@@ -1,0 +1,95 @@
+# Aura: AI-Native Programming Language
+
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/cybrid-systems/aura/actions)
+[![Stars](https://img.shields.io/github/stars/cybrid-systems/aura?style=social)](https://github.com/cybrid-systems/aura)
+
+**Aura** is an AI-native programming language enabling AI agents to query, mutate, and compile code via **persistent ASTs**, **static reflection**, and **incremental compilation** using C++26 modules.
+
+## 🚀 Quick Start
+
+### Prerequisites
+- GCC 15+ (C++26 modules; `-fmodules-ts` for older)
+- CMake 3.28+
+
+```bash
+git clone https://github.com/cybrid-systems/aura.git
+cd aura
+mkdir build && cd build
+cmake .. && cmake --build .
+./aura  # Run MVP demo
+```
+
+**Output**:
+```
+Compiled IR:
+IR: main
+0.1-MVP
+```
+
+## ✨ Key Features (MVP)
+- **AST Auto-Mutation**: AI-driven code transformations.
+- **Static Reflection**: Compile-time introspection via C++26.
+- **Incremental Compilation**: Change-aware recompilation.
+- **Racket DSL Bridge**: Extensible frontend syntax.
+
+## 🏗️ Architecture
+```
+Racket DSL → AST → Query Engine → Incremental Compiler
+```
+
+```mermaid
+graph LR
+    A[Racket Frontend] --> B[AST with Reflection]
+    B --> C[Query Engine]
+    C --> D[Incremental Compiler]
+    D --> E[LLVM IR]
+```
+
+## 📖 Example: Lucene-style AST Query
+
+```cpp
+import aura;  // C++26 modules
+
+int main() {
+    aura::AuraContext ctx;
+    
+    // Lucene-style AST queries
+    auto functions = ctx.query("type:Function AND name:main");
+    auto loops = ctx.query("type:ForLoop AND depth<3");
+    auto high_complexity = ctx.query("cyclomatic_complexity>10");
+    
+    // Compile results
+    for (auto& node : functions) {
+        auto ir = ctx.compile(node);
+        std::cout << ir << "\n";
+    }
+    
+    return 0;
+}
+```
+
+Compile:
+```bash
+g++ -std=c++26 -fmodules-ts -c aura.cppm ast.cppm query.cppm compiler.cppm
+g++ -std=c++26 -fmodules-ts main.cpp *.o -o aura
+```
+
+## 🛣️ Roadmap
+- [x] MVP: C++ modules + AST/Query/Compile.
+- [ ] Racket EDSL + JSON bridge.
+- [ ] Incremental types/reflection (C++26).
+- [ ] LLVM backend.
+- [ ] AI pattern matcher.
+
+## 🤝 Contributing
+1. Fork & PR.
+2. Build: `cmake --build build`.
+3. Test: `ctest`.
+
+[CONTRIBUTING.md](CONTRIBUTING.md)
+
+## 📄 License
+[Apache 2.0](LICENSE) © 2026 cybrid-systems.
+
+⭐ **Star us!** Issues: [New Issue](https://github.com/cybrid-systems/aura/issues).
