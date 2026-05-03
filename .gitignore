@@ -1,0 +1,21 @@
+# Racket
+compiled/
+*.rkt~
+*.zo
+
+# C++26
+build/
+*.o
+*.obj
+*.exe
+*.out
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
