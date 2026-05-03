@@ -1,95 +1,43 @@
-# Aura: AI-Native Programming Language
+# Aura
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/cybrid-systems/aura/actions)
-[![Stars](https://img.shields.io/github/stars/cybrid-systems/aura?style=social)](https://github.com/cybrid-systems/aura)
+**为 AI Agent 设计的编程语言**  
+从最小 Lisp 核心开始，自然生长。
 
-**Aura** is an AI-native programming language enabling AI agents to query, mutate, and compile code via **persistent ASTs**, **static reflection**, and **incremental compilation** using C++26 modules.
+---
 
-## 🚀 Quick Start
+## 当前状态（2026.05）
 
-### Prerequisites
-- GCC 15+ (C++26 modules; `-fmodules-ts` for older)
-- CMake 3.28+
+**Phase 0：最小 Homoiconic AST**
+
+- 目标：让 AI 能把代码当成**数据**直接查询、变换、生长
+- 目前进度：设计哲学已完成，核心 AST 原型正在规划中
+- 技术栈：暂定 **Racket**（最符合「代码即数据」与「语言自然生长」理念）
+
+> **重要说明**：本仓库目前处于极早期阶段，暂无完整实现。所有宏大功能（C++26、LLVM、增量编译等）将在后续阶段逐步引入。
+
+---
+
+## 为什么叫 Aura？
+
+Aura（光环 / 灵气）代表语言在语义空间中散发出的**无形却无所不在的能量场**。  
+AI Agent 在这个光环里自由地操作代码，最终让整个软件栈自然演化成新的形态。
+
+---
+
+## 设计哲学（核心原则）
+
+1. **最小核心**：只保留最少的语义原语，所有上层语法都是宏（macro）。
+2. **代码即数据**：程序与数据同构（homoiconicity），AI 可直接操作 AST。
+3. **自然生长**：不拔苗助长，语言从真实语义需求中慢慢长大。
+4. **窄门路线**：不兼容旧生态、不优化给人读、最终目标是统一并替换现有软件栈。
+
+完整哲学文档见原设计仓库：  
+https://github.com/cybrid-systems/ai-programming-language-design
+
+---
+
+## 如何开始
 
 ```bash
 git clone https://github.com/cybrid-systems/aura.git
 cd aura
-mkdir build && cd build
-cmake .. && cmake --build .
-./aura  # Run MVP demo
-```
-
-**Output**:
-```
-Compiled IR:
-IR: main
-0.1-MVP
-```
-
-## ✨ Key Features (MVP)
-- **AST Auto-Mutation**: AI-driven code transformations.
-- **Static Reflection**: Compile-time introspection via C++26.
-- **Incremental Compilation**: Change-aware recompilation.
-- **Racket DSL Bridge**: Extensible frontend syntax.
-
-## 🏗️ Architecture
-```
-Racket DSL → AST → Query Engine → Incremental Compiler
-```
-
-```mermaid
-graph LR
-    A[Racket Frontend] --> B[AST with Reflection]
-    B --> C[Query Engine]
-    C --> D[Incremental Compiler]
-    D --> E[LLVM IR]
-```
-
-## 📖 Example: Lucene-style AST Query
-
-```cpp
-import aura;  // C++26 modules
-
-int main() {
-    aura::AuraContext ctx;
-    
-    // Lucene-style AST queries
-    auto functions = ctx.query("type:Function AND name:main");
-    auto loops = ctx.query("type:ForLoop AND depth<3");
-    auto high_complexity = ctx.query("cyclomatic_complexity>10");
-    
-    // Compile results
-    for (auto& node : functions) {
-        auto ir = ctx.compile(node);
-        std::cout << ir << "\n";
-    }
-    
-    return 0;
-}
-```
-
-Compile:
-```bash
-g++ -std=c++26 -fmodules-ts -c aura.cppm ast.cppm query.cppm compiler.cppm
-g++ -std=c++26 -fmodules-ts main.cpp *.o -o aura
-```
-
-## 🛣️ Roadmap
-- [x] MVP: C++ modules + AST/Query/Compile.
-- [ ] Racket EDSL + JSON bridge.
-- [ ] Incremental types/reflection (C++26).
-- [ ] LLVM backend.
-- [ ] AI pattern matcher.
-
-## 🤝 Contributing
-1. Fork & PR.
-2. Build: `cmake --build build`.
-3. Test: `ctest`.
-
-[CONTRIBUTING.md](CONTRIBUTING.md)
-
-## 📄 License
-[Apache 2.0](LICENSE) © 2026 cybrid-systems.
-
-⭐ **Star us!** Issues: [New Issue](https://github.com/cybrid-systems/aura/issues).
