@@ -53,6 +53,7 @@ ast::Expr* Parser::parse_list() {
         if (kw == "lambda") return parse_lambda();
         if (kw == "let")    return parse_let(false);
         if (kw == "letrec") return parse_let(true);
+        if (kw == "define") return parse_define();
     }
     auto* func = parse_expr();
     if (!func) { skip_to_rparen(); return nullptr; }
@@ -92,6 +93,17 @@ ast::Expr* Parser::parse_lambda() {
     return arena_.create<ast::Expr>(std::move(lambda));
 }
 
+ast::Expr* Parser::parse_define() {
+    lexer_->consume(); // 'define'
+    auto name = lexer_->consume();
+    if (name.kind != TokenKind::Identifier) return nullptr;
+    auto* val = parse_expr_value();
+    if (!val) return nullptr;
+    lexer_->consume(); // ')'
+    return arena_.create<ast::Expr>(
+        ast::DefineNode{{}, std::string(name.text), val});
+}
+
 ast::Expr* Parser::parse_let(bool is_letrec) {
     lexer_->consume();
     if (lexer_->consume().kind != TokenKind::LParen) return nullptr;
@@ -115,14 +127,11 @@ ast::Expr* Parser::parse_let(bool is_letrec) {
     if (lexer_->peek().kind == TokenKind::RParen) lexer_->consume();
 
     if (is_letrec) {
-        // Desugar multi-binding to nested single-binding letrec nodes
         for (auto it = bindings.rbegin(); it != bindings.rend(); ++it)
             body = arena_.create<ast::Expr>(
                 ast::LetRecNode{{}, it->name, it->value, body});
         return body;
     }
-
-    // Non-recursive let: desugar to nested lets
     for (auto it = bindings.rbegin(); it != bindings.rend(); ++it)
         body = arena_.create<ast::Expr>(
             ast::LetNode{{}, it->name, it->value, body});

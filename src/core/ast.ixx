@@ -16,6 +16,7 @@ export enum class NodeTag : uint32_t {
     Lambda       = 0x05,
     Let          = 0x06,
     LetRec       = 0x07,
+    Define       = 0x08,
 };
 
 export struct SourceLocation {
@@ -70,11 +71,17 @@ export struct LetRecNode {
     struct Expr* body             = nullptr;
 };
 
+export struct DefineNode {
+    NodeTag tag                   = NodeTag::Define;
+    std::string name;
+    struct Expr* value            = nullptr;
+};
+
 export struct Expr {
     NodeTag tag;
     std::variant<
         LiteralIntNode, VariableNode, CallNode,
-        IfExprNode, LambdaNode, LetNode, LetRecNode
+        IfExprNode, LambdaNode, LetNode, LetRecNode, DefineNode
     > payload;
 
     Expr(LiteralIntNode n) : tag(n.tag), payload(n) {}
@@ -84,6 +91,7 @@ export struct Expr {
     Expr(LambdaNode n)     : tag(n.tag), payload(n) {}
     Expr(LetNode n)        : tag(n.tag), payload(n) {}
     Expr(LetRecNode n)     : tag(n.tag), payload(n) {}
+    Expr(DefineNode n)     : tag(n.tag), payload(n) {}
 };
 
 } // namespace aura::ast
