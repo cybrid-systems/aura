@@ -10,13 +10,11 @@ set(CMAKE_EXPERIMENTAL_CXX_MODULE_CMAKE_API
 
 add_executable(aura)
 
-# ─── Core layer ───
 target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/arena.ixx
     src/core/ast.ixx
     src/core/core.ixx)
 
-# ─── Parser layer ───
 target_sources(aura PRIVATE
     src/parser/lexer_impl.cpp
     src/parser/parser_impl.cpp)
@@ -24,56 +22,56 @@ target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx
     src/parser/parser.ixx)
 
-# ─── Compiler layer ───
 target_sources(aura PRIVATE
     src/compiler/frontend_impl.cpp)
 target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/frontend.ixx)
 
-# ─── Main ───
 target_sources(aura PRIVATE src/main.cpp)
 
-target_compile_options(aura PRIVATE
-    -fmodules-ts
-    -Wall -Wextra -Wpedantic)
+target_compile_options(aura PRIVATE -fmodules-ts -Wall -Wextra -Wpedantic)
 target_link_libraries(aura PRIVATE stdc++)
 
-set_target_properties(aura PROPERTIES
-    INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
-
-# ─── Step 09 tests: integer literal ───
 enable_testing()
 
-add_test(NAME step09_literal_42
-    COMMAND sh -c "test \"\$(echo 42 | ./aura)\" = 42"
+macro(aura_test name input expected)
+    add_test(NAME ${name}
+        COMMAND sh -c "test \"$(printf '${input}' | ./build/aura)\" = ${expected}")
+endmacro()
+
+add_test(NAME step09_int_42
+    COMMAND sh -c "test \"$(echo 42 | ./aura)\" = 42"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
-
-add_test(NAME step09_literal_neg5
-    COMMAND sh -c "test \"\$(echo -5 | ./aura)\" = -5"
+add_test(NAME step09_int_neg5
+    COMMAND sh -c "test \"$(echo -5 | ./aura)\" = -5"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
-
-add_test(NAME step09_literal_large
-    COMMAND sh -c "test \"\$(echo 999999 | ./aura)\" = 999999"
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
-
-# ─── Step 10 tests: variable + let ───
-
-add_test(NAME step10_variable_error
+add_test(NAME step10_var_error
     COMMAND sh -c "echo x | ./aura 2>&1 | grep -F 'unbound variable'"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
-
-add_test(NAME step10_let_single
-    COMMAND sh -c "test \"\$(printf '(let ((x 10)) x)' | ./aura)\" = 10"
+add_test(NAME step10_let
+    COMMAND sh -c "test \"$(printf '(let ((x 10)) x)' | ./aura)\" = 10"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
-
-add_test(NAME step10_let_multi
-    COMMAND sh -c "test \"\$(printf '(let ((x 10) (y 20)) x)' | ./aura)\" = 10"
+add_test(NAME step10_let_nested
+    COMMAND sh -c "test \"$(printf '(let ((x 10)) (let ((x 20)) x))' | ./aura)\" = 20"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
-
-add_test(NAME step10_let_shadow
-    COMMAND sh -c "test \"\$(printf '(let ((x 10)) (let ((x 20)) x))' | ./aura)\" = 20"
+add_test(NAME step11_add
+    COMMAND sh -c "test \"$(echo '(+ 1 2)' | ./aura)\" = 3"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
-
-add_test(NAME step10_let_var_value
-    COMMAND sh -c "test \"\$(printf '(let ((x 10)) (let ((y x)) y))' | ./aura)\" = 10"
+add_test(NAME step11_sub
+    COMMAND sh -c "test \"$(echo '(- 5 3)' | ./aura)\" = 2"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+add_test(NAME step11_mul
+    COMMAND sh -c "test \"$(echo '(* 2 3)' | ./aura)\" = 6"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+add_test(NAME step11_nested
+    COMMAND sh -c "test \"$(echo '(+ 1 (* 2 3))' | ./aura)\" = 7"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+add_test(NAME step11_eq
+    COMMAND sh -c "test \"$(echo '(= 3 3)' | ./aura)\" = 1"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+add_test(NAME step12_if_true
+    COMMAND sh -c "test \"$(printf '(if 1 42 0)' | ./aura)\" = 42"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+add_test(NAME step12_if_false
+    COMMAND sh -c "test \"$(printf '(if 0 0 99)' | ./aura)\" = 99"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})

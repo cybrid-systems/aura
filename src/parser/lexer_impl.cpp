@@ -24,7 +24,9 @@ Token Lexer::advance() {
              std::isdigit(static_cast<unsigned char>(source_[pos_ + 1])))) {
             return read_number();
         }
-        if (std::isalpha(static_cast<unsigned char>(c)) || c == '_' || c == '+' || c == '*')
+        if (std::isalpha(static_cast<unsigned char>(c)) || c == '_' ||
+            c == '+' || c == '*' || c == '-' || c == '/' ||
+            c == '=' || c == '<' || c == '>' || c == '!')
             return read_identifier();
         return make_token(TokenKind::Error, source_.substr(pos_++, 1));
     }

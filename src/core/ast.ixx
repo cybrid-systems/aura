@@ -8,8 +8,6 @@ export module aura.core.ast;
 
 namespace aura::ast {
 
-// ─── Node tags ───
-
 export enum class NodeTag : uint32_t {
     LiteralInt   = 0x01,
     Variable     = 0x02,
@@ -19,21 +17,13 @@ export enum class NodeTag : uint32_t {
     Let          = 0x06,
 };
 
-// ─── Source location ───
-
 export struct SourceLocation {
-    uint32_t line   = 0;
-    uint32_t column = 0;
-    uint32_t file   = 0;
+    uint32_t line = 0, column = 0, file = 0;
 };
-
-// ─── Phase definitions (Trees that Grow) ───
 
 export struct ParsedPhase {
     static constexpr uint32_t id = 0;
 };
-
-// ─── Node types (each with per-node extension slot) ───
 
 export struct LiteralIntNode {
     NodeTag tag   = NodeTag::LiteralInt;
@@ -46,36 +36,36 @@ export struct VariableNode {
 };
 
 export struct CallNode {
-    NodeTag tag = NodeTag::Call;
+    NodeTag tag                               = NodeTag::Call;
+    struct Expr* function                     = nullptr;
+    std::vector<struct Expr*> args;
 };
 
 export struct IfExprNode {
-    NodeTag tag = NodeTag::IfExpr;
+    NodeTag tag                               = NodeTag::IfExpr;
+    struct Expr* condition                    = nullptr;
+    struct Expr* then_branch                  = nullptr;
+    struct Expr* else_branch                  = nullptr;
 };
 
 export struct LambdaNode {
-    NodeTag tag = NodeTag::Lambda;
+    NodeTag tag                               = NodeTag::Lambda;
+    std::vector<std::string> params;
+    struct Expr* body                         = nullptr;
 };
 
-// Single-binding let. Multi-binding desugared to nested lets.
 export struct LetNode {
-    NodeTag tag       = NodeTag::Let;
+    NodeTag tag                               = NodeTag::Let;
     std::string name;
-    struct Expr* value = nullptr;
-    struct Expr* body  = nullptr;
+    struct Expr* value                         = nullptr;
+    struct Expr* body                          = nullptr;
 };
-
-// ─── Expr variant ───
 
 export struct Expr {
     NodeTag tag;
     std::variant<
-        LiteralIntNode,
-        VariableNode,
-        CallNode,
-        IfExprNode,
-        LambdaNode,
-        LetNode
+        LiteralIntNode, VariableNode, CallNode,
+        IfExprNode, LambdaNode, LetNode
     > payload;
 
     Expr(LiteralIntNode n) : tag(n.tag), payload(n) {}
