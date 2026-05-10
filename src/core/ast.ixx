@@ -15,6 +15,7 @@ export enum class NodeTag : uint32_t {
     IfExpr       = 0x04,
     Lambda       = 0x05,
     Let          = 0x06,
+    LetRec       = 0x07,
 };
 
 export struct SourceLocation {
@@ -36,36 +37,44 @@ export struct VariableNode {
 };
 
 export struct CallNode {
-    NodeTag tag                               = NodeTag::Call;
-    struct Expr* function                     = nullptr;
+    NodeTag tag                   = NodeTag::Call;
+    struct Expr* function         = nullptr;
     std::vector<struct Expr*> args;
 };
 
 export struct IfExprNode {
-    NodeTag tag                               = NodeTag::IfExpr;
-    struct Expr* condition                    = nullptr;
-    struct Expr* then_branch                  = nullptr;
-    struct Expr* else_branch                  = nullptr;
+    NodeTag tag                   = NodeTag::IfExpr;
+    struct Expr* condition        = nullptr;
+    struct Expr* then_branch      = nullptr;
+    struct Expr* else_branch      = nullptr;
 };
 
 export struct LambdaNode {
-    NodeTag tag                               = NodeTag::Lambda;
+    NodeTag tag                   = NodeTag::Lambda;
     std::vector<std::string> params;
-    struct Expr* body                         = nullptr;
+    struct Expr* body             = nullptr;
 };
 
 export struct LetNode {
-    NodeTag tag                               = NodeTag::Let;
+    NodeTag tag                   = NodeTag::Let;
     std::string name;
-    struct Expr* value                         = nullptr;
-    struct Expr* body                          = nullptr;
+    struct Expr* value            = nullptr;
+    struct Expr* body             = nullptr;
+};
+
+// Single-binding letrec. Multi-binding desugared to nested.
+export struct LetRecNode {
+    NodeTag tag                   = NodeTag::LetRec;
+    std::string name;
+    struct Expr* value            = nullptr;
+    struct Expr* body             = nullptr;
 };
 
 export struct Expr {
     NodeTag tag;
     std::variant<
         LiteralIntNode, VariableNode, CallNode,
-        IfExprNode, LambdaNode, LetNode
+        IfExprNode, LambdaNode, LetNode, LetRecNode
     > payload;
 
     Expr(LiteralIntNode n) : tag(n.tag), payload(n) {}
@@ -74,6 +83,7 @@ export struct Expr {
     Expr(IfExprNode n)     : tag(n.tag), payload(n) {}
     Expr(LambdaNode n)     : tag(n.tag), payload(n) {}
     Expr(LetNode n)        : tag(n.tag), payload(n) {}
+    Expr(LetRecNode n)     : tag(n.tag), payload(n) {}
 };
 
 } // namespace aura::ast

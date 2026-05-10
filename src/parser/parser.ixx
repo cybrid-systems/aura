@@ -28,7 +28,7 @@ private:
     ast::Expr* parse_list();
     ast::Expr* parse_if();
     ast::Expr* parse_lambda();
-    ast::Expr* parse_let();
+    ast::Expr* parse_let(bool is_letrec);
     ast::Expr* parse_expr_value();
     void skip_to_rparen();
 

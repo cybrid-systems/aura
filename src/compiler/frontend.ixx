@@ -27,6 +27,8 @@ private:
 
 export class Env final {
 public:
+    using CellTable = std::vector<int64_t>;
+
     Env() = default;
     explicit Env(const Env* parent) : parent_(parent) {}
     Env(const Env&) = default;
@@ -34,13 +36,10 @@ public:
 
     void set_parent(const Env* p) { parent_ = p; }
     void set_primitives(const Primitives* p) { primitives_ = p; }
+    void set_cells(CellTable* c) { cells_ = c; }
     void bind(const std::string& name, int64_t value) { bindings_.emplace_back(name, value); }
     
-    std::optional<int64_t> lookup(const std::string& name) const {
-        for (auto it = bindings_.rbegin(); it != bindings_.rend(); ++it)
-            if (it->first == name) return it->second;
-        return parent_ ? parent_->lookup(name) : std::nullopt;
-    }
+    std::optional<int64_t> lookup(const std::string& name) const;
 
     std::optional<PrimitiveFn> lookup_primitive(const std::string& name) const {
         return primitives_ ? primitives_->lookup(name) : std::nullopt;
@@ -49,11 +48,13 @@ public:
 private:
     const Env* parent_ = nullptr;
     const Primitives* primitives_ = nullptr;
+    CellTable* cells_ = nullptr;
     std::vector<std::pair<std::string, int64_t>> bindings_;
 };
 
 export using ClosureId = uint64_t;
 constexpr ClosureId CLOSURE_SENTINEL = 0x1000000;
+constexpr int64_t CELL_SENTINEL = 0x2000000;
 
 export struct Closure {
     std::vector<std::string> params;
@@ -78,6 +79,7 @@ public:
 
 private:
     ClosureId next_id() { return next_id_++; }
+    size_t alloc_cell(int64_t val) { cells_.push_back(val); return cells_.size() - 1; }
     EvalResult apply_closure(ClosureId id, const std::vector<ast::Expr*>& args, const Env& call_env);
     Env* copy_env(const Env& env);
 
@@ -85,6 +87,7 @@ private:
     Primitives primitives_;
     ast::ASTArena* arena_ = nullptr;
     std::unordered_map<ClosureId, Closure> closures_;
+    Env::CellTable cells_;
     uint64_t next_id_ = 1;
 };
 
