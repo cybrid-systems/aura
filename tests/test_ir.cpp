@@ -5,6 +5,33 @@ import aura.compiler.frontend;
 import aura.compiler.ir;
 import aura.compiler.lowering;
 import aura.compiler.ir_interpreter;
+import aura.compiler.compute_kind;
+
+// Run compute-kind analysis on the top function and return a summary string
+std::string check_compute_kind(aura::compiler::LoweringPass& lowering,
+                                const std::string& input) {
+    aura::ast::ASTArena arena;
+    aura::parser::Parser parser(arena);
+    auto pr = parser.parse(input);
+    if (!pr.root) return "parse_fail";
+
+    auto mod = lowering.lower(pr.root);
+    auto& top_func = mod.entry();
+
+    aura::compiler::ComputeKindAnalysis analysis;
+    auto result = analysis.analyze(top_func);
+    if (!result.valid) return "invalid";
+
+    // Build a compact string per instruction: K=Known, U=Unknown
+    std::string summary;
+    for (std::size_t bi = 0; bi < result.per_block_inst_kind.size(); ++bi) {
+        if (bi > 0) summary += '|';
+        for (auto k : result.per_block_inst_kind[bi]) {
+            summary += (k == aura::compiler::ComputeKind::Known) ? 'K' : 'U';
+        }
+    }
+    return summary;
+}
 
 int main() {
     aura::ast::ASTArena arena;
@@ -78,5 +105,36 @@ int main() {
     }
 
     std::println("IR test: {}/{} passed", passed, passed + failed);
-    return failed ? 1 : 0;
+
+    if (failed > 0) return 1;
+
+    // ── L2.3: compute-kind analysis tests ─────────────────────
+    struct CKTest { std::string input; std::string desc; };
+    CKTest ck_tests[] = {
+        {"42", "literal"},
+        {"(+ 1 2)", "add_const"},
+        {"(let ((x 10)) x)", "let_known"},
+        {"((lambda (x) (* x 2)) 5)", "lambda_call"},
+    };
+
+    int ck_passed = 0, ck_failed = 0;
+    for (auto& t : ck_tests) {
+        auto summary = check_compute_kind(lowering, t.input);
+        // Verify: first N-1 instructions (everything except Return) should contain at least one K
+        // and the last char should be 'U' (Return is always Unknown in our analysis)
+        if (summary.empty()) {
+            std::cerr << "CK FAIL: " << t.desc << " empty summary" << std::endl;
+            ++ck_failed;
+        } else if (summary.back() == 'U' && summary.find('K') != std::string::npos) {
+            ++ck_passed;
+            std::println("CK OK:  {} → {} (\"{}\")", t.desc, summary, t.input);
+        } else {
+            std::cerr << "CK FAIL: " << t.desc << " summary='" << summary << "'" << std::endl;
+            ++ck_failed;
+        }
+    }
+
+    std::println("Compute-kind test: {}/{}/{} passed/failed/total",
+                 ck_passed, ck_failed, ck_passed + ck_failed);
+    return (failed + ck_failed) > 0 ? 1 : 0;
 }
