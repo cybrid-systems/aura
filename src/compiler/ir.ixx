@@ -23,15 +23,23 @@ export enum class IROpcode : std::uint8_t {
     Return,         // return: value_slot
     // Closures
     MakeClosure,    // create closure: func_slot, env_size
-    Capture,        // capture variable: env_slot, var_slot
+    Capture,        // capture variable: env_slot, env_idx, var_slot
+    CaptureRef,     // capture by reference: closure_slot, env_idx, cell_slot
     Apply,          // apply closure: closure_slot, arg_count, result_slot
 };
 
 export struct IRInstruction {
     IROpcode opcode;
-    std::array<std::uint32_t, 3> operands = {};
+    std::array<std::uint32_t, 4> operands = {};
     std::uint32_t source_ast_node_id = 0;
 };
+
+// Helper: pack two uint32 into one (for Call: args_begin << 16 | arg_count)
+export constexpr std::uint32_t pack_pair(std::uint32_t hi, std::uint32_t lo) {
+    return (hi << 16) | (lo & 0xFFFF);
+}
+export constexpr std::uint32_t unpack_hi(std::uint32_t p) { return p >> 16; }
+export constexpr std::uint32_t unpack_lo(std::uint32_t p) { return p & 0xFFFF; }
 
 export struct BasicBlock {
     std::uint32_t id = 0;
@@ -47,6 +55,22 @@ export struct IRFunction {
     std::vector<std::string> params;
     std::vector<std::string> free_vars;
     std::uint32_t local_count = 0;  // number of local slots needed
+    std::uint32_t arg_count = 0;    // number of arguments
+};
+
+export struct IRModule {
+    std::vector<IRFunction> functions;
+    std::uint32_t entry_function_id = 0;
+
+    std::uint32_t add_function(IRFunction func) {
+        func.id = static_cast<std::uint32_t>(functions.size());
+        functions.push_back(std::move(func));
+        return func.id;
+    }
+
+    void set_entry(std::uint32_t id) { entry_function_id = id; }
+    IRFunction& entry() { return functions[entry_function_id]; }
+    const IRFunction& entry() const { return functions[entry_function_id]; }
 };
 
 } // namespace aura::ir
