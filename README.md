@@ -7,17 +7,7 @@
 
 ## 设计仓库
 
-完整的设计哲学、架构方案、序列化协议、eDSL 查询语言等所有设计文档均在：
-
-**https://github.com/cybrid-systems/ai-programming-language-design**
-
-| 设计文档 | 说明 |
-|----------|------|
-| [DESIGN_PHILOSOPHY.md](https://github.com/cybrid-systems/ai-programming-language-design/blob/main/docs/philosophy/DESIGN_PHILOSOPHY.md) | 窄门哲学与核心设计原则 |
-| [ARCHITECTURE.md](https://github.com/cybrid-systems/ai-programming-language-design/blob/main/docs/ARCHITECTURE.md) | 三层架构与模块分解 |
-| [SERIALIZATION.md](https://github.com/cybrid-systems/ai-programming-language-design/blob/main/docs/SERIALIZATION.md) | Trees that Grow + ABF v2 序列化 |
-| [AURAQUERY.md](https://github.com/cybrid-systems/ai-programming-language-design/blob/main/docs/AURAQUERY.md) | Aura eDSL 查询与变换语法 |
-| [CXX_MODULES.md](https://github.com/cybrid-systems/ai-programming-language-design/blob/main/docs/CXX_MODULES.md) | C++26 模块划分与 CMake 配置 |
+> 完整设计文档见 [**ai-programming-language-design**](https://github.com/cybrid-systems/ai-programming-language-design) — 架构设计、序列化协议、AuraQuery eDSL、C++26 模块方案。
 
 ---
 
