@@ -117,6 +117,8 @@ ast::Expr* Parser::parse_let() {
 }
 
 ast::Expr* Parser::parse_expr_value() {
+    // Handle any expression as a let-binding value
+    // Including nested lists like (lambda (x) x)
     Token tok = lexer_->peek();
     switch (tok.kind) {
     case TokenKind::Integer:
@@ -124,6 +126,10 @@ ast::Expr* Parser::parse_expr_value() {
     case TokenKind::Identifier:
         return arena_.create<ast::Expr>(
             ast::VariableNode{{}, std::string(lexer_->consume().text)});
+    case TokenKind::LParen: {
+        lexer_->consume();
+        return parse_list();
+    }
     default: return nullptr;
     }
 }
