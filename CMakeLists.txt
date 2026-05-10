@@ -24,6 +24,9 @@ target_sources(aura PRIVATE
 target_compile_options(aura PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(aura PRIVATE stdc++)
 
+# Enable standard header module scanning for import <iostream> etc.
+set(CMAKE_CXX_MODULE_STANDARD_HEADERS ON)
+
 set_target_properties(aura PROPERTIES
     INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
 
