@@ -31,6 +31,7 @@ int main(int argc, char* argv[]) {
     }
 
     aura::compiler::Evaluator evaluator;
+    evaluator.set_arena(&arena);
     auto result = evaluator.eval(parse_result.root);
 
     if (!result.success) {
