@@ -1,0 +1,74 @@
+[
+{
+  "directory": "/home/dev/code/aura/build",
+  "command": "/usr/bin/c++ -std=c++26 -Wall -Wextra -Wpedantic -fmodules-ts -fmodule-mapper=CMakeFiles/aura.dir/src/parser/lexer_impl.cpp.o.modmap -MD -fdeps-format=p1689r5 -x c++ -o CMakeFiles/aura.dir/src/parser/lexer_impl.cpp.o -c /home/dev/code/aura/src/parser/lexer_impl.cpp",
+  "file": "/home/dev/code/aura/src/parser/lexer_impl.cpp",
+  "output": "/home/dev/code/aura/build/CMakeFiles/aura.dir/src/parser/lexer_impl.cpp.o"
+},
+{
+  "directory": "/home/dev/code/aura/build",
+  "command": "/usr/bin/c++ -std=c++26 -Wall -Wextra -Wpedantic -fmodules-ts -fmodule-mapper=CMakeFiles/aura.dir/src/parser/parser_impl.cpp.o.modmap -MD -fdeps-format=p1689r5 -x c++ -o CMakeFiles/aura.dir/src/parser/parser_impl.cpp.o -c /home/dev/code/aura/src/parser/parser_impl.cpp",
+  "file": "/home/dev/code/aura/src/parser/parser_impl.cpp",
+  "output": "/home/dev/code/aura/build/CMakeFiles/aura.dir/src/parser/parser_impl.cpp.o"
+},
+{
+  "directory": "/home/dev/code/aura/build",
+  "command": "/usr/bin/c++ -std=c++26 -Wall -Wextra -Wpedantic -fmodules-ts -fmodule-mapper=CMakeFiles/aura.dir/src/compiler/frontend_impl.cpp.o.modmap -MD -fdeps-format=p1689r5 -x c++ -o CMakeFiles/aura.dir/src/compiler/frontend_impl.cpp.o -c /home/dev/code/aura/src/compiler/frontend_impl.cpp",
+  "file": "/home/dev/code/aura/src/compiler/frontend_impl.cpp",
+  "output": "/home/dev/code/aura/build/CMakeFiles/aura.dir/src/compiler/frontend_impl.cpp.o"
+},
+{
+  "directory": "/home/dev/code/aura/build",
+  "command": "/usr/bin/c++ -std=c++26 -Wall -Wextra -Wpedantic -fmodules-ts -fmodule-mapper=CMakeFiles/aura.dir/src/main.cpp.o.modmap -MD -fdeps-format=p1689r5 -x c++ -o CMakeFiles/aura.dir/src/main.cpp.o -c /home/dev/code/aura/src/main.cpp",
+  "file": "/home/dev/code/aura/src/main.cpp",
+  "output": "/home/dev/code/aura/build/CMakeFiles/aura.dir/src/main.cpp.o"
+},
+{
+  "directory": "/home/dev/code/aura/build",
+  "command": "/usr/bin/c++ -std=c++26 -Wall -Wextra -Wpedantic -fmodules-ts -fmodule-mapper=CMakeFiles/aura.dir/src/core/arena.ixx.o.modmap -MD -fdeps-format=p1689r5 -x c++ -o CMakeFiles/aura.dir/src/core/arena.ixx.o -c /home/dev/code/aura/src/core/arena.ixx",
+  "file": "/home/dev/code/aura/src/core/arena.ixx",
+  "output": "/home/dev/code/aura/build/CMakeFiles/aura.dir/src/core/arena.ixx.o"
+},
+{
+  "directory": "/home/dev/code/aura/build",
+  "command": "/usr/bin/c++ -std=c++26 -Wall -Wextra -Wpedantic -fmodules-ts -fmodule-mapper=CMakeFiles/aura.dir/src/core/ast.ixx.o.modmap -MD -fdeps-format=p1689r5 -x c++ -o CMakeFiles/aura.dir/src/core/ast.ixx.o -c /home/dev/code/aura/src/core/ast.ixx",
+  "file": "/home/dev/code/aura/src/core/ast.ixx",
+  "output": "/home/dev/code/aura/build/CMakeFiles/aura.dir/src/core/ast.ixx.o"
+},
+{
+  "directory": "/home/dev/code/aura/build",
+  "command": "/usr/bin/c++ -std=c++26 -Wall -Wextra -Wpedantic -fmodules-ts -fmodule-mapper=CMakeFiles/aura.dir/src/core/core.ixx.o.modmap -MD -fdeps-format=p1689r5 -x c++ -o CMakeFiles/aura.dir/src/core/core.ixx.o -c /home/dev/code/aura/src/core/core.ixx",
+  "file": "/home/dev/code/aura/src/core/core.ixx",
+  "output": "/home/dev/code/aura/build/CMakeFiles/aura.dir/src/core/core.ixx.o"
+},
+{
+  "directory": "/home/dev/code/aura/build",
+  "command": "/usr/bin/c++ -std=c++26 -Wall -Wextra -Wpedantic -fmodules-ts -fmodule-mapper=CMakeFiles/aura.dir/src/parser/lexer.ixx.o.modmap -MD -fdeps-format=p1689r5 -x c++ -o CMakeFiles/aura.dir/src/parser/lexer.ixx.o -c /home/dev/code/aura/src/parser/lexer.ixx",
+  "file": "/home/dev/code/aura/src/parser/lexer.ixx",
+  "output": "/home/dev/code/aura/build/CMakeFiles/aura.dir/src/parser/lexer.ixx.o"
+},
+{
+  "directory": "/home/dev/code/aura/build",
+  "command": "/usr/bin/c++ -std=c++26 -Wall -Wextra -Wpedantic -fmodules-ts -fmodule-mapper=CMakeFiles/aura.dir/src/parser/parser.ixx.o.modmap -MD -fdeps-format=p1689r5 -x c++ -o CMakeFiles/aura.dir/src/parser/parser.ixx.o -c /home/dev/code/aura/src/parser/parser.ixx",
+  "file": "/home/dev/code/aura/src/parser/parser.ixx",
+  "output": "/home/dev/code/aura/build/CMakeFiles/aura.dir/src/parser/parser.ixx.o"
+},
+{
+  "directory": "/home/dev/code/aura/build",
+  "command": "/usr/bin/c++ -std=c++26 -Wall -Wextra -Wpedantic -fmodules-ts -fmodule-mapper=CMakeFiles/aura.dir/src/compiler/frontend.ixx.o.modmap -MD -fdeps-format=p1689r5 -x c++ -o CMakeFiles/aura.dir/src/compiler/frontend.ixx.o -c /home/dev/code/aura/src/compiler/frontend.ixx",
+  "file": "/home/dev/code/aura/src/compiler/frontend.ixx",
+  "output": "/home/dev/code/aura/build/CMakeFiles/aura.dir/src/compiler/frontend.ixx.o"
+},
+{
+  "directory": "/home/dev/code/aura/build",
+  "command": "/usr/bin/c++ -std=c++26 -fmodules-ts -fmodule-mapper=CMakeFiles/__cmake_cxx_std_26.dir/usr/include/c++/16/bits/std.cc.o.modmap -MD -fdeps-format=p1689r5 -x c++ -o CMakeFiles/__cmake_cxx_std_26.dir/usr/include/c++/16/bits/std.cc.o -c /usr/include/c++/16/bits/std.cc",
+  "file": "/usr/include/c++/16/bits/std.cc",
+  "output": "/home/dev/code/aura/build/CMakeFiles/__cmake_cxx_std_26.dir/usr/include/c++/16/bits/std.cc.o"
+},
+{
+  "directory": "/home/dev/code/aura/build",
+  "command": "/usr/bin/c++ -std=c++26 -fmodules-ts -fmodule-mapper=CMakeFiles/__cmake_cxx_std_26.dir/usr/include/c++/16/bits/std.compat.cc.o.modmap -MD -fdeps-format=p1689r5 -x c++ -o CMakeFiles/__cmake_cxx_std_26.dir/usr/include/c++/16/bits/std.compat.cc.o -c /usr/include/c++/16/bits/std.compat.cc",
+  "file": "/usr/include/c++/16/bits/std.compat.cc",
+  "output": "/home/dev/code/aura/build/CMakeFiles/__cmake_cxx_std_26.dir/usr/include/c++/16/bits/std.compat.cc.o"
+}
+]

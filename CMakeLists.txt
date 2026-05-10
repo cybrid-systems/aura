@@ -12,11 +12,13 @@ set_property(TARGET aura PROPERTY CXX_MODULE_STD ON)
 target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/frontend.ixx)
+    src/compiler/frontend.ixx
+    src/binary/abf_deserializer.ixx)
 
 target_sources(aura PRIVATE
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/compiler/frontend_impl.cpp src/main.cpp)
+    src/compiler/frontend_impl.cpp
+    src/binary/abf_deserializer_impl.cpp src/main.cpp)
 
 target_compile_options(aura PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(aura PRIVATE stdc++)
