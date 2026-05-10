@@ -1,20 +1,15 @@
-module;
-#include <string>
-#include <string_view>
-#include <vector>
-#include <cctype>
-#include <cstdint>
-
 export module aura.parser.lexer;
+
+import <cstdint>;
+import <string>;
+import <string_view>;
 
 namespace aura::parser {
 
 export enum class TokenKind {
-    Integer,
-    Identifier,
+    Integer, Identifier,
     LParen, RParen,
-    EndOfFile,
-    Error
+    EndOfFile, Error
 };
 
 export struct Token {
@@ -28,9 +23,7 @@ export struct Token {
 
 export class Lexer {
 public:
-    explicit Lexer(std::string_view source)
-        : source_(source)
-    {}
+    explicit Lexer(std::string_view source) : source_(source) {}
 
     Token peek();
     Token consume();

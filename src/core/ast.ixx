@@ -1,10 +1,9 @@
-module;
-#include <cstdint>
-#include <variant>
-#include <string>
-#include <vector>
-
 export module aura.core.ast;
+
+import <cstdint>;
+import <string>;
+import <variant>;
+import <vector>;
 
 namespace aura::ast {
 
@@ -33,7 +32,7 @@ export struct ParsedPhase {
     static constexpr uint32_t id = 0;
 };
 
-// ─── Node types (each with per-node extension slot) ───
+// ─── Node types ───
 
 export struct LiteralIntNode {
     NodeTag tag   = NodeTag::LiteralInt;
@@ -57,7 +56,6 @@ export struct LambdaNode {
     NodeTag tag = NodeTag::Lambda;
 };
 
-// Single-binding let. Multi-binding desugared to nested lets.
 export struct LetNode {
     NodeTag tag       = NodeTag::Let;
     std::string name;
@@ -70,12 +68,8 @@ export struct LetNode {
 export struct Expr {
     NodeTag tag;
     std::variant<
-        LiteralIntNode,
-        VariableNode,
-        CallNode,
-        IfExprNode,
-        LambdaNode,
-        LetNode
+        LiteralIntNode, VariableNode, CallNode,
+        IfExprNode, LambdaNode, LetNode
     > payload;
 
     Expr(LiteralIntNode n) : tag(n.tag), payload(n) {}
