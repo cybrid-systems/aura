@@ -44,6 +44,8 @@ public:
     void set_arena(ast::ASTArena* a) { arena_=a; }
     EvalResult eval(const ast::Expr* e) { return eval_in(e,top_); }
     EvalResult eval_in(const ast::Expr* e, const Env& env);
+    const Primitives& primitives() const { return primitives_; }
+    Env& top_env() { return top_; }
 private:
     ClosureId next_id() { return next_id_++; }
     std::size_t alloc_cell(std::int64_t v) { cells_.push_back(v); return cells_.size()-1; }

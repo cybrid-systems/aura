@@ -3,6 +3,9 @@ import aura.core;
 import aura.parser.parser;
 import aura.compiler.frontend;
 import aura.binary.abf_deserializer;
+import aura.compiler.ir;
+import aura.compiler.lowering;
+import aura.compiler.ir_interpreter;
 
 int main(int argc, char* argv[]) {
     // Check for --abf mode: read ABF binary from stdin, deserialize, evaluate
