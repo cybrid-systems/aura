@@ -168,7 +168,23 @@ Racket 是"最快的 Lisp 方言原型平台";C++26 是"在工程质量和性能
 
 ---
 
-## 6. 开发者协作原则
+## 6. 设计文档
+
+完整的设计哲学、架构方案、序列化协议、AuraQuery eDSL 等所有扩展设计文档均在设计仓库：
+
+**https://github.com/cybrid-systems/ai-programming-language-design**
+
+| 文档 | 说明 |
+|------|------|
+| [DESIGN_PHILOSOPHY.md](https://github.com/cybrid-systems/ai-programming-language-design/blob/main/docs/philosophy/DESIGN_PHILOSOPHY.md) | 窄门哲学与核心设计原则 |
+| [ARCHITECTURE.md](https://github.com/cybrid-systems/ai-programming-language-design/blob/main/docs/ARCHITECTURE.md) | 三层架构与模块分解 |
+| [SERIALIZATION.md](https://github.com/cybrid-systems/ai-programming-language-design/blob/main/docs/SERIALIZATION.md) | Trees that Grow + ABF v2 序列化 |
+| [AURAQUERY.md](https://github.com/cybrid-systems/ai-programming-language-design/blob/main/docs/AURAQUERY.md) | Aura eDSL 查询与变换语法 |
+| [CXX_MODULES.md](https://github.com/cybrid-systems/ai-programming-language-design/blob/main/docs/CXX_MODULES.md) | C++26 模块划分与 CMake 配置 |
+
+---
+
+## 7. 开发者协作原则
 
 1. **Racket 原型优先**:所有新特性先在 Racket 中验证语义后再 C++26 实现
 2. **每个 PR 一个功能点**:遵循 Ghuloum 精神,每个提交增加一个最小功能
