@@ -6,6 +6,7 @@ import aura.compiler.ir;
 import aura.compiler.lowering;
 import aura.compiler.ir_interpreter;
 import aura.compiler.compute_kind;
+import aura.compiler.arity;
 
 // Run compute-kind analysis on the top function and return a summary string
 std::string check_compute_kind(aura::compiler::LoweringPass& lowering,
@@ -136,5 +137,56 @@ int main() {
 
     std::println("Compute-kind test: {}/{}/{} passed/failed/total",
                  ck_passed, ck_failed, ck_passed + ck_failed);
-    return (failed + ck_failed) > 0 ? 1 : 0;
+
+    // ── L2.4: arity checking tests ───────────────────────────
+    aura::compiler::ArityChecker arity_checker;
+
+    struct ArityTest { std::string input; bool expect_error; std::string desc; };
+    ArityTest arity_tests[] = {
+        // Correct arity: (lambda (x) ...) called with 1 arg → OK
+        {"((lambda (x) (* x 2)) 5)", false, "correct_1arg"},
+        // Correct arity: (lambda (x y) ...) called with 2 args → OK
+        {"((lambda (x y) (+ x y)) 3 4)", false, "correct_2arg"},
+        // Wrong arity: (lambda (x) ...) called with 2 args → error
+        {"((lambda (x) x) 1 2)", true, "wrong_arity_too_many"},
+        // Wrong arity: (lambda (x y) ...) called with 1 arg → error
+        {"((lambda (x y) (+ x y)) 5)", true, "wrong_arity_too_few"},
+        // Zero-arg lambda: correct
+        {"((lambda () 42))", false, "zero_arg_ok"},
+    };
+
+    int arity_passed = 0, arity_failed = 0;
+    for (auto& t : arity_tests) {
+        arena.reset();
+        aura::parser::Parser parser(arena);
+        auto pr = parser.parse(t.input);
+        if (!pr.root) { std::cerr << "PARSE FAIL: " << t.input << std::endl; ++arity_failed; continue; }
+
+        auto mod = lowering.lower(pr.root);
+        auto result = arity_checker.check(mod);
+
+        bool got_error = result.has_error;
+        if (got_error == t.expect_error) {
+            ++arity_passed;
+            if (got_error) {
+                std::println("ARITY OK: {} → {} (expected error: {})",
+                             t.desc, result.diagnostics[0].message, t.input);
+            } else {
+                std::println("ARITY OK: {} → no error (\"{}\")", t.desc, t.input);
+            }
+        } else {
+            std::cerr << "ARITY FAIL: " << t.desc << " (" << t.input << ")\n";
+            if (got_error) {
+                for (auto& d : result.diagnostics)
+                    std::cerr << "  error: " << d.message << std::endl;
+            } else {
+                std::cerr << "  expected error but got none" << std::endl;
+            }
+            ++arity_failed;
+        }
+    }
+
+    std::println("Arity test: {}/{}/{} passed/failed/total",
+                 arity_passed, arity_failed, arity_passed + arity_failed);
+    return (failed + ck_failed + arity_failed) > 0 ? 1 : 0;
 }
