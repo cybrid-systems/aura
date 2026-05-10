@@ -1,8 +1,8 @@
-export module aura.parser.parser;
+module;
+#include <string>
+#include <optional>
 
-import <string>;
-import <string_view>;
-import <optional>;
+export module aura.parser.parser;
 
 import aura.core;
 import aura.parser.lexer;
@@ -18,7 +18,9 @@ export struct ParseResult {
 
 export class Parser {
 public:
-    explicit Parser(ast::ASTArena& arena) : arena_(arena) {}
+    explicit Parser(ast::ASTArena& arena)
+        : arena_(arena)
+    {}
 
     ParseResult parse(std::string_view source);
 

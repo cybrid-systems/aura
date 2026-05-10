@@ -1,9 +1,11 @@
-module aura.parser.lexer;
+module;
+#include <cstddef>
+#include <cctype>
+#include <cstdint>
+#include <string_view>
+#include <string>
 
-import <cstddef>;
-import <cctype>;
-import <cstdint>;
-import <string_view>;
+module aura.parser.lexer;
 
 namespace aura::parser {
 
@@ -19,8 +21,9 @@ Token Lexer::advance() {
     default:
         if (std::isdigit(static_cast<unsigned char>(c)) ||
             (c == '-' && pos_ + 1 < source_.size() &&
-             std::isdigit(static_cast<unsigned char>(source_[pos_ + 1]))))
+             std::isdigit(static_cast<unsigned char>(source_[pos_ + 1])))) {
             return read_number();
+        }
         if (std::isalpha(static_cast<unsigned char>(c)) || c == '_' || c == '+' || c == '*')
             return read_identifier();
         return make_token(TokenKind::Error, source_.substr(pos_++, 1));
@@ -40,8 +43,7 @@ Token Lexer::read_identifier() {
     while (pos_ < source_.size()) {
         char c = source_[pos_];
         if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' ||
-            c == '+' || c == '*' || c == '-' || c == '/' ||
-            c == '=' || c == '<' || c == '>' || c == '!')
+            c == '+' || c == '*' || c == '-' || c == '/' || c == '=' || c == '<' || c == '>' || c == '!')
             pos_++;
         else break;
     }
@@ -51,20 +53,31 @@ Token Lexer::read_identifier() {
 void Lexer::skip_whitespace() {
     while (pos_ < source_.size()) {
         char c = source_[pos_];
-        if (c == ' ' || c == '\t') { pos_++; col_++; }
-        else if (c == '\n') { pos_++; line_++; col_ = 1; }
-        else if (c == ';') { while (pos_ < source_.size() && source_[pos_] != '\n') pos_++; }
-        else break;
+        if (c == ' ' || c == '\t') {
+            pos_++; col_++;
+        } else if (c == '\n') {
+            pos_++; line_++; col_ = 1;
+        } else if (c == ';') {
+            while (pos_ < source_.size() && source_[pos_] != '\n') pos_++;
+        } else break;
     }
 }
 
 Token Lexer::peek() {
-    if (!peeked_) { peeked_ = true; peek_token_ = advance(); }
+    if (!peeked_) {
+        peeked_ = true;
+        peek_token_ = advance();
+    }
     return peek_token_;
 }
 
 Token Lexer::consume() {
-    if (peeked_) { peeked_ = false; auto t = peek_token_; peek_token_ = {}; return t; }
+    if (peeked_) {
+        peeked_ = false;
+        Token t = peek_token_;
+        peek_token_ = {};
+        return t;
+    }
     return advance();
 }
 
