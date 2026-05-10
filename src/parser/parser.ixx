@@ -27,6 +27,8 @@ public:
 private:
     ast::Expr* parse_expr();
     ast::Expr* parse_literal_int(Token tok);
+    ast::Expr* parse_let();
+    ast::Expr* parse_expr_value();
 
     ast::ASTArena& arena_;
     std::optional<Lexer> lexer_;

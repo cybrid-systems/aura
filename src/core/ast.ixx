@@ -2,6 +2,7 @@ module;
 #include <cstdint>
 #include <variant>
 #include <string>
+#include <vector>
 
 export module aura.core.ast;
 
@@ -15,6 +16,7 @@ export enum class NodeTag : uint32_t {
     Call         = 0x03,
     IfExpr       = 0x04,
     Lambda       = 0x05,
+    Let          = 0x06,
 };
 
 // ─── Source location ───
@@ -55,17 +57,33 @@ export struct LambdaNode {
     NodeTag tag = NodeTag::Lambda;
 };
 
+// Single-binding let. Multi-binding desugared to nested lets.
+export struct LetNode {
+    NodeTag tag       = NodeTag::Let;
+    std::string name;
+    struct Expr* value = nullptr;
+    struct Expr* body  = nullptr;
+};
+
 // ─── Expr variant ───
 
 export struct Expr {
     NodeTag tag;
-    std::variant<LiteralIntNode, VariableNode, CallNode, IfExprNode, LambdaNode> payload;
+    std::variant<
+        LiteralIntNode,
+        VariableNode,
+        CallNode,
+        IfExprNode,
+        LambdaNode,
+        LetNode
+    > payload;
 
     Expr(LiteralIntNode n) : tag(n.tag), payload(n) {}
     Expr(VariableNode n)   : tag(n.tag), payload(n) {}
     Expr(CallNode n)       : tag(n.tag), payload(n) {}
     Expr(IfExprNode n)     : tag(n.tag), payload(n) {}
     Expr(LambdaNode n)     : tag(n.tag), payload(n) {}
+    Expr(LetNode n)        : tag(n.tag), payload(n) {}
 };
 
 } // namespace aura::ast
