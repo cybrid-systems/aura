@@ -26,7 +26,7 @@ M5 生产     ⬜
 
 | Step | 特性 | 红线 | 状态 |
 |------|------|------|------|
-| A1.1 | CMake + 模块骨架 | `cmake -B build && cmake --build build` | 🔨 |
+| A1.1 | CMake + 模块骨架 | `cmake -B build && cmake --build build` | ✅ |
 | A1.2 | Compiler Service 进程框架 + 文本解析器 | `echo '(+ 1 2)'` → 不崩溃 | ⬜ |
 | A1.3 | ABF 序列化器 (Racket 端) | `(serialize-expr '(+ 1 2))` → bytes | ⬜ |
 | A1.4 | ABF 反序列化器 (C++ 端) | Racket ABF → C++ 结构等价 | ⬜ |
@@ -36,7 +36,7 @@ M5 生产     ⬜
 
 | Step | 特性 | 红线 | 状态 |
 |------|------|------|------|
-| L1.1 | 整数字面量 | `echo 42 \| ./aura --eval` → `42` | ⬜ |
+| L1.1 | 整数字面量 | `echo 42 | ./aura` → `42` | ✅ |
 | L1.2 | 变量 + 环境 | `echo x \| ./aura --env 'x=10'` → `10` | ⬜ |
 | L1.3 | 算术原语 | `'echo (+ 1 (* 2 3))'` → `7` | ⬜ |
 | L1.4 | if | `'echo (if (> 3 2) 1 0)'` → `1` | ⬜ |
@@ -49,7 +49,7 @@ M5 生产     ⬜
 
 | Step | 特性 | 红线 | 状态 |
 |------|------|------|------|
-| I1.1 | CTest 基础测试框架 | `ctest --test-dir build` → 通过 | 🔨 |
+| I1.1 | CTest 基础测试框架 | `ctest --test-dir build` → 3/3 通过 | ✅ |
 | I1.2 | 混合构建 (Racket + C++) | `make && make test` | ⬜ |
 | I1.3 | CI 管线 | PR → CI 自动跑测试 | ⬜ |
 | I1.4 | 性能基准框架 | `./benchmark` → 可记录 | ⬜ |
