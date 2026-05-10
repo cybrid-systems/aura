@@ -12,4 +12,4 @@
 | [aura_query.md](https://github.com/cybrid-systems/ai-programming-language-design/blob/main/docs/aura_query.md) | Aura 原生 eDSL 查询与变换语法 |
 | [aura_modules.md](https://github.com/cybrid-systems/ai-programming-language-design/blob/main/docs/aura_modules.md) | C++26 模块划分与 CMake 配置 |
 
-实现进度见 [ROADMAP.md](./ROADMAP.md)。
+实现进度见 [roadmap.md](./roadmap.md)。
