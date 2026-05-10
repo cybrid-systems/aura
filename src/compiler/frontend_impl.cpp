@@ -1,187 +1,140 @@
-module;
-#include <cstdint>
-#include <string>
-#include <variant>
-#include <functional>
-#include <optional>
-#include <vector>
-#include <iostream>
-
 module aura.compiler.frontend;
+import std;
 
 namespace aura::compiler {
 
-std::optional<int64_t> Env::lookup(const std::string& name) const {
-    for (auto it = bindings_.rbegin(); it != bindings_.rend(); ++it) {
-        if (it->first == name) {
-            auto val = it->second;
-            if (cells_ && static_cast<uint64_t>(val) >= CELL_SENTINEL) {
-                size_t idx = static_cast<size_t>(val - CELL_SENTINEL);
-                if (idx < cells_->size()) {
-                    auto deref = (*cells_)[idx];
-                    return deref;
-                }
+std::optional<std::int64_t> Env::lookup(const std::string& n) const {
+    for (auto it = bindings_.rbegin(); it != bindings_.rend(); ++it)
+        if (it->first == n) {
+            auto v = it->second;
+            if (cells_ && static_cast<std::uint64_t>(v) >= CELL_SENTINEL) {
+                auto idx = static_cast<std::size_t>(v - CELL_SENTINEL);
+                if (idx < cells_->size()) return (*cells_)[idx];
             }
-            return val;
+            return v;
         }
-    }
-    return parent_ ? parent_->lookup(name) : std::nullopt;
+    return parent_ ? parent_->lookup(n) : std::nullopt;
 }
 
 Primitives::Primitives() {
-    table_["+"]  = [](const auto& a) { return a[0] + a[1]; };
-    table_["-"]  = [](const auto& a) { return a.size() == 1 ? -a[0] : a[0] - a[1]; };
-    table_["*"]  = [](const auto& a) { return a[0] * a[1]; };
-    table_["/"]  = [](const auto& a) { return a[0] / a[1]; };
-    table_["="]  = [](const auto& a) { return a[0] == a[1]; };
-    table_["<"]  = [](const auto& a) { return a[0] < a[1]; };
-    table_[">"]  = [](const auto& a) { return a[0] > a[1]; };
-    table_["<="] = [](const auto& a) { return a[0] <= a[1]; };
-    table_[">="] = [](const auto& a) { return a[0] >= a[1]; };
+    table_["+"]  = [](auto& a) { return a[0] + a[1]; };
+    table_["-"]  = [](auto& a) { return a.size() == 1 ? -a[0] : a[0] - a[1]; };
+    table_["*"]  = [](auto& a) { return a[0] * a[1]; };
+    table_["/"]  = [](auto& a) { return a[0] / a[1]; };
+    table_["="]  = [](auto& a) { return a[0] == a[1]; };
+    table_["<"]  = [](auto& a) { return a[0] < a[1]; };
+    table_[">"]  = [](auto& a) { return a[0] > a[1]; };
+    table_["<="] = [](auto& a) { return a[0] <= a[1]; };
+    table_[">="] = [](auto& a) { return a[0] >= a[1]; };
 }
 
-std::optional<PrimitiveFn> Primitives::lookup(const std::string& name) const {
-    auto it = table_.find(name);
-    return it != table_.end() ? std::optional(it->second) : std::nullopt;
+std::optional<PrimFn> Primitives::lookup(const std::string& n) const {
+    auto i = table_.find(n);
+    return i != table_.end() ? std::optional(i->second) : std::nullopt;
 }
 
-Evaluator::Evaluator() {
-    top_.set_primitives(&primitives_);
+Evaluator::Evaluator() { top_.set_primitives(&primitives_); }
+
+Env* Evaluator::copy_env(const Env& e) {
+    return arena_ ? arena_->create<Env>(e) : nullptr;
 }
 
-Env* Evaluator::copy_env(const Env& env) {
-    if (!arena_) return nullptr;
-    return arena_->create<Env>(env);
-}
-
-EvalResult Evaluator::eval_in(const ast::Expr* expr, const Env& env) {
-    if (!expr) return {false, 0, "null expression"};
-
-    return std::visit([&](const auto& node) -> EvalResult {
-        using T = std::decay_t<decltype(node)>;
-
+EvalResult Evaluator::eval_in(const ast::Expr* e, const Env& env) {
+    if (!e) return {false, 0, "null"};
+    return std::visit([&](const auto& n) -> EvalResult {
+        using T = std::decay_t<decltype(n)>;
         if constexpr (std::is_same_v<T, ast::LiteralIntNode>)
-            return {true, node.value, ""};
-
+            return {true, n.value, ""};
         if constexpr (std::is_same_v<T, ast::VariableNode>) {
-            auto val = env.lookup(node.name);
-            if (val.has_value()) return {true, *val, ""};
-            return {false, 0, "unbound variable: " + node.name};
+            auto v = env.lookup(n.name);
+            if (v.has_value()) return {true, *v, ""};
+            return {false, 0, "unbound variable: " + n.name};
         }
-
         if constexpr (std::is_same_v<T, ast::CallNode>) {
-            // 1. Inline lambda
-            if (auto* lam = std::get_if<ast::LambdaNode>(&node.function->payload)) {
-                Env new_env(&env);
-                new_env.set_primitives(&primitives_);
-                for (size_t i = 0; i < lam->params.size() && i < node.args.size(); ++i) {
-                    auto a = eval_in(node.args[i], env);
+            if (auto* lam = std::get_if<ast::LambdaNode>(&n.function->payload)) {
+                Env ne(&env);
+                ne.set_primitives(&primitives_);
+                for (std::size_t i = 0; i < lam->params.size() && i < n.args.size(); ++i) {
+                    auto a = eval_in(n.args[i], env);
                     if (!a.success) return a;
-                    new_env.bind(lam->params[i], a.int_value);
+                    ne.bind(lam->params[i], a.int_value);
                 }
-                return eval_in(lam->body, new_env);
+                return eval_in(lam->body, ne);
             }
-
-            // 2. Primitive call
-            if (auto* var = std::get_if<ast::VariableNode>(&node.function->payload)) {
-                auto prim = env.lookup_primitive(var->name);
-                if (prim.has_value()) {
-                    std::vector<int64_t> vals;
-                    for (auto* a : node.args) {
+            if (auto* var = std::get_if<ast::VariableNode>(&n.function->payload)) {
+                auto p = env.lookup_primitive(var->name);
+                if (p.has_value()) {
+                    std::vector<std::int64_t> va;
+                    for (auto* a : n.args) {
                         auto r = eval_in(a, env);
                         if (!r.success) return r;
-                        vals.push_back(r.int_value);
+                        va.push_back(r.int_value);
                     }
-                    return {true, (*prim)(vals), ""};
+                    return {true, (*p)(va), ""};
                 }
             }
-
-            // 3. Computed function
-            auto fn_result = eval_in(node.function, env);
-            if (!fn_result.success) return fn_result;
-
-            if (static_cast<uint64_t>(fn_result.int_value) >= CLOSURE_SENTINEL) {
-                return apply_closure(
-                    static_cast<ClosureId>(fn_result.int_value - CLOSURE_SENTINEL),
-                    node.args, env);
-            }
-
+            auto fr = eval_in(n.function, env);
+            if (!fr.success) return fr;
+            if (static_cast<std::uint64_t>(fr.int_value) >= CLOSURE_SENTINEL)
+                return apply_closure(static_cast<ClosureId>(fr.int_value - CLOSURE_SENTINEL), n.args, env);
             return {false, 0, "not callable"};
         }
-
         if constexpr (std::is_same_v<T, ast::IfExprNode>) {
-            auto cond = eval_in(node.condition, env);
-            if (!cond.success) return cond;
-            return eval_in(cond.int_value ? node.then_branch : node.else_branch, env);
+            auto c = eval_in(n.condition, env);
+            if (!c.success) return c;
+            return eval_in(c.int_value ? n.then_branch : n.else_branch, env);
         }
-
         if constexpr (std::is_same_v<T, ast::LambdaNode>) {
-            auto* captured = copy_env(env);
+            auto* cap = copy_env(env);
             auto id = next_id();
-            closures_[id] = {node.params, node.body, captured};
-            return {true, static_cast<int64_t>(CLOSURE_SENTINEL + id), ""};
+            closures_[id] = {n.params, n.body, cap};
+            return {true, static_cast<std::int64_t>(CLOSURE_SENTINEL + id), ""};
         }
-
         if constexpr (std::is_same_v<T, ast::LetNode>) {
-            auto val = eval_in(node.value, env);
-            if (!val.success) return val;
-            Env new_env(&env);
-            new_env.set_primitives(&primitives_);
-            new_env.bind(node.name, val.int_value);
-            return eval_in(node.body, new_env);
+            auto v = eval_in(n.value, env);
+            if (!v.success) return v;
+            Env ne(&env);
+            ne.set_primitives(&primitives_);
+            ne.bind(n.name, v.int_value);
+            return eval_in(n.body, ne);
         }
-
         if constexpr (std::is_same_v<T, ast::DefineNode>) {
-            Env& mutable_env = const_cast<Env&>(env);
-            mutable_env.set_cells(&cells_);
-
-            size_t cell_idx = alloc_cell(0);
-            mutable_env.bind(node.name,
-                             static_cast<int64_t>(CELL_SENTINEL + cell_idx));
-
-            auto val = eval_in(node.value, env);
-            if (!val.success) return val;
-
-            cells_[cell_idx] = val.int_value;
-            return val;
+            Env& me = const_cast<Env&>(env);
+            me.set_cells(&cells_);
+            auto ci = alloc_cell(0);
+            me.bind(n.name, static_cast<std::int64_t>(CELL_SENTINEL + ci));
+            auto v = eval_in(n.value, env);
+            if (!v.success) return v;
+            cells_[ci] = v.int_value;
+            return v;
         }
-
         if constexpr (std::is_same_v<T, ast::LetRecNode>) {
-            Env new_env(&env);
-            new_env.set_primitives(&primitives_);
-            new_env.set_cells(&cells_);
-
-            size_t cell_idx = alloc_cell(0);
-            new_env.bind(node.name,
-                         static_cast<int64_t>(CELL_SENTINEL + cell_idx));
-
-            auto val = eval_in(node.value, new_env);
-            if (!val.success) return val;
-
-            cells_[cell_idx] = val.int_value;
-            return eval_in(node.body, new_env);
+            Env ne(&env);
+            ne.set_primitives(&primitives_);
+            ne.set_cells(&cells_);
+            auto ci = alloc_cell(0);
+            ne.bind(n.name, static_cast<std::int64_t>(CELL_SENTINEL + ci));
+            auto v = eval_in(n.value, ne);
+            if (!v.success) return v;
+            cells_[ci] = v.int_value;
+            return eval_in(n.body, ne);
         }
-
-        return {false, 0, "unknown node type"};
-    }, expr->payload);
+        return {false, 0, "unknown"};
+    }, e->payload);
 }
 
 EvalResult Evaluator::apply_closure(ClosureId id, const std::vector<ast::Expr*>& args, const Env& call_env) {
     auto it = closures_.find(id);
-    if (it == closures_.end())
-        return {false, 0, "invalid closure"};
-
-    auto& closure = it->second;
-    Env new_env(closure.env ? closure.env : &top_);
-    new_env.set_primitives(&primitives_);
-
-    for (size_t i = 0; i < closure.params.size() && i < args.size(); ++i) {
-        auto val = eval_in(args[i], call_env);
-        if (!val.success) return val;
-        new_env.bind(closure.params[i], val.int_value);
+    if (it == closures_.end()) return {false, 0, "invalid closure"};
+    auto& cl = it->second;
+    Env ne(cl.env ? cl.env : &top_);
+    ne.set_primitives(&primitives_);
+    for (std::size_t i = 0; i < cl.params.size() && i < args.size(); ++i) {
+        auto v = eval_in(args[i], call_env);
+        if (!v.success) return v;
+        ne.bind(cl.params[i], v.int_value);
     }
-
-    return eval_in(closure.body, new_env);
+    return eval_in(cl.body, ne);
 }
 
 } // namespace aura::compiler
