@@ -1,9 +1,10 @@
-export module aura.core.arena;
+module;
+#include <memory>
+#include <vector>
+#include <cstddef>
+#include <new>
 
-import <cstddef>;
-import <new>;
-import <memory>;
-import <vector>;
+export module aura.core.arena;
 
 namespace aura::ast {
 
@@ -15,20 +16,24 @@ public:
 
     template <typename T, typename... Args>
     [[nodiscard]] T* create(Args&&... args) {
-        size_t start = (pos_ + alignof(T) - 1) & ~(alignof(T) - 1);
-        size_t end = start + sizeof(T);
-        if (end > buffer_.size())
-            throw std::bad_alloc();
-        auto* raw = &buffer_[start];
-        pos_ = end;
-        return std::construct_at(reinterpret_cast<T*>(raw),
-                                 std::forward<Args>(args)...);
+        void* raw = alloc(sizeof(T), alignof(T));
+        return std::construct_at(static_cast<T*>(raw), std::forward<Args>(args)...);
     }
 
     void reset() { pos_ = 0; }
+
     size_t used() const { return pos_; }
 
 private:
+    void* alloc(size_t size, size_t alignment) {
+        size_t start = (pos_ + alignment - 1) & ~(alignment - 1);
+        size_t end = start + size;
+        if (end > buffer_.size())
+            throw std::bad_alloc();
+        pos_ = end;
+        return &buffer_[start];
+    }
+
     std::vector<std::byte> buffer_;
     size_t pos_ = 0;
 };
