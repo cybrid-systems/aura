@@ -10,6 +10,20 @@ module aura.compiler.frontend;
 
 namespace aura::compiler {
 
+std::optional<int64_t> Env::lookup(const std::string& name) const {
+    for (auto it = bindings_.rbegin(); it != bindings_.rend(); ++it) {
+        if (it->first == name) {
+            auto val = it->second;
+            if (cells_ && static_cast<uint64_t>(val) >= CELL_SENTINEL) {
+                size_t idx = static_cast<size_t>(val - CELL_SENTINEL);
+                if (idx < cells_->size()) return (*cells_)[idx];
+            }
+            return val;
+        }
+    }
+    return parent_ ? parent_->lookup(name) : std::nullopt;
+}
+
 Primitives::Primitives() {
     table_["+"]  = [](const auto& a) { return a[0] + a[1]; };
     table_["-"]  = [](const auto& a) { return a.size() == 1 ? -a[0] : a[0] - a[1]; };
@@ -110,6 +124,27 @@ EvalResult Evaluator::eval_in(const ast::Expr* expr, const Env& env) {
             Env new_env(&env);
             new_env.set_primitives(&primitives_);
             new_env.bind(node.name, val.int_value);
+            return eval_in(node.body, new_env);
+        }
+
+        if constexpr (std::is_same_v<T, ast::LetRecNode>) {
+            Env new_env(&env);
+            new_env.set_primitives(&primitives_);
+            new_env.set_cells(&cells_);
+
+            // Allocate cell, bind placeholder
+            size_t cell_idx = alloc_cell(0);
+            new_env.bind(node.name,
+                         static_cast<int64_t>(CELL_SENTINEL + cell_idx));
+
+            // Evaluate value expression (closure captures env with cell)
+            auto val = eval_in(node.value, new_env);
+            if (!val.success) return val;
+
+            // Fill cell with real value
+            cells_[cell_idx] = val.int_value;
+
+            // Evaluate body — lookups auto-dereference the cell
             return eval_in(node.body, new_env);
         }
 

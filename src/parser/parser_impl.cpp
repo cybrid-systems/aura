@@ -51,10 +51,9 @@ ast::Expr* Parser::parse_list() {
         std::string_view kw = first.text;
         if (kw == "if")     return parse_if();
         if (kw == "lambda") return parse_lambda();
-        if (kw == "let")    return parse_let();
+        if (kw == "let")    return parse_let(false);
+        if (kw == "letrec") return parse_let(true);
     }
-
-    // Function call
     auto* func = parse_expr();
     if (!func) { skip_to_rparen(); return nullptr; }
     ast::CallNode call;
@@ -93,11 +92,13 @@ ast::Expr* Parser::parse_lambda() {
     return arena_.create<ast::Expr>(std::move(lambda));
 }
 
-ast::Expr* Parser::parse_let() {
+ast::Expr* Parser::parse_let(bool is_letrec) {
     lexer_->consume();
     if (lexer_->consume().kind != TokenKind::LParen) return nullptr;
+
     struct Binding { std::string name; ast::Expr* value; };
     std::vector<Binding> bindings;
+
     while (lexer_->peek().kind != TokenKind::RParen) {
         if (lexer_->consume().kind != TokenKind::LParen) return nullptr;
         auto name = lexer_->consume();
@@ -108,17 +109,27 @@ ast::Expr* Parser::parse_let() {
         if (lexer_->consume().kind != TokenKind::RParen) return nullptr;
     }
     lexer_->consume();
+
     auto* body = parse_expr();
     if (!body) return nullptr;
     if (lexer_->peek().kind == TokenKind::RParen) lexer_->consume();
+
+    if (is_letrec) {
+        // Desugar multi-binding to nested single-binding letrec nodes
+        for (auto it = bindings.rbegin(); it != bindings.rend(); ++it)
+            body = arena_.create<ast::Expr>(
+                ast::LetRecNode{{}, it->name, it->value, body});
+        return body;
+    }
+
+    // Non-recursive let: desugar to nested lets
     for (auto it = bindings.rbegin(); it != bindings.rend(); ++it)
-        body = arena_.create<ast::Expr>(ast::LetNode{{}, it->name, it->value, body});
+        body = arena_.create<ast::Expr>(
+            ast::LetNode{{}, it->name, it->value, body});
     return body;
 }
 
 ast::Expr* Parser::parse_expr_value() {
-    // Handle any expression as a let-binding value
-    // Including nested lists like (lambda (x) x)
     Token tok = lexer_->peek();
     switch (tok.kind) {
     case TokenKind::Integer:
