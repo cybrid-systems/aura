@@ -16,6 +16,7 @@ target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir.ixx
     src/compiler/lowering.ixx
     src/compiler/ir_interpreter.ixx
+    src/compiler/compute_kind.ixx
     src/binary/abf_deserializer.ixx)
 
 target_sources(aura PRIVATE
@@ -23,6 +24,7 @@ target_sources(aura PRIVATE
     src/compiler/frontend_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_interpreter_impl.cpp
+    src/compiler/compute_kind_impl.cpp
     src/binary/abf_deserializer_impl.cpp src/main.cpp)
 
 target_compile_options(aura PRIVATE -Wall -Wextra -Wpedantic)
@@ -61,12 +63,14 @@ target_sources(test_ir PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/frontend.ixx
     src/compiler/ir.ixx
     src/compiler/lowering.ixx
-    src/compiler/ir_interpreter.ixx)
+    src/compiler/ir_interpreter.ixx
+    src/compiler/compute_kind.ixx)
 target_sources(test_ir PRIVATE
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
     src/compiler/frontend_impl.cpp
     src/compiler/lowering_impl.cpp
-    src/compiler/ir_interpreter_impl.cpp)
+    src/compiler/ir_interpreter_impl.cpp
+    src/compiler/compute_kind_impl.cpp)
 target_compile_options(test_ir PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(test_ir PRIVATE stdc++)
 
