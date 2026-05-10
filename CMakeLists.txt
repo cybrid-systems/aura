@@ -41,7 +41,7 @@ target_link_libraries(aura PRIVATE stdc++)
 set_target_properties(aura PROPERTIES
     INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
 
-# ─── Tests ───
+# ─── Step 09 tests: integer literal ───
 enable_testing()
 
 add_test(NAME step09_literal_42
@@ -54,4 +54,26 @@ add_test(NAME step09_literal_neg5
 
 add_test(NAME step09_literal_large
     COMMAND sh -c "test \"\$(echo 999999 | ./aura)\" = 999999"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+# ─── Step 10 tests: variable + let ───
+
+add_test(NAME step10_variable_error
+    COMMAND sh -c "echo x | ./aura 2>&1 | grep -F 'unbound variable'"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+add_test(NAME step10_let_single
+    COMMAND sh -c "test \"\$(printf '(let ((x 10)) x)' | ./aura)\" = 10"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+add_test(NAME step10_let_multi
+    COMMAND sh -c "test \"\$(printf '(let ((x 10) (y 20)) x)' | ./aura)\" = 10"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+add_test(NAME step10_let_shadow
+    COMMAND sh -c "test \"\$(printf '(let ((x 10)) (let ((x 20)) x))' | ./aura)\" = 20"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+add_test(NAME step10_let_var_value
+    COMMAND sh -c "test \"\$(printf '(let ((x 10)) (let ((y x)) y))' | ./aura)\" = 10"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
