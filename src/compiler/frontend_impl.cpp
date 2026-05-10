@@ -5,6 +5,7 @@ module;
 #include <functional>
 #include <optional>
 #include <vector>
+#include <iostream>
 
 module aura.compiler.frontend;
 
@@ -16,7 +17,10 @@ std::optional<int64_t> Env::lookup(const std::string& name) const {
             auto val = it->second;
             if (cells_ && static_cast<uint64_t>(val) >= CELL_SENTINEL) {
                 size_t idx = static_cast<size_t>(val - CELL_SENTINEL);
-                if (idx < cells_->size()) return (*cells_)[idx];
+                if (idx < cells_->size()) {
+                    auto deref = (*cells_)[idx];
+                    return deref;
+                }
             }
             return val;
         }
@@ -66,7 +70,7 @@ EvalResult Evaluator::eval_in(const ast::Expr* expr, const Env& env) {
         }
 
         if constexpr (std::is_same_v<T, ast::CallNode>) {
-            // 1. Inline lambda: ((lambda (x) ...) arg)
+            // 1. Inline lambda
             if (auto* lam = std::get_if<ast::LambdaNode>(&node.function->payload)) {
                 Env new_env(&env);
                 new_env.set_primitives(&primitives_);
@@ -78,7 +82,7 @@ EvalResult Evaluator::eval_in(const ast::Expr* expr, const Env& env) {
                 return eval_in(lam->body, new_env);
             }
 
-            // 2. Primitive call: (+ a b)
+            // 2. Primitive call
             if (auto* var = std::get_if<ast::VariableNode>(&node.function->payload)) {
                 auto prim = env.lookup_primitive(var->name);
                 if (prim.has_value()) {
@@ -92,7 +96,7 @@ EvalResult Evaluator::eval_in(const ast::Expr* expr, const Env& env) {
                 }
             }
 
-            // 3. Computed function: evaluate and apply as closure
+            // 3. Computed function
             auto fn_result = eval_in(node.function, env);
             if (!fn_result.success) return fn_result;
 
@@ -127,24 +131,34 @@ EvalResult Evaluator::eval_in(const ast::Expr* expr, const Env& env) {
             return eval_in(node.body, new_env);
         }
 
+        if constexpr (std::is_same_v<T, ast::DefineNode>) {
+            Env& mutable_env = const_cast<Env&>(env);
+            mutable_env.set_cells(&cells_);
+
+            size_t cell_idx = alloc_cell(0);
+            mutable_env.bind(node.name,
+                             static_cast<int64_t>(CELL_SENTINEL + cell_idx));
+
+            auto val = eval_in(node.value, env);
+            if (!val.success) return val;
+
+            cells_[cell_idx] = val.int_value;
+            return val;
+        }
+
         if constexpr (std::is_same_v<T, ast::LetRecNode>) {
             Env new_env(&env);
             new_env.set_primitives(&primitives_);
             new_env.set_cells(&cells_);
 
-            // Allocate cell, bind placeholder
             size_t cell_idx = alloc_cell(0);
             new_env.bind(node.name,
                          static_cast<int64_t>(CELL_SENTINEL + cell_idx));
 
-            // Evaluate value expression (closure captures env with cell)
             auto val = eval_in(node.value, new_env);
             if (!val.success) return val;
 
-            // Fill cell with real value
             cells_[cell_idx] = val.int_value;
-
-            // Evaluate body — lookups auto-dereference the cell
             return eval_in(node.body, new_env);
         }
 
