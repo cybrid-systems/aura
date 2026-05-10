@@ -1,5 +1,6 @@
 module;
 #include <string>
+#include <string_view>
 #include <optional>
 
 export module aura.parser.parser;
@@ -18,17 +19,18 @@ export struct ParseResult {
 
 export class Parser {
 public:
-    explicit Parser(ast::ASTArena& arena)
-        : arena_(arena)
-    {}
-
+    explicit Parser(ast::ASTArena& arena) : arena_(arena) {}
     ParseResult parse(std::string_view source);
 
 private:
     ast::Expr* parse_expr();
     ast::Expr* parse_literal_int(Token tok);
+    ast::Expr* parse_list();
+    ast::Expr* parse_if();
+    ast::Expr* parse_lambda();
     ast::Expr* parse_let();
     ast::Expr* parse_expr_value();
+    void skip_to_rparen();
 
     ast::ASTArena& arena_;
     std::optional<Lexer> lexer_;
