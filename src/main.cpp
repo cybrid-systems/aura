@@ -8,6 +8,40 @@ import aura.compiler.lowering;
 import aura.compiler.ir_interpreter;
 
 int main(int argc, char* argv[]) {
+    // Check for --ir flag: lower to IR and execute via IR interpreter
+    if (argc > 1 && std::string_view(argv[1]) == "--ir") {
+        aura::ast::ASTArena arena;
+        aura::compiler::Evaluator evaluator;
+        evaluator.set_arena(&arena);
+
+        std::string input;
+        if (argc > 2) {
+            input = argv[2];
+        } else {
+            std::getline(std::cin, input);
+        }
+
+        aura::parser::Parser parser(arena);
+        auto pr = parser.parse(input);
+        if (!pr.success || !pr.root) {
+            std::cerr << "parse error" << std::endl;
+            return 1;
+        }
+
+        aura::compiler::LoweringPass lowering(arena);
+        auto ir_mod = lowering.lower(pr.root);
+
+        aura::compiler::IRInterpreter ir_interp(ir_mod, evaluator.primitives());
+        auto result = ir_interp.execute();
+
+        if (!result.success) {
+            std::cerr << "ir error: " << result.error << std::endl;
+            return 1;
+        }
+        std::cout << result.int_value << std::endl;
+        return 0;
+    }
+
     // Check for --abf mode: read ABF binary from stdin, deserialize, evaluate
     if (argc > 1 && std::string_view(argv[1]) == "--abf") {
         // Read binary data from stdin
