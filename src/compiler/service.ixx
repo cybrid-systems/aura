@@ -21,13 +21,9 @@ namespace aura::compiler {
 //
 export class CompilerService {
 public:
-    CompilerService()
-        : parser_(arena_)
-    {
+    CompilerService() {
         evaluator_.set_arena(&arena_);
     }
-
-    // ---- Session lifecycle -------------------------------------------
 
     void reset() { arena_.reset(); }
 
@@ -52,7 +48,6 @@ public:
         aura::compiler::LoweringPass lowering(arena_);
         auto ir_mod = lowering.lower(pr.root);
 
-        // Run the standard pass pipeline (concept-based fold)
         ComputeKindWrap ck;
         ArityWrap ar;
         ConstantFoldingWrap cf;
@@ -108,12 +103,10 @@ public:
 
     ast::ASTArena& arena() { return arena_; }
     Evaluator& evaluator() { return evaluator_; }
-    aura::parser::Parser& parser() { return parser_; }
 
 private:
     ast::ASTArena arena_;
     ast::ArenaGroup arena_group_;
-    aura::parser::Parser parser_;
     Evaluator evaluator_;
 };
 
