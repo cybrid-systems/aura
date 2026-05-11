@@ -95,8 +95,7 @@ std::string check_compute_kind(const std::string& input) {
     auto mod = aura::compiler::lower_to_ir(pr.root, arena);
     auto& top_func = mod.entry();
 
-    aura::compiler::ComputeKindAnalysis analysis;
-    auto result = analysis.analyze(top_func);
+    auto result = aura::compiler::compute_kind(top_func);
     if (!result.valid) return "invalid";
 
     // Build a compact string per instruction: K=Known, U=Unknown
@@ -209,8 +208,6 @@ int main() {
                  ck_passed, ck_failed, ck_passed + ck_failed);
 
     // ── L2.4: arity checking tests ───────────────────────────
-    aura::compiler::ArityChecker arity_checker;
-
     struct ArityTest { std::string input; bool expect_error; std::string desc; };
     ArityTest arity_tests[] = {
         {"((lambda (x) (* x 2)) 5)", false, "correct_1arg"},
@@ -227,7 +224,7 @@ int main() {
         if (!pr.root) { std::println(std::cerr, "PARSE FAIL: {}", t.input); ++arity_failed; continue; }
 
         auto mod = aura::compiler::lower_to_ir(pr.root, arena);
-        auto result = arity_checker.check(mod);
+        auto result = aura::compiler::check_arity(mod);
 
         bool got_error = result.has_error;
         if (got_error == t.expect_error) {
