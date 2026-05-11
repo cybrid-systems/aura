@@ -44,17 +44,16 @@ public:
     // ---- IR pipeline ------------------------------------------------
 
     EvalResult eval_ir(std::string_view input) {
-        auto pr = aura::parser::parse(input, arena_);
-        if (!pr.success || !pr.root) {
-            return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::ParseError, "parse error"});
-        }
-
-        // Phase 3.1: FlatAST pipeline (flatten → reconstruct → LoweringPass)
+        // Phase 4: parse directly into FlatAST (bypasses Expr* entirely)
         auto alloc = arena_.allocator();
         aura::ast::StringPool pool(alloc);
         aura::ast::FlatAST flat(alloc);
-        flat.root = aura::ast::flatten_to_flat(pr.root, flat, pool);
+        auto pr = aura::parser::parse_to_flat(input, flat, pool);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::ParseError, pr.error});
+        }
+        flat.root = pr.root;
         auto ir_mod = aura::compiler::lower_to_ir(flat, pool, arena_);
 
         ComputeKindWrap ck;
