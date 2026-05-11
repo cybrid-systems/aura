@@ -9,76 +9,105 @@
 
 ```
 M0 种子     ✅  Racket #lang 原型
-M1 C++求值  ✅  树遍历器 + ABF + IR 管线
-M2 管线     🔨  IR Pass 管线（当前工作）
-M3 查询     ⬜  AuraQuery 引擎
-M4 反射     ⬜
-M5 生产     ⬜  LLVM + AOT + 自举
+M1 C++求值  ✅  树遍历器 + ABF + IR 管线 (9/9)
+M2 查询引擎 🔨  AST查询/变换/自动修复 (6/7)
+M3 反射     ⬜
+M4 生产     ⬜  LLVM + AOT + 自举
 ```
 
-### ✅ M1 完成交付
+### ✅ M1 — C++ 求值器（完成）
 
-| 层 | 特性 | 验证 |
+| 层 | 特性 | 状态 |
 |---|------|------|
-| 树遍历求值器 | L1.1-L1.8: 整数/变量/算术/if/闭包/letrec/define/REPL | 13 个 CTest |
-| ABF 反序列化 | Racket 输出 → C++ Expr 结构等价 | pipe 模式通过 |
-| AuraIR 管线 | 18 opcodes, Lowering Pass, IR 解释器 | 9 个 IR CTest |
-| 闭包变换 | 自由变量捕获, MakeClosure + Capture 运行时 | `((lambda (y) (+ x y)) 5)` → 15 |
-| compute-kind | Known/Unknown 数据流分析 | 常量传播正确标记 |
-| Arity 检查 | 编译期参数数量校验 | 参数不匹配 → 编译期错误 |
+| 树遍历求值器 | L1.1-L1.8: 整数/变量/算术/if/闭包/letrec/define/REPL | ✅ |
+| ABF 反序列化 | Racket 输出 → C++ Expr 结构等价 | ✅ |
+| AuraIR 管线 | 21 opcodes, Lowering Pass, IR 解释器 | ✅ |
+| 内存池 | pmr SmallObjectPool 三级 bump + ArenaGroup | ✅ |
+| 闭包变换 | 自由变量捕获, MakeClosure + Capture | ✅ |
+| compute-kind | Known/Unknown 数据流分析 | ✅ |
+| Arity 检查 | 编译期参数数量校验 | ✅ |
+| 常量折叠 | 编译期算术折叠 | ✅ |
+| letrec IR | mutable cell heap 支持递归闭包 | ✅ |
+| Pass Manager | concept-based fold pipeline | ✅ |
+| C++ 现代化 | Parser/Lowering 纯函数化, EvalResult → std::expected | ✅ |
 
-**总计：22 个 CTest 全部通过**
+### 🔨 M2 — AuraQuery 引擎（进行中）
+
+| 特性 | 状态 |
+|------|------|
+| M2.1 ASTIndex (SoA 零拷贝过滤) | ✅ |
+| M2.2 QueryEngine (S-表达式查询解析 + 执行) | ✅ |
+| M2.3 TransformEngine (Patch 生成 + 应用) | ✅ |
+| M2.4 --query / --query-and-fix CLI | ✅ |
+| M2.5 SymRefIndex (符号引用倒排) | ✅ |
+| M2.6 Hot swap (函数级 IR 替换) | ⬜ |
+| M2.7 AutoFixEngine + --serve 模式 | ✅ |
+
+**29 个 CTest 全部通过**
 
 ```bash
-$ echo '((lambda (x) (* x 2)) 5)' | ./aura --ir
-10
-$ echo '((lambda (x y) (+ x y)) 3 4)' | ./aura
-7
+$ echo '(+ 1 2)' | ./aura --query '(node-type Call)'
+query: 1 matches
+$ echo '(+ x 1)' | ./aura --serve
+S error kind=3 msg=unbound variable: x
+S fix 4 patches
+S fixed 0
 $ ctest --test-dir build
-100% tests passed, 0 tests failed out of 22
+100% tests passed, 0 tests failed out of 29
 ```
 
-### 🔨 M2 当前工作
+### Racket Agent Demo
 
-- [ ] L2.5: 常量折叠 — `(+ 1 2)` → `3` 编译期折叠
-- [ ] L2.6: letrec IR 支持 — mutable cell 闭环
-- [ ] A2.3: Pass Manager — pass 注册 + 执行顺序
+```bash
+$ racket tests/agent_demo.rkt
+# submit (+ x 1) → detect error → query AST → fix → verify 43 ✓
+```
 
 ---
 
 ## 架构概览
 
 ```
-输入 (文本)                 IR 管线                   输出
-┌────────┐   parse()   ┌──────────┐   analyze/opt   ┌──────────┐
-│ S-Expr  │ ────────→  │ AuraIR   │ ─────────────→  │ 结果     │
-│ 文本    │            │ IRModule │                 │ int64    │
-└────────┘            └──────────┘                 └──────────┘
-                           │
-                     ┌─────┴──────┐
-                     │ Pass 管线  │
-                     │ (进行中)   │
-                     └────────────┘
+Agent (Racket/Python)
+  │
+  ├── /dev/stdin ──→ CompilerService ──→ EvalResult / Diagnostic
+  │                    │
+  │                    ├── Parser ──→ FlatAST (SoA, pmr arena)
+  │                    ├── Tree-walker Evaluator (Phase 0)
+  │                    └── IR Pipeline
+  │                         ├── Lowering Pass (FlatAST → IR)
+  │                         ├── PassManager (concept-based fold)
+  │                         │   ├── ComputeKind
+  │                         │   ├── ArityCheck
+  │                         │   └── ConstantFolding
+  │                         └── IRInterpreter (closure + cell heap)
+  │
+  └── --query / --query-and-fix / --serve / --auto-fix CLI
+       └── QueryEngine → TransformEngine → apply_patches
 ```
 
 ### 源码结构
 
 ```
 src/
-├── core/          arena.ixx, ast.ixx         — 核心数据结构
-├── parser/        lexer.ixx, parser.ixx      — 文本 S-Expr 解析器
+├── core/          arena.ixx, ast.ixx, ast_flat.ixx, ast_pool.ixx
+├── parser/        lexer.ixx, parser.ixx
 ├── compiler/
-│   ├── frontend.ixx               — 树遍历求值器 (Phase 0)
-│   ├── ir.ixx                     — AuraIR 指令集 (18 opcodes)
-│   ├── lowering.ixx               — Expr → IR lowering
+│   ├── frontend.ixx               — 树遍历求值器
+│   ├── ir.ixx                     — AuraIR 指令集 (21 opcodes)
+│   ├── lowering.ixx               — Expr/FlatAST → IR
 │   ├── ir_interpreter.ixx         — IR 解释器
-│   ├── compute_kind.ixx           — compute-kind 分析
-│   └── arity.ixx                  — Arity 检查
-├── binary/
-│   └── abf_deserializer.ixx       — ABF v2 反序列化
-└── main.cpp                       — CLI: REPL / pipe / --ir / --abf
+│   ├── pass_manager.ixx           — concept-based Pass pipeline
+│   ├── compute_kind.ixx           — Known/Unknown 分析
+│   ├── arity.ixx                  — 参数数量校验
+│   ├── diag.ixx                   — 结构化错误诊断
+│   ├── service.ixx                — CompilerService
+│   └── query.ixx                  — ASTIndex/QueryEngine/TransformEngine/SymRefIndex/AutoFix
+├── binary/        abf_deserializer.ixx
+└── main.cpp                       — CLI: REPL / pipe / --ir / --query / --serve / ...
 tests/
-└── test_ir.cpp                    — IR 管线集成测试
+├── test_ir.cpp                    — IR 管线/查询/内存池集成测试
+└── agent_demo.rkt                 — Racket Agent 自动修复演示
 ```
 
 ---
@@ -97,19 +126,28 @@ cmake --build build --target aura
 ```bash
 # 树遍历模式 (默认)
 echo '(+ 1 2)' | ./aura          # → 3
-echo '(let ((x 10)) x)' | ./aura  # → 10
-
-# REPL 模式
-./aura                            # 交互式输入
 
 # IR 管线模式
 echo '((lambda (x) (* x 2)) 5)' | ./aura --ir  # → 10
+
+# 查询 AST
+echo '(+ 1 2)' | ./aura --query '(node-type LiteralInt)'  # → 2 matches
+
+# 变换 AST
+echo '(+ 1 2)' | ./aura --query-and-fix '(node-type LiteralInt)' '(LiteralInt 99)'
+
+# 自动修复
+echo '(+ x 1)' | ./aura --serve   # → error + auto-fix
+
+# REPL 模式
+./aura
 ```
 
 ### 测试
 
 ```bash
-ctest --test-dir build            # 22 个测试全部通过
+ctest --test-dir build            # 29 个测试全部通过
+racket tests/agent_demo.rkt       # Agent 自动修复演示
 ```
 
 ---
