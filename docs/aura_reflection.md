@@ -1,8 +1,8 @@
 # M3: 反射 (Reflection) 规划方案
 
-**版本**：v0.2
+**版本**：v0.3
 **依赖**：M1 IR 管线 ✅ + M2 AuraQuery 引擎 ✅ + GCC 16.1 P2996 ✅
-**状态**：Phase 1 Day 1 完成
+**状态**：Phase 1 Day 1-2 完成
 
 ---
 
@@ -224,9 +224,16 @@ Day 1: ✅ 完成
   ├── ✅ auto_to_json<T>() 实现 — 支持 int/uint8~64, bool, string, float/double
   └── ⏳ 替换 --serve JSON 手写 (见 §10 集成说明)
 
-Day 2:
-  ├── auto_to_json<IRInstruction> → IR 序列化
-  └── auto_to_json<ArityDiagnostic> → 诊断协议
+Day 2: ✅ 完成
+  ├── ✅ reflect/reflect.hh — header-only 反射库（零模块依赖）
+  │   ├── auto_to_json<T>() — 支持 scalar/string/enum/array
+  │   ├── 可独立编译: g++ -std=c++26 -freflection -I.
+  │   └── 与模块系统完全隔离
+  ├── ✅ tools/aura-reflect.cpp — 独立反射工具
+  │   ├── ir_instruction_to_json() — IR 指令序列化
+  │   ├── --ir-instruction CLI: demo 24 种 opcode
+  │   └── --schema: 显示类型反射 schema
+  └── ✅ CMake target: aura-reflect（独立于模块编译）
 
 Day 3:
   ├── Expansion statements: 编译期循环
@@ -313,33 +320,59 @@ GCC 16.1 `-freflection` 与 C++ module system (`import std;`) 存在兼容性问
 3. **`#include <meta>` 与 `import std;` 冲突**：在同一 TU 中混用
    `<meta>` header 和 `import std;` 会导致 `type_traits` 的重定义。
 
-### 10.2 当前策略：两阶段构建
+### 10.2 当前策略：双轨构建（推荐）
 
 ```
-Phase A: GCC 16.0.1 + 模块系统 (原有)
-  └── 构建 aura core (所有 import std; 的 .ixx / .cpp)
+Track A: GCC 16.1 + 模块系统 (原有 aura)
+  ├── 编译所有 .ixx / .cpp 模块
+  ├── 使用 import std; （不启用 -freflection）
+  └── 产物: aura (主程序)
 
-Phase B: GCC 16.1 + -freflection (反射增强)
-  └── 构建 reflect*.cpp，链接 Phase A 的产物
-  └── 或完全独立构建 (头文件方式)
+Track B: GCC 16.1 + -freflection (反射)
+  ├── 编译 tools/aura-reflect.cpp
+  ├── 使用 reflect/reflect.hh（传统 #include）
+  ├── 不依赖任何模块（import/export）
+  └── 产物: aura-reflect (独立反射工具)
+
+两个 Track 完全独立，互不干扰。
 ```
 
-### 10.3 替代方案：非模块头文件
+### 10.3 reflect/reflect.hh — Header-only 反射库
 
-将 `auto_to_json` 封装在独立头文件中，不依赖模块系统：
+位置: `reflect/reflect.hh`
 
-- 文件位置: `src/compiler/reflect.hh`
-- 依赖: `#include <meta>` + `#include <string>` + 基础头文件
-- 构建: `g++ -std=c++26 -freflection ...`
-- 无模块依赖, 使用传统 `#include`
+设计原则：
+- **零模块依赖**：使用传统 `#include`，`#include <meta>` 而非 `import std;`
+- **独立编译**：`g++ -std=c++26 -freflection -I. file.cpp`
+- **自包含**：所有 P2996 反射逻辑集中在头文件中
+- **高效**：consteval 编译期生成 metadata，运行时 typed pointer 读取
 
-当 GCC 修复模块 + reflection 的兼容性后，再整合到模块系统。
+支持的成员类型：
+- bool, std::string, float, double
+- int8/16/32/64, uint8/16/32/64, unsigned long, size_t
+- enum（序列化为整数，工具层可重写为字符串）
+- std::array<T,N>（序列化为 JSON 数组）
+- std::vector<T>（通过重载支持）
+- 未知类型 → `"null"`
 
-### 10.4 集成路线
+### 10.4 tools/aura-reflect.cpp — 独立反射工具
+
+构建: `g++ -std=c++26 -freflection -I. tools/aura-reflect.cpp -o build/aura-reflect`
+CMake: `ninja aura-reflect`
+
+CLI 模式:
+- `--ir-instruction`: 演示所有 IR opcode 的 P2996 序列化
+- `--schema`: 显示 IRInstruction 类型的反射 schema
+
+### 10.5 未来集成路线
 
 | 步骤 | 状态 | 说明 |
 |------|------|------|
 | 独立 demo | ✅ | `tests/reflect_json_demo.cpp` 可独立编译运行 |
-| Header-only 库 | 🔲 | `src/compiler/reflect.hh` 作为头文件引入 |
-| --serve 集成 | ⏳ | main.cpp 中引入 reflect.hh, 用 auto_to_json 替换手写 JSON |
-| 模块集成 | 🔲 | 等待 GCC 修复后, 将 reflect 作为 ixx 模块加入 |
+| Header-only 库 | ✅ | `reflect/reflect.hh` — 零模块依赖 |
+| 独立反射工具 | ✅ | `tools/aura-reflect.cpp` + CMake target |
+| --serve 集成 | ⏳ | 方案多种可选：
+| | | ① 将 reflect.hh 作为独立子进程通过 JSON IPC 被 --serve 调用 |
+| | | ② 等 GCC 修复后直接 import reflect.hh 进 main.cpp |
+| | | ③ 创建一个轻量桥接库，把反射结果通过共享内存/socket 暴露 |
+| 模块集成 | 🔲 | 等待 GCC 修复模块 + reflection 兼容性后合并 |
