@@ -26,21 +26,16 @@ bool run_one(aura::ir::IRModule& mod, P& pass) {
     return !pass.has_error();
 }
 
-// ── ComputeKindWrap — pure analysis pass ───────────────────────
-//
-// Runs compute-kind analysis on each function in the module.
+// ── ComputeKindWrap — analysis pass (wraps pure function) ─────
 export class ComputeKindWrap {
 public:
     void run(aura::ir::IRModule& module) {
         results_.clear();
-        for (auto& func : module.functions) {
-            ComputeKindAnalysis analyzer;
-            results_.push_back(analyzer.analyze(func));
-        }
+        for (auto& func : module.functions)
+            results_.push_back(aura::compiler::compute_kind(func));
     }
 
     bool has_error() const { return false; }
-
     std::string_view name() const { return "compute-kind"; }
     const std::vector<ComputeKindResult>& results() const { return results_; }
 
@@ -52,13 +47,11 @@ private:
 export class ArityWrap {
 public:
     void run(aura::ir::IRModule& module) {
-        ArityChecker checker;
-        result_ = checker.check(module);
+        result_ = aura::compiler::check_arity(module);
     }
 
     bool has_error() const { return result_.has_error; }
     std::string_view name() const { return "arity"; }
-
     const ArityCheckResult& result() const { return result_; }
 
 private:
