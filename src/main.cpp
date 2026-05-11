@@ -10,46 +10,64 @@ import aura.core.ast_pool;
 import aura.parser.parser;
 import aura.binary.abf_deserializer;
 
+// JSON helper: wrap a string value for JSON (escape quotes and backslashes)
+static std::string json_escape(std::string_view s) {
+    std::string out;
+    for (auto c : s) {
+        if (c == '"' || c == '\\') { out += '\\'; out += c; }
+        else if (c == '\n') { out += "\\n"; }
+        else { out += c; }
+    }
+    return out;
+}
+
 int main(int argc, char* argv[]) {
-    // ── --serve: persistent compile-fix loop (for AI Agent) ────
+    // ── --serve: persistent JSON-line compile-fix loop ─────────
+    // Each line of output is JSON. Agent reads with JSON.parse(line).
+    // Messages: ok, error, fix, fixed, fix-fail
     if (argc > 1 && std::string_view(argv[1]) == "--serve") {
         aura::compiler::CompilerService cs;
         std::string line;
         while (std::getline(std::cin, line)) {
             if (line.empty()) continue;
 
-            aura::ast::ASTArena arena;
-            auto alloc = arena.allocator();
+            auto alloc = cs.arena().allocator();
             aura::ast::StringPool pool(alloc);
             aura::ast::FlatAST flat(alloc);
 
-            auto pr = aura::parser::parse(line, arena);
-            if (!pr.success || !pr.root) {
-                std::println("S parse-error {}", line);
+            auto pr = aura::parser::parse_to_flat(line, flat, pool);
+            if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+                std::println("{{\"status\":\"parse-error\",\"input\":\"{}\"}}",
+                             json_escape(line));
                 continue;
             }
-            flat.root = aura::ast::flatten_to_flat(pr.root, flat, pool);
+            flat.root = pr.root;
 
             auto r = cs.eval(line);
             if (r) {
-                std::println("S ok {}", *r);
+                std::println("{{\"status\":\"ok\",\"value\":{}}}", *r);
             } else {
                 auto& d = r.error();
-                std::println("S error kind={} msg={} node={}",
-                             static_cast<int>(d.kind), d.message, d.node_id);
+                std::println("{{\"status\":\"error\",\"kind\":{},\"msg\":\"{}\",\"node_id\":{}}}",
+                             static_cast<int>(d.kind),
+                             json_escape(d.message), d.node_id);
 
-                // Try auto-fix for known error patterns
+                // Auto-fix
                 aura::compiler::AutoFixEngine fixer(flat, pool);
                 fixer.add_error_fix(d.kind);
                 auto patches = fixer.run_all();
                 if (patches > 0) {
-                    std::println("S fix {} patches", patches);
-                    auto mod = aura::compiler::lower_to_ir(flat, pool, arena);
+                    std::println("{{\"status\":\"fix\",\"patches\":{}}}", patches);
+                    auto mod = aura::compiler::lower_to_ir(flat, pool, cs.arena());
                     aura::compiler::Primitives prims;
                     aura::compiler::IRInterpreter interp(mod, prims);
                     auto fixed = interp.execute();
-                    if (fixed) std::println("S fixed {}", *fixed);
-                    else std::println("S fix-fail {}", fixed.error().message);
+                    if (fixed) {
+                        std::println("{{\"status\":\"fixed\",\"value\":{}}}", *fixed);
+                    } else {
+                        std::println("{{\"status\":\"fix-fail\",\"msg\":\"{}\"}}",
+                                     json_escape(fixed.error().message));
+                    }
                 }
             }
         }
@@ -80,9 +98,9 @@ int main(int argc, char* argv[]) {
         std::string input;
         if (argc > 3) { input = argv[3]; }
         else { std::getline(std::cin, input); }
-        auto pr = aura::parser::parse(input, arena);
-        if (!pr.success || !pr.root) { std::println(std::cerr, "parse error"); return 1; }
-        flat.root = aura::ast::flatten_to_flat(pr.root, flat, pool);
+        auto pr = aura::parser::parse_to_flat(input, flat, pool);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) { std::println(std::cerr, "parse error"); return 1; }
+        flat.root = pr.root;
         aura::compiler::QueryEngine engine(flat, pool);
         auto results = engine.query(argv[2]);
         std::println("query: {} matches", results.size());
@@ -100,9 +118,9 @@ int main(int argc, char* argv[]) {
         std::string input;
         if (argc > 4) { input = argv[4]; }
         else { std::getline(std::cin, input); }
-        auto pr = aura::parser::parse(input, arena);
-        if (!pr.success || !pr.root) { std::println(std::cerr, "parse error"); return 1; }
-        flat.root = aura::ast::flatten_to_flat(pr.root, flat, pool);
+        auto pr = aura::parser::parse_to_flat(input, flat, pool);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) { std::println(std::cerr, "parse error"); return 1; }
+        flat.root = pr.root;
         aura::compiler::QueryEngine engine(flat, pool);
         aura::compiler::TransformEngine xform(flat, pool);
         auto result = xform.query_and_fix(engine, argv[2], argv[3]);
@@ -120,9 +138,9 @@ int main(int argc, char* argv[]) {
         std::string input;
         if (argc > 2) input = argv[2];
         else std::getline(std::cin, input);
-        auto pr = aura::parser::parse(input, arena);
-        if (!pr.success || !pr.root) { std::println(std::cerr, "parse error"); return 1; }
-        flat.root = aura::ast::flatten_to_flat(pr.root, flat, pool);
+        auto pr = aura::parser::parse_to_flat(input, flat, pool);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) { std::println(std::cerr, "parse error"); return 1; }
+        flat.root = pr.root;
         aura::compiler::AutoFixEngine fixer(flat, pool);
         fixer.add_default_rules();
         auto patches = fixer.run_all();
