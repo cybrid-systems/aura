@@ -7,6 +7,7 @@ import aura.compiler.ir;
 import aura.compiler.lowering;
 import aura.compiler.ir_interpreter;
 import aura.compiler.pass_manager;
+import aura.diag;
 
 namespace aura::compiler {
 
@@ -32,7 +33,8 @@ public:
     EvalResult eval(std::string_view input) {
         auto pr = aura::parser::parse(input, arena_);
         if (!pr.success || !pr.root) {
-            return {false, 0, "parse error"};
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::ParseError, "parse error"});
         }
         return evaluator_.eval(pr.root);
     }
@@ -42,7 +44,8 @@ public:
     EvalResult eval_ir(std::string_view input) {
         auto pr = aura::parser::parse(input, arena_);
         if (!pr.success || !pr.root) {
-            return {false, 0, "parse error"};
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::ParseError, "parse error"});
         }
 
         auto ir_mod = aura::compiler::lower_to_ir(pr.root, arena_);
@@ -59,11 +62,11 @@ public:
         cf.run(ir_mod);
 
         if (ar.has_error()) {
-            std::string errs;
             for (auto& d : ar.result().diagnostics) {
-                errs += d.message + "\n";
+                std::println(std::cerr, "arith: {}", d.message);
             }
-            return {false, 0, errs};
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::ArityMismatch, "arity check failed"});
         }
 
         if (cf.folded_count() > 0) {

@@ -4,10 +4,11 @@ import std;
 namespace aura::compiler {
 
 using namespace aura::ir;
+using namespace aura::diag;
 
 EvalResult IRInterpreter::execute() {
     if (module_.functions.empty())
-        return {false, 0, "empty module"};
+        return std::unexpected(Diagnostic{ErrorKind::IRNoReturn, "empty module"});
     return execute_function(module_.entry(), {});
 }
 
@@ -22,7 +23,7 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                                         std::vector<std::int64_t>& locals,
                                         const std::vector<std::int64_t>& args) {
     if (func.blocks.empty())
-        return {false, 0, "empty function"};
+        return std::unexpected(Diagnostic{ErrorKind::IRNoReturn, "empty function"});
 
     std::uint32_t current = func.entry_block;
 
@@ -47,10 +48,8 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                 break;
 
             case IROpcode::Arg:
-                // ops[0] = dst slot, ops[1] = absolute index into args array
                 if (ops[1] < args.size()) {
                     auto val = args[ops[1]];
-                    // Check for byref encoding: negative values mean "cell slot index"
                     if (val < 0) {
                         auto cell_slot = static_cast<std::size_t>(-val - 1);
                         if (cell_slot < locals.size())
@@ -74,7 +73,8 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                 locals[ops[0]] = locals[ops[1]] * locals[ops[2]];
                 break;
             case IROpcode::Div:
-                if (locals[ops[2]] == 0) return {false, 0, "division by zero"};
+                if (locals[ops[2]] == 0)
+                    return std::unexpected(Diagnostic{ErrorKind::DivisionByZero, "division by zero"});
                 locals[ops[0]] = locals[ops[1]] / locals[ops[2]];
                 break;
 
@@ -118,35 +118,29 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                 auto arg_count = ops[2];
 
                 std::vector<std::int64_t> call_args;
-                for (std::uint32_t i = 0; i < arg_count; ++i) {
+                for (std::uint32_t i = 0; i < arg_count; ++i)
                     call_args.push_back(locals[arg_base + i]);
-                }
 
                 constexpr std::int64_t CLOSURE_SENTINEL = 0x1000000;
                 if (static_cast<std::uint64_t>(callee_val) >= static_cast<std::uint64_t>(CLOSURE_SENTINEL)) {
                     auto closure_id = static_cast<std::uint64_t>(callee_val - CLOSURE_SENTINEL);
                     auto it = runtime_closures_.find(closure_id);
                     if (it == runtime_closures_.end())
-                        return {false, 0, "invalid closure reference"};
+                        return std::unexpected(Diagnostic{ErrorKind::InvalidClosure, "invalid closure reference"});
 
                     auto& closure = it->second;
                     if (closure.func_id >= module_.functions.size())
-                        return {false, 0, "invalid closure function id"};
+                        return std::unexpected(Diagnostic{ErrorKind::IRCorruption, "invalid closure function id"});
 
                     auto& callee_func = module_.functions[closure.func_id];
 
-                    // Build all_args: env values (prepended) then call args
                     std::vector<std::int64_t> all_args;
-                    for (auto& ev : closure.env) {
-                        all_args.push_back(ev);
-                    }
-                    for (auto& a : call_args) {
-                        all_args.push_back(a);
-                    }
+                    for (auto& ev : closure.env) all_args.push_back(ev);
+                    for (auto& a : call_args) all_args.push_back(a);
 
                     auto result = execute_function(callee_func, all_args);
-                    if (!result.success) return result;
-                    locals[ops[3]] = result.int_value;
+                    if (!result) return result;
+                    locals[ops[3]] = *result;
                 } else {
                     locals[ops[3]] = callee_val;
                 }
@@ -154,14 +148,11 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
             }
 
             case IROpcode::Return:
-                return {true, locals[ops[0]], ""};
+                return locals[ops[0]];
 
             case IROpcode::MakeClosure: {
                 auto id = next_closure_id_++;
-                runtime_closures_[id] = IRClosure{
-                    ops[1],
-                    std::vector<std::int64_t>(ops[2], 0)
-                };
+                runtime_closures_[id] = IRClosure{ops[1], std::vector<std::int64_t>(ops[2], 0)};
                 constexpr std::int64_t CLOSURE_SENTINEL = 0x1000000;
                 locals[ops[0]] = CLOSURE_SENTINEL + static_cast<std::int64_t>(id);
                 break;
@@ -173,26 +164,20 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                 if (static_cast<std::uint64_t>(closure_val) >= static_cast<std::uint64_t>(CLOSURE_SENTINEL)) {
                     auto closure_id = static_cast<std::uint64_t>(closure_val - CLOSURE_SENTINEL);
                     auto it = runtime_closures_.find(closure_id);
-                    if (it != runtime_closures_.end() && ops[1] < it->second.env.size()) {
+                    if (it != runtime_closures_.end() && ops[1] < it->second.env.size())
                         it->second.env[ops[1]] = locals[ops[2]];
-                    }
                 }
                 break;
             }
 
             case IROpcode::CaptureRef: {
-                // ops[0] = closure_slot, ops[1] = env_idx, ops[2] = cell_slot
-                // Store the cell slot INDEX (byref), not the value
                 auto closure_val = locals[ops[0]];
                 constexpr std::int64_t CLOSURE_SENTINEL = 0x1000000;
                 if (static_cast<std::uint64_t>(closure_val) >= static_cast<std::uint64_t>(CLOSURE_SENTINEL)) {
                     auto closure_id = static_cast<std::uint64_t>(closure_val - CLOSURE_SENTINEL);
                     auto it = runtime_closures_.find(closure_id);
-                    if (it != runtime_closures_.end() && ops[1] < it->second.env.size()) {
-                        // Store a negative value representing "byref: slot number"
-                        // Use -1 - slot as the encoding (so slot 0 → -1, slot 1 → -2, etc.)
+                    if (it != runtime_closures_.end() && ops[1] < it->second.env.size())
                         it->second.env[ops[1]] = -1 - static_cast<std::int64_t>(ops[2]);
-                    }
                 }
                 break;
             }
@@ -200,36 +185,29 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
             case IROpcode::Apply: {
                 auto closure_val = locals[ops[0]];
                 auto arg_count = ops[1];
-
                 std::vector<std::int64_t> apply_args;
-                for (std::uint32_t i = 0; i < arg_count; ++i) {
+                for (std::uint32_t i = 0; i < arg_count; ++i)
                     apply_args.push_back(locals[ops[0] + i + 1]);
-                }
 
                 constexpr std::int64_t CLOSURE_SENTINEL = 0x1000000;
                 if (static_cast<std::uint64_t>(closure_val) >= static_cast<std::uint64_t>(CLOSURE_SENTINEL)) {
                     auto closure_id = static_cast<std::uint64_t>(closure_val - CLOSURE_SENTINEL);
                     auto it = runtime_closures_.find(closure_id);
                     if (it == runtime_closures_.end())
-                        return {false, 0, "invalid closure in apply"};
+                        return std::unexpected(Diagnostic{ErrorKind::InvalidClosure, "invalid closure in apply"});
 
                     auto& closure = it->second;
                     if (closure.func_id >= module_.functions.size())
-                        return {false, 0, "invalid function id in apply"};
+                        return std::unexpected(Diagnostic{ErrorKind::IRCorruption, "invalid function id in apply"});
 
                     auto& callee_func = module_.functions[closure.func_id];
-
                     std::vector<std::int64_t> all_args;
-                    for (auto& ev : closure.env) {
-                        all_args.push_back(ev);
-                    }
-                    for (auto& a : apply_args) {
-                        all_args.push_back(a);
-                    }
+                    for (auto& ev : closure.env) all_args.push_back(ev);
+                    for (auto& a : apply_args) all_args.push_back(a);
 
                     auto result = execute_function(callee_func, all_args);
-                    if (!result.success) return result;
-                    locals[ops[2]] = result.int_value;
+                    if (!result) return result;
+                    locals[ops[2]] = *result;
                 } else {
                     locals[ops[2]] = closure_val;
                 }
@@ -244,7 +222,7 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
         next_block:;
     }
 
-    return {false, 0, "no return"};
+    return std::unexpected(Diagnostic{ErrorKind::IRNoReturn, "no return"});
 }
 
 } // namespace aura::compiler

@@ -14,11 +14,11 @@ int main(int argc, char* argv[]) {
             std::getline(std::cin, input);
         }
         auto result = cs.eval_ir(input);
-        if (!result.success) {
-            std::println(std::cerr, "error: {}", result.error);
+        if (!result) {
+            std::println(std::cerr, "error: {}", result.error().message);
             return 1;
         }
-        std::println("{}", result.int_value);
+        std::println("{}", *result);
         return 0;
     }
 
@@ -45,11 +45,11 @@ int main(int argc, char* argv[]) {
         try {
             auto* expr = des.deserialize(data);
             auto result = cs.evaluator().eval(expr);
-            if (!result.success) {
-                std::println(std::cerr, "eval error: {}", result.error);
+            if (!result) {
+                std::println(std::cerr, "eval error: {}", result.error().message);
                 return 1;
             }
-            std::println("{}", result.int_value);
+            std::println("{}", *result);
         } catch (const std::exception& e) {
             std::println(std::cerr, "error: {}", e.what());
             return 1;
@@ -72,9 +72,9 @@ int main(int argc, char* argv[]) {
         while (std::print("> "), std::getline(std::cin, line)) {
             if (line.empty()) continue;
             auto r = cs.eval(line);
-            if (!r.success) std::println(std::cerr, "error: {}", r.error);
-            else std::println("{}", r.int_value);
-            cs.reset();  // fresh arena for next REPL expression
+            if (!r) std::println(std::cerr, "error: {}", r.error().message);
+            else std::println("{}", *r);
+            cs.reset();
         }
         return 0;
     }
@@ -94,8 +94,8 @@ int main(int argc, char* argv[]) {
         if (s == std::string::npos) continue;
         e = e.substr(s);
         auto r = cs.eval(e);
-        if (!r.success) { std::println(std::cerr, "error: {}", r.error); err = true; }
-        else std::println("{}", r.int_value);
+        if (!r) { std::println(std::cerr, "error: {}", r.error().message); err = true; }
+        else std::println("{}", *r);
         cs.reset();
     }
     return err ? 1 : 0;

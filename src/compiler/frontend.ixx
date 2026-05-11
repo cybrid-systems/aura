@@ -1,6 +1,7 @@
 export module aura.compiler.frontend;
 import std;
 import aura.core;
+import aura.diag;
 
 namespace aura::compiler {
 
@@ -36,7 +37,13 @@ constexpr ClosureId CLOSURE_SENTINEL = 0x1000000;
 constexpr std::int64_t CELL_SENTINEL = 0x2000000;
 
 export struct Closure { std::vector<std::string> params; const ast::Expr* body=nullptr; const Env* env=nullptr; };
-export struct EvalResult { bool success=false; std::int64_t int_value=0; std::string error; };
+
+// EvalResult — now an alias for std::expected<int64_t, diag::Diagnostic>
+// Replace .success with .has_value(), .int_value with .value(), .error with .error().message
+export using EvalResult = std::expected<std::int64_t, aura::diag::Diagnostic>;
+
+// Legacy EvalResult struct kept for binary compat during migration
+// Will be removed after all callers migrate
 
 export class Evaluator {
 public:
