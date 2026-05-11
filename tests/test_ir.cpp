@@ -87,8 +87,7 @@ bool test_arena_group() {
 std::string check_compute_kind(aura::compiler::LoweringPass& lowering,
                                 const std::string& input) {
     aura::ast::ASTArena arena;
-    aura::parser::Parser parser(arena);
-    auto pr = parser.parse(input);
+    auto pr = aura::parser::parse(input, arena);
     if (!pr.root) return "parse_fail";
 
     auto mod = lowering.lower(pr.root);
@@ -155,8 +154,7 @@ int main() {
     int passed = 0, failed = 0;
     for (auto& t : tests) {
         arena.reset();
-        aura::parser::Parser parser(arena);
-        auto pr = parser.parse(t.input);
+        auto pr = aura::parser::parse(t.input, arena);
         if (!pr.success || !pr.root) {
             std::println(std::cerr, "PARSE FAIL: {}", t.input);
             ++failed; continue;
@@ -224,8 +222,7 @@ int main() {
     int arity_passed = 0, arity_failed = 0;
     for (auto& t : arity_tests) {
         arena.reset();
-        aura::parser::Parser parser(arena);
-        auto pr = parser.parse(t.input);
+        auto pr = aura::parser::parse(t.input, arena);
         if (!pr.root) { std::println(std::cerr, "PARSE FAIL: {}", t.input); ++arity_failed; continue; }
 
         auto mod = lowering.lower(pr.root);
@@ -269,8 +266,7 @@ int main() {
                                 std::size_t expected_folds,
                                 const std::string& desc) {
         arena.reset();
-        aura::parser::Parser parser(arena);
-        auto pr = parser.parse(input);
+        auto pr = aura::parser::parse(input, arena);
         if (!pr.root) { std::println(std::cerr, "CF PARSE FAIL: {}", input); ++cf_failed; return; }
 
         auto mod = lowering.lower(pr.root);
@@ -319,8 +315,7 @@ int main() {
         aura::compiler::ArityWrap ar;
 
         aura::ast::ASTArena arena;
-        aura::parser::Parser parser(arena);
-        auto pr = parser.parse("(+ 1 2)");
+        auto pr = aura::parser::parse("(+ 1 2)", arena);
         auto mod = lowering.lower(pr.root);
 
         ck.run(mod);
@@ -341,8 +336,7 @@ int main() {
         aura::compiler::ConstantFoldingWrap cf;
 
         aura::ast::ASTArena arena;
-        aura::parser::Parser parser(arena);
-        auto pr = parser.parse("((lambda (x) x) 1 2)");
+        auto pr = aura::parser::parse("((lambda (x) x) 1 2)", arena);
         auto mod = lowering.lower(pr.root);
 
         ck.run(mod);
@@ -364,8 +358,7 @@ int main() {
         aura::compiler::ArityWrap ar;
 
         aura::ast::ASTArena arena;
-        aura::parser::Parser parser(arena);
-        auto pr = parser.parse("(+ 1 2)");
+        auto pr = aura::parser::parse("(+ 1 2)", arena);
         auto mod = lowering.lower(pr.root);
 
         auto pipeline_ok = aura::compiler::run_pipeline(mod, ck, ar);

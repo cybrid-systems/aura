@@ -34,7 +34,7 @@ public:
     // ---- Tree-walker evaluation --------------------------------------
 
     EvalResult eval(std::string_view input) {
-        auto pr = parser_.parse(std::string(input));
+        auto pr = aura::parser::parse(input, arena_);
         if (!pr.success || !pr.root) {
             return {false, 0, "parse error"};
         }
@@ -43,9 +43,8 @@ public:
 
     // ---- IR pipeline ------------------------------------------------
 
-    // Default pipeline: lower → passes → execute
     EvalResult eval_ir(std::string_view input) {
-        auto pr = parser_.parse(std::string(input));
+        auto pr = aura::parser::parse(input, arena_);
         if (!pr.success || !pr.root) {
             return {false, 0, "parse error"};
         }
