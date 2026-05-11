@@ -163,12 +163,12 @@ int main() {
         aura::compiler::IRInterpreter ir_interp(ir_mod, evaluator.primitives());
         auto result = ir_interp.execute();
 
-        if (result.success && result.int_value == t.expected) {
+        if (result && *result == t.expected) {
             ++passed;
         } else {
             std::print(std::cerr, "FAIL: {}", t.input);
-            if (!result.success) std::print(std::cerr, " error: {}", result.error);
-            else std::print(std::cerr, " got {} expected {}", result.int_value, t.expected);
+            if (!result) std::print(std::cerr, " error: {}", result.error().message);
+            else std::print(std::cerr, " got {} expected {}", *result, t.expected);
             std::println(std::cerr, "");
             ++failed;
         }
@@ -277,13 +277,13 @@ int main() {
         aura::compiler::IRInterpreter interp(mod, evaluator.primitives());
         auto result = interp.execute();
 
-        bool ok = result.success && result.int_value == expected;
+        bool ok = result && *result == expected;
         if (ok && cf_pass.folded_count() == expected_folds) {
-            std::println("CF OK: {} (folded {}, got {})", desc, cf_pass.folded_count(), result.int_value);
+            std::println("CF OK: {} (folded {}, got {})", desc, cf_pass.folded_count(), *result);
             ++cf_passed;
         } else {
             std::println(std::cerr, "CF FAIL: {} (expected {} folds, got {}; result={} expected={})",
-                         desc, expected_folds, cf_pass.folded_count(), result.int_value, expected);
+                         desc, expected_folds, cf_pass.folded_count(), *result, expected);
             ++cf_failed;
         }
     };

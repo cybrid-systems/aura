@@ -3,6 +3,7 @@ import std;
 import aura.core;
 import aura.compiler.ir;
 import aura.compiler.frontend;  // for EvalResult
+import aura.diag;              // for Diagnostic
 
 namespace aura::compiler {
 
