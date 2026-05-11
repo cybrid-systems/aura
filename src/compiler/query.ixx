@@ -3,6 +3,7 @@ import std;
 import aura.core;
 import aura.core.ast_flat;
 import aura.core.ast_pool;
+import aura.diag;
 
 namespace aura::compiler {
 
@@ -409,12 +410,19 @@ public:
             "(and (node-type IfExpr) (child 0 (and (node-type LiteralInt) (= int_value 0))))",
             "(child 2)"
         );
-        // (if 1 X Y) → X
-        add_rule(
-            "(and (node-type IfExpr) (child 0 (and (node-type LiteralInt) (= int_value 1))))",
-            "(child 1)"
-        );
+    }
 
+    // Add a rule from an error kind (for --fix CLI)
+    void add_error_fix(aura::diag::ErrorKind kind) {
+        switch (kind) {
+        case aura::diag::ErrorKind::UnboundVariable:
+            // Generic fallback: any reference to unbound var → LiteralInt 0
+            // (the specific var name is in the message)
+            add_rule("(node-type Variable)", "(LiteralInt 0)");
+            break;
+        default:
+            break;
+        }
     }
 
 private:
