@@ -2,12 +2,48 @@ import std;
 import aura.core;
 import aura.compiler.service;
 import aura.compiler.query;
+import aura.compiler.lowering;
+import aura.compiler.ir_interpreter;
+import aura.compiler.frontend;
 import aura.core.ast_flat;
 import aura.core.ast_pool;
 import aura.parser.parser;
 import aura.binary.abf_deserializer;
 
 int main(int argc, char* argv[]) {
+    // ── --auto-fix: run built-in optimization fixes ──────────────
+    if (argc > 1 && std::string_view(argv[1]) == "--auto-fix") {
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+
+        std::string input;
+        if (argc > 2) { input = argv[2]; }
+        else { std::getline(std::cin, input); }
+
+        auto pr = aura::parser::parse(input, arena);
+        if (!pr.success || !pr.root) {
+            std::println(std::cerr, "parse error");
+            return 1;
+        }
+        flat.root = aura::ast::flatten_to_flat(pr.root, flat, pool);
+
+        aura::compiler::AutoFixEngine fixer(flat, pool);
+        fixer.add_default_rules();
+        auto patches = fixer.run_all();
+
+        std::println("auto-fix: {} patches applied", patches);
+
+        // Re-compile and show result
+        auto mod = aura::compiler::lower_to_ir(flat, pool, arena);
+        aura::compiler::Primitives prims;
+        aura::compiler::IRInterpreter interp(mod, prims);
+        auto eval = interp.execute();
+        if (eval) std::println("result: {}", *eval);
+        return 0;
+    }
+
     // ── --query-and-fix: query + transform on parsed AST ─────────
     if (argc > 3 && std::string_view(argv[1]) == "--query-and-fix") {
         aura::ast::ASTArena arena;
