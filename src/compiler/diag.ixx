@@ -40,13 +40,14 @@ export struct Diagnostic {
     ErrorKind kind = ErrorKind::InternalError;
     std::string message;
     SourceLocation location;
+    std::uint32_t node_id = ~0u;  // FlatAST NodeId (~0 = unknown)
     std::vector<std::string> context_stack;
 
     Diagnostic() = default;
 
     Diagnostic(ErrorKind k, std::string msg,
-               SourceLocation loc = {})
-        : kind(k), message(std::move(msg)), location(loc) {}
+               SourceLocation loc = {}, std::uint32_t nid = ~0u)
+        : kind(k), message(std::move(msg)), location(loc), node_id(nid) {}
 
     // Add context frame for error traceback
     Diagnostic& context(std::string_view ctx) & {
@@ -80,8 +81,10 @@ export struct Diagnostic {
         };
 
         out += std::format("error: {}", message);
+        if (node_id != ~0u)
+            out += std::format(" at node[{}]", node_id);
         if (location.valid())
-            out += std::format(" at {}", location.format());
+            out += std::format(" {}", location.format());
 
         // Print context in reverse order (innermost first)
         for (auto it = context_stack.rbegin(); it != context_stack.rend(); ++it)
