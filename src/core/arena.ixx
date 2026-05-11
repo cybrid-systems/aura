@@ -27,11 +27,91 @@ export struct ArenaStats {
     }
 };
 
-// ── ASTArena — pmr bump allocator ────────────────────────────────
+// ── SmallObjectPool — fixed-size class allocator ─────────────────
 //
-// v1: 单 arena, pmr monotonic_buffer_resource
-// v2: stats tracking, overflow fallback
-// v3: (planned) small-object pool
+// Three tiers for frequently allocated small objects:
+//   Tier 0: 16 bytes  (LiteralInt, Variable, etc.)
+//   Tier 1: 32 bytes  (small Call, IfExpr, etc.)
+//   Tier 2: 64 bytes  (Lambda, larger nodes)
+//
+// Each tier gets its own bump pointer within a pre-allocated buffer.
+// When a tier's region fills up, overflow goes to the caller's
+// fallback allocator (the main monotonic_buffer_resource).
+//
+export class SmallObjectPool {
+public:
+    // Size classes (must be sorted ascending)
+    static constexpr std::size_t kTierSizes[]  = {16, 32, 64};
+    static constexpr std::size_t kNumTiers     = 3;
+    static constexpr std::size_t kSmallPoolSize = 3 * 1024 * 1024; // 3MB total
+    static constexpr std::size_t kPerTierSize  = kSmallPoolSize / kNumTiers; // 1MB each
+    static constexpr std::size_t kMaxSmallSize = kTierSizes[kNumTiers - 1];  // 64
+
+    SmallObjectPool() {
+        buffer_.resize(kSmallPoolSize);
+        for (std::size_t i = 0; i < kNumTiers; ++i) {
+            classes_[i].start  = buffer_.data() + i * kPerTierSize;
+            classes_[i].bump   = classes_[i].start;
+            classes_[i].end    = classes_[i].start + kPerTierSize;
+            classes_[i].obj_sz = kTierSizes[i];
+        }
+    }
+
+    // Allocate from the best-fitting tier. Returns nullptr if too large
+    // or if the tier is exhausted (caller should fallback).
+    void* try_allocate(std::size_t size) {
+        for (auto& c : classes_) {
+            if (size <= c.obj_sz) {
+                void* ptr = c.bump;
+                c.bump += c.obj_sz;
+                if (c.bump <= c.end) {
+                    allocated_from_small_ += c.obj_sz;
+                    return ptr;
+                }
+                // This tier is exhausted — reset bump and signal overflow
+                c.bump -= c.obj_sz; // undo
+                return nullptr;
+            }
+        }
+        return nullptr; // too large for any tier
+    }
+
+    // Reset all tier bump pointers (but keep buffer allocated)
+    void reset() {
+        for (auto& c : classes_) {
+            c.bump = c.start;
+        }
+        allocated_from_small_ = 0;
+    }
+
+    // Total bytes consumed from the small pool
+    [[nodiscard]] std::size_t allocated() const { return allocated_from_small_; }
+
+    // Capacity of the small pool
+    [[nodiscard]] std::size_t capacity() const { return kSmallPoolSize; }
+
+private:
+    struct Tier {
+        std::byte* start = nullptr;
+        std::byte* bump  = nullptr;
+        std::byte* end   = nullptr;
+        std::size_t obj_sz = 0;
+    };
+
+    std::vector<std::byte> buffer_;
+    Tier classes_[kNumTiers];
+    std::size_t allocated_from_small_ = 0;
+};
+
+// ── ASTArena — tiered pmr bump allocator ─────────────────────────
+//
+// v1: single pmr monotonic_buffer_resource
+// v2: ArenaStats + ArenaGroup
+// v3: SmallObjectPool for objects <= 64 bytes (3 tiers: 16/32/64)
+//
+// Allocation path:
+//   create<T>() → sizeof(T) <= 64 → SmallObjectPool
+//               → else             → pmr monotonic_buffer_resource
 //
 export class ASTArena {
 public:
@@ -44,14 +124,8 @@ public:
     // Allocate and construct an object of type T
     template <typename T, typename... Args>
     [[nodiscard]] T* create(Args&&... args) {
-        auto align = alignof(T);
-        auto size = sizeof(T);
-        auto pre_pos = stats_.used;
-        void* raw = allocate(size, align);
-        auto post_pos = stats_.used;
-        stats_.wasted += (post_pos - pre_pos) - size;
+        void* raw = allocate_raw(sizeof(T), alignof(T));
         ++stats_.allocation_count;
-        stats_.peak_used = std::max(stats_.peak_used, stats_.used);
         return std::construct_at(static_cast<T*>(raw),
                                  std::forward<Args>(args)...);
     }
@@ -64,11 +138,11 @@ public:
 
     // Release all allocated memory in one shot
     void reset() {
+        small_pool_.reset();
         resource_.release();
         stats_.used = 0;
         stats_.allocation_count = 0;
         stats_.wasted = 0;
-        // capacity & peak_used preserved across resets
     }
 
     // Get a pmr-compatible allocator for std::pmr containers
@@ -80,22 +154,32 @@ public:
     // Snapshot of current memory statistics
     [[nodiscard]] ArenaStats stats() const noexcept {
         auto s = stats_;
-        s.capacity = buffer_.size();
+        s.capacity = buffer_.size() + small_pool_.capacity();
+        s.used = stats_.used + small_pool_.allocated();
+        s.peak_used = std::max(s.peak_used, s.used);
         return s;
     }
 
     // Bytes consumed so far
     [[nodiscard]] std::size_t used() const noexcept {
-        return stats_.used;
+        return stats_.used + small_pool_.allocated();
     }
 
     // Total buffer capacity
     [[nodiscard]] std::size_t capacity() const noexcept {
-        return buffer_.size();
+        return buffer_.size() + small_pool_.capacity();
     }
 
 private:
-    void* allocate(std::size_t size, std::size_t alignment) {
+    void* allocate_raw(std::size_t size, std::size_t alignment) {
+        // Try small-object pool first (for objects <= 64 bytes)
+        if (size <= SmallObjectPool::kMaxSmallSize) {
+            void* ptr = small_pool_.try_allocate(size);
+            if (ptr) return ptr;
+            // Small-object tier exhausted — fall through to main arena
+        }
+
+        // Allocate from main pmr buffer
         void* ptr = resource_.allocate(size, alignment);
         stats_.used += size;
         return ptr;
@@ -103,6 +187,7 @@ private:
 
     std::vector<std::byte> buffer_;
     std::pmr::monotonic_buffer_resource resource_;
+    SmallObjectPool small_pool_;
     ArenaStats stats_;
 };
 

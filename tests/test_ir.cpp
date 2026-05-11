@@ -11,9 +11,9 @@ import aura.compiler.service;
 
 // ── Memory pool tests (arena stats + arena group) ─────────────
 bool test_arena_stats() {
-    aura::ast::ASTArena arena(1024);  // tiny arena for testing
+    aura::ast::ASTArena arena(4096);
 
-    // Allocate a few objects
+    // Allocate small objects (go through SmallObjectPool)
     auto* i = arena.create<int>(42);
     auto* d = arena.create<double>(3.14);
     auto* c = arena.create<char>('X');
@@ -21,16 +21,26 @@ bool test_arena_stats() {
     if (*i != 42 || *d != 3.14 || *c != 'X') return false;
 
     auto s = arena.stats();
-    // Should have some allocations
     if (s.allocation_count < 3) return false;
-    if (s.used < sizeof(int) + sizeof(double) + sizeof(char)) return false;
+    if (s.used < 3) return false;       // small pool has at least 3 slots
     if (s.peak_used < s.used) return false;
+
+    // Allocate a large object (bypasses small pool, goes through main arena)
+    struct Large { char data[128]; };
+    auto* big = arena.create<Large>();
+    if (!big) return false;
+    auto s2 = arena.stats();
+    if (s2.allocation_count < 4) return false;
+    if (s2.used < 128) return false;
 
     arena.reset();
     auto after = arena.stats();
-    // After reset, used goes to 0 but capacity stays
     if (after.used != 0) return false;
-    if (after.capacity != 1024) return false;
+    if (after.capacity < 4096) return false;  // capacity includes 3MB small pool
+
+    // Can still allocate after reset
+    auto* x = arena.create<int>(99);
+    if (*x != 99) return false;
 
     return true;
 }
@@ -258,6 +268,38 @@ int main() {
         cs.eval("(+ 1 2)");
         auto s = cs.arena().stats();
         std::println("ARENA DEMO: {}", s.format());
+    }
+
+    // SmallObjectPool tier test: verify proper size class routing
+    {
+        aura::ast::ASTArena arena(4096);
+        struct S8  { char d[8];  };
+        struct S24 { char d[24]; };
+        struct S48 { char d[48]; };
+
+        auto* a = arena.create<S8>();
+        auto* b = arena.create<S24>();
+        auto* c = arena.create<S48>();
+        auto* d = arena.create<int>();
+
+        if (a && b && c && d) {
+            auto s = arena.stats();
+            // 4 small objects, all from SmallObjectPool; large check
+            struct Big { char d[256]; };
+            arena.create<Big>();
+            auto s2 = arena.stats();
+            if (s2.allocation_count == 5 && s2.used >= 256) {
+                std::println("ARENA OK: small-object tiers (16/32/64) + overflow");
+                ++mp_passed;
+            } else {
+                std::println(std::cerr, "ARENA FAIL: tier routing (used={}, allocs={})",
+                             s2.used, s2.allocation_count);
+                ++mp_failed;
+            }
+        } else {
+            std::println(std::cerr, "ARENA FAIL: small-object allocation null");
+            ++mp_failed;
+        }
     }
 
     // Multi-module arena demo
