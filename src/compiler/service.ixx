@@ -33,12 +33,22 @@ public:
     // ---- Tree-walker evaluation --------------------------------------
 
     EvalResult eval(std::string_view input) {
-        auto pr = aura::parser::parse(input, arena_);
-        if (!pr.success || !pr.root) {
+        // Phase 4: parse to FlatAST, then reconstruct Expr* for evaluator
+        auto alloc = arena_.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat(input, flat, pool);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
             return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::ParseError, "parse error"});
+                aura::diag::ErrorKind::ParseError, pr.error});
         }
-        return evaluator_.eval(pr.root);
+        flat.root = pr.root;
+        auto* expr = aura::compiler::reconstruct_expr(flat, pool, arena_);
+        if (!expr) {
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError, "reconstruction failed"});
+        }
+        return evaluator_.eval(expr);
     }
 
     // ---- IR pipeline ------------------------------------------------
