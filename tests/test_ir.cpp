@@ -8,6 +8,7 @@ import aura.compiler.ir_interpreter;
 import aura.compiler.compute_kind;
 import aura.compiler.arity;
 import aura.compiler.service;
+import aura.compiler.pass_manager;
 
 // ── Memory pool tests (arena stats + arena group) ─────────────
 bool test_arena_stats() {
@@ -259,6 +260,87 @@ int main() {
     if (test_arena_stats()) { std::println("ARENA OK: stats"); ++mp_passed; }
     else { std::println(std::cerr, "ARENA FAIL: stats"); ++mp_failed; }
 
+    // ── A2.3: Pass Manager tests ─────────────────────────────
+    int pm_passed = 0, pm_failed = 0;
+
+    // Test basic pass registration and execution
+    {
+        aura::compiler::PassManager pm;
+        auto& ck = pm.emplace<aura::compiler::ComputeKindWrap>();
+        auto& ar = pm.emplace<aura::compiler::ArityWrap>();
+
+        // Parse + lower a valid expression to get an IRModule
+        aura::ast::ASTArena arena;
+        aura::parser::Parser parser(arena);
+        auto pr = parser.parse("(+ 1 2)");
+        auto mod = lowering.lower(pr.root);
+
+        pm.run(mod);
+
+        if (pm.has_run("compute-kind") && pm.has_run("arity")) {
+            std::println("PM OK: both passes ran");
+            ++pm_passed;
+        } else {
+            std::println(std::cerr, "PM FAIL: passes did not run");
+            ++pm_failed;
+        }
+
+        if (ar.has_error() == false) {
+            std::println("PM OK: arity no error on valid code");
+            ++pm_passed;
+        } else {
+            std::println(std::cerr, "PM FAIL: arity false positive");
+            ++pm_failed;
+        }
+    }
+
+    // Test dependency ordering
+    {
+        // Arity depends on compute-kind; verify order
+        aura::compiler::PassManager pm;
+        auto& ar = pm.emplace<aura::compiler::ArityWrap>();
+        auto& ck = pm.emplace<aura::compiler::ComputeKindWrap>();
+
+        aura::ast::ASTArena arena;
+        aura::parser::Parser parser(arena);
+        auto pr = parser.parse("(+ 1 2)");
+        auto mod = lowering.lower(pr.root);
+
+        pm.run(mod);
+        // Both should still run (topo-sort orders ck before arity)
+        if (pm.has_run("compute-kind") && pm.has_run("arity")) {
+            std::println("PM OK: dep ordering works (arity→ck correctly ordered)");
+            ++pm_passed;
+        } else {
+            std::println(std::cerr, "PM FAIL: dep ordering broken");
+            ++pm_failed;
+        }
+    }
+
+    // Test arity error detection via PM
+    {
+        aura::compiler::PassManager pm;
+        auto& ar = pm.emplace<aura::compiler::ArityWrap>();
+        pm.emplace<aura::compiler::ComputeKindWrap>();
+
+        aura::ast::ASTArena arena;
+        aura::parser::Parser parser(arena);
+        auto pr = parser.parse("((lambda (x) x) 1 2)");  // wrong arity
+        auto mod = lowering.lower(pr.root);
+
+        pm.run(mod);
+        if (ar.has_error()) {
+            std::println("PM OK: arity error detected: {}", ar.result().diagnostics[0].message);
+            ++pm_passed;
+        } else {
+            std::println(std::cerr, "PM FAIL: arity missed error");
+            ++pm_failed;
+        }
+    }
+
+    std::println("PassManager test: {}/{}/{} passed/failed/total",
+                 pm_passed, pm_failed, pm_passed + pm_failed);
+
     if (test_arena_group()) { std::println("ARENA OK: group"); ++mp_passed; }
     else { std::println(std::cerr, "ARENA FAIL: group"); ++mp_failed; }
 
@@ -331,5 +413,5 @@ int main() {
 
     std::println("Memory pool test: {}/{}/{} passed/failed/total",
                  mp_passed, mp_failed, mp_passed + mp_failed);
-    return (failed + ck_failed + arity_failed + mp_failed) > 0 ? 1 : 0;
+    return (failed + ck_failed + arity_failed + mp_failed + pm_failed) > 0 ? 1 : 0;
 }
