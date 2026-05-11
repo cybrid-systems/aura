@@ -73,12 +73,16 @@ static Expr* reconstruct_node(NodeId id, const FlatAST& flat,
 }
 
 // ── lower_to_ir (FlatAST path) ──────────────────────────────────
-// Reconstructs Expr* from FlatAST, then delegates to LoweringPass directly.
 IRModule lower_to_ir(FlatAST& flat, StringPool& pool, ASTArena& arena) {
     auto* expr = reconstruct_node(flat.root, flat, pool, arena);
     if (!expr) return {};
     LoweringPass lowering(arena);
     return lowering.lower(expr);
+}
+
+// ── reconstruct_expr (public API) ───────────────────────────────
+Expr* reconstruct_expr(FlatAST& flat, StringPool& pool, ASTArena& arena) {
+    return reconstruct_node(flat.root, flat, pool, arena);
 }
 
 } // namespace aura::compiler

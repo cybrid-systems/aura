@@ -86,4 +86,10 @@ export aura::ir::IRModule lower_to_ir(ast::FlatAST& flat,
                                        ast::StringPool& pool,
                                        ast::ASTArena& arena);
 
+// Reconstruct an Expr* tree from FlatAST (for tree-walker evaluator).
+// Phase 4 bridge: parser → FlatAST → reconstruct → Expr* → evaluator.
+export ast::Expr* reconstruct_expr(ast::FlatAST& flat,
+                                    ast::StringPool& pool,
+                                    ast::ASTArena& arena);
+
 } // namespace aura::compiler
