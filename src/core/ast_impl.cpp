@@ -2,7 +2,7 @@ module aura.core.ast;
 
 namespace aura::ast {
 
-// Recursively flatten an Expr pointer-tree into an index-based AST.
+// Recursively flatten an Expr pointer-tree into the old index-based AST.
 // This is a temporary bridge — eventually parse() should produce AST directly.
 NodeId flatten_expr(const Expr* expr, AST& ast) {
     if (!expr) return NULL_NODE;

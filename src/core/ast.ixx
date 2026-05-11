@@ -3,6 +3,12 @@ import std;
 
 namespace aura::ast {
 
+// ── Common type aliases (shared by both pointer and flat AST) ───
+export using NodeId = std::uint32_t;
+export constexpr NodeId NULL_NODE = ~0u;
+export using SymId = std::uint32_t;
+export constexpr SymId INVALID_SYM = ~0u;
+
 // ── Pointer-based AST (legacy, being migrated to flat index AST) ─
 
 export struct Expr;
@@ -38,23 +44,11 @@ export struct Expr {
     Expr(DefineNode n)     : tag(n.tag), payload(n) {}
 };
 
-// ── Flat index-based AST (DOD target) ───────────────────────────
+// ── Flat index-based AST (DOD prototype) ────────────────────────
 //
-// Nodes are stored in a flat vector and referenced by uint32_t ID.
-// Child links are indices, not pointers — no pointer chasing.
-// Trivially serializable, AI-mutable by index range.
+// Deprecated: use FlatAST (aura.core.ast_flat) for new code.
+// This is the Phase 1 prototype kept for backward compatibility.
 //
-// Usage:
-//   AST ast;
-//   auto five = ast.add_literal(5);
-//   auto x    = ast.add_variable("x");
-//   auto add  = ast.add_call(plus_id, {x, five});
-//   ast.root = add;
-//   // then: lower_to_ir(ast, arena);
-//
-export using NodeId = std::uint32_t;
-export constexpr NodeId NULL_NODE = ~0u;
-
 // A single vertex in the flat AST graph.
 // All node types share one struct, with unused fields zeroed.
 export struct ASTNode {

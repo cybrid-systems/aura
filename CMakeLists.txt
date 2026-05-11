@@ -10,7 +10,7 @@ add_executable(aura)
 set_property(TARGET aura PROPERTY CXX_MODULE_STD ON)
 
 target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
+    src/core/arena.ixx src/core/ast.ixx src/core/ast_flat.ixx src/core/ast_pool.ixx src/core/core.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/frontend.ixx
     src/compiler/ir.ixx
@@ -25,6 +25,7 @@ target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 
 target_sources(aura PRIVATE
     src/core/ast_impl.cpp
+    src/core/ast_flat_impl.cpp
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
     src/compiler/frontend_impl.cpp
     src/compiler/lowering_impl.cpp
@@ -64,7 +65,7 @@ AT(step15_letrec_fact10
 add_executable(test_ir tests/test_ir.cpp)
 set_property(TARGET test_ir PROPERTY CXX_MODULE_STD ON)
 target_sources(test_ir PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
+    src/core/arena.ixx src/core/ast.ixx src/core/ast_flat.ixx src/core/ast_pool.ixx src/core/core.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/frontend.ixx
     src/compiler/ir.ixx
@@ -77,6 +78,7 @@ target_sources(test_ir PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/pass_manager.ixx)
 target_sources(test_ir PRIVATE
     src/core/ast_impl.cpp
+    src/core/ast_flat_impl.cpp
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
     src/compiler/frontend_impl.cpp
     src/compiler/lowering_impl.cpp
