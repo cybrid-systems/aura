@@ -7,6 +7,70 @@ import aura.compiler.lowering;
 import aura.compiler.ir_interpreter;
 import aura.compiler.compute_kind;
 import aura.compiler.arity;
+import aura.compiler.service;
+
+// ── Memory pool tests (arena stats + arena group) ─────────────
+bool test_arena_stats() {
+    aura::ast::ASTArena arena(1024);  // tiny arena for testing
+
+    // Allocate a few objects
+    auto* i = arena.create<int>(42);
+    auto* d = arena.create<double>(3.14);
+    auto* c = arena.create<char>('X');
+
+    if (*i != 42 || *d != 3.14 || *c != 'X') return false;
+
+    auto s = arena.stats();
+    // Should have some allocations
+    if (s.allocation_count < 3) return false;
+    if (s.used < sizeof(int) + sizeof(double) + sizeof(char)) return false;
+    if (s.peak_used < s.used) return false;
+
+    arena.reset();
+    auto after = arena.stats();
+    // After reset, used goes to 0 but capacity stays
+    if (after.used != 0) return false;
+    if (after.capacity != 1024) return false;
+
+    return true;
+}
+
+bool test_arena_group() {
+    aura::ast::ArenaGroup group;
+
+    auto& a1 = group.module_arena("module_a");
+    auto* i1 = a1.create<int>(100);
+
+    auto& a2 = group.module_arena("module_b");
+    auto* i2 = a2.create<int>(200);
+
+    if (*i1 != 100 || *i2 != 200) return false;
+    if (group.count() != 2) return false;
+
+    // Check per-module stats
+    auto stats = group.module_stats();
+    if (stats.size() != 2) return false;
+
+    // Check aggregate
+    auto total = group.total_stats();
+    if (total.allocation_count < 2) return false;
+
+    // Reset one module
+    group.reset_module("module_a");
+    if (group.module_arena("module_a").used() != 0) return false;
+    if (group.module_arena("module_b").used() == 0) return false;
+
+    // Reset all
+    group.reset_all();
+    if (group.module_arena("module_a").used() != 0) return false;
+    if (group.module_arena("module_b").used() != 0) return false;
+
+    // Format shouldn't crash
+    auto fmt = total.format();
+    if (fmt.empty()) return false;
+
+    return true;
+}
 
 // Run compute-kind analysis on the top function and return a summary string
 std::string check_compute_kind(aura::compiler::LoweringPass& lowering,
@@ -179,5 +243,51 @@ int main() {
 
     std::println("Arity test: {}/{}/{} passed/failed/total",
                  arity_passed, arity_failed, arity_passed + arity_failed);
-    return (failed + ck_failed + arity_failed) > 0 ? 1 : 0;
+
+    // ── Memory pool tests ───────────────────────────────────
+    int mp_passed = 0, mp_failed = 0;
+    if (test_arena_stats()) { std::println("ARENA OK: stats"); ++mp_passed; }
+    else { std::println(std::cerr, "ARENA FAIL: stats"); ++mp_failed; }
+
+    if (test_arena_group()) { std::println("ARENA OK: group"); ++mp_passed; }
+    else { std::println(std::cerr, "ARENA FAIL: group"); ++mp_failed; }
+
+    // Demo: print stats from a real compilation
+    {
+        aura::compiler::CompilerService cs;
+        cs.eval("(+ 1 2)");
+        auto s = cs.arena().stats();
+        std::println("ARENA DEMO: {}", s.format());
+    }
+
+    // Multi-module arena demo
+    {
+        aura::compiler::CompilerService cs;
+        auto& ma = cs.module_arena("kernel");
+        ma.create<int>(42);
+        auto& mb = cs.module_arena("driver");
+        mb.create<double>(3.14);
+        mb.create<double>(2.71);
+
+        auto total = cs.memory_stats();
+        std::println("ARENA MULTI: {} modules, total {}",
+                     cs.module_memory_stats().size(), total.format());
+
+        cs.reset_module("driver");
+        auto after = cs.memory_stats();
+        std::println("ARENA MULTI: after driver reset, total {}", after.format());
+
+        if (cs.module_arena("kernel").used() > 0 &&
+            cs.module_arena("driver").used() == 0) {
+            std::println("ARENA OK: multi-module isolation");
+            ++mp_passed;
+        } else {
+            std::println(std::cerr, "ARENA FAIL: multi-module isolation");
+            ++mp_failed;
+        }
+    }
+
+    std::println("Memory pool test: {}/{}/{} passed/failed/total",
+                 mp_passed, mp_failed, mp_passed + mp_failed);
+    return (failed + ck_failed + arity_failed + mp_failed) > 0 ? 1 : 0;
 }

@@ -11,36 +11,25 @@ namespace aura::compiler {
 
 // CompilerService — owns a full compilation session's lifecycle.
 //
-// Each session has:
-//   - A pmr-based ASTArena (bulk allocation, one-shot reset)
-//   - A persistent Evaluator with pristine top-level environment
-//   - Optional: parser, lowering, IR interpreter all share the arena
+// Each request creates a fresh AST in the arena; after eval, arena
+// is reset for the next request. Evaluator state (closures, defines)
+// persists across resets.
 //
-// Typical usage per eval request:
-//   1. Reset the arena (reclaims all AST memory)
-//   2. Parse input into arena-allocated AST
-//   3. Evaluate (tree-walker or IR pipeline)
-//   4. Return result; arena stays ready for next input
-//
-// For REPL / Compiler-as-a-Service mode:
-//   - Keep the same CompilerService across inputs
-//   - evaluator state (closures, binds) persists across resets
+// For multi-module scenarios, use module_arena() to get an isolated
+// arena that can be independently reset.
 //
 export class CompilerService {
 public:
     CompilerService()
-        : parser_(arena_)
+        : parser_(default_arena_)
     {
-        evaluator_.set_arena(&arena_);
+        evaluator_.set_arena(&default_arena_);
     }
 
     // ---- Session lifecycle -------------------------------------------
 
-    // Reset arena memory. Call between compilation requests.
-    // Parser reference stays valid — arena is same object, just emptied.
-    void reset() {
-        arena_.reset();
-    }
+    // Reset the default arena. Call between compilation requests.
+    void reset() { default_arena_.reset(); }
 
     // ---- Tree-walker evaluation --------------------------------------
 
@@ -62,21 +51,52 @@ public:
             return {false, 0, "parse error"};
         }
 
-        aura::compiler::LoweringPass lowering(arena_);
+        aura::compiler::LoweringPass lowering(default_arena_);
         auto ir_mod = lowering.lower(pr.root);
 
         aura::compiler::IRInterpreter ir_interp(ir_mod, evaluator_.primitives());
         return ir_interp.execute();
     }
 
+    // ---- Multi-module arena support ----------------------------------
+
+    // Get or create an isolated arena for a named module.
+    // Each module gets its own bump allocator; resetting one module
+    // does not affect others.
+    ast::ASTArena& module_arena(const std::string& name,
+                                std::size_t initial_size = 8 * 1024 * 1024) {
+        return arena_group_.module_arena(name, initial_size);
+    }
+
+    // Reset a specific module's arena (reclaims its AST memory)
+    void reset_module(const std::string& name) {
+        arena_group_.reset_module(name);
+    }
+
+    // ---- Diagnostics ------------------------------------------------
+
+    // Snapshot of current memory usage across all arenas
+    ast::ArenaStats memory_stats() const {
+        auto s = default_arena_.stats();
+        s.merge(arena_group_.total_stats());
+        return s;
+    }
+
+    // Per-module memory breakdown
+    std::vector<std::pair<std::string, ast::ArenaStats>>
+    module_memory_stats() const {
+        return arena_group_.module_stats();
+    }
+
     // ---- Accessors ---------------------------------------------------
 
-    ast::ASTArena& arena() { return arena_; }
+    ast::ASTArena& arena() { return default_arena_; }
     Evaluator& evaluator() { return evaluator_; }
     aura::parser::Parser& parser() { return parser_; }
 
 private:
-    ast::ASTArena arena_;
+    ast::ASTArena default_arena_;
+    ast::ArenaGroup arena_group_;
     aura::parser::Parser parser_;
     Evaluator evaluator_;
 };
