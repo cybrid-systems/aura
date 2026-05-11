@@ -7,6 +7,8 @@ import aura.compiler.ir;
 import aura.compiler.lowering;
 import aura.compiler.ir_interpreter;
 import aura.compiler.pass_manager;
+import aura.core.ast_flat;
+import aura.core.ast_pool;
 import aura.diag;
 
 namespace aura::compiler {
@@ -48,7 +50,12 @@ public:
                 aura::diag::ErrorKind::ParseError, "parse error"});
         }
 
-        auto ir_mod = aura::compiler::lower_to_ir(pr.root, arena_);
+        // Phase 3.1: FlatAST pipeline (flatten → reconstruct → LoweringPass)
+        auto alloc = arena_.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        flat.root = aura::ast::flatten_to_flat(pr.root, flat, pool);
+        auto ir_mod = aura::compiler::lower_to_ir(flat, pool, arena_);
 
         ComputeKindWrap ck;
         ArityWrap ar;
