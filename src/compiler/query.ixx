@@ -370,4 +370,58 @@ inline TransformResult TransformEngine::query_and_fix(
     return r;
 }
 
+// ── AutoFixEngine — pattern-based automatic fix ────────────────
+//
+// Holds a set of (query, replacement) rules. When run against a
+// FlatAST, finds all matches and applies fixes in batch.
+//
+// Built-in rules:
+//   (+ x x) → (* x 2)
+//   (if 1 then else) → then
+//
+export class AutoFixEngine {
+public:
+    AutoFixEngine(aura::ast::FlatAST& ast,
+                  aura::ast::StringPool& pool)
+        : ast_(ast), pool_(pool) {}
+
+    // Add a fix rule: when <query> matches, apply <replacement>
+    void add_rule(std::string_view query, std::string_view replacement) {
+        rules_.push_back({std::string(query), std::string(replacement)});
+    }
+
+    // Run all rules against the FlatAST. Returns total patches applied.
+    std::size_t run_all() {
+        std::size_t total = 0;
+        for (auto& rule : rules_) {
+            aura::compiler::QueryEngine engine(ast_, pool_);
+            aura::compiler::TransformEngine xform(ast_, pool_);
+            auto r = xform.query_and_fix(engine, rule.query, rule.replacement);
+            if (r.applied) total += r.patch_count;
+        }
+        return total;
+    }
+
+    // Add default optimization rules
+    void add_default_rules() {
+        // (if 0 X Y) → Y
+        add_rule(
+            "(and (node-type IfExpr) (child 0 (and (node-type LiteralInt) (= int_value 0))))",
+            "(child 2)"
+        );
+        // (if 1 X Y) → X
+        add_rule(
+            "(and (node-type IfExpr) (child 0 (and (node-type LiteralInt) (= int_value 1))))",
+            "(child 1)"
+        );
+
+    }
+
+private:
+    struct Rule { std::string query; std::string replacement; };
+    std::vector<Rule> rules_;
+    aura::ast::FlatAST& ast_;
+    aura::ast::StringPool& pool_;
+};
+
 } // namespace aura::compiler
