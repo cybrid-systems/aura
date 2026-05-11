@@ -9,6 +9,9 @@ import aura.compiler.compute_kind;
 import aura.compiler.arity;
 import aura.compiler.service;
 import aura.compiler.pass_manager;
+import aura.compiler.query;
+import aura.core.ast_flat;
+import aura.core.ast_pool;
 
 // ── Memory pool tests (arena stats + arena group) ─────────────
 bool test_arena_stats() {
@@ -249,6 +252,79 @@ int main() {
 
     std::println("Arity test: {}/{}/{} passed/failed/total",
                  arity_passed, arity_failed, arity_passed + arity_failed);
+
+    // ── M2.1: QueryEngine tests ─────────────────────────────
+    {
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+
+        // Build a simple AST: (let ((x 10)) (+ x 5))
+        auto ten    = flat.add_literal(10);
+        auto x      = flat.add_variable(pool.intern("x"));
+        auto plus   = flat.add_variable(pool.intern("+"));
+        auto five   = flat.add_literal(5);
+        auto add    = flat.add_call(plus, {x, five});
+        auto the_let = flat.add_let(pool.intern("x"), ten, add);
+        flat.root = the_let;
+
+        aura::compiler::QueryEngine engine(flat, pool);
+        int q_passed = 0, q_failed_local = 0;
+
+        // Test parser directly
+        auto parsed = engine.parse("(node-type LiteralInt)");
+        if (parsed.kind == aura::compiler::QueryExpr::Kind::NodeType) {
+            std::println("QE PARSE OK: kind=NodeType");
+            auto pr = engine.execute(parsed);
+            if (pr.size() == 2) std::println("QE PARSE OK: 2 LiteralInt");
+            else std::println(std::cerr, "QE PARSE FAIL: got {} LiteralInt", pr.size());
+        } else {
+            std::println(std::cerr, "QE PARSE FAIL: kind={}", static_cast<int>(parsed.kind));
+        }
+
+        // Use manually-built queries to verify execute()/match() work
+        auto test_mq = [&](aura::compiler::QueryExpr q,
+                           std::size_t expected_count,
+                           std::string_view desc) {
+            auto results = engine.execute(q);
+            if (results.size() == expected_count) {
+                std::println("QE OK: {} ({} matches)", desc, results.size());
+                ++q_passed;
+            } else {
+                std::println(std::cerr, "QE FAIL: {} (expected {} got {})",
+                             desc, expected_count, results.size());
+                ++q_failed_local;
+            }
+        };
+
+        aura::compiler::QueryExpr q_lit, q_var, q_call, q_let;
+        q_lit.kind = aura::compiler::QueryExpr::Kind::NodeType; q_lit.node_tag = aura::ast::NodeTag::LiteralInt;
+        q_var.kind = aura::compiler::QueryExpr::Kind::NodeType; q_var.node_tag = aura::ast::NodeTag::Variable;
+        q_call.kind = aura::compiler::QueryExpr::Kind::NodeType; q_call.node_tag = aura::ast::NodeTag::Call;
+        q_let.kind = aura::compiler::QueryExpr::Kind::NodeType; q_let.node_tag = aura::ast::NodeTag::Let;
+
+        aura::compiler::QueryExpr q_callee;
+        q_callee.kind = aura::compiler::QueryExpr::Kind::Callee;
+        q_callee.str_value = "+";
+
+        aura::compiler::QueryExpr q_and;
+        q_and.kind = aura::compiler::QueryExpr::Kind::And;
+        aura::compiler::QueryExpr q_gt;
+        q_gt.kind = aura::compiler::QueryExpr::Kind::Gt;
+        q_gt.field_name = "child-count"; q_gt.int_value = 0;
+        q_and.children = {q_call, q_gt};
+
+        test_mq(q_lit, 2, "all LiteralInt");
+        test_mq(q_var, 2, "all Variable");
+        test_mq(q_call, 1, "all Call");
+        test_mq(q_let, 1, "all Let");
+        test_mq(q_callee, 1, "calls to +");
+        test_mq(q_and, 1, "call with >0 children");
+
+        std::println("QueryEngine test: {}/{}/{} passed/failed/total",
+                     q_passed, q_failed_local, q_passed + q_failed_local);
+    }
 
     // ── Memory pool tests ───────────────────────────────────
     int mp_passed = 0, mp_failed = 0;
