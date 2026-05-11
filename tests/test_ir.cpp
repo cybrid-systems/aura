@@ -360,6 +360,50 @@ int main() {
                      sr_passed, sr_failed, sr_passed + sr_failed);
     }
 
+    // ── Phase 4: FlatParser tests ───────────────────────────
+    {
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat("(+ 1 2)", flat, pool);
+        if (pr.success && flat.size() == 4) {
+            auto v = flat.get(pr.root);
+            if (v.tag == aura::ast::NodeTag::Call &&
+                v.children.size() == 3) {
+                std::println("FP OK: parse (+ 1 2) → Call with 3 children");
+            } else {
+                std::println(std::cerr, "FP FAIL: root not Call");
+            }
+        } else {
+            std::println(std::cerr, "FP FAIL: parse failed");
+        }
+    }
+    {
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat("((lambda (x) (* x 2)) 5)", flat, pool);
+        if (pr.success) {
+            std::println("FP OK: parse lambda + call");
+        } else {
+            std::println(std::cerr, "FP FAIL: lambda parse failed");
+        }
+    }
+    {
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat("(let ((x 10)) x)", flat, pool);
+        if (pr.success) {
+            std::println("FP OK: parse let");
+        } else {
+            std::println(std::cerr, "FP FAIL: let parse failed");
+        }
+    }
+
     // ── Memory pool tests ───────────────────────────────────
     int mp_passed = 0, mp_failed = 0;
     if (test_arena_stats()) { std::println("ARENA OK: stats"); ++mp_passed; }

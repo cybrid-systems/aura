@@ -27,7 +27,7 @@ target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 target_sources(aura PRIVATE
     src/core/ast_impl.cpp
     src/core/ast_flat_impl.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
+    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp src/parser/flat_parser_impl.cpp
     src/compiler/frontend_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/lowering_flat_impl.cpp
@@ -83,7 +83,7 @@ target_sources(test_ir PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 target_sources(test_ir PRIVATE
     src/core/ast_impl.cpp
     src/core/ast_flat_impl.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
+    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp src/parser/flat_parser_impl.cpp
     src/compiler/frontend_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/lowering_flat_impl.cpp
