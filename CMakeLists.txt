@@ -111,3 +111,39 @@ IRT(if_false "(if 0 0 99)" 99)
 IRT(let_x "(let ((x 10)) x)" 10)
 IRT(lambda_call "((lambda (x) (* x 2)) 5)" 10)
 IRT(lambda_closure "(let ((x 10)) ((lambda (y) (+ x y)) 5))" 15)
+
+# ── CLI mode tests ─────────────────────────────────────────────
+# Query: node-type Call on (+ 1 2) → 1 call node
+add_test(NAME cli_query_call
+    COMMAND sh -c "printf '(+ 1 2)' | ./aura --query '(node-type Call)' | grep -q '1 matches'"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+# Query: (callee "+") on (+ 1 2) → 1 match
+add_test(NAME cli_query_callee
+    COMMAND sh -c "printf '(+ 1 2)' | ./aura --query '(callee \"+\")' | grep -q '1 matches'"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+# Query-and-fix: replace LiteralInt with 99 → should succeed
+add_test(NAME cli_query_and_fix
+    COMMAND sh -c "printf '(+ 1 2)' | ./aura --query-and-fix '(node-type LiteralInt)' '(LiteralInt 99)' | grep -q 'applied=true'"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+# Auto-fix: runs optimizations on (+ 1 2)
+add_test(NAME cli_auto_fix
+    COMMAND sh -c "printf '(+ 1 2)' | timeout 10 ./aura --auto-fix | grep -q 'auto-fix'"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+# Serve mode: error detection on unbound variable
+add_test(NAME cli_serve_error
+    COMMAND sh -c "printf '(+ x 1)' | timeout 5 ./aura --serve | grep -q 'kind='"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+# Serve mode: ok result on valid code
+add_test(NAME cli_serve_ok
+    COMMAND sh -c "printf '(+ 1 2)' | timeout 5 ./aura --serve | grep -q 'S ok'"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+# Diag: diagnostic shows node_id in format
+add_test(NAME cli_serve_fix
+    COMMAND sh -c "printf '(+ x 1)' | timeout 5 ./aura --serve | grep -q 'S fix'"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
