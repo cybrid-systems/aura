@@ -45,8 +45,7 @@ public:
             return {false, 0, "parse error"};
         }
 
-        aura::compiler::LoweringPass lowering(arena_);
-        auto ir_mod = lowering.lower(pr.root);
+        auto ir_mod = aura::compiler::lower_to_ir(pr.root, arena_);
 
         ComputeKindWrap ck;
         ArityWrap ar;

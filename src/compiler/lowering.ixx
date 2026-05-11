@@ -13,11 +13,12 @@ struct Binding {
     std::uint32_t slot;
 };
 
+// Internal lowering state machine (implementation detail).
+// Prefer the free function lower_to_ir() for most use cases.
 export class LoweringPass {
+    friend aura::ir::IRModule lower_to_ir(const ast::Expr*, ast::ASTArena&);
 public:
     explicit LoweringPass(ast::ASTArena& arena) : arena_(arena) {}
-
-    // Lower an Expr AST to an IRModule
     aura::ir::IRModule lower(const ast::Expr* expr);
 
 private:
@@ -63,5 +64,14 @@ private:
     // Free variable map: name → env slot index within current env
     std::unordered_map<std::string, std::uint32_t> free_var_map_;
 };
+
+// Free function — preferred API.
+// Lowers an AST expression to an IRModule in a single call.
+// Creates a temporary LoweringPass internally.
+export inline aura::ir::IRModule lower_to_ir(const ast::Expr* expr,
+                                              ast::ASTArena& arena) {
+    LoweringPass lowering(arena);
+    return lowering.lower(expr);
+}
 
 } // namespace aura::compiler
