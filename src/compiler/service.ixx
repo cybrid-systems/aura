@@ -22,14 +22,14 @@ namespace aura::compiler {
 export class CompilerService {
 public:
     CompilerService()
-        : parser_(default_arena_)
+        : parser_(arena_)
     {
-        evaluator_.set_arena(&default_arena_);
+        evaluator_.set_arena(&arena_);
     }
 
     // ---- Session lifecycle -------------------------------------------
 
-    void reset() { default_arena_.reset(); }
+    void reset() { arena_.reset(); }
 
     // ---- Tree-walker evaluation --------------------------------------
 
@@ -50,21 +50,21 @@ public:
             return {false, 0, "parse error"};
         }
 
-        aura::compiler::LoweringPass lowering(default_arena_);
+        aura::compiler::LoweringPass lowering(arena_);
         auto ir_mod = lowering.lower(pr.root);
 
-        // Run the standard pass pipeline
-        pass_mgr_.clear();
-        auto& ck = pass_mgr_.emplace<ComputeKindWrap>();
-        auto& ar = pass_mgr_.emplace<ArityWrap>();
-        auto& cf = pass_mgr_.emplace<ConstantFoldingWrap>();
-        pass_mgr_.run(ir_mod);
+        // Run the standard pass pipeline (concept-based fold)
+        ComputeKindWrap ck;
+        ArityWrap ar;
+        ConstantFoldingWrap cf;
 
-        if (cf.did_fold()) {
-            std::println(std::cerr, "PM: folded {} instructions", cf.folded_count());
-        }
+        std::println(std::cerr, "PM: running {}→{}→{}",
+                     ck.name(), ar.name(), cf.name());
 
-        // Arity check failure → stop with diagnostic
+        ck.run(ir_mod);
+        ar.run(ir_mod);
+        cf.run(ir_mod);
+
         if (ar.has_error()) {
             std::string errs;
             for (auto& d : ar.result().diagnostics) {
@@ -73,13 +73,13 @@ public:
             return {false, 0, errs};
         }
 
+        if (cf.folded_count() > 0) {
+            std::println(std::cerr, "PM: folded {} instructions", cf.folded_count());
+        }
+
         aura::compiler::IRInterpreter ir_interp(ir_mod, evaluator_.primitives());
         return ir_interp.execute();
     }
-
-    // ---- Pass manager access -----------------------------------------
-
-    PassManager& passes() { return pass_mgr_; }
 
     // ---- Multi-module arena support ----------------------------------
 
@@ -95,7 +95,7 @@ public:
     // ---- Diagnostics ------------------------------------------------
 
     ast::ArenaStats memory_stats() const {
-        auto s = default_arena_.stats();
+        auto s = arena_.stats();
         s.merge(arena_group_.total_stats());
         return s;
     }
@@ -107,16 +107,15 @@ public:
 
     // ---- Accessors ---------------------------------------------------
 
-    ast::ASTArena& arena() { return default_arena_; }
+    ast::ASTArena& arena() { return arena_; }
     Evaluator& evaluator() { return evaluator_; }
     aura::parser::Parser& parser() { return parser_; }
 
 private:
-    ast::ASTArena default_arena_;
+    ast::ASTArena arena_;
     ast::ArenaGroup arena_group_;
     aura::parser::Parser parser_;
     Evaluator evaluator_;
-    PassManager pass_mgr_;
 };
 
 } // namespace aura::compiler

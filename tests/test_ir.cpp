@@ -275,22 +275,21 @@ int main() {
 
         auto mod = lowering.lower(pr.root);
 
-        aura::compiler::PassManager pm;
-        auto& ck = pm.emplace<aura::compiler::ComputeKindWrap>();
-        auto& cf = pm.emplace<aura::compiler::ConstantFoldingWrap>();
-        pm.run(mod);
+        aura::compiler::ComputeKindWrap ck;
+        aura::compiler::ConstantFoldingWrap cf_pass;
+        ck.run(mod);
+        cf_pass.run(mod);
 
-        // Execute after folding to verify correctness
         aura::compiler::IRInterpreter interp(mod, evaluator.primitives());
         auto result = interp.execute();
 
         bool ok = result.success && result.int_value == expected;
-        if (ok && cf.folded_count() == expected_folds) {
-            std::println("CF OK: {} (folded {}, got {})", desc, cf.folded_count(), result.int_value);
+        if (ok && cf_pass.folded_count() == expected_folds) {
+            std::println("CF OK: {} (folded {}, got {})", desc, cf_pass.folded_count(), result.int_value);
             ++cf_passed;
         } else {
             std::println(std::cerr, "CF FAIL: {} (expected {} folds, got {}; result={} expected={})",
-                         desc, expected_folds, cf.folded_count(), result.int_value, expected);
+                         desc, expected_folds, cf_pass.folded_count(), result.int_value, expected);
             ++cf_failed;
         }
     };
@@ -312,32 +311,23 @@ int main() {
     std::println("Constant-fold test: {}/{}/{} passed/failed/total",
                  cf_passed, cf_failed, cf_passed + cf_failed);
 
+    // ── Pipeline tests (concept-based fold) ────────────────────
     int pm_passed = 0, pm_failed = 0;
 
-    // Test basic pass registration and execution
     {
-        aura::compiler::PassManager pm;
-        auto& ck = pm.emplace<aura::compiler::ComputeKindWrap>();
-        auto& ar = pm.emplace<aura::compiler::ArityWrap>();
+        aura::compiler::ComputeKindWrap ck;
+        aura::compiler::ArityWrap ar;
 
-        // Parse + lower a valid expression to get an IRModule
         aura::ast::ASTArena arena;
         aura::parser::Parser parser(arena);
         auto pr = parser.parse("(+ 1 2)");
         auto mod = lowering.lower(pr.root);
 
-        pm.run(mod);
+        ck.run(mod);
+        ar.run(mod);
 
-        if (pm.has_run("compute-kind") && pm.has_run("arity")) {
-            std::println("PM OK: both passes ran");
-            ++pm_passed;
-        } else {
-            std::println(std::cerr, "PM FAIL: passes did not run");
-            ++pm_failed;
-        }
-
-        if (ar.has_error() == false) {
-            std::println("PM OK: arity no error on valid code");
+        if (!ar.has_error()) {
+            std::println("PM OK: pipeline ran, arity no error");
             ++pm_passed;
         } else {
             std::println(std::cerr, "PM FAIL: arity false positive");
@@ -345,41 +335,20 @@ int main() {
         }
     }
 
-    // Test dependency ordering
     {
-        // Arity depends on compute-kind; verify order
-        aura::compiler::PassManager pm;
-        auto& ar = pm.emplace<aura::compiler::ArityWrap>();
-        auto& ck = pm.emplace<aura::compiler::ComputeKindWrap>();
+        aura::compiler::ComputeKindWrap ck;
+        aura::compiler::ArityWrap ar;
+        aura::compiler::ConstantFoldingWrap cf;
 
         aura::ast::ASTArena arena;
         aura::parser::Parser parser(arena);
-        auto pr = parser.parse("(+ 1 2)");
+        auto pr = parser.parse("((lambda (x) x) 1 2)");
         auto mod = lowering.lower(pr.root);
 
-        pm.run(mod);
-        // Both should still run (topo-sort orders ck before arity)
-        if (pm.has_run("compute-kind") && pm.has_run("arity")) {
-            std::println("PM OK: dep ordering works (arity→ck correctly ordered)");
-            ++pm_passed;
-        } else {
-            std::println(std::cerr, "PM FAIL: dep ordering broken");
-            ++pm_failed;
-        }
-    }
+        ck.run(mod);
+        ar.run(mod);
+        cf.run(mod);
 
-    // Test arity error detection via PM
-    {
-        aura::compiler::PassManager pm;
-        auto& ar = pm.emplace<aura::compiler::ArityWrap>();
-        pm.emplace<aura::compiler::ComputeKindWrap>();
-
-        aura::ast::ASTArena arena;
-        aura::parser::Parser parser(arena);
-        auto pr = parser.parse("((lambda (x) x) 1 2)");  // wrong arity
-        auto mod = lowering.lower(pr.root);
-
-        pm.run(mod);
         if (ar.has_error()) {
             std::println("PM OK: arity error detected: {}", ar.result().diagnostics[0].message);
             ++pm_passed;
@@ -389,7 +358,27 @@ int main() {
         }
     }
 
-    std::println("PassManager test: {}/{}/{} passed/failed/total",
+    // Test fold expression pipeline (compile-time ordering)
+    {
+        aura::compiler::ComputeKindWrap ck;
+        aura::compiler::ArityWrap ar;
+
+        aura::ast::ASTArena arena;
+        aura::parser::Parser parser(arena);
+        auto pr = parser.parse("(+ 1 2)");
+        auto mod = lowering.lower(pr.root);
+
+        auto pipeline_ok = aura::compiler::run_pipeline(mod, ck, ar);
+        if (pipeline_ok) {
+            std::println("PM OK: run_pipeline fold works");
+            ++pm_passed;
+        } else {
+            std::println(std::cerr, "PM FAIL: run_pipeline fold broken");
+            ++pm_failed;
+        }
+    }
+
+    std::println("Pipeline test: {}/{}/{} passed/failed/total",
                  pm_passed, pm_failed, pm_passed + pm_failed);
 
     if (test_arena_group()) { std::println("ARENA OK: group"); ++mp_passed; }
