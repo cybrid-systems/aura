@@ -29,6 +29,7 @@ target_sources(aura PRIVATE
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
     src/compiler/frontend_impl.cpp
     src/compiler/lowering_impl.cpp
+    src/compiler/lowering_flat_impl.cpp
     src/compiler/ir_interpreter_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/arity_impl.cpp
@@ -82,6 +83,7 @@ target_sources(test_ir PRIVATE
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
     src/compiler/frontend_impl.cpp
     src/compiler/lowering_impl.cpp
+    src/compiler/lowering_flat_impl.cpp
     src/compiler/ir_interpreter_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/arity_impl.cpp)

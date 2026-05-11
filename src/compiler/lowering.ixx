@@ -1,6 +1,8 @@
 export module aura.compiler.lowering;
 import std;
 import aura.core;
+import aura.core.ast_flat;
+import aura.core.ast_pool;
 import aura.compiler.ir;
 
 namespace aura::compiler {
@@ -65,13 +67,21 @@ private:
     std::unordered_map<std::string, std::uint32_t> free_var_map_;
 };
 
-// Free function — preferred API.
+// Free function — preferred API (Expr* tree path).
 // Lowers an AST expression to an IRModule in a single call.
-// Creates a temporary LoweringPass internally.
 export inline aura::ir::IRModule lower_to_ir(const ast::Expr* expr,
                                               ast::ASTArena& arena) {
     LoweringPass lowering(arena);
     return lowering.lower(expr);
 }
+
+// Free function — FlatAST path.
+// Lowers a flat index-based AST to an IRModule.
+// Internally reconstructs Expr* from FlatAST in the given arena,
+// then delegates to the Expr* lower_to_ir (Phase 3 bridge).
+// Phase 4+ will implement a native FlatAST→IR lowering.
+export aura::ir::IRModule lower_to_ir(ast::FlatAST& flat,
+                                       ast::StringPool& pool,
+                                       ast::ASTArena& arena);
 
 } // namespace aura::compiler
