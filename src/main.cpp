@@ -1,50 +1,29 @@
 import std;
 import aura.core;
-import aura.parser.parser;
-import aura.compiler.frontend;
+import aura.compiler.service;
 import aura.binary.abf_deserializer;
-import aura.compiler.ir;
-import aura.compiler.lowering;
-import aura.compiler.ir_interpreter;
 
 int main(int argc, char* argv[]) {
-    // Check for --ir flag: lower to IR and execute via IR interpreter
+    // ── --ir: lower to IR and execute ─────────────────────────────
     if (argc > 1 && std::string_view(argv[1]) == "--ir") {
-        aura::ast::ASTArena arena;
-        aura::compiler::Evaluator evaluator;
-        evaluator.set_arena(&arena);
-
+        aura::compiler::CompilerService cs;
         std::string input;
         if (argc > 2) {
             input = argv[2];
         } else {
             std::getline(std::cin, input);
         }
-
-        aura::parser::Parser parser(arena);
-        auto pr = parser.parse(input);
-        if (!pr.success || !pr.root) {
-            std::println(std::cerr, "parse error");
-            return 1;
-        }
-
-        aura::compiler::LoweringPass lowering(arena);
-        auto ir_mod = lowering.lower(pr.root);
-
-        aura::compiler::IRInterpreter ir_interp(ir_mod, evaluator.primitives());
-        auto result = ir_interp.execute();
-
+        auto result = cs.eval_ir(input);
         if (!result.success) {
-            std::println(std::cerr, "ir error: {}", result.error);
+            std::println(std::cerr, "error: {}", result.error);
             return 1;
         }
         std::println("{}", result.int_value);
         return 0;
     }
 
-    // Check for --abf mode: read ABF binary from stdin, deserialize, evaluate
+    // ── --abf: deserialize ABF binary and evaluate ────────────────
     if (argc > 1 && std::string_view(argv[1]) == "--abf") {
-        // Read binary data from stdin
         std::vector<std::byte> data;
         std::array<char, 4096> buf;
         while (std::cin.read(buf.data(), buf.size()).gcount() > 0) {
@@ -56,20 +35,16 @@ int main(int argc, char* argv[]) {
             for (std::streamsize i = 0; i < std::cin.gcount(); ++i)
                 data.push_back(static_cast<std::byte>(buf[static_cast<std::size_t>(i)]));
         }
-
         if (data.empty()) {
             std::println(std::cerr, "aura --abf: no input");
             return 1;
         }
 
-        aura::ast::ASTArena arena;
-        aura::binary::ABFDeserializer des(arena);
-        aura::compiler::Evaluator evaluator;
-        evaluator.set_arena(&arena);
-
+        aura::compiler::CompilerService cs;
+        aura::binary::ABFDeserializer des(cs.arena());
         try {
             auto* expr = des.deserialize(data);
-            auto result = evaluator.eval(expr);
+            auto result = cs.evaluator().eval(expr);
             if (!result.success) {
                 std::println(std::cerr, "eval error: {}", result.error);
                 return 1;
@@ -82,12 +57,9 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    // Normal REPL/pipe mode
-    aura::ast::ASTArena arena;
-    aura::compiler::Evaluator evaluator;
-    evaluator.set_arena(&arena);
+    // ── Normal REPL / pipe mode (tree-walker) ─────────────────────
+    aura::compiler::CompilerService cs;
 
-    // Check if stdin is interactive (REPL mode)
     bool interactive = false;
     try {
         std::cin.sync();
@@ -99,16 +71,15 @@ int main(int argc, char* argv[]) {
         std::string line;
         while (std::print("> "), std::getline(std::cin, line)) {
             if (line.empty()) continue;
-            aura::parser::Parser parser(arena);
-            auto pr = parser.parse(line);
-            if (!pr.success || !pr.root) { std::println(std::cerr, "parse error"); continue; }
-            auto r = evaluator.eval(pr.root);
-            if (!r.success) std::println(std::cerr, "eval error: {}", r.error);
+            auto r = cs.eval(line);
+            if (!r.success) std::println(std::cerr, "error: {}", r.error);
             else std::println("{}", r.int_value);
+            cs.reset();  // fresh arena for next REPL expression
         }
         return 0;
     }
 
+    // Pipe mode: read lines from stdin
     std::vector<std::string> exprs;
     std::string line;
     while (std::getline(std::cin, line)) exprs.push_back(line);
@@ -122,12 +93,10 @@ int main(int argc, char* argv[]) {
         auto s = e.find_first_not_of(" \t\r\n");
         if (s == std::string::npos) continue;
         e = e.substr(s);
-        aura::parser::Parser parser(arena);
-        auto pr = parser.parse(e);
-        if (!pr.success || !pr.root) { std::println(std::cerr, "parse error"); err = true; continue; }
-        auto r = evaluator.eval(pr.root);
-        if (!r.success) { std::println(std::cerr, "eval error: {}", r.error); err = true; }
+        auto r = cs.eval(e);
+        if (!r.success) { std::println(std::cerr, "error: {}", r.error); err = true; }
         else std::println("{}", r.int_value);
+        cs.reset();
     }
     return err ? 1 : 0;
 }
