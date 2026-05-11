@@ -84,13 +84,12 @@ bool test_arena_group() {
 }
 
 // Run compute-kind analysis on the top function and return a summary string
-std::string check_compute_kind(aura::compiler::LoweringPass& lowering,
-                                const std::string& input) {
+std::string check_compute_kind(const std::string& input) {
     aura::ast::ASTArena arena;
     auto pr = aura::parser::parse(input, arena);
     if (!pr.root) return "parse_fail";
 
-    auto mod = lowering.lower(pr.root);
+    auto mod = aura::compiler::lower_to_ir(pr.root, arena);
     auto& top_func = mod.entry();
 
     aura::compiler::ComputeKindAnalysis analysis;
@@ -112,7 +111,6 @@ int main() {
     aura::ast::ASTArena arena;
     aura::compiler::Evaluator evaluator;
     evaluator.set_arena(&arena);
-    aura::compiler::LoweringPass lowering(arena);
 
     // Test cases: (input, expected)
     struct Test { std::string input; std::int64_t expected; };
@@ -160,7 +158,7 @@ int main() {
             ++failed; continue;
         }
 
-        auto ir_mod = lowering.lower(pr.root);
+        auto ir_mod = aura::compiler::lower_to_ir(pr.root, arena);
 
         aura::compiler::IRInterpreter ir_interp(ir_mod, evaluator.primitives());
         auto result = ir_interp.execute();
@@ -191,7 +189,7 @@ int main() {
 
     int ck_passed = 0, ck_failed = 0;
     for (auto& t : ck_tests) {
-        auto summary = check_compute_kind(lowering, t.input);
+        auto summary = check_compute_kind(t.input);
         if (summary.empty()) {
             std::println(std::cerr, "CK FAIL: {} empty summary", t.desc);
             ++ck_failed;
@@ -225,7 +223,7 @@ int main() {
         auto pr = aura::parser::parse(t.input, arena);
         if (!pr.root) { std::println(std::cerr, "PARSE FAIL: {}", t.input); ++arity_failed; continue; }
 
-        auto mod = lowering.lower(pr.root);
+        auto mod = aura::compiler::lower_to_ir(pr.root, arena);
         auto result = arity_checker.check(mod);
 
         bool got_error = result.has_error;
@@ -269,7 +267,7 @@ int main() {
         auto pr = aura::parser::parse(input, arena);
         if (!pr.root) { std::println(std::cerr, "CF PARSE FAIL: {}", input); ++cf_failed; return; }
 
-        auto mod = lowering.lower(pr.root);
+        auto mod = aura::compiler::lower_to_ir(pr.root, arena);
 
         aura::compiler::ComputeKindWrap ck;
         aura::compiler::ConstantFoldingWrap cf_pass;
@@ -316,7 +314,7 @@ int main() {
 
         aura::ast::ASTArena arena;
         auto pr = aura::parser::parse("(+ 1 2)", arena);
-        auto mod = lowering.lower(pr.root);
+        auto mod = aura::compiler::lower_to_ir(pr.root, arena);
 
         ck.run(mod);
         ar.run(mod);
@@ -337,7 +335,7 @@ int main() {
 
         aura::ast::ASTArena arena;
         auto pr = aura::parser::parse("((lambda (x) x) 1 2)", arena);
-        auto mod = lowering.lower(pr.root);
+        auto mod = aura::compiler::lower_to_ir(pr.root, arena);
 
         ck.run(mod);
         ar.run(mod);
@@ -359,7 +357,7 @@ int main() {
 
         aura::ast::ASTArena arena;
         auto pr = aura::parser::parse("(+ 1 2)", arena);
-        auto mod = lowering.lower(pr.root);
+        auto mod = aura::compiler::lower_to_ir(pr.root, arena);
 
         auto pipeline_ok = aura::compiler::run_pipeline(mod, ck, ar);
         if (pipeline_ok) {
