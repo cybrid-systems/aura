@@ -18,6 +18,7 @@ target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_interpreter.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/diag.ixx
     src/binary/abf_deserializer.ixx)
 
 target_sources(aura PRIVATE
@@ -67,7 +68,8 @@ target_sources(test_ir PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/lowering.ixx
     src/compiler/ir_interpreter.ixx
     src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx)
+    src/compiler/arity.ixx
+    src/compiler/diag.ixx)
 target_sources(test_ir PRIVATE
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
     src/compiler/frontend_impl.cpp

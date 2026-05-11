@@ -83,24 +83,22 @@ int main() {
         aura::parser::Parser parser(arena);
         auto pr = parser.parse(t.input);
         if (!pr.success || !pr.root) {
-            std::cerr << "PARSE FAIL: " << t.input << std::endl;
+            std::println(std::cerr, "PARSE FAIL: {}", t.input);
             ++failed; continue;
         }
 
-        // Lower to IR
         auto ir_mod = lowering.lower(pr.root);
 
-        // Execute via IR interpreter
         aura::compiler::IRInterpreter ir_interp(ir_mod, evaluator.primitives());
         auto result = ir_interp.execute();
 
         if (result.success && result.int_value == t.expected) {
             ++passed;
         } else {
-            std::cerr << "FAIL: " << t.input;
-            if (!result.success) std::cerr << " error: " << result.error;
-            else std::cerr << " got " << result.int_value << " expected " << t.expected;
-            std::cerr << std::endl;
+            std::print(std::cerr, "FAIL: {}", t.input);
+            if (!result.success) std::print(std::cerr, " error: {}", result.error);
+            else std::print(std::cerr, " got {} expected {}", result.int_value, t.expected);
+            std::println(std::cerr, "");
             ++failed;
         }
     }
@@ -121,16 +119,14 @@ int main() {
     int ck_passed = 0, ck_failed = 0;
     for (auto& t : ck_tests) {
         auto summary = check_compute_kind(lowering, t.input);
-        // Verify: first N-1 instructions (everything except Return) should contain at least one K
-        // and the last char should be 'U' (Return is always Unknown in our analysis)
         if (summary.empty()) {
-            std::cerr << "CK FAIL: " << t.desc << " empty summary" << std::endl;
+            std::println(std::cerr, "CK FAIL: {} empty summary", t.desc);
             ++ck_failed;
         } else if (summary.back() == 'U' && summary.find('K') != std::string::npos) {
             ++ck_passed;
-            std::println("CK OK:  {} → {} (\"{}\")", t.desc, summary, t.input);
+            std::println(R"(CK OK:  {} → {} ("{}"))", t.desc, summary, t.input);
         } else {
-            std::cerr << "CK FAIL: " << t.desc << " summary='" << summary << "'" << std::endl;
+            std::println(std::cerr, "CK FAIL: {} summary='{}'", t.desc, summary);
             ++ck_failed;
         }
     }
@@ -143,15 +139,10 @@ int main() {
 
     struct ArityTest { std::string input; bool expect_error; std::string desc; };
     ArityTest arity_tests[] = {
-        // Correct arity: (lambda (x) ...) called with 1 arg → OK
         {"((lambda (x) (* x 2)) 5)", false, "correct_1arg"},
-        // Correct arity: (lambda (x y) ...) called with 2 args → OK
         {"((lambda (x y) (+ x y)) 3 4)", false, "correct_2arg"},
-        // Wrong arity: (lambda (x) ...) called with 2 args → error
         {"((lambda (x) x) 1 2)", true, "wrong_arity_too_many"},
-        // Wrong arity: (lambda (x y) ...) called with 1 arg → error
         {"((lambda (x y) (+ x y)) 5)", true, "wrong_arity_too_few"},
-        // Zero-arg lambda: correct
         {"((lambda () 42))", false, "zero_arg_ok"},
     };
 
@@ -160,7 +151,7 @@ int main() {
         arena.reset();
         aura::parser::Parser parser(arena);
         auto pr = parser.parse(t.input);
-        if (!pr.root) { std::cerr << "PARSE FAIL: " << t.input << std::endl; ++arity_failed; continue; }
+        if (!pr.root) { std::println(std::cerr, "PARSE FAIL: {}", t.input); ++arity_failed; continue; }
 
         auto mod = lowering.lower(pr.root);
         auto result = arity_checker.check(mod);
@@ -169,18 +160,18 @@ int main() {
         if (got_error == t.expect_error) {
             ++arity_passed;
             if (got_error) {
-                std::println("ARITY OK: {} → {} (expected error: {})",
+                std::println(R"(ARITY OK: {} → {} (expected error: "{}"))",
                              t.desc, result.diagnostics[0].message, t.input);
             } else {
-                std::println("ARITY OK: {} → no error (\"{}\")", t.desc, t.input);
+                std::println(R"(ARITY OK: {} → no error ("{}"))", t.desc, t.input);
             }
         } else {
-            std::cerr << "ARITY FAIL: " << t.desc << " (" << t.input << ")\n";
+            std::println(std::cerr, "ARITY FAIL: {} ({})", t.desc, t.input);
             if (got_error) {
                 for (auto& d : result.diagnostics)
-                    std::cerr << "  error: " << d.message << std::endl;
+                    std::println(std::cerr, "  error: {}", d.message);
             } else {
-                std::cerr << "  expected error but got none" << std::endl;
+                std::println(std::cerr, "  expected error but got none");
             }
             ++arity_failed;
         }
