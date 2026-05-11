@@ -326,6 +326,40 @@ int main() {
                      q_passed, q_failed_local, q_passed + q_failed_local);
     }
 
+    // ── M2.5: SymRefIndex tests ────────────────────────────
+    {
+        aura::ast::ASTArena arena2;
+        auto alloc2 = arena2.allocator();
+        aura::ast::StringPool pool2(alloc2);
+        aura::ast::FlatAST flat2(alloc2);
+
+        auto x_sym = pool2.intern("x");
+        auto y_sym = pool2.intern("y");
+        auto ten = flat2.add_literal(10);
+        auto xv = flat2.add_variable(x_sym);
+        auto yv = flat2.add_variable(y_sym);
+        auto plus = flat2.add_variable(pool2.intern("+"));
+        auto add = flat2.add_call(plus, {xv, yv});
+        auto let = flat2.add_let(x_sym, ten, add);
+        flat2.root = let;
+
+        aura::compiler::SymRefIndex sri(flat2, pool2);
+        sri.build();
+
+        int sr_passed = 0, sr_failed = 0;
+        auto check = [&](auto cnt, auto expected, std::string_view desc) {
+            if (cnt == expected) { std::println("SRI OK: {}", desc); ++sr_passed; }
+            else { std::println(std::cerr, "SRI FAIL: {} (got {} expected {})", desc, cnt, expected); ++sr_failed; }
+        };
+
+        check(sri.count(x_sym), 2ul, "x refs (definition + use)");
+        check(sri.count(y_sym), 1ul, "y refs");
+        check(sri.unique_symbols(), 3ul, "unique symbols (x, y, +)");
+
+        std::println("SymRefIndex test: {}/{}/{} passed/failed/total",
+                     sr_passed, sr_failed, sr_passed + sr_failed);
+    }
+
     // ── Memory pool tests ───────────────────────────────────
     int mp_passed = 0, mp_failed = 0;
     if (test_arena_stats()) { std::println("ARENA OK: stats"); ++mp_passed; }

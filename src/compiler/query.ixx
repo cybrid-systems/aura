@@ -100,6 +100,68 @@ private:
     ASTIndex index_;
 };
 
+// ── SymRefIndex — inverted index: SymId → all referencing nodes ─
+// Built by scanning FlatAST once. Enables fast "find all refs" and
+// "unused definition" queries.
+export class SymRefIndex {
+public:
+    SymRefIndex(const aura::ast::FlatAST& ast,
+                aura::ast::StringPool& pool)
+        : ast_(ast), pool_(pool) {}
+
+    // Build the inverted index (O(N) scan). Call once after AST is built.
+    void build() {
+        refs_.clear();
+        for (aura::ast::NodeId id = 0; id < ast_.size(); ++id) {
+            auto v = ast_.get(id);
+            if (v.sym_id != aura::ast::INVALID_SYM)
+                refs_[v.sym_id].push_back(id);
+        }
+    }
+
+    // All references to a given symbol
+    std::span<const aura::ast::NodeId> refs_of(aura::ast::SymId sym) const {
+        auto it = refs_.find(sym);
+        if (it != refs_.end()) return it->second;
+        return {};
+    }
+
+    // All references to a named symbol
+    std::span<const aura::ast::NodeId> refs_of(std::string_view name) {
+        auto sym = pool_.intern(name);
+        return refs_of(sym);
+    }
+
+    // Number of references to a symbol
+    std::size_t count(aura::ast::SymId sym) const {
+        auto it = refs_.find(sym);
+        return it != refs_.end() ? it->second.size() : 0;
+    }
+
+    // Which nodes have zero references (potential dead code)
+    std::vector<aura::ast::NodeId> unused_defs() const {
+        std::vector<aura::ast::NodeId> result;
+        for (aura::ast::NodeId id = 0; id < ast_.size(); ++id) {
+            auto v = ast_.get(id);
+            if ((v.tag == aura::ast::NodeTag::Define ||
+                 v.tag == aura::ast::NodeTag::Let) &&
+                v.sym_id != aura::ast::INVALID_SYM &&
+                count(v.sym_id) <= 1) {
+                result.push_back(id);
+            }
+        }
+        return result;
+    }
+
+    // Total unique symbols indexed
+    std::size_t unique_symbols() const { return refs_.size(); }
+
+private:
+    const aura::ast::FlatAST& ast_;
+    aura::ast::StringPool& pool_;
+    std::unordered_map<aura::ast::SymId, std::vector<aura::ast::NodeId>> refs_;
+};
+
 // ── Transform — pattern → replacement rule ─────────────────────
 // Replacement template syntax:
 //   (replace-with (Call (child 0) (LiteralInt 42)))
