@@ -261,6 +261,57 @@ int main() {
     else { std::println(std::cerr, "ARENA FAIL: stats"); ++mp_failed; }
 
     // ── A2.3: Pass Manager tests ─────────────────────────────
+    // ── L2.5: Constant folding tests ────────────────────────────
+    int cf_passed = 0, cf_failed = 0;
+
+    auto test_const_fold = [&](const std::string& input,
+                                std::int64_t expected,
+                                std::size_t expected_folds,
+                                const std::string& desc) {
+        arena.reset();
+        aura::parser::Parser parser(arena);
+        auto pr = parser.parse(input);
+        if (!pr.root) { std::println(std::cerr, "CF PARSE FAIL: {}", input); ++cf_failed; return; }
+
+        auto mod = lowering.lower(pr.root);
+
+        aura::compiler::PassManager pm;
+        auto& ck = pm.emplace<aura::compiler::ComputeKindWrap>();
+        auto& cf = pm.emplace<aura::compiler::ConstantFoldingWrap>();
+        pm.run(mod);
+
+        // Execute after folding to verify correctness
+        aura::compiler::IRInterpreter interp(mod, evaluator.primitives());
+        auto result = interp.execute();
+
+        bool ok = result.success && result.int_value == expected;
+        if (ok && cf.folded_count() == expected_folds) {
+            std::println("CF OK: {} (folded {}, got {})", desc, cf.folded_count(), result.int_value);
+            ++cf_passed;
+        } else {
+            std::println(std::cerr, "CF FAIL: {} (expected {} folds, got {}; result={} expected={})",
+                         desc, expected_folds, cf.folded_count(), result.int_value, expected);
+            ++cf_failed;
+        }
+    };
+
+    test_const_fold("(+ 1 2)", 3, 1, "add_const");
+    test_const_fold("(* 2 3)", 6, 1, "mul_const");
+    test_const_fold("(+ 1 (* 2 3))", 7, 2, "nested_const");  // Mul(2,3) folds, Add(1,6) folds
+    test_const_fold("(if 1 42 0)", 42, 2, "if_condition_const");  // both branches' Local copies from Knowns fold
+    test_const_fold("(= 1 1)", 1, 1, "eq_const");
+    test_const_fold("(> 3 2)", 1, 1, "gt_const");
+    test_const_fold("(let ((x 10)) x)", 10, 1, "let_copy");  // Local from Known → folded
+    // (let ((x 10)) (+ x 5)): Local(x_copy, x_slot) folds, Add(x_copy, 5) also folds → 2
+    test_const_fold("(let ((x 10)) (+ x 5))", 15, 2, "let_add");
+    // lambda call: caller's Local(arg_copy, ConstI64) folds, but lambda's Arg doesn't → 1
+    test_const_fold("((lambda (x) (* x 2)) 5)", 10, 1, "lambda_arg_unknown");
+    // (+ 1 (+ 2 3)): inner Add(2,3) folds, outer Add(1,5) folds → 2
+    test_const_fold("(+ 1 (+ 2 3))", 6, 2, "nested_add");
+
+    std::println("Constant-fold test: {}/{}/{} passed/failed/total",
+                 cf_passed, cf_failed, cf_passed + cf_failed);
+
     int pm_passed = 0, pm_failed = 0;
 
     // Test basic pass registration and execution
@@ -413,5 +464,5 @@ int main() {
 
     std::println("Memory pool test: {}/{}/{} passed/failed/total",
                  mp_passed, mp_failed, mp_passed + mp_failed);
-    return (failed + ck_failed + arity_failed + mp_failed + pm_failed) > 0 ? 1 : 0;
+    return (failed + ck_failed + arity_failed + mp_failed + pm_failed + cf_failed) > 0 ? 1 : 0;
 }

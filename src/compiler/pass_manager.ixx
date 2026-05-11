@@ -66,7 +66,13 @@ private:
     ArityCheckResult result_;
 };
 
-// ── ConstantFoldingWrap — stub for L2.5 (will leverage compute-kind) ─
+// ── ConstantFoldingWrap — compile-time constant folding ──────────
+//
+// Replaces pure arithmetic/comparison/logic instructions whose all
+// operands are compile-time constants with a single ConstI64.
+//
+// Example: Add(r, ConstI64(3), ConstI64(4)) → ConstI64(r, 7)
+//
 export class ConstantFoldingWrap final : public IRPass {
 public:
     std::string_view name() const override { return "const-fold"; }
@@ -75,14 +81,119 @@ public:
     }
 
     void run(aura::ir::IRModule& module) override {
-        // Placeholder — L2.5 implementation will go here
-        folded_ = false;
+        folded_count_ = 0;
+        for (auto& func : module.functions) {
+            for (auto& block : func.blocks) {
+                fold_block(block);
+            }
+        }
     }
 
-    bool did_fold() const { return folded_; }
+    std::size_t folded_count() const { return folded_count_; }
+    bool did_fold() const { return folded_count_ > 0; }
 
 private:
-    bool folded_ = false;
+    // ── Value tracking ────────────────────────────────────────────
+    // Tracks which local slots have known int64 values and what they are.
+    void record_known(std::uint32_t slot, std::int64_t val) {
+        known_values_[slot] = val;
+    }
+
+    bool get_known(std::uint32_t slot, std::int64_t& out) const {
+        auto it = known_values_.find(slot);
+        if (it != known_values_.end()) {
+            out = it->second;
+            return true;
+        }
+        return false;
+    }
+
+    // ── Block folding ─────────────────────────────────────────────
+    void fold_block(aura::ir::BasicBlock& block) {
+        known_values_.clear();
+
+        for (auto& instr : block.instructions) {
+            auto& ops = instr.operands;
+
+            switch (instr.opcode) {
+            case aura::ir::IROpcode::ConstI64: {
+                // Record Known value
+                std::int64_t val = (static_cast<std::int64_t>(ops[2]) << 32) | ops[1];
+                record_known(ops[0], val);
+                break;
+            }
+
+            case aura::ir::IROpcode::Local: {
+                // Copy from a known slot → fold to ConstI64
+                std::int64_t src_val = 0;
+                if (get_known(ops[1], src_val)) {
+                    replace_with_const(instr, ops[0], src_val);
+                    ++folded_count_;
+                }
+                break;
+            }
+
+            case aura::ir::IROpcode::MakeClosure: {
+                // Closure creation is pure; the closure value itself is "known"
+                // but we don't fold it (it's a runtime object, not an int64)
+                // However, the slot IS known (it's a compile-time constant closure)
+                // We don't fold it but we also don't mark it as unknown
+                break;
+            }
+
+            // ── Arithmetic ────────────────────────────────────────
+#define FOLD_BINARY(OPCODE, EXPR)                                 \
+    case aura::ir::IROpcode::OPCODE: {                            \
+        std::int64_t a, b;                                          \
+        if (get_known(ops[1], a) && get_known(ops[2], b)) {        \
+            replace_with_const(instr, ops[0], (EXPR));              \
+            ++folded_count_;                                        \
+        }                                                           \
+        break;                                                      \
+    }
+
+            FOLD_BINARY(Add, a + b)
+            FOLD_BINARY(Sub, a - b)
+            FOLD_BINARY(Mul, a * b)
+            FOLD_BINARY(Div, a / b)
+            FOLD_BINARY(Eq,  static_cast<std::int64_t>(a == b))
+            FOLD_BINARY(Lt,  static_cast<std::int64_t>(a < b))
+            FOLD_BINARY(Gt,  static_cast<std::int64_t>(a > b))
+            FOLD_BINARY(Le,  static_cast<std::int64_t>(a <= b))
+            FOLD_BINARY(Ge,  static_cast<std::int64_t>(a >= b))
+            FOLD_BINARY(And, static_cast<std::int64_t>(a && b))
+            FOLD_BINARY(Or,  static_cast<std::int64_t>(a || b))
+
+            case aura::ir::IROpcode::Not: {
+                std::int64_t a;
+                if (get_known(ops[1], a)) {
+                    replace_with_const(instr, ops[0], !a);
+                    ++folded_count_;
+                }
+                break;
+            }
+
+#undef FOLD_BINARY
+
+            default:
+                break;
+            }
+        }
+    }
+
+    // ── IR mutation ──────────────────────────────────────────────
+    // Replace an instruction with ConstI64(slot, val)
+    void replace_with_const(aura::ir::IRInstruction& instr,
+                             std::uint32_t slot, std::int64_t val) {
+        instr.opcode = aura::ir::IROpcode::ConstI64;
+        auto lo = static_cast<std::uint32_t>(val & 0xFFFFFFFF);
+        auto hi = static_cast<std::uint32_t>((val >> 32) & 0xFFFFFFFF);
+        instr.operands = {slot, lo, hi, 0};
+        record_known(slot, val);
+    }
+
+    std::unordered_map<std::uint32_t, std::int64_t> known_values_;
+    std::size_t folded_count_ = 0;
 };
 
 // ── PassManager — pass registry + dependency-aware executor ─────

@@ -54,9 +54,15 @@ public:
         auto ir_mod = lowering.lower(pr.root);
 
         // Run the standard pass pipeline
+        pass_mgr_.clear();
         auto& ck = pass_mgr_.emplace<ComputeKindWrap>();
         auto& ar = pass_mgr_.emplace<ArityWrap>();
+        auto& cf = pass_mgr_.emplace<ConstantFoldingWrap>();
         pass_mgr_.run(ir_mod);
+
+        if (cf.did_fold()) {
+            std::println(std::cerr, "PM: folded {} instructions", cf.folded_count());
+        }
 
         // Arity check failure → stop with diagnostic
         if (ar.has_error()) {
