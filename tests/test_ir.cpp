@@ -401,6 +401,60 @@ int main() {
         }
     }
 
+    // ── M2.6: Hot-swap tests ────────────────────────────────
+    {
+        aura::ast::ASTArena arena;
+        aura::compiler::LoweringPass lowering(arena);
+        aura::compiler::Evaluator eval;
+        eval.set_arena(&arena);
+        aura::parser::Parser parser(arena);
+
+        auto pr = parser.parse("((lambda (x) (* x 2)) 5)");
+        auto mod = lowering.lower(pr.root);
+        auto& top = mod.functions[0];
+        auto& lam = mod.functions[1];
+
+        // Verify original structure
+        bool has_closure = false;
+        for (auto& block : top.blocks)
+            for (auto& instr : block.instructions)
+                if (instr.opcode == aura::ir::IROpcode::MakeClosure)
+                    has_closure = true;
+
+        // Execute original — should be 10
+        aura::compiler::IRInterpreter interp(mod, eval.primitives());
+        auto r1 = interp.execute();
+
+        // Hot-swap: replace lambda body with (* x 3) → expects 15
+        aura::ir::IRFunction new_fn;
+        new_fn.name = "swapped";
+        new_fn.entry_block = 0;
+        new_fn.blocks.resize(1);
+        new_fn.blocks[0].id = 0;
+        new_fn.params = {"x"};
+        new_fn.arg_count = 1;
+        new_fn.blocks[0].instructions = {
+            {aura::ir::IROpcode::Arg, {0, 0, 0, 0}},
+            {aura::ir::IROpcode::ConstI64, {1, 3, 0, 0}},
+            {aura::ir::IROpcode::Mul, {2, 0, 1, 0}},
+            {aura::ir::IROpcode::Return, {2, 0, 0, 0}},
+        };
+        new_fn.local_count = 3;
+
+        bool ok = mod.hot_swap_function(0, std::move(new_fn));
+
+        // Re-execute — should be 15
+        aura::compiler::IRInterpreter interp2(mod, eval.primitives());
+        auto r2 = interp2.execute();
+
+        if (ok && r1 && *r1 == 10 && r2 && *r2 == 15) {
+            std::println("HS OK: (* x 2) → (* x 3): {} → {}", *r1, *r2);
+        } else {
+            std::println(std::cerr, "HS FAIL: r1={} r2={}",
+                         r1 ? *r1 : -1, r2 ? *r2 : -1);
+        }
+    }
+
     // ── Memory pool tests ───────────────────────────────────
     int mp_passed = 0, mp_failed = 0;
     if (test_arena_stats()) { std::println("ARENA OK: stats"); ++mp_passed; }

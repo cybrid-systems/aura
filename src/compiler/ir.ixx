@@ -75,6 +75,38 @@ export struct IRModule {
     void set_entry(std::uint32_t id) { entry_function_id = id; }
     IRFunction& entry() { return functions[entry_function_id]; }
     const IRFunction& entry() const { return functions[entry_function_id]; }
+
+    // Hot-swap a function: replace the body while keeping the same id
+    // All existing closures referencing func_id will use the new code
+    // on their next invocation.
+    bool hot_swap_function(std::uint32_t func_id, IRFunction new_func) {
+        if (func_id >= functions.size()) return false;
+        new_func.id = func_id;
+        functions[func_id] = std::move(new_func);
+        return true;
+    }
+
+    // Find all Call/MakeClosure instructions that reference a function
+    std::vector<std::pair<std::uint32_t, std::uint32_t>>
+    find_callers_of(std::uint32_t func_id) const {
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> result;
+        for (std::size_t fi = 0; fi < functions.size(); ++fi) {
+            auto& f = functions[fi];
+            for (std::size_t bi = 0; bi < f.blocks.size(); ++bi) {
+                auto& b = f.blocks[bi];
+                for (std::size_t ii = 0; ii < b.instructions.size(); ++ii) {
+                    auto& instr = b.instructions[ii];
+                    if (instr.opcode == IROpcode::MakeClosure &&
+                        instr.operands.size() > 1 &&
+                        instr.operands[1] == func_id) {
+                        result.emplace_back(static_cast<std::uint32_t>(fi),
+                                            static_cast<std::uint32_t>(ii));
+                    }
+                }
+            }
+        }
+        return result;
+    }
 };
 
 } // namespace aura::ir
