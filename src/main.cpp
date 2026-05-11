@@ -8,6 +8,35 @@ import aura.parser.parser;
 import aura.binary.abf_deserializer;
 
 int main(int argc, char* argv[]) {
+    // ── --query-and-fix: query + transform on parsed AST ─────────
+    if (argc > 3 && std::string_view(argv[1]) == "--query-and-fix") {
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+
+        std::string input;
+        if (argc > 4) { input = argv[4]; }
+        else { std::getline(std::cin, input); }
+
+        auto pr = aura::parser::parse(input, arena);
+        if (!pr.success || !pr.root) {
+            std::println(std::cerr, "parse error");
+            return 1;
+        }
+        flat.root = aura::ast::flatten_to_flat(pr.root, flat, pool);
+
+        aura::compiler::QueryEngine engine(flat, pool);
+        aura::compiler::TransformEngine xform(flat, pool);
+        auto result = xform.query_and_fix(engine, argv[2], argv[3]);
+
+        std::println("transform: {} matches, {} patches, applied={}",
+                     result.match_count, result.patch_count, result.applied);
+        if (!result.error.empty())
+            std::println(std::cerr, "  error: {}", result.error);
+        return result.applied ? 0 : 1;
+    }
+
     // ── --query: run AuraQuery on parsed AST ─────────────────────
     if (argc > 2 && std::string_view(argv[1]) == "--query") {
         aura::ast::ASTArena arena;
