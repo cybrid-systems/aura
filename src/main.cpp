@@ -1,9 +1,42 @@
 import std;
 import aura.core;
 import aura.compiler.service;
+import aura.compiler.query;
+import aura.core.ast_flat;
+import aura.core.ast_pool;
+import aura.parser.parser;
 import aura.binary.abf_deserializer;
 
 int main(int argc, char* argv[]) {
+    // ── --query: run AuraQuery on parsed AST ─────────────────────
+    if (argc > 2 && std::string_view(argv[1]) == "--query") {
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+
+        std::string input;
+        if (argc > 3) { input = argv[3]; }
+        else { std::getline(std::cin, input); }
+
+        auto pr = aura::parser::parse(input, arena);
+        if (!pr.success || !pr.root) {
+            std::println(std::cerr, "parse error");
+            return 1;
+        }
+        flat.root = aura::ast::flatten_to_flat(pr.root, flat, pool);
+
+        aura::compiler::QueryEngine engine(flat, pool);
+        auto results = engine.query(argv[2]);
+
+        std::println("query: {} matches", results.size());
+        for (auto id : results) {
+            auto v = flat.get(id);
+            std::println("  node[{}]: tag={}", id, static_cast<int>(v.tag));
+        }
+        return 0;
+    }
+
     // ── --ir: lower to IR and execute ─────────────────────────────
     if (argc > 1 && std::string_view(argv[1]) == "--ir") {
         aura::compiler::CompilerService cs;
