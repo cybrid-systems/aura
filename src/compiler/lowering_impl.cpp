@@ -69,36 +69,36 @@ std::uint32_t LoweringPass::lower_literal_int(const ast::LiteralIntNode& node) {
 }
 
 std::uint32_t LoweringPass::lower_variable(const ast::VariableNode& node) {
-    // Look up in scope chain (local, captured, or arg)
+    // Look up in scope chain
     for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
         auto found = it->find(node.name);
         if (found != it->end()) {
             auto& binding = found->second;
             auto slot = alloc_local();
-            if (binding.kind == BindingKind::Local) {
-                // Local variable: load from local slot
+            switch (binding.kind) {
+            case BindingKind::Local:
                 emit(IROpcode::Local, slot, binding.slot);
-            } else {
-                // Captured: load from env object (Capture retrieves value)
+                break;
+            case BindingKind::Captured:
                 emit(IROpcode::Local, slot, binding.slot);
+                break;
+            case BindingKind::Cell:
+                // Mutable cell (letrec): load via CellGet
+                emit(IROpcode::CellGet, slot, binding.slot);
+                break;
             }
             return slot;
         }
     }
 
-    // Check if it's a free variable from outer lambda's free_var_map
+    // Free variable from outer lambda's env (captured at closure creation)
     auto fv = free_var_map_.find(node.name);
     if (fv != free_var_map_.end()) {
-        // This variable is captured in the closure's env
-        // Load from env: first load env pointer, then index into it
         auto slot = alloc_local();
-        // For the current function, the env is at env_slot_ after MakeClosure
-        // The Capture opcode stores captured vars into env slots during closure creation
         emit(IROpcode::Local, slot, fv->second);
         return slot;
     }
 
-    // Not found: push as 0 (will cause eval error)
     auto slot = alloc_local();
     emit(IROpcode::ConstI64, slot, 0);
     return slot;
@@ -155,7 +155,8 @@ void LoweringPass::collect_free_vars(const ast::Expr* expr,
 // ─── Lambda lowering ─────────────────────────────────────────────
 
 aura::ir::IRFunction LoweringPass::lower_lambda_body(
-    const ast::LambdaNode& node, std::vector<std::string>& free_vars)
+    const ast::LambdaNode& node, std::vector<std::string>& free_vars,
+    const std::unordered_set<std::string>& cell_free_vars)
 {
     // Create a new IRFunction for this lambda
     IRFunction func;
@@ -187,13 +188,20 @@ aura::ir::IRFunction LoweringPass::lower_lambda_body(
     // Scope for this function: first env vars, then params
     scopes_.push_back({});
 
-    // First, load captured free variables from the env prefix of the args array
+    // First, load captured free variables from the env prefix
     for (std::size_t i = 0; i < free_vars.size(); ++i) {
+        auto& fv = free_vars[i];
         auto slot = alloc_local();
-        // Env values are at args[0..free_vars.size()-1]
         emit(IROpcode::Arg, slot, static_cast<std::uint32_t>(i));
-        scopes_.back()[free_vars[i]] = Binding{ BindingKind::Captured, slot };
-        free_var_map_[free_vars[i]] = static_cast<std::uint32_t>(i);
+        if (cell_free_vars.count(fv)) {
+            // Cell capture: env[i] is cell_id, load via CellGet
+            auto result = alloc_local();
+            emit(IROpcode::CellGet, result, slot);
+            scopes_.back()[fv] = Binding{ BindingKind::Local, result };
+        } else {
+            scopes_.back()[fv] = Binding{ BindingKind::Captured, slot };
+        }
+        free_var_map_[fv] = static_cast<std::uint32_t>(i);
     }
 
     // Load parameters (args are AFTER env values in locals)
@@ -245,7 +253,7 @@ std::uint32_t LoweringPass::lower_lambda(const ast::LambdaNode& node) {
     }
 
     // Lower the lambda body as a separate function
-    auto lambda_func = lower_lambda_body(node, free_vars);
+    auto lambda_func = lower_lambda_body(node, free_vars, cell_free_vars_);
     auto func_id = module_.add_function(std::move(lambda_func));
 
     // Emit MakeClosure in the current function
@@ -256,18 +264,19 @@ std::uint32_t LoweringPass::lower_lambda(const ast::LambdaNode& node) {
     // Capture each free variable into the closure
     for (std::size_t i = 0; i < free_vars.size(); ++i) {
         auto& fv = free_vars[i];
-        // Find the variable's slot in current scope
         for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
             auto found = it->find(fv);
             if (found != it->end()) {
-                if (byref_captures_.count(fv)) {
-                    // Capture by reference: store the slot index, not the value
-                    emit(IROpcode::CaptureRef, closure_slot,
-                         static_cast<std::uint32_t>(i),
-                         static_cast<std::uint32_t>(found->second.slot));
+                auto& binding = found->second;
+                if (binding.kind == BindingKind::Cell) {
+                    // Cell binding (letrec): capture the cell_id (stored at binding.slot)
+                    auto slot = alloc_local();
+                    emit(IROpcode::Local, slot, binding.slot);  // copies cell_id
+                    emit(IROpcode::Capture, closure_slot,
+                         static_cast<std::uint32_t>(i), slot);
                 } else {
                     auto slot = alloc_local();
-                    emit(IROpcode::Local, slot, found->second.slot);
+                    emit(IROpcode::Local, slot, binding.slot);
                     emit(IROpcode::Capture, closure_slot,
                          static_cast<std::uint32_t>(i), slot);
                 }
@@ -387,21 +396,26 @@ std::uint32_t LoweringPass::lower_if(const ast::IfExprNode& node) {
 
 std::uint32_t LoweringPass::lower_let(const ast::LetNode& node, bool is_rec) {
     if (is_rec) {
-        // For letrec: pre-allocate a slot for the binding, then evaluate the value
-        auto cell_slot = alloc_local();
-        emit(IROpcode::ConstI64, cell_slot, 0, 0);
-        // Bind before evaluating — mark as byref so captures use CaptureRef
-        scopes_.back()[node.name] = Binding{ BindingKind::Local, cell_slot };
-        byref_captures_.insert(node.name);
-        // Evaluate the value (lambda), which will capture 'fact' by reference
+        // For letrec: allocate a mutable cell on the heap; the lambda body
+        // will CellGet the current value at call time (after the cell is filled).
+        auto cell_id_slot = alloc_local();
+        emit(IROpcode::NewCell, cell_id_slot);
+
+        // Bind name → CellGet(cell_id_slot).  Both the lambda body and the
+        // letrec body will emit CellGet when referencing this name.
+        scopes_.back()[node.name] = Binding{ BindingKind::Cell, cell_id_slot };
+        cell_free_vars_.insert(node.name);
+
+        // Evaluate the value (lambda).  The lambda's free-var capture will
+        // see Cell binding and capture the cell_id, not the value-in-the-cell.
         auto val_slot = lower_expr(node.value);
-        // Store the result into the cell (now captured refs will see the value)
-        emit(IROpcode::Local, cell_slot, val_slot);
-        byref_captures_.erase(node.name);
-        // Lower body
-        if (node.body) {
-            return lower_expr(node.body);
-        }
+
+        // Store the closure into the cell (now CellGet in the lambda body
+        // will resolve to the actual closure at call time).
+        emit(IROpcode::CellSet, cell_id_slot, val_slot);
+        cell_free_vars_.erase(node.name);
+
+        if (node.body) return lower_expr(node.body);
         return val_slot;
     }
 

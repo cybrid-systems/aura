@@ -47,6 +47,10 @@ private:
     // Per-instance closure storage
     std::uint64_t next_closure_id_ = 1;
     std::unordered_map<std::uint64_t, IRClosure> runtime_closures_;
+
+    // Per-instance mutable cell heap (for letrec)
+    std::uint64_t next_cell_id_ = 1;
+    std::unordered_map<std::uint64_t, std::int64_t> cell_heap_;
 };
 
 } // namespace aura::compiler

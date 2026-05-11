@@ -214,6 +214,27 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                 break;
             }
 
+            case IROpcode::NewCell: {
+                auto cell_id = next_cell_id_++;
+                cell_heap_[cell_id] = 0;
+                locals[ops[0]] = static_cast<std::int64_t>(cell_id);  // result_slot = cell_id
+                break;
+            }
+
+            case IROpcode::CellSet: {
+                // ops[0] = cell_id_slot, ops[1] = value_slot
+                auto cell_id = static_cast<std::uint64_t>(locals[ops[0]]);
+                cell_heap_[cell_id] = locals[ops[1]];
+                break;
+            }
+
+            case IROpcode::CellGet: {
+                // ops[0] = result_slot, ops[1] = cell_id_slot
+                auto cell_id = static_cast<std::uint64_t>(locals[ops[1]]);
+                locals[ops[0]] = cell_heap_[cell_id];
+                break;
+            }
+
             default:
                 break;
             }

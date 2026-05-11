@@ -23,9 +23,13 @@ export enum class IROpcode : std::uint8_t {
     Return,         // return: value_slot
     // Closures
     MakeClosure,    // create closure: func_slot, env_size
-    Capture,        // capture variable: env_slot, env_idx, var_slot
+    Capture,        // capture variable: closure_slot, env_idx, var_slot
     CaptureRef,     // capture by reference: closure_slot, env_idx, cell_slot
     Apply,          // apply closure: closure_slot, arg_count, result_slot
+    // Mutable cells (for letrec)
+    NewCell,        // allocate mutable cell: result_slot
+    CellSet,        // write to cell: cell_id, value_slot
+    CellGet,        // read from cell: result_slot, cell_id
 };
 
 export struct IRInstruction {
