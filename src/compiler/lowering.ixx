@@ -8,7 +8,7 @@ import aura.compiler.ir;
 namespace aura::compiler {
 
 // A slot binding: either a local variable (slot index) or captured (env slot)
-enum class BindingKind : std::uint8_t { Local, Captured };
+enum class BindingKind : std::uint8_t { Local, Captured, Cell };
 
 struct Binding {
     BindingKind kind;
@@ -48,11 +48,13 @@ private:
                            std::unordered_set<std::string>& bound);
 
     // Lower a lambda body as a separate IR function
+    // cell_free_vars: subset of free_vars that are letrec cell references
     aura::ir::IRFunction lower_lambda_body(const ast::LambdaNode& node,
-                                            std::vector<std::string>& free_vars);
+                                            std::vector<std::string>& free_vars,
+                                            const std::unordered_set<std::string>& cell_free_vars = {});
 
-    // Set of variables that should be captured by reference (for letrec)
-    std::unordered_set<std::string> byref_captures_;
+    // Set of variables that should be captured as cell references (for letrec)
+    std::unordered_set<std::string> cell_free_vars_;
 
     ast::ASTArena& arena_;
     aura::ir::IRModule module_;
