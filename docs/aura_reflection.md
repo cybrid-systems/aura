@@ -1,8 +1,8 @@
 # M3: 反射 (Reflection) 规划方案
 
-**版本**：v0.1（草案）
-**依赖**：M1 IR 管线 ✅ + M2 AuraQuery 引擎 ✅ + GCC 16.1 P2996
-**状态**：规划阶段
+**版本**：v0.2
+**依赖**：M1 IR 管线 ✅ + M2 AuraQuery 引擎 ✅ + GCC 16.1 P2996 ✅
+**状态**：Phase 1 Day 1 完成
 
 ---
 
@@ -215,13 +215,14 @@ flambda 策略                  eval_ir() 可选参数
 
 ## 7. 实现路线图
 
-### Phase 1: P2996 基础 (GCC 16.1 就绪后)
+### Phase 1: P2996 基础 (GCC 16.1 就绪)
 
 ```
-Day 1:
-  ├── GCC 16.1 升级验证
-  ├── reflect_json_demo 编译通过
-  └── auto_to_json<Diagnostic> → 替换 --serve JSON 手写
+Day 1: ✅ 完成
+  ├── ✅ GCC 16.1 升级验证 (从源码构建 16.1.0)
+  ├── ✅ reflect_json_demo 编译通过 (g++ -std=c++26 -freflection)
+  ├── ✅ auto_to_json<T>() 实现 — 支持 int/uint8~64, bool, string, float/double
+  └── ⏳ 替换 --serve JSON 手写 (见 §10 集成说明)
 
 Day 2:
   ├── auto_to_json<IRInstruction> → IR 序列化
@@ -291,4 +292,54 @@ Day 7:
 
 ---
 
-> 本文档是 M3 起始设计，版本 v0.1。GCC 16.1 就绪后立即启动 Phase 1。
+> 本文档是 M3 设计，版本 v0.2。Phase 1 Day 1 完成。
+
+---
+
+## 10. 集成到 Aura 模块系统
+
+### 10.1 已知限制
+
+GCC 16.1 `-freflection` 与 C++ module system (`import std;`) 存在兼容性问题：
+
+1. **`-freflection` 与 std module 冲突**：编译 std module (`import std` + `-freflection`)
+   会导致 `std::remove_const` 等模板的 pendings 加载失败。原因可能是
+   `-freflection` 改变了类型系统的内部处理方式。
+
+2. **`^^T` 跨模块边界**：即使编译通过，`nonstatic_data_members_of(^^T, ...)`
+   在对 `import` 导入的类型上会触发 "constexpr call flows off the end"
+   错误，反射操作在模块边界处被阻断。
+
+3. **`#include <meta>` 与 `import std;` 冲突**：在同一 TU 中混用
+   `<meta>` header 和 `import std;` 会导致 `type_traits` 的重定义。
+
+### 10.2 当前策略：两阶段构建
+
+```
+Phase A: GCC 16.0.1 + 模块系统 (原有)
+  └── 构建 aura core (所有 import std; 的 .ixx / .cpp)
+
+Phase B: GCC 16.1 + -freflection (反射增强)
+  └── 构建 reflect*.cpp，链接 Phase A 的产物
+  └── 或完全独立构建 (头文件方式)
+```
+
+### 10.3 替代方案：非模块头文件
+
+将 `auto_to_json` 封装在独立头文件中，不依赖模块系统：
+
+- 文件位置: `src/compiler/reflect.hh`
+- 依赖: `#include <meta>` + `#include <string>` + 基础头文件
+- 构建: `g++ -std=c++26 -freflection ...`
+- 无模块依赖, 使用传统 `#include`
+
+当 GCC 修复模块 + reflection 的兼容性后，再整合到模块系统。
+
+### 10.4 集成路线
+
+| 步骤 | 状态 | 说明 |
+|------|------|------|
+| 独立 demo | ✅ | `tests/reflect_json_demo.cpp` 可独立编译运行 |
+| Header-only 库 | 🔲 | `src/compiler/reflect.hh` 作为头文件引入 |
+| --serve 集成 | ⏳ | main.cpp 中引入 reflect.hh, 用 auto_to_json 替换手写 JSON |
+| 模块集成 | 🔲 | 等待 GCC 修复后, 将 reflect 作为 ixx 模块加入 |
