@@ -210,14 +210,11 @@ public:
         child_data_.push_back(body);
         child_begin_[id] = start;
         child_count_[id] = 1;
-        // Store params in a separate flat vector (limited capacity for now)
-        // Since FlatAST doesn't have a generic params store, encode params
-        // as string children via the name field of synthetic nodes.
-        // Simpler: store param count + param IDs after body in child_data
-        for (auto p : params) child_data_.push_back(p);
-        // No — child_data is NodeId, not SymId. Can't store SymId there.
-        // For now: params are reconstructed from the parser's original input.
-        // The params are accessible through the parser's pool.
+        // Store params using the same SoA as Lambda params
+        auto pstart = static_cast<std::uint32_t>(param_data_.size());
+        param_data_.insert(param_data_.end(), params.begin(), params.end());
+        param_begin_[id] = pstart;
+        param_count_[id] = static_cast<std::uint32_t>(params.size());
         return id;
     }
 
