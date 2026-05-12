@@ -50,9 +50,11 @@ export struct ASTIndex {
     }
 
     // Find calls to a specific function by name
+    // Find calls to a specific function by name — uses TagIndex
     auto calls_to(std::string_view name) const {
         auto sym = pool.intern(name);
-        return by_tag(aura::ast::NodeTag::Call)
+        auto call_nodes = by_tag(aura::ast::NodeTag::Call);
+        return call_nodes
              | std::views::filter([this, sym](aura::ast::NodeId id) {
                    auto v = ast.get(id);
                    if (v.children.empty()) return false;
