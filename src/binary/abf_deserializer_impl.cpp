@@ -68,6 +68,9 @@ ast::Expr* ABFDeserializer::read_node(Reader& r) {
     case 0x06: return read_let(r, false);
     case 0x07: return read_let(r, true);
     case 0x08: return read_define(r);
+    case 0x09: return read_begin(r);
+    case 0x0A: return read_set(r);
+    case 0x0B: return read_quote(r);
     default: throw std::runtime_error("unknown tag: " + std::to_string(tag));
     }
 }
@@ -133,6 +136,25 @@ ast::Expr* ABFDeserializer::read_define(Reader& r) {
     auto name = r.read_string();
     auto* val = read_node(r);
     return arena_.create<ast::Expr>(ast::DefineNode{{ast::NodeTag::Define}, name, val});
+}
+
+ast::Expr* ABFDeserializer::read_begin(Reader& r) {
+    auto count = r.read_varint();
+    ast::BeginNode begin{{}, {}};
+    for (std::uint64_t i = 0; i < count; ++i)
+        begin.exprs.push_back(read_node(r));
+    return arena_.create<ast::Expr>(std::move(begin));
+}
+
+ast::Expr* ABFDeserializer::read_set(Reader& r) {
+    auto name = r.read_string();
+    auto* val = read_node(r);
+    return arena_.create<ast::Expr>(ast::SetNode{{ast::NodeTag::Set}, name, val});
+}
+
+ast::Expr* ABFDeserializer::read_quote(Reader& r) {
+    auto* val = read_node(r);
+    return arena_.create<ast::Expr>(ast::QuoteNode{{ast::NodeTag::Quote}, val});
 }
 
 } // namespace aura::binary

@@ -30,6 +30,10 @@ ast::Expr* Parser::parse_list() {
         if (kw=="let") return parse_let(false);
         if (kw=="letrec") return parse_let(true);
         if (kw=="define") return parse_define();
+        if (kw=="begin") return parse_begin();
+        if (kw=="set!") return parse_set();
+        if (kw=="quote") return parse_quote();
+        if (kw=="cond") return parse_cond();
     }
     auto* func = parse_expr(); if (!func) { skip_rparen(); return nullptr; }
     ast::CallNode call;
@@ -76,6 +80,63 @@ ast::Expr* Parser::parse_val() {
     default: return nullptr;
     }
 }
+ast::Expr* Parser::parse_begin() {
+    lexer_->consume(); // consume 'begin'
+    ast::BeginNode begin{{}};
+    while (lexer_->peek().kind != TokenKind::RParen && !lexer_->eof()) {
+        auto* e = parse_expr();
+        if (e) begin.exprs.push_back(e);
+        else break;
+    }
+    lexer_->consume(); // rparen
+    return arena_.template create<ast::Expr>(std::move(begin));
+}
+
+ast::Expr* Parser::parse_set() {
+    lexer_->consume(); // consume 'set!'
+    auto n = lexer_->consume();
+    if (n.kind != TokenKind::Identifier) { skip_rparen(); return nullptr; }
+    auto* v = parse_val();
+    if (!v) { skip_rparen(); return nullptr; }
+    lexer_->consume(); // rparen
+    return arena_.template create<ast::Expr>(ast::SetNode{{}, std::string(n.text), v});
+}
+
+ast::Expr* Parser::parse_quote() {
+    lexer_->consume(); // consume 'quote'
+    auto* v = parse_val();
+    if (!v) { skip_rparen(); return nullptr; }
+    lexer_->consume(); // rparen
+    return arena_.template create<ast::Expr>(ast::QuoteNode{{}, v});
+}
+
+ast::Expr* Parser::parse_cond() {
+    lexer_->consume(); // consume 'cond'
+    // Desugar (cond (t1 e1) (t2 e2) (else en)) -> (if t1 e1 (if t2 e2 en))
+    // Collect all clauses first, then build nested-if from the inside out
+    struct Clause { ast::Expr* test; ast::Expr* val; };
+    std::vector<Clause> clauses;
+    while (lexer_->peek().kind != TokenKind::RParen && !lexer_->eof()) {
+        if (lexer_->peek().kind != TokenKind::LParen) break;
+        lexer_->consume(); // lparen of clause
+        auto* test = parse_val();
+        if (!test) { skip_rparen(); break; }
+        auto* val = parse_val();
+        if (!val) { skip_rparen(); break; }
+        lexer_->consume(); // rparen of clause
+        clauses.push_back({test, val});
+    }
+    lexer_->consume(); // rparen of cond
+    // Build nested if from the inside out
+    if (clauses.empty()) return nullptr;
+    auto* result = clauses.back().val;
+    for (auto it = clauses.rbegin() + 1; it != clauses.rend(); ++it) {
+        result = arena_.template create<ast::Expr>(
+            ast::IfExprNode{{}, it->test, it->val, result});
+    }
+    return result;
+}
+
 void Parser::skip_rparen(){while(lexer_->peek().kind!=TokenKind::RParen&&!lexer_->eof())lexer_->consume();lexer_->consume();}
 
 } // namespace aura::parser

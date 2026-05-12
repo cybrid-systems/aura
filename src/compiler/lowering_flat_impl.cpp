@@ -68,6 +68,22 @@ static Expr* reconstruct_node(NodeId id, const FlatAST& flat,
         auto* val = reconstruct_node(v.child(0), flat, pool, arena);
         return arena.create<Expr>(DefineNode{v.tag, std::string(name), val});
     }
+    case NodeTag::Begin: {
+        ast::BeginNode begin{v.tag, {}};
+        for (std::size_t i = 0; i < v.children.size(); ++i) {
+            begin.exprs.push_back(reconstruct_node(v.child(i), flat, pool, arena));
+        }
+        return arena.create<Expr>(std::move(begin));
+    }
+    case NodeTag::Set: {
+        auto name = pool.resolve(v.sym_id);
+        auto* val = reconstruct_node(v.child(0), flat, pool, arena);
+        return arena.create<Expr>(SetNode{v.tag, std::string(name), val});
+    }
+    case NodeTag::Quote: {
+        auto* val = reconstruct_node(v.child(0), flat, pool, arena);
+        return arena.create<Expr>(QuoteNode{v.tag, val});
+    }
     }
     return nullptr;
 }

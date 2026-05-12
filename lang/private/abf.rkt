@@ -13,6 +13,9 @@
 (define TAG-LET         #x06)
 (define TAG-LETREC      #x07)
 (define TAG-DEFINE      #x08)
+(define TAG-BEGIN       #x09)
+(define TAG-SET         #x0A)
+(define TAG-QUOTE       #x0B)
 (define PHASE-PARSED 0)
 
 (define (tag-for-expr expr)
@@ -22,11 +25,13 @@
         [(symbol? expr) TAG-VARIABLE]
         [(pair? expr)
          (case (car expr)
-           [(quote) TAG-LITERAL-INT]
+           [(quote) TAG-QUOTE]
            [(if) TAG-IF]
            [(lambda) TAG-LAMBDA]
            [(let) TAG-LET]
            [(letrec) TAG-LETREC]
+           [(begin) TAG-BEGIN]
+           [(set!) TAG-SET]
            [else TAG-CALL])]
         [else (error 'tag-for-expr "unknown expr: ~a" expr)]))
 
@@ -64,7 +69,10 @@
     [(#x05) (write-lambda buf expr phase-id)]
     [(#x06) (write-let buf expr phase-id #f)]
     [(#x07) (write-let buf expr phase-id #t)]
-    [(#x08) (write-define buf expr phase-id)]))
+    [(#x08) (write-define buf expr phase-id)]
+    [(#x09) (write-begin buf expr phase-id)]
+    [(#x0A) (write-set buf expr phase-id)]
+    [(#x0B) (write-quote buf expr phase-id)]))
 
 (define (write-literal-int buf expr)
   (define val (if (integer? expr) expr 0))
@@ -123,6 +131,23 @@
   (put-varint! buf (bytes-length name-bytes))
   (put-bytes! buf name-bytes)
   (write-node buf (caddr expr) phase-id))
+
+(define (write-begin buf expr phase-id)
+  (define exprs (cdr expr))
+  (put-varint! buf (length exprs))
+  (for ([e exprs])
+    (write-node buf e phase-id)))
+
+(define (write-set buf expr phase-id)
+  (define name (symbol->string (cadr expr)))
+  (define name-bytes (string->bytes/utf-8 name))
+  (put-varint! buf (bytes-length name-bytes))
+  (put-bytes! buf name-bytes)
+  (write-node buf (caddr expr) phase-id))
+
+(define (write-quote buf expr phase-id)
+  ;; quote wraps a single expression — write it directly
+  (write-node buf (cadr expr) phase-id))
 
 (define (serialize-delta expr base-version)
   (serialize-expr expr))

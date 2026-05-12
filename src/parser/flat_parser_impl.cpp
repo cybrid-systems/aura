@@ -41,6 +41,10 @@ NodeId FlatParser::parse_list() {
         if (kw == "let")    return parse_let(false);
         if (kw == "letrec") return parse_let(true);
         if (kw == "define") return parse_define();
+        if (kw == "begin")  return parse_begin();
+        if (kw == "set!")   return parse_set();
+        if (kw == "quote")  return parse_quote();
+        if (kw == "cond")   return parse_cond();
     }
 
     auto func = parse_expr();
@@ -143,6 +147,58 @@ void FlatParser::skip_rparen() {
     while (lexer_->peek().kind != TokenKind::RParen && !lexer_->eof())
         lexer_->consume();
     lexer_->consume();
+}
+
+NodeId FlatParser::parse_begin() {
+    lexer_->consume(); // 'begin'
+    std::vector<NodeId> exprs;
+    while (lexer_->peek().kind != TokenKind::RParen && !lexer_->eof()) {
+        auto e = parse_expr();
+        if (e != NULL_NODE) exprs.push_back(e);
+        else break;
+    }
+    lexer_->consume(); // ')'
+    return flat_.add_begin(exprs.data(), static_cast<std::uint32_t>(exprs.size()));
+}
+
+NodeId FlatParser::parse_set() {
+    lexer_->consume(); // 'set!'
+    auto n = lexer_->consume();
+    if (n.kind != TokenKind::Identifier) { skip_rparen(); return NULL_NODE; }
+    auto v = parse_val();
+    if (v == NULL_NODE) { skip_rparen(); return NULL_NODE; }
+    lexer_->consume(); // ')'
+    return flat_.add_set(pool_.intern(std::string(n.text)), v);
+}
+
+NodeId FlatParser::parse_quote() {
+    lexer_->consume(); // 'quote'
+    auto v = parse_val();
+    if (v == NULL_NODE) { skip_rparen(); return NULL_NODE; }
+    lexer_->consume(); // ')'
+    return flat_.add_quote(v);
+}
+
+NodeId FlatParser::parse_cond() {
+    lexer_->consume(); // 'cond'
+    struct Clause { NodeId test; NodeId val; };
+    std::vector<Clause> clauses;
+    while (lexer_->peek().kind != TokenKind::RParen && !lexer_->eof()) {
+        if (lexer_->peek().kind != TokenKind::LParen) break;
+        lexer_->consume(); // '('
+        auto cn = parse_expr();
+        if (cn == NULL_NODE) { skip_rparen(); break; }
+        auto v = parse_expr();
+        if (v == NULL_NODE) { skip_rparen(); break; }
+        lexer_->consume(); // ')'
+        clauses.push_back({cn, v});
+    }
+    lexer_->consume(); // ')'
+    if (clauses.empty()) return NULL_NODE;
+    auto result = clauses.back().val;
+    for (auto it = clauses.rbegin() + 1; it != clauses.rend(); ++it)
+        result = flat_.add_if(it->test, it->val, result);
+    return result;
 }
 
 // ── Free function ──────────────────────────────────────────────

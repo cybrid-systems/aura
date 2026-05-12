@@ -269,6 +269,9 @@ ReplaceTemplate parse_rt(TokenStream& ts) {
             if (op == "Call")      r.tag = aura::ast::NodeTag::Call;
             else if (op == "IfExpr" || op == "If") r.tag = aura::ast::NodeTag::IfExpr;
             else if (op == "Lambda") r.tag = aura::ast::NodeTag::Lambda;
+            else if (op == "Begin" || op == "BeginNode") r.tag = aura::ast::NodeTag::Begin;
+            else if (op == "Set" || op == "SetNode") r.tag = aura::ast::NodeTag::Set;
+            else if (op == "Quote" || op == "QuoteNode") r.tag = aura::ast::NodeTag::Quote;
             while (!ts.end() && ts.t[ts.p] != ")")
                 r.children.push_back(parse_rt(ts));
         }

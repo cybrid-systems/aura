@@ -19,6 +19,7 @@ export struct ParsedPhase { static constexpr std::uint32_t id = 0; };
 export enum class NodeTag : std::uint32_t {
     LiteralInt = 0x01, Variable = 0x02, Call = 0x03,
     IfExpr = 0x04, Lambda = 0x05, Let = 0x06, LetRec = 0x07, Define = 0x08,
+    Begin = 0x09, Set = 0x0A, Quote = 0x0B,
 };
 
 export struct LiteralIntNode { NodeTag tag; std::int64_t value = 0; };
@@ -29,10 +30,14 @@ export struct LambdaNode     { NodeTag tag; std::vector<std::string> params; Exp
 export struct LetNode        { NodeTag tag; std::string name; Expr* value = nullptr; Expr* body = nullptr; };
 export struct LetRecNode     { NodeTag tag; std::string name; Expr* value = nullptr; Expr* body = nullptr; };
 export struct DefineNode     { NodeTag tag; std::string name; Expr* value = nullptr; };
+export struct BeginNode     { NodeTag tag; std::vector<Expr*> exprs; };
+export struct SetNode       { NodeTag tag; std::string name; Expr* value = nullptr; };
+export struct QuoteNode     { NodeTag tag; Expr* value = nullptr; };
 
 export struct Expr {
     NodeTag tag;
-    std::variant<LiteralIntNode, VariableNode, CallNode, IfExprNode, LambdaNode, LetNode, LetRecNode, DefineNode> payload;
+    std::variant<LiteralIntNode, VariableNode, CallNode, IfExprNode, LambdaNode,
+                 LetNode, LetRecNode, DefineNode, BeginNode, SetNode, QuoteNode> payload;
 
     Expr(LiteralIntNode n) : tag(n.tag), payload(n) {}
     Expr(VariableNode n)   : tag(n.tag), payload(n) {}
@@ -42,6 +47,9 @@ export struct Expr {
     Expr(LetNode n)        : tag(n.tag), payload(n) {}
     Expr(LetRecNode n)     : tag(n.tag), payload(n) {}
     Expr(DefineNode n)     : tag(n.tag), payload(n) {}
+    Expr(BeginNode n)      : tag(n.tag), payload(n) {}
+    Expr(SetNode n)        : tag(n.tag), payload(n) {}
+    Expr(QuoteNode n)      : tag(n.tag), payload(n) {}
 };
 
 // ── Flat index-based AST (DOD prototype) ────────────────────────

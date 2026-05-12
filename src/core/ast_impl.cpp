@@ -47,6 +47,21 @@ NodeId flatten_expr(const Expr* expr, AST& ast) {
             auto val = flatten_expr(node.value, ast);
             return ast.add_define(node.name, val);
         }
+        else if constexpr (std::is_same_v<T, BeginNode>) {
+            auto id = ast.add_node();
+            ast[id].tag = NodeTag::LiteralInt;
+            if (!node.exprs.empty()) {
+                auto last = flatten_expr(node.exprs.back(), ast);
+                ast[id].int_value = ast[last].int_value;  // rough flatten
+            }
+            return id;
+        }
+        else if constexpr (std::is_same_v<T, SetNode>) {
+            return ast.add_literal(0);
+        }
+        else if constexpr (std::is_same_v<T, QuoteNode>) {
+            return ast.add_literal(0);
+        }
         return NULL_NODE;
     }, expr->payload);
 }

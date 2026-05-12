@@ -35,6 +35,9 @@ private:
     ast::Expr* read_lambda(Reader& r);
     ast::Expr* read_let(Reader& r, bool is_rec);
     ast::Expr* read_define(Reader& r);
+    ast::Expr* read_begin(Reader& r);
+    ast::Expr* read_set(Reader& r);
+    ast::Expr* read_quote(Reader& r);
 
     ast::ASTArena& arena_;
 };

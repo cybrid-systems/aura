@@ -39,6 +39,8 @@ private:
     std::uint32_t lower_variable(const ast::VariableNode& node);
     std::uint32_t lower_call(const ast::CallNode& node);
     std::uint32_t lower_if(const ast::IfExprNode& node);
+    std::uint32_t lower_begin(const ast::BeginNode& node);
+    std::uint32_t lower_set(const ast::SetNode& node);
     std::uint32_t lower_lambda(const ast::LambdaNode& node);
     std::uint32_t lower_let(const ast::LetNode& node, bool is_rec);
 
