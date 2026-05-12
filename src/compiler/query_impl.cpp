@@ -74,7 +74,10 @@ QueryExpr QueryEngine::parse(std::string_view sexpr) {
     return parse_expr(ps);
 }
 
-bool QueryEngine::match(NodeId id, const QueryExpr& q) {
+static constexpr int MAX_MATCH_DEPTH = 64;
+
+bool QueryEngine::match(NodeId id, const QueryExpr& q, int depth) {
+    if (depth > MAX_MATCH_DEPTH) return false;
     if (id >= index_.ast.size()) return false;
     auto v = index_.ast.get(id);
     switch (q.kind) {
@@ -87,13 +90,13 @@ bool QueryEngine::match(NodeId id, const QueryExpr& q) {
         return index_.pool.resolve(c.sym_id) == q.str_value;
     }
     case QueryExpr::Kind::Child:
-        return q.child_index < v.children.size() && match(v.child(q.child_index), q.children[0]);
+        return q.child_index < v.children.size() && match(v.child(q.child_index), q.children[0], depth+1);
     case QueryExpr::Kind::HasChild:
-        for (auto c : v.children) if (match(c, q.children[0])) return true;
+        for (auto c : v.children) if (match(c, q.children[0], depth+1)) return true;
         return false;
     case QueryExpr::Kind::Exists:
-        if (match(id, q.children[0])) return true;
-        for (auto c : v.children) if (match(c, q)) return true;
+        if (match(id, q.children[0], depth+1)) return true;
+        for (auto c : v.children) if (match(c, q, depth+1)) return true;
         return false;
     case QueryExpr::Kind::Eq:
         if (q.field_name == "name" || q.field_name == "sym_id")
@@ -105,11 +108,20 @@ bool QueryEngine::match(NodeId id, const QueryExpr& q) {
         if (q.field_name == "child-count") return v.children.size() > (std::size_t)q.int_value;
         if (q.field_name == "int_value") return v.int_value > q.int_value;
         return false;
-    case QueryExpr::Kind::And: for (auto& c : q.children) if (!match(id, c)) return false; return true;
-    case QueryExpr::Kind::Or:  for (auto& c : q.children) if (match(id, c)) return true; return false;
-    case QueryExpr::Kind::Not: return !q.children.empty() && !match(id, q.children[0]);
+    case QueryExpr::Kind::And: for (auto& c : q.children) if (!match(id, c, depth+1)) return false; return true;
+    case QueryExpr::Kind::Or:  for (auto& c : q.children) if (match(id, c, depth+1)) return true; return false;
+    case QueryExpr::Kind::Not: return !q.children.empty() && !match(id, q.children[0], depth+1);
     default: return false;
     }
+}
+
+void QueryEngine::ensure_sym_index() const {
+    if (sym_index_built_) return;
+    auto* idx = new SymRefIndex(index_.ast, index_.pool);
+    idx->build();
+    sym_index_ = idx;
+    sym_index_built_ = true;
+    index_.set_sym_index(*sym_index_);
 }
 
 std::vector<NodeId> QueryEngine::execute(const QueryExpr& q) {

@@ -12,13 +12,10 @@ export struct ASTIndex {
     const aura::ast::FlatAST& ast;
     aura::ast::StringPool& pool;
 
-    // ── TagIndex — pre-built per-tag node lists ───────────────
-    // by_tag() becomes O(1) instead of O(N) after first build.
     struct TagIndex {
         static constexpr std::size_t TAG_COUNT = 12;
         std::array<std::vector<aura::ast::NodeId>, TAG_COUNT> tags;
         bool built = false;
-
         void build(const aura::ast::FlatAST& a) {
             if (built) return;
             for (auto& v : tags) v.clear();
@@ -28,16 +25,17 @@ export struct ASTIndex {
             }
             built = true;
         }
-
         std::span<const aura::ast::NodeId> nodes(aura::ast::NodeTag t) const {
             auto idx = static_cast<std::size_t>(t);
             if (idx < TAG_COUNT) return tags[idx];
             return {};
         }
     };
-
     mutable TagIndex tag_index_;
+    mutable void* sym_ref_ = nullptr;
+    template<typename T> void set_sym_index(T& r) const { sym_ref_ = &r; }
 
+    // Filter nodes by tag
     // Filter nodes by tag — O(1) after first call (lazy-builds TagIndex)
     std::span<const aura::ast::NodeId> by_tag(aura::ast::NodeTag t) const {
         tag_index_.build(ast);
@@ -106,6 +104,8 @@ export struct QueryExpr {
 };
 
 // ── QueryEngine — parse + execute queries ──────────────────────
+export class SymRefIndex;
+
 export class QueryEngine {
 public:
     QueryEngine(aura::ast::FlatAST& ast,
@@ -124,14 +124,18 @@ public:
     }
 
 private:
-    // Internal recursive matching
-    bool match(aura::ast::NodeId id, const QueryExpr& q);
+    // Internal recursive matching (depth-limited)
+    bool match(aura::ast::NodeId id, const QueryExpr& q, int depth = 0);
 
     // Parse helpers
     QueryExpr parse_node_type(std::string_view tag);
     QueryExpr parse_call(std::string_view expr);
 
     ASTIndex index_;
+    mutable SymRefIndex* sym_index_ = nullptr;
+    mutable bool sym_index_built_ = false;
+
+    void ensure_sym_index() const;
 };
 
 // ── SymRefIndex — inverted index: SymId → all referencing nodes ─
@@ -251,6 +255,7 @@ public:
         std::string_view replace_sexpr);
 
 private:
+    std::unordered_map<std::string, ReplaceTemplate> parse_cache_;
     aura::ast::NodeId build_node(const ReplaceTemplate& tmpl);
 
     aura::ast::FlatAST& ast_;
@@ -321,9 +326,13 @@ ReplaceTemplate parse_rt(TokenStream& ts) {
 }
 
 inline ReplaceTemplate TransformEngine::parse_replace(std::string_view sexpr) {
+    auto it = parse_cache_.find(std::string(sexpr));
+    if (it != parse_cache_.end()) return it->second;
     auto tokens = tokenize_rt(sexpr);
     TokenStream ts{std::move(tokens), 0};
-    return parse_rt(ts);
+    auto result = parse_rt(ts);
+    parse_cache_[std::string(sexpr)] = result;
+    return result;
 }
 
 inline aura::ast::NodeId TransformEngine::build_node(const ReplaceTemplate& tmpl) {
