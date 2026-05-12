@@ -96,6 +96,11 @@ static Expr* reconstruct_node(NodeId id, const FlatAST& flat,
         auto* val = reconstruct_node(v.child(0), flat, pool, arena);
         return arena.create<Expr>(QuoteNode{v.tag, val});
     }
+    case NodeTag::TypeAnnotation: {
+        auto type_name = pool.resolve(v.sym_id);
+        auto* inner = reconstruct_node(v.child(0), flat, pool, arena);
+        return arena.create<Expr>(TypeAnnotationNode{v.tag, inner, std::string(type_name)});
+    }
     }
     return nullptr;
 }
