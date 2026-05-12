@@ -30,6 +30,8 @@ export enum class IROpcode : std::uint8_t {
     NewCell,        // allocate mutable cell: result_slot
     CellSet,        // write to cell: cell_id, value_slot
     CellGet,        // read from cell: result_slot, cell_id
+    // Type coercion (L6.6b)
+    CastOp,         // runtime type check: result_slot, value_slot, type_tag
 };
 
 export struct IRInstruction {

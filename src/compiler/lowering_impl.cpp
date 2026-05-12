@@ -53,7 +53,17 @@ std::uint32_t LoweringPass::lower_expr(const ast::Expr* expr) {
         if constexpr (std::is_same_v<T, ast::SetNode>)        return lower_set(node);
         if constexpr (std::is_same_v<T, ast::QuoteNode>)      return lower_expr(node.value);
         if constexpr (std::is_same_v<T, ast::TypeAnnotationNode>) return lower_expr(node.inner_expr);
-        if constexpr (std::is_same_v<T, ast::CoercionNode>) return lower_expr(node.inner_expr);
+        if constexpr (std::is_same_v<T, ast::CoercionNode>) {
+            auto inner = lower_expr(node.inner_expr);
+            auto slot = alloc_local();
+            // Map type name to CastOp tag: Int=0, String=1, Bool=2
+            std::uint32_t type_tag = 3;  // dynamic
+            if (node.to_type_name == "Int") type_tag = 0;
+            else if (node.to_type_name == "String") type_tag = 1;
+            else if (node.to_type_name == "Bool") type_tag = 2;
+            emit(IROpcode::CastOp, slot, inner, type_tag);
+            return slot;
+        }
         auto s = alloc_local(); emit(IROpcode::ConstI64, s, 0); return s;
     }, expr->payload);
 }
