@@ -62,6 +62,9 @@ NodeId flatten_expr(const Expr* expr, AST& ast) {
         else if constexpr (std::is_same_v<T, QuoteNode>) {
             return ast.add_literal(0);
         }
+        else if constexpr (std::is_same_v<T, TypeAnnotationNode>) {
+            return flatten_expr(node.inner_expr, ast);
+        }
         return NULL_NODE;
     }, expr->payload);
 }

@@ -18,6 +18,7 @@
 (define TAG-QUOTE       #x0B)
 (define TAG-STRING      #x0D)
 (define TAG-COND       #x0C)
+(define TAG-TYPE-ANNOTATION #x0F)
 (define PHASE-PARSED 0)
 
 (define (tag-for-expr expr)
@@ -37,6 +38,7 @@
            [(begin) TAG-BEGIN]
            [(cond) TAG-COND]
            [(set!) TAG-SET]
+           [(:) TAG-TYPE-ANNOTATION]
            [else TAG-CALL])]
         [else (error 'tag-for-expr "unknown expr: ~a" expr)]))
 
@@ -79,7 +81,8 @@
     [(#x09) (write-begin buf expr phase-id)]
     [(#x0A) (write-set buf expr phase-id)]
     [(#x0B) (write-quote buf expr phase-id)]
-    [(#x0D) (write-string buf expr phase-id)]))
+    [(#x0D) (write-string buf expr phase-id)]
+    [(#x0F) (write-type-annotation buf expr phase-id)]))
 
 (define (write-literal-int buf expr)
   (define val (if (integer? expr) expr 0))
@@ -182,6 +185,15 @@
 (define (write-quote buf expr phase-id)
   ;; quote wraps a single expression — write it directly
   (write-node buf (cadr expr) phase-id))
+
+(define (write-type-annotation buf expr phase-id)
+  ;; (: x Int) → tag 0x0F, type name string, inner expression
+  (define type-name (symbol->string (caddr expr)))
+  (define inner-expr (cadr expr))
+  (define name-bytes (string->bytes/utf-8 type-name))
+  (put-varint! buf (bytes-length name-bytes))
+  (put-bytes! buf name-bytes)
+  (write-node buf inner-expr phase-id))
 
 (define (serialize-delta expr base-version)
   (serialize-expr expr))

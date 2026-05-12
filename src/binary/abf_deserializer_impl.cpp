@@ -189,6 +189,21 @@ ast::Expr* ABFDeserializer::read_cond(Reader& r) {
     return val;
 }
 
+ast::Expr* ABFDeserializer::read_type_annotation(Reader& r) {
+    // Read type name string (varint-length-prefixed UTF-8)
+    auto type_len = r.read_varint();
+    if (r.pos + type_len > r.data.size())
+        throw std::runtime_error("truncated type annotation name");
+    std::string type_name(reinterpret_cast<const char*>(r.data.data() + r.pos), type_len);
+    r.pos += type_len;
+
+    // Read inner expression
+    auto* inner = read_node(r);
+
+    return arena_.create<ast::Expr>(
+        ast::TypeAnnotationNode{{ast::NodeTag::TypeAnnotation}, inner, std::move(type_name)});
+}
+
 ast::Expr* ABFDeserializer::read_quote(Reader& r) {
     auto* val = read_node(r);
     return arena_.create<ast::Expr>(ast::QuoteNode{{ast::NodeTag::Quote}, val});
@@ -210,5 +225,6 @@ void ABFDeserializer::register_all_readers() {
     reg(0x0B, [](void*r, void*o) -> void* { return ((ABFDeserializer*)o)->read_quote(*(Reader*)r); });
     reg(0x0C, [](void*r, void*o) -> void* { return ((ABFDeserializer*)o)->read_cond(*(Reader*)r); });
     reg(0x0D, [](void*r, void*o) -> void* { return ((ABFDeserializer*)o)->read_string(*(Reader*)r); });
+    reg(0x0F, [](void*r, void*o) -> void* { return ((ABFDeserializer*)o)->read_type_annotation(*(Reader*)r); });
 }
 } // namespace aura::binary

@@ -20,6 +20,7 @@ export enum class NodeTag : std::uint32_t {
     LiteralInt = 0x01, Variable = 0x02, Call = 0x03,
     IfExpr = 0x04, Lambda = 0x05, Let = 0x06, LetRec = 0x07, Define = 0x08,
     Begin = 0x09, Set = 0x0A, Quote = 0x0B, LiteralString = 0x0D, MacroDef = 0x0E,
+    TypeAnnotation = 0x0F,
 };
 
 export struct LiteralIntNode { NodeTag tag; std::int64_t value = 0; };
@@ -35,11 +36,12 @@ export struct BeginNode     { NodeTag tag; std::vector<Expr*> exprs; };
 export struct SetNode       { NodeTag tag; std::string name; Expr* value = nullptr; };
 export struct MacroDefNode  { NodeTag tag; std::string name; std::vector<std::string> params; Expr* body = nullptr; };
 export struct QuoteNode     { NodeTag tag; Expr* value = nullptr; };
+export struct TypeAnnotationNode { NodeTag tag; Expr* inner_expr = nullptr; std::string type_name; };
 
 export struct Expr {
     NodeTag tag;
     std::variant<LiteralIntNode, VariableNode, CallNode, IfExprNode, LambdaNode,
-                 LetNode, LetRecNode, DefineNode, BeginNode, SetNode, QuoteNode, MacroDefNode, LiteralStringNode> payload;
+                 LetNode, LetRecNode, DefineNode, BeginNode, SetNode, QuoteNode, MacroDefNode, LiteralStringNode, TypeAnnotationNode> payload;
 
     Expr(LiteralIntNode n) : tag(n.tag), payload(n) {}
     Expr(VariableNode n)   : tag(n.tag), payload(n) {}
@@ -54,6 +56,7 @@ export struct Expr {
     Expr(QuoteNode n)      : tag(n.tag), payload(n) {}
     Expr(MacroDefNode n)   : tag(n.tag), payload(n) {}
     Expr(LiteralStringNode n) : tag(n.tag), payload(n) {}
+    Expr(TypeAnnotationNode n) : tag(n.tag), payload(n) {}
 };
 
 // ── Flat index-based AST (DOD prototype) ────────────────────────

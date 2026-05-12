@@ -46,6 +46,7 @@ public:
     ast::Expr* read_quote(Reader& r);
     ast::Expr* read_cond(Reader& r);
     ast::Expr* read_string(Reader& r);
+    ast::Expr* read_type_annotation(Reader& r);
 
     ast::ASTArena& arena_;
 };

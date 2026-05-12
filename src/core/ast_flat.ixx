@@ -18,7 +18,7 @@ export struct NodeMeta {
     bool has_params;              // has param list (Lambda)
 };
 
-export constexpr std::array<NodeMeta, 14> kNodeMeta = {{
+export constexpr std::array<NodeMeta, 15> kNodeMeta = {{
     {NodeTag::LiteralInt, "LiteralInt", 0, false, false, true,  false},
     {NodeTag::LiteralString, "LiteralString", 0, false, true,  false, false},
     {NodeTag::Variable,   "Variable",   0, false, true,  false, false},
@@ -31,6 +31,7 @@ export constexpr std::array<NodeMeta, 14> kNodeMeta = {{
     {NodeTag::Begin,      "Begin",      0, true,  false, false, false},
     {NodeTag::Set,        "Set",        1, false, true,  false, false},
     {NodeTag::Quote,      "Quote",      1, false, false, false, false},
+    {NodeTag::TypeAnnotation, "TypeAnnotation", 1, false, true,  false, false},
 }};
 
 export constexpr const NodeMeta& meta(NodeTag tag) {
@@ -218,6 +219,16 @@ public:
         auto id = add_node(NodeTag::Quote);
         auto start = static_cast<std::uint32_t>(child_data_.size());
         child_data_.push_back(val);
+        child_begin_[id] = start;
+        child_count_[id] = 1;
+        return id;
+    }
+
+    NodeId add_type_annotation(SymId type_name, NodeId inner) {
+        auto id = add_node(NodeTag::TypeAnnotation);
+        sym_id_[id] = type_name;
+        auto start = static_cast<std::uint32_t>(child_data_.size());
+        child_data_.push_back(inner);
         child_begin_[id] = start;
         child_count_[id] = 1;
         return id;
