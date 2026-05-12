@@ -39,7 +39,8 @@ enum Tag : std::uint8_t {
     Define = 0x08, Begin = 0x09, Set = 0x0A, Quote = 0x0B,
     Cond = 0x0C,
     TypeAnnotation = 0x0F,
-    TAG_COUNT = 0x10  // one past max
+    Coercion = 0x10,
+    TAG_COUNT = 0x11  // one past max
 };
 
 using ReadFn = void* (*)(void*);
@@ -72,7 +73,8 @@ consteval bool validate_tag_values() {
         LetRec    == 0x07 && Define   == 0x08 &&
         Begin     == 0x09 && Set      == 0x0A &&
         Quote     == 0x0B && Cond     == 0x0C &&
-    TypeAnnotation == 0x0F;
+    TypeAnnotation == 0x0F &&
+    Coercion == 0x10;
 }
 
 static_assert(validate_tag_values(), "Tag values don't match ABF spec");

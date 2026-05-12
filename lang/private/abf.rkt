@@ -19,6 +19,7 @@
 (define TAG-STRING      #x0D)
 (define TAG-COND       #x0C)
 (define TAG-TYPE-ANNOTATION #x0F)
+(define TAG-COERCION #x10)
 (define PHASE-PARSED 0)
 
 (define (tag-for-expr expr)
@@ -39,6 +40,7 @@
            [(cond) TAG-COND]
            [(set!) TAG-SET]
            [(:) TAG-TYPE-ANNOTATION]
+           [(coerce) TAG-COERCION]
            [else TAG-CALL])]
         [else (error 'tag-for-expr "unknown expr: ~a" expr)]))
 
@@ -82,7 +84,8 @@
     [(#x0A) (write-set buf expr phase-id)]
     [(#x0B) (write-quote buf expr phase-id)]
     [(#x0D) (write-string buf expr phase-id)]
-    [(#x0F) (write-type-annotation buf expr phase-id)]))
+    [(#x0F) (write-type-annotation buf expr phase-id)]
+    [(#x10) (write-coercion buf expr phase-id)]))
 
 (define (write-literal-int buf expr)
   (define val (if (integer? expr) expr 0))
@@ -191,6 +194,15 @@
   (define type-name (symbol->string (caddr expr)))
   (define inner-expr (cadr expr))
   (define name-bytes (string->bytes/utf-8 type-name))
+  (put-varint! buf (bytes-length name-bytes))
+  (put-bytes! buf name-bytes)
+  (write-node buf inner-expr phase-id))
+
+(define (write-coercion buf expr phase-id)
+  ;; Coercion: (coerce expr TargetType) → tag 0x10, target type name, inner expression
+  (define target-type (symbol->string (caddr expr)))
+  (define inner-expr (cadr expr))
+  (define name-bytes (string->bytes/utf-8 target-type))
   (put-varint! buf (bytes-length name-bytes))
   (put-bytes! buf name-bytes)
   (write-node buf inner-expr phase-id))
