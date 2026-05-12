@@ -208,3 +208,17 @@ add_test(NAME schema_ir_instruction
 add_test(NAME schema_serve
     COMMAND sh -c "./aura-schema --serve | head -1 | grep -q schema"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+# ── Phase 3b D3: Macro validation tests ────────────────────────
+add_test(NAME macro_twice
+    COMMAND sh -c "printf '(begin (defmacro (twice x) (+ x x)) (twice 5))' | timeout 5 ./aura | grep -q '10'"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+add_test(NAME macro_free_var
+    COMMAND sh -c "printf '(begin (define base 10) (defmacro (add-base x) (+ x base)) (add-base 5))' | timeout 5 ./aura | grep -q '15'"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+add_test(NAME macro_unused_param_warning
+    COMMAND sh -c "printf '(defmacro (const x) 42)' | timeout 5 ./aura 2>&1 | grep -q 'never used'"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+add_test(NAME macro_constant_body_warning
+    COMMAND sh -c "printf '(defmacro (always) 42)' | timeout 5 ./aura 2>&1 | grep -q 'does not reference'"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
