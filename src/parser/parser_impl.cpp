@@ -22,6 +22,11 @@ ast::Expr* Parser::parse_int(Token tok) {
     catch(...) { return nullptr; }
 }
 ast::Expr* Parser::parse_list() {
+    // () → null sentinel (0)
+    if (lexer_->peek().kind == TokenKind::RParen) {
+        lexer_->consume();
+        return arena_.template create<ast::Expr>(ast::LiteralIntNode{{}, 0});
+    }
     auto f = lexer_->peek();
     if (f.kind==TokenKind::Identifier) {
         auto kw=f.text;
