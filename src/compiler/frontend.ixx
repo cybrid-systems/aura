@@ -11,6 +11,7 @@ export class Primitives {
 public:
     Primitives();
     std::optional<PrimFn> lookup(const std::string& n) const;
+    void add(const std::string& name, PrimFn fn) { table_[name] = std::move(fn); }
 private:
     std::unordered_map<std::string, PrimFn> table_;
 };
@@ -35,6 +36,14 @@ private:
 export using ClosureId = std::uint64_t;
 constexpr ClosureId CLOSURE_SENTINEL = 0x1000000;
 constexpr std::int64_t CELL_SENTINEL = 0x2000000;
+constexpr std::int64_t PAIR_SENTINEL = 0x4000000;
+constexpr std::int64_t TRUE_VAL = 1;
+constexpr std::int64_t FALSE_VAL = 0;
+
+export struct Pair {
+    std::int64_t car;
+    std::int64_t cdr;
+};
 
 export struct Closure { std::vector<std::string> params; const ast::Expr* body=nullptr; const Env* env=nullptr; };
 
@@ -58,9 +67,11 @@ private:
     std::size_t alloc_cell(std::int64_t v) { cells_.push_back(v); return cells_.size()-1; }
     EvalResult apply_closure(ClosureId id, const std::vector<ast::Expr*>& args, const Env& call_env);
     Env* copy_env(const Env& env);
+    void init_pair_primitives();
     Env top_; Primitives primitives_; ast::ASTArena* arena_=nullptr;
     std::unordered_map<ClosureId,Closure> closures_;
     std::vector<std::int64_t> cells_;
+    std::vector<Pair> pairs_;
     std::uint64_t next_id_=1;
 };
 

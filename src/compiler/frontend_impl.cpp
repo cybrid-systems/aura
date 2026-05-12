@@ -28,6 +28,34 @@ Primitives::Primitives() {
     table_[">"]  = [](auto& a) { return a[0] > a[1]; };
     table_["<="] = [](auto& a) { return a[0] <= a[1]; };
     table_[">="] = [](auto& a) { return a[0] >= a[1]; };
+    // Ghuloum Step 9: booleans
+    table_["not"]  = [](auto& a) { return a[0] == 0 ? TRUE_VAL : FALSE_VAL; };
+    table_["and"]  = [](auto& a) { return a[0] && a[1] ? TRUE_VAL : FALSE_VAL; };
+    table_["or"]   = [](auto& a) { return a[0] || a[1] ? TRUE_VAL : FALSE_VAL; };
+    table_["eq?"]  = [](auto& a) { return a[0] == a[1] ? TRUE_VAL : FALSE_VAL; };
+}
+
+void Evaluator::init_pair_primitives() {
+    // Ghuloum Step 10: pairs — capture pairs_ by reference
+    primitives_.add("cons", [this](const auto& a) {
+        auto id = pairs_.size();
+        pairs_.push_back({a[0], a[1]});
+        return PAIR_SENTINEL + static_cast<std::int64_t>(id);
+    });
+    primitives_.add("car", [this](const auto& a) {
+        auto id = static_cast<std::size_t>(a[0] - PAIR_SENTINEL);
+        return id < pairs_.size() ? pairs_[id].car : 0;
+    });
+    primitives_.add("cdr", [this](const auto& a) {
+        auto id = static_cast<std::size_t>(a[0] - PAIR_SENTINEL);
+        return id < pairs_.size() ? pairs_[id].cdr : 0;
+    });
+    primitives_.add("pair?", [](const auto& a) {
+        return static_cast<std::uint64_t>(a[0]) >= static_cast<std::uint64_t>(PAIR_SENTINEL) ? TRUE_VAL : FALSE_VAL;
+    });
+    primitives_.add("null?", [](const auto& a) {
+        return a[0] == 0 ? TRUE_VAL : FALSE_VAL;
+    });
 }
 
 std::optional<PrimFn> Primitives::lookup(const std::string& n) const {
@@ -35,7 +63,10 @@ std::optional<PrimFn> Primitives::lookup(const std::string& n) const {
     return i != table_.end() ? std::optional(i->second) : std::nullopt;
 }
 
-Evaluator::Evaluator() { top_.set_primitives(&primitives_); }
+Evaluator::Evaluator() {
+    top_.set_primitives(&primitives_);
+    init_pair_primitives();
+}
 
 Env* Evaluator::copy_env(const Env& e) {
     return arena_ ? arena_->create<Env>(e) : nullptr;
