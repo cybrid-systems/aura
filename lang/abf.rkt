@@ -1,10 +1,13 @@
 #lang racket/base
-;; Aura #lang expander — evaluate single top-level expressions
+;; Aura #lang — ABF output mode
 ;;
-;; This module is the expansion target of lang/reader.rkt.
-;; It provides #%module-begin and friends to make #lang aura work.
+;; Same as lang/expander.rkt but outputs ABF binary instead of text.
+;; Used by: #lang aura --abf
+;;
+;; This is a separate module to avoid conditional logic in the expander.
 
-(require "private/core.rkt")
+(require "private/core.rkt"
+         "private/abf.rkt")
 
 (provide (rename-out [my-module-begin #%module-begin])
          (rename-out [my-datum #%datum])
@@ -13,7 +16,8 @@
 
 (define-syntax-rule (my-module-begin expr)
   (#%plain-module-begin
-    (displayln (eval-expr 'expr (make-env)))))
+    (write-bytes (serialize-expr 'expr))
+    (flush-output)))
 
 (define-syntax-rule (my-datum . x) x)
 (define-syntax-rule (my-top . x) x)
