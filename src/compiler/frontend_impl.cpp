@@ -82,6 +82,55 @@ void Evaluator::init_pair_primitives() {
             return static_cast<std::int64_t>(static_cast<unsigned char>(string_heap_[idx][pos]));
         return std::int64_t(0);
     });
+    primitives_.add("substring", [this](const auto& a) {
+        if (a.size() < 3) return std::int64_t(0);
+        auto idx  = static_cast<std::size_t>(a[0] - STRING_SENTINEL);
+        auto start = static_cast<std::size_t>(a[1]);
+        auto end   = static_cast<std::size_t>(a[2]);
+        if (idx >= string_heap_.size()) return std::int64_t(0);
+        auto& s = string_heap_[idx];
+        if (start > s.size()) start = s.size();
+        if (end > s.size()) end = s.size();
+        if (start >= end) {
+            auto id = string_heap_.size();
+            string_heap_.push_back("");
+            return STRING_SENTINEL + static_cast<std::int64_t>(id);
+        }
+        auto sub = s.substr(start, end - start);
+        auto nid = string_heap_.size();
+        string_heap_.push_back(std::move(sub));
+        return STRING_SENTINEL + static_cast<std::int64_t>(nid);
+    });
+    primitives_.add("string=?", [this](const auto& a) {
+        if (a.size() < 2) return FALSE_VAL;
+        auto i1 = static_cast<std::size_t>(a[0] - STRING_SENTINEL);
+        auto i2 = static_cast<std::size_t>(a[1] - STRING_SENTINEL);
+        if (i1 >= string_heap_.size() || i2 >= string_heap_.size())
+            return a[0] == a[1] ? TRUE_VAL : FALSE_VAL;
+        return string_heap_[i1] == string_heap_[i2] ? TRUE_VAL : FALSE_VAL;
+    });
+    primitives_.add("string<?", [this](const auto& a) {
+        if (a.size() < 2) return FALSE_VAL;
+        auto i1 = static_cast<std::size_t>(a[0] - STRING_SENTINEL);
+        auto i2 = static_cast<std::size_t>(a[1] - STRING_SENTINEL);
+        if (i1 >= string_heap_.size() || i2 >= string_heap_.size())
+            return FALSE_VAL;
+        return string_heap_[i1] < string_heap_[i2] ? TRUE_VAL : FALSE_VAL;
+    });
+    primitives_.add("number->string", [this](const auto& a) {
+        if (a.empty()) return std::int64_t(0);
+        auto s = std::to_string(a[0]);
+        auto id = string_heap_.size();
+        string_heap_.push_back(std::move(s));
+        return STRING_SENTINEL + static_cast<std::int64_t>(id);
+    });
+    primitives_.add("string->number", [this](const auto& a) {
+        if (a.empty()) return std::int64_t(0);
+        auto i = static_cast<std::size_t>(a[0] - STRING_SENTINEL);
+        if (i >= string_heap_.size()) return std::int64_t(0);
+        try { return static_cast<std::int64_t>(std::stoll(string_heap_[i])); }
+        catch (...) { return std::int64_t(0); }
+    });
     primitives_.add("null?", [](const auto& a) {
         return a[0] == 0 ? TRUE_VAL : FALSE_VAL;
     });
