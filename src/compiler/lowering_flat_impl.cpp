@@ -18,6 +18,10 @@ static Expr* reconstruct_node(NodeId id, const FlatAST& flat,
     auto v = flat.get(id);
 
     switch (v.tag) {
+    case NodeTag::LiteralString: {
+        auto name = pool.resolve(v.sym_id);
+        return arena.create<Expr>(ast::LiteralStringNode{v.tag, std::string(name)});
+    }
     case NodeTag::LiteralInt:
         return arena.create<Expr>(LiteralIntNode{v.tag, v.int_value});
 

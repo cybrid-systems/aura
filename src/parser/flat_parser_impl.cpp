@@ -140,6 +140,8 @@ NodeId FlatParser::parse_val() {
     switch (tok.kind) {
     case TokenKind::Integer:
         return parse_int(lexer_->consume());
+    case TokenKind::String:
+        return flat_.add_literalstring(pool_.intern(std::string(lexer_->consume().text)));
     case TokenKind::Identifier:
         return flat_.add_variable(pool_.intern(std::string(lexer_->consume().text)));
     case TokenKind::LParen:

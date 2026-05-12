@@ -16,17 +16,19 @@
 (define TAG-BEGIN       #x09)
 (define TAG-SET         #x0A)
 (define TAG-QUOTE       #x0B)
+(define TAG-STRING      #x0D)
 (define TAG-COND       #x0C)
 (define PHASE-PARSED 0)
 
 (define (tag-for-expr expr)
   (cond [(number? expr) TAG-LITERAL-INT]
-        [(string? expr) TAG-LITERAL-INT]
+        [(string? expr) TAG-STRING]
         [(boolean? expr) TAG-LITERAL-INT]
         [(symbol? expr) TAG-VARIABLE]
         [(pair? expr)
          (case (car expr)
            [(quote) TAG-QUOTE]
+           [(string) TAG-STRING]
            [(if) TAG-IF]
            [(lambda) TAG-LAMBDA]
            [(let) TAG-LET]
@@ -76,7 +78,8 @@
     [(#x08) (write-define buf expr phase-id)]
     [(#x09) (write-begin buf expr phase-id)]
     [(#x0A) (write-set buf expr phase-id)]
-    [(#x0B) (write-quote buf expr phase-id)]))
+    [(#x0B) (write-quote buf expr phase-id)]
+    [(#x0D) (write-string buf expr phase-id)]))
 
 (define (write-literal-int buf expr)
   (define val (if (integer? expr) expr 0))
@@ -169,6 +172,12 @@
           (put-varint! buf 0)
           (write-clauses rest)))))
   (write-clauses clauses))
+
+(define (write-string buf expr phase-id)
+  ;; expr is the string literal itself
+  (define name-bytes (string->bytes/utf-8 expr))
+  (put-varint! buf (bytes-length name-bytes))
+  (put-bytes! buf name-bytes))
 
 (define (write-quote buf expr phase-id)
   ;; quote wraps a single expression — write it directly

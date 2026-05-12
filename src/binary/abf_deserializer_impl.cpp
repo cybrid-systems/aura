@@ -61,37 +61,21 @@ ast::Expr* ABFDeserializer::deserialize(std::span<const std::byte> data) {
     return read_node(r);
 }
 
-// Wrap read functions for dispatch table
 
-// and bridge through the deserializer.
 
 ast::Expr* ABFDeserializer::read_node(Reader& r) {
+    // One-time registration, then dispatch via static registry
+    [[maybe_unused]] static bool _init_ = (register_all_readers(), true);
+
     auto tag = static_cast<std::uint32_t>(r.read_varint());
     r.read_varint();  // ExtID
     auto ext_len = r.read_varint();  // ExtLen
     if (ext_len > 0) r.read_bytes(ext_len);
 
-    // Dispatch table: index by tag value, 0x01-0x0C
-    // ReadFn = member function pointer: (ABFDeserializer::*)(Reader&)
-    using MemFn = ast::Expr* (ABFDeserializer::*)(Reader&);
-    static constexpr MemFn reader_for[] = {
-        nullptr,                    // 0x00 unused
-        &ABFDeserializer::read_literal_int, // 0x01
-        &ABFDeserializer::read_variable,    // 0x02
-        &ABFDeserializer::read_call,        // 0x03
-        &ABFDeserializer::read_if,          // 0x04
-        &ABFDeserializer::read_lambda,      // 0x05
-        &ABFDeserializer::read_let_nonrec, // 0x06
-        &ABFDeserializer::read_let_rec,  // 0x07 LetRec
-        &ABFDeserializer::read_define,      // 0x08
-        &ABFDeserializer::read_begin,       // 0x09
-        &ABFDeserializer::read_set,         // 0x0A
-        &ABFDeserializer::read_quote,       // 0x0B
-        &ABFDeserializer::read_cond,        // 0x0C
-    };
-
-    if (tag < sizeof(reader_for)/sizeof(reader_for[0]) && reader_for[tag]) {
-        return (this->*reader_for[tag])(r);
+    auto fn = ::aura::reflect::abf_registry::ReaderRegistry::get(
+        static_cast<std::uint8_t>(tag));
+    if (fn) {
+        return static_cast<ast::Expr*>(fn(&r, this));
     }
     throw std::runtime_error("unknown tag: " + std::to_string(tag));
 }
@@ -182,6 +166,11 @@ ast::Expr* ABFDeserializer::read_set(Reader& r) {
 }
 
 
+ast::Expr* ABFDeserializer::read_string(Reader& r) {
+    auto val = r.read_string();
+    return arena_.create<ast::Expr>(ast::LiteralStringNode{{ast::NodeTag::LiteralString}, std::move(val)});
+}
+
 ast::Expr* ABFDeserializer::read_cond(Reader& r) {
     // Format: test1 val1 [TAG-IF test2 val2 [TAG-IF test3 v3 ...]]
     // Read the first (test, val) pair
@@ -220,5 +209,6 @@ void ABFDeserializer::register_all_readers() {
     reg(0x0A, [](void*r, void*o) -> void* { return ((ABFDeserializer*)o)->read_set(*(Reader*)r); });
     reg(0x0B, [](void*r, void*o) -> void* { return ((ABFDeserializer*)o)->read_quote(*(Reader*)r); });
     reg(0x0C, [](void*r, void*o) -> void* { return ((ABFDeserializer*)o)->read_cond(*(Reader*)r); });
+    reg(0x0D, [](void*r, void*o) -> void* { return ((ABFDeserializer*)o)->read_string(*(Reader*)r); });
 }
 } // namespace aura::binary
