@@ -301,6 +301,14 @@ void Evaluator::init_pair_primitives() {
         }
         return TRUE_VAL;
     });
+    static std::atomic<std::uint64_t> gs_counter_{0};
+    primitives_.add("gensym", [](const auto&) -> std::int64_t {
+        // Generate unique symbol name (stored in string heap)
+        auto id = gs_counter_.fetch_add(1, std::memory_order_relaxed);
+        // Return unique string name — caller must use with intern
+        // For now, return the counter as marker; actual usage in macro expander
+        return static_cast<std::int64_t>(id);
+    });
     primitives_.add("display", [this](const auto& a) {
         if (a.empty()) return TRUE_VAL;
         io_print_val(a[0], &string_heap_, false);
@@ -647,6 +655,13 @@ ast::Expr* Evaluator::expand_macro(const std::string& name,
         ast::ASTArena* arena;
         const std::vector<std::string>* params;
         const std::vector<ast::Expr*>* args;
+        std::unordered_map<std::string, std::string> rename_;
+        std::uint64_t gs_counter_ = 0;
+
+        std::string fresh_name(const std::string& base) {
+            auto id = gs_counter_++;
+            return "__gs_" + base + "_" + std::to_string(id);
+        }
 
         ast::Expr* clone(ast::Expr* expr) {
             return std::visit([this](const auto& node) -> ast::Expr* {
@@ -660,6 +675,10 @@ ast::Expr* Evaluator::expand_macro(const std::string& name,
                             return clone((*args)[i]);
                         }
                     }
+                    // Check rename map (hygienic binding)
+                    auto it = rename_.find(node.name);
+                    if (it != rename_.end())
+                        return arena->template create<ast::Expr>(ast::VariableNode{node.tag, it->second});
                     // Not a param — clone as-is
                     return arena->template create<ast::Expr>(ast::VariableNode{node.tag, node.name});
                 }
@@ -681,18 +700,37 @@ ast::Expr* Evaluator::expand_macro(const std::string& name,
                 }
 
                 if constexpr (std::is_same_v<T, ast::LambdaNode>) {
-                    ast::LambdaNode lam{node.tag, node.params, clone(node.body)};
+                    // Hygienic: rename all lambda params with fresh names
+                    std::vector<std::string> new_params;
+                    for (auto& p : node.params) {
+                        auto fresh = fresh_name(p);
+                        rename_[p] = fresh;
+                        new_params.push_back(std::move(fresh));
+                    }
+                    ast::LambdaNode lam{node.tag, std::move(new_params), clone(node.body)};
+                    // Restore original names (scoped rename)
+                    for (auto& p : node.params) rename_.erase(p);
                     return arena->template create<ast::Expr>(std::move(lam));
                 }
 
                 if constexpr (std::is_same_v<T, ast::LetNode>) {
-                    return arena->template create<ast::Expr>(
-                        ast::LetNode{node.tag, node.name, clone(node.value), clone(node.body)});
+                    // Hygienic: rename let binding
+                    auto fresh = fresh_name(node.name);
+                    rename_[node.name] = fresh;
+                    auto* cloned = arena->template create<ast::Expr>(
+                        ast::LetNode{node.tag, fresh, clone(node.value), clone(node.body)});
+                    rename_.erase(node.name);
+                    return cloned;
                 }
 
                 if constexpr (std::is_same_v<T, ast::LetRecNode>) {
-                    return arena->template create<ast::Expr>(
-                        ast::LetRecNode{node.tag, node.name, clone(node.value), clone(node.body)});
+                    // Hygienic: rename letrec binding
+                    auto fresh = fresh_name(node.name);
+                    rename_[node.name] = fresh;
+                    auto* cloned = arena->template create<ast::Expr>(
+                        ast::LetRecNode{node.tag, fresh, clone(node.value), clone(node.body)});
+                    rename_.erase(node.name);
+                    return cloned;
                 }
 
                 if constexpr (std::is_same_v<T, ast::DefineNode>) {
@@ -732,7 +770,7 @@ ast::Expr* Evaluator::expand_macro(const std::string& name,
         }
     };
 
-    Expander expander{arena_, &mac.params, &args};
+    Expander expander{arena_, &mac.params, &args, {}, 0};
     return expander.clone(mac.body);
 }
 
