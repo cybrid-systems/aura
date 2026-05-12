@@ -63,6 +63,15 @@ std::uint32_t LoweringPass::lower_expr(const ast::Expr* expr) {
     }, expr->payload);
 }
 
+// ── collect_free_vars2 — returns pair (preferred API) ───────
+std::pair<std::unordered_set<std::string>, std::unordered_set<std::string>>
+LoweringPass::collect_free_vars2(const ast::Expr* expr,
+                                  std::unordered_set<std::string> bound) {
+    std::unordered_set<std::string> free;
+    collect_free_vars(expr, free, bound);
+    return {free, bound};
+}
+
 std::uint32_t LoweringPass::lower_literal_int(const ast::LiteralIntNode& node) {
     auto slot = alloc_local();
     auto val = static_cast<std::uint64_t>(static_cast<std::int64_t>(node.value));
@@ -110,8 +119,8 @@ std::uint32_t LoweringPass::lower_variable(const ast::VariableNode& node) {
 // ─── Free variable collection ────────────────────────────────────
 
 void LoweringPass::collect_free_vars(const ast::Expr* expr,
-                                      std::unordered_set<std::string>& free,
-                                      std::unordered_set<std::string>& bound) {
+                                 std::unordered_set<std::string>& free, std::unordered_set<std::string>& bound) {
+    
     if (!expr) return;
 
     std::visit([&](const auto& node) {
@@ -159,6 +168,7 @@ void LoweringPass::collect_free_vars(const ast::Expr* expr,
             collect_free_vars(node.value, free, bound);
         }
     }, expr->payload);
+    
 }
 
 // ─── Lambda lowering ─────────────────────────────────────────────

@@ -45,9 +45,16 @@ private:
     std::uint32_t lower_let(const ast::LetNode& node, bool is_rec);
 
     // Find free variables in an expression (variables not bound in scope)
+    // Returns pair of (free_vars, bound_vars)
+    // Find free variables in an expression (variables not bound in scope)
+    // Legacy: pass in/out sets by reference
     void collect_free_vars(const ast::Expr* expr,
                            std::unordered_set<std::string>& free,
                            std::unordered_set<std::string>& bound);
+    // Preferred: returns pair of (free_vars, bound_vars)
+    std::pair<std::unordered_set<std::string>, std::unordered_set<std::string>>
+    collect_free_vars2(const ast::Expr* expr,
+                       std::unordered_set<std::string> bound = {});
 
     // Lower a lambda body as a separate IR function
     // cell_free_vars: subset of free_vars that are letrec cell references
