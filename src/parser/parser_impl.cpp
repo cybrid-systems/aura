@@ -12,11 +12,17 @@ ast::Expr* Parser::parse_expr() {
     auto tok = lexer_->peek();
     switch (tok.kind) {
     case TokenKind::Integer: return parse_int(lexer_->consume());
+    case TokenKind::String: return parse_string(lexer_->consume());
     case TokenKind::Identifier: { auto t=lexer_->consume(); return arena_.template create<ast::Expr>(ast::VariableNode{{},std::string(t.text)}); }
     case TokenKind::LParen: lexer_->consume(); return parse_list();
     default: return nullptr;
     }
 }
+ast::Expr* Parser::parse_string(Token tok) {
+    return arena_.template create<ast::Expr>(
+        ast::LiteralStringNode{{}, std::string(tok.text)});
+}
+
 ast::Expr* Parser::parse_int(Token tok) {
     try { auto v=std::stoll(std::string(tok.text)); return arena_.template create<ast::Expr>(ast::LiteralIntNode{{},v}); }
     catch(...) { return nullptr; }
@@ -101,6 +107,7 @@ ast::Expr* Parser::parse_val() {
     auto tok=lexer_->peek();
     switch(tok.kind){
     case TokenKind::Integer: return parse_int(lexer_->consume());
+    case TokenKind::String: return parse_string(lexer_->consume());
     case TokenKind::Identifier: return arena_.template create<ast::Expr>(ast::VariableNode{{},std::string(lexer_->consume().text)});
     case TokenKind::LParen: lexer_->consume(); return parse_list();
     default: return nullptr;

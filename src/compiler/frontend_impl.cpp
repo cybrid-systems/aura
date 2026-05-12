@@ -53,6 +53,35 @@ void Evaluator::init_pair_primitives() {
     primitives_.add("pair?", [](const auto& a) {
         return static_cast<std::uint64_t>(a[0]) >= static_cast<std::uint64_t>(PAIR_SENTINEL) ? TRUE_VAL : FALSE_VAL;
     });
+    primitives_.add("string?", [this](const auto& a) {
+        if (a.empty()) return FALSE_VAL;
+        return static_cast<std::uint64_t>(a[0]) >= static_cast<std::uint64_t>(STRING_SENTINEL) ? TRUE_VAL : FALSE_VAL;
+    });
+    primitives_.add("string-append", [this](const auto& a) {
+        std::string result;
+        for (auto v : a) {
+            if (static_cast<std::uint64_t>(v) >= static_cast<std::uint64_t>(STRING_SENTINEL)) {
+                auto idx = static_cast<std::size_t>(v - STRING_SENTINEL);
+                if (idx < string_heap_.size()) result += string_heap_[idx];
+            }
+        }
+        auto id = string_heap_.size();
+        string_heap_.push_back(std::move(result));
+        return STRING_SENTINEL + static_cast<std::int64_t>(id);
+    });
+    primitives_.add("string-length", [this](const auto& a) {
+        if (a.empty()) return std::int64_t(0);
+        auto idx = static_cast<std::size_t>(a[0] - STRING_SENTINEL);
+        return static_cast<std::int64_t>(idx < string_heap_.size() ? string_heap_[idx].size() : 0);
+    });
+    primitives_.add("string-ref", [this](const auto& a) {
+        if (a.size() < 2) return std::int64_t(0);
+        auto idx = static_cast<std::size_t>(a[0] - STRING_SENTINEL);
+        auto pos = static_cast<std::size_t>(a[1]);
+        if (idx < string_heap_.size() && pos < string_heap_[idx].size())
+            return static_cast<std::int64_t>(static_cast<unsigned char>(string_heap_[idx][pos]));
+        return std::int64_t(0);
+    });
     primitives_.add("null?", [](const auto& a) {
         return a[0] == 0 ? TRUE_VAL : FALSE_VAL;
     });
@@ -106,6 +135,12 @@ EvalResult Evaluator::eval_in(const ast::Expr* e, const Env& env) {
         using T = std::decay_t<decltype(n)>;
         if constexpr (std::is_same_v<T, ast::LiteralIntNode>)
             return n.value;
+        if constexpr (std::is_same_v<T, ast::LiteralStringNode>) {
+            // Store string in heap, return sentinel
+            auto id = string_heap_.size();
+            string_heap_.push_back(n.value);
+            return STRING_SENTINEL + static_cast<std::int64_t>(id);
+        }
         if constexpr (std::is_same_v<T, ast::VariableNode>) {
             auto v = env.lookup(n.name);
             if (v.has_value()) return *v;

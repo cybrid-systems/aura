@@ -41,6 +41,7 @@ export using ClosureId = std::uint64_t;
 constexpr ClosureId CLOSURE_SENTINEL = 0x1000000;
 constexpr std::int64_t CELL_SENTINEL = 0x2000000;
 constexpr std::int64_t PAIR_SENTINEL = 0x4000000;
+constexpr std::int64_t STRING_SENTINEL = 0x8000000;
 constexpr std::int64_t TRUE_VAL = 1;
 constexpr std::int64_t FALSE_VAL = 0;
 
@@ -80,6 +81,7 @@ private:
     std::unordered_map<std::string, MacroDef> macros_;
     std::vector<std::int64_t> cells_;
     std::vector<Pair> pairs_;
+    std::vector<std::string> string_heap_;
     std::uint64_t next_id_=1;
 };
 

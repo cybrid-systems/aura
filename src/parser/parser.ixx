@@ -23,7 +23,7 @@ public:
     explicit Parser(ast::ASTArena& a) : arena_(a) {}
     ParseResult parse(std::string_view source);
 private:
-    ast::Expr* parse_expr(); ast::Expr* parse_int(Token tok); ast::Expr* parse_list();
+    ast::Expr* parse_expr(); ast::Expr* parse_string(Token tok); ast::Expr* parse_int(Token tok); ast::Expr* parse_list();
     ast::Expr* parse_if(); ast::Expr* parse_lambda(); ast::Expr* parse_let(bool r); ast::Expr* parse_define();
     ast::Expr* parse_begin(); ast::Expr* parse_set(); ast::Expr* parse_quote(); ast::Expr* parse_cond(); ast::Expr* parse_defmacro();
     ast::Expr* parse_val(); void skip_rparen();
