@@ -114,6 +114,15 @@ bool QueryEngine::match(NodeId id, const QueryExpr& q) {
 
 std::vector<NodeId> QueryEngine::execute(const QueryExpr& q) {
     std::vector<NodeId> r;
+
+    // Fast path: simple NodeType query uses TagIndex (O(1) lookup)
+    if (q.kind == QueryExpr::Kind::NodeType && q.children.empty()) {
+        auto nodes = index_.by_tag(q.node_tag);
+        r.assign(nodes.begin(), nodes.end());
+        return r;
+    }
+
+    // General path: linear scan with full match
     for (NodeId i = 0; i < index_.ast.size(); ++i)
         if (match(i, q)) r.push_back(i);
     return r;

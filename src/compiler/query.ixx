@@ -10,14 +10,38 @@ namespace aura::compiler {
 // ── ASTIndex — zero-copy filter views on FlatAST SoA ───────────
 export struct ASTIndex {
     const aura::ast::FlatAST& ast;
-    aura::ast::StringPool& pool;  // intern() is non-const
+    aura::ast::StringPool& pool;
 
-    // Filter nodes by tag
-    auto by_tag(aura::ast::NodeTag t) const {
-        return std::views::iota(0u, ast.size())
-             | std::views::filter([this, t](aura::ast::NodeId id) {
-                   return ast.get(id).tag == t;
-               });
+    // ── TagIndex — pre-built per-tag node lists ───────────────
+    // by_tag() becomes O(1) instead of O(N) after first build.
+    struct TagIndex {
+        static constexpr std::size_t TAG_COUNT = 12;
+        std::array<std::vector<aura::ast::NodeId>, TAG_COUNT> tags;
+        bool built = false;
+
+        void build(const aura::ast::FlatAST& a) {
+            if (built) return;
+            for (auto& v : tags) v.clear();
+            for (aura::ast::NodeId id = 0; id < a.size(); ++id) {
+                auto t = static_cast<std::size_t>(a.get(id).tag);
+                if (t < TAG_COUNT) tags[t].push_back(id);
+            }
+            built = true;
+        }
+
+        std::span<const aura::ast::NodeId> nodes(aura::ast::NodeTag t) const {
+            auto idx = static_cast<std::size_t>(t);
+            if (idx < TAG_COUNT) return tags[idx];
+            return {};
+        }
+    };
+
+    mutable TagIndex tag_index_;
+
+    // Filter nodes by tag — O(1) after first call (lazy-builds TagIndex)
+    std::span<const aura::ast::NodeId> by_tag(aura::ast::NodeTag t) const {
+        tag_index_.build(ast);
+        return tag_index_.nodes(t);
     }
 
     // Get children of a node as a range
@@ -40,12 +64,19 @@ export struct ASTIndex {
     // Find all references to a symbol
     auto refs_of(std::string_view name) const {
         auto sym = pool.intern(name);
-        return std::views::iota(0u, ast.size())
+        // Use TagIndex to only scan nodes with sym_id != INVALID_SYM
+        // This is still O(N) but avoids checking nodes with no symbol.
+        // Future: integrate with SymRefIndex for O(1) lookups.
+        return by_tag(aura::ast::NodeTag::Variable)
              | std::views::filter([this, sym](aura::ast::NodeId id) {
                    return ast.get(id).sym_id == sym;
                });
     }
+
+    // Invalidate when AST changes (call after applying patches)
+    void invalidate_tag_index() const { tag_index_.built = false; }
 };
+
 
 // ── QueryExpr — parsed query AST ───────────────────────────────
 export struct QueryExpr {
