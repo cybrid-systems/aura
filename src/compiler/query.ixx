@@ -313,6 +313,8 @@ ReplaceTemplate parse_rt(TokenStream& ts) {
             else if (op == "Begin" || op == "BeginNode") r.tag = aura::ast::NodeTag::Begin;
             else if (op == "Set" || op == "SetNode") r.tag = aura::ast::NodeTag::Set;
             else if (op == "Quote" || op == "QuoteNode") r.tag = aura::ast::NodeTag::Quote;
+            else if (op == "LiteralString" || op == "String") r.tag = aura::ast::NodeTag::LiteralString;
+            else if (op == "Coercion" || op == "CoercionNode") r.tag = aura::ast::NodeTag::Coercion;
             while (!ts.end() && ts.t[ts.p] != ")")
                 r.children.push_back(parse_rt(ts));
         }
