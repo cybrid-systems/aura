@@ -15,6 +15,9 @@ public:
     static bool is_abf(std::span<const std::byte> data);
 
 private:
+public:
+public:
+public:
     struct Reader {
         std::span<const std::byte> data;
         std::size_t pos = 0;
@@ -34,8 +37,9 @@ private:
     ast::Expr* read_if(Reader& r);
     ast::Expr* read_lambda(Reader& r);
     ast::Expr* read_let(Reader& r, bool is_rec);
-    ast::Expr* read_let_rec(Reader& r);
     ast::Expr* read_let_nonrec(Reader& r);
+    ast::Expr* read_let_rec(Reader& r);
+    static void register_all_readers();
     ast::Expr* read_define(Reader& r);
     ast::Expr* read_begin(Reader& r);
     ast::Expr* read_set(Reader& r);
