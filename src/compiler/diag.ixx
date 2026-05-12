@@ -14,6 +14,7 @@ export enum class ErrorKind : std::uint8_t {
     DivisionByZero,
     InvalidClosure,
     ArityMismatch,
+    TypeError,
     // IR pipeline errors
     IRCorruption,
     IRNoReturn,
@@ -72,6 +73,7 @@ export struct Diagnostic {
             case ErrorKind::DivisionByZero:    return "division by zero";
             case ErrorKind::InvalidClosure:    return "invalid closure";
             case ErrorKind::ArityMismatch:     return "arity mismatch";
+            case ErrorKind::TypeError:         return "type error";
             case ErrorKind::IRCorruption:      return "IR corruption";
             case ErrorKind::IRNoReturn:        return "no return from IR function";
             case ErrorKind::InternalError:     return "internal error";
@@ -101,5 +103,28 @@ using Result = std::expected<T, Diagnostic>;
 
 // Convenience: Result<void> for operations that don't produce a value
 export using VoidResult = Result<void>;
+
+// ── DiagnosticCollector — collects diagnostics during compilation ─
+export class DiagnosticCollector {
+public:
+    void report(aura::diag::Diagnostic d) {
+        diagnostics_.push_back(std::move(d));
+    }
+
+    bool has_errors() const {
+        return !diagnostics_.empty();
+    }
+
+    std::span<const aura::diag::Diagnostic> diagnostics() const {
+        return diagnostics_;
+    }
+
+    void clear() {
+        diagnostics_.clear();
+    }
+
+private:
+    std::vector<aura::diag::Diagnostic> diagnostics_;
+};
 
 } // namespace aura::diag
