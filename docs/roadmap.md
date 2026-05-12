@@ -12,9 +12,9 @@ M0 Racket原型    ✅  #lang aura + 全语义求值器 + ABF 序列化
 M1 C++ 求值器   ✅  树遍历器 + IR 管线 (Ghuloum Step 1-8)
 M2 查询引擎     ✅  Query/Transform/AutoFix/HotSwap/--serve
 M3a 语言补全    ✅  布尔/序对/begin/set!/quote/cond (Ghuloum Step 9-14)
-M3b 宏系统      🔨  defmacro ✅ → 卫生宏/编译期验证 ⬜
+M3b 宏系统      ✅  defmacro + 卫生宏 gensym + 编译期模板验证
 M3c 反射        ✅  P2996 auto_to_json + dispatch 表 + 结构验证
-M3d 类型系统      🔨  L6.1 TypeRegistry ✅ → L6.2 TypeAnnotationNode ✅ → L6.3 TypeChecker Skeleton ✅ → L6.4 推断 ⬜
+M3d 类型系统      🔨  L6.1-L6.7 全线 ✅ → EvalValue variant ⬜
 M4 生产         ⬜  LLVM JIT / AOT / 类型系统 / 自举
 ```
 
@@ -70,7 +70,7 @@ CompilerService  🟢 eval/eval_ir/    90%     API 稳定
                    --serve
 Reflection       🟢 P2996/kNodeMeta  90%     4 个组件
 Contracts        🟢 arena + emit     15%     试点阶段
-宏系统           🔨 defmacro          30%     Day 1/3
+宏系统           ✅ defmacro+gensym+验证   100%    Day 1-3
 TypeChecker      🔨 src/compiler/type_checker  15%     骨架
 LLVM/M4          ⬜                    0%
 ```
@@ -135,15 +135,15 @@ LLVM/M4          ⬜                    0%
 | 13 | quote 字面数据 | ✅ |
 | 14 | cond 条件 | ✅ |
 
-### M3b — 宏系统 🔨
+### M3b — 宏系统 ✅
 
 | 组件 | 状态 | 计划 |
 |------|------|------|
 | defmacro 解析器 | ✅ | Phase 3b D1 |
 | 模板替换展开 | ✅ | Phase 3b D1 |
 | 持久化 arena | ✅ | 避免 reset 后 body 失效 |
-| 卫生宏 (gensym) | ⬜ | Phase 3b D2 |
-| 编译期 AST 验证 | ⬜ | Phase 3b D3 |
+| 卫生宏 (gensym) | ✅ | Phase 3b D2 |
+| 编译期 AST 验证 | ✅ | Phase 3b D3 |
 
 ### M3c — 反射 ✅
 
@@ -211,7 +211,7 @@ See [ai-programming-language-design/docs/aura_typesystem.md](../design/aura_type
 ## 测试
 
 ```
-CTest: 39 tests ✅
+CTest: 43 tests ✅
   - 9 step tests       (语言语义)
   - 1 ir_basic         (IR 管线)
   - 9 IR mode tests    (--ir flag)

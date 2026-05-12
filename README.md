@@ -10,10 +10,12 @@
 ```
 M0 种子     ✅  Racket #lang 原型
 M1 C++求值  ✅  树遍历器 + ABF + IR 管线 (9/9)
-M2 查询引擎 🔨  AST查询/变换/自动修复 (6/7)
-M3 反射     ⬜
-M3d 类型系统 🔨 L6.1-L6.3 基础 ✅
-M4 生产     ⬜  LLVM + AOT + 自举（类型系统 L6.4+ 进行中）
+M2 查询引擎 ✅  查询/变换/自动修复/--serve
+M3a 语言补全  ✅  布尔/序对/begin/set!/quote/cond
+M3b 宏系统   ✅  defmacro + 卫生宏 gensym + 编译期验证
+M3c 反射     ✅  P2996 + IR opcode + Schema
+M3d 类型系统 🔨  L6.1-L6.7 全线 ✅（L6.8+ 进行中）
+M4 生产     ⬜  LLVM + AOT + 自举
 ```
 
 ### ✅ M1 — C++ 求值器（完成）
