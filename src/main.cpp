@@ -173,49 +173,63 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    // ── --inspect: eval with runtime reflection dump ──────────────
+    // ── --inspect: eval with full runtime reflection dump ────────
     if (argc > 1 && std::string_view(argv[1]) == "--inspect") {
         aura::compiler::CompilerService cs;
         std::string input;
         if (argc > 2) { input = argv[2]; }
         else { std::getline(std::cin, input); }
 
-        // Enable verbose inspection
         cs.set_strategy({.enable_inlining = true, .enable_specialization = false,
                          .max_unroll = 3, .verbose_inspect = true});
 
         auto result = cs.eval_ir(input);
 
-        // Print result
         if (!result) {
             std::println(std::cerr, "error: {}", result.error().message);
         } else {
             std::println("result: {}", *result);
         }
 
-        // Print closure/cell state
+        // ── Environment dump ─────────────────────────────────────
         auto closures = cs.last_closures();
         auto cells = cs.last_cells();
 
-        std::println("closures ({}):", closures.size());
+        std::println("┌─ closures ({})", closures.size());
         for (auto& c : closures) {
-            std::println("  [{}] func={} ('{}') env=[",
-                         c.id, c.func_id, c.func_name);
-            for (auto& v : c.env) {
-                std::println("    {}", v);
+            std::println("├ [{}] func[{}] '{}'", c.id, c.func_id, c.func_name);
+            // Free variables (captured from enclosing scope)
+            if (!c.func_free_vars.empty()) {
+                std::println("│   free-vars:");
+                for (std::size_t i = 0; i < c.func_free_vars.size() && i < c.env.size(); ++i) {
+                    std::println("│     {} : {}", c.func_free_vars[i], c.env[i]);
+                }
             }
-            std::println("  ]");
+            // Parameters
+            if (!c.func_params.empty()) {
+                std::println("│   params:");
+                for (auto& p : c.func_params) {
+                    std::println("│     {}", p);
+                }
+            }
+            // Remaining env (non-free-var values)
+            if (c.env.size() > c.func_free_vars.size()) {
+                std::println("│   extra env slots:");
+                for (std::size_t i = c.func_free_vars.size(); i < c.env.size(); ++i) {
+                    std::println("│     [{}] = {}", i, c.env[i]);
+                }
+            }
         }
 
-        std::println("cells ({}):", cells.size());
+        std::println("┌─ cells ({})", cells.size());
         for (auto& c : cells) {
-            std::println("  [{}] = {}", c.id, c.value);
+            std::println("├ [{}] = {}", c.id, c.value);
         }
 
         return result ? 0 : 1;
     }
 
-    // ── --env: quick cell/clone state dump ────────────────────────
+    // ── --env: compact cell/closure state dump ───────────────────
     if (argc > 1 && std::string_view(argv[1]) == "--env") {
         aura::compiler::CompilerService cs;
         std::string input;
@@ -223,17 +237,69 @@ int main(int argc, char* argv[]) {
         else { std::getline(std::cin, input); }
 
         auto result = cs.eval_ir(input);
-        std::println("result: {}", result ? std::to_string(*result) : std::string("error"));
+        if (result) {
+            std::println("result: {}", *result);
+        } else {
+            std::println(std::cerr, "error: {}", result.error().message);
+        }
 
         auto closures = cs.last_closures();
         auto cells = cs.last_cells();
-        for (auto& cl : closures) {
-            std::println("  closure [{}] = func[{}] ({}) env={}",
-                         cl.id, cl.func_id, cl.func_name, cl.env.size());
+
+        for (auto& c : closures) {
+            std::println("closure [{}] = func[{}] '{}'",
+                         c.id, c.func_id, c.func_name);
+            for (std::size_t i = 0; i < c.env.size(); ++i) {
+                auto label = i < c.func_free_vars.size()
+                           ? c.func_free_vars[i] : std::format("[{}]", i);
+                std::println("  {} = {}", label, c.env[i]);
+            }
         }
-        for (auto& ce : cells) {
-            std::println("  cell [{}] = {}", ce.id, ce.value);
+
+        for (auto& c : cells) {
+            std::println("cell [{}] = {}", c.id, c.value);
         }
+
+        return result ? 0 : 1;
+    }
+
+    // ── --env-json: machine-readable JSON env dump ────────────────
+    if (argc > 1 && std::string_view(argv[1]) == "--env-json") {
+        aura::compiler::CompilerService cs;
+        std::string input;
+        if (argc > 2) { input = argv[2]; }
+        else { std::getline(std::cin, input); }
+
+        auto result = cs.eval_ir(input);
+        auto closures = cs.last_closures();
+        auto cells = cs.last_cells();
+
+        std::println("{{\"status\":\"{}\",\"result\":{},\"closures\":[",
+                     result ? "ok" : "error",
+                     result ? std::to_string(*result) : std::string("null"));
+
+        for (std::size_t i = 0; i < closures.size(); ++i) {
+            auto& c = closures[i];
+            std::println("  {{\"id\":{},\"func_id\":{},\"func\":\"{}\",",
+                         c.id, c.func_id, c.func_name);
+            std::println("   \"env\":[");
+            for (std::size_t j = 0; j < c.env.size(); ++j) {
+                auto label = j < c.func_free_vars.size()
+                           ? c.func_free_vars[j] : std::format("[{}]", j);
+                std::println("    {{\"name\":\"{}\",\"value\":{}}}{}",
+                             label, c.env[j],
+                             j + 1 < c.env.size() ? "," : "");
+            }
+            std::println("   ]}}{}", i + 1 < closures.size() ? "," : "");
+        }
+
+        std::println("],\"cells\":[");
+        for (std::size_t i = 0; i < cells.size(); ++i) {
+            std::println("  {{\"id\":{},\"value\":{}}}{}",
+                         cells[i].id, cells[i].value,
+                         i + 1 < cells.size() ? "," : "");
+        }
+        std::println("]}}");
         return result ? 0 : 1;
     }
 

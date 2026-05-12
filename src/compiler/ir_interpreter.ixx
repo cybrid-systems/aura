@@ -24,9 +24,11 @@ struct CallFrame {
 // IR interpreter — lowered code execution with closure support
 // ── Runtime reflection: closure/cell introspection ──────────────
 export struct ClosureSnapshot {
-    std::uint64_t     id;
-    std::uint32_t     func_id;
-    std::string       func_name;
+    std::uint64_t          id;
+    std::uint32_t          func_id;
+    std::string            func_name;
+    std::vector<std::string> func_params;     // from IRFunction::params
+    std::vector<std::string> func_free_vars;  // from IRFunction::free_vars
     std::vector<std::int64_t> env;
 };
 
@@ -79,6 +81,10 @@ private:
     EvalResult run_function(const aura::ir::IRFunction& func,
                              std::vector<std::int64_t>& locals,
                              const std::vector<std::int64_t>& args);
+
+    // Build a snapshot from runtime closure data
+    ClosureSnapshot make_snapshot(std::uint64_t id,
+                                   const IRClosure& closure) const;
 
     const aura::ir::IRModule& module_;
     const Primitives& primitives_;

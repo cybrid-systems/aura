@@ -260,32 +260,39 @@ std::optional<ClosureSnapshot> IRInterpreter::inspect_closure(std::uint64_t clos
     else
         fname = "<unknown>";
 
-    return ClosureSnapshot{
-        .id        = closure_id,
-        .func_id   = closure.func_id,
-        .func_name = std::move(fname),
-        .env       = closure.env
-    };
+    return make_snapshot(closure_id, closure);
 }
 
 std::vector<ClosureSnapshot> IRInterpreter::list_closures() const {
     std::vector<ClosureSnapshot> result;
     result.reserve(runtime_closures_.size());
     for (auto& [id, closure] : runtime_closures_) {
-        std::string fname;
-        if (closure.func_id < module_.functions.size())
-            fname = module_.functions[closure.func_id].name;
-        else
-            fname = "<unknown>";
-
-        result.push_back(ClosureSnapshot{
-            .id        = id,
-            .func_id   = closure.func_id,
-            .func_name = std::move(fname),
-            .env       = closure.env
-        });
+        result.push_back(make_snapshot(id, closure));
     }
     return result;
+}
+
+// Helper: build ClosureSnapshot from runtime closure data
+ClosureSnapshot IRInterpreter::make_snapshot(std::uint64_t id,
+                                               const IRClosure& closure) const {
+    std::string fname;
+    std::vector<std::string> params, free_vars;
+    if (closure.func_id < module_.functions.size()) {
+        auto& f = module_.functions[closure.func_id];
+        fname = f.name;
+        params = f.params;
+        free_vars = f.free_vars;
+    } else {
+        fname = "<unknown>";
+    }
+    return ClosureSnapshot{
+        .id            = id,
+        .func_id       = closure.func_id,
+        .func_name     = std::move(fname),
+        .func_params   = std::move(params),
+        .func_free_vars = std::move(free_vars),
+        .env           = closure.env
+    };
 }
 
 std::vector<CellSnapshot> IRInterpreter::list_cells() const {
