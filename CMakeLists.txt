@@ -37,8 +37,8 @@ target_sources(aura PRIVATE
     src/compiler/arity_impl.cpp
     src/binary/abf_deserializer_impl.cpp src/main.cpp)
 
-target_compile_options(aura PRIVATE -Wall -Wextra -Wpedantic)
-target_link_libraries(aura PRIVATE stdc++)
+target_compile_options(aura PRIVATE -Wall -Wextra -Wpedantic -fcontracts -fcontract-evaluation-semantic=observe)
+target_link_libraries(aura PRIVATE stdc++ stdc++exp)
 
 enable_testing()
 macro(AT N I E)
@@ -91,8 +91,8 @@ target_sources(test_ir PRIVATE
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/arity_impl.cpp)
-target_compile_options(test_ir PRIVATE -Wall -Wextra -Wpedantic)
-target_link_libraries(test_ir PRIVATE stdc++)
+target_compile_options(test_ir PRIVATE -Wall -Wextra -Wpedantic -fcontracts -fcontract-evaluation-semantic=observe)
+target_link_libraries(test_ir PRIVATE stdc++ stdc++exp)
 
 add_test(NAME ir_basic COMMAND ./test_ir
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
