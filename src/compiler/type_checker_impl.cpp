@@ -218,9 +218,105 @@ TypeId InferenceEngine::synthesize_lambda(const LambdaNode& n) {
     return reg_.register_func(std::move(param_types), body_type);
 }
 
+// ── Occurrence Typing (L6.7) ─────────────────────────────────
+// Analyze if-condition for type predicates like (string? x)
+struct OccurrenceInfo {
+    std::string var_name;
+    TypeId refined_type;
+    bool is_negation = false;
+};
+
+// Try to extract type predicate info from a condition expression
+static std::optional<OccurrenceInfo> analyze_predicate(const ast::Expr& cond, core::TypeRegistry& reg) {
+    // Handle (not p) — recurse and swap
+    auto* call = std::get_if<ast::CallNode>(&cond.payload);
+    if (!call || call->args.empty()) return std::nullopt;
+    
+    auto* fn = std::get_if<ast::VariableNode>(&call->function->payload);
+    
+    // Check for (not p)
+    if (fn && fn->name == "not" && !call->args.empty()) {
+        auto inner = analyze_predicate(*call->args[0], reg);
+        if (inner) { inner->is_negation = !inner->is_negation; return inner; }
+        return std::nullopt;
+    }
+    
+    // Check for (and p1 p2) — return first found
+    if (fn && fn->name == "and") {
+        for (auto* arg : call->args) {
+            auto inner = analyze_predicate(*arg, reg);
+            if (inner) return inner;
+        }
+        return std::nullopt;
+    }
+    
+    // Check for (or p1 p2) — return first found
+    if (fn && fn->name == "or") {
+        for (auto* arg : call->args) {
+            auto inner = analyze_predicate(*arg, reg);
+            if (inner) return inner;
+        }
+        return std::nullopt;
+    }
+    
+    // Must be a predicate call: (pred? x)
+    if (call->args.size() != 1) return std::nullopt;
+    auto* pred = std::get_if<ast::VariableNode>(&call->function->payload);
+    auto* arg = std::get_if<ast::VariableNode>(&call->args[0]->payload);
+    if (!pred || !arg) return std::nullopt;
+    
+    // Map predicate name → refined type
+    // References the TypeRegistry from the inference engine context
+    if (pred->name == "string?")
+        return OccurrenceInfo{arg->name, reg.string_type()};
+    else if (pred->name == "number?")
+        return OccurrenceInfo{arg->name, reg.int_type()};
+    else if (pred->name == "boolean?")
+        return OccurrenceInfo{arg->name, reg.bool_type()};
+    else if (pred->name == "null?")
+        return OccurrenceInfo{arg->name, reg.void_type()};
+    else if (pred->name == "pair?")
+        return OccurrenceInfo{arg->name, reg.dynamic_type()};  // Pair: dynamic for now
+    else if (pred->name == "procedure?")
+        return OccurrenceInfo{arg->name, reg.dynamic_type()};  // (-> Any Any): dynamic
+    
+    return std::nullopt;
+}
+
 TypeId InferenceEngine::synthesize_if(const IfExprNode& n) {
     check(*n.condition, reg_.bool_type());
     if (!n.then_branch) return reg_.void_type();
+    
+    // Occurrence typing: analyze condition for type predicates
+    auto occ = analyze_predicate(*n.condition, reg_);
+    
+    if (occ && !occ->is_negation) {
+        // Then-branch: variable has refined type
+        env_.push_scope();
+        if (env_.is_bound(occ->var_name))
+            env_.bind(occ->var_name, occ->refined_type);
+        TypeId then_type = synthesize(*n.then_branch);
+        env_.pop_scope();
+        
+        // Else-branch: no refinement (keeps original type)
+        TypeId else_type = n.else_branch ? synthesize(*n.else_branch) : reg_.void_type();
+        return lub(then_type, else_type);
+    }
+    
+    if (occ && occ->is_negation) {
+        // Then-branch: no refinement
+        TypeId then_type = synthesize(*n.then_branch);
+        
+        // Else-branch: variable has refined type
+        env_.push_scope();
+        if (env_.is_bound(occ->var_name))
+            env_.bind(occ->var_name, occ->refined_type);
+        TypeId else_type = n.else_branch ? synthesize(*n.else_branch) : reg_.void_type();
+        env_.pop_scope();
+        return lub(then_type, else_type);
+    }
+    
+    // No predicate found: standard if typing
     TypeId then_type = synthesize(*n.then_branch);
     TypeId else_type = n.else_branch ? synthesize(*n.else_branch) : reg_.void_type();
     return lub(then_type, else_type);
