@@ -364,7 +364,7 @@ L6        31-35   类型系统启蒙      EvalValue variant         5 天
 
 ---
 
-## 设计约束
+## 迭代标准
 
 1. **每步可编译，每步可测试** — 严格执行 Ghuloum 原则
 2. **已有基础设施不改** — ABF、query engine、reflection 保持不变
@@ -376,3 +376,10 @@ L6        31-35   类型系统启蒙      EvalValue variant         5 天
 
 > 语言当前的状态像一栋毛坯房：框架（IR 管线）和智能家居（查询引擎/反射）都装好了，
 > 但水管（字符串）和电路（列表库）还没铺。Phase L1-L5 就是铺水电，L6 才是整体装修。
+
+---
+
+## 迭代标准
+
+每个语言特性必须穿透 12 层 Trees that Grow 管线：AST → SoA → 解析器(×2) → 求值器 → ABF(×2) → Lowering → Reconstruct → 查询引擎 → Flatten → 测试。
+详见 [kernel_iteration_standard.md](./kernel_iteration_standard.md)。
