@@ -159,13 +159,27 @@ LLVM/M4          ⬜                    0%
 | --inspect / --env CLI | ✅ | 运行时 |
 | Contracts (observe) | 🔨 | arena + emit |
 
-### M4 — 生产化 (规划)
+### M4 — 类型系统 + EvalValue (规划，L6-L7)
+
+| Phase | Step | 内容 | 红线 | 状态 |
+|-------|------|------|------|------|
+| L6 | 31 | EvalValue variant | (type? Int) | ⬜ |
+| L6 | 32 | TypeId 骨架 | (type-of 42) → Int | ⬜ |
+| L6 | 33 | 基础类型检查 | (+ 1 "a") → TypeError | ⬜ |
+| L6 | 34 | Query 类型 clause | (query (return-type Int)) | ⬜ |
+| L6 | 35 | Coercion 框架 | (cast 42 : Int) → no-op | ⬜ |
+| L7 | 36-40 | Sound Gradual 核心 | 完整 bi-directional checker | ⬜ |
+| M3/M4 | — | Reflection 类型验证 | P2996 类型结构校验 | ⬜ |
+| M4 | — | Monomorphization + 优化 | 类型标注代码零运行时开销 | ⬜ |
+
+See [ai-programming-language-design/docs/aura_typesystem.md](../design/aura_typesystem.md) for full design.
+
+### M4b — 生产化 (规划)
 
 | 组件 | 状态 |
 |------|------|
 | 三层运行时 (解释/JIT/AOT) | ⬜ |
 | LLVM ORC JIT | ⬜ |
-| 类型系统 (Sound Gradual Typing) | ⬜ |
 | 自举 | ⬜ |
 | CI/CD | ⬜ |
 
