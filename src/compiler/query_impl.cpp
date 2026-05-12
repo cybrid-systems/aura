@@ -69,9 +69,9 @@ static QueryExpr parse_list(PS& ps) {
     else if (op == "and")      { q.kind = QueryExpr::Kind::And; while (!ps.close() && !ps.end()) q.children.push_back(parse_expr(ps)); }
     else if (op == "or")       { q.kind = QueryExpr::Kind::Or;  while (!ps.close() && !ps.end()) q.children.push_back(parse_expr(ps)); }
     else if (op == "not")      { q.kind = QueryExpr::Kind::Not; q.children.push_back(parse_expr(ps)); }
-    else if (op == "has-type") { q.kind = QueryExpr::Kind::HasType; q.str_value = std::string(ps.next()); }
-    else if (op == "return-type") { q.kind = QueryExpr::Kind::ReturnType; q.str_value = std::string(ps.next()); }
-    else if (op == "argument-type") { q.kind = QueryExpr::Kind::ArgType; q.child_index = (std::uint32_t)std::stoul(std::string(ps.next())); q.str_value = std::string(ps.next()); }
+    else if (op == "has-type?" || op == "has-type") { q.kind = QueryExpr::Kind::HasType; q.str_value = std::string(ps.next()); }
+    else if (op == "return-type?" || op == "return-type") { q.kind = QueryExpr::Kind::ReturnType; q.str_value = std::string(ps.next()); }
+    else if (op == "argument-type?" || op == "argument-type") { q.kind = QueryExpr::Kind::ArgType; q.child_index = (std::uint32_t)std::stoul(std::string(ps.next())); q.str_value = std::string(ps.next()); }
 
     if (!ps.end()) ps.next(); // ')'
     return q;
@@ -126,7 +126,7 @@ bool QueryEngine::match(NodeId id, const QueryExpr& q, int depth) {
     case QueryExpr::Kind::Or:  for (auto& c : q.children) if (match(id, c, depth+1)) return true; return false;
     case QueryExpr::Kind::Not: return !q.children.empty() && !match(id, q.children[0], depth+1);
     case QueryExpr::Kind::HasType:
-        return index_.ast.type_id(id) != 0 && index_.ast.type_id(id) == resolve_type_id(q.str_value);
+return index_.ast.type_id(id) != 0 && index_.ast.type_id(id) == resolve_type_id(q.str_value);
     case QueryExpr::Kind::ReturnType: {
         if (v.tag != NodeTag::Call) return false;
         return index_.ast.type_id(id) != 0 && index_.ast.type_id(id) == resolve_type_id(q.str_value);
