@@ -1,3 +1,5 @@
+module;
+#include <cstdio>
 module aura.compiler.frontend;
 import std;
 
@@ -35,6 +37,21 @@ Primitives::Primitives() {
     table_["eq?"]  = [](auto& a) { return a[0] == a[1] ? TRUE_VAL : FALSE_VAL; };
 }
 
+// ── I/O helper (non-template, avoids generic lambda lookup issues) ──
+namespace {
+    static void io_print_val(std::int64_t v, const std::vector<std::string>* heap, bool quote) {
+        auto uv = static_cast<std::uint64_t>(v);
+        if (v == 0)       { std::printf("()"); return; }
+        if (v == 1)       { std::printf("#t"); return; }
+        if (uv >= static_cast<std::uint64_t>(0x8000000) && heap && uv - static_cast<std::uint64_t>(0x8000000) < heap->size()) {
+            auto idx = static_cast<std::size_t>(v - static_cast<std::int64_t>(0x8000000));
+            if (quote) std::printf("\"%s\"", (*heap)[idx].c_str());
+            else       std::printf("%s",       (*heap)[idx].c_str());
+            return;
+        }
+        std::printf("%ld", (long)v);
+    }
+}
 void Evaluator::init_pair_primitives() {
     // Ghuloum Step 10: pairs — capture pairs_ by reference
     primitives_.add("cons", [this](const auto& a) {
@@ -285,21 +302,45 @@ void Evaluator::init_pair_primitives() {
         return TRUE_VAL;
     });
     primitives_.add("display", [this](const auto& a) {
-        if (a.empty() || a.size() < 1) return TRUE_VAL;
-        auto v = a[0]; auto uv = static_cast<std::uint64_t>(v);
-        if (v == 0) std::print("()");
-        else if (v == TRUE_VAL) std::print("#t");
-        else if (v == FALSE_VAL) std::print("#f");
-        else if (uv >= static_cast<std::uint64_t>(PAIR_SENTINEL) && uv < static_cast<std::uint64_t>(PAIR_SENTINEL) + pairs_.size())
-            std::print("<pair>");
-        else if (uv >= static_cast<std::uint64_t>(STRING_SENTINEL)) {
-            auto idx = static_cast<std::size_t>(v - STRING_SENTINEL);
-            if (idx < string_heap_.size()) std::print("{}", string_heap_[idx]);
-        }
-        else std::print("{}", v);
+        if (a.empty()) return TRUE_VAL;
+        io_print_val(a[0], &string_heap_, false);
         return TRUE_VAL;
     });
-    primitives_.add("newline", [](const auto&) { std::println(""); return TRUE_VAL; });
+    primitives_.add("write", [this](const auto& a) -> std::int64_t {
+        if (a.empty()) return TRUE_VAL;
+        io_print_val(a[0], &string_heap_, true);
+        return TRUE_VAL;
+    });
+    primitives_.add("newline", [](const auto&) { std::printf("\n"); return TRUE_VAL; });
+    primitives_.add("error", [](const auto& a) -> std::int64_t {
+        std::string msg = a.empty() ? "error" : std::to_string(a[0]);
+        throw std::runtime_error(msg);
+        return FALSE_VAL;
+    });
+    primitives_.add("assert", [this](const auto& a) -> std::int64_t {
+        if (a.empty() || a[0] == FALSE_VAL) {
+            std::string msg = "assertion failed";
+            if (a.size() > 1) {
+                auto uv = static_cast<std::uint64_t>(a[1]);
+                if (uv >= static_cast<std::uint64_t>(STRING_SENTINEL) && uv < static_cast<std::uint64_t>(STRING_SENTINEL) + string_heap_.size())
+                    msg = string_heap_[static_cast<std::size_t>(a[1] - STRING_SENTINEL)];
+                else
+                    msg = std::to_string(a[1]);
+            }
+            throw std::runtime_error(msg);
+        }
+        return TRUE_VAL;
+    });
+    primitives_.add("read", [this](const auto&) {
+        std::string line;
+        std::getline(std::cin, line);
+        if (line.empty()) return std::int64_t(0);
+        // Parse and evaluate using the CompilerService
+        // For now: store the line as a string and return it
+        auto id = string_heap_.size();
+        string_heap_.push_back(std::move(line));
+        return STRING_SENTINEL + static_cast<std::int64_t>(id);
+    });
 }
 
 std::int64_t* Env::lookup_cell_ptr(const std::string& n, std::vector<std::int64_t>* cells) const {
