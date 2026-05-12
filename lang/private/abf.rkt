@@ -16,6 +16,7 @@
 (define TAG-BEGIN       #x09)
 (define TAG-SET         #x0A)
 (define TAG-QUOTE       #x0B)
+(define TAG-COND       #x0C)
 (define PHASE-PARSED 0)
 
 (define (tag-for-expr expr)
@@ -30,7 +31,9 @@
            [(lambda) TAG-LAMBDA]
            [(let) TAG-LET]
            [(letrec) TAG-LETREC]
+           [(define) TAG-DEFINE]
            [(begin) TAG-BEGIN]
+           [(cond) TAG-COND]
            [(set!) TAG-SET]
            [else TAG-CALL])]
         [else (error 'tag-for-expr "unknown expr: ~a" expr)]))
@@ -66,6 +69,7 @@
     [(#x02) (write-variable buf expr)]
     [(#x03) (write-call buf expr phase-id)]
     [(#x04) (write-if buf expr phase-id)]
+    [(#x0C) (write-cond buf expr phase-id)]
     [(#x05) (write-lambda buf expr phase-id)]
     [(#x06) (write-let buf expr phase-id #f)]
     [(#x07) (write-let buf expr phase-id #t)]
@@ -144,6 +148,27 @@
   (put-varint! buf (bytes-length name-bytes))
   (put-bytes! buf name-bytes)
   (write-node buf (caddr expr) phase-id))
+
+
+(define (write-cond buf expr phase-id)
+  ;; Desugar (cond (t1 v1) (t2 v2) ... (else en))
+  ;; Write as sequence: test1 val1 IF_tag test2 val2 IF_tag ... else_val
+  ;; read_cond reads: test1, val1, then loop: if next=0x04 read next pair
+  (define clauses (cdr expr))
+  (define (write-pair test val)
+    (write-node buf test phase-id)
+    (write-node buf val phase-id))
+  (define (write-clauses cls)
+    (unless (null? cls)
+      (write-pair (caar cls) (cadar cls))
+      (let ([rest (cdr cls)])
+        (unless (null? rest)
+          ;; Mark continuation with IF tag
+          (put-varint! buf TAG-IF)
+          (put-varint! buf phase-id)
+          (put-varint! buf 0)
+          (write-clauses rest)))))
+  (write-clauses clauses))
 
 (define (write-quote buf expr phase-id)
   ;; quote wraps a single expression — write it directly
