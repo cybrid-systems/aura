@@ -22,6 +22,7 @@ enum class NodeTag : std::uint32_t {
     LiteralInt = 0x01, Variable = 0x02, Call = 0x03,
     IfExpr = 0x04, Lambda = 0x05, Let = 0x06, LetRec = 0x07,
     Define = 0x08, Begin = 0x09, Set = 0x0A, Quote = 0x0B,
+    TypeAnnotation = 0x0F,
 };
 
 struct LiteralIntNode { NodeTag tag; std::int64_t value; };
@@ -35,6 +36,7 @@ struct DefineNode     { NodeTag tag; std::string name; Expr* value; };
 struct BeginNode      { NodeTag tag; std::vector<Expr*> exprs; };
 struct SetNode        { NodeTag tag; std::string name; Expr* value; };
 struct QuoteNode      { NodeTag tag; Expr* value; };
+struct TypeAnnotationNode { NodeTag tag; Expr* inner_expr; std::string type_name; };
 
 struct BadNode        { int x; int y; };  // should fail
 
@@ -67,11 +69,12 @@ int main() {
     passed += c.operator()<BeginNode>("BeginNode", true);
     passed += c.operator()<SetNode>("SetNode", true);
     passed += c.operator()<QuoteNode>("QuoteNode", true);
+    passed += c.operator()<TypeAnnotationNode>("TypeAnnotationNode", true);
 
     // Expected failures
     passed += c.operator()<BadNode>("BadNode (should fail)", false);
 
-    total += 12;
+    total += 13;
 
     printf("\n  %d/%d passed\n", passed, total);
     return (passed == total) ? 0 : 1;

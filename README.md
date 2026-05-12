@@ -5,14 +5,15 @@
 
 ---
 
-## 当前状态（2026.05.11）
+## 当前状态（2026.05.12）
 
 ```
 M0 种子     ✅  Racket #lang 原型
 M1 C++求值  ✅  树遍历器 + ABF + IR 管线 (9/9)
 M2 查询引擎 🔨  AST查询/变换/自动修复 (6/7)
 M3 反射     ⬜
-M4 生产     ⬜  LLVM + AOT + 自举
+M3d 类型系统 🔨 L6.1-L6.3 基础 ✅
+M4 生产     ⬜  LLVM + AOT + 自举（类型系统 L6.4+ 进行中）
 ```
 
 ### ✅ M1 — C++ 求值器（完成）
@@ -43,7 +44,7 @@ M4 生产     ⬜  LLVM + AOT + 自举
 | M2.6 Hot swap (函数级 IR 替换) | ⬜ |
 | M2.7 AutoFixEngine + --serve 模式 | ✅ |
 
-**29 个 CTest 全部通过**
+**39 个 CTest 全部通过**
 
 ```bash
 $ echo '(+ 1 2)' | ./aura --query '(node-type Call)'
@@ -53,8 +54,23 @@ S error kind=3 msg=unbound variable: x
 S fix 4 patches
 S fixed 0
 $ ctest --test-dir build
-100% tests passed, 0 tests failed out of 29
+100% tests passed, 0 tests failed out of 39
 ```
+
+### 类型系统（进行中 — L6）
+
+| 特性 | 状态 |
+|------|------|
+| L6.1 TypeRegistry (Int/Bool/String/Void/Any) | ✅ |
+| L6.2 TypeAnnotationNode + ABF TAG-TYPE 0x0F | ✅ |
+| L6.3 TypeChecker Pass 骨架 | ✅ |
+| L6.4 Bi-dir 推断 + 约束求解 | ⬜ |
+| L6.5 Query 类型 clause | ⬜ |
+| L6.6 Gradual coercion | ⬜ |
+| L6.7 Occurrence typing | ⬜ |
+
+Full design: [`docs/aura_typesystem.md`](docs/aura_typesystem.md)
+Formal rules: [`docs/aura_typesystem_formal.md`](docs/aura_typesystem_formal.md)
 
 ### Racket Agent Demo
 
@@ -90,7 +106,7 @@ Agent (Racket/Python)
 
 ```
 src/
-├── core/          arena.ixx, ast.ixx, ast_flat.ixx, ast_pool.ixx
+├── core/          arena.ixx, ast.ixx, ast_flat.ixx, ast_pool.ixx, type.ixx, type_info.ixx
 ├── parser/        lexer.ixx, parser.ixx
 ├── compiler/
 │   ├── frontend.ixx               — 树遍历求值器
@@ -102,7 +118,8 @@ src/
 │   ├── arity.ixx                  — 参数数量校验
 │   ├── diag.ixx                   — 结构化错误诊断
 │   ├── service.ixx                — CompilerService
-│   └── query.ixx                  — ASTIndex/QueryEngine/TransformEngine/SymRefIndex/AutoFix
+│   ├── query.ixx                  — ASTIndex/QueryEngine/TransformEngine/SymRefIndex/AutoFix
+│   └── type_checker.ixx           — TypeChecker 骨架 (L6.3+)
 ├── binary/        abf_deserializer.ixx
 └── main.cpp                       — CLI: REPL / pipe / --ir / --query / --serve / ...
 tests/
@@ -146,7 +163,7 @@ echo '(+ x 1)' | ./aura --serve   # → error + auto-fix
 ### 测试
 
 ```bash
-ctest --test-dir build            # 29 个测试全部通过
+ctest --test-dir build            # 39 个测试全部通过
 racket tests/agent_demo.rkt       # Agent 自动修复演示
 ```
 

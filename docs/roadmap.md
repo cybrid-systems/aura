@@ -14,6 +14,7 @@ M2 查询引擎     ✅  Query/Transform/AutoFix/HotSwap/--serve
 M3a 语言补全    ✅  布尔/序对/begin/set!/quote/cond (Ghuloum Step 9-14)
 M3b 宏系统      🔨  defmacro ✅ → 卫生宏/编译期验证 ⬜
 M3c 反射        ✅  P2996 auto_to_json + dispatch 表 + 结构验证
+M3d 类型系统      🔨  L6.1 TypeRegistry ✅ → L6.2 TypeAnnotationNode ✅ → L6.3 TypeChecker Skeleton ✅ → L6.4 推断 ⬜
 M4 生产         ⬜  LLVM JIT / AOT / 类型系统 / 自举
 ```
 
@@ -55,7 +56,7 @@ Step  C++    特性                         交付日
 设计层           实现                覆盖率   质量
 ────────────────────────────────────────────────────
 Racket Frontend  👻 #lang aura + ABF  65%     可用
-AST Layer        🟢 Expr* + FlatAST   90%     通过 37 测试
+AST Layer        🟢 Expr* + FlatAST   90%     通过 39 测试
 AuraIR Layer     🟢 27 opcodes       95%     测试全覆盖
 IR Lowering      🟢 LoweringPass→    90%     逐步函数化
                    LoweringState
@@ -70,6 +71,7 @@ CompilerService  🟢 eval/eval_ir/    90%     API 稳定
 Reflection       🟢 P2996/kNodeMeta  90%     4 个组件
 Contracts        🟢 arena + emit     15%     试点阶段
 宏系统           🔨 defmacro          30%     Day 1/3
+TypeChecker      🔨 src/compiler/type_checker  15%     骨架
 LLVM/M4          ⬜                    0%
 ```
 
@@ -77,7 +79,7 @@ LLVM/M4          ⬜                    0%
 
 | 指标 | 数值 | 趋势 |
 |------|------|------|
-| CTest | 37/37 ✅ | 持续增长 |
+| CTest | 39/39 ✅ | 持续增长 |
 | 源码模块 (.ixx) | 19 | 稳定 |
 | 实现文件 (.cpp) | 14 | 稳定 |
 | reflect/ 工具链 | 6 个头文件 | 新增 |
@@ -209,7 +211,7 @@ See [ai-programming-language-design/docs/aura_typesystem.md](../design/aura_type
 ## 测试
 
 ```
-CTest: 37 tests ✅
+CTest: 39 tests ✅
   - 9 step tests       (语言语义)
   - 1 ir_basic         (IR 管线)
   - 9 IR mode tests    (--ir flag)
