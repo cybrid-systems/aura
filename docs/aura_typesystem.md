@@ -1286,6 +1286,7 @@ P2 — L6.5 止：
 ```
 
 ### 20.4 类型规则（核心）
+> 完整形式规则见附录 `aura_typesystem_formal.md` §15。
 
 在 TypeChecker 中新增 **Ownership Pass**，规则如下：
 
