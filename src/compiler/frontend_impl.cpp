@@ -277,6 +277,41 @@ void Evaluator::init_pair_primitives() {
     primitives_.add("filter", [this](const auto& a) {
         return a.empty() ? std::int64_t(0) : a[0];
     });
+
+    // ── L6.8: Runtime type introspection ────────────────────────────
+    // Infer a human-readable type name from a sentinel-based int64_t.
+    // Order matters: check highest sentinel first (non-overlapping ranges).
+    auto infer_type_name = [this](std::int64_t v) -> const char* {
+        auto uv = static_cast<std::uint64_t>(v);
+        if (uv >= static_cast<std::uint64_t>(STRING_SENTINEL)) return "String";
+        if (uv >= static_cast<std::uint64_t>(PAIR_SENTINEL))   return "Pair";
+        if (uv >= static_cast<std::uint64_t>(CELL_SENTINEL))   return "Cell";
+        if (uv >= static_cast<std::uint64_t>(CLOSURE_SENTINEL)) return "Closure";
+        if (v == 0 || v == 1) return "Bool";
+        return "Int";
+    };
+
+    // (type-of val) → type name as string
+    primitives_.add("type-of", [this, infer_type_name](const auto& a) -> std::int64_t {
+        if (a.empty()) return std::int64_t(0);
+        auto type_name = infer_type_name(a[0]);
+        auto id = string_heap_.size();
+        string_heap_.push_back(type_name);
+        return STRING_SENTINEL + static_cast<std::int64_t>(id);
+    });
+
+    // (type? val type-name) → bool
+    primitives_.add("type?", [this, infer_type_name](const auto& a) -> std::int64_t {
+        if (a.size() < 2) return FALSE_VAL;
+        auto val_type = infer_type_name(a[0]);
+        // Get the expected type name from the second arg
+        auto expected_idx = static_cast<std::size_t>(a[1] - STRING_SENTINEL);
+        if (expected_idx >= string_heap_.size()) return FALSE_VAL;
+        auto& expected = string_heap_[expected_idx];
+        return (val_type == expected) ? TRUE_VAL : FALSE_VAL;
+    });
+
+
     primitives_.add("equal?", [this](const auto& a) {
         if (a.size() < 2) return TRUE_VAL;
         std::vector<std::pair<std::int64_t, std::int64_t>> stack;
