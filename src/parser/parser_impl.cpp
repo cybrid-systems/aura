@@ -34,6 +34,7 @@ ast::Expr* Parser::parse_list() {
         if (kw=="set!") return parse_set();
         if (kw=="quote") return parse_quote();
         if (kw=="cond") return parse_cond();
+        if (kw=="defmacro") return parse_defmacro();
     }
     auto* func = parse_expr(); if (!func) { skip_rparen(); return nullptr; }
     ast::CallNode call;
@@ -70,6 +71,26 @@ ast::Expr* Parser::parse_let(bool r) {
         else  body=arena_.template create<ast::Expr>(ast::LetNode{{},it->n,it->v,body});
     }
     return body;
+}
+
+ast::Expr* Parser::parse_defmacro() {
+    lexer_->consume(); // 'defmacro'
+    // (name . params)
+    if (lexer_->consume().kind != TokenKind::LParen) { skip_rparen(); return nullptr; }
+    auto name_tok = lexer_->consume();
+    if (name_tok.kind != TokenKind::Identifier) { skip_rparen(); return nullptr; }
+    ast::MacroDefNode mac{{}, std::string(name_tok.text), {}, nullptr};
+    while (lexer_->peek().kind != TokenKind::RParen) {
+        auto p = lexer_->consume();
+        if (p.kind != TokenKind::Identifier) { skip_rparen(); return nullptr; }
+        mac.params.push_back(std::string(p.text));
+    }
+    lexer_->consume(); // ')'
+    // Body is the next expression
+    mac.body = parse_expr();
+    if (!mac.body) { skip_rparen(); return nullptr; }
+    lexer_->consume(); // ')'
+    return arena_.template create<ast::Expr>(std::move(mac));
 }
 ast::Expr* Parser::parse_val() {
     auto tok=lexer_->peek();

@@ -25,7 +25,7 @@ public:
 private:
     ast::Expr* parse_expr(); ast::Expr* parse_int(Token tok); ast::Expr* parse_list();
     ast::Expr* parse_if(); ast::Expr* parse_lambda(); ast::Expr* parse_let(bool r); ast::Expr* parse_define();
-    ast::Expr* parse_begin(); ast::Expr* parse_set(); ast::Expr* parse_quote(); ast::Expr* parse_cond();
+    ast::Expr* parse_begin(); ast::Expr* parse_set(); ast::Expr* parse_quote(); ast::Expr* parse_cond(); ast::Expr* parse_defmacro();
     ast::Expr* parse_val(); void skip_rparen();
     ast::ASTArena& arena_; std::optional<Lexer> lexer_;
 };
@@ -51,7 +51,7 @@ private:
     aura::ast::NodeId parse_let(bool rec);
     aura::ast::NodeId parse_define();
     aura::ast::NodeId parse_begin(); aura::ast::NodeId parse_set();
-    aura::ast::NodeId parse_quote(); aura::ast::NodeId parse_cond();
+    aura::ast::NodeId parse_quote(); aura::ast::NodeId parse_cond(); aura::ast::NodeId parse_defmacro();
     aura::ast::NodeId parse_val();
     std::vector<aura::ast::NodeId> parse_bindings();
     void skip_rparen();

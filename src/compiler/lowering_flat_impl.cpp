@@ -68,6 +68,14 @@ static Expr* reconstruct_node(NodeId id, const FlatAST& flat,
         auto* val = reconstruct_node(v.child(0), flat, pool, arena);
         return arena.create<Expr>(DefineNode{v.tag, std::string(name), val});
     }
+    case NodeTag::MacroDef: {
+        auto name = pool.resolve(v.sym_id);
+        auto* body = reconstruct_node(v.child(0), flat, pool, arena);
+        // Params are not stored in FlatAST — we need a different approach.
+        // For now, reconstruct with empty params and use the Expr* parser path
+        // when macros are involved. This is a known limitation of the flat AST.
+        return arena.create<Expr>(MacroDefNode{v.tag, std::string(name), {}, body});
+    }
     case NodeTag::Begin: {
         ast::BeginNode begin{v.tag, {}};
         for (std::size_t i = 0; i < v.children.size(); ++i) {

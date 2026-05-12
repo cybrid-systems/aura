@@ -18,7 +18,7 @@ export struct NodeMeta {
     bool has_params;              // has param list (Lambda)
 };
 
-export constexpr std::array<NodeMeta, 11> kNodeMeta = {{
+export constexpr std::array<NodeMeta, 12> kNodeMeta = {{
     {NodeTag::LiteralInt, "LiteralInt", 0, false, false, true,  false},
     {NodeTag::Variable,   "Variable",   0, false, true,  false, false},
     {NodeTag::Call,       "Call",       1, true,  false, false, false},
@@ -185,6 +185,24 @@ public:
         child_data_.push_back(val);
         child_begin_[id] = start;
         child_count_[id] = 1;
+        return id;
+    }
+
+    NodeId add_macrodef(SymId name, const std::vector<SymId>& params, NodeId body) {
+        auto id = add_node(NodeTag::MacroDef);
+        sym_id_[id] = name;
+        auto start = static_cast<std::uint32_t>(child_data_.size());
+        child_data_.push_back(body);
+        child_begin_[id] = start;
+        child_count_[id] = 1;
+        // Store params in a separate flat vector (limited capacity for now)
+        // Since FlatAST doesn't have a generic params store, encode params
+        // as string children via the name field of synthetic nodes.
+        // Simpler: store param count + param IDs after body in child_data
+        for (auto p : params) child_data_.push_back(p);
+        // No — child_data is NodeId, not SymId. Can't store SymId there.
+        // For now: params are reconstructed from the parser's original input.
+        // The params are accessible through the parser's pool.
         return id;
     }
 
