@@ -4,8 +4,26 @@ import std;
 namespace aura::parser {
 
 ParseResult Parser::parse(std::string_view s) {
-    lexer_.emplace(s); ParseResult r; r.arena=&arena_; r.root=parse_expr();
-    if (r.root) r.success=true; else r.error="parse error"; return r;
+    lexer_.emplace(s); ParseResult r; r.arena=&arena_;
+    auto* first = parse_expr();
+    if (!first) { r.error = "parse error"; return r; }
+    // Check if there are more expressions after the first
+    auto next = lexer_->peek();
+    if (next.kind == TokenKind::EndOfFile || next.kind == TokenKind::Error) {
+        r.root = first; r.success = true; return r;
+    }
+    // Multiple top-level forms → wrap in begin
+    ast::BeginNode begin{{}};
+    begin.exprs.push_back(first);
+    do {
+        auto* e = parse_expr();
+        if (e) begin.exprs.push_back(e);
+        if (lexer_->eof()) break;
+        next = lexer_->peek();
+    } while (next.kind != TokenKind::EndOfFile);
+    r.root = arena_.template create<ast::Expr>(std::move(begin));
+    r.success = true;
+    return r;
 }
 ast::Expr* Parser::parse_expr() {
     if (!lexer_) return nullptr;
