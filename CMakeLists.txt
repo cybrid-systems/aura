@@ -155,3 +155,16 @@ add_test(NAME reflect_ir_instruction
 add_test(NAME reflect_schema
     COMMAND ./aura-reflect --schema
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+# ── aura-schema: standalone JSON Schema generator ────────────────
+add_executable(aura-schema tools/aura-schema.cpp)
+target_include_directories(aura-schema PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_options(aura-schema PRIVATE -std=c++26 -freflection)
+target_link_libraries(aura-schema PRIVATE stdc++)
+
+add_test(NAME schema_ir_instruction
+    COMMAND ./aura-schema
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+add_test(NAME schema_serve
+    COMMAND sh -c "./aura-schema --serve | head -1 | grep -q schema"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})

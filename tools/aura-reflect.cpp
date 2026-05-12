@@ -2,16 +2,17 @@
 //  aura-reflect — Standalone P2996 reflection tool for Aura IR
 //
 //  Built independently from the module-based aura core.
-//  Uses:  g++ -std=c++26 -freflection tools/aura-reflect.cpp -o build/aura-reflect
+//  Uses:  ninja aura-reflect
 //
-//  Demonstrates:
-//    - auto_to_json<IRInstruction> — IR instruction serialization
-//    - auto_to_json<IRFunction>    — function serialization
-//    - auto_to_json<IRModule>      — module serialization
-//    - CLI: --ir-instruction, --ir-function, --ir-module
+//  CLI:
+//    --ir-instruction   Demo IR instruction serialization
+//    --schema           Show compile-time JSON Schema for IR types
+//    --expansion        Demo template for (P1306) expansion statements
+//    (no args)          Run all demos
 // ──────────────────────────────────────────────────────────────
 
 #include "reflect/reflect.hh"
+#include "reflect/reflect_schema.hh"
 #include <cstdio>
 #include <string>
 #include <array>
@@ -22,8 +23,7 @@
 // ── IR types (inlined to avoid module dependency) ──────────────
 
 enum class IROpcode : std::uint8_t {
-    Nop,
-    ConstI64, Local, Arg,
+    Nop, ConstI64, Local, Arg,
     Add, Sub, Mul, Div,
     Eq, Lt, Gt, Le, Ge,
     And, Or, Not,
@@ -38,25 +38,8 @@ struct IRInstruction {
     std::uint32_t source_ast_node_id = 0;
 };
 
-struct BasicBlock {
-    std::uint32_t id = 0;
-    std::vector<IRInstruction> instructions;
-    std::vector<std::uint32_t> successors;
-};
-
-struct IRFunction {
-    std::uint32_t id = 0;
-    std::string name;
-    std::uint32_t entry_block = 0;
-    std::vector<BasicBlock> blocks;
-    std::vector<std::string> params;
-    std::vector<std::string> free_vars;
-    std::uint32_t local_count = 0;
-    std::uint32_t arg_count = 0;
-};
-
 // ==============================================================
-//  IROpcode → string (for better JSON)
+//  IROpcode → string
 // ==============================================================
 
 constexpr const char* opcode_name(IROpcode op) {
@@ -92,16 +75,11 @@ constexpr const char* opcode_name(IROpcode op) {
     return "?";
 }
 
-// ── Custom operator<< for IROpcode (needed for vector serialization) ──
-// This allows auto_to_json(vector<T>) to work with IROpcode vectors
-
 // ==============================================================
-//  Enhanced auto_to_json for IRInstruction
+//  IR instruction serialization (mixed: enum→string + auto_to_json)
 // ==============================================================
 
 std::string ir_instruction_to_json(const IRInstruction& inst) {
-    // Use P2996 auto_to_json for the scalar/std::array fields,
-    // but override opcode field with string name
     std::string json = "{";
     json += "\"opcode\":\""; json += opcode_name(inst.opcode); json += "\",";
     json += "\"operands\":" + aura::reflect::auto_to_json(inst.operands) + ",";
@@ -111,44 +89,120 @@ std::string ir_instruction_to_json(const IRInstruction& inst) {
 }
 
 // ==============================================================
-//  CLI modes
+//  --expansion: P1306 expansion statements demo
+// ==============================================================
+
+struct ExpansionDemo {
+    std::string name;
+    int         version;
+    double      score;
+    bool        active;
+};
+
+template <typename T>
+void demo_expansion_print(const T& obj, const char* label) {
+    using namespace std::meta;
+    
+    constexpr size_t N = []() {
+        return nonstatic_data_members_of(
+            ^^T, access_context::unchecked()).size();
+    }();
+    
+    static constexpr auto members = []() {
+        std::array<info, N> arr{};
+        auto vec = nonstatic_data_members_of(^^T, access_context::unchecked());
+        for (size_t i = 0; i < N; ++i) arr[i] = vec[i];
+        return arr;
+    }();
+    
+    printf("%s:\n", label);
+    
+    // ── P1306 expansion statement ─────────────────────────────
+    // Each iteration of template for generates real, separate code.
+    // The [:m:] splice accesses obj.member with the correct type.
+    // type_of(m) + is_same_type → compile-time type dispatch.
+    template for (constexpr auto m : members) {
+        constexpr auto type = type_of(m);
+        auto name = identifier_of(m);
+        
+        if constexpr (is_same_type(type, ^^std::string)) {
+            printf("    %s (string): \"%s\"\n",
+                   std::string(name).c_str(),
+                   obj.[:m:].c_str());
+        } else if constexpr (is_same_type(type, ^^int) || 
+                             is_same_type(type, ^^unsigned int)) {
+            printf("    %s (int): %d\n",
+                   std::string(name).c_str(),
+                   static_cast<int>(obj.[:m:]));
+        } else if constexpr (is_same_type(type, ^^double) || 
+                             is_same_type(type, ^^float)) {
+            printf("    %s (float): %g\n",
+                   std::string(name).c_str(),
+                   static_cast<double>(obj.[:m:]));
+        } else if constexpr (is_same_type(type, ^^bool)) {
+            printf("    %s (bool): %s\n",
+                   std::string(name).c_str(),
+                   obj.[:m:] ? "true" : "false");
+        } else {
+            printf("    %s (other)\n", std::string(name).c_str());
+        }
+    }
+}
+
+void demo_expansion() {
+    printf("=== P1306 Expansion Statements Demo ===\n\n");
+    printf("template for + [:m:] generates separate code paths\n");
+    printf("for each member at compile time, with type dispatch\n");
+    printf("via constexpr is_same_type().\n\n");
+    
+    ExpansionDemo d{"aura", 1, 99.5, true};
+    demo_expansion_print(d, "ExpansionDemo");
+    
+    printf("\n");
+    demo_expansion_print(IRInstruction{IROpcode::Add, {1,2,0,0}, 42}, "IRInstruction");
+    
+    printf("\n✅ template for works with mixed-type structs\n");
+}
+
+// ==============================================================
+//  --schema: JSON Schema demo
+// ==============================================================
+
+void demo_schema() {
+    printf("=== Compile-time JSON Schema Generation ===\n\n");
+    printf("Generated using P2996 reflection + P1306 expansion\n");
+    printf("statements. Stored as static constexpr char array\n");
+    printf("at compile time.\n\n");
+    
+    printf("--- IRInstruction Schema ---\n%s\n\n",
+           aura::reflect::get_json_schema<IRInstruction>().data());
+    
+    printf("Describes 3 fields: opcode (enum→integer),\n");
+    printf("operands (std::array<uint32_t,4>→array),\n");
+    printf("source_ast_node_id (uint32_t→integer).\n");
+}
+
+// ==============================================================
+//  --ir-instruction: IR serialization demo
 // ==============================================================
 
 void demo_ir_instruction() {
-    printf("=== IR Instruction demo ===\n");
-
-    IRInstruction add{
-        IROpcode::Add,
-        {1, 2, 0, 0},
-        42
+    printf("=== IR Instruction serialization ===\n\n");
+    
+    auto show = [](IROpcode op, auto ops, uint32_t src) {
+        IRInstruction inst{op, ops, src};
+        auto json = ir_instruction_to_json(inst);
+        printf("  %s → %s\n", opcode_name(op), json.c_str());
     };
-    printf("  add: %s\n\n", ir_instruction_to_json(add).c_str());
-
-    IRInstruction closure{
-        IROpcode::MakeClosure,
-        {0, 2, 0, 0},
-        100
-    };
-    printf("  closure: %s\n\n", ir_instruction_to_json(closure).c_str());
-
-    // Bulk: P2996 auto_to_json on ALL instruction types
-    printf("  All opcodes via auto_to_json:\n");
-    for (int i = 0; i <= 23; ++i) {
-        IRInstruction inst{static_cast<IROpcode>(i), {0, 0, 0, 0}, 0};
-        printf("    %s: %s\n", opcode_name(static_cast<IROpcode>(i)),
-               ir_instruction_to_json(inst).c_str());
-    }
-
-    printf("\n=== Done ===\n");
-}
-
-void demo_show_schema() {
-    // Show compile-time JSON schema for IR types
-    printf("=== P2996 Reflection Schema ===\n");
-    printf("  IRInstruction: ");
-    // Use auto_to_json on a default instance
-    printf("%s\n", aura::reflect::auto_to_json(IRInstruction{}).c_str());
-    printf("\n");
+    
+    show(IROpcode::Add,         std::array<std::uint32_t,4>{1,2,0,0},  42);
+    show(IROpcode::MakeClosure, std::array<std::uint32_t,4>{0,2,0,0},  100);
+    show(IROpcode::Call,        std::array<std::uint32_t,4>{3,2,5,0},  7);
+    show(IROpcode::Return,      std::array<std::uint32_t,4>{0,0,0,0},  0);
+    show(IROpcode::Branch,      std::array<std::uint32_t,4>{0,1,2,0},  15);
+    
+    printf("\n  Uses P2996 auto_to_json for operands[] and node_id.\n");
+    printf("  opcode handled via hand-written switch with enum names.\n");
 }
 
 // ==============================================================
@@ -156,22 +210,22 @@ void demo_show_schema() {
 // ==============================================================
 
 int main(int argc, char* argv[]) {
-    if (argc > 1) {
-        std::string_view arg = argv[1];
-        if (arg == "--ir-instruction" || arg == "--ir") {
-            demo_ir_instruction();
-            return 0;
-        }
-        if (arg == "--schema") {
-            demo_show_schema();
-            return 0;
-        }
-        printf("Usage: %s [--ir-instruction|--schema]\n", argv[0]);
+    auto has = [&](const char* name) {
+        for (int i = 1; i < argc; ++i)
+            if (std::string_view(argv[i]) == name) return true;
+        return false;
+    };
+    
+    bool all = (argc == 1);
+    
+    if (all || has("--ir-instruction")) { demo_ir_instruction(); printf("\n"); }
+    if (all || has("--schema"))         { demo_schema();         printf("\n"); }
+    if (all || has("--expansion"))      { demo_expansion();      printf("\n"); }
+    
+    if (!all && !has("--ir-instruction") && !has("--schema") && !has("--expansion")) {
+        printf("Usage: %s [--ir-instruction|--schema|--expansion]\n", argv[0]);
         return 1;
     }
-
-    // Default: run all demos
-    demo_ir_instruction();
-    demo_show_schema();
+    
     return 0;
 }
