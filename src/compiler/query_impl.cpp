@@ -18,14 +18,23 @@ static std::uint32_t resolve_type_id(const std::string& name) {
 static std::vector<std::string> tokenize(std::string_view s) {
     std::vector<std::string> tokens;
     std::string cur;
-    for (auto c : s) {
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        auto c = s[i];
         if (c == '(' || c == ')') {
             if (!cur.empty()) { tokens.push_back(std::move(cur)); }
             tokens.emplace_back(1, c);
         } else if (c == ' ' || c == '\t' || c == '\n') {
             if (!cur.empty()) { tokens.push_back(std::move(cur)); }
-        } else if (c == '"') { /* skip string literal content */ }
-        else { cur += c; }
+        } else if (c == '"') {
+            // Capture string content between quotes, strip the quotes
+            i++;
+            cur.clear();
+            while (i < s.size() && s[i] != '"') { cur += s[i]; i++; }
+            if (i < s.size()) i++; // skip closing quote
+            tokens.push_back(std::move(cur));
+        } else {
+            cur += c;
+        }
     }
     if (!cur.empty()) tokens.push_back(std::move(cur));
     return tokens;
@@ -74,6 +83,8 @@ static QueryExpr parse_list(PS& ps) {
     else if (op == "has-type?" || op == "has-type") { q.kind = QueryExpr::Kind::HasType; q.str_value = std::string(ps.next()); }
     else if (op == "return-type?" || op == "return-type") { q.kind = QueryExpr::Kind::ReturnType; q.str_value = std::string(ps.next()); }
     else if (op == "argument-type?" || op == "argument-type") { q.kind = QueryExpr::Kind::ArgType; q.child_index = (std::uint32_t)std::stoul(std::string(ps.next())); q.str_value = std::string(ps.next()); }
+    else if (op == "ref-count") { q.kind = QueryExpr::Kind::RefCount; q.int_value = std::stoll(std::string(ps.next())); }
+    else if (op == "has-error?" || op == "has-error") { q.kind = QueryExpr::Kind::HasError; }
 
     if (!ps.end()) ps.next(); // ')'
     return q;
@@ -139,6 +150,13 @@ return index_.ast.type_id(id) != 0 && index_.ast.type_id(id) == resolve_type_id(
         auto cid = v.child(q.child_index);
         return index_.ast.type_id(cid) != 0 && index_.ast.type_id(cid) == resolve_type_id(q.str_value);
     }
+    case QueryExpr::Kind::RefCount: {
+        if (v.sym_id == aura::ast::INVALID_SYM) return false;
+        ensure_sym_index();
+        return sym_index_->count(v.sym_id) == static_cast<std::size_t>(q.int_value);
+    }
+    case QueryExpr::Kind::HasError:
+        return false;  // Error tracking not yet implemented in FlatAST
     default: return false;
     }
 }

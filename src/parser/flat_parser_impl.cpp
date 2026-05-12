@@ -8,8 +8,23 @@ FlatParseResult FlatParser::parse(std::string_view s) {
     lexer_.emplace(s);
     FlatParseResult r;
     r.root = parse_expr();
-    if (r.root != NULL_NODE) r.success = true;
-    else r.error = "parse error";
+    if (r.root == NULL_NODE) { r.error = "parse error"; return r; }
+    // Check for multiple top-level expressions
+    auto next = lexer_->peek();
+    if (next.kind == TokenKind::EndOfFile || next.kind == TokenKind::Error) {
+        r.success = true; return r;
+    }
+    // Multiple forms → wrap in begin
+    std::vector<NodeId> exprs;
+    exprs.push_back(r.root);
+    do {
+        auto e = parse_expr();
+        if (e != NULL_NODE) exprs.push_back(e);
+        if (lexer_->eof()) break;
+        next = lexer_->peek();
+    } while (next.kind != TokenKind::EndOfFile);
+    r.root = flat_.add_begin(exprs.data(), static_cast<std::uint32_t>(exprs.size()));
+    r.success = true;
     return r;
 }
 
@@ -18,6 +33,8 @@ NodeId FlatParser::parse_expr() {
     auto tok = lexer_->peek();
     switch (tok.kind) {
     case TokenKind::Integer: return parse_int(lexer_->consume());
+    case TokenKind::String:
+        return flat_.add_literalstring(pool_.intern(std::string(lexer_->consume().text)));
     case TokenKind::Identifier:
         return flat_.add_variable(pool_.intern(std::string(lexer_->consume().text)));
     case TokenKind::LParen: lexer_->consume(); return parse_list();
