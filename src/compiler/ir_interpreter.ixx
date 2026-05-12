@@ -22,6 +22,27 @@ struct CallFrame {
 };
 
 // IR interpreter — lowered code execution with closure support
+// ── Runtime reflection: closure/cell introspection ──────────────
+export struct ClosureSnapshot {
+    std::uint64_t     id;
+    std::uint32_t     func_id;
+    std::string       func_name;
+    std::vector<std::int64_t> env;
+};
+
+export struct CellSnapshot {
+    std::uint64_t id;
+    std::int64_t  value;
+};
+
+// ── Evaluation strategy (flambda-style) ─────────────────────────
+export struct EvalStrategy {
+    bool enable_inlining       = true;
+    bool enable_specialization = false;
+    int  max_unroll            = 3;
+    bool verbose_inspect       = false;
+};
+
 export class IRInterpreter {
 public:
     explicit IRInterpreter(const aura::ir::IRModule& mod,
@@ -30,6 +51,24 @@ public:
 
     // Execute the top-level function and return result
     EvalResult execute();
+
+    // ── Runtime reflection API ─────────────────────────────────
+    // Inspect a single closure by id
+    std::optional<ClosureSnapshot> inspect_closure(std::uint64_t closure_id) const;
+
+    // List all active closures
+    std::vector<ClosureSnapshot> list_closures() const;
+
+    // List all active mutable cells
+    std::vector<CellSnapshot> list_cells() const;
+
+    // Get/set evaluation strategy
+    const EvalStrategy& strategy() const { return strategy_; }
+    void set_strategy(const EvalStrategy& s) { strategy_ = s; }
+
+    // Counters
+    std::size_t closure_count() const { return runtime_closures_.size(); }
+    std::size_t cell_count() const { return cell_heap_.size(); }
 
 private:
     // Execute a specific function with given args
@@ -43,6 +82,7 @@ private:
 
     const aura::ir::IRModule& module_;
     const Primitives& primitives_;
+    EvalStrategy strategy_;
 
     // Per-instance closure storage
     std::uint64_t next_closure_id_ = 1;

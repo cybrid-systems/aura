@@ -246,4 +246,55 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
     return std::unexpected(Diagnostic{ErrorKind::IRNoReturn, "no return"});
 }
 
+// ── Runtime reflection implementation ─────────────────────────
+
+std::optional<ClosureSnapshot> IRInterpreter::inspect_closure(std::uint64_t closure_id) const {
+    auto it = runtime_closures_.find(closure_id);
+    if (it == runtime_closures_.end())
+        return std::nullopt;
+
+    auto& closure = it->second;
+    std::string fname;
+    if (closure.func_id < module_.functions.size())
+        fname = module_.functions[closure.func_id].name;
+    else
+        fname = "<unknown>";
+
+    return ClosureSnapshot{
+        .id        = closure_id,
+        .func_id   = closure.func_id,
+        .func_name = std::move(fname),
+        .env       = closure.env
+    };
+}
+
+std::vector<ClosureSnapshot> IRInterpreter::list_closures() const {
+    std::vector<ClosureSnapshot> result;
+    result.reserve(runtime_closures_.size());
+    for (auto& [id, closure] : runtime_closures_) {
+        std::string fname;
+        if (closure.func_id < module_.functions.size())
+            fname = module_.functions[closure.func_id].name;
+        else
+            fname = "<unknown>";
+
+        result.push_back(ClosureSnapshot{
+            .id        = id,
+            .func_id   = closure.func_id,
+            .func_name = std::move(fname),
+            .env       = closure.env
+        });
+    }
+    return result;
+}
+
+std::vector<CellSnapshot> IRInterpreter::list_cells() const {
+    std::vector<CellSnapshot> result;
+    result.reserve(cell_heap_.size());
+    for (auto& [id, val] : cell_heap_) {
+        result.push_back(CellSnapshot{.id = id, .value = val});
+    }
+    return result;
+}
+
 } // namespace aura::compiler
