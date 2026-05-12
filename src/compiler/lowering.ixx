@@ -15,15 +15,33 @@ struct Binding {
     std::uint32_t slot;
 };
 
+// ── LoweringState — all mutable lowering state ────────────────
+struct LoweringState {
+    ast::ASTArena& arena;
+    aura::ir::IRModule module;
+    aura::ir::IRFunction* cur_func = nullptr;
+    std::uint32_t cur_block = 0;
+    std::uint32_t local_count = 0;
+    std::vector<std::unordered_map<std::string, Binding>> scopes;
+    std::uint32_t env_slot = 0;
+    std::unordered_map<std::string, std::uint32_t> free_var_map;
+    std::unordered_set<std::string> cell_free_vars;
+
+    explicit LoweringState(ast::ASTArena& a) : arena(a) {}
+};
+
+
 // Internal lowering state machine (implementation detail).
 // Prefer the free function lower_to_ir() for most use cases.
 export class LoweringPass {
     friend aura::ir::IRModule lower_to_ir(const ast::Expr*, ast::ASTArena&);
 public:
-    explicit LoweringPass(ast::ASTArena& arena) : arena_(arena) {}
+    explicit LoweringPass(ast::ASTArena& arena) : state_(new LoweringState(arena)) {}
     aura::ir::IRModule lower(const ast::Expr* expr);
 
 private:
+    LoweringState* state_ = nullptr;
+
     // Allocate a new local slot
     std::uint32_t alloc_local() { return local_count_++; }
     std::uint32_t alloc_block();
@@ -62,20 +80,12 @@ private:
                                             std::vector<std::string>& free_vars,
                                             const std::unordered_set<std::string>& cell_free_vars = {});
 
-    // Set of variables that should be captured as cell references (for letrec)
-    std::unordered_set<std::string> cell_free_vars_;
 
-    ast::ASTArena& arena_;
-    aura::ir::IRModule module_;
     aura::ir::IRFunction* cur_func_ = nullptr;
     std::uint32_t current_block_ = 0;
     std::uint32_t local_count_ = 0;
-    // Scope chain: symbol → Binding
-    std::vector<std::unordered_map<std::string, Binding>> scopes_;
-    // For env access in closure: current env slot index in the function
     std::uint32_t env_slot_ = 0;
     // Free variable map: name → env slot index within current env
-    std::unordered_map<std::string, std::uint32_t> free_var_map_;
 };
 
 // Free function — preferred API (Expr* tree path).

@@ -6,18 +6,18 @@ namespace aura::compiler {
 using namespace aura::ir;
 
 std::uint32_t LoweringPass::alloc_block() {
-    auto id = static_cast<std::uint32_t>(cur_func_->blocks.size());
-    cur_func_->blocks.push_back({id, {}, {}});
+    auto id = static_cast<std::uint32_t>(state_->cur_func->blocks.size());
+    state_->cur_func->blocks.push_back({id, {}, {}});
     return id;
 }
 
 void LoweringPass::emit(IROpcode op, std::uint32_t op0, std::uint32_t op1, std::uint32_t op2, std::uint32_t op3) {
-    cur_func_->blocks[current_block_].instructions.push_back({op, {op0, op1, op2, op3}});
+    state_->cur_func->blocks[state_->cur_block].instructions.push_back({op, {op0, op1, op2, op3}});
 }
 
 IRModule LoweringPass::lower(const ast::Expr* expr) {
-    module_ = {};
-    scopes_.clear();
+    state_->module = {};
+    state_->scopes.clear();
 
     // Create the top-level function
     IRFunction top_func;
@@ -25,21 +25,21 @@ IRModule LoweringPass::lower(const ast::Expr* expr) {
     top_func.entry_block = 0;
     top_func.blocks.push_back({0, {}, {}});
     top_func.arg_count = 0;
-    cur_func_ = &top_func;
-    current_block_ = 0;
-    local_count_ = 0;
+    state_->cur_func = &top_func;
+    state_->cur_block = 0;
+    state_->local_count = 0;
 
     // Push empty scope for top-level (no parameters)
-    scopes_.push_back({});
+    state_->scopes.push_back({});
 
     // Lower the expression
     auto result_slot = lower_expr(expr);
     emit(IROpcode::Return, result_slot);
 
-    top_func.local_count = local_count_;
-    auto top_id = module_.add_function(std::move(top_func));
-    module_.set_entry(top_id);
-    return std::move(module_);
+    top_func.local_count = state_->local_count;
+    auto top_id = state_->module.add_function(std::move(top_func));
+    state_->module.set_entry(top_id);
+    return std::move(state_->module);
 }
 
 std::uint32_t LoweringPass::lower_expr(const ast::Expr* expr) {
@@ -82,7 +82,7 @@ std::uint32_t LoweringPass::lower_literal_int(const ast::LiteralIntNode& node) {
 
 std::uint32_t LoweringPass::lower_variable(const ast::VariableNode& node) {
     // Look up in scope chain
-    for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
+    for (auto it = state_->scopes.rbegin(); it != state_->scopes.rend(); ++it) {
         auto found = it->find(node.name);
         if (found != it->end()) {
             auto& binding = found->second;
@@ -104,8 +104,8 @@ std::uint32_t LoweringPass::lower_variable(const ast::VariableNode& node) {
     }
 
     // Free variable from outer lambda's env (captured at closure creation)
-    auto fv = free_var_map_.find(node.name);
-    if (fv != free_var_map_.end()) {
+    auto fv = state_->free_var_map.find(node.name);
+    if (fv != state_->free_var_map.end()) {
         auto slot = alloc_local();
         emit(IROpcode::Local, slot, fv->second);
         return slot;
@@ -186,26 +186,26 @@ aura::ir::IRFunction LoweringPass::lower_lambda_body(
     func.arg_count = static_cast<std::uint32_t>(node.params.size());
 
     // Save and swap state
-    auto* saved_func = cur_func_;
-    auto saved_block = current_block_;
-    auto saved_locals = local_count_;
-    auto saved_scopes = scopes_;
-    auto saved_env_slot = env_slot_;
-    auto saved_fv_map = std::move(free_var_map_);
+    auto* saved_func = state_->cur_func;
+    auto saved_block = state_->cur_block;
+    auto saved_locals = state_->local_count;
+    auto saved_scopes = state_->scopes;
+    auto saved_env_slot = state_->env_slot;
+    auto saved_fv_map = std::move(state_->free_var_map);
 
-    cur_func_ = &func;
-    current_block_ = 0;
-    local_count_ = 0;
-    free_var_map_.clear();
+    state_->cur_func = &func;
+    state_->cur_block = 0;
+    state_->local_count = 0;
+    state_->free_var_map.clear();
 
     // At runtime, env values are PREPENDED to the argument list,
     // so locals = [env[0], env[1], ..., arg[0], arg[1], ...].
     // Load captured free variables from the env prefix, then params.
 
-    env_slot_ = alloc_local();  // placeholder
+    state_->env_slot = alloc_local();  // placeholder
 
     // Scope for this function: first env vars, then params
-    scopes_.push_back({});
+    state_->scopes.push_back({});
 
     // First, load captured free variables from the env prefix
     for (std::size_t i = 0; i < free_vars.size(); ++i) {
@@ -216,11 +216,11 @@ aura::ir::IRFunction LoweringPass::lower_lambda_body(
             // Cell capture: env[i] is cell_id, load via CellGet
             auto result = alloc_local();
             emit(IROpcode::CellGet, result, slot);
-            scopes_.back()[fv] = Binding{ BindingKind::Local, result };
+            state_->scopes.back()[fv] = Binding{ BindingKind::Local, result };
         } else {
-            scopes_.back()[fv] = Binding{ BindingKind::Captured, slot };
+            state_->scopes.back()[fv] = Binding{ BindingKind::Captured, slot };
         }
-        free_var_map_[fv] = static_cast<std::uint32_t>(i);
+        state_->free_var_map[fv] = static_cast<std::uint32_t>(i);
     }
 
     // Load parameters (args are AFTER env values in locals)
@@ -228,22 +228,22 @@ aura::ir::IRFunction LoweringPass::lower_lambda_body(
         auto slot = alloc_local();
         emit(IROpcode::Arg, slot,
              static_cast<std::uint32_t>(free_vars.size() + i));
-        scopes_.back()[node.params[i]] = Binding{ BindingKind::Local, slot };
+        state_->scopes.back()[node.params[i]] = Binding{ BindingKind::Local, slot };
     }
 
     // Lower body
     auto result_slot = lower_expr(node.body);
     emit(IROpcode::Return, result_slot);
 
-    func.local_count = local_count_;
+    func.local_count = state_->local_count;
 
     // Restore state
-    cur_func_ = saved_func;
-    current_block_ = saved_block;
-    local_count_ = saved_locals;
-    scopes_ = std::move(saved_scopes);
-    env_slot_ = saved_env_slot;
-    free_var_map_ = std::move(saved_fv_map);
+    state_->cur_func = saved_func;
+    state_->cur_block = saved_block;
+    state_->local_count = saved_locals;
+    state_->scopes = std::move(saved_scopes);
+    state_->env_slot = saved_env_slot;
+    state_->free_var_map = std::move(saved_fv_map);
 
     return func;
 }
@@ -260,7 +260,7 @@ std::uint32_t LoweringPass::lower_lambda(const ast::LambdaNode& node) {
     for (auto& fv : free_set) {
         // Check if this free var is bound in an enclosing scope
         bool in_scope = false;
-        for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
+        for (auto it = state_->scopes.rbegin(); it != state_->scopes.rend(); ++it) {
             if (it->find(fv) != it->end()) {
                 in_scope = true;
                 break;
@@ -272,8 +272,8 @@ std::uint32_t LoweringPass::lower_lambda(const ast::LambdaNode& node) {
     }
 
     // Lower the lambda body as a separate function
-    auto lambda_func = lower_lambda_body(node, free_vars, cell_free_vars_);
-    auto func_id = module_.add_function(std::move(lambda_func));
+    auto lambda_func = lower_lambda_body(node, free_vars, state_->cell_free_vars);
+    auto func_id = state_->module.add_function(std::move(lambda_func));
 
     // Emit MakeClosure in the current function
     auto closure_slot = alloc_local();
@@ -283,7 +283,7 @@ std::uint32_t LoweringPass::lower_lambda(const ast::LambdaNode& node) {
     // Capture each free variable into the closure
     for (std::size_t i = 0; i < free_vars.size(); ++i) {
         auto& fv = free_vars[i];
-        for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
+        for (auto it = state_->scopes.rbegin(); it != state_->scopes.rend(); ++it) {
             auto found = it->find(fv);
             if (found != it->end()) {
                 auto& binding = found->second;
@@ -358,8 +358,8 @@ std::uint32_t LoweringPass::lower_call(const ast::CallNode& node) {
     
     // Reserve contiguous argument block = [base, base + arg_count)
     // This ensures all args are packed consecutively for the interpreter
-    auto arg_base = local_count_;
-    local_count_ += static_cast<std::uint32_t>(node.args.size());
+    auto arg_base = state_->local_count;
+    state_->local_count += static_cast<std::uint32_t>(node.args.size());
     
     std::size_t i = 0;
     for (auto* a : node.args) {
@@ -393,21 +393,21 @@ std::uint32_t LoweringPass::lower_if(const ast::IfExprNode& node) {
     auto phi_slot = alloc_local();
 
     // Then block: compute value and store in phi_slot
-    current_block_ = then_block;
+    state_->cur_block = then_block;
     auto then_val = lower_expr(node.then_branch);
     emit(IROpcode::Local, phi_slot, then_val);
     emit(IROpcode::Jump, merge_block);
-    cur_func_->blocks[then_block].successors.push_back(merge_block);
+    state_->cur_func->blocks[then_block].successors.push_back(merge_block);
 
     // Else block: compute value and store in phi_slot
-    current_block_ = else_block;
+    state_->cur_block = else_block;
     auto else_val = lower_expr(node.else_branch);
     emit(IROpcode::Local, phi_slot, else_val);
     emit(IROpcode::Jump, merge_block);
-    cur_func_->blocks[else_block].successors.push_back(merge_block);
+    state_->cur_func->blocks[else_block].successors.push_back(merge_block);
 
     // Merge block: phi_slot now has the correct value from either branch
-    current_block_ = merge_block;
+    state_->cur_block = merge_block;
     return phi_slot;
 }
 
@@ -426,7 +426,7 @@ std::uint32_t LoweringPass::lower_begin(const ast::BeginNode& node) {
 std::uint32_t LoweringPass::lower_set(const ast::SetNode& node) {
     auto val_slot = lower_expr(node.value);
     // Look up the variable in scope chain
-    for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
+    for (auto it = state_->scopes.rbegin(); it != state_->scopes.rend(); ++it) {
         auto found = it->find(node.name);
         if (found != it->end()) {
             emit(IROpcode::CellSet, found->second.slot, val_slot);
@@ -448,8 +448,8 @@ std::uint32_t LoweringPass::lower_let(const ast::LetNode& node, bool is_rec) {
 
         // Bind name → CellGet(cell_id_slot).  Both the lambda body and the
         // letrec body will emit CellGet when referencing this name.
-        scopes_.back()[node.name] = Binding{ BindingKind::Cell, cell_id_slot };
-        cell_free_vars_.insert(node.name);
+        state_->scopes.back()[node.name] = Binding{ BindingKind::Cell, cell_id_slot };
+        state_->cell_free_vars.insert(node.name);
 
         // Evaluate the value (lambda).  The lambda's free-var capture will
         // see Cell binding and capture the cell_id, not the value-in-the-cell.
@@ -458,7 +458,7 @@ std::uint32_t LoweringPass::lower_let(const ast::LetNode& node, bool is_rec) {
         // Store the closure into the cell (now CellGet in the lambda body
         // will resolve to the actual closure at call time).
         emit(IROpcode::CellSet, cell_id_slot, val_slot);
-        cell_free_vars_.erase(node.name);
+        state_->cell_free_vars.erase(node.name);
 
         if (node.body) return lower_expr(node.body);
         return val_slot;
@@ -466,7 +466,7 @@ std::uint32_t LoweringPass::lower_let(const ast::LetNode& node, bool is_rec) {
 
     // Non-recursive let: evaluate value then bind
     auto val_slot = lower_expr(node.value);
-    scopes_.back()[node.name] = Binding{ BindingKind::Local, val_slot };
+    state_->scopes.back()[node.name] = Binding{ BindingKind::Local, val_slot };
     if (node.body) {
         return lower_expr(node.body);
     }
