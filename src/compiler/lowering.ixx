@@ -43,7 +43,6 @@ struct LoweringState {
     }
 };
 
-
 // Internal lowering state machine (implementation detail).
 // Prefer the free function lower_to_ir() for most use cases.
 export class LoweringPass {
@@ -53,10 +52,10 @@ public:
     aura::ir::IRModule lower(const ast::Expr* expr);
 
 private:
+    LoweringState* state_ = nullptr;
     std::uint32_t alloc_block() { return state_->alloc_block(); }
     std::uint32_t alloc_local() { return state_->alloc_local(); }
     void emit(aura::ir::IROpcode op, std::uint32_t o0=0, std::uint32_t o1=0, std::uint32_t o2=0, std::uint32_t o3=0) { state_->emit(op, o0, o1, o2, o3); }
-    LoweringState* state_ = nullptr;
 
     // Allocate a new local slot
 
@@ -91,12 +90,6 @@ private:
     aura::ir::IRFunction lower_lambda_body(const ast::LambdaNode& node,
                                             std::vector<std::string>& free_vars,
                                             const std::unordered_set<std::string>& cell_free_vars = {});
-
-
-    aura::ir::IRFunction* cur_func_ = nullptr;
-    std::uint32_t current_block_ = 0;
-    std::uint32_t local_count_ = 0;
-    std::uint32_t env_slot_ = 0;
     // Free variable map: name → env slot index within current env
 };
 
