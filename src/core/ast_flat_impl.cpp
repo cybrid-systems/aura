@@ -56,6 +56,10 @@ NodeId flatten_to_flat(const Expr* expr, FlatAST& ast, StringPool& pool) {
             auto inner = flatten_to_flat(node.inner_expr, ast, pool);
             return ast.add_type_annotation(pool.intern(node.type_name), inner);
         }
+        else if constexpr (std::is_same_v<T, CoercionNode>) {
+            auto inner = flatten_to_flat(node.inner_expr, ast, pool);
+            return ast.add_coercion(inner, 0);
+        }
         return NULL_NODE;
     }, expr->payload);
 }

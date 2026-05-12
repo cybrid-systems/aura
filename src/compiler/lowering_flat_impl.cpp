@@ -101,6 +101,10 @@ static Expr* reconstruct_node(NodeId id, const FlatAST& flat,
         auto* inner = reconstruct_node(v.child(0), flat, pool, arena);
         return arena.create<Expr>(TypeAnnotationNode{v.tag, inner, std::string(type_name)});
     }
+    case NodeTag::Coercion: {
+        auto* inner = reconstruct_node(v.child(0), flat, pool, arena);
+        return arena.create<Expr>(CoercionNode{v.tag, inner, ""});
+    }
     }
     return nullptr;
 }

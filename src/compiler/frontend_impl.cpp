@@ -535,6 +535,10 @@ EvalResult Evaluator::eval_in(const ast::Expr* e, const Env& env) {
             // Strip type annotation, evaluate inner expression
             return eval_in(n.inner_expr, env);
         }
+        if constexpr (std::is_same_v<T, ast::CoercionNode>) {
+            // Strip coercion, eval inner (runtime check deferred to L6.6b)
+            return eval_in(n.inner_expr, env);
+        }
         if constexpr (std::is_same_v<T, ast::MacroDefNode>) {
             // Clone the body into a persistent CloneNode-backed copy.
             // The original body is in arena_ which gets reset between evals.
@@ -579,6 +583,8 @@ EvalResult Evaluator::eval_in(const ast::Expr* e, const Env& env) {
                             return pa->create<ast::Expr>(ast::QuoteNode{node.tag, clone(node.value)});
                         if constexpr (std::is_same_v<T, ast::TypeAnnotationNode>)
                             return pa->create<ast::Expr>(ast::TypeAnnotationNode{node.tag, clone(node.inner_expr), node.type_name});
+                        if constexpr (std::is_same_v<T, ast::CoercionNode>)
+                            return pa->create<ast::Expr>(ast::CoercionNode{node.tag, clone(node.inner_expr), node.to_type_name});
                         return nullptr;
                     }, e->payload);
                 }
@@ -696,6 +702,11 @@ ast::Expr* Evaluator::expand_macro(const std::string& name,
                 if constexpr (std::is_same_v<T, ast::TypeAnnotationNode>) {
                     return arena->template create<ast::Expr>(
                         ast::TypeAnnotationNode{node.tag, clone(node.inner_expr), node.type_name});
+                }
+
+                if constexpr (std::is_same_v<T, ast::CoercionNode>) {
+                    return arena->template create<ast::Expr>(
+                        ast::CoercionNode{node.tag, clone(node.inner_expr), node.to_type_name});
                 }
 
                 return nullptr;

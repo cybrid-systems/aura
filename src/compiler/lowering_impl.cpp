@@ -53,6 +53,7 @@ std::uint32_t LoweringPass::lower_expr(const ast::Expr* expr) {
         if constexpr (std::is_same_v<T, ast::SetNode>)        return lower_set(node);
         if constexpr (std::is_same_v<T, ast::QuoteNode>)      return lower_expr(node.value);
         if constexpr (std::is_same_v<T, ast::TypeAnnotationNode>) return lower_expr(node.inner_expr);
+        if constexpr (std::is_same_v<T, ast::CoercionNode>) return lower_expr(node.inner_expr);
         auto s = alloc_local(); emit(IROpcode::ConstI64, s, 0); return s;
     }, expr->payload);
 }
@@ -166,6 +167,8 @@ void LoweringPass::collect_free_vars(const ast::Expr* expr,
         } else if constexpr (std::is_same_v<T, ast::SetNode>) {
             collect_free_vars(node.value, free, bound);
         } else if constexpr (std::is_same_v<T, ast::TypeAnnotationNode>) {
+            collect_free_vars(node.inner_expr, free, bound);
+        } else if constexpr (std::is_same_v<T, ast::CoercionNode>) {
             collect_free_vars(node.inner_expr, free, bound);
         } else if constexpr (std::is_same_v<T, ast::QuoteNode>) {
             collect_free_vars(node.value, free, bound);

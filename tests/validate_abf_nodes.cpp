@@ -23,6 +23,7 @@ enum class NodeTag : std::uint32_t {
     IfExpr = 0x04, Lambda = 0x05, Let = 0x06, LetRec = 0x07,
     Define = 0x08, Begin = 0x09, Set = 0x0A, Quote = 0x0B,
     TypeAnnotation = 0x0F,
+    Coercion = 0x10,
 };
 
 struct LiteralIntNode { NodeTag tag; std::int64_t value; };
@@ -37,6 +38,7 @@ struct BeginNode      { NodeTag tag; std::vector<Expr*> exprs; };
 struct SetNode        { NodeTag tag; std::string name; Expr* value; };
 struct QuoteNode      { NodeTag tag; Expr* value; };
 struct TypeAnnotationNode { NodeTag tag; Expr* inner_expr; std::string type_name; };
+struct CoercionNode { NodeTag tag; Expr* inner_expr; std::string to_type_name; };
 
 struct BadNode        { int x; int y; };  // should fail
 
@@ -70,11 +72,12 @@ int main() {
     passed += c.operator()<SetNode>("SetNode", true);
     passed += c.operator()<QuoteNode>("QuoteNode", true);
     passed += c.operator()<TypeAnnotationNode>("TypeAnnotationNode", true);
+    passed += c.operator()<CoercionNode>("CoercionNode", true);
 
     // Expected failures
     passed += c.operator()<BadNode>("BadNode (should fail)", false);
 
-    total += 13;
+    total += 14;
 
     printf("\n  %d/%d passed\n", passed, total);
     return (passed == total) ? 0 : 1;
