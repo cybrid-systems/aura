@@ -1221,6 +1221,178 @@ P2 — L6.5 止：
 
 ---
 
+## 20. 线性所有权模型设计（M4 规划）
+
+**版本**：v0.1（草案）
+**状态**：设计阶段
+**目标阶段**：M4
+
+### 20.1 设计目标与原则
+
+未来 Agent AI OS 对资源安全的要求远高于传统 OS。线性所有权模型的目标是：
+
+- 在类型层面防止 double-free、use-after-free、数据竞争
+- 支持 AI Agent 安全地创建、传递、释放系统资源
+- 与 Sound Gradual Typing 良好兼容
+- 保持 Aura “最小核心 + 宏生长” 的哲学
+
+**关键决策**：
+- **优先实现 Affine Ownership**（最多使用一次），而非严格 Linear（必须使用一次）
+- 采用 Move 语义 为主，显式借用为辅
+- 利用 C++26 std::move + RAII + P2996 实现零成本抽象
+
+### 20.2 核心概念
+
+| 概念 | 含义 | Aura 表示 | 对应 C++ 概念 |
+|---------------|-----------------------------------|---------------|-------------------|
+| Owned | 拥有唯一所有权 | (Linear T) | Linear<T> |
+| Moved | 所有权已转移 | — | moved = true |
+| Borrow | 临时共享引用（不可变） | (& T) | Borrow<T> |
+| Mut Borrow| 临时独占可变引用 | (&mut T) | MutBorrow<T> |
+| Drop | 离开作用域自动释放资源 | defdrop | 析构函数 |
+
+### 20.3 语法设计
+
+```scheme
+;; 创建线性资源
+(define (open-file path)
+  (Linear (FileHandle path)))
+
+;; 移动所有权
+(let ([f (open-file "log.txt")])
+  (write-line f "Hello Aura")
+  ; (write-line f "again") ; 编译错误：f 已被移动
+)
+
+;; 不可变借用
+(let ([f (open-file "config.txt")])
+  (let ([view (& f)])
+    (read-config view))
+  (write-line f "updated")) ; 仍可使用
+
+;; 可变借用
+(let ([f (open-file "data.txt")])
+  (let ([mut-view (&mut f)])
+    (append-line mut-view "new line"))
+  (close f))
+```
+
+辅助宏：
+
+```scheme
+(move expr)       ; 显式移动
+(borrow expr)     ; 不可变借用
+(mut-borrow expr) ; 可变借用
+```
+
+### 20.4 类型规则（核心）
+
+在 TypeChecker 中新增 **Ownership Pass**，规则如下：
+
+**基本规则**：
+- (Linear T) 类型的值默认**移动语义**
+- 变量使用后标记为 Moved，再次使用报错
+- (& x) 要求 x 当前为 Owned 状态，创建借用计数
+- (&mut x) 要求当前无活跃借用，且 x 为 Owned
+
+**约束扩展**：
+
+```cpp
+enum class OwnershipKind {
+    MustMove,      // 必须移动（消耗所有权）
+    Borrowed,      // 已借用
+    MutBorrowed,   // 可变借用中
+    Owned          // 拥有所有权
+};
+```
+
+完整形式规则见附录 `aura_typesystem_formal.md` §15（规划）。
+
+### 20.5 与现有类型系统集成
+
+| 现有机制 | 集成方式 |
+|----------------------|----------|
+| TypedPhase | 新增 OwnershipInfo 扩展字段（state, borrow_count） |
+| TypeEnv | 增加 ownership_state 映射 |
+| CoercionInsertionPass | Linear<T> ↔ Any 之间插入运行时检查 |
+| QueryEngine | 支持 (linear-owned? node)、(has-active-borrow? node) 查询 |
+| Hyperstatic Scope | 全局线性资源不可重复绑定 |
+
+### 20.6 C++26 后端实现
+
+```cpp
+// aura/linear.ixx
+module aura.core.linear;
+
+export template <typename T>
+struct Linear {
+    T value;
+    bool moved = false;
+
+    Linear(T&& v) : value(std::move(v)) {}
+
+    Linear(Linear&& other) noexcept
+        : value(std::move(other.value)), moved(other.moved) {
+        other.moved = true;
+    }
+
+    ~Linear() {
+        if (!moved) {
+            drop(std::move(value));  // 由 Aura 宏生成
+        }
+    }
+};
+
+export template <typename T>
+struct Borrow {
+    T* ptr;
+    // TODO: 生命周期验证
+};
+```
+
+**P2996 优化**：编译期验证 moved 状态，自动生成 drop 特化。
+
+### 20.7 渐进类型兼容
+
+```scheme
+;; 动态模式（默认）
+(let ([f (open-file "a.txt")])  ; 运行时引用计数
+  (write f "hello"))
+
+;; 静态线性模式
+(let ([f : (Linear File) (open-file "b.txt")])
+  (write f "hello")       ; 编译期保证
+  ; (write f "world")    ; 错误：f 已被移动
+)
+```
+
+### 20.8 实现路线图（M4）
+
+| 子阶段 | 内容 | 预计工期 |
+|----------|--------------------------------|----------|
+| M4.1 | Linear<T> + move 基础支持 | 5 天 |
+| M4.2 | 不可变借用 (& T) | 4 天 |
+| M4.3 | 可变借用 (&mut T) | 5 天 |
+| M4.4 | defdrop 宏 + P2996 验证 | 3 天 |
+| M4.5 | QueryEngine 集成 + 测试 | 4 天 |
+
+**红线测试**：
+- `(+ (move x) (move x))` → 编译错误
+- 借用结束后仍可使用原变量
+- Drop 自动调用验证
+
+### 20.9 风险与缓解措施
+
+| 风险 | 影响 | 缓解 |
+|------|------|------|
+| 所有权语义与宏系统交互复杂 | 高 | Affine 优先，逐步增强 |
+| 借用检查性能开销 | 中 | 编译期静态检查，运行时零成本 |
+| 与 gradual typing 的 Any 边界 | 中 | Linear<T> ↔ Any 运行时计数降级 |
+| C++ RAII 与 Aura GC 并存冲突 | 低 | Linear<T> 明确直接调用析构，不经过 GC |
+| 开发者体验陡峭 | 低 | 默认动态 + 可选静态，渐进采用 |
+
+---
+
 ## 19. 版本历史
 
 | 版本 | 日期 | 变更 |
@@ -1228,4 +1400,5 @@ P2 — L6.5 止：
 | v0.1 | 2026-05-12 | 初始草案（设计哲学、类型语言、Phased 实现、AI 集成） |
 | v0.2 | 2026-05-12 | 补充形式规则、约束求解算法、测试计划、里程碑展开、风险矩阵 |
 | v0.3 | 2026-05-12 | 修复 §13.3 consistent equality (non-transitive)、§13.4 value restriction、§13.5 GG 精确表述、§13.6 occurrence propagation 表、§14.2 consistent_unify。提取 formal 附录。|
+| v0.4 | 2026-05-12 | 新增 §20 线性所有权模型设计（M4 规划），Affine + Borrow + Move，C++26 Linear<T> |
 
