@@ -103,17 +103,29 @@ ast::Expr* ABFDeserializer::read_lambda(Reader& r) {
 }
 
 ast::Expr* ABFDeserializer::read_let(Reader& r, bool is_rec) {
+    // ABF format: count | name1 val1 | name2 val2 | ... | nameN valN | body
     auto count = r.read_varint();
-    ast::Expr* body = nullptr;
+
+    // Read all bindings first (vector of {name, value})
+    struct Binding { std::string name; ast::Expr* val; };
+    std::vector<Binding> bindings;
+    bindings.reserve(count);
     for (std::uint64_t i = 0; i < count; ++i) {
-        auto name = r.read_string();
-        auto* val = read_node(r);
-        if (i == count - 1) body = read_node(r);
+        bindings.push_back({r.read_string(), read_node(r)});
+    }
+
+    // Read the body (comes after all bindings)
+    auto* body = read_node(r);
+
+    // Build nested let structure from the inside out:
+    // Let(x, 1, Let(y, 2, Let(z, 3, body)))
+    for (auto it = bindings.rbegin(); it != bindings.rend(); ++it) {
         auto node = is_rec
-            ? ast::Expr(ast::LetRecNode{{ast::NodeTag::LetRec}, name, val, body})
-            : ast::Expr(ast::LetNode{{ast::NodeTag::Let}, name, val, body});
+            ? ast::Expr(ast::LetRecNode{{ast::NodeTag::LetRec}, it->name, it->val, body})
+            : ast::Expr(ast::LetNode{{ast::NodeTag::Let}, it->name, it->val, body});
         body = arena_.create<ast::Expr>(std::move(node));
     }
+
     return body;
 }
 
