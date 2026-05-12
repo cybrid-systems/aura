@@ -14,7 +14,7 @@ M2 查询引擎     ✅  Query/Transform/AutoFix/HotSwap/--serve
 M3a 语言补全    ✅  布尔/序对/begin/set!/quote/cond (Ghuloum Step 9-14)
 M3b 宏系统      ✅  defmacro + 卫生宏 gensym + 编译期模板验证
 M3c 反射        ✅  P2996 auto_to_json + dispatch 表 + 结构验证
-M3d 类型系统      🔨  L6.1-L6.7 全线 ✅ → EvalValue variant ⬜
+M3d 类型系统      🔨  L6.1-L6.8 全线 ✅ → EvalValue variant ⬜
 M4 生产         ⬜  LLVM JIT / AOT / 类型系统 / 自举
 ```
 
@@ -165,7 +165,8 @@ LLVM/M4          ⬜                    0%
 
 | Phase | Step | 内容 | 红线 | 状态 |
 |-------|------|------|------|------|
-| L6 | 31 | EvalValue variant | (type? Int) | ⬜ |
+| L6 | 31 | Runtime type introspection (type-of/type?) | (type? 42 "Int") → #t | ✅ |
+| L6 | 32 | EvalValue variant refactor | (type? Int) | ⬜ |
 | L6 | 32 | TypeId 骨架 | (type-of 42) → Int | ⬜ |
 | L6 | 33 | 基础类型检查 | (+ 1 "a") → TypeError | ⬜ |
 | L6 | 34 | Query 类型 clause | (query (return-type Int)) | ⬜ |
