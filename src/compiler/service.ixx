@@ -57,6 +57,19 @@ public:
                 aura::diag::ErrorKind::ParseError, pr.error});
         }
         flat.root = pr.root;
+
+        // Check if AST contains MacroDef nodes — IR pipeline doesn't
+        // support macros. If found, fall back to tree-walker evaluator.
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            if (flat.get(id).tag == aura::ast::NodeTag::MacroDef) {
+                auto* expr = aura::compiler::reconstruct_expr(flat, pool, arena_);
+                if (!expr) return std::unexpected(
+                    aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                           "macro expand: reconstruct failed"});
+                return evaluator_.eval(expr);
+            }
+        }
+
         auto ir_mod = aura::compiler::lower_to_ir(flat, pool, arena_);
 
         ComputeKindWrap ck;
