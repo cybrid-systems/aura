@@ -8,7 +8,7 @@
 M0 种子     ✅  Racket #lang 原型
 M1 C++求值  ✅  树遍历器 + ABF + IR 管线 (9/9)
 M2 查询引擎 🔨  AST查询/变换/自动修复 (6/7)
-M3 反射     ⬜
+M3 反射     🔨  Phase 1 (P2996) Day 2/3
 M4 生产     ⬜
 ```
 
@@ -75,7 +75,7 @@ M4 生产     ⬜
 | M2.3 | TransformEngine — Patch 生成 | `query-and-fix` → applied=true | ✅ |
 | M2.4 | CLI: --query / --query-and-fix | CLI 模式可用 | ✅ |
 | M2.5 | SymRefIndex — 符号引用倒排 | `count("x")` → refs | ✅ |
-| M2.6 | Hot swap — 函数级 IR 替换 | 运行时替换 | ⬜ |
+| M2.6 | Hot swap — 函数级 IR 替换 | 运行时替换 | ✅ |
 | M2.7 | AutoFixEngine + --serve 模式 | 编译→报错→自动修复→验证 | ✅ |
 
 ### 端到端 Demo
