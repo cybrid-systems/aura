@@ -6,7 +6,33 @@
 
 ---
 
-## 现状：Step 1-15 已就绪
+## 现状：Step 1-15 已就绪 + Pre-Step 0 ✅
+
+```
+Step  C++  功能
+────  ───  ──────────────────────────────
+1-8   ✅   整数/变量/lambda/if/let/letrec/算术/比较
+9-14  ✅   布尔/序对/begin/set!/quote/cond → 语言核心语法
+15    ✅   defmacro 模板替换
+Pre0  ✅   () 空列表 → 0 sentinel， (cons 1 (cons 2 ())) 不再 crash
+```
+
+**可用的值类型**：`int64_t`（布尔用 0/1，序对用 sentinel，空列表用 0）
+**可用的过程**：`+ - * / = < > not and or eq? cons car cdr pair? null?`
+
+---
+
+## 按 Review 反馈调整的计划变更
+
+| 反馈 | 调整 |
+|------|------|
+| Pre-Step 0: 先修空列表 bug | ✅ 已修复，`()` → 0 |
+| list 做成 primitive 而非宏 | 采纳，L2 Step 19 改为 primitive |
+| equal? 必须在 L2 完成 | 采纳 |
+| 增加 list? 谓词 | 采纳 |
+| L3 I/O 拆分 | 采纳：display/newline 先做，read/error 后面 |
+| AI 友好特性（AST 查询暴露） | 增加 Step 22.5 |
+| 字符串放 arena 而非独立 heap | 采纳 |
 
 ```
 Step  C++  功能
@@ -24,9 +50,11 @@ Step  C++  功能
 ## 总览
 
 ```
-Phase L1: 字符串         (3天)  Step 16-18
+Pre-Step 0: 空列表修复     (0.5天) ✅ 完成
+Phase L1: 字符串          (3天)  Step 16-18
 Phase L2: 列表库          (3天)  Step 19-22
-Phase L3: I/O 与控制      (3天)  Step 23-25
+Phase L3a: 输出基元       (1天)  Step 23-24
+Phase L3b: 输入+错误      (2天)  Step 25-26
 Phase L4: 数值扩展        (2天)  Step 26-27
 Phase L5: 向量与复合数据  (3天)  Step 28-30
 Phase L6: 类型系统启蒙    (5天)  Step 31-35
@@ -137,7 +165,19 @@ std::vector<std::string> string_heap_;
 (filter (lambda (x) (> x 1)) (list 1 2 3)) → (2 3)
 ```
 
-### Step 22: 相等比较 — 1 天
+### Step 22.5: AST 反射（AI 友好）— 1 天
+
+```scheme
+(ast-node? x)              → 判断 x 是否为持久 AST 节点
+(ast-children x)           → 获取节点的子节点列表
+(ast-type x)               → 返回节点类型标识符 (如 'Call)
+(query-ast pattern)        → 直接调用 QueryEngine (已有的 TagIndex/SymRefIndex)
+```
+
+**实现**：调用现有的 `FlatAST` 和 `QueryEngine`，通过 `--serve` IPC 暴露。
+这是 Aura 作为 "AI-native language" 的差异化能力。
+
+### Step 26: 相等比较 — 1 天
 
 ```scheme
 (equal? (list 1 2) (list 1 2))  → #t
@@ -161,7 +201,7 @@ std::vector<std::string> string_heap_;
 
 **实现**：`display` 和 `newline` 作为 primitives，直接调用 `std::print` / `std::println`。
 
-### Step 24: 输入 — 1 天
+### Step 26: 输入 — 1 天
 
 ```scheme
 (read)                     → 从 stdin 读一个 S-表达式
@@ -171,7 +211,7 @@ std::vector<std::string> string_heap_;
 
 **实现**：`read` 调用当前的解析器，`read-line` 读取一行作为字符串。
 
-### Step 25: 错误处理 — 1 天
+### Step 26: 错误处理 — 1 天
 
 ```scheme
 (error "msg")              → 抛出 Diagnostic 错误
