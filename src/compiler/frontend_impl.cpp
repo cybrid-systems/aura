@@ -5,6 +5,14 @@ import std;
 
 namespace aura::compiler {
 
+// Phase 3b D3: forward declaration for macro template validation
+struct MacroValidation;
+static void validate_macro_template(MacroValidation& result,
+                                     const std::string& name,
+                                     const std::vector<std::string>& params,
+                                     ast::Expr* body,
+                                     aura::diag::DiagnosticCollector* diag);
+
 using namespace aura::diag;
 
 std::optional<std::int64_t> Env::lookup(const std::string& n) const {
@@ -617,6 +625,14 @@ EvalResult Evaluator::eval_in(const ast::Expr* e, const Env& env) {
             };
             Cloner cloner{&persistent_arena};
             auto* persistent_body = cloner.clone(n.body);
+
+            // Phase 3b D3: Validate macro template at definition time
+            aura::diag::DiagnosticCollector macro_diag;
+            aura::compiler::MacroValidation mv;
+            aura::compiler::validate_macro_template(mv, n.name, n.params, persistent_body, &macro_diag);
+            // Validation does not block registration — warnings only
+            (void)mv;
+
             const_cast<Evaluator*>(this)->macros_[n.name] = MacroDef{n.params, persistent_body};
             return 0;
         }
@@ -640,6 +656,115 @@ EvalResult Evaluator::apply_closure(ClosureId id, const std::vector<ast::Expr*>&
 }
 
 
+
+// ── Macro template validation (Phase 3b D3) ──────────────────
+// Runs at defmacro definition time to catch errors early.
+struct MacroValidation {
+    bool body_valid = true;        // body is non-null
+    std::vector<std::string> unused_params;   // params never referenced
+    std::vector<std::string> free_vars;       // vars in body not in param list
+    bool constant_body = false;    // no param references → always same result
+};
+
+// Recursively collect all VariableNode names from an Expr tree.
+static void collect_var_refs(const ast::Expr* e, std::unordered_set<std::string>& vars) {
+    if (!e) return;
+    std::visit([&](const auto& node) {
+        using T = std::decay_t<decltype(node)>;
+        if constexpr (std::is_same_v<T, ast::VariableNode>) {
+            vars.insert(node.name);
+        } else if constexpr (std::is_same_v<T, ast::CallNode>) {
+            collect_var_refs(node.function, vars);
+            for (auto* a : node.args) collect_var_refs(a, vars);
+        } else if constexpr (std::is_same_v<T, ast::IfExprNode>) {
+            collect_var_refs(node.condition, vars);
+            collect_var_refs(node.then_branch, vars);
+            collect_var_refs(node.else_branch, vars);
+        } else if constexpr (std::is_same_v<T, ast::LambdaNode>) {
+            // Lambda params shadow outer scope — don't collect them as free
+            collect_var_refs(node.body, vars);
+            for (auto& p : node.params) vars.erase(p);
+        } else if constexpr (std::is_same_v<T, ast::LetNode>) {
+            collect_var_refs(node.value, vars);
+            collect_var_refs(node.body, vars);
+            vars.erase(node.name);  // let binding shadows
+        } else if constexpr (std::is_same_v<T, ast::LetRecNode>) {
+            collect_var_refs(node.value, vars);
+            collect_var_refs(node.body, vars);
+            vars.erase(node.name);
+        } else if constexpr (std::is_same_v<T, ast::DefineNode>) {
+            collect_var_refs(node.value, vars);
+            vars.erase(node.name);
+        } else if constexpr (std::is_same_v<T, ast::BeginNode>) {
+            for (auto* x : node.exprs) collect_var_refs(x, vars);
+        } else if constexpr (std::is_same_v<T, ast::SetNode>) {
+            collect_var_refs(node.value, vars);
+        } else if constexpr (std::is_same_v<T, ast::QuoteNode>) {
+            // Quoted expressions don't introduce free references
+        } else if constexpr (std::is_same_v<T, ast::TypeAnnotationNode>) {
+            collect_var_refs(node.inner_expr, vars);
+        } else if constexpr (std::is_same_v<T, ast::CoercionNode>) {
+            collect_var_refs(node.inner_expr, vars);
+        }
+        // LiteralIntNode, LiteralStringNode, MacroDefNode: no variables
+    }, e->payload);
+}
+
+// Validate a macro template body at definition time.
+static void validate_macro_template(MacroValidation& mv,
+                                     const std::string& name,
+                                     const std::vector<std::string>& params,
+                                     ast::Expr* body,
+                                     aura::diag::DiagnosticCollector* diag) {
+    mv = MacroValidation{};
+    mv.body_valid = (body != nullptr);
+
+    if (!body) {
+        if (diag) diag->report(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::ParseError,
+            std::format("macro '{}': body is null", name)});
+        return;
+    }
+
+    // Collect all variable references in the body
+    std::unordered_set<std::string> body_vars;
+    collect_var_refs(body, body_vars);
+
+    // Check for unused params
+    for (auto& p : params) {
+        if (body_vars.find(p) == body_vars.end()) {
+            mv.unused_params.push_back(p);
+            if (diag) {
+                // Warning only — unused param is not fatal
+                std::println(std::cerr, "warning: macro '{}': parameter '{}' is never used in template",
+                             name, p);
+            }
+        }
+    }
+
+    // Collect free variables (vars in body that aren't params)
+    std::unordered_set<std::string> param_set(params.begin(), params.end());
+    for (auto& v : body_vars) {
+        if (param_set.find(v) == param_set.end()) {
+            mv.free_vars.push_back(v);
+        }
+    }
+
+    // Check for constant body (no param references)
+    bool has_param_ref = false;
+    for (auto& v : body_vars) {
+        if (param_set.find(v) != param_set.end()) {
+            has_param_ref = true;
+            break;
+        }
+    }
+    mv.constant_body = !has_param_ref;
+    if (mv.constant_body && diag) {
+        std::println(std::cerr, "warning: macro '{}': body does not reference any parameters "
+                     "— always expands to the same expression", name);
+    }
+
+}
 
 // ── Macro expansion: substitute params with args in body AST ──
 ast::Expr* Evaluator::expand_macro(const std::string& name,
