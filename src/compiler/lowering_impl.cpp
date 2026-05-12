@@ -5,15 +5,7 @@ namespace aura::compiler {
 
 using namespace aura::ir;
 
-std::uint32_t LoweringPass::alloc_block() {
-    auto id = static_cast<std::uint32_t>(state_->cur_func->blocks.size());
-    state_->cur_func->blocks.push_back({id, {}, {}});
-    return id;
-}
 
-void LoweringPass::emit(IROpcode op, std::uint32_t op0, std::uint32_t op1, std::uint32_t op2, std::uint32_t op3) {
-    state_->cur_func->blocks[state_->cur_block].instructions.push_back({op, {op0, op1, op2, op3}});
-}
 
 IRModule LoweringPass::lower(const ast::Expr* expr) {
     state_->module = {};
@@ -72,13 +64,20 @@ LoweringPass::collect_free_vars2(const ast::Expr* expr,
     return {free, bound};
 }
 
-std::uint32_t LoweringPass::lower_literal_int(const ast::LiteralIntNode& node) {
-    auto slot = alloc_local();
+
+// ── Free function: lower_literal_int ──
+std::uint32_t lower_literal_int(LoweringState& state, const ast::LiteralIntNode& node) {
+    auto slot = state.alloc_local();
     auto val = static_cast<std::uint64_t>(static_cast<std::int64_t>(node.value));
-    emit(IROpcode::ConstI64, slot, static_cast<std::uint32_t>(val),
+    state.emit(IROpcode::ConstI64, slot, static_cast<std::uint32_t>(val),
          static_cast<std::uint32_t>(val >> 32));
     return slot;
 }
+
+std::uint32_t LoweringPass::lower_literal_int(const ast::LiteralIntNode& node) {
+    return aura::compiler::lower_literal_int(*state_, node);
+}
+
 
 std::uint32_t LoweringPass::lower_variable(const ast::VariableNode& node) {
     // Look up in scope chain

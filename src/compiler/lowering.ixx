@@ -28,6 +28,19 @@ struct LoweringState {
     std::unordered_set<std::string> cell_free_vars;
 
     explicit LoweringState(ast::ASTArena& a) : arena(a) {}
+    std::uint32_t alloc_local() { return local_count++; }
+
+    void emit(aura::ir::IROpcode op, std::uint32_t op0, std::uint32_t op1 = 0, std::uint32_t op2 = 0, std::uint32_t op3 = 0) {
+        if (!cur_func || cur_block >= cur_func->blocks.size()) return;
+        auto& blk = cur_func->blocks[cur_block];
+        blk.instructions.push_back({op, {op0, op1, op2, op3}});
+    }
+    std::uint32_t alloc_block() {
+        if (!cur_func) return 0;
+        cur_func->blocks.push_back({
+            static_cast<std::uint32_t>(cur_func->blocks.size())});
+        return static_cast<std::uint32_t>(cur_func->blocks.size() - 1);
+    }
 };
 
 
@@ -40,15 +53,14 @@ public:
     aura::ir::IRModule lower(const ast::Expr* expr);
 
 private:
+    std::uint32_t alloc_block() { return state_->alloc_block(); }
+    std::uint32_t alloc_local() { return state_->alloc_local(); }
+    void emit(aura::ir::IROpcode op, std::uint32_t o0=0, std::uint32_t o1=0, std::uint32_t o2=0, std::uint32_t o3=0) { state_->emit(op, o0, o1, o2, o3); }
     LoweringState* state_ = nullptr;
 
     // Allocate a new local slot
-    std::uint32_t alloc_local() { return local_count_++; }
-    std::uint32_t alloc_block();
 
     // Emit a single IR instruction into the current block
-    void emit(aura::ir::IROpcode op, std::uint32_t op0 = 0,
-              std::uint32_t op1 = 0, std::uint32_t op2 = 0, std::uint32_t op3 = 0);
 
     // Recursively lower an expression into the current function, return result slot
     std::uint32_t lower_expr(const ast::Expr* expr);
