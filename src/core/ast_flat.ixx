@@ -2,6 +2,7 @@ export module aura.core.ast_flat;
 import std;
 import aura.core;
 import aura.core.ast_pool;
+import aura.core.type;
 
 namespace aura::ast {
 
@@ -70,6 +71,7 @@ private:
         child_count_.push_back(0);
         param_begin_.push_back(0);
         param_count_.push_back(0);
+        type_id_.push_back(0);
         return id;
     }
 
@@ -83,12 +85,15 @@ private:
     std::pmr::vector<std::uint32_t>  param_begin_;
     std::pmr::vector<std::uint32_t>  param_count_;
     std::pmr::vector<SymId>     param_data_;
+    // Type information (L6.5+): type_id per node, 0 = DYNAMIC
+    std::pmr::vector<std::uint32_t> type_id_;
 
 public:
     explicit FlatAST(std::pmr::polymorphic_allocator<std::byte> alloc = {})
         : tag_(alloc), int_val_(alloc), sym_id_(alloc),
           child_begin_(alloc), child_count_(alloc), child_data_(alloc),
-          param_begin_(alloc), param_count_(alloc), param_data_(alloc)
+          param_begin_(alloc), param_count_(alloc), param_data_(alloc),
+          type_id_(alloc)
     {}
 
     // ── Builders ───────────────────────────────────────────────
@@ -269,11 +274,26 @@ public:
         tag_.clear(); int_val_.clear(); sym_id_.clear();
         child_begin_.clear(); child_count_.clear(); child_data_.clear();
         param_begin_.clear(); param_count_.clear(); param_data_.clear();
+        type_id_.clear();
         root = NULL_NODE;
     }
 
     std::size_t size() const { return tag_.size(); }
     bool empty() const { return tag_.empty(); }
+
+    // ── Type ID access ─────────────────────────────────────────
+
+    std::uint32_t type_id(NodeId id) const {
+        return id < type_id_.size() ? type_id_[id] : 0;
+    }
+
+    void set_type(NodeId id, std::uint32_t tid) {
+        if (id < type_id_.size()) type_id_[id] = tid;
+    }
+
+    // Resolve type names → TypeIds for all TypeAnnotation nodes
+    // Requires TypeRegistry for name resolution
+    void resolve_type_ids(aura::core::TypeRegistry& reg, StringPool& pool);
 
     NodeId root = NULL_NODE;
 

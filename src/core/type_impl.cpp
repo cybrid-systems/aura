@@ -85,6 +85,12 @@ bool TypeRegistry::is_subtype(TypeId sub, TypeId sup) const {
     return false;
 }
 
+TypeId TypeRegistry::lookup_type(const std::string& name) const {
+    auto it = name_to_id_.find(name);
+    if (it != name_to_id_.end()) return it->second;
+    return TypeId{};
+}
+
 std::string TypeRegistry::format_type(TypeId id) const {
     auto tag = tag_of(id);
     switch (tag) {

@@ -1,6 +1,7 @@
 module aura.core.ast_flat;
 import aura.core.ast;
 import aura.core.ast_pool;
+import aura.core.type;
 
 namespace aura::ast {
 
@@ -79,6 +80,21 @@ void fixup_deltas(FlatAST& ast) {
         auto children = const_cast<FlatAST&>(ast).children(id);
         for (auto& cid : children) {
             if (cid != NULL_NODE) cid += id;
+        }
+    }
+}
+
+void FlatAST::resolve_type_ids(aura::core::TypeRegistry& reg, StringPool& pool) {
+    for (std::size_t i = 0; i < tag_.size(); ++i) {
+        if (tag_[i] == NodeTag::TypeAnnotation) {
+            auto sym = sym_id_[i];
+            auto sv = pool.resolve(sym);
+            std::string name(sv);
+            if (!name.empty()) {
+                auto tid = reg.lookup_type(name);
+                if (tid.valid() && i < type_id_.size())
+                    type_id_[i] = tid.index;
+            }
         }
     }
 }

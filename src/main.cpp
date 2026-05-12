@@ -7,6 +7,7 @@ import aura.compiler.ir_interpreter;
 import aura.compiler.frontend;
 import aura.core.ast_flat;
 import aura.core.ast_pool;
+import aura.core.type;
 import aura.parser.parser;
 import aura.binary.abf_deserializer;
 
@@ -42,6 +43,8 @@ int main(int argc, char* argv[]) {
                 continue;
             }
             flat.root = pr.root;
+            aura::core::TypeRegistry tr;
+            flat.resolve_type_ids(tr, pool);
 
             auto r = cs.eval(line);
             if (r) {
@@ -101,6 +104,8 @@ int main(int argc, char* argv[]) {
         auto pr = aura::parser::parse_to_flat(input, flat, pool);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) { std::println(std::cerr, "parse error"); return 1; }
         flat.root = pr.root;
+        aura::core::TypeRegistry tr;
+        flat.resolve_type_ids(tr, pool);
         aura::compiler::QueryEngine engine(flat, pool);
         auto results = engine.query(argv[2]);
         std::println("query: {} matches", results.size());
@@ -121,6 +126,8 @@ int main(int argc, char* argv[]) {
         auto pr = aura::parser::parse_to_flat(input, flat, pool);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) { std::println(std::cerr, "parse error"); return 1; }
         flat.root = pr.root;
+        aura::core::TypeRegistry tr;
+        flat.resolve_type_ids(tr, pool);
         aura::compiler::QueryEngine engine(flat, pool);
         aura::compiler::TransformEngine xform(flat, pool);
         auto result = xform.query_and_fix(engine, argv[2], argv[3]);
@@ -141,6 +148,8 @@ int main(int argc, char* argv[]) {
         auto pr = aura::parser::parse_to_flat(input, flat, pool);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) { std::println(std::cerr, "parse error"); return 1; }
         flat.root = pr.root;
+        aura::core::TypeRegistry tr;
+        flat.resolve_type_ids(tr, pool);
         aura::compiler::AutoFixEngine fixer(flat, pool);
         fixer.add_default_rules();
         auto patches = fixer.run_all();

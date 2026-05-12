@@ -87,6 +87,9 @@ public:
     std::string format_type(TypeId id) const;
     size_t size() const { return entries_.size(); }
 
+    // Lookup type by name (returns invalid TypeId if not found)
+    TypeId lookup_type(const std::string& name) const;
+
 private:
     struct Entry {
         TypeTag tag;
