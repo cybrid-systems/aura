@@ -131,8 +131,158 @@ void Evaluator::init_pair_primitives() {
         try { return static_cast<std::int64_t>(std::stoll(string_heap_[i])); }
         catch (...) { return std::int64_t(0); }
     });
+    primitives_.add("list", [this](const auto& a) {
+        // Build proper list (pair chain ending with 0)
+        std::int64_t result = 0;
+        for (auto it = a.rbegin(); it != a.rend(); ++it) {
+            auto id = pairs_.size();
+            pairs_.push_back({*it, result});
+            result = PAIR_SENTINEL + static_cast<std::int64_t>(id);
+        }
+        return result;
+    });
+    primitives_.add("list?", [this](const auto& a) {
+        if (a.empty()) return TRUE_VAL;
+        auto v = a[0];
+        while (v != 0) {
+            auto uv = static_cast<std::uint64_t>(v);
+            if (uv < static_cast<std::uint64_t>(PAIR_SENTINEL))
+                return FALSE_VAL;
+            auto idx = static_cast<std::size_t>(uv - PAIR_SENTINEL);
+            if (idx >= pairs_.size()) return FALSE_VAL;
+            v = pairs_[idx].cdr;  // follow cdr chain
+        }
+        return TRUE_VAL;  // reached null → proper list
+    });
     primitives_.add("null?", [](const auto& a) {
         return a[0] == 0 ? TRUE_VAL : FALSE_VAL;
+    });
+    primitives_.add("length", [this](const auto& a) {
+        if (a.empty()) return std::int64_t(0);
+        auto v = a[0]; std::int64_t n = 0;
+        while (v != 0) {
+            auto uv = static_cast<std::uint64_t>(v);
+            if (uv < static_cast<std::uint64_t>(PAIR_SENTINEL)) return std::int64_t(0);
+            auto idx = static_cast<std::size_t>(uv - PAIR_SENTINEL);
+            if (idx >= pairs_.size()) return std::int64_t(0);
+            v = pairs_[idx].cdr; n++;
+        }
+        return n;
+    });
+    primitives_.add("list-ref", [this](const auto& a) {
+        if (a.size() < 2) return std::int64_t(0);
+        auto v = a[0]; auto pos = static_cast<std::size_t>(a[1]);
+        for (std::size_t i = 0; i < pos; ++i) {
+            auto uv = static_cast<std::uint64_t>(v);
+            if (uv < static_cast<std::uint64_t>(PAIR_SENTINEL)) return std::int64_t(0);
+            auto idx = static_cast<std::size_t>(uv - PAIR_SENTINEL);
+            if (idx >= pairs_.size()) return std::int64_t(0);
+            v = pairs_[idx].cdr;
+        }
+        auto uv = static_cast<std::uint64_t>(v);
+        if (uv < static_cast<std::uint64_t>(PAIR_SENTINEL)) return v;
+        auto idx = static_cast<std::size_t>(uv - PAIR_SENTINEL);
+        return idx < pairs_.size() ? pairs_[idx].car : std::int64_t(0);
+    });
+    primitives_.add("member", [this](const auto& a) {
+        if (a.size() < 2) return std::int64_t(0);
+        auto val = a[0]; auto v = a[1];
+        while (v != 0) {
+            auto uv = static_cast<std::uint64_t>(v);
+            if (uv < static_cast<std::uint64_t>(PAIR_SENTINEL)) return std::int64_t(0);
+            auto idx = static_cast<std::size_t>(uv - PAIR_SENTINEL);
+            if (idx >= pairs_.size()) return std::int64_t(0);
+            if (pairs_[idx].car == val) return v;
+            v = pairs_[idx].cdr;
+        }
+        return std::int64_t(0);
+    });
+    primitives_.add("append", [this](const auto& a) {
+        if (a.empty()) return std::int64_t(0);
+        // For now: two-arg append
+        if (a.size() < 2) return a[0];
+        // Copy first list, last cdr points to second list
+        auto list1 = a[0]; auto list2 = a[1];
+        if (list1 == 0) return list2;
+        // Walk to end of list1, copying each pair
+        std::int64_t result = 0; std::int64_t tail = 0;
+        auto v = list1;
+        while (v != 0) {
+            auto uv = static_cast<std::uint64_t>(v);
+            if (uv < static_cast<std::uint64_t>(PAIR_SENTINEL)) return list1;
+            auto idx = static_cast<std::size_t>(uv - PAIR_SENTINEL);
+            if (idx >= pairs_.size()) return list1;
+            auto new_id = pairs_.size();
+            pairs_.push_back({pairs_[idx].car, 0});  // cdr = 0 for now
+            auto new_pair = PAIR_SENTINEL + static_cast<std::int64_t>(new_id);
+            if (result == 0) result = new_pair;
+            else { auto tidx = static_cast<std::size_t>(tail - PAIR_SENTINEL);
+                   pairs_[tidx].cdr = new_pair; }
+            tail = new_pair;
+            v = pairs_[idx].cdr;
+        }
+        // Set last cdr to list2
+        if (tail != 0) {
+            auto tidx = static_cast<std::size_t>(tail - PAIR_SENTINEL);
+            pairs_[tidx].cdr = list2;
+        }
+        return result;
+    });
+    primitives_.add("reverse", [this](const auto& a) {
+        if (a.empty()) return std::int64_t(0);
+        auto v = a[0]; std::int64_t result = 0;
+        while (v != 0) {
+            auto uv = static_cast<std::uint64_t>(v);
+            if (uv < static_cast<std::uint64_t>(PAIR_SENTINEL)) return a[0];
+            auto idx = static_cast<std::size_t>(uv - PAIR_SENTINEL);
+            if (idx >= pairs_.size()) return a[0];
+            auto new_id = pairs_.size();
+            pairs_.push_back({pairs_[idx].car, result});
+            result = PAIR_SENTINEL + static_cast<std::int64_t>(new_id);
+            v = pairs_[idx].cdr;
+        }
+        return result;
+    });
+    primitives_.add("map", [this](const auto& a) {
+        // map takes a fn value (int64_t) and a list — simplified
+        // For now: not supported in simplified form.
+        // Full map needs higher-order function support.
+        return a.empty() ? std::int64_t(0) : a[0];
+    });
+    primitives_.add("filter", [this](const auto& a) {
+        return a.empty() ? std::int64_t(0) : a[0];
+    });
+    primitives_.add("equal?", [this](const auto& a) {
+        if (a.size() < 2) return TRUE_VAL;
+        std::vector<std::pair<std::int64_t, std::int64_t>> stack;
+        stack.push_back({a[0], a[1]});
+        while (!stack.empty()) {
+            auto [x, y] = stack.back(); stack.pop_back();
+            if (x == y) continue;
+            auto ux = static_cast<std::uint64_t>(x);
+            auto uy = static_cast<std::uint64_t>(y);
+            bool px = ux >= static_cast<std::uint64_t>(PAIR_SENTINEL) && ux < static_cast<std::uint64_t>(PAIR_SENTINEL) + pairs_.size();
+            bool py = uy >= static_cast<std::uint64_t>(PAIR_SENTINEL) && uy < static_cast<std::uint64_t>(PAIR_SENTINEL) + pairs_.size();
+            if (px && py) {
+                auto ix = static_cast<std::size_t>(x - PAIR_SENTINEL);
+                auto iy = static_cast<std::size_t>(y - PAIR_SENTINEL);
+                if (ix >= pairs_.size() || iy >= pairs_.size()) return FALSE_VAL;
+                stack.push_back({pairs_[ix].cdr, pairs_[iy].cdr});
+                stack.push_back({pairs_[ix].car, pairs_[iy].car});
+                continue;
+            }
+            bool sx = ux >= static_cast<std::uint64_t>(STRING_SENTINEL) && ux < static_cast<std::uint64_t>(STRING_SENTINEL) + string_heap_.size();
+            bool sy = uy >= static_cast<std::uint64_t>(STRING_SENTINEL) && uy < static_cast<std::uint64_t>(STRING_SENTINEL) + string_heap_.size();
+            if (sx && sy) {
+                auto six = static_cast<std::size_t>(x - STRING_SENTINEL);
+                auto siy = static_cast<std::size_t>(y - STRING_SENTINEL);
+                if (six >= string_heap_.size() || siy >= string_heap_.size()) return FALSE_VAL;
+                if (string_heap_[six] != string_heap_[siy]) return FALSE_VAL;
+                continue;
+            }
+            return FALSE_VAL;
+        }
+        return TRUE_VAL;
     });
 }
 
