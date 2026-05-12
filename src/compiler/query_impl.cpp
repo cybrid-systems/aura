@@ -5,6 +5,16 @@ namespace aura::compiler {
 
 using namespace aura::ast;
 
+// ── resolve_type_id — map type name to hardcoded TypeId values ──
+// TODO: integrate with TypeRegistry
+static std::uint32_t resolve_type_id(const std::string& name) {
+    if (name == "Int")    return 1;
+    if (name == "Bool")   return 2;
+    if (name == "String") return 3;
+    if (name == "Void")   return 4;
+    return 0;  // DYNAMIC / unknown
+}
+
 static std::vector<std::string> tokenize(std::string_view s) {
     std::vector<std::string> tokens;
     std::string cur;
@@ -59,6 +69,9 @@ static QueryExpr parse_list(PS& ps) {
     else if (op == "and")      { q.kind = QueryExpr::Kind::And; while (!ps.close() && !ps.end()) q.children.push_back(parse_expr(ps)); }
     else if (op == "or")       { q.kind = QueryExpr::Kind::Or;  while (!ps.close() && !ps.end()) q.children.push_back(parse_expr(ps)); }
     else if (op == "not")      { q.kind = QueryExpr::Kind::Not; q.children.push_back(parse_expr(ps)); }
+    else if (op == "has-type") { q.kind = QueryExpr::Kind::HasType; q.str_value = std::string(ps.next()); }
+    else if (op == "return-type") { q.kind = QueryExpr::Kind::ReturnType; q.str_value = std::string(ps.next()); }
+    else if (op == "argument-type") { q.kind = QueryExpr::Kind::ArgType; q.child_index = (std::uint32_t)std::stoul(std::string(ps.next())); q.str_value = std::string(ps.next()); }
 
     if (!ps.end()) ps.next(); // ')'
     return q;
@@ -112,6 +125,18 @@ bool QueryEngine::match(NodeId id, const QueryExpr& q, int depth) {
     case QueryExpr::Kind::And: for (auto& c : q.children) if (!match(id, c, depth+1)) return false; return true;
     case QueryExpr::Kind::Or:  for (auto& c : q.children) if (match(id, c, depth+1)) return true; return false;
     case QueryExpr::Kind::Not: return !q.children.empty() && !match(id, q.children[0], depth+1);
+    case QueryExpr::Kind::HasType:
+        return index_.ast.type_id(id) != 0 && index_.ast.type_id(id) == resolve_type_id(q.str_value);
+    case QueryExpr::Kind::ReturnType: {
+        if (v.tag != NodeTag::Call) return false;
+        return index_.ast.type_id(id) != 0 && index_.ast.type_id(id) == resolve_type_id(q.str_value);
+    }
+    case QueryExpr::Kind::ArgType: {
+        if (v.tag != NodeTag::Call) return false;
+        if (q.child_index >= v.children.size()) return false;
+        auto cid = v.child(q.child_index);
+        return index_.ast.type_id(cid) != 0 && index_.ast.type_id(cid) == resolve_type_id(q.str_value);
+    }
     default: return false;
     }
 }

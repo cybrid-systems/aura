@@ -92,6 +92,9 @@ export struct QueryExpr {
         HasError,        // (has-error?)
         RefCount,        // (= (ref-count :node) N)
         AllNodes,        // wildcard — match everything
+        HasType,          // (has-type? Int) — node's type_id matches
+        ReturnType,       // (return-type Int) — call return type matches
+        ArgType,          // (argument-type 0 Int) — call arg type matches
     };
 
     Kind kind = Kind::AllNodes;
