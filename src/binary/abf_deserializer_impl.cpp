@@ -38,6 +38,11 @@ std::span<const std::byte> ABFDeserializer::Reader::read_bytes(std::size_t n) {
     return result;
 }
 
+std::uint8_t ABFDeserializer::Reader::peek_byte() const {
+    if (pos >= data.size()) return 0;
+    return static_cast<std::uint8_t>(data[pos]);
+}
+
 bool ABFDeserializer::is_abf(std::span<const std::byte> data) {
     if (data.size() < 4) return false;
     return data[0] == std::byte{'A'} && data[1] == std::byte{'B'} &&
@@ -71,6 +76,7 @@ ast::Expr* ABFDeserializer::read_node(Reader& r) {
     case 0x09: return read_begin(r);
     case 0x0A: return read_set(r);
     case 0x0B: return read_quote(r);
+    case 0x0C: return read_cond(r);
     default: throw std::runtime_error("unknown tag: " + std::to_string(tag));
     }
 }
@@ -150,6 +156,25 @@ ast::Expr* ABFDeserializer::read_set(Reader& r) {
     auto name = r.read_string();
     auto* val = read_node(r);
     return arena_.create<ast::Expr>(ast::SetNode{{ast::NodeTag::Set}, name, val});
+}
+
+
+ast::Expr* ABFDeserializer::read_cond(Reader& r) {
+    // Format: test1 val1 [TAG-IF test2 val2 [TAG-IF test3 v3 ...]]
+    // Read the first (test, val) pair
+    auto* test = read_node(r);
+    auto* val = read_node(r);
+    // Check if there's more (peek for another IF continuation tag)
+    if (!r.eof() && r.peek_byte() == 0x04) {
+        r.read_varint();  // skip TAG-IF
+        r.read_varint();  // skip ext_id
+        r.read_varint();  // skip ext_len
+        auto* else_branch = read_cond(r);
+        return arena_.create<ast::Expr>(
+            ast::IfExprNode{{ast::NodeTag::IfExpr}, test, val, else_branch});
+    }
+    // Last clause: just the value
+    return val;
 }
 
 ast::Expr* ABFDeserializer::read_quote(Reader& r) {
