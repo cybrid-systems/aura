@@ -18,8 +18,9 @@ export struct NodeMeta {
     bool has_params;              // has param list (Lambda)
 };
 
-export constexpr std::array<NodeMeta, 12> kNodeMeta = {{
+export constexpr std::array<NodeMeta, 14> kNodeMeta = {{
     {NodeTag::LiteralInt, "LiteralInt", 0, false, false, true,  false},
+    {NodeTag::LiteralString, "LiteralString", 0, false, true,  false, false},
     {NodeTag::Variable,   "Variable",   0, false, true,  false, false},
     {NodeTag::Call,       "Call",       1, true,  false, false, false},
     {NodeTag::IfExpr,     "IfExpr",     3, false, false, false, false},
@@ -90,6 +91,13 @@ public:
     {}
 
     // ── Builders ───────────────────────────────────────────────
+
+    NodeId add_literalstring(SymId name) {
+        auto id = add_node(NodeTag::LiteralString);
+        sym_id_[id] = name;
+        child_count_[id] = 0;
+        return id;
+    }
 
     NodeId add_literal(std::int64_t val) {
         auto id = add_node(NodeTag::LiteralInt);

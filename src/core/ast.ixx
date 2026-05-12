@@ -19,7 +19,7 @@ export struct ParsedPhase { static constexpr std::uint32_t id = 0; };
 export enum class NodeTag : std::uint32_t {
     LiteralInt = 0x01, Variable = 0x02, Call = 0x03,
     IfExpr = 0x04, Lambda = 0x05, Let = 0x06, LetRec = 0x07, Define = 0x08,
-    Begin = 0x09, Set = 0x0A, Quote = 0x0B, MacroDef = 0x0D,
+    Begin = 0x09, Set = 0x0A, Quote = 0x0B, LiteralString = 0x0D, MacroDef = 0x0E,
 };
 
 export struct LiteralIntNode { NodeTag tag; std::int64_t value = 0; };

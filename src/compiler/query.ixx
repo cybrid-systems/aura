@@ -13,7 +13,7 @@ export struct ASTIndex {
     aura::ast::StringPool& pool;
 
     struct TagIndex {
-        static constexpr std::size_t TAG_COUNT = 12;
+        static constexpr std::size_t TAG_COUNT = 15;
         std::array<std::vector<aura::ast::NodeId>, TAG_COUNT> tags;
         bool built = false;
         void build(const aura::ast::FlatAST& a) {

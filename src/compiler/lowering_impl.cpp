@@ -40,6 +40,7 @@ std::uint32_t LoweringPass::lower_expr(const ast::Expr* expr) {
     return std::visit([&](const auto& node) -> std::uint32_t {
         using T = std::decay_t<decltype(node)>;
         if constexpr (std::is_same_v<T, ast::LiteralIntNode>) return lower_literal_int(node);
+        if constexpr (std::is_same_v<T, ast::LiteralStringNode>) { auto s = alloc_local(); emit(IROpcode::ConstI64, s, 0); return s; }
         if constexpr (std::is_same_v<T, ast::VariableNode>)    return lower_variable(node);
         if constexpr (std::is_same_v<T, ast::CallNode>)        return lower_call(node);
         if constexpr (std::is_same_v<T, ast::IfExprNode>)      return lower_if(node);
