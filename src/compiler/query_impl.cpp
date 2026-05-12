@@ -48,7 +48,8 @@ static QueryExpr parse_list(PS& ps) {
         else if (s == "Define")    q.node_tag = NodeTag::Define;
         else if (s == "Begin")     q.node_tag = NodeTag::Begin;
         else if (s == "Set")       q.node_tag = NodeTag::Set;
-        else if (s == "Quote")     q.node_tag = NodeTag::Quote; }
+        else if (s == "Quote")     q.node_tag = NodeTag::Quote; 
+        else if (s == "TypeAnnotation") q.node_tag = NodeTag::TypeAnnotation; }
     else if (op == "callee")   { q.kind = QueryExpr::Kind::Callee; q.str_value = std::string(ps.next()); }
     else if (op == "child")    { q.kind = QueryExpr::Kind::Child; q.child_index = (std::uint32_t)std::stoul(std::string(ps.next())); q.children.push_back(parse_expr(ps)); }
     else if (op == "has-child"){ q.kind = QueryExpr::Kind::HasChild; q.children.push_back(parse_expr(ps)); }

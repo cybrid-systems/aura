@@ -69,7 +69,7 @@ Layer  组件              文件                责任
 
 ### 红线验证
 
-红线测试全部通过后，运行 `ctest` 确保 37+ 测试全绿。
+红线测试全部通过后，运行 `ctest` 确保 39+ 测试全绿。
 
 ---
 
@@ -124,6 +124,7 @@ Layer 2: src/core/ast_flat.ixx
   [ ] kNodeMeta 表条目
   [ ] kNodeMeta 数组大小更新
   [ ] FlatAST::add_xxx 构造器
+  [ ] reflect/type_validate.hh P2996 验证条目
 
 Layer 3: src/parser/parser_impl.cpp
   [ ] 关键字检查（如适用）
@@ -167,10 +168,16 @@ Layer 12: tests/
   [ ] ABF E2E 测试
   [ ] ctest 全绿
 
+Layer 12b: src/compiler/type_checker.ixx (L6.3+)
+  [ ] TypeChecker 模块接口
+  [ ] infer_type 实现
+  [ ] check_type 实现
+
 Special:
   [ ] ABF ABF 端到端（racket --abf | ./aura --abf）
   [ ] --serve 不崩溃
   [ ] --query '(node-type Xxx)' 匹配
+  [ ] type_redlines.txt 红线测试 (TDD)
 ```
 
 ---
@@ -191,12 +198,13 @@ begin          ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅  12/12
 set!           ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅  12/12
 quote          ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅  12/12
 cond           ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅  12/12
-defmacro       ✅ ✅ ⬜ ⬜ ⬜ ⬜ ⬜ ⚠  ⚠  ✅ ⚠  ⚠   4/12
+defmacro       ✅ ✅ ⚠  ⚠  ⚠  ⚠  ⚠  ⚠  ⚠  ✅ ⚠  ⚠   4/12
 字符串         ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅  12/12 ✅
-列表库          ⬜ ⬜ ⬜ ⬜ ⬜ ⬜ ⬜ ⬜ ⬜ ⬜ ⬜ ⬜   0/12
-I/O             ⬜ ⬜ ⬜ ⬜ ⬜ ⬜ ⬜ ⬜ ⬜ ⬜ ⬜ ⬜   0/12
-数值扩展        ⬜ ⬜ ⬜ ⬜ ⬜ ⬜ ⬜ ⬜ ⬜ ⬜ ⬜ ⬜   0/12
-向量+struct     ⬜ ⬜ ⬜ ⬜ ⬜ ⬜ ⬜ ⬜ ⬜ ⬜ ⬜ ⬜   0/12
+列表库          ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅  12/12 ✅
+I/O (display/  ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅  12/12 ✅
+  newline)
+类型标注        ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅ ✅  12/12 ✅
+(TypeAnnotation)
 
 符号说明: ✅=完成 ⬜=未开始 ⚠=部分实现
 ```
@@ -214,9 +222,28 @@ printf '#lang aura\n"hello"' |            → 134217728  ✅ ABF
 echo '"hello"' | ./aura --serve          → JSON       ✅ serve
 echo '"hello"' | ./aura --query          → 0 matches  ✅ 查询
   '(node-type LiteralString)'                         （在只有整数的表达式里是对的）
-ctest                                    → 37/37      ✅ 全绿
+ctest                                    → 39/39      ✅ 全绿
 ```
 
+---
+
+### 示例：L6.2 TypeAnnotationNode 的完整管线
+
+以 `(: x Int)` 为例展示类型标注的 12 层覆盖 + 反射验证：
+
+```
+echo '(: x Int)' | racket -l aura -- --abf
+                 → hex: 41 42 46 32 02 00 0F ... (TAG-TYPE-ANNOTATION 0x0F)
+echo '(: x Int)' | racket -l aura -- --abf | ./aura --abf
+                 → eval error: unbound variable: x  ✅ annotation stripped
+echo '(begin (define x 42) (: x Int))' | racket -l aura -- --abf | ./aura --abf
+                 → 42  ✅ value through annotation
+./aura --serve '(node-type TypeAnnotation)'
+                 → query result: 0  ✅ query supports tag
+./build/validate-abf-nodes
+                 → 13/13 passed  ✅ P2996 layout validation
+ctest            → 39/39 ✅
+```
 ---
 
 ## 7. 与设计文档的关系
