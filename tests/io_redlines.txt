@@ -1,0 +1,23 @@
+# L3a: I/O primitives — 红线清单
+# 测试先写，实现后逐行验证
+# output goes to stdout; primitives return #t on success
+
+# Step 23: display
+(display 42)       → 42\n#t
+(display "hello")  → hello\n#t
+(display #t)       → #t\n#t
+(display ())       → ()\n#t
+
+# Step 24: newline + write
+(newline)          → \n#t
+(write 42)         → 42\n#t
+(write "hello")    → "hello"\n#t
+
+# Step 24: display with multiple values
+(display (list 1 2 3)) → (1 2 3)\n#t
+
+# Compound
+(begin (display "hello") (newline) (display 42)) → hello\\n42\\n#t
+
+# Step 22.5: AST reflection (AI-friendly)
+# These need access to FlatAST through --serve or query

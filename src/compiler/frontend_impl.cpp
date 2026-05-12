@@ -284,6 +284,22 @@ void Evaluator::init_pair_primitives() {
         }
         return TRUE_VAL;
     });
+    primitives_.add("display", [this](const auto& a) {
+        if (a.empty() || a.size() < 1) return TRUE_VAL;
+        auto v = a[0]; auto uv = static_cast<std::uint64_t>(v);
+        if (v == 0) std::print("()");
+        else if (v == TRUE_VAL) std::print("#t");
+        else if (v == FALSE_VAL) std::print("#f");
+        else if (uv >= static_cast<std::uint64_t>(PAIR_SENTINEL) && uv < static_cast<std::uint64_t>(PAIR_SENTINEL) + pairs_.size())
+            std::print("<pair>");
+        else if (uv >= static_cast<std::uint64_t>(STRING_SENTINEL)) {
+            auto idx = static_cast<std::size_t>(v - STRING_SENTINEL);
+            if (idx < string_heap_.size()) std::print("{}", string_heap_[idx]);
+        }
+        else std::print("{}", v);
+        return TRUE_VAL;
+    });
+    primitives_.add("newline", [](const auto&) { std::println(""); return TRUE_VAL; });
 }
 
 std::int64_t* Env::lookup_cell_ptr(const std::string& n, std::vector<std::int64_t>* cells) const {
