@@ -27,6 +27,10 @@ public:
     void bind(const std::string& n, std::int64_t v) { bindings_.emplace_back(n,v); }
     std::optional<std::int64_t> lookup(const std::string& n) const;
     std::optional<PrimFn> lookup_primitive(const std::string& n) const { return primitives_?primitives_->lookup(n):std::nullopt; }
+    std::int64_t* lookup_cell_ptr(const std::string& n, std::vector<std::int64_t>* cells) const;
+    const Env* parent() const { return parent_; }
+    std::vector<std::pair<std::string,std::int64_t>>& bindings() { return bindings_; }
+    const std::vector<std::pair<std::string,std::int64_t>>& bindings() const { return bindings_; }
 private:
     const Env* parent_=nullptr; const Primitives* primitives_=nullptr;
     std::vector<std::int64_t>* cells_=nullptr;

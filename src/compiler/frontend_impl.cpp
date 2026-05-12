@@ -58,6 +58,34 @@ void Evaluator::init_pair_primitives() {
     });
 }
 
+std::int64_t* Env::lookup_cell_ptr(const std::string& n, std::vector<std::int64_t>* cells) const {
+    if (!cells) return nullptr;
+    for (auto& b : bindings_) {
+        if (b.first == n) {
+            auto cv = b.second;
+            if (static_cast<std::uint64_t>(cv) >= static_cast<std::uint64_t>(CELL_SENTINEL)) {
+                auto ci = static_cast<std::size_t>(cv - CELL_SENTINEL);
+                if (ci < cells->size()) return &(*cells)[ci];
+            }
+            return nullptr;
+        }
+    }
+    // Walk up the parent chain
+    for (auto* p = parent_; p; p = p->parent_) {
+        for (auto& b : p->bindings_) {
+            if (b.first == n) {
+                auto cv = b.second;
+                if (static_cast<std::uint64_t>(cv) >= static_cast<std::uint64_t>(CELL_SENTINEL)) {
+                    auto ci = static_cast<std::size_t>(cv - CELL_SENTINEL);
+                    if (ci < cells->size()) return &(*cells)[ci];
+                }
+                return nullptr;
+            }
+        }
+    }
+    return nullptr;
+}
+
 std::optional<PrimFn> Primitives::lookup(const std::string& n) const {
     auto i = table_.find(n);
     return i != table_.end() ? std::optional(i->second) : std::nullopt;
@@ -155,6 +183,49 @@ EvalResult Evaluator::eval_in(const ast::Expr* e, const Env& env) {
             if (!v) return v;
             cells_[ci] = *v;
             return eval_in(n.body, ne);
+        }
+        // Ghuloum Steps 11-13
+        if constexpr (std::is_same_v<T, ast::BeginNode>) {
+            ast::Expr* last = nullptr;
+            for (auto* e : n.exprs) {
+                auto v = eval_in(e, env);
+                if (!v) return v;
+                last = e;
+            }
+            return last ? eval_in(last, env) : EvalResult(0);
+        }
+        if constexpr (std::is_same_v<T, ast::SetNode>) {
+            auto v = eval_in(n.value, env);
+            if (!v) return v;
+            // Try cell-based mutation first (letrec/define bindings)
+            auto* cell_ptr = env.lookup_cell_ptr(n.name, &cells_);
+            if (cell_ptr) {
+                *cell_ptr = *v;
+                return *v;
+            }
+            // Fallback: direct env mutation (let bindings)
+            // Walk the env chain and mutate the first matching binding
+            auto& write_env = const_cast<Env&>(env);
+            for (auto& b : write_env.bindings()) {
+                if (b.first == n.name) {
+                    b.second = *v;
+                    return *v;
+                }
+            }
+            for (auto* p = env.parent(); p; p = p->parent()) {
+                auto& parent_write = const_cast<Env&>(*p);
+                for (auto& b : parent_write.bindings()) {
+                    if (b.first == n.name) {
+                        b.second = *v;
+                        return *v;
+                    }
+                }
+            }
+            return std::unexpected(Diagnostic{ErrorKind::UnboundVariable,
+                                              "set!: unbound variable: " + n.name});
+        }
+        if constexpr (std::is_same_v<T, ast::QuoteNode>) {
+            return eval_in(n.value, env);
         }
         return std::unexpected(Diagnostic{ErrorKind::InternalError, "unknown expression type"});
     }, e->payload);

@@ -18,7 +18,7 @@ export struct NodeMeta {
     bool has_params;              // has param list (Lambda)
 };
 
-export constexpr std::array<NodeMeta, 8> kNodeMeta = {{
+export constexpr std::array<NodeMeta, 11> kNodeMeta = {{
     {NodeTag::LiteralInt, "LiteralInt", 0, false, false, true,  false},
     {NodeTag::Variable,   "Variable",   0, false, true,  false, false},
     {NodeTag::Call,       "Call",       1, true,  false, false, false},
@@ -27,6 +27,9 @@ export constexpr std::array<NodeMeta, 8> kNodeMeta = {{
     {NodeTag::Let,        "Let",        2, false, true,  false, false},
     {NodeTag::LetRec,     "LetRec",     2, false, true,  false, false},
     {NodeTag::Define,     "Define",     1, false, true,  false, false},
+    {NodeTag::Begin,      "Begin",      0, true,  false, false, false},
+    {NodeTag::Set,        "Set",        1, false, true,  false, false},
+    {NodeTag::Quote,      "Quote",      1, false, false, false, false},
 }};
 
 export constexpr const NodeMeta& meta(NodeTag tag) {
@@ -165,6 +168,34 @@ public:
         return id;
     }
 
+
+    NodeId add_begin(NodeId* exprs, std::uint32_t count) {
+        auto id = add_node(NodeTag::Begin);
+        auto start = static_cast<std::uint32_t>(child_data_.size());
+        for (std::uint32_t i = 0; i < count; ++i) child_data_.push_back(exprs[i]);
+        child_begin_[id] = start;
+        child_count_[id] = count;
+        return id;
+    }
+
+    NodeId add_set(SymId name, NodeId val) {
+        auto id = add_node(NodeTag::Set);
+        sym_id_[id] = name;
+        auto start = static_cast<std::uint32_t>(child_data_.size());
+        child_data_.push_back(val);
+        child_begin_[id] = start;
+        child_count_[id] = 1;
+        return id;
+    }
+
+    NodeId add_quote(NodeId val) {
+        auto id = add_node(NodeTag::Quote);
+        auto start = static_cast<std::uint32_t>(child_data_.size());
+        child_data_.push_back(val);
+        child_begin_[id] = start;
+        child_count_[id] = 1;
+        return id;
+    }
     // ── Access ─────────────────────────────────────────────────
 
     NodeView get(NodeId id) const {

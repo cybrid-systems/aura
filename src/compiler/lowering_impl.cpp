@@ -56,6 +56,9 @@ std::uint32_t LoweringPass::lower_expr(const ast::Expr* expr) {
         if constexpr (std::is_same_v<T, ast::LetRecNode>)      return lower_let(ast::LetNode{node.tag, node.name, node.value, node.body}, true);
         if constexpr (std::is_same_v<T, ast::DefineNode>)      return lower_let(
             ast::LetNode{ast::NodeTag::Let, node.name, node.value, nullptr}, false);
+        if constexpr (std::is_same_v<T, ast::BeginNode>)      return lower_begin(node);
+        if constexpr (std::is_same_v<T, ast::SetNode>)        return lower_set(node);
+        if constexpr (std::is_same_v<T, ast::QuoteNode>)      return lower_expr(node.value);
         auto s = alloc_local(); emit(IROpcode::ConstI64, s, 0); return s;
     }, expr->payload);
 }
@@ -147,6 +150,12 @@ void LoweringPass::collect_free_vars(const ast::Expr* expr,
             collect_free_vars(node.value, free, inner_bound);
             collect_free_vars(node.body, free, inner_bound);
         } else if constexpr (std::is_same_v<T, ast::DefineNode>) {
+            collect_free_vars(node.value, free, bound);
+        } else if constexpr (std::is_same_v<T, ast::BeginNode>) {
+            for (auto* e : node.exprs) collect_free_vars(e, free, bound);
+        } else if constexpr (std::is_same_v<T, ast::SetNode>) {
+            collect_free_vars(node.value, free, bound);
+        } else if constexpr (std::is_same_v<T, ast::QuoteNode>) {
             collect_free_vars(node.value, free, bound);
         }
     }, expr->payload);
@@ -390,6 +399,32 @@ std::uint32_t LoweringPass::lower_if(const ast::IfExprNode& node) {
     // Merge block: phi_slot now has the correct value from either branch
     current_block_ = merge_block;
     return phi_slot;
+}
+
+// ─── Begin lowering ──────────────────────────────────────────────
+
+std::uint32_t LoweringPass::lower_begin(const ast::BeginNode& node) {
+    std::uint32_t last_slot = 0;
+    for (auto* e : node.exprs) {
+        last_slot = lower_expr(e);
+    }
+    return last_slot;
+}
+
+// ─── Set lowering ────────────────────────────────────────────────
+
+std::uint32_t LoweringPass::lower_set(const ast::SetNode& node) {
+    auto val_slot = lower_expr(node.value);
+    // Look up the variable in scope chain
+    for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
+        auto found = it->find(node.name);
+        if (found != it->end()) {
+            emit(IROpcode::CellSet, found->second.slot, val_slot);
+            return val_slot;
+        }
+    }
+    // Not found — just return value
+    return val_slot;
 }
 
 // ─── Let lowering ────────────────────────────────────────────────
