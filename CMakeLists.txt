@@ -156,6 +156,16 @@ add_test(NAME inspect_env
     COMMAND sh -c "printf '(let ((x 10)) x)' | timeout 5 ./aura --env | grep -q 'result: 10'"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
+# ── validate_abf_nodes: P2996 ABF struct layout validation ────
+add_executable(validate-abf-nodes tests/validate_abf_nodes.cpp)
+target_include_directories(validate-abf-nodes PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_options(validate-abf-nodes PRIVATE -std=c++26 -freflection)
+target_link_libraries(validate-abf-nodes PRIVATE stdc++)
+
+add_test(NAME validate_abf_nodes
+    COMMAND ./validate-abf-nodes
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
 # ── aura-reflect: standalone P2996 reflection tool ───────────────
 # Built WITHOUT modules to avoid -freflection / import std; conflicts.
 add_executable(aura-reflect tools/aura-reflect.cpp)
