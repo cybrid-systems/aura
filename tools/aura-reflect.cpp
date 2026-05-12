@@ -12,6 +12,7 @@
 // ──────────────────────────────────────────────────────────────
 
 #include "reflect/reflect.hh"
+#include "reflect/opcode_reflect.hh"
 #include "reflect/reflect_schema.hh"
 #include <cstdio>
 #include <string>
@@ -206,6 +207,24 @@ void demo_ir_instruction() {
 }
 
 // ==============================================================
+//  --opcodes: P2996 reflection demo
+// ==============================================================
+
+void demo_opcodes() {
+    printf("=== IROpcode Reflection Table (P2996-generated) ===\n\n");
+    constexpr auto N = aura::reflect::enum_count<IROpcode>();
+    printf("  %zu opcodes, names unique: %d\n\n", N,
+           aura::reflect::validate_enum<IROpcode>());
+    printf("  #   name\n");
+    printf("  ──  ──────────────────────────────\n");
+    for (int i = 0; i < (int)N; ++i) {
+        auto name = aura::reflect::opcode_name<IROpcode>(i);
+        printf("  %2d  %.*s\n", i, (int)name.size(), name.data());
+    }
+    printf("\n  (no hand-written switch — P2996 enumerators_of)\n");
+}
+
+// ==============================================================
 //  Main
 // ==============================================================
 
@@ -221,9 +240,10 @@ int main(int argc, char* argv[]) {
     if (all || has("--ir-instruction")) { demo_ir_instruction(); printf("\n"); }
     if (all || has("--schema"))         { demo_schema();         printf("\n"); }
     if (all || has("--expansion"))      { demo_expansion();      printf("\n"); }
+    if (all || has("--opcodes"))        { demo_opcodes();        printf("\n"); }
     
     if (!all && !has("--ir-instruction") && !has("--schema") && !has("--expansion")) {
-        printf("Usage: %s [--ir-instruction|--schema|--expansion]\n", argv[0]);
+        printf("Usage: %s [--ir-instruction|--schema|--expansion|--opcodes]\n", argv[0]);
         return 1;
     }
     
