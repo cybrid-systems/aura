@@ -124,6 +124,19 @@ EvalResult Evaluator::eval_in(const ast::Expr* e, const Env& env) {
                 }
                 return eval_in(lam->body, ne);
             }
+            // Macro expansion
+            if (auto* var = std::get_if<ast::VariableNode>(&n.function->payload)) {
+                auto macro_it = macros_.find(var->name);
+                if (macro_it != macros_.end()) {
+                    if (macro_it->second.params.size() != n.args.size())
+                        return std::unexpected(Diagnostic{ErrorKind::ArityMismatch,
+                            "macro " + var->name + ": expected " +
+                            std::to_string(macro_it->second.params.size()) +
+                            " args, got " + std::to_string(n.args.size())});
+                    auto* expanded = expand_macro(var->name, n.args);
+                    return eval_in(expanded, env);
+                }
+            }
             // Primitive call
             if (auto* var = std::get_if<ast::VariableNode>(&n.function->payload)) {
                 auto p = env.lookup_primitive(var->name);
@@ -227,6 +240,57 @@ EvalResult Evaluator::eval_in(const ast::Expr* e, const Env& env) {
         if constexpr (std::is_same_v<T, ast::QuoteNode>) {
             return eval_in(n.value, env);
         }
+        if constexpr (std::is_same_v<T, ast::MacroDefNode>) {
+            // Clone the body into a persistent CloneNode-backed copy.
+            // The original body is in arena_ which gets reset between evals.
+            // We must deep-copy it now while arena_ is still alive.
+            // Simplest approach: serialize → deserialize via expand_macro's clone
+            // Keep the macro in a persistent AST by cloning into a static arena.
+            static ast::ASTArena persistent_arena(64 * 1024);
+            struct Cloner {
+                ast::ASTArena* pa;
+                ast::Expr* clone(ast::Expr* e) {
+                    return std::visit([this](const auto& node) -> ast::Expr* {
+                        using T = std::decay_t<decltype(node)>;
+                        if constexpr (std::is_same_v<T, ast::LiteralIntNode>)
+                            return pa->create<ast::Expr>(node);
+                        if constexpr (std::is_same_v<T, ast::VariableNode>)
+                            return pa->create<ast::Expr>(node);
+                        if constexpr (std::is_same_v<T, ast::CallNode>) {
+                            ast::CallNode c{node.tag, clone(node.function), {}};
+                            for (auto* a : node.args) c.args.push_back(clone(a));
+                            return pa->create<ast::Expr>(std::move(c));
+                        }
+                        if constexpr (std::is_same_v<T, ast::IfExprNode>)
+                            return pa->create<ast::Expr>(ast::IfExprNode{node.tag, clone(node.condition), clone(node.then_branch), clone(node.else_branch)});
+                        if constexpr (std::is_same_v<T, ast::LambdaNode>) {
+                            ast::LambdaNode l{node.tag, node.params, clone(node.body)};
+                            return pa->create<ast::Expr>(std::move(l));
+                        }
+                        if constexpr (std::is_same_v<T, ast::LetNode>)
+                            return pa->create<ast::Expr>(ast::LetNode{node.tag, node.name, clone(node.value), clone(node.body)});
+                        if constexpr (std::is_same_v<T, ast::LetRecNode>)
+                            return pa->create<ast::Expr>(ast::LetRecNode{node.tag, node.name, clone(node.value), clone(node.body)});
+                        if constexpr (std::is_same_v<T, ast::DefineNode>)
+                            return pa->create<ast::Expr>(ast::DefineNode{node.tag, node.name, clone(node.value)});
+                        if constexpr (std::is_same_v<T, ast::BeginNode>) {
+                            ast::BeginNode b{node.tag, {}};
+                            for (auto* e : node.exprs) b.exprs.push_back(clone(e));
+                            return pa->create<ast::Expr>(std::move(b));
+                        }
+                        if constexpr (std::is_same_v<T, ast::SetNode>)
+                            return pa->create<ast::Expr>(ast::SetNode{node.tag, node.name, clone(node.value)});
+                        if constexpr (std::is_same_v<T, ast::QuoteNode>)
+                            return pa->create<ast::Expr>(ast::QuoteNode{node.tag, clone(node.value)});
+                        return nullptr;
+                    }, e->payload);
+                }
+            };
+            Cloner cloner{&persistent_arena};
+            auto* persistent_body = cloner.clone(n.body);
+            const_cast<Evaluator*>(this)->macros_[n.name] = MacroDef{n.params, persistent_body};
+            return 0;
+        }
         return std::unexpected(Diagnostic{ErrorKind::InternalError, "unknown expression type"});
     }, e->payload);
 }
@@ -244,6 +308,101 @@ EvalResult Evaluator::apply_closure(ClosureId id, const std::vector<ast::Expr*>&
         ne.bind(cl.params[i], *v);
     }
     return eval_in(cl.body, ne);
+}
+
+
+
+// ── Macro expansion: substitute params with args in body AST ──
+ast::Expr* Evaluator::expand_macro(const std::string& name,
+                                    const std::vector<ast::Expr*>& args) {
+    auto it = macros_.find(name);
+    if (it == macros_.end()) return nullptr;
+    auto& mac = it->second;
+
+    // Clone the body AST, replacing VariableNodes that match params
+    // with the corresponding argument expressions.
+    // Uses a recursive walk with arena allocation.
+    struct Expander {
+        ast::ASTArena* arena;
+        const std::vector<std::string>* params;
+        const std::vector<ast::Expr*>* args;
+
+        ast::Expr* clone(ast::Expr* expr) {
+            return std::visit([this](const auto& node) -> ast::Expr* {
+                using T = std::decay_t<decltype(node)>;
+
+                if constexpr (std::is_same_v<T, ast::VariableNode>) {
+                    // Check if this variable matches a macro parameter
+                    for (std::size_t i = 0; i < params->size(); ++i) {
+                        if (node.name == (*params)[i]) {
+                            // Substitute: return cloned arg
+                            return clone((*args)[i]);
+                        }
+                    }
+                    // Not a param — clone as-is
+                    return arena->template create<ast::Expr>(ast::VariableNode{node.tag, node.name});
+                }
+
+                if constexpr (std::is_same_v<T, ast::LiteralIntNode>) {
+                    return arena->template create<ast::Expr>(ast::LiteralIntNode{node.tag, node.value});
+                }
+
+                if constexpr (std::is_same_v<T, ast::CallNode>) {
+                    ast::CallNode call{node.tag, clone(node.function), {}};
+                    for (auto* a : node.args)
+                        call.args.push_back(clone(a));
+                    return arena->template create<ast::Expr>(std::move(call));
+                }
+
+                if constexpr (std::is_same_v<T, ast::IfExprNode>) {
+                    return arena->template create<ast::Expr>(
+                        ast::IfExprNode{node.tag, clone(node.condition), clone(node.then_branch), clone(node.else_branch)});
+                }
+
+                if constexpr (std::is_same_v<T, ast::LambdaNode>) {
+                    ast::LambdaNode lam{node.tag, node.params, clone(node.body)};
+                    return arena->template create<ast::Expr>(std::move(lam));
+                }
+
+                if constexpr (std::is_same_v<T, ast::LetNode>) {
+                    return arena->template create<ast::Expr>(
+                        ast::LetNode{node.tag, node.name, clone(node.value), clone(node.body)});
+                }
+
+                if constexpr (std::is_same_v<T, ast::LetRecNode>) {
+                    return arena->template create<ast::Expr>(
+                        ast::LetRecNode{node.tag, node.name, clone(node.value), clone(node.body)});
+                }
+
+                if constexpr (std::is_same_v<T, ast::DefineNode>) {
+                    return arena->template create<ast::Expr>(
+                        ast::DefineNode{node.tag, node.name, clone(node.value)});
+                }
+
+                if constexpr (std::is_same_v<T, ast::BeginNode>) {
+                    ast::BeginNode begin{node.tag, {}};
+                    for (auto* e : node.exprs)
+                        begin.exprs.push_back(clone(e));
+                    return arena->template create<ast::Expr>(std::move(begin));
+                }
+
+                if constexpr (std::is_same_v<T, ast::SetNode>) {
+                    return arena->template create<ast::Expr>(
+                        ast::SetNode{node.tag, node.name, clone(node.value)});
+                }
+
+                if constexpr (std::is_same_v<T, ast::QuoteNode>) {
+                    return arena->template create<ast::Expr>(
+                        ast::QuoteNode{node.tag, clone(node.value)});
+                }
+
+                return nullptr;
+            }, expr->payload);
+        }
+    };
+
+    Expander expander{arena_, &mac.params, &args};
+    return expander.clone(mac.body);
 }
 
 } // namespace aura::compiler

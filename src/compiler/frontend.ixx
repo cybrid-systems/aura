@@ -49,6 +49,8 @@ export struct Pair {
     std::int64_t cdr;
 };
 
+export struct MacroDef { std::vector<std::string> params; ast::Expr* body=nullptr; };
+
 export struct Closure { std::vector<std::string> params; const ast::Expr* body=nullptr; const Env* env=nullptr; };
 
 // EvalResult — now an alias for std::expected<int64_t, diag::Diagnostic>
@@ -67,6 +69,7 @@ public:
     const Primitives& primitives() const { return primitives_; }
     Env& top_env() { return top_; }
 private:
+    ast::Expr* expand_macro(const std::string& name, const std::vector<ast::Expr*>& args);
     ClosureId next_id() { return next_id_++; }
     std::size_t alloc_cell(std::int64_t v) { cells_.push_back(v); return cells_.size()-1; }
     EvalResult apply_closure(ClosureId id, const std::vector<ast::Expr*>& args, const Env& call_env);
@@ -74,6 +77,7 @@ private:
     void init_pair_primitives();
     Env top_; Primitives primitives_; ast::ASTArena* arena_=nullptr;
     std::unordered_map<ClosureId,Closure> closures_;
+    std::unordered_map<std::string, MacroDef> macros_;
     std::vector<std::int64_t> cells_;
     std::vector<Pair> pairs_;
     std::uint64_t next_id_=1;

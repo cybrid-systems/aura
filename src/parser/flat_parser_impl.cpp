@@ -45,6 +45,7 @@ NodeId FlatParser::parse_list() {
         if (kw == "set!")   return parse_set();
         if (kw == "quote")  return parse_quote();
         if (kw == "cond")   return parse_cond();
+        if (kw == "defmacro") return parse_defmacro();
     }
 
     auto func = parse_expr();
@@ -199,6 +200,24 @@ NodeId FlatParser::parse_cond() {
     for (auto it = clauses.rbegin() + 1; it != clauses.rend(); ++it)
         result = flat_.add_if(it->test, it->val, result);
     return result;
+}
+
+NodeId FlatParser::parse_defmacro() {
+    lexer_->consume(); // 'defmacro'
+    if (lexer_->consume().kind != TokenKind::LParen) { skip_rparen(); return NULL_NODE; }
+    auto name = lexer_->consume();
+    if (name.kind != TokenKind::Identifier) { skip_rparen(); return NULL_NODE; }
+    std::vector<SymId> params;
+    while (lexer_->peek().kind != TokenKind::RParen) {
+        auto p = lexer_->consume();
+        if (p.kind != TokenKind::Identifier) { skip_rparen(); return NULL_NODE; }
+        params.push_back(pool_.intern(std::string(p.text)));
+    }
+    lexer_->consume(); // ')'
+    auto body = parse_expr();
+    if (body == NULL_NODE) { skip_rparen(); return NULL_NODE; }
+    lexer_->consume(); // ')'
+    return flat_.add_macrodef(pool_.intern(std::string(name.text)), params, body);
 }
 
 // ── Free function ──────────────────────────────────────────────
