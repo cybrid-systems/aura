@@ -1,11 +1,20 @@
 #lang racket/base
-(require "private/core.rkt")
-(provide #%module-begin #%datum #%top #%app)
+;; Aura #lang expander — evaluate single top-level expressions
+;;
+;; This module is the expansion target of lang/reader.rkt.
+;; It provides #%module-begin and friends to make #lang aura work.
 
-(define-syntax-rule (#%module-begin expr)
+(require "private/core.rkt")
+
+(provide (rename-out [my-module-begin #%module-begin])
+         (rename-out [my-datum #%datum])
+         (rename-out [my-top #%top])
+         (rename-out [my-app #%app]))
+
+(define-syntax-rule (my-module-begin expr)
   (#%plain-module-begin
     (displayln (eval-expr 'expr (make-env)))))
 
-(define-syntax-rule (#%datum . x) x)
-(define-syntax-rule (#%top . x) x)
-(define-syntax-rule (#%app proc arg ...) (proc arg ...))
+(define-syntax-rule (my-datum . x) x)
+(define-syntax-rule (my-top . x) x)
+(define-syntax-rule (my-app proc arg ...) (proc arg ...))
