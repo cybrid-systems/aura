@@ -37,6 +37,7 @@ target_sources(aura PRIVATE
     src/compiler/arity_impl.cpp
     src/binary/abf_deserializer_impl.cpp src/main.cpp)
 
+target_include_directories(aura PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_options(aura PRIVATE -Wall -Wextra -Wpedantic -fcontracts -fcontract-evaluation-semantic=observe)
 target_link_libraries(aura PRIVATE stdc++ stdc++exp)
 

@@ -1,3 +1,5 @@
+module;
+#include "reflect/tag_dispatch.hh"
 module aura.binary.abf_deserializer;
 import std;
 
@@ -58,27 +60,39 @@ ast::Expr* ABFDeserializer::deserialize(std::span<const std::byte> data) {
     return read_node(r);
 }
 
+// Wrap read functions for dispatch table
+
+// and bridge through the deserializer.
+
 ast::Expr* ABFDeserializer::read_node(Reader& r) {
     auto tag = static_cast<std::uint32_t>(r.read_varint());
     r.read_varint();  // ExtID
     auto ext_len = r.read_varint();  // ExtLen
     if (ext_len > 0) r.read_bytes(ext_len);
 
-    switch (tag) {
-    case 0x01: return read_literal_int(r);
-    case 0x02: return read_variable(r);
-    case 0x03: return read_call(r);
-    case 0x04: return read_if(r);
-    case 0x05: return read_lambda(r);
-    case 0x06: return read_let(r, false);
-    case 0x07: return read_let(r, true);
-    case 0x08: return read_define(r);
-    case 0x09: return read_begin(r);
-    case 0x0A: return read_set(r);
-    case 0x0B: return read_quote(r);
-    case 0x0C: return read_cond(r);
-    default: throw std::runtime_error("unknown tag: " + std::to_string(tag));
+    // Dispatch table: index by tag value, 0x01-0x0C
+    // ReadFn = member function pointer: (ABFDeserializer::*)(Reader&)
+    using MemFn = ast::Expr* (ABFDeserializer::*)(Reader&);
+    static constexpr MemFn reader_for[] = {
+        nullptr,                    // 0x00 unused
+        &ABFDeserializer::read_literal_int, // 0x01
+        &ABFDeserializer::read_variable,    // 0x02
+        &ABFDeserializer::read_call,        // 0x03
+        &ABFDeserializer::read_if,          // 0x04
+        &ABFDeserializer::read_lambda,      // 0x05
+        &ABFDeserializer::read_let_nonrec, // 0x06
+        &ABFDeserializer::read_let_rec,  // 0x07 LetRec
+        &ABFDeserializer::read_define,      // 0x08
+        &ABFDeserializer::read_begin,       // 0x09
+        &ABFDeserializer::read_set,         // 0x0A
+        &ABFDeserializer::read_quote,       // 0x0B
+        &ABFDeserializer::read_cond,        // 0x0C
+    };
+
+    if (tag < sizeof(reader_for)/sizeof(reader_for[0]) && reader_for[tag]) {
+        return (this->*reader_for[tag])(r);
     }
+    throw std::runtime_error("unknown tag: " + std::to_string(tag));
 }
 
 ast::Expr* ABFDeserializer::read_literal_int(Reader& r) {
@@ -109,6 +123,14 @@ ast::Expr* ABFDeserializer::read_lambda(Reader& r) {
     for (std::uint64_t i = 0; i < n; ++i) lam.params.push_back(r.read_string());
     lam.body = read_node(r);
     return arena_.create<ast::Expr>(std::move(lam));
+}
+
+ast::Expr* ABFDeserializer::read_let_nonrec(Reader& r) {
+    return read_let(r, false);
+}
+
+ast::Expr* ABFDeserializer::read_let_rec(Reader& r) {
+    return read_let(r, true);
 }
 
 ast::Expr* ABFDeserializer::read_let(Reader& r, bool is_rec) {
