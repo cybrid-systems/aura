@@ -1,4 +1,5 @@
 module;
+#include "reflect/abf_reader_registry.hh"
 #include "reflect/tag_dispatch.hh"
 module aura.binary.abf_deserializer;
 import std;
@@ -204,4 +205,20 @@ ast::Expr* ABFDeserializer::read_quote(Reader& r) {
     return arena_.create<ast::Expr>(ast::QuoteNode{{ast::NodeTag::Quote}, val});
 }
 
+
+void ABFDeserializer::register_all_readers() {
+    auto reg = ::aura::reflect::abf_registry::ReaderRegistry::reg;
+    reg(0x01, [](void*r, void*o) -> void* { return ((ABFDeserializer*)o)->read_literal_int(*(Reader*)r); });
+    reg(0x02, [](void*r, void*o) -> void* { return ((ABFDeserializer*)o)->read_variable(*(Reader*)r); });
+    reg(0x03, [](void*r, void*o) -> void* { return ((ABFDeserializer*)o)->read_call(*(Reader*)r); });
+    reg(0x04, [](void*r, void*o) -> void* { return ((ABFDeserializer*)o)->read_if(*(Reader*)r); });
+    reg(0x05, [](void*r, void*o) -> void* { return ((ABFDeserializer*)o)->read_lambda(*(Reader*)r); });
+    reg(0x06, [](void*r, void*o) -> void* { return ((ABFDeserializer*)o)->read_let(*(Reader*)r, false); });
+    reg(0x07, [](void*r, void*o) -> void* { return ((ABFDeserializer*)o)->read_let(*(Reader*)r, true); });
+    reg(0x08, [](void*r, void*o) -> void* { return ((ABFDeserializer*)o)->read_define(*(Reader*)r); });
+    reg(0x09, [](void*r, void*o) -> void* { return ((ABFDeserializer*)o)->read_begin(*(Reader*)r); });
+    reg(0x0A, [](void*r, void*o) -> void* { return ((ABFDeserializer*)o)->read_set(*(Reader*)r); });
+    reg(0x0B, [](void*r, void*o) -> void* { return ((ABFDeserializer*)o)->read_quote(*(Reader*)r); });
+    reg(0x0C, [](void*r, void*o) -> void* { return ((ABFDeserializer*)o)->read_cond(*(Reader*)r); });
+}
 } // namespace aura::binary
