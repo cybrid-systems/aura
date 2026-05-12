@@ -33,6 +33,11 @@ NodeId FlatParser::parse_int(Token tok) {
 }
 
 NodeId FlatParser::parse_list() {
+    // () → null sentinel (0)
+    if (lexer_->peek().kind == TokenKind::RParen) {
+        lexer_->consume();
+        return flat_.add_literal(0);
+    }
     auto f = lexer_->peek();
     if (f.kind == TokenKind::Identifier) {
         auto kw = f.text;
