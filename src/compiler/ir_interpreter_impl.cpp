@@ -104,6 +104,32 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                 locals[ops[0]] = (!locals[ops[1]]) ? 1 : 0;
                 break;
 
+            case IROpcode::CastOp: {
+                // CastOp: result_slot=ops[0], value_slot=ops[1], type_tag=ops[2]
+                auto val = locals[ops[1]];
+                auto uv = static_cast<std::uint64_t>(val);
+                bool ok = true;
+                switch (ops[2]) {
+                    case 0: // Int — not a sentinel
+                        ok = (uv < 0x1000000);
+                        break;
+                    case 1: // String
+                        ok = (uv >= 0x8000000);
+                        break;
+                    case 2: // Bool
+                        ok = (val == 0 || val == 1);
+                        break;
+                    default: // Dynamic / unknown
+                        ok = true;
+                        break;
+                }
+                if (!ok) {
+                    std::println(std::cerr, "runtime type error: coercion failed");
+                }
+                locals[ops[0]] = val;
+                break;
+            }
+
             case IROpcode::Branch:
                 current = (locals[ops[0]] != 0) ? ops[1] : ops[2];
                 goto next_block;

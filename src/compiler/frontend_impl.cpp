@@ -535,9 +535,27 @@ EvalResult Evaluator::eval_in(const ast::Expr* e, const Env& env) {
             // Strip type annotation, evaluate inner expression
             return eval_in(n.inner_expr, env);
         }
+        // ── Helper: runtime type check ────────────────────────────────
+        auto check_runtime_type = [&](std::int64_t val, const std::string& type_name) -> bool {
+            auto uv = static_cast<std::uint64_t>(val);
+            if (type_name == "Int")    return (uv < 0x1000000);       // not a sentinel
+            if (type_name == "String") return (uv >= 0x8000000);      // STRING_SENTINEL
+            if (type_name == "Bool")   return (val == 0 || val == 1); // #f or #t
+            if (type_name == "Any")    return true;
+            return true;  // unknown type: accept
+        };
+        
         if constexpr (std::is_same_v<T, ast::CoercionNode>) {
-            // Strip coercion, eval inner (runtime check deferred to L6.6b)
-            return eval_in(n.inner_expr, env);
+            auto result = eval_in(n.inner_expr, env);
+            if (result) {
+                if (!check_runtime_type(*result, n.to_type_name)) {
+                    std::println(std::cerr, "runtime type error: expected {}, got value {}",
+                                 n.to_type_name, *result);
+                }
+                return *result;
+            }
+            // Propagate error
+            return std::unexpected(result.error());
         }
         if constexpr (std::is_same_v<T, ast::MacroDefNode>) {
             // Clone the body into a persistent CloneNode-backed copy.
