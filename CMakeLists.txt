@@ -142,6 +142,19 @@ add_test(NAME cli_serve_ok COMMAND sh -c "printf '(+ 1 2)' | timeout 5 ./aura --
 # Diag: diagnostic shows node_id in format
 add_test(NAME cli_serve_fix COMMAND sh -c "printf '(+ x 1)' | timeout 5 ./aura --serve | grep -q -F 'patches'" WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
+# ── M3 Phase 2: Runtime reflection tests ──────────────────────
+add_test(NAME inspect_closure_fact
+    COMMAND sh -c "printf '(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 5))' | timeout 5 ./aura --inspect | grep -q 'closures (1)'"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+add_test(NAME inspect_no_closure
+    COMMAND sh -c "printf '(+ 1 2)' | timeout 5 ./aura --inspect | grep -q 'closures (0)'"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+add_test(NAME inspect_env
+    COMMAND sh -c "printf '(let ((x 10)) x)' | timeout 5 ./aura --env | grep -q 'result: 10'"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
 # ── aura-reflect: standalone P2996 reflection tool ───────────────
 # Built WITHOUT modules to avoid -freflection / import std; conflicts.
 add_executable(aura-reflect tools/aura-reflect.cpp)

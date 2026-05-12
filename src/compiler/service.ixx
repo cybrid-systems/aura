@@ -90,7 +90,14 @@ public:
         }
 
         aura::compiler::IRInterpreter ir_interp(ir_mod, evaluator_.primitives());
-        return ir_interp.execute();
+        ir_interp.set_strategy(strategy_);
+        auto result = ir_interp.execute();
+
+        // Capture runtime state for --inspect
+        last_closures_ = ir_interp.list_closures();
+        last_cells_ = ir_interp.list_cells();
+
+        return result;
     }
 
     // ---- Multi-module arena support ----------------------------------
@@ -117,6 +124,18 @@ public:
         return arena_group_.module_stats();
     }
 
+    // ---- Runtime reflection (M3 Phase 2) ------------------------------
+
+    // Closures persisted from last IR execution
+    std::vector<aura::compiler::ClosureSnapshot> last_closures() const {
+        return last_closures_;
+    }
+    std::vector<aura::compiler::CellSnapshot> last_cells() const {
+        return last_cells_;
+    }
+    const aura::compiler::EvalStrategy& strategy() const { return strategy_; }
+    void set_strategy(const aura::compiler::EvalStrategy& s) { strategy_ = s; }
+
     // ---- Accessors ---------------------------------------------------
 
     ast::ASTArena& arena() { return arena_; }
@@ -126,6 +145,9 @@ private:
     ast::ASTArena arena_;
     ast::ArenaGroup arena_group_;
     Evaluator evaluator_;
+    aura::compiler::EvalStrategy strategy_;
+    std::vector<aura::compiler::ClosureSnapshot> last_closures_;
+    std::vector<aura::compiler::CellSnapshot> last_cells_;
 };
 
 } // namespace aura::compiler

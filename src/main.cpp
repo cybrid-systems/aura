@@ -153,6 +153,90 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
+    // ── --strategy: set eval strategy before executing ─────────────
+    // Usage: echo '(let ...)' | ./aura --strategy 'max_unroll=5' --ir
+    if (argc > 1 && std::string_view(argv[1]) == "--strategy") {
+        // Note: strategy parsing is simple placeholder
+        aura::compiler::CompilerService cs;
+        if (argc > 2) {
+            aura::compiler::EvalStrategy s;
+            if (std::string_view(argv[2]) == "no-inline") s.enable_inlining = false;
+            if (std::string_view(argv[2]) == "specialize") s.enable_specialization = true;
+            cs.set_strategy(s);
+        }
+        // Forward remaining args would re-dispatch to --ir
+        // (not yet implemented — full strategy CLI / config passthrough pending)
+        // Re-dispatch to --ir with the modified CompilerService
+        // For now, fall through to --ir
+        // This is a stub — full strategy CLI will come with proper arg parsing
+        std::println(std::cerr, "strategy set, re-run with --ir or --inspect");
+        return 0;
+    }
+
+    // ── --inspect: eval with runtime reflection dump ──────────────
+    if (argc > 1 && std::string_view(argv[1]) == "--inspect") {
+        aura::compiler::CompilerService cs;
+        std::string input;
+        if (argc > 2) { input = argv[2]; }
+        else { std::getline(std::cin, input); }
+
+        // Enable verbose inspection
+        cs.set_strategy({.enable_inlining = true, .enable_specialization = false,
+                         .max_unroll = 3, .verbose_inspect = true});
+
+        auto result = cs.eval_ir(input);
+
+        // Print result
+        if (!result) {
+            std::println(std::cerr, "error: {}", result.error().message);
+        } else {
+            std::println("result: {}", *result);
+        }
+
+        // Print closure/cell state
+        auto closures = cs.last_closures();
+        auto cells = cs.last_cells();
+
+        std::println("closures ({}):", closures.size());
+        for (auto& c : closures) {
+            std::println("  [{}] func={} ('{}') env=[",
+                         c.id, c.func_id, c.func_name);
+            for (auto& v : c.env) {
+                std::println("    {}", v);
+            }
+            std::println("  ]");
+        }
+
+        std::println("cells ({}):", cells.size());
+        for (auto& c : cells) {
+            std::println("  [{}] = {}", c.id, c.value);
+        }
+
+        return result ? 0 : 1;
+    }
+
+    // ── --env: quick cell/clone state dump ────────────────────────
+    if (argc > 1 && std::string_view(argv[1]) == "--env") {
+        aura::compiler::CompilerService cs;
+        std::string input;
+        if (argc > 2) { input = argv[2]; }
+        else { std::getline(std::cin, input); }
+
+        auto result = cs.eval_ir(input);
+        std::println("result: {}", result ? std::to_string(*result) : std::string("error"));
+
+        auto closures = cs.last_closures();
+        auto cells = cs.last_cells();
+        for (auto& cl : closures) {
+            std::println("  closure [{}] = func[{}] ({}) env={}",
+                         cl.id, cl.func_id, cl.func_name, cl.env.size());
+        }
+        for (auto& ce : cells) {
+            std::println("  cell [{}] = {}", ce.id, ce.value);
+        }
+        return result ? 0 : 1;
+    }
+
     // ── --abf: deserialize ABF binary and evaluate ────────────────
     if (argc > 1 && std::string_view(argv[1]) == "--abf") {
         std::vector<std::byte> data;
