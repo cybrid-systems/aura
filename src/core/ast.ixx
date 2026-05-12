@@ -23,6 +23,7 @@ export enum class NodeTag : std::uint32_t {
 };
 
 export struct LiteralIntNode { NodeTag tag; std::int64_t value = 0; };
+export struct LiteralStringNode { NodeTag tag; std::string value; };
 export struct VariableNode   { NodeTag tag; std::string name; };
 export struct CallNode       { NodeTag tag; Expr* function = nullptr; std::vector<Expr*> args; };
 export struct IfExprNode     { NodeTag tag; Expr* condition = nullptr; Expr* then_branch = nullptr; Expr* else_branch = nullptr; };
@@ -38,7 +39,7 @@ export struct QuoteNode     { NodeTag tag; Expr* value = nullptr; };
 export struct Expr {
     NodeTag tag;
     std::variant<LiteralIntNode, VariableNode, CallNode, IfExprNode, LambdaNode,
-                 LetNode, LetRecNode, DefineNode, BeginNode, SetNode, QuoteNode, MacroDefNode> payload;
+                 LetNode, LetRecNode, DefineNode, BeginNode, SetNode, QuoteNode, MacroDefNode, LiteralStringNode> payload;
 
     Expr(LiteralIntNode n) : tag(n.tag), payload(n) {}
     Expr(VariableNode n)   : tag(n.tag), payload(n) {}
@@ -52,6 +53,7 @@ export struct Expr {
     Expr(SetNode n)        : tag(n.tag), payload(n) {}
     Expr(QuoteNode n)      : tag(n.tag), payload(n) {}
     Expr(MacroDefNode n)   : tag(n.tag), payload(n) {}
+    Expr(LiteralStringNode n) : tag(n.tag), payload(n) {}
 };
 
 // ── Flat index-based AST (DOD prototype) ────────────────────────
