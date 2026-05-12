@@ -262,7 +262,7 @@ int main() {
         auto x      = flat.add_variable(pool.intern("x"));
         auto plus   = flat.add_variable(pool.intern("+"));
         auto five   = flat.add_literal(5);
-        auto add    = flat.add_call(plus, {x, five});
+        auto add    = flat.add_call(plus, std::vector{x, five});
         auto the_let = flat.add_let(pool.intern("x"), ten, add);
         flat.root = the_let;
 
@@ -336,7 +336,7 @@ int main() {
         auto xv = flat2.add_variable(x_sym);
         auto yv = flat2.add_variable(y_sym);
         auto plus = flat2.add_variable(pool2.intern("+"));
-        auto add = flat2.add_call(plus, {xv, yv});
+        auto add = flat2.add_call(plus, std::vector{xv, yv});
         auto let = flat2.add_let(x_sym, ten, add);
         flat2.root = let;
 
