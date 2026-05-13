@@ -46,7 +46,7 @@ M4 生产     ⬜  LLVM + AOT + 自举
 | M2.6 Hot swap (函数级 IR 替换) | ⬜ |
 | M2.7 AutoFixEngine + --serve 模式 | ✅ |
 
-**39 个 CTest 全部通过**
+**48 个 CTest 全部通过**
 
 ```bash
 $ echo '(+ 1 2)' | ./aura --query '(node-type Call)'
@@ -56,7 +56,7 @@ S error kind=3 msg=unbound variable: x
 S fix 4 patches
 S fixed 0
 $ ctest --test-dir build
-100% tests passed, 0 tests failed out of 39
+100% tests passed, 0 tests failed out of 48
 ```
 
 ### 类型系统（进行中 — L6）
@@ -165,7 +165,7 @@ echo '(+ x 1)' | ./aura --serve   # → error + auto-fix
 ### 测试
 
 ```bash
-ctest --test-dir build            # 39 个测试全部通过
+ctest --test-dir build            # 48 个测试全部通过
 racket tests/agent_demo.rkt       # Agent 自动修复演示
 ```
 

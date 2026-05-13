@@ -1,7 +1,7 @@
 # Aura — 实现进度跟踪
 
 **构建方法**：《An Incremental Approach to Compiler Construction》（Ghuloum, ICFP 2006）
-**现状**：Ghuloum 37 步已完成 15 步（含 defmacro），超出原论文范围（查询引擎/P2996 反射）。
+**现状**：Ghuloum 37 步已完成 17 步（含 defmacro/gensym/验证），超出原论文范围（查询引擎/P2996 反射/类型系统）。
 
 ---
 
@@ -42,8 +42,8 @@ Step  C++    特性                         交付日
 14    ✅     cond 语法糖                    Phase 3a D2
 ── 语言完备 ──
 15    ✅     defmacro 宏定义                Phase 3b D1
-16    ⬜     卫生宏 (gensym)               Phase 3b D2
-17    ⬜     编译期 AST 验证                Phase 3b D3
+16    ✅     卫生宏 (gensym)               Phase 3b D2
+17    ✅     编译期 AST 验证                Phase 3b D3
 ```
 
 ---
@@ -79,7 +79,7 @@ LLVM/M4          ⬜                    0%
 
 | 指标 | 数值 | 趋势 |
 |------|------|------|
-| CTest | 39/39 ✅ | 持续增长 |
+| CTest | 48/48 ✅ | 持续增长 |
 | 源码模块 (.ixx) | 19 | 稳定 |
 | 实现文件 (.cpp) | 14 | 稳定 |
 | reflect/ 工具链 | 6 个头文件 | 新增 |
@@ -102,7 +102,7 @@ LLVM/M4          ⬜                    0%
 | ABF v2 反序列化 | ✅ | 12 节点 + dispatch 表 |
 | pmr 内存池 (ASTArena) | ✅ | 4-tier |
 | CompilerService | ✅ | 双路径（eval + eval_ir） |
-| 树遍历器 (Expr* → FlatAST) | ✅ | Phase 4 桥接 |
+| eval_flat (SoA 直读) | ✅ | Phase 4 完成 |
 | 扁平 AST + SoA (FlatAST) | ✅ | 9 pmr::vector |
 | AuraIR (27 opcodes) | ✅ | 含环境/单元/闭包 |
 | IR Lowering | ✅ | LoweringState 功能式 |
@@ -212,7 +212,7 @@ See [ai-programming-language-design/docs/aura_typesystem.md](../design/aura_type
 ## 测试
 
 ```
-CTest: 43 tests ✅
+CTest: 48 tests ✅
   - 9 step tests       (语言语义)
   - 1 ir_basic         (IR 管线)
   - 9 IR mode tests    (--ir flag)

@@ -69,7 +69,7 @@ Layer  组件              文件                责任
 
 ### 红线验证
 
-红线测试全部通过后，运行 `ctest` 确保 39+ 测试全绿。
+红线测试全部通过后，运行 `ctest` 确保 48+ 测试全绿。
 
 ---
 
@@ -222,7 +222,7 @@ printf '#lang aura\n"hello"' |            → 134217728  ✅ ABF
 echo '"hello"' | ./aura --serve          → JSON       ✅ serve
 echo '"hello"' | ./aura --query          → 0 matches  ✅ 查询
   '(node-type LiteralString)'                         （在只有整数的表达式里是对的）
-ctest                                    → 39/39      ✅ 全绿
+ctest                                    → 48/48      ✅ 全绿
 ```
 
 ---
@@ -242,7 +242,7 @@ echo '(begin (define x 42) (: x Int))' | racket -l aura -- --abf | ./aura --abf
                  → query result: 0  ✅ query supports tag
 ./build/validate-abf-nodes
                  → 13/13 passed  ✅ P2996 layout validation
-ctest            → 39/39 ✅
+ctest            → 48/48 ✅
 ```
 ---
 
