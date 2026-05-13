@@ -223,7 +223,6 @@ aura::ir::IRFunction LoweringPass::lower_lambda_body(
     // Scope for this function: first env vars, then params
     state_->scopes.push_back({});
 
-    // First, load captured free variables from the env prefix
     for (std::size_t i = 0; i < free_vars.size(); ++i) {
         auto& fv = free_vars[i];
         auto slot = alloc_local();

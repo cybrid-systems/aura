@@ -76,9 +76,8 @@ BENCHMARKS = [
 
     # ── IR pipeline benchmarks ───────────────────────────────
     BenchCase("ir_add", "(+ 1 2)", "ir", expected_val=3),
-    # Note: recursive letrec has a const-fold bug in IR pipeline
-    # (pre-existing, const-fold replaces letrec body with arg value)
-    # BenchCase("ir_fact", "(letrec ((fact ...)) (fact 5))", "ir", expected_val=120),
+    BenchCase("ir_fact", "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 5))", "ir", expected_val=120),
+    BenchCase("ir_fib_10", "(letrec ((fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))))) (fib 10))", "ir", expected_val=55),
     BenchCase("ir_lambda", "((lambda (x) (* x 2)) 5)", "ir", expected_val=10),
     BenchCase("ir_closure", "(let ((f (lambda (x) (+ x 1)))) (f 41))", "ir", expected_val=42),
     BenchCase("ir_if", "(if (< 3 5) 100 200)", "ir", expected_val=100),

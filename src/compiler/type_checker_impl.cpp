@@ -285,6 +285,19 @@ static std::optional<OccurrenceInfo> analyze_predicate(const ast::Expr& cond, co
         return std::nullopt;
     }
     
+    // Check for (type? x "TypeName") — L6.5 Query 类型 clause
+    if (fn && fn->name == "type?" && call->args.size() == 2) {
+        auto* var_arg = std::get_if<ast::VariableNode>(&call->args[0]->payload);
+        auto* type_lit = std::get_if<ast::LiteralStringNode>(&call->args[1]->payload);
+        if (var_arg && type_lit) {
+            auto type_id = reg.lookup_type(type_lit->value);
+            if (type_id.valid()) {
+                return OccurrenceInfo{var_arg->name, type_id};
+            }
+        }
+        return std::nullopt;
+    }
+    
     // Must be a predicate call: (pred? x)
     if (call->args.size() != 1) return std::nullopt;
     auto* pred = std::get_if<ast::VariableNode>(&call->function->payload);
@@ -560,7 +573,7 @@ void InferenceEngine::init_primitive_env() {
     register_primitive("assert",  {Dyn}, Void);
 
     // Introspection
-    register_primitive("type-of", {Dyn}, String);
+    register_primitive("type-of", {Dyn}, reg_.type_type());
     register_primitive("type?",   {Dyn, String}, Bool);
 
     // Misc
