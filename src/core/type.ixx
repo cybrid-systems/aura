@@ -77,11 +77,12 @@ public:
     bool is_subtype(TypeId sub, TypeId sup) const;
 
     // ── 预定义常量 ──
-    TypeId dynamic_type() const { return TypeId{0, 0}; }
-    TypeId int_type()     const { return TypeId{1, 0}; }
-    TypeId bool_type()    const { return TypeId{2, 0}; }
-    TypeId string_type()  const { return TypeId{3, 0}; }
-    TypeId void_type()    const { return TypeId{4, 0}; }
+    TypeId dynamic_type() const { return TypeId{0, 1}; }
+    TypeId int_type()     const { return TypeId{1, 1}; }
+    TypeId bool_type()    const { return TypeId{2, 1}; }
+    TypeId string_type()  const { return TypeId{3, 1}; }
+    TypeId void_type()    const { return TypeId{4, 1}; }
+    TypeId type_type()    const { return TypeId{5, 1}; }
 
     // ── 工具 ──
     std::string format_type(TypeId id) const;

@@ -327,7 +327,22 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
             auto& fv = free_vars[i];
             auto slot = state.alloc_local();
             state.emit(IROpcode::Arg, slot, static_cast<std::uint32_t>(i));
-            state.scopes.back()[fv] = Binding{BindingKind::Captured, slot};
+            // Check if this free var is a letrec cell in the outer scope
+            bool is_cell = false;
+            for (auto it = saved_scopes.rbegin(); it != saved_scopes.rend(); ++it) {
+                auto found = it->find(fv);
+                if (found != it->end() && found->second.kind == BindingKind::Cell) {
+                    is_cell = true; break;
+                }
+            }
+            if (is_cell) {
+                // Cell capture: env[i] is cell_id, load via CellGet
+                auto result = state.alloc_local();
+                state.emit(IROpcode::CellGet, result, slot);
+                state.scopes.back()[fv] = Binding{BindingKind::Local, result};
+            } else {
+                state.scopes.back()[fv] = Binding{BindingKind::Captured, slot};
+            }
             state.free_var_map[fv] = static_cast<std::uint32_t>(i);
         }
 
