@@ -137,14 +137,15 @@ public:
         std::string out;
         out += "type: " + treg.format_type(result) + "\n";
 
-        if (diag.has_errors()) {
+        auto all_diags = diag.diagnostics();
+        if (all_diags.empty()) {
+            out += "no errors\n";
+        } else {
             out += "diagnostics:\n";
-            for (auto& d : diag.diagnostics()) {
+            for (auto& d : all_diags) {
                 out += "  [" + std::to_string(static_cast<int>(d.kind))
                      + "] " + d.message + "\n";
             }
-        } else {
-            out += "no errors\n";
         }
 
         return out;

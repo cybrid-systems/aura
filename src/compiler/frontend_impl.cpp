@@ -128,20 +128,32 @@ std::optional<std::int64_t> Env::lookup(const std::string& n) const {
 }
 
 Primitives::Primitives() {
-    table_["+"]  = [](auto& a) { return a[0] + a[1]; };
-    table_["-"]  = [](auto& a) { return a.size() == 1 ? -a[0] : a[0] - a[1]; };
-    table_["*"]  = [](auto& a) { return a[0] * a[1]; };
-    table_["/"]  = [](auto& a) { return a[0] / a[1]; };
-    table_["="]  = [](auto& a) { return a[0] == a[1]; };
-    table_["<"]  = [](auto& a) { return a[0] < a[1]; };
-    table_[">"]  = [](auto& a) { return a[0] > a[1]; };
-    table_["<="] = [](auto& a) { return a[0] <= a[1]; };
-    table_[">="] = [](auto& a) { return a[0] >= a[1]; };
+    table_["+"]  = [this](auto& a) { return str_to_int(a[0]) + str_to_int(a[1]); };
+    table_["-"]  = [this](auto& a) { return a.size() == 1 ? -str_to_int(a[0]) : str_to_int(a[0]) - str_to_int(a[1]); };
+    table_["*"]  = [this](auto& a) { return str_to_int(a[0]) * str_to_int(a[1]); };
+    table_["/"]  = [this](auto& a) { return str_to_int(a[0]) / str_to_int(a[1]); };
+    table_["="]  = [this](auto& a) { return str_to_int(a[0]) == str_to_int(a[1]); };
+    table_["<"]  = [this](auto& a) { return str_to_int(a[0]) < str_to_int(a[1]); };
+    table_[">"]  = [this](auto& a) { return str_to_int(a[0]) > str_to_int(a[1]); };
+    table_["<="] = [this](auto& a) { return str_to_int(a[0]) <= str_to_int(a[1]); };
+    table_[">="] = [this](auto& a) { return str_to_int(a[0]) >= str_to_int(a[1]); };
     // Ghuloum Step 9: booleans
     table_["not"]  = [](auto& a) { return a[0] == 0 ? TRUE_VAL : FALSE_VAL; };
     table_["and"]  = [](auto& a) { return a[0] && a[1] ? TRUE_VAL : FALSE_VAL; };
     table_["or"]   = [](auto& a) { return a[0] || a[1] ? TRUE_VAL : FALSE_VAL; };
     table_["eq?"]  = [](auto& a) { return a[0] == a[1] ? TRUE_VAL : FALSE_VAL; };
+}
+
+std::int64_t Primitives::str_to_int(std::int64_t v) const {
+    auto uv = static_cast<std::uint64_t>(v);
+    if (uv < 0x1000000) return v;  // already int
+    if (uv >= 0x8000000 && string_heap_ && uv - 0x8000000 < string_heap_->size()) {
+        // String → Int: parse
+        auto idx = static_cast<std::size_t>(uv - 0x8000000);
+        try { return static_cast<std::int64_t>(std::stoll((*string_heap_)[idx])); }
+        catch (...) { return 0; }
+    }
+    return v;
 }
 
 // ── I/O helper (non-template, avoids generic lambda lookup issues) ──
@@ -184,9 +196,13 @@ void Evaluator::init_pair_primitives() {
     primitives_.add("string-append", [this](const auto& a) {
         std::string result;
         for (auto v : a) {
-            if (static_cast<std::uint64_t>(v) >= static_cast<std::uint64_t>(STRING_SENTINEL)) {
+            auto uv = static_cast<std::uint64_t>(v);
+            if (uv >= static_cast<std::uint64_t>(STRING_SENTINEL)) {
                 auto idx = static_cast<std::size_t>(v - STRING_SENTINEL);
                 if (idx < string_heap_.size()) result += string_heap_[idx];
+            } else if (uv < 0x1000000) {
+                // Int → String coercion
+                result += std::to_string(v);
             }
         }
         auto id = string_heap_.size();
@@ -195,24 +211,49 @@ void Evaluator::init_pair_primitives() {
     });
     primitives_.add("string-length", [this](const auto& a) {
         if (a.empty()) return std::int64_t(0);
-        auto idx = static_cast<std::size_t>(a[0] - STRING_SENTINEL);
-        return static_cast<std::int64_t>(idx < string_heap_.size() ? string_heap_[idx].size() : 0);
+        auto uv = static_cast<std::uint64_t>(a[0]);
+        if (uv >= static_cast<std::uint64_t>(STRING_SENTINEL)) {
+            auto idx = static_cast<std::size_t>(a[0] - STRING_SENTINEL);
+            return static_cast<std::int64_t>(idx < string_heap_.size() ? string_heap_[idx].size() : 0);
+        } else if (uv < 0x1000000) {
+            // Int → String coercion
+            return static_cast<std::int64_t>(std::to_string(a[0]).size());
+        }
+        return std::int64_t(0);
     });
     primitives_.add("string-ref", [this](const auto& a) {
         if (a.size() < 2) return std::int64_t(0);
-        auto idx = static_cast<std::size_t>(a[0] - STRING_SENTINEL);
+        // Coerce first arg: Int → String
+        auto uv0 = static_cast<std::uint64_t>(a[0]);
+        std::string s;
+        if (uv0 >= static_cast<std::uint64_t>(STRING_SENTINEL)) {
+            auto idx = static_cast<std::size_t>(a[0] - STRING_SENTINEL);
+            if (idx < string_heap_.size()) s = string_heap_[idx];
+        } else if (uv0 < 0x1000000) {
+            s = std::to_string(a[0]);
+        }
         auto pos = static_cast<std::size_t>(a[1]);
-        if (idx < string_heap_.size() && pos < string_heap_[idx].size())
-            return static_cast<std::int64_t>(static_cast<unsigned char>(string_heap_[idx][pos]));
+        if (pos < s.size())
+            return static_cast<std::int64_t>(static_cast<unsigned char>(s[pos]));
         return std::int64_t(0);
     });
     primitives_.add("substring", [this](const auto& a) {
         if (a.size() < 3) return std::int64_t(0);
-        auto idx  = static_cast<std::size_t>(a[0] - STRING_SENTINEL);
+        // Coerce first arg: Int → String
+        auto uv0 = static_cast<std::uint64_t>(a[0]);
+        std::string s_buf;
+        const std::string* sp = nullptr;
+        if (uv0 >= static_cast<std::uint64_t>(STRING_SENTINEL)) {
+            auto idx = static_cast<std::size_t>(a[0] - STRING_SENTINEL);
+            if (idx < string_heap_.size()) sp = &string_heap_[idx];
+        } else if (uv0 < 0x1000000) {
+            s_buf = std::to_string(a[0]);
+            sp = &s_buf;
+        }
+        if (!sp) return std::int64_t(0);
+        const auto& s = *sp;
         auto start = static_cast<std::size_t>(a[1]);
         auto end   = static_cast<std::size_t>(a[2]);
-        if (idx >= string_heap_.size()) return std::int64_t(0);
-        auto& s = string_heap_[idx];
         if (start > s.size()) start = s.size();
         if (end > s.size()) end = s.size();
         if (start >= end) {
@@ -227,19 +268,29 @@ void Evaluator::init_pair_primitives() {
     });
     primitives_.add("string=?", [this](const auto& a) {
         if (a.size() < 2) return FALSE_VAL;
-        auto i1 = static_cast<std::size_t>(a[0] - STRING_SENTINEL);
-        auto i2 = static_cast<std::size_t>(a[1] - STRING_SENTINEL);
-        if (i1 >= string_heap_.size() || i2 >= string_heap_.size())
-            return a[0] == a[1] ? TRUE_VAL : FALSE_VAL;
-        return string_heap_[i1] == string_heap_[i2] ? TRUE_VAL : FALSE_VAL;
+        auto to_str = [this](std::int64_t v) -> std::string {
+            auto uv = static_cast<std::uint64_t>(v);
+            if (uv >= static_cast<std::uint64_t>(STRING_SENTINEL)) {
+                auto idx = static_cast<std::size_t>(v - STRING_SENTINEL);
+                return (idx < string_heap_.size()) ? string_heap_[idx] : "";
+            }
+            if (uv < 0x1000000) return std::to_string(v);
+            return "";
+        };
+        return to_str(a[0]) == to_str(a[1]) ? TRUE_VAL : FALSE_VAL;
     });
     primitives_.add("string<?", [this](const auto& a) {
         if (a.size() < 2) return FALSE_VAL;
-        auto i1 = static_cast<std::size_t>(a[0] - STRING_SENTINEL);
-        auto i2 = static_cast<std::size_t>(a[1] - STRING_SENTINEL);
-        if (i1 >= string_heap_.size() || i2 >= string_heap_.size())
-            return FALSE_VAL;
-        return string_heap_[i1] < string_heap_[i2] ? TRUE_VAL : FALSE_VAL;
+        auto to_str = [this](std::int64_t v) -> std::string {
+            auto uv = static_cast<std::uint64_t>(v);
+            if (uv >= static_cast<std::uint64_t>(STRING_SENTINEL)) {
+                auto idx = static_cast<std::size_t>(v - STRING_SENTINEL);
+                return (idx < string_heap_.size()) ? string_heap_[idx] : "";
+            }
+            if (uv < 0x1000000) return std::to_string(v);
+            return "";
+        };
+        return to_str(a[0]) < to_str(a[1]) ? TRUE_VAL : FALSE_VAL;
     });
     primitives_.add("number->string", [this](const auto& a) {
         if (a.empty()) return std::int64_t(0);
@@ -528,6 +579,7 @@ std::optional<PrimFn> Primitives::lookup(const std::string& n) const {
 
 Evaluator::Evaluator() {
     top_.set_primitives(&primitives_);
+    primitives_.set_string_heap(&string_heap_);
     init_pair_primitives();
 }
 
@@ -685,24 +737,53 @@ EvalResult Evaluator::eval_in(const ast::Expr* e, const Env& env) {
             // Strip type annotation, evaluate inner expression
             return eval_in(n.inner_expr, env);
         }
-        // ── Helper: runtime type check ────────────────────────────────
-        auto check_runtime_type = [&](std::int64_t val, const std::string& type_name) -> bool {
+        // ── Helper: runtime type coercion ──────────────────────────────
+        auto coerce_value = [&](std::int64_t val, const std::string& to_type) -> std::int64_t {
             auto uv = static_cast<std::uint64_t>(val);
-            if (type_name == "Int")    return (uv < 0x1000000);       // not a sentinel
-            if (type_name == "String") return (uv >= 0x8000000);      // STRING_SENTINEL
-            if (type_name == "Bool")   return (val == 0 || val == 1); // #f or #t
-            if (type_name == "Any")    return true;
-            return true;  // unknown type: accept
+            bool is_int    = (uv < 0x1000000);
+            bool is_string = (uv >= 0x8000000);
+            
+            if (to_type == "Any" || to_type.empty()) return val;
+            
+            // Coerce to Int
+            if (to_type == "Int") {
+                if (is_int) return val;                       // already int
+                if (is_string) {                               // string → int
+                    auto idx = static_cast<std::size_t>(uv - STRING_SENTINEL);
+                    if (idx < string_heap_.size()) {
+                        try { return static_cast<std::int64_t>(std::stoll(string_heap_[idx])); }
+                        catch (...) { return 0; }
+                    }
+                    return 0;
+                }
+                return val;  // other sentinel: pass through
+            }
+            
+            // Coerce to String
+            if (to_type == "String") {
+                if (is_string) return val;                    // already string
+                if (is_int) {                                  // int → string
+                    auto s = std::to_string(val);
+                    auto id = string_heap_.size();
+                    string_heap_.push_back(std::move(s));
+                    return STRING_SENTINEL + static_cast<std::int64_t>(id);
+                }
+                return val;
+            }
+            
+            // Coerce to Bool
+            if (to_type == "Bool") {
+                return (val != 0) ? std::int64_t(1) : std::int64_t(0);
+            }
+            
+            // Unknown type: pass through
+            return val;
         };
         
         if constexpr (std::is_same_v<T, ast::CoercionNode>) {
             auto result = eval_in(n.inner_expr, env);
             if (result) {
-                if (!check_runtime_type(*result, n.to_type_name)) {
-                    std::println(std::cerr, "runtime type error: expected {}, got value {}",
-                                 n.to_type_name, *result);
-                }
-                return *result;
+                return coerce_value(*result, n.to_type_name);
             }
             // Propagate error
             return std::unexpected(result.error());

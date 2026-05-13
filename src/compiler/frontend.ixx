@@ -14,8 +14,14 @@ public:
     Primitives();
     std::optional<PrimFn> lookup(const std::string& n) const;
     void add(const std::string& name, PrimFn fn) { table_[name] = std::move(fn); }
+    void set_string_heap(std::vector<std::string>* h) { string_heap_ = h; }
+    const std::vector<std::string>& string_heap() const { return *string_heap_; }
+    std::vector<std::string>& string_heap() { return *string_heap_; }
+    // Runtime coercion: String sentinel → int64_t value
+    std::int64_t str_to_int(std::int64_t v) const;
 private:
     std::unordered_map<std::string, PrimFn> table_;
+    std::vector<std::string>* string_heap_ = nullptr;
 };
 
 export class Env final {

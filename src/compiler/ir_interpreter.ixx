@@ -97,6 +97,9 @@ private:
     // Per-instance mutable cell heap (for letrec)
     std::uint64_t next_cell_id_ = 1;
     std::unordered_map<std::uint64_t, std::int64_t> cell_heap_;
+
+    // Runtime string heap (for Int→String coercion)
+    std::vector<std::string> string_heap_;
 };
 
 } // namespace aura::compiler

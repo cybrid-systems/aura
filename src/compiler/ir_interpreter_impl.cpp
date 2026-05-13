@@ -106,27 +106,56 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
 
             case IROpcode::CastOp: {
                 // CastOp: result_slot=ops[0], value_slot=ops[1], type_tag=ops[2]
+                // type_tag: 0=Int, 1=String, 2=Bool, 3+=Dynamic
                 auto val = locals[ops[1]];
                 auto uv = static_cast<std::uint64_t>(val);
-                bool ok = true;
+                bool is_int    = (uv < 0x1000000);
+                bool is_string = (uv >= 0x8000000);
+                
                 switch (ops[2]) {
-                    case 0: // Int — not a sentinel
-                        ok = (uv < 0x1000000);
+                    case 0: { // Coerce to Int
+                        if (is_int) {
+                            locals[ops[0]] = val;
+                        } else if (is_string) {
+                            // String → Int: parse the string
+                            auto idx = static_cast<std::size_t>(uv - 0x8000000);
+                            if (idx < string_heap_.size()) {
+                                try {
+                                    locals[ops[0]] = static_cast<std::int64_t>(
+                                        std::stoll(string_heap_[idx]));
+                                } catch (...) {
+                                    locals[ops[0]] = 0;
+                                }
+                            } else {
+                                locals[ops[0]] = 0;
+                            }
+                        } else {
+                            locals[ops[0]] = val;
+                        }
                         break;
-                    case 1: // String
-                        ok = (uv >= 0x8000000);
+                    }
+                    case 1: { // Coerce to String
+                        if (is_string) {
+                            locals[ops[0]] = val;
+                        } else if (is_int) {
+                            // Int → String: convert and store in heap
+                            auto s = std::to_string(val);
+                            auto id = string_heap_.size();
+                            string_heap_.push_back(std::move(s));
+                            locals[ops[0]] = static_cast<std::int64_t>(0x8000000 + id);
+                        } else {
+                            locals[ops[0]] = val;
+                        }
                         break;
-                    case 2: // Bool
-                        ok = (val == 0 || val == 1);
+                    }
+                    case 2: { // Coerce to Bool
+                        locals[ops[0]] = (val != 0) ? std::int64_t(1) : std::int64_t(0);
                         break;
-                    default: // Dynamic / unknown
-                        ok = true;
+                    }
+                    default: // Dynamic / unknown: pass through
+                        locals[ops[0]] = val;
                         break;
                 }
-                if (!ok) {
-                    std::println(std::cerr, "runtime type error: coercion failed");
-                }
-                locals[ops[0]] = val;
                 break;
             }
 
