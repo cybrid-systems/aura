@@ -136,6 +136,17 @@ int main(int argc, char* argv[]) {
         return result.applied ? 0 : 1;
     }
 
+    // ── --typecheck: run compile-time type checking ────────────
+    if (argc > 1 && std::string_view(argv[1]) == "--typecheck") {
+        aura::compiler::CompilerService cs;
+        std::string input;
+        if (argc > 2) { input = argv[2]; }
+        else { std::getline(std::cin, input); }
+        auto result = cs.typecheck(input);
+        std::print("{}", result);
+        return result.find("diagnostics:") == std::string::npos ? 0 : 1;
+    }
+
     // ── --auto-fix: run built-in optimization fixes ──────────────
     if (argc > 1 && std::string_view(argv[1]) == "--auto-fix") {
         aura::ast::ASTArena arena;
