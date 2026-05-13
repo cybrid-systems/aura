@@ -130,7 +130,9 @@ void ConstraintSystem::clear() {
 // ═══════════════════════════════════════════════════════════
 
 InferenceEngine::InferenceEngine(TypeRegistry& reg, DiagnosticCollector& diag)
-    : reg_(reg), diag_(diag), cs_(reg), env_(reg) {}
+    : reg_(reg), diag_(diag), cs_(reg), env_(reg) {
+    init_primitive_env();
+}
 
 TypeId InferenceEngine::infer(Expr* e) {
     if (!e) return reg_.dynamic_type();
@@ -192,10 +194,26 @@ TypeId InferenceEngine::synthesize_call(const CallNode& n) {
     if (f_ty) {
         // Known function type: check args, return expected return type
         std::size_t n_expected = std::min(f_ty->args.size(), n.args.size());
-        for (std::size_t i = 0; i < n_expected; i++)
-            check(*n.args[i], f_ty->args[i]);
-        for (std::size_t i = n_expected; i < n.args.size(); i++)
-            synthesize(*n.args[i]);  // extra args get dynamic
+        for (std::size_t i = 0; i < n_expected; i++) {
+            // Check each arg against the expected parameter type — this
+            // produces type errors for mismatches like (Int vs String)
+            TypeId arg_type = synthesize(*n.args[i]);
+            if (!cs_.consistent_unify(arg_type, f_ty->args[i])) {
+                auto msg = std::string("argument ")
+                         + std::to_string(i)
+                         + ": expected " + std::string(reg_.format_type(f_ty->args[i]))
+                         + ", got " + std::string(reg_.format_type(arg_type));
+                diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg)));
+            }
+        }
+
+        // Arity mismatch warning
+        if (n.args.size() != f_ty->args.size() && !f_ty->args.empty()) {
+            auto msg = "call: expected " + std::to_string(f_ty->args.size())
+                     + " arguments, got " + std::to_string(n.args.size());
+            diag_.report(Diagnostic(ErrorKind::ArityMismatch, std::move(msg)));
+        }
+
         return f_ty->ret;
     }
 
@@ -422,6 +440,91 @@ void InferenceEngine::check(const Expr& e, TypeId expected) {
             }
         }
     }, e.payload);
+}
+
+void InferenceEngine::register_primitive(std::string name, std::vector<TypeId> param_types, TypeId ret_type) {
+    auto func_type = reg_.register_func(std::move(param_types), ret_type);
+    env_.bind(std::move(name), func_type);
+}
+
+void InferenceEngine::init_primitive_env() {
+    auto Int = reg_.int_type();
+    auto Bool = reg_.bool_type();
+    auto String = reg_.string_type();
+    auto Dyn = reg_.dynamic_type();
+    auto Void = reg_.void_type();
+
+    // Arithmetic: (Int, Int) -> Int
+    register_primitive("+",  {Int, Int}, Int);
+    register_primitive("-",  {Int, Int}, Int);
+    register_primitive("*",  {Int, Int}, Int);
+    register_primitive("/",  {Int, Int}, Int);
+
+    // Comparison: (Int, Int) -> Int (0/1 at runtime)
+    register_primitive("=",  {Int, Int}, Int);
+    register_primitive("<",  {Int, Int}, Int);
+    register_primitive(">",  {Int, Int}, Int);
+    register_primitive("<=", {Int, Int}, Int);
+    register_primitive(">=", {Int, Int}, Int);
+
+    // Boolean logic: runtime #t/#f are lexed as Int 0/1, so
+    // truthiness-checking ops work on any value.
+    register_primitive("and", {Dyn, Dyn}, Int);
+    register_primitive("or",  {Dyn, Dyn}, Int);
+
+    // not: works on any truthy/falsy value (runtime: a[0] == 0 → 1)
+    register_primitive("not", {Dyn}, Int);
+    register_primitive("eq?", {Dyn, Dyn}, Bool);
+
+    // Type predicates return 0/1 which are Int at the type level
+    register_primitive("number?",   {Dyn}, Int);
+    register_primitive("string?",   {Dyn}, Int);
+    register_primitive("boolean?",  {Dyn}, Int);
+    register_primitive("null?",     {Dyn}, Int);
+    register_primitive("pair?",     {Dyn}, Int);
+    register_primitive("procedure?",{Dyn}, Int);
+    register_primitive("list?",     {Dyn}, Int);
+    register_primitive("equal?",    {Dyn, Dyn}, Int);
+
+    // String operations
+    register_primitive("string-append",  {String, String}, String);
+    register_primitive("string-length",  {String}, Int);
+    register_primitive("string-ref",     {String, Int}, Int);
+    register_primitive("substring",      {String, Int, Int}, String);
+    register_primitive("string=?",       {String, String}, Int);
+    register_primitive("string<?",       {String, String}, Int);
+    register_primitive("number->string", {Int}, String);
+    register_primitive("string->number", {String}, Int);
+
+    // Pair operations
+    register_primitive("cons", {Dyn, Dyn}, Dyn);
+    register_primitive("car",  {Dyn}, Dyn);
+    register_primitive("cdr",  {Dyn}, Dyn);
+
+    // List operations
+    register_primitive("list",    {Dyn}, Dyn);       // varargs — minimal
+    register_primitive("length",  {Dyn}, Int);
+    register_primitive("list-ref", {Dyn, Int}, Dyn);
+    register_primitive("member",  {Dyn, Dyn}, Dyn);
+    register_primitive("append",  {Dyn, Dyn}, Dyn);
+    register_primitive("reverse", {Dyn}, Dyn);
+    register_primitive("map",     {Dyn, Dyn}, Dyn);
+    register_primitive("filter",  {Dyn, Dyn}, Dyn);
+
+    // I/O
+    register_primitive("display", {Dyn}, Void);
+    register_primitive("write",   {Dyn}, Void);
+    register_primitive("newline", {},    Void);
+    register_primitive("error",   {Dyn}, Void);
+    register_primitive("assert",  {Dyn}, Void);
+
+    // Introspection
+    register_primitive("type-of", {Dyn}, String);
+    register_primitive("type?",   {Dyn, String}, Bool);
+
+    // Misc
+    register_primitive("read",    {}, String);
+    register_primitive("gensym",  {}, String);
 }
 
 TypeId InferenceEngine::lub(TypeId a, TypeId b) {
