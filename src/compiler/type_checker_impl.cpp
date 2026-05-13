@@ -355,26 +355,73 @@ TypeId InferenceEngine::synthesize_begin(const BeginNode& n) {
 }
 
 TypeId InferenceEngine::synthesize_annotation(const TypeAnnotationNode& n) {
-    // Look up type name in registry
     auto inner_type = synthesize(*n.inner_expr);
     
-    // Check type_name against registry
     if (!n.type_name.empty()) {
-        // For now, all annotations are dynamic (just check inner)
-        // TODO: resolve type_name → TypeId and check consistency
-        check(*n.inner_expr, reg_.dynamic_type());
+        auto expected = reg_.lookup_type(n.type_name);
+        if (!expected.valid()) {
+            diag_.report(Diagnostic(ErrorKind::TypeError,
+                "unknown type: " + n.type_name));
+        } else {
+            check(*n.inner_expr, expected);
+        }
     }
     return inner_type;
 }
 
-void InferenceEngine::check(const Expr& e, TypeId expected) {
-    TypeId inferred = synthesize(e);
+void InferenceEngine::check_call(const CallNode& n, TypeId expected) {
+    // Synthesize the call's type normally, then check against expected
+    TypeId inferred = synthesize_call(n);
     if (!cs_.consistent_unify(inferred, expected)) {
-        auto msg = "type mismatch: expected "
+        auto msg = "call return type mismatch: expected "
                  + std::string(reg_.format_type(expected))
                  + ", got " + std::string(reg_.format_type(inferred));
         diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg)));
     }
+}
+
+void InferenceEngine::check_lambda(const LambdaNode& n, TypeId expected) {
+    // If expected is a function type, use its param types to guide inference
+    auto* f_ty = reg_.func_of(expected);
+    if (!f_ty) {
+        diag_.report(Diagnostic(ErrorKind::TypeError,
+            "expected a function type but got "
+            + std::string(reg_.format_type(expected))));
+        return;
+    }
+    if (f_ty->args.size() != n.params.size()) {
+        diag_.report(Diagnostic(ErrorKind::ArityMismatch,
+            "lambda expects " + std::to_string(n.params.size())
+            + " parameters but context provides "
+            + std::to_string(f_ty->args.size())));
+        return;
+    }
+    env_.push_scope();
+    for (std::size_t i = 0; i < n.params.size(); ++i)
+        env_.bind(n.params[i], f_ty->args[i]);
+    check(*n.body, f_ty->ret);
+    env_.pop_scope();
+}
+
+void InferenceEngine::check(const Expr& e, TypeId expected) {
+    // Dispatch to node-specific check when available for better error messages
+    // and context-guided inference (e.g., lambda param types from expected type)
+    std::visit([this, &expected](const auto& node) {
+        using T = std::decay_t<decltype(node)>;
+        if constexpr (std::is_same_v<T, CallNode>)
+            check_call(node, expected);
+        else if constexpr (std::is_same_v<T, LambdaNode>)
+            check_lambda(node, expected);
+        else {
+            TypeId inferred = synthesize(node);
+            if (!cs_.consistent_unify(inferred, expected)) {
+                auto msg = "type mismatch: expected "
+                         + std::string(reg_.format_type(expected))
+                         + ", got " + std::string(reg_.format_type(inferred));
+                diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg)));
+            }
+        }
+    }, e.payload);
 }
 
 TypeId InferenceEngine::lub(TypeId a, TypeId b) {

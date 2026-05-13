@@ -94,6 +94,8 @@ Agent (Racket/Python)
   │                    ├── Tree-walker Evaluator (Phase 0)
   │                    └── IR Pipeline
   │                         ├── Lowering Pass (FlatAST → IR)
+  │                         │   ├── Expr* path (legacy)
+  │                         │   └── FlatAST path (native, no reconstruct)
   │                         ├── PassManager (concept-based fold)
   │                         │   ├── ComputeKind
   │                         │   ├── ArityCheck
