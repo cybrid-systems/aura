@@ -101,17 +101,16 @@ export inline aura::ir::IRModule lower_to_ir(const ast::Expr* expr,
     return lowering.lower(expr);
 }
 
-// Free function — FlatAST path.
-// Lowers a flat index-based AST to an IRModule.
-// Internally reconstructs Expr* from FlatAST in the given arena,
-// then delegates to the Expr* lower_to_ir (Phase 3 bridge).
-// Phase 4+ will implement a native FlatAST→IR lowering.
+// Free function — FlatAST path (Phase 4+).
+// Natively lowers FlatAST (SoA) to IRModule without Expr* reconstruction.
+// Calls lower_flat_expr() which walks FlatAST directly.
 export aura::ir::IRModule lower_to_ir(ast::FlatAST& flat,
                                        ast::StringPool& pool,
                                        ast::ASTArena& arena);
 
-// Reconstruct an Expr* tree from FlatAST (for tree-walker evaluator).
-// Phase 4 bridge: parser → FlatAST → reconstruct → Expr* → evaluator.
+// Reconstruct an Expr* tree from FlatAST.
+// Needed by tree-walker evaluator for Lambda closure bodies and
+// MacroDef expansion (Closure table stores Expr*).
 export ast::Expr* reconstruct_expr(ast::FlatAST& flat,
                                     ast::StringPool& pool,
                                     ast::ASTArena& arena);
