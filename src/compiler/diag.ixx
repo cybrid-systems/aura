@@ -21,6 +21,8 @@ export enum class ErrorKind : std::uint8_t {
     // Internal
     InternalError,
     OutOfMemory,
+    // Informational (not an error)
+    Note,
 };
 
 // Source location (line/column, 1-indexed)
@@ -112,7 +114,10 @@ public:
     }
 
     bool has_errors() const {
-        return !diagnostics_.empty();
+        for (auto& d : diagnostics_)
+            if (d.kind != ErrorKind::Note)
+                return true;
+        return false;
     }
 
     std::span<const aura::diag::Diagnostic> diagnostics() const {

@@ -68,7 +68,7 @@ $ ctest --test-dir build
 | L6.3 TypeChecker Pass 骨架 | ✅ |
 | L6.4 Bi-dir 推断 + 约束求解 | ⬜ |
 | L6.5 Query 类型 clause | ⬜ |
-| L6.6 Gradual coercion | ⬜ |
+| L6.6 Gradual coercion | ✅ |
 | L6.7 Occurrence typing | ⬜ |
 
 Full design: [`docs/aura_typesystem.md`](docs/aura_typesystem.md)

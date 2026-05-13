@@ -195,15 +195,23 @@ TypeId InferenceEngine::synthesize_call(const CallNode& n) {
         // Known function type: check args, return expected return type
         std::size_t n_expected = std::min(f_ty->args.size(), n.args.size());
         for (std::size_t i = 0; i < n_expected; i++) {
-            // Check each arg against the expected parameter type — this
-            // produces type errors for mismatches like (Int vs String)
             TypeId arg_type = synthesize(*n.args[i]);
             if (!cs_.consistent_unify(arg_type, f_ty->args[i])) {
-                auto msg = std::string("argument ")
-                         + std::to_string(i)
-                         + ": expected " + std::string(reg_.format_type(f_ty->args[i]))
-                         + ", got " + std::string(reg_.format_type(arg_type));
-                diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg)));
+                if (is_coercible(arg_type, f_ty->args[i])) {
+                    // Gradual coercion: accept with a note
+                    auto msg = std::string("argument ")
+                             + std::to_string(i)
+                             + ": coercion from "
+                             + std::string(reg_.format_type(arg_type))
+                             + " to " + std::string(reg_.format_type(f_ty->args[i]));
+                    diag_.report(Diagnostic(ErrorKind::Note, std::move(msg)));
+                } else {
+                    auto msg = std::string("argument ")
+                             + std::to_string(i)
+                             + ": expected " + std::string(reg_.format_type(f_ty->args[i]))
+                             + ", got " + std::string(reg_.format_type(arg_type));
+                    diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg)));
+                }
             }
         }
 
@@ -391,10 +399,18 @@ void InferenceEngine::check_call(const CallNode& n, TypeId expected) {
     // Synthesize the call's type normally, then check against expected
     TypeId inferred = synthesize_call(n);
     if (!cs_.consistent_unify(inferred, expected)) {
-        auto msg = "call return type mismatch: expected "
-                 + std::string(reg_.format_type(expected))
-                 + ", got " + std::string(reg_.format_type(inferred));
-        diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg)));
+        if (is_coercible(inferred, expected)) {
+            // Gradual coercion on return type
+            auto msg = "call return type: coercion from "
+                     + std::string(reg_.format_type(inferred))
+                     + " to " + std::string(reg_.format_type(expected));
+            diag_.report(Diagnostic(ErrorKind::Note, std::move(msg)));
+        } else {
+            auto msg = "call return type mismatch: expected "
+                     + std::string(reg_.format_type(expected))
+                     + ", got " + std::string(reg_.format_type(inferred));
+            diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg)));
+        }
     }
 }
 
@@ -433,13 +449,38 @@ void InferenceEngine::check(const Expr& e, TypeId expected) {
         else {
             TypeId inferred = synthesize(node);
             if (!cs_.consistent_unify(inferred, expected)) {
-                auto msg = "type mismatch: expected "
-                         + std::string(reg_.format_type(expected))
-                         + ", got " + std::string(reg_.format_type(inferred));
-                diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg)));
+                if (is_coercible(inferred, expected)) {
+                    auto msg = "coercion from "
+                             + std::string(reg_.format_type(inferred))
+                             + " to " + std::string(reg_.format_type(expected));
+                    diag_.report(Diagnostic(ErrorKind::Note, std::move(msg)));
+                } else {
+                    auto msg = "type mismatch: expected "
+                             + std::string(reg_.format_type(expected))
+                             + ", got " + std::string(reg_.format_type(inferred));
+                    diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg)));
+                }
             }
         }
     }, e.payload);
+}
+
+bool InferenceEngine::is_coercible(TypeId from, TypeId to) {
+    if (from == to) return true;
+    // Dynamic coerce to/from anything (gradual core)
+    if (from == reg_.dynamic_type() || to == reg_.dynamic_type())
+        return true;
+    auto from_tag = reg_.tag_of(from);
+    auto to_tag = reg_.tag_of(to);
+    // Int ↔ String
+    if ((from_tag == TypeTag::INT && to_tag == TypeTag::STRING) ||
+        (from_tag == TypeTag::STRING && to_tag == TypeTag::INT))
+        return true;
+    // Int ↔ Bool (truthiness / 0/1)
+    if ((from_tag == TypeTag::INT && to_tag == TypeTag::BOOL) ||
+        (from_tag == TypeTag::BOOL && to_tag == TypeTag::INT))
+        return true;
+    return false;
 }
 
 void InferenceEngine::register_primitive(std::string name, std::vector<TypeId> param_types, TypeId ret_type) {
