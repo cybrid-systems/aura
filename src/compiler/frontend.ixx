@@ -1,6 +1,8 @@
 export module aura.compiler.frontend;
 import std;
 import aura.core;
+import aura.core.ast_flat;
+import aura.core.ast_pool;
 import aura.diag;
 
 namespace aura::compiler {
@@ -67,6 +69,11 @@ public:
     void set_arena(ast::ASTArena* a) { arena_=a; }
     EvalResult eval(const ast::Expr* e) { return eval_in(e,top_); }
     EvalResult eval_in(const ast::Expr* e, const Env& env);
+    // Phase 4: tree-walker evaluator directly on FlatAST (no Expr* bridge)
+    EvalResult eval_flat(aura::ast::FlatAST& flat,
+                          aura::ast::StringPool& pool,
+                          aura::ast::NodeId id,
+                          const Env& env);
     const Primitives& primitives() const { return primitives_; }
     Env& top_env() { return top_; }
 private:
