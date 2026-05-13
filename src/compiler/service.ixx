@@ -33,15 +33,17 @@ public:
     // ---- Tree-walker evaluation --------------------------------------
 
     EvalResult eval(std::string_view input) {
-        // Phase 3 bridge: use pointer-tree Parser directly.
-        // FlatParser can't represent MacroDef params, so for ast nodes
-        // that require params (macro definitions), use Expr* parser.
-        auto pr = aura::parser::parse(input, arena_);
-        if (!pr.success || !pr.root) {
+        // Phase 4: parse directly into FlatAST, evaluator reads FlatAST directly.
+        auto alloc = arena_.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat(input, flat, pool);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
             return std::unexpected(aura::diag::Diagnostic{
                 aura::diag::ErrorKind::ParseError, pr.error.empty() ? "parse error" : pr.error});
         }
-        return evaluator_.eval(pr.root);
+        flat.root = pr.root;
+        return evaluator_.eval_flat(flat, pool, flat.root, evaluator_.top_env());
     }
 
     // ---- IR pipeline ------------------------------------------------
