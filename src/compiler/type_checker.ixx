@@ -67,6 +67,9 @@ public:
     // Top-level entry
     aura::core::TypeId infer(aura::ast::Expr* e);
 
+    // Initialize environment with primitive type signatures
+    void init_primitive_env();
+
     // Synthesis (top-down)
     aura::core::TypeId synthesize(const aura::ast::Expr& e);
 
@@ -88,6 +91,9 @@ private:
     void check_lambda(const aura::ast::LambdaNode& n, aura::core::TypeId expected);
 
     aura::core::TypeId lub(aura::core::TypeId a, aura::core::TypeId b);
+
+    // Register all built-in primitives in the type environment
+    void register_primitive(std::string name, std::vector<aura::core::TypeId> param_types, aura::core::TypeId ret_type);
 };
 
 // ── TypeChecker — Public API ─────────────────────────────
