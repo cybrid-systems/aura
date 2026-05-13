@@ -1,12 +1,14 @@
 export module aura.compiler.service;
 import std;
 import aura.core;
+import aura.core.type;
 import aura.parser.parser;
 import aura.compiler.frontend;
 import aura.compiler.ir;
 import aura.compiler.lowering;
 import aura.compiler.ir_interpreter;
 import aura.compiler.pass_manager;
+import aura.compiler.type_checker;
 import aura.core.ast_flat;
 import aura.core.ast_pool;
 import aura.diag;
@@ -106,6 +108,46 @@ public:
         last_cells_ = ir_interp.list_cells();
 
         return result;
+    }
+
+    // ---- Type checking (L6.x) ----------------------------------------
+
+    // Run the TypeChecker on a input expression.
+    // Returns a string with the inferred type or error messages.
+    std::string typecheck(std::string_view input) {
+        auto alloc = arena_.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat(input, flat, pool);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+            return std::string("parse error: ") + pr.error;
+        }
+        flat.root = pr.root;
+
+        // Reconstruct Expr* tree for the TypeChecker
+        auto* expr = aura::compiler::reconstruct_expr(flat, pool, arena_);
+        if (!expr) return std::string("reconstruct failed");
+
+        aura::core::TypeRegistry treg;
+        aura::compiler::TypeChecker tc(treg);
+        aura::diag::DiagnosticCollector diag;
+
+        auto result = tc.infer(expr, diag);
+
+        std::string out;
+        out += "type: " + treg.format_type(result) + "\n";
+
+        if (diag.has_errors()) {
+            out += "diagnostics:\n";
+            for (auto& d : diag.diagnostics()) {
+                out += "  [" + std::to_string(static_cast<int>(d.kind))
+                     + "] " + d.message + "\n";
+            }
+        } else {
+            out += "no errors\n";
+        }
+
+        return out;
     }
 
     // ---- Multi-module arena support ----------------------------------

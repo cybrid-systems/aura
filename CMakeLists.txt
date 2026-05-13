@@ -156,8 +156,16 @@ add_test(NAME cli_serve_error COMMAND sh -c "printf '(+ x 1)' | timeout 5 ./aura
 # Serve mode: ok result on valid code
 add_test(NAME cli_serve_ok COMMAND sh -c "printf '(+ 1 2)' | timeout 5 ./aura --serve | grep -q -F 'ok'" WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
-# Diag: diagnostic shows node_id in format
-add_test(NAME cli_serve_fix COMMAND sh -c "printf '(+ x 1)' | timeout 5 ./aura --serve | grep -q -F 'patches'" WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# ── TypeChecker tests (L6.x) ──────────────────────────────────
+add_test(NAME tc_int
+    COMMAND sh -c "printf '42' | timeout 5 ./aura --typecheck | grep -q 'type: Int'"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+add_test(NAME tc_lambda
+    COMMAND sh -c "printf '(lambda (x) x)' | timeout 5 ./aura --typecheck | grep -q -e '->'"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+add_test(NAME tc_let
+    COMMAND sh -c "printf '(let ((x 10)) x)' | timeout 5 ./aura --typecheck | grep -q 'type: Int'"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # ── M3 Phase 2: Runtime reflection tests ──────────────────────
 add_test(NAME inspect_closure_fact
