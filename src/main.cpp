@@ -460,6 +460,34 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
+    // ── --cache-open: load and inspect a cache file ───────────────
+    // Usage: ./aura --cache-open out.abc
+    // Prints cache stats. Add --ir to also evaluate (re-parses stdin).
+    if (argc > 2 && std::string_view(argv[1]) == "--cache-open") {
+        auto mc = aura::compiler::cache::open_cache(argv[2]);
+        if (!mc.valid()) {
+            std::println(std::cerr, "error: cannot open cache file {}", argv[2]);
+            return 1;
+        }
+        std::println("cache: {} nodes, root={}, version=3 (O(1) resolve)",
+                     mc.size(), mc.root());
+        // Show first few nodes with sym resolution
+        auto show_n = std::min<std::size_t>(mc.size(), 6);
+        for (std::uint32_t i = 0; i < show_n; ++i) {
+            auto nv = mc.get(i);
+            auto tag_int = static_cast<int>(nv.tag);
+            std::string sym;
+            if (nv.sym_id == 0xFFFFFFFFu) {
+                sym = "(none)";
+            } else {
+                auto sv = mc.resolve(nv.sym_id);
+                sym = sv.empty() ? "(unresolved)" : std::string(sv);
+            }
+            std::println("  [{}] tag={} sym_id={} sym='{}' int={}", i, tag_int, nv.sym_id, sym, nv.int_value);
+        }
+        return 0;
+    }
+
     // ── --strategy: set eval strategy before executing ─────────────
     // Usage: echo '(let ...)' | ./aura --strategy 'max_unroll=5' --ir
     if (argc > 1 && std::string_view(argv[1]) == "--strategy") {

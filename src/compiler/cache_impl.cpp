@@ -105,22 +105,30 @@ bool write_cache(const std::string& path,
     std::uint64_t li_off         = off; off += pad64(n * 4);
     std::uint64_t co_off         = off; off += pad64(n * 4);
 
-    // ── String table layout ────────────────────────────────────
+    // ── String table layout (v3+ with offset array) ────────────
     // [num_strings:uint32]
+    // [offsets[num_strings]:uint32]  — each offset is byte distance from string_offset
     // [len_0:uint32, data_0:char[len_0]]
     // [len_1:uint32, data_1:char[len_1]]
     // ...
     std::uint64_t str_off = off;
-    std::uint64_t str_data_off = off + 4;
-    for (auto& s : stbl.strings)
-        str_data_off += 4 + s.size();  // len + data
-    str_data_off = pad64(str_data_off);
+    auto offsets_size = static_cast<std::uint64_t>(stbl.strings.size()) * 4;
+    std::uint64_t str_data_start = 4 + offsets_size;  // skip num_strings + offset table
+    std::vector<std::uint32_t> str_offsets;
+    str_offsets.reserve(stbl.strings.size());
+    {
+        std::uint32_t cur = static_cast<std::uint32_t>(str_data_start);
+        for (auto& s : stbl.strings) {
+            str_offsets.push_back(cur);
+            cur += 4 + static_cast<std::uint32_t>(s.size());
+        }
+    }
 
     // ── Write header ─────────────────────────────────────────
     CacheHeader header;
     std::memset(&header, 0, sizeof(header));
     std::memcpy(header.magic, "AURACACHE", 8);
-    header.version = 2;
+    header.version = 3;
     header.num_nodes = static_cast<std::uint32_t>(n);
     header.num_strings = static_cast<std::uint32_t>(stbl.strings.size());
     // Store root NodeId in content_hash (abuse field for now; Phase 2 adds proper field)
@@ -147,10 +155,11 @@ bool write_cache(const std::string& path,
     f.seekp(li_off);   f.write((const char*)lines.data(), n * 4);
     f.seekp(co_off);   f.write((const char*)cols.data(), n * 4);
 
-    // ── Write string table ────────────────────────────────────
+    // ── Write string table (v3: num_strings + offsets + data) ──
     f.seekp(str_off);
     std::uint32_t num_strs = static_cast<std::uint32_t>(stbl.strings.size());
     f.write(reinterpret_cast<const char*>(&num_strs), 4);
+    f.write(reinterpret_cast<const char*>(str_offsets.data()), offsets_size);
     for (auto& s : stbl.strings) {
         std::uint32_t len = static_cast<std::uint32_t>(s.size());
         f.write(reinterpret_cast<const char*>(&len), 4);
@@ -232,7 +241,8 @@ void MappedCache::copy_pointers(const MappedCache& o) {
     child_data_ = o.child_data_;
     param_begins_ = o.param_begins_; param_counts_ = o.param_counts_;
     param_data_ = o.param_data_;
-    str_data_raw_ = o.str_data_raw_;
+    str_offsets_ = o.str_offsets_;
+    str_data_base_ = o.str_data_base_;
     lines_ = o.lines_; cols_ = o.cols_;
 }
 
@@ -254,7 +264,12 @@ NodeView MappedCache::get(NodeId id) const {
 }
 
 std::string_view MappedCache::resolve(SymId id) const {
-    return resolve_slow(id);
+    if (!valid() || !str_offsets_ || id >= header_->num_strings) return "";
+    auto off = str_offsets_[id];
+    auto* p = str_data_base_ + off;
+    std::uint32_t len = 0;
+    std::memcpy(&len, p, 4);
+    return std::string_view(reinterpret_cast<const char*>(p + 4), len);
 }
 
 MappedCache open_cache(const std::string& path) {
@@ -273,7 +288,7 @@ MappedCache open_cache(const std::string& path) {
 
     cache.data_ = data;
     auto* hdr = static_cast<const CacheHeader*>(data);
-    if (std::memcmp(hdr->magic, "AURACACHE", 8) != 0 || hdr->version != 2) {
+    if (std::memcmp(hdr->magic, "AURACACHE", 8) != 0 || hdr->version != 3) {
         ::munmap(data, cache.file_size_);
         cache.data_ = nullptr; cache.file_size_ = 0; return cache;
     }
@@ -283,26 +298,13 @@ MappedCache open_cache(const std::string& path) {
     cache.root_ = static_cast<NodeId>(hdr->content_hash);
     setup_pointers(cache);
 
-    // ── Wire up string table ────────────────────────────────────
-    // Layout: [num_strings:u32] [len_0:u32, data_0:char[]] [len_1:u32, ...]
+    // ── Wire up string table (v3: offsets array for O(1) resolve) ──
+    // Layout: [num_strings:u32, offsets[N]:u32, [len:u32,data:char[]]...]
     auto* sp = static_cast<const std::uint8_t*>(data) + hdr->string_offset;
-    sp += 4;  // skip num_strings
-    cache.str_data_raw_ = sp;  // points to [len_0, data_0, len_1, data_1, ...]
+    cache.str_offsets_ = reinterpret_cast<const std::uint32_t*>(sp + 4);  // skip num_strings
+    cache.str_data_base_ = sp;  // base for offset resolution
 
     return cache;
-}
-
-std::string_view MappedCache::resolve_slow(SymId id) const {
-    if (!valid() || !str_data_raw_ || id >= header_->num_strings) return "";
-    // Scan to find the string
-    auto* p = str_data_raw_;
-    for (SymId i = 0; i < id; ++i) {
-        std::uint32_t len = 0;
-        std::memcpy(&len, p, 4); p += 4 + len;
-    }
-    std::uint32_t len = 0;
-    std::memcpy(&len, p, 4);
-    return std::string_view(reinterpret_cast<const char*>(p + 4), len);
 }
 
 bool remove_cache(const std::string& path) {
