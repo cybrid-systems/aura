@@ -181,8 +181,9 @@ void InferenceEngine::init_primitive_env() {
 
     // Boolean logic: runtime #t/#f are lexed as Int 0/1, so
     // truthiness-checking ops work on any value.
-    register_primitive("and", {Dyn, Dyn}, Int);
-    register_primitive("or",  {Dyn, Dyn}, Int);
+    // and/or are variadic — minimal signature uses 2 args
+    register_primitive("and", {Dyn, Dyn}, Dyn);
+    register_primitive("or",  {Dyn, Dyn}, Dyn);
 
     // not: works on any truthy/falsy value (runtime: a[0] == 0 → 1)
     register_primitive("not", {Dyn}, Int);
@@ -437,7 +438,14 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
             }
         }
         std::size_t num_args = v.children.size() > 1 ? v.children.size() - 1 : 0;
-        if (num_args != f_ty->args.size() && !f_ty->args.empty()) {
+        // Skip arity check for variadic primitives
+        bool is_variadic = false;
+        auto callee_v = flat.get(func_id);
+        if (callee_v.sym_id != INVALID_SYM && callee_v.tag == NodeTag::Variable) {
+            auto cname = pool.resolve(callee_v.sym_id);
+            is_variadic = (cname == "and" || cname == "or");
+        }
+        if (num_args != f_ty->args.size() && !f_ty->args.empty() && !is_variadic) {
             auto msg = "call: expected " + std::to_string(f_ty->args.size())
                      + " arguments, got " + std::to_string(num_args);
             diag_.report(Diagnostic(ErrorKind::ArityMismatch, std::move(msg), cur_loc_));

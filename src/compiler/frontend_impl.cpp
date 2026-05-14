@@ -176,8 +176,16 @@ Primitives::Primitives() {
     table_[">="] = [this](auto& a) { return make_int(coerce_to_int(a[0], string_heap_) >= coerce_to_int(a[1], string_heap_) ? 1 : 0); };
     // Ghuloum Step 9: booleans
     table_["not"]  = [](auto& a) { return make_int(!is_truthy(a[0]) ? 1 : 0); };
-    table_["and"]  = [](auto& a) { return make_int(is_truthy(a[0]) && is_truthy(a[1]) ? 1 : 0); };
-    table_["or"]   = [](auto& a) { return make_int(is_truthy(a[0]) || is_truthy(a[1]) ? 1 : 0); };
+    table_["and"]  = [](auto& a) {
+        for (std::size_t i = 0; i + 1 < a.size(); ++i)
+            if (!is_truthy(a[i])) return a[i];
+        return a.empty() ? make_int(1) : a.back();
+    };
+    table_["or"]   = [](auto& a) {
+        for (std::size_t i = 0; i + 1 < a.size(); ++i)
+            if (is_truthy(a[i])) return a[i];
+        return a.empty() ? make_int(0) : a.back();
+    };
     table_["eq?"]  = [](auto& a) { return make_int(a[0] == a[1] ? 1 : 0); };
 }
 
