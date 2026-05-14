@@ -1,23 +1,22 @@
-# Racket
-compiled/
-*.rkt~
-*.zo
 
-# C++26
 build/
+build_debug
+# C++26
+compile_commands.json
+compiled/
+.DS_Store
+*.exe
+# IDE
+.idea/
 *.o
 *.obj
-*.exe
-*.out
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
 # OS
-.DS_Store
-Thumbs.db
-compile_commands.json
+*.out
+# Racket
+*.rkt~
+*.swo
+*.swp
 tests/__pycache__/
+Thumbs.db
+.vscode/
+*.zo
