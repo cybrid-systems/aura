@@ -64,6 +64,13 @@ export enum class PrimId : std::uint8_t {
     WriteFile,
     FileExists,
     Gensym,
+    // Vector primitives
+    Vector,
+    VectorRef,
+    VectorSet,
+    VectorLength,
+    VectorP,
+    MakeVector,
 };
 
 // Helper: pack two uint32 into one (for Call: args_begin << 16 | arg_count)
