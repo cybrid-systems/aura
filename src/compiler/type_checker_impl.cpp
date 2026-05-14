@@ -134,350 +134,7 @@ InferenceEngine::InferenceEngine(TypeRegistry& reg, DiagnosticCollector& diag)
     init_primitive_env();
 }
 
-TypeId InferenceEngine::infer(Expr* e) {
-    if (!e) return reg_.dynamic_type();
-    cs_.clear();
-    auto result = synthesize(*e);
-    if (!cs_.solve()) {
-        diag_.report(Diagnostic(ErrorKind::TypeError, "type constraint solving failed", cur_loc_));
-    }
-    return result;
-}
 
-TypeId InferenceEngine::synthesize(const Expr& e) {
-    cur_loc_ = {e.loc.line, e.loc.column, e.loc.file};
-    return std::visit([this](const auto& node) -> TypeId {
-        using T = std::decay_t<decltype(node)>;
-        if constexpr (std::is_same_v<T, LiteralIntNode>)
-            return reg_.int_type();
-        else if constexpr (std::is_same_v<T, LiteralStringNode>)
-            return reg_.string_type();
-        else if constexpr (std::is_same_v<T, VariableNode>)
-            return synthesize_var(node);
-        else if constexpr (std::is_same_v<T, CallNode>)
-            return synthesize_call(node);
-        else if constexpr (std::is_same_v<T, IfExprNode>)
-            return synthesize_if(node);
-        else if constexpr (std::is_same_v<T, LambdaNode>)
-            return synthesize_lambda(node);
-        else if constexpr (std::is_same_v<T, LetNode>)
-            return synthesize_let(node);
-        else if constexpr (std::is_same_v<T, LetRecNode>)
-            return synthesize_letrec(node);
-        else if constexpr (std::is_same_v<T, BeginNode>)
-            return synthesize_begin(node);
-        else if constexpr (std::is_same_v<T, TypeAnnotationNode>)
-            return synthesize_annotation(node);
-        else if constexpr (std::is_same_v<T, QuoteNode>)
-            return reg_.dynamic_type();
-        else if constexpr (std::is_same_v<T, DefineNode>)
-            return reg_.void_type();
-        else if constexpr (std::is_same_v<T, SetNode>)
-            return reg_.void_type();
-        else
-            return reg_.dynamic_type();
-    }, e.payload);
-}
-
-TypeId InferenceEngine::synthesize_var(const VariableNode& n) {
-    auto ty = env_.lookup(n.name);
-    if (!ty.valid()) {
-        diag_.report(Diagnostic(ErrorKind::UnboundVariable, "unbound variable: " + n.name, cur_loc_));
-        return reg_.dynamic_type();
-    }
-    return ty;
-}
-
-TypeId InferenceEngine::synthesize_call(const CallNode& n) {
-    TypeId func_type = synthesize(*n.function);
-    auto* f_ty = reg_.func_of(func_type);
-
-    if (f_ty) {
-        // Known function type: check args, return expected return type
-        auto saved_loc_ = cur_loc_;  // save call-site location before processing args
-        std::size_t n_expected = std::min(f_ty->args.size(), n.args.size());
-        for (std::size_t i = 0; i < n_expected; i++) {
-            TypeId arg_type = synthesize(*n.args[i]);
-            if (!cs_.consistent_unify(arg_type, f_ty->args[i])) {
-                if (is_coercible(arg_type, f_ty->args[i])) {
-                    // Gradual coercion: accept with a note
-                    auto msg = std::string("argument ")
-                             + std::to_string(i)
-                             + ": coercion from "
-                             + std::string(reg_.format_type(arg_type))
-                             + " to " + std::string(reg_.format_type(f_ty->args[i]));
-                    diag_.report(Diagnostic(ErrorKind::Note, std::move(msg), saved_loc_));
-                } else {
-                    auto msg = std::string("argument ")
-                             + std::to_string(i)
-                             + ": expected " + std::string(reg_.format_type(f_ty->args[i]))
-                             + ", got " + std::string(reg_.format_type(arg_type));
-                    diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg), saved_loc_));
-                }
-            }
-        }
-        if (n.args.size() != f_ty->args.size() && !f_ty->args.empty()) {
-            auto msg = "call: expected " + std::to_string(f_ty->args.size())
-                     + " arguments, got " + std::to_string(n.args.size());
-            diag_.report(Diagnostic(ErrorKind::ArityMismatch, std::move(msg), cur_loc_));
-        }
-
-        return f_ty->ret;
-    }
-
-    // Unknown function type: check args dynamically
-    for (auto* arg : n.args)
-        synthesize(*arg);
-    return reg_.dynamic_type();
-}
-
-TypeId InferenceEngine::synthesize_lambda(const LambdaNode& n) {
-    env_.push_scope();
-    std::vector<TypeId> param_types;
-    for (auto& p : n.params) {
-        auto tv = cs_.fresh_var();
-        param_types.push_back(tv);
-        env_.bind(p, tv);
-    }
-    TypeId body_type = synthesize(*n.body);
-    env_.pop_scope();
-    return reg_.register_func(std::move(param_types), body_type);
-}
-
-// ── Occurrence Typing (L6.7) ─────────────────────────────────
-// Analyze if-condition for type predicates like (string? x)
-struct OccurrenceInfo {
-    std::string var_name;
-    TypeId refined_type;
-    bool is_negation = false;
-};
-
-// Try to extract type predicate info from a condition expression
-static std::optional<OccurrenceInfo> analyze_predicate(const ast::Expr& cond, core::TypeRegistry& reg) {
-    // Handle (not p) — recurse and swap
-    auto* call = std::get_if<ast::CallNode>(&cond.payload);
-    if (!call || call->args.empty()) return std::nullopt;
-    
-    auto* fn = std::get_if<ast::VariableNode>(&call->function->payload);
-    
-    // Check for (not p)
-    if (fn && fn->name == "not" && !call->args.empty()) {
-        auto inner = analyze_predicate(*call->args[0], reg);
-        if (inner) { inner->is_negation = !inner->is_negation; return inner; }
-        return std::nullopt;
-    }
-    
-    // Check for (and p1 p2) — return first found
-    if (fn && fn->name == "and") {
-        for (auto* arg : call->args) {
-            auto inner = analyze_predicate(*arg, reg);
-            if (inner) return inner;
-        }
-        return std::nullopt;
-    }
-    
-    // Check for (or p1 p2) — return first found
-    if (fn && fn->name == "or") {
-        for (auto* arg : call->args) {
-            auto inner = analyze_predicate(*arg, reg);
-            if (inner) return inner;
-        }
-        return std::nullopt;
-    }
-    
-    // Check for (type? x "TypeName") — L6.5 Query 类型 clause
-    if (fn && fn->name == "type?" && call->args.size() == 2) {
-        auto* var_arg = std::get_if<ast::VariableNode>(&call->args[0]->payload);
-        auto* type_lit = std::get_if<ast::LiteralStringNode>(&call->args[1]->payload);
-        if (var_arg && type_lit) {
-            auto type_id = reg.lookup_type(type_lit->value);
-            if (type_id.valid()) {
-                return OccurrenceInfo{var_arg->name, type_id};
-            }
-        }
-        return std::nullopt;
-    }
-    
-    // Must be a predicate call: (pred? x)
-    if (call->args.size() != 1) return std::nullopt;
-    auto* pred = std::get_if<ast::VariableNode>(&call->function->payload);
-    auto* arg = std::get_if<ast::VariableNode>(&call->args[0]->payload);
-    if (!pred || !arg) return std::nullopt;
-    
-    // Map predicate name → refined type
-    // References the TypeRegistry from the inference engine context
-    if (pred->name == "string?")
-        return OccurrenceInfo{arg->name, reg.string_type()};
-    else if (pred->name == "number?")
-        return OccurrenceInfo{arg->name, reg.int_type()};
-    else if (pred->name == "boolean?")
-        return OccurrenceInfo{arg->name, reg.bool_type()};
-    else if (pred->name == "null?")
-        return OccurrenceInfo{arg->name, reg.void_type()};
-    else if (pred->name == "pair?")
-        return OccurrenceInfo{arg->name, reg.dynamic_type()};  // Pair: dynamic for now
-    else if (pred->name == "procedure?")
-        return OccurrenceInfo{arg->name, reg.dynamic_type()};  // (-> Any Any): dynamic
-    
-    return std::nullopt;
-}
-
-TypeId InferenceEngine::synthesize_if(const IfExprNode& n) {
-    check(*n.condition, reg_.bool_type());
-    if (!n.then_branch) return reg_.void_type();
-    
-    // Occurrence typing: analyze condition for type predicates
-    auto occ = analyze_predicate(*n.condition, reg_);
-    
-    if (occ && !occ->is_negation) {
-        // Then-branch: variable has refined type
-        env_.push_scope();
-        if (env_.is_bound(occ->var_name))
-            env_.bind(occ->var_name, occ->refined_type);
-        TypeId then_type = synthesize(*n.then_branch);
-        env_.pop_scope();
-        
-        // Else-branch: no refinement (keeps original type)
-        TypeId else_type = n.else_branch ? synthesize(*n.else_branch) : reg_.void_type();
-        return lub(then_type, else_type);
-    }
-    
-    if (occ && occ->is_negation) {
-        // Then-branch: no refinement
-        TypeId then_type = synthesize(*n.then_branch);
-        
-        // Else-branch: variable has refined type
-        env_.push_scope();
-        if (env_.is_bound(occ->var_name))
-            env_.bind(occ->var_name, occ->refined_type);
-        TypeId else_type = n.else_branch ? synthesize(*n.else_branch) : reg_.void_type();
-        env_.pop_scope();
-        return lub(then_type, else_type);
-    }
-    
-    // No predicate found: standard if typing
-    TypeId then_type = synthesize(*n.then_branch);
-    TypeId else_type = n.else_branch ? synthesize(*n.else_branch) : reg_.void_type();
-    return lub(then_type, else_type);
-}
-
-TypeId InferenceEngine::synthesize_let(const LetNode& n) {
-    env_.push_scope();
-    TypeId val_type = synthesize(*n.value);
-    env_.bind(n.name, val_type);
-    TypeId body_type = synthesize(*n.body);
-    env_.pop_scope();
-    return body_type;
-}
-
-TypeId InferenceEngine::synthesize_letrec(const LetRecNode& n) {
-    env_.push_scope();
-    // In letrec, the binding is visible in the value expression
-    TypeId val_type = cs_.fresh_var();  // forward reference
-    env_.bind(n.name, val_type);
-    // Re-evaluate with proper type
-    env_.pop_scope();
-    env_.push_scope();
-    TypeId actual_val_type = synthesize(*n.value);
-    env_.bind(n.name, actual_val_type);
-    TypeId body_type = synthesize(*n.body);
-    env_.pop_scope();
-    return body_type;
-}
-
-TypeId InferenceEngine::synthesize_begin(const BeginNode& n) {
-    if (n.exprs.empty()) return reg_.void_type();
-    TypeId last = reg_.void_type();
-    for (auto* e : n.exprs)
-        last = synthesize(*e);
-    return last;
-}
-
-TypeId InferenceEngine::synthesize_annotation(const TypeAnnotationNode& n) {
-    auto inner_type = synthesize(*n.inner_expr);
-    
-    if (!n.type_name.empty()) {
-        auto expected = reg_.lookup_type(n.type_name);
-        if (!expected.valid()) {
-            diag_.report(Diagnostic(ErrorKind::TypeError,
-                "unknown type: " + n.type_name, cur_loc_));
-        } else {
-            check(*n.inner_expr, expected);
-        }
-    }
-    return inner_type;
-}
-
-void InferenceEngine::check_call(const CallNode& n, TypeId expected) {
-    // Synthesize the call's type normally, then check against expected
-    TypeId inferred = synthesize_call(n);
-    if (!cs_.consistent_unify(inferred, expected)) {
-        if (is_coercible(inferred, expected)) {
-            // Gradual coercion on return type
-            auto msg = "call return type: coercion from "
-                     + std::string(reg_.format_type(inferred))
-                     + " to " + std::string(reg_.format_type(expected));
-            diag_.report(Diagnostic(ErrorKind::Note, std::move(msg), cur_loc_));
-        } else {
-            auto msg = "call return type mismatch: expected "
-                     + std::string(reg_.format_type(expected))
-                     + ", got " + std::string(reg_.format_type(inferred));
-            diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg), cur_loc_));
-        }
-    }
-}
-
-void InferenceEngine::check_lambda(const LambdaNode& n, TypeId expected) {
-    // If expected is a function type, use its param types to guide inference
-    auto* f_ty = reg_.func_of(expected);
-    if (!f_ty) {
-        diag_.report(Diagnostic(ErrorKind::TypeError,
-            "expected a function type but got "
-            + std::string(reg_.format_type(expected)), cur_loc_));
-        return;
-    }
-    if (f_ty->args.size() != n.params.size()) {
-        diag_.report(Diagnostic(ErrorKind::ArityMismatch,
-            "lambda expects " + std::to_string(n.params.size())
-            + " parameters but context provides "
-            + std::to_string(f_ty->args.size()), cur_loc_));
-        return;
-    }
-    env_.push_scope();
-    for (std::size_t i = 0; i < n.params.size(); ++i)
-        env_.bind(n.params[i], f_ty->args[i]);
-    check(*n.body, f_ty->ret);
-    env_.pop_scope();
-}
-
-void InferenceEngine::check(const Expr& e, TypeId expected) {
-    cur_loc_ = {e.loc.line, e.loc.column, e.loc.file};
-    // Dispatch to node-specific check when available for better error messages
-    // and context-guided inference (e.g., lambda param types from expected type)
-    std::visit([this, &expected](const auto& node) {
-        using T = std::decay_t<decltype(node)>;
-        if constexpr (std::is_same_v<T, CallNode>)
-            check_call(node, expected);
-        else if constexpr (std::is_same_v<T, LambdaNode>)
-            check_lambda(node, expected);
-        else {
-            TypeId inferred = synthesize(node);
-            if (!cs_.consistent_unify(inferred, expected)) {
-                if (is_coercible(inferred, expected)) {
-                    auto msg = "coercion from "
-                             + std::string(reg_.format_type(inferred))
-                             + " to " + std::string(reg_.format_type(expected));
-                    diag_.report(Diagnostic(ErrorKind::Note, std::move(msg), cur_loc_));
-                } else {
-                    auto msg = "type mismatch: expected "
-                             + std::string(reg_.format_type(expected))
-                             + ", got " + std::string(reg_.format_type(inferred));
-                    diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg), cur_loc_));
-                }
-            }
-        }
-    }, e.payload);
-}
 
 bool InferenceEngine::is_coercible(TypeId from, TypeId to) {
     if (from == to) return true;
@@ -591,12 +248,418 @@ TypeId InferenceEngine::lub(TypeId a, TypeId b) {
 }
 
 // ═══════════════════════════════════════════════════════════
+// FlatAST Inference (bypasses Expr* reconstruction)
+// ═══════════════════════════════════════════════════════════
+
+// FlatAST version of analyze_predicate
+struct OccurrenceInfoFlat {
+    std::string var_name;
+    TypeId refined_type;
+    bool is_negation = false;
+};
+
+static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(
+    const FlatAST& flat, const StringPool& pool, NodeId cond_id, TypeRegistry& reg)
+{
+    auto cond = flat.get(cond_id);
+    if (cond.tag != NodeTag::Call || cond.children.empty()) return std::nullopt;
+
+    auto fn_id = cond.child(0);
+    auto fn = flat.get(fn_id);
+
+    // Check for (not p)
+    if (fn.tag == NodeTag::Variable) {
+        auto fn_name = pool.resolve(fn.sym_id);
+        if (fn_name == "not" && cond.children.size() >= 2) {
+            auto inner = analyze_predicate_flat(flat, pool, cond.child(1), reg);
+            if (inner) { inner->is_negation = !inner->is_negation; return inner; }
+            return std::nullopt;
+        }
+
+        // Check for (and p1 p2) — return first found
+        if (fn_name == "and") {
+            for (std::size_t i = 1; i < cond.children.size(); i++) {
+                auto inner = analyze_predicate_flat(flat, pool, cond.child(i), reg);
+                if (inner) return inner;
+            }
+            return std::nullopt;
+        }
+
+        // Check for (or p1 p2) — return first found
+        if (fn_name == "or") {
+            for (std::size_t i = 1; i < cond.children.size(); i++) {
+                auto inner = analyze_predicate_flat(flat, pool, cond.child(i), reg);
+                if (inner) return inner;
+            }
+            return std::nullopt;
+        }
+
+        // Check for (type? x "TypeName")
+        if (fn_name == "type?" && cond.children.size() == 3) {
+            auto var_id = cond.child(1);
+            auto var_node = flat.get(var_id);
+            auto type_lit_id = cond.child(2);
+            auto type_lit = flat.get(type_lit_id);
+            if (var_node.tag == NodeTag::Variable && type_lit.tag == NodeTag::LiteralString) {
+                auto type_name = pool.resolve(type_lit.sym_id);
+                auto type_id = reg.lookup_type(std::string(type_name));
+                if (type_id.valid()) {
+                    return OccurrenceInfoFlat{
+                        std::string(pool.resolve(var_node.sym_id)), type_id
+                    };
+                }
+            }
+            return std::nullopt;
+        }
+
+        // Must be a predicate call: (pred? x)
+        if (cond.children.size() == 2) {
+            auto arg_id = cond.child(1);
+            auto arg = flat.get(arg_id);
+            if (arg.tag == NodeTag::Variable) {
+                auto var_name = pool.resolve(arg.sym_id);
+                if (fn_name == "string?")
+                    return OccurrenceInfoFlat{std::string(var_name), reg.string_type()};
+                else if (fn_name == "number?")
+                    return OccurrenceInfoFlat{std::string(var_name), reg.int_type()};
+                else if (fn_name == "boolean?")
+                    return OccurrenceInfoFlat{std::string(var_name), reg.bool_type()};
+                else if (fn_name == "null?")
+                    return OccurrenceInfoFlat{std::string(var_name), reg.void_type()};
+                else if (fn_name == "pair?")
+                    return OccurrenceInfoFlat{std::string(var_name), reg.dynamic_type()};
+                else if (fn_name == "procedure?")
+                    return OccurrenceInfoFlat{std::string(var_name), reg.dynamic_type()};
+            }
+        }
+    }
+
+    return std::nullopt;
+}
+
+TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id) {
+    if (id == NULL_NODE || id >= flat.size()) return reg_.dynamic_type();
+    cs_.clear();
+    auto result = synthesize_flat(flat, pool, id, flat.get(id));
+    if (!cs_.solve()) {
+        diag_.report(Diagnostic(ErrorKind::TypeError, "type constraint solving failed", cur_loc_));
+    }
+    return result;
+}
+
+TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId /*id*/, NodeView v) {
+    cur_loc_ = {v.line, v.col, 0};
+
+    using Tag = NodeTag;
+    switch (v.tag) {
+    case Tag::LiteralInt:
+        return reg_.int_type();
+    case Tag::LiteralString:
+        return reg_.string_type();
+    case Tag::Variable:
+        return synthesize_flat_var(pool, v);
+    case Tag::Call:
+        return synthesize_flat_call(flat, pool, v);
+    case Tag::IfExpr:
+        return synthesize_flat_if(flat, pool, v);
+    case Tag::Lambda:
+        return synthesize_flat_lambda(flat, pool, v);
+    case Tag::Let:
+        return synthesize_flat_let(flat, pool, v, false);
+    case Tag::LetRec:
+        return synthesize_flat_let(flat, pool, v, true);
+    case Tag::Begin:
+        return synthesize_flat_begin(flat, pool, v);
+    case Tag::TypeAnnotation:
+        return synthesize_flat_annotation(flat, pool, v);
+    case Tag::Coercion:
+        return synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
+    case Tag::Define:
+        return reg_.void_type();
+    case Tag::Set:
+        return reg_.void_type();
+    case Tag::Quote:
+        return reg_.dynamic_type();
+    default:
+        return reg_.dynamic_type();
+    }
+}
+
+TypeId InferenceEngine::synthesize_flat_var(StringPool& pool, NodeView v) {
+    auto name = pool.resolve(v.sym_id);
+    if (name.empty()) {
+        diag_.report(Diagnostic(ErrorKind::UnboundVariable, "unbound variable", cur_loc_));
+        return reg_.dynamic_type();
+    }
+    std::string var_name(name);
+    auto ty = env_.lookup(var_name);
+    if (!ty.valid()) {
+        diag_.report(Diagnostic(ErrorKind::UnboundVariable,
+            "unbound variable: " + var_name, cur_loc_));
+        return reg_.dynamic_type();
+    }
+    return ty;
+}
+
+TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, NodeView v) {
+    // v.child(0) = function, v.child(1..n) = args
+    if (v.children.empty()) return reg_.dynamic_type();
+
+    auto func_id = v.child(0);
+    TypeId func_type = synthesize_flat(flat, pool, func_id, flat.get(func_id));
+    auto* f_ty = reg_.func_of(func_type);
+
+    if (f_ty) {
+        auto saved_loc = cur_loc_;
+        std::size_t n_expected = std::min(f_ty->args.size(),
+            v.children.size() > 1 ? v.children.size() - 1 : 0);
+        for (std::size_t i = 0; i < n_expected; i++) {
+            auto arg_id = v.child(i + 1);
+            TypeId arg_type = synthesize_flat(flat, pool, arg_id, flat.get(arg_id));
+            if (!cs_.consistent_unify(arg_type, f_ty->args[i])) {
+                if (is_coercible(arg_type, f_ty->args[i])) {
+                    auto msg = std::string("argument ")
+                             + std::to_string(i)
+                             + ": coercion from "
+                             + std::string(reg_.format_type(arg_type))
+                             + " to " + std::string(reg_.format_type(f_ty->args[i]));
+                    diag_.report(Diagnostic(ErrorKind::Note, std::move(msg), saved_loc));
+                } else {
+                    auto msg = std::string("argument ")
+                             + std::to_string(i)
+                             + ": expected " + std::string(reg_.format_type(f_ty->args[i]))
+                             + ", got " + std::string(reg_.format_type(arg_type));
+                    diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg), saved_loc));
+                }
+            }
+        }
+        std::size_t num_args = v.children.size() > 1 ? v.children.size() - 1 : 0;
+        if (num_args != f_ty->args.size() && !f_ty->args.empty()) {
+            auto msg = "call: expected " + std::to_string(f_ty->args.size())
+                     + " arguments, got " + std::to_string(num_args);
+            diag_.report(Diagnostic(ErrorKind::ArityMismatch, std::move(msg), cur_loc_));
+        }
+        return f_ty->ret;
+    }
+
+    // Unknown function type: check args dynamically
+    for (std::size_t i = 1; i < v.children.size(); i++)
+        synthesize_flat(flat, pool, v.child(i), flat.get(v.child(i)));
+    return reg_.dynamic_type();
+}
+
+TypeId InferenceEngine::synthesize_flat_lambda(FlatAST& flat, StringPool& pool, NodeView v) {
+    // body = v.child(0), params = v.params (span of SymId)
+    env_.push_scope();
+    std::vector<TypeId> param_types;
+    for (auto sym : v.params) {
+        auto tv = cs_.fresh_var();
+        param_types.push_back(tv);
+        std::string pname(pool.resolve(sym));
+        env_.bind(pname, tv);
+    }
+    TypeId body_type = reg_.void_type();
+    if (!v.children.empty()) {
+        auto body_id = v.child(0);
+        body_type = synthesize_flat(flat, pool, body_id, flat.get(body_id));
+    }
+    env_.pop_scope();
+    return reg_.register_func(std::move(param_types), body_type);
+}
+
+TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, NodeView v) {
+    // children: 0=condition, 1=then_branch, 2=else_branch (can be NULL_NODE)
+    if (v.children.empty()) return reg_.void_type();
+
+    auto cond_id = v.child(0);
+    check_flat(flat, pool, cond_id, reg_.bool_type());
+
+    if (v.children.size() < 2) return reg_.void_type();
+    auto then_id = v.child(1);
+    if (then_id == NULL_NODE) return reg_.void_type();
+
+    // Occurrence typing: analyze condition for type predicates
+    auto occ = analyze_predicate_flat(flat, pool, cond_id, reg_);
+
+    if (occ && !occ->is_negation) {
+        // Then-branch: variable has refined type
+        env_.push_scope();
+        if (env_.is_bound(occ->var_name))
+            env_.bind(occ->var_name, occ->refined_type);
+        TypeId then_type = synthesize_flat(flat, pool, then_id, flat.get(then_id));
+        env_.pop_scope();
+
+        // Else-branch: no refinement (keeps original type)
+        TypeId else_type = reg_.void_type();
+        if (v.children.size() >= 3 && v.child(2) != NULL_NODE)
+            else_type = synthesize_flat(flat, pool, v.child(2), flat.get(v.child(2)));
+        return lub(then_type, else_type);
+    }
+
+    if (occ && occ->is_negation) {
+        // Then-branch: no refinement
+        TypeId then_type = synthesize_flat(flat, pool, then_id, flat.get(then_id));
+
+        // Else-branch: variable has refined type
+        TypeId else_type = reg_.void_type();
+        env_.push_scope();
+        if (env_.is_bound(occ->var_name))
+            env_.bind(occ->var_name, occ->refined_type);
+        if (v.children.size() >= 3 && v.child(2) != NULL_NODE)
+            else_type = synthesize_flat(flat, pool, v.child(2), flat.get(v.child(2)));
+        env_.pop_scope();
+        return lub(then_type, else_type);
+    }
+
+    // No predicate found: standard if typing
+    TypeId then_type = synthesize_flat(flat, pool, then_id, flat.get(then_id));
+    TypeId else_type = reg_.void_type();
+    if (v.children.size() >= 3 && v.child(2) != NULL_NODE)
+        else_type = synthesize_flat(flat, pool, v.child(2), flat.get(v.child(2)));
+    return lub(then_type, else_type);
+}
+
+TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool, NodeView v, bool is_rec) {
+    // children: 0=value, 1=body, name from v.sym_id
+    // If is_rec, the binding is visible in the value expression too
+    auto name = pool.resolve(v.sym_id);
+    std::string var_name(name);
+
+    if (is_rec) {
+        // Forward reference pattern
+        env_.push_scope();
+        TypeId val_type = cs_.fresh_var();
+        env_.bind(var_name, val_type);
+        env_.pop_scope();
+
+        env_.push_scope();
+        TypeId actual_val_type = reg_.void_type();
+        if (!v.children.empty() && v.child(0) != NULL_NODE)
+            actual_val_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
+        env_.bind(var_name, actual_val_type);
+        TypeId body_type = reg_.void_type();
+        if (v.children.size() >= 2 && v.child(1) != NULL_NODE)
+            body_type = synthesize_flat(flat, pool, v.child(1), flat.get(v.child(1)));
+        env_.pop_scope();
+        return body_type;
+    }
+
+    env_.push_scope();
+    TypeId val_type = reg_.void_type();
+    if (!v.children.empty() && v.child(0) != NULL_NODE)
+        val_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
+    env_.bind(var_name, val_type);
+    TypeId body_type = reg_.void_type();
+    if (v.children.size() >= 2 && v.child(1) != NULL_NODE)
+        body_type = synthesize_flat(flat, pool, v.child(1), flat.get(v.child(1)));
+    env_.pop_scope();
+    return body_type;
+}
+
+TypeId InferenceEngine::synthesize_flat_begin(FlatAST& flat, StringPool& pool, NodeView v) {
+    if (v.children.empty()) return reg_.void_type();
+    TypeId last = reg_.void_type();
+    for (auto child_id : v.children)
+        last = synthesize_flat(flat, pool, child_id, flat.get(child_id));
+    return last;
+}
+
+TypeId InferenceEngine::synthesize_flat_annotation(FlatAST& flat, StringPool& pool, NodeView v) {
+    // child(0) = inner_expr, sym_id = type name string
+    if (v.children.empty()) return reg_.dynamic_type();
+    auto inner_id = v.child(0);
+    TypeId inner_type = synthesize_flat(flat, pool, inner_id, flat.get(inner_id));
+
+    auto type_name = pool.resolve(v.sym_id);
+    if (!type_name.empty()) {
+        auto expected = reg_.lookup_type(std::string(type_name));
+        if (!expected.valid()) {
+            diag_.report(Diagnostic(ErrorKind::TypeError,
+                "unknown type: " + std::string(type_name), cur_loc_));
+        } else {
+            check_flat(flat, pool, inner_id, expected);
+        }
+    }
+    return inner_type;
+}
+
+void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, TypeId expected) {
+    if (id == NULL_NODE || id >= flat.size()) return;
+    auto v = flat.get(id);
+    cur_loc_ = {v.line, v.col, 0};
+
+    if (v.tag == NodeTag::Call)
+        check_flat_call(flat, pool, v, expected);
+    else if (v.tag == NodeTag::Lambda)
+        check_flat_lambda(flat, pool, v, expected);
+    else {
+        TypeId inferred = synthesize_flat(flat, pool, id, v);
+        if (!cs_.consistent_unify(inferred, expected)) {
+            if (is_coercible(inferred, expected)) {
+                auto msg = "coercion from "
+                         + std::string(reg_.format_type(inferred))
+                         + " to " + std::string(reg_.format_type(expected));
+                diag_.report(Diagnostic(ErrorKind::Note, std::move(msg), cur_loc_));
+            } else {
+                auto msg = "type mismatch: expected "
+                         + std::string(reg_.format_type(expected))
+                         + ", got " + std::string(reg_.format_type(inferred));
+                diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg), cur_loc_));
+            }
+        }
+    }
+}
+
+void InferenceEngine::check_flat_call(FlatAST& flat, StringPool& pool, NodeView v, TypeId expected) {
+    // Synthesize the call's type normally, then check against expected
+    TypeId inferred = synthesize_flat_call(flat, pool, v);
+    if (!cs_.consistent_unify(inferred, expected)) {
+        if (is_coercible(inferred, expected)) {
+            auto msg = "call return type: coercion from "
+                     + std::string(reg_.format_type(inferred))
+                     + " to " + std::string(reg_.format_type(expected));
+            diag_.report(Diagnostic(ErrorKind::Note, std::move(msg), cur_loc_));
+        } else {
+            auto msg = "call return type mismatch: expected "
+                     + std::string(reg_.format_type(expected))
+                     + ", got " + std::string(reg_.format_type(inferred));
+            diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg), cur_loc_));
+        }
+    }
+}
+
+void InferenceEngine::check_flat_lambda(FlatAST& flat, StringPool& pool, NodeView v, TypeId expected) {
+    auto* f_ty = reg_.func_of(expected);
+    if (!f_ty) {
+        diag_.report(Diagnostic(ErrorKind::TypeError,
+            "expected a function type but got "
+            + std::string(reg_.format_type(expected)), cur_loc_));
+        return;
+    }
+    if (f_ty->args.size() != v.params.size()) {
+        diag_.report(Diagnostic(ErrorKind::ArityMismatch,
+            "lambda expects " + std::to_string(v.params.size())
+            + " parameters but context provides "
+            + std::to_string(f_ty->args.size()), cur_loc_));
+        return;
+    }
+    env_.push_scope();
+    for (std::size_t i = 0; i < v.params.size(); ++i) {
+        std::string pname(pool.resolve(v.params[i]));
+        env_.bind(pname, f_ty->args[i]);
+    }
+    if (!v.children.empty() && v.child(0) != NULL_NODE)
+        check_flat(flat, pool, v.child(0), f_ty->ret);
+    env_.pop_scope();
+}
+
+// ═══════════════════════════════════════════════════════════
 // TypeChecker — Public API
 // ═══════════════════════════════════════════════════════════
 
-TypeId TypeChecker::infer(Expr* expr, DiagnosticCollector& diag) {
+TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node, DiagnosticCollector& diag) {
     InferenceEngine engine(types, diag);
-    return engine.infer(expr);
+    return engine.infer_flat(flat, pool, node);
 }
 
 } // namespace aura::compiler
