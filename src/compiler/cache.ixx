@@ -68,6 +68,7 @@ private:
     const NodeId* type_ids_ = nullptr;
     const std::uint32_t*  lines_ = nullptr;
     const std::uint32_t*  cols_ = nullptr;
+    const std::uint8_t*   markers_ = nullptr;
 
     // String pool pointers (from string_offset)
     // Layout: [num_strings:u32, offsets[num_strings]:u32, [len:u32,data:char[]]...]

@@ -12,6 +12,12 @@ export constexpr SymId INVALID_SYM = ~0u;
 
 // ── Source location ──────────────────────────────────────────
 export struct SourceLocation { std::uint32_t line = 0, column = 0, file = 0; };
+// ── Syntax marker (Trees-That-Grow / hygienic macros) ──────
+export enum class SyntaxMarker : std::uint8_t {
+    User = 0,
+    MacroIntroduced = 1,
+};
+
 
 // ── Phase tag (Trees-That-Grow) ──────────────────────────────
 export struct ParsedPhase { static constexpr std::uint32_t id = 0; };
@@ -202,6 +208,7 @@ export struct NodeView {
     std::uint32_t col = 0;
     std::span<const NodeId> children;
     std::span<const SymId> params;
+    SyntaxMarker marker = SyntaxMarker::User;
 
     bool has_int()   const { return tag == NodeTag::LiteralInt; }
     bool has_name()  const { return sym_id != INVALID_SYM; }
@@ -218,7 +225,7 @@ export struct Patch {
 // ── FlatAST — SoA flat index-based AST ─────────────────────────
 export class FlatAST {
 private:
-    NodeId add_node(NodeTag tag) {
+    NodeId add_node(NodeTag tag, SyntaxMarker m = SyntaxMarker::User) {
         auto id = static_cast<NodeId>(tag_.size());
         tag_.push_back(tag);
         int_val_.push_back(0);
@@ -229,6 +236,7 @@ private:
         param_count_.push_back(0);
         line_.push_back(0);
         col_.push_back(0);
+        marker_.push_back(m);
         type_id_.push_back(0);
         return id;
     }
@@ -247,6 +255,7 @@ private:
     std::pmr::vector<std::uint32_t> line_;
     std::pmr::vector<std::uint32_t> col_;
     // Type information (L6.5+): type_id per node, 0 = DYNAMIC
+    std::pmr::vector<SyntaxMarker> marker_;
     std::pmr::vector<std::uint32_t> type_id_;
 
 public:
@@ -419,6 +428,7 @@ public:
                                   child_count_[id]),
             .params   = std::span(param_data_.data() + param_begin_[id],
                                   param_count_[id]),
+            .marker   = id < marker_.size() ? marker_[id] : SyntaxMarker::User,
         };
     }
 
