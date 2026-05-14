@@ -322,6 +322,26 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
+    // ── --unparse: parse and output S-expression source code ─────
+    if (argc > 1 && std::string_view(argv[1]) == "--unparse") {
+        aura::compiler::CompilerService cs;
+        std::string input;
+        if (argc > 2) { input = argv[2]; }
+        else { std::getline(std::cin, input); }
+
+        auto alloc = cs.arena().allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat(input, flat, pool);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+            std::println(std::cerr, "parse error");
+            return 1;
+        }
+        flat.root = pr.root;
+        std::println("{}", aura::compiler::unparse_node(flat, pool, flat.root));
+        return 0;
+    }
+
     // ── --strategy: set eval strategy before executing ─────────────
     // Usage: echo '(let ...)' | ./aura --strategy 'max_unroll=5' --ir
     if (argc > 1 && std::string_view(argv[1]) == "--strategy") {

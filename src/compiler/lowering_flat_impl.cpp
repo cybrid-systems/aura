@@ -575,4 +575,137 @@ Expr* reconstruct_expr(FlatAST& flat, StringPool& pool, ASTArena& arena) {
     return reconstruct_node(flat.root, flat, pool, arena);
 }
 
+// ── unparse_node — FlatAST → S-expression source ───────────────
+std::string unparse_node(const FlatAST& flat, const StringPool& pool,
+                           NodeId id, int indent) {
+    if (id == NULL_NODE || id >= flat.size()) return "()";
+    auto v = flat.get(id);
+    auto indent_str = [](int d) { return std::string(static_cast<std::size_t>(d * 2), ' '); };
+
+    switch (v.tag) {
+    case NodeTag::LiteralInt:
+        return std::to_string(v.int_value);
+
+    case NodeTag::LiteralString: {
+        auto s = pool.resolve(v.sym_id);
+        std::string out = "\"";
+        for (char c : s) {
+            if (c == '"') out += "\\\"";
+            else if (c == '\\') out += "\\\\";
+            else if (c == '\n') out += "\\n";
+            else out += c;
+        }
+        return out + "\"";
+    }
+
+    case NodeTag::Variable:
+        return std::string(pool.resolve(v.sym_id));
+
+    case NodeTag::Call: {
+        // Check: is this a lambda application? ((lambda ...) ...)
+        // Format: (func arg1 arg2 ...)
+        auto callee = v.child(0);
+        std::string s = "(";
+        s += unparse_node(flat, pool, callee, indent + 1);
+
+        for (std::size_t i = 1; i < v.children.size(); ++i) {
+            auto arg_str = unparse_node(flat, pool, v.child(i), indent + 1);
+            // If arg is multiline or makes total line too long, use newline
+            bool long_arg = arg_str.size() > 40 ||
+                (s.size() + arg_str.size() + 2 > 80 && s.size() > 20);
+            if (long_arg) {
+                s += "\n" + indent_str(indent + 1) + arg_str;
+            } else {
+                s += " " + arg_str;
+            }
+        }
+        s += ")";
+        return s;
+    }
+
+    case NodeTag::IfExpr: {
+        std::string s = "(if ";
+        s += unparse_node(flat, pool, v.child(0), indent + 1);
+        auto then_str = unparse_node(flat, pool, v.child(1), indent + 1);
+        auto else_str = unparse_node(flat, pool, v.child(2), indent + 1);
+        if (then_str.size() + else_str.size() > 40) {
+            s += "\n" + indent_str(indent + 1) + then_str;
+            s += "\n" + indent_str(indent + 1) + else_str;
+        } else {
+            s += " " + then_str + " " + else_str;
+        }
+        s += ")";
+        return s;
+    }
+
+    case NodeTag::Lambda: {
+        std::string s = "(lambda (";
+        for (std::size_t i = 0; i < v.params.size(); ++i) {
+            if (i > 0) s += " ";
+            s += pool.resolve(v.params[i]);
+        }
+        s += ")\n" + indent_str(indent + 1);
+        s += unparse_node(flat, pool, v.child(0), indent + 1);
+        s += ")";
+        return s;
+    }
+
+    case NodeTag::Let:
+    case NodeTag::LetRec: {
+        std::string kw = (v.tag == NodeTag::LetRec) ? "letrec" : "let";
+        std::string s = "(" + kw + " ((";
+        s += pool.resolve(v.sym_id);
+        s += " ";
+        s += unparse_node(flat, pool, v.child(0), indent + 1);
+        s += "))\n" + indent_str(indent + 1);
+        s += unparse_node(flat, pool, v.child(1), indent + 1);
+        s += ")";
+        return s;
+    }
+
+    case NodeTag::Define: {
+        std::string s = "(define ";
+        s += pool.resolve(v.sym_id);
+        auto val_str = unparse_node(flat, pool, v.child(0), indent + 1);
+        if (val_str.size() > 30) {
+            s += "\n" + indent_str(indent + 1) + val_str;
+        } else {
+            s += " " + val_str;
+        }
+        s += ")";
+        return s;
+    }
+
+    case NodeTag::Begin: {
+        std::string s = "(begin";
+        for (std::size_t i = 0; i < v.children.size(); ++i) {
+            s += "\n" + indent_str(indent + 1);
+            s += unparse_node(flat, pool, v.child(i), indent + 1);
+        }
+        return s + ")";
+    }
+
+    case NodeTag::Set: {
+        return "(set! " + std::string(pool.resolve(v.sym_id)) + " "
+             + unparse_node(flat, pool, v.child(0), indent + 1) + ")";
+    }
+
+    case NodeTag::Quote: {
+        return "(quote " + unparse_node(flat, pool, v.child(0), indent + 1) + ")";
+    }
+
+    case NodeTag::TypeAnnotation: {
+        return "(the " + std::string(pool.resolve(v.sym_id)) + " "
+             + unparse_node(flat, pool, v.child(0), indent + 1) + ")";
+    }
+
+    case NodeTag::Coercion: {
+        return "(coerce " + unparse_node(flat, pool, v.child(0), indent + 1) + ")";
+    }
+
+    default:
+        return "()";
+    }
+}
+
 } // namespace aura::compiler
