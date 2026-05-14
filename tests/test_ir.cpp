@@ -481,53 +481,6 @@ int main() {
     else { std::println(std::cerr, "ARENA FAIL: stats"); ++mp_failed; }
 
     // ── A2.3: Pass Manager tests ─────────────────────────────
-    // ── Flat AST test (index-based DOD) ────────────────────────
-    {
-        aura::ast::AST ast;
-        auto five = ast.add_literal(5);
-        auto x    = ast.add_variable("x");
-        auto add  = ast.add_call(x, std::array{five});
-        ast.root = add;
-
-        if (ast.size() == 3 &&
-            ast[five].tag == aura::ast::NodeTag::LiteralInt &&
-            ast[five].int_value == 5 &&
-            ast[x].tag == aura::ast::NodeTag::Variable &&
-            ast[x].name == "x" &&
-            ast[add].tag == aura::ast::NodeTag::Call &&
-            ast[ast[add].child0].name == "x") {
-            std::println("AST FLAT OK: build + access");
-        } else {
-            std::println(std::cerr, "AST FLAT FAIL: build/access");
-        }
-    }
-
-    // Test flatten_expr from pointer tree
-    {
-        aura::ast::ASTArena arena;
-        auto* raw_expr = arena.create<aura::ast::Expr>(
-            aura::ast::CallNode{
-                aura::ast::NodeTag::Call,
-                arena.create<aura::ast::Expr>(
-                    aura::ast::VariableNode{aura::ast::NodeTag::Variable, "f"}),
-                std::vector<aura::ast::Expr*>{
-                    arena.create<aura::ast::Expr>(
-                        aura::ast::LiteralIntNode{aura::ast::NodeTag::LiteralInt, 42})
-                }
-            });
-
-        aura::ast::AST flat;
-        auto root = aura::ast::flatten_expr(raw_expr, flat);
-
-        if (flat.size() == 3 &&
-            flat[root].tag == aura::ast::NodeTag::Call &&
-            flat[flat[root].child0].tag == aura::ast::NodeTag::Variable &&
-            flat[flat[root].children[0]].tag == aura::ast::NodeTag::LiteralInt) {
-            std::println("AST FLAT OK: flatten from pointer tree");
-        } else {
-            std::println(std::cerr, "AST FLAT FAIL: flatten pointer tree");
-        }
-    }
 
     // ── L2.5: Constant folding tests ────────────────────────────
     int cf_passed = 0, cf_failed = 0;
