@@ -9,6 +9,7 @@ import aura.compiler.evaluator;
 import aura.compiler.value;
 import aura.core.type;
 import aura.parser.parser;
+import aura.compiler.ir;
 import aura.compiler.cache;
 
 // Format helper: format EvalValue with access to string heap
@@ -522,10 +523,44 @@ int main(int argc, char* argv[]) {
                              fn.id, fn.name, fn.blocks.size(),
                              fn.params.size(), fn.local_count, fn.arg_count);
             }
+            // Build IRModule from cached functions
+            aura::ir::IRModule cached_mod;
+            for (auto& fn : mc.ir_functions())
+                cached_mod.add_function(fn);
+            cached_mod.set_entry(mc.ir_entry());
+            cached_mod.string_pool.assign(mc.ir_strings().begin(), mc.ir_strings().end());
+
+            // Run passes
+            aura::compiler::ComputeKindWrap ck;
+            aura::compiler::ArityWrap ar;
+            aura::compiler::ConstantFoldingWrap cf;
+            std::println(std::cerr, "PM: running {}->{}->{}", ck.name(), ar.name(), cf.name());
+            ck.run(cached_mod);
+            ar.run(cached_mod);
+            cf.run(cached_mod);
+
+            if (ar.has_error()) {
+                std::println(std::cerr, "arity check failed from cache");
+                return 1;
+            }
+
+            if (cf.folded_count() > 0)
+                std::println(std::cerr, "PM: folded {} instructions", cf.folded_count());
+
+            // Execute
+            aura::compiler::CompilerService cs_tmp;
+            aura::compiler::IRInterpreter interp(cached_mod, cs_tmp.evaluator().primitives());
+            auto result = interp.execute();
+            if (!result) {
+                std::println(std::cerr, "error: {}", result.error().message);
+                return 1;
+            }
+            std::println("{}", fmt_val(*result, cs_tmp));
+            return 0;
         } else {
-            std::println("IR cache: not present");
+            std::println("no IR cache available \u2014 use --cache instead");
+            return 1;
         }
-        return 0;
     }
 
     // ── --strategy: set eval strategy before executing ─────────────

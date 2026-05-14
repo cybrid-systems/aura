@@ -239,6 +239,7 @@ void InferenceEngine::init_primitive_env() {
     // Misc
     register_primitive("read",      {}, String);
     register_primitive("read-file", {String}, String);
+    register_primitive("load-module", {String}, Dyn);
     register_primitive("write-file",{String, String}, Void);
     register_primitive("file-exists?", {String}, Int);
     register_primitive("gensym",    {}, String);

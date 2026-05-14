@@ -4,6 +4,7 @@ module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
 import aura.compiler.value;
+import aura.parser.parser;
 
 namespace aura::compiler {
 
@@ -652,6 +653,33 @@ void Evaluator::init_pair_primitives() {
         auto& path = string_heap_[idx];
         std::ifstream f(path);
         return make_int(f.good() ? 1 : 0);
+    });
+
+    primitives_.add("load-module", [this](const auto& a) {
+        if (a.empty() || !is_string(a[0])) return make_void();
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size()) return make_void();
+        auto& path = string_heap_[idx];
+
+        // Read file content
+        std::ifstream f(path);
+        if (!f) return make_void();
+        std::string content((std::istreambuf_iterator<char>(f)), {});
+        if (content.empty()) return make_void();
+
+        // Parse in arena
+        if (!arena_) return make_void();
+        auto alloc = arena_->allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat(content, flat, pool);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) return make_void();
+        flat.root = pr.root;
+
+        // Evaluate in current top env
+        auto result = eval_flat(flat, pool, flat.root, top_env());
+        if (!result) return make_void();
+        return *result;
     });
 }
 
