@@ -1,0 +1,5 @@
+$root .
+aura.compiler.query CMakeFiles/aura.dir/aura.compiler.query.gcm
+aura.core CMakeFiles/aura.dir/aura.core.gcm
+std CMakeFiles/__cmake_cxx_std_26.dir/std.gcm
+aura.diag CMakeFiles/aura.dir/aura.diag.gcm

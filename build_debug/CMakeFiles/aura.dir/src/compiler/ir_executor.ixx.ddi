@@ -1,0 +1,40 @@
+{
+"rules": [
+{
+"primary-output": "CMakeFiles/aura.dir/src/compiler/ir_executor.ixx.o",
+"provides": [
+{
+"logical-name": "aura.compiler.ir_executor",
+"is-interface": true
+}
+],
+"requires": [
+{
+"logical-name": "aura.diag"
+}
+,
+{
+"logical-name": "aura.compiler.value"
+}
+,
+{
+"logical-name": "aura.compiler.evaluator"
+}
+,
+{
+"logical-name": "aura.core"
+}
+,
+{
+"logical-name": "std"
+}
+,
+{
+"logical-name": "aura.compiler.ir"
+}
+]
+}
+],
+"version": 0,
+"revision": 0
+}

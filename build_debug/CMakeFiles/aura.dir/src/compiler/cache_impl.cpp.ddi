@@ -1,0 +1,14 @@
+{
+"rules": [
+{
+"primary-output": "CMakeFiles/aura.dir/src/compiler/cache_impl.cpp.o",
+"requires": [
+{
+"logical-name": "aura.compiler.cache"
+}
+]
+}
+],
+"version": 0,
+"revision": 0
+}

@@ -1,0 +1,7 @@
+ninja_dyndep_version = 1.0
+build CMakeFiles/__cmake_cxx_std_26.dir/usr/local/include/c++/16.1.0/bits/std.cc.o | CMakeFiles/__cmake_cxx_std_26.dir/std.gcm: dyndep
+  restat = 1
+
+build CMakeFiles/__cmake_cxx_std_26.dir/usr/local/include/c++/16.1.0/bits/std.compat.cc.o | CMakeFiles/__cmake_cxx_std_26.dir/std.compat.gcm: dyndep | CMakeFiles/__cmake_cxx_std_26.dir/std.gcm
+  restat = 1
+

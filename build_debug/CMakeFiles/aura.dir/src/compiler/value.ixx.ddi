@@ -1,0 +1,20 @@
+{
+"rules": [
+{
+"primary-output": "CMakeFiles/aura.dir/src/compiler/value.ixx.o",
+"provides": [
+{
+"logical-name": "aura.compiler.value",
+"is-interface": true
+}
+],
+"requires": [
+{
+"logical-name": "std"
+}
+]
+}
+],
+"version": 0,
+"revision": 0
+}

@@ -1,0 +1,30 @@
+{
+"rules": [
+{
+"primary-output": "CMakeFiles/aura.dir/src/compiler/evaluator_impl.cpp.o",
+"requires": [
+{
+"logical-name": "aura.parser.parser"
+}
+,
+{
+"logical-name": "aura.compiler.evaluator"
+}
+,
+{
+"logical-name": "std"
+}
+,
+{
+"logical-name": "aura.compiler.value"
+}
+,
+{
+"logical-name": "aura.core.ast"
+}
+]
+}
+],
+"version": 0,
+"revision": 0
+}

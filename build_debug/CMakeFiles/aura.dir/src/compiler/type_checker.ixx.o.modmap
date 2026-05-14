@@ -1,0 +1,6 @@
+$root .
+aura.compiler.type_checker CMakeFiles/aura.dir/aura.compiler.type_checker.gcm
+aura.diag CMakeFiles/aura.dir/aura.diag.gcm
+aura.core CMakeFiles/aura.dir/aura.core.gcm
+std CMakeFiles/__cmake_cxx_std_26.dir/std.gcm
+aura.core.type CMakeFiles/aura.dir/aura.core.type.gcm

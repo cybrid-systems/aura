@@ -1,0 +1,30 @@
+{
+	"bmi-installation" : null,
+	"compiler-frontend-variant" : "GNU",
+	"compiler-id" : "GNU",
+	"compiler-simulate-id" : "",
+	"config" : "Debug",
+	"cxx-modules" : {},
+	"database-info" : null,
+	"dir-cur-bld" : "/home/dev/code/aura/build_debug",
+	"dir-cur-src" : "/home/dev/code/aura",
+	"dir-top-bld" : "/home/dev/code/aura/build_debug",
+	"dir-top-src" : "/home/dev/code/aura",
+	"exports" : [],
+	"forward-modules-from-target-dirs" : [],
+	"include-dirs" : 
+	[
+		"/home/dev/code/aura"
+	],
+	"language" : "CXX",
+	"linked-target-dirs" : [],
+	"module-dir" : "/home/dev/code/aura/build_debug/CMakeFiles/validate-node-layout.dir",
+	"sources" : 
+	{
+		"CMakeFiles/validate-node-layout.dir/tests/validate_node_layout.cpp.o" : 
+		{
+			"language" : "CXX",
+			"source" : "/home/dev/code/aura/tests/validate_node_layout.cpp"
+		}
+	}
+}

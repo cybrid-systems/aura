@@ -1,0 +1,24 @@
+{
+"rules": [
+{
+"primary-output": "CMakeFiles/aura.dir/src/compiler/compute_kind.ixx.o",
+"provides": [
+{
+"logical-name": "aura.compiler.compute_kind",
+"is-interface": true
+}
+],
+"requires": [
+{
+"logical-name": "aura.compiler.ir"
+}
+,
+{
+"logical-name": "std"
+}
+]
+}
+],
+"version": 0,
+"revision": 0
+}

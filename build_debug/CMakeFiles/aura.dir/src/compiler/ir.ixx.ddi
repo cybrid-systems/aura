@@ -1,0 +1,24 @@
+{
+"rules": [
+{
+"primary-output": "CMakeFiles/aura.dir/src/compiler/ir.ixx.o",
+"provides": [
+{
+"logical-name": "aura.compiler.ir",
+"is-interface": true
+}
+],
+"requires": [
+{
+"logical-name": "aura.core"
+}
+,
+{
+"logical-name": "std"
+}
+]
+}
+],
+"version": 0,
+"revision": 0
+}

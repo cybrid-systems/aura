@@ -1,0 +1,32 @@
+{
+"rules": [
+{
+"primary-output": "CMakeFiles/aura.dir/src/compiler/pass_manager.ixx.o",
+"provides": [
+{
+"logical-name": "aura.compiler.pass_manager",
+"is-interface": true
+}
+],
+"requires": [
+{
+"logical-name": "aura.compiler.ir"
+}
+,
+{
+"logical-name": "aura.compiler.arity"
+}
+,
+{
+"logical-name": "aura.compiler.compute_kind"
+}
+,
+{
+"logical-name": "std"
+}
+]
+}
+],
+"version": 0,
+"revision": 0
+}

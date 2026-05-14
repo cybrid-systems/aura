@@ -1,0 +1,32 @@
+{
+"rules": [
+{
+"primary-output": "CMakeFiles/aura.dir/src/compiler/type_checker.ixx.o",
+"provides": [
+{
+"logical-name": "aura.compiler.type_checker",
+"is-interface": true
+}
+],
+"requires": [
+{
+"logical-name": "aura.diag"
+}
+,
+{
+"logical-name": "aura.core"
+}
+,
+{
+"logical-name": "aura.core.type"
+}
+,
+{
+"logical-name": "std"
+}
+]
+}
+],
+"version": 0,
+"revision": 0
+}
