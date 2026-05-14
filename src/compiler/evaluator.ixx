@@ -1,4 +1,4 @@
-export module aura.compiler.frontend;
+export module aura.compiler.evaluator;
 import std;
 import aura.core;
 import aura.core.ast_flat;

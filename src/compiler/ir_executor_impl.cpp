@@ -1,4 +1,4 @@
-module aura.compiler.ir_interpreter;
+module aura.compiler.ir_executor;
 import std;
 import aura.compiler.types;
 
