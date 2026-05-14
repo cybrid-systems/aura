@@ -17,17 +17,19 @@ static Expr* reconstruct_node(NodeId id, const FlatAST& flat,
     if (id == NULL_NODE || id >= flat.size()) return nullptr;
     auto v = flat.get(id);
 
+    auto make_expr = [&](auto&& nc) -> Expr* { auto* e = arena.create<Expr>(std::move(nc)); e->loc = {v.line, v.col, 0}; return e; };
+
     switch (v.tag) {
     case NodeTag::LiteralString: {
         auto name = pool.resolve(v.sym_id);
-        return arena.create<Expr>(ast::LiteralStringNode{v.tag, std::string(name)});
+        return make_expr(ast::LiteralStringNode{v.tag, std::string(name)});
     }
     case NodeTag::LiteralInt:
-        return arena.create<Expr>(LiteralIntNode{v.tag, v.int_value});
+        return make_expr(LiteralIntNode{v.tag, v.int_value});
 
     case NodeTag::Variable: {
         auto name = pool.resolve(v.sym_id);
-        return arena.create<Expr>(VariableNode{v.tag, std::string(name)});
+        return make_expr(VariableNode{v.tag, std::string(name)});
     }
 
     case NodeTag::Call: {
@@ -35,14 +37,14 @@ static Expr* reconstruct_node(NodeId id, const FlatAST& flat,
         std::vector<Expr*> args;
         for (std::size_t i = 1; i < v.children.size(); ++i)
             args.push_back(reconstruct_node(v.child(i), flat, pool, arena));
-        return arena.create<Expr>(CallNode{v.tag, func, std::move(args)});
+        return make_expr(CallNode{v.tag, func, std::move(args)});
     }
 
     case NodeTag::IfExpr: {
         auto* cond = reconstruct_node(v.child(0), flat, pool, arena);
         auto* then_b = reconstruct_node(v.child(1), flat, pool, arena);
         auto* else_b = reconstruct_node(v.child(2), flat, pool, arena);
-        return arena.create<Expr>(IfExprNode{v.tag, cond, then_b, else_b});
+        return make_expr(IfExprNode{v.tag, cond, then_b, else_b});
     }
 
     case NodeTag::Lambda: {
@@ -50,27 +52,27 @@ static Expr* reconstruct_node(NodeId id, const FlatAST& flat,
         for (auto pid : v.params)
             param_names.push_back(std::string(pool.resolve(pid)));
         auto* body = reconstruct_node(v.child(0), flat, pool, arena);
-        return arena.create<Expr>(LambdaNode{v.tag, std::move(param_names), body});
+        return make_expr(LambdaNode{v.tag, std::move(param_names), body});
     }
 
     case NodeTag::Let: {
         auto name = pool.resolve(v.sym_id);
         auto* val = reconstruct_node(v.child(0), flat, pool, arena);
         auto* body = reconstruct_node(v.child(1), flat, pool, arena);
-        return arena.create<Expr>(LetNode{v.tag, std::string(name), val, body});
+        return make_expr(LetNode{v.tag, std::string(name), val, body});
     }
 
     case NodeTag::LetRec: {
         auto name = pool.resolve(v.sym_id);
         auto* val = reconstruct_node(v.child(0), flat, pool, arena);
         auto* body = reconstruct_node(v.child(1), flat, pool, arena);
-        return arena.create<Expr>(LetRecNode{v.tag, std::string(name), val, body});
+        return make_expr(LetRecNode{v.tag, std::string(name), val, body});
     }
 
     case NodeTag::Define: {
         auto name = pool.resolve(v.sym_id);
         auto* val = reconstruct_node(v.child(0), flat, pool, arena);
-        return arena.create<Expr>(DefineNode{v.tag, std::string(name), val});
+        return make_expr(DefineNode{v.tag, std::string(name), val});
     }
     case NodeTag::MacroDef: {
         auto name = pool.resolve(v.sym_id);
@@ -78,32 +80,34 @@ static Expr* reconstruct_node(NodeId id, const FlatAST& flat,
         std::vector<std::string> params;
         for (auto pid : v.params)
             params.push_back(std::string(pool.resolve(pid)));
-        return arena.create<Expr>(MacroDefNode{v.tag, std::string(name), std::move(params), body});
+        return make_expr(MacroDefNode{v.tag, std::string(name), std::move(params), body});
     }
     case NodeTag::Begin: {
         ast::BeginNode begin{v.tag, {}};
         for (std::size_t i = 0; i < v.children.size(); ++i) {
             begin.exprs.push_back(reconstruct_node(v.child(i), flat, pool, arena));
         }
-        return arena.create<Expr>(std::move(begin));
+        auto* e_b = arena.create<Expr>(std::move(begin));
+        e_b->loc = {v.line, v.col, 0};
+        return e_b;
     }
     case NodeTag::Set: {
         auto name = pool.resolve(v.sym_id);
         auto* val = reconstruct_node(v.child(0), flat, pool, arena);
-        return arena.create<Expr>(SetNode{v.tag, std::string(name), val});
+        return make_expr(SetNode{v.tag, std::string(name), val});
     }
     case NodeTag::Quote: {
         auto* val = reconstruct_node(v.child(0), flat, pool, arena);
-        return arena.create<Expr>(QuoteNode{v.tag, val});
+        return make_expr(QuoteNode{v.tag, val});
     }
     case NodeTag::TypeAnnotation: {
         auto type_name = pool.resolve(v.sym_id);
         auto* inner = reconstruct_node(v.child(0), flat, pool, arena);
-        return arena.create<Expr>(TypeAnnotationNode{v.tag, inner, std::string(type_name)});
+        return make_expr(TypeAnnotationNode{v.tag, inner, std::string(type_name)});
     }
     case NodeTag::Coercion: {
         auto* inner = reconstruct_node(v.child(0), flat, pool, arena);
-        return arena.create<Expr>(CoercionNode{v.tag, inner, ""});
+        return make_expr(CoercionNode{v.tag, inner, ""});
     }
     }
     return nullptr;

@@ -45,6 +45,8 @@ export struct NodeView {
     NodeTag tag = NodeTag::LiteralInt;
     std::int64_t int_value = 0;
     SymId sym_id = INVALID_SYM;
+    std::uint32_t line = 0;
+    std::uint32_t col = 0;
     std::span<const NodeId> children;
     std::span<const SymId> params;
 
@@ -72,6 +74,8 @@ private:
         child_count_.push_back(0);
         param_begin_.push_back(0);
         param_count_.push_back(0);
+        line_.push_back(0);
+        col_.push_back(0);
         type_id_.push_back(0);
         return id;
     }
@@ -86,6 +90,9 @@ private:
     std::pmr::vector<std::uint32_t>  param_begin_;
     std::pmr::vector<std::uint32_t>  param_count_;
     std::pmr::vector<SymId>     param_data_;
+    // Source location (line/col, 1-based)
+    std::pmr::vector<std::uint32_t> line_;
+    std::pmr::vector<std::uint32_t> col_;
     // Type information (L6.5+): type_id per node, 0 = DYNAMIC
     std::pmr::vector<std::uint32_t> type_id_;
 
@@ -94,7 +101,7 @@ public:
         : tag_(alloc), int_val_(alloc), sym_id_(alloc),
           child_begin_(alloc), child_count_(alloc), child_data_(alloc),
           param_begin_(alloc), param_count_(alloc), param_data_(alloc),
-          type_id_(alloc)
+          line_(alloc), col_(alloc), type_id_(alloc)
     {}
 
     // ── Builders ───────────────────────────────────────────────
@@ -253,12 +260,22 @@ public:
             .tag      = tag_[id],
             .int_value = int_val_[id],
             .sym_id   = sym_id_[id],
+            .line     = id < line_.size() ? line_[id] : 0,
+            .col      = id < col_.size() ? col_[id] : 0,
             .children = std::span(child_data_.data() + child_begin_[id],
                                   child_count_[id]),
             .params   = std::span(param_data_.data() + param_begin_[id],
                                   param_count_[id]),
         };
     }
+
+    // ── Location ──────────────────────────────────────────────
+    void set_loc(NodeId id, std::uint32_t line, std::uint32_t col) {
+        line_[id] = line;
+        col_[id] = col;
+    }
+    std::uint32_t line(NodeId id) const { return line_[id]; }
+    std::uint32_t col(NodeId id) const { return col_[id]; }
 
     // Direct field access (for mutation)
     NodeTag& tag(NodeId id) { return tag_[id]; }
