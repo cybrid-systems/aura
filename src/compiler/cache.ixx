@@ -42,9 +42,8 @@ public:
     NodeId root() const { return root_; }
     std::size_t size() const { return num_nodes_; }
 
-    // StringPool access
+    // StringPool access (O(1) via offset array)
     std::string_view resolve(SymId id) const;
-    std::string_view resolve_slow(SymId id) const;
 
 private:
     friend MappedCache open_cache(const std::string& path);
@@ -73,9 +72,9 @@ private:
     const std::uint32_t*  cols_ = nullptr;
 
     // String pool pointers (from string_offset)
+    // Layout: [num_strings:u32, offsets[num_strings]:u32, [len:u32,data:char[]]...]
     const std::uint32_t* str_offsets_ = nullptr;
-    const std::uint32_t* str_lengths_ = nullptr;
-    const std::uint8_t*  str_data_raw_ = nullptr;
+    const std::uint8_t*  str_data_base_ = nullptr;
 
     NodeId root_ = NULL_NODE;
     std::size_t num_nodes_ = 0;
