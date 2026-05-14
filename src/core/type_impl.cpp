@@ -12,6 +12,7 @@ TypeRegistry::TypeRegistry() {
     register_type(TypeTag::VECTOR, "Vector");
     register_type(TypeTag::FLOAT, "Float");
     register_type(TypeTag::PAIR, "Pair");
+    register_type(TypeTag::HASH, "Hash");
 }
 
 TypeId TypeRegistry::register_type(TypeTag tag, std::string name) {

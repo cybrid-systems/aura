@@ -24,6 +24,10 @@ export struct VectorRef {
     std::uint64_t index = 0;
     constexpr auto operator<=>(const VectorRef&) const = default;
 };
+export struct HashRef {
+    std::uint64_t index = 0;
+    constexpr auto operator<=>(const HashRef&) const = default;
+};
 
 // The universal runtime value
 export using EvalValue = std::variant<
@@ -34,10 +38,10 @@ export using EvalValue = std::variant<
     PairRef,           // Pair (index 4)
     ClosureRef,        // Closure (index 5)
     CellRef,           // Cell (index 6)
-    VectorRef          // Vector (index 7)
+    VectorRef,         // Vector (index 7)
+    HashRef            // Hash (index 8)
 >;
 
-// Helpers
 export inline EvalValue make_int(std::int64_t v) { return EvalValue(std::in_place_index<1>, v); }
 export inline EvalValue make_bool(bool v) { return EvalValue(std::in_place_index<2>, v); }
 export inline EvalValue make_string(std::uint64_t idx) { return EvalValue(std::in_place_index<3>, StringRef{idx}); }
@@ -45,9 +49,9 @@ export inline EvalValue make_pair(std::uint64_t idx) { return EvalValue(std::in_
 export inline EvalValue make_closure(std::uint64_t id) { return EvalValue(std::in_place_index<5>, ClosureRef{id}); }
 export inline EvalValue make_cell(std::uint64_t id) { return EvalValue(std::in_place_index<6>, CellRef{id}); }
 export inline EvalValue make_vector(std::uint64_t idx) { return EvalValue(std::in_place_index<7>, VectorRef{idx}); }
+export inline EvalValue make_hash(std::uint64_t idx) { return EvalValue(std::in_place_index<8>, HashRef{idx}); }
 export inline EvalValue make_void() { return EvalValue(std::in_place_index<0>); }
 
-// Predicates
 export inline bool is_int(const EvalValue& v) noexcept { return std::holds_alternative<std::int64_t>(v); }
 export inline bool is_bool(const EvalValue& v) noexcept { return std::holds_alternative<bool>(v); }
 export inline bool is_void(const EvalValue& v) noexcept { return std::holds_alternative<std::monostate>(v); }
@@ -56,8 +60,8 @@ export inline bool is_pair(const EvalValue& v) noexcept { return std::holds_alte
 export inline bool is_closure(const EvalValue& v) noexcept { return std::holds_alternative<ClosureRef>(v); }
 export inline bool is_cell(const EvalValue& v) noexcept { return std::holds_alternative<CellRef>(v); }
 export inline bool is_vector(const EvalValue& v) noexcept { return std::holds_alternative<VectorRef>(v); }
+export inline bool is_hash(const EvalValue& v) noexcept { return std::holds_alternative<HashRef>(v); }
 
-// Accessors (asserts correct type)
 export inline std::int64_t as_int(const EvalValue& v) { return std::get<std::int64_t>(v); }
 export inline bool as_bool(const EvalValue& v) { return std::get<bool>(v); }
 export inline std::uint64_t as_string_idx(const EvalValue& v) { return std::get<StringRef>(v).index; }
@@ -65,29 +69,28 @@ export inline std::uint64_t as_pair_idx(const EvalValue& v) { return std::get<Pa
 export inline std::uint64_t as_closure_id(const EvalValue& v) { return std::get<ClosureRef>(v).id; }
 export inline std::uint64_t as_cell_id(const EvalValue& v) { return std::get<CellRef>(v).id; }
 export inline std::uint64_t as_vector_idx(const EvalValue& v) { return std::get<VectorRef>(v).index; }
+export inline std::uint64_t as_hash_idx(const EvalValue& v) { return std::get<HashRef>(v).index; }
 
-// Truthiness (backward-compat with sentinel-style: 0 int is falsy)
 export inline bool is_truthy(const EvalValue& v) {
     if (is_bool(v)) return as_bool(v);
     if (is_void(v)) return false;
     if (is_int(v)) return as_int(v) != 0;
-    return true; // strings, pairs, closures, cells, vectors are all truthy
+    return true;
 }
 
-// Format value for display (basic value only — no heap access needed)
 export inline std::string format_value(const EvalValue& v) {
     if (is_void(v)) return "()";
     if (is_bool(v)) return as_bool(v) ? "#t" : "#f";
     if (is_int(v)) return std::to_string(as_int(v));
     if (is_string(v)) return std::format("<string[{}]>", as_string_idx(v));
     if (is_vector(v)) return std::format("<vector[{}]>", as_vector_idx(v));
+    if (is_hash(v)) return std::format("<hash[{}]>", as_hash_idx(v));
     if (is_pair(v)) return std::format("<pair[{}]>", as_pair_idx(v));
     if (is_closure(v)) return std::format("<closure[{}]>", as_closure_id(v));
     if (is_cell(v)) return std::format("<cell[{}]>", as_cell_id(v));
     return "<unknown>";
 }
 
-// Format with string heap access — shows actual string content
 export inline std::string format_value(const EvalValue& v, const std::vector<std::string>* heap) {
     if (is_void(v)) return "()";
     if (is_bool(v)) return as_bool(v) ? "#t" : "#f";
@@ -100,6 +103,7 @@ export inline std::string format_value(const EvalValue& v, const std::vector<std
         return std::format("<string[{}]>", as_string_idx(v));
     }
     if (is_vector(v)) return std::format("<vector[{}]>", as_vector_idx(v));
+    if (is_hash(v)) return std::format("<hash[{}]>", as_hash_idx(v));
     if (is_pair(v)) return std::format("<pair[{}]>", as_pair_idx(v));
     if (is_closure(v)) return std::format("<closure[{}]>", as_closure_id(v));
     if (is_cell(v)) return std::format("<cell[{}]>", as_cell_id(v));
