@@ -846,6 +846,22 @@ int main() {
                          treg.format_type(ty), diag.diagnostics().size()); ++tc_passed;
         }
 
+        // Test: forall type registration + format
+        {
+            auto a_var = treg.make_var("a");
+            auto int_type = treg.int_type();
+            auto forall = treg.register_forall(a_var, int_type);
+            auto tag = treg.tag_of(forall);
+            auto fmt = treg.format_type(forall);
+            if (tag == aura::core::TypeTag::FORALL && fmt.find("forall") != std::string::npos) {
+                std::println("TC OK: forall type registered → {}", fmt);
+                ++tc_passed;
+            } else {
+                std::println(std::cerr, "TC FAIL: forall type");
+                ++tc_failed;
+            }
+        }
+
         std::println("TypeChecker test: {}/{}/{} passed/failed/total",
                      tc_passed, tc_failed, tc_passed + tc_failed);
         if (tc_failed > 0) return 1;
