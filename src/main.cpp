@@ -3,6 +3,7 @@ import aura.core;
 import aura.compiler.service;
 import aura.compiler.query;
 import aura.compiler.lowering;
+import aura.compiler.pass_manager;
 import aura.compiler.ir_executor;
 import aura.compiler.evaluator;
 import aura.compiler.value;
@@ -435,9 +436,9 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    // ── --cache: parse stdin and write FlatAST+StringPool cache file ─
+    // ── --cache: parse stdin and write FlatAST+StringPool+IR cache file ─
     // Usage: echo '(+ 1 2)' | ./aura --cache out.abc
-    // Parses stdin to FlatAST, writes cache, then evaluates normally.
+    // Parses stdin to FlatAST, lowers to IR, writes cache (with IR), then evaluates.
     if (argc > 2 && std::string_view(argv[1]) == "--cache") {
         std::string input;
         if (argc > 3) { input = argv[3]; }
@@ -458,12 +459,23 @@ int main(int argc, char* argv[]) {
         }
         flat.root = pr.root;
 
-        if (!aura::compiler::cache::write_cache(argv[2], flat, pool, pr.root)) {
+        // Lower to IR and run passes
+        auto ir_mod = aura::compiler::lower_to_ir(flat, pool, arena);
+        aura::compiler::ComputeKindWrap ck;
+        aura::compiler::ArityWrap ar;
+        aura::compiler::ConstantFoldingWrap cf;
+        ck.run(ir_mod);
+        ar.run(ir_mod);
+        cf.run(ir_mod);
+
+        // Write cache with IR
+        if (!aura::compiler::cache::write_cache(argv[2], flat, pool, pr.root, 0, &ir_mod)) {
             std::println(std::cerr, "error: cannot write cache file {}", argv[2]);
             return 1;
         }
 
-        std::println(std::cerr, "cache written to {}", argv[2]);
+        std::println(std::cerr, "cache written to {} ({} ir functions, {} ir strings)",
+                     argv[2], ir_mod.functions.size(), ir_mod.string_pool.size());
 
         // Evaluate normally
         aura::compiler::CompilerService cs;
@@ -478,7 +490,7 @@ int main(int argc, char* argv[]) {
 
     // ── --cache-open: load and inspect a cache file ───────────────
     // Usage: ./aura --cache-open out.abc
-    // Prints cache stats. Add --ir to also evaluate (re-parses stdin).
+    // Prints cache stats (AST + IR if available).
     if (argc > 2 && std::string_view(argv[1]) == "--cache-open") {
         auto mc = aura::compiler::cache::open_cache(argv[2]);
         if (!mc.valid()) {
@@ -500,6 +512,18 @@ int main(int argc, char* argv[]) {
                 sym = sv.empty() ? "(unresolved)" : std::string(sv);
             }
             std::println("  [{}] tag={} sym_id={} sym='{}' int={}", i, tag_int, nv.sym_id, sym, nv.int_value);
+        }
+        // Show IR cache info
+        if (mc.has_ir()) {
+            std::println("IR cache: {} functions, {} strings",
+                         mc.ir_functions().size(), mc.ir_strings().size());
+            for (auto& fn : mc.ir_functions()) {
+                std::println("  func[{}] '{}': {} blocks, {} params, {} locals, {} args",
+                             fn.id, fn.name, fn.blocks.size(),
+                             fn.params.size(), fn.local_count, fn.arg_count);
+            }
+        } else {
+            std::println("IR cache: not present");
         }
         return 0;
     }
