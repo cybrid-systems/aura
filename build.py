@@ -190,6 +190,10 @@ INTEG_TESTS = [
     IntegCase("vector_length", "(vector-length (vector 1 2 3))", "eval", expected="3"),
     IntegCase("vector_set", "(begin (vector-set! (vector 1 2 3) 0 99) 42)", "eval", expected="42"),
     IntegCase("tc_vector", "(vector-length (vector (list 1)))", "typecheck", expected="Int"),
+    IntegCase("vector_pred", "(vector? (vector 1 2 3))", "eval", expected="#t"),
+    IntegCase("make_vector", "(vector-length (make-vector 5 42))", "eval", expected="5"),
+    IntegCase("list_to_vector", "(vector-length (list->vector (list 1 2 3)))", "eval", expected="3"),
+    IntegCase("vector_to_list", "(length (vector->list (vector 1 2 3)))", "eval", expected="3"),
 
 # ── List operations ─────────────────────────────────────
     IntegCase("list_basic", "(list 1 2 3)", "eval", expected="pair"),

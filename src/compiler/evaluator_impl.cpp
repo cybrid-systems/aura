@@ -459,6 +459,45 @@ void Evaluator::init_pair_primitives() {
         if (idx >= vector_heap_.size()) return make_int(0);
         return make_int(static_cast<std::int64_t>(vector_heap_[idx].size()));
     });
+    primitives_.add("vector?", [this](const auto& a) {
+        if (a.empty()) return make_bool(false);
+        return make_bool(is_vector(a[0]));
+    });
+    primitives_.add("make-vector", [this](const auto& a) {
+        auto n = a.empty() ? 0 : static_cast<std::size_t>(as_int(a[0]));
+        EvalValue init = a.size() > 1 ? a[1] : make_void();
+        std::vector<EvalValue> elems(n, init);
+        auto idx = vector_heap_.size();
+        vector_heap_.push_back(std::move(elems));
+        return make_vector(idx);
+    });
+    primitives_.add("list->vector", [this](const auto& a) {
+        std::vector<EvalValue> elems;
+        if (!a.empty()) {
+            auto v = a[0];
+            while (is_pair(v)) {
+                auto idx = as_pair_idx(v);
+                if (idx >= pairs_.size()) break;
+                elems.push_back(pairs_[idx].car);
+                v = pairs_[idx].cdr;
+            }
+        }
+        auto idx = vector_heap_.size();
+        vector_heap_.push_back(std::move(elems));
+        return make_vector(idx);
+    });
+    primitives_.add("vector->list", [this](const auto& a) {
+        if (a.empty() || !is_vector(a[0])) return make_void();
+        auto idx = as_vector_idx(a[0]);
+        if (idx >= vector_heap_.size()) return make_void();
+        EvalValue result = make_void();
+        for (auto it = vector_heap_[idx].rbegin(); it != vector_heap_[idx].rend(); ++it) {
+            auto pid = pairs_.size();
+            pairs_.push_back({*it, result});
+            result = make_pair(pid);
+        }
+        return result;
+    });
 
     // ── L6.8: Runtime type introspection ────────────────────────────
     auto infer_type_name = [](const EvalValue& v) -> const char* {

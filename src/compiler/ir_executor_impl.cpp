@@ -200,6 +200,8 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                     "error", "assert",
                     "read", "read-file", "write-file", "file-exists?",
                     "gensym",
+                    "vector", "vector-ref", "vector-set!",
+                    "vector-length", "vector?", "make-vector",
                 };
                 auto idx = static_cast<std::size_t>(prim_id);
                 if (idx < std::size(prim_names)) {

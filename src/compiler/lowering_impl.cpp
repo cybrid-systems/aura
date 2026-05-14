@@ -169,6 +169,12 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
                 {"write-file",    PrimId::WriteFile},
                 {"file-exists?",  PrimId::FileExists},
                 {"gensym",        PrimId::Gensym},
+                {"vector",         PrimId::Vector},
+                {"vector-ref",     PrimId::VectorRef},
+                {"vector-set!",    PrimId::VectorSet},
+                {"vector-length",  PrimId::VectorLength},
+                {"vector?",        PrimId::VectorP},
+                {"make-vector",    PrimId::MakeVector},
             };
             auto pcit = prim_call_map.find(std::string(callee_name));
             if (pcit != prim_call_map.end()) {

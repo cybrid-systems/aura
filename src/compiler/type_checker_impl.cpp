@@ -247,6 +247,10 @@ void InferenceEngine::init_primitive_env() {
     register_primitive("vector-ref",    {Vector, Int}, Dyn);
     register_primitive("vector-set!",   {Vector, Int, Dyn}, Void);
     register_primitive("vector-length", {Vector}, Int);
+    register_primitive("vector?",       {Dyn}, Bool);
+    register_primitive("make-vector",   {Int, Dyn}, Vector);
+    // List<->Vector conversion
+
 }
 
 TypeId InferenceEngine::lub(TypeId a, TypeId b) {
