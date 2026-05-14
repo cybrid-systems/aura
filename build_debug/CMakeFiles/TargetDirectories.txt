@@ -1,9 +1,0 @@
-/home/dev/code/aura/build_debug/CMakeFiles/aura.dir
-/home/dev/code/aura/build_debug/CMakeFiles/test_ir.dir
-/home/dev/code/aura/build_debug/CMakeFiles/validate-node-layout.dir
-/home/dev/code/aura/build_debug/CMakeFiles/aura-reflect.dir
-/home/dev/code/aura/build_debug/CMakeFiles/aura-schema.dir
-/home/dev/code/aura/build_debug/CMakeFiles/test.dir
-/home/dev/code/aura/build_debug/CMakeFiles/edit_cache.dir
-/home/dev/code/aura/build_debug/CMakeFiles/rebuild_cache.dir
-/home/dev/code/aura/build_debug/CMakeFiles/__cmake_cxx_std_26.dir
