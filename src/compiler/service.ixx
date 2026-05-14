@@ -9,6 +9,7 @@ import aura.compiler.lowering;
 import aura.compiler.ir_interpreter;
 import aura.compiler.pass_manager;
 import aura.compiler.type_checker;
+import aura.compiler.types;
 import aura.core.ast_flat;
 import aura.core.ast_pool;
 import aura.diag;
@@ -74,7 +75,37 @@ public:
             }
         }
 
-        auto ir_mod = aura::compiler::lower_to_ir(flat, pool, arena_);
+        // === Phase 1: Define separation (IR caching) ===
+        // Check if this expression is a define binding
+        auto def = try_extract_define(flat, pool, flat.root);
+        if (def) {
+            auto& [name, _body_id] = *def;
+
+            // Lower to IR to extract the lambda function for caching
+            auto ir_mod = aura::compiler::lower_to_ir(flat, pool, arena_);
+
+            // Extract any non-entry functions (lambda bodies) from the module
+            for (auto& func : ir_mod.functions) {
+                if (func.id != ir_mod.entry_function_id) {
+                    ir_cache_[name] = std::move(func);
+                    break;
+                }
+            }
+
+            // Also evaluate via tree-walker for persistent runtime bindings
+            auto* expr = aura::compiler::reconstruct_expr(flat, pool, arena_);
+            if (expr) {
+                auto result = evaluator_.eval(expr);
+                if (!result) return result;
+            }
+
+            // Return void for define (no visible result)
+            return EvalResult(types::make_void());
+        }
+
+        // === Normal IR path (with cache awareness) ===
+        auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
+        auto ir_mod = aura::compiler::lower_to_ir_with_cache(flat, pool, arena_, cache_ptr);
 
         ComputeKindWrap ck;
         ArityWrap ar;
@@ -244,7 +275,86 @@ public:
     ast::ASTArena& arena() { return arena_; }
     Evaluator& evaluator() { return evaluator_; }
 
+    // Return current number of cached define functions
+    std::size_t cached_function_count() const { return ir_cache_.size(); }
+
+    // Check if a cached function exists
+    bool has_cached_function(const std::string& name) const {
+        return ir_cache_.find(name) != ir_cache_.end();
+    }
+
+    // ---- Phase 5: serve integration (define/exec JSON protocol) ----
+
+    // Define a function: both tree-walker eval (for env persistence) and IR cache.
+    // Returns the tree-walker evaluation result (for backward compat).
+    EvalResult define_function(std::string_view code) {
+        auto alloc = arena_.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat(code, flat, pool);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::ParseError, pr.error.empty() ? "parse error" : pr.error});
+        }
+        flat.root = pr.root;
+
+        // Check if root is a Define node
+        if (flat.get(flat.root).tag == aura::ast::NodeTag::Define) {
+            // Extract name for caching
+            auto name = pool.resolve(flat.get(flat.root).sym_id);
+
+            // Lower to IR and cache the lambda function
+            auto ir_mod = aura::compiler::lower_to_ir(flat, pool, arena_);
+            for (auto& func : ir_mod.functions) {
+                if (func.id != ir_mod.entry_function_id) {
+                    ir_cache_[std::string(name)] = std::move(func);
+                    break;
+                }
+            }
+
+            // Tree-walker eval for persistent runtime bindings
+            auto* expr = aura::compiler::reconstruct_expr(flat, pool, arena_);
+            if (expr) {
+                auto result = evaluator_.eval(expr);
+                if (!result) return result;
+                return result;
+            }
+
+            return EvalResult(types::make_void());
+        }
+
+        // Not a define — just tree-walker eval
+        return evaluator_.eval_flat(flat, pool, flat.root, evaluator_.top_env());
+    }
+
+    // Execute with IR cache awareness. If the code references cached functions,
+    // the lowering pass inlines them automatically. Delegates to eval_ir().
+    EvalResult exec_with_cache(std::string_view code) {
+        return eval_ir(code);
+    }
+
 private:
+    // Try to extract a define/let/letrec binding from the FlatAST root.
+    // Returns {name, body_node_id} if root is a Define node.
+    static std::optional<std::pair<std::string, aura::ast::NodeId>>
+    try_extract_define(aura::ast::FlatAST& flat,
+                       aura::ast::StringPool& pool,
+                       aura::ast::NodeId root) {
+        if (root == aura::ast::NULL_NODE) return std::nullopt;
+        auto v = flat.get(root);
+        if (v.tag == aura::ast::NodeTag::Define) {
+            auto name = pool.resolve(v.sym_id);
+            aura::ast::NodeId body = v.children.empty()
+                ? aura::ast::NULL_NODE : v.child(0);
+            return std::make_pair(std::string(name), body);
+        }
+        return std::nullopt;
+    }
+
+    // IR function cache: name → pre-compiled IRFunction for cached defines.
+    // Populated on define, consumed by lowering pass for cache-aware inlining.
+    std::unordered_map<std::string, aura::ir::IRFunction> ir_cache_;
+
     ast::ASTArena arena_;
     ast::ArenaGroup arena_group_;
     Evaluator evaluator_;

@@ -50,6 +50,16 @@ export aura::ir::IRModule lower_to_ir(ast::FlatAST& flat,
                                        ast::StringPool& pool,
                                        ast::ASTArena& arena);
 
+// Lower with cached define support.
+// When cache is non-null, Call nodes whose callee is a VariableNode
+// matching a cached function will inline the cached IRFunction
+// (emit MakeClosure + Call) instead of lowering the callee as a variable.
+export aura::ir::IRModule lower_to_ir_with_cache(
+    ast::FlatAST& flat,
+    ast::StringPool& pool,
+    ast::ASTArena& arena,
+    const std::unordered_map<std::string, aura::ir::IRFunction>* cache);
+
 // Reconstruct an Expr* tree from FlatAST.
 // Needed by tree-walker evaluator for Lambda closure bodies and
 // MacroDef expansion (Closure table stores Expr*).

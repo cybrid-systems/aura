@@ -117,10 +117,12 @@ static Expr* reconstruct_node(NodeId id, const FlatAST& flat,
 // Lower a FlatAST node to IR instructions. Returns the result slot.
 // Reads FlatAST directly without reconstructing to Expr*.
 // For Lambda nodes, reconstructs just the lambda body (needed by closure table).
+// cache: optional map from variable name → pre-compiled IRFunction for cached defines.
 static std::uint32_t lower_flat_expr(LoweringState& state,
                                       const FlatAST& flat,
                                       StringPool& pool,
-                                      NodeId id) {
+                                      NodeId id,
+                                      const std::unordered_map<std::string, aura::ir::IRFunction>* cache = nullptr) {
     // Early exit for invalid ids (backup for contract-observe mode)
     if (id == NULL_NODE || id >= flat.size()) {
         auto slot = state.alloc_local();
@@ -175,56 +177,77 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
         return slot;
     }
     case NodeTag::Call: {
+        auto callee_v = flat.get(v.child(0));
+
         // Check if callee is a known primitive (+, -, *, /, =, <, >, <=, >=)
         // and inline as direct IR opcode to avoid Call overhead.
-        {
-            auto callee_v = flat.get(v.child(0));
-            if (callee_v.tag == NodeTag::Variable) {
-                auto callee_name = pool.resolve(callee_v.sym_id);
-                static const std::unordered_map<std::string, IROpcode> prim_map = {
-                    {"+", IROpcode::Add}, {"-", IROpcode::Sub},
-                    {"*", IROpcode::Mul}, {"/", IROpcode::Div},
-                    {"=", IROpcode::Eq},  {"<", IROpcode::Lt},
-                    {">", IROpcode::Gt},  {"<=", IROpcode::Le},
-                    {">=", IROpcode::Ge},
-                };
-                auto it = prim_map.find(std::string(callee_name));
-                if (it != prim_map.end()) {
-                    auto op = it->second;
-                    auto result_slot = state.alloc_local();
-                    auto arg_count = v.children.size() - 1;
-                    if (arg_count == 0) {
-                        // No args: return 0
-                        state.emit(IROpcode::ConstI64, result_slot, 0, 0);
-                    } else {
-                        auto arg0 = lower_flat_expr(state, flat, pool, v.child(1));
-                        if (arg_count == 1) {
-                            // Unary minus: emit Sub(0, arg)
-                            if (std::string(callee_name) == "-") {
-                                auto zero = state.alloc_local();
-                                state.emit(IROpcode::ConstI64, zero, 0, 0);
-                                state.emit(op, result_slot, zero, arg0);
-                            } else {
-                                state.emit(op, result_slot, arg0, arg0);
-                            }
+        if (callee_v.tag == NodeTag::Variable) {
+            auto callee_name = pool.resolve(callee_v.sym_id);
+            static const std::unordered_map<std::string, IROpcode> prim_map = {
+                {"+", IROpcode::Add}, {"-", IROpcode::Sub},
+                {"*", IROpcode::Mul}, {"/", IROpcode::Div},
+                {"=", IROpcode::Eq},  {"<", IROpcode::Lt},
+                {">", IROpcode::Gt},  {"<=", IROpcode::Le},
+                {">=", IROpcode::Ge},
+            };
+            auto it = prim_map.find(std::string(callee_name));
+            if (it != prim_map.end()) {
+                auto op = it->second;
+                auto result_slot = state.alloc_local();
+                auto arg_count = v.children.size() - 1;
+                if (arg_count == 0) {
+                    // No args: return 0
+                    state.emit(IROpcode::ConstI64, result_slot, 0, 0);
+                } else {
+                    auto arg0 = lower_flat_expr(state, flat, pool, v.child(1), cache);
+                    if (arg_count == 1) {
+                        // Unary minus: emit Sub(0, arg)
+                        if (std::string(callee_name) == "-") {
+                            auto zero = state.alloc_local();
+                            state.emit(IROpcode::ConstI64, zero, 0, 0);
+                            state.emit(op, result_slot, zero, arg0);
                         } else {
-                            // Binary: lower second arg and emit
-                            auto arg1 = lower_flat_expr(state, flat, pool, v.child(2));
-                            state.emit(op, result_slot, arg0, arg1);
+                            state.emit(op, result_slot, arg0, arg0);
                         }
+                    } else {
+                        // Binary: lower second arg and emit
+                        auto arg1 = lower_flat_expr(state, flat, pool, v.child(2), cache);
+                        state.emit(op, result_slot, arg0, arg1);
                     }
+                }
+                return result_slot;
+            }
+
+            // Check if callee is a cached define function
+            if (cache) {
+                auto cache_it = cache->find(std::string(callee_name));
+                if (cache_it != cache->end()) {
+                    // Inline cached function: insert body into module, emit MakeClosure + Call
+                    auto carg_count = static_cast<std::uint32_t>(v.children.size() - 1);
+                    auto arg_base = state.local_count;
+                    for (std::size_t i = 1; i < v.children.size(); ++i) {
+                        auto val_slot = lower_flat_expr(state, flat, pool, v.child(i), cache);
+                        state.emit(IROpcode::Local, arg_base + static_cast<std::uint32_t>(i - 1), val_slot);
+                        state.alloc_local();
+                    }
+                    // Insert cached function into current module
+                    auto fid = state.module.add_function(cache_it->second);
+                    auto closure_slot = state.alloc_local();
+                    state.emit(IROpcode::MakeClosure, closure_slot, fid, 0);
+                    auto result_slot = state.alloc_local();
+                    state.emit(IROpcode::Call, closure_slot, arg_base, carg_count, result_slot);
                     return result_slot;
                 }
             }
         }
 
         // General function call: lower callee and args, then emit Call
-        auto callee_slot = lower_flat_expr(state, flat, pool, v.child(0));
+        auto callee_slot = lower_flat_expr(state, flat, pool, v.child(0), cache);
         auto arg_count = static_cast<std::uint32_t>(v.children.size() - 1);
         // Reserve contiguous argument block
         auto arg_base = state.local_count;
         for (std::size_t i = 1; i < v.children.size(); ++i) {
-            auto val_slot = lower_flat_expr(state, flat, pool, v.child(i));
+            auto val_slot = lower_flat_expr(state, flat, pool, v.child(i), cache);
             state.emit(IROpcode::Local, arg_base + static_cast<std::uint32_t>(i - 1), val_slot);
             state.alloc_local();
         }
@@ -234,7 +257,7 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
         return result_slot;
     }
     case NodeTag::IfExpr: {
-        auto cond_slot = lower_flat_expr(state, flat, pool, v.child(0));
+        auto cond_slot = lower_flat_expr(state, flat, pool, v.child(0), cache);
         auto then_blk = state.alloc_block();
         auto else_blk = state.alloc_block();
         auto merge_blk = state.alloc_block();
@@ -243,12 +266,12 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
         auto phi_slot = state.alloc_local();
 
         state.cur_block = then_blk;
-        auto then_val = lower_flat_expr(state, flat, pool, v.child(1));
+        auto then_val = lower_flat_expr(state, flat, pool, v.child(1), cache);
         state.emit(IROpcode::Local, phi_slot, then_val);
         state.emit(IROpcode::Jump, merge_blk);
 
         state.cur_block = else_blk;
-        auto else_val = lower_flat_expr(state, flat, pool, v.child(2));
+        auto else_val = lower_flat_expr(state, flat, pool, v.child(2), cache);
         state.emit(IROpcode::Local, phi_slot, else_val);
         state.emit(IROpcode::Jump, merge_blk);
 
@@ -360,7 +383,7 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
         }
 
         // Lower body via native FlatAST path
-        auto body_slot = lower_flat_expr(state, flat, pool, v.child(0));
+        auto body_slot = lower_flat_expr(state, flat, pool, v.child(0), cache);
         state.emit(IROpcode::Return, body_slot);
 
         func.local_count = state.local_count;
@@ -410,17 +433,17 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
             state.scopes.push_back({});
             auto& scope = state.scopes.back();
             scope[std::string(name)] = Binding{BindingKind::Cell, ci};
-            auto val_slot = lower_flat_expr(state, flat, pool, val_id);
+            auto val_slot = lower_flat_expr(state, flat, pool, val_id, cache);
             state.emit(IROpcode::CellSet, ci, val_slot);
-            auto body_slot = lower_flat_expr(state, flat, pool, body_id);
+            auto body_slot = lower_flat_expr(state, flat, pool, body_id, cache);
             state.scopes.pop_back();
             return body_slot;
         } else {
-            auto val_slot = lower_flat_expr(state, flat, pool, val_id);
+            auto val_slot = lower_flat_expr(state, flat, pool, val_id, cache);
             state.scopes.push_back({});
             auto& scope = state.scopes.back();
             scope[std::string(name)] = Binding{BindingKind::Local, val_slot};
-            auto body_slot = lower_flat_expr(state, flat, pool, body_id);
+            auto body_slot = lower_flat_expr(state, flat, pool, body_id, cache);
             state.scopes.pop_back();
             return body_slot;
         }
@@ -428,7 +451,7 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
     case NodeTag::Define: {
         auto name = pool.resolve(v.sym_id);
         auto val_id = v.children.empty() ? NULL_NODE : v.child(0);
-        auto val_slot = lower_flat_expr(state, flat, pool, val_id);
+        auto val_slot = lower_flat_expr(state, flat, pool, val_id, cache);
         // Define = letrec cell in top scope
         state.scopes.push_back({});
         auto& scope = state.scopes.back();
@@ -442,7 +465,7 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
     case NodeTag::Begin: {
         std::uint32_t last_slot = 0;
         for (auto c : v.children)
-            last_slot = lower_flat_expr(state, flat, pool, c);
+            last_slot = lower_flat_expr(state, flat, pool, c, cache);
         if (!v.children.empty()) return last_slot;
         auto slot = state.alloc_local();
         state.emit(IROpcode::ConstI64, slot, 0, 0);
@@ -451,7 +474,7 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
     case NodeTag::Set: {
         auto name = pool.resolve(v.sym_id);
         auto val_id = v.children.empty() ? NULL_NODE : v.child(0);
-        auto val_slot = lower_flat_expr(state, flat, pool, val_id);
+        auto val_slot = lower_flat_expr(state, flat, pool, val_id, cache);
 
         for (auto it = state.scopes.rbegin(); it != state.scopes.rend(); ++it) {
             auto found = it->find(std::string(name));
@@ -469,11 +492,11 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
         return val_slot;
     }
     case NodeTag::Quote:
-        return lower_flat_expr(state, flat, pool, v.child(0));
+        return lower_flat_expr(state, flat, pool, v.child(0), cache);
     case NodeTag::TypeAnnotation:
-        return lower_flat_expr(state, flat, pool, v.child(0));
+        return lower_flat_expr(state, flat, pool, v.child(0), cache);
     case NodeTag::Coercion: {
-        auto inner = lower_flat_expr(state, flat, pool, v.child(0));
+        auto inner = lower_flat_expr(state, flat, pool, v.child(0), cache);
         auto slot = state.alloc_local();
         state.emit(IROpcode::CastOp, slot, inner, 3); // dynamic
         return slot;
@@ -488,8 +511,9 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
     }
 }
 
-// ── lower_to_ir (FlatAST path) — native, no full-tree reconstruct ──
-IRModule lower_to_ir(FlatAST& flat, StringPool& pool, ASTArena& arena) {
+// ── Internal: lower_to_ir with optional cache ──────────────────
+static IRModule lower_to_ir_impl(FlatAST& flat, StringPool& pool, ASTArena& arena,
+                                  const std::unordered_map<std::string, aura::ir::IRFunction>* cache) {
     LoweringState state(arena);
     state.module = {};
     // Create top-level function
@@ -502,7 +526,7 @@ IRModule lower_to_ir(FlatAST& flat, StringPool& pool, ASTArena& arena) {
     state.cur_block = 0;
     state.local_count = 0;
 
-    auto result_slot = lower_flat_expr(state, flat, pool, flat.root);
+    auto result_slot = lower_flat_expr(state, flat, pool, flat.root, cache);
 
     // Emit return
     state.emit(IROpcode::Return, result_slot);
@@ -510,6 +534,18 @@ IRModule lower_to_ir(FlatAST& flat, StringPool& pool, ASTArena& arena) {
     auto top_id = state.module.add_function(std::move(top_func));
     state.module.entry_function_id = top_id;
     return state.module;
+}
+
+// ── lower_to_ir (FlatAST path) — native, no full-tree reconstruct ──
+IRModule lower_to_ir(FlatAST& flat, StringPool& pool, ASTArena& arena) {
+    return lower_to_ir_impl(flat, pool, arena, nullptr);
+}
+
+// ── lower_to_ir_with_cache ─────────────────────────────────────
+IRModule lower_to_ir_with_cache(
+    FlatAST& flat, StringPool& pool, ASTArena& arena,
+    const std::unordered_map<std::string, aura::ir::IRFunction>* cache) {
+    return lower_to_ir_impl(flat, pool, arena, cache);
 }
 
 // ── reconstruct_expr (public API) — kept for tree-walker fallback ──

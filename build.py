@@ -161,6 +161,24 @@ INTEG_TESTS = [
     IntegCase("coerce_arith", '(+ 1 "2")', "eval", expected="3"),
     IntegCase("coerce_strlen", "(string-length 12345)", "eval", expected="5"),
 
+    # ── Serve JSON command protocol ─────────────────────────
+    IntegCase("serve_define",
+              '{"cmd":"define","code":"(define add (lambda (x y) (+ x y)))","name":"add"}\n'
+              '{"cmd":"exec","code":"(add 1 2)"}',
+              "serve", expected="\"3\""),
+    IntegCase("serve_define_redefine",
+              '{"cmd":"define","code":"(define mul (lambda (x y) (* x y)))","name":"mul"}\n'
+              '{"cmd":"exec","code":"(mul 3 4)"}\n'
+              '{"cmd":"redefine","code":"(define mul (lambda (x y) (+ x y)))","name":"mul"}\n'
+              '{"cmd":"exec","code":"(mul 3 4)"}',
+              "serve", expected="\"7\""),
+    IntegCase("serve_plain_sexpr",
+              '(+ 1 2)',
+              "serve", expected="\"3\""),
+    IntegCase("serve_unknown_cmd",
+              '{"cmd":"noop","code":"(+ 1 2)"}',
+              "serve", expected="unknown command"),
+
     # ── Error cases ──────────────────────────────────────────
     IntegCase("err_unbound", "x", "eval", expected_err="unbound variable", expected_status=1),
     IntegCase("err_type", '(+ 1 "a")', "typecheck", expected_err="coercion from String to Int", expected_status=1),
@@ -174,13 +192,20 @@ def test_integ():
         fail(f"{AURA} not found — run 'build' first")
         return 1
 
-    flags = {"eval": [], "ir": ["--ir"], "typecheck": ["--typecheck"]}
+    flags = {"eval": [], "ir": ["--ir"], "typecheck": ["--typecheck"], "serve": ["--serve"]}
     passed = failed = 0
 
     for tc in INTEG_TESTS:
         args = [str(AURA)] + flags.get(tc.pipeline, [])
+
+        # For serve pipeline, code may contain embedded newlines (multi-line input)
+        if tc.pipeline == "serve":
+            pipe_input = tc.code
+        else:
+            pipe_input = tc.code + "\n"
+
         r = subprocess.run(
-            args, input=tc.code + "\n",
+            args, input=pipe_input,
             capture_output=True, text=True, timeout=30
         )
 
@@ -196,9 +221,16 @@ def test_integ():
         stdout = r.stdout.strip()
         stderr = r.stderr.strip()
 
-        if tc.expected and tc.expected not in stdout:
+        # For serve pipeline, check the LAST line of stdout for the expected value
+        check_stdout = stdout
+        if tc.pipeline == "serve":
+            # Each serve response is one JSON line; use last line for matching
+            lines = stdout.split("\n")
+            check_stdout = lines[-1] if lines else stdout
+
+        if tc.expected and tc.expected not in check_stdout:
             ok_case = False
-            issues.append(f"expected '{tc.expected}' in stdout, got: {stdout[:60]}...")
+            issues.append(f"expected '{tc.expected}' in stdout, got: {stdout[:80]}...")
 
         if tc.expected_err:
             # Check both stdout and stderr for error message
