@@ -121,6 +121,7 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
                                       const FlatAST& flat,
                                       StringPool& pool,
                                       NodeId id) {
+    // Early exit for invalid ids (backup for contract-observe mode)
     if (id == NULL_NODE || id >= flat.size()) {
         auto slot = state.alloc_local();
         state.emit(IROpcode::ConstI64, slot, 0, 0);
