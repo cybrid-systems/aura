@@ -14,7 +14,8 @@ using namespace aura::diag;
 
 // Forward decl: macro body cloner (defined at end of file)
 static aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
-    aura::ast::FlatAST& source, aura::ast::StringPool& source_pool, aura::ast::NodeId body_id);
+    aura::ast::FlatAST& source, aura::ast::StringPool& source_pool, aura::ast::NodeId body_id,
+    const std::unordered_map<std::string, aura::ast::NodeId>* subst = nullptr);
 
 // ── Env::lookup: returns EvalValue variant ─────────────────────
 std::optional<EvalValue> Env::lookup(const std::string& n) const {
@@ -905,10 +906,21 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
 // When a Variable matches a macro param, substitute with the arg expression.
 // All new nodes are marked MacroIntroduced for hygiene tracking.
 static aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
-    aura::ast::FlatAST& source, aura::ast::StringPool& source_pool, aura::ast::NodeId body_id) {
+    aura::ast::FlatAST& source, aura::ast::StringPool& source_pool, aura::ast::NodeId body_id,
+    const std::unordered_map<std::string, aura::ast::NodeId>* subst) {
     using namespace aura::ast;
     if (body_id == NULL_NODE || body_id >= source.size()) return NULL_NODE;
     auto v = source.get(body_id);
+
+    // Variable substitution: if this variable is a macro param, return the arg clone
+    if (subst && v.tag == NodeTag::Variable && v.sym_id != INVALID_SYM) {
+        auto name = source_pool.resolve(v.sym_id);
+        auto it = subst->find(std::string(name));
+        if (it != subst->end()) {
+            // Clone the argument expression from source FlatAST
+            return clone_macro_body(target, target_pool, source, source_pool, it->second, subst);
+        }
+    }
 
     // Re-intern SymIds: resolve in source_pool, intern in target_pool
     auto transplant = [&](SymId sid) -> SymId {
@@ -918,7 +930,7 @@ static aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast:
     // Clone children recursively
     std::vector<aura::ast::NodeId> child_ids;
     for (std::uint32_t i = 0; i < v.children.size(); ++i)
-        child_ids.push_back(clone_macro_body(target, target_pool, source, source_pool, v.child(i)));
+        child_ids.push_back(clone_macro_body(target, target_pool, source, source_pool, v.child(i), subst));
 
     // Clone params (for Lambda nodes)
     std::vector<aura::ast::SymId> param_syms;
@@ -972,6 +984,70 @@ static aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast:
         target.set_loc(new_id, v.line, v.col);
     }
     return new_id;
+}
+
+// ── Pre-expand all macros in a FlatAST ─────────────────────────
+// Scans for MacroDef nodes, collects them, then expands all macro calls.
+// Returns the (possibly new) root node of the expanded tree.
+// After this pass, the FlatAST contains no MacroDef or macro calls.
+// Multiple passes handle nested macros.
+aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                           aura::ast::NodeId root, int max_passes) {
+    using namespace aura::ast;
+    for (int pass = 0; pass < max_passes; ++pass) {
+        // Phase 1: collect macro definitions
+        struct MD { aura::ast::FlatAST* src_flat; aura::ast::StringPool* src_pool; std::vector<std::string> params; NodeId body_id; };
+        std::unordered_map<std::string, MD> local_macros;
+        bool has_macro_def = false;
+
+        for (NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+            if (v.tag == NodeTag::MacroDef) {
+                has_macro_def = true;
+                // Macro name is in sym_id; params follow
+                auto macro_name = std::string(pool.resolve(v.sym_id));
+                std::vector<std::string> params;
+                for (auto pid : v.params)
+                    params.push_back(std::string(pool.resolve(pid)));
+                auto body_id = v.children.empty() ? NULL_NODE : v.child(0);
+                local_macros[macro_name] = MD{&flat, &pool, std::move(params), body_id};
+            }
+        }
+
+        if (!has_macro_def) return root;  // no more macros to expand
+
+        // Phase 2: find and expand macro calls
+        bool expanded_any = false;
+        NodeId new_root = root;
+
+        for (NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+            if (v.tag == NodeTag::Call && !v.children.empty()) {
+                auto callee_v = flat.get(v.child(0));
+                if (callee_v.tag == NodeTag::Variable) {
+                    auto cname = std::string(pool.resolve(callee_v.sym_id));
+                    auto it = local_macros.find(cname);
+                    if (it != local_macros.end()) {
+                        // Build substitution: macro param → arg expression
+                        auto& md = it->second;
+                        std::unordered_map<std::string, aura::ast::NodeId> subst;
+                        for (std::size_t ai = 0; ai < md.params.size() && ai + 1 < v.children.size(); ++ai)
+                            subst[md.params[ai]] = v.child(ai + 1);
+                        // Clone macro body with substitution
+                        auto expanded = clone_macro_body(flat, pool, *md.src_flat, *md.src_pool, md.body_id, &subst);
+                        if (expanded != NULL_NODE) {
+                            if (id == root) new_root = expanded;
+                            expanded_any = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!expanded_any) return root;
+        root = new_root;
+    }
+    return root;
 }
 
 } // namespace aura::compiler

@@ -82,4 +82,8 @@ private:
     std::uint64_t next_id_=1;
 };
 
+// Pre-expand all macros in a FlatAST. Returns (possibly new) root.
+export aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                           aura::ast::NodeId root, int max_passes = 10);
+
 } // namespace aura::compiler
