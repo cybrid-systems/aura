@@ -44,6 +44,17 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                 locals[ops[0]] = make_int(val);
                 break;
             }
+            case IROpcode::ConstString: {
+                // Store string in the shared string heap so primitives can find it
+                auto& heap = const_cast<std::vector<std::string>&>(primitives_.string_heap());
+                auto sidx = heap.size();
+                if (ops[1] < module_.string_pool.size())
+                    heap.push_back(module_.string_pool[ops[1]]);
+                else
+                    heap.push_back("");
+                locals[ops[0]] = make_string(sidx);
+                break;
+            }
 
             case IROpcode::Local:
                 locals[ops[0]] = locals[ops[1]];
@@ -171,6 +182,33 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
             case IROpcode::Jump:
                 current = ops[0];
                 goto next_block;
+
+            case IROpcode::PrimCall: {
+                auto prim_id = static_cast<PrimId>(ops[0]);
+                auto arg_base = unpack_hi(ops[1]);
+                auto arg_count = unpack_lo(ops[1]);
+                std::vector<EvalValue> pargs;
+                for (std::uint32_t pi = 0; pi < arg_count; ++pi)
+                    pargs.push_back(locals[arg_base + pi]);
+                EvalResult presult = make_int(0);
+                // Map PrimId to registered primitive name
+                static const char* prim_names[] = {
+                    "string-append", "string-length", "string-ref",
+                    "substring", "string=?", "string<?",
+                    "number->string", "string->number",
+                    "display", "write", "newline",
+                    "error", "assert",
+                    "read", "read-file", "write-file", "file-exists?",
+                    "gensym",
+                };
+                auto idx = static_cast<std::size_t>(prim_id);
+                if (idx < std::size(prim_names)) {
+                    auto pfn = primitives_.lookup(prim_names[idx]);
+                    if (pfn) presult = (*pfn)(pargs);
+                }
+                if (presult) locals[ops[2]] = *presult;
+                break;
+            }
 
             case IROpcode::Call: {
                 auto& callee_val = locals[ops[0]];

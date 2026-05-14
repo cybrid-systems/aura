@@ -50,9 +50,10 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
         return slot;
     }
     case NodeTag::LiteralString: {
-        // Strings not supported in IR as first-class; return 0
+        auto s = pool.resolve(v.sym_id);
+        auto si = state.module.add_string(std::string(s));
         auto slot = state.alloc_local();
-        state.emit(IROpcode::ConstI64, slot, 0, 0);
+        state.emit(IROpcode::ConstString, slot, si, 0);
         return slot;
     }
     case NodeTag::Variable: {
@@ -145,6 +146,43 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
                         state.emit(op, result_slot, arg0, arg1);
                     }
                 }
+                return result_slot;
+            }
+
+            // Check if callee is a known non-arithmetic primitive (string ops, etc.)
+            static const std::unordered_map<std::string, PrimId> prim_call_map = {
+                {"string-append", PrimId::StringAppend},
+                {"string-length", PrimId::StringLength},
+                {"string-ref",    PrimId::StringRef},
+                {"substring",     PrimId::Substring},
+                {"string=?",      PrimId::StringEq},
+                {"string<?",      PrimId::StringLt},
+                {"number->string", PrimId::NumberToString},
+                {"string->number", PrimId::StringToNumber},
+                {"display",       PrimId::Display},
+                {"write",         PrimId::Write},
+                {"newline",       PrimId::Newline},
+                {"error",         PrimId::Error},
+                {"assert",        PrimId::Assert},
+                {"read",          PrimId::Read},
+                {"read-file",     PrimId::ReadFile},
+                {"write-file",    PrimId::WriteFile},
+                {"file-exists?",  PrimId::FileExists},
+                {"gensym",        PrimId::Gensym},
+            };
+            auto pcit = prim_call_map.find(std::string(callee_name));
+            if (pcit != prim_call_map.end()) {
+                auto prim_id = static_cast<std::uint32_t>(pcit->second);
+                auto arg_count = static_cast<std::uint32_t>(v.children.size() - 1);
+                auto arg_base = state.local_count;
+                for (std::size_t i = 1; i < v.children.size(); ++i) {
+                    auto val_slot = lower_flat_expr(state, flat, pool, v.child(i), cache, cache_hits);
+                    state.emit(IROpcode::Local, arg_base + static_cast<std::uint32_t>(i - 1), val_slot);
+                    state.alloc_local();
+                }
+                auto result_slot = state.alloc_local();
+                state.emit(IROpcode::PrimCall, prim_id,
+                           pack_pair(arg_base, arg_count), result_slot, 0);
                 return result_slot;
             }
 
