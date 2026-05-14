@@ -1,5 +1,6 @@
 module;
 #include <cstdio>
+#include <unistd.h>
 module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
@@ -667,17 +668,55 @@ void Evaluator::init_pair_primitives() {
         std::string content((std::istreambuf_iterator<char>(f)), {});
         if (content.empty()) return make_void();
 
-        // Parse in arena
+        // Parse in arena — arena-allocate so closures outlive this call
         if (!arena_) return make_void();
         auto alloc = arena_->allocator();
-        aura::ast::StringPool pool(alloc);
-        aura::ast::FlatAST flat(alloc);
-        auto pr = aura::parser::parse_to_flat(content, flat, pool);
+        auto* pool_ptr = arena_->create<aura::ast::StringPool>(alloc);
+        auto* flat_ptr = arena_->create<aura::ast::FlatAST>(alloc);
+        auto pr = aura::parser::parse_to_flat(content, *flat_ptr, *pool_ptr);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) return make_void();
-        flat.root = pr.root;
+        flat_ptr->root = pr.root;
 
         // Evaluate in current top env
-        auto result = eval_flat(flat, pool, flat.root, top_env());
+        auto result = eval_flat(*flat_ptr, *pool_ptr, flat_ptr->root, top_env());
+        if (!result) return make_void();
+        return *result;
+    });
+
+    primitives_.add("import", [this](const auto& a) {
+        if (a.empty() || !is_string(a[0])) return make_void();
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size()) return make_void();
+        auto& path = string_heap_[idx];
+
+        // Resolve path: if relative, prepend CWD
+        std::string resolved = path;
+        if (!path.empty() && path[0] != '/') {
+            char cwd_buf[4096];
+            if (::getcwd(cwd_buf, sizeof(cwd_buf)))
+                resolved = std::string(cwd_buf) + "/" + path;
+        }
+
+        // Dedup: skip if already loaded
+        if (loaded_modules_.count(resolved)) return make_void();
+        loaded_modules_.insert(resolved);
+
+        // Read file
+        std::ifstream f(resolved);
+        if (!f) return make_void();
+        std::string content((std::istreambuf_iterator<char>(f)), {});
+        if (content.empty()) return make_void();
+
+        // Parse + eval — arena-allocate so closures outlive this call
+        if (!arena_) return make_void();
+        auto alloc = arena_->allocator();
+        auto* pool_ptr = arena_->create<aura::ast::StringPool>(alloc);
+        auto* flat_ptr = arena_->create<aura::ast::FlatAST>(alloc);
+        auto pr = aura::parser::parse_to_flat(content, *flat_ptr, *pool_ptr);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) return make_void();
+        flat_ptr->root = pr.root;
+
+        auto result = eval_flat(*flat_ptr, *pool_ptr, flat_ptr->root, top_env());
         if (!result) return make_void();
         return *result;
     });
@@ -781,7 +820,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                     if (!ar) return ar;
                     ne.bind(md.params[i], *ar);
                 }
-                return eval_flat(*md.flat, pool, md.body_id, ne);
+                return eval_flat(*md.flat, md.pool ? *md.pool : pool, md.body_id, ne);
             }
         }
         // Primitive call
@@ -814,7 +853,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                 if (!ar) return ar;
                 ne.bind(cl.params[i], *ar);
             }
-            return eval_flat(*cl.flat, pool, cl.body_id, ne);
+            return eval_flat(*cl.flat, cl.pool ? *cl.pool : pool, cl.body_id, ne);
         }
         return std::unexpected(Diagnostic{ErrorKind::UnboundVariable,
                                           "cannot call: " + std::string(pool.resolve(callee.sym_id))});
