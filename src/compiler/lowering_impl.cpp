@@ -633,6 +633,20 @@ std::string unparse_node(const FlatAST& flat, const StringPool& pool,
         return "(coerce " + unparse_node(flat, pool, v.child(0), indent + 1) + ")";
     }
 
+    case NodeTag::MacroDef: {
+        std::string s = "(defmacro (";
+        s += pool.resolve(v.sym_id);
+        for (std::size_t i = 0; i < v.params.size(); ++i) {
+            s += " ";
+            s += pool.resolve(v.params[i]);
+        }
+        s += ")\n" + indent_str(indent + 1);
+        if (!v.children.empty())
+            s += unparse_node(flat, pool, v.child(0), indent + 1);
+        s += ")";
+        return s;
+    }
+
     default:
         return "()";
     }
