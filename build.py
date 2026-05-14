@@ -8,6 +8,7 @@ Usage:
   ./build.py check            # 构建 + 全部测试
   ./build.py clean            # 清理构建产物
   ./build.py list             # 列出测试套件
+  ./build.py demo             # 运行 Agent 管线演示
 
 Test suites:
   unit        C++ 单元测试 (61 cases)
@@ -182,6 +183,38 @@ INTEG_TESTS = [
     # ── Error cases ──────────────────────────────────────────
     IntegCase("err_unbound", "x", "eval", expected_err="unbound variable", expected_status=1),
     IntegCase("err_type", '(+ 1 "a")', "typecheck", expected_err="coercion from String to Int", expected_status=1),
+
+    # ── List operations ─────────────────────────────────────
+    IntegCase("list_basic", "(list 1 2 3)", "eval", expected="pair"),
+    IntegCase("list_length", "(length (list 1 2 3))", "eval", expected="3"),
+    IntegCase("list_ref", "(list-ref (list 10 20 30) 1)", "eval", expected="20"),
+    IntegCase("list_reverse", "(length (reverse (list 1 2 3)))", "eval", expected="3"),
+    IntegCase("list_append", "(length (append (list 1 2) (list 3 4)))", "eval", expected="4"),
+    IntegCase("list_member_found", "(member 2 (list 1 2 3))", "eval", expected="pair"),
+    IntegCase("list_member_not_found", "(member 99 (list 1 2 3))", "eval", expected="0"),
+    IntegCase("map_length", "(length (map (lambda (x) (* x 2)) (list 1 2 3)))", "eval", expected="3"),
+    IntegCase("filter_count", "(length (filter (lambda (x) (> x 2)) (list 1 2 3 4 5)))", "eval", expected="3"),
+    IntegCase("nested_list", "(car (car (list (list 1 2) (list 3 4))))", "eval", expected="1"),
+
+    # ── Type checker edge cases ────────────────────────────
+    IntegCase("tc_list", "(list 1 2 3)", "typecheck", expected="Any", expected_status=1),
+    IntegCase("tc_map", "(map (lambda (x) (* x 2)) (list 1 2))", "typecheck", expected="Any", expected_status=1),
+    IntegCase("tc_filter", "(filter (lambda (x) (> x 2)) (list 1 2))", "typecheck", expected="Any", expected_status=1),
+    IntegCase("tc_string_compare", '(string=? "a" "a")', "typecheck", expected="Int"),
+    IntegCase("tc_append", '(string-append "a" "b")', "typecheck", expected="String"),
+    IntegCase("tc_pair", "(cons 1 2)", "typecheck", expected="Any"),
+    IntegCase("tc_let_lambda", "(let ((f (lambda (x) (+ x 1)))) (f 41))", "typecheck", expected="Int"),
+
+    # ── Error recovery ─────────────────────────────────────
+    IntegCase("err_div_zero", "(/ 1 0)", "eval", expected_err="", expected_status=0),
+    IntegCase("err_unbound_var", "nonexistent", "eval", expected_err="unbound variable", expected_status=1),
+    IntegCase("err_wrong_arg_type", '(/ "a" 1)', "typecheck", expected_err="coercion", expected_status=1),
+    IntegCase("err_arity", "(+ 1)", "typecheck", expected_err="expected 2 arguments", expected_status=1),
+
+    # ─── IR pipeline edge cases ────────────────────────────
+    IntegCase("ir_fold_arith", "(+ (* 2 3) 4)", "ir", expected="10"),
+    IntegCase("ir_let_arith", "(let ((x (+ 1 2))) (* x 3))", "ir", expected="9"),
+    IntegCase("ir_nested_arith", "(+ (* 2 3) (/ 10 2))", "ir", expected="11"),
 ]
 
 
@@ -404,6 +437,21 @@ def test_mutation():
 
 
 # ═══════════════════════════════════════════════════════════════
+# Agent demo
+# ═══════════════════════════════════════════════════════════════
+
+def test_demo():
+    """Agent demo — full pipeline"""
+    print(f"{B}═══ Agent Demo ═══{N}")
+    r = subprocess.run([sys.executable, str(ROOT / "tests" / "agent_demo.py")])
+    if r.returncode == 0:
+        ok("agent demo passed")
+    else:
+        fail("agent demo failed")
+    return r.returncode
+
+
+# ═══════════════════════════════════════════════════════════════
 # Runners
 # ═══════════════════════════════════════════════════════════════
 
@@ -414,6 +462,7 @@ SUITES = {
     "bench":     test_bench,
     "smoke":     test_smoke,
     "mutation":  test_mutation,
+    "demo":      test_demo,
 }
 
 
@@ -502,6 +551,7 @@ def main():
         "check": lambda: (cmd_build(), cmd_test([]))[1],
         "test":  lambda: cmd_test(args or ["all"]),
         "list":  cmd_list,
+        "demo":  test_demo,
     }
 
     if cmd in commands:
