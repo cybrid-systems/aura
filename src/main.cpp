@@ -133,7 +133,19 @@ int main(int argc, char* argv[]) {
                 auto& type = cmd_type->second;
                 auto& code = code_it->second;
 
-                if (type == "define") {
+                if (type == "defmacro") {
+                    auto result = cs.define_function(code);
+                    if (result) {
+                        auto name = cmd.count("name") ? cmd["name"] : "<macro>";
+                        std::println("{{\"status\":\"defined\",\"name\":\"{}\"}}",
+                                     json_escape(name));
+                    } else {
+                        auto& d = result.error();
+                        std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
+                                     json_escape(d.message));
+                    }
+                }
+                else if (type == "define") {
                     auto result = cs.define_function(code);
                     if (result) {
                         auto name = cmd.count("name") ? cmd["name"] : "<lambda>";
