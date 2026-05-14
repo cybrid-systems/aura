@@ -10,6 +10,7 @@ import aura.core.ast_flat;
 import aura.core.ast_pool;
 import aura.core.type;
 import aura.parser.parser;
+import aura.compiler.cache;
 import aura.binary.abf_deserializer;
 
 // JSON helper: wrap a string value for JSON (escape quotes and backslashes)
@@ -416,6 +417,47 @@ int main(int argc, char* argv[]) {
         }
         f << input << "\n";
         std::println(std::cerr, "written to {}", argv[2]);
+        return 0;
+    }
+
+    // ── --cache: parse stdin and write FlatAST+StringPool cache file ─
+    // Usage: echo '(+ 1 2)' | ./aura --cache out.abc
+    // Parses stdin to FlatAST, writes cache, then evaluates normally.
+    if (argc > 2 && std::string_view(argv[1]) == "--cache") {
+        std::string input;
+        if (argc > 3) { input = argv[3]; }
+        else { std::getline(std::cin, input); }
+
+        if (input.empty()) {
+            std::println(std::cerr, "error: empty input");
+            return 1;
+        }
+
+        aura::ast::ASTArena arena;
+        aura::ast::StringPool pool(arena.allocator());
+        aura::ast::FlatAST flat(arena.allocator());
+        auto pr = aura::parser::parse_to_flat(input, flat, pool);
+        if (pr.error.size()) {
+            std::println(std::cerr, "parse error: {}", pr.error);
+            return 1;
+        }
+        flat.root = pr.root;
+
+        if (!aura::compiler::cache::write_cache(argv[2], flat, pool, pr.root)) {
+            std::println(std::cerr, "error: cannot write cache file {}", argv[2]);
+            return 1;
+        }
+
+        std::println(std::cerr, "cache written to {}", argv[2]);
+
+        // Evaluate normally
+        aura::compiler::CompilerService cs;
+        auto result = cs.eval_ir(input);
+        if (!result) {
+            std::println(std::cerr, "eval error: {}", result.error().message);
+            return 1;
+        }
+        std::println("{}", aura::compiler::types::format_value(*result));
         return 0;
     }
 
