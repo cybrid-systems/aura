@@ -1,9 +1,9 @@
-export module aura.compiler.types;
+export module aura.compiler.value;
 import std;
 
 namespace aura::compiler::types {
 
-// Lightweight handle types for heap-indexed values
+// Lightweight handle value for heap-indexed values
 export struct StringRef {
     std::uint64_t index = 0;
     constexpr auto operator<=>(const StringRef&) const = default;
@@ -66,7 +66,7 @@ export inline bool is_truthy(const EvalValue& v) {
     return true; // strings, pairs, closures, cells are all truthy
 }
 
-// Format value for display (basic types only — no heap access needed)
+// Format value for display (basic value only — no heap access needed)
 export inline std::string format_value(const EvalValue& v) {
     if (is_void(v)) return "()";
     if (is_bool(v)) return as_bool(v) ? "#t" : "#f";

@@ -5,8 +5,8 @@
 //   - First member must be NodeTag (4-byte enum)
 //   - Remaining members must be ABF-serializable types
 //
-// Build: g++ -std=c++26 -freflection -I. tests/validate_abf_nodes.cpp -o build/validate_abf_nodes
-// Run:   ./build/validate_abf_nodes
+// Build: g++ -std=c++26 -freflection -I. tests/validate_node_layout.cpp -o build/validate_node_layout
+// Run:   ./build/validate_node_layout
 
 #include "reflect/read_auto_validate.hh"
 #include <cstdio>

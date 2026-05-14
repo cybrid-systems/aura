@@ -15,7 +15,7 @@ target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/cache.ixx
-    src/compiler/types.ixx
+    src/compiler/value.ixx
     src/compiler/ir.ixx
     src/compiler/lowering.ixx
     src/compiler/ir_executor.ixx
@@ -78,7 +78,7 @@ target_sources(test_ir PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/cache.ixx
-    src/compiler/types.ixx
+    src/compiler/value.ixx
     src/compiler/ir.ixx
     src/compiler/lowering.ixx
     src/compiler/ir_executor.ixx
@@ -173,14 +173,14 @@ add_test(NAME inspect_env
     COMMAND sh -c "printf '(let ((x 10)) x)' | timeout 5 ./aura --env | grep -q 'result: 10'"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
-# ── validate_abf_nodes: P2996 ABF struct layout validation ────
-add_executable(validate-abf-nodes tests/validate_abf_nodes.cpp)
-target_include_directories(validate-abf-nodes PRIVATE ${CMAKE_SOURCE_DIR})
-target_compile_options(validate-abf-nodes PRIVATE -std=c++26 -freflection)
-target_link_libraries(validate-abf-nodes PRIVATE stdc++)
+# ── validate_node_layout: P2996 ABF struct layout validation ────
+add_executable(validate-node-layout tests/validate_node_layout.cpp)
+target_include_directories(validate-node-layout PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_options(validate-node-layout PRIVATE -std=c++26 -freflection)
+target_link_libraries(validate-node-layout PRIVATE stdc++)
 
-add_test(NAME validate_abf_nodes
-    COMMAND ./validate-abf-nodes
+add_test(NAME validate_node_layout
+    COMMAND ./validate-node-layout
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # ── cache: write FlatAST+StringPool cache file ─────────────────
