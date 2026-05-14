@@ -2,6 +2,7 @@ export module aura.compiler.cache;
 
 import std;
 import aura.core;
+import aura.compiler.ir;
 
 using namespace aura::ast;
 
@@ -75,8 +76,21 @@ private:
     const std::uint32_t* str_offsets_ = nullptr;
     const std::uint8_t*  str_data_base_ = nullptr;
 
+    // IR module cache (loaded from ir_offset)
+    std::vector<aura::ir::IRFunction> ir_functions_;
+    std::uint32_t ir_entry_function_id_ = 0;
+    std::vector<std::string> ir_string_pool_;
+    bool has_ir_cache_ = false;
+
     NodeId root_ = NULL_NODE;
     std::size_t num_nodes_ = 0;
+
+public:
+    // IR module access
+    bool has_ir() const { return has_ir_cache_; }
+    const std::vector<aura::ir::IRFunction>& ir_functions() const { return ir_functions_; }
+    std::uint32_t ir_entry() const { return ir_entry_function_id_; }
+    const std::vector<std::string>& ir_strings() const { return ir_string_pool_; }
 };
 
 // ── Public API ────────────────────────────────────────────────
@@ -86,7 +100,8 @@ export bool write_cache(const std::string& path,
                         const FlatAST& flat,
                         const StringPool& pool,
                         NodeId root,
-                        std::uint64_t source_mtime = 0);
+                        std::uint64_t source_mtime = 0,
+                        const aura::ir::IRModule* ir_mod = nullptr);
 
 // Open a cache file via mmap (zero-copy read).
 export MappedCache open_cache(const std::string& path);
