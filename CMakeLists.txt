@@ -14,6 +14,7 @@ target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/type.ixx src/core/type_info.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
+    src/compiler/cache.ixx
     src/compiler/types.ixx
     src/compiler/ir.ixx
     src/compiler/lowering.ixx
@@ -33,6 +34,7 @@ target_sources(aura PRIVATE
     src/core/type_impl.cpp
     src/parser/lexer_impl.cpp src/parser/flat_parser_impl.cpp
     src/compiler/evaluator_impl.cpp
+    src/compiler/cache_impl.cpp
     src/compiler/ir_lowering.cpp
     src/compiler/ir_executor_impl.cpp
     src/compiler/compute_kind_impl.cpp
@@ -85,6 +87,7 @@ target_sources(test_ir PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/type.ixx src/core/type_info.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
+    src/compiler/cache.ixx
     src/compiler/types.ixx
     src/compiler/ir.ixx
     src/compiler/lowering.ixx
@@ -102,6 +105,7 @@ target_sources(test_ir PRIVATE
     src/core/type_impl.cpp
     src/parser/lexer_impl.cpp src/parser/flat_parser_impl.cpp
     src/compiler/evaluator_impl.cpp
+    src/compiler/cache_impl.cpp
     src/compiler/ir_lowering.cpp
     src/compiler/ir_executor_impl.cpp
     src/compiler/compute_kind_impl.cpp
@@ -188,6 +192,11 @@ target_link_libraries(validate-abf-nodes PRIVATE stdc++)
 
 add_test(NAME validate_abf_nodes
     COMMAND ./validate-abf-nodes
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+# ── cache: write FlatAST+StringPool cache file ─────────────────
+add_test(NAME cache_write
+    COMMAND sh -c "printf '(+ 1 2)' | timeout 5 ./aura --cache /tmp/test_aura.cache 2>&1 | grep -q 'cache written'"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # ── aura-reflect: standalone P2996 reflection tool ───────────────
