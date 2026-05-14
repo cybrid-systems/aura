@@ -19,26 +19,50 @@ export struct NodeMeta {
     bool has_params;              // has param list (Lambda)
 };
 
+// Tag-to-metadata mapping, indexed by `tag - 1`.
+// Tags must be sequential starting from 1 (LiteralInt = 0x01).
+// Gap at 0x0C is filled with a sentinel.
 export constexpr std::array<NodeMeta, 16> kNodeMeta = {{
-    {NodeTag::LiteralInt, "LiteralInt", 0, false, false, true,  false},
-    {NodeTag::LiteralString, "LiteralString", 0, false, true,  false, false},
-    {NodeTag::Variable,   "Variable",   0, false, true,  false, false},
-    {NodeTag::Call,       "Call",       1, true,  false, false, false},
-    {NodeTag::IfExpr,     "IfExpr",     3, false, false, false, false},
-    {NodeTag::Lambda,     "Lambda",     1, false, false, false, true},
-    {NodeTag::Let,        "Let",        2, false, true,  false, false},
-    {NodeTag::LetRec,     "LetRec",     2, false, true,  false, false},
-    {NodeTag::Define,     "Define",     1, false, true,  false, false},
-    {NodeTag::Begin,      "Begin",      0, true,  false, false, false},
-    {NodeTag::Set,        "Set",        1, false, true,  false, false},
-    {NodeTag::Quote,      "Quote",      1, false, false, false, false},
-    {NodeTag::TypeAnnotation, "TypeAnnotation", 1, false, true,  false, false},
-    {NodeTag::Coercion, "Coercion", 1, false, true,  false, false},
+    {NodeTag::LiteralInt, "LiteralInt", 0, false, false, true,  false},  // 0x01
+    {NodeTag::Variable,   "Variable",   0, false, true,  false, false},  // 0x02
+    {NodeTag::Call,       "Call",       1, true,  false, false, false},  // 0x03
+    {NodeTag::IfExpr,     "IfExpr",     3, false, false, false, false},  // 0x04
+    {NodeTag::Lambda,     "Lambda",     1, false, false, false, true},   // 0x05
+    {NodeTag::Let,        "Let",        2, false, true,  false, false},  // 0x06
+    {NodeTag::LetRec,     "LetRec",     2, false, true,  false, false},  // 0x07
+    {NodeTag::Define,     "Define",     1, false, true,  false, false},  // 0x08
+    {NodeTag::Begin,      "Begin",      0, true,  false, false, false},  // 0x09
+    {NodeTag::Set,        "Set",        1, false, true,  false, false},  // 0x0A
+    {NodeTag::Quote,      "Quote",      1, false, false, false, false},  // 0x0B
+    {NodeTag::LiteralInt, "<gap>",      0, false, false, false, false},  // 0x0C (gap)
+    {NodeTag::LiteralString, "LiteralString", 0, false, true,  false, false}, // 0x0D
+    {NodeTag::LiteralInt, "<gap>",      0, false, false, false, false},  // 0x0E (MacroDef — Expr* only)
+    {NodeTag::TypeAnnotation, "TypeAnnotation", 1, false, true,  false, false}, // 0x0F
+    {NodeTag::Coercion, "Coercion", 1, false, true,  false, false},     // 0x10
 }};
+
 
 export constexpr const NodeMeta& meta(NodeTag tag) {
     return kNodeMeta[static_cast<std::size_t>(tag) - 1];
 }
+
+// Compile-time validation: check known entries, skip gap sentinels
+consteval bool validate_node_meta() {
+    // Gap entries (0x0C, 0x0E in tag space → indices 11, 13)
+    if (kNodeMeta[11].name != "<gap>") return false;
+    if (kNodeMeta[13].name != "<gap>") return false;
+    if (meta(NodeTag::LiteralInt).name != "LiteralInt") return false;
+    if (meta(NodeTag::Call).fixed_children != 1) return false;
+    if (meta(NodeTag::Call).has_var_children != true) return false;
+    if (meta(NodeTag::Lambda).has_params != true) return false;
+    if (meta(NodeTag::IfExpr).fixed_children != 3) return false;
+    if (meta(NodeTag::Let).has_string != true) return false;
+    if (meta(NodeTag::LiteralInt).has_int != true) return false;
+    if (meta(NodeTag::Begin).has_var_children != true) return false;
+    if (meta(NodeTag::Coercion).name != "Coercion") return false;
+    return true;
+}
+static_assert(validate_node_meta(), "kNodeMeta misaligned with NodeTag enum");
 
 // ── NodeView — lightweight non-owning read view ────────────────
 export struct NodeView {
