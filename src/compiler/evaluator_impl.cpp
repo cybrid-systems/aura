@@ -431,8 +431,38 @@ void Evaluator::init_pair_primitives() {
         return result;
     });
 
+    // ── Vector primitives ─────────────────────────────────────────
+    primitives_.add("vector", [this](const auto& a) {
+        std::vector<EvalValue> elems(a.begin(), a.end());
+        auto idx = vector_heap_.size();
+        vector_heap_.push_back(std::move(elems));
+        return make_vector(idx);
+    });
+    primitives_.add("vector-ref", [this](const auto& a) {
+        if (a.size() < 2 || !is_vector(a[0])) return make_void();
+        auto idx = as_vector_idx(a[0]);
+        auto pos = static_cast<std::size_t>(as_int(a[1]));
+        if (idx >= vector_heap_.size() || pos >= vector_heap_[idx].size()) return make_void();
+        return vector_heap_[idx][pos];
+    });
+    primitives_.add("vector-set!", [this](const auto& a) {
+        if (a.size() < 3 || !is_vector(a[0])) return make_void();
+        auto idx = as_vector_idx(a[0]);
+        auto pos = static_cast<std::size_t>(as_int(a[1]));
+        if (idx >= vector_heap_.size() || pos >= vector_heap_[idx].size()) return make_void();
+        vector_heap_[idx][pos] = a[2];
+        return make_void();
+    });
+    primitives_.add("vector-length", [this](const auto& a) {
+        if (a.empty() || !is_vector(a[0])) return make_int(0);
+        auto idx = as_vector_idx(a[0]);
+        if (idx >= vector_heap_.size()) return make_int(0);
+        return make_int(static_cast<std::int64_t>(vector_heap_[idx].size()));
+    });
+
     // ── L6.8: Runtime type introspection ────────────────────────────
     auto infer_type_name = [](const EvalValue& v) -> const char* {
+        if (is_vector(v)) return "Vector";
         if (is_string(v)) return "String";
         if (is_pair(v))   return "Pair";
         if (is_cell(v))   return "Cell";

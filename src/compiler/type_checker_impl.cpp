@@ -165,6 +165,7 @@ void InferenceEngine::init_primitive_env() {
     auto String = reg_.string_type();
     auto Dyn = reg_.dynamic_type();
     auto Void = reg_.void_type();
+    auto Vector = reg_.lookup_type("Vector");
 
     // Arithmetic: (Int, Int) -> Int
     register_primitive("+",  {Int, Int}, Int);
@@ -241,6 +242,11 @@ void InferenceEngine::init_primitive_env() {
     register_primitive("write-file",{String, String}, Void);
     register_primitive("file-exists?", {String}, Int);
     register_primitive("gensym",    {}, String);
+    // Vector primitives
+    register_primitive("vector",        {Dyn}, Vector);  // varargs — minimal
+    register_primitive("vector-ref",    {Vector, Int}, Dyn);
+    register_primitive("vector-set!",   {Vector, Int, Dyn}, Void);
+    register_primitive("vector-length", {Vector}, Int);
 }
 
 TypeId InferenceEngine::lub(TypeId a, TypeId b) {
