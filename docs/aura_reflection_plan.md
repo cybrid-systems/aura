@@ -3,6 +3,8 @@
 **版本**：v1.0
 **依赖**：GCC 16.1 P2996 (`__cpp_impl_reflection = 202603`) ✅
 
+> ⚠️ Racket frontend and ABF pipeline removed 2026-05-14. Phase A/B/C ABF auto-generation plans are obsolete. The P2996 reflection tools (aura-reflect, aura-schema) remain and are in active use.
+
 ---
 
 ## 1. 现状评估

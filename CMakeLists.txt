@@ -25,8 +25,7 @@ target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
     src/compiler/query.ixx
-    src/compiler/type_checker.ixx
-    src/binary/abf_deserializer.ixx)
+    src/compiler/type_checker.ixx)
 
 target_sources(aura PRIVATE
     src/core/ast_impl.cpp
@@ -41,7 +40,7 @@ target_sources(aura PRIVATE
     src/compiler/query_impl.cpp
     src/compiler/type_checker_impl.cpp
     src/compiler/arity_impl.cpp
-    src/binary/abf_deserializer_impl.cpp src/main.cpp)
+    src/main.cpp)
 
 target_include_directories(aura PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_options(aura PRIVATE -Wall -Wextra -Wpedantic -fcontracts -fcontract-evaluation-semantic=observe)
@@ -70,14 +69,6 @@ AT(step15_letrec_fact5
     "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 5))" 120)
 AT(step15_letrec_fact10
     "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 10))" 3628800)
-
-# ── Type Annotation tests ──
-add_test(NAME type_abf_annotation
-    COMMAND sh -c "printf '(: x Int)' | timeout 3 racket -l aura -- --abf 2>/dev/null | timeout 3 ./aura --abf 2>&1 | grep -q 'eval error'"
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
-add_test(NAME type_abf_define_annot
-    COMMAND sh -c "printf '(begin (define x 42) (: x Int))' | timeout 3 racket -l aura -- --abf 2>/dev/null | timeout 3 ./aura --abf | grep -q '^42\$'"
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # ── IR tests ─────────────────────────────────────────────────────
 add_executable(test_ir tests/test_ir.cpp)

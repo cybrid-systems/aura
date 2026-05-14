@@ -2,7 +2,9 @@
 
 **版本**：v1.0
 **原则**：每步新增一个语言特性，必须穿透完整的 Trees that Grow 管线。
-**方法**：测试先行（TDD），基础设施同步，ABF/查询引擎/IR/SoA 全线覆盖。
+**方法**：测试先行（TDD），基础设施同步，查询引擎/IR/SoA 全线覆盖。
+
+> ⚠️ Racket frontend and ABF pipeline removed 2026-05-14. This iteration standard references files that no longer exist. Retained for historical process reference.
 
 ---
 

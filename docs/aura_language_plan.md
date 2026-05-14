@@ -367,7 +367,7 @@ L6        31-35   类型系统启蒙      EvalValue variant         5 天
 ## 迭代标准
 
 1. **每步可编译，每步可测试** — 严格执行 Ghuloum 原则
-2. **已有基础设施不改** — ABF、query engine、reflection 保持不变
+2. **已有基础设施不改** — query engine、reflection 保持不变
 3. **字符串用 sentinel + string_heap** — 和序对模式一致，不需要改值系统
 4. **变参基元逐步改** — `+` 从 2 参数改为变参，不破坏已有测试
 5. **EvalValue 推迟到 L6** — 最大重构放最后，先用 sentinel 模式支撑 L1-L5
@@ -381,5 +381,5 @@ L6        31-35   类型系统启蒙      EvalValue variant         5 天
 
 ## 迭代标准
 
-每个语言特性必须穿透 12 层 Trees that Grow 管线：AST → SoA → 解析器(×2) → 求值器 → ABF(×2) → Lowering → Reconstruct → 查询引擎 → Flatten → 测试。
+每个语言特性必须穿透 10 层 Trees that Grow 管线：AST → SoA → 解析器(×2) → 求值器 → Lowering → Reconstruct → 查询引擎 → Flatten → 测试。
 详见 [kernel_iteration_standard.md](./kernel_iteration_standard.md)。
