@@ -164,6 +164,20 @@ int main(int argc, char* argv[]) {
                                      json_escape(d.message));
                     }
                 }
+                else if (type == "unparse") {
+                    auto alloc = cs.arena().allocator();
+                    aura::ast::StringPool pool(alloc);
+                    aura::ast::FlatAST flat(alloc);
+                    auto ux_pr = aura::parser::parse_to_flat(code, flat, pool);
+                    if (!ux_pr.success) {
+                        std::println("{{\"status\":\"error\",\"msg\":\"parse error\"}}");
+                    } else {
+                        flat.root = ux_pr.root;
+                        auto src = aura::compiler::unparse_node(flat, pool, flat.root);
+                        std::println("{{\"status\":\"ok\",\"source\":\"{}\"}}",
+                                     json_escape(src));
+                    }
+                }
                 else {
                     std::println("{{\"status\":\"error\",\"msg\":\"unknown command: {}\"}}",
                                  json_escape(type));
