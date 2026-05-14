@@ -636,6 +636,51 @@ void Evaluator::init_pair_primitives() {
         string_heap_.push_back(std::move(line));
         return make_string(id);
     });
+
+    // ── File I/O (P0) ───────────────────────────────────────────
+    primitives_.add("read-file", [this](const auto& a) {
+        if (a.empty() || !is_string(a[0])) return make_void();
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size()) return make_void();
+        auto& path = string_heap_[idx];
+        std::ifstream f(path);
+        if (!f) return make_void();
+        std::string content((std::istreambuf_iterator<char>(f)),
+                             std::istreambuf_iterator<char>());
+        auto id = string_heap_.size();
+        string_heap_.push_back(std::move(content));
+        return make_string(id);
+    });
+
+    primitives_.add("write-file", [this](const auto& a) {
+        if (a.size() < 2 || !is_string(a[0])) return make_void();
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size()) return make_void();
+        auto& path = string_heap_[idx];
+        std::string content;
+        if (is_string(a[1])) {
+            auto cidx = as_string_idx(a[1]);
+            if (cidx < string_heap_.size())
+                content = string_heap_[cidx];
+        } else if (is_int(a[1])) {
+            content = std::to_string(as_int(a[1]));
+        } else {
+            return make_void();
+        }
+        std::ofstream f(path);
+        if (!f) return make_void();
+        f << content;
+        return make_int(1);
+    });
+
+    primitives_.add("file-exists?", [this](const auto& a) {
+        if (a.empty() || !is_string(a[0])) return make_int(0);
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size()) return make_int(0);
+        auto& path = string_heap_[idx];
+        std::ifstream f(path);
+        return make_int(f.good() ? 1 : 0);
+    });
 }
 
 // ── Env::lookup_cell_ptr: returns EvalValue* ──────────────────

@@ -235,8 +235,11 @@ void InferenceEngine::init_primitive_env() {
     register_primitive("type?",   {Dyn, String}, Bool);
 
     // Misc
-    register_primitive("read",    {}, String);
-    register_primitive("gensym",  {}, String);
+    register_primitive("read",      {}, String);
+    register_primitive("read-file", {String}, String);
+    register_primitive("write-file",{String, String}, Void);
+    register_primitive("file-exists?", {String}, Int);
+    register_primitive("gensym",    {}, String);
 }
 
 TypeId InferenceEngine::lub(TypeId a, TypeId b) {
