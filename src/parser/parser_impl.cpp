@@ -8,7 +8,15 @@ FlatParseResult FlatParser::parse(std::string_view s) {
     lexer_.emplace(s);
     FlatParseResult r;
     r.root = parse_expr();
-    if (r.root == NULL_NODE) { r.error = "parse error"; return r; }
+    if (r.root == NULL_NODE) {
+        auto tok = lexer_->peek();
+        if (tok.kind != TokenKind::EndOfFile)
+            r.error = "parse error at line " + std::to_string(tok.line)
+                    + ":" + std::to_string(tok.column);
+        else
+            r.error = "parse error";
+        return r;
+    }
     // Check for multiple top-level expressions
     auto next = lexer_->peek();
     if (next.kind == TokenKind::EndOfFile || next.kind == TokenKind::Error) {

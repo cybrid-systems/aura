@@ -13,6 +13,35 @@ namespace aura::compiler {
 using types::EvalValue;
 using namespace types;
 
+// ── Edit distance for error suggestions ────────────────────────
+static std::size_t edit_distance(std::string_view a, std::string_view b) {
+    auto m = a.size(), n = b.size();
+    if (m == 0) return n;
+    if (n == 0) return m;
+    // Use two-row DP for efficiency
+    std::vector<std::size_t> prev(n + 1), cur(n + 1);
+    for (std::size_t j = 0; j <= n; ++j) prev[j] = j;
+    for (std::size_t i = 1; i <= m; ++i) {
+        cur[0] = i;
+        for (std::size_t j = 1; j <= n; ++j) {
+            auto cost = (a[i - 1] == b[j - 1]) ? 0 : 1;
+            cur[j] = std::min({ prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost });
+        }
+        std::swap(prev, cur);
+    }
+    return prev[n];
+}
+
+static std::string closest_match(std::string_view name, const std::vector<std::string>& candidates, std::size_t max_dist = 3) {
+    std::string best; std::size_t best_dist = max_dist + 1;
+    for (auto& c : candidates) {
+        auto d = edit_distance(name, c);
+        if (d < best_dist) { best_dist = d; best = c; }
+    }
+    return best;
+}
+
+
 using namespace aura::diag;
 
 // Forward decl: macro body cloner (defined at end of file)
@@ -932,8 +961,27 @@ void Evaluator::init_pair_primitives() {
             }
         }
 
-        // Not found anywhere
-        if (resolved.empty()) return make_void();
+        // Not found anywhere — report error
+        if (resolved.empty()) {
+            std::string err = "import: cannot find module '" + path + "'";
+            auto* env = ::getenv("AURA_PATH");
+            if (env) {
+                err += "\n  searched in: CWD";
+                std::string aura_path(env);
+                std::size_t start = 0, end;
+                while ((end = aura_path.find(':', start)) != std::string::npos) {
+                    auto dir = aura_path.substr(start, end - start);
+                    if (!dir.empty()) err += "\n    " + dir;
+                    start = end + 1;
+                }
+                if (start < aura_path.size()) {
+                    auto dir = aura_path.substr(start);
+                    if (!dir.empty()) err += "\n    " + dir;
+                }
+            }
+            std::println(std::cerr, "error: {}", err);
+            return make_void();
+        }
 
         // Dedup: skip if already loaded
         if (loaded_modules_.count(resolved)) return make_void();
@@ -1027,8 +1075,20 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
         auto name = pool.resolve(v.sym_id);
         auto val = env.lookup(std::string(name));
         if (val) return *val;
-        return std::unexpected(Diagnostic{ErrorKind::UnboundVariable,
-                                          "unbound variable: " + std::string(name)});
+        // Suggest closest bound variables
+        std::string msg = "unbound variable: " + std::string(name);
+        std::vector<std::string> candidates;
+        {
+            const Env* e = &env;
+            while (e) {
+                for (auto& b : const_cast<Env&>(*e).bindings())
+                    candidates.push_back(b.first);
+                e = e->parent();
+            }
+        }
+        auto best = closest_match(name, candidates);
+        if (!best.empty()) msg += " (did you mean " + best + "?)";
+        return std::unexpected(Diagnostic{ErrorKind::UnboundVariable, msg});
     }
     case aura::ast::NodeTag::Call: {
         if (v.children.empty()) return EvalResult(make_void());
@@ -1179,6 +1239,22 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                 b.second = *val;
                 return *val;
             }
+        }
+        // Suggest closest bound variables
+        {
+            std::vector<std::string> candidates;
+            {
+                const Env* e = &env;
+                while (e) {
+                    for (auto& b : const_cast<Env&>(*e).bindings())
+                        candidates.push_back(b.first);
+                    e = e->parent();
+                }
+            }
+            auto best = closest_match(name, candidates);
+            if (!best.empty())
+                return std::unexpected(Diagnostic{ErrorKind::UnboundVariable,
+                    "set!: unbound variable: " + std::string(name) + " (did you mean " + best + "?)"});
         }
         return std::unexpected(Diagnostic{ErrorKind::UnboundVariable,
                                           "set!: unbound variable: " + std::string(name)});

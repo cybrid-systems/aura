@@ -545,7 +545,9 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
                         || cname == "hash");
         }
         if (num_args != ft.args.size() && !ft.args.empty() && !is_variadic) {
-            auto msg = "call: expected " + std::to_string(ft.args.size())
+            auto msg = std::string("call '")
+                     + std::string(pool.resolve(callee_v.sym_id))
+                     + "': expected " + std::to_string(ft.args.size())
                      + " arguments, got " + std::to_string(num_args);
             diag_.report(Diagnostic(ErrorKind::ArityMismatch, std::move(msg), cur_loc_));
         }
