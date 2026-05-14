@@ -99,7 +99,9 @@ public:
             std::println(std::cerr, "PM: folded {} instructions", cf.folded_count());
         }
 
-        aura::compiler::IRInterpreter ir_interp(ir_mod, evaluator_.primitives());
+        last_ir_mod_ = ir_mod;
+
+        aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, evaluator_.primitives());
         ir_interp.set_strategy(strategy_);
         auto result = ir_interp.execute();
 
@@ -171,6 +173,60 @@ public:
         return arena_group_.module_stats();
     }
 
+    // ---- Hot swap (M2.6) ----------------------------------------------
+
+    EvalResult hot_swap(std::string_view new_code) {
+        if (!last_ir_mod_) {
+            // No cache yet — seed it with a regular eval_ir first
+            return eval_ir(new_code);
+        }
+
+        auto alloc = arena_.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat(new_code, flat, pool);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::ParseError, pr.error});
+        }
+        flat.root = pr.root;
+
+        auto new_mod = aura::compiler::lower_to_ir(flat, pool, arena_);
+
+        // Hot-swap each function from new_mod into the cached module
+        for (auto& new_func : new_mod.functions) {
+            auto func_id = new_func.id;
+            if (func_id < last_ir_mod_->functions.size()) {
+                new_func.id = func_id;
+                (*last_ir_mod_).functions[func_id] = std::move(new_func);
+            } else {
+                last_ir_mod_->functions.push_back(std::move(new_func));
+            }
+        }
+        last_ir_mod_->entry_function_id = new_mod.entry_function_id;
+
+        // Re-run passes on the hot-swapped module
+        ComputeKindWrap ck;
+        ArityWrap ar;
+        ConstantFoldingWrap cf;
+        ck.run(*last_ir_mod_);
+        ar.run(*last_ir_mod_);
+        cf.run(*last_ir_mod_);
+
+        if (ar.has_error()) {
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::ArityMismatch, "arity check failed"});
+        }
+
+        aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, evaluator_.primitives());
+        ir_interp.set_strategy(strategy_);
+        auto result = ir_interp.execute();
+
+        last_closures_ = ir_interp.list_closures();
+        last_cells_ = ir_interp.list_cells();
+        return result;
+    }
+
     // ---- Runtime reflection (M3 Phase 2) ------------------------------
 
     // Closures persisted from last IR execution
@@ -195,6 +251,7 @@ private:
     aura::compiler::EvalStrategy strategy_;
     std::vector<aura::compiler::ClosureSnapshot> last_closures_;
     std::vector<aura::compiler::CellSnapshot> last_cells_;
+    std::optional<aura::ir::IRModule> last_ir_mod_;
 };
 
 } // namespace aura::compiler
