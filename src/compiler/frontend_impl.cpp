@@ -436,10 +436,101 @@ void Evaluator::init_pair_primitives() {
         return result;
     });
     primitives_.add("map", [this](const auto& a) {
-        return a.empty() ? make_void() : a[0];
+        // (map func list) — apply func to each element, collect results
+        if (a.size() < 2 || !is_closure(a[0]) || is_void(a[1])) return make_void();
+        auto cid = as_closure_id(a[0]);
+        auto it = closures_.find(cid);
+        if (it == closures_.end() || it->second.params.empty()) return make_void();
+        auto& closure = it->second;
+        auto param = closure.params[0];
+
+        // Walk the list, apply func to each element, build result in order
+        EvalValue result = make_void();
+        EvalValue tail = make_void();
+        bool first = true;
+        EvalValue current = a[1];
+
+        while (is_pair(current)) {
+            auto idx = as_pair_idx(current);
+            if (idx >= pairs_.size()) break;
+
+            Env ne(closure.env ? *closure.env : Env());
+            ne.set_primitives(&primitives_);
+            ne.set_cells(&cells_);
+            ne.bind(param, pairs_[idx].car);
+
+            auto r = eval_in(closure.body, ne);
+            if (!r) return make_void();
+
+            auto new_id = pairs_.size();
+            pairs_.push_back({*r, make_void()});
+            auto new_pair = make_pair(new_id);
+
+            if (first) {
+                result = new_pair;
+                tail = new_pair;
+                first = false;
+            } else {
+                auto tail_idx = as_pair_idx(tail);
+                if (tail_idx < pairs_.size())
+                    pairs_[tail_idx].cdr = new_pair;
+                tail = new_pair;
+            }
+
+            current = pairs_[idx].cdr;
+        }
+
+        return result;
     });
     primitives_.add("filter", [this](const auto& a) {
-        return a.empty() ? make_void() : a[0];
+        // (filter pred list) — keep elements where pred returns truthy
+        if (a.size() < 2 || !is_closure(a[0]) || is_void(a[1])) return make_void();
+        auto cid = as_closure_id(a[0]);
+        auto it = closures_.find(cid);
+        if (it == closures_.end() || it->second.params.empty()) return make_void();
+        auto& closure = it->second;
+        auto param = closure.params[0];
+
+        EvalValue result = make_void();
+        EvalValue tail = make_void();
+        bool first = true;
+        EvalValue current = a[1];
+
+        while (is_pair(current)) {
+            auto idx = as_pair_idx(current);
+            if (idx >= pairs_.size()) break;
+
+            Env ne(closure.env ? *closure.env : Env());
+            ne.set_primitives(&primitives_);
+            ne.set_cells(&cells_);
+            ne.bind(param, pairs_[idx].car);
+
+            auto r = eval_in(closure.body, ne);
+            if (!r) break;
+
+            // Check truthiness: keep if the predicate returns truthy
+            bool keep = types::is_truthy(*r);
+            if (keep) {
+                auto new_id = pairs_.size();
+                pairs_.push_back({pairs_[idx].car, make_void()});
+                auto new_pair = make_pair(new_id);
+
+                if (first) {
+                    result = new_pair;
+                    tail = new_pair;
+                    first = false;
+                } else {
+                    auto tail_idx = as_pair_idx(tail);
+                    if (tail_idx < pairs_.size())
+                        pairs_[tail_idx].cdr = new_pair;
+                    tail = new_pair;
+                }
+            }
+
+            current = pairs_[idx].cdr;
+        }
+
+        return result;
     });
 
     // ── L6.8: Runtime type introspection ────────────────────────────
