@@ -29,6 +29,7 @@ export enum class TypeTag : uint8_t {
     FORALL,         // 多态 ∀
     VOID,           // 无返回值
     TYPE,           // 类型自身的类型
+    HASH,           // hash table
 };
 
 // ── TypeId ────────────────────────────────────────────────────

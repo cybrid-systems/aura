@@ -166,6 +166,7 @@ void InferenceEngine::init_primitive_env() {
     auto Dyn = reg_.dynamic_type();
     auto Void = reg_.void_type();
     auto Vector = reg_.lookup_type("Vector");
+    auto Hash = reg_.lookup_type("Hash");
 
     // Arithmetic: (Int, Int) -> Int
     register_primitive("+",  {Int, Int}, Int);
@@ -252,6 +253,16 @@ void InferenceEngine::init_primitive_env() {
     register_primitive("vector?",       {Dyn}, Bool);
     register_primitive("make-vector",   {Int, Dyn}, Vector);
     // List<->Vector conversion
+
+    // Hash primitives
+    register_primitive("hash",          {Dyn}, Hash);
+    register_primitive("hash-ref",      {Hash, Dyn}, Dyn);
+    register_primitive("hash-set!",     {Hash, Dyn, Dyn}, Void);
+    register_primitive("hash-length",   {Hash}, Int);
+    register_primitive("hash-keys",     {Hash}, Dyn);
+    register_primitive("hash-values",   {Hash}, Dyn);
+    register_primitive("hash?",         {Dyn}, Bool);
+    register_primitive("hash-remove!",  {Hash, Dyn}, Bool);
 
 }
 

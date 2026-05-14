@@ -97,6 +97,7 @@ namespace {
         if (is_pair(v))         { std::printf("<pair[%zu]>", (size_t)as_pair_idx(v)); return; }
         if (is_closure(v))      { std::printf("<closure[%zu]>", (size_t)as_closure_id(v)); return; }
         if (is_cell(v))         { std::printf("<cell[%zu]>", (size_t)as_cell_id(v)); return; }
+        if (is_hash(v))         { std::printf("<hash[%zu]>", (size_t)as_hash_idx(v)); return; }
         std::printf("<unknown>");
     }
 }
@@ -506,8 +507,116 @@ void Evaluator::init_pair_primitives() {
         return result;
     });
 
+    // ── Hash table (Swiss table) primitives ──────────────────────
+    primitives_.add("hash", [this](const auto& a) {
+        // (hash key val key val ...) — create hash table from pairs
+        HashTable ht;
+        ht.capacity = 8;  // initial power of 2
+        ht.metadata.resize(ht.capacity, 0xFF);
+        ht.keys.resize(ht.capacity);
+        ht.values.resize(ht.capacity);
+        for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
+            // hash — simplified: just use std::hash
+            auto h = static_cast<std::uint64_t>(std::hash<std::int64_t>{}(as_int(a[i])));  // TEMP: only int keys
+            auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;  // bit 7 = 1
+            auto idx = (h >> 1) & (ht.capacity - 1);
+            ht.metadata[idx] = fp;
+            ht.keys[idx] = a[i];
+            ht.values[idx] = a[i + 1];
+            ht.size++;
+        }
+        auto hidx = hash_heap_.size();
+        hash_heap_.push_back(std::move(ht));
+        return make_hash(hidx);
+    });
+    primitives_.add("hash-ref", [this](const auto& a) {
+        if (a.size() < 2 || !is_hash(a[0])) return make_void();
+        auto hidx = as_hash_idx(a[0]);
+        if (hidx >= hash_heap_.size()) return make_void();
+        auto& ht = hash_heap_[hidx];
+        // Linear scan through all slots (simplified for now — full Swiss lookup later)
+        for (std::size_t i = 0; i < ht.capacity; ++i) {
+            if (ht.metadata[i] != 0xFF && /*equal?*/ ht.keys[i] == a[1]) {
+                return ht.values[i];
+            }
+        }
+        return make_void();
+    });
+    primitives_.add("hash-set!", [this](const auto& a) {
+        if (a.size() < 3 || !is_hash(a[0])) return make_void();
+        auto hidx = as_hash_idx(a[0]);
+        if (hidx >= hash_heap_.size()) return make_void();
+        auto& ht = hash_heap_[hidx];
+        for (std::size_t i = 0; i < ht.capacity; ++i) {
+            if (ht.metadata[i] == 0xFF) {
+                auto h = static_cast<std::uint64_t>(std::hash<std::int64_t>{}(as_int(a[1])));
+                ht.metadata[i] = static_cast<std::uint8_t>(h >> 57) | 0x80;
+                ht.keys[i] = a[1];
+                ht.values[i] = a[2];
+                ht.size++;
+                return make_void();
+            }
+        }
+        return make_void();
+    });
+    primitives_.add("hash-length", [this](const auto& a) {
+        if (a.empty() || !is_hash(a[0])) return make_int(0);
+        auto hidx = as_hash_idx(a[0]);
+        if (hidx >= hash_heap_.size()) return make_int(0);
+        return make_int(static_cast<std::int64_t>(hash_heap_[hidx].size));
+    });
+    primitives_.add("hash-keys", [this](const auto& a) {
+        if (a.empty() || !is_hash(a[0])) return make_void();
+        auto hidx = as_hash_idx(a[0]);
+        if (hidx >= hash_heap_.size()) return make_void();
+        auto& ht = hash_heap_[hidx];
+        EvalValue result = make_void();
+        for (std::size_t i = ht.capacity; i > 0; --i) {
+            if (ht.metadata[i - 1] != 0xFF) {
+                auto pid = pairs_.size();
+                pairs_.push_back({ht.keys[i - 1], result});
+                result = make_pair(pid);
+            }
+        }
+        return result;
+    });
+    primitives_.add("hash-values", [this](const auto& a) {
+        if (a.empty() || !is_hash(a[0])) return make_void();
+        auto hidx = as_hash_idx(a[0]);
+        if (hidx >= hash_heap_.size()) return make_void();
+        auto& ht = hash_heap_[hidx];
+        EvalValue result = make_void();
+        for (std::size_t i = ht.capacity; i > 0; --i) {
+            if (ht.metadata[i - 1] != 0xFF) {
+                auto pid = pairs_.size();
+                pairs_.push_back({ht.values[i - 1], result});
+                result = make_pair(pid);
+            }
+        }
+        return result;
+    });
+    primitives_.add("hash?", [this](const auto& a) {
+        if (a.empty()) return make_bool(false);
+        return make_bool(is_hash(a[0]));
+    });
+    primitives_.add("hash-remove!", [this](const auto& a) {
+        if (a.size() < 2 || !is_hash(a[0])) return make_void();
+        auto hidx = as_hash_idx(a[0]);
+        if (hidx >= hash_heap_.size()) return make_void();
+        auto& ht = hash_heap_[hidx];
+        for (std::size_t i = 0; i < ht.capacity; ++i) {
+            if (ht.metadata[i] != 0xFF && ht.keys[i] == a[1]) {
+                ht.metadata[i] = 0xFF;
+                ht.size--;
+                return make_bool(true);
+            }
+        }
+        return make_bool(false);
+    });
+
     // ── L6.8: Runtime type introspection ────────────────────────────
     auto infer_type_name = [](const EvalValue& v) -> const char* {
+        if (is_hash(v))   return "Hash";
         if (is_vector(v)) return "Vector";
         if (is_string(v)) return "String";
         if (is_pair(v))   return "Pair";

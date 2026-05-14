@@ -79,6 +79,14 @@ private:
     std::vector<types::EvalValue> cells_;
     std::vector<Pair> pairs_;
     std::vector<std::string> string_heap_;
+    struct HashTable {
+        std::vector<std::uint8_t> metadata;  // 0xFF=empty, 0x00-0x7F=occupied(7-bit fingerprint)
+        std::vector<types::EvalValue> keys;
+        std::vector<types::EvalValue> values;
+        std::size_t size = 0;      // live entries
+        std::size_t capacity = 0;  // power of 2
+    };
+    std::vector<HashTable> hash_heap_;
     std::vector<std::vector<types::EvalValue>> vector_heap_;
     std::uint64_t next_id_=1;
 };
