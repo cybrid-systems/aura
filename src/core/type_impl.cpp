@@ -9,6 +9,7 @@ TypeRegistry::TypeRegistry() {
     register_type(TypeTag::STRING, "String");
     register_type(TypeTag::VOID, "Void");
     register_type(TypeTag::TYPE, "Type");
+    register_type(TypeTag::VECTOR, "Vector");
 }
 
 TypeId TypeRegistry::register_type(TypeTag tag, std::string name) {

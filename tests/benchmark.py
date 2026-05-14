@@ -69,6 +69,8 @@ BENCHMARKS = [
     # ── L6: Strings ──────────────────────────────────────────
     BenchCase("str_append", '(string-append "a" "b")', "eval", expected_val=None),
     BenchCase("str_length", '(string-length "hello")', "eval", expected_val=5),
+    BenchCase("vec_basic", "(vector 1 2 3)", "eval", expected_val=None),
+    BenchCase("vec_ref", "(vector-ref (vector 10 20 30) 1)", "eval", expected_val=20),
 
     # ── L6: Pairs ────────────────────────────────────────────
     BenchCase("cons_car", '(car (cons 1 2))', "eval", expected_val=1),

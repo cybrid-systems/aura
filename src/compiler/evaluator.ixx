@@ -78,6 +78,7 @@ private:
     std::vector<types::EvalValue> cells_;
     std::vector<Pair> pairs_;
     std::vector<std::string> string_heap_;
+    std::vector<std::vector<types::EvalValue>> vector_heap_;
     std::uint64_t next_id_=1;
 };
 

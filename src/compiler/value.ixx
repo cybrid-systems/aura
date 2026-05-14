@@ -20,6 +20,10 @@ export struct CellRef {
     std::uint64_t id = 0;
     constexpr auto operator<=>(const CellRef&) const = default;
 };
+export struct VectorRef {
+    std::uint64_t index = 0;
+    constexpr auto operator<=>(const VectorRef&) const = default;
+};
 
 // The universal runtime value
 export using EvalValue = std::variant<
@@ -29,7 +33,8 @@ export using EvalValue = std::variant<
     StringRef,         // String (index 3)
     PairRef,           // Pair (index 4)
     ClosureRef,        // Closure (index 5)
-    CellRef            // Cell (index 6)
+    CellRef,           // Cell (index 6)
+    VectorRef          // Vector (index 7)
 >;
 
 // Helpers
@@ -39,6 +44,7 @@ export inline EvalValue make_string(std::uint64_t idx) { return EvalValue(std::i
 export inline EvalValue make_pair(std::uint64_t idx) { return EvalValue(std::in_place_index<4>, PairRef{idx}); }
 export inline EvalValue make_closure(std::uint64_t id) { return EvalValue(std::in_place_index<5>, ClosureRef{id}); }
 export inline EvalValue make_cell(std::uint64_t id) { return EvalValue(std::in_place_index<6>, CellRef{id}); }
+export inline EvalValue make_vector(std::uint64_t idx) { return EvalValue(std::in_place_index<7>, VectorRef{idx}); }
 export inline EvalValue make_void() { return EvalValue(std::in_place_index<0>); }
 
 // Predicates
@@ -49,6 +55,7 @@ export inline bool is_string(const EvalValue& v) noexcept { return std::holds_al
 export inline bool is_pair(const EvalValue& v) noexcept { return std::holds_alternative<PairRef>(v); }
 export inline bool is_closure(const EvalValue& v) noexcept { return std::holds_alternative<ClosureRef>(v); }
 export inline bool is_cell(const EvalValue& v) noexcept { return std::holds_alternative<CellRef>(v); }
+export inline bool is_vector(const EvalValue& v) noexcept { return std::holds_alternative<VectorRef>(v); }
 
 // Accessors (asserts correct type)
 export inline std::int64_t as_int(const EvalValue& v) { return std::get<std::int64_t>(v); }
@@ -57,13 +64,14 @@ export inline std::uint64_t as_string_idx(const EvalValue& v) { return std::get<
 export inline std::uint64_t as_pair_idx(const EvalValue& v) { return std::get<PairRef>(v).index; }
 export inline std::uint64_t as_closure_id(const EvalValue& v) { return std::get<ClosureRef>(v).id; }
 export inline std::uint64_t as_cell_id(const EvalValue& v) { return std::get<CellRef>(v).id; }
+export inline std::uint64_t as_vector_idx(const EvalValue& v) { return std::get<VectorRef>(v).index; }
 
 // Truthiness (backward-compat with sentinel-style: 0 int is falsy)
 export inline bool is_truthy(const EvalValue& v) {
     if (is_bool(v)) return as_bool(v);
     if (is_void(v)) return false;
     if (is_int(v)) return as_int(v) != 0;
-    return true; // strings, pairs, closures, cells are all truthy
+    return true; // strings, pairs, closures, cells, vectors are all truthy
 }
 
 // Format value for display (basic value only — no heap access needed)
@@ -72,6 +80,7 @@ export inline std::string format_value(const EvalValue& v) {
     if (is_bool(v)) return as_bool(v) ? "#t" : "#f";
     if (is_int(v)) return std::to_string(as_int(v));
     if (is_string(v)) return std::format("<string[{}]>", as_string_idx(v));
+    if (is_vector(v)) return std::format("<vector[{}]>", as_vector_idx(v));
     if (is_pair(v)) return std::format("<pair[{}]>", as_pair_idx(v));
     if (is_closure(v)) return std::format("<closure[{}]>", as_closure_id(v));
     if (is_cell(v)) return std::format("<cell[{}]>", as_cell_id(v));
@@ -90,6 +99,7 @@ export inline std::string format_value(const EvalValue& v, const std::vector<std
         }
         return std::format("<string[{}]>", as_string_idx(v));
     }
+    if (is_vector(v)) return std::format("<vector[{}]>", as_vector_idx(v));
     if (is_pair(v)) return std::format("<pair[{}]>", as_pair_idx(v));
     if (is_closure(v)) return std::format("<closure[{}]>", as_closure_id(v));
     if (is_cell(v)) return std::format("<cell[{}]>", as_cell_id(v));

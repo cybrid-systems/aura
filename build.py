@@ -184,7 +184,14 @@ INTEG_TESTS = [
     IntegCase("err_unbound", "x", "eval", expected_err="unbound variable", expected_status=1),
     IntegCase("err_type", '(+ 1 "a")', "typecheck", expected_err="coercion from String to Int", expected_status=1),
 
-    # ── List operations ─────────────────────────────────────
+    # ── Vector operations ──────────────────────────────────
+    IntegCase("vector_basic", "(vector 1 2 3)", "eval", expected="vector"),
+    IntegCase("vector_ref", "(vector-ref (vector 10 20 30) 1)", "eval", expected="20"),
+    IntegCase("vector_length", "(vector-length (vector 1 2 3))", "eval", expected="3"),
+    IntegCase("vector_set", "(begin (vector-set! (vector 1 2 3) 0 99) 42)", "eval", expected="42"),
+    IntegCase("tc_vector", "(vector-length (vector (list 1)))", "typecheck", expected="Int"),
+
+# ── List operations ─────────────────────────────────────
     IntegCase("list_basic", "(list 1 2 3)", "eval", expected="pair"),
     IntegCase("list_length", "(length (list 1 2 3))", "eval", expected="3"),
     IntegCase("list_ref", "(list-ref (list 10 20 30) 1)", "eval", expected="20"),
