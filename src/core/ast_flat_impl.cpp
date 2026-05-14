@@ -5,65 +5,6 @@ import aura.core.type;
 
 namespace aura::ast {
 
-// ── New flatten (to FlatAST SoA + StringPool) ───────────────────
-NodeId flatten_to_flat(const Expr* expr, FlatAST& ast, StringPool& pool) {
-    if (!expr) return NULL_NODE;
-
-    return std::visit([&](const auto& node) -> NodeId {
-        using T = std::decay_t<decltype(node)>;
-
-        if constexpr (std::is_same_v<T, LiteralIntNode>) {
-            return ast.add_literal(node.value);
-        }
-        else if constexpr (std::is_same_v<T, VariableNode>) {
-            return ast.add_variable(pool.intern(node.name));
-        }
-        else if constexpr (std::is_same_v<T, CallNode>) {
-            auto func = flatten_to_flat(node.function, ast, pool);
-            std::vector<NodeId> arg_ids;
-            for (auto* a : node.args)
-                arg_ids.push_back(flatten_to_flat(a, ast, pool));
-            return ast.add_call(func, arg_ids);
-        }
-        else if constexpr (std::is_same_v<T, IfExprNode>) {
-            auto cond = flatten_to_flat(node.condition, ast, pool);
-            auto then_b = flatten_to_flat(node.then_branch, ast, pool);
-            auto else_b = flatten_to_flat(node.else_branch, ast, pool);
-            return ast.add_if(cond, then_b, else_b);
-        }
-        else if constexpr (std::is_same_v<T, LambdaNode>) {
-            std::vector<SymId> param_ids;
-            for (auto& p : node.params)
-                param_ids.push_back(pool.intern(p));
-            auto body = flatten_to_flat(node.body, ast, pool);
-            return ast.add_lambda(param_ids, body);
-        }
-        else if constexpr (std::is_same_v<T, LetNode>) {
-            auto val = flatten_to_flat(node.value, ast, pool);
-            auto body = node.body ? flatten_to_flat(node.body, ast, pool) : NULL_NODE;
-            return ast.add_let(pool.intern(node.name), val, body);
-        }
-        else if constexpr (std::is_same_v<T, LetRecNode>) {
-            auto val = flatten_to_flat(node.value, ast, pool);
-            auto body = flatten_to_flat(node.body, ast, pool);
-            return ast.add_letrec(pool.intern(node.name), val, body);
-        }
-        else if constexpr (std::is_same_v<T, DefineNode>) {
-            auto val = flatten_to_flat(node.value, ast, pool);
-            return ast.add_define(pool.intern(node.name), val);
-        }
-        else if constexpr (std::is_same_v<T, TypeAnnotationNode>) {
-            auto inner = flatten_to_flat(node.inner_expr, ast, pool);
-            return ast.add_type_annotation(pool.intern(node.type_name), inner);
-        }
-        else if constexpr (std::is_same_v<T, CoercionNode>) {
-            auto inner = flatten_to_flat(node.inner_expr, ast, pool);
-            return ast.add_coercion(inner, 0);
-        }
-        return NULL_NODE;
-    }, expr->payload);
-}
-
 // ── Patch application ──────────────────────────────────────────
 bool apply_patches(FlatAST& ast, std::span<const Patch> patches) {
     for (auto& p : patches) {

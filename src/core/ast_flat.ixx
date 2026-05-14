@@ -355,7 +355,6 @@ export bool apply_patches(FlatAST& ast, std::span<const Patch> patches);
 export void fixup_deltas(FlatAST& ast);
 
 // ── Bridge from pointer tree to FlatAST ────────────────────────
-// Temporary: new code should bypass Expr* entirely.
-export NodeId flatten_to_flat(const Expr* expr, FlatAST& ast, StringPool& pool);
+
 
 } // namespace aura::ast
