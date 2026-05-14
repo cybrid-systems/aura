@@ -355,6 +355,55 @@ def test_smoke():
 
 
 # ═══════════════════════════════════════════════════════════════
+# Mutation tests (变异循环)
+# ═══════════════════════════════════════════════════════════════
+
+def test_mutation():
+    """Agent 变异循环 — mutation loop 功能验证"""
+    print(f"{B}═══ Mutation tests ═══{N}")
+    if not AURA.exists():
+        fail(f"{AURA} not found")
+        return 1
+
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "tests" / "mutation_loop.py"),
+         "--demo"],
+        capture_output=True, text=True, timeout=30
+    )
+    print(r.stdout)
+    if r.returncode != 0:
+        print(r.stderr)
+        fail("mutation demo failed")
+        return 1
+    ok("mutation: demo OK")
+
+    r2 = subprocess.run(
+        [sys.executable, str(ROOT / "tests" / "mutation_loop.py"),
+         "--list"],
+        capture_output=True, text=True, timeout=15
+    )
+    print(r2.stdout)
+    if r2.returncode != 0:
+        print(r2.stderr)
+        fail("mutation list failed")
+        return 1
+    ok("mutation: list OK")
+
+    r3 = subprocess.run(
+        [sys.executable, str(ROOT / "tests" / "mutation_loop.py"),
+         str(ROOT / "tests" / "fixtures" / "basic_add.aura"), "--fast"],
+        capture_output=True, text=True, timeout=30
+    )
+    print(r3.stdout)
+    if r3.returncode != 0:
+        print(r3.stderr)
+        fail("mutation single-pass failed")
+        return 1
+    ok("mutation: single-pass OK")
+    return 0
+
+
+# ═══════════════════════════════════════════════════════════════
 # Runners
 # ═══════════════════════════════════════════════════════════════
 
@@ -364,7 +413,37 @@ SUITES = {
     "typecheck": test_typecheck,
     "bench":     test_bench,
     "smoke":     test_smoke,
+    "mutation":  test_mutation,
 }
+
+
+def test_mutation():
+    """Agent 变异循环 — mutation loop 功能验证"""
+    print(f"{B}═══ Mutation tests ═══{N}")
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "tests" / "mutation_loop.py"),
+         str(ROOT / "tests" / "fixtures" / "basic_add.aura"), "--fast"],
+        capture_output=True, text=True, timeout=60
+    )
+    print(r.stdout)
+    if r.returncode != 0:
+        print(r.stderr)
+        fail("mutation tests failed")
+        return 1
+    ok("mutation: single-pass OK")
+
+    # Also run demo for coverage
+    r2 = subprocess.run(
+        [sys.executable, str(ROOT / "tests" / "mutation_loop.py"), "--demo"],
+        capture_output=True, text=True, timeout=30
+    )
+    print(r2.stdout)
+    if r2.returncode != 0:
+        print(r2.stderr)
+        fail("mutation demo failed")
+        return 1
+    ok("mutation: demo OK")
+    return 0
 
 
 def run(cmd, **kwargs):
