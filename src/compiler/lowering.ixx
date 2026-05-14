@@ -61,13 +61,6 @@ export aura::ir::IRModule lower_to_ir_with_cache(
     const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache,
     std::vector<std::string>* cache_hits = nullptr);
 
-// Reconstruct an Expr* tree from FlatAST.
-// Needed by tree-walker evaluator for Lambda closure bodies and
-// MacroDef expansion (Closure table stores Expr*).
-export ast::Expr* reconstruct_expr(ast::FlatAST& flat,
-                                    ast::StringPool& pool,
-                                    ast::ASTArena& arena);
-
 // FlatAST → S-expression source code (reverse of parse_to_flat)
 export std::string unparse_node(const ast::FlatAST& flat,
                                  const ast::StringPool& pool,
