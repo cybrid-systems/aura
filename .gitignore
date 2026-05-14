@@ -20,3 +20,4 @@ build/
 .DS_Store
 Thumbs.db
 compile_commands.json
+tests/__pycache__/
