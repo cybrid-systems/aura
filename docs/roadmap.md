@@ -7,13 +7,13 @@
 ```
 M1 求值器          ✅  纯 FlatAST 管线 (SoA)，无 Expr* 指针树
 M2 查询引擎        ✅  ASTIndex + QueryEngine + TransformEngine
-M3a 语言补全       ✅  布尔/序对/begin/set!/quote/cond/letrec/string
-M3b 宏系统         ✅  defmacro + gensym + 编译期验证
+M3a 语言补全       ✅  布尔/序对/begin/set!/quote/cond/letrec/string/vector
+M3b 宏系统         ✅  defmacro + SyntaxMarker (卫生宏 Phase1)
 M3c 反射           ✅  P2996 auto_to_json + kNodeMeta + 结构布局验证
 M3d 类型系统       ✅  L6.1-L6.7: 渐进类型 + Occurrence + 类型查询
-M3e 工具链         ✅  Benchmark (42) + 增量编译 + --serve + HotSwap
-M3f AI 闭环         ✅  mutation_loop + LLM 驱动 + AI Agent 演示
-M4a 缓存           ✅  ABF v2 列式 (write/read/--cache/--cache-open/O(1) resolve)
+M3e 工具链         ✅  Benchmark(44) + 增量编译 + --serve + CI
+M3f AI 闭环         ✅  mutation_loop + LLM 驱动 + AI Agent 演示(6 场景)
+M4a 缓存           ✅  ABF v4 列式 (O(1) resolve + SyntaxMarker)
 M4b AI 协议         ✅  docs/ai_agent_protocol.md (7 工具定义)
 M4c 生产           ⬜  LLVM JIT / AOT / 自举
 ```
@@ -27,65 +27,44 @@ M4c 生产           ⬜  LLVM JIT / AOT / 自举
 | 源文件 | 28 (.ixx + .cpp) |
 | 代码行数 | ~7500 |
 | CTest | 49/49 |
-| Benchmark | 42/42 |
-| 集成测试 | 57/57 |
+| Benchmark | 44/44 |
+| 集成测试 | 62/62 |
 | 测试套件 | 8 (build.py test all) |
 | IR opcodes | 21 |
-| 内存池 tier | 4 (ASTArena + ArenaGroup) |
+| 运行时类型 | 8 (Void/Int/Bool/String/Pair/Closure/Cell/Vector) |
+| 语言原语 | ~53 |
+| CI | GitHub Actions |
 
 ---
 
-## 组件状态
+## 下一步计划
 
-### 核心 (core) ✅
+### 🔴 P0 — String 原语补齐到 IR 管线
 
-| 模块 | 状态 | 说明 |
-|------|------|------|
-| arena.ixx | ✅ | ASTArena pmr bump allocator |
-| ast.ixx | ✅ | FlatAST SoA + NodeView + StringPool |
-| type.ixx | ✅ | TypeRegistry + TypeId (6 预定义类型) |
-
-### 解析器 (parser) ✅
-
-| 模块 | 说明 |
+| 问题 | 现状 |
 |------|------|
-| lexer | Tokenizer |
-| parser | S-表达式 → FlatAST (SoA) |
+| IR executor 不支持 string | `--ir` 模式下 `string-append` 返回 0 |
+| number->string 在 evaluator | 树遍历器正常，IR 路径无支持 |
+| serve exec 缓存函数查找 bug | `exec_with_cache` 返回 0 |
 
-### 编译器 (compiler)
+### 🟡 P1 — IR 缓存序列化 (ABF v4 Phase 3)
 
-| 模块 | 状态 | 说明 |
-|------|------|------|
-| evaluator | ✅ | 树遍历求值器 (纯 FlatAST) |
-| ir | ✅ | AuraIR 21 opcodes |
-| lowering | ✅ | FlatAST → IR (cache-aware) |
-| ir_executor | ✅ | IR 解释器 (闭包 + cells + coercion) |
-| pass_manager | ✅ | concept-based fold pipeline |
-| compute_kind | ✅ | Known/Unknown 分析 |
-| arity | ✅ | 参数数量校验 |
-| cache | ✅ | ABF v2 列式缓存 (v3 O(1) resolve) |
-| diag | ✅ | 结构化诊断 + blame 位置 |
-| service | ✅ | CompilerService |
-| query | ✅ | ASTIndex / QueryEngine / TransformEngine |
-| type_checker | ✅ | L6.1-L6.7 |
+编译后的 IR 函数写入 cache 文件，`--cache-open` 直接执行（跳过 parse+lowering）。
 
-### 工具
+### 🟡 P1 — 卫生宏 Phase 2
 
-| 工具 | 说明 |
+利用 SyntaxMarker 列做宏展开器 MacroExpander：
+- 预展开管线（parse → macro_expand → typecheck → lower）
+- MacroIntroduced 节点自动重命名
+
+### 🟢 P2 — 类型系统 L6.8+ 补全
+
+| 特性 | 状态 |
 |------|------|
-| aura-reflect | P2996 IR opcode / schema 验证 |
-| aura-schema | JSON Schema 生成 |
-| main.cpp | CLI: 求值/查询/变换/类型检查/缓存/serve/hot-swap |
+| forall 多态 | ⚡ register_forall 存在但 0 测试 |
+| Float/Symbol/Pair 类型注册 | ⚡ TypeTag 枚举已有但未注册 |
+| Tuple/Variant/Record 类型语言 | ⬜ 设计阶段 |
 
----
+### 🟢 P2 — LLVM 后端探索
 
-## 下一步
-
-```
-P0  向量类型          — 基础数据结构（变长数组）
-P0  number->string    — 当前返回空字符串（字符串连接也无法正确处理）
-P1  IR 缓存序列化     — 编译后 IR 函数写入 cache 文件（Phase 3）
-P1  卫生宏 Phase 1    — FlatAST 标记 + 自动重命名
-P2  CI + benchmark 回归 — GitHub Actions + --check 自动化
-P3  LLVM 后端探索     — M4 正式第一步
-```
+M4 正式第一步。建议等 Agent demo 证明价值后再投入。
