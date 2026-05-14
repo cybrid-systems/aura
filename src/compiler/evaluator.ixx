@@ -75,6 +75,7 @@ private:
     Env top_; Primitives primitives_; ast::ASTArena* arena_=nullptr;
     std::unordered_map<ClosureId,Closure> closures_;
     std::unordered_map<std::string, MacroDef> macros_;
+    std::unordered_set<std::string> loaded_modules_;
     std::vector<types::EvalValue> cells_;
     std::vector<Pair> pairs_;
     std::vector<std::string> string_heap_;
