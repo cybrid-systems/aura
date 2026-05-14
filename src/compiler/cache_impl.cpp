@@ -244,6 +244,7 @@ void MappedCache::copy_pointers(const MappedCache& o) {
     str_offsets_ = o.str_offsets_;
     str_data_base_ = o.str_data_base_;
     lines_ = o.lines_; cols_ = o.cols_;
+    markers_ = o.markers_;
 }
 
 MappedCache::~MappedCache() {
@@ -260,6 +261,7 @@ NodeView MappedCache::get(NodeId id) const {
         .col      = id < num_nodes_ ? cols_[id] : 0,
         .children = std::span(child_data_ + child_begins_[id], child_counts_[id]),
         .params   = std::span(param_data_ + param_begins_[id], param_counts_[id]),
+        .marker   = markers_ ? static_cast<SyntaxMarker>(markers_[id]) : SyntaxMarker::User,
     };
 }
 
