@@ -13,10 +13,18 @@ Usage:
   python3 tests/mutation_loop.py --demo                     # 快速演示
   python3 tests/mutation_loop.py --list                     # 列出变异策略
   python3 tests/mutation_loop.py --loop --fast <seed.aura>  # 持续变异 (无性能检查)
+  python3 tests/mutation_loop.py --ai <seed.aura>           # AI驱动变异
 
 Flags:
   --fast, --no-bench   跳过基准测试回归检测 (debug 构建推荐)
+  --ai, --llm          启用AI驱动变异 (使用LLM生成代码变化)
+  --model <name>       LLM模型名称 (默认: deepseek/deepseek-v4-flash)
+  --api-key <key>      LLM API密钥 (默认: 环境变量 LLM_API_KEY)
+  --base-url <url>     LLM API基础URL (默认: 环境变量 LLM_BASE_URL)
+  --iterations <N>     AI变异迭代次数 (默认: 5)
 """
+
+import http.client
 
 import subprocess
 import json
@@ -616,6 +624,349 @@ def mutation_loop(
 
 
 # ═══════════════════════════════════════════════════════════════
+# LLM API (AI-driven mutation)
+# ═══════════════════════════════════════════════════════════════
+
+def llm_complete(
+    messages: list[dict],
+    api_key: Optional[str] = None,
+    model: Optional[str] = None,
+    base_url: Optional[str] = None,
+    timeout: int = 60
+) -> str:
+    """Call an OpenAI-compatible chat completion API.
+
+    Returns the response text content, or empty string on failure.
+
+    Environment variables (used when corresponding arg is None):
+      LLM_API_KEY   — API key
+      LLM_MODEL     — Model name (e.g. "deepseek/deepseek-v4-flash")
+      LLM_BASE_URL  — API base URL (e.g. "https://api.deepseek.com")
+    """
+    api_key = api_key or os.environ.get("LLM_API_KEY", "")
+    model = model or os.environ.get("LLM_MODEL", "deepseek/deepseek-v4-flash")
+    base_url = base_url or os.environ.get("LLM_BASE_URL", "")
+
+    if not api_key:
+        print(f"  {Y}Warning: No LLM_API_KEY set, falling back to random mutation{N}")
+        return ""
+
+    # Derive base_url from model prefix if not set
+    if not base_url:
+        model_prefix = model.split("/")[0] if "/" in model else ""
+        known_endpoints = {
+            "deepseek": "https://api.deepseek.com",
+            "openai": "https://api.openai.com",
+            "anthropic": "https://api.anthropic.com",
+            "grok": "https://api.x.ai",
+            "google": "https://generativelanguage.googleapis.com",
+        }
+        base_url = known_endpoints.get(model_prefix, "https://api.openai.com")
+
+    # Strip trailing slash
+    base_url = base_url.rstrip("/")
+
+    # Parse host and path from base_url
+    scheme_rest = base_url.split("://", 1)
+    if len(scheme_rest) == 2:
+        host_part = scheme_rest[1]
+    else:
+        host_part = scheme_rest[0]
+
+    # Handle possible path in host_part, e.g. "api.deepseek.com/v1"
+    if "/" in host_part:
+        host, path_prefix = host_part.split("/", 1)
+        path_prefix = "/" + path_prefix
+    else:
+        host = host_part
+        path_prefix = ""
+
+    body = json.dumps({
+        "model": model,
+        "messages": messages,
+        "temperature": 0.7,
+        "max_tokens": 2048,
+    })
+
+    try:
+        conn = http.client.HTTPSConnection(host, timeout=timeout)
+        conn.request(
+            "POST",
+            f"{path_prefix}/chat/completions",
+            body=body,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            }
+        )
+        resp = conn.getresponse()
+        if resp.status != 200:
+            err_body = resp.read().decode("utf-8", errors="replace")[:200]
+            print(f"  {Y}LLM API error: HTTP {resp.status} — {err_body}{N}")
+            return ""
+        data = json.loads(resp.read().decode("utf-8"))
+        conn.close()
+        return data["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        print(f"  {Y}LLM API exception: {e}{N}")
+        return ""
+
+
+def _extract_code_from_llm_response(raw: str) -> Optional[str]:
+    """Extract code from an LLM response.
+
+    Handles:
+    1. Code in markdown fenced blocks (```aura ... ``` or ```lisp ... ```)
+    2. Code in markdown code block (``` ... ```) — takes first block
+    3. Plain S-expression text with balanced parens
+
+    Returns the extracted code or None if nothing parseable found.
+    """
+    if not raw:
+        return None
+
+    raw = raw.strip()
+
+    # Strategy 1: Look for fenced code blocks (``` or `````)
+    block_pattern = re.compile(r'```(?:aura|lisp|scheme|clojure|scm)?\s*\n?(.*?)```', re.DOTALL)
+    blocks = block_pattern.findall(raw)
+    if blocks:
+        candidate = blocks[0].strip()
+        if candidate:
+            return candidate
+
+    # Strategy 2: Look for inline code (`...`)
+    inline_pattern = re.compile(r'`([^`]+)`')
+    inlines = inline_pattern.findall(raw)
+    if inlines:
+        for candidate in inlines:
+            candidate = candidate.strip()
+            if candidate and (candidate.startswith("(") or re.match(r'^[\d"\']', candidate)):
+                return candidate
+
+    # Strategy 3: Try to find an S-expression (balanced parens)
+    # Look for the first top-level S-expression
+    depth = 0
+    start = -1
+    for i, c in enumerate(raw):
+        if c == '(':
+            if depth == 0:
+                start = i
+            depth += 1
+        elif c == ')':
+            depth -= 1
+            if depth == 0 and start >= 0:
+                candidate = raw[start:i + 1].strip()
+                if candidate:
+                    return candidate
+
+    # Strategy 4: Return the whole thing if it looks like code
+    if raw.startswith("(") or raw.startswith('"') or re.match(r'^[\d\-]', raw):
+        return raw
+
+    return None
+
+
+def _build_ai_system_prompt() -> str:
+    """Build the system prompt for AI-driven mutation."""
+    return textwrap.dedent("""\
+    You are an AI code evolution agent for the Aura programming language.
+    Aura is a Lisp-like language where code is data (homoiconic).
+
+    Aura syntax examples:
+    - Literals: 42, "hello"
+    - Arithmetic: (+ 1 2), (* 3 4), (- 10 5), (/ 100 5)
+    - Variables: (let ((x 10)) x)
+    - Lambda: (lambda (x) (* x 2))
+    - Apply: ((lambda (x) (* x 2)) 5)
+    - If: (if condition then else)
+    - Recursion: (letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 5))
+    - Pairs: (cons 1 2), (car pair), (cdr pair)
+    - String: (string-append "a" "b"), (string-length s), (string-ref s i)
+    - Type query: (type-of 42), (type? 42 "Int")
+
+    Your task: Given a piece of Aura code and its execution result, suggest a mutation.
+    The mutation should:
+    1. Preserve semantic correctness (the new code should still compile and produce meaningful results)
+    2. Be creative but practical (don't break the code randomly)
+    3. Return ONLY the complete mutated Aura S-expression, no explanation
+    """)
+
+
+def _build_ai_user_prompt(code: str, result: str, history: list[dict]) -> str:
+    """Build the user prompt for a given code and context."""
+    history_str = "[]"
+    if history:
+        history_str = json.dumps(history[-5:], indent=2)
+
+    return textwrap.dedent(f"""\
+    Current code: {code}
+    Previous result: {result}
+    Mutation history: {history_str}
+
+    Return ONLY the complete mutated Aura S-expression with no explanation.
+    """)
+
+
+def mutate_with_ai(
+    code: str,
+    result: str,
+    history: list[dict],
+    api_key: Optional[str] = None,
+    model: Optional[str] = None,
+    base_url: Optional[str] = None
+) -> Optional[str]:
+    """Use LLM to suggest a mutation for the given code.
+
+    Returns the mutated code string, or None if the LLM call failed
+    or the response couldn't be parsed.
+    """
+    system_prompt = _build_ai_system_prompt()
+    user_prompt = _build_ai_user_prompt(code, result, history)
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    print(f"  {C}Sending code to LLM for mutation suggestion...{N}")
+    response = llm_complete(messages, api_key=api_key, model=model, base_url=base_url)
+
+    if not response:
+        print(f"  {Y}LLM returned empty response{N}")
+        return None
+
+    mutated = _extract_code_from_llm_response(response)
+    if mutated:
+        print(f"  {G}LLM returned:{N} {mutated[:80]}{'...' if len(mutated) > 80 else ''}")
+        return mutated
+    else:
+        print(f"  {Y}Could not parse code from LLM response: {response[:100]}{N}")
+        return None
+
+
+def ai_mutation_loop(
+    seed_code: str,
+    iterations: int = 5,
+    do_bench: bool = False,
+    verbose: bool = True,
+    api_key: Optional[str] = None,
+    model: Optional[str] = None,
+    base_url: Optional[str] = None
+) -> str:
+    """Run AI-driven mutation loop for N iterations.
+
+    Each iteration:
+      1. Sends current code + result + history to LLM
+      2. LLM suggests a mutation
+      3. Applies, compiles, verifies output matches expected
+      4. Feeds result back as context for next iteration
+      5. If LLM fails, falls back to random mutation
+
+    Returns the final evolved code.
+    """
+    # Get expected output
+    ok, expected = get_output(seed_code)
+    if not ok:
+        print(f"{R}Error: cannot evaluate seed code: {expected}{N}")
+        print(f"  Seed: {seed_code}")
+        sys.exit(1)
+
+    print(f"{C}{'═'*60}{N}")
+    print(f"{B}Aura AI Mutation Loop{N}")
+    print(f"{C}{'═'*60}{N}")
+    print(f"  Seed:       {Y}{seed_code}{N}")
+    print(f"  Expected:   {G}{expected}{N}")
+    print(f"  Iterations: {iterations}")
+    print(f"  Model:      {model or os.environ.get('LLM_MODEL', 'deepseek/deepseek-v4-flash')}")
+    print(f"  Base URL:   {base_url or os.environ.get('LLM_BASE_URL', 'auto-detect')}")
+    print(f"{C}{'─'*60}{N}")
+
+    current_code = seed_code
+    current_result = expected
+    history = []
+
+    for gen in range(iterations):
+        print(f"\n{B}AI Generation {gen + 1}/{iterations}{N}")
+        print(f"  Current: {Y}{current_code[:80]}{N}")
+
+        # Try AI mutation first
+        ai_code = mutate_with_ai(
+            current_code, current_result, history,
+            api_key=api_key, model=model, base_url=base_url
+        )
+
+        if ai_code and ai_code != current_code:
+            # Test the AI-suggested mutation
+            ok2, output = get_output(ai_code)
+            if ok2 and output == current_result:
+                # Accepted!
+                history.append({
+                    "iteration": gen + 1,
+                    "code_before": current_code,
+                    "code_after": ai_code,
+                    "result": "accepted",
+                    "output": output,
+                })
+                current_code = ai_code
+                current_result = output
+                print(f"  {G}✓ AI mutation accepted{N}")
+                print(f"  {G}→ Kept:{N} {current_code[:80]}")
+            elif ok2:
+                # Output changed but code is valid — still accept as creative mutation
+                history.append({
+                    "iteration": gen + 1,
+                    "code_before": current_code,
+                    "code_after": ai_code,
+                    "result": "output_changed",
+                    "previous_output": current_result,
+                    "new_output": output,
+                })
+                print(f"  {Y}~ Output changed: '{current_result}' → '{output}'{N}")
+                current_code = ai_code
+                current_result = output
+                print(f"  {Y}→ Kept (new output):{N} {current_code[:80]}")
+            else:
+                # Execution error — record and fall back to random
+                print(f"  {R}✗ AI mutation failed: {output[:80]}{N}")
+                history.append({
+                    "iteration": gen + 1,
+                    "code_before": current_code,
+                    "code_after": ai_code,
+                    "result": "exec_error",
+                    "error": output,
+                })
+                # Fall back to random mutation
+                print(f"  {Y}Falling back to random mutation...{N}")
+                report = single_pass(current_code, current_result, do_bench)
+                if report.kept > 0:
+                    current_code = report.current_code
+                    print(f"  {G}→ Random kept:{N} {current_code[:80]}")
+        elif ai_code is None:
+            # LLM call failed — fall back to random
+            print(f"  {Y}AI mutation unavailable, falling back to random...{N}")
+            report = single_pass(current_code, current_result, do_bench)
+            if report.kept > 0:
+                current_code = report.current_code
+                print(f"  {G}→ Random kept:{N} {current_code[:80]}")
+        else:
+            # LLM returned same code or couldn't parse
+            print(f"  {Y}~ AI returned no effective change, falling back to random...{N}")
+            report = single_pass(current_code, current_result, do_bench)
+            if report.kept > 0:
+                current_code = report.current_code
+                print(f"  {G}→ Random kept:{N} {current_code[:80]}")
+
+    print(f"\n{C}{'═'*60}{N}")
+    print(f"{G}AI Mutation loop complete!{N}")
+    print(f"  Final code: {Y}{current_code}{N}")
+    print(f"  Output:     {G}{current_result}{N}")
+    print(f"{C}{'═'*60}{N}")
+
+    return current_code
+
+
+# ═══════════════════════════════════════════════════════════════
 # Demo mode
 # ═══════════════════════════════════════════════════════════════
 
@@ -660,20 +1011,82 @@ def list_mutations():
 # CLI
 # ═══════════════════════════════════════════════════════════════
 
+def _parse_flag_args(args: list[str]) -> dict:
+    """Parse known flags from args list, returning remaining args.
+
+    Returns dict with:
+      - 'remaining': non-flag positional args
+      - 'ai': bool
+      - 'model': str or None
+      - 'api_key': str or None
+      - 'base_url': str or None
+      - 'iterations': int
+      - 'do_bench': bool
+    """
+    result = {
+        "ai": False,
+        "model": None,
+        "api_key": None,
+        "base_url": None,
+        "iterations": 5,
+        "do_bench": True,
+    }
+    i = 0
+    remaining = []
+    while i < len(args):
+        a = args[i]
+        if a in ("--ai", "--llm"):
+            result["ai"] = True
+            i += 1
+        elif a in ("--fast", "--no-bench"):
+            result["do_bench"] = False
+            i += 1
+        elif a == "--model":
+            i += 1
+            if i < len(args):
+                result["model"] = args[i]
+                i += 1
+        elif a == "--api-key":
+            i += 1
+            if i < len(args):
+                result["api_key"] = args[i]
+                i += 1
+        elif a == "--base-url":
+            i += 1
+            if i < len(args):
+                result["base_url"] = args[i]
+                i += 1
+        elif a == "--iterations":
+            i += 1
+            if i < len(args):
+                try:
+                    result["iterations"] = int(args[i])
+                except ValueError:
+                    print(f"{Y}Warning: invalid --iterations value '{args[i]}', using default 5{N}")
+                i += 1
+        elif a in ("-h", "--help"):
+            print(__doc__.strip())
+            sys.exit(0)
+        else:
+            remaining.append(a)
+            i += 1
+
+    result["remaining"] = remaining
+    return result
+
+
 def main():
     if not AURA.exists():
         print(f"{R}Error: {AURA} not found. Run 'python3 build.py build' first.{N}")
         sys.exit(1)
 
-    args = sys.argv[1:]
+    raw_args = sys.argv[1:]
+    parsed = _parse_flag_args(raw_args)
+    args = parsed["remaining"]
+    do_bench = parsed["do_bench"]
+    ai_mode = parsed["ai"]
 
-    # Parse --fast / --no-bench flags
-    do_bench = True
-    if "--fast" in args or "--no-bench" in args:
-        do_bench = False
-        args = [a for a in args if a not in ("--fast", "--no-bench")]
-
-    if not args or args[0] in ("-h", "--help"):
+    if not args:
         print(__doc__.strip())
         return
 
@@ -715,13 +1128,27 @@ def main():
         mutation_loop(seed, expected, iterations=10, do_bench=do_bench)
         return
 
-    # Default: single mutation pass
+    # Default: read seed from file or inline
     path = Path(args[0])
     if path.exists():
         code = path.read_text().strip()
     else:
         code = args[0]
 
+    if ai_mode:
+        # AI-driven mutation loop
+        ai_mutation_loop(
+            seed_code=code,
+            iterations=parsed["iterations"],
+            do_bench=do_bench,
+            verbose=True,
+            api_key=parsed["api_key"],
+            model=parsed["model"],
+            base_url=parsed["base_url"],
+        )
+        return
+
+    # Default: single mutation pass (random)
     print(f"{B}Single mutation pass{N}")
     print(f"  Input: {Y}{code}{N}")
 
