@@ -34,6 +34,7 @@ ComputeKindResult compute_kind(const IRFunction& func) {
                     kind = ComputeKind::Known; break;
 
                 case IROpcode::ConstI64:
+                case IROpcode::ConstF64:
                     kind = ComputeKind::Known; break;
 
                 case IROpcode::Local:
@@ -68,7 +69,7 @@ ComputeKindResult compute_kind(const IRFunction& func) {
                 auto dst = ops[0];
                 bool has_dst = false;
                 switch (instr.opcode) {
-                case IROpcode::ConstI64: case IROpcode::Local: case IROpcode::Arg:
+                case IROpcode::ConstI64: case IROpcode::ConstF64: case IROpcode::Local: case IROpcode::Arg:
                 case IROpcode::Add: case IROpcode::Sub: case IROpcode::Mul: case IROpcode::Div:
                 case IROpcode::Eq: case IROpcode::Lt: case IROpcode::Gt:
                 case IROpcode::Le: case IROpcode::Ge: case IROpcode::And:

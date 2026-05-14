@@ -33,7 +33,18 @@ Token Lexer::read_string() {
     return make_tok(TokenKind::String, source_.substr(s, pos_ - s - 1));
 }
 
-Token Lexer::read_number() { std::size_t s = pos_; if (source_[pos_] == '-') pos_++; while (pos_ < source_.size() && std::isdigit((unsigned char)source_[pos_])) pos_++; return make_tok(TokenKind::Integer, source_.substr(s, pos_-s)); }
+Token Lexer::read_number() {
+    std::size_t s = pos_;
+    if (source_[pos_] == '-') pos_++;
+    while (pos_ < source_.size() && std::isdigit((unsigned char)source_[pos_])) pos_++;
+    // Check for decimal point followed by digit
+    if (pos_ < source_.size() && source_[pos_] == '.' && pos_ + 1 < source_.size() && std::isdigit((unsigned char)source_[pos_ + 1])) {
+        pos_++; // consume '.'
+        while (pos_ < source_.size() && std::isdigit((unsigned char)source_[pos_])) pos_++;
+        return make_tok(TokenKind::Float, source_.substr(s, pos_-s));
+    }
+    return make_tok(TokenKind::Integer, source_.substr(s, pos_-s));
+}
 Token Lexer::read_identifier() { std::size_t s = pos_; while (pos_ < source_.size()) { char c = source_[pos_]; if (std::isalnum((unsigned char)c) || c == '_' || c == '+' || c == '*' || c == '-' || c == '/' || c == '=' || c == '<' || c == '>' || c == '!' || c == '?') pos_++; else break; } return make_tok(TokenKind::Identifier, source_.substr(s, pos_-s)); }
 void Lexer::skip_ws() { while (pos_ < source_.size()) { char c = source_[pos_]; if (c == ' '||c=='\t') { pos_++; col_++; } else if (c == '\n') { pos_++; line_++; col_=1; } else if (c == ';') { while (pos_<source_.size() && source_[pos_]!='\n') pos_++; } else break; } }
 Token Lexer::peek() { if (!peeked_) { peeked_=true; peek_token_=advance(); } return peek_token_; }

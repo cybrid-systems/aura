@@ -14,7 +14,8 @@ int resolve_callee(const IRFunction& func, const IRModule& mod, std::uint32_t sl
             std::uint32_t dst = 0;
             bool writes = false;
             switch (instr.opcode) {
-            case IROpcode::ConstI64: case IROpcode::Local: case IROpcode::Arg:
+            case IROpcode::ConstI64:
+        case IROpcode::ConstF64: case IROpcode::Local: case IROpcode::Arg:
             case IROpcode::Add: case IROpcode::Sub: case IROpcode::Mul: case IROpcode::Div:
             case IROpcode::Eq: case IROpcode::Lt: case IROpcode::Gt:
             case IROpcode::Le: case IROpcode::Ge: case IROpcode::And:

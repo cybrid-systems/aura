@@ -100,6 +100,8 @@ private:
             case aura::ir::IROpcode::ConstI64:
                 known_[ops[0]] = (static_cast<std::int64_t>(ops[2]) << 32) | ops[1];
                 break;
+            case aura::ir::IROpcode::ConstF64:
+                break;
             case aura::ir::IROpcode::Local: {
                 auto it = known_.find(ops[1]);
                 if (it != known_.end()) { replace(instr, ops[0], it->second); ++folded_; }

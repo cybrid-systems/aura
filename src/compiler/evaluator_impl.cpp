@@ -1,5 +1,6 @@
 module;
 #include <cstdio>
+#include <cstdlib>
 #include <unistd.h>
 module aura.compiler.evaluator;
 import std;
@@ -38,6 +39,7 @@ std::optional<EvalValue> Env::lookup(const std::string& n) const {
 namespace {
     static std::int64_t coerce_to_int(const EvalValue& v, const std::vector<std::string>* heap) {
         if (is_int(v)) return as_int(v);
+        if (is_float(v)) return static_cast<std::int64_t>(as_float(v)); // truncate
         if (is_string(v) && heap) {
             auto idx = as_string_idx(v);
             if (idx < heap->size()) {
@@ -48,23 +50,75 @@ namespace {
         if (is_bool(v)) return as_bool(v) ? 1 : 0;
         return 0;
     }
+
+    static double coerce_to_double(const EvalValue& v, const std::vector<std::string>* heap) {
+        if (is_float(v)) return as_float(v);
+        return static_cast<double>(coerce_to_int(v, heap));
+    }
 }
 
 // ── Primitives: EvalValue operations ──────────────────────────
 
 Primitives::Primitives() {
-    table_["+"]  = [this](auto& a) { return make_int(coerce_to_int(a[0], string_heap_) + coerce_to_int(a[1], string_heap_)); };
+    table_["+"]  = [this](auto& a) {
+        if (is_float(a[0]) || is_float(a[1])) {
+            double x = is_float(a[0]) ? as_float(a[0]) : static_cast<double>(coerce_to_int(a[0], string_heap_));
+            double y = is_float(a[1]) ? as_float(a[1]) : static_cast<double>(coerce_to_int(a[1], string_heap_));
+            return make_float(x + y);
+        }
+        return make_int(coerce_to_int(a[0], string_heap_) + coerce_to_int(a[1], string_heap_));
+    };
     table_["-"]  = [this](auto& a) {
+        if ((a.size() > 0 && is_float(a[0])) || (a.size() > 1 && is_float(a[1]))) {
+            double x = a.empty() ? 0.0 : (is_float(a[0]) ? as_float(a[0]) : static_cast<double>(coerce_to_int(a[0], string_heap_)));
+            if (a.size() == 1) return make_float(-x);
+            double y = is_float(a[1]) ? as_float(a[1]) : static_cast<double>(coerce_to_int(a[1], string_heap_));
+            return make_float(x - y);
+        }
         auto v0 = coerce_to_int(a[0], string_heap_);
         return a.size() == 1 ? make_int(-v0) : make_int(v0 - coerce_to_int(a[1], string_heap_));
     };
-    table_["*"]  = [this](auto& a) { return make_int(coerce_to_int(a[0], string_heap_) * coerce_to_int(a[1], string_heap_)); };
-    table_["/"]  = [this](auto& a) { return make_int(coerce_to_int(a[0], string_heap_) / coerce_to_int(a[1], string_heap_)); };
-    table_["="]  = [this](auto& a) { return make_int(coerce_to_int(a[0], string_heap_) == coerce_to_int(a[1], string_heap_) ? 1 : 0); };
-    table_["<"]  = [this](auto& a) { return make_int(coerce_to_int(a[0], string_heap_) < coerce_to_int(a[1], string_heap_) ? 1 : 0); };
-    table_[">"]  = [this](auto& a) { return make_int(coerce_to_int(a[0], string_heap_) > coerce_to_int(a[1], string_heap_) ? 1 : 0); };
-    table_["<="] = [this](auto& a) { return make_int(coerce_to_int(a[0], string_heap_) <= coerce_to_int(a[1], string_heap_) ? 1 : 0); };
-    table_[">="] = [this](auto& a) { return make_int(coerce_to_int(a[0], string_heap_) >= coerce_to_int(a[1], string_heap_) ? 1 : 0); };
+    table_["*"]  = [this](auto& a) {
+        if (is_float(a[0]) || is_float(a[1])) {
+            double x = is_float(a[0]) ? as_float(a[0]) : static_cast<double>(coerce_to_int(a[0], string_heap_));
+            double y = is_float(a[1]) ? as_float(a[1]) : static_cast<double>(coerce_to_int(a[1], string_heap_));
+            return make_float(x * y);
+        }
+        return make_int(coerce_to_int(a[0], string_heap_) * coerce_to_int(a[1], string_heap_));
+    };
+    table_["/"]  = [this](auto& a) {
+        if (is_float(a[0]) || is_float(a[1])) {
+            double x = is_float(a[0]) ? as_float(a[0]) : static_cast<double>(coerce_to_int(a[0], string_heap_));
+            double y = is_float(a[1]) ? as_float(a[1]) : static_cast<double>(coerce_to_int(a[1], string_heap_));
+            if (y == 0.0) return make_int(0);
+            return make_float(x / y);
+        }
+        return make_int(coerce_to_int(a[0], string_heap_) / coerce_to_int(a[1], string_heap_));
+    };
+    auto to_fcomp = [this](const EvalValue& v) -> double {
+        if (is_float(v)) return as_float(v);
+        return static_cast<double>(coerce_to_int(v, string_heap_));
+    };
+    table_["="]  = [this,&to_fcomp](auto& a) {
+        if (is_float(a[0]) || is_float(a[1])) return make_int(to_fcomp(a[0]) == to_fcomp(a[1]) ? 1 : 0);
+        return make_int(coerce_to_int(a[0], string_heap_) == coerce_to_int(a[1], string_heap_) ? 1 : 0);
+    };
+    table_["<"]  = [this,&to_fcomp](auto& a) {
+        if (is_float(a[0]) || is_float(a[1])) return make_int(to_fcomp(a[0]) < to_fcomp(a[1]) ? 1 : 0);
+        return make_int(coerce_to_int(a[0], string_heap_) < coerce_to_int(a[1], string_heap_) ? 1 : 0);
+    };
+    table_[">"]  = [this,&to_fcomp](auto& a) {
+        if (is_float(a[0]) || is_float(a[1])) return make_int(to_fcomp(a[0]) > to_fcomp(a[1]) ? 1 : 0);
+        return make_int(coerce_to_int(a[0], string_heap_) > coerce_to_int(a[1], string_heap_) ? 1 : 0);
+    };
+    table_["<="] = [this,&to_fcomp](auto& a) {
+        if (is_float(a[0]) || is_float(a[1])) return make_int(to_fcomp(a[0]) <= to_fcomp(a[1]) ? 1 : 0);
+        return make_int(coerce_to_int(a[0], string_heap_) <= coerce_to_int(a[1], string_heap_) ? 1 : 0);
+    };
+    table_[">="] = [this,&to_fcomp](auto& a) {
+        if (is_float(a[0]) || is_float(a[1])) return make_int(to_fcomp(a[0]) >= to_fcomp(a[1]) ? 1 : 0);
+        return make_int(coerce_to_int(a[0], string_heap_) >= coerce_to_int(a[1], string_heap_) ? 1 : 0);
+    };
     // Ghuloum Step 9: booleans
     table_["not"]  = [](auto& a) { return make_int(!is_truthy(a[0]) ? 1 : 0); };
     table_["and"]  = [](auto& a) {
@@ -85,6 +139,7 @@ namespace {
     static void io_print_val(const EvalValue& v, const std::vector<std::string>* heap, bool quote) {
         if (is_void(v))         { std::printf("()"); return; }
         if (is_bool(v))         { std::printf(as_bool(v) ? "#t" : "#f"); return; }
+        if (is_float(v))        { std::printf("%g", as_float(v)); return; }
         if (is_int(v))          { std::printf("%ld", (long)as_int(v)); return; }
         if (is_string(v) && heap) {
             auto idx = as_string_idx(v);
@@ -218,7 +273,19 @@ void Evaluator::init_pair_primitives() {
     });
     primitives_.add("number->string", [this](const auto& a) {
         if (a.empty()) return make_int(0);
-        auto s = is_int(a[0]) ? std::to_string(as_int(a[0])) : "0";
+        std::string s;
+        if (is_float(a[0])) s = std::to_string(as_float(a[0]));
+        else if (is_int(a[0])) s = std::to_string(as_int(a[0]));
+        else s = "0";
+        // Trim trailing zeros from float representation
+        if (is_float(a[0])) {
+            auto dot = s.find('.');
+            if (dot != std::string::npos) {
+                auto last = s.find_last_not_of('0');
+                if (last > dot) s = s.substr(0, last + 1);
+                else s = s.substr(0, dot);
+            }
+        }
         auto id = string_heap_.size();
         string_heap_.push_back(std::move(s));
         return make_string(id);
@@ -227,7 +294,12 @@ void Evaluator::init_pair_primitives() {
         if (a.empty() || !is_string(a[0])) return make_int(0);
         auto i = as_string_idx(a[0]);
         if (i >= string_heap_.size()) return make_int(0);
-        try { return make_int(static_cast<std::int64_t>(std::stoll(string_heap_[i]))); }
+        try {
+            auto& str = string_heap_[i];
+            if (str.find('.') != std::string::npos || str.find('e') != std::string::npos || str.find('E') != std::string::npos)
+                return make_float(std::stod(str));
+            return make_int(static_cast<std::int64_t>(std::stoll(str)));
+        }
         catch (...) { return make_int(0); }
     });
     primitives_.add("list", [this](const auto& a) {
@@ -613,6 +685,7 @@ void Evaluator::init_pair_primitives() {
         return make_bool(false);
     });
     auto infer_type_name = [](const EvalValue& v) -> const char* {
+        if (is_float(v))  return "Float";
         if (is_hash(v))   return "Hash";
         if (is_vector(v)) return "Vector";
         if (is_string(v)) return "String";
@@ -795,13 +868,72 @@ void Evaluator::init_pair_primitives() {
         if (idx >= string_heap_.size()) return make_void();
         auto& path = string_heap_[idx];
 
-        // Resolve path: if relative, prepend CWD
-        std::string resolved = path;
-        if (!path.empty() && path[0] != '/') {
-            char cwd_buf[4096];
-            if (::getcwd(cwd_buf, sizeof(cwd_buf)))
-                resolved = std::string(cwd_buf) + "/" + path;
+        // ── Resolve path ────────────────────────────────────────────
+        // Strategy:
+        //   1. If absolute, try it directly.
+        //   2. If relative, try CWD/path first, then each AURA_PATH dir.
+        //   3. At each location, try the path as-is and with ".aura" appended.
+        //   4. First hit wins.
+
+        auto try_load = [&](const std::string& full) -> std::optional<std::string> {
+            for (auto candidate : {full, full + ".aura"}) {
+                std::ifstream probe(candidate);
+                if (probe) {
+                    probe.close();
+                    // Canonicalize for dedup
+                    char real[4096];
+                    if (::realpath(candidate.c_str(), real))
+                        return std::string(real);
+                    return candidate;
+                }
+            }
+            return std::nullopt;
+        };
+
+        std::string resolved;
+        if (!path.empty() && path[0] == '/') {
+            // Absolute path — try directly
+            auto hit = try_load(path);
+            if (hit) resolved = *hit;
+        } else {
+            // Relative / bare name — search path
+            // a) CWD first
+            {
+                char cwd_buf[4096];
+                if (::getcwd(cwd_buf, sizeof(cwd_buf))) {
+                    auto hit = try_load(std::string(cwd_buf) + "/" + path);
+                    if (hit) resolved = *hit;
+                }
+            }
+
+            // b) AURA_PATH directories
+            if (resolved.empty()) {
+                auto* env = ::getenv("AURA_PATH");
+                if (env) {
+                    std::string aura_path(env);
+                    std::size_t start = 0, end;
+                    while ((end = aura_path.find(':', start)) != std::string::npos) {
+                        auto dir = aura_path.substr(start, end - start);
+                        if (!dir.empty()) {
+                            auto hit = try_load(dir + "/" + path);
+                            if (hit) { resolved = *hit; break; }
+                        }
+                        start = end + 1;
+                    }
+                    // Last component
+                    if (resolved.empty() && start < aura_path.size()) {
+                        auto dir = aura_path.substr(start);
+                        if (!dir.empty()) {
+                            auto hit = try_load(dir + "/" + path);
+                            if (hit) resolved = *hit;
+                        }
+                    }
+                }
+            }
         }
+
+        // Not found anywhere
+        if (resolved.empty()) return make_void();
 
         // Dedup: skip if already loaded
         if (loaded_modules_.count(resolved)) return make_void();
@@ -884,6 +1016,8 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
     switch (v.tag) {
     case aura::ast::NodeTag::LiteralInt:
         return make_int(v.int_value);
+    case aura::ast::NodeTag::LiteralFloat:
+        return make_float(v.float_value);
     case aura::ast::NodeTag::LiteralString: {
         auto sid = string_heap_.size();
         string_heap_.push_back(std::string(pool.resolve(v.sym_id)));
@@ -1064,6 +1198,38 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
             param_names.push_back(std::string(pool.resolve(p)));
         auto body_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
         if (body_id == aura::ast::NULL_NODE) return EvalResult(make_void());
+
+        // ── Warn: unused macro parameters ──────────────────────────
+        // Scan the body for variable references and compare with params.
+        {
+            // Collect all variable names referenced in the macro body
+            std::unordered_set<std::string> used_vars;
+            auto collect_vars = [&](this const auto& self, aura::ast::NodeId nid) -> void {
+                if (nid == aura::ast::NULL_NODE || nid >= flat.size()) return;
+                auto nv = flat.get(nid);
+                if (nv.tag == aura::ast::NodeTag::Variable && nv.sym_id != aura::ast::INVALID_SYM) {
+                    used_vars.insert(std::string(pool.resolve(nv.sym_id)));
+                }
+                for (auto c : nv.children)
+                    self(c);
+            };
+            collect_vars(body_id);
+
+            int used_count = 0;
+            for (auto& p : param_names) {
+                if (used_vars.count(p) == 0) {
+                    std::println(std::cerr, "warning: macro '{}': parameter '{}' never used",
+                                 std::string(name), p);
+                } else {
+                    ++used_count;
+                }
+            }
+            if (used_count == 0) {
+                std::println(std::cerr, "warning: macro '{}': body does not reference any parameter",
+                             std::string(name));
+            }
+        }
+
         // Store FlatAST pointer + NodeId directly -- no Expr* reconstruction needed
         macros_[std::string(name)] = MacroDef{std::move(param_names), &flat, &pool, body_id};
         return EvalResult(make_void());

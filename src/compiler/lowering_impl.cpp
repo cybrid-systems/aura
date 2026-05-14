@@ -41,6 +41,13 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
     auto v = flat.get(id);
 
     switch (v.tag) {
+    case NodeTag::LiteralFloat: {
+        auto slot = state.alloc_local();
+        std::uint64_t bits;
+        std::memcpy(&bits, &v.float_value, sizeof(bits));
+        state.emit(IROpcode::ConstF64, slot, static_cast<std::uint32_t>(bits & 0xFFFFFFFF), static_cast<std::uint32_t>(bits >> 32));
+        return slot;
+    }
     case NodeTag::LiteralInt: {
         auto slot = state.alloc_local();
         auto val = static_cast<std::uint64_t>(v.int_value);

@@ -29,6 +29,7 @@ export enum class NodeTag : std::uint32_t {
     Begin = 0x09, Set = 0x0A, Quote = 0x0B, LiteralString = 0x0D, MacroDef = 0x0E,
     TypeAnnotation = 0x0F,
     Coercion = 0x10,
+    LiteralFloat = 0x11,
 };
 
 
@@ -151,29 +152,31 @@ export struct NodeMeta {
     bool has_var_children;        // variable-length children (Call args)
     bool has_string;              // has a name/id string (Variable/Let/Define)
     bool has_int;                 // has an int64 value (LiteralInt)
+    bool has_float;               // has a double value (LiteralFloat)
     bool has_params;              // has param list (Lambda)
 };
 
 // Tag-to-metadata mapping, indexed by `tag - 1`.
 // Tags must be sequential starting from 1 (LiteralInt = 0x01).
 // Gap at 0x0C is filled with a sentinel.
-export constexpr std::array<NodeMeta, 16> kNodeMeta = {{
-    {NodeTag::LiteralInt, "LiteralInt", 0, false, false, true,  false},  // 0x01
-    {NodeTag::Variable,   "Variable",   0, false, true,  false, false},  // 0x02
-    {NodeTag::Call,       "Call",       1, true,  false, false, false},  // 0x03
-    {NodeTag::IfExpr,     "IfExpr",     3, false, false, false, false},  // 0x04
-    {NodeTag::Lambda,     "Lambda",     1, false, false, false, true},   // 0x05
-    {NodeTag::Let,        "Let",        2, false, true,  false, false},  // 0x06
-    {NodeTag::LetRec,     "LetRec",     2, false, true,  false, false},  // 0x07
-    {NodeTag::Define,     "Define",     1, false, true,  false, false},  // 0x08
-    {NodeTag::Begin,      "Begin",      0, true,  false, false, false},  // 0x09
-    {NodeTag::Set,        "Set",        1, false, true,  false, false},  // 0x0A
-    {NodeTag::Quote,      "Quote",      1, false, false, false, false},  // 0x0B
-    {NodeTag::LiteralInt, "<gap>",      0, false, false, false, false},  // 0x0C (gap)
-    {NodeTag::LiteralString, "LiteralString", 0, false, true,  false, false}, // 0x0D
-    {NodeTag::LiteralInt, "<gap>",      0, false, false, false, false},  // 0x0E (MacroDef — Expr* only)
-    {NodeTag::TypeAnnotation, "TypeAnnotation", 1, false, true,  false, false}, // 0x0F
-    {NodeTag::Coercion, "Coercion", 1, false, true,  false, false},     // 0x10
+export constexpr std::array<NodeMeta, 17> kNodeMeta = {{
+    {NodeTag::LiteralInt, "LiteralInt", 0, false, false, true,  false, false},  // 0x01
+    {NodeTag::Variable,   "Variable",   0, false, true,  false, false, false},  // 0x02
+    {NodeTag::Call,       "Call",       1, true,  false, false, false, false},  // 0x03
+    {NodeTag::IfExpr,     "IfExpr",     3, false, false, false, false, false},  // 0x04
+    {NodeTag::Lambda,     "Lambda",     1, false, false, false, false, true},   // 0x05
+    {NodeTag::Let,        "Let",        2, false, true,  false, false, false},  // 0x06
+    {NodeTag::LetRec,     "LetRec",     2, false, true,  false, false, false},  // 0x07
+    {NodeTag::Define,     "Define",     1, false, true,  false, false, false},  // 0x08
+    {NodeTag::Begin,      "Begin",      0, true,  false, false, false, false},  // 0x09
+    {NodeTag::Set,        "Set",        1, false, true,  false, false, false},  // 0x0A
+    {NodeTag::Quote,      "Quote",      1, false, false, false, false, false},  // 0x0B
+    {NodeTag::LiteralInt, "<gap>",      0, false, false, false, false, false},  // 0x0C (gap)
+    {NodeTag::LiteralString, "LiteralString", 0, false, true,  false, false, false}, // 0x0D
+    {NodeTag::LiteralInt, "<gap>",      0, false, false, false, false, false},  // 0x0E (MacroDef — Expr* only)
+    {NodeTag::TypeAnnotation, "TypeAnnotation", 1, false, true,  false, false, false}, // 0x0F
+    {NodeTag::Coercion, "Coercion", 1, false, true,  false, false, false},  // 0x10
+    {NodeTag::LiteralFloat, "LiteralFloat", 0, false, false, false, true, false},  // 0x11
 }};
 
 
@@ -195,6 +198,8 @@ consteval bool validate_node_meta() {
     if (meta(NodeTag::LiteralInt).has_int != true) return false;
     if (meta(NodeTag::Begin).has_var_children != true) return false;
     if (meta(NodeTag::Coercion).name != "Coercion") return false;
+    if (meta(NodeTag::LiteralFloat).name != "LiteralFloat") return false;
+    if (meta(NodeTag::LiteralFloat).has_float != true) return false;
     return true;
 }
 static_assert(validate_node_meta(), "kNodeMeta misaligned with NodeTag enum");
@@ -203,6 +208,7 @@ static_assert(validate_node_meta(), "kNodeMeta misaligned with NodeTag enum");
 export struct NodeView {
     NodeTag tag = NodeTag::LiteralInt;
     std::int64_t int_value = 0;
+    double float_value = 0.0;
     SymId sym_id = INVALID_SYM;
     std::uint32_t line = 0;
     std::uint32_t col = 0;
@@ -211,6 +217,7 @@ export struct NodeView {
     SyntaxMarker marker = SyntaxMarker::User;
 
     bool has_int()   const { return tag == NodeTag::LiteralInt; }
+    bool has_float() const { return tag == NodeTag::LiteralFloat; }
     bool has_name()  const { return sym_id != INVALID_SYM; }
     NodeId child(std::uint32_t i) const { return children[i]; }
 };
@@ -229,6 +236,7 @@ private:
         auto id = static_cast<NodeId>(tag_.size());
         tag_.push_back(tag);
         int_val_.push_back(0);
+        float_val_.push_back(0.0);
         sym_id_.push_back(INVALID_SYM);
         child_begin_.push_back(0);
         child_count_.push_back(0);
@@ -244,6 +252,7 @@ private:
     // SoA storage (all pmr::vector = arena allocated)
     std::pmr::vector<NodeTag>   tag_;
     std::pmr::vector<std::int64_t> int_val_;
+    std::pmr::vector<double>    float_val_;
     std::pmr::vector<SymId>     sym_id_;
     std::pmr::vector<std::uint32_t>  child_begin_;
     std::pmr::vector<std::uint32_t>  child_count_;
@@ -260,13 +269,19 @@ private:
 
 public:
     explicit FlatAST(std::pmr::polymorphic_allocator<std::byte> alloc = {})
-        : tag_(alloc), int_val_(alloc), sym_id_(alloc),
+        : tag_(alloc), int_val_(alloc), float_val_(alloc), sym_id_(alloc),
           child_begin_(alloc), child_count_(alloc), child_data_(alloc),
           param_begin_(alloc), param_count_(alloc), param_data_(alloc),
           line_(alloc), col_(alloc), type_id_(alloc)
     {}
 
     // ── Builders ───────────────────────────────────────────────
+
+    NodeId add_literal_float(double val) {
+        auto id = add_node(NodeTag::LiteralFloat);
+        float_val_[id] = val;
+        return id;
+    }
 
     NodeId add_literalstring(SymId name) {
         auto id = add_node(NodeTag::LiteralString);
@@ -421,6 +436,7 @@ public:
         return NodeView{
             .tag      = tag_[id],
             .int_value = int_val_[id],
+            .float_value = float_val_[id],
             .sym_id   = sym_id_[id],
             .line     = id < line_.size() ? line_[id] : 0,
             .col      = id < col_.size() ? col_[id] : 0,
