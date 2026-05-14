@@ -13,9 +13,8 @@ using namespace types;
 using namespace aura::diag;
 
 // Forward decl: macro body cloner (defined at end of file)
-static aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
-    aura::ast::NodeId body_id,
-    const std::unordered_map<std::string, aura::ast::NodeId>& subst);
+static aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
+    aura::ast::FlatAST& source, aura::ast::StringPool& source_pool, aura::ast::NodeId body_id);
 
 // ── Env::lookup: returns EvalValue variant ─────────────────────
 std::optional<EvalValue> Env::lookup(const std::string& n) const {
@@ -892,7 +891,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
         auto body_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
         if (body_id == aura::ast::NULL_NODE) return EvalResult(make_void());
         // Store FlatAST pointer + NodeId directly -- no Expr* reconstruction needed
-        macros_[std::string(name)] = MacroDef{std::move(param_names), &flat, body_id};
+        macros_[std::string(name)] = MacroDef{std::move(param_names), &flat, &pool, body_id};
         return EvalResult(make_void());
     }
     default:
@@ -905,94 +904,73 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
 // Clone a FlatAST subtree with MacroIntroduced markers.
 // When a Variable matches a macro param, substitute with the arg expression.
 // All new nodes are marked MacroIntroduced for hygiene tracking.
-static aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
-    aura::ast::NodeId body_id,
-    const std::unordered_map<std::string, aura::ast::NodeId>& subst) {
+static aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
+    aura::ast::FlatAST& source, aura::ast::StringPool& source_pool, aura::ast::NodeId body_id) {
     using namespace aura::ast;
-    if (body_id == NULL_NODE || body_id >= flat.size()) return NULL_NODE;
-    auto v = flat.get(body_id);
+    if (body_id == NULL_NODE || body_id >= source.size()) return NULL_NODE;
+    auto v = source.get(body_id);
 
-    // Variable substitution: param → argument
-    if (v.tag == NodeTag::Variable && v.sym_id != INVALID_SYM) {
-        auto name = pool.resolve(v.sym_id);
-        auto it = subst.find(std::string(name));
-        if (it != subst.end())
-            return clone_macro_body(flat, pool, it->second, subst);
-    }
+    // Re-intern SymIds: resolve in source_pool, intern in target_pool
+    auto transplant = [&](SymId sid) -> SymId {
+        return (sid == INVALID_SYM) ? sid : target_pool.intern(std::string(source_pool.resolve(sid)));
+    };
 
     // Clone children recursively
     std::vector<aura::ast::NodeId> child_ids;
     for (std::uint32_t i = 0; i < v.children.size(); ++i)
-        child_ids.push_back(clone_macro_body(flat, pool, v.child(i), subst));
+        child_ids.push_back(clone_macro_body(target, target_pool, source, source_pool, v.child(i)));
 
-    // Build the new node
+    // Clone params (for Lambda nodes)
+    std::vector<aura::ast::SymId> param_syms;
+    for (auto pid : v.params)
+        param_syms.push_back(transplant(pid));
+
     aura::ast::NodeId new_id = NULL_NODE;
     switch (v.tag) {
     case NodeTag::LiteralInt:
-        new_id = flat.add_literal(v.int_value);
-        break;
+        new_id = target.add_literal(v.int_value); break;
     case NodeTag::LiteralString:
-        if (v.sym_id != INVALID_SYM)
-            new_id = flat.add_literalstring(pool.intern(std::string(pool.resolve(v.sym_id))));
-        break;
+        new_id = target.add_literalstring(transplant(v.sym_id)); break;
     case NodeTag::Variable:
-        if (v.sym_id != INVALID_SYM)
-            new_id = flat.add_variable(v.sym_id);
-        break;
+        new_id = target.add_variable(transplant(v.sym_id)); break;
     case NodeTag::Call: {
-        std::vector<aura::ast::NodeId> args;
-        for (std::size_t i = 1; i < child_ids.size(); ++i)
-            args.push_back(child_ids[i]);
-        if (!child_ids.empty())
-            new_id = flat.add_call(child_ids[0], args);
+        std::vector<aura::ast::NodeId> args(child_ids.begin() + 1, child_ids.end());
+        if (!child_ids.empty()) new_id = target.add_call(child_ids[0], args);
         break;
     }
     case NodeTag::IfExpr:
-        if (child_ids.size() >= 3)
-            new_id = flat.add_if(child_ids[0], child_ids[1], child_ids[2]);
+        if (child_ids.size() >= 3) new_id = target.add_if(child_ids[0], child_ids[1], child_ids[2]);
         break;
-    case NodeTag::Lambda: {
-        std::vector<aura::ast::SymId> param_syms;
-        for (auto pid : v.params)
-            param_syms.push_back(pid);
-        if (!child_ids.empty())
-            new_id = flat.add_lambda(param_syms, child_ids[0]);
+    case NodeTag::Lambda:
+        if (!child_ids.empty()) new_id = target.add_lambda(param_syms, child_ids[0]);
         break;
-    }
     case NodeTag::Let:
-    case NodeTag::LetRec: {
-        if (v.sym_id != INVALID_SYM && child_ids.size() >= 2)
+    case NodeTag::LetRec:
+        if (child_ids.size() >= 2)
             new_id = (v.tag == NodeTag::Let)
-                ? flat.add_let(v.sym_id, child_ids[0], child_ids[1])
-                : flat.add_letrec(v.sym_id, child_ids[0], child_ids[1]);
+                ? target.add_let(transplant(v.sym_id), child_ids[0], child_ids[1])
+                : target.add_letrec(transplant(v.sym_id), child_ids[0], child_ids[1]);
         break;
-    }
     case NodeTag::Begin:
         if (!child_ids.empty())
-            new_id = flat.add_begin(child_ids.data(), static_cast<std::uint32_t>(child_ids.size()));
+            new_id = target.add_begin(child_ids.data(), static_cast<std::uint32_t>(child_ids.size()));
         break;
     case NodeTag::Set:
-        if (v.sym_id != INVALID_SYM && !child_ids.empty())
-            new_id = flat.add_set(v.sym_id, child_ids[0]);
+        if (!child_ids.empty()) new_id = target.add_set(transplant(v.sym_id), child_ids[0]);
         break;
     case NodeTag::Quote:
-        if (!child_ids.empty())
-            new_id = flat.add_quote(child_ids[0]);
+        if (!child_ids.empty()) new_id = target.add_quote(child_ids[0]);
         break;
     case NodeTag::Define:
-        if (v.sym_id != INVALID_SYM && !child_ids.empty())
-            new_id = flat.add_define(v.sym_id, child_ids[0]);
+        if (!child_ids.empty()) new_id = target.add_define(transplant(v.sym_id), child_ids[0]);
         break;
-    default:
-        break;
+    default: break;
     }
 
-    // Mark all cloned nodes as MacroIntroduced
     if (new_id != NULL_NODE) {
-        flat.set_marker(new_id, SyntaxMarker::MacroIntroduced);
-        flat.set_loc(new_id, v.line, v.col);
+        target.set_marker(new_id, SyntaxMarker::MacroIntroduced);
+        target.set_loc(new_id, v.line, v.col);
     }
-
     return new_id;
 }
 
