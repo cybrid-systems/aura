@@ -10,8 +10,6 @@ import aura.compiler.arity;
 import aura.compiler.service;
 import aura.compiler.pass_manager;
 import aura.compiler.query;
-import aura.core.ast_flat;
-import aura.core.ast_pool;
 import aura.core.type;
 import aura.diag;
 import aura.compiler.types;

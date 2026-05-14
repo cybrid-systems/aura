@@ -1,8 +1,6 @@
 export module aura.compiler.evaluator;
 import std;
 import aura.core;
-import aura.core.ast_flat;
-import aura.core.ast_pool;
 import aura.diag;
 import aura.compiler.types;
 
