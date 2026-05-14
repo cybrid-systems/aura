@@ -394,6 +394,26 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
         return reg_.void_type();
     case Tag::Quote:
         return reg_.dynamic_type();
+    case Tag::MacroDef: {
+        // Type-check macro body with params bound as Dyn
+        env_.push_scope();
+        std::vector<TypeId> param_types;
+        for (auto pid : v.params) {
+            auto pname = std::string(pool.resolve(pid));
+            env_.bind(pname, reg_.dynamic_type());
+            param_types.push_back(reg_.dynamic_type());
+        }
+        // Type-check body
+        TypeId body_type = reg_.void_type();
+        if (!v.children.empty()) {
+            auto body_id = v.child(0);
+            body_type = synthesize_flat(flat, pool, body_id, flat.get(body_id));
+        }
+        env_.pop_scope();
+        // Register as a function type for display
+        auto macro_fn_type = reg_.register_func(std::move(param_types), body_type);
+        return macro_fn_type;
+    }
     default:
         return reg_.dynamic_type();
     }
