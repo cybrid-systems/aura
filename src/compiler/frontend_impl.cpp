@@ -4,12 +4,26 @@ module aura.compiler.frontend;
 import std;
 import aura.core.ast_flat;
 import aura.core.ast_pool;
+import aura.compiler.types;
 
 namespace aura::compiler {
+
+using types::EvalValue;
+using namespace types;
 
 // Forward declarations for single-node FlatAST→Expr* reconstruction
 // (used by eval_flat for Lambda/MacroDef body reconstruction)
 namespace {
+    // Helper: create Expr and set source location from FlatAST NodeView
+    template <typename T, typename... Args>
+    static aura::ast::Expr* make_expr_with_loc(aura::ast::ASTArena& arena,
+                                                 const aura::ast::NodeView& v,
+                                                 Args&&... args) {
+        auto* e = arena.create<aura::ast::Expr>(T{v.tag, std::forward<Args>(args)...});
+        e->loc = {v.line, v.col, 0};
+        return e;
+    }
+
     static aura::ast::Expr* reconst_node(aura::ast::NodeId id,
                                           const aura::ast::FlatAST& flat,
                                           aura::ast::StringPool& pool,
@@ -20,50 +34,50 @@ namespace {
         switch (v.tag) {
         case NodeTag::LiteralString: {
             auto name = pool.resolve(v.sym_id);
-            return arena.create<ast::Expr>(ast::LiteralStringNode{v.tag, std::string(name)});
+            return make_expr_with_loc<ast::LiteralStringNode>(arena, v, std::string(name));
         }
         case NodeTag::LiteralInt:
-            return arena.create<ast::Expr>(ast::LiteralIntNode{v.tag, v.int_value});
+            return make_expr_with_loc<ast::LiteralIntNode>(arena, v, v.int_value);
         case NodeTag::Variable: {
             auto name = pool.resolve(v.sym_id);
-            return arena.create<ast::Expr>(ast::VariableNode{v.tag, std::string(name)});
+            return make_expr_with_loc<ast::VariableNode>(arena, v, std::string(name));
         }
         case NodeTag::Call: {
             auto* func = reconst_node(v.child(0), flat, pool, arena);
             std::vector<ast::Expr*> args;
             for (std::size_t i = 1; i < v.children.size(); ++i)
                 args.push_back(reconst_node(v.child(i), flat, pool, arena));
-            return arena.create<ast::Expr>(ast::CallNode{v.tag, func, std::move(args)});
+            return make_expr_with_loc<ast::CallNode>(arena, v, func, std::move(args));
         }
         case NodeTag::IfExpr: {
             auto* c = reconst_node(v.child(0), flat, pool, arena);
             auto* t = reconst_node(v.child(1), flat, pool, arena);
             auto* e = reconst_node(v.child(2), flat, pool, arena);
-            return arena.create<ast::Expr>(ast::IfExprNode{v.tag, c, t, e});
+            return make_expr_with_loc<ast::IfExprNode>(arena, v, c, t, e);
         }
         case NodeTag::Lambda: {
             std::vector<std::string> params;
             for (auto p : v.params)
                 params.push_back(std::string(pool.resolve(p)));
             auto* body = reconst_node(v.child(0), flat, pool, arena);
-            return arena.create<ast::Expr>(ast::LambdaNode{v.tag, std::move(params), body});
+            return make_expr_with_loc<ast::LambdaNode>(arena, v, std::move(params), body);
         }
         case NodeTag::Let: {
             auto name = pool.resolve(v.sym_id);
             auto* val = reconst_node(v.child(0), flat, pool, arena);
             auto* body = reconst_node(v.child(1), flat, pool, arena);
-            return arena.create<ast::Expr>(ast::LetNode{v.tag, std::string(name), val, body});
+            return make_expr_with_loc<ast::LetNode>(arena, v, std::string(name), val, body);
         }
         case NodeTag::LetRec: {
             auto name = pool.resolve(v.sym_id);
             auto* val = reconst_node(v.child(0), flat, pool, arena);
             auto* body = reconst_node(v.child(1), flat, pool, arena);
-            return arena.create<ast::Expr>(ast::LetRecNode{v.tag, std::string(name), val, body});
+            return make_expr_with_loc<ast::LetRecNode>(arena, v, std::string(name), val, body);
         }
         case NodeTag::Define: {
             auto name = pool.resolve(v.sym_id);
             auto* val = reconst_node(v.child(0), flat, pool, arena);
-            return arena.create<ast::Expr>(ast::DefineNode{v.tag, std::string(name), val});
+            return make_expr_with_loc<ast::DefineNode>(arena, v, std::string(name), val);
         }
         case NodeTag::MacroDef: {
             auto name = pool.resolve(v.sym_id);
@@ -71,31 +85,31 @@ namespace {
             std::vector<std::string> params;
             for (auto p : v.params)
                 params.push_back(std::string(pool.resolve(p)));
-            return arena.create<ast::Expr>(ast::MacroDefNode{v.tag, std::string(name), std::move(params), body});
+            return make_expr_with_loc<ast::MacroDefNode>(arena, v, std::string(name), std::move(params), body);
         }
         case NodeTag::Begin: {
             ast::BeginNode begin{v.tag, {}};
             for (std::size_t i = 0; i < v.children.size(); ++i)
                 begin.exprs.push_back(reconst_node(v.child(i), flat, pool, arena));
-            return arena.create<ast::Expr>(std::move(begin));
+            auto* e_b = arena.create<ast::Expr>(std::move(begin)); e_b->loc = {v.line, v.col, 0}; return e_b;
         }
         case NodeTag::Set: {
             auto name = pool.resolve(v.sym_id);
             auto* val = reconst_node(v.child(0), flat, pool, arena);
-            return arena.create<ast::Expr>(ast::SetNode{v.tag, std::string(name), val});
+            return make_expr_with_loc<ast::SetNode>(arena, v, std::string(name), val);
         }
         case NodeTag::Quote: {
             auto* val = reconst_node(v.child(0), flat, pool, arena);
-            return arena.create<ast::Expr>(ast::QuoteNode{v.tag, val});
+            return make_expr_with_loc<ast::QuoteNode>(arena, v, val);
         }
         case NodeTag::TypeAnnotation: {
             auto type_name = pool.resolve(v.sym_id);
             auto* inner = reconst_node(v.child(0), flat, pool, arena);
-            return arena.create<ast::Expr>(ast::TypeAnnotationNode{v.tag, inner, std::string(type_name)});
+            return make_expr_with_loc<ast::TypeAnnotationNode>(arena, v, inner, std::string(type_name));
         }
         case NodeTag::Coercion: {
             auto* inner = reconst_node(v.child(0), flat, pool, arena);
-            return arena.create<ast::Expr>(ast::CoercionNode{v.tag, inner, ""});
+            return make_expr_with_loc<ast::CoercionNode>(arena, v, inner, "");
         }
         default:
             return nullptr;
@@ -114,12 +128,14 @@ static void validate_macro_template(MacroValidation& result,
 
 using namespace aura::diag;
 
-std::optional<std::int64_t> Env::lookup(const std::string& n) const {
+// ── Env::lookup: returns EvalValue variant ─────────────────────
+std::optional<EvalValue> Env::lookup(const std::string& n) const {
     for (auto it = bindings_.rbegin(); it != bindings_.rend(); ++it)
         if (it->first == n) {
-            auto v = it->second;
-            if (cells_ && static_cast<std::uint64_t>(v) >= CELL_SENTINEL) {
-                auto idx = static_cast<std::size_t>(v - CELL_SENTINEL);
+            auto& v = it->second;
+            // If the binding is a cell reference, dereference it
+            if (is_cell(v) && cells_) {
+                auto idx = as_cell_id(v);
                 if (idx < cells_->size()) return (*cells_)[idx];
             }
             return v;
@@ -127,442 +143,427 @@ std::optional<std::int64_t> Env::lookup(const std::string& n) const {
     return parent_ ? parent_->lookup(n) : std::nullopt;
 }
 
-Primitives::Primitives() {
-    table_["+"]  = [this](auto& a) { return str_to_int(a[0]) + str_to_int(a[1]); };
-    table_["-"]  = [this](auto& a) { return a.size() == 1 ? -str_to_int(a[0]) : str_to_int(a[0]) - str_to_int(a[1]); };
-    table_["*"]  = [this](auto& a) { return str_to_int(a[0]) * str_to_int(a[1]); };
-    table_["/"]  = [this](auto& a) { return str_to_int(a[0]) / str_to_int(a[1]); };
-    table_["="]  = [this](auto& a) { return str_to_int(a[0]) == str_to_int(a[1]); };
-    table_["<"]  = [this](auto& a) { return str_to_int(a[0]) < str_to_int(a[1]); };
-    table_[">"]  = [this](auto& a) { return str_to_int(a[0]) > str_to_int(a[1]); };
-    table_["<="] = [this](auto& a) { return str_to_int(a[0]) <= str_to_int(a[1]); };
-    table_[">="] = [this](auto& a) { return str_to_int(a[0]) >= str_to_int(a[1]); };
-    // Ghuloum Step 9: booleans
-    table_["not"]  = [](auto& a) { return a[0] == 0 ? TRUE_VAL : FALSE_VAL; };
-    table_["and"]  = [](auto& a) { return a[0] && a[1] ? TRUE_VAL : FALSE_VAL; };
-    table_["or"]   = [](auto& a) { return a[0] || a[1] ? TRUE_VAL : FALSE_VAL; };
-    table_["eq?"]  = [](auto& a) { return a[0] == a[1] ? TRUE_VAL : FALSE_VAL; };
-}
-
-std::int64_t Primitives::str_to_int(std::int64_t v) const {
-    auto uv = static_cast<std::uint64_t>(v);
-    if (uv < 0x1000000) return v;  // already int
-    if (uv >= 0x8000000 && string_heap_ && uv - 0x8000000 < string_heap_->size()) {
-        // String → Int: parse
-        auto idx = static_cast<std::size_t>(uv - 0x8000000);
-        try { return static_cast<std::int64_t>(std::stoll((*string_heap_)[idx])); }
-        catch (...) { return 0; }
-    }
-    return v;
-}
-
-// ── I/O helper (non-template, avoids generic lambda lookup issues) ──
+// ── Helper: coerce EvalValue to int (string → int parsing) ────
 namespace {
-    static void io_print_val(std::int64_t v, const std::vector<std::string>* heap, bool quote) {
-        auto uv = static_cast<std::uint64_t>(v);
-        if (v == 0)       { std::printf("()"); return; }
-        if (v == 1)       { std::printf("#t"); return; }
-        if (uv >= static_cast<std::uint64_t>(0x8000000) && heap && uv - static_cast<std::uint64_t>(0x8000000) < heap->size()) {
-            auto idx = static_cast<std::size_t>(v - static_cast<std::int64_t>(0x8000000));
-            if (quote) std::printf("\"%s\"", (*heap)[idx].c_str());
-            else       std::printf("%s",       (*heap)[idx].c_str());
-            return;
+    static std::int64_t coerce_to_int(const EvalValue& v, const std::vector<std::string>* heap) {
+        if (is_int(v)) return as_int(v);
+        if (is_string(v) && heap) {
+            auto idx = as_string_idx(v);
+            if (idx < heap->size()) {
+                try { return static_cast<std::int64_t>(std::stoll((*heap)[idx])); }
+                catch (...) { return 0; }
+            }
         }
-        std::printf("%ld", (long)v);
+        if (is_bool(v)) return as_bool(v) ? 1 : 0;
+        return 0;
     }
 }
+
+// ── Primitives: EvalValue operations ──────────────────────────
+
+Primitives::Primitives() {
+    table_["+"]  = [this](auto& a) { return make_int(coerce_to_int(a[0], string_heap_) + coerce_to_int(a[1], string_heap_)); };
+    table_["-"]  = [this](auto& a) {
+        auto v0 = coerce_to_int(a[0], string_heap_);
+        return a.size() == 1 ? make_int(-v0) : make_int(v0 - coerce_to_int(a[1], string_heap_));
+    };
+    table_["*"]  = [this](auto& a) { return make_int(coerce_to_int(a[0], string_heap_) * coerce_to_int(a[1], string_heap_)); };
+    table_["/"]  = [this](auto& a) { return make_int(coerce_to_int(a[0], string_heap_) / coerce_to_int(a[1], string_heap_)); };
+    table_["="]  = [this](auto& a) { return make_int(coerce_to_int(a[0], string_heap_) == coerce_to_int(a[1], string_heap_) ? 1 : 0); };
+    table_["<"]  = [this](auto& a) { return make_int(coerce_to_int(a[0], string_heap_) < coerce_to_int(a[1], string_heap_) ? 1 : 0); };
+    table_[">"]  = [this](auto& a) { return make_int(coerce_to_int(a[0], string_heap_) > coerce_to_int(a[1], string_heap_) ? 1 : 0); };
+    table_["<="] = [this](auto& a) { return make_int(coerce_to_int(a[0], string_heap_) <= coerce_to_int(a[1], string_heap_) ? 1 : 0); };
+    table_[">="] = [this](auto& a) { return make_int(coerce_to_int(a[0], string_heap_) >= coerce_to_int(a[1], string_heap_) ? 1 : 0); };
+    // Ghuloum Step 9: booleans
+    table_["not"]  = [](auto& a) { return make_int(!is_truthy(a[0]) ? 1 : 0); };
+    table_["and"]  = [](auto& a) { return make_int(is_truthy(a[0]) && is_truthy(a[1]) ? 1 : 0); };
+    table_["or"]   = [](auto& a) { return make_int(is_truthy(a[0]) || is_truthy(a[1]) ? 1 : 0); };
+    table_["eq?"]  = [](auto& a) { return make_int(a[0] == a[1] ? 1 : 0); };
+}
+
+// ── I/O helper for EvalValue ──────────────────────────────────
+namespace {
+    static void io_print_val(const EvalValue& v, const std::vector<std::string>* heap, bool quote) {
+        if (is_void(v))         { std::printf("()"); return; }
+        if (is_bool(v))         { std::printf(as_bool(v) ? "#t" : "#f"); return; }
+        if (is_int(v))          { std::printf("%ld", (long)as_int(v)); return; }
+        if (is_string(v) && heap) {
+            auto idx = as_string_idx(v);
+            if (idx < heap->size()) {
+                if (quote) std::printf("\"%s\"", (*heap)[idx].c_str());
+                else       std::printf("%s",       (*heap)[idx].c_str());
+                return;
+            }
+        }
+        if (is_pair(v))         { std::printf("<pair[%zu]>", (size_t)as_pair_idx(v)); return; }
+        if (is_closure(v))      { std::printf("<closure[%zu]>", (size_t)as_closure_id(v)); return; }
+        if (is_cell(v))         { std::printf("<cell[%zu]>", (size_t)as_cell_id(v)); return; }
+        std::printf("<unknown>");
+    }
+}
+
 void Evaluator::init_pair_primitives() {
-    // Ghuloum Step 10: pairs — capture pairs_ by reference
     primitives_.add("cons", [this](const auto& a) {
         auto id = pairs_.size();
         pairs_.push_back({a[0], a[1]});
-        return PAIR_SENTINEL + static_cast<std::int64_t>(id);
+        return make_pair(id);
     });
     primitives_.add("car", [this](const auto& a) {
-        auto id = static_cast<std::size_t>(a[0] - PAIR_SENTINEL);
-        return id < pairs_.size() ? pairs_[id].car : 0;
+        if (!is_pair(a[0])) return make_int(0);
+        auto id = as_pair_idx(a[0]);
+        return id < pairs_.size() ? pairs_[id].car : make_int(0);
     });
     primitives_.add("cdr", [this](const auto& a) {
-        auto id = static_cast<std::size_t>(a[0] - PAIR_SENTINEL);
-        return id < pairs_.size() ? pairs_[id].cdr : 0;
+        if (!is_pair(a[0])) return make_int(0);
+        auto id = as_pair_idx(a[0]);
+        return id < pairs_.size() ? pairs_[id].cdr : make_int(0);
     });
     primitives_.add("pair?", [](const auto& a) {
-        return static_cast<std::uint64_t>(a[0]) >= static_cast<std::uint64_t>(PAIR_SENTINEL) ? TRUE_VAL : FALSE_VAL;
+        if (a.empty()) return make_int(0);
+        return make_int(is_pair(a[0]) ? 1 : 0);
     });
     primitives_.add("string?", [this](const auto& a) {
-        if (a.empty()) return FALSE_VAL;
-        return static_cast<std::uint64_t>(a[0]) >= static_cast<std::uint64_t>(STRING_SENTINEL) ? TRUE_VAL : FALSE_VAL;
+        if (a.empty()) return make_int(0);
+        return make_int(is_string(a[0]) ? 1 : 0);
     });
     primitives_.add("string-append", [this](const auto& a) {
         std::string result;
-        for (auto v : a) {
-            auto uv = static_cast<std::uint64_t>(v);
-            if (uv >= static_cast<std::uint64_t>(STRING_SENTINEL)) {
-                auto idx = static_cast<std::size_t>(v - STRING_SENTINEL);
+        for (auto& v : a) {
+            if (is_string(v)) {
+                auto idx = as_string_idx(v);
                 if (idx < string_heap_.size()) result += string_heap_[idx];
-            } else if (uv < 0x1000000) {
-                // Int → String coercion
-                result += std::to_string(v);
+            } else if (is_int(v)) {
+                result += std::to_string(as_int(v));
             }
         }
         auto id = string_heap_.size();
         string_heap_.push_back(std::move(result));
-        return STRING_SENTINEL + static_cast<std::int64_t>(id);
+        return make_string(id);
     });
     primitives_.add("string-length", [this](const auto& a) {
-        if (a.empty()) return std::int64_t(0);
-        auto uv = static_cast<std::uint64_t>(a[0]);
-        if (uv >= static_cast<std::uint64_t>(STRING_SENTINEL)) {
-            auto idx = static_cast<std::size_t>(a[0] - STRING_SENTINEL);
-            return static_cast<std::int64_t>(idx < string_heap_.size() ? string_heap_[idx].size() : 0);
-        } else if (uv < 0x1000000) {
-            // Int → String coercion
-            return static_cast<std::int64_t>(std::to_string(a[0]).size());
+        if (a.empty()) return make_int(0);
+        std::size_t len = 0;
+        if (is_string(a[0])) {
+            auto idx = as_string_idx(a[0]);
+            len = (idx < string_heap_.size()) ? string_heap_[idx].size() : 0;
+        } else if (is_int(a[0])) {
+            len = std::to_string(as_int(a[0])).size();
         }
-        return std::int64_t(0);
+        return make_int(static_cast<std::int64_t>(len));
     });
     primitives_.add("string-ref", [this](const auto& a) {
-        if (a.size() < 2) return std::int64_t(0);
-        // Coerce first arg: Int → String
-        auto uv0 = static_cast<std::uint64_t>(a[0]);
+        if (a.size() < 2) return make_int(0);
         std::string s;
-        if (uv0 >= static_cast<std::uint64_t>(STRING_SENTINEL)) {
-            auto idx = static_cast<std::size_t>(a[0] - STRING_SENTINEL);
+        if (is_string(a[0])) {
+            auto idx = as_string_idx(a[0]);
             if (idx < string_heap_.size()) s = string_heap_[idx];
-        } else if (uv0 < 0x1000000) {
-            s = std::to_string(a[0]);
+        } else if (is_int(a[0])) {
+            s = std::to_string(as_int(a[0]));
         }
-        auto pos = static_cast<std::size_t>(a[1]);
+        auto pos = static_cast<std::size_t>(as_int(a[1]));
         if (pos < s.size())
-            return static_cast<std::int64_t>(static_cast<unsigned char>(s[pos]));
-        return std::int64_t(0);
+            return make_int(static_cast<std::int64_t>(static_cast<unsigned char>(s[pos])));
+        return make_int(0);
     });
     primitives_.add("substring", [this](const auto& a) {
-        if (a.size() < 3) return std::int64_t(0);
-        // Coerce first arg: Int → String
-        auto uv0 = static_cast<std::uint64_t>(a[0]);
+        if (a.size() < 3) return make_int(0);
         std::string s_buf;
         const std::string* sp = nullptr;
-        if (uv0 >= static_cast<std::uint64_t>(STRING_SENTINEL)) {
-            auto idx = static_cast<std::size_t>(a[0] - STRING_SENTINEL);
+        if (is_string(a[0])) {
+            auto idx = as_string_idx(a[0]);
             if (idx < string_heap_.size()) sp = &string_heap_[idx];
-        } else if (uv0 < 0x1000000) {
-            s_buf = std::to_string(a[0]);
+        } else if (is_int(a[0])) {
+            s_buf = std::to_string(as_int(a[0]));
             sp = &s_buf;
         }
-        if (!sp) return std::int64_t(0);
+        if (!sp) return make_int(0);
         const auto& s = *sp;
-        auto start = static_cast<std::size_t>(a[1]);
-        auto end   = static_cast<std::size_t>(a[2]);
+        auto start = static_cast<std::size_t>(as_int(a[1]));
+        auto end   = static_cast<std::size_t>(as_int(a[2]));
         if (start > s.size()) start = s.size();
         if (end > s.size()) end = s.size();
         if (start >= end) {
             auto id = string_heap_.size();
             string_heap_.push_back("");
-            return STRING_SENTINEL + static_cast<std::int64_t>(id);
+            return make_string(id);
         }
         auto sub = s.substr(start, end - start);
         auto nid = string_heap_.size();
         string_heap_.push_back(std::move(sub));
-        return STRING_SENTINEL + static_cast<std::int64_t>(nid);
+        return make_string(nid);
     });
     primitives_.add("string=?", [this](const auto& a) {
-        if (a.size() < 2) return FALSE_VAL;
-        auto to_str = [this](std::int64_t v) -> std::string {
-            auto uv = static_cast<std::uint64_t>(v);
-            if (uv >= static_cast<std::uint64_t>(STRING_SENTINEL)) {
-                auto idx = static_cast<std::size_t>(v - STRING_SENTINEL);
+        if (a.size() < 2) return make_int(0);
+        auto to_str = [this](const EvalValue& v) -> std::string {
+            if (is_string(v)) {
+                auto idx = as_string_idx(v);
                 return (idx < string_heap_.size()) ? string_heap_[idx] : "";
             }
-            if (uv < 0x1000000) return std::to_string(v);
+            if (is_int(v)) return std::to_string(as_int(v));
             return "";
         };
-        return to_str(a[0]) == to_str(a[1]) ? TRUE_VAL : FALSE_VAL;
+        return make_int(to_str(a[0]) == to_str(a[1]) ? 1 : 0);
     });
     primitives_.add("string<?", [this](const auto& a) {
-        if (a.size() < 2) return FALSE_VAL;
-        auto to_str = [this](std::int64_t v) -> std::string {
-            auto uv = static_cast<std::uint64_t>(v);
-            if (uv >= static_cast<std::uint64_t>(STRING_SENTINEL)) {
-                auto idx = static_cast<std::size_t>(v - STRING_SENTINEL);
+        if (a.size() < 2) return make_int(0);
+        auto to_str = [this](const EvalValue& v) -> std::string {
+            if (is_string(v)) {
+                auto idx = as_string_idx(v);
                 return (idx < string_heap_.size()) ? string_heap_[idx] : "";
             }
-            if (uv < 0x1000000) return std::to_string(v);
+            if (is_int(v)) return std::to_string(as_int(v));
             return "";
         };
-        return to_str(a[0]) < to_str(a[1]) ? TRUE_VAL : FALSE_VAL;
+        return make_int(to_str(a[0]) < to_str(a[1]) ? 1 : 0);
     });
     primitives_.add("number->string", [this](const auto& a) {
-        if (a.empty()) return std::int64_t(0);
-        auto s = std::to_string(a[0]);
+        if (a.empty()) return make_int(0);
+        auto s = is_int(a[0]) ? std::to_string(as_int(a[0])) : "0";
         auto id = string_heap_.size();
         string_heap_.push_back(std::move(s));
-        return STRING_SENTINEL + static_cast<std::int64_t>(id);
+        return make_string(id);
     });
     primitives_.add("string->number", [this](const auto& a) {
-        if (a.empty()) return std::int64_t(0);
-        auto i = static_cast<std::size_t>(a[0] - STRING_SENTINEL);
-        if (i >= string_heap_.size()) return std::int64_t(0);
-        try { return static_cast<std::int64_t>(std::stoll(string_heap_[i])); }
-        catch (...) { return std::int64_t(0); }
+        if (a.empty() || !is_string(a[0])) return make_int(0);
+        auto i = as_string_idx(a[0]);
+        if (i >= string_heap_.size()) return make_int(0);
+        try { return make_int(static_cast<std::int64_t>(std::stoll(string_heap_[i]))); }
+        catch (...) { return make_int(0); }
     });
     primitives_.add("list", [this](const auto& a) {
-        // Build proper list (pair chain ending with 0)
-        std::int64_t result = 0;
+        // Build proper list (pair chain ending with void)
+        EvalValue result = make_void();
         for (auto it = a.rbegin(); it != a.rend(); ++it) {
             auto id = pairs_.size();
             pairs_.push_back({*it, result});
-            result = PAIR_SENTINEL + static_cast<std::int64_t>(id);
+            result = make_pair(id);
         }
         return result;
     });
     primitives_.add("list?", [this](const auto& a) {
-        if (a.empty()) return TRUE_VAL;
+        if (a.empty()) return make_bool(true);
         auto v = a[0];
-        while (v != 0) {
-            auto uv = static_cast<std::uint64_t>(v);
-            if (uv < static_cast<std::uint64_t>(PAIR_SENTINEL))
-                return FALSE_VAL;
-            auto idx = static_cast<std::size_t>(uv - PAIR_SENTINEL);
-            if (idx >= pairs_.size()) return FALSE_VAL;
+        while (!is_void(v)) {
+            if (!is_pair(v)) return make_bool(false);
+            auto idx = as_pair_idx(v);
+            if (idx >= pairs_.size()) return make_bool(false);
             v = pairs_[idx].cdr;  // follow cdr chain
         }
-        return TRUE_VAL;  // reached null → proper list
+        return make_int(1);
     });
     primitives_.add("null?", [](const auto& a) {
-        return a[0] == 0 ? TRUE_VAL : FALSE_VAL;
+        return make_int(a.empty() || is_void(a[0]) ? 1 : 0);
     });
     primitives_.add("length", [this](const auto& a) {
-        if (a.empty()) return std::int64_t(0);
+        if (a.empty()) return make_int(0);
         auto v = a[0]; std::int64_t n = 0;
-        while (v != 0) {
-            auto uv = static_cast<std::uint64_t>(v);
-            if (uv < static_cast<std::uint64_t>(PAIR_SENTINEL)) return std::int64_t(0);
-            auto idx = static_cast<std::size_t>(uv - PAIR_SENTINEL);
-            if (idx >= pairs_.size()) return std::int64_t(0);
+        while (!is_void(v)) {
+            if (!is_pair(v)) return make_int(0);
+            auto idx = as_pair_idx(v);
+            if (idx >= pairs_.size()) return make_int(0);
             v = pairs_[idx].cdr; n++;
         }
-        return n;
+        return make_int(n);
     });
     primitives_.add("list-ref", [this](const auto& a) {
-        if (a.size() < 2) return std::int64_t(0);
-        auto v = a[0]; auto pos = static_cast<std::size_t>(a[1]);
+        if (a.size() < 2) return make_int(0);
+        auto v = a[0]; auto pos = static_cast<std::size_t>(as_int(a[1]));
         for (std::size_t i = 0; i < pos; ++i) {
-            auto uv = static_cast<std::uint64_t>(v);
-            if (uv < static_cast<std::uint64_t>(PAIR_SENTINEL)) return std::int64_t(0);
-            auto idx = static_cast<std::size_t>(uv - PAIR_SENTINEL);
-            if (idx >= pairs_.size()) return std::int64_t(0);
+            if (!is_pair(v)) return make_int(0);
+            auto idx = as_pair_idx(v);
+            if (idx >= pairs_.size()) return make_int(0);
             v = pairs_[idx].cdr;
         }
-        auto uv = static_cast<std::uint64_t>(v);
-        if (uv < static_cast<std::uint64_t>(PAIR_SENTINEL)) return v;
-        auto idx = static_cast<std::size_t>(uv - PAIR_SENTINEL);
-        return idx < pairs_.size() ? pairs_[idx].car : std::int64_t(0);
+        if (is_pair(v)) {
+            auto idx = as_pair_idx(v);
+            return idx < pairs_.size() ? pairs_[idx].car : make_int(0);
+        }
+        return v;
     });
     primitives_.add("member", [this](const auto& a) {
-        if (a.size() < 2) return std::int64_t(0);
-        auto val = a[0]; auto v = a[1];
-        while (v != 0) {
-            auto uv = static_cast<std::uint64_t>(v);
-            if (uv < static_cast<std::uint64_t>(PAIR_SENTINEL)) return std::int64_t(0);
-            auto idx = static_cast<std::size_t>(uv - PAIR_SENTINEL);
-            if (idx >= pairs_.size()) return std::int64_t(0);
+        if (a.size() < 2) return make_int(0);
+        auto& val = a[0]; auto v = a[1];
+        while (!is_void(v)) {
+            if (!is_pair(v)) return make_int(0);
+            auto idx = as_pair_idx(v);
+            if (idx >= pairs_.size()) return make_int(0);
             if (pairs_[idx].car == val) return v;
             v = pairs_[idx].cdr;
         }
-        return std::int64_t(0);
+        return make_int(0);
     });
     primitives_.add("append", [this](const auto& a) {
-        if (a.empty()) return std::int64_t(0);
-        // For now: two-arg append
+        if (a.empty()) return make_void();
         if (a.size() < 2) return a[0];
-        // Copy first list, last cdr points to second list
         auto list1 = a[0]; auto list2 = a[1];
-        if (list1 == 0) return list2;
-        // Walk to end of list1, copying each pair
-        std::int64_t result = 0; std::int64_t tail = 0;
+        if (is_void(list1)) return list2;
+        EvalValue result = make_void(); EvalValue tail = make_void();
         auto v = list1;
-        while (v != 0) {
-            auto uv = static_cast<std::uint64_t>(v);
-            if (uv < static_cast<std::uint64_t>(PAIR_SENTINEL)) return list1;
-            auto idx = static_cast<std::size_t>(uv - PAIR_SENTINEL);
+        while (!is_void(v)) {
+            if (!is_pair(v)) return list1;
+            auto idx = as_pair_idx(v);
             if (idx >= pairs_.size()) return list1;
             auto new_id = pairs_.size();
-            pairs_.push_back({pairs_[idx].car, 0});  // cdr = 0 for now
-            auto new_pair = PAIR_SENTINEL + static_cast<std::int64_t>(new_id);
-            if (result == 0) result = new_pair;
-            else { auto tidx = static_cast<std::size_t>(tail - PAIR_SENTINEL);
-                   pairs_[tidx].cdr = new_pair; }
+            pairs_.push_back({pairs_[idx].car, make_void()});
+            auto new_pair = make_pair(new_id);
+            if (is_void(result)) result = new_pair;
+            else {
+                auto tidx = as_pair_idx(tail);
+                pairs_[tidx].cdr = new_pair;
+            }
             tail = new_pair;
             v = pairs_[idx].cdr;
         }
         // Set last cdr to list2
-        if (tail != 0) {
-            auto tidx = static_cast<std::size_t>(tail - PAIR_SENTINEL);
+        if (!is_void(tail)) {
+            auto tidx = as_pair_idx(tail);
             pairs_[tidx].cdr = list2;
         }
         return result;
     });
     primitives_.add("reverse", [this](const auto& a) {
-        if (a.empty()) return std::int64_t(0);
-        auto v = a[0]; std::int64_t result = 0;
-        while (v != 0) {
-            auto uv = static_cast<std::uint64_t>(v);
-            if (uv < static_cast<std::uint64_t>(PAIR_SENTINEL)) return a[0];
-            auto idx = static_cast<std::size_t>(uv - PAIR_SENTINEL);
+        if (a.empty()) return make_int(0);
+        auto v = a[0]; EvalValue result = make_void();
+        while (!is_void(v)) {
+            if (!is_pair(v)) return a[0];
+            auto idx = as_pair_idx(v);
             if (idx >= pairs_.size()) return a[0];
             auto new_id = pairs_.size();
             pairs_.push_back({pairs_[idx].car, result});
-            result = PAIR_SENTINEL + static_cast<std::int64_t>(new_id);
+            result = make_pair(new_id);
             v = pairs_[idx].cdr;
         }
         return result;
     });
     primitives_.add("map", [this](const auto& a) {
-        // map takes a fn value (int64_t) and a list — simplified
-        // For now: not supported in simplified form.
-        // Full map needs higher-order function support.
-        return a.empty() ? std::int64_t(0) : a[0];
+        return a.empty() ? make_void() : a[0];
     });
     primitives_.add("filter", [this](const auto& a) {
-        return a.empty() ? std::int64_t(0) : a[0];
+        return a.empty() ? make_void() : a[0];
     });
 
     // ── L6.8: Runtime type introspection ────────────────────────────
-    // Infer a human-readable type name from a sentinel-based int64_t.
-    // Order matters: check highest sentinel first (non-overlapping ranges).
-    auto infer_type_name = [this](std::int64_t v) -> const char* {
-        auto uv = static_cast<std::uint64_t>(v);
-        if (uv >= static_cast<std::uint64_t>(STRING_SENTINEL)) return "String";
-        if (uv >= static_cast<std::uint64_t>(PAIR_SENTINEL))   return "Pair";
-        if (uv >= static_cast<std::uint64_t>(CELL_SENTINEL))   return "Cell";
-        if (uv >= static_cast<std::uint64_t>(CLOSURE_SENTINEL)) return "Closure";
-        if (v == 0 || v == 1) return "Bool";
-        return "Int";
+    auto infer_type_name = [](const EvalValue& v) -> const char* {
+        if (is_string(v)) return "String";
+        if (is_pair(v))   return "Pair";
+        if (is_cell(v))   return "Cell";
+        if (is_closure(v)) return "Closure";
+        if (is_bool(v))   return "Bool";
+        // Backward compat: int 0/1 was historically treated as Bool
+        if (is_int(v) && (as_int(v) == 0 || as_int(v) == 1)) return "Bool";
+        if (is_int(v))    return "Int";
+        if (is_void(v))   return "Void";
+        return "Unknown";
     };
 
-    // (type-of val) → type name as string
-    primitives_.add("type-of", [this, infer_type_name](const auto& a) -> std::int64_t {
-        if (a.empty()) return std::int64_t(0);
+    primitives_.add("type-of", [this, infer_type_name](const auto& a) -> EvalValue {
+        if (a.empty()) return make_int(0);
         auto type_name = infer_type_name(a[0]);
         auto id = string_heap_.size();
         string_heap_.push_back(type_name);
-        return STRING_SENTINEL + static_cast<std::int64_t>(id);
+        return make_string(id);
     });
 
-    // (type? val type-name) → bool
-    primitives_.add("type?", [this, infer_type_name](const auto& a) -> std::int64_t {
-        if (a.size() < 2) return FALSE_VAL;
+    primitives_.add("type?", [this, infer_type_name](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !is_string(a[1])) return make_int(0);
         auto val_type = infer_type_name(a[0]);
-        // Get the expected type name from the second arg
-        auto expected_idx = static_cast<std::size_t>(a[1] - STRING_SENTINEL);
-        if (expected_idx >= string_heap_.size()) return FALSE_VAL;
+        auto expected_idx = as_string_idx(a[1]);
+        if (expected_idx >= string_heap_.size()) return make_int(0);
         auto& expected = string_heap_[expected_idx];
-        return (val_type == expected) ? TRUE_VAL : FALSE_VAL;
+        return make_int(val_type == expected ? 1 : 0);
     });
-
 
     primitives_.add("equal?", [this](const auto& a) {
-        if (a.size() < 2) return TRUE_VAL;
-        std::vector<std::pair<std::int64_t, std::int64_t>> stack;
+        if (a.size() < 2) return make_int(1);
+        struct EqPair { EvalValue x, y; };
+        std::vector<EqPair> stack;
         stack.push_back({a[0], a[1]});
         while (!stack.empty()) {
-            auto [x, y] = stack.back(); stack.pop_back();
-            if (x == y) continue;
-            auto ux = static_cast<std::uint64_t>(x);
-            auto uy = static_cast<std::uint64_t>(y);
-            bool px = ux >= static_cast<std::uint64_t>(PAIR_SENTINEL) && ux < static_cast<std::uint64_t>(PAIR_SENTINEL) + pairs_.size();
-            bool py = uy >= static_cast<std::uint64_t>(PAIR_SENTINEL) && uy < static_cast<std::uint64_t>(PAIR_SENTINEL) + pairs_.size();
-            if (px && py) {
-                auto ix = static_cast<std::size_t>(x - PAIR_SENTINEL);
-                auto iy = static_cast<std::size_t>(y - PAIR_SENTINEL);
-                if (ix >= pairs_.size() || iy >= pairs_.size()) return FALSE_VAL;
+            auto p = stack.back(); stack.pop_back();
+            if (p.x == p.y) continue;
+            if (is_pair(p.x) && is_pair(p.y)) {
+                auto ix = as_pair_idx(p.x);
+                auto iy = as_pair_idx(p.y);
+                if (ix >= pairs_.size() || iy >= pairs_.size()) return make_int(0);
                 stack.push_back({pairs_[ix].cdr, pairs_[iy].cdr});
                 stack.push_back({pairs_[ix].car, pairs_[iy].car});
                 continue;
             }
-            bool sx = ux >= static_cast<std::uint64_t>(STRING_SENTINEL) && ux < static_cast<std::uint64_t>(STRING_SENTINEL) + string_heap_.size();
-            bool sy = uy >= static_cast<std::uint64_t>(STRING_SENTINEL) && uy < static_cast<std::uint64_t>(STRING_SENTINEL) + string_heap_.size();
-            if (sx && sy) {
-                auto six = static_cast<std::size_t>(x - STRING_SENTINEL);
-                auto siy = static_cast<std::size_t>(y - STRING_SENTINEL);
-                if (six >= string_heap_.size() || siy >= string_heap_.size()) return FALSE_VAL;
-                if (string_heap_[six] != string_heap_[siy]) return FALSE_VAL;
+            if (is_string(p.x) && is_string(p.y)) {
+                auto six = as_string_idx(p.x);
+                auto siy = as_string_idx(p.y);
+                if (six >= string_heap_.size() || siy >= string_heap_.size()) return make_int(0);
+                if (string_heap_[six] != string_heap_[siy]) return make_int(0);
                 continue;
             }
-            return FALSE_VAL;
+            return make_int(0);
         }
-        return TRUE_VAL;
+        return make_int(1);
     });
+
     static std::atomic<std::uint64_t> gs_counter_{0};
-    primitives_.add("gensym", [](const auto&) -> std::int64_t {
-        // Generate unique symbol name (stored in string heap)
+    primitives_.add("gensym", [](const auto&) -> EvalValue {
         auto id = gs_counter_.fetch_add(1, std::memory_order_relaxed);
-        // Return unique string name — caller must use with intern
-        // For now, return the counter as marker; actual usage in macro expander
-        return static_cast<std::int64_t>(id);
+        return make_int(static_cast<std::int64_t>(id));
     });
     primitives_.add("display", [this](const auto& a) {
-        if (a.empty()) return TRUE_VAL;
+        if (a.empty()) return make_int(1);
         io_print_val(a[0], &string_heap_, false);
-        return TRUE_VAL;
+        return make_int(1);
     });
-    primitives_.add("write", [this](const auto& a) -> std::int64_t {
-        if (a.empty()) return TRUE_VAL;
+    primitives_.add("write", [this](const auto& a) -> EvalValue {
+        if (a.empty()) return make_int(1);
         io_print_val(a[0], &string_heap_, true);
-        return TRUE_VAL;
+        return make_int(1);
     });
-    primitives_.add("newline", [](const auto&) { std::printf("\n"); return TRUE_VAL; });
-    primitives_.add("error", [](const auto& a) -> std::int64_t {
-        std::string msg = a.empty() ? "error" : std::to_string(a[0]);
+    primitives_.add("newline", [](const auto&) { std::printf("\n"); return make_int(1); });
+    primitives_.add("error", [](const auto& a) -> EvalValue {
+        std::string msg = a.empty() ? "error" : (is_int(a[0]) ? std::to_string(as_int(a[0])) : "error");
         throw std::runtime_error(msg);
-        return FALSE_VAL;
+        return make_int(0);
     });
-    primitives_.add("assert", [this](const auto& a) -> std::int64_t {
-        if (a.empty() || a[0] == FALSE_VAL) {
+    primitives_.add("assert", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_truthy(a[0])) {
             std::string msg = "assertion failed";
             if (a.size() > 1) {
-                auto uv = static_cast<std::uint64_t>(a[1]);
-                if (uv >= static_cast<std::uint64_t>(STRING_SENTINEL) && uv < static_cast<std::uint64_t>(STRING_SENTINEL) + string_heap_.size())
-                    msg = string_heap_[static_cast<std::size_t>(a[1] - STRING_SENTINEL)];
-                else
-                    msg = std::to_string(a[1]);
+                if (is_string(a[1])) {
+                    auto idx = as_string_idx(a[1]);
+                    if (idx < string_heap_.size()) msg = string_heap_[idx];
+                } else if (is_int(a[1])) {
+                    msg = std::to_string(as_int(a[1]));
+                }
             }
             throw std::runtime_error(msg);
         }
-        return TRUE_VAL;
+        return make_int(1);
     });
     primitives_.add("read", [this](const auto&) {
         std::string line;
         std::getline(std::cin, line);
-        if (line.empty()) return std::int64_t(0);
-        // Parse and evaluate using the CompilerService
-        // For now: store the line as a string and return it
+        if (line.empty()) return make_void();
         auto id = string_heap_.size();
         string_heap_.push_back(std::move(line));
-        return STRING_SENTINEL + static_cast<std::int64_t>(id);
+        return make_string(id);
     });
 }
 
-std::int64_t* Env::lookup_cell_ptr(const std::string& n, std::vector<std::int64_t>* cells) const {
+// ── Env::lookup_cell_ptr: returns EvalValue* ──────────────────
+EvalValue* Env::lookup_cell_ptr(const std::string& n, std::vector<EvalValue>* cells) const {
     if (!cells) return nullptr;
     for (auto& b : bindings_) {
         if (b.first == n) {
-            auto cv = b.second;
-            if (static_cast<std::uint64_t>(cv) >= static_cast<std::uint64_t>(CELL_SENTINEL)) {
-                auto ci = static_cast<std::size_t>(cv - CELL_SENTINEL);
+            if (is_cell(b.second)) {
+                auto ci = as_cell_id(b.second);
                 if (ci < cells->size()) return &(*cells)[ci];
             }
             return nullptr;
         }
     }
-    // Walk up the parent chain
     for (auto* p = parent_; p; p = p->parent_) {
         for (auto& b : p->bindings_) {
             if (b.first == n) {
-                auto cv = b.second;
-                if (static_cast<std::uint64_t>(cv) >= static_cast<std::uint64_t>(CELL_SENTINEL)) {
-                    auto ci = static_cast<std::size_t>(cv - CELL_SENTINEL);
+                if (is_cell(b.second)) {
+                    auto ci = as_cell_id(b.second);
                     if (ci < cells->size()) return &(*cells)[ci];
                 }
                 return nullptr;
@@ -587,17 +588,17 @@ Env* Evaluator::copy_env(const Env& e) {
     return arena_ ? arena_->create<Env>(e) : nullptr;
 }
 
+// ── eval_in: EvalValue-based tree-walker ──────────────────────
 EvalResult Evaluator::eval_in(const ast::Expr* e, const Env& env) {
     if (!e) return std::unexpected(Diagnostic{ErrorKind::InternalError, "null expression"});
     return std::visit([&](const auto& n) -> EvalResult {
         using T = std::decay_t<decltype(n)>;
         if constexpr (std::is_same_v<T, ast::LiteralIntNode>)
-            return n.value;
+            return make_int(n.value);
         if constexpr (std::is_same_v<T, ast::LiteralStringNode>) {
-            // Store string in heap, return sentinel
             auto id = string_heap_.size();
             string_heap_.push_back(n.value);
-            return STRING_SENTINEL + static_cast<std::int64_t>(id);
+            return make_string(id);
         }
         if constexpr (std::is_same_v<T, ast::VariableNode>) {
             auto v = env.lookup(n.name);
@@ -634,7 +635,7 @@ EvalResult Evaluator::eval_in(const ast::Expr* e, const Env& env) {
             if (auto* var = std::get_if<ast::VariableNode>(&n.function->payload)) {
                 auto p = env.lookup_primitive(var->name);
                 if (p.has_value()) {
-                    std::vector<std::int64_t> va;
+                    std::vector<EvalValue> va;
                     for (auto* a : n.args) {
                         auto r = eval_in(a, env);
                         if (!r) return r;
@@ -646,20 +647,20 @@ EvalResult Evaluator::eval_in(const ast::Expr* e, const Env& env) {
             // Closure call
             auto fr = eval_in(n.function, env);
             if (!fr) return fr;
-            if (static_cast<std::uint64_t>(*fr) >= CLOSURE_SENTINEL)
-                return apply_closure(static_cast<ClosureId>(*fr - CLOSURE_SENTINEL), n.args, env);
+            if (is_closure(*fr))
+                return apply_closure(as_closure_id(*fr), n.args, env);
             return std::unexpected(Diagnostic{ErrorKind::InvalidClosure, "not callable"});
         }
         if constexpr (std::is_same_v<T, ast::IfExprNode>) {
             auto c = eval_in(n.condition, env);
             if (!c) return c;
-            return eval_in(*c ? n.then_branch : n.else_branch, env);
+            return eval_in(is_truthy(*c) ? n.then_branch : n.else_branch, env);
         }
         if constexpr (std::is_same_v<T, ast::LambdaNode>) {
             auto* cap = copy_env(env);
             auto id = next_id();
             closures_[id] = {n.params, n.body, cap};
-            return static_cast<std::int64_t>(CLOSURE_SENTINEL + id);
+            return make_closure(id);
         }
         if constexpr (std::is_same_v<T, ast::LetNode>) {
             auto v = eval_in(n.value, env);
@@ -672,8 +673,8 @@ EvalResult Evaluator::eval_in(const ast::Expr* e, const Env& env) {
         if constexpr (std::is_same_v<T, ast::DefineNode>) {
             Env& me = const_cast<Env&>(env);
             me.set_cells(&cells_);
-            auto ci = alloc_cell(0);
-            me.bind(n.name, static_cast<std::int64_t>(CELL_SENTINEL + ci));
+            auto ci = alloc_cell(make_void());
+            me.bind(n.name, make_cell(ci));
             auto v = eval_in(n.value, env);
             if (!v) return v;
             cells_[ci] = *v;
@@ -683,8 +684,8 @@ EvalResult Evaluator::eval_in(const ast::Expr* e, const Env& env) {
             Env ne(&env);
             ne.set_primitives(&primitives_);
             ne.set_cells(&cells_);
-            auto ci = alloc_cell(0);
-            ne.bind(n.name, static_cast<std::int64_t>(CELL_SENTINEL + ci));
+            auto ci = alloc_cell(make_void());
+            ne.bind(n.name, make_cell(ci));
             auto v = eval_in(n.value, ne);
             if (!v) return v;
             cells_[ci] = *v;
@@ -698,19 +699,16 @@ EvalResult Evaluator::eval_in(const ast::Expr* e, const Env& env) {
                 if (!v) return v;
                 last = e;
             }
-            return last ? eval_in(last, env) : EvalResult(0);
+            return last ? eval_in(last, env) : EvalResult(make_void());
         }
         if constexpr (std::is_same_v<T, ast::SetNode>) {
             auto v = eval_in(n.value, env);
             if (!v) return v;
-            // Try cell-based mutation first (letrec/define bindings)
             auto* cell_ptr = env.lookup_cell_ptr(n.name, &cells_);
             if (cell_ptr) {
                 *cell_ptr = *v;
                 return *v;
             }
-            // Fallback: direct env mutation (let bindings)
-            // Walk the env chain and mutate the first matching binding
             auto& write_env = const_cast<Env&>(env);
             for (auto& b : write_env.bindings()) {
                 if (b.first == n.name) {
@@ -734,66 +732,61 @@ EvalResult Evaluator::eval_in(const ast::Expr* e, const Env& env) {
             return eval_in(n.value, env);
         }
         if constexpr (std::is_same_v<T, ast::TypeAnnotationNode>) {
-            // Strip type annotation, evaluate inner expression
             return eval_in(n.inner_expr, env);
         }
-        // ── Helper: runtime type coercion ──────────────────────────────
-        auto coerce_value = [&](std::int64_t val, const std::string& to_type) -> std::int64_t {
-            auto uv = static_cast<std::uint64_t>(val);
-            bool is_int    = (uv < 0x1000000);
-            bool is_string = (uv >= 0x8000000);
-            
+        // ── Helper: runtime type coercion for EvalValue ──────────
+        auto coerce_value = [&](const EvalValue& val, const std::string& to_type) -> EvalValue {
             if (to_type == "Any" || to_type.empty()) return val;
-            
+
             // Coerce to Int
             if (to_type == "Int") {
-                if (is_int) return val;                       // already int
-                if (is_string) {                               // string → int
-                    auto idx = static_cast<std::size_t>(uv - STRING_SENTINEL);
+                if (is_int(val)) return val;
+                if (is_string(val)) {
+                    auto idx = as_string_idx(val);
                     if (idx < string_heap_.size()) {
-                        try { return static_cast<std::int64_t>(std::stoll(string_heap_[idx])); }
-                        catch (...) { return 0; }
+                        try { return make_int(static_cast<std::int64_t>(std::stoll(string_heap_[idx]))); }
+                        catch (...) { return make_int(0); }
                     }
-                    return 0;
+                    return make_int(0);
                 }
-                return val;  // other sentinel: pass through
+                if (is_bool(val)) return make_int(as_bool(val) ? 1 : 0);
+                return make_int(0);
             }
-            
+
             // Coerce to String
             if (to_type == "String") {
-                if (is_string) return val;                    // already string
-                if (is_int) {                                  // int → string
-                    auto s = std::to_string(val);
+                if (is_string(val)) return val;
+                if (is_int(val)) {
+                    auto s = std::to_string(as_int(val));
                     auto id = string_heap_.size();
                     string_heap_.push_back(std::move(s));
-                    return STRING_SENTINEL + static_cast<std::int64_t>(id);
+                    return make_string(id);
+                }
+                if (is_bool(val)) {
+                    auto s = as_bool(val) ? "#t" : "#f";
+                    auto id = string_heap_.size();
+                    string_heap_.push_back(std::move(s));
+                    return make_string(id);
                 }
                 return val;
             }
-            
+
             // Coerce to Bool
             if (to_type == "Bool") {
-                return (val != 0) ? std::int64_t(1) : std::int64_t(0);
+                return make_bool(is_truthy(val));
             }
-            
-            // Unknown type: pass through
+
             return val;
         };
-        
+
         if constexpr (std::is_same_v<T, ast::CoercionNode>) {
             auto result = eval_in(n.inner_expr, env);
             if (result) {
                 return coerce_value(*result, n.to_type_name);
             }
-            // Propagate error
             return std::unexpected(result.error());
         }
         if constexpr (std::is_same_v<T, ast::MacroDefNode>) {
-            // Clone the body into a persistent CloneNode-backed copy.
-            // The original body is in arena_ which gets reset between evals.
-            // We must deep-copy it now while arena_ is still alive.
-            // Simplest approach: serialize → deserialize via expand_macro's clone
-            // Keep the macro in a persistent AST by cloning into a static arena.
             static ast::ASTArena persistent_arena(64 * 1024);
             struct Cloner {
                 ast::ASTArena* pa;
@@ -841,20 +834,19 @@ EvalResult Evaluator::eval_in(const ast::Expr* e, const Env& env) {
             Cloner cloner{&persistent_arena};
             auto* persistent_body = cloner.clone(n.body);
 
-            // Phase 3b D3: Validate macro template at definition time
             aura::diag::DiagnosticCollector macro_diag;
             aura::compiler::MacroValidation mv;
             aura::compiler::validate_macro_template(mv, n.name, n.params, persistent_body, &macro_diag);
-            // Validation does not block registration — warnings only
             (void)mv;
 
             const_cast<Evaluator*>(this)->macros_[n.name] = MacroDef{n.params, persistent_body};
-            return 0;
+            return EvalResult(make_void());
         }
         return std::unexpected(Diagnostic{ErrorKind::InternalError, "unknown expression type"});
     }, e->payload);
 }
 
+// ── apply_closure: EvalValue-based ────────────────────────────
 EvalResult Evaluator::apply_closure(ClosureId id, const std::vector<ast::Expr*>& args, const Env& call_env) {
     auto it = closures_.find(id);
     if (it == closures_.end())
@@ -870,9 +862,7 @@ EvalResult Evaluator::apply_closure(ClosureId id, const std::vector<ast::Expr*>&
     return eval_in(cl.body, ne);
 }
 
-// ── Phase 4: FlatAST tree-walker evaluator ─────────────────────
-// Evaluates FlatAST nodes directly, bypassing Expr* reconstruction.
-// Uses reconstruct_expr only for Lambda body (needed by Closure table).
+// ── Phase 4: FlatAST tree-walker evaluator (EvalValue) ───────
 EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                                  aura::ast::StringPool& pool,
                                  aura::ast::NodeId id,
@@ -882,11 +872,11 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
     auto v = flat.get(id);
     switch (v.tag) {
     case aura::ast::NodeTag::LiteralInt:
-        return v.int_value;
+        return make_int(v.int_value);
     case aura::ast::NodeTag::LiteralString: {
         auto sid = string_heap_.size();
         string_heap_.push_back(std::string(pool.resolve(v.sym_id)));
-        return STRING_SENTINEL + static_cast<std::int64_t>(sid);
+        return make_string(sid);
     }
     case aura::ast::NodeTag::Variable: {
         auto name = pool.resolve(v.sym_id);
@@ -896,7 +886,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                                           "unbound variable: " + std::string(name)});
     }
     case aura::ast::NodeTag::Call: {
-        if (v.children.empty()) return EvalResult(0);
+        if (v.children.empty()) return EvalResult(make_void());
         auto callee_id = v.child(0);
         auto callee = flat.get(callee_id);
         // Inline lambda
@@ -930,12 +920,12 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                 return eval_in(md.body, ne);
             }
         }
-        // Primitive call (check BEFORE evaluating callee name)
+        // Primitive call
         if (callee.tag == aura::ast::NodeTag::Variable) {
             auto cname = std::string(pool.resolve(callee.sym_id));
             auto prim = env.lookup_primitive(cname);
             if (prim) {
-                std::vector<std::int64_t> args;
+                std::vector<EvalValue> args;
                 for (std::size_t i = 1; i < v.children.size(); ++i) {
                     auto ar = eval_flat(flat, pool, v.child(i), env);
                     if (!ar) return ar;
@@ -944,12 +934,11 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                 return (*prim)(args);
             }
         }
-        // Closure call (evaluate callee, apply)
+        // Closure call
         auto fn = eval_flat(flat, pool, callee_id, env);
         if (!fn) return fn;
-        auto fn_uv = static_cast<std::uint64_t>(*fn);
-        if (fn_uv >= CLOSURE_SENTINEL) {
-            auto cid = static_cast<ClosureId>(*fn - static_cast<std::int64_t>(CLOSURE_SENTINEL));
+        if (is_closure(*fn)) {
+            auto cid = as_closure_id(*fn);
             auto it = closures_.find(cid);
             if (it == closures_.end())
                 return std::unexpected(Diagnostic{ErrorKind::InvalidClosure, "eval_flat: invalid closure"});
@@ -967,13 +956,12 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                                           "cannot call: " + std::string(pool.resolve(callee.sym_id))});
     }
     case aura::ast::NodeTag::IfExpr: {
-        if (v.children.size() < 3) return EvalResult(0);
+        if (v.children.size() < 3) return EvalResult(make_void());
         auto c = eval_flat(flat, pool, v.child(0), env);
         if (!c) return c;
-        return eval_flat(flat, pool, *c ? v.child(1) : v.child(2), env);
+        return eval_flat(flat, pool, is_truthy(*c) ? v.child(1) : v.child(2), env);
     }
     case aura::ast::NodeTag::Lambda: {
-        // Reconstruct lambda expression for closure storage
         auto* expr = reconst_node(id, flat, pool, *arena_);
         if (!expr || expr->tag != aura::ast::NodeTag::Lambda)
             return std::unexpected(Diagnostic{ErrorKind::InternalError, "eval_flat: lambda reconstruct failed"});
@@ -981,7 +969,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
         auto* cap = copy_env(env);
         auto cid = next_id();
         closures_[cid] = Closure{lam.params, lam.body, cap};
-        return static_cast<std::int64_t>(CLOSURE_SENTINEL + cid);
+        return make_closure(cid);
     }
     case aura::ast::NodeTag::Let:
     case aura::ast::NodeTag::LetRec: {
@@ -994,8 +982,8 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
             ne.set_primitives(&primitives_);
             ne.set_cells(&cells_);
             std::size_t ci = cells_.size();
-            cells_.push_back(0);
-            ne.bind(std::string(name), CELL_SENTINEL + static_cast<std::int64_t>(ci));
+            cells_.push_back(make_void());
+            ne.bind(std::string(name), make_cell(ci));
             auto vv = eval_flat(flat, pool, val_id, ne);
             if (!vv) return vv;
             cells_[ci] = *vv;
@@ -1014,15 +1002,15 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
         auto val_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
         Env& me = const_cast<Env&>(env);
         me.set_cells(&cells_);
-        auto ci = alloc_cell(0);
-        me.bind(std::string(name), static_cast<std::int64_t>(CELL_SENTINEL + static_cast<std::int64_t>(ci)));
+        auto ci = alloc_cell(make_void());
+        me.bind(std::string(name), make_cell(ci));
         auto vv = eval_flat(flat, pool, val_id, env);
         if (!vv) return vv;
         cells_[ci] = *vv;
         return *vv;
     }
     case aura::ast::NodeTag::Begin: {
-        EvalResult last = EvalResult(0);
+        EvalResult last = EvalResult(make_void());
         for (auto c : v.children) {
             auto r = eval_flat(flat, pool, c, env);
             if (!r) return r;
@@ -1035,6 +1023,11 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
         auto val_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
         auto val = eval_flat(flat, pool, val_id, env);
         if (!val) return val;
+        auto* cell_ptr = env.lookup_cell_ptr(std::string(name), &cells_);
+        if (cell_ptr) {
+            *cell_ptr = *val;
+            return *val;
+        }
         for (auto& b : const_cast<Env&>(env).bindings()) {
             if (b.first == name) {
                 b.second = *val;
@@ -1045,11 +1038,11 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                                           "set!: unbound variable: " + std::string(name)});
     }
     case aura::ast::NodeTag::Quote: {
-        if (v.children.empty()) return EvalResult(0);
+        if (v.children.empty()) return EvalResult(make_void());
         return eval_flat(flat, pool, v.child(0), env);
     }
     case aura::ast::NodeTag::TypeAnnotation: {
-        if (v.children.empty()) return EvalResult(0);
+        if (v.children.empty()) return EvalResult(make_void());
         return eval_flat(flat, pool, v.child(0), env);
     }
     case aura::ast::NodeTag::MacroDef: {
@@ -1058,11 +1051,9 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
         for (auto p : v.params)
             param_names.push_back(std::string(pool.resolve(p)));
         auto body_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
-        if (body_id == aura::ast::NULL_NODE) return EvalResult(0);
-        // Reconstruct body to Expr* for persistent storage
+        if (body_id == aura::ast::NULL_NODE) return EvalResult(make_void());
         auto* body_expr = reconst_node(body_id, flat, pool, *arena_);
-        if (!body_expr) return EvalResult(0);
-        // Clone to persistent arena
+        if (!body_expr) return EvalResult(make_void());
         static aura::ast::ASTArena persistent_arena(64 * 1024);
         struct Cloner {
             aura::ast::ASTArena* pa;
@@ -1109,32 +1100,21 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
         };
         Cloner cloner{&persistent_arena};
         auto* persistent_body = cloner.clone(body_expr);
-        // Phase 3b D3: Compile-time macro template validation
-        // Inline validation checks (MacroValidation struct is incomplete here)
         if (body_expr) {
-            // Check for constant body (no param references)
             bool has_param_ref = false;
             for (auto& p : param_names) {
-                // Simple check: scan body for VariableNodes with matching name
-                // Use string matching on the body (sufficient for now)
-                struct Checker { std::vector<std::string> params; bool found = false; };
-                // Walk the Expr* body to check param references
-                // For now, just warn if body is a literal
                 if (body_expr->tag == aura::ast::NodeTag::LiteralInt ||
                     body_expr->tag == aura::ast::NodeTag::LiteralString) {
                     has_param_ref = false;
                 } else {
-                    has_param_ref = true;  // assume params are used
+                    has_param_ref = true;
                 }
             }
             if (!has_param_ref && param_names.empty() && body_expr->tag == aura::ast::NodeTag::LiteralInt) {
                 std::println(std::cerr, "warning: macro '{}': body does not reference any parameters "
                              "— always expands to the same expression", std::string(name));
             }
-            // Check for unused params
             for (auto& p : param_names) {
-                // Check if param name appears in the body's variable references
-                // This is a simplified check; full tree walk needs MacroValidation
                 bool found = false;
                 if (body_expr->tag == aura::ast::NodeTag::Variable) {
                     auto& var_node = std::get<aura::ast::VariableNode>(body_expr->payload);
@@ -1142,16 +1122,13 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                 }
                 if (body_expr->tag == aura::ast::NodeTag::Call) {
                     auto& call_node = std::get<aura::ast::CallNode>(body_expr->payload);
-                    // Check function and args
-                    // This is simplified — full check uses collect_var_refs
                 }
-                // Simplified unused param warning
                 std::println(std::cerr, "warning: macro '{}': parameter '{}' is never used in template",
                              std::string(name), p);
             }
         }
         macros_[std::string(name)] = MacroDef{std::move(param_names), persistent_body};
-        return EvalResult(0);
+        return EvalResult(make_void());
     }
     default:
         return std::unexpected(Diagnostic{ErrorKind::InternalError,
@@ -1160,15 +1137,13 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
 }
 
 // ── Macro template validation (Phase 3b D3) ──────────────────
-// Runs at defmacro definition time to catch errors early.
 struct MacroValidation {
-    bool body_valid = true;        // body is non-null
-    std::vector<std::string> unused_params;   // params never referenced
-    std::vector<std::string> free_vars;       // vars in body not in param list
-    bool constant_body = false;    // no param references → always same result
+    bool body_valid = true;
+    std::vector<std::string> unused_params;
+    std::vector<std::string> free_vars;
+    bool constant_body = false;
 };
 
-// Recursively collect all VariableNode names from an Expr tree.
 static void collect_var_refs(const ast::Expr* e, std::unordered_set<std::string>& vars) {
     if (!e) return;
     std::visit([&](const auto& node) {
@@ -1183,13 +1158,12 @@ static void collect_var_refs(const ast::Expr* e, std::unordered_set<std::string>
             collect_var_refs(node.then_branch, vars);
             collect_var_refs(node.else_branch, vars);
         } else if constexpr (std::is_same_v<T, ast::LambdaNode>) {
-            // Lambda params shadow outer scope — don't collect them as free
             collect_var_refs(node.body, vars);
             for (auto& p : node.params) vars.erase(p);
         } else if constexpr (std::is_same_v<T, ast::LetNode>) {
             collect_var_refs(node.value, vars);
             collect_var_refs(node.body, vars);
-            vars.erase(node.name);  // let binding shadows
+            vars.erase(node.name);
         } else if constexpr (std::is_same_v<T, ast::LetRecNode>) {
             collect_var_refs(node.value, vars);
             collect_var_refs(node.body, vars);
@@ -1202,17 +1176,14 @@ static void collect_var_refs(const ast::Expr* e, std::unordered_set<std::string>
         } else if constexpr (std::is_same_v<T, ast::SetNode>) {
             collect_var_refs(node.value, vars);
         } else if constexpr (std::is_same_v<T, ast::QuoteNode>) {
-            // Quoted expressions don't introduce free references
         } else if constexpr (std::is_same_v<T, ast::TypeAnnotationNode>) {
             collect_var_refs(node.inner_expr, vars);
         } else if constexpr (std::is_same_v<T, ast::CoercionNode>) {
             collect_var_refs(node.inner_expr, vars);
         }
-        // LiteralIntNode, LiteralStringNode, MacroDefNode: no variables
     }, e->payload);
 }
 
-// Validate a macro template body at definition time.
 static void validate_macro_template(MacroValidation& mv,
                                      const std::string& name,
                                      const std::vector<std::string>& params,
@@ -1228,23 +1199,19 @@ static void validate_macro_template(MacroValidation& mv,
         return;
     }
 
-    // Collect all variable references in the body
     std::unordered_set<std::string> body_vars;
     collect_var_refs(body, body_vars);
 
-    // Check for unused params
     for (auto& p : params) {
         if (body_vars.find(p) == body_vars.end()) {
             mv.unused_params.push_back(p);
             if (diag) {
-                // Warning only — unused param is not fatal
                 std::println(std::cerr, "warning: macro '{}': parameter '{}' is never used in template",
                              name, p);
             }
         }
     }
 
-    // Collect free variables (vars in body that aren't params)
     std::unordered_set<std::string> param_set(params.begin(), params.end());
     for (auto& v : body_vars) {
         if (param_set.find(v) == param_set.end()) {
@@ -1252,7 +1219,6 @@ static void validate_macro_template(MacroValidation& mv,
         }
     }
 
-    // Check for constant body (no param references)
     bool has_param_ref = false;
     for (auto& v : body_vars) {
         if (param_set.find(v) != param_set.end()) {
@@ -1265,19 +1231,15 @@ static void validate_macro_template(MacroValidation& mv,
         std::println(std::cerr, "warning: macro '{}': body does not reference any parameters "
                      "— always expands to the same expression", name);
     }
-
 }
 
-// ── Macro expansion: substitute params with args in body AST ──
+// ── Macro expansion ───────────────────────────────────────────
 ast::Expr* Evaluator::expand_macro(const std::string& name,
                                     const std::vector<ast::Expr*>& args) {
     auto it = macros_.find(name);
     if (it == macros_.end()) return nullptr;
     auto& mac = it->second;
 
-    // Clone the body AST, replacing VariableNodes that match params
-    // with the corresponding argument expressions.
-    // Uses a recursive walk with arena allocation.
     struct Expander {
         ast::ASTArena* arena;
         const std::vector<std::string>* params;
@@ -1295,23 +1257,23 @@ ast::Expr* Evaluator::expand_macro(const std::string& name,
                 using T = std::decay_t<decltype(node)>;
 
                 if constexpr (std::is_same_v<T, ast::VariableNode>) {
-                    // Check if this variable matches a macro parameter
                     for (std::size_t i = 0; i < params->size(); ++i) {
                         if (node.name == (*params)[i]) {
-                            // Substitute: return cloned arg
                             return clone((*args)[i]);
                         }
                     }
-                    // Check rename map (hygienic binding)
                     auto it = rename_.find(node.name);
                     if (it != rename_.end())
                         return arena->template create<ast::Expr>(ast::VariableNode{node.tag, it->second});
-                    // Not a param — clone as-is
                     return arena->template create<ast::Expr>(ast::VariableNode{node.tag, node.name});
                 }
 
                 if constexpr (std::is_same_v<T, ast::LiteralIntNode>) {
                     return arena->template create<ast::Expr>(ast::LiteralIntNode{node.tag, node.value});
+                }
+
+                if constexpr (std::is_same_v<T, ast::LiteralStringNode>) {
+                    return arena->template create<ast::Expr>(ast::LiteralStringNode{node.tag, node.value});
                 }
 
                 if constexpr (std::is_same_v<T, ast::CallNode>) {
@@ -1327,7 +1289,6 @@ ast::Expr* Evaluator::expand_macro(const std::string& name,
                 }
 
                 if constexpr (std::is_same_v<T, ast::LambdaNode>) {
-                    // Hygienic: rename all lambda params with fresh names
                     std::vector<std::string> new_params;
                     for (auto& p : node.params) {
                         auto fresh = fresh_name(p);
@@ -1335,13 +1296,11 @@ ast::Expr* Evaluator::expand_macro(const std::string& name,
                         new_params.push_back(std::move(fresh));
                     }
                     ast::LambdaNode lam{node.tag, std::move(new_params), clone(node.body)};
-                    // Restore original names (scoped rename)
                     for (auto& p : node.params) rename_.erase(p);
                     return arena->template create<ast::Expr>(std::move(lam));
                 }
 
                 if constexpr (std::is_same_v<T, ast::LetNode>) {
-                    // Hygienic: rename let binding
                     auto fresh = fresh_name(node.name);
                     rename_[node.name] = fresh;
                     auto* cloned = arena->template create<ast::Expr>(
@@ -1351,7 +1310,6 @@ ast::Expr* Evaluator::expand_macro(const std::string& name,
                 }
 
                 if constexpr (std::is_same_v<T, ast::LetRecNode>) {
-                    // Hygienic: rename letrec binding
                     auto fresh = fresh_name(node.name);
                     rename_[node.name] = fresh;
                     auto* cloned = arena->template create<ast::Expr>(

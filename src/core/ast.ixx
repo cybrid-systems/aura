@@ -42,12 +42,13 @@ export struct CoercionNode { NodeTag tag; Expr* inner_expr = nullptr; std::strin
 
 export struct Expr {
     NodeTag tag;
+    SourceLocation loc;   // source position (1-based line/col)
     std::variant<LiteralIntNode, VariableNode, CallNode, IfExprNode, LambdaNode,
                  LetNode, LetRecNode, DefineNode, BeginNode, SetNode, QuoteNode, MacroDefNode, LiteralStringNode, TypeAnnotationNode, CoercionNode> payload;
 
-    Expr(LiteralIntNode n) : tag(n.tag), payload(n) {}
-    Expr(VariableNode n)   : tag(n.tag), payload(n) {}
-    Expr(CallNode n)       : tag(n.tag), payload(n) {}
+    Expr(LiteralIntNode n) : tag(n.tag), loc{}, payload(n) {}
+    Expr(VariableNode n)   : tag(n.tag), loc{}, payload(n) {}
+    Expr(CallNode n)       : tag(n.tag), loc{}, payload(n) {}
     Expr(IfExprNode n)     : tag(n.tag), payload(n) {}
     Expr(LambdaNode n)     : tag(n.tag), payload(n) {}
     Expr(LetNode n)        : tag(n.tag), payload(n) {}

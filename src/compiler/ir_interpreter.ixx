@@ -4,20 +4,23 @@ import aura.core;
 import aura.compiler.ir;
 import aura.compiler.frontend;  // for EvalResult
 import aura.diag;              // for Diagnostic
+import aura.compiler.types;
 
 namespace aura::compiler {
+
+using EvalValue = types::EvalValue;
 
 // Runtime closure value
 export struct IRClosure {
     std::uint32_t func_id = 0;
-    std::vector<std::int64_t> env;
+    std::vector<EvalValue> env;
 };
 
 // Call frame for recursive IR execution
 struct CallFrame {
     const aura::ir::IRFunction* func = nullptr;
     std::uint32_t current_block = 0;
-    std::vector<std::int64_t> locals;
+    std::vector<EvalValue> locals;
     std::size_t instr_index = 0;
 };
 
@@ -29,12 +32,12 @@ export struct ClosureSnapshot {
     std::string            func_name;
     std::vector<std::string> func_params;     // from IRFunction::params
     std::vector<std::string> func_free_vars;  // from IRFunction::free_vars
-    std::vector<std::int64_t> env;
+    std::vector<EvalValue> env;
 };
 
 export struct CellSnapshot {
     std::uint64_t id;
-    std::int64_t  value;
+    EvalValue  value;
 };
 
 // ── Evaluation strategy (flambda-style) ─────────────────────────
@@ -75,12 +78,12 @@ public:
 private:
     // Execute a specific function with given args
     EvalResult execute_function(const aura::ir::IRFunction& func,
-                                 const std::vector<std::int64_t>& args);
+                                 const std::vector<EvalValue>& args);
 
     // Step through instructions (args are separate from locals for Arg opcode)
     EvalResult run_function(const aura::ir::IRFunction& func,
-                             std::vector<std::int64_t>& locals,
-                             const std::vector<std::int64_t>& args);
+                             std::vector<EvalValue>& locals,
+                             const std::vector<EvalValue>& args);
 
     // Build a snapshot from runtime closure data
     ClosureSnapshot make_snapshot(std::uint64_t id,
@@ -96,7 +99,7 @@ private:
 
     // Per-instance mutable cell heap (for letrec)
     std::uint64_t next_cell_id_ = 1;
-    std::unordered_map<std::uint64_t, std::int64_t> cell_heap_;
+    std::unordered_map<std::uint64_t, EvalValue> cell_heap_;
 
     // Runtime string heap (for Int→String coercion)
     std::vector<std::string> string_heap_;

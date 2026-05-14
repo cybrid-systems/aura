@@ -14,6 +14,7 @@ target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/type.ixx src/core/type_info.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/frontend.ixx
+    src/compiler/types.ixx
     src/compiler/ir.ixx
     src/compiler/lowering.ixx
     src/compiler/ir_interpreter.ixx
@@ -85,6 +86,7 @@ target_sources(test_ir PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/type.ixx src/core/type_info.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/frontend.ixx
+    src/compiler/types.ixx
     src/compiler/ir.ixx
     src/compiler/lowering.ixx
     src/compiler/ir_interpreter.ixx

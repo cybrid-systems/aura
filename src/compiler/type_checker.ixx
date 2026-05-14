@@ -61,6 +61,7 @@ export class InferenceEngine {
     aura::diag::DiagnosticCollector& diag_;
     ConstraintSystem cs_;
     TypeEnv env_;
+    aura::diag::SourceLocation cur_loc_;  // location of expression being checked
 public:
     InferenceEngine(aura::core::TypeRegistry& reg, aura::diag::DiagnosticCollector& diag);
 

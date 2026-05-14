@@ -144,7 +144,7 @@ public:
             out += "diagnostics:\n";
             for (auto& d : all_diags) {
                 out += "  [" + std::to_string(static_cast<int>(d.kind))
-                     + "] " + d.message + "\n";
+                     + "] " + d.format() + "\n";
             }
         }
 

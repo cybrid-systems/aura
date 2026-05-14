@@ -139,12 +139,13 @@ TypeId InferenceEngine::infer(Expr* e) {
     cs_.clear();
     auto result = synthesize(*e);
     if (!cs_.solve()) {
-        diag_.report(Diagnostic(ErrorKind::TypeError, "type constraint solving failed"));
+        diag_.report(Diagnostic(ErrorKind::TypeError, "type constraint solving failed", cur_loc_));
     }
     return result;
 }
 
 TypeId InferenceEngine::synthesize(const Expr& e) {
+    cur_loc_ = {e.loc.line, e.loc.column, e.loc.file};
     return std::visit([this](const auto& node) -> TypeId {
         using T = std::decay_t<decltype(node)>;
         if constexpr (std::is_same_v<T, LiteralIntNode>)
@@ -181,7 +182,7 @@ TypeId InferenceEngine::synthesize(const Expr& e) {
 TypeId InferenceEngine::synthesize_var(const VariableNode& n) {
     auto ty = env_.lookup(n.name);
     if (!ty.valid()) {
-        diag_.report(Diagnostic(ErrorKind::UnboundVariable, "unbound variable: " + n.name));
+        diag_.report(Diagnostic(ErrorKind::UnboundVariable, "unbound variable: " + n.name, cur_loc_));
         return reg_.dynamic_type();
     }
     return ty;
@@ -193,6 +194,7 @@ TypeId InferenceEngine::synthesize_call(const CallNode& n) {
 
     if (f_ty) {
         // Known function type: check args, return expected return type
+        auto saved_loc_ = cur_loc_;  // save call-site location before processing args
         std::size_t n_expected = std::min(f_ty->args.size(), n.args.size());
         for (std::size_t i = 0; i < n_expected; i++) {
             TypeId arg_type = synthesize(*n.args[i]);
@@ -204,22 +206,20 @@ TypeId InferenceEngine::synthesize_call(const CallNode& n) {
                              + ": coercion from "
                              + std::string(reg_.format_type(arg_type))
                              + " to " + std::string(reg_.format_type(f_ty->args[i]));
-                    diag_.report(Diagnostic(ErrorKind::Note, std::move(msg)));
+                    diag_.report(Diagnostic(ErrorKind::Note, std::move(msg), saved_loc_));
                 } else {
                     auto msg = std::string("argument ")
                              + std::to_string(i)
                              + ": expected " + std::string(reg_.format_type(f_ty->args[i]))
                              + ", got " + std::string(reg_.format_type(arg_type));
-                    diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg)));
+                    diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg), saved_loc_));
                 }
             }
         }
-
-        // Arity mismatch warning
         if (n.args.size() != f_ty->args.size() && !f_ty->args.empty()) {
             auto msg = "call: expected " + std::to_string(f_ty->args.size())
                      + " arguments, got " + std::to_string(n.args.size());
-            diag_.report(Diagnostic(ErrorKind::ArityMismatch, std::move(msg)));
+            diag_.report(Diagnostic(ErrorKind::ArityMismatch, std::move(msg), cur_loc_));
         }
 
         return f_ty->ret;
@@ -400,7 +400,7 @@ TypeId InferenceEngine::synthesize_annotation(const TypeAnnotationNode& n) {
         auto expected = reg_.lookup_type(n.type_name);
         if (!expected.valid()) {
             diag_.report(Diagnostic(ErrorKind::TypeError,
-                "unknown type: " + n.type_name));
+                "unknown type: " + n.type_name, cur_loc_));
         } else {
             check(*n.inner_expr, expected);
         }
@@ -417,12 +417,12 @@ void InferenceEngine::check_call(const CallNode& n, TypeId expected) {
             auto msg = "call return type: coercion from "
                      + std::string(reg_.format_type(inferred))
                      + " to " + std::string(reg_.format_type(expected));
-            diag_.report(Diagnostic(ErrorKind::Note, std::move(msg)));
+            diag_.report(Diagnostic(ErrorKind::Note, std::move(msg), cur_loc_));
         } else {
             auto msg = "call return type mismatch: expected "
                      + std::string(reg_.format_type(expected))
                      + ", got " + std::string(reg_.format_type(inferred));
-            diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg)));
+            diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg), cur_loc_));
         }
     }
 }
@@ -433,14 +433,14 @@ void InferenceEngine::check_lambda(const LambdaNode& n, TypeId expected) {
     if (!f_ty) {
         diag_.report(Diagnostic(ErrorKind::TypeError,
             "expected a function type but got "
-            + std::string(reg_.format_type(expected))));
+            + std::string(reg_.format_type(expected)), cur_loc_));
         return;
     }
     if (f_ty->args.size() != n.params.size()) {
         diag_.report(Diagnostic(ErrorKind::ArityMismatch,
             "lambda expects " + std::to_string(n.params.size())
             + " parameters but context provides "
-            + std::to_string(f_ty->args.size())));
+            + std::to_string(f_ty->args.size()), cur_loc_));
         return;
     }
     env_.push_scope();
@@ -451,6 +451,7 @@ void InferenceEngine::check_lambda(const LambdaNode& n, TypeId expected) {
 }
 
 void InferenceEngine::check(const Expr& e, TypeId expected) {
+    cur_loc_ = {e.loc.line, e.loc.column, e.loc.file};
     // Dispatch to node-specific check when available for better error messages
     // and context-guided inference (e.g., lambda param types from expected type)
     std::visit([this, &expected](const auto& node) {
@@ -466,12 +467,12 @@ void InferenceEngine::check(const Expr& e, TypeId expected) {
                     auto msg = "coercion from "
                              + std::string(reg_.format_type(inferred))
                              + " to " + std::string(reg_.format_type(expected));
-                    diag_.report(Diagnostic(ErrorKind::Note, std::move(msg)));
+                    diag_.report(Diagnostic(ErrorKind::Note, std::move(msg), cur_loc_));
                 } else {
                     auto msg = "type mismatch: expected "
                              + std::string(reg_.format_type(expected))
                              + ", got " + std::string(reg_.format_type(inferred));
-                    diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg)));
+                    diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg), cur_loc_));
                 }
             }
         }

@@ -33,10 +33,18 @@ NodeId FlatParser::parse_expr() {
     auto tok = lexer_->peek();
     switch (tok.kind) {
     case TokenKind::Integer: return parse_int(lexer_->consume());
-    case TokenKind::String:
-        return flat_.add_literalstring(pool_.intern(std::string(lexer_->consume().text)));
-    case TokenKind::Identifier:
-        return flat_.add_variable(pool_.intern(std::string(lexer_->consume().text)));
+    case TokenKind::String: {
+        auto tok = lexer_->consume();
+        auto id = flat_.add_literalstring(pool_.intern(std::string(tok.text)));
+        flat_.set_loc(id, tok.line, tok.column);
+        return id;
+    }
+    case TokenKind::Identifier: {
+        auto tok = lexer_->consume();
+        auto id = flat_.add_variable(pool_.intern(std::string(tok.text)));
+        flat_.set_loc(id, tok.line, tok.column);
+        return id;
+    }
     case TokenKind::LParen: lexer_->consume(); return parse_list();
     default: return NULL_NODE;
     }
@@ -50,10 +58,13 @@ NodeId FlatParser::parse_int(Token tok) {
 }
 
 NodeId FlatParser::parse_list() {
+    auto tok = lexer_->peek(); // '(' or first token
     // () → null sentinel (0)
     if (lexer_->peek().kind == TokenKind::RParen) {
         lexer_->consume();
-        return flat_.add_literal(0);
+        auto id = flat_.add_literal(0);
+        flat_.set_loc(id, tok.line, tok.column);
+        return id;
     }
     auto f = lexer_->peek();
     if (f.kind == TokenKind::Identifier) {
@@ -80,20 +91,24 @@ NodeId FlatParser::parse_list() {
         else break;
     }
     lexer_->consume(); // ')'
-    return flat_.add_call(func, args);
+    auto id = flat_.add_call(func, args);
+    flat_.set_loc(id, tok.line, tok.column);
+    return id;
 }
 
 NodeId FlatParser::parse_if() {
-    lexer_->consume(); // 'if'
+    auto tok = lexer_->consume(); // 'if'
     auto c = parse_expr();
     auto t = parse_expr();
     auto e = parse_expr();
     lexer_->consume(); // ')'
-    return flat_.add_if(c, t, e);
+    auto id = flat_.add_if(c, t, e);
+    flat_.set_loc(id, tok.line, tok.column);
+    return id;
 }
 
 NodeId FlatParser::parse_lambda() {
-    lexer_->consume(); // 'lambda'
+    auto tok = lexer_->consume(); // 'lambda'
     if (lexer_->consume().kind != TokenKind::LParen) return NULL_NODE;
 
     std::vector<SymId> params;
@@ -107,7 +122,7 @@ NodeId FlatParser::parse_lambda() {
     auto body = parse_expr();
     if (body == NULL_NODE) return NULL_NODE;
     lexer_->consume(); // ')'
-    return flat_.add_lambda(params, body);
+    auto lid = flat_.add_lambda(params, body); flat_.set_loc(lid, tok.line, tok.column); return lid;
 }
 
 NodeId FlatParser::parse_define() {
@@ -121,7 +136,7 @@ NodeId FlatParser::parse_define() {
 }
 
 NodeId FlatParser::parse_let(bool rec) {
-    lexer_->consume(); // 'let' or 'letrec'
+    auto tok = lexer_->consume(); // 'let' or 'letrec'
     if (lexer_->consume().kind != TokenKind::LParen) return NULL_NODE; // ((
     
     struct Binding { SymId name; NodeId val; };
@@ -175,7 +190,7 @@ void FlatParser::skip_rparen() {
 }
 
 NodeId FlatParser::parse_begin() {
-    lexer_->consume(); // 'begin'
+    auto tok = lexer_->consume(); // 'begin'
     std::vector<NodeId> exprs;
     while (lexer_->peek().kind != TokenKind::RParen && !lexer_->eof()) {
         auto e = parse_expr();
@@ -183,25 +198,31 @@ NodeId FlatParser::parse_begin() {
         else break;
     }
     lexer_->consume(); // ')'
-    return flat_.add_begin(exprs.data(), static_cast<std::uint32_t>(exprs.size()));
+    auto bid = flat_.add_begin(exprs.data(), static_cast<std::uint32_t>(exprs.size()));
+    flat_.set_loc(bid, tok.line, tok.column);
+    return bid;
 }
 
 NodeId FlatParser::parse_set() {
-    lexer_->consume(); // 'set!'
+    auto tok = lexer_->consume(); // 'set!'
     auto n = lexer_->consume();
     if (n.kind != TokenKind::Identifier) { skip_rparen(); return NULL_NODE; }
     auto v = parse_val();
     if (v == NULL_NODE) { skip_rparen(); return NULL_NODE; }
     lexer_->consume(); // ')'
-    return flat_.add_set(pool_.intern(std::string(n.text)), v);
+    auto sid = flat_.add_set(pool_.intern(std::string(n.text)), v);
+    flat_.set_loc(sid, tok.line, tok.column);
+    return sid;
 }
 
 NodeId FlatParser::parse_quote() {
-    lexer_->consume(); // 'quote'
+    auto tok = lexer_->consume(); // 'quote'
     auto v = parse_val();
     if (v == NULL_NODE) { skip_rparen(); return NULL_NODE; }
     lexer_->consume(); // ')'
-    return flat_.add_quote(v);
+    auto qid = flat_.add_quote(v);
+    flat_.set_loc(qid, tok.line, tok.column);
+    return qid;
 }
 
 NodeId FlatParser::parse_cond() {
@@ -227,7 +248,7 @@ NodeId FlatParser::parse_cond() {
 }
 
 NodeId FlatParser::parse_defmacro() {
-    lexer_->consume(); // 'defmacro'
+    auto tok = lexer_->consume(); // 'defmacro'
     if (lexer_->consume().kind != TokenKind::LParen) { skip_rparen(); return NULL_NODE; }
     auto name = lexer_->consume();
     if (name.kind != TokenKind::Identifier) { skip_rparen(); return NULL_NODE; }
@@ -241,7 +262,9 @@ NodeId FlatParser::parse_defmacro() {
     auto body = parse_expr();
     if (body == NULL_NODE) { skip_rparen(); return NULL_NODE; }
     lexer_->consume(); // ')'
-    return flat_.add_macrodef(pool_.intern(std::string(name.text)), params, body);
+    auto mid = flat_.add_macrodef(pool_.intern(std::string(name.text)), params, body);
+    flat_.set_loc(mid, tok.line, tok.column);
+    return mid;
 }
 
 // ── Free function ──────────────────────────────────────────────

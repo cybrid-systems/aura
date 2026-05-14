@@ -14,6 +14,7 @@ import aura.core.ast_flat;
 import aura.core.ast_pool;
 import aura.core.type;
 import aura.diag;
+import aura.compiler.types;
 import aura.compiler.type_checker;
 
 // ── Memory pool tests (arena stats + arena group) ─────────────
@@ -168,12 +169,12 @@ int main() {
         aura::compiler::IRInterpreter ir_interp(ir_mod, evaluator.primitives());
         auto result = ir_interp.execute();
 
-        if (result && *result == t.expected) {
+        if (result && aura::compiler::types::is_int(*result) && aura::compiler::types::as_int(*result) == t.expected) {
             ++passed;
         } else {
             std::print(std::cerr, "FAIL: {}", t.input);
             if (!result) std::print(std::cerr, " error: {}", result.error().message);
-            else std::print(std::cerr, " got {} expected {}", *result, t.expected);
+            else std::print(std::cerr, " got {} expected {}", aura::compiler::types::format_value(*result), t.expected);
             std::println(std::cerr, "");
             ++failed;
         }
@@ -450,11 +451,11 @@ int main() {
         aura::compiler::IRInterpreter interp2(mod, eval.primitives());
         auto r2 = interp2.execute();
 
-        if (ok && r1 && *r1 == 10 && r2 && *r2 == 15) {
-            std::println("HS OK: (* x 2) → (* x 3): {} → {}", *r1, *r2);
+        if (ok && r1 && aura::compiler::types::is_int(*r1) && aura::compiler::types::as_int(*r1) == 10 && r2 && aura::compiler::types::is_int(*r2) && aura::compiler::types::as_int(*r2) == 15) {
+            std::println("HS OK: (* x 2) → (* x 3): {} → {}", aura::compiler::types::format_value(*r1), aura::compiler::types::format_value(*r2));
         } else {
             std::println(std::cerr, "HS FAIL: r1={} r2={}",
-                         r1 ? *r1 : -1, r2 ? *r2 : -1);
+                         r1 ? aura::compiler::types::format_value(*r1) : std::string("-1"), r2 ? aura::compiler::types::format_value(*r2) : std::string("-1"));
         }
     }
 
@@ -533,13 +534,13 @@ int main() {
         aura::compiler::IRInterpreter interp(mod, evaluator.primitives());
         auto result = interp.execute();
 
-        bool ok = result && *result == expected;
+        bool ok = result && aura::compiler::types::is_int(*result) && aura::compiler::types::as_int(*result) == expected;
         if (ok && cf_pass.folded_count() == expected_folds) {
-            std::println("CF OK: {} (folded {}, got {})", desc, cf_pass.folded_count(), *result);
+            std::println("CF OK: {} (folded {}, got {})", desc, cf_pass.folded_count(), aura::compiler::types::format_value(*result));
             ++cf_passed;
         } else {
             std::println(std::cerr, "CF FAIL: {} (expected {} folds, got {}; result={} expected={})",
-                         desc, expected_folds, cf_pass.folded_count(), *result, expected);
+                         desc, expected_folds, cf_pass.folded_count(), aura::compiler::types::format_value(*result), expected);
             ++cf_failed;
         }
     };
