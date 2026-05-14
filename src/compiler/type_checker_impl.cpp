@@ -417,27 +417,33 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
 
     auto func_id = v.child(0);
     TypeId func_type = synthesize_flat(flat, pool, func_id, flat.get(func_id));
-    auto* f_ty = reg_.func_of(func_type);
 
-    if (f_ty) {
+    // COPY func type before processing args — synthesize_flat may call
+    // register_func which can reallocate entries_, invalidating func_of* pointers.
+    std::optional<FuncType> f_ty_copy;
+    if (auto* ft = reg_.func_of(func_type))
+        f_ty_copy = *ft;
+
+    if (f_ty_copy) {
+        auto& ft = *f_ty_copy;
         auto saved_loc = cur_loc_;
-        std::size_t n_expected = std::min(f_ty->args.size(),
+        std::size_t n_expected = std::min(ft.args.size(),
             v.children.size() > 1 ? v.children.size() - 1 : 0);
         for (std::size_t i = 0; i < n_expected; i++) {
             auto arg_id = v.child(i + 1);
             TypeId arg_type = synthesize_flat(flat, pool, arg_id, flat.get(arg_id));
-            if (!cs_.consistent_unify(arg_type, f_ty->args[i])) {
-                if (is_coercible(arg_type, f_ty->args[i])) {
+            if (!cs_.consistent_unify(arg_type, ft.args[i])) {
+                if (is_coercible(arg_type, ft.args[i])) {
                     auto msg = std::string("argument ")
                              + std::to_string(i)
                              + ": coercion from "
                              + std::string(reg_.format_type(arg_type))
-                             + " to " + std::string(reg_.format_type(f_ty->args[i]));
+                             + " to " + std::string(reg_.format_type(ft.args[i]));
                     diag_.report(Diagnostic(ErrorKind::Note, std::move(msg), saved_loc));
                 } else {
                     auto msg = std::string("argument ")
                              + std::to_string(i)
-                             + ": expected " + std::string(reg_.format_type(f_ty->args[i]))
+                             + ": expected " + std::string(reg_.format_type(ft.args[i]))
                              + ", got " + std::string(reg_.format_type(arg_type));
                     diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg), saved_loc));
                 }
@@ -451,12 +457,12 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
             auto cname = pool.resolve(callee_v.sym_id);
             is_variadic = (cname == "and" || cname == "or");
         }
-        if (num_args != f_ty->args.size() && !f_ty->args.empty() && !is_variadic) {
-            auto msg = "call: expected " + std::to_string(f_ty->args.size())
+        if (num_args != ft.args.size() && !ft.args.empty() && !is_variadic) {
+            auto msg = "call: expected " + std::to_string(ft.args.size())
                      + " arguments, got " + std::to_string(num_args);
             diag_.report(Diagnostic(ErrorKind::ArityMismatch, std::move(msg), cur_loc_));
         }
-        return f_ty->ret;
+        return ft.ret;
     }
 
     // Unknown function type: check args dynamically
