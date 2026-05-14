@@ -80,16 +80,39 @@ public:
         auto def = try_extract_define(flat, pool, flat.root);
         if (def) {
             auto& [name, _body_id] = *def;
+            auto name_str = std::string(name);
 
-            // Lower to IR to extract the lambda function for caching
-            auto ir_mod = aura::compiler::lower_to_ir(flat, pool, arena_);
+            // Check if this is a redefinition before caching the new version
+            bool is_redefine = ir_cache_.count(name_str) > 0;
+
+            // Lower WITH cache so that the Variable handler creates MakeClosure
+            // for cached dependencies (with proper func id remapping).
+            auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
+            std::vector<std::string> cache_hits;
+            auto ir_mod = aura::compiler::lower_to_ir_with_cache(flat, pool, arena_, cache_ptr, &cache_hits);
 
             // Extract any non-entry functions (lambda bodies) from the module
+            // and store as a bundle (preserving func ids for dependent fns).
+            std::vector<aura::ir::IRFunction> bundle;
             for (auto& func : ir_mod.functions) {
                 if (func.id != ir_mod.entry_function_id) {
-                    ir_cache_[name] = std::move(func);
-                    break;
+                    bundle.push_back(std::move(func));
                 }
+            }
+            ir_cache_[name_str] = std::move(bundle);
+
+            // Store source for re-lowering on dependency changes
+            function_sources_[name_str] = std::string(input);
+
+            // Record dependencies from cache hits detected during lowering
+            for (auto& called_name : cache_hits) {
+                record_dependency(name_str, called_name);
+            }
+
+            // If redefining, invalidate dependents AFTER new function is cached,
+            // so they get re-lowered with the updated version
+            if (is_redefine) {
+                invalidate_function(name_str);
             }
 
             // Also evaluate via tree-walker for persistent runtime bindings
@@ -287,6 +310,11 @@ public:
 
     // Define a function: both tree-walker eval (for env persistence) and IR cache.
     // Returns the tree-walker evaluation result (for backward compat).
+    // Define a function: both tree-walker eval (for env persistence) and IR cache.
+    // Returns the tree-walker evaluation result (for backward compat).
+    //
+    // Dependency tracking: when lowering with cache, records which cached functions
+    // this new definition calls. On redefinition, invalidates all transitive dependents.
     EvalResult define_function(std::string_view code) {
         auto alloc = arena_.allocator();
         aura::ast::StringPool pool(alloc);
@@ -302,14 +330,38 @@ public:
         if (flat.get(flat.root).tag == aura::ast::NodeTag::Define) {
             // Extract name for caching
             auto name = pool.resolve(flat.get(flat.root).sym_id);
+            auto name_str = std::string(name);
 
-            // Lower to IR and cache the lambda function
-            auto ir_mod = aura::compiler::lower_to_ir(flat, pool, arena_);
+            // Check if this is a redefinition before caching the new version
+            bool is_redefine = ir_cache_.count(name_str) > 0;
+
+            // Lower WITH cache so that the Variable handler creates MakeClosure
+            // for cached dependencies (with proper func id remapping).
+            auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
+            std::vector<std::string> cache_hits;
+            auto ir_mod = aura::compiler::lower_to_ir_with_cache(flat, pool, arena_, cache_ptr, &cache_hits);
+
+            // Cache all non-entry functions as a bundle (preserving func id ordering)
+            std::vector<aura::ir::IRFunction> bundle;
             for (auto& func : ir_mod.functions) {
                 if (func.id != ir_mod.entry_function_id) {
-                    ir_cache_[std::string(name)] = std::move(func);
-                    break;
+                    bundle.push_back(std::move(func));
                 }
+            }
+            ir_cache_[name_str] = std::move(bundle);
+
+            // Store source for re-lowering on dependency changes
+            function_sources_[name_str] = std::string(code);
+
+            // Record dependencies from cache hits detected during lowering
+            for (auto& called_name : cache_hits) {
+                record_dependency(name_str, called_name);
+            }
+
+            // If redefining, invalidate dependents AFTER new function is cached,
+            // so they get re-lowered with the updated version
+            if (is_redefine) {
+                invalidate_function(name_str);
             }
 
             // Tree-walker eval for persistent runtime bindings
@@ -351,9 +403,152 @@ private:
         return std::nullopt;
     }
 
-    // IR function cache: name → pre-compiled IRFunction for cached defines.
-    // Populated on define, consumed by lowering pass for cache-aware inlining.
-    std::unordered_map<std::string, aura::ir::IRFunction> ir_cache_;
+    // IR function cache: name → bundle of functions for cached defines.
+    // Stores ALL non-entry functions from the original lowering module.
+    // The LAST function in the bundle is the user-defined lambda itself.
+    // When inlined, all functions are added to the current module in order,
+    // preserving func id references across cached calls.
+    std::unordered_map<std::string, std::vector<aura::ir::IRFunction>> ir_cache_;
+
+    // Source code for each cached function, used for re-lowering on dependency changes.
+    std::unordered_map<std::string, std::string> function_sources_;
+
+    // Dependency tracking for incremental compilation.
+    // DepEntry.calls = functions this one calls; DepEntry.called_by = functions that call this one.
+    // When a function is redefined, all transitively dependent functions are invalidated.
+    struct DepEntry {
+        std::vector<std::string> calls;
+        std::vector<std::string> called_by;
+    };
+    std::unordered_map<std::string, DepEntry> dep_graph_;
+
+    void record_dependency(const std::string& caller, const std::string& callee) {
+        dep_graph_[caller].calls.push_back(callee);
+        dep_graph_[callee].called_by.push_back(caller);
+    }
+
+    // Scan FlatAST from the given node for Variable nodes that reference cached functions.
+    // Records these as dependencies of `def_name`.
+    void track_define_dependencies(const std::string& def_name,
+                                   aura::ast::FlatAST& flat,
+                                   aura::ast::StringPool& pool) {
+        if (ir_cache_.empty()) return;
+
+        struct DepWalker {
+            const std::string& def_name;
+            aura::ast::FlatAST& flat;
+            aura::ast::StringPool& pool;
+            CompilerService* self;
+
+            void walk(aura::ast::NodeId id) {
+                if (id == aura::ast::NULL_NODE || id >= flat.size()) return;
+                auto nv = flat.get(id);
+                if (nv.tag == aura::ast::NodeTag::Variable) {
+                    auto name = pool.resolve(nv.sym_id);
+                    auto name_str = std::string(name);
+                    // Don't record self-reference
+                    if (name_str != def_name && self->ir_cache_.count(name_str)) {
+                        // Check if we already recorded this dep
+                        auto& calls = self->dep_graph_[def_name].calls;
+                        if (std::find(calls.begin(), calls.end(), name_str) == calls.end()) {
+                            self->record_dependency(def_name, name_str);
+                        }
+                    }
+                }
+                for (auto c : nv.children) walk(c);
+            }
+        };
+
+        DepWalker{def_name, flat, pool, this}.walk(flat.root);
+    }
+
+    // Invalidate a function and all its transitive dependents (called_by chain).
+    // Instead of removing from cache, re-lowers each dependent with the current cache
+    // so they stay resolvable in the IR pipeline with updated dependencies.
+    void invalidate_function(const std::string& name) {
+        // BFS to find all transitively dependent functions
+        std::vector<std::string> dependents;
+        std::vector<std::string> queue;
+        std::unordered_set<std::string> visited;
+
+        queue.push_back(name);
+        visited.insert(name);
+
+        while (!queue.empty()) {
+            auto current = queue.back();
+            queue.pop_back();
+
+            auto it = dep_graph_.find(current);
+            if (it == dep_graph_.end()) continue;
+
+            for (auto& dependent : it->second.called_by) {
+                if (visited.count(dependent)) continue;
+                visited.insert(dependent);
+                dependents.push_back(dependent);
+                queue.push_back(dependent);
+            }
+        }
+
+        // Debug: check if any dependents found
+        if (dependents.empty()) {
+            // No dependents, nothing to re-lower
+        }
+
+        // Clean up old dependency info for all affected functions
+        // (the redefined function and all its transitives)
+        for (auto& f : dependents) {
+            auto fit = dep_graph_.find(f);
+            if (fit != dep_graph_.end()) {
+                for (auto& callee : fit->second.calls) {
+                    auto& cb = dep_graph_[callee].called_by;
+                    cb.erase(std::remove(cb.begin(), cb.end(), f), cb.end());
+                }
+                dep_graph_.erase(f);
+            }
+        }
+        // Clean up the original function's dep info
+        auto it = dep_graph_.find(name);
+        if (it != dep_graph_.end()) {
+            for (auto& callee : it->second.calls) {
+                auto& cb = dep_graph_[callee].called_by;
+                cb.erase(std::remove(cb.begin(), cb.end(), name), cb.end());
+            }
+            dep_graph_.erase(name);
+        }
+
+            // Re-lower each dependent with current cache (nearest to redefined first = natural BFS order)
+        for (auto& dep_name : dependents) {
+            auto src_it = function_sources_.find(dep_name);
+            if (src_it == function_sources_.end()) continue;
+
+            // Re-parse the function source
+            auto alloc = arena_.allocator();
+            aura::ast::StringPool pool(alloc);
+            aura::ast::FlatAST flat(alloc);
+            auto pr = aura::parser::parse_to_flat(src_it->second, flat, pool);
+            if (!pr.success || pr.root == aura::ast::NULL_NODE) continue;
+            flat.root = pr.root;
+
+            // Re-lower with current cache to detect new dependencies
+            auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
+            std::vector<std::string> cache_hits;
+            auto ir_mod = aura::compiler::lower_to_ir_with_cache(flat, pool, arena_, cache_ptr, &cache_hits);
+
+            // Update cache with new IR (store full bundle)
+            std::vector<aura::ir::IRFunction> bundle;
+            for (auto& func : ir_mod.functions) {
+                if (func.id != ir_mod.entry_function_id) {
+                    bundle.push_back(std::move(func));
+                }
+            }
+            ir_cache_[dep_name] = std::move(bundle);
+
+            // Re-record dependencies
+            for (auto& called_name : cache_hits) {
+                record_dependency(dep_name, called_name);
+            }
+        }
+    }
 
     ast::ASTArena arena_;
     ast::ArenaGroup arena_group_;

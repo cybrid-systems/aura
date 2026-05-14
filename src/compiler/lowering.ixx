@@ -54,11 +54,14 @@ export aura::ir::IRModule lower_to_ir(ast::FlatAST& flat,
 // When cache is non-null, Call nodes whose callee is a VariableNode
 // matching a cached function will inline the cached IRFunction
 // (emit MakeClosure + Call) instead of lowering the callee as a variable.
+// cache_hits: if non-null, receives the names of cached functions that were
+// actually inlined during lowering (for dependency tracking).
 export aura::ir::IRModule lower_to_ir_with_cache(
     ast::FlatAST& flat,
     ast::StringPool& pool,
     ast::ASTArena& arena,
-    const std::unordered_map<std::string, aura::ir::IRFunction>* cache);
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache,
+    std::vector<std::string>* cache_hits = nullptr);
 
 // Reconstruct an Expr* tree from FlatAST.
 // Needed by tree-walker evaluator for Lambda closure bodies and
