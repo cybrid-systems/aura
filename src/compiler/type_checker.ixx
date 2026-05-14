@@ -8,7 +8,9 @@ module;
 export module aura.compiler.type_checker;
 
 import std;
-import aura.core.ast;
+import aura.core;
+import aura.core.ast_flat;
+import aura.core.ast_pool;
 import aura.core.type;
 import aura.diag;
 
@@ -65,31 +67,54 @@ export class InferenceEngine {
 public:
     InferenceEngine(aura::core::TypeRegistry& reg, aura::diag::DiagnosticCollector& diag);
 
-    // Top-level entry
-    aura::core::TypeId infer(aura::ast::Expr* e);
+    // FlatAST inference entries
+    aura::core::TypeId infer_flat(aura::ast::FlatAST& flat,
+                                   aura::ast::StringPool& pool,
+                                   aura::ast::NodeId node);
+    void check_flat(aura::ast::FlatAST& flat,
+                    aura::ast::StringPool& pool,
+                    aura::ast::NodeId id,
+                    aura::core::TypeId expected);
 
     // Initialize environment with primitive type signatures
     void init_primitive_env();
 
-    // Synthesis (top-down)
-    aura::core::TypeId synthesize(const aura::ast::Expr& e);
-
-    // Checking (bottom-up with expected type)
-    void check(const aura::ast::Expr& e, aura::core::TypeId expected);
-
 private:
-    // Per-node-type inference
-    aura::core::TypeId synthesize_var(const aura::ast::VariableNode& n);
-    aura::core::TypeId synthesize_call(const aura::ast::CallNode& n);
-    aura::core::TypeId synthesize_lambda(const aura::ast::LambdaNode& n);
-    aura::core::TypeId synthesize_if(const aura::ast::IfExprNode& n);
-    aura::core::TypeId synthesize_let(const aura::ast::LetNode& n);
-    aura::core::TypeId synthesize_letrec(const aura::ast::LetRecNode& n);
-    aura::core::TypeId synthesize_begin(const aura::ast::BeginNode& n);
-    aura::core::TypeId synthesize_annotation(const aura::ast::TypeAnnotationNode& n);
+    // FlatAST per-node-type inference
+    aura::core::TypeId synthesize_flat(aura::ast::FlatAST& flat,
+                                        aura::ast::StringPool& pool,
+                                        aura::ast::NodeId id,
+                                        aura::ast::NodeView v);
+    aura::core::TypeId synthesize_flat_var(aura::ast::StringPool& pool,
+                                            aura::ast::NodeView v);
+    aura::core::TypeId synthesize_flat_call(aura::ast::FlatAST& flat,
+                                             aura::ast::StringPool& pool,
+                                             aura::ast::NodeView v);
+    aura::core::TypeId synthesize_flat_lambda(aura::ast::FlatAST& flat,
+                                               aura::ast::StringPool& pool,
+                                               aura::ast::NodeView v);
+    aura::core::TypeId synthesize_flat_if(aura::ast::FlatAST& flat,
+                                           aura::ast::StringPool& pool,
+                                           aura::ast::NodeView v);
+    aura::core::TypeId synthesize_flat_let(aura::ast::FlatAST& flat,
+                                            aura::ast::StringPool& pool,
+                                            aura::ast::NodeView v,
+                                            bool is_rec);
+    aura::core::TypeId synthesize_flat_begin(aura::ast::FlatAST& flat,
+                                              aura::ast::StringPool& pool,
+                                              aura::ast::NodeView v);
+    aura::core::TypeId synthesize_flat_annotation(aura::ast::FlatAST& flat,
+                                                   aura::ast::StringPool& pool,
+                                                   aura::ast::NodeView v);
 
-    void check_call(const aura::ast::CallNode& n, aura::core::TypeId expected);
-    void check_lambda(const aura::ast::LambdaNode& n, aura::core::TypeId expected);
+    void check_flat_call(aura::ast::FlatAST& flat,
+                         aura::ast::StringPool& pool,
+                         aura::ast::NodeView v,
+                         aura::core::TypeId expected);
+    void check_flat_lambda(aura::ast::FlatAST& flat,
+                           aura::ast::StringPool& pool,
+                           aura::ast::NodeView v,
+                           aura::core::TypeId expected);
 
     aura::core::TypeId lub(aura::core::TypeId a, aura::core::TypeId b);
 
@@ -104,7 +129,10 @@ private:
 export struct TypeChecker {
     aura::core::TypeRegistry& types;
     explicit TypeChecker(aura::core::TypeRegistry& reg) : types(reg) {}
-    aura::core::TypeId infer(aura::ast::Expr* expr, aura::diag::DiagnosticCollector& diag);
+    aura::core::TypeId infer_flat(aura::ast::FlatAST& flat,
+                                   aura::ast::StringPool& pool,
+                                   aura::ast::NodeId node,
+                                   aura::diag::DiagnosticCollector& diag);
 };
 
 } // namespace aura::compiler

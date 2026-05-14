@@ -43,65 +43,7 @@ struct LoweringState {
     }
 };
 
-// Internal lowering state machine (implementation detail).
-// Prefer the free function lower_to_ir() for most use cases.
-export class LoweringPass {
-    friend aura::ir::IRModule lower_to_ir(const ast::Expr*, ast::ASTArena&);
-public:
-    explicit LoweringPass(ast::ASTArena& arena) : state_(new LoweringState(arena)) {}
-    aura::ir::IRModule lower(const ast::Expr* expr);
-
-private:
-    LoweringState* state_ = nullptr;
-    std::uint32_t alloc_block() { return state_->alloc_block(); }
-    std::uint32_t alloc_local() { return state_->alloc_local(); }
-    void emit(aura::ir::IROpcode op, std::uint32_t o0=0, std::uint32_t o1=0, std::uint32_t o2=0, std::uint32_t o3=0) { state_->emit(op, o0, o1, o2, o3); }
-
-    // Allocate a new local slot
-
-    // Emit a single IR instruction into the current block
-
-    // Recursively lower an expression into the current function, return result slot
-    std::uint32_t lower_expr(const ast::Expr* expr);
-
-    std::uint32_t lower_literal_int(const ast::LiteralIntNode& node);
-    std::uint32_t lower_variable(const ast::VariableNode& node);
-    std::uint32_t lower_call(const ast::CallNode& node);
-    std::uint32_t lower_if(const ast::IfExprNode& node);
-    std::uint32_t lower_begin(const ast::BeginNode& node);
-    std::uint32_t lower_set(const ast::SetNode& node);
-    std::uint32_t lower_lambda(const ast::LambdaNode& node);
-    std::uint32_t lower_let(const ast::LetNode& node, bool is_rec);
-
-    // Find free variables in an expression (variables not bound in scope)
-    // Returns pair of (free_vars, bound_vars)
-    // Find free variables in an expression (variables not bound in scope)
-    // Legacy: pass in/out sets by reference
-    void collect_free_vars(const ast::Expr* expr,
-                           std::unordered_set<std::string>& free,
-                           std::unordered_set<std::string>& bound);
-    // Preferred: returns pair of (free_vars, bound_vars)
-    std::pair<std::unordered_set<std::string>, std::unordered_set<std::string>>
-    collect_free_vars2(const ast::Expr* expr,
-                       std::unordered_set<std::string> bound = {});
-
-    // Lower a lambda body as a separate IR function
-    // cell_free_vars: subset of free_vars that are letrec cell references
-    aura::ir::IRFunction lower_lambda_body(const ast::LambdaNode& node,
-                                            std::vector<std::string>& free_vars,
-                                            const std::unordered_set<std::string>& cell_free_vars = {});
-    // Free variable map: name → env slot index within current env
-};
-
-// Free function — preferred API (Expr* tree path).
-// Lowers an AST expression to an IRModule in a single call.
-export inline aura::ir::IRModule lower_to_ir(const ast::Expr* expr,
-                                              ast::ASTArena& arena) {
-    LoweringPass lowering(arena);
-    return lowering.lower(expr);
-}
-
-// Free function — FlatAST path (Phase 4+).
+// Free function — FlatAST path.
 // Natively lowers FlatAST (SoA) to IRModule without Expr* reconstruction.
 // Calls lower_flat_expr() which walks FlatAST directly.
 export aura::ir::IRModule lower_to_ir(ast::FlatAST& flat,

@@ -7,8 +7,6 @@ import aura.parser.lexer;
 
 namespace aura::parser {
 
-export struct ParseResult { ast::Expr* root = nullptr; bool success = false; std::string error; ast::ASTArena* arena = nullptr; };
-
 // Result from FlatParser (direct FlatAST, no Expr* intermediate)
 export struct FlatParseResult {
     aura::ast::NodeId root = aura::ast::NULL_NODE;
@@ -16,27 +14,7 @@ export struct FlatParseResult {
     std::string error;
 };
 
-// ── Legacy Expr* parser ─────────────────────────────────────────
-export class Parser {
-    friend ParseResult parse(std::string_view, ast::ASTArena&);
-public:
-    explicit Parser(ast::ASTArena& a) : arena_(a) {}
-    ParseResult parse(std::string_view source);
-private:
-    ast::Expr* parse_expr(); ast::Expr* parse_string(Token tok); ast::Expr* parse_int(Token tok); ast::Expr* parse_list();
-    ast::Expr* parse_if(); ast::Expr* parse_lambda(); ast::Expr* parse_let(bool r); ast::Expr* parse_define();
-    ast::Expr* parse_begin(); ast::Expr* parse_set(); ast::Expr* parse_quote(); ast::Expr* parse_cond(); ast::Expr* parse_defmacro();
-    ast::Expr* parse_val(); void skip_rparen();
-    ast::ASTArena& arena_; std::optional<Lexer> lexer_;
-};
-
-export inline ParseResult parse(std::string_view source, ast::ASTArena& arena) {
-    Parser parser(arena);
-    return parser.parse(source);
-}
-
 // ── FlatParser — writes directly to FlatAST (SoA), bypasses Expr* ─
-// Phase 4: new code should use parse_to_flat() instead of parse().
 export class FlatParser {
 public:
     FlatParser(aura::ast::FlatAST& flat, aura::ast::StringPool& pool)

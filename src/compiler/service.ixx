@@ -124,15 +124,11 @@ public:
         }
         flat.root = pr.root;
 
-        // Reconstruct Expr* tree for the TypeChecker
-        auto* expr = aura::compiler::reconstruct_expr(flat, pool, arena_);
-        if (!expr) return std::string("reconstruct failed");
-
         aura::core::TypeRegistry treg;
         aura::compiler::TypeChecker tc(treg);
         aura::diag::DiagnosticCollector diag;
 
-        auto result = tc.infer(expr, diag);
+        auto result = tc.infer_flat(flat, pool, pr.root, diag);
 
         std::string out;
         out += "type: " + treg.format_type(result) + "\n";

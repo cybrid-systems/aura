@@ -93,10 +93,14 @@ bool test_arena_group() {
 // Run compute-kind analysis on the top function and return a summary string
 std::string check_compute_kind(const std::string& input) {
     aura::ast::ASTArena arena;
-    auto pr = aura::parser::parse(input, arena);
-    if (!pr.root) return "parse_fail";
+    auto alloc = arena.allocator();
+    aura::ast::StringPool pool(alloc);
+    aura::ast::FlatAST flat(alloc);
+    auto pr = aura::parser::parse_to_flat(input, flat, pool);
+    flat.root = pr.root;
+    if (!pr.success) return "parse_fail";
 
-    auto mod = aura::compiler::lower_to_ir(pr.root, arena);
+    auto mod = aura::compiler::lower_to_ir(flat, pool, arena);
     auto& top_func = mod.entry();
 
     auto result = aura::compiler::compute_kind(top_func);
@@ -158,13 +162,17 @@ int main() {
     int passed = 0, failed = 0;
     for (auto& t : tests) {
         arena.reset();
-        auto pr = aura::parser::parse(t.input, arena);
-        if (!pr.success || !pr.root) {
+        auto alloc = arena.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat(t.input, flat, pool);
+    flat.root = pr.root;
+        if (!pr.success || !pr.success) {
             std::println(std::cerr, "PARSE FAIL: {}", t.input);
             ++failed; continue;
         }
 
-        auto ir_mod = aura::compiler::lower_to_ir(pr.root, arena);
+        auto ir_mod = aura::compiler::lower_to_ir(flat, pool, arena);
 
         aura::compiler::IRInterpreter ir_interp(ir_mod, evaluator.primitives());
         auto result = ir_interp.execute();
@@ -224,10 +232,14 @@ int main() {
     int arity_passed = 0, arity_failed = 0;
     for (auto& t : arity_tests) {
         arena.reset();
-        auto pr = aura::parser::parse(t.input, arena);
-        if (!pr.root) { std::println(std::cerr, "PARSE FAIL: {}", t.input); ++arity_failed; continue; }
+        auto alloc = arena.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat(t.input, flat, pool);
+    flat.root = pr.root;
+        if (!pr.success) { std::println(std::cerr, "PARSE FAIL: {}", t.input); ++arity_failed; continue; }
 
-        auto mod = aura::compiler::lower_to_ir(pr.root, arena);
+        auto mod = aura::compiler::lower_to_ir(flat, pool, arena);
         auto result = aura::compiler::check_arity(mod);
 
         bool got_error = result.has_error;
@@ -368,6 +380,7 @@ int main() {
         aura::ast::StringPool pool(alloc);
         aura::ast::FlatAST flat(alloc);
         auto pr = aura::parser::parse_to_flat("(+ 1 2)", flat, pool);
+    flat.root = pr.root;
         if (pr.success && flat.size() == 4) {
             auto v = flat.get(pr.root);
             if (v.tag == aura::ast::NodeTag::Call &&
@@ -386,6 +399,7 @@ int main() {
         aura::ast::StringPool pool(alloc);
         aura::ast::FlatAST flat(alloc);
         auto pr = aura::parser::parse_to_flat("((lambda (x) (* x 2)) 5)", flat, pool);
+    flat.root = pr.root;
         if (pr.success) {
             std::println("FP OK: parse lambda + call");
         } else {
@@ -398,6 +412,7 @@ int main() {
         aura::ast::StringPool pool(alloc);
         aura::ast::FlatAST flat(alloc);
         auto pr = aura::parser::parse_to_flat("(let ((x 10)) x)", flat, pool);
+    flat.root = pr.root;
         if (pr.success) {
             std::println("FP OK: parse let");
         } else {
@@ -408,15 +423,16 @@ int main() {
     // ── M2.6: Hot-swap tests ────────────────────────────────
     {
         aura::ast::ASTArena arena;
-        aura::compiler::LoweringPass lowering(arena);
         aura::compiler::Evaluator eval;
         eval.set_arena(&arena);
-        aura::parser::Parser parser(arena);
-
-        auto pr = parser.parse("((lambda (x) (* x 2)) 5)");
-        auto mod = lowering.lower(pr.root);
+        auto alloc = arena.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat("((lambda (x) (* x 2)) 5)", flat, pool);
+    flat.root = pr.root;
+        auto mod = aura::compiler::lower_to_ir(flat, pool, arena);
         auto& top = mod.functions[0];
-        auto& lam = mod.functions[1];
+        (void)mod.functions[1];
 
         // Verify original structure
         bool has_closure = false;
@@ -521,10 +537,14 @@ int main() {
                                 std::size_t expected_folds,
                                 const std::string& desc) {
         arena.reset();
-        auto pr = aura::parser::parse(input, arena);
-        if (!pr.root) { std::println(std::cerr, "CF PARSE FAIL: {}", input); ++cf_failed; return; }
+        auto alloc = arena.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat(input, flat, pool);
+    flat.root = pr.root;
+        if (!pr.success) { std::println(std::cerr, "CF PARSE FAIL: {}", input); ++cf_failed; return; }
 
-        auto mod = aura::compiler::lower_to_ir(pr.root, arena);
+        auto mod = aura::compiler::lower_to_ir(flat, pool, arena);
 
         aura::compiler::ComputeKindWrap ck;
         aura::compiler::ConstantFoldingWrap cf_pass;
@@ -570,8 +590,12 @@ int main() {
         aura::compiler::ArityWrap ar;
 
         aura::ast::ASTArena arena;
-        auto pr = aura::parser::parse("(+ 1 2)", arena);
-        auto mod = aura::compiler::lower_to_ir(pr.root, arena);
+        auto alloc = arena.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat("(+ 1 2)", flat, pool);
+    flat.root = pr.root;
+        auto mod = aura::compiler::lower_to_ir(flat, pool, arena);
 
         ck.run(mod);
         ar.run(mod);
@@ -591,8 +615,12 @@ int main() {
         aura::compiler::ConstantFoldingWrap cf;
 
         aura::ast::ASTArena arena;
-        auto pr = aura::parser::parse("((lambda (x) x) 1 2)", arena);
-        auto mod = aura::compiler::lower_to_ir(pr.root, arena);
+        auto alloc = arena.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat("((lambda (x) x) 1 2)", flat, pool);
+    flat.root = pr.root;
+        auto mod = aura::compiler::lower_to_ir(flat, pool, arena);
 
         ck.run(mod);
         ar.run(mod);
@@ -613,8 +641,12 @@ int main() {
         aura::compiler::ArityWrap ar;
 
         aura::ast::ASTArena arena;
-        auto pr = aura::parser::parse("(+ 1 2)", arena);
-        auto mod = aura::compiler::lower_to_ir(pr.root, arena);
+        auto alloc = arena.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat("(+ 1 2)", flat, pool);
+    flat.root = pr.root;
+        auto mod = aura::compiler::lower_to_ir(flat, pool, arena);
 
         auto pipeline_ok = aura::compiler::run_pipeline(mod, ck, ar);
         if (pipeline_ok) {
@@ -699,7 +731,7 @@ int main() {
         }
     }
 
-    // ── L6.x: TypeChecker tests ─────────────────────────────
+    // ── L6.x: TypeChecker tests (FlatAST) ───────────────────────
     {
         aura::core::TypeRegistry treg;
         aura::diag::DiagnosticCollector diag;
@@ -708,10 +740,13 @@ int main() {
 
         // Test 1: literal type inference
         {
+            diag.clear();
             aura::ast::ASTArena arena;
-            auto* e = arena.create<aura::ast::Expr>(
-                aura::ast::LiteralIntNode{aura::ast::NodeTag::LiteralInt, 42});
-            auto ty = tc.infer(e, diag);
+            auto alloc = arena.allocator();
+            aura::ast::StringPool pool(alloc);
+            aura::ast::FlatAST flat(alloc);
+            auto id = flat.add_literal(42);
+            auto ty = tc.infer_flat(flat, pool, id, diag);
             if (ty == treg.int_type()) {
                 std::println("TC OK: literal int → Int"); ++tc_passed;
             } else {
@@ -724,13 +759,14 @@ int main() {
         {
             diag.clear();
             aura::ast::ASTArena arena;
-            auto* body = arena.create<aura::ast::Expr>(
-                aura::ast::VariableNode{aura::ast::NodeTag::Variable, "x"});
-            auto* val = arena.create<aura::ast::Expr>(
-                aura::ast::LiteralIntNode{aura::ast::NodeTag::LiteralInt, 10});
-            auto* let_e = arena.create<aura::ast::Expr>(
-                aura::ast::LetNode{aura::ast::NodeTag::Let, "x", val, body});
-            auto ty = tc.infer(let_e, diag);
+            auto alloc = arena.allocator();
+            aura::ast::StringPool pool(alloc);
+            aura::ast::FlatAST flat(alloc);
+            auto x_id = pool.intern("x");
+            auto val_id = flat.add_literal(10);
+            auto body_id = flat.add_variable(x_id);
+            auto let_id = flat.add_let(x_id, val_id, body_id);
+            auto ty = tc.infer_flat(flat, pool, let_id, diag);
             if (ty == treg.int_type()) {
                 std::println("TC OK: (let ((x 10)) x) → Int"); ++tc_passed;
             } else {
@@ -743,12 +779,14 @@ int main() {
         {
             diag.clear();
             aura::ast::ASTArena arena;
-            auto* body = arena.create<aura::ast::Expr>(
-                aura::ast::LiteralIntNode{aura::ast::NodeTag::LiteralInt, 42});
-            auto* lam = arena.create<aura::ast::Expr>(
-                aura::ast::LambdaNode{aura::ast::NodeTag::Lambda,
-                    std::vector<std::string>{"x"}, body});
-            auto ty = tc.infer(lam, diag);
+            auto alloc = arena.allocator();
+            aura::ast::StringPool pool(alloc);
+            aura::ast::FlatAST flat(alloc);
+            auto x_id = pool.intern("x");
+            aura::ast::SymId params[] = {x_id};
+            auto body_id = flat.add_literal(42);
+            auto lam_id = flat.add_lambda(params, body_id);
+            auto ty = tc.infer_flat(flat, pool, lam_id, diag);
             // Expected: (-> Int Int) — function from Int to Int
             // (x gets fresh var, body returns 42 → Int, result is (-> ? Int))
             auto* fty = treg.func_of(ty);
@@ -763,17 +801,18 @@ int main() {
         {
             diag.clear();
             aura::ast::ASTArena arena;
-            auto* body = arena.create<aura::ast::Expr>(
-                aura::ast::LiteralIntNode{aura::ast::NodeTag::LiteralInt, 42});
-            auto* lam = arena.create<aura::ast::Expr>(
-                aura::ast::LambdaNode{aura::ast::NodeTag::Lambda,
-                    std::vector<std::string>{"x", "y"}, body});
-            auto* arg = arena.create<aura::ast::Expr>(
-                aura::ast::LiteralIntNode{aura::ast::NodeTag::LiteralInt, 1});
-            auto* call = arena.create<aura::ast::Expr>(
-                aura::ast::CallNode{aura::ast::NodeTag::Call, lam,
-                    std::vector<aura::ast::Expr*>{arg}});
-            auto ty = tc.infer(call, diag);
+            auto alloc = arena.allocator();
+            aura::ast::StringPool pool(alloc);
+            aura::ast::FlatAST flat(alloc);
+            auto x_id = pool.intern("x");
+            auto y_id = pool.intern("y");
+            aura::ast::SymId params[] = {x_id, y_id};
+            auto body_id = flat.add_literal(42);
+            auto lam_id = flat.add_lambda(params, body_id);
+            auto arg_id = flat.add_literal(1);
+            aura::ast::NodeId args[] = {arg_id};
+            auto call_id = flat.add_call(lam_id, args);
+            auto ty = tc.infer_flat(flat, pool, call_id, diag);
             // Infer returns dynamic because there's no arity check in type inference
             // (arity is handled by the IR arity pass)
             if (ty == treg.dynamic_type() || ty == treg.int_type()) {
@@ -788,30 +827,28 @@ int main() {
         {
             diag.clear();
             aura::ast::ASTArena arena;
-            // Build: (if (string? x) x 0)
-            auto* x = arena.create<aura::ast::Expr>(
-                aura::ast::VariableNode{aura::ast::NodeTag::Variable, "x"});
-            auto* pred_name = arena.create<aura::ast::Expr>(
-                aura::ast::VariableNode{aura::ast::NodeTag::Variable, "string?"});
-            auto* pred_call = arena.create<aura::ast::Expr>(
-                aura::ast::CallNode{aura::ast::NodeTag::Call, pred_name,
-                    std::vector<aura::ast::Expr*>{x}});
-            auto* zero = arena.create<aura::ast::Expr>(
-                aura::ast::LiteralIntNode{aura::ast::NodeTag::LiteralInt, 0});
-            // Need a fresh 'x' for the then-branch (different Var node)
-            auto* then_x = arena.create<aura::ast::Expr>(
-                aura::ast::VariableNode{aura::ast::NodeTag::Variable, "x"});
-            auto* if_e = arena.create<aura::ast::Expr>(
-                aura::ast::IfExprNode{aura::ast::NodeTag::IfExpr,
-                    pred_call, then_x, zero});
+            auto alloc = arena.allocator();
+            aura::ast::StringPool pool(alloc);
+            aura::ast::FlatAST flat(alloc);
+            auto x_sym = pool.intern("x");
+            auto str_q = pool.intern("string?");
+            auto hello_sym = pool.intern("hello");
 
-            // Make a let to bind x: (let ((x "hello")) (if (string? x) x 0))
-            auto* str_val = arena.create<aura::ast::Expr>(
-                aura::ast::LiteralStringNode{aura::ast::NodeTag::LiteralString, "hello"});
-            auto* let_e = arena.create<aura::ast::Expr>(
-                aura::ast::LetNode{aura::ast::NodeTag::Let, "x", str_val, if_e});
+            // Build: (let ((x "hello")) (if (string? x) x 0))
+            // (string? x)
+            auto x_var = flat.add_variable(x_sym);
+            auto pred = flat.add_variable(str_q);
+            aura::ast::NodeId pred_args[] = {x_var};
+            auto pred_call = flat.add_call(pred, pred_args);
+            // if branches
+            auto then_x = flat.add_variable(x_sym);
+            auto zero = flat.add_literal(0);
+            auto if_expr = flat.add_if(pred_call, then_x, zero);
+            // let binding: x = "hello"
+            auto str_val = flat.add_literalstring(hello_sym);
+            auto let_expr = flat.add_let(x_sym, str_val, if_expr);
 
-            auto ty = tc.infer(let_e, diag);
+            auto ty = tc.infer_flat(flat, pool, let_expr, diag);
             // x is String, then-branch refines to String, else is Int → lub = Dynamic
             // Or if occurrence typing works, then-branch returns String
             if (ty == treg.string_type() || ty == treg.dynamic_type()) {
@@ -827,12 +864,13 @@ int main() {
         {
             diag.clear();
             aura::ast::ASTArena arena;
-            auto* inner = arena.create<aura::ast::Expr>(
-                aura::ast::LiteralIntNode{aura::ast::NodeTag::LiteralInt, 99});
-            auto* annot = arena.create<aura::ast::Expr>(
-                aura::ast::TypeAnnotationNode{aura::ast::NodeTag::TypeAnnotation,
-                    inner, "Int"});
-            auto ty = tc.infer(annot, diag);
+            auto alloc = arena.allocator();
+            aura::ast::StringPool pool(alloc);
+            aura::ast::FlatAST flat(alloc);
+            auto int_sym = pool.intern("Int");
+            auto inner_id = flat.add_literal(99);
+            auto annot_id = flat.add_type_annotation(int_sym, inner_id);
+            auto ty = tc.infer_flat(flat, pool, annot_id, diag);
             if (ty == treg.int_type()) {
                 std::println("TC OK: type annotation (: 99 Int) → Int"); ++tc_passed;
             } else {
@@ -845,12 +883,13 @@ int main() {
         {
             diag.clear();
             aura::ast::ASTArena arena;
-            auto* inner = arena.create<aura::ast::Expr>(
-                aura::ast::LiteralStringNode{aura::ast::NodeTag::LiteralString, "hi"});
-            auto* annot = arena.create<aura::ast::Expr>(
-                aura::ast::TypeAnnotationNode{aura::ast::NodeTag::TypeAnnotation,
-                    inner, "Int"});
-            auto ty = tc.infer(annot, diag);
+            auto alloc = arena.allocator();
+            aura::ast::StringPool pool(alloc);
+            aura::ast::FlatAST flat(alloc);
+            auto int_sym = pool.intern("Int");
+            auto inner_id = flat.add_literalstring(pool.intern("hi"));
+            auto annot_id = flat.add_type_annotation(int_sym, inner_id);
+            auto ty = tc.infer_flat(flat, pool, annot_id, diag);
             // Should still work (consistent_unify with dynamic for strings)
             std::println("TC OK: string annotated Int → {} ({} diags)",
                          treg.format_type(ty), diag.diagnostics().size()); ++tc_passed;
