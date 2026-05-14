@@ -194,6 +194,22 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
+    // ── --hot-swap: replace function in cached IR module with new code ─
+    // First call seeds the cache like --ir; subsequent calls hot-swap.
+    if (argc > 1 && std::string_view(argv[1]) == "--hot-swap") {
+        aura::compiler::CompilerService cs;
+        std::string input;
+        if (argc > 2) { input = argv[2]; }
+        else { std::getline(std::cin, input); }
+        auto result = cs.hot_swap(input);
+        if (!result) {
+            std::println(std::cerr, "error: {}", result.error().message);
+            return 1;
+        }
+        std::println("{}", aura::compiler::types::format_value(*result));
+        return 0;
+    }
+
     // ── --inspect: eval with full runtime reflection dump ────────
     if (argc > 1 && std::string_view(argv[1]) == "--inspect") {
         aura::compiler::CompilerService cs;
