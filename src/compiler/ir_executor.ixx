@@ -1,8 +1,8 @@
-export module aura.compiler.ir_interpreter;
+export module aura.compiler.ir_executor;
 import std;
 import aura.core;
 import aura.compiler.ir;
-import aura.compiler.frontend;  // for EvalResult
+import aura.compiler.evaluator;  // for EvalResult
 import aura.diag;              // for Diagnostic
 import aura.compiler.types;
 

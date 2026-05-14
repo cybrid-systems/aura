@@ -1,6 +1,6 @@
 module;
 #include <cstdio>
-module aura.compiler.frontend;
+module aura.compiler.evaluator;
 import std;
 import aura.core.ast_flat;
 import aura.core.ast_pool;

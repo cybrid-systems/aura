@@ -13,11 +13,11 @@ target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/arena.ixx src/core/ast.ixx src/core/ast_flat.ixx src/core/ast_pool.ixx src/core/core.ixx
     src/core/type.ixx src/core/type_info.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/frontend.ixx
+    src/compiler/evaluator.ixx
     src/compiler/types.ixx
     src/compiler/ir.ixx
     src/compiler/lowering.ixx
-    src/compiler/ir_interpreter.ixx
+    src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
     src/compiler/diag.ixx
@@ -32,9 +32,9 @@ target_sources(aura PRIVATE
     src/core/ast_flat_impl.cpp
     src/core/type_impl.cpp
     src/parser/lexer_impl.cpp src/parser/flat_parser_impl.cpp
-    src/compiler/frontend_impl.cpp
-    src/compiler/lowering_flat_impl.cpp
-    src/compiler/ir_interpreter_impl.cpp
+    src/compiler/evaluator_impl.cpp
+    src/compiler/ir_lowering.cpp
+    src/compiler/ir_executor_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/type_checker_impl.cpp
@@ -84,11 +84,11 @@ target_sources(test_ir PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/arena.ixx src/core/ast.ixx src/core/ast_flat.ixx src/core/ast_pool.ixx src/core/core.ixx
     src/core/type.ixx src/core/type_info.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/frontend.ixx
+    src/compiler/evaluator.ixx
     src/compiler/types.ixx
     src/compiler/ir.ixx
     src/compiler/lowering.ixx
-    src/compiler/ir_interpreter.ixx
+    src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
     src/compiler/diag.ixx
@@ -101,9 +101,9 @@ target_sources(test_ir PRIVATE
     src/core/ast_flat_impl.cpp
     src/core/type_impl.cpp
     src/parser/lexer_impl.cpp src/parser/flat_parser_impl.cpp
-    src/compiler/frontend_impl.cpp
-    src/compiler/lowering_flat_impl.cpp
-    src/compiler/ir_interpreter_impl.cpp
+    src/compiler/evaluator_impl.cpp
+    src/compiler/ir_lowering.cpp
+    src/compiler/ir_executor_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/type_checker_impl.cpp

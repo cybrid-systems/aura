@@ -1,10 +1,10 @@
 import std;
 import aura.core;
 import aura.parser.parser;
-import aura.compiler.frontend;
+import aura.compiler.evaluator;
 import aura.compiler.ir;
 import aura.compiler.lowering;
-import aura.compiler.ir_interpreter;
+import aura.compiler.ir_executor;
 import aura.compiler.compute_kind;
 import aura.compiler.arity;
 import aura.compiler.service;
