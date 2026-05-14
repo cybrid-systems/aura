@@ -32,7 +32,8 @@ NodeId FlatParser::parse_expr() {
     if (!lexer_) return NULL_NODE;
     auto tok = lexer_->peek();
     switch (tok.kind) {
-    case TokenKind::Integer: return parse_int(lexer_->consume());
+    case TokenKind::Integer: return parse_number(lexer_->consume());
+    case TokenKind::Float: return parse_float(lexer_->consume());
     case TokenKind::String: {
         auto tok = lexer_->consume();
         auto id = flat_.add_literalstring(pool_.intern(std::string(tok.text)));
@@ -50,10 +51,17 @@ NodeId FlatParser::parse_expr() {
     }
 }
 
-NodeId FlatParser::parse_int(Token tok) {
+NodeId FlatParser::parse_number(Token tok) {
     try {
         auto v = std::stoll(std::string(tok.text));
         return flat_.add_literal(v);
+    } catch (...) { return NULL_NODE; }
+}
+
+NodeId FlatParser::parse_float(Token tok) {
+    try {
+        auto v = std::stod(std::string(tok.text));
+        return flat_.add_literal_float(v);
     } catch (...) { return NULL_NODE; }
 }
 
@@ -171,7 +179,9 @@ NodeId FlatParser::parse_val() {
     auto tok = lexer_->peek();
     switch (tok.kind) {
     case TokenKind::Integer:
-        return parse_int(lexer_->consume());
+        return parse_number(lexer_->consume());
+    case TokenKind::Float:
+        return parse_float(lexer_->consume());
     case TokenKind::String:
         return flat_.add_literalstring(pool_.intern(std::string(lexer_->consume().text)));
     case TokenKind::Identifier:

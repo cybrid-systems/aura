@@ -44,6 +44,13 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                 locals[ops[0]] = make_int(val);
                 break;
             }
+            case IROpcode::ConstF64: {
+                std::uint64_t bits = static_cast<std::uint64_t>(ops[1]) | (static_cast<std::uint64_t>(ops[2]) << 32);
+                double val;
+                std::memcpy(&val, &bits, sizeof(val));
+                locals[ops[0]] = make_float(val);
+                break;
+            }
             case IROpcode::ConstString: {
                 // Store string in the shared string heap so primitives can find it
                 auto& heap = const_cast<std::vector<std::string>&>(primitives_.string_heap());
@@ -77,36 +84,100 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                     locals[ops[0]] = make_void();
                 break;
 
-            case IROpcode::Add:
-                locals[ops[0]] = make_int(as_int(locals[ops[1]]) + as_int(locals[ops[2]]));
+            case IROpcode::Add: {
+                auto& a = locals[ops[1]]; auto& b = locals[ops[2]];
+                if (is_float(a) || is_float(b)) {
+                    double x = is_float(a) ? as_float(a) : static_cast<double>(as_int(a));
+                    double y = is_float(b) ? as_float(b) : static_cast<double>(as_int(b));
+                    locals[ops[0]] = make_float(x + y);
+                } else
+                    locals[ops[0]] = make_int(as_int(a) + as_int(b));
                 break;
-            case IROpcode::Sub:
-                locals[ops[0]] = make_int(as_int(locals[ops[1]]) - as_int(locals[ops[2]]));
+            }
+            case IROpcode::Sub: {
+                auto& a = locals[ops[1]]; auto& b = locals[ops[2]];
+                if (is_float(a) || is_float(b)) {
+                    double x = is_float(a) ? as_float(a) : static_cast<double>(as_int(a));
+                    double y = is_float(b) ? as_float(b) : static_cast<double>(as_int(b));
+                    locals[ops[0]] = make_float(x - y);
+                } else
+                    locals[ops[0]] = make_int(as_int(a) - as_int(b));
                 break;
-            case IROpcode::Mul:
-                locals[ops[0]] = make_int(as_int(locals[ops[1]]) * as_int(locals[ops[2]]));
+            }
+            case IROpcode::Mul: {
+                auto& a = locals[ops[1]]; auto& b = locals[ops[2]];
+                if (is_float(a) || is_float(b)) {
+                    double x = is_float(a) ? as_float(a) : static_cast<double>(as_int(a));
+                    double y = is_float(b) ? as_float(b) : static_cast<double>(as_int(b));
+                    locals[ops[0]] = make_float(x * y);
+                } else
+                    locals[ops[0]] = make_int(as_int(a) * as_int(b));
                 break;
-            case IROpcode::Div:
-                if (as_int(locals[ops[2]]) == 0)
-                    return std::unexpected(Diagnostic{ErrorKind::DivisionByZero, "division by zero"});
-                locals[ops[0]] = make_int(as_int(locals[ops[1]]) / as_int(locals[ops[2]]));
+            }
+            case IROpcode::Div: {
+                auto& a = locals[ops[1]]; auto& b = locals[ops[2]];
+                if (is_float(a) || is_float(b)) {
+                    double x = is_float(a) ? as_float(a) : static_cast<double>(as_int(a));
+                    double y = is_float(b) ? as_float(b) : static_cast<double>(as_int(b));
+                    if (y == 0.0) return std::unexpected(Diagnostic{ErrorKind::DivisionByZero, "division by zero"});
+                    locals[ops[0]] = make_float(x / y);
+                } else {
+                    if (as_int(b) == 0) return std::unexpected(Diagnostic{ErrorKind::DivisionByZero, "division by zero"});
+                    locals[ops[0]] = make_int(as_int(a) / as_int(b));
+                }
                 break;
+            }
 
-            case IROpcode::Eq:
-                locals[ops[0]] = make_int(as_int(locals[ops[1]]) == as_int(locals[ops[2]]) ? 1 : 0);
+            case IROpcode::Eq: {
+                auto& a = locals[ops[1]]; auto& b = locals[ops[2]];
+                if (is_float(a) || is_float(b)) {
+                    double x = is_float(a) ? as_float(a) : static_cast<double>(as_int(a));
+                    double y = is_float(b) ? as_float(b) : static_cast<double>(as_int(b));
+                    locals[ops[0]] = make_int(x == y ? 1 : 0);
+                } else
+                    locals[ops[0]] = make_int(as_int(a) == as_int(b) ? 1 : 0);
                 break;
-            case IROpcode::Lt:
-                locals[ops[0]] = make_int(as_int(locals[ops[1]]) < as_int(locals[ops[2]]) ? 1 : 0);
+            }
+            case IROpcode::Lt: {
+                auto& a = locals[ops[1]]; auto& b = locals[ops[2]];
+                if (is_float(a) || is_float(b)) {
+                    double x = is_float(a) ? as_float(a) : static_cast<double>(as_int(a));
+                    double y = is_float(b) ? as_float(b) : static_cast<double>(as_int(b));
+                    locals[ops[0]] = make_int(x < y ? 1 : 0);
+                } else
+                    locals[ops[0]] = make_int(as_int(a) < as_int(b) ? 1 : 0);
                 break;
-            case IROpcode::Gt:
-                locals[ops[0]] = make_int(as_int(locals[ops[1]]) > as_int(locals[ops[2]]) ? 1 : 0);
+            }
+            case IROpcode::Gt: {
+                auto& a = locals[ops[1]]; auto& b = locals[ops[2]];
+                if (is_float(a) || is_float(b)) {
+                    double x = is_float(a) ? as_float(a) : static_cast<double>(as_int(a));
+                    double y = is_float(b) ? as_float(b) : static_cast<double>(as_int(b));
+                    locals[ops[0]] = make_int(x > y ? 1 : 0);
+                } else
+                    locals[ops[0]] = make_int(as_int(a) > as_int(b) ? 1 : 0);
                 break;
-            case IROpcode::Le:
-                locals[ops[0]] = make_int(as_int(locals[ops[1]]) <= as_int(locals[ops[2]]) ? 1 : 0);
+            }
+            case IROpcode::Le: {
+                auto& a = locals[ops[1]]; auto& b = locals[ops[2]];
+                if (is_float(a) || is_float(b)) {
+                    double x = is_float(a) ? as_float(a) : static_cast<double>(as_int(a));
+                    double y = is_float(b) ? as_float(b) : static_cast<double>(as_int(b));
+                    locals[ops[0]] = make_int(x <= y ? 1 : 0);
+                } else
+                    locals[ops[0]] = make_int(as_int(a) <= as_int(b) ? 1 : 0);
                 break;
-            case IROpcode::Ge:
-                locals[ops[0]] = make_int(as_int(locals[ops[1]]) >= as_int(locals[ops[2]]) ? 1 : 0);
+            }
+            case IROpcode::Ge: {
+                auto& a = locals[ops[1]]; auto& b = locals[ops[2]];
+                if (is_float(a) || is_float(b)) {
+                    double x = is_float(a) ? as_float(a) : static_cast<double>(as_int(a));
+                    double y = is_float(b) ? as_float(b) : static_cast<double>(as_int(b));
+                    locals[ops[0]] = make_int(x >= y ? 1 : 0);
+                } else
+                    locals[ops[0]] = make_int(as_int(a) >= as_int(b) ? 1 : 0);
                 break;
+            }
 
             case IROpcode::And:
                 locals[ops[0]] = make_int(is_truthy(locals[ops[1]]) && is_truthy(locals[ops[2]]) ? 1 : 0);

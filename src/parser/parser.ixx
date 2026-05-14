@@ -20,7 +20,8 @@ public:
     FlatParseResult parse(std::string_view source);
 private:
     aura::ast::NodeId parse_expr();
-    aura::ast::NodeId parse_int(Token tok);
+    aura::ast::NodeId parse_number(Token tok);
+    aura::ast::NodeId parse_float(Token tok);
     aura::ast::NodeId parse_list();
     aura::ast::NodeId parse_if();
     aura::ast::NodeId parse_lambda();

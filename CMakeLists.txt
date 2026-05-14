@@ -245,3 +245,14 @@ add_test(NAME type_check_true
 add_test(NAME type_check_false
     COMMAND sh -c "printf '(type? 42 \"String\")' | timeout 5 ./aura | grep -q '^0$'"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+# ── Float support tests ──────────────────────────────────────
+add_test(NAME float_literal
+    COMMAND sh -c "printf '3.14' | timeout 5 ./aura | grep -q '3.14'"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+add_test(NAME float_arith
+    COMMAND sh -c "printf '(+ 3.14 2.86)' | timeout 5 ./aura | grep -q '6'"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+add_test(NAME float_mixed
+    COMMAND sh -c "printf '(+ 5 2.5)' | timeout 5 ./aura | grep -q '7.5'"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})

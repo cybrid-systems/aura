@@ -162,24 +162,25 @@ void InferenceEngine::register_primitive(std::string name, std::vector<TypeId> p
 void InferenceEngine::init_primitive_env() {
     auto Int = reg_.int_type();
     auto Bool = reg_.bool_type();
+    auto Float = reg_.register_type(TypeTag::FLOAT, "Float");
     auto String = reg_.string_type();
     auto Dyn = reg_.dynamic_type();
     auto Void = reg_.void_type();
     auto Vector = reg_.lookup_type("Vector");
     auto Hash = reg_.lookup_type("Hash");
 
-    // Arithmetic: (Int, Int) -> Int
-    register_primitive("+",  {Int, Int}, Int);
-    register_primitive("-",  {Int, Int}, Int);
-    register_primitive("*",  {Int, Int}, Int);
-    register_primitive("/",  {Int, Int}, Int);
+    // Arithmetic: (Number, Number) -> Number (Int or Float promotion)
+    register_primitive("+",  {Dyn, Dyn}, Dyn);
+    register_primitive("-",  {Dyn, Dyn}, Dyn);
+    register_primitive("*",  {Dyn, Dyn}, Dyn);
+    register_primitive("/",  {Dyn, Dyn}, Dyn);
 
-    // Comparison: (Int, Int) -> Int (0/1 at runtime)
-    register_primitive("=",  {Int, Int}, Int);
-    register_primitive("<",  {Int, Int}, Int);
-    register_primitive(">",  {Int, Int}, Int);
-    register_primitive("<=", {Int, Int}, Int);
-    register_primitive(">=", {Int, Int}, Int);
+    // Comparison: (Number, Number) -> Bool
+    register_primitive("=",  {Dyn, Dyn}, Bool);
+    register_primitive("<",  {Dyn, Dyn}, Bool);
+    register_primitive(">",  {Dyn, Dyn}, Bool);
+    register_primitive("<=", {Dyn, Dyn}, Bool);
+    register_primitive(">=", {Dyn, Dyn}, Bool);
 
     // Boolean logic: runtime #t/#f are lexed as Int 0/1, so
     // truthiness-checking ops work on any value.
@@ -188,26 +189,26 @@ void InferenceEngine::init_primitive_env() {
     register_primitive("or",  {Dyn, Dyn}, Dyn);
 
     // not: works on any truthy/falsy value (runtime: a[0] == 0 → 1)
-    register_primitive("not", {Dyn}, Int);
+    register_primitive("not", {Dyn}, Bool);
     register_primitive("eq?", {Dyn, Dyn}, Bool);
 
-    // Type predicates return 0/1 which are Int at the type level
-    register_primitive("number?",   {Dyn}, Int);
-    register_primitive("string?",   {Dyn}, Int);
-    register_primitive("boolean?",  {Dyn}, Int);
-    register_primitive("null?",     {Dyn}, Int);
-    register_primitive("pair?",     {Dyn}, Int);
-    register_primitive("procedure?",{Dyn}, Int);
-    register_primitive("list?",     {Dyn}, Int);
-    register_primitive("equal?",    {Dyn, Dyn}, Int);
+    // Type predicates return Bool
+    register_primitive("number?",   {Dyn}, Bool);
+    register_primitive("string?",   {Dyn}, Bool);
+    register_primitive("boolean?",  {Dyn}, Bool);
+    register_primitive("null?",     {Dyn}, Bool);
+    register_primitive("pair?",     {Dyn}, Bool);
+    register_primitive("procedure?",{Dyn}, Bool);
+    register_primitive("list?",     {Dyn}, Bool);
+    register_primitive("equal?",    {Dyn, Dyn}, Bool);
 
     // String operations
     register_primitive("string-append",  {String, String}, String);
     register_primitive("string-length",  {String}, Int);
     register_primitive("string-ref",     {String, Int}, Int);
     register_primitive("substring",      {String, Int, Int}, String);
-    register_primitive("string=?",       {String, String}, Int);
-    register_primitive("string<?",       {String, String}, Int);
+    register_primitive("string=?",       {String, String}, Bool);
+    register_primitive("string<?",       {String, String}, Bool);
     register_primitive("number->string", {Int}, String);
     register_primitive("string->number", {String}, Int);
 
@@ -243,14 +244,14 @@ void InferenceEngine::init_primitive_env() {
     register_primitive("load-module", {String}, Dyn);
     register_primitive("import", {String}, Dyn);
     register_primitive("write-file",{String, String}, Void);
-    register_primitive("file-exists?", {String}, Int);
+    register_primitive("file-exists?", {String}, Bool);
     register_primitive("gensym",    {}, String);
     // Vector primitives
     register_primitive("vector",        {Dyn}, Vector);  // varargs — minimal
     register_primitive("vector-ref",    {Vector, Int}, Dyn);
     register_primitive("vector-set!",   {Vector, Int, Dyn}, Void);
     register_primitive("vector-length", {Vector}, Int);
-    register_primitive("vector?",       {Dyn}, Bool);
+    register_primitive("vector?",       {Dyn}, Bool); // already Bool
     register_primitive("make-vector",   {Int, Dyn}, Vector);
     // List<->Vector conversion
 
@@ -270,7 +271,10 @@ TypeId InferenceEngine::lub(TypeId a, TypeId b) {
     if (a == b) return a;
     if (a == reg_.dynamic_type() || b == reg_.dynamic_type())
         return reg_.dynamic_type();
-    // Int → Float promotion (reserved for L4)
+    // Int → Float promotion
+    if ((a == reg_.int_type() && b == reg_.lookup_type("Float")) ||
+        (a == reg_.lookup_type("Float") && b == reg_.int_type()))
+        return reg_.lookup_type("Float");
     return reg_.dynamic_type();  // safe fallback
 }
 
@@ -371,7 +375,7 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id) {
     if (!cs_.solve()) {
         diag_.report(Diagnostic(ErrorKind::TypeError, "type constraint solving failed", cur_loc_));
     }
-    return result;
+    return cs_.normalize(result);
 }
 
 TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId /*id*/, NodeView v) {
@@ -381,6 +385,8 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
     switch (v.tag) {
     case Tag::LiteralInt:
         return reg_.int_type();
+    case Tag::LiteralFloat:
+        return reg_.lookup_type("Float");
     case Tag::LiteralString:
         return reg_.string_type();
     case Tag::Variable:
@@ -455,6 +461,48 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
     auto func_id = v.child(0);
     TypeId func_type = synthesize_flat(flat, pool, func_id, flat.get(func_id));
 
+    // Special inference for arithmetic primitives: constrain return via arg types.
+    // This gives us (Int, Int) -> Int inference inside lambdas where args are type vars,
+    // and (Float, x) -> Float promotion without losing specificity to Dyn.
+    auto infer_arith = [&]() -> std::optional<TypeId> {
+        auto callee_of_func = flat.get(func_id);
+        if (v.children.size() < 3) return std::nullopt;
+        if (callee_of_func.tag != NodeTag::Variable || callee_of_func.sym_id == INVALID_SYM)
+            return std::nullopt;
+        auto fname = pool.resolve(callee_of_func.sym_id);
+        static const std::unordered_set<std::string> arith = {"+", "-", "*", "/"};
+        if (!arith.count(std::string(fname))) return std::nullopt;
+
+        // Synthesize arg types (pure lookup for variables, no side effects)
+        TypeId t0 = synthesize_flat(flat, pool, v.child(1), flat.get(v.child(1)));
+        TypeId t1 = synthesize_flat(flat, pool, v.child(2), flat.get(v.child(2)));
+        t0 = cs_.normalize(t0);
+        t1 = cs_.normalize(t1);
+        auto tag0 = reg_.tag_of(t0);
+        auto tag1 = reg_.tag_of(t1);
+
+        // Both concrete: return the wider type
+        if (tag0 == TypeTag::INT && tag1 == TypeTag::INT) return reg_.int_type();
+        if (tag0 == TypeTag::FLOAT && tag1 == TypeTag::FLOAT) return reg_.lookup_type("Float");
+        if ((tag0 == TypeTag::INT && tag1 == TypeTag::FLOAT) ||
+            (tag0 == TypeTag::FLOAT && tag1 == TypeTag::INT)) {
+            // Coerce Int to Float
+            if (tag0 == TypeTag::INT) cs_.consistent_unify(t0, reg_.lookup_type("Float"));
+            if (tag1 == TypeTag::INT) cs_.consistent_unify(t1, reg_.lookup_type("Float"));
+            return reg_.lookup_type("Float");
+        }
+
+        // At least one is a type variable: create a fresh result var and constrain
+        auto result = cs_.fresh_var();
+        cs_.consistent_unify(t0, result);
+        cs_.consistent_unify(t1, result);
+        return result;
+    };
+    if (auto arith_result = infer_arith()) {
+        // Mark args as checked (synthesize_flat already processed them)
+        return *arith_result;
+    }
+
     // COPY func type before processing args — synthesize_flat may call
     // register_func which can reallocate entries_, invalidating func_of* pointers.
     std::optional<FuncType> f_ty_copy;
@@ -492,13 +540,17 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
         auto callee_v = flat.get(func_id);
         if (callee_v.sym_id != INVALID_SYM && callee_v.tag == NodeTag::Variable) {
             auto cname = pool.resolve(callee_v.sym_id);
-            is_variadic = (cname == "and" || cname == "or");
+            is_variadic = (cname == "and" || cname == "or"
+                        || cname == "list" || cname == "vector"
+                        || cname == "hash");
         }
         if (num_args != ft.args.size() && !ft.args.empty() && !is_variadic) {
             auto msg = "call: expected " + std::to_string(ft.args.size())
                      + " arguments, got " + std::to_string(num_args);
             diag_.report(Diagnostic(ErrorKind::ArityMismatch, std::move(msg), cur_loc_));
         }
+
+
         return ft.ret;
     }
 
@@ -586,17 +638,20 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool, Nod
     std::string var_name(name);
 
     if (is_rec) {
-        // Forward reference pattern
         env_.push_scope();
-        TypeId val_type = cs_.fresh_var();
-        env_.bind(var_name, val_type);
-        env_.pop_scope();
+        // Bind name to a fresh type variable (forward reference)
+        TypeId fwd_var = cs_.fresh_var();
+        env_.bind(var_name, fwd_var);
 
-        env_.push_scope();
-        TypeId actual_val_type = reg_.void_type();
+        // Evaluate the value expression with the binding in scope
+        TypeId val_type = reg_.void_type();
         if (!v.children.empty() && v.child(0) != NULL_NODE)
-            actual_val_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
-        env_.bind(var_name, actual_val_type);
+            val_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
+
+        // Unify forward reference with the actual value type
+        cs_.consistent_unify(fwd_var, val_type);
+
+        // Body type (fact is now resolved via the type variable)
         TypeId body_type = reg_.void_type();
         if (v.children.size() >= 2 && v.child(1) != NULL_NODE)
             body_type = synthesize_flat(flat, pool, v.child(1), flat.get(v.child(1)));

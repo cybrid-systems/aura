@@ -8,6 +8,7 @@ export enum class IROpcode : std::uint8_t {
     Nop,
     // Data
     ConstI64,       // load int64 constant
+    ConstF64,       // load double constant
     Local,          // load local variable (slot index)
     Arg,            // load function argument (slot index)
     // Arithmetic
