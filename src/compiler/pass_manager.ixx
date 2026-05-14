@@ -35,6 +35,11 @@ public:
             results_.push_back(aura::compiler::compute_kind(func));
     }
 
+    // Phase 4: per-function analysis — cleanly supports incremental compilation
+    ComputeKindResult compute_function(const aura::ir::IRFunction& func) {
+        return aura::compiler::compute_kind(func);
+    }
+
     bool has_error() const { return false; }
     std::string_view name() const { return "compute-kind"; }
     const std::vector<ComputeKindResult>& results() const { return results_; }
@@ -68,6 +73,18 @@ public:
                 fold_block(block);
             }
         }
+    }
+
+    // Phase 4: per-function constant folding — reuses the private fold_block logic.
+    // Each function's blocks are folded independently; known_ is reset per block.
+    // Returns the number of instructions folded in this function.
+    std::size_t fold_function(aura::ir::IRFunction& func) {
+        std::size_t before = folded_;
+        for (auto& block : func.blocks) {
+            known_.clear();
+            fold_block(block);
+        }
+        return folded_ - before;
     }
 
     bool has_error() const { return false; }

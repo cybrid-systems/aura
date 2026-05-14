@@ -91,6 +91,21 @@ public:
             std::vector<std::string> cache_hits;
             auto ir_mod = aura::compiler::lower_to_ir_with_cache(flat, pool, arena_, cache_ptr, &cache_hits);
 
+            // Phase 4: Run passes per-function on the new function bundle.
+            {
+                ComputeKindWrap ck_pass;
+                ConstantFoldingWrap cf_pass;
+                for (auto& func : ir_mod.functions) {
+                    if (func.id == ir_mod.entry_function_id) continue;
+                    ck_pass.compute_function(func);
+                    auto nf = cf_pass.fold_function(func);
+                    if (nf > 0) {
+                        std::println(std::cerr, "PM: folded {} instructions in function '{}'",
+                                     nf, func.name);
+                    }
+                }
+            }
+
             // Extract any non-entry functions (lambda bodies) from the module
             // and store as a bundle (preserving func ids for dependent fns).
             std::vector<aura::ir::IRFunction> bundle;
@@ -341,6 +356,24 @@ public:
             std::vector<std::string> cache_hits;
             auto ir_mod = aura::compiler::lower_to_ir_with_cache(flat, pool, arena_, cache_ptr, &cache_hits);
 
+            // Phase 4: Run passes per-function on the new function bundle.
+            // This ensures cached functions are already analyzed and folded,
+            // so when they're inlined into a new module, their blocks are
+            // pre-processed and only the entry wrapper needs full pass execution.
+            {
+                ComputeKindWrap ck_pass;
+                ConstantFoldingWrap cf_pass;
+                for (auto& func : ir_mod.functions) {
+                    if (func.id == ir_mod.entry_function_id) continue;
+                    ck_pass.compute_function(func);
+                    auto nf = cf_pass.fold_function(func);
+                    if (nf > 0) {
+                        std::println(std::cerr, "PM: folded {} instructions in function '{}'",
+                                     nf, func.name);
+                    }
+                }
+            }
+
             // Cache all non-entry functions as a bundle (preserving func id ordering)
             std::vector<aura::ir::IRFunction> bundle;
             for (auto& func : ir_mod.functions) {
@@ -533,6 +566,21 @@ private:
             auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
             std::vector<std::string> cache_hits;
             auto ir_mod = aura::compiler::lower_to_ir_with_cache(flat, pool, arena_, cache_ptr, &cache_hits);
+
+            // Phase 4: Run passes per-function on the re-lowered function bundle.
+            {
+                ComputeKindWrap ck_pass;
+                ConstantFoldingWrap cf_pass;
+                for (auto& func : ir_mod.functions) {
+                    if (func.id == ir_mod.entry_function_id) continue;
+                    ck_pass.compute_function(func);
+                    auto nf = cf_pass.fold_function(func);
+                    if (nf > 0) {
+                        std::println(std::cerr, "PM: folded {} instructions in function '{}'",
+                                     nf, func.name);
+                    }
+                }
+            }
 
             // Update cache with new IR (store full bundle)
             std::vector<aura::ir::IRFunction> bundle;
