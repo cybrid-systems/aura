@@ -32,12 +32,38 @@ export enum class IROpcode : std::uint8_t {
     CellGet,        // read from cell: result_slot, cell_id
     // Type coercion (L6.6b)
     CastOp,         // runtime type check: result_slot, value_slot, type_tag
+    // String support
+    ConstString,    // load string constant: result_slot, string_index
+    // Primitive call (for non-arithmetic primitives like string ops)
+    PrimCall,       // call prim by id: prim_id, packed_args(arg_begin, arg_count), result_slot
 };
 
 export struct IRInstruction {
     IROpcode opcode;
     std::array<std::uint32_t, 4> operands = {};
     std::uint32_t source_ast_node_id = 0;
+};
+
+// Primitive IDs for PrimCall opcode
+export enum class PrimId : std::uint8_t {
+    StringAppend,
+    StringLength,
+    StringRef,
+    Substring,
+    StringEq,
+    StringLt,
+    NumberToString,
+    StringToNumber,
+    Display,
+    Write,
+    Newline,
+    Error,
+    Assert,
+    Read,
+    ReadFile,
+    WriteFile,
+    FileExists,
+    Gensym,
 };
 
 // Helper: pack two uint32 into one (for Call: args_begin << 16 | arg_count)
@@ -72,6 +98,14 @@ export struct IRModule {
         func.id = static_cast<std::uint32_t>(functions.size());
         functions.push_back(std::move(func));
         return func.id;
+    }
+
+    std::vector<std::string> string_pool;  // string constants (for ConstString opcode)
+
+    std::uint32_t add_string(std::string s) {
+        auto id = static_cast<std::uint32_t>(string_pool.size());
+        string_pool.push_back(std::move(s));
+        return id;
     }
 
     void set_entry(std::uint32_t id) { entry_function_id = id; }
