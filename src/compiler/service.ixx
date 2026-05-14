@@ -63,8 +63,7 @@ public:
         }
         flat_ptr->root = pr.root;
 
-        // Check if AST contains MacroDef nodes — IR pipeline doesn't
-        // support macros. If found, fall back to tree-walker evaluator.
+        // IR pipeline doesn't support macros — fall back to tree-walker evaluator
         for (aura::ast::NodeId id = 0; id < flat_ptr->size(); ++id) {
             if (flat_ptr->get(id).tag == aura::ast::NodeTag::MacroDef) {
                 return evaluator_.eval_flat(*flat_ptr, *pool_ptr, flat_ptr->root, evaluator_.top_env());
