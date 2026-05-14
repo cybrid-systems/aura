@@ -11,7 +11,6 @@ import aura.core.ast_pool;
 import aura.core.type;
 import aura.parser.parser;
 import aura.compiler.cache;
-import aura.binary.abf_deserializer;
 
 // JSON helper: wrap a string value for JSON (escape quotes and backslashes)
 static std::string json_escape(std::string_view s) {
@@ -625,26 +624,6 @@ int main(int argc, char* argv[]) {
         }
         std::println("]}}");
         return result ? 0 : 1;
-    }
-
-    // ── --abf: deserialize ABF binary and evaluate ────────────────
-    if (argc > 1 && std::string_view(argv[1]) == "--abf") {
-        std::vector<std::byte> data;
-        std::array<char, 4096> buf;
-        while (std::cin.read(buf.data(), buf.size()).gcount() > 0) {
-            for (auto i = decltype(buf)::difference_type(0); i < std::cin.gcount(); ++i)
-                data.push_back(static_cast<std::byte>(buf[i]));
-        }
-        if (data.empty()) { std::println(std::cerr, "aura --abf: no input"); return 1; }
-        aura::compiler::CompilerService cs;
-        aura::binary::ABFDeserializer des(cs.arena());
-        try {
-            auto* expr = des.deserialize(data);
-            auto result = cs.evaluator().eval(expr);
-            if (!result) { std::println(std::cerr, "eval error: {}", result.error().message); return 1; }
-            std::println("{}", aura::compiler::types::format_value(*result));
-        } catch (const std::exception& e) { std::println(std::cerr, "error: {}", e.what()); return 1; }
-        return 0;
     }
 
     // ── Normal REPL / pipe mode (tree-walker) ─────────────────────

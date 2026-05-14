@@ -8,14 +8,16 @@
 ## 里程碑状态
 
 ```
-M0 Racket原型    ✅  #lang aura + 全语义求值器 + ABF 序列化
-M1 C++ 求值器   ✅  树遍历器 + IR 管线 (Ghuloum Step 1-8)
-M2 查询引擎     ✅  Query/Transform/AutoFix/HotSwap/--serve
-M3a 语言补全    ✅  布尔/序对/begin/set!/quote/cond (Ghuloum Step 9-14)
-M3b 宏系统      ✅  defmacro + 卫生宏 gensym + 编译期模板验证
-M3c 反射        ✅  P2996 auto_to_json + dispatch 表 + 结构验证
-M3d 类型系统      🔨  L6.1-L6.8 全线 ✅ → EvalValue variant ⬜
-M4 生产         ⬜  LLVM JIT / AOT / 类型系统 / 自举
+M0 已归档           ✅  (Racket 原型 + ABF 已移除, 2026-05-14)
+M1 C++ 求值器      ✅  树遍历器 + IR 管线 (Ghuloum Step 1-8)
+M2 查询引擎        ✅  Query/Transform/AutoFix/HotSwap/--serve
+M3a 语言补全       ✅  布尔/序对/begin/set!/quote/cond (Ghuloum Step 9-14)
+M3b 宏系统         ✅  defmacro + 卫生宏 gensym + 编译期模板验证
+M3c 反射           ✅  P2996 auto_to_json + 结构验证
+M3d 类型系统         🔨  L6.1-L6.8 全线 ✅ → EvalValue variant ⬜
+M4a ABF v2 缓存    ✅  列式 FlatAST 写入 + mmap 读取
+M4b --cache CLI    ✅  --cache 命令行标志 + 缓存命中/写入
+M4c 生产           ⬜  LLVM JIT / AOT / 类型系统 / 自举
 ```
 
 ---
@@ -55,7 +57,6 @@ Step  C++    特性                         交付日
 ```
 设计层           实现                覆盖率   质量
 ────────────────────────────────────────────────────
-Racket Frontend  👻 #lang aura + ABF  65%     可用
 AST Layer        🟢 Expr* + FlatAST   90%     通过 39 测试
 AuraIR Layer     🟢 27 opcodes       95%     测试全覆盖
 IR Lowering      🟢 LoweringPass→    90%     逐步函数化
@@ -65,7 +66,7 @@ AuraQuery        🟢 Index/Query/     95%     经过优化
                    Transform/Fix
 IR Interpreter   🟢 闭包/letrec/     95%     稳定
                    27 opcodes
-ABF Ser/Deser    🟢 12 节点类型      95%     P2996 验证
+ABF v2 Cache     🟢 列式 FlatAST     95%     稳定
 CompilerService  🟢 eval/eval_ir/    90%     API 稳定
                    --serve
 Reflection       🟢 P2996/kNodeMeta  90%     4 个组件
@@ -84,7 +85,6 @@ LLVM/M4          ⬜                    0%
 | 实现文件 (.cpp) | 14 | 稳定 |
 | reflect/ 工具链 | 6 个头文件 | 新增 |
 | IR opcodes | 27 | 稳定 |
-| ABF 节点类型 | 12 | 稳定 |
 | 内存池 tier | 4 | 稳定 |
 | 手写 switch（已消除） | 0 | ✅ 全替换 |
 | 未初始化成员警告 | ~5 | 低 |
@@ -99,7 +99,7 @@ LLVM/M4          ⬜                    0%
 |------|------|------|
 | CMake 4.0 + C++26 模块骨架 | ✅ | 稳定 |
 | CLI 文本模式 + REPL | ✅ | 稳定 |
-| ABF v2 反序列化 | ✅ | 12 节点 + dispatch 表 |
+| ABF v2 列式缓存 (FlatAST write + mmap) | ✅ | 列式 SoA 写入/mmap 读取 |
 | pmr 内存池 (ASTArena) | ✅ | 4-tier |
 | CompilerService | ✅ | 双路径（eval + eval_ir） |
 | eval_flat (SoA 直读) | ✅ | Phase 4 完成 |
@@ -122,7 +122,6 @@ LLVM/M4          ⬜                    0%
 | Hot swap — 函数级 IR 替换 | ✅ | 运行时替换 |
 | AutoFixEngine — 自动修复 | ✅ | 规则系统 |
 | --serve 模式 | ✅ | JSON protocol |
-| Racket Agent Demo | ✅ | E2E ABF 管线 |
 
 ### M3a — 语言补全 ✅ (Ghuloum 9-14)
 
@@ -152,8 +151,7 @@ LLVM/M4          ⬜                    0%
 | GCC 16.1 P2996 auto_to_json | ✅ | 编译期 |
 | compile-time JSON Schema | ✅ | 编译期 |
 | P1306 expansion demo | ✅ | 编译期 |
-| kNodeMeta (12 节点) | ✅ | constexpr |
-| ABF dispatch 表 | ✅ | static registry |
+| kNodeMeta | ✅ | constexpr |
 | IROpcode enum reflection | ✅ | 枚举反射 |
 | Struct layout validation | ✅ | P2996 编译期 |
 | TagIndex for query | ✅ | 运行时 |
@@ -203,9 +201,6 @@ See [ai-programming-language-design/docs/aura_typesystem.md](../design/aura_type
 | 模板 tokenize 缓存 | ✅ | P3 |
 | match 深度限制 | ✅ | P4 |
 | IROpcode 枚举反射 | ✅ | B1 |
-| ABF dispatch 表 | ✅ | A1 |
-| P2996 struct 验证 | ✅ | A2 |
-| 静态 reader registry | ✅ | A3 |
 
 ---
 
@@ -222,7 +217,6 @@ CTest: 48 tests ✅
   - 4 reflect/schema tests
   - 2 schema tests
   - 2 auto-fix tests
-  - 1 validate_abf_nodes (P2996 结构验证)
   - 1 reflect_ir_instruction
   - 1 reflect_schema
 ```
