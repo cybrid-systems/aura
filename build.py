@@ -451,6 +451,17 @@ def test_demo():
     return r.returncode
 
 
+def test_ai_agent_demo():
+    """AI Agent 端到端演示 — 6 场景工具链"""
+    print(f"{B}═══ AI Agent Demo ═══{N}")
+    r = subprocess.run([sys.executable, str(ROOT / "tests" / "ai_agent_demo.py")], timeout=120)
+    if r.returncode == 0:
+        ok("ai agent demo passed")
+    else:
+        fail("ai agent demo failed")
+    return r.returncode
+
+
 # ═══════════════════════════════════════════════════════════════
 # Runners
 # ═══════════════════════════════════════════════════════════════
@@ -463,6 +474,7 @@ SUITES = {
     "smoke":     test_smoke,
     "mutation":  test_mutation,
     "demo":      test_demo,
+    "ai":        test_ai_agent_demo,
 }
 
 
