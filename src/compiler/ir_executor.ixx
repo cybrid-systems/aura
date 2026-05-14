@@ -4,7 +4,7 @@ import aura.core;
 import aura.compiler.ir;
 import aura.compiler.evaluator;  // for EvalResult
 import aura.diag;              // for Diagnostic
-import aura.compiler.types;
+import aura.compiler.value;
 
 namespace aura::compiler {
 

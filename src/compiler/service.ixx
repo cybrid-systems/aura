@@ -9,7 +9,7 @@ import aura.compiler.lowering;
 import aura.compiler.ir_executor;
 import aura.compiler.pass_manager;
 import aura.compiler.type_checker;
-import aura.compiler.types;
+import aura.compiler.value;
 import aura.diag;
 
 namespace aura::compiler {

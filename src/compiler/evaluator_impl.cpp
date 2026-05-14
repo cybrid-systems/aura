@@ -3,7 +3,7 @@ module;
 module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
-import aura.compiler.types;
+import aura.compiler.value;
 
 namespace aura::compiler {
 

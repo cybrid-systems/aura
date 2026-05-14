@@ -12,7 +12,7 @@ import aura.compiler.pass_manager;
 import aura.compiler.query;
 import aura.core.type;
 import aura.diag;
-import aura.compiler.types;
+import aura.compiler.value;
 import aura.compiler.type_checker;
 
 // ── Memory pool tests (arena stats + arena group) ─────────────
