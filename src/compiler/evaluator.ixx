@@ -50,9 +50,9 @@ export struct Pair {
     types::EvalValue cdr;
 };
 
-export struct MacroDef { std::vector<std::string> params; ast::Expr* body=nullptr; };
+export struct MacroDef { std::vector<std::string> params; ast::FlatAST* flat=nullptr; ast::NodeId body_id=ast::NULL_NODE; };
 
-export struct Closure { std::vector<std::string> params; const ast::Expr* body=nullptr; const Env* env=nullptr; };
+export struct Closure { std::vector<std::string> params; ast::FlatAST* flat=nullptr; ast::StringPool* pool=nullptr; ast::NodeId body_id=ast::NULL_NODE; const Env* env=nullptr; };
 
 export using EvalResult = std::expected<types::EvalValue, aura::diag::Diagnostic>;
 
@@ -60,8 +60,6 @@ export class Evaluator {
 public:
     Evaluator();
     void set_arena(ast::ASTArena* a) { arena_=a; }
-    EvalResult eval(const ast::Expr* e) { return eval_in(e,top_); }
-    EvalResult eval_in(const ast::Expr* e, const Env& env);
     EvalResult eval_flat(aura::ast::FlatAST& flat,
                           aura::ast::StringPool& pool,
                           aura::ast::NodeId id,
@@ -69,10 +67,9 @@ public:
     const Primitives& primitives() const { return primitives_; }
     Env& top_env() { return top_; }
 private:
-    ast::Expr* expand_macro(const std::string& name, const std::vector<ast::Expr*>& args);
     ClosureId next_id() { return next_id_++; }
     std::size_t alloc_cell(const types::EvalValue& v) { cells_.push_back(v); return cells_.size()-1; }
-    EvalResult apply_closure(ClosureId id, const std::vector<ast::Expr*>& args, const Env& call_env);
+    // (apply_closure and expand_macro removed — use eval_flat directly)
     Env* copy_env(const Env& env);
     void init_pair_primitives();
     Env top_; Primitives primitives_; ast::ASTArena* arena_=nullptr;

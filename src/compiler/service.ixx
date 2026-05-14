@@ -35,47 +35,45 @@ public:
 
     EvalResult eval(std::string_view input) {
         // Phase 4: parse directly into FlatAST, evaluator reads FlatAST directly.
+        // Arena-allocate FlatAST/Pool so closures can reference them across calls.
         auto alloc = arena_.allocator();
-        aura::ast::StringPool pool(alloc);
-        aura::ast::FlatAST flat(alloc);
-        auto pr = aura::parser::parse_to_flat(input, flat, pool);
+        auto* pool_ptr = arena_.create<aura::ast::StringPool>(alloc);
+        auto* flat_ptr = arena_.create<aura::ast::FlatAST>(alloc);
+        auto pr = aura::parser::parse_to_flat(input, *flat_ptr, *pool_ptr);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
             return std::unexpected(aura::diag::Diagnostic{
                 aura::diag::ErrorKind::ParseError, pr.error.empty() ? "parse error" : pr.error});
         }
-        flat.root = pr.root;
-        return evaluator_.eval_flat(flat, pool, flat.root, evaluator_.top_env());
+        flat_ptr->root = pr.root;
+        return evaluator_.eval_flat(*flat_ptr, *pool_ptr, flat_ptr->root, evaluator_.top_env());
     }
 
     // ---- IR pipeline ------------------------------------------------
 
     EvalResult eval_ir(std::string_view input) {
         // Phase 4: parse directly into FlatAST (bypasses Expr* entirely)
+        // Arena-allocate FlatAST/Pool so closures can reference them across calls.
         auto alloc = arena_.allocator();
-        aura::ast::StringPool pool(alloc);
-        aura::ast::FlatAST flat(alloc);
-        auto pr = aura::parser::parse_to_flat(input, flat, pool);
+        auto* pool_ptr = arena_.create<aura::ast::StringPool>(alloc);
+        auto* flat_ptr = arena_.create<aura::ast::FlatAST>(alloc);
+        auto pr = aura::parser::parse_to_flat(input, *flat_ptr, *pool_ptr);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
             return std::unexpected(aura::diag::Diagnostic{
                 aura::diag::ErrorKind::ParseError, pr.error});
         }
-        flat.root = pr.root;
+        flat_ptr->root = pr.root;
 
         // Check if AST contains MacroDef nodes — IR pipeline doesn't
         // support macros. If found, fall back to tree-walker evaluator.
-        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            if (flat.get(id).tag == aura::ast::NodeTag::MacroDef) {
-                auto* expr = aura::compiler::reconstruct_expr(flat, pool, arena_);
-                if (!expr) return std::unexpected(
-                    aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
-                                           "macro expand: reconstruct failed"});
-                return evaluator_.eval(expr);
+        for (aura::ast::NodeId id = 0; id < flat_ptr->size(); ++id) {
+            if (flat_ptr->get(id).tag == aura::ast::NodeTag::MacroDef) {
+                return evaluator_.eval_flat(*flat_ptr, *pool_ptr, flat_ptr->root, evaluator_.top_env());
             }
         }
 
         // === Phase 1: Define separation (IR caching) ===
         // Check if this expression is a define binding
-        auto def = try_extract_define(flat, pool, flat.root);
+        auto def = try_extract_define(*flat_ptr, *pool_ptr, flat_ptr->root);
         if (def) {
             auto& [name, _body_id] = *def;
             auto name_str = std::string(name);
@@ -85,9 +83,9 @@ public:
 
             // Lower WITH cache so that the Variable handler creates MakeClosure
             // for cached dependencies (with proper func id remapping).
-            auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
+            auto cache_ptr_local = ir_cache_.empty() ? nullptr : &ir_cache_;
             std::vector<std::string> cache_hits;
-            auto ir_mod = aura::compiler::lower_to_ir_with_cache(flat, pool, arena_, cache_ptr, &cache_hits);
+            auto ir_mod = aura::compiler::lower_to_ir_with_cache(*flat_ptr, *pool_ptr, arena_, cache_ptr_local, &cache_hits);
 
             // Phase 4: Run passes per-function on the new function bundle.
             {
@@ -129,25 +127,23 @@ public:
             }
 
             // Also evaluate via tree-walker for persistent runtime bindings
-            auto* expr = aura::compiler::reconstruct_expr(flat, pool, arena_);
-            if (expr) {
-                auto result = evaluator_.eval(expr);
-                if (!result) return result;
-            }
+            // (no Expr* reconstruction needed -- eval_flat reads FlatAST directly)
+            auto result = evaluator_.eval_flat(*flat_ptr, *pool_ptr, flat_ptr->root, evaluator_.top_env());
+            if (!result) return result;
 
             // Return void for define (no visible result)
             return EvalResult(types::make_void());
         }
 
         // === Normal IR path (with cache awareness) ===
-        auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
-        auto ir_mod = aura::compiler::lower_to_ir_with_cache(flat, pool, arena_, cache_ptr);
+        auto cache_ptr_local = ir_cache_.empty() ? nullptr : &ir_cache_;
+        auto ir_mod = aura::compiler::lower_to_ir_with_cache(*flat_ptr, *pool_ptr, arena_, cache_ptr_local);
 
         ComputeKindWrap ck;
         ArityWrap ar;
         ConstantFoldingWrap cf;
 
-        std::println(std::cerr, "PM: running {}→{}→{}",
+        std::println(std::cerr, "PM: running {}->{}->{}",
                      ck.name(), ar.name(), cf.name());
 
         ck.run(ir_mod);
@@ -178,7 +174,6 @@ public:
 
         return result;
     }
-
     // ---- Type checking (L6.x) ----------------------------------------
 
     // Run the TypeChecker on a input expression.
@@ -329,20 +324,21 @@ public:
     // Dependency tracking: when lowering with cache, records which cached functions
     // this new definition calls. On redefinition, invalidates all transitive dependents.
     EvalResult define_function(std::string_view code) {
+        // Arena-allocate FlatAST/Pool so closures can reference them across calls.
         auto alloc = arena_.allocator();
-        aura::ast::StringPool pool(alloc);
-        aura::ast::FlatAST flat(alloc);
-        auto pr = aura::parser::parse_to_flat(code, flat, pool);
+        auto* pool_ptr = arena_.create<aura::ast::StringPool>(alloc);
+        auto* flat_ptr = arena_.create<aura::ast::FlatAST>(alloc);
+        auto pr = aura::parser::parse_to_flat(code, *flat_ptr, *pool_ptr);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
             return std::unexpected(aura::diag::Diagnostic{
                 aura::diag::ErrorKind::ParseError, pr.error.empty() ? "parse error" : pr.error});
         }
-        flat.root = pr.root;
+        flat_ptr->root = pr.root;
 
         // Check if root is a Define node
-        if (flat.get(flat.root).tag == aura::ast::NodeTag::Define) {
+        if (flat_ptr->get(flat_ptr->root).tag == aura::ast::NodeTag::Define) {
             // Extract name for caching
-            auto name = pool.resolve(flat.get(flat.root).sym_id);
+            auto name = pool_ptr->resolve(flat_ptr->get(flat_ptr->root).sym_id);
             auto name_str = std::string(name);
 
             // Check if this is a redefinition before caching the new version
@@ -350,14 +346,11 @@ public:
 
             // Lower WITH cache so that the Variable handler creates MakeClosure
             // for cached dependencies (with proper func id remapping).
-            auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
+            auto cache_ptr_local = ir_cache_.empty() ? nullptr : &ir_cache_;
             std::vector<std::string> cache_hits;
-            auto ir_mod = aura::compiler::lower_to_ir_with_cache(flat, pool, arena_, cache_ptr, &cache_hits);
+            auto ir_mod = aura::compiler::lower_to_ir_with_cache(*flat_ptr, *pool_ptr, arena_, cache_ptr_local, &cache_hits);
 
             // Phase 4: Run passes per-function on the new function bundle.
-            // This ensures cached functions are already analyzed and folded,
-            // so when they're inlined into a new module, their blocks are
-            // pre-processed and only the entry wrapper needs full pass execution.
             {
                 ComputeKindWrap ck_pass;
                 ConstantFoldingWrap cf_pass;
@@ -395,23 +388,16 @@ public:
                 invalidate_function(name_str);
             }
 
-            // Tree-walker eval for persistent runtime bindings
-            auto* expr = aura::compiler::reconstruct_expr(flat, pool, arena_);
-            if (expr) {
-                auto result = evaluator_.eval(expr);
-                if (!result) return result;
-                return result;
-            }
-
-            return EvalResult(types::make_void());
+            // Tree-walker eval for persistent runtime bindings (reads FlatAST directly)
+            auto result = evaluator_.eval_flat(*flat_ptr, *pool_ptr, flat_ptr->root, evaluator_.top_env());
+            if (!result) return result;
+            return result;
         }
 
-        // Not a define — just tree-walker eval
-        return evaluator_.eval_flat(flat, pool, flat.root, evaluator_.top_env());
+        // Not a define -- just tree-walker eval
+        return evaluator_.eval_flat(*flat_ptr, *pool_ptr, flat_ptr->root, evaluator_.top_env());
     }
 
-    // Execute with IR cache awareness. If the code references cached functions,
-    // the lowering pass inlines them automatically. Delegates to eval_ir().
     EvalResult exec_with_cache(std::string_view code) {
         return eval_ir(code);
     }

@@ -6,111 +6,6 @@ namespace aura::compiler {
 using namespace aura::ir;
 using namespace aura::ast;
 
-// ── Reconstruct an Expr* tree from a FlatAST index node ─────────
-// Phase 3 bridge: converts FlatAST back to pointer tree so existing
-// LoweringPass can consume it. Phase 4 will bypass this step.
-
-static Expr* reconstruct_node(NodeId id, const FlatAST& flat,
-                               StringPool& pool, ASTArena& arena) {
-    if (id == NULL_NODE || id >= flat.size()) return nullptr;
-    auto v = flat.get(id);
-
-    auto make_expr = [&](auto&& nc) -> Expr* { auto* e = arena.create<Expr>(std::move(nc)); e->loc = {v.line, v.col, 0}; return e; };
-
-    switch (v.tag) {
-    case NodeTag::LiteralString: {
-        auto name = pool.resolve(v.sym_id);
-        return make_expr(ast::LiteralStringNode{v.tag, std::string(name)});
-    }
-    case NodeTag::LiteralInt:
-        return make_expr(LiteralIntNode{v.tag, v.int_value});
-
-    case NodeTag::Variable: {
-        auto name = pool.resolve(v.sym_id);
-        return make_expr(VariableNode{v.tag, std::string(name)});
-    }
-
-    case NodeTag::Call: {
-        auto* func = reconstruct_node(v.child(0), flat, pool, arena);
-        std::vector<Expr*> args;
-        for (std::size_t i = 1; i < v.children.size(); ++i)
-            args.push_back(reconstruct_node(v.child(i), flat, pool, arena));
-        return make_expr(CallNode{v.tag, func, std::move(args)});
-    }
-
-    case NodeTag::IfExpr: {
-        auto* cond = reconstruct_node(v.child(0), flat, pool, arena);
-        auto* then_b = reconstruct_node(v.child(1), flat, pool, arena);
-        auto* else_b = reconstruct_node(v.child(2), flat, pool, arena);
-        return make_expr(IfExprNode{v.tag, cond, then_b, else_b});
-    }
-
-    case NodeTag::Lambda: {
-        std::vector<std::string> param_names;
-        for (auto pid : v.params)
-            param_names.push_back(std::string(pool.resolve(pid)));
-        auto* body = reconstruct_node(v.child(0), flat, pool, arena);
-        return make_expr(LambdaNode{v.tag, std::move(param_names), body});
-    }
-
-    case NodeTag::Let: {
-        auto name = pool.resolve(v.sym_id);
-        auto* val = reconstruct_node(v.child(0), flat, pool, arena);
-        auto* body = reconstruct_node(v.child(1), flat, pool, arena);
-        return make_expr(LetNode{v.tag, std::string(name), val, body});
-    }
-
-    case NodeTag::LetRec: {
-        auto name = pool.resolve(v.sym_id);
-        auto* val = reconstruct_node(v.child(0), flat, pool, arena);
-        auto* body = reconstruct_node(v.child(1), flat, pool, arena);
-        return make_expr(LetRecNode{v.tag, std::string(name), val, body});
-    }
-
-    case NodeTag::Define: {
-        auto name = pool.resolve(v.sym_id);
-        auto* val = reconstruct_node(v.child(0), flat, pool, arena);
-        return make_expr(DefineNode{v.tag, std::string(name), val});
-    }
-    case NodeTag::MacroDef: {
-        auto name = pool.resolve(v.sym_id);
-        auto* body = reconstruct_node(v.child(0), flat, pool, arena);
-        std::vector<std::string> params;
-        for (auto pid : v.params)
-            params.push_back(std::string(pool.resolve(pid)));
-        return make_expr(MacroDefNode{v.tag, std::string(name), std::move(params), body});
-    }
-    case NodeTag::Begin: {
-        ast::BeginNode begin{v.tag, {}};
-        for (std::size_t i = 0; i < v.children.size(); ++i) {
-            begin.exprs.push_back(reconstruct_node(v.child(i), flat, pool, arena));
-        }
-        auto* e_b = arena.create<Expr>(std::move(begin));
-        e_b->loc = {v.line, v.col, 0};
-        return e_b;
-    }
-    case NodeTag::Set: {
-        auto name = pool.resolve(v.sym_id);
-        auto* val = reconstruct_node(v.child(0), flat, pool, arena);
-        return make_expr(SetNode{v.tag, std::string(name), val});
-    }
-    case NodeTag::Quote: {
-        auto* val = reconstruct_node(v.child(0), flat, pool, arena);
-        return make_expr(QuoteNode{v.tag, val});
-    }
-    case NodeTag::TypeAnnotation: {
-        auto type_name = pool.resolve(v.sym_id);
-        auto* inner = reconstruct_node(v.child(0), flat, pool, arena);
-        return make_expr(TypeAnnotationNode{v.tag, inner, std::string(type_name)});
-    }
-    case NodeTag::Coercion: {
-        auto* inner = reconstruct_node(v.child(0), flat, pool, arena);
-        return make_expr(CoercionNode{v.tag, inner, ""});
-    }
-    }
-    return nullptr;
-}
-
 // ── Internal: native FlatAST lowering helpers ──────────────────
 // Lower a FlatAST node to IR instructions. Returns the result slot.
 // Reads FlatAST directly without reconstructing to Expr*.
@@ -564,13 +459,6 @@ IRModule lower_to_ir_with_cache(
     const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache,
     std::vector<std::string>* cache_hits) {
     return lower_to_ir_impl(flat, pool, arena, cache, cache_hits);
-}
-
-// ── reconstruct_expr (public API) — kept for tree-walker fallback ──
-
-// ── reconstruct_expr (public API) ───────────────────────────────
-Expr* reconstruct_expr(FlatAST& flat, StringPool& pool, ASTArena& arena) {
-    return reconstruct_node(flat.root, flat, pool, arena);
 }
 
 // ── unparse_node — FlatAST → S-expression source ───────────────
