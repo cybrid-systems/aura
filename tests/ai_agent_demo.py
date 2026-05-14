@@ -154,38 +154,47 @@ def demo_incremental_serve():
     print("📦 场景 4: 增量编译 — serve 协议 (define→exec→redefine)")
     print("═" * 60)
 
+    # Persistent session: all commands to the same --serve process
+    proc = subprocess.Popen([AURA, "--serve"], stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, bufsize=1)
+
     def serve(cmd_type, code):
         payload = json.dumps({"cmd": cmd_type, "code": code})
-        r = subprocess.run([AURA, "--serve"], input=payload,
-                           capture_output=True, text=True, timeout=10)
-        return r.stdout.strip()
+        proc.stdin.write(payload + "\n")
+        proc.stdin.flush()
+        return proc.stdout.readline().strip()
 
-    # Step 1: Define 函数
-    print("\n[ACT] serve define: (define add (lambda (x y) (+ x y)))")
-    result = serve("define", "(define add (lambda (x y) (+ x y)))")
-    print(f"  → {result}")
-    ok1 = 'defined' in result
+    try:
+        # Step 1: Define 函数
+        print("\n[ACT] serve define: (define add (lambda (x y) (+ x y)))")
+        result = serve("define", "(define add (lambda (x y) (+ x y)))")
+        print(f"  → {result}")
+        ok1 = 'defined' in result
 
-    # Step 2: Exec
-    print("\n[ACT] serve exec: (add 1 2)")
-    result = serve("exec", "(add 1 2)")
-    print(f"  → {result}")
-    ok2 = 'status' in result
+        # Step 2: Exec
+        print("\n[ACT] serve exec: (add 1 2)")
+        result = serve("exec", "(add 1 2)")
+        print(f"  → {result}")
+        ok2 = 'value' in result and '"3"' in result
 
-    # Step 3: Redefine (hot-swap)
-    print("\n[ACT] serve redefine: (define add (lambda (x y) (+ (* x 2) y)))")
-    result = serve("redefine", "(define add (lambda (x y) (+ (* x 2) y)))")
-    print(f"  → {result}")
-    ok3 = 'redefined' in result
+        # Step 3: Redefine (hot-swap)
+        print("\n[ACT] serve redefine: (define add (lambda (x y) (+ (* x 2) y)))")
+        result = serve("redefine", "(define add (lambda (x y) (+ (* x 2) y)))")
+        print(f"  → {result}")
+        ok3 = 'redefined' in result
 
-    # Step 4: Exec again
-    print("\n[VERIFY] serve exec: (add 1 2) 热替换后")
-    result = serve("exec", "(add 1 2)")
-    print(f"  → {result}")
-    ok4 = 'status' in result
+        # Step 4: Exec again
+        print("\n[VERIFY] serve exec: (add 1 2) 热替换后")
+        result = serve("exec", "(add 1 2)")
+        print(f"  → {result}")
+        ok4 = 'value' in result and '"4"' in result
 
-    ok = ok1 and ok2 and ok3 and ok4
-    print(f"\n  {'✅' if ok else '❌'} define/redefine 协议 OK (exec 缓存函数查找有已知 bug)")
+        ok = ok1 and ok2 and ok3 and ok4
+        print(f"\n  {'✅' if ok else '❌'} 期望 add(1,2)=3, redef → add(1,2)=4")
+    finally:
+        proc.stdin.close()
+        proc.wait(timeout=5)
     return ok
 
 
