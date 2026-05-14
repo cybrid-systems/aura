@@ -140,7 +140,7 @@ INTEG_TESTS = [
     IntegCase("if_true", "(if 1 42 0)", "eval", expected="42"),
     IntegCase("if_false", "(if 0 42 0)", "eval", expected="0"),
     IntegCase("fact_5", "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 5))", "eval", expected="120"),
-    IntegCase("string", '(string-append "a" "b")', "eval", expected="string"),
+    IntegCase("string", '(string-append "a" "b")', "eval", expected="ab"),
     IntegCase("pair", "(car (cons 1 2))", "eval", expected="1"),
 
     # ── IR pipeline ──────────────────────────────────────────
