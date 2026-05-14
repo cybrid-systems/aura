@@ -70,4 +70,10 @@ export ast::Expr* reconstruct_expr(ast::FlatAST& flat,
                                     ast::StringPool& pool,
                                     ast::ASTArena& arena);
 
+// FlatAST → S-expression source code (reverse of parse_to_flat)
+export std::string unparse_node(const ast::FlatAST& flat,
+                                 const ast::StringPool& pool,
+                                 ast::NodeId id,
+                                 int indent = 0);
+
 } // namespace aura::compiler
