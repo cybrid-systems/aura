@@ -178,6 +178,32 @@ int main(int argc, char* argv[]) {
                                      json_escape(src));
                     }
                 }
+                else if (type == "write") {
+                    auto write_path = cmd.count("file") ? cmd["file"] : "";
+                    if (write_path.empty()) {
+                        std::println("{{\"status\":\"error\",\"msg\":\"missing file field\"}}");
+                    } else {
+                        auto w_alloc = cs.arena().allocator();
+                        aura::ast::StringPool w_pool(w_alloc);
+                        aura::ast::FlatAST w_flat(w_alloc);
+                        auto w_pr = aura::parser::parse_to_flat(code, w_flat, w_pool);
+                        if (!w_pr.success) {
+                            std::println("{{\"status\":\"error\",\"msg\":\"parse error\"}}");
+                        } else {
+                            w_flat.root = w_pr.root;
+                            auto w_src = aura::compiler::unparse_node(w_flat, w_pool, w_flat.root);
+                            std::ofstream w_f(write_path);
+                            if (w_f) {
+                                w_f << w_src << "\n";
+                                std::println("{{\"status\":\"ok\",\"file\":\"{}\"}}",
+                                             json_escape(write_path));
+                            } else {
+                                std::println("{{\"status\":\"error\",\"msg\":\"cannot write: {}\"}}",
+                                             json_escape(write_path));
+                            }
+                        }
+                    }
+                }
                 else {
                     std::println("{{\"status\":\"error\",\"msg\":\"unknown command: {}\"}}",
                                  json_escape(type));
@@ -337,11 +363,22 @@ int main(int argc, char* argv[]) {
     }
 
     // ── --unparse: parse and output S-expression source code ─────
+    // Usage: ./aura --unparse [file]
+    //   file: write to file instead of stdout
     if (argc > 1 && std::string_view(argv[1]) == "--unparse") {
         aura::compiler::CompilerService cs;
         std::string input;
-        if (argc > 2) { input = argv[2]; }
-        else { std::getline(std::cin, input); }
+        // Check if next arg is a filename (not a flag)
+        bool write_file = false;
+        std::string out_path;
+        if (argc > 2 && std::string_view(argv[2])[0] != '-') {
+            out_path = argv[2];
+            write_file = true;
+            input = (argc > 3) ? argv[3] : "";
+        } else if (argc > 2) {
+            input = argv[2];
+        }
+        if (input.empty()) { std::getline(std::cin, input); }
 
         auto alloc = cs.arena().allocator();
         aura::ast::StringPool pool(alloc);
@@ -352,7 +389,33 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         flat.root = pr.root;
-        std::println("{}", aura::compiler::unparse_node(flat, pool, flat.root));
+        auto source = aura::compiler::unparse_node(flat, pool, flat.root);
+        if (write_file) {
+            std::ofstream f(out_path);
+            if (!f) {
+                std::println(std::cerr, "error: cannot write {}", out_path);
+                return 1;
+            }
+            f << source << "\n";
+            std::println(std::cerr, "written to {}", out_path);
+        } else {
+            std::println("{}", source);
+        }
+        return 0;
+    }
+
+    // ── --write: write stdin content to file ──────────────────────
+    // Usage: ./aura --write <file>
+    if (argc > 2 && std::string_view(argv[1]) == "--write") {
+        std::string input;
+        std::getline(std::cin, input);
+        std::ofstream f(argv[2]);
+        if (!f) {
+            std::println(std::cerr, "error: cannot write {}", argv[2]);
+            return 1;
+        }
+        f << input << "\n";
+        std::println(std::cerr, "written to {}", argv[2]);
         return 0;
     }
 
