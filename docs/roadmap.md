@@ -1,222 +1,91 @@
 # Aura — 实现进度跟踪
 
-**构建方法**：《An Incremental Approach to Compiler Construction》（Ghuloum, ICFP 2006）
-**现状**：Ghuloum 37 步已完成 17 步（含 defmacro/gensym/验证），超出原论文范围（查询引擎/P2996 反射/类型系统）。
-
 ---
 
 ## 里程碑状态
 
 ```
-M0 已归档           ✅  (Racket 原型 + ABF 已移除, 2026-05-14)
-M1 C++ 求值器      ✅  树遍历器 + IR 管线 (Ghuloum Step 1-8)
-M2 查询引擎        ✅  Query/Transform/AutoFix/HotSwap/--serve
-M3a 语言补全       ✅  布尔/序对/begin/set!/quote/cond (Ghuloum Step 9-14)
-M3b 宏系统         ✅  defmacro + 卫生宏 gensym + 编译期模板验证
-M3c 反射           ✅  P2996 auto_to_json + 结构验证
-M3d 类型系统         🔨  L6.1-L6.8 全线 ✅ → EvalValue variant ⬜
-M4a ABF v2 缓存    ✅  列式 FlatAST 写入 + mmap 读取
-M4b --cache CLI    ✅  --cache 命令行标志 + 缓存命中/写入
-M4c 生产           ⬜  LLVM JIT / AOT / 类型系统 / 自举
+M1 求值器          ✅  纯 FlatAST 管线 (SoA)，无 Expr* 指针树
+M2 查询引擎        ✅  ASTIndex + QueryEngine + TransformEngine
+M3a 语言补全       ✅  布尔/序对/begin/set!/quote/cond/letrec/string
+M3b 宏系统         ✅  defmacro + gensym + 编译期验证
+M3c 反射           ✅  P2996 auto_to_json + kNodeMeta + 结构布局验证
+M3d 类型系统       ✅  L6.1-L6.7: 渐进类型 + Occurrence + 类型查询
+M3e 工具链         ✅  Benchmark (42) + 增量编译 + --serve + HotSwap
+M3f AI 闭环         ✅  mutation_loop + LLM 驱动 + AI Agent 演示
+M4a 缓存           ✅  ABF v2 列式 (write/read/--cache/--cache-open/O(1) resolve)
+M4b AI 协议         ✅  docs/ai_agent_protocol.md (7 工具定义)
+M4c 生产           ⬜  LLVM JIT / AOT / 自举
 ```
 
 ---
 
-## Ghuloum 步骤对照
+## 代码库统计
 
-```
-Step  C++    特性                         交付日
-────  ─────  ───────────────────────────  ──────────
-1     ✅     整数字面量                    Sprint B
-2     ✅     变量引用                      Sprint B
-3     ✅     lambda + 函数应用             Sprint B
-4     ✅     if 条件                       Sprint B
-5     ✅     let 绑定                      Sprint B
-6     ✅     letrec 递归绑定                Sprint B
-7     ✅     算术原语 (+ - * /)            Sprint B
-8     ✅     比较 (= < > <= >=)            Sprint B
-── 语言核心闭合 ──
-9     ✅     布尔值 (not and or eq?)       Phase 3a D1
-10    ✅     序对 (cons car cdr null?)     Phase 3a D1
-11    ✅     begin 顺序                    Phase 3a D2
-12    ✅     set! 赋值                     Phase 3a D2
-13    ✅     quote + 字面数据               Phase 3a D2
-14    ✅     cond 语法糖                    Phase 3a D2
-── 语言完备 ──
-15    ✅     defmacro 宏定义                Phase 3b D1
-16    ✅     卫生宏 (gensym)               Phase 3b D2
-17    ✅     编译期 AST 验证                Phase 3b D3
-```
-
----
-
-## 架构评估
-
-### 三层架构落地
-
-```
-设计层           实现                覆盖率   质量
-────────────────────────────────────────────────────
-AST Layer        🟢 Expr* + FlatAST   90%     通过 39 测试
-AuraIR Layer     🟢 27 opcodes       95%     测试全覆盖
-IR Lowering      🟢 LoweringPass→    90%     逐步函数化
-                   LoweringState
-PassManager      🟢 concepts fold    95%     纯函数式
-AuraQuery        🟢 Index/Query/     95%     经过优化
-                   Transform/Fix
-IR Interpreter   🟢 闭包/letrec/     95%     稳定
-                   27 opcodes
-ABF v2 Cache     🟢 列式 FlatAST     95%     稳定
-CompilerService  🟢 eval/eval_ir/    90%     API 稳定
-                   --serve
-Reflection       🟢 P2996/kNodeMeta  90%     4 个组件
-Contracts        🟢 arena + emit     15%     试点阶段
-宏系统           ✅ defmacro+gensym+验证   100%    Day 1-3
-TypeChecker      🔨 src/compiler/type_checker  15%     骨架
-LLVM/M4          ⬜                    0%
-```
-
-### 代码质量指标
-
-| 指标 | 数值 | 趋势 |
-|------|------|------|
-| CTest | 48/48 ✅ | 持续增长 |
-| 源码模块 (.ixx) | 19 | 稳定 |
-| 实现文件 (.cpp) | 14 | 稳定 |
-| reflect/ 工具链 | 6 个头文件 | 新增 |
-| IR opcodes | 27 | 稳定 |
-| 内存池 tier | 4 | 稳定 |
-| 手写 switch（已消除） | 0 | ✅ 全替换 |
-| 未初始化成员警告 | ~5 | 低 |
-
----
-
-## M1-M3 组件状态
-
-### M1 — C++ 求值器 ✅
-
-| 组件 | 状态 | 质量 |
-|------|------|------|
-| CMake 4.0 + C++26 模块骨架 | ✅ | 稳定 |
-| CLI 文本模式 + REPL | ✅ | 稳定 |
-| ABF v2 列式缓存 (FlatAST write + mmap) | ✅ | 列式 SoA 写入/mmap 读取 |
-| pmr 内存池 (ASTArena) | ✅ | 4-tier |
-| CompilerService | ✅ | 双路径（eval + eval_ir） |
-| eval_flat (SoA 直读) | ✅ | Phase 4 完成 |
-| 扁平 AST + SoA (FlatAST) | ✅ | 9 pmr::vector |
-| AuraIR (27 opcodes) | ✅ | 含环境/单元/闭包 |
-| IR Lowering | ✅ | LoweringState 功能式 |
-| IR Interpreter | ✅ | closures + cells |
-| PassManager | ✅ | concepts fold |
-| 常量折叠 / 类型分析 | ✅ | 3 passes |
-| contracts | 🔨 | arena + emit 试点 |
-
-### M2 — 查询引擎 ✅
-
-| 组件 | 状态 | 质量 |
-|------|------|------|
-| TagIndex | ✅ | O(1) by_tag |
-| QueryEngine — S-表达式查询 | ✅ | depth-limited match |
-| TransformEngine — Patch 生成 | ✅ | cached templates |
-| SymRefIndex — 符号引用倒排 | ✅ | O(1) refs_of |
-| Hot swap — 函数级 IR 替换 | ✅ | 运行时替换 |
-| AutoFixEngine — 自动修复 | ✅ | 规则系统 |
-| --serve 模式 | ✅ | JSON protocol |
-
-### M3a — 语言补全 ✅ (Ghuloum 9-14)
-
-| Step | 新增 | 状态 |
-|------|------|------|
-| 9 | 布尔值 (#f/#t + not/and/or/eq?) | ✅ |
-| 10 | 序对 (cons/car/cdr/null?/pair?) | ✅ |
-| 11 | begin 顺序执行 | ✅ |
-| 12 | set! 赋值 | ✅ |
-| 13 | quote 字面数据 | ✅ |
-| 14 | cond 条件 | ✅ |
-
-### M3b — 宏系统 ✅
-
-| 组件 | 状态 | 计划 |
-|------|------|------|
-| defmacro 解析器 | ✅ | Phase 3b D1 |
-| 模板替换展开 | ✅ | Phase 3b D1 |
-| 持久化 arena | ✅ | 避免 reset 后 body 失效 |
-| 卫生宏 (gensym) | ✅ | Phase 3b D2 |
-| 编译期 AST 验证 | ✅ | Phase 3b D3 |
-
-### M3c — 反射 ✅
-
-| 组件 | 状态 | 类型 |
-|------|------|------|
-| GCC 16.1 P2996 auto_to_json | ✅ | 编译期 |
-| compile-time JSON Schema | ✅ | 编译期 |
-| P1306 expansion demo | ✅ | 编译期 |
-| kNodeMeta | ✅ | constexpr |
-| IROpcode enum reflection | ✅ | 枚举反射 |
-| Struct layout validation | ✅ | P2996 编译期 |
-| TagIndex for query | ✅ | 运行时 |
-| Closure introspection | ✅ | 运行时 |
-| --inspect / --env CLI | ✅ | 运行时 |
-| Contracts (observe) | 🔨 | arena + emit |
-
-### M4 — 类型系统 + EvalValue (规划，L6-L7)
-
-| Phase | Step | 内容 | 红线 | 状态 |
-|-------|------|------|------|------|
-| L6 | 31 | Runtime type introspection (type-of/type?) | (type? 42 "Int") → #t | ✅ |
-| L6 | 32 | EvalValue variant refactor | (type? Int) | ⬜ |
-| L6 | 32 | TypeId 骨架 | (type-of 42) → Int | ⬜ |
-| L6 | 33 | 基础类型检查 | (+ 1 "a") → TypeError | ⬜ |
-| L6 | 34 | Query 类型 clause | (query (return-type Int)) | ⬜ |
-| L6 | 35 | Coercion 框架 | (cast 42 : Int) → no-op | ⬜ |
-| L7 | 36-40 | Sound Gradual 核心 | 完整 bi-directional checker | ⬜ |
-| M3/M4 | — | Reflection 类型验证 | P2996 类型结构校验 | ⬜ |
-| M4 | — | Monomorphization + 优化 | 类型标注代码零运行时开销 | ⬜ |
-
-See [ai-programming-language-design/docs/aura_typesystem.md](../design/aura_typesystem.md) for full design.
-
-### M4b — 生产化 (规划)
-
-| 组件 | 状态 |
+| 指标 | 数值 |
 |------|------|
-| 三层运行时 (解释/JIT/AOT) | ⬜ |
-| LLVM ORC JIT | ⬜ |
-| 自举 | ⬜ |
-| CI/CD | ⬜ |
+| 源文件 | 28 (.ixx + .cpp) |
+| 代码行数 | ~7500 |
+| CTest | 49/49 |
+| Benchmark | 42/42 |
+| 集成测试 | 57/57 |
+| 测试套件 | 8 (build.py test all) |
+| IR opcodes | 21 |
+| 内存池 tier | 4 (ASTArena + ArenaGroup) |
 
 ---
 
-## Code Review 响应
+## 组件状态
 
-2026-05-12 external review 确认以下改进：
+### 核心 (core) ✅
 
-| 建议 | 状态 | 交付 |
+| 模块 | 状态 | 说明 |
 |------|------|------|
-| LoweringPass → LoweringState | ✅ | QW1: 9 成员 → 值结构体 |
-| collect_free_vars 返回 pair | ✅ | QW2: collect_free_vars2 |
-| consteval tag 验证 | ✅ | QW3: is_valid_tag/meta_of |
-| Contracts 试点 | ✅ | arena + emit, observe 模式 |
-| TagIndex O(1) by_tag | ✅ | P1 |
-| SymRefIndex 集成 | ✅ | P2 |
-| 模板 tokenize 缓存 | ✅ | P3 |
-| match 深度限制 | ✅ | P4 |
-| IROpcode 枚举反射 | ✅ | B1 |
+| arena.ixx | ✅ | ASTArena pmr bump allocator |
+| ast.ixx | ✅ | FlatAST SoA + NodeView + StringPool |
+| type.ixx | ✅ | TypeRegistry + TypeId (6 预定义类型) |
+
+### 解析器 (parser) ✅
+
+| 模块 | 说明 |
+|------|------|
+| lexer | Tokenizer |
+| parser | S-表达式 → FlatAST (SoA) |
+
+### 编译器 (compiler)
+
+| 模块 | 状态 | 说明 |
+|------|------|------|
+| evaluator | ✅ | 树遍历求值器 (纯 FlatAST) |
+| ir | ✅ | AuraIR 21 opcodes |
+| lowering | ✅ | FlatAST → IR (cache-aware) |
+| ir_executor | ✅ | IR 解释器 (闭包 + cells + coercion) |
+| pass_manager | ✅ | concept-based fold pipeline |
+| compute_kind | ✅ | Known/Unknown 分析 |
+| arity | ✅ | 参数数量校验 |
+| cache | ✅ | ABF v2 列式缓存 (v3 O(1) resolve) |
+| diag | ✅ | 结构化诊断 + blame 位置 |
+| service | ✅ | CompilerService |
+| query | ✅ | ASTIndex / QueryEngine / TransformEngine |
+| type_checker | ✅ | L6.1-L6.7 |
+
+### 工具
+
+| 工具 | 说明 |
+|------|------|
+| aura-reflect | P2996 IR opcode / schema 验证 |
+| aura-schema | JSON Schema 生成 |
+| main.cpp | CLI: 求值/查询/变换/类型检查/缓存/serve/hot-swap |
 
 ---
 
-## 测试
+## 下一步
 
 ```
-CTest: 48 tests ✅
-  - 9 step tests       (语言语义)
-  - 1 ir_basic         (IR 管线)
-  - 9 IR mode tests    (--ir flag)
-  - 3 CLI query tests
-  - 3 --serve tests
-  - 2 inspect tests
-  - 4 reflect/schema tests
-  - 2 schema tests
-  - 2 auto-fix tests
-  - 1 reflect_ir_instruction
-  - 1 reflect_schema
+P0  向量类型          — 基础数据结构（变长数组）
+P0  number->string    — 当前返回空字符串（字符串连接也无法正确处理）
+P1  IR 缓存序列化     — 编译后 IR 函数写入 cache 文件（Phase 3）
+P1  卫生宏 Phase 1    — FlatAST 标记 + 自动重命名
+P2  CI + benchmark 回归 — GitHub Actions + --check 自动化
+P3  LLVM 后端探索     — M4 正式第一步
 ```
