@@ -10,6 +10,12 @@ import aura.core.type;
 import aura.parser.parser;
 import aura.compiler.cache;
 
+// Format helper: format EvalValue with access to string heap
+static std::string fmt_val(const aura::compiler::types::EvalValue& v,
+                           aura::compiler::CompilerService& cs) {
+    return aura::compiler::types::format_value(v, &cs.evaluator().primitives().string_heap());
+}
+
 // JSON helper: wrap a string value for JSON (escape quotes and backslashes)
 static std::string json_escape(std::string_view s) {
     std::string out;
@@ -143,7 +149,7 @@ int main(int argc, char* argv[]) {
                     auto result = cs.exec_with_cache(code);
                     if (result) {
                         std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
-                                     aura::compiler::types::format_value(*result));
+                                     fmt_val(*result, cs));
                     } else {
                         auto& d = result.error();
                         std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
@@ -224,7 +230,7 @@ int main(int argc, char* argv[]) {
 
                 auto r = cs.eval(line);
                 if (r) {
-                    std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}", aura::compiler::types::format_value(*r));
+                    std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}", fmt_val(*r, cs));
                 } else {
                     auto& d = r.error();
                     std::println("{{\"status\":\"error\",\"kind\":{},\"msg\":\"{}\",\"node_id\":{}}}",
@@ -263,7 +269,7 @@ int main(int argc, char* argv[]) {
                 std::println(std::cerr, "error: {}", result.error().message);
                 return 1;
             }
-            std::println("{}", aura::compiler::types::format_value(*result));
+            std::println("{}", fmt_val(*result, cs));
         } else {
             std::string line;
             while (std::getline(std::cin, line)) {
@@ -272,7 +278,7 @@ int main(int argc, char* argv[]) {
                 if (!result) {
                     std::println(std::cerr, "error: {}", result.error().message);
                 } else {
-                    std::println("{}", aura::compiler::types::format_value(*result));
+                    std::println("{}", fmt_val(*result, cs));
                 }
             }
         }
@@ -454,7 +460,7 @@ int main(int argc, char* argv[]) {
             std::println(std::cerr, "eval error: {}", result.error().message);
             return 1;
         }
-        std::println("{}", aura::compiler::types::format_value(*result));
+        std::println("{}", fmt_val(*result, cs));
         return 0;
     }
 
@@ -518,7 +524,7 @@ int main(int argc, char* argv[]) {
             std::println(std::cerr, "error: {}", result.error().message);
             return 1;
         }
-        std::println("{}", aura::compiler::types::format_value(*result));
+        std::println("{}", fmt_val(*result, cs));
         return 0;
     }
 
@@ -537,7 +543,7 @@ int main(int argc, char* argv[]) {
         if (!result) {
             std::println(std::cerr, "error: {}", result.error().message);
         } else {
-            std::println("result: {}", aura::compiler::types::format_value(*result));
+            std::println("result: {}", fmt_val(*result, cs));
         }
 
         // ── Environment dump ─────────────────────────────────────
@@ -551,7 +557,7 @@ int main(int argc, char* argv[]) {
             if (!c.func_free_vars.empty()) {
                 std::println("│   free-vars:");
                 for (std::size_t i = 0; i < c.func_free_vars.size() && i < c.env.size(); ++i) {
-                    std::println("│     {} : {}", c.func_free_vars[i], aura::compiler::types::format_value(c.env[i]));
+                    std::println("│     {} : {}", c.func_free_vars[i], fmt_val(c.env[i], cs));
                 }
             }
             // Parameters
@@ -565,14 +571,14 @@ int main(int argc, char* argv[]) {
             if (c.env.size() > c.func_free_vars.size()) {
                 std::println("│   extra env slots:");
                 for (std::size_t i = c.func_free_vars.size(); i < c.env.size(); ++i) {
-                    std::println("│     [{}] = {}", i, aura::compiler::types::format_value(c.env[i]));
+                    std::println("│     [{}] = {}", i, fmt_val(c.env[i], cs));
                 }
             }
         }
 
         std::println("┌─ cells ({})", cells.size());
         for (auto& c : cells) {
-            std::println("├ [{}] = {}", c.id, aura::compiler::types::format_value(c.value));
+            std::println("├ [{}] = {}", c.id, fmt_val(c.value, cs));
         }
 
         return result ? 0 : 1;
@@ -587,7 +593,7 @@ int main(int argc, char* argv[]) {
 
         auto result = cs.eval_ir(input);
         if (result) {
-            std::println("result: {}", aura::compiler::types::format_value(*result));
+            std::println("result: {}", fmt_val(*result, cs));
         } else {
             std::println(std::cerr, "error: {}", result.error().message);
         }
@@ -601,12 +607,12 @@ int main(int argc, char* argv[]) {
             for (std::size_t i = 0; i < c.env.size(); ++i) {
                 auto label = i < c.func_free_vars.size()
                            ? c.func_free_vars[i] : std::format("[{}]", i);
-                std::println("  {} = {}", label, aura::compiler::types::format_value(c.env[i]));
+                std::println("  {} = {}", label, fmt_val(c.env[i], cs));
             }
         }
 
         for (auto& c : cells) {
-            std::println("cell [{}] = {}", c.id, aura::compiler::types::format_value(c.value));
+            std::println("cell [{}] = {}", c.id, fmt_val(c.value, cs));
         }
 
         return result ? 0 : 1;
@@ -625,7 +631,7 @@ int main(int argc, char* argv[]) {
 
         std::println("{{\"status\":\"{}\",\"result\":{},\"closures\":[",
                      result ? "ok" : "error",
-                     result ? aura::compiler::types::format_value(*result) : std::string("null"));
+                     result ? fmt_val(*result, cs) : std::string("null"));
 
         for (std::size_t i = 0; i < closures.size(); ++i) {
             auto& c = closures[i];
@@ -636,7 +642,7 @@ int main(int argc, char* argv[]) {
                 auto label = j < c.func_free_vars.size()
                            ? c.func_free_vars[j] : std::format("[{}]", j);
                 std::println("    {{\"name\":\"{}\",\"value\":{}}}{}",
-                             label, aura::compiler::types::format_value(c.env[j]),
+                             label, fmt_val(c.env[j], cs),
                              j + 1 < c.env.size() ? "," : "");
             }
             std::println("   ]}}{}", i + 1 < closures.size() ? "," : "");
@@ -645,7 +651,7 @@ int main(int argc, char* argv[]) {
         std::println("],\"cells\":[");
         for (std::size_t i = 0; i < cells.size(); ++i) {
             std::println("  {{\"id\":{},\"value\":{}}}{}",
-                         cells[i].id, aura::compiler::types::format_value(cells[i].value),
+                         cells[i].id, fmt_val(cells[i].value, cs),
                          i + 1 < cells.size() ? "," : "");
         }
         std::println("]}}");
@@ -664,7 +670,7 @@ int main(int argc, char* argv[]) {
             if (line.empty()) continue;
             auto r = cs.eval(line);
             if (!r) std::println(std::cerr, "error: {}", r.error().message);
-            else std::println("{}", aura::compiler::types::format_value(*r));
+            else std::println("{}", fmt_val(*r, cs));
             cs.reset();
         }
         return 0;
@@ -681,7 +687,7 @@ int main(int argc, char* argv[]) {
         e = e.substr(s);
         auto r = cs.eval(e);
         if (!r) { std::println(std::cerr, "error: {}", r.error().message); err = true; }
-        else std::println("{}", aura::compiler::types::format_value(*r));
+        else std::println("{}", fmt_val(*r, cs));
         cs.reset();
     }
     return err ? 1 : 0;

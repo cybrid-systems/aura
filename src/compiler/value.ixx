@@ -78,4 +78,22 @@ export inline std::string format_value(const EvalValue& v) {
     return "<unknown>";
 }
 
+// Format with string heap access — shows actual string content
+export inline std::string format_value(const EvalValue& v, const std::vector<std::string>* heap) {
+    if (is_void(v)) return "()";
+    if (is_bool(v)) return as_bool(v) ? "#t" : "#f";
+    if (is_int(v)) return std::to_string(as_int(v));
+    if (is_string(v)) {
+        if (heap) {
+            auto idx = as_string_idx(v);
+            if (idx < heap->size()) return std::format("\"{}\"", (*heap)[idx]);
+        }
+        return std::format("<string[{}]>", as_string_idx(v));
+    }
+    if (is_pair(v)) return std::format("<pair[{}]>", as_pair_idx(v));
+    if (is_closure(v)) return std::format("<closure[{}]>", as_closure_id(v));
+    if (is_cell(v)) return std::format("<cell[{}]>", as_cell_id(v));
+    return "<unknown>";
+}
+
 } // namespace aura::compiler::types
