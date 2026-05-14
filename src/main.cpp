@@ -6,8 +6,6 @@ import aura.compiler.lowering;
 import aura.compiler.ir_executor;
 import aura.compiler.evaluator;
 import aura.compiler.types;
-import aura.core.ast_flat;
-import aura.core.ast_pool;
 import aura.core.type;
 import aura.parser.parser;
 import aura.compiler.cache;

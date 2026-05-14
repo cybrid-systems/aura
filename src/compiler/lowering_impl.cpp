@@ -1,7 +1,5 @@
 module aura.compiler.lowering;
 import aura.core.ast;
-import aura.core.ast_flat;
-import aura.core.ast_pool;
 
 namespace aura::compiler {
 

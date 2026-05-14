@@ -10,8 +10,6 @@ import aura.compiler.ir_executor;
 import aura.compiler.pass_manager;
 import aura.compiler.type_checker;
 import aura.compiler.types;
-import aura.core.ast_flat;
-import aura.core.ast_pool;
 import aura.diag;
 
 namespace aura::compiler {

@@ -9,8 +9,6 @@ export module aura.compiler.type_checker;
 
 import std;
 import aura.core;
-import aura.core.ast_flat;
-import aura.core.ast_pool;
 import aura.core.type;
 import aura.diag;
 

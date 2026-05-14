@@ -1,8 +1,6 @@
 export module aura.parser.parser;
 import std;
 import aura.core;
-import aura.core.ast_flat;
-import aura.core.ast_pool;
 import aura.parser.lexer;
 
 namespace aura::parser {

@@ -2,8 +2,7 @@ module;
 #include <cstdio>
 module aura.compiler.evaluator;
 import std;
-import aura.core.ast_flat;
-import aura.core.ast_pool;
+import aura.core.ast;
 import aura.compiler.types;
 
 namespace aura::compiler {

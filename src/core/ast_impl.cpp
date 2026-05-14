@@ -1,6 +1,4 @@
-module aura.core.ast_flat;
-import aura.core.ast;
-import aura.core.ast_pool;
+module aura.core.ast;
 import aura.core.type;
 
 namespace aura::ast {
