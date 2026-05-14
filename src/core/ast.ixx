@@ -469,6 +469,15 @@ public:
     std::size_t size() const { return tag_.size(); }
     bool empty() const { return tag_.empty(); }
 
+    // ── Marker access ─────────────────────────────────────────
+
+    void set_marker(NodeId id, SyntaxMarker m) {
+        if (id < marker_.size()) marker_[id] = m;
+    }
+    SyntaxMarker marker(NodeId id) const {
+        return id < marker_.size() ? marker_[id] : SyntaxMarker::User;
+    }
+
     // ── Type ID access ─────────────────────────────────────────
 
     std::uint32_t type_id(NodeId id) const {
