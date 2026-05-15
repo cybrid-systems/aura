@@ -395,6 +395,9 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
     using Tag = NodeTag;
     switch (v.tag) {
     case Tag::LiteralInt:
+        // #t/#f parsed with BoolLiteral marker
+        if (v.marker == SyntaxMarker::BoolLiteral)
+            return reg_.bool_type();
         return reg_.int_type();
     case Tag::LiteralFloat:
         return reg_.lookup_type("Float");

@@ -182,6 +182,7 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
                 {"vector-length",  PrimId::VectorLength},
                 {"vector?",        PrimId::VectorP},
                 {"make-vector",    PrimId::MakeVector},
+                {"import",         PrimId::Import},
             };
             auto pcit = prim_call_map.find(std::string(callee_name));
             if (pcit != prim_call_map.end()) {

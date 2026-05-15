@@ -273,6 +273,7 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                     "gensym",
                     "vector", "vector-ref", "vector-set!",
                     "vector-length", "vector?", "make-vector",
+                    "import",
                 };
                 auto idx = static_cast<std::size_t>(prim_id);
                 if (idx < std::size(prim_names)) {

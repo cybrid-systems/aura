@@ -1,9 +1,5 @@
 module;
-
-#include <string>
-#include <vector>
 #include <cstdint>
-#include <unordered_map>
 
 export module aura.compiler.type_checker;
 
