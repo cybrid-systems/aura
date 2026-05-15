@@ -59,6 +59,11 @@ export struct FuncType {
     TypeId ret;
 };
 
+export struct ForallType {
+    TypeId var;      // bound type variable
+    TypeId body;     // body type (usually a FuncType)
+};
+
 // ── TypeRegistry ──────────────────────────────────────────────
 export class TypeRegistry {
 public:
@@ -74,6 +79,7 @@ public:
     TypeTag tag_of(TypeId id) const;
     std::string_view name_of(TypeId id) const;
     const FuncType* func_of(TypeId id) const;
+    const ForallType* forall_of(TypeId id) const;
     bool is_var(TypeId id) const;
     bool is_subtype(TypeId sub, TypeId sup) const;
 
@@ -84,6 +90,9 @@ public:
     TypeId string_type()  const { return TypeId{3, 1}; }
     TypeId void_type()    const { return TypeId{4, 1}; }
     TypeId type_type()    const { return TypeId{5, 1}; }
+
+    // ── Instantiate a forall type with fresh type variables
+    TypeId instantiate(TypeId forall_id, std::function<TypeId()> fresh_var);
 
     // ── 工具 ──
     std::string format_type(TypeId id) const;
@@ -97,6 +106,7 @@ private:
         TypeTag tag;
         std::string name;
         std::optional<FuncType> func;
+    std::optional<ForallType> forall;
     };
     std::vector<Entry> entries_;
     std::unordered_map<std::string, TypeId> name_to_id_;

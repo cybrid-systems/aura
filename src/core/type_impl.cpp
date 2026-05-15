@@ -47,8 +47,10 @@ TypeId TypeRegistry::register_forall(TypeId var, TypeId body) {
         .index = static_cast<std::uint32_t>(entries_.size()),
         .generation = next_generation_,
     };
-    std::string forall_name = std::string("forall ") + std::string(name_of(var)) + " " + std::string(name_of(body));
-    entries_.push_back(Entry{TypeTag::FORALL, std::move(forall_name), std::nullopt});
+    auto name_var = name_of(var);
+    auto name_body = name_of(body);
+    std::string forall_name = std::string("∀") + std::string(name_var) + ". " + std::string(name_body);
+    entries_.push_back(Entry{TypeTag::FORALL, std::move(forall_name), std::nullopt, ForallType{var, body}});
     return id;
 }
 
@@ -74,6 +76,12 @@ std::string_view TypeRegistry::name_of(TypeId id) const {
     return "<invalid>";
 }
 
+const ForallType* TypeRegistry::forall_of(TypeId id) const {
+    if (id.index < entries_.size() && entries_[id.index].forall)
+        return &*entries_[id.index].forall;
+    return nullptr;
+}
+
 const FuncType* TypeRegistry::func_of(TypeId id) const {
     if (id.index < entries_.size() && entries_[id.index].func)
         return &*entries_[id.index].func;
@@ -82,6 +90,29 @@ const FuncType* TypeRegistry::func_of(TypeId id) const {
 
 bool TypeRegistry::is_var(TypeId id) const {
     return id.index < entries_.size() && entries_[id.index].tag == TypeTag::TYPE_VAR;
+}
+
+TypeId TypeRegistry::instantiate(TypeId forall_id, std::function<TypeId()> fresh_var) {
+    auto* ft = forall_of(forall_id);
+    if (!ft) return forall_id;
+    // Build substitution map: bound var → fresh var
+    auto fresh = fresh_var();
+    // Recursively replace the bound variable in the body
+    auto replace_var = [&](this const auto& self, TypeId tid) -> TypeId {
+        if (tid == ft->var) return fresh;
+        if (auto* f = func_of(tid)) {
+            std::vector<TypeId> new_args;
+            for (auto& a : f->args) new_args.push_back(self(a));
+            return register_func(std::move(new_args), self(f->ret));
+        }
+        // Forall body could be nested
+        if (auto* f2 = forall_of(tid)) {
+            auto new_body = self(f2->body);
+            return register_forall(f2->var, new_body);
+        }
+        return tid;
+    };
+    return replace_var(ft->body);
 }
 
 bool TypeRegistry::is_subtype(TypeId sub, TypeId sup) const {
@@ -111,6 +142,11 @@ std::string TypeRegistry::format_type(TypeId id) const {
         }
         case TypeTag::TYPE_VAR:
             return std::string(name_of(id));
+        case TypeTag::FORALL: {
+            auto* ft = forall_of(id);
+            if (!ft) return "<forall>";
+            return "∀" + format_type(ft->var) + ". " + format_type(ft->body);
+        }
         default:
             return std::string(name_of(id));
     }
