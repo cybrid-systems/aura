@@ -1024,9 +1024,21 @@ void Evaluator::init_pair_primitives() {
         auto old_val = static_cast<std::uint64_t>(old_tid);
         auto new_val = static_cast<std::uint64_t>(string_heap_.size()); // placeholder
 
+        // Simple type ID mapping based on well-known type names
+        auto type_str = string_heap_[type_idx];
+        std::uint32_t new_tid = 0;
+        if (type_str == "Int") new_tid = 1;
+        else if (type_str == "Float") new_tid = 2;
+        else if (type_str == "String") new_tid = 3;
+        else if (type_str == "Bool") new_tid = 4;
+        else if (type_str == "Dyn" || type_str == "Any") new_tid = 0;
+        else new_tid = 0; // unknown → Dyn
+
         auto mid = flat.add_mutation_with_rollback(node, "replace-type",
             old_type_str, string_heap_[type_idx], "replace type annotation",
-            aura::ast::MutationStatus::Committed, 1, old_val, new_val, true);
+            aura::ast::MutationStatus::Committed, 1, old_val, new_tid, true);
+        // Actually apply the type change
+        flat.set_type(node, new_tid);
         return make_int(static_cast<std::int64_t>(mid));
     });
 
@@ -1114,15 +1126,53 @@ void Evaluator::init_pair_primitives() {
         return make_int(static_cast<std::int64_t>(current_flat_->rollback_since(mid)));
     });
 
-    // (check-preconditions node-id field-offset) → true if valid
+    // (check-preconditions node-id (field-offset|new-type-str)) → true if valid
+    // With int second arg: check field existence (0=int_val_, 1=type_id_)
+    // With string second arg: check type compatibility (new type string)
     primitives_.add("check-preconditions", [this](const auto& a) {
-        if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1]) || !current_flat_)
+        if (a.size() < 2 || !is_int(a[0]) || !current_flat_)
             return make_bool(false);
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        auto field = static_cast<std::uint32_t>(as_int(a[1]));
         auto& flat = *current_flat_;
         if (node >= flat.size()) return make_bool(false);
         auto nv = flat.get(node);
+
+        // String arg: type compatibility check
+        if (is_string(a[1])) {
+            auto type_idx = as_string_idx(a[1]);
+            if (type_idx >= string_heap_.size()) return make_bool(false);
+            auto new_type = string_heap_[type_idx];
+
+            // Check compatibility based on node tag
+            switch (nv.tag) {
+            case aura::ast::NodeTag::LiteralInt:
+                // Int literal: compatible with Int, Float, Bool (≠0), Dyn
+                return make_bool(new_type == "Int" || new_type == "Float"
+                              || new_type == "Bool" || new_type == "Dyn"
+                              || new_type == "Any");
+            case aura::ast::NodeTag::LiteralFloat:
+                // Float literal: compatible with Float, Dyn
+                return make_bool(new_type == "Float" || new_type == "Dyn"
+                              || new_type == "Any");
+            case aura::ast::NodeTag::LiteralString:
+                return make_bool(new_type == "String" || new_type == "Dyn"
+                              || new_type == "Any");
+            case aura::ast::NodeTag::Call:
+            case aura::ast::NodeTag::Lambda:
+                // Structural nodes: always OK (any type)
+                return make_bool(true);
+            case aura::ast::NodeTag::Variable:
+                // Variable: always OK (outer scope determines type)
+                return make_bool(true);
+            default:
+                // Other nodes: permissive
+                return make_bool(true);
+            }
+        }
+
+        // Int arg: field existence check
+        if (!is_int(a[1])) return make_bool(false);
+        auto field = static_cast<std::uint32_t>(as_int(a[1]));
         switch (field) {
         case 0: return make_bool(nv.has_int());   // int_val_
         case 1: return make_bool(true);            // type_id_ (always valid)

@@ -171,6 +171,10 @@ int main(int argc, char* argv[]) {
                             std::string s = sum_it != cmd.end() ? sum_it->second : "";
                             sexpr = std::format("(mutate:replace-value {} {} \"{}\")",
                                                 node, v, s);
+                        } else if (op_name == "mutate:replace-type") {
+                            // (mutate:replace-type node type-string)
+                            std::string t = val_it != cmd.end() ? val_it->second : "Dyn";
+                            sexpr = std::format("(mutate:replace-type {} \"{}\")", node, t);
                         } else {
                             // Generic: pass through with all fields
                             std::string v = val_it != cmd.end() ? val_it->second : "0";
