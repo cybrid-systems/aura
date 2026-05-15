@@ -60,6 +60,8 @@ export class Evaluator {
 public:
     Evaluator();
     void set_arena(ast::ASTArena* a) { arena_=a; }
+    // Set current FlatAST/Pool for mutation primitives
+    void set_flat_pool(ast::FlatAST* f, ast::StringPool* p) { current_flat_ = f; current_pool_ = p; }
     EvalResult eval_flat(aura::ast::FlatAST& flat,
                           aura::ast::StringPool& pool,
                           aura::ast::NodeId id,
@@ -73,6 +75,8 @@ private:
     Env* copy_env(const Env& env);
     void init_pair_primitives();
     Env top_; Primitives primitives_; ast::ASTArena* arena_=nullptr;
+    ast::FlatAST* current_flat_ = nullptr;
+    ast::StringPool* current_pool_ = nullptr;
     std::unordered_map<ClosureId,Closure> closures_;
     std::unordered_map<std::string, MacroDef> macros_;
     std::unordered_set<std::string> loaded_modules_;

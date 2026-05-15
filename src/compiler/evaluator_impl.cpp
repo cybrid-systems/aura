@@ -1005,6 +1005,74 @@ void Evaluator::init_pair_primitives() {
         if (!result) return make_void();
         return *result;
     });
+
+    // ── Typed mutation operators ──────────────────────────────────
+
+    primitives_.add("mutate:replace-type", [this](const auto& a) {
+        // (mutate:replace-type node-id new-type-str)
+        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1])) return make_int(0);
+        auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto type_idx = as_string_idx(a[1]);
+        if (type_idx >= string_heap_.size()) return make_int(0);
+        auto& type_str = string_heap_[type_idx];
+
+        if (!current_flat_) return make_int(0);
+        auto& flat = *current_flat_;
+        if (node >= flat.size()) return make_int(0);
+
+        // Get the old type string (format_type from type_id_)
+        auto old_tid = flat.type_id(node);
+        std::string old_type_str = (old_tid > 0) ? "#" + std::to_string(old_tid) : "Any";
+
+        // Record mutation
+        auto mid = flat.add_mutation(node, "replace-type", old_type_str,
+                                       type_str, "replace type annotation");
+        return make_int(static_cast<std::int64_t>(mid));
+    });
+
+    primitives_.add("mutate:record-patch", [this](const auto& a) {
+        // (mutate:record-patch node-id op-name summary)
+        if (a.size() < 3 || !is_int(a[0]) || !is_string(a[1]) || !is_string(a[2]))
+            return make_int(0);
+        auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto op_idx = as_string_idx(a[1]);
+        auto sum_idx = as_string_idx(a[2]);
+        if (op_idx >= string_heap_.size() || sum_idx >= string_heap_.size())
+            return make_int(0);
+
+        if (!current_flat_) return make_int(0);
+        auto& flat = *current_flat_;
+        if (node >= flat.size()) return make_int(0);
+
+        auto mid = flat.add_mutation(node, string_heap_[op_idx],
+                                       "<runtime>", "<runtime>", string_heap_[sum_idx]);
+        return make_int(static_cast<std::int64_t>(mid));
+    });
+
+    primitives_.add("mutation-count", [this](const auto&) {
+        if (!current_flat_) return make_int(0);
+        return make_int(static_cast<std::int64_t>(current_flat_->mutation_count()));
+    });
+
+    primitives_.add("mutation-history", [this](const auto& a) {
+        // (mutation-history node-id) → list of summary strings
+        if (a.empty() || !is_int(a[0]) || !current_flat_) return make_int(0);
+        auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto hist = current_flat_->mutation_history(node);
+        // Build a proper list (pair chain)
+        EvalValue result = make_void();
+        for (auto it = hist.rbegin(); it != hist.rend(); ++it) {
+            auto& rec = *it;
+            // Store summary in string heap
+            auto sid = string_heap_.size();
+            string_heap_.push_back(std::string("[") + std::to_string(rec.mutation_id)
+                + "] " + rec.operator_name + ": " + rec.summary);
+            auto pair_id = pairs_.size();
+            pairs_.push_back({make_string(sid), result});
+            result = make_pair(pair_id);
+        }
+        return result;
+    });
 }
 
 // ── Env::lookup_cell_ptr: returns EvalValue* ──────────────────
@@ -1057,6 +1125,8 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                                  aura::ast::StringPool& pool,
                                  aura::ast::NodeId id,
                                  const Env& env) {
+    current_flat_ = &flat;
+    current_pool_ = &pool;
     if (id >= flat.size())
         return std::unexpected(Diagnostic{ErrorKind::InternalError, "invalid node id"});
     auto v = flat.get(id);
