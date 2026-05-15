@@ -257,6 +257,12 @@ void InferenceEngine::init_primitive_env() {
     register_primitive("write-file",{String, String}, Void);
     register_primitive("file-exists?", {String}, Bool);
     register_primitive("gensym",    {}, String);
+
+    // Typed mutation operators (runtime-only, minimal type info)
+    register_primitive("mutate:replace-type",  {Dyn, String}, Dyn);
+    register_primitive("mutate:record-patch",  {Dyn, String, String}, Dyn);
+    register_primitive("mutation-count",       {}, Int);
+    register_primitive("mutation-history",     {Dyn}, Dyn);
     // Vector primitives
     register_primitive("vector",        {Dyn}, Vector);  // varargs — minimal
     register_primitive("vector-ref",    {Vector, Int}, Dyn);
