@@ -1,20 +1,7 @@
 module;
-#include <vector>
-#include <string>
-#include <string_view>
-#include <cstdint>
-#include <optional>
-#include <expected>
-#include <span>
-#include <array>
-#include <memory>
-#include <functional>
-#include <print>
-#include <format>
-#include <iostream>
-#include <cstdio>
 
 export module aura.compiler.reflect;
+import std;
 import aura.diag;
 
 namespace aura::reflect {

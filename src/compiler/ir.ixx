@@ -72,6 +72,8 @@ export enum class PrimId : std::uint8_t {
     VectorLength,
     VectorP,
     MakeVector,
+    // Module primitives
+    Import,
 };
 
 // Helper: pack two uint32 into one (for Call: args_begin << 16 | arg_count)
