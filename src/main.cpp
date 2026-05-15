@@ -742,7 +742,6 @@ int main(int argc, char* argv[]) {
             auto r = cs.eval(line);
             if (!r) std::println(std::cerr, "error: {}", r.error().message);
             else std::println("{}", fmt_val(*r, cs));
-            cs.reset();
         }
         return 0;
     }
@@ -759,7 +758,6 @@ int main(int argc, char* argv[]) {
         auto r = cs.eval(e);
         if (!r) { std::println(std::cerr, "error: {}", r.error().message); err = true; }
         else std::println("{}", fmt_val(*r, cs));
-        cs.reset();
     }
     return err ? 1 : 0;
 }
