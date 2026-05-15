@@ -1008,30 +1008,57 @@ void Evaluator::init_pair_primitives() {
 
     // ── Typed mutation operators ──────────────────────────────────
 
+    // (mutate:replace-type node-id new-type-str)
     primitives_.add("mutate:replace-type", [this](const auto& a) {
-        // (mutate:replace-type node-id new-type-str)
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1])) return make_int(0);
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto type_idx = as_string_idx(a[1]);
         if (type_idx >= string_heap_.size()) return make_int(0);
-        auto& type_str = string_heap_[type_idx];
-
         if (!current_flat_) return make_int(0);
         auto& flat = *current_flat_;
         if (node >= flat.size()) return make_int(0);
 
-        // Get the old type string (format_type from type_id_)
         auto old_tid = flat.type_id(node);
-        std::string old_type_str = (old_tid > 0) ? "#" + std::to_string(old_tid) : "Any";
+        std::string old_type_str = (old_tid > 0)
+            ? "#" + std::to_string(old_tid) : "Any";
+        auto old_val = static_cast<std::uint64_t>(old_tid);
+        auto new_val = static_cast<std::uint64_t>(string_heap_.size()); // placeholder
 
-        // Record mutation
-        auto mid = flat.add_mutation(node, "replace-type", old_type_str,
-                                       type_str, "replace type annotation");
+        auto mid = flat.add_mutation_with_rollback(node, "replace-type",
+            old_type_str, string_heap_[type_idx], "replace type annotation",
+            aura::ast::MutationStatus::Committed, 1, old_val, new_val, true);
         return make_int(static_cast<std::int64_t>(mid));
     });
 
+    // (mutate:replace-value node-id new-int-value summary)
+    primitives_.add("mutate:replace-value", [this](const auto& a) {
+        if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_string(a[2]))
+            return make_int(0);
+        auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto new_val = static_cast<std::uint64_t>(as_int(a[1]));
+        auto sum_idx = as_string_idx(a[2]);
+        if (sum_idx >= string_heap_.size()) return make_int(0);
+        if (!current_flat_) return make_int(0);
+        auto& flat = *current_flat_;
+        if (node >= flat.size()) return make_int(0);
+
+        // Check preconditions: node must exist and be the right tag
+        auto nv = flat.get(node);
+        if (!nv.has_int()) return make_int(0);  // not a LiteralInt
+
+        // Check precondition: field 0 (int_val_) exists for this node
+        auto old_val = static_cast<std::uint64_t>(nv.int_value);
+
+        auto mid = flat.add_mutation_with_rollback(node, "replace-value",
+            "Int", "Int", string_heap_[sum_idx],
+            aura::ast::MutationStatus::Committed, 0, old_val, new_val, true);
+        // Apply the change
+        flat.set_int(node, static_cast<std::int64_t>(new_val));
+        return make_int(static_cast<std::int64_t>(mid));
+    });
+
+    // (mutate:record-patch node-id op-name summary)
     primitives_.add("mutate:record-patch", [this](const auto& a) {
-        // (mutate:record-patch node-id op-name summary)
         if (a.size() < 3 || !is_int(a[0]) || !is_string(a[1]) || !is_string(a[2]))
             return make_int(0);
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
@@ -1039,39 +1066,68 @@ void Evaluator::init_pair_primitives() {
         auto sum_idx = as_string_idx(a[2]);
         if (op_idx >= string_heap_.size() || sum_idx >= string_heap_.size())
             return make_int(0);
-
         if (!current_flat_) return make_int(0);
         auto& flat = *current_flat_;
         if (node >= flat.size()) return make_int(0);
 
         auto mid = flat.add_mutation(node, string_heap_[op_idx],
-                                       "<runtime>", "<runtime>", string_heap_[sum_idx]);
+            "<runtime>", "<runtime>", string_heap_[sum_idx]);
         return make_int(static_cast<std::int64_t>(mid));
     });
 
+    // (mutation-count)
     primitives_.add("mutation-count", [this](const auto&) {
         if (!current_flat_) return make_int(0);
         return make_int(static_cast<std::int64_t>(current_flat_->mutation_count()));
     });
 
+    // (mutation-history node-id) → list of summary strings
     primitives_.add("mutation-history", [this](const auto& a) {
-        // (mutation-history node-id) → list of summary strings
         if (a.empty() || !is_int(a[0]) || !current_flat_) return make_int(0);
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto hist = current_flat_->mutation_history(node);
-        // Build a proper list (pair chain)
         EvalValue result = make_void();
         for (auto it = hist.rbegin(); it != hist.rend(); ++it) {
             auto& rec = *it;
-            // Store summary in string heap
             auto sid = string_heap_.size();
-            string_heap_.push_back(std::string("[") + std::to_string(rec.mutation_id)
-                + "] " + rec.operator_name + ": " + rec.summary);
+            string_heap_.push_back(std::format("[{}] {}: {}{}",
+                rec.mutation_id, rec.operator_name, rec.summary,
+                rec.status == aura::ast::MutationStatus::RolledBack ? " [rolled-back]" : ""));
             auto pair_id = pairs_.size();
             pairs_.push_back({make_string(sid), result});
             result = make_pair(pair_id);
         }
         return result;
+    });
+
+    // (rollback mutation-id) → true if successful
+    primitives_.add("rollback", [this](const auto& a) {
+        if (a.empty() || !is_int(a[0]) || !current_flat_) return make_bool(false);
+        auto mid = static_cast<std::uint64_t>(as_int(a[0]));
+        return make_bool(current_flat_->rollback(mid));
+    });
+
+    // (rollback-since mutation-id) → count of rolled-back mutations
+    primitives_.add("rollback-since", [this](const auto& a) {
+        if (a.empty() || !is_int(a[0]) || !current_flat_) return make_int(0);
+        auto mid = static_cast<std::uint64_t>(as_int(a[0]));
+        return make_int(static_cast<std::int64_t>(current_flat_->rollback_since(mid)));
+    });
+
+    // (check-preconditions node-id field-offset) → true if valid
+    primitives_.add("check-preconditions", [this](const auto& a) {
+        if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1]) || !current_flat_)
+            return make_bool(false);
+        auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto field = static_cast<std::uint32_t>(as_int(a[1]));
+        auto& flat = *current_flat_;
+        if (node >= flat.size()) return make_bool(false);
+        auto nv = flat.get(node);
+        switch (field) {
+        case 0: return make_bool(nv.has_int());   // int_val_
+        case 1: return make_bool(true);            // type_id_ (always valid)
+        default: return make_bool(false);
+        }
     });
 }
 

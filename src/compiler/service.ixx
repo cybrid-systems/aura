@@ -45,6 +45,9 @@ public:
                 aura::diag::ErrorKind::ParseError, pr.error.empty() ? "parse error" : pr.error});
         }
         flat_ptr->root = pr.root;
+        // Store for mutation targeting
+        current_ast_ = flat_ptr;
+        current_pool_ = pool_ptr;
         return evaluator_.eval_flat(*flat_ptr, *pool_ptr, flat_ptr->root, evaluator_.top_env());
     }
 
@@ -62,6 +65,9 @@ public:
                 aura::diag::ErrorKind::ParseError, pr.error});
         }
         flat_ptr->root = pr.root;
+        // Store for mutation targeting
+        current_ast_ = flat_ptr;
+        current_pool_ = pool_ptr;
 
         // IR pipeline doesn't support macros — fall back to tree-walker evaluator
         for (aura::ast::NodeId id = 0; id < flat_ptr->size(); ++id) {
@@ -333,6 +339,9 @@ public:
                 aura::diag::ErrorKind::ParseError, pr.error.empty() ? "parse error" : pr.error});
         }
         flat_ptr->root = pr.root;
+        // Store for mutation targeting
+        current_ast_ = flat_ptr;
+        current_pool_ = pool_ptr;
 
         // Check if root is a Define node
         if (flat_ptr->get(flat_ptr->root).tag == aura::ast::NodeTag::Define) {
@@ -400,6 +409,119 @@ public:
     EvalResult exec_with_cache(std::string_view code) {
         return eval_ir(code);
     }
+
+    // ── Persistent AST for mutation workflows ───────────────────
+
+    // Parse input into a persistent AST (stored in the arena).
+    // Subsequent typed_mutate / query_mutation_log calls operate on this AST.
+    // Call set_code() again to replace the program.
+    void set_code(std::string_view input) {
+        auto alloc = arena_.allocator();
+        current_ast_ = arena_.create<aura::ast::FlatAST>(alloc);
+        current_pool_ = arena_.create<aura::ast::StringPool>(alloc);
+        auto pr = aura::parser::parse_to_flat(input, *current_ast_, *current_pool_);
+        if (pr.success && pr.root != aura::ast::NULL_NODE) {
+            current_ast_->root = pr.root;
+        } else {
+            current_ast_ = nullptr;
+            current_pool_ = nullptr;
+        }
+    }
+
+    // Evaluate the persistent AST (tree-walker only).
+    EvalResult eval_current() {
+        if (!current_ast_ || !current_pool_ || current_ast_->root == aura::ast::NULL_NODE) {
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError, "no code loaded — call set_code() first"});
+        }
+        return evaluator_.eval_flat(*current_ast_, *current_pool_,
+                                     current_ast_->root, evaluator_.top_env());
+    }
+
+    // Result of a mutation operation.
+    struct MutationResult {
+        std::uint64_t mutation_id;
+        bool success;
+        std::string error;
+    };
+
+    // Mutation log entry (for JSON serialization).
+    struct MutationLogEntry {
+        std::uint64_t mutation_id;
+        std::uint64_t timestamp_ms;
+        std::uint32_t target_node;
+        std::string operator_name;
+        std::string old_type;
+        std::string new_type;
+        std::string summary;
+        std::string status;  // "Committed" or "RolledBack"
+    };
+
+    // Evaluate an S-expression by parsing it INTO persistent AST (current_ast_).
+    // This makes all nodes co-exist in one FlatAST, so mutation primitives
+    // correctly read/write the original program's nodes.
+    EvalResult eval_on_current(std::string_view sexpr) {
+        if (!current_ast_ || !current_pool_) {
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError, "no AST loaded"});
+        }
+        auto pr = aura::parser::parse_to_flat(sexpr, *current_ast_, *current_pool_);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::ParseError,
+                pr.error.empty() ? "parse error" : pr.error});
+        }
+        return evaluator_.eval_flat(*current_ast_, *current_pool_,
+                                     pr.root, evaluator_.top_env());
+    }
+
+    // Apply a mutation expression by parsing it INTO the persistent AST.
+    // Returns the mutation ID (0 on failure).
+    MutationResult typed_mutate(std::string_view sexpr) {
+        if (!current_ast_ || !current_pool_) {
+            return {0, false, "no AST loaded"};
+        }
+        auto pr = aura::parser::parse_to_flat(sexpr, *current_ast_, *current_pool_);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+            return {0, false, pr.error.empty() ? "parse error" : pr.error};
+        }
+        auto result = evaluator_.eval_flat(*current_ast_, *current_pool_,
+                                            pr.root, evaluator_.top_env());
+        if (!result) {
+            return {0, false, result.error().message};
+        }
+        auto& val = *result;
+        auto mid = static_cast<std::uint64_t>(
+            aura::compiler::types::is_int(val) ? aura::compiler::types::as_int(val) : 0);
+        return {mid, mid > 0, ""};
+    }
+
+    // Query mutation log for a specific node (or all nodes if NULL_NODE).
+    std::vector<MutationLogEntry> query_mutation_log(
+        aura::ast::NodeId node = aura::ast::NULL_NODE) const {
+        std::vector<MutationLogEntry> result;
+        if (!current_ast_) return result;
+        auto hist = (node == aura::ast::NULL_NODE)
+            ? current_ast_->all_mutations()
+            : current_ast_->mutation_history(node);
+        for (auto& rec : hist) {
+            result.push_back({
+                rec.mutation_id,
+                rec.timestamp_ms,
+                rec.target_node,
+                rec.operator_name,
+                rec.old_type_str,
+                rec.new_type_str,
+                rec.summary,
+                rec.status == aura::ast::MutationStatus::Committed ? "Committed" : "RolledBack"
+            });
+        }
+        return result;
+    }
+
+    // Get the current persistent AST (for direct inspection).
+    aura::ast::FlatAST* current_ast() const { return current_ast_; }
+    aura::ast::StringPool* current_pool() const { return current_pool_; }
 
 private:
     // Try to extract a define/let/letrec binding from the FlatAST root.
@@ -588,6 +710,10 @@ private:
     std::vector<aura::compiler::ClosureSnapshot> last_closures_;
     std::vector<aura::compiler::CellSnapshot> last_cells_;
     std::optional<aura::ir::IRModule> last_ir_mod_;
+
+    // Persistent AST for mutation workflows (set_code / typed_mutate).
+    aura::ast::FlatAST* current_ast_ = nullptr;
+    aura::ast::StringPool* current_pool_ = nullptr;
 };
 
 } // namespace aura::compiler

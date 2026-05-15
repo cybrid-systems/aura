@@ -73,21 +73,33 @@ static std::unordered_map<std::string, std::string> parse_json_command(std::stri
         ++p;
 
         skip_ws();
-        // Parse value (must be quoted string)
-        if (*p != '"') return result;
-        ++p;
+        // Parse value (string or number/bool/null)
         std::string value;
-        while (p < end && *p != '"') {
-            if (*p == '\\' && p + 1 < end) {
-                ++p;
-                value += *p;
-            } else {
-                value += *p;
-            }
+        if (*p == '"') {
+            // Quoted string
             ++p;
+            while (p < end && *p != '"') {
+                if (*p == '\\' && p + 1 < end) {
+                    ++p;
+                    value += *p;
+                } else {
+                    value += *p;
+                }
+                ++p;
+            }
+            if (p >= end) return result;
+            ++p; // skip closing quote
+        } else if (*p == 't' || *p == 'f' || *p == 'n') {
+            // true / false / null
+            while (p < end && (*p != ',' && *p != '}' && *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r')) {
+                value += *p++;
+            }
+        } else {
+            // Number (int or float)
+            while (p < end && *p != ',' && *p != '}' && *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r') {
+                value += *p++;
+            }
         }
-        if (p >= end) return result;
-        ++p; // skip closing quote
 
         result[std::move(key)] = std::move(value);
 
@@ -127,13 +139,102 @@ int main(int argc, char* argv[]) {
                     continue;
                 }
                 auto cmd_type = cmd.find("cmd");
-                auto code_it = cmd.find("code");
-                if (cmd_type == cmd.end() || code_it == cmd.end()) {
-                    std::println("{{\"status\":\"error\",\"msg\":\"missing cmd or code field\"}}");
+                if (cmd_type == cmd.end()) {
+                    std::println("{{\"status\":\"error\",\"msg\":\"missing cmd field\"}}");
                     continue;
                 }
                 auto& type = cmd_type->second;
-                auto& code = code_it->second;
+
+                // Commands that don't need a code field
+                if (type == "mutate") {
+                    // {"cmd": "mutate", "op": "record-patch", "node": 0, "op-name": "replace-type", "summary": "change type"}
+                    auto op_it = cmd.find("op");          // mutation op name
+                    auto node_it = cmd.find("node");       // target node ID
+                    auto val_it = cmd.find("value");       // for replace-value
+                    auto on_it = cmd.find("op-name");      // for record-patch: recorded op name
+                    auto sum_it = cmd.find("summary");
+                    if (op_it == cmd.end() || node_it == cmd.end()) {
+                        std::println("{{\"status\":\"error\",\"msg\":\"missing op or node\"}}");
+                    } else {
+                        auto op_name = op_it->second;
+                        auto node = std::stoll(node_it->second);
+                        std::string sexpr;
+                        if (op_name == "mutate:record-patch") {
+                            // (mutate:record-patch node op-name summary)
+                            std::string on = on_it != cmd.end() ? on_it->second : "patch";
+                            std::string s = sum_it != cmd.end() ? sum_it->second : "";
+                            sexpr = std::format("(mutate:record-patch {} \"{}\" \"{}\")",
+                                                node, on, s);
+                        } else if (op_name == "mutate:replace-value") {
+                            // (mutate:replace-value node new-value summary)
+                            std::string v = val_it != cmd.end() ? val_it->second : "0";
+                            std::string s = sum_it != cmd.end() ? sum_it->second : "";
+                            sexpr = std::format("(mutate:replace-value {} {} \"{}\")",
+                                                node, v, s);
+                        } else {
+                            // Generic: pass through with all fields
+                            std::string v = val_it != cmd.end() ? val_it->second : "0";
+                            std::string s = sum_it != cmd.end() ? sum_it->second : "";
+                            sexpr = std::format("({} {} {} \"{}\")",
+                                                op_name, node, v, s);
+                        }
+                        auto mut_result = cs.typed_mutate(sexpr);
+                        if (mut_result.success) {
+                            std::println("{{\"status\":\"ok\",\"mutation_id\":{}}}",
+                                        mut_result.mutation_id);
+                        } else {
+                            std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
+                                        json_escape(mut_result.error.empty()
+                                            ? "mutation failed" : mut_result.error));
+                        }
+                    }
+                    continue;
+                }
+                if (type == "rollback") {
+                    // {"cmd": "rollback", "id": 1}
+                    auto id_it = cmd.find("id");
+                    if (id_it == cmd.end()) {
+                        std::println("{{\"status\":\"error\",\"msg\":\"missing id\"}}");
+                    } else {
+                        auto sexpr = std::format("(rollback {})", id_it->second);
+                        auto result = cs.eval_on_current(sexpr);
+                        std::println("{{\"status\":\"ok\",\"rolled_back\":{}}}",
+                                    result ? (is_bool(*result) ? (as_bool(*result) ? "true" : "false") : "false") : "false");
+                    }
+                    continue;
+                }
+                if (type == "mutation-log") {
+                    // {"cmd": "mutation-log", "node": 0}
+                    auto node_it = cmd.find("node");
+                    if (node_it == cmd.end()) {
+                        std::println("{{\"status\":\"error\",\"msg\":\"missing node\"}}");
+                    } else {
+                        auto node = static_cast<aura::ast::NodeId>(std::stoul(node_it->second));
+                        auto entries = cs.query_mutation_log(node);
+                        std::println("{{\"status\":\"ok\",\"log\":[");
+                        bool first = true;
+                        for (auto& e : entries) {
+                            if (!first) std::println(",");
+                            first = false;
+                            std::print("  {{\"id\":{},\"ts\":{},\"node\":{},\"op\":\"{}\","
+                                       "\"old_type\":\"{}\",\"new_type\":\"{}\","
+                                       "\"summary\":\"{}\",\"status\":\"{}\"}}",
+                                       e.mutation_id, e.timestamp_ms, e.target_node,
+                                       json_escape(e.operator_name),
+                                       json_escape(e.old_type), json_escape(e.new_type),
+                                       json_escape(e.summary), json_escape(e.status));
+                        }
+                        std::println("]}}");
+                    }
+                    continue;
+                }
+                {
+                    auto code_it = cmd.find("code");
+                    if (code_it == cmd.end()) {
+                        std::println("{{\"status\":\"error\",\"msg\":\"missing code field\"}}");
+                        continue;
+                    }
+                    auto& code = code_it->second;
 
                 if (type == "defmacro") {
                     auto result = cs.define_function(code);
@@ -222,11 +323,73 @@ int main(int argc, char* argv[]) {
                         }
                     }
                 }
+                else if (type == "mutate") {
+                    // {"cmd": "mutate", "op": "replace-value", "node": 0, "value": 42, "summary": "change x"}
+                    auto op_it = cmd.find("op");
+                    auto node_it = cmd.find("node");
+                    auto val_it = cmd.find("value");
+                    auto sum_it = cmd.find("summary");
+                    if (op_it == cmd.end() || node_it == cmd.end()) {
+                        std::println("{{\"status\":\"error\",\"msg\":\"missing op or node\"}}");
+                    } else {
+                        auto node = std::stoll(node_it->second);
+                        auto sexpr = std::format("({} {} {}{}{})",
+                            op_it->second, node,
+                            val_it != cmd.end() ? val_it->second : "0",
+                            sum_it != cmd.end() ? " \"" + sum_it->second + "\"" : " \"\"",
+                            "");
+                        // Evaluate mutation against the persistent AST
+                        auto mut_result = cs.typed_mutate(sexpr);
+                        if (mut_result.success) {
+                            std::println("{{\"status\":\"ok\",\"mutation_id\":{}}}",
+                                        mut_result.mutation_id);
+                        } else {
+                            std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
+                                        json_escape(mut_result.error));
+                        }
+                    }
+                }
+                else if (type == "rollback") {
+                    // {"cmd": "rollback", "id": 1}
+                    auto id_it = cmd.find("id");
+                    if (id_it == cmd.end()) {
+                        std::println("{{\"status\":\"error\",\"msg\":\"missing id\"}}");
+                    } else {
+                        auto sexpr = std::format("(rollback {})", id_it->second);
+                        auto result = cs.eval_on_current(sexpr);
+                        std::println("{{\"status\":\"ok\",\"rolled_back\":{}}}",
+                                    result ? (is_bool(*result) ? (as_bool(*result) ? "true" : "false") : "false") : "false");
+                    }
+                }
+                else if (type == "mutation-log") {
+                    // {"cmd": "mutation-log", "node": 0}
+                    auto node_it = cmd.find("node");
+                    if (node_it == cmd.end()) {
+                        std::println("{{\"status\":\"error\",\"msg\":\"missing node\"}}");
+                    } else {
+                        auto node = static_cast<aura::ast::NodeId>(std::stoul(node_it->second));
+                        auto entries = cs.query_mutation_log(node);
+                        std::println("{{\"status\":\"ok\",\"log\":[");
+                        bool first = true;
+                        for (auto& e : entries) {
+                            if (!first) std::println(",");
+                            first = false;
+                            std::print("  {{\"id\":{},\"ts\":{},\"node\":{},\"op\":\"{}\","
+                                       "\"old_type\":\"{}\",\"new_type\":\"{}\","
+                                       "\"summary\":\"{}\",\"status\":\"{}\"}}",
+                                       e.mutation_id, e.timestamp_ms, e.target_node,
+                                       json_escape(e.operator_name),
+                                       json_escape(e.old_type), json_escape(e.new_type),
+                                       json_escape(e.summary), json_escape(e.status));
+                        }
+                        std::println("]}}");
+                    }
+                }
                 else {
                     std::println("{{\"status\":\"error\",\"msg\":\"unknown command: {}\"}}",
                                  json_escape(type));
                 }
-            } else {
+            } } else {
                 // ── Plain S-expression (backward compatible) ────────
                 auto alloc = cs.arena().allocator();
                 aura::ast::StringPool pool(alloc);
