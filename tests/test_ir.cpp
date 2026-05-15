@@ -867,6 +867,80 @@ int main() {
         if (tc_failed > 0) return 1;
     }
 
+    // ═══════════════════════════════════════════════════════════
+    // Mutation audit tests
+    // ═══════════════════════════════════════════════════════════
+    {
+        using namespace aura::ast;
+        int mu_passed = 0, mu_failed = 0;
+
+        // Create FlatAST with arena
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        FlatAST flat(alloc);
+        StringPool pool(alloc);
+
+        // Build a simple AST: (+ 1 2)
+        auto lit1 = flat.add_literal(1);
+        auto lit2 = flat.add_literal(2);
+        auto plus = flat.add_variable(pool.intern("+"));
+        std::vector<aura::ast::NodeId> call_args = {lit1, lit2};
+        auto call = flat.add_call(plus, call_args);
+        flat.root = call;
+
+        // Record mutations
+        auto m1 = flat.add_mutation(lit1, "replace-value", "Int", "Float",
+                                     "change 1 to 1.0");
+        auto m2 = flat.add_mutation(call, "replace-op", "(Int Int -> Int)",
+                                     "(Float Float -> Float)", "change + to f+");
+        auto m3 = flat.add_mutation(lit1, "refine-constraint", "Int",
+                                     "{x: Int | x > 0}", "add positive constraint");
+
+        if (flat.mutation_count() == 3) {
+            std::println("MU OK: mutation_count = 3"); ++mu_passed;
+        } else {
+            std::println(std::cerr, "MU FAIL: expected 3, got {}", flat.mutation_count()); ++mu_failed;
+        }
+
+        auto hist1 = flat.mutation_history(lit1);
+        if (hist1.size() == 2) {
+            std::println("MU OK: lit1 has 2 mutations"); ++mu_passed;
+        } else {
+            std::println(std::cerr, "MU FAIL: lit1 expected 2, got {}", hist1.size()); ++mu_failed;
+        }
+
+        if (hist1[0].operator_name == hist1[1].operator_name) {
+            std::println(std::cerr, "MU FAIL: same operator on lit1"); ++mu_failed;
+        } else {
+            std::println("MU OK: lit1 ops differ ({})", hist1[1].operator_name); ++mu_passed;
+        }
+
+        auto hist2 = flat.mutation_history(call);
+        if (hist2.size() == 1 && hist2[0].operator_name == "replace-op") {
+            std::println("MU OK: call mutation correct"); ++mu_passed;
+        } else {
+            std::println(std::cerr, "MU FAIL: call mutation"); ++mu_failed;
+        }
+
+        auto hist3 = flat.mutation_history(lit2);
+        if (hist3.empty()) {
+            std::println("MU OK: lit2 has 0 mutations"); ++mu_passed;
+        } else {
+            std::println(std::cerr, "MU FAIL: lit2 expected 0"); ++mu_failed;
+        }
+
+        // Verify mutation_id monotonic
+        if (m1 < m2 && m2 < m3) {
+            std::println("MU OK: mutation IDs monotonic"); ++mu_passed;
+        } else {
+            std::println(std::cerr, "MU FAIL: non-monotonic IDs"); ++mu_failed;
+        }
+
+        std::println("Mutation audit: {}/{}/{} passed/failed/total",
+                     mu_passed, mu_failed, mu_passed + mu_failed);
+        if (mu_failed > 0) return 1;
+    }
+
     std::println("Memory pool test: {}/{}/{} passed/failed/total",
                  mp_passed, mp_failed, mp_passed + mp_failed);
     return (failed + ck_failed + arity_failed + mp_failed + pm_failed + cf_failed) > 0 ? 1 : 0;

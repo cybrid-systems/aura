@@ -223,6 +223,23 @@ export struct NodeView {
     NodeId child(std::uint32_t i) const { return children[i]; }
 };
 
+// ── MutationRecord — typed mutation audit log ─────────────────
+export enum class MutationStatus : std::uint8_t {
+    Committed,
+    RolledBack,
+};
+
+export struct MutationRecord {
+    std::uint64_t mutation_id;
+    std::uint64_t timestamp_ms;
+    NodeId target_node;
+    std::string operator_name;   // "replace-type", "refine-constraint", ...
+    std::string old_type_str;    // format_type(old_type) at mutation time
+    std::string new_type_str;    // format_type(new_type) at mutation time
+    std::string summary;         // human-readable change description
+    MutationStatus status;
+};
+
 // ── Patch — AI mutation descriptor ─────────────────────────────
 export struct Patch {
     NodeId node = NULL_NODE;
@@ -247,6 +264,7 @@ private:
         col_.push_back(0);
         marker_.push_back(m);
         type_id_.push_back(0);
+        node_first_mutation_.push_back(0);
         return id;
     }
 
@@ -267,6 +285,10 @@ private:
     // Type information (L6.5+): type_id per node, 0 = DYNAMIC
     std::pmr::vector<SyntaxMarker> marker_;
     std::pmr::vector<std::uint32_t> type_id_;
+    // Mutation audit log (heap-allocated, small+append-only)
+    std::vector<MutationRecord> mutation_log_;
+    std::vector<std::uint32_t> node_first_mutation_;
+    std::uint64_t next_mutation_id_ = 1;
 
 public:
     explicit FlatAST(std::pmr::polymorphic_allocator<std::byte> alloc = {})
@@ -494,6 +516,43 @@ public:
     SyntaxMarker marker(NodeId id) const {
         return id < marker_.size() ? marker_[id] : SyntaxMarker::User;
     }
+
+    // ── Mutation audit ──────────────────────────────────────────
+
+    // Record a mutation on a node. Returns the mutation_id.
+    std::uint64_t add_mutation(NodeId node, std::string_view op_name,
+                                std::string_view old_type, std::string_view new_type,
+                                std::string_view summary,
+                                MutationStatus status = MutationStatus::Committed) {
+        std::uint64_t mid = next_mutation_id_++;
+        auto now = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()
+            ).count());
+        mutation_log_.push_back({mid, now, node, std::string(op_name),
+                                  std::string(old_type), std::string(new_type),
+                                  std::string(summary), status});
+        // Update node_first_mutation_ index
+        if (node < node_first_mutation_.size() && node_first_mutation_[node] == 0) {
+            node_first_mutation_[node] = static_cast<std::uint32_t>(mutation_log_.size());
+        }
+        // If node index doesn't exist yet, we'll set it on next get
+        return mid;
+    }
+
+    // Get mutation history for a specific node (0 == no history)
+    // Get mutation history for a specific node (filters from log, O(n) in log size)
+    std::vector<MutationRecord> mutation_history(NodeId node) const {
+        std::vector<MutationRecord> result;
+        for (auto& rec : mutation_log_) {
+            if (rec.target_node == node)
+                result.push_back(rec);
+        }
+        return result;
+    }
+
+    // Total number of mutations recorded
+    std::size_t mutation_count() const { return mutation_log_.size(); }
 
     // ── Type ID access ─────────────────────────────────────────
 
