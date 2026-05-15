@@ -233,11 +233,16 @@ export struct MutationRecord {
     std::uint64_t mutation_id;
     std::uint64_t timestamp_ms;
     NodeId target_node;
-    std::string operator_name;   // "replace-type", "refine-constraint", ...
+    std::string operator_name;   // "replace-type", "replace-value", ...
     std::string old_type_str;    // format_type(old_type) at mutation time
     std::string new_type_str;    // format_type(new_type) at mutation time
     std::string summary;         // human-readable change description
     MutationStatus status;
+    // Rollback data: for apply_patches-style rollback
+    std::uint32_t field_offset;  // which SoA column was modified
+    std::uint64_t old_value;     // original value before mutation
+    std::uint64_t new_value;     // value after mutation
+    bool has_rollback_data;      // true if rollback is available
 };
 
 // ── Patch — AI mutation descriptor ─────────────────────────────
@@ -524,6 +529,19 @@ public:
                                 std::string_view old_type, std::string_view new_type,
                                 std::string_view summary,
                                 MutationStatus status = MutationStatus::Committed) {
+        return add_mutation_with_rollback(node, op_name, old_type, new_type,
+                                           summary, status, 0, 0, 0, false);
+    }
+
+    // Record a mutation with rollback data (field_offset + old/new_value)
+    std::uint64_t add_mutation_with_rollback(NodeId node, std::string_view op_name,
+                                              std::string_view old_type, std::string_view new_type,
+                                              std::string_view summary,
+                                              MutationStatus status,
+                                              std::uint32_t field_offset,
+                                              std::uint64_t old_value,
+                                              std::uint64_t new_value,
+                                              bool has_rollback) {
         std::uint64_t mid = next_mutation_id_++;
         auto now = static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -531,7 +549,8 @@ public:
             ).count());
         mutation_log_.push_back({mid, now, node, std::string(op_name),
                                   std::string(old_type), std::string(new_type),
-                                  std::string(summary), status});
+                                  std::string(summary), status,
+                                  field_offset, old_value, new_value, has_rollback});
         // Update node_first_mutation_ index
         if (node < node_first_mutation_.size() && node_first_mutation_[node] == 0) {
             node_first_mutation_[node] = static_cast<std::uint32_t>(mutation_log_.size());
@@ -554,6 +573,53 @@ public:
     // Total number of mutations recorded
     std::size_t mutation_count() const { return mutation_log_.size(); }
 
+    // Get all mutation records (unfiltered).
+    const std::vector<MutationRecord>& all_mutations() const { return mutation_log_; }
+    std::vector<MutationRecord>& all_mutations() { return mutation_log_; }
+
+    // Rollback a mutation by ID. Returns true if successful.
+    bool rollback(std::uint64_t mutation_id) {
+        for (auto& rec : mutation_log_) {
+            if (rec.mutation_id == mutation_id) {
+                if (rec.status != MutationStatus::Committed) return false;
+                if (!rec.has_rollback_data) return false;
+                // Apply old value back to the SoA column
+                if (rec.target_node < tag_.size()) {
+                    switch (rec.field_offset) {
+                    case 0: // int_val_
+                        if (rec.target_node < int_val_.size()) {
+                            int_val_[rec.target_node] = static_cast<std::int64_t>(rec.old_value);
+                            rec.status = MutationStatus::RolledBack;
+                            return true;
+                        }
+                        break;
+                    case 1: // type_id_
+                        if (rec.target_node < type_id_.size()) {
+                            type_id_[rec.target_node] = static_cast<std::uint32_t>(rec.old_value);
+                            rec.status = MutationStatus::RolledBack;
+                            return true;
+                        }
+                        break;
+                    default: return false;
+                    }
+                }
+                return false;
+            }
+        }
+        return false;
+    }
+
+    // Rollback all mutations since (and including) the given ID.
+    std::size_t rollback_since(std::uint64_t since_id) {
+        std::size_t count = 0;
+        for (auto it = mutation_log_.rbegin(); it != mutation_log_.rend(); ++it) {
+            if (it->mutation_id >= since_id && it->status == MutationStatus::Committed) {
+                if (rollback(it->mutation_id)) ++count;
+            }
+        }
+        return count;
+    }
+
     // ── Type ID access ─────────────────────────────────────────
 
     std::uint32_t type_id(NodeId id) const {
@@ -562,6 +628,10 @@ public:
 
     void set_type(NodeId id, std::uint32_t tid) {
         if (id < type_id_.size()) type_id_[id] = tid;
+    }
+
+    void set_int(NodeId id, std::int64_t val) {
+        if (id < int_val_.size()) int_val_[id] = val;
     }
 
     // Resolve type names → TypeIds for all TypeAnnotation nodes
