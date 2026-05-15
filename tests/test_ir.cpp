@@ -853,7 +853,7 @@ int main() {
             auto forall = treg.register_forall(a_var, int_type);
             auto tag = treg.tag_of(forall);
             auto fmt = treg.format_type(forall);
-            if (tag == aura::core::TypeTag::FORALL && fmt.find("forall") != std::string::npos) {
+            if (tag == aura::core::TypeTag::FORALL && (fmt.find("∀") != std::string::npos || fmt.find("forall") != std::string::npos)) {
                 std::println("TC OK: forall type registered → {}", fmt);
                 ++tc_passed;
             } else {

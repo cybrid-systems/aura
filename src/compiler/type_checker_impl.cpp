@@ -224,8 +224,19 @@ void InferenceEngine::init_primitive_env() {
     register_primitive("member",  {Dyn, Dyn}, Dyn);
     register_primitive("append",  {Dyn, Dyn}, Dyn);
     register_primitive("reverse", {Dyn}, Dyn);
-    register_primitive("map",     {Dyn, Dyn}, Dyn);
-    register_primitive("filter",  {Dyn, Dyn}, Dyn);
+    // Polymorphic map/filter: ∀a b. ((a -> b), list a) -> b
+    // The list types are approximated as Any for now (no proper List type).
+    // The function contract (a→b) enforces type consistency between args and results.
+    {
+        auto a = reg_.make_var("a");
+        auto b = reg_.make_var("b");
+        auto a_to_b = reg_.register_func({a}, b);
+        auto list_a = reg_.dynamic_type();
+        auto map_type = reg_.register_func({a_to_b, list_a}, b);
+        auto forall_map = reg_.register_forall(a, reg_.register_forall(b, map_type));
+        env_.bind("map", forall_map);
+        env_.bind("filter", forall_map);
+    }
 
     // I/O
     register_primitive("display", {Dyn}, Void);
@@ -445,13 +456,23 @@ TypeId InferenceEngine::synthesize_flat_var(StringPool& pool, NodeView v) {
         return reg_.dynamic_type();
     }
     std::string var_name(name);
-    auto ty = env_.lookup(var_name);
-    if (!ty.valid()) {
+    auto ty_raw = env_.lookup(var_name);
+    if (!ty_raw.valid()) {
         diag_.report(Diagnostic(ErrorKind::UnboundVariable,
             "unbound variable: " + var_name, cur_loc_));
         return reg_.dynamic_type();
     }
-    return ty;
+    // Fully instantiate forall types (peel all ∀ layers) with fresh variables
+    auto instantiate_all = [&](this const auto& self, TypeId tid) -> TypeId {
+        auto* ft = reg_.forall_of(tid);
+        if (!ft) return tid;
+        auto inst = reg_.instantiate(tid, [this]() { return cs_.fresh_var(); });
+        return self(inst);
+    };
+    if (reg_.forall_of(ty_raw)) {
+        return instantiate_all(ty_raw);
+    }
+    return ty_raw;
 }
 
 TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, NodeView v) {
