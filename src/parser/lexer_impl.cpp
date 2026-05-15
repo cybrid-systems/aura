@@ -10,6 +10,7 @@ Token Lexer::advance() {
     switch (c) {
     case '(': return make_tok(TokenKind::LParen, source_.substr(pos_++, 1));
     case ')': return make_tok(TokenKind::RParen, source_.substr(pos_++, 1));
+    case '\'': return make_tok(TokenKind::Quote, source_.substr(pos_++, 1));
     default:
         if (std::isdigit((unsigned char)c) || (c == '-' && pos_+1<source_.size() && std::isdigit((unsigned char)source_[pos_+1]))) return read_number();
         if (std::isalpha((unsigned char)c) || c == '_' || c == '+' || c == '*' || c == '-' || c == '/' || c == '=' || c == '<' || c == '>' || c == '!') return read_identifier();
@@ -19,7 +20,7 @@ Token Lexer::advance() {
             auto next = source_[pos_ + 1];
             if (next == 'f' || next == 't') {
                 pos_ += 2;
-                return make_tok(TokenKind::Integer, (next == 't') ? "1" : "0");
+                return make_tok(TokenKind::Bool, (next == 't') ? "1" : "0");
             }
         }
         return make_tok(TokenKind::Error, source_.substr(pos_++, 1));

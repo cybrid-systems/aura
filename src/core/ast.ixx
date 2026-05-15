@@ -16,6 +16,7 @@ export struct SourceLocation { std::uint32_t line = 0, column = 0, file = 0; };
 export enum class SyntaxMarker : std::uint8_t {
     User = 0,
     MacroIntroduced = 1,
+    BoolLiteral = 2,  // #t / #f
 };
 
 

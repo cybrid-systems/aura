@@ -1063,6 +1063,9 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
     auto v = flat.get(id);
     switch (v.tag) {
     case aura::ast::NodeTag::LiteralInt:
+        // #t/#f have BoolLiteral marker — convert to Bool at runtime
+        if (v.marker == aura::ast::SyntaxMarker::BoolLiteral)
+            return make_bool(v.int_value != 0);
         return make_int(v.int_value);
     case aura::ast::NodeTag::LiteralFloat:
         return make_float(v.float_value);

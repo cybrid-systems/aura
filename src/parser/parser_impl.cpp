@@ -41,6 +41,14 @@ NodeId FlatParser::parse_expr() {
     auto tok = lexer_->peek();
     switch (tok.kind) {
     case TokenKind::Integer: return parse_number(lexer_->consume());
+    case TokenKind::Bool: {
+        auto tok = lexer_->consume();
+        auto v = std::stoll(std::string(tok.text));
+        auto id = flat_.add_literal(v);
+        flat_.set_marker(id, aura::ast::SyntaxMarker::BoolLiteral);
+        flat_.set_loc(id, tok.line, tok.column);
+        return id;
+    }
     case TokenKind::Float: return parse_float(lexer_->consume());
     case TokenKind::String: {
         auto tok = lexer_->consume();
@@ -51,6 +59,14 @@ NodeId FlatParser::parse_expr() {
     case TokenKind::Identifier: {
         auto tok = lexer_->consume();
         auto id = flat_.add_variable(pool_.intern(std::string(tok.text)));
+        flat_.set_loc(id, tok.line, tok.column);
+        return id;
+    }
+    case TokenKind::Quote: {
+        lexer_->consume(); // consume '
+        auto quoted = parse_expr();
+        if (quoted == NULL_NODE) return NULL_NODE;
+        auto id = flat_.add_quote(quoted);
         flat_.set_loc(id, tok.line, tok.column);
         return id;
     }
@@ -143,8 +159,36 @@ NodeId FlatParser::parse_lambda() {
 
 NodeId FlatParser::parse_define() {
     lexer_->consume(); // 'define'
-    auto n = lexer_->consume();
-    if (n.kind != TokenKind::Identifier) return NULL_NODE;
+    auto n = lexer_->peek();
+    if (n.kind == TokenKind::LParen) {
+        // Shorthand: (define (fn params...) body...)
+        lexer_->consume(); // '('
+        auto fn = lexer_->consume();
+        if (fn.kind != TokenKind::Identifier) { skip_rparen(); return NULL_NODE; }
+        std::vector<SymId> params;
+        while (lexer_->peek().kind != TokenKind::RParen) {
+            auto p = lexer_->consume();
+            if (p.kind != TokenKind::Identifier) { skip_rparen(); return NULL_NODE; }
+            params.push_back(pool_.intern(std::string(p.text)));
+        }
+        lexer_->consume(); // ')' after params
+        // Parse multiple body expressions and wrap in begin
+        std::vector<NodeId> body_exprs;
+        while (lexer_->peek().kind != TokenKind::RParen && !lexer_->eof()) {
+            auto be = parse_expr();
+            if (be == NULL_NODE) break;
+            body_exprs.push_back(be);
+        }
+        lexer_->consume(); // ')' closing define
+        if (body_exprs.empty()) return NULL_NODE;
+        NodeId body = (body_exprs.size() == 1) ? body_exprs[0]
+                    : flat_.add_begin(body_exprs.data(), static_cast<std::uint32_t>(body_exprs.size()));
+        auto lambda = flat_.add_lambda(params, body);
+        return flat_.add_define(pool_.intern(std::string(fn.text)), lambda);
+    }
+    // Normal: (define name value)
+    if (n.kind != TokenKind::Identifier) { skip_rparen(); return NULL_NODE; }
+    lexer_->consume(); // consume name
     auto v = parse_val();
     if (v == NULL_NODE) return NULL_NODE;
     lexer_->consume(); // ')'
@@ -188,6 +232,14 @@ NodeId FlatParser::parse_val() {
     switch (tok.kind) {
     case TokenKind::Integer:
         return parse_number(lexer_->consume());
+    case TokenKind::Bool: {
+        auto tok = lexer_->consume();
+        auto v = std::stoll(std::string(tok.text));
+        auto id = flat_.add_literal(v);
+        flat_.set_marker(id, aura::ast::SyntaxMarker::BoolLiteral);
+        flat_.set_loc(id, tok.line, tok.column);
+        return id;
+    }
     case TokenKind::Float:
         return parse_float(lexer_->consume());
     case TokenKind::String:
