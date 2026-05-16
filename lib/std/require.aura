@@ -1,9 +1,14 @@
 ; Aura module loader — require
-; (import "std/require")
+;
+; require 现在是一个内建特殊形式，无需 import 即可使用。
+; 此文件保留为空以便向后兼容。
 ;
 ; 用法:
-;   (require std/list)    — 加载单个模块（推荐，符号形式）
-;   (require "std/list")  — 字符串形式也支持
+;   (require std/list)    — 符号形式
+;   (require "std/list")  — 字符串形式
+;
+; require 是内建语法，和 import 的区别:
+;   import: 参数必须是字符串字面量 "(import \"std/list\")"
+;   require: 参数可以是符号或字符串 (require std/list) 或 (require "std/list")
 
-(defmacro (require mod-name)
-  `(import ,mod-name))
+; 空文件 — require 已在 C++ 求值器中作为特殊形式实现
