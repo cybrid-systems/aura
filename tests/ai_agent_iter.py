@@ -105,6 +105,11 @@ def main():
             print(f"    {line}")
         history.append((i, code))
 
+        # Strip display/write calls that would shadow the return value
+        code = re.sub(r'\(display\s+([^)]+)\)', r'\1', code)
+        code = re.sub(r'\(write\s+([^)]+)\)', r'\1', code)
+        code = re.sub(r'\(newline\)', '', code)
+
         # Wrap multi-line in begin
         lines = [l.strip() for l in code.split("\n") if l.strip() and not l.startswith(";")]
         if len(lines) > 1 and not (lines[0].startswith("(begin") and lines[-1] == ")"):
