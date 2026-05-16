@@ -50,6 +50,7 @@ static aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast:
 
 // ── Env::lookup: returns EvalValue variant ─────────────────────
 std::optional<EvalValue> Env::lookup(const std::string& n) const {
+    // 1. Check local bindings
     for (auto it = bindings_.rbegin(); it != bindings_.rend(); ++it)
         if (it->first == n) {
             auto& v = it->second;
@@ -60,7 +61,16 @@ std::optional<EvalValue> Env::lookup(const std::string& n) const {
             }
             return v;
         }
-    return parent_ ? parent_->lookup(n) : std::nullopt;
+    // 2. Check parent
+    if (parent_) return parent_->lookup(n);
+    // 3. Fallback: check primitives (allows passing names like `+` as values)
+    if (primitives_) {
+        auto slot = primitives_->slot_for_name(n);
+        if (slot != std::numeric_limits<std::size_t>::max()) {
+            return make_primitive(slot);
+        }
+    }
+    return std::nullopt;
 }
 
 // ── Env::lookup_binding: returns raw binding (cell sentinel as-is) ─
@@ -202,6 +212,12 @@ Primitives::Primitives() {
         return a.empty() ? make_int(0) : a.back();
     };
     table_["eq?"]  = [](auto& a) { return make_int(a[0] == a[1] ? 1 : 0); };
+    // Populate ordered_names_ with all primitives registered directly via table_[]
+    for (auto& [name, _] : table_) {
+        if (std::find(ordered_names_.begin(), ordered_names_.end(), name) == ordered_names_.end()) {
+            ordered_names_.push_back(name);
+        }
+    }
 }
 
 // ── I/O helper for EvalValue ──────────────────────────────────
@@ -298,7 +314,7 @@ void Evaluator::init_pair_primitives() {
     });
     primitives_.add("procedure?", [](const auto& a) {
         if (a.empty()) return make_bool(false);
-        return make_bool(is_closure(a[0]));
+        return make_bool(is_closure(a[0]) || is_primitive(a[0]));
     });
 
     // ── Pair / List / String primitives ─────────────────────────
@@ -677,12 +693,31 @@ void Evaluator::init_pair_primitives() {
     });
     primitives_.add("map", [this](const auto& a) {
         // (map func list) — apply func to each element, collect results
-        if (a.size() < 2 || !is_closure(a[0]) || is_void(a[1])) return make_void();
-        auto cid = as_closure_id(a[0]);
-        auto it = closures_.find(cid);
-        if (it == closures_.end() || it->second.params.empty()) return make_void();
-        auto& closure = it->second;
-        auto param = closure.params[0];
+        if (a.size() < 2 || is_void(a[1])) return make_void();
+
+        // Helper to apply a function (closure or primitive) to a single argument
+        auto apply_fn = [&](const EvalValue& fn, const EvalValue& arg) -> EvalValue {
+            if (is_primitive(fn)) {
+                auto slot = as_primitive_slot(fn);
+                if (slot >= primitives_.slot_count()) return make_void();
+                auto prim = primitives_.lookup(primitives_.name_for_slot(slot));
+                if (!prim) return make_void();
+                return (*prim)({arg});
+            }
+            if (is_closure(fn)) {
+                auto cid = as_closure_id(fn);
+                auto it = closures_.find(cid);
+                if (it == closures_.end() || it->second.params.empty()) return make_void();
+                auto& cl = it->second;
+                Env ne(cl.env ? *cl.env : Env());
+                ne.set_primitives(&primitives_);
+                ne.set_cells(&cells_);
+                ne.bind(cl.params[0], arg);
+                auto r = cl.flat ? eval_flat(*cl.flat, *cl.pool, cl.body_id, ne) : EvalResult(make_void());
+                return r ? *r : make_void();
+            }
+            return make_void();
+        };
 
         // Walk the list, apply func to each element, build result in order
         EvalValue result = make_void();
@@ -694,19 +729,10 @@ void Evaluator::init_pair_primitives() {
             auto idx = as_pair_idx(current);
             if (idx >= pairs_.size()) break;
 
-            Env ne(closure.env ? *closure.env : Env());
-            ne.set_primitives(&primitives_);
-            ne.set_cells(&cells_);
-            ne.bind(param, pairs_[idx].car);
-
-            auto r = closure.flat ? eval_flat(*closure.flat,
-                                                *closure.pool,
-                                                closure.body_id, ne) :
-                                    EvalResult(make_void());
-            if (!r) return make_void();
+            auto mapped = apply_fn(a[0], pairs_[idx].car);
 
             auto new_id = pairs_.size();
-            pairs_.push_back({*r, make_void()});
+            pairs_.push_back({mapped, make_void()});
             auto new_pair = make_pair(new_id);
 
             if (first) {
@@ -727,12 +753,31 @@ void Evaluator::init_pair_primitives() {
     });
     primitives_.add("filter", [this](const auto& a) {
         // (filter pred list) — keep elements where pred returns truthy
-        if (a.size() < 2 || !is_closure(a[0]) || is_void(a[1])) return make_void();
-        auto cid = as_closure_id(a[0]);
-        auto it = closures_.find(cid);
-        if (it == closures_.end() || it->second.params.empty()) return make_void();
-        auto& closure = it->second;
-        auto param = closure.params[0];
+        if (a.size() < 2 || is_void(a[1])) return make_void();
+
+        // Helper to apply a predicate (closure or primitive) to a single argument
+        auto apply_pred = [&](const EvalValue& fn, const EvalValue& arg) -> bool {
+            if (is_primitive(fn)) {
+                auto slot = as_primitive_slot(fn);
+                if (slot >= primitives_.slot_count()) return false;
+                auto prim = primitives_.lookup(primitives_.name_for_slot(slot));
+                if (!prim) return false;
+                return types::is_truthy((*prim)({arg}));
+            }
+            if (is_closure(fn)) {
+                auto cid = as_closure_id(fn);
+                auto it = closures_.find(cid);
+                if (it == closures_.end() || it->second.params.empty()) return false;
+                auto& cl = it->second;
+                Env ne(cl.env ? *cl.env : Env());
+                ne.set_primitives(&primitives_);
+                ne.set_cells(&cells_);
+                ne.bind(cl.params[0], arg);
+                auto r = cl.flat ? eval_flat(*cl.flat, *cl.pool, cl.body_id, ne) : EvalResult(make_void());
+                return r ? types::is_truthy(*r) : false;
+            }
+            return false;
+        };
 
         EvalValue result = make_void();
         EvalValue tail = make_void();
@@ -743,19 +788,7 @@ void Evaluator::init_pair_primitives() {
             auto idx = as_pair_idx(current);
             if (idx >= pairs_.size()) break;
 
-            Env ne(closure.env ? *closure.env : Env());
-            ne.set_primitives(&primitives_);
-            ne.set_cells(&cells_);
-            ne.bind(param, pairs_[idx].car);
-
-            auto r = closure.flat ? eval_flat(*closure.flat,
-                                                *closure.pool,
-                                                closure.body_id, ne) :
-                                    EvalResult(make_void());
-            if (!r) break;
-
-            // Check truthiness: keep if the predicate returns truthy
-            bool keep = types::is_truthy(*r);
+            bool keep = apply_pred(a[0], pairs_[idx].car);
             if (keep) {
                 auto new_id = pairs_.size();
                 pairs_.push_back({pairs_[idx].car, make_void()});
@@ -1493,15 +1526,35 @@ void Evaluator::init_pair_primitives() {
     primitives_.add("foldl", [this](const auto& a) {
         if (a.size() < 3) return make_void();
         auto f = a[0];
+        auto acc = a[1];
+        auto lst = a[2];
+
+        // Handle primitive function (e.g., (foldl + 0 (list 1 2 3)))
+        if (is_primitive(f)) {
+            auto slot = as_primitive_slot(f);
+            if (slot >= primitives_.slot_count()) return make_void();
+            auto prim = primitives_.lookup(primitives_.name_for_slot(slot));
+            if (!prim) return make_void();
+
+            while (!is_end_of_list(lst)) {
+                if (!is_pair(lst)) break;
+                auto idx = as_pair_idx(lst);
+                if (idx >= pairs_.size()) break;
+
+                // Call primitive with (acc, car)
+                acc = (*prim)({acc, pairs_[idx].car});
+                lst = pairs_[idx].cdr;
+            }
+            return acc;
+        }
+
+        // Handle closure function
         if (!is_closure(f)) return make_void();
         auto cid = as_closure_id(f);
         auto it = closures_.find(cid);
         if (it == closures_.end() || it->second.params.empty()) return make_void();
         auto& closure = it->second;
         auto param = closure.params[0];
-
-        auto acc = a[1];
-        auto lst = a[2];
 
         while (!is_end_of_list(lst)) {
             if (!is_pair(lst)) break;
@@ -1734,6 +1787,19 @@ Evaluator::Evaluator() {
     top_.set_cells(&cells_);
     primitives_.set_string_heap(&string_heap_);
     init_pair_primitives();
+    build_primitive_slots();
+}
+
+// slot_for_name: find the slot for a primitive name
+std::size_t Primitives::slot_for_name(const std::string& name) const {
+    for (std::size_t i = 0; i < ordered_names_.size(); ++i) {
+        if (ordered_names_[i] == name) return i;
+    }
+    return std::numeric_limits<std::size_t>::max();
+}
+
+void Evaluator::build_primitive_slots() {
+    // No longer needed — Primitives manages ordering internally
 }
 
 Env* Evaluator::copy_env(const Env& e) {
@@ -2492,6 +2558,22 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                 if (cl.body_id != aura::ast::NULL_NODE)
                     return eval_flat(*cl.flat, cl.pool ? *cl.pool : *p, cl.body_id, *tail_env);
                 return make_void();
+            }
+            // Primitive value call: callee is a PrimitiveRef (passed as value, not a Variable node)
+            if (is_primitive(*fn)) {
+                auto slot = as_primitive_slot(*fn);
+                if (slot < primitives_.slot_count()) {
+                    auto prim = eval_env.lookup_primitive(primitives_.name_for_slot(slot));
+                    if (prim) {
+                        std::vector<EvalValue> args;
+                        for (std::size_t i = 1; i < v.children.size(); ++i) {
+                            auto ar = eval_flat(*f, *p, v.child(i), eval_env);
+                            if (!ar) return ar;
+                            args.push_back(*ar);
+                        }
+                        return (*prim)(args);
+                    }
+                }
             }
             return std::unexpected(Diagnostic{ErrorKind::UnboundVariable,
                                               "cannot call: " + std::string(p->resolve(callee.sym_id))});

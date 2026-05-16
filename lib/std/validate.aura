@@ -1,0 +1,86 @@
+; Aura JSON Schema Validator — 纯函数式
+; (import "std/validate")
+; 用法: (validate schema data) → 错误列表 (空=有效)
+
+(define (json-type v)
+  (cond ((null? v) "null") ((boolean? v) "boolean")
+        ((integer? v) "integer") ((float? v) "number")
+        ((string? v) "string") ((pair? v) "array")
+        ((hash? v) "object") (else "unknown")))
+
+(define (err path msg errors)
+  (cons (list path msg) errors))
+
+; ── 单值验证（全函数式，无 set!）─────────────────────────────
+(define (check val schema path)
+  (define (check-type val type path errs)
+    (let ((actual (json-type val)))
+      (if (equal? actual type) errs
+        (err path (string-append "want " type " got " actual) errs))))
+  (define (check-range val min max path errs)
+    (let ((e (if (or (null? min) (>= val min)) errs
+              (err path (string-append "min " (number->string min)) errs))))
+      (if (or (null? max) (<= val max)) e
+        (err path (string-append "max " (number->string max)) e))))
+  (define (check-str-len s min max path errs)
+    (let ((e (if (or (null? min) (>= (string-length s) min)) errs
+              (err path (string-append "minLength " (number->string min)) errs))))
+      (if (or (null? max) (<= (string-length s) max)) e
+        (err path (string-append "maxLength " (number->string max)) e))))
+  (define (check-arr val items min max path errs)
+    (let* ((e0 (if (or (null? min) (>= (length val) min)) errs
+                (err path (string-append "minItems " (number->string min)) errs)))
+           (e1 (if (or (null? max) (<= (length val) max)) e0
+                (err path (string-append "maxItems " (number->string max)) e0))))
+      (if (null? items) e1
+        (let lp ((i 0) (lst val) (errs e1))
+          (if (null? lst) errs
+            (lp (+ i 1) (cdr lst)
+              (append errs (check (car lst) items
+                (string-append path "[" (number->string i) "]")))))))))
+  (define (check-obj val props required path errs)
+    (let* (; Required fields
+           (e1 (if (null? required) errs
+                (let lp ((reqs required) (e errs))
+                  (if (null? reqs) e
+                    (lp (cdr reqs)
+                      (if (null? (hash-ref val (car reqs)))
+                        (err (string-append path "." (car reqs)) "required" e)
+                        e))))))
+           ; Property schemas
+           (e2 (if (null? props) e1
+                (let ((keys (hash-keys props)))
+                  (let lp ((ks keys) (e e1))
+                    (if (null? ks) e
+                      (let* ((k (car ks))
+                             (prop-schema (hash-ref props k))
+                             (prop-val (hash-ref val k))
+                             (prop-path (string-append path "." k)))
+                        (if (null? prop-val) (lp (cdr ks) e)
+                          (lp (cdr ks) (append e (check prop-val prop-schema prop-path)))))))))))
+      e2))
+  (define (check-enum val options path errs)
+    (let found ((opts options))
+      (if (null? opts) (err path "not in enum" errs)
+        (if (equal? (car opts) val) errs (found (cdr opts))))))
+  
+  ; Main
+  (let* ((type (hash-ref schema "type"))
+         (errs (if (null? type) (list)
+                 (check-type val type path (list))))
+         (errs (if (or (not (null? errs)) (not (integer? val))) errs
+                 (check-range val (hash-ref schema "minimum") (hash-ref schema "maximum") path errs)))
+         (errs (if (or (not (null? errs)) (not (string? val))) errs
+                 (check-str-len val (hash-ref schema "minLength") (hash-ref schema "maxLength") path errs)))
+         (errs (if (or (not (null? errs)) (not (pair? val))) errs
+                 (check-arr val (hash-ref schema "items")
+                   (hash-ref schema "minItems") (hash-ref schema "maxItems") path errs)))
+         (errs (if (or (not (null? errs)) (not (hash? val))) errs
+                 (check-obj val (hash-ref schema "properties") (hash-ref schema "required") path errs)))
+         (errs (if (null? (hash-ref schema "enum")) errs
+                 (check-enum val (hash-ref schema "enum") path errs))))
+    errs))
+
+(define (validate schema data) (check data schema "#"))
+(define (valid? errors) (null? errors))
+(define (error-count errors) (length errors))
