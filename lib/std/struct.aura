@@ -1,0 +1,32 @@
+; Aura struct library — define-struct as a macro
+; Import with: (import "std/struct")
+;
+; (define-struct Name (field1 field2 ...))
+;   generates make-Name, Name?, Name-field1, Name-field2, ...
+
+(defmacro (define-struct name fields)
+  (let ((mk (symbol-append "make-" name))
+        (pred (symbol-append name "?")))
+    (let build ((i 1) (fs fields) (acc
+      (list
+        (list (quote define) pred
+          (list (quote lambda) (list (quote obj))
+            (list (quote and)
+              (list (quote vector?) (quote obj))
+              (list (quote equal?)
+                (list (quote vector-ref) (quote obj) 0)
+                (list (quote quote) name)))))
+        (list (quote define) mk
+          (list (quote lambda) fields
+            (cons (quote vector)
+              (cons (list (quote quote) name)
+                (map (lambda (f) f) fields))))))))
+      (if (null? fs)
+        (cons (quote begin) (reverse acc))
+        (build (+ i 1) (cdr fs)
+          (cons
+            (list (quote define)
+              (symbol-append name "-" (car fs))
+              (list (quote lambda) (list (quote obj))
+                (list (quote vector-ref) (quote obj) i)))
+            acc))))))

@@ -1731,6 +1731,7 @@ std::optional<PrimFn> Primitives::lookup(const std::string& n) const {
 
 Evaluator::Evaluator() {
     top_.set_primitives(&primitives_);
+    top_.set_cells(&cells_);
     primitives_.set_string_heap(&string_heap_);
     init_pair_primitives();
 }
@@ -1780,10 +1781,211 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
     }
 }
 
+// ── data_to_flat: convert EvalValue data back to FlatAST nodes ──
+// Inverse of ast_to_data. Needed so lambda bodies from macro data
+// can be converted to AST for closure creation.
+ast::NodeId Evaluator::data_to_flat(const types::EvalValue& data, aura::ast::FlatAST& flat, aura::ast::StringPool& pool, int depth) {
+    using namespace types;
+    if (depth > 256) return ast::NULL_NODE;
+    if (is_int(data)) {
+        return flat.add_literal(as_int(data));
+    }
+    if (is_float(data)) {
+        return flat.add_literal_float(as_float(data));
+    }
+    if (is_bool(data)) {
+        auto id = flat.add_literal(as_bool(data) ? 1 : 0);
+        flat.set_marker(id, ast::SyntaxMarker::BoolLiteral);
+        return id;
+    }
+    if (is_void(data)) {
+        return flat.add_literal(0);  // () sentinel
+    }
+    if (is_string(data)) {
+        auto idx = as_string_idx(data);
+        if (idx < string_heap_.size()) {
+            // Strings in code context are variable references
+            auto name = string_heap_[idx];
+            auto sid = pool.intern(name);
+            return flat.add_variable(sid);
+        }
+        return ast::NULL_NODE;
+    }
+    if (is_pair(data)) {
+        auto pair_idx = as_pair_idx(data);
+        if (pair_idx >= pairs_.size()) return ast::NULL_NODE;
+
+        auto car_data = pairs_[pair_idx].car;
+        auto cdr_data = pairs_[pair_idx].cdr;
+
+        if (is_string(car_data)) {
+            auto fn_idx = as_string_idx(car_data);
+            auto fn_name = fn_idx < string_heap_.size() ? string_heap_[fn_idx] : "";
+
+            // Quote: (quote expr)
+            if (fn_name == "quote" && is_pair(cdr_data)) {
+                auto qp = as_pair_idx(cdr_data);
+                auto quoted = pairs_[qp].car;
+                auto quoted_node = data_to_flat(quoted, flat, pool, depth + 1);
+                if (quoted_node != ast::NULL_NODE)
+                    return flat.add_quote(quoted_node);
+                return flat.add_literal(0);  // fallback
+            }
+
+            // Quasiquote: (quasiquote expr)
+            if (fn_name == "quasiquote" && is_pair(cdr_data)) {
+                auto qp = as_pair_idx(cdr_data);
+                auto quoted = pairs_[qp].car;
+                return data_to_flat(quoted, flat, pool, depth + 1);
+            }
+
+            // Unquote: (unquote expr) — just convert the inner expression
+            if (fn_name == "unquote" && is_pair(cdr_data)) {
+                auto qp = as_pair_idx(cdr_data);
+                auto inner = pairs_[qp].car;
+                return data_to_flat(inner, flat, pool, depth + 1);
+            }
+
+            // Begin: (begin ...)
+            if (fn_name == "begin") {
+                std::vector<ast::NodeId> exprs;
+                auto cur = cdr_data;
+                while (is_pair(cur)) {
+                    auto cp = as_pair_idx(cur);
+                    auto e = data_to_flat(pairs_[cp].car, flat, pool, depth + 1);
+                    if (e != ast::NULL_NODE) exprs.push_back(e);
+                    cur = pairs_[cp].cdr;
+                }
+                return flat.add_begin(exprs);
+            }
+
+            // If: (if cond then else)
+            if (fn_name == "if") {
+                ast::NodeId cond_node = ast::NULL_NODE, then_node = ast::NULL_NODE, else_node = ast::NULL_NODE;
+                if (is_pair(cdr_data)) {
+                    auto cp = as_pair_idx(cdr_data);
+                    cond_node = data_to_flat(pairs_[cp].car, flat, pool, depth + 1);
+                    auto rest = pairs_[cp].cdr;
+                    if (is_pair(rest)) {
+                        auto tp = as_pair_idx(rest);
+                        then_node = data_to_flat(pairs_[tp].car, flat, pool, depth + 1);
+                        auto erest = pairs_[tp].cdr;
+                        if (is_pair(erest)) {
+                            auto ep = as_pair_idx(erest);
+                            else_node = data_to_flat(pairs_[ep].car, flat, pool, depth + 1);
+                        }
+                    }
+                }
+                if (cond_node != ast::NULL_NODE && then_node != ast::NULL_NODE && else_node != ast::NULL_NODE)
+                    return flat.add_if(cond_node, then_node, else_node);
+                if (cond_node != ast::NULL_NODE && then_node != ast::NULL_NODE)
+                    return flat.add_if(cond_node, then_node, flat.add_literal(0));
+                return cond_node != ast::NULL_NODE ? cond_node : flat.add_literal(0);
+            }
+
+            // Lambda: (lambda (args) body)
+            if (fn_name == "lambda") {
+                if (is_pair(cdr_data)) {
+                    auto params_pair = as_pair_idx(cdr_data);
+                    auto params_data = pairs_[params_pair].car;
+                    auto body_rest = pairs_[params_pair].cdr;
+
+                    std::vector<ast::SymId> params;
+                    auto args_data = params_data;
+                    while (is_pair(args_data)) {
+                        auto ap = as_pair_idx(args_data);
+                        auto arg = pairs_[ap].car;
+                        if (is_string(arg)) {
+                            auto aidx = as_string_idx(arg);
+                            auto astr = aidx < string_heap_.size() ? string_heap_[aidx] : "";
+                            params.push_back(pool.intern(astr));
+                        }
+                        args_data = pairs_[ap].cdr;
+                    }
+
+                    ast::NodeId body_node = ast::NULL_NODE;
+                    if (is_pair(body_rest)) {
+                        auto bp = as_pair_idx(body_rest);
+                        body_node = data_to_flat(pairs_[bp].car, flat, pool, depth + 1);
+                    }
+                    if (body_node == ast::NULL_NODE)
+                        body_node = flat.add_literal(0);
+                    return flat.add_lambda(params, body_node);
+                }
+                return ast::NULL_NODE;
+            }
+
+            // Define: (define name value)
+            if (fn_name == "define") {
+                if (is_pair(cdr_data)) {
+                    auto np = as_pair_idx(cdr_data);
+                    auto name_data = pairs_[np].car;
+                    auto val_rest = pairs_[np].cdr;
+
+                    if (is_string(name_data) && is_pair(val_rest)) {
+                        auto ni = as_string_idx(name_data);
+                        auto ns = ni < string_heap_.size() ? string_heap_[ni] : "";
+                        auto vp = as_pair_idx(val_rest);
+                        auto val_node = data_to_flat(pairs_[vp].car, flat, pool, depth + 1);
+                        return flat.add_define(pool.intern(ns), val_node);
+                    }
+                }
+                return ast::NULL_NODE;
+            }
+
+            // Set!: (set! name value)
+            if (fn_name == "set!") {
+                if (is_pair(cdr_data)) {
+                    auto np = as_pair_idx(cdr_data);
+                    auto name_val = pairs_[np].car;
+                    auto val_rest = pairs_[np].cdr;
+                    if (is_string(name_val) && is_pair(val_rest)) {
+                        auto ni = as_string_idx(name_val);
+                        auto ns = ni < string_heap_.size() ? string_heap_[ni] : "";
+                        auto vp = as_pair_idx(val_rest);
+                        auto val_node = data_to_flat(pairs_[vp].car, flat, pool, depth + 1);
+                        return flat.add_set(pool.intern(ns), val_node);
+                    }
+                }
+                return ast::NULL_NODE;
+            }
+
+            // Let: (let ((x val)) body)
+            if (fn_name == "let") {
+                // For data_to_flat, let is just a call node
+                // (let ((x val)) body) is sugar and should already be expanded
+                // Just treat as a general call
+            }
+        }
+
+        // General function call: build Call(node func, [args...])
+        auto func_node = data_to_flat(car_data, flat, pool, depth);
+        if (func_node == ast::NULL_NODE) return ast::NULL_NODE;
+        std::vector<ast::NodeId> args;
+        auto cur = cdr_data;
+        while (is_pair(cur)) {
+            auto cp = as_pair_idx(cur);
+            auto a = data_to_flat(pairs_[cp].car, flat, pool, depth + 1);
+            if (a != ast::NULL_NODE) args.push_back(a);
+            cur = pairs_[cp].cdr;
+        }
+        return flat.add_call(func_node, args);
+    }
+    if (is_cell(data)) {
+        // Dereference cell and convert the inner value
+        auto cid = as_cell_id(data);
+        if (cid < cells_.size())
+            return data_to_flat(cells_[cid], flat, pool, depth + 1);
+    }
+    return ast::NULL_NODE;
+}
+
 // ── eval_data_as_code: evaluate macro-expanded data as code ──
 // Macro bodies produce data (lists) via cons/quote chains.
 // This function interprets that data as code and evaluates it.
-EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env& env) {
+// flat/pool are needed for lambda and define-shorthand handling.
+EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env& env,
+                                          ast::FlatAST* flat, ast::StringPool* pool) {
     // Not a pair → literal value (number, string, bool, void)
     if (!types::is_pair(data)) {
         // Strings are literal symbols/data, return as-is
@@ -1808,21 +2010,21 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 auto cond_pair = types::as_pair_idx(cdr_val);
                 auto cond_val = pairs_[cond_pair].car;
                 auto rest = pairs_[cond_pair].cdr;
-                auto cond_result = eval_data_as_code(cond_val, env);
+                auto cond_result = eval_data_as_code(cond_val, env, flat, pool);
                 if (!cond_result) return cond_result;
                 if (types::is_pair(rest)) {
                     auto then_pair = types::as_pair_idx(rest);
                     auto then_val = pairs_[then_pair].car;
                     auto else_rest = pairs_[then_pair].cdr;
                     if (types::is_truthy(*cond_result)) {
-                        auto r = eval_data_as_code(then_val, env);
+                        auto r = eval_data_as_code(then_val, env, flat, pool);
                         return r;
                     } else {
                         // Evaluate else branch
                         if (types::is_pair(else_rest)) {
                             auto else_pair = types::as_pair_idx(else_rest);
                             auto else_val = pairs_[else_pair].car;
-                            return eval_data_as_code(else_val, env);
+                            return eval_data_as_code(else_val, env, flat, pool);
                         }
                     }
                 }
@@ -1831,9 +2033,52 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
         }
 
         // ── lambda: (lambda (params) body) ──
+        // Needs flat/pool to create an AST closure
         if (fn_name == "lambda") {
-            // Can't create closures from data easily — return as-is
-            // This is a limitation: lambda in macro output needs special handling
+            if (!flat || !pool) {
+                // Without flat/pool, we can't create closures — return as-is
+                return make_void();
+            }
+            if (types::is_pair(cdr_val)) {
+                auto params_pair = types::as_pair_idx(cdr_val);
+                auto params_data = pairs_[params_pair].car;  // (arg1 arg2 ...)
+                auto body_rest = pairs_[params_pair].cdr;    // (body ...)
+
+                // Extract param names
+                std::vector<ast::SymId> param_syms;
+                auto args_data = params_data;
+                while (types::is_pair(args_data)) {
+                    auto ap = types::as_pair_idx(args_data);
+                    auto arg_data = pairs_[ap].car;
+                    if (types::is_string(arg_data)) {
+                        auto aidx = types::as_string_idx(arg_data);
+                        auto astr = aidx < string_heap_.size() ? string_heap_[aidx] : "";
+                        param_syms.push_back(pool->intern(astr));
+                    }
+                    args_data = pairs_[ap].cdr;
+                }
+
+                // Extract and convert body data to FlatAST
+                ast::NodeId body_node = ast::NULL_NODE;
+                if (types::is_pair(body_rest)) {
+                    auto bp = types::as_pair_idx(body_rest);
+                    auto body_data = pairs_[bp].car;
+                    body_node = data_to_flat(body_data, *flat, *pool);
+                }
+                if (body_node == ast::NULL_NODE)
+                    body_node = flat->add_literal(0);
+
+                // Create lambda node and closure
+                auto lambda_id = flat->add_lambda(param_syms, body_node);
+                auto cid = next_id();
+                auto* copied_env = copy_env(env);
+                closures_[cid] = Closure{/*params*/{}, flat, pool, body_node, copied_env};
+                // Store param names as strings for the Closure
+                for (auto& ps : param_syms) {
+                    closures_[cid].params.push_back(std::string(pool->resolve(ps)));
+                }
+                return make_closure(cid);
+            }
             return make_void();
         }
 
@@ -1843,7 +2088,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
             EvalResult last = make_void();
             while (types::is_pair(current)) {
                 auto elem_pair = types::as_pair_idx(current);
-                last = eval_data_as_code(pairs_[elem_pair].car, env);
+                last = eval_data_as_code(pairs_[elem_pair].car, env, flat, pool);
                 if (!last) return last;
                 current = pairs_[elem_pair].cdr;
             }
@@ -1859,15 +2104,17 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
             return make_void();
         }
 
-        // ── define: (define name value) ── bind in top env
+        // ── define: (define name value) or (define (name args) body) ──
         if (fn_name == "define") {
             if (types::is_pair(cdr_val)) {
                 auto name_pair = types::as_pair_idx(cdr_val);
                 auto name_val = pairs_[name_pair].car;
                 auto val_rest = pairs_[name_pair].cdr;
+
+                // (define name value)
                 if (types::is_string(name_val) && types::is_pair(val_rest)) {
                     auto val_pair = types::as_pair_idx(val_rest);
-                    auto val = eval_data_as_code(pairs_[val_pair].car, env);
+                    auto val = eval_data_as_code(pairs_[val_pair].car, env, flat, pool);
                     if (val) {
                         auto name_idx = types::as_string_idx(name_val);
                         auto name_str = name_idx < string_heap_.size() ? string_heap_[name_idx] : "";
@@ -1877,6 +2124,62 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         return *val;
                     }
                     return val;
+                }
+
+                // (define (name args...) body) — function shorthand
+                if (types::is_pair(name_val) && types::is_pair(val_rest) && flat && pool) {
+                    auto fn_pair = types::as_pair_idx(name_val);
+                    auto fn_name_data = pairs_[fn_pair].car;
+                    auto fn_args_data = pairs_[fn_pair].cdr;
+
+                    if (types::is_string(fn_name_data)) {
+                        auto ni = types::as_string_idx(fn_name_data);
+                        auto fn_str = ni < string_heap_.size() ? string_heap_[ni] : "";
+
+                        // Extract param names from (arg1 arg2 ...)
+                        std::vector<ast::SymId> param_syms;
+                        auto args_data = fn_args_data;
+                        while (types::is_pair(args_data)) {
+                            auto ap = types::as_pair_idx(args_data);
+                            auto arg_data = pairs_[ap].car;
+                            if (types::is_string(arg_data)) {
+                                auto aidx = types::as_string_idx(arg_data);
+                                auto astr = aidx < string_heap_.size() ? string_heap_[aidx] : "";
+                                param_syms.push_back(pool->intern(astr));
+                            }
+                            args_data = pairs_[ap].cdr;
+                        }
+
+                        // Extract and convert body data
+                        ast::NodeId body_node = ast::NULL_NODE;
+                        if (types::is_pair(val_rest)) {
+                            auto bp = types::as_pair_idx(val_rest);
+                            auto body_data = pairs_[bp].car;
+                            body_node = data_to_flat(body_data, *flat, *pool);
+                        }
+                        if (body_node == ast::NULL_NODE)
+                            body_node = flat->add_literal(0);
+
+                        // Create lambda node and closure
+                        auto lambda_id = flat->add_lambda(param_syms, body_node);
+                        auto cid = next_id();
+                        auto* copied_env = copy_env(env);
+                        Closure cl;
+                        for (auto& ps : param_syms) {
+                            cl.params.push_back(std::string(pool->resolve(ps)));
+                        }
+                        cl.flat = flat;
+                        cl.pool = pool;
+                        cl.body_id = body_node;
+                        cl.env = copied_env;
+                        closures_[cid] = std::move(cl);
+
+                        // Bind in env
+                        auto ci = alloc_cell(make_void());
+                        const_cast<Env&>(env).bind(fn_str, make_cell(ci));
+                        cells_[ci] = make_closure(cid);
+                        return make_closure(cid);
+                    }
                 }
             }
             return make_void();
@@ -1889,7 +2192,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 auto name_val = pairs_[name_pair].car;
                 auto val_rest = pairs_[name_pair].cdr;
                 if (types::is_string(name_val) && types::is_pair(val_rest)) {
-                    auto val = eval_data_as_code(pairs_[types::as_pair_idx(val_rest)].car, env);
+                    auto val = eval_data_as_code(pairs_[types::as_pair_idx(val_rest)].car, env, flat, pool);
                     if (val) {
                         auto name_idx = types::as_string_idx(name_val);
                         auto name_str = name_idx < string_heap_.size() ? string_heap_[name_idx] : "";
@@ -1917,7 +2220,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         if (types::is_string(name_val) && types::is_pair(val_expr)) {
                             auto name_idx = types::as_string_idx(name_val);
                             auto name_str = name_idx < string_heap_.size() ? string_heap_[name_idx] : "";
-                            auto val = eval_data_as_code(pairs_[types::as_pair_idx(val_expr)].car, env);
+                            auto val = eval_data_as_code(pairs_[types::as_pair_idx(val_expr)].car, env, flat, pool);
                             if (!val) return val;
                             bindings.emplace_back(name_str, *val);
                         }
@@ -1935,7 +2238,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 EvalResult last = make_void();
                 while (types::is_pair(body_current)) {
                     auto elem_pair = types::as_pair_idx(body_current);
-                    last = eval_data_as_code(pairs_[elem_pair].car, new_env);
+                    last = eval_data_as_code(pairs_[elem_pair].car, new_env, flat, pool);
                     if (!last) return last;
                     body_current = pairs_[elem_pair].cdr;
                 }
@@ -1952,7 +2255,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
             auto current = cdr_val;
             while (types::is_pair(current)) {
                 auto arg_pair = types::as_pair_idx(current);
-                auto arg_val = eval_data_as_code(pairs_[arg_pair].car, env);
+                auto arg_val = eval_data_as_code(pairs_[arg_pair].car, env, flat, pool);
                 if (!arg_val) return arg_val;
                 args.push_back(*arg_val);
                 current = pairs_[arg_pair].cdr;
@@ -1964,6 +2267,11 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
         auto env_val = env.lookup(fn_name);
         if (env_val) {
             auto fn_val = *env_val;
+            // Dereference cells — needed when lookup returned cell sentinel (cells_ not set on env)
+            if (types::is_cell(fn_val)) {
+                auto ci = types::as_cell_id(fn_val);
+                if (ci < cells_.size()) fn_val = cells_[ci];
+            }
             if (types::is_closure(fn_val)) {
                 auto cid = types::as_closure_id(fn_val);
                 auto it = closures_.find(cid);
@@ -1974,7 +2282,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                     auto current = cdr_val;
                     while (types::is_pair(current)) {
                         auto arg_pair = types::as_pair_idx(current);
-                        auto arg_val = eval_data_as_code(pairs_[arg_pair].car, env);
+                        auto arg_val = eval_data_as_code(pairs_[arg_pair].car, env, flat, pool);
                         if (!arg_val) return arg_val;
                         cargs.push_back(*arg_val);
                         current = pairs_[arg_pair].cdr;
@@ -1994,7 +2302,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
     }
 
     // Not a string function name — evaluate car and cdr, apply
-    auto fn = eval_data_as_code(car_val, env);
+    auto fn = eval_data_as_code(car_val, env, flat, pool);
     if (!fn) return fn;
     if (types::is_closure(*fn)) {
         auto cid = types::as_closure_id(*fn);
@@ -2005,7 +2313,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
             auto current = cdr_val;
             while (types::is_pair(current)) {
                 auto arg_pair = types::as_pair_idx(current);
-                auto arg_val = eval_data_as_code(pairs_[arg_pair].car, env);
+                auto arg_val = eval_data_as_code(pairs_[arg_pair].car, env, flat, pool);
                 if (!arg_val) return arg_val;
                 cargs.push_back(*arg_val);
                 current = pairs_[arg_pair].cdr;
@@ -2126,7 +2434,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                     auto template_result = eval_flat(*md.flat, md.pool ? *md.pool : *p, md.body_id, *tail_env);
                     if (!template_result) return template_result;
                     // Re-evaluate the template data as code
-                    return eval_data_as_code(*template_result, eval_env);
+                    return eval_data_as_code(*template_result, eval_env, f, p);
                 }
             }
             // Primitive call (all arg evals are recursive)
