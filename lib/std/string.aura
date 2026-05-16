@@ -1,13 +1,15 @@
 ; Aura standard string library
 ; Import with: (import "std/string")
 
-; Split string by a character (char code, e.g. 32 for space, 44 for comma)
+; Split string by a separator
+; sep can be: a string (uses first char), or a char code (integer)
 (define (string-split s sep)
+  (define sep-code (if (string? sep) (string-ref sep 0) sep))
   (define (iter i current result)
     (if (>= i (string-length s))
       (reverse (cons (list->string (reverse current)) result))
       (let ((c (string-ref s i)))
-        (if (= c sep)
+        (if (= c sep-code)
           (iter (+ i 1) (list) (cons (list->string (reverse current)) result))
           (iter (+ i 1) (cons c current) result)))))
   (iter 0 (list) (list)))
