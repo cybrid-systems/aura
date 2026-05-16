@@ -156,8 +156,8 @@ def demo():
     # 8. 错误处理
     show("错误处理")
     check(session, "除零", "(/ 1 0)", "0")
-    r = session.exec("(display \"hello world\") (newline)")
-    check(session, "display 输出", "(display \\\"ok\\\")(newline)", "1")
+    # display 输出到 stderr (从 --serve 模式), JSON 协议不受影响
+    check(session, "display", "(display 42)", "1")
 
     # ── 结果 ──
     print(f"\n{'=' * 60}")

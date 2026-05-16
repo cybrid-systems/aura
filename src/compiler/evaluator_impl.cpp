@@ -1,5 +1,6 @@
 module;
 #include <cstdlib>
+#include <cstdio>
 #include <unistd.h>
 module aura.compiler.evaluator;
 import std;
@@ -231,29 +232,29 @@ namespace {
     }
     static void io_print_val(const EvalValue& v, const std::vector<std::string>* heap,
                              const std::vector<Pair>* pairs, bool quote, int depth = 0) {
-        if (depth > 64) { std::printf("..."); return; }
-        if (is_void(v))         { std::printf("()"); return; }
-        if (is_bool(v))         { std::printf(as_bool(v) ? "#t" : "#f"); return; }
-        if (is_float(v))        { std::printf("%g", as_float(v)); return; }
-        if (is_int(v))          { std::printf("%ld", (long)as_int(v)); return; }
+        if (depth > 64) { std::fprintf(stderr, "..."); return; }
+        if (is_void(v))         { std::fprintf(stderr, "()"); return; }
+        if (is_bool(v))         { std::fprintf(stderr, "%s", as_bool(v) ? "#t" : "#f"); return; }
+        if (is_float(v))        { std::fprintf(stderr, "%g", as_float(v)); return; }
+        if (is_int(v))          { std::fprintf(stderr, "%ld", (long)as_int(v)); return; }
         if (is_string(v) && heap) {
             auto idx = as_string_idx(v);
             if (idx < heap->size()) {
-                if (quote) std::printf("\"%s\"", (*heap)[idx].c_str());
-                else       std::printf("%s",       (*heap)[idx].c_str());
+                if (quote) std::fprintf(stderr, "\"%s\"", (*heap)[idx].c_str());
+                else       std::fprintf(stderr, "%s",       (*heap)[idx].c_str());
                 return;
             }
         }
         if (is_pair(v) && pairs) {
             auto idx = as_pair_idx(v);
-            if (idx >= pairs->size()) { std::printf("<pair[%zu]>", (size_t)idx); return; }
+            if (idx >= pairs->size()) { std::fprintf(stderr, "<pair[%zu]>", (size_t)idx); return; }
             // Check if it's a proper list (cdr chain ends in void or int 0 sentinel)
             auto cdr = (*pairs)[idx].cdr;
             if (is_end_of_list(cdr) && !quote) {
                 // Single-element list: (x)
-                std::printf("(");
+                std::fprintf(stderr, "(");
                 io_print_val((*pairs)[idx].car, heap, pairs, quote, depth + 1);
-                std::printf(")");
+                std::fprintf(stderr, ")");
                 return;
             }
             // Walk the chain to see if it's a proper list
@@ -268,23 +269,23 @@ namespace {
                 elements.push_back((*pairs)[nidx].car);
                 next = (*pairs)[nidx].cdr;
             }
-            std::printf("(");
+            std::fprintf(stderr, "(");
             for (std::size_t i = 0; i < elements.size(); ++i) {
-                if (i > 0) std::printf(" ");
+                if (i > 0) std::fprintf(stderr, " ");
                 io_print_val(elements[i], heap, pairs, quote, depth + 1);
             }
             if (!is_end_of_list(next)) {
-                std::printf(" . ");
+                std::fprintf(stderr, " . ");
                 io_print_val(next, heap, pairs, quote, depth + 1);
             }
-            std::printf(")");
+            std::fprintf(stderr, ")");
             return;
         }
-        if (is_vector(v))       { std::printf("<vector[%zu]>", (size_t)as_vector_idx(v)); return; }
-        if (is_hash(v))         { std::printf("<hash[%zu]>", (size_t)as_hash_idx(v)); return; }
-        if (is_closure(v))      { std::printf("<closure[%zu]>", (size_t)as_closure_id(v)); return; }
-        if (is_cell(v))         { std::printf("<cell[%zu]>", (size_t)as_cell_id(v)); return; }
-        std::printf("<unknown>");
+        if (is_vector(v))       { std::fprintf(stderr, "<vector[%zu]>", (size_t)as_vector_idx(v)); return; }
+        if (is_hash(v))         { std::fprintf(stderr, "<hash[%zu]>", (size_t)as_hash_idx(v)); return; }
+        if (is_closure(v))      { std::fprintf(stderr, "<closure[%zu]>", (size_t)as_closure_id(v)); return; }
+        if (is_cell(v))         { std::fprintf(stderr, "<cell[%zu]>", (size_t)as_cell_id(v)); return; }
+        std::fprintf(stderr, "<unknown>");
     }
 }
 
@@ -1096,7 +1097,7 @@ void Evaluator::init_pair_primitives() {
         io_print_val(a[0], &string_heap_, &pairs_, true);
         return make_int(1);
     });
-    primitives_.add("newline", [](const auto&) { std::printf("\n"); return make_int(1); });
+    primitives_.add("newline", [](const auto&) { std::fprintf(stderr, "\n"); return make_int(1); });
     primitives_.add("error", [](const auto& a) -> EvalValue {
         std::string msg = a.empty() ? "error" : (is_int(a[0]) ? std::to_string(as_int(a[0])) : "error");
         throw std::runtime_error(msg);
