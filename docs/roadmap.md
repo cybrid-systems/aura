@@ -16,8 +16,9 @@ M3f AI 闭环         ✅  mutation_loop + LLM 驱动 + AI Agent 演示(6 场景
 M4a 缓存           ✅  ABF v4 列式 (O(1) resolve + SyntaxMarker)
 M4b AI 协议         ✅  docs/ai_agent_protocol.md (7 工具定义)
 M4c 模块系统       ✅  import + AURA_PATH + ABF v2 全链路
-M4d 自进化         🚧  docs/typed_mutation_design.md (设计阶段)
-M4e 生产           ⬜  LLVM JIT / AOT / 自举
+M4d 自进化         ✅  Typed Mutation 三周 (设计/MutationLog/原语/AI协议)
+M4e 语言完善       ✅  变参算术 + 数值基元 + 类型谓词 + 字符操作 + Quote 修复
+M4f 生产           ⬜  LLVM JIT / AOT / 自举
 ```
 
 ---
@@ -27,7 +28,7 @@ M4e 生产           ⬜  LLVM JIT / AOT / 自举
 | 指标 | 数值 |
 |------|------|
 | 源文件 | 33 (.ixx + .cpp) |
-| 代码行数 | ~8800 |
+| 代码行数 | ~9200 |
 | CTest | 52/52 |
 | Benchmark | 44/44 |
 | 集成测试 | 62/62 |

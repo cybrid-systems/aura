@@ -137,20 +137,39 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
                     // No args: return 0
                     state.emit(IROpcode::ConstI64, result_slot, 0, 0);
                 } else {
-                    auto arg0 = lower_flat_expr(state, flat, pool, v.child(1), cache, cache_hits);
+                    // Lower first arg
+                    auto prev = lower_flat_expr(state, flat, pool, v.child(1), cache, cache_hits);
                     if (arg_count == 1) {
                         // Unary minus: emit Sub(0, arg)
                         if (std::string(callee_name) == "-") {
                             auto zero = state.alloc_local();
                             state.emit(IROpcode::ConstI64, zero, 0, 0);
-                            state.emit(op, result_slot, zero, arg0);
+                            state.emit(op, result_slot, zero, prev);
                         } else {
-                            state.emit(op, result_slot, arg0, arg0);
+                            state.emit(op, result_slot, prev, prev);
                         }
                     } else {
-                        // Binary: lower second arg and emit
+                        // For 2+ args, chain binary ops: ((a op b) op c) op ...
+                        // Emit the first binary op into a temp accumulator,
+                        // then chain the rest, with the LAST op writing to result_slot.
                         auto arg1 = lower_flat_expr(state, flat, pool, v.child(2), cache, cache_hits);
-                        state.emit(op, result_slot, arg0, arg1);
+                        if (arg_count == 2) {
+                            state.emit(op, result_slot, prev, arg1);
+                        } else {
+                            auto acc = state.alloc_local();
+                            state.emit(op, acc, prev, arg1);
+                            for (std::size_t ai = 3; ai < v.children.size(); ++ai) {
+                                auto next = lower_flat_expr(state, flat, pool, v.child(ai), cache, cache_hits);
+                                auto is_last = (ai + 1 == v.children.size());
+                                if (is_last) {
+                                    state.emit(op, result_slot, acc, next);
+                                } else {
+                                    auto tmp = state.alloc_local();
+                                    state.emit(op, tmp, acc, next);
+                                    acc = tmp;
+                                }
+                            }
+                        }
                     }
                 }
                 return result_slot;
@@ -454,8 +473,27 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
         }
         return val_slot;
     }
-    case NodeTag::Quote:
-        return lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
+    case NodeTag::Quote: {
+        // Inline literals (self-quoting), placeholder for complex data
+        if (!v.children.empty()) {
+            auto child = flat.get(v.child(0));
+            if (child.tag == NodeTag::LiteralInt) {
+                auto slot = state.alloc_local();
+                state.emit(IROpcode::ConstI64, slot, child.int_value, 0);
+                return slot;
+            }
+            if (child.tag == NodeTag::LiteralFloat) {
+                return lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
+            }
+            if (child.tag == NodeTag::LiteralString) {
+                return lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
+            }
+        }
+        // Non-trivial quoted data: not supported in IR yet, emit 0
+        auto slot = state.alloc_local();
+        state.emit(IROpcode::ConstI64, slot, 0, 0);
+        return slot;
+    }
     case NodeTag::TypeAnnotation:
         return lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
     case NodeTag::Coercion: {

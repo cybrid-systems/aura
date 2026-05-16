@@ -72,6 +72,7 @@ private:
     ClosureId next_id() { return next_id_++; }
     std::size_t alloc_cell(const types::EvalValue& v) { cells_.push_back(v); return cells_.size()-1; }
     // (apply_closure and expand_macro removed — use eval_flat directly)
+    EvalValue ast_to_data(const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool, aura::ast::NodeId nid);
     Env* copy_env(const Env& env);
     void init_pair_primitives();
     Env top_; Primitives primitives_; ast::ASTArena* arena_=nullptr;

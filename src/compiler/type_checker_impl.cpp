@@ -282,6 +282,32 @@ void InferenceEngine::init_primitive_env() {
     register_primitive("hash?",         {Dyn}, Bool);
     register_primitive("hash-remove!",  {Hash, Dyn}, Bool);
 
+    // Numeric extension primitives
+    register_primitive("modulo",    {Int, Int}, Int);
+    register_primitive("quotient",  {Int, Int}, Int);
+    register_primitive("remainder", {Int, Int}, Int);
+    register_primitive("abs",       {Int}, Int);
+    register_primitive("gcd",       {Int, Int}, Int);
+    register_primitive("lcm",       {Int, Int}, Int);
+    register_primitive("min",       {Dyn, Dyn}, Dyn);
+    register_primitive("max",       {Dyn, Dyn}, Dyn);
+
+    // Character primitives
+    register_primitive("char?",         {Dyn}, Bool);
+    register_primitive("char->integer", {Dyn}, Int);
+    register_primitive("integer->char", {Int}, Int);
+    register_primitive("string->list",  {String}, Dyn);
+    register_primitive("list->string",  {Dyn}, String);
+    register_primitive("read-line",     {}, String);
+    register_primitive("eof-object?",   {Dyn}, Bool);
+
+    // Additional type predicates
+    register_primitive("integer?",  {Dyn}, Bool);
+    register_primitive("float?",    {Dyn}, Bool);
+
+    // Missing list/vector conversions
+    register_primitive("list->vector",  {Dyn}, Vector);
+    register_primitive("vector->list",  {Vector}, Dyn);
 }
 
 TypeId InferenceEngine::lub(TypeId a, TypeId b) {
@@ -572,7 +598,12 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
             auto cname = pool.resolve(callee_v.sym_id);
             is_variadic = (cname == "and" || cname == "or"
                         || cname == "list" || cname == "vector"
-                        || cname == "hash");
+                        || cname == "hash"
+                        || cname == "+" || cname == "-"
+                        || cname == "*" || cname == "/"
+                        || cname == "=" || cname == "<"
+                        || cname == ">" || cname == "<="
+                        || cname == ">=");
         }
         if (num_args != ft.args.size() && !ft.args.empty() && !is_variadic) {
             auto msg = std::string("call '")

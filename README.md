@@ -4,7 +4,7 @@
 
 ---
 
-## 当前状态（2026.05.15）
+## 当前状态（2026.05.16）
 
 ```
 M1 求值器     ✅  纯 FlatAST 管线 (SoA)，Expr* 指针树全部移除
@@ -18,7 +18,9 @@ M3f AI 闭环    ✅  mutation_loop + LLM 驱动 + AI Agent 演示(6 场景)
 M4a 缓存      ✅  ABF v2 列式缓存 (v4, O(1) resolve, SyntaxMarker)
 M4b AI 协议    ✅  docs/ai_agent_protocol.md (7 工具定义)
 M4c 模块系统  ✅  import + AURA_PATH + ABF v2 全链路
-M4d 自进化     🚧  docs/typed_mutation_design.md (设计阶段)
+M4d 自进化     ✅  Typed Mutation 三周全部完成 (设计/MutationLog/原语/AI协议集成)
+M4e 语言完善   ✅  变参算术 + 数值基元 + 类型谓词 + 字符操作 + Quote 修复
+M4f 生产后端   ⬜  LLVM JIT / AOT / 自举
 ```
 
 ### 核心管线
