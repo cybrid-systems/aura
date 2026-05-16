@@ -2561,6 +2561,58 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
         case aura::ast::NodeTag::Begin: {
             auto count = v.children.size();
             if (count == 0) return EvalResult(make_void());
+            
+            // Check if there are multiple define nodes → use letrec semantics
+            // Phase 1: pre-allocate cells for all defines
+            std::vector<std::pair<std::string, aura::ast::NodeId>> letrec_defs;
+            bool has_multiple_defs = false;
+            int define_count = 0;
+            aura::ast::NodeId last_expr = v.child(count - 1);
+            for (std::size_t i = 0; i < count; ++i) {
+                auto child_node = f->get(v.child(i));
+                if (child_node.tag == aura::ast::NodeTag::Define) {
+                    define_count++;
+                    if (define_count > 1) has_multiple_defs = true;
+                    letrec_defs.push_back({std::string(p->resolve(child_node.sym_id)),
+                                            child_node.children.empty() ? aura::ast::NULL_NODE : child_node.child(0)});
+                }
+            }
+            
+            if (has_multiple_defs) {
+                // Phase 1: pre-allocate cells for all defines
+                // This ensures all function names are visible to each other
+                std::vector<std::size_t> cell_ids;
+                {
+                    auto& mutable_env = const_cast<Env&>(eval_env);
+                    mutable_env.set_cells(&cells_);
+                    for (auto& d : letrec_defs) {
+                        auto ci = alloc_cell(make_void());
+                        mutable_env.bind(d.first, make_cell(ci));
+                        cell_ids.push_back(ci);
+                    }
+                }
+                // Phase 2: evaluate values and set cells
+                for (std::size_t i = 0; i < letrec_defs.size(); ++i) {
+                    auto& d = letrec_defs[i];
+                    if (d.second != aura::ast::NULL_NODE) {
+                        auto val = eval_flat(*f, *p, d.second, eval_env);
+                        if (!val) return val;
+                        cells_[cell_ids[i]] = *val;
+                    }
+                }
+                // Phase 3: evaluate remaining (non-define) expressions
+                for (std::size_t i = 0; i < count - 1; ++i) {
+                    auto child_node = f->get(v.child(i));
+                    if (child_node.tag == aura::ast::NodeTag::Define) continue;
+                    auto r = eval_flat(*f, *p, v.child(i), eval_env);
+                    if (!r) return r;
+                }
+                // TCO: last expression
+                current_id = last_expr;
+                continue;
+            }
+            
+            // Single define (or no defines) — sequential evaluation
             for (std::size_t i = 0; i < count - 1; ++i) {
                 auto r = eval_flat(*f, *p, v.child(i), eval_env);
                 if (!r) return r;
