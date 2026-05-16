@@ -198,8 +198,17 @@ Primitives::Primitives() {
 }
 
 // ── I/O helper for EvalValue ──────────────────────────────────
+struct Pair;
 namespace {
-    static void io_print_val(const EvalValue& v, const std::vector<std::string>* heap, bool quote) {
+    // Check if value is the end of a list (void is the proper sentinel)
+    // Note: int 0 is ALSO used as the empty list sentinel in some contexts,
+    // but we only treat it as end-of-list in cdr chain position.
+    static bool is_end_of_list(const EvalValue& v) {
+        return is_void(v) || (is_int(v) && as_int(v) == 0);
+    }
+    static void io_print_val(const EvalValue& v, const std::vector<std::string>* heap,
+                             const std::vector<Pair>* pairs, bool quote, int depth = 0) {
+        if (depth > 64) { std::printf("..."); return; }
         if (is_void(v))         { std::printf("()"); return; }
         if (is_bool(v))         { std::printf(as_bool(v) ? "#t" : "#f"); return; }
         if (is_float(v))        { std::printf("%g", as_float(v)); return; }
@@ -212,10 +221,46 @@ namespace {
                 return;
             }
         }
-        if (is_pair(v))         { std::printf("<pair[%zu]>", (size_t)as_pair_idx(v)); return; }
+        if (is_pair(v) && pairs) {
+            auto idx = as_pair_idx(v);
+            if (idx >= pairs->size()) { std::printf("<pair[%zu]>", (size_t)idx); return; }
+            // Check if it's a proper list (cdr chain ends in void or int 0 sentinel)
+            auto cdr = (*pairs)[idx].cdr;
+            if (is_end_of_list(cdr) && !quote) {
+                // Single-element list: (x)
+                std::printf("(");
+                io_print_val((*pairs)[idx].car, heap, pairs, quote, depth + 1);
+                std::printf(")");
+                return;
+            }
+            // Walk the chain to see if it's a proper list
+            std::vector<EvalValue> elements;
+            elements.push_back((*pairs)[idx].car);
+            auto next = cdr;
+            bool proper = true;
+            while (!is_end_of_list(next)) {
+                if (!is_pair(next)) { proper = false; break; }
+                auto nidx = as_pair_idx(next);
+                if (nidx >= pairs->size()) { proper = false; break; }
+                elements.push_back((*pairs)[nidx].car);
+                next = (*pairs)[nidx].cdr;
+            }
+            std::printf("(");
+            for (std::size_t i = 0; i < elements.size(); ++i) {
+                if (i > 0) std::printf(" ");
+                io_print_val(elements[i], heap, pairs, quote, depth + 1);
+            }
+            if (!is_end_of_list(next)) {
+                std::printf(" . ");
+                io_print_val(next, heap, pairs, quote, depth + 1);
+            }
+            std::printf(")");
+            return;
+        }
+        if (is_vector(v))       { std::printf("<vector[%zu]>", (size_t)as_vector_idx(v)); return; }
+        if (is_hash(v))         { std::printf("<hash[%zu]>", (size_t)as_hash_idx(v)); return; }
         if (is_closure(v))      { std::printf("<closure[%zu]>", (size_t)as_closure_id(v)); return; }
         if (is_cell(v))         { std::printf("<cell[%zu]>", (size_t)as_cell_id(v)); return; }
-        if (is_hash(v))         { std::printf("<hash[%zu]>", (size_t)as_hash_idx(v)); return; }
         std::printf("<unknown>");
     }
 }
@@ -844,12 +889,12 @@ void Evaluator::init_pair_primitives() {
     });
     primitives_.add("display", [this](const auto& a) {
         if (a.empty()) return make_int(1);
-        io_print_val(a[0], &string_heap_, false);
+        io_print_val(a[0], &string_heap_, &pairs_, false);
         return make_int(1);
     });
     primitives_.add("write", [this](const auto& a) -> EvalValue {
         if (a.empty()) return make_int(1);
-        io_print_val(a[0], &string_heap_, true);
+        io_print_val(a[0], &string_heap_, &pairs_, true);
         return make_int(1);
     });
     primitives_.add("newline", [](const auto&) { std::printf("\n"); return make_int(1); });

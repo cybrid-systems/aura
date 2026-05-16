@@ -15,7 +15,8 @@ import aura.compiler.cache;
 // Format helper: format EvalValue with access to string heap
 static std::string fmt_val(const aura::compiler::types::EvalValue& v,
                            aura::compiler::CompilerService& cs) {
-    return aura::compiler::types::format_value(v, &cs.evaluator().primitives().string_heap());
+    return aura::compiler::format_value(v, &cs.evaluator().primitives().string_heap(),
+                                         &cs.evaluator().pairs());
 }
 
 // JSON helper: wrap a string value for JSON (escape quotes and backslashes)
@@ -452,16 +453,14 @@ int main(int argc, char* argv[]) {
             }
             std::println("{}", fmt_val(*result, cs));
         } else {
-            std::string line;
-            while (std::getline(std::cin, line)) {
-                if (line.empty()) continue;
-                auto result = cs.eval_ir(line);
-                if (!result) {
-                    std::println(std::cerr, "error: {}", result.error().message);
-                } else {
-                    std::println("{}", fmt_val(*result, cs));
-                }
+            std::ostringstream buf;
+            buf << std::cin.rdbuf();
+            auto result = cs.eval_ir(buf.str());
+            if (!result) {
+                std::println(std::cerr, "error: {}", result.error().message);
+                return 1;
             }
+            std::println("{}", fmt_val(*result, cs));
         }
         return 0;
     }
@@ -913,10 +912,101 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
+    // ── Pipe mode: read all input, split into complete S-expressions ──
+    // Join all lines to support multi-line expressions
+    std::string all_input;
+    {
+        std::ostringstream buf;
+        buf << std::cin.rdbuf();
+        all_input = buf.str();
+    }
+    if (all_input.empty()) { std::println(std::cerr, "usage: echo '(+ 1 2)' | ./aura"); return 1; }
+
+    // Split into balanced S-expressions by tracking paren balance
+    // Also track string literals to avoid counting parens inside strings
     std::vector<std::string> exprs;
-    std::string line;
-    while (std::getline(std::cin, line)) exprs.push_back(line);
+    std::string current;
+    int depth = 0;
+    bool in_string = false;
+
+    for (std::size_t i = 0; i < all_input.size(); ++i) {
+        auto c = all_input[i];
+
+        if (in_string) {
+            current += c;
+            if (c == '\\' && i + 1 < all_input.size()) {
+                // Skip escaped character
+                ++i;
+                current += all_input[i];
+            } else if (c == '"') {
+                in_string = false;
+            }
+            continue;
+        }
+
+        if (c == '"') {
+            current += c;
+            in_string = true;
+            continue;
+        }
+
+        if (c == '(' || c == '[') {
+            if (depth == 0 && !current.empty()) {
+                // Start of a new expression while we had non-whitespace leftover?
+                // This shouldn't normally happen, push current as complete
+                auto trimmed = current;
+                auto pos = trimmed.find_first_not_of(" \t\r\n");
+                if (pos != std::string::npos) {
+                    trimmed = trimmed.substr(pos);
+                    auto end = trimmed.find_last_not_of(" \t\r\n");
+                    if (end != std::string::npos) trimmed = trimmed.substr(0, end + 1);
+                    exprs.push_back(trimmed);
+                }
+                current.clear();
+            }
+            current += c;
+            ++depth;
+            continue;
+        }
+
+        if ((c == ')' || c == ']') && depth > 0) {
+            current += c;
+            --depth;
+            if (depth == 0) {
+                // Complete expression found
+                auto trimmed = current;
+                auto pos = trimmed.find_first_not_of(" \t\r\n");
+                if (pos != std::string::npos) {
+                    trimmed = trimmed.substr(pos);
+                    auto end = trimmed.find_last_not_of(" \t\r\n");
+                    if (end != std::string::npos) trimmed = trimmed.substr(0, end + 1);
+                    exprs.push_back(trimmed);
+                }
+                current.clear();
+            }
+            continue;
+        }
+
+        current += c;
+    }
+
+    // If there's leftover text, try it as a complete expression
+    if (!current.empty()) {
+        auto trimmed = current;
+        auto pos = trimmed.find_first_not_of(" \t\r\n");
+        if (pos != std::string::npos) {
+            trimmed = trimmed.substr(pos);
+            auto end = trimmed.find_last_not_of(" \t\r\n");
+            if (end != std::string::npos) trimmed = trimmed.substr(0, end + 1);
+            if (!trimmed.empty() && depth == 0)
+                exprs.push_back(trimmed);
+            else if (!trimmed.empty())
+                std::println(std::cerr, "warning: unbalanced parentheses in input");
+        }
+    }
+
     if (exprs.empty()) { std::println(std::cerr, "usage: echo '(+ 1 2)' | ./aura"); return 1; }
+
     bool err = false;
     for (auto& e : exprs) {
         auto s = e.find_first_not_of(" \t\r\n");

@@ -68,6 +68,7 @@ public:
                           const Env& env);
     const Primitives& primitives() const { return primitives_; }
     Env& top_env() { return top_; }
+    const std::vector<Pair>& pairs() const { return pairs_; }
 private:
     ClosureId next_id() { return next_id_++; }
     std::size_t alloc_cell(const types::EvalValue& v) { cells_.push_back(v); return cells_.size()-1; }
@@ -95,6 +96,59 @@ private:
     std::vector<std::vector<types::EvalValue>> vector_heap_;
     std::uint64_t next_id_=1;
 };
+
+// Pair-aware value formatting (recursively prints lists)
+export inline std::string format_value(const types::EvalValue& v, const std::vector<std::string>* heap,
+                                        const std::vector<Pair>* pairs, int depth = 0) {
+    const int max_depth = 64;
+    if (depth > max_depth) return "...";
+    if (types::is_void(v)) return "()";
+    if (types::is_bool(v)) return types::as_bool(v) ? "#t" : "#f";
+    if (types::is_int(v)) return std::to_string(types::as_int(v));
+    if (types::is_float(v)) return std::to_string(types::as_float(v));
+    if (types::is_string(v)) {
+        if (heap) {
+            auto idx = types::as_string_idx(v);
+            if (idx < heap->size()) return std::format("\"{}\"", (*heap)[idx]);
+        }
+        return std::format("<string[{}]>", types::as_string_idx(v));
+    }
+    if (types::is_pair(v) && pairs) {
+        auto idx = types::as_pair_idx(v);
+        if (idx >= pairs->size()) return std::format("<pair[{}]>", idx);
+
+        // Walk the cdr chain to collect all elements
+        std::vector<std::string> elements;
+        auto current = v;
+
+        while (types::is_pair(current)) {
+            auto cidx = types::as_pair_idx(current);
+            if (cidx >= pairs->size()) { break; }
+            elements.push_back(format_value((*pairs)[cidx].car, heap, pairs, depth + 1));
+            current = (*pairs)[cidx].cdr;
+            if (elements.size() > 256) { elements.push_back("..."); break; }
+        }
+
+        std::string result = "(";
+        for (std::size_t i = 0; i < elements.size(); ++i) {
+            if (i > 0) result += " ";
+            result += elements[i];
+        }
+        if (!types::is_truthy(current)) {
+            // proper list
+        } else {
+            if (!elements.empty()) result += " . ";
+            result += format_value(current, heap, pairs, depth + 1);
+        }
+        result += ")";
+        return result;
+    }
+    if (types::is_vector(v)) return std::format("<vector[{}]>", types::as_vector_idx(v));
+    if (types::is_hash(v)) return std::format("<hash[{}]>", types::as_hash_idx(v));
+    if (types::is_closure(v)) return std::format("<closure[{}]>", types::as_closure_id(v));
+    if (types::is_cell(v)) return std::format("<cell[{}]>", types::as_cell_id(v));
+    return "<unknown>";
+}
 
 // Pre-expand all macros in a FlatAST. Returns (possibly new) root.
 export aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
