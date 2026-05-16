@@ -1,0 +1,10 @@
+; Aura module loader
+; (import "std/require")
+;
+; Usage:
+;   (require "std/list")       → 加载模块，成功返回 #t
+;   (require "std/json")       → 会自动跳过已加载模块
+
+(define (require path)
+  (import path)
+  #t)
