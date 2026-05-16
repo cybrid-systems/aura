@@ -70,6 +70,34 @@ NodeId FlatParser::parse_expr() {
         flat_.set_loc(id, tok.line, tok.column);
         return id;
     }
+    case TokenKind::QuasiQuote: {
+        lexer_->consume(); // consume `
+        auto quoted = parse_expr();
+        if (quoted == NULL_NODE) return NULL_NODE;
+        auto id = expand_qq(quoted, 0);
+        flat_.set_loc(id, tok.line, tok.column);
+        return id;
+    }
+    case TokenKind::Unquote: {
+        lexer_->consume(); // consume ,
+        auto inner = parse_expr();
+        if (inner == NULL_NODE) return NULL_NODE;
+        // Represent (unquote inner) as a Call to variable 'unquote'
+        auto unquote_var = flat_.add_variable(pool_.intern("unquote"));
+        auto id = flat_.add_call(unquote_var, {inner});
+        flat_.set_loc(id, tok.line, tok.column);
+        return id;
+    }
+    case TokenKind::UnquoteSplicing: {
+        lexer_->consume(); // consume ,@
+        auto inner = parse_expr();
+        if (inner == NULL_NODE) return NULL_NODE;
+        // Represent (unquote-splicing inner) as a Call to variable 'unquote-splicing'
+        auto unsplice_var = flat_.add_variable(pool_.intern("unquote-splicing"));
+        auto id = flat_.add_call(unsplice_var, {inner});
+        flat_.set_loc(id, tok.line, tok.column);
+        return id;
+    }
     case TokenKind::LParen: lexer_->consume(); return parse_list();
     default: return NULL_NODE;
     }
@@ -741,6 +769,159 @@ std::vector<std::pair<SymId, NodeId>> FlatParser::compile_pattern(NodeId pattern
     // Default fallback: exact equality match
     *out_test = make_call(sym_equal_q, {var_tmp, pattern_node});
     return bindings;
+}
+
+// ── Quasiquote expansion ───────────────────────────────────────
+
+// Check if a node is (unquote ...)
+static bool is_unquote(const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool, NodeId id) {
+    if (id == NULL_NODE) return false;
+    auto v = flat.get(id);
+    if (v.tag != NodeTag::Call || v.children.empty()) return false;
+    auto callee = flat.get(v.child(0));
+    return callee.tag == NodeTag::Variable && std::string(pool.resolve(callee.sym_id)) == "unquote";
+}
+
+// Check if a node is (unquote-splicing ...)
+static bool is_unquote_splicing(const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool, NodeId id) {
+    if (id == NULL_NODE) return false;
+    auto v = flat.get(id);
+    if (v.tag != NodeTag::Call || v.children.empty()) return false;
+    auto callee = flat.get(v.child(0));
+    return callee.tag == NodeTag::Variable && std::string(pool.resolve(callee.sym_id)) == "unquote-splicing";
+}
+
+// Check if a node is (quasiquote ...)
+static bool is_quasiquote(const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool, NodeId id) {
+    if (id == NULL_NODE) return false;
+    auto v = flat.get(id);
+    if (v.tag != NodeTag::Call || v.children.empty()) return false;
+    auto callee = flat.get(v.child(0));
+    return callee.tag == NodeTag::Variable && std::string(pool.resolve(callee.sym_id)) == "quasiquote";
+}
+
+NodeId FlatParser::expand_qq(NodeId expr, int depth) {
+    if (expr == NULL_NODE) {
+        // Empty quasiquote: (quote ())
+        return flat_.add_quote(flat_.add_literal(0));
+    }
+
+    auto v = flat_.get(expr);
+
+    // Non-Call compound nodes: special forms parsed by keyword (IfExpr, Lambda, Let, etc.)
+    // The keyword (if, lambda, etc.) is LOST by parse_list — we need to reconstruct it
+    if (v.tag != NodeTag::Call) {
+        // Variables and literals: (quote expr)
+        if (v.tag == NodeTag::Variable || v.tag == NodeTag::LiteralInt 
+            || v.tag == NodeTag::LiteralFloat || v.tag == NodeTag::LiteralString
+            || v.tag == NodeTag::Quote) {
+            return flat_.add_quote(expr);
+        }
+        // Other compound nodes (IfExpr, Begin, Lambda, etc.) with children:
+        // Build a list that starts with (quote <form-name>) followed by child expansions
+        if (v.children.size() > 0) {
+            // Determine the form name based on node tag
+            std::string form_name;
+            switch (v.tag) {
+            case NodeTag::IfExpr:    form_name = "if"; break;
+            case NodeTag::Lambda:    form_name = "lambda"; break;
+            case NodeTag::Let:       form_name = "let"; break;
+            case NodeTag::LetRec:    form_name = "letrec"; break;
+            case NodeTag::Define:    form_name = "define"; break;
+            case NodeTag::Begin:     form_name = "begin"; break;
+            case NodeTag::Set:       form_name = "set!"; break;
+            default: return flat_.add_quote(expr);
+            }
+            // Build: (cons (quote <form-name>) (cons child0 (cons child1 ... (quote ()))))
+            NodeId result = flat_.add_quote(flat_.add_literal(0)); // (quote ())
+            for (int i = static_cast<int>(v.children.size()) - 1; i >= 0; --i) {
+                auto expanded = expand_qq(v.child(i), depth);
+                auto cons_var = flat_.add_variable(pool_.intern("cons"));
+                result = flat_.add_call(cons_var, {expanded, result});
+            }
+            // Prepend (quote <form-name>)
+            auto form_var = flat_.add_variable(pool_.intern(form_name));
+            auto form_quote = flat_.add_quote(form_var);
+            auto cons_var2 = flat_.add_variable(pool_.intern("cons"));
+            result = flat_.add_call(cons_var2, {form_quote, result});
+            return result;
+        }
+        return flat_.add_quote(expr);
+    }
+
+    // Empty list: (quote ())
+    if (v.children.empty()) {
+        return flat_.add_quote(expr);
+    }
+
+    // Handle unquote at depth 0: just return the inner expression
+    if (depth == 0 && is_unquote(flat_, pool_, expr)) {
+        if (v.children.size() > 1) return v.child(1);
+        return expr;
+    }
+
+    // Handle unquote at depth > 0: (quote (unquote ...))
+    if (depth > 0 && is_unquote(flat_, pool_, expr)) {
+        if (v.children.size() > 1) {
+            auto inner = expand_qq(v.child(1), depth - 1);
+            auto unq_var = flat_.add_variable(pool_.intern("unquote"));
+            return flat_.add_quote(flat_.add_call(unq_var, {inner}));
+        }
+        return flat_.add_quote(expr);
+    }
+
+    // Handle unquote-splicing at depth 0: return the inner expression
+    if (depth == 0 && is_unquote_splicing(flat_, pool_, expr)) {
+        if (v.children.size() > 1) return v.child(1);
+        return expr;
+    }
+
+    // Handle unquote-splicing at depth > 0: (quote (unquote-splicing ...))
+    if (depth > 0 && is_unquote_splicing(flat_, pool_, expr)) {
+        if (v.children.size() > 1) {
+            auto inner = expand_qq(v.child(1), depth - 1);
+            auto unsplice_var = flat_.add_variable(pool_.intern("unquote-splicing"));
+            return flat_.add_quote(flat_.add_call(unsplice_var, {inner}));
+        }
+        return flat_.add_quote(expr);
+    }
+
+    // Handle nested quasiquote
+    if (is_quasiquote(flat_, pool_, expr)) {
+        if (v.children.size() > 1) {
+            auto inner = expand_qq(v.child(1), depth + 1);
+            auto qq_var = flat_.add_variable(pool_.intern("quasiquote"));
+            return flat_.add_call(qq_var, {inner});
+        }
+    }
+
+    // Pair/list: expand all children
+    return expand_qq_pair(expr, depth);
+}
+
+NodeId FlatParser::expand_qq_pair(NodeId expr, int depth) {
+    auto v = flat_.get(expr);
+
+    // Build from right to left, starting with (quote ()), consing each element
+    NodeId result = flat_.add_quote(flat_.add_literal(0)); // (quote ())
+
+    for (int i = static_cast<int>(v.children.size()) - 1; i >= 0; --i) {
+        auto child = v.child(i);
+
+        // Handle unquote-splicing at depth 0: (append expr result)
+        if (depth == 0 && is_unquote_splicing(flat_, pool_, child)) {
+            auto child_v = flat_.get(child);
+            auto spliced = child_v.children.size() > 1 ? child_v.child(1) : child;
+            auto append_var = flat_.add_variable(pool_.intern("append"));
+            result = flat_.add_call(append_var, {spliced, result});
+        } else {
+            auto expanded = expand_qq(child, depth);
+            auto cons_var = flat_.add_variable(pool_.intern("cons"));
+            result = flat_.add_call(cons_var, {expanded, result});
+        }
+    }
+
+    return result;
 }
 
 // ── Free function ──────────────────────────────────────────────

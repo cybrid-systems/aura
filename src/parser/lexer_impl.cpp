@@ -11,6 +11,14 @@ Token Lexer::advance() {
     case '(': return make_tok(TokenKind::LParen, source_.substr(pos_++, 1));
     case ')': return make_tok(TokenKind::RParen, source_.substr(pos_++, 1));
     case '\'': return make_tok(TokenKind::Quote, source_.substr(pos_++, 1));
+    case '`': return make_tok(TokenKind::QuasiQuote, source_.substr(pos_++, 1));
+    case ',': {
+        if (pos_ + 1 < source_.size() && source_[pos_ + 1] == '@') {
+            pos_ += 2;
+            return make_tok(TokenKind::UnquoteSplicing, ",@");
+        }
+        return make_tok(TokenKind::Unquote, source_.substr(pos_++, 1));
+    }
     default:
         if (std::isdigit((unsigned char)c) || (c == '-' && pos_+1<source_.size() && std::isdigit((unsigned char)source_[pos_+1]))) return read_number();
         if (std::isalpha((unsigned char)c) || c == '_' || c == '+' || c == '*' || c == '-' || c == '/' || c == '=' || c == '<' || c == '>' || c == '!' || c == '?') return read_identifier();

@@ -34,6 +34,8 @@ private:
     aura::ast::NodeId parse_match();
     aura::ast::NodeId parse_define_struct();
     aura::ast::NodeId parse_val();
+    aura::ast::NodeId expand_qq(aura::ast::NodeId expr, int depth);
+    aura::ast::NodeId expand_qq_pair(aura::ast::NodeId expr, int depth);
     std::vector<std::pair<aura::ast::SymId, aura::ast::NodeId>> compile_pattern(aura::ast::NodeId pattern_node, aura::ast::SymId tmp, aura::ast::NodeId* out_test);
     std::vector<aura::ast::NodeId> parse_bindings();
     void skip_rparen();

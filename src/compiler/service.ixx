@@ -48,7 +48,12 @@ public:
         // Store for mutation targeting
         current_ast_ = flat_ptr;
         current_pool_ = pool_ptr;
-        return evaluator_.eval_flat(*flat_ptr, *pool_ptr, flat_ptr->root, evaluator_.top_env());
+        // Store for mutation targeting
+        current_ast_ = flat_ptr;
+        current_pool_ = pool_ptr;
+        // Pre-expand all macros in this expression
+        auto expanded_root = aura::compiler::macro_expand_all(*flat_ptr, *pool_ptr, flat_ptr->root);
+        return evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
     }
 
     // ---- IR pipeline ------------------------------------------------
