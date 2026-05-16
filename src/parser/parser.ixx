@@ -32,7 +32,6 @@ private:
     aura::ast::NodeId parse_begin(); aura::ast::NodeId parse_set();
     aura::ast::NodeId parse_quote(); aura::ast::NodeId parse_cond(); aura::ast::NodeId parse_defmacro();
     aura::ast::NodeId parse_match();
-    aura::ast::NodeId parse_define_struct();
     aura::ast::NodeId parse_val();
     aura::ast::NodeId expand_qq(aura::ast::NodeId expr, int depth);
     aura::ast::NodeId expand_qq_pair(aura::ast::NodeId expr, int depth);
