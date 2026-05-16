@@ -37,7 +37,12 @@ Token Lexer::advance() {
 Token Lexer::read_string() {
     std::size_t s = pos_ + 1; // skip "
     pos_++;
-    while (pos_ < source_.size() && source_[pos_] != '"') pos_++;
+    while (pos_ < source_.size() && source_[pos_] != '"') {
+        if (source_[pos_] == '\\' && pos_ + 1 < source_.size())
+            pos_ += 2; // skip escape (prevents \" from ending the string)
+        else
+            pos_++;
+    }
     if (pos_ < source_.size()) pos_++; // skip closing "
     return make_tok(TokenKind::String, source_.substr(s, pos_ - s - 1));
 }
