@@ -115,10 +115,42 @@ std::string check_compute_kind(const std::string& input) {
     return summary;
 }
 
+// ── Quote test ─────────────────────────────────────────────────
+bool test_quote() {
+    aura::ast::ASTArena arena(4096);
+    auto a = arena.allocator();
+    aura::ast::FlatAST flat(a);
+    aura::ast::StringPool pool(a);
+    aura::compiler::Evaluator eval;
+
+    // Test: (quote 42) should return 42
+    auto lit = flat.add_literal(42);
+    auto q = flat.add_quote(lit);
+    auto r = eval.eval_flat(flat, pool, q, eval.top_env());
+    if (!r || !aura::compiler::types::is_int(*r) || aura::compiler::types::as_int(*r) != 42) {
+        std::println(std::cerr, "FAIL: (quote 42) expected 42");
+        return false;
+    }
+
+    // Test: 'x should return a string "x"
+    auto sym = flat.add_variable(pool.intern("x"));
+    auto qsym = flat.add_quote(sym);
+    auto r2 = eval.eval_flat(flat, pool, qsym, eval.top_env());
+    if (!r2 || !aura::compiler::types::is_string(*r2)) {
+        std::println(std::cerr, "FAIL: (quote x) expected string \"x\"");
+        return false;
+    }
+
+    std::println("Quote test: OK");
+    return true;
+}
+
 int main() {
     aura::ast::ASTArena arena;
     aura::compiler::Evaluator evaluator;
     evaluator.set_arena(&arena);
+
+    if (!test_quote()) return 1;
 
     // Test cases: (input, expected)
     struct Test { std::string input; std::int64_t expected; };

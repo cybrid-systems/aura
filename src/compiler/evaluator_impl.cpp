@@ -88,65 +88,100 @@ namespace {
 // ── Primitives: EvalValue operations ──────────────────────────
 
 Primitives::Primitives() {
-    table_["+"]  = [this](auto& a) {
-        if (is_float(a[0]) || is_float(a[1])) {
-            double x = is_float(a[0]) ? as_float(a[0]) : static_cast<double>(coerce_to_int(a[0], string_heap_));
-            double y = is_float(a[1]) ? as_float(a[1]) : static_cast<double>(coerce_to_int(a[1], string_heap_));
-            return make_float(x + y);
+    // ── Variadic arithmetic ────────────────────────────────────────
+    // (+) → 0, (+ x) → x, (+ x y ...) → sum; float if any arg is float
+    table_["+"] = [this](auto& a) {
+        if (a.empty()) return make_int(0);
+        bool any_f = false;
+        for (auto& v : a) if (is_float(v)) { any_f = true; break; }
+        if (any_f) {
+            double r = 0.0;
+            for (auto& v : a) r += is_float(v) ? as_float(v) : static_cast<double>(coerce_to_int(v, string_heap_));
+            return make_float(r);
         }
-        return make_int(coerce_to_int(a[0], string_heap_) + coerce_to_int(a[1], string_heap_));
+        std::int64_t r = 0;
+        for (auto& v : a) r += coerce_to_int(v, string_heap_);
+        return make_int(r);
     };
-    table_["-"]  = [this](auto& a) {
-        if ((a.size() > 0 && is_float(a[0])) || (a.size() > 1 && is_float(a[1]))) {
-            double x = a.empty() ? 0.0 : (is_float(a[0]) ? as_float(a[0]) : static_cast<double>(coerce_to_int(a[0], string_heap_)));
-            if (a.size() == 1) return make_float(-x);
-            double y = is_float(a[1]) ? as_float(a[1]) : static_cast<double>(coerce_to_int(a[1], string_heap_));
-            return make_float(x - y);
+    // (-) → 0, (- x) → -x, (- x y ...) → x - y - z - ...
+    table_["-"] = [this](auto& a) {
+        if (a.empty()) return make_int(0);
+        bool any_f = false;
+        for (auto& v : a) if (is_float(v)) { any_f = true; break; }
+        auto to_f = [this](const EvalValue& v) { return is_float(v) ? as_float(v) : static_cast<double>(coerce_to_int(v, string_heap_)); };
+        if (any_f) {
+            if (a.size() == 1) return make_float(-to_f(a[0]));
+            double r = to_f(a[0]);
+            for (std::size_t i = 1; i < a.size(); ++i) r -= to_f(a[i]);
+            return make_float(r);
         }
-        auto v0 = coerce_to_int(a[0], string_heap_);
-        return a.size() == 1 ? make_int(-v0) : make_int(v0 - coerce_to_int(a[1], string_heap_));
+        if (a.size() == 1) return make_int(-coerce_to_int(a[0], string_heap_));
+        std::int64_t r = coerce_to_int(a[0], string_heap_);
+        for (std::size_t i = 1; i < a.size(); ++i) r -= coerce_to_int(a[i], string_heap_);
+        return make_int(r);
     };
-    table_["*"]  = [this](auto& a) {
-        if (is_float(a[0]) || is_float(a[1])) {
-            double x = is_float(a[0]) ? as_float(a[0]) : static_cast<double>(coerce_to_int(a[0], string_heap_));
-            double y = is_float(a[1]) ? as_float(a[1]) : static_cast<double>(coerce_to_int(a[1], string_heap_));
-            return make_float(x * y);
+    // (*) → 1, (* x) → x, (* x y ...) → product; float if any arg is float
+    table_["*"] = [this](auto& a) {
+        if (a.empty()) return make_int(1);
+        bool any_f = false;
+        for (auto& v : a) if (is_float(v)) { any_f = true; break; }
+        if (any_f) {
+            double r = 1.0;
+            for (auto& v : a) r *= is_float(v) ? as_float(v) : static_cast<double>(coerce_to_int(v, string_heap_));
+            return make_float(r);
         }
-        return make_int(coerce_to_int(a[0], string_heap_) * coerce_to_int(a[1], string_heap_));
+        std::int64_t r = 1;
+        for (auto& v : a) r *= coerce_to_int(v, string_heap_);
+        return make_int(r);
     };
-    table_["/"]  = [this](auto& a) {
-        if (is_float(a[0]) || is_float(a[1])) {
-            double x = is_float(a[0]) ? as_float(a[0]) : static_cast<double>(coerce_to_int(a[0], string_heap_));
-            double y = is_float(a[1]) ? as_float(a[1]) : static_cast<double>(coerce_to_int(a[1], string_heap_));
-            if (y == 0.0) return make_int(0);
-            return make_float(x / y);
+    // (/) → 1, (/ x) → 1.0/x (float reciprocal), (/ x y ...) → x / y / z / ...
+    table_["/"] = [this](auto& a) {
+        if (a.empty()) return make_int(1);
+        auto to_f = [this](const EvalValue& v) { return is_float(v) ? as_float(v) : static_cast<double>(coerce_to_int(v, string_heap_)); };
+        if (a.size() == 1) {
+            double x = to_f(a[0]);
+            return (x == 0.0) ? make_int(0) : make_float(1.0 / x);
         }
-        return make_int(coerce_to_int(a[0], string_heap_) / coerce_to_int(a[1], string_heap_));
+        bool any_f = false;
+        for (auto& v : a) if (is_float(v)) { any_f = true; break; }
+        if (any_f) {
+            double r = to_f(a[0]);
+            for (std::size_t i = 1; i < a.size(); ++i) {
+                double d = to_f(a[i]);
+                if (d == 0.0) return make_int(0);
+                r /= d;
+            }
+            return make_float(r);
+        }
+        std::int64_t r = coerce_to_int(a[0], string_heap_);
+        for (std::size_t i = 1; i < a.size(); ++i) {
+            auto d = coerce_to_int(a[i], string_heap_);
+            if (d == 0) return make_int(0);
+            r /= d;
+        }
+        return make_int(r);
     };
-    auto to_fcomp = [this](const EvalValue& v) -> double {
-        if (is_float(v)) return as_float(v);
-        return static_cast<double>(coerce_to_int(v, string_heap_));
+    auto to_f = [this](const EvalValue& v) -> double {
+        return is_float(v) ? as_float(v) : static_cast<double>(coerce_to_int(v, string_heap_));
     };
-    table_["="]  = [this,&to_fcomp](auto& a) {
-        if (is_float(a[0]) || is_float(a[1])) return make_int(to_fcomp(a[0]) == to_fcomp(a[1]) ? 1 : 0);
-        return make_int(coerce_to_int(a[0], string_heap_) == coerce_to_int(a[1], string_heap_) ? 1 : 0);
+    auto chain_cmp = [this,&to_f](const auto& a, auto fn_int, auto fn_float) -> EvalValue {
+        if (a.size() < 2) return make_int(1);
+        bool any_f = false;
+        for (auto& v : a) if (is_float(v)) { any_f = true; break; }
+        if (any_f) {
+            for (std::size_t i = 1; i < a.size(); ++i)
+                if (!fn_float(to_f(a[i-1]), to_f(a[i]))) return make_int(0);
+            return make_int(1);
+        }
+        for (std::size_t i = 1; i < a.size(); ++i)
+            if (!fn_int(coerce_to_int(a[i-1], string_heap_), coerce_to_int(a[i], string_heap_))) return make_int(0);
+        return make_int(1);
     };
-    table_["<"]  = [this,&to_fcomp](auto& a) {
-        if (is_float(a[0]) || is_float(a[1])) return make_int(to_fcomp(a[0]) < to_fcomp(a[1]) ? 1 : 0);
-        return make_int(coerce_to_int(a[0], string_heap_) < coerce_to_int(a[1], string_heap_) ? 1 : 0);
-    };
-    table_[">"]  = [this,&to_fcomp](auto& a) {
-        if (is_float(a[0]) || is_float(a[1])) return make_int(to_fcomp(a[0]) > to_fcomp(a[1]) ? 1 : 0);
-        return make_int(coerce_to_int(a[0], string_heap_) > coerce_to_int(a[1], string_heap_) ? 1 : 0);
-    };
-    table_["<="] = [this,&to_fcomp](auto& a) {
-        if (is_float(a[0]) || is_float(a[1])) return make_int(to_fcomp(a[0]) <= to_fcomp(a[1]) ? 1 : 0);
-        return make_int(coerce_to_int(a[0], string_heap_) <= coerce_to_int(a[1], string_heap_) ? 1 : 0);
-    };
-    table_[">="] = [this,&to_fcomp](auto& a) {
-        if (is_float(a[0]) || is_float(a[1])) return make_int(to_fcomp(a[0]) >= to_fcomp(a[1]) ? 1 : 0);
-        return make_int(coerce_to_int(a[0], string_heap_) >= coerce_to_int(a[1], string_heap_) ? 1 : 0);
-    };
+    table_["="]  = [&](auto& a) { return chain_cmp(a, [](auto x, auto y){ return x == y; }, [](auto x, auto y){ return x == y; }); };
+    table_["<"]  = [&](auto& a) { return chain_cmp(a, [](auto x, auto y){ return x < y; }, [](auto x, auto y){ return x < y; }); };
+    table_[">"]  = [&](auto& a) { return chain_cmp(a, [](auto x, auto y){ return x > y; }, [](auto x, auto y){ return x > y; }); };
+    table_["<="] = [&](auto& a) { return chain_cmp(a, [](auto x, auto y){ return x <= y; }, [](auto x, auto y){ return x <= y; }); };
+    table_[">="] = [&](auto& a) { return chain_cmp(a, [](auto x, auto y){ return x >= y; }, [](auto x, auto y){ return x >= y; }); };
     // Ghuloum Step 9: booleans
     table_["not"]  = [](auto& a) { return make_int(!is_truthy(a[0]) ? 1 : 0); };
     table_["and"]  = [](auto& a) {
@@ -186,6 +221,35 @@ namespace {
 }
 
 void Evaluator::init_pair_primitives() {
+    // ── Type predicates ──────────────────────────────────────────
+    primitives_.add("integer?", [](const auto& a) {
+        if (a.empty()) return make_bool(false);
+        return make_bool(is_int(a[0]));
+    });
+    primitives_.add("float?", [](const auto& a) {
+        if (a.empty()) return make_bool(false);
+        return make_bool(is_float(a[0]));
+    });
+    primitives_.add("boolean?", [](const auto& a) {
+        if (a.empty()) return make_bool(false);
+        return make_bool(is_bool(a[0]));
+    });
+    primitives_.add("number?", [](const auto& a) {
+        if (a.empty()) return make_bool(false);
+        return make_bool(is_int(a[0]) || is_float(a[0]));
+    });
+    primitives_.add("symbol?", [](const auto& a) {
+        if (a.empty()) return make_bool(false);
+        // Symbols are interned during parsing and not represented as
+        // first-class EvalValue values; always return false.
+        return make_bool(false);
+    });
+    primitives_.add("procedure?", [](const auto& a) {
+        if (a.empty()) return make_bool(false);
+        return make_bool(is_closure(a[0]));
+    });
+
+    // ── Pair / List / String primitives ─────────────────────────
     primitives_.add("cons", [this](const auto& a) {
         auto id = pairs_.size();
         pairs_.push_back({a[0], a[1]});
@@ -1006,6 +1070,173 @@ void Evaluator::init_pair_primitives() {
         return *result;
     });
 
+    // ── Numeric extension primitives ──────────────────────────────
+
+    // modulo: (modulo n m) → remainder with sign of divisor (non-negative when m > 0)
+    primitives_.add("modulo", [this](const auto& a) {
+        if (a.size() < 2) return make_int(0);
+        auto divisor = coerce_to_int(a[1], &string_heap_);
+        if (divisor == 0) return make_int(0);
+        auto n = coerce_to_int(a[0], &string_heap_);
+        auto r = n % divisor;
+        if (r < 0) r += (divisor > 0 ? divisor : -divisor);
+        return make_int(r);
+    });
+    // quotient: (quotient n m) → integer division truncating toward zero
+    primitives_.add("quotient", [this](const auto& a) {
+        if (a.size() < 2) return make_int(0);
+        auto divisor = coerce_to_int(a[1], &string_heap_);
+        if (divisor == 0) return make_int(0);
+        return make_int(coerce_to_int(a[0], &string_heap_) / divisor);
+    });
+    // remainder: (remainder n m) → remainder with sign of dividend
+    primitives_.add("remainder", [this](const auto& a) {
+        if (a.size() < 2) return make_int(0);
+        auto divisor = coerce_to_int(a[1], &string_heap_);
+        if (divisor == 0) return make_int(0);
+        return make_int(coerce_to_int(a[0], &string_heap_) % divisor);
+    });
+    // abs: (abs n) → absolute value
+    primitives_.add("abs", [this](const auto& a) {
+        if (a.empty()) return make_int(0);
+        if (is_float(a[0])) return make_float(std::abs(as_float(a[0])));
+        auto n = coerce_to_int(a[0], &string_heap_);
+        return make_int(n < 0 ? -n : n);
+    });
+    // gcd: (gcd a b ...) → greatest common divisor (variadic)
+    primitives_.add("gcd", [this](const auto& a) {
+        if (a.empty()) return make_int(0);
+        auto to_int = [this](const EvalValue& v) { return coerce_to_int(v, &string_heap_); };
+        auto r = to_int(a[0]);
+        auto abs_gcd = [](std::int64_t x, std::int64_t y) -> std::int64_t {
+            x = x < 0 ? -x : x;
+            y = y < 0 ? -y : y;
+            while (y != 0) { auto t = y; y = x % y; x = t; }
+            return x;
+        };
+        for (std::size_t i = 1; i < a.size(); ++i)
+            r = abs_gcd(r, to_int(a[i]));
+        return make_int(r);
+    });
+    // lcm: (lcm a b ...) → least common multiple (variadic)
+    primitives_.add("lcm", [this](const auto& a) {
+        if (a.empty()) return make_int(1);
+        auto to_int = [this](const EvalValue& v) { return coerce_to_int(v, &string_heap_); };
+        auto r = to_int(a[0]);
+        auto gcd = [](std::int64_t x, std::int64_t y) -> std::int64_t {
+            x = x < 0 ? -x : x;
+            y = y < 0 ? -y : y;
+            if (x == 0 || y == 0) return 0;
+            while (y != 0) { auto t = y; y = x % y; x = t; }
+            return x;
+        };
+        for (std::size_t i = 1; i < a.size(); ++i) {
+            auto n = to_int(a[i]);
+            auto g = gcd(r, n);
+            r = (g == 0) ? 0 : (r / g) * n;
+        }
+        if (r < 0) r = -r;
+        return make_int(r);
+    });
+    // min: (min a b ...) → minimum (variadic)
+    primitives_.add("min", [this](const auto& a) {
+        if (a.empty()) return make_int(0);
+        bool any_f = false;
+        for (auto& v : a) if (is_float(v)) { any_f = true; break; }
+        if (any_f) {
+            auto to_f = [this](const EvalValue& v) { return is_float(v) ? as_float(v) : static_cast<double>(coerce_to_int(v, &string_heap_)); };
+            double r = to_f(a[0]);
+            for (std::size_t i = 1; i < a.size(); ++i) r = std::min(r, to_f(a[i]));
+            return make_float(r);
+        }
+        std::int64_t r = coerce_to_int(a[0], &string_heap_);
+        for (std::size_t i = 1; i < a.size(); ++i) r = std::min(r, coerce_to_int(a[i], &string_heap_));
+        return make_int(r);
+    });
+    // max: (max a b ...) → maximum (variadic)
+    primitives_.add("max", [this](const auto& a) {
+        if (a.empty()) return make_int(0);
+        bool any_f = false;
+        for (auto& v : a) if (is_float(v)) { any_f = true; break; }
+        if (any_f) {
+            auto to_f = [this](const EvalValue& v) { return is_float(v) ? as_float(v) : static_cast<double>(coerce_to_int(v, &string_heap_)); };
+            double r = to_f(a[0]);
+            for (std::size_t i = 1; i < a.size(); ++i) r = std::max(r, to_f(a[i]));
+            return make_float(r);
+        }
+        std::int64_t r = coerce_to_int(a[0], &string_heap_);
+        for (std::size_t i = 1; i < a.size(); ++i) r = std::max(r, coerce_to_int(a[i], &string_heap_));
+        return make_int(r);
+    });
+
+    // ── Character + I/O extensions ────────────────────────────────
+
+    // char?: (char? v) → true if is_int(v) (chars represented as ints)
+    primitives_.add("char?", [](const auto& a) {
+        if (a.empty()) return make_bool(false);
+        return make_bool(is_int(a[0]));
+    });
+    // char->integer: (char->integer c) → integer value
+    primitives_.add("char->integer", [](const auto& a) {
+        if (a.empty() || !is_int(a[0])) return make_int(0);
+        return a[0];
+    });
+    // integer->char: (integer->char n) → identity
+    primitives_.add("integer->char", [](const auto& a) {
+        if (a.empty() || !is_int(a[0])) return make_int(0);
+        return a[0];
+    });
+    // string->list: (string->list s) → list of char codes
+    primitives_.add("string->list", [this](const auto& a) {
+        if (a.empty()) return make_void();
+        std::string s;
+        if (is_string(a[0])) {
+            auto idx = as_string_idx(a[0]);
+            if (idx < string_heap_.size()) s = string_heap_[idx];
+        } else if (is_int(a[0])) {
+            s = std::to_string(as_int(a[0]));
+        }
+        EvalValue result = make_void();
+        for (auto it = s.rbegin(); it != s.rend(); ++it) {
+            auto pid = pairs_.size();
+            pairs_.push_back({make_int(static_cast<std::int64_t>(static_cast<unsigned char>(*it))), result});
+            result = make_pair(pid);
+        }
+        return result;
+    });
+    // list->string: (list->string lst) → string from char codes
+    primitives_.add("list->string", [this](const auto& a) {
+        if (a.empty() || !is_pair(a[0]) && !is_void(a[0])) return make_int(0);
+        std::string result;
+        auto v = a[0];
+        while (is_pair(v)) {
+            auto idx = as_pair_idx(v);
+            if (idx >= pairs_.size()) break;
+            auto car = pairs_[idx].car;
+            if (is_int(car))
+                result.push_back(static_cast<char>(as_int(car)));
+            v = pairs_[idx].cdr;
+        }
+        auto sid = string_heap_.size();
+        string_heap_.push_back(std::move(result));
+        return make_string(sid);
+    });
+    // read-line: (read-line) → read a line from stdin as string
+    primitives_.add("read-line", [this](const auto&) {
+        std::string line;
+        std::getline(std::cin, line);
+        if (line.empty()) return make_void();
+        auto id = string_heap_.size();
+        string_heap_.push_back(std::move(line));
+        return make_string(id);
+    });
+    // eof-object?: (eof-object? v) → check if value represents EOF
+    primitives_.add("eof-object?", [](const auto& a) {
+        if (a.empty()) return make_bool(false);
+        // EOF is represented as void (the same as when read-line returns empty)
+        return make_bool(is_void(a[0]));
+    });
+
     // ── Typed mutation operators ──────────────────────────────────
 
     // (mutate:replace-type node-id new-type-str)
@@ -1226,6 +1457,43 @@ Env* Evaluator::copy_env(const Env& e) {
 
 // apply_closure removed — closure calls use eval_flat directly
 
+// ── ast_to_data: convert AST subtree to EvalValue data ───────
+EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool, aura::ast::NodeId nid) {
+    if (nid == ast::NULL_NODE) return make_void();
+    auto v = flat.get(nid);
+    switch (v.tag) {
+    case ast::NodeTag::LiteralInt:
+        return make_int(v.int_value);
+    case ast::NodeTag::LiteralFloat:
+        return make_float(v.float_value);
+    case ast::NodeTag::LiteralString: {
+        auto name = std::string(pool.resolve(v.sym_id));
+        auto idx = string_heap_.size();
+        string_heap_.push_back(std::move(name));
+        return make_string(idx);
+    }
+    case ast::NodeTag::Variable: {
+        auto name = std::string(pool.resolve(v.sym_id));
+        auto idx = string_heap_.size();
+        string_heap_.push_back(std::move(name));
+        return make_string(idx);
+    }
+    case ast::NodeTag::Call: {
+        // Build a proper list from children (right-to-left cons chain)
+        EvalValue tail = make_void();
+        for (auto it = v.children.rbegin(); it != v.children.rend(); ++it) {
+            auto item = ast_to_data(flat, pool, *it);
+            auto pair_idx = pairs_.size();
+            pairs_.push_back(Pair{std::move(item), tail});
+            tail = make_pair(pair_idx);
+        }
+        return tail;
+    }
+    default:
+        return make_void();
+    }
+}
+
 // ── Phase 4: FlatAST tree-walker evaluator (EvalValue) ───────
 EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                                  aura::ast::StringPool& pool,
@@ -1439,7 +1707,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
     }
     case aura::ast::NodeTag::Quote: {
         if (v.children.empty()) return EvalResult(make_void());
-        return eval_flat(flat, pool, v.child(0), env);
+        return EvalResult(ast_to_data(flat, pool, v.child(0)));
     }
     case aura::ast::NodeTag::TypeAnnotation: {
         if (v.children.empty()) return EvalResult(make_void());
