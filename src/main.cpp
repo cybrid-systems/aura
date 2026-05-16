@@ -16,7 +16,8 @@ import aura.compiler.cache;
 static std::string fmt_val(const aura::compiler::types::EvalValue& v,
                            aura::compiler::CompilerService& cs) {
     return aura::compiler::format_value(v, &cs.evaluator().primitives().string_heap(),
-                                         &cs.evaluator().pairs());
+                                         &cs.evaluator().pairs(), 0,
+                                         &cs.evaluator().primitives());
 }
 
 // JSON helper: wrap a string value for JSON (escape quotes and backslashes)
