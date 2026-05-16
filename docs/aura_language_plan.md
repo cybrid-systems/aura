@@ -1,6 +1,9 @@
 # Ghuloum Steps 16-35: 语言内核增量完善计划
 
-**版本**：v1.0
+> **⚠️ 本文档为 2026-05-12 的原始计划，大部分步骤已在后续 sprint 中完成。**
+> 当前语言能力见 `docs/roadmap.md` 和 `README.md`。
+
+**版本**：v1.0（归档，2026.05.12）
 **日期**：2026-05-12
 **方法**：《An Incremental Approach to Compiler Construction》— 每步增加一个最小功能，系统始终可运行可测试。
 

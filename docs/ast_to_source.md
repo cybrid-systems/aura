@@ -1,7 +1,7 @@
 # FlatAST → Source 反序列化设计
 
 **版本**: v1.0
-**状态**: 设计阶段
+**状态**: ✅ 部分实现（用于 display/format_value），完整反解待完善
 **对应**: M3e 工具链 — AST → Source
 
 ---
