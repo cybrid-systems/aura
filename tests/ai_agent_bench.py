@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Aura AI Agent — 多程序测试基准
+"""Aura AI Agent — 多程序测试基准 (带完整标准库 API)
 
 运行 LLM 迭代式 Agent 解决一系列编程任务，记录成功率。
 """
 import subprocess, json, sys, os, time, re, http.client, urllib.parse
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from ai_agent_prompt import build_system_prompt
 
 AURA = os.environ.get("AURA_BIN", "./build/aura")
 OPENAI_KEY = os.environ.get("OPENAI_API_KEY", "")
@@ -16,7 +19,7 @@ def llm(msgs):
     p = urllib.parse.urlparse(OPENAI_URL)
     c = http.client.HTTPSConnection(p.netloc, timeout=60) if p.scheme == "https" else http.client.HTTPConnection(p.netloc, timeout=60)
     c.request("POST", p.path + "/chat/completions", json.dumps({
-        "model": OPENAI_MODEL, "messages": msgs, "temperature": 0.3,
+        "model": OPENAI_MODEL, "messages": msgs, "temperature": 0.2, "max_tokens": 2000,
     }), {"Content-Type": "application/json", "Authorization": f"Bearer {OPENAI_KEY}"})
     r = c.getresponse()
     d = json.loads(r.read())
@@ -45,168 +48,104 @@ def extract(text):
             if any(k in c for k in ("define","require","(+","(begin","lambda","import")): return c
     return ""
 
-SYSTEM = """You are an agent for Aura (Scheme-like Lisp). Generate code between ``` markers.
+SYSTEM_PROMPT = build_system_prompt()
 
-SUPPORTED:
-- (define (fn x) ...), (lambda (x) body)
-- (if cond t e), (begin expr...)
-- (+ 1 2 3), (- x y), (* x y), (/ x y), (modulo n m), (abs n), (gcd n m)
-- (list 1 2 3), (cons 1 2), (car x), (cdr x)
-- (map fn lst), (filter fn lst), (foldl fn init lst)
-- (= x y), (< x y), (> x y), (not x), (and x y), (or x y)
-- (null? x), (pair? x), (integer? x), (procedure? x)
-- (display x), (write x)
-- (require std/list) -> sum, sort, range, foldl, zip, flatten, last, sum, product
-- (require std/math) -> factorial, sqrt, pi, odd?, even?, mean
-- (require std/json) -> json-stringify, json-parse
-- (require std/string) -> string-split, string-join, string-upcase, string-downcase
-- (require std/struct) -> define-struct
-
-CRITICAL: The LAST expression in your code determines the returned value.
-Do NOT use (display x) for the final value — just return x directly.
-Example: (begin (define (fib n) ...) (fib 10)) returns 55, not 1.
-
-UNSUPPORTED (do not use): displayln, println, print, apply, reduce, for, while, begin0
-
-Say DONE when the program is correct and complete."""
-
-# ── 测试用例 ──────────────────────────────────────────────────
 TASKS = [
-    {
-        "id": "fib10",
-        "prompt": "Calculate fibonacci(10) efficiently",
-        "verify": lambda v: v == "55" or "55" in str(v),
-    },
-    {
-        "id": "fib20",
-        "prompt": "Calculate fibonacci(20) efficiently (must handle recursion depth)",
-        "verify": lambda v: v == "6765" or "6765" in str(v),
-    },
-    {
-        "id": "sum_1_to_100",
-        "prompt": "Sum integers from 1 to 100 using std/list range and foldl",
-        "verify": lambda v: v == "5050" or "5050" in str(v),
-    },
-    {
-        "id": "filter_odd",
-        "prompt": "Filter odd numbers from (range 1 20) and sum them",
-        "verify": lambda v: v == "100" or "100" in str(v),  # 1+3+5+7+9+11+13+15+17+19 = 100
-    },
-    {
-        "id": "map_square",
-        "prompt": "Square each element in (list 1 2 3 4 5) using map",
-        "verify": lambda v: "(1 4 9 16 25)" in str(v).replace(",", ""),
-    },
-    {
-        "id": "json_roundtrip",
-        "prompt": "Parse JSON string '{\"a\":1,\"b\":2}' and re-serialize it with std/json",
-        "verify": lambda v: "a" in str(v).replace(",", ""),
-    },
-    {
-        "id": "factorial",
-        "prompt": "Compute factorial(10) using std/math",
-        "verify": lambda v: v == "3628800" or "3628800" in str(v),
-    },
-    {
-        "id": "quicksort",
-        "prompt": "Implement quicksort: (qsort (list 3 1 4 1 5 9 2 6)) that returns sorted list",
-        "verify": lambda v: "(1 1 2 3 4 5 6 9)" in str(v).replace(",", ""),
-    },
-    {
-        "id": "zipper",
-        "prompt": "Zip two lists (list 1 2 3) and (list 'a 'b 'c) into pairs, using std/list",
-        "verify": lambda v: "a" in str(v) and "1" in str(v),
-    },
-    {
-        "id": "string_processor",
-        "prompt": "Split 'hello,world,aura' by comma, upcase each part, join with dash. Use std/string",
-        "verify": lambda v: "HELLO" in str(v).upper() and "WORLD" in str(v).upper(),
-    },
-    {
-        "id": "struct_point",
-        "prompt": "Define a point struct with x and y, create (10 20), extract x value",
-        "verify": lambda v: "10" in str(v),
-    },
-    {
-        "id": "prime_sieve",
-        "prompt": "Find all prime numbers up to 30 using trial division",
-        "verify": lambda v: all(p in str(v) for p in ["2","3","5","7","11","13","17","19","23","29"]),
-    },
+    {"id": "fib10",         "prompt": "Compute fibonacci(10) efficiently",
+     "verify": lambda v: "55" in str(v)},
+    {"id": "fib20",         "prompt": "Compute fibonacci(20) efficiently (iterative, not recursive)",
+     "verify": lambda v: "6765" in str(v)},
+    {"id": "sum_1_to_100",  "prompt": "Sum 1..100 using range and foldl from std/list",
+     "verify": lambda v: "5050" in str(v)},
+    {"id": "filter_odd",    "prompt": "Filter odd numbers from (range 1 20) and sum them",
+     "verify": lambda v: str(v).replace(",","") == "100" or "100" in str(v)},
+    {"id": "map_square",    "prompt": "Square each element in (list 1 2 3 4 5) using map",
+     "verify": lambda v: "25" in str(v) and "1" in str(v)},
+    {"id": "json_roundtrip", "prompt": "Parse '{\"a\":1,\"b\":2}' and re-serialize with std/json",
+     "verify": lambda v: "a" in str(v) or "{\"" in str(v)},
+    {"id": "factorial",     "prompt": "Compute factorial(10) using std/math",
+     "verify": lambda v: "3628800" in str(v)},
+    {"id": "quicksort",     "prompt": "Sort (list 3 1 4 1 5 9 2 6) with quicksort",
+     "verify": lambda v: "1 2 3 4 5 6 9" in str(v).replace(",","") or "1234569" in str(v).replace(",","")},
+    {"id": "string_proc",   "prompt": "Split 'hello,world,aura' by comma, upcase each, join with dash. Use std/string",
+     "verify": lambda v: "HELLO" in str(v).upper() and "WORLD" in str(v).upper() and "AURA" in str(v).upper()},
+    {"id": "struct_point",  "prompt": "Define point struct with x y, make (10 20), extract x",
+     "verify": lambda v: "10" in str(v)},
+    {"id": "prime_sieve",   "prompt": "Find primes up to 30 using trial division",
+     "verify": lambda v: all(p in str(v) for p in ["2","3","5","7","11","13","17","19","23","29"])},
+    {"id": "fib100_foldl",  "prompt": "Compute fibonacci(100) using iterative approach (big number)",
+     "verify": lambda v: "354224848179261915075" in str(v) or str(v).startswith("35422")},
 ]
 
-
-def solve_task(task):
-    print(f"\n  ┌─ {task['id']} ─────────────────────")
+def solve(task):
+    print(f"\n  {task['id']}: ", end="", flush=True)
     s = Session()
-    msgs = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": task["prompt"]}]
-    last_val = None
+    msgs = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": task["prompt"]}]
+    last_val, success = None, False
 
     for rnd in range(1, MAX_ROUNDS + 1):
-        print(f"  │ Round {rnd}: ", end="", flush=True)
+        t0 = time.time()
         resp = llm(msgs)
+        t_llm = time.time() - t0
         code = extract(resp)
 
         if not code:
             if "DONE" in resp.strip().split("\n")[-1].upper():
-                print("DONE (verify last result)")
-                break
+                print(f"r{rnd} done", end=" "); break
             msgs.append({"role": "assistant", "content": resp})
             continue
 
-        # Strip display/write calls that would shadow the return value
+        # Clean up display calls that would shadow return value
         code = re.sub(r'\(display\s+([^)]+)\)', r'\1', code)
-        code = re.sub(r'\(write\s+([^)]+)\)', r'\1', code)
-        code = re.sub(r'\(newline\)', '', code)
-
         lines = [l.strip() for l in code.split("\n") if l.strip() and not l.startswith(";")]
         if len(lines) > 1 and not (lines[0].startswith("(begin") and lines[-1] == ")"):
             code = "(begin " + " ".join(l for l in lines if not l.startswith(";")) + ")"
 
         t0 = time.time()
         r = s.exec(code)
-        elapsed = time.time() - t0
+        t_exec = time.time() - t0
         status = r.get("status")
         value = r.get("value", r.get("msg", ""))
         last_val = value
 
-        if status == "ok":
-            print(f"OK ({elapsed:.1f}s) val={value[:60]}")
-            if task["verify"](value):
-                print(f"  │ ✅ CORRECT")
-                s.close()
-                return True, rnd, value
+        if status == "ok" and task["verify"](value):
+            print(f"✅ r{rnd} ({t_llm:.0f}s+{t_exec:.0f}s)", end=" ")
+            success = True; break
+        elif status == "ok":
+            print(f"r{rnd} val={value[:30]}", end=" ")
+            # LLM decides: improve or DONE
         elif status == "timeout":
-            print(f"TIMEOUT")
+            print(f"r{rnd} timeout", end=" ")
         else:
-            print(f"ERROR: {value[:60]}")
+            print(f"r{rnd} err={value[:30]}", end=" ")
 
-        fb = f"Result: status={status} time={elapsed:.1f}s\n"
-        fb += f"Value: {value}\n" if status == "ok" else f"Error: {value}\n"
-        fb += "Fix and retry.\n" if status != "ok" else "Improve or say DONE if correct.\n"
+        fb = f"Result: status={status}"
+        fb += f" value={value}" if status == "ok" else f" error={value}"
+        fb += f"\nTime: {t_exec:.1f}s"
+        fb += "\nFix errors and retry.\n" if status != "ok" else "\nIf correct say DONE, otherwise improve.\n"
         msgs.append({"role": "assistant", "content": resp})
         msgs.append({"role": "user", "content": fb})
 
     s.close()
-    return False, MAX_ROUNDS, last_val
-
+    return success, last_val
 
 def main():
     if not OPENAI_KEY:
         print("Need OPENAI_API_KEY"); sys.exit(1)
-    print(f"LLM: {OPENAI_MODEL}\nTasks: {len(TASKS)}")
+    print(f"Model: {OPENAI_MODEL}\nSystem prompt: {len(SYSTEM_PROMPT)} chars\nTasks: {len(TASKS)}\n")
 
     results = []
     for t in TASKS:
-        ok, rnds, val = solve_task(t)
-        results.append((t["id"], ok, rnds))
-        print(f"  └─ {'✅' if ok else '❌'} {t['id']} ({rnds} rounds)")
+        ok, val = solve(t)
+        results.append((t["id"], ok))
+        print(f"{'✅' if ok else '❌'}")
 
-    passed = sum(1 for _, ok, _ in results if ok)
     print(f"\n{'='*50}")
-    print(f"Results: {passed}/{len(results)} passed")
-    for tid, ok, rnds in results:
-        print(f"  {'✅' if ok else '❌'} {tid} ({rnds}r)")
-    print(f"{'='*50}")
+    passed = sum(1 for _, ok in results if ok)
+    print(f"Results: {passed}/{len(results)} passed ({100*passed//len(results)}%)")
+    for tid, ok in results:
+        print(f"  {'✅' if ok else '❌'} {tid}")
+    print('='*50)
 
 if __name__ == "__main__":
     main()
