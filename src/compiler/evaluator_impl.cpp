@@ -2109,13 +2109,11 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                 auto macro_it = macros_.find(cname);
                 if (macro_it != macros_.end()) {
                     auto& md = macro_it->second;
-                    // Evaluate args first
+                    // Convert AST args to data (NOT evaluate — macros receive syntax)
                     std::vector<EvalValue> margs;
                     margs.reserve(md.params.size());
                     for (std::size_t i = 0; i < md.params.size() && i+1 < v.children.size(); ++i) {
-                        auto ar = eval_flat(*f, *p, v.child(i+1), eval_env);
-                        if (!ar) return ar;
-                        margs.push_back(*ar);
+                        margs.push_back(ast_to_data(*f, *p, v.child(i+1)));
                     }
                     // Bind args in tail env
                     tail_env.emplace(&eval_env);
