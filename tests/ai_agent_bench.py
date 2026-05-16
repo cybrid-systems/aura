@@ -16,8 +16,10 @@ MAX_ROUNDS = 10
 EXEC_TIMEOUT = 15
 
 def llm(msgs):
+    import socket
+    socket.setdefaulttimeout(120)
     p = urllib.parse.urlparse(OPENAI_URL)
-    c = http.client.HTTPSConnection(p.netloc, timeout=60) if p.scheme == "https" else http.client.HTTPConnection(p.netloc, timeout=60)
+    c = http.client.HTTPSConnection(p.netloc, timeout=120) if p.scheme == "https" else http.client.HTTPConnection(p.netloc, timeout=120)
     c.request("POST", p.path + "/chat/completions", json.dumps({
         "model": OPENAI_MODEL, "messages": msgs, "temperature": 0.2, "max_tokens": 2000,
     }), {"Content-Type": "application/json", "Authorization": f"Bearer {OPENAI_KEY}"})
