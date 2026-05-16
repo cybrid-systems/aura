@@ -109,12 +109,30 @@ M5e 生产后端        ⬜  LLVM JIT / AOT / 自举
 | set-car!/set-cdr! | ✅ | 破坏性列表操作 |
 | 管道多行输入 | ✅ | S-表达式分割器 |
 | display 递归打印 | ✅ | `(display '(1 2 3))` → `(1 2 3)` |
+| match | ✅ | 模式匹配 + 列表解构 |
+| define-struct | ✅ | 命名结构体 (vector 实现) |
+| std/list | ✅ | foldr, zip, sort, range, sum 等 |
+| std/math | ✅ | pi, sqrt, expt, factorial, mean |
+| std/string | ✅ | split, join, trim, upcase/downcase |
+| std/json | ✅ | json-parse + json-stringify |
+
+## 已知遗留问题
+
+### 🔴 闭包按值捕获环境快照
+`(define f (lambda ...))` 创建闭包时，捕获的是当前环境的快照（深拷贝）。
+如果 `f` 体内部调用 `g`，`g` 必须在 `f` **之前**定义，否则 `f` 的闭包找不到 `g`。
+
+与 Scheme 的 `letrec` 语义不同，影响：
+- 互递归函数（`pv` ↔ `pa` / `js` ↔ `jslist`）无法直接工作
+- 需要：手动重排定义顺序、传递函数参数、或使用 `set!` + global 绕开
+
+**根本修复**：将内部 `define` 改用 `letrec` 语义（先创建所有 cell，再求值 body）。
 
 ## 下一步计划
 
 ### 🟡 P6 — 模式匹配 + 记录
-- `(match expr [pattern body]...)` 降级为 if+car/cdr
-- `define-record-type` 或 `define-struct` 命名结构体
+- `(match expr [pattern body]...)` 降级为 if+car/cdr ✅
+- `define-record-type` / `define-struct` ✅
 
 ### 🟡 P6 — 标准库骨架
 - `std/math.aura` (pi, sq, exp, sin/cos)
