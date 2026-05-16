@@ -2519,6 +2519,38 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                     return eval_data_as_code(*template_result, eval_env, f, p);
                 }
             }
+            // Built-in require: (require mod-name) — symbol, not string
+            if (callee.tag == aura::ast::NodeTag::Variable) {
+                auto cname = std::string(p->resolve(callee.sym_id));
+                if (cname == "require" && v.children.size() > 1) {
+                    auto req_arg = v.child(1);
+                    auto rv = f->get(req_arg);
+                    std::string mod_path;
+                    if (rv.tag == aura::ast::NodeTag::LiteralString) {
+                        mod_path = std::string(p->resolve(rv.sym_id));
+                    } else if (rv.tag == aura::ast::NodeTag::Variable) {
+                        mod_path = std::string(p->resolve(rv.sym_id));
+                    } else {
+                        return std::unexpected(Diagnostic{ErrorKind::ParseError,
+                            "require: expected a module name (symbol or string)"});
+                    }
+                    // Build (import "...") and evaluate
+                    if (!arena_) return make_void();
+                    auto alloc = arena_->allocator();
+                    auto* ipool = arena_->create<aura::ast::StringPool>(alloc);
+                    auto* iflat = arena_->create<aura::ast::FlatAST>(alloc);
+                    auto import_expr = std::string("(import \"") + mod_path + "\")";
+                    auto pr = aura::parser::parse_to_flat(import_expr, *iflat, *ipool);
+                    if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+                        return std::unexpected(Diagnostic{ErrorKind::ParseError,
+                            "require: internal error"});
+                    }
+                    iflat->root = pr.root;
+                    // Pre-expand macros so import primitive is recognized
+                    auto expanded_root = aura::compiler::macro_expand_all(*iflat, *ipool, iflat->root);
+                    return eval_flat(*iflat, *ipool, expanded_root, eval_env);
+                }
+            }
             // Primitive call (all arg evals are recursive)
             if (callee.tag == aura::ast::NodeTag::Variable) {
                 auto cname = std::string(p->resolve(callee.sym_id));
