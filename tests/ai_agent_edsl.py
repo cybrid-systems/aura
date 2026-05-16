@@ -23,35 +23,58 @@ SYSTEM_PROMPT = build_system_prompt() + """
 
 ## TYPED MUTATION (增量变换)
 
-不要重写整个程序。使用以下 EDSL 操作进行增量修改:
+不要重写整个程序。用 mutate 做一步修改，exec 验证。
 
-1. 先用 exec 定义程序
-2. 用 query 检查 AST 节点
-3. 用 mutate 做精确修改
-
-### Query (查询 AST)
-(query:node code node-id)           — 查看节点
-(query:parent code node-id)         — 父节点
-(query:children code node-id)       — 子节点列表
-(query:siblings code node-id)       — 兄弟节点
-
-### Mutate (修改)
-(mutate:replace-value node-id new-value "summary")  — 替换值
+已注册的 mutate 原语（可在 Aura 中直接使用）:
+```
+(mutate:replace-value node-id new-value "summary")  — 替换节点值
 (mutate:replace-type node-id new-type "summary")    — 替换类型
 (mutate:record-patch node-id "op-name" "summary")   — 记录操作
+```
 
-### Fix (编译-修复循环)
-(fix code error-message)            — 尝试修复编译错误
-(fix:value code node-id)            — 修复特定节点的值
-(fix:type code node-id)             — 修复类型
+### 示例: 改 fib 返回值
 
-## WORKFLOW
-1. 用 exec 先定义/写程序
-2. 用 query 看 AST
-3. 用 mutate 精确改一个节点
-4. 看结果，不对就 rollback
-5. 重复直到正确
-"""
+第一步: exec 定义程序
+```
+(define (add x y) (+ x y))
+```
+
+第二步: mutate 改函数体 (mutate:replace-value 节点 新值 "说明")
+```
+(mutate:replace-value 4 100 "add 改成返回 100")
+```
+
+第三步: exec 验证
+```
+(add 1 2)
+```
+→ 100
+
+### 示例: 改 fib 从递归到迭代
+
+原始:
+```
+(define (fib n)
+  (if (< n 2) n
+    (+ (fib (- n 1)) (fib (- n 2)))))
+```
+
+一步替换为迭代:
+```
+(mutate:replace-value 0 "(define (fib n) (define (iter a b count) (if (= count 0) a (iter b (+ a b) (- count 1)))) (iter 0 1 n))" "fib 改成迭代")
+```
+
+验证:
+```
+(fib 30)
+```
+
+## 规则
+- 第一轮写完整代码
+- 之后用 mutate 做一步修改
+- 每步后 exec 验证结果
+- 任务完成后说 DONE"""
+
 
 class AuraSession:
     def __init__(self):
