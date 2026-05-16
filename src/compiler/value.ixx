@@ -29,6 +29,12 @@ export struct HashRef {
     constexpr auto operator<=>(const HashRef&) const = default;
 };
 
+// Primitive slot reference (for passing builtins like `+` as values)
+export struct PrimitiveRef {
+    std::size_t slot = 0;
+    constexpr auto operator<=>(const PrimitiveRef&) const = default;
+};
+
 // The universal runtime value
 export using EvalValue = std::variant<
     std::monostate,    // Void (index 0)
@@ -40,7 +46,8 @@ export using EvalValue = std::variant<
     CellRef,           // Cell (index 6)
     VectorRef,         // Vector (index 7)
     HashRef,           // Hash (index 8)
-    double             // Float (index 9)
+    double,            // Float (index 9)
+    PrimitiveRef       // Primitive (index 10)
 >;
 
 export inline EvalValue make_int(std::int64_t v) { return EvalValue(std::in_place_index<1>, v); }
@@ -52,6 +59,7 @@ export inline EvalValue make_cell(std::uint64_t id) { return EvalValue(std::in_p
 export inline EvalValue make_vector(std::uint64_t idx) { return EvalValue(std::in_place_index<7>, VectorRef{idx}); }
 export inline EvalValue make_hash(std::uint64_t idx) { return EvalValue(std::in_place_index<8>, HashRef{idx}); }
 export inline EvalValue make_float(double v) { return EvalValue(std::in_place_index<9>, v); }
+export inline EvalValue make_primitive(std::size_t slot) { return EvalValue(std::in_place_index<10>, PrimitiveRef{slot}); }
 export inline EvalValue make_void() { return EvalValue(std::in_place_index<0>); }
 
 export inline bool is_int(const EvalValue& v) noexcept { return std::holds_alternative<std::int64_t>(v); }
@@ -64,6 +72,7 @@ export inline bool is_cell(const EvalValue& v) noexcept { return std::holds_alte
 export inline bool is_vector(const EvalValue& v) noexcept { return std::holds_alternative<VectorRef>(v); }
 export inline bool is_hash(const EvalValue& v) noexcept { return std::holds_alternative<HashRef>(v); }
 export inline bool is_float(const EvalValue& v) noexcept { return std::holds_alternative<double>(v); }
+export inline bool is_primitive(const EvalValue& v) noexcept { return std::holds_alternative<PrimitiveRef>(v); }
 
 export inline std::int64_t as_int(const EvalValue& v) { return std::get<std::int64_t>(v); }
 export inline bool as_bool(const EvalValue& v) { return std::get<bool>(v); }
@@ -74,6 +83,7 @@ export inline std::uint64_t as_cell_id(const EvalValue& v) { return std::get<Cel
 export inline std::uint64_t as_vector_idx(const EvalValue& v) { return std::get<VectorRef>(v).index; }
 export inline std::uint64_t as_hash_idx(const EvalValue& v) { return std::get<HashRef>(v).index; }
 export inline double as_float(const EvalValue& v) { return std::get<double>(v); }
+export inline std::size_t as_primitive_slot(const EvalValue& v) { return std::get<PrimitiveRef>(v).slot; }
 
 export inline bool is_truthy(const EvalValue& v) {
     if (is_bool(v)) return as_bool(v);
@@ -94,6 +104,7 @@ export inline std::string format_value(const EvalValue& v) {
     if (is_pair(v)) return std::format("<pair[{}]>", as_pair_idx(v));
     if (is_closure(v)) return std::format("<closure[{}]>", as_closure_id(v));
     if (is_cell(v)) return std::format("<cell[{}]>", as_cell_id(v));
+    if (is_primitive(v)) return "<primitive>";
     return "<unknown>";
 }
 

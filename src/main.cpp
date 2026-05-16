@@ -944,6 +944,15 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
+        if (c == ';') {
+            // Line comment: skip to end of line
+            if (depth > 0) current += ';';
+            while (i + 1 < all_input.size() && all_input[i + 1] != '\n') {
+                ++i;
+            }
+            continue;
+        }
+
         if (c == '"') {
             current += c;
             in_string = true;

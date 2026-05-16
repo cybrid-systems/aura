@@ -13,13 +13,22 @@ export class Primitives {
 public:
     Primitives();
     std::optional<PrimFn> lookup(const std::string& n) const;
-    void add(const std::string& name, PrimFn fn) { table_[name] = std::move(fn); }
+    void add(const std::string& name, PrimFn fn) { 
+        auto slot = ordered_names_.size();
+        table_[name] = std::move(fn);
+        ordered_names_.push_back(name);
+    }
     void set_string_heap(std::vector<std::string>* h) { string_heap_ = h; }
     const std::vector<std::string>& string_heap() const { return *string_heap_; }
     std::vector<std::string>& string_heap() { return *string_heap_; }
+    // Slot-based lookup for primitive values
+    const std::string& name_for_slot(std::size_t slot) const { return ordered_names_[slot]; }
+    std::size_t slot_for_name(const std::string& name) const;
+    std::size_t slot_count() const { return ordered_names_.size(); }
 private:
     std::unordered_map<std::string, PrimFn> table_;
     std::vector<std::string>* string_heap_ = nullptr;
+    std::vector<std::string> ordered_names_;
 };
 
 export class Env final {
@@ -84,6 +93,7 @@ private:
                                                   aura::ast::StringPool* pool = nullptr);
     Env* copy_env(const Env& env);
     void init_pair_primitives();
+    void build_primitive_slots();
     Env top_; Primitives primitives_; ast::ASTArena* arena_=nullptr;
     ast::FlatAST* current_flat_ = nullptr;
     ast::StringPool* current_pool_ = nullptr;
@@ -155,6 +165,7 @@ export inline std::string format_value(const types::EvalValue& v, const std::vec
     if (types::is_hash(v)) return std::format("<hash[{}]>", types::as_hash_idx(v));
     if (types::is_closure(v)) return std::format("<closure[{}]>", types::as_closure_id(v));
     if (types::is_cell(v)) return std::format("<cell[{}]>", types::as_cell_id(v));
+    if (types::is_primitive(v)) return "<primitive>";
     return "<unknown>";
 }
 
