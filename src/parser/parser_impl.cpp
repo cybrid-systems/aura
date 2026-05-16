@@ -52,7 +52,21 @@ NodeId FlatParser::parse_expr() {
     case TokenKind::Float: return parse_float(lexer_->consume());
     case TokenKind::String: {
         auto tok = lexer_->consume();
-        auto id = flat_.add_literalstring(pool_.intern(std::string(tok.text)));
+        auto s = std::string(tok.text);
+        // Process \" → " and \\ → \ in string literals
+        std::string unescaped;
+        bool has_esc = false;
+        for (std::size_t i = 0; i < s.size(); ++i) {
+            if (s[i] == '\\' && i + 1 < s.size()) {
+                auto n = s[i + 1];
+                if (n == '"') { unescaped += '"'; i++; has_esc = true; }
+                else if (n == '\\') { unescaped += '\\'; i++; has_esc = true; }
+                else { unescaped += s[i]; }
+            } else {
+                unescaped += s[i];
+            }
+        }
+        auto id = flat_.add_literalstring(pool_.intern(has_esc ? unescaped : s));
         flat_.set_loc(id, tok.line, tok.column);
         return id;
     }
@@ -374,8 +388,23 @@ NodeId FlatParser::parse_val() {
     }
     case TokenKind::Float:
         return parse_float(lexer_->consume());
-    case TokenKind::String:
-        return flat_.add_literalstring(pool_.intern(std::string(lexer_->consume().text)));
+    case TokenKind::String: {
+        auto tok2 = lexer_->consume();
+        auto s2 = std::string(tok2.text);
+        std::string unesc2;
+        bool has_e2 = false;
+        for (std::size_t i = 0; i < s2.size(); ++i) {
+            if (s2[i] == '\\' && i + 1 < s2.size()) {
+                auto n = s2[i + 1];
+                if (n == '"') { unesc2 += '"'; i++; has_e2 = true; }
+                else if (n == '\\') { unesc2 += '\\'; i++; has_e2 = true; }
+                else { unesc2 += s2[i]; }
+            } else {
+                unesc2 += s2[i];
+            }
+        }
+        return flat_.add_literalstring(pool_.intern(has_e2 ? unesc2 : s2));
+    }
     case TokenKind::Identifier:
         return flat_.add_variable(pool_.intern(std::string(lexer_->consume().text)));
     case TokenKind::LParen:
