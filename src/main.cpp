@@ -952,17 +952,32 @@ int main(int argc, char* argv[]) {
 
         if (c == '(' || c == '[') {
             if (depth == 0 && !current.empty()) {
-                // Start of a new expression while we had non-whitespace leftover?
-                // This shouldn't normally happen, push current as complete
-                auto trimmed = current;
-                auto pos = trimmed.find_first_not_of(" \t\r\n");
-                if (pos != std::string::npos) {
-                    trimmed = trimmed.substr(pos);
-                    auto end = trimmed.find_last_not_of(" \t\r\n");
-                    if (end != std::string::npos) trimmed = trimmed.substr(0, end + 1);
-                    exprs.push_back(trimmed);
+                // Prefix characters (' ` ,) before ( form a single expression
+                // e.g. '(+ 1 2), `(1 ,x 3), ,(+ 1 2)
+                bool is_prefix = false;
+                for (auto pc : current) {
+                    if (pc == '\'' || pc == '`' || pc == ',') {
+                        is_prefix = true;
+                        break;
+                    }
+                    if (!std::isspace(static_cast<unsigned char>(pc))) {
+                        is_prefix = false;
+                        break;
+                    }
                 }
-                current.clear();
+                if (!is_prefix) {
+                    // Start of a new expression while we had non-whitespace leftover?
+                    // Push current as complete
+                    auto trimmed = current;
+                    auto pos = trimmed.find_first_not_of(" \t\r\n");
+                    if (pos != std::string::npos) {
+                        trimmed = trimmed.substr(pos);
+                        auto end = trimmed.find_last_not_of(" \t\r\n");
+                        if (end != std::string::npos) trimmed = trimmed.substr(0, end + 1);
+                        exprs.push_back(trimmed);
+                    }
+                    current.clear();
+                }
             }
             current += c;
             ++depth;
