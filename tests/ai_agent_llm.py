@@ -139,6 +139,14 @@ def main():
                     lines = p.strip().split("\n")
                     code = "\n".join(l for l in lines if not l.startswith("aura"))
                     break
+        # 移除 <think> 标签内容（MiniMax 等模型会输出推理过程）
+        import re
+        code = re.sub(r'<think>.*?</think>', '', code, flags=re.DOTALL).strip()
+        # 多个表达式时用 begin 包裹，确保全部执行
+        lines = [l.strip() for l in code.split("\n") if l.strip()]
+        if len(lines) > 1:
+            if not (lines[0].startswith("(begin") and lines[-1] == ")"):
+                code = "(begin " + " ".join(l for l in lines if not l.startswith(";")) + ")"
 
         print(f"\n  📄 生成代码:")
         for line in code.strip().split("\n"):
