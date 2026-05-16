@@ -130,17 +130,26 @@ M5e 生产后端        ⬜  LLVM JIT / AOT / 自举
 
 ## 下一步计划
 
-### 🟡 P6 — 模式匹配 + 记录
+### 🟡 P6 — 模式匹配 + 记录 ✅
 - `(match expr [pattern body]...)` 降级为 if+car/cdr ✅
 - `define-record-type` / `define-struct` ✅
 
-### 🟡 P6 — 标准库骨架
+### 🟡 P6 — 标准库骨架 ✅
 - `std/math.aura` (pi, sq, exp, sin/cos)
 - `std/list.aura` (foldr, zip, take-while, partition, sort)
 - `std/string.aura` (split, join, trim, replace, reverse)
 - `std/json.aura` (parse, stringify)
 
-### 🟢 P7 — LLVM JIT 后端
+### 🟡 P7 — 宏系统 v2 (datí)
+- `quasiquote` + `unquote` + `unquote-splicing` — 可读的代码模板
+- `gensym` — 生成唯一标识符
+- `symbol-append` — 符号名拼接
+- 递归宏展开（多遍）
+- 目标：`define-struct` 等 DSL 可用 defmacro 实现
+- 设计：`docs/macro_system_v2.md`
+- 卫生性：v1 暂缓
+
+### 🟢 P8 — LLVM JIT 后端
 - 从 IR 管线到 LLVM IR 的降级
 - `--jit` 模式
 - 与 --serve 集成
