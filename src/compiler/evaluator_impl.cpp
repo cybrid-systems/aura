@@ -200,7 +200,7 @@ Primitives::Primitives() {
     table_["<="] = [&](auto& a) { return chain_cmp(a, [](auto x, auto y){ return x <= y; }, [](auto x, auto y){ return x <= y; }); };
     table_[">="] = [&](auto& a) { return chain_cmp(a, [](auto x, auto y){ return x >= y; }, [](auto x, auto y){ return x >= y; }); };
     // Ghuloum Step 9: booleans
-    table_["not"]  = [](auto& a) { return make_int(!is_truthy(a[0]) ? 1 : 0); };
+    table_["not"]  = [](auto& a) { return make_bool(a.empty() || !is_truthy(a[0])); };
     table_["and"]  = [](auto& a) {
         for (std::size_t i = 0; i + 1 < a.size(); ++i)
             if (!is_truthy(a[i])) return a[i];
@@ -211,7 +211,7 @@ Primitives::Primitives() {
             if (is_truthy(a[i])) return a[i];
         return a.empty() ? make_int(0) : a.back();
     };
-    table_["eq?"]  = [](auto& a) { return make_int(a[0] == a[1] ? 1 : 0); };
+    table_["eq?"]  = [](auto& a) { return make_bool(a.size() >= 2 && a[0] == a[1]); };
     // Populate ordered_names_ with all primitives registered directly via table_[]
     for (auto& [name, _] : table_) {
         if (std::find(ordered_names_.begin(), ordered_names_.end(), name) == ordered_names_.end()) {
@@ -334,8 +334,8 @@ void Evaluator::init_pair_primitives() {
         return id < pairs_.size() ? pairs_[id].cdr : make_int(0);
     });
     primitives_.add("pair?", [](const auto& a) {
-        if (a.empty()) return make_int(0);
-        return make_int(is_pair(a[0]) ? 1 : 0);
+        if (a.empty()) return make_bool(false);
+        return make_bool(is_pair(a[0]));
     });
 
     // ── Cadr / Caddr shorthands ────────────────────────────────────
@@ -462,8 +462,8 @@ void Evaluator::init_pair_primitives() {
     });
 
     primitives_.add("string?", [this](const auto& a) {
-        if (a.empty()) return make_int(0);
-        return make_int(is_string(a[0]) ? 1 : 0);
+        if (a.empty()) return make_bool(false);
+        return make_bool(is_string(a[0]));
     });
     primitives_.add("string-append", [this](const auto& a) {
         std::string result;
@@ -608,7 +608,7 @@ void Evaluator::init_pair_primitives() {
         return make_int(1);
     });
     primitives_.add("null?", [](const auto& a) {
-        return make_int(a.empty() || is_void(a[0]) || (is_int(a[0]) && as_int(a[0]) == 0) ? 1 : 0);
+        return make_bool(!a.empty() && (is_void(a[0]) || (is_int(a[0]) && as_int(a[0]) == 0)));
     });
     primitives_.add("length", [this](const auto& a) {
         if (a.empty()) return make_int(0);
