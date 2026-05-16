@@ -28,6 +28,10 @@
     1
     (* n (factorial (- n 1)))))
 
+; Even/Odd (利用 not 返回 #t/#f)
+(define (odd? n) (not (= 0 (modulo n 2))))
+(define (even? n) (not (odd? n)))
+
 ; Sign
 (define (signum n)
   (if (= n 0) 0

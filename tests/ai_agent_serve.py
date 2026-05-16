@@ -143,6 +143,7 @@ def demo():
     check(session, "integer?", "(integer? 42)", "#t")
     check(session, "string?", '(string? "hello")', "#t")
     check(session, "null?", "(null? (list))", "#t")
+    check(session, "null? (cons)", "(null? (cons 1 2))", "#f")
     check(session, "procedure?", "(procedure? (lambda (x) x))", "#t")
 
     # 7. 结构体
