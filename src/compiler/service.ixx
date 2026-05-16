@@ -33,7 +33,7 @@ public:
 
     // ---- Tree-walker evaluation --------------------------------------
 
-    EvalResult eval(std::string_view input) {
+    [[nodiscard]] EvalResult eval(std::string_view input) {
         // Phase 4: parse directly into FlatAST, evaluator reads FlatAST directly.
         // Arena-allocate FlatAST/Pool so closures can reference them across calls.
         auto alloc = arena_.allocator();
@@ -53,7 +53,7 @@ public:
 
     // ---- IR pipeline ------------------------------------------------
 
-    EvalResult eval_ir(std::string_view input) {
+    [[nodiscard]] EvalResult eval_ir(std::string_view input) {
         // Phase 4: parse directly into FlatAST (bypasses Expr* entirely)
         // Arena-allocate FlatAST/Pool so closures can reference them across calls.
         auto alloc = arena_.allocator();
@@ -477,7 +477,7 @@ public:
 
     // Apply a mutation expression by parsing it INTO the persistent AST.
     // Returns the mutation ID (0 on failure).
-    MutationResult typed_mutate(std::string_view sexpr) {
+    [[nodiscard]] MutationResult typed_mutate(std::string_view sexpr) {
         if (!current_ast_ || !current_pool_) {
             return {0, false, "no AST loaded"};
         }
