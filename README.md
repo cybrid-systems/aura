@@ -7,20 +7,12 @@
 ## 当前状态（2026.05.16）
 
 ```
-M1 求值器     ✅  纯 FlatAST 管线 (SoA)，Expr* 指针树全部移除
-M2 查询引擎   ✅  ASTIndex + QueryEngine + TransformEngine
-M3a 语言补全  ✅  布尔/序对/begin/set!/quote/cond/letrec/string/vector/hash
-M3b 宏系统    ✅  defmacro + 卫生宏 Phase 1-5 (SyntaxMarker + 展开器 + 克隆 + 类型检查)
-M3c 反射      ✅  P2996 schema + kNodeMeta + IR opcode + 结构布局验证
-M3d 类型系统  ✅  L6.1-L6.8: 渐进类型 + Occurrence + forall 多态 + Float
-M3e 工具链    ✅  Benchmark(44) + 增量编译 + --serve + CI
-M3f AI 闭环    ✅  mutation_loop + LLM 驱动 + AI Agent 演示(6 场景)
-M4a 缓存      ✅  ABF v2 列式缓存 (v4, O(1) resolve, SyntaxMarker)
-M4b AI 协议    ✅  docs/ai_agent_protocol.md (7 工具定义)
-M4c 模块系统  ✅  import + AURA_PATH + ABF v2 全链路
-M4d 自进化     ✅  Typed Mutation 三周全部完成 (设计/MutationLog/原语/AI协议集成)
-M4e 语言完善   ✅  变参算术 + 数值基元 + 类型谓词 + 字符操作 + Quote 修复
-M4f 生产后端   ⬜  LLVM JIT / AOT / 自举
+M1-M3  语言核心          ✅  FlatAST管线/宏系统/反射/类型系统/工具链
+M4     高级特性          ✅  AI闭环/缓存/模块系统/Typed Mutation
+M5     语言完善          ✅  变参算术/TCO/equal?/match/define-struct/cXr简写
+M6     标准库            ✅  list/math/string/json (AURA_PATH 可导入)
+P7     宏系统 v2         🟡  设计就绪 (quasiquote/gensym/递归展开)
+P8     生产后端          ⬜  LLVM JIT / AOT / 自举
 ```
 
 ### 核心管线
@@ -37,12 +29,15 @@ M4f 生产后端   ⬜  LLVM JIT / AOT / 自举
 ### 测试覆盖
 
 ```
-CTest: 52/52   Benchmark: 44/44   Integration: 62/62
+CTest: 52/52   Benchmark: 44/44   Integration: 62/62   std lib: 168 行 Aura 代码
 ```
 
 ```bash
 $ ctest
 100% tests passed, 0 tests failed out of 52
+
+$ AURA_PATH=./lib echo '(import "std/list") (sort (list 3 1 4 1 5))' | ./aura
+# → (1 1 3 4 5)
 ```
 
 ---
@@ -54,36 +49,44 @@ $ ctest
 cmake -B build && cmake --build build --target aura
 
 # 求值
-echo '(+ 1 2)' | ./aura                      # → 3
-echo '((lambda (x) (* x 2)) 5)' | ./aura --ir # → 10
+echo '(+ 1 2  󰊯 3 4 5)' | ./aura            # → 15  (变参算术)
+echo '(+ 3.14 1.5)' | ./aura                 # → 4.64 (float 自动提升)
+echo '(filter (lambda (x) (> x 5)) (list 3 7 2 9))' | ./aura  # → (7 9)
+echo '(foldl + 0 (list 1 2 3 4 5))' | ./aura   # → 15
 
-# 浮点数
-echo '(+ 3.14 1.5)' | ./aura                 # → 4.640000000000001
-echo '(/ 10.0 3.0)' | ./aura --ir            # → 3.3333333333333335
+# 类型检查 + 多态
+echo '(map (lambda (x) (* x 2)) (list 1 2 3))' | ./aura --typecheck
 
-# 类型检查 + forall 多态
-echo '42' | ./aura --typecheck                # → type: Int
-echo '(map (lambda (x) (+ x 1)) (list 1 2 3))' | ./aura --typecheck  # → type: Int
-
-# 跨行 define + 闭包
+# 递归 + TCO (20000 层不爆栈)
 cat <<EOF | ./aura
-(define fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))))
-(fib 10)
+(define (deep n) (if (< n 0) 0 (deep (- n 1))))
+(deep 20000)
 EOF
-# → 55
 
-# 模块导入 (AURA_PATH)
-export AURA_PATH="/usr/local/lib/aura"
-echo '(import "math") (add 2 3)' | ./aura
+# 模式匹配
+cat <<EOF | ./aura
+(match (list 1 2 3)
+  ((list a b c) (+ a b c))
+  (_ 0))
+EOF
 
-# 哈希表
+# 命名结构体
+cat <<EOF | ./aura
+(define-struct point (x y))
+(define p (make-point 10 20))
+(point-x p)  ; → 10
+EOF
+
+# 标准库 (AURA_PATH)
+export AURA_PATH="./lib"
+echo '(import "std/list") (sort (list 9 2 7 4 1 8 5 3 6))' | ./aura
+echo '(import "std/json") (json-parse "{\"a\":1}")' | ./aura
+
+# 哈希表 + 文件 I/O
 echo '(hash-set! h "key" 42) (hash-ref h "key")' | ./aura
+echo '(read-file "data.txt")' | ./aura
 
-# 缓存序列化 (ABF v4)
-echo '(+ 1 2)' | ./aura --cache /tmp/x.abc
-./aura --cache-open /tmp/x.abc
-
-# AI Agent 演示
+# --serve (AI Agent 模式)
 python3 tests/ai_agent_demo.py
 ```
 
@@ -123,14 +126,17 @@ tests/
 
 | 文档 | 内容 |
 |------|------|
-| [`docs/aura_typesystem.md`](docs/aura_typesystem.md) | 类型系统设计（代码验证标注版） |
-| [`docs/ai_agent_protocol.md`](docs/ai_agent_protocol.md) | AI Agent 工具定义 + Zero-Shot 工作流 |
-| [`docs/hygienic_macros.md`](docs/hygienic_macros.md) | 卫生宏 + SyntaxMarker 设计 |
-| [`docs/module_system_abf_v2.md`](docs/module_system_abf_v2.md) | 模块系统 + ABF v2 序列化 |
-| [`docs/incremental_caas.md`](docs/incremental_caas.md) | 增量编译 + Compiler as a Service |
-| [`docs/ast_to_source.md`](docs/ast_to_source.md) | FlatAST → S-表达式反解 |
-| [`docs/typed_mutation_design.md`](docs/typed_mutation_design.md) | 🆕 类型安全变异算子设计 |
-| [`docs/roadmap.md`](docs/roadmap.md) | 完整路线图 |
+| 文档 | 状态 | 内容 |
+|------|------|------|
+| [`docs/aura_typesystem.md`](docs/aura_typesystem.md) | ✅ 实现完成 | 渐进类型 + Occurrence + forall + Float |
+| [`docs/macro_system_v2.md`](docs/macro_system_v2.md) | 🟡 设计就绪 | quasiquote + gensym + 递归宏展开 |
+| [`docs/ai_agent_protocol.md`](docs/ai_agent_protocol.md) | ✅ 实现完成 | AI Agent 工具定义 + Zero-Shot 工作流 |
+| [`docs/hygienic_macros.md`](docs/hygienic_macros.md) | ⚠️ 部分过时 | defmacro + SyntaxMarker（v2 设计中） |
+| [`docs/module_system_abf_v2.md`](docs/module_system_abf_v2.md) | ✅ 实现完成 | import + AURA_PATH + ABF 序列化 |
+| [`docs/typed_mutation_design.md`](docs/typed_mutation_design.md) | ✅ 实现完成 | MutationLog + 类型安全变异算子 |
+| [`docs/incremental_caas.md`](docs/incremental_caas.md) | ✅ 实现完成 | Compiler Service + 增量编译 |
+| [`docs/ast_to_source.md`](docs/ast_to_source.md) | 🟡 基础实现 | FlatAST → S-表达式反解 |
+| [`docs/roadmap.md`](docs/roadmap.md) | ✅ 活跃 | 完整路线图 + 遗留问题 |
 
 ---
 

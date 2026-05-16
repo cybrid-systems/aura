@@ -107,6 +107,7 @@ NodeId FlatParser::parse_list() {
         if (kw == "let*")   return parse_let_star();
         if (kw == "letrec") return parse_let(true);
         if (kw == "define") return parse_define();
+        if (kw == "define-struct") return parse_define_struct();
         if (kw == "begin")  return parse_begin();
         if (kw == "set!")   return parse_set();
         if (kw == "quote")  return parse_quote();
@@ -195,6 +196,102 @@ NodeId FlatParser::parse_define() {
     if (v == NULL_NODE) return NULL_NODE;
     lexer_->consume(); // ')'
     return flat_.add_define(pool_.intern(std::string(n.text)), v);
+}
+
+NodeId FlatParser::parse_define_struct() {
+    auto tok = lexer_->consume(); // 'define-struct'
+    
+    // Parse struct name
+    auto name_tok = lexer_->consume();
+    if (name_tok.kind != TokenKind::Identifier) { skip_rparen(); return NULL_NODE; }
+    auto struct_name = pool_.intern(std::string(name_tok.text));
+    
+    // Parse field list: (field1 field2 ...)
+    if (lexer_->consume().kind != TokenKind::LParen) { skip_rparen(); return NULL_NODE; }
+    std::vector<SymId> fields;
+    while (lexer_->peek().kind != TokenKind::RParen) {
+        auto f = lexer_->consume();
+        if (f.kind != TokenKind::Identifier) { skip_rparen(); return NULL_NODE; }
+        fields.push_back(pool_.intern(std::string(f.text)));
+    }
+    lexer_->consume(); // ')' after field list
+    
+    lexer_->consume(); // ')' closing define-struct
+    
+    // ── Generate constructor: (define make-Name (lambda (f1 f2 ...)
+    //                               (vector 'Name f1 f2 ...)))
+    auto make_name = pool_.intern(std::string("make-") + std::string(name_tok.text));
+    
+    // Build the quote for the type tag: 'Name
+    auto tag_var = flat_.add_variable(struct_name);
+    auto tag_quote = flat_.add_quote(tag_var);
+    
+    // Build: (vector 'Name f1 f2 ...)
+    std::vector<NodeId> vec_args;
+    vec_args.push_back(tag_quote);
+    for (auto f : fields) {
+        vec_args.push_back(flat_.add_variable(f));
+    }
+    auto vector_call = flat_.add_call(flat_.add_variable(pool_.intern("vector")), vec_args);
+    auto constructor = flat_.add_lambda(fields, vector_call);
+    auto make_define = flat_.add_define(make_name, constructor);
+    
+    // ── Generate predicate: (define Name? (lambda (obj)
+    //                               (and (vector? obj)
+    //                                    (equal? (vector-ref obj 0) 'Name))))
+    auto pred_name = pool_.intern(std::string(name_tok.text) + "?");
+    auto obj_sym = pool_.intern("__obj");
+    auto obj_var = flat_.add_variable(obj_sym);
+    
+    // (vector? obj)
+    auto vec_check = flat_.add_call(
+        flat_.add_variable(pool_.intern("vector?")),
+        std::vector<NodeId>{obj_var}
+    );
+    // (vector-ref obj 0)
+    auto ref_call = flat_.add_call(
+        flat_.add_variable(pool_.intern("vector-ref")),
+        std::vector<NodeId>{obj_var, flat_.add_literal(0)}
+    );
+    // (equal? ref 'Name)
+    auto eq_check = flat_.add_call(
+        flat_.add_variable(pool_.intern("equal?")),
+        std::vector<NodeId>{ref_call, tag_quote}
+    );
+    // (and vec-check eq-check)
+    auto and_call = flat_.add_call(
+        flat_.add_variable(pool_.intern("and")),
+        std::vector<NodeId>{vec_check, eq_check}
+    );
+    
+    auto pred_lambda = flat_.add_lambda({obj_sym}, and_call);
+    auto pred_define = flat_.add_define(pred_name, pred_lambda);
+    
+    // ── Generate accessors: (define Name-field (lambda (rec) (vector-ref rec N)))
+    std::vector<NodeId> all_defines;
+    all_defines.push_back(make_define);
+    all_defines.push_back(pred_define);
+    
+    for (std::size_t i = 0; i < fields.size(); ++i) {
+        auto fname = pool_.resolve(fields[i]);
+        auto acc_name = pool_.intern(std::string(name_tok.text) + "-" + std::string(fname));
+        auto rec_sym = pool_.intern("__rec");
+        auto rec_var = flat_.add_variable(rec_sym);
+        
+        // (vector-ref obj i+1)  (index 0 is the tag)
+        auto ref = flat_.add_call(
+            flat_.add_variable(pool_.intern("vector-ref")),
+            std::vector<NodeId>{rec_var, flat_.add_literal(static_cast<std::int64_t>(i + 1))}
+        );
+        auto acc_lambda = flat_.add_lambda({rec_sym}, ref);
+        auto acc_define = flat_.add_define(acc_name, acc_lambda);
+        all_defines.push_back(acc_define);
+    }
+    
+    // Wrap everything in begin
+    auto id = flat_.add_begin(all_defines.data(), static_cast<std::uint32_t>(all_defines.size()));
+    flat_.set_loc(id, tok.line, tok.column);
+    return id;
 }
 
 NodeId FlatParser::parse_let(bool rec) {
