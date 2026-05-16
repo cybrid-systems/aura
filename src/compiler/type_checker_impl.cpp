@@ -217,6 +217,24 @@ void InferenceEngine::init_primitive_env() {
     register_primitive("car",  {Dyn}, Dyn);
     register_primitive("cdr",  {Dyn}, Dyn);
 
+    // Cadr/Caddr shorthands
+    register_primitive("caar",  {Dyn}, Dyn);
+    register_primitive("cadr",  {Dyn}, Dyn);
+    register_primitive("cdar",  {Dyn}, Dyn);
+    register_primitive("cddr",  {Dyn}, Dyn);
+    register_primitive("caaar", {Dyn}, Dyn);
+    register_primitive("caadr", {Dyn}, Dyn);
+    register_primitive("cadar", {Dyn}, Dyn);
+    register_primitive("caddr", {Dyn}, Dyn);
+    register_primitive("cdaar", {Dyn}, Dyn);
+    register_primitive("cdadr", {Dyn}, Dyn);
+    register_primitive("cddar", {Dyn}, Dyn);
+    register_primitive("cdddr", {Dyn}, Dyn);
+
+    // Mutable pair operations
+    register_primitive("set-car!", {Dyn, Dyn}, Void);
+    register_primitive("set-cdr!", {Dyn, Dyn}, Void);
+
     // List operations
     register_primitive("list",    {Dyn}, Dyn);       // varargs — minimal
     register_primitive("length",  {Dyn}, Int);
