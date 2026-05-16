@@ -112,6 +112,7 @@ NodeId FlatParser::parse_list() {
         if (kw == "quote")  return parse_quote();
         if (kw == "cond")   return parse_cond();
         if (kw == "defmacro") return parse_defmacro();
+        if (kw == "match")  return parse_match();
     }
 
     auto func = parse_expr();
@@ -438,6 +439,211 @@ NodeId FlatParser::parse_defmacro() {
     auto mid = flat_.add_macrodef(pool_.intern(std::string(name.text)), params, body);
     flat_.set_loc(mid, tok.line, tok.column);
     return mid;
+}
+
+// ── Match / pattern matching ─────────────────────────────────
+NodeId FlatParser::parse_match() {
+    auto tok = lexer_->consume(); // 'match'
+
+    // Parse subject expression
+    auto subject = parse_expr();
+    if (subject == NULL_NODE) { skip_rparen(); return NULL_NODE; }
+
+    // Temp variable to hold subject (evaluated once)
+    auto tmp = pool_.intern("__match_tmp");
+
+    // Parse clauses: (pattern body ...)
+    struct Clause { NodeId test; NodeId body; };
+    std::vector<Clause> clauses;
+
+    while (lexer_->peek().kind != TokenKind::RParen && !lexer_->eof()) {
+        if (lexer_->peek().kind != TokenKind::LParen) break;
+        lexer_->consume(); // '('
+
+        // Parse pattern (as an s-expression value)
+        auto pattern = parse_val();
+        if (pattern == NULL_NODE) break;
+
+        // Parse body
+        auto body = parse_expr();
+        if (body == NULL_NODE) break;
+
+        if (lexer_->peek().kind != TokenKind::RParen) break;
+        lexer_->consume(); // ')'
+
+        // Compile pattern into test and bindings, then wrap body in let
+        NodeId test;
+        auto bindings = compile_pattern(pattern, tmp, &test);
+
+        // Wrap body in let bindings
+        for (auto& [name, val] : bindings)
+            body = flat_.add_let(name, val, body);
+
+        clauses.push_back({test, body});
+    }
+
+    if (lexer_->peek().kind == TokenKind::RParen)
+        lexer_->consume(); // ')'
+
+    if (clauses.empty()) return NULL_NODE;
+
+    // Build nested if chain from right to left
+    NodeId result = clauses.back().body;
+    for (auto it = clauses.rbegin() + 1; it != clauses.rend(); ++it)
+        result = flat_.add_if(it->test, it->body, result);
+
+    // Wrap in (let ((__match_tmp subject)) result)
+    result = flat_.add_let(tmp, subject, result);
+    flat_.set_loc(result, tok.line, tok.column);
+    return result;
+}
+
+std::vector<std::pair<SymId, NodeId>> FlatParser::compile_pattern(NodeId pattern_node, SymId tmp, NodeId* out_test) {
+    auto v = flat_.get(pattern_node);
+    std::vector<std::pair<SymId, NodeId>> bindings;
+    auto var_tmp = flat_.add_variable(tmp);
+    auto sym_null_q = pool_.intern("null?");
+    auto sym_pair_q = pool_.intern("pair?");
+    auto sym_car = pool_.intern("car");
+    auto sym_cdr = pool_.intern("cdr");
+    auto sym_equal_q = pool_.intern("equal?");
+
+    // Helper: call with args as initializer_list
+    auto make_call = [&](SymId func, std::initializer_list<NodeId> args) -> NodeId {
+        return flat_.add_call(flat_.add_variable(func), std::vector<NodeId>(args));
+    };
+
+    // Variable/wildcard pattern
+    if (v.tag == NodeTag::Variable) {
+        auto name = pool_.resolve(v.sym_id);
+        if (name == "_" || (name.size() > 1 && name[0] == '_' && name != "__match_tmp")) {
+            // Wildcard: match anything, no bindings
+            *out_test = flat_.add_literal(1);
+            return bindings;
+        }
+        // Variable binding: match anything, bind to whole value
+        *out_test = flat_.add_literal(1);
+        bindings.emplace_back(v.sym_id, var_tmp);
+        return bindings;
+    }
+
+    // Empty list () → (null? tmp)
+    if (v.tag == NodeTag::LiteralInt && v.int_value == 0) {
+        *out_test = make_call(sym_null_q, {var_tmp});
+        return bindings;
+    }
+
+    // Literal number: (= tmp literal) via equal?
+    if (v.tag == NodeTag::LiteralInt || v.tag == NodeTag::LiteralFloat || v.tag == NodeTag::LiteralString) {
+        *out_test = make_call(sym_equal_q, {var_tmp, pattern_node});
+        return bindings;
+    }
+
+    // Quote pattern: (quote data) → (equal? tmp '(data))
+    if (v.tag == NodeTag::Quote) {
+        *out_test = make_call(sym_equal_q, {var_tmp, pattern_node});
+        return bindings;
+    }
+
+    // Call: (list ...), (cons ...), or other function-like pattern
+    if (v.tag == NodeTag::Call) {
+        if (v.children.empty()) { *out_test = flat_.add_literal(0); return bindings; }
+
+        auto callee_v = flat_.get(v.child(0));
+        if (callee_v.tag == NodeTag::Variable) {
+            auto callee_name = pool_.resolve(callee_v.sym_id);
+
+            // (quote data) pattern — explicit quote in call position
+            if (callee_name == "quote" && v.children.size() > 1) {
+                auto quoted = v.child(1);
+                // Re-wrap as proper quote expression
+                auto quoted_expr = flat_.add_quote(quoted);
+                *out_test = make_call(sym_equal_q, {var_tmp, quoted_expr});
+                return bindings;
+            }
+
+            // (list p1 p2 ...) pattern
+            if (callee_name == "list") {
+                // Build chain: (pair? tmp) && (pair? (cdr tmp)) && ... && (null? (cddr... tmp))
+                NodeId accumulated_test = flat_.add_literal(1); // start with #t
+                NodeId current = var_tmp;
+
+                for (std::size_t i = 1; i < v.children.size(); ++i) {
+                    // (pair? current)
+                    auto pair_test = make_call(sym_pair_q, {current});
+                    accumulated_test = flat_.add_if(accumulated_test, pair_test, flat_.add_literal(0));
+
+                    auto elem = v.child(i);
+                    auto elem_v = flat_.get(elem);
+
+                    // (car current) — extract element value
+                    auto car_expr = make_call(sym_car, {current});
+
+                    if (elem_v.tag == NodeTag::Variable) {
+                        auto elem_name = pool_.resolve(elem_v.sym_id);
+                        if (elem_name != "_" && !(elem_name.size() > 1 && elem_name[0] == '_')) {
+                            // Variable binding: bind car value
+                            bindings.emplace_back(elem_v.sym_id, car_expr);
+                        } // else: wildcard, skip
+                    } else if (elem_v.tag == NodeTag::LiteralInt && elem_v.int_value == 0) {
+                        // () — exact match car against empty list
+                        auto eq_test = make_call(sym_equal_q, {car_expr, elem});
+                        accumulated_test = flat_.add_if(accumulated_test, eq_test, flat_.add_literal(0));
+                    } else if (elem_v.tag == NodeTag::LiteralInt || elem_v.tag == NodeTag::LiteralFloat || elem_v.tag == NodeTag::LiteralString) {
+                        // Literal element match
+                        auto eq_test = make_call(sym_equal_q, {car_expr, elem});
+                        accumulated_test = flat_.add_if(accumulated_test, eq_test, flat_.add_literal(0));
+                    }
+                    // For (list ...) sub-patterns or other complex elements,
+                    // we fall through and they match anything (no equality check)
+
+                    // Move to next: (cdr current)
+                    current = make_call(sym_cdr, {current});
+                }
+
+                // Final: (null? current) — proper list length check
+                auto null_test = make_call(sym_null_q, {current});
+                accumulated_test = flat_.add_if(accumulated_test, null_test, flat_.add_literal(0));
+
+                *out_test = accumulated_test;
+                return bindings;
+            }
+
+            // (cons p q) pattern
+            if (callee_name == "cons" && v.children.size() >= 3) {
+                // Test: (pair? tmp)
+                *out_test = make_call(sym_pair_q, {var_tmp});
+
+                auto car_pat = v.child(1);
+                auto cdr_pat = v.child(2);
+                auto car_v = flat_.get(car_pat);
+                auto cdr_v = flat_.get(cdr_pat);
+
+                auto car_expr = make_call(sym_car, {var_tmp});
+                auto cdr_expr = make_call(sym_cdr, {var_tmp});
+
+                // Car binding
+                if (car_v.tag == NodeTag::Variable) {
+                    auto ename = pool_.resolve(car_v.sym_id);
+                    if (ename != "_" && !(ename.size() > 1 && ename[0] == '_'))
+                        bindings.emplace_back(car_v.sym_id, car_expr);
+                }
+
+                // Cdr binding
+                if (cdr_v.tag == NodeTag::Variable) {
+                    auto ename = pool_.resolve(cdr_v.sym_id);
+                    if (ename != "_" && !(ename.size() > 1 && ename[0] == '_'))
+                        bindings.emplace_back(cdr_v.sym_id, cdr_expr);
+                }
+
+                return bindings;
+            }
+        }
+    }
+
+    // Default fallback: exact equality match
+    *out_test = make_call(sym_equal_q, {var_tmp, pattern_node});
+    return bindings;
 }
 
 // ── Free function ──────────────────────────────────────────────

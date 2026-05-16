@@ -1838,9 +1838,9 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                     tail_env->bind(std::string(p->resolve(pspan[i])), std::move(iargs[i]));
                 }
                 auto body_id = callee.children.empty() ? aura::ast::NULL_NODE : callee.child(0);
-                current_env = &*tail_env;
-                current_id = body_id;
-                continue; // TCO: lambda body
+                if (body_id != aura::ast::NULL_NODE)
+                    return eval_flat(*f, *p, body_id, *tail_env);
+                return make_void();
             }
             // Macro expansion (arg evals are recursive; body is tail)
             if (callee.tag == aura::ast::NodeTag::Variable) {
@@ -1864,9 +1864,9 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                     }
                     f = md.flat;
                     p = md.pool ? md.pool : p;
-                    current_id = md.body_id;
-                    current_env = &*tail_env;
-                    continue; // TCO: macro body
+                    if (md.body_id != aura::ast::NULL_NODE)
+                        return eval_flat(*md.flat, md.pool ? *md.pool : *p, md.body_id, *tail_env);
+                    return make_void();
                 }
             }
             // Primitive call (all arg evals are recursive)
@@ -1906,11 +1906,9 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                 for (std::size_t i = 0; i < cargs.size(); ++i) {
                     tail_env->bind(cl.params[i], std::move(cargs[i]));
                 }
-                f = cl.flat;
-                p = cl.pool ? cl.pool : p;
-                current_id = cl.body_id;
-                current_env = &*tail_env;
-                continue; // TCO: closure body
+                if (cl.body_id != aura::ast::NULL_NODE)
+                    return eval_flat(*cl.flat, cl.pool ? *cl.pool : *p, cl.body_id, *tail_env);
+                return make_void();
             }
             return std::unexpected(Diagnostic{ErrorKind::UnboundVariable,
                                               "cannot call: " + std::string(p->resolve(callee.sym_id))});
@@ -1962,9 +1960,9 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                 tail_env->set_cells(&cells_);
                 tail_env->bind(std::string(name), *vv);
             }
-            current_env = &*tail_env;
-            current_id = body_id;
-            continue; // TCO: let body
+            if (body_id != aura::ast::NULL_NODE)
+                return eval_flat(*f, *p, body_id, *tail_env);
+            return make_void();
         }
         case aura::ast::NodeTag::Define: {
             auto name = p->resolve(v.sym_id);
