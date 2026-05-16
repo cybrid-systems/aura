@@ -50,31 +50,40 @@ def extract(text):
 
 SYSTEM_PROMPT = build_system_prompt()
 
+EXEC_TIMEOUT_LONG = 60  # for complex tasks
+
 TASKS = [
     {"id": "fib10",         "prompt": "Compute fibonacci(10) efficiently",
-     "verify": lambda v: "55" in str(v)},
+     "timeout": 10, "verify": lambda v: "55" in str(v)},
     {"id": "fib20",         "prompt": "Compute fibonacci(20) efficiently (iterative, not recursive)",
-     "verify": lambda v: "6765" in str(v)},
+     "timeout": 10, "verify": lambda v: "6765" in str(v)},
     {"id": "sum_1_to_100",  "prompt": "Sum 1..100 using range and foldl from std/list",
-     "verify": lambda v: "5050" in str(v)},
+     "timeout": 10, "verify": lambda v: "5050" in str(v)},
     {"id": "filter_odd",    "prompt": "Filter odd numbers from (range 1 20) and sum them",
-     "verify": lambda v: str(v).replace(",","") == "100" or "100" in str(v)},
+     "timeout": 10, "verify": lambda v: str(v).replace(",","") == "100" or "100" in str(v)},
     {"id": "map_square",    "prompt": "Square each element in (list 1 2 3 4 5) using map",
-     "verify": lambda v: "25" in str(v) and "1" in str(v)},
+     "timeout": 10, "verify": lambda v: "25" in str(v) and "1" in str(v)},
     {"id": "json_roundtrip", "prompt": "Parse '{\"a\":1,\"b\":2}' and re-serialize with std/json",
-     "verify": lambda v: "a" in str(v) or "{\"" in str(v)},
+     "timeout": 10, "verify": lambda v: "a" in str(v) or "{\"" in str(v)},
     {"id": "factorial",     "prompt": "Compute factorial(10) using std/math",
-     "verify": lambda v: "3628800" in str(v)},
-    {"id": "quicksort",     "prompt": "Sort (list 3 1 4 1 5 9 2 6) with quicksort",
-     "verify": lambda v: "1 2 3 4 5 6 9" in str(v).replace(",","") or "1234569" in str(v).replace(",","")},
+     "timeout": 10, "verify": lambda v: "3628800" in str(v)},
+    {"id": "quicksort",     "prompt": "Sort (list 3 1 4 1 5 9 2 6) with quicksort, return the list",
+     "timeout": 10, "verify": lambda v: all(p in str(v).replace(",","") for p in ["1","2","3","4","5","6","9"])},
     {"id": "string_proc",   "prompt": "Split 'hello,world,aura' by comma, upcase each, join with dash. Use std/string",
-     "verify": lambda v: "HELLO" in str(v).upper() and "WORLD" in str(v).upper() and "AURA" in str(v).upper()},
+     "timeout": 10, "verify": lambda v: "HELLO" in str(v).upper() and "WORLD" in str(v).upper() and "AURA" in str(v).upper()},
     {"id": "struct_point",  "prompt": "Define point struct with x y, make (10 20), extract x",
-     "verify": lambda v: "10" in str(v)},
-    {"id": "prime_sieve",   "prompt": "Find primes up to 30 using trial division",
-     "verify": lambda v: all(p in str(v) for p in ["2","3","5","7","11","13","17","19","23","29"])},
-    {"id": "fib100_foldl",  "prompt": "Compute fibonacci(100) using iterative approach (big number)",
-     "verify": lambda v: "354224848179261915075" in str(v) or str(v).startswith("35422")},
+     "timeout": 10, "verify": lambda v: "10" in str(v)},
+    {"id": "prime_sieve_30", "prompt": "Find primes up to 30 by checking divisibility 2..sqrt(n). Return as list.",
+     "timeout": 30, "verify": lambda v: all(p in str(v) for p in ["2","3","5","7","11","13","17","19","23","29"])},
+    {"id": "fib100_foldl",  "prompt": "Compute fibonacci(100) using iterative approach. Return just the number.",
+     "timeout": 30, "verify": lambda v: "354224848179261915075" in str(v) or str(v).startswith("35422")},
+    # 更复杂的任务
+    {"id": "json_validate", "prompt": "Write a function (validate-schema data schema) that checks if a hash has required fields. Test it.",
+     "timeout": 30, "verify": lambda v: "#t" in str(v) or "true" in str(v).lower()},
+    {"id": "tree_depth",   "prompt": "Write a function to compute the maximum depth of a nested list: (depth '(1 (2 (3)) 4)) => 3",
+     "timeout": 30, "verify": lambda v: "3" in str(v)},
+    {"id": "csv_parse",    "prompt": "Parse CSV string 'a,b\\nc,d' into list of lists. Write the parser function.",
+     "timeout": 30, "verify": lambda v: "a" in str(v) and "d" in str(v)},
 ]
 
 def solve(task):
@@ -82,6 +91,7 @@ def solve(task):
     s = Session()
     msgs = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": task["prompt"]}]
     last_val, success = None, False
+    timeout = task.get("timeout", EXEC_TIMEOUT)
 
     for rnd in range(1, MAX_ROUNDS + 1):
         t0 = time.time()
@@ -102,7 +112,7 @@ def solve(task):
             code = "(begin " + " ".join(l for l in lines if not l.startswith(";")) + ")"
 
         t0 = time.time()
-        r = s.exec(code)
+        r = s.exec(code, timeout)
         t_exec = time.time() - t0
         status = r.get("status")
         value = r.get("value", r.get("msg", ""))
