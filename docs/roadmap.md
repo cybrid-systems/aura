@@ -18,7 +18,12 @@ M4b AI 协议         ✅  docs/ai_agent_protocol.md (7 工具定义)
 M4c 模块系统       ✅  import + AURA_PATH + ABF v2 全链路
 M4d 自进化         ✅  Typed Mutation 三周 (设计/MutationLog/原语/AI协议)
 M4e 语言完善       ✅  变参算术 + 数值基元 + 类型谓词 + 字符操作 + Quote 修复
-M4f 生产           ⬜  LLVM JIT / AOT / 自举
+M4f 实战测试         ✅  BST/Mergesort/Quicksort/Compose 实战验证
+M5a 尾递归优化      ✅  迭代式 eval_loop (TCO 支持)
+M5b 相等比较        ✅  equal? 深度递归比较
+M5c 列表访问简写    ✅  cadr/caddr/cddr/cadar 等
+M5d 破坏性操作      ✅  set-car!/set-cdr!
+M5e 生产后端        ⬜  LLVM JIT / AOT / 自举
 ```
 
 ---
@@ -83,38 +88,41 @@ M4f 生产           ⬜  LLVM JIT / AOT / 自举
 
 ---
 
+## 现有能力概览
+
+| 能力 | 状态 | 说明 |
+|------|------|------|
+| 变参算术 | ✅ | `(+ 1 2 3)` → 6 |
+| 数值基元 | ✅ | modulo/quotient/remainder/abs/gcd/lcm/min/max |
+| 类型谓词 | ✅ | integer?/float?/boolean?/number?/symbol?/procedure? |
+| 字符操作 | ✅ | char?/char->integer/integer->char/string->list/list->string |
+| I/O | ✅ | read/read-line/write/display/newline/eof-object? |
+| let* | ✅ | 变量依赖绑定 |
+| named let | ✅ | `(let loop ((i 0) ...) ...)` — 循环模式 |
+| `;` 注释 | ✅ | 行注释 |
+| `()` sentinel | ✅ | null?/length/list? 同时识别 void 和 int 0 |
+| take/drop/foldl | ✅ | 基础列表原语 |
+| define 链 | ✅ | 顺序 define 跨 eval 调用正确 |
+| 尾递归 | ✅ | 迭代式 eval_loop，大递归不爆栈 |
+| equal? | ✅ | 深度递归比较序对/列表/向量 |
+| cadr/caddr | ✅ | 标准 cXr 缩写 |
+| set-car!/set-cdr! | ✅ | 破坏性列表操作 |
+| 管道多行输入 | ✅ | S-表达式分割器 |
+| display 递归打印 | ✅ | `(display '(1 2 3))` → `(1 2 3)` |
+
 ## 下一步计划
 
-### 🔴 P3 — Typed Mutation（3 周）
+### 🟡 P6 — 模式匹配 + 记录
+- `(match expr [pattern body]...)` 降级为 if+car/cdr
+- `define-record-type` 或 `define-struct` 命名结构体
 
-类型安全变异算子，支持 AI Agent 安全自修改代码。
+### 🟡 P6 — 标准库骨架
+- `std/math.aura` (pi, sq, exp, sin/cos)
+- `std/list.aura` (foldr, zip, take-while, partition, sort)
+- `std/string.aura` (split, join, trim, replace, reverse)
+- `std/json.aura` (parse, stringify)
 
-| Week | 内容 | 交付物 |
-|------|------|--------|
-| W1 | MutationRecord + MutationLog | FlatAST 存储、add_mutation、mutation_history |
-| W2 | TypedMutationOp 原语 | check_preconditions、create_patches、apply、revert |
-| W3 | Provenance 查询 + AI 协议集成 | mutation-log、rollback、--serve 扩展 |
-
-详见 [`docs/typed_mutation_design.md`](docs/typed_mutation_design.md)
-
-### 🟡 P4 — Capability Effects（2 周）
-
-- `perform (MutateAST node code)` 通过 effect handler 调度
-- `(: modify-module (Capability ModuleA -> Bool))` 类型签名
-- 与现有 `primitives_.add` 机制集成
-
-### 🟡 P4 — 增量热更新健全性（1 周）
-
-- 子树级类型重检查（只检查受 mutation 影响的部分）
-- 热更新时自动插入 coercion + blame 边界
-- 与 ABF v2 + --serve 深度集成
-
-### 🟢 P5 — LLVM 后端探索
-
-M4e 正式第一步。建议等 Agent demo + Typed Mutation 验证价值后再投入。
-
-### 🟢 P5 — 包管理器
-
-在 AURA_PATH 基础上：
-- 本地 `~/.aura/pkgs/` 仓库
-- `(require "math")` 从 URL 下载并缓存
+### 🟢 P7 — LLVM JIT 后端
+- 从 IR 管线到 LLVM IR 的降级
+- `--jit` 模式
+- 与 --serve 集成

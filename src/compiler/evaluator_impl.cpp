@@ -321,6 +321,130 @@ void Evaluator::init_pair_primitives() {
         if (a.empty()) return make_int(0);
         return make_int(is_pair(a[0]) ? 1 : 0);
     });
+
+    // ── Cadr / Caddr shorthands ────────────────────────────────────
+    primitives_.add("caar", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_pair(a[0])) return make_void();
+        auto idx = as_pair_idx(a[0]);
+        if (idx >= pairs_.size()) return make_void();
+        auto c = pairs_[idx].car;
+        if (!is_pair(c)) return make_void();
+        return pairs_[as_pair_idx(c)].car;
+    });
+    primitives_.add("cadr", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_pair(a[0])) return make_void();
+        auto idx = as_pair_idx(a[0]);
+        if (idx >= pairs_.size()) return make_void();
+        auto c = pairs_[idx].cdr;
+        if (!is_pair(c)) return make_void();
+        return pairs_[as_pair_idx(c)].car;
+    });
+    primitives_.add("cdar", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_pair(a[0])) return make_void();
+        auto idx = as_pair_idx(a[0]);
+        if (idx >= pairs_.size()) return make_void();
+        auto c = pairs_[idx].car;
+        if (!is_pair(c)) return make_void();
+        return pairs_[as_pair_idx(c)].cdr;
+    });
+    primitives_.add("cddr", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_pair(a[0])) return make_void();
+        auto idx = as_pair_idx(a[0]);
+        if (idx >= pairs_.size()) return make_void();
+        auto c = pairs_[idx].cdr;
+        if (!is_pair(c)) return make_void();
+        return pairs_[as_pair_idx(c)].cdr;
+    });
+    primitives_.add("caaar", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_pair(a[0])) return make_void();
+        auto idx = as_pair_idx(a[0]);
+        if (idx >= pairs_.size()) return make_void();
+        auto c = pairs_[idx].car;
+        return is_pair(c) ? pairs_[as_pair_idx(c)].car : make_void();
+    });
+    primitives_.add("caadr", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_pair(a[0])) return make_void();
+        auto idx = as_pair_idx(a[0]);
+        if (idx >= pairs_.size()) return make_void();
+        auto c = pairs_[idx].cdr;
+        if (!is_pair(c)) return make_void();
+        return pairs_[as_pair_idx(c)].car;
+    });
+    primitives_.add("cadar", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_pair(a[0])) return make_void();
+        auto idx = as_pair_idx(a[0]);
+        if (idx >= pairs_.size()) return make_void();
+        auto c = pairs_[idx].car;
+        if (!is_pair(c)) return make_void();
+        auto d = pairs_[as_pair_idx(c)].cdr;
+        if (!is_pair(d)) return make_void();
+        return pairs_[as_pair_idx(d)].car;
+    });
+    primitives_.add("caddr", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_pair(a[0])) return make_void();
+        auto idx = as_pair_idx(a[0]);
+        if (idx >= pairs_.size()) return make_void();
+        auto c = pairs_[idx].cdr;
+        if (!is_pair(c)) return make_void();
+        auto d = pairs_[as_pair_idx(c)].cdr;
+        if (!is_pair(d)) return make_void();
+        return pairs_[as_pair_idx(d)].car;
+    });
+    primitives_.add("cdaar", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_pair(a[0])) return make_void();
+        auto idx = as_pair_idx(a[0]);
+        if (idx >= pairs_.size()) return make_void();
+        auto c = pairs_[idx].car;
+        if (!is_pair(c)) return make_void();
+        return pairs_[as_pair_idx(c)].cdr;
+    });
+    primitives_.add("cdadr", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_pair(a[0])) return make_void();
+        auto idx = as_pair_idx(a[0]);
+        if (idx >= pairs_.size()) return make_void();
+        auto c = pairs_[idx].cdr;
+        if (!is_pair(c)) return make_void();
+        auto d = pairs_[as_pair_idx(c)].car;
+        if (!is_pair(d)) return make_void();
+        return pairs_[as_pair_idx(d)].cdr;
+    });
+    primitives_.add("cddar", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_pair(a[0])) return make_void();
+        auto idx = as_pair_idx(a[0]);
+        if (idx >= pairs_.size()) return make_void();
+        auto c = pairs_[idx].cdr;
+        if (!is_pair(c)) return make_void();
+        auto d = pairs_[as_pair_idx(c)].cdr;
+        if (!is_pair(d)) return make_void();
+        return pairs_[as_pair_idx(d)].cdr;
+    });
+    primitives_.add("cdddr", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_pair(a[0])) return make_void();
+        auto idx = as_pair_idx(a[0]);
+        if (idx >= pairs_.size()) return make_void();
+        auto c = pairs_[idx].cdr;
+        if (!is_pair(c)) return make_void();
+        auto d = pairs_[as_pair_idx(c)].cdr;
+        if (!is_pair(d)) return make_void();
+        return pairs_[as_pair_idx(d)].cdr;
+    });
+
+    // ── Mutable pair operations ───────────────────────────────────
+    primitives_.add("set-car!", [this](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !is_pair(a[0])) return make_void();
+        auto idx = as_pair_idx(a[0]);
+        if (idx >= pairs_.size()) return make_void();
+        pairs_[idx].car = a[1];
+        return make_void();
+    });
+    primitives_.add("set-cdr!", [this](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !is_pair(a[0])) return make_void();
+        auto idx = as_pair_idx(a[0]);
+        if (idx >= pairs_.size()) return make_void();
+        pairs_[idx].cdr = a[1];
+        return make_void();
+    });
+
     primitives_.add("string?", [this](const auto& a) {
         if (a.empty()) return make_int(0);
         return make_int(is_string(a[0]) ? 1 : 0);
@@ -862,31 +986,49 @@ void Evaluator::init_pair_primitives() {
     });
 
     primitives_.add("equal?", [this](const auto& a) {
-        if (a.size() < 2) return make_int(1);
-        struct EqPair { EvalValue x, y; };
-        std::vector<EqPair> stack;
-        stack.push_back({a[0], a[1]});
-        while (!stack.empty()) {
-            auto p = stack.back(); stack.pop_back();
-            if (p.x == p.y) continue;
-            if (is_pair(p.x) && is_pair(p.y)) {
-                auto ix = as_pair_idx(p.x);
-                auto iy = as_pair_idx(p.y);
-                if (ix >= pairs_.size() || iy >= pairs_.size()) return make_int(0);
-                stack.push_back({pairs_[ix].cdr, pairs_[iy].cdr});
-                stack.push_back({pairs_[ix].car, pairs_[iy].car});
-                continue;
+        if (a.size() < 2) return make_bool(true);
+
+        struct EqCheck {
+            Evaluator& e;
+            bool operator()(const EvalValue& x, const EvalValue& y, int depth) const {
+                if (depth > 64) return true;
+                if (x == y) return true;
+                if (is_int(x) && is_int(y)) return as_int(x) == as_int(y);
+                if (is_float(x) && is_float(y)) return as_float(x) == as_float(y);
+                if (is_bool(x) && is_bool(y)) return as_bool(x) == as_bool(y);
+                if (is_string(x) && is_string(y)) {
+                    auto xi = as_string_idx(x), yi = as_string_idx(y);
+                    if (xi < e.string_heap_.size() && yi < e.string_heap_.size())
+                        return e.string_heap_[xi] == e.string_heap_[yi];
+                    return false;
+                }
+                if (is_pair(x) && is_pair(y)) {
+                    auto xi = as_pair_idx(x), yi = as_pair_idx(y);
+                    if (xi < e.pairs_.size() && yi < e.pairs_.size())
+                        return (*this)(e.pairs_[xi].car, e.pairs_[yi].car, depth + 1)
+                            && (*this)(e.pairs_[xi].cdr, e.pairs_[yi].cdr, depth + 1);
+                    return false;
+                }
+                if (is_vector(x) && is_vector(y)) {
+                    auto xi = as_vector_idx(x), yi = as_vector_idx(y);
+                    if (xi < e.vector_heap_.size() && yi < e.vector_heap_.size()) {
+                        auto& vx = e.vector_heap_[xi];
+                        auto& vy = e.vector_heap_[yi];
+                        if (vx.size() != vy.size()) return false;
+                        for (std::size_t i = 0; i < vx.size(); ++i)
+                            if (!(*this)(vx[i], vy[i], depth + 1)) return false;
+                        return true;
+                    }
+                    return false;
+                }
+                // Empty list sentinel: void or int 0
+                if ((is_void(x) || (is_int(x) && as_int(x) == 0)) &&
+                    (is_void(y) || (is_int(y) && as_int(y) == 0))) return true;
+                return false;
             }
-            if (is_string(p.x) && is_string(p.y)) {
-                auto six = as_string_idx(p.x);
-                auto siy = as_string_idx(p.y);
-                if (six >= string_heap_.size() || siy >= string_heap_.size()) return make_int(0);
-                if (string_heap_[six] != string_heap_[siy]) return make_int(0);
-                continue;
-            }
-            return make_int(0);
-        }
-        return make_int(1);
+        };
+
+        return make_bool(EqCheck{*this}(a[0], a[1], 0));
     });
 
     static std::atomic<std::uint64_t> gs_counter_{0};
@@ -1626,212 +1768,44 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                                  aura::ast::StringPool& pool,
                                  aura::ast::NodeId id,
                                  const Env& env) {
-    current_flat_ = &flat;
-    current_pool_ = &pool;
-    if (id >= flat.size())
-        return std::unexpected(Diagnostic{ErrorKind::InternalError, "invalid node id"});
-    auto v = flat.get(id);
-    switch (v.tag) {
-    case aura::ast::NodeTag::LiteralInt:
-        // #t/#f have BoolLiteral marker — convert to Bool at runtime
-        if (v.marker == aura::ast::SyntaxMarker::BoolLiteral)
-            return make_bool(v.int_value != 0);
-        return make_int(v.int_value);
-    case aura::ast::NodeTag::LiteralFloat:
-        return make_float(v.float_value);
-    case aura::ast::NodeTag::LiteralString: {
-        auto sid = string_heap_.size();
-        string_heap_.push_back(std::string(pool.resolve(v.sym_id)));
-        return make_string(sid);
-    }
-    case aura::ast::NodeTag::Variable: {
-        auto name = pool.resolve(v.sym_id);
-        auto val = env.lookup(std::string(name));
-        if (val) return *val;
-        // Suggest closest bound variables
-        std::string msg = "unbound variable: " + std::string(name);
-        std::vector<std::string> candidates;
-        {
-            const Env* e = &env;
-            while (e) {
-                for (auto& b : const_cast<Env&>(*e).bindings())
-                    candidates.push_back(b.first);
-                e = e->parent();
-            }
+    // TCO loop state: f/p point to the current FlatAST/Pool,
+    // which may change during closure/macro tail calls.
+    aura::ast::FlatAST* f = &flat;
+    aura::ast::StringPool* p = &pool;
+    const Env* current_env = &env;
+    aura::ast::NodeId current_id = id;
+    std::optional<Env> tail_env;
+
+    while (true) {
+        current_flat_ = f;
+        current_pool_ = p;
+        // Save the eval environment before any tail_env.emplace could corrupt current_env
+        const Env& eval_env = *current_env;
+        if (current_id >= f->size() || current_id == aura::ast::NULL_NODE)
+            return std::unexpected(Diagnostic{ErrorKind::InternalError, "invalid node id"});
+        auto v = f->get(current_id);
+        switch (v.tag) {
+        case aura::ast::NodeTag::LiteralInt:
+            // #t/#f have BoolLiteral marker — convert to Bool at runtime
+            if (v.marker == aura::ast::SyntaxMarker::BoolLiteral)
+                return make_bool(v.int_value != 0);
+            return make_int(v.int_value);
+        case aura::ast::NodeTag::LiteralFloat:
+            return make_float(v.float_value);
+        case aura::ast::NodeTag::LiteralString: {
+            auto sid = string_heap_.size();
+            string_heap_.push_back(std::string(p->resolve(v.sym_id)));
+            return make_string(sid);
         }
-        auto best = closest_match(name, candidates);
-        if (!best.empty()) msg += " (did you mean " + best + "?)";
-        return std::unexpected(Diagnostic{ErrorKind::UnboundVariable, msg});
-    }
-    case aura::ast::NodeTag::Call: {
-        if (v.children.empty()) return EvalResult(make_void());
-        auto callee_id = v.child(0);
-        auto callee = flat.get(callee_id);
-        // Inline lambda
-        if (callee.tag == aura::ast::NodeTag::Lambda) {
-            auto pspan = callee.params;
-            Env ne(&env);
-            ne.set_primitives(&primitives_);
-            for (std::size_t i = 0; i < pspan.size() && i+1 < v.children.size(); ++i) {
-                auto ar = eval_flat(flat, pool, v.child(i+1), env);
-                if (!ar) return ar;
-                ne.bind(std::string(pool.resolve(pspan[i])), *ar);
-            }
-            auto body_id = callee.children.empty() ? aura::ast::NULL_NODE : callee.child(0);
-            return eval_flat(flat, pool, body_id, ne);
-        }
-        // Macro expansion
-        if (callee.tag == aura::ast::NodeTag::Variable) {
-            auto cname = std::string(pool.resolve(callee.sym_id));
-            auto macro_it = macros_.find(cname);
-            if (macro_it != macros_.end()) {
-                auto& md = macro_it->second;
-                Env ne(&env);
-                ne.set_primitives(&primitives_);
-                for (std::size_t i = 0; i < md.params.size() && i+1 < v.children.size(); ++i) {
-                    auto ar = eval_flat(flat, pool, v.child(i+1), env);
-                    if (!ar) return ar;
-                    ne.bind(md.params[i], *ar);
-                }
-                return eval_flat(*md.flat, md.pool ? *md.pool : pool, md.body_id, ne);
-            }
-        }
-        // Primitive call
-        if (callee.tag == aura::ast::NodeTag::Variable) {
-            auto cname = std::string(pool.resolve(callee.sym_id));
-            auto prim = env.lookup_primitive(cname);
-            if (prim) {
-                std::vector<EvalValue> args;
-                for (std::size_t i = 1; i < v.children.size(); ++i) {
-                    auto ar = eval_flat(flat, pool, v.child(i), env);
-                    if (!ar) return ar;
-                    args.push_back(*ar);
-                }
-                return (*prim)(args);
-            }
-        }
-        // Closure call
-        auto fn = eval_flat(flat, pool, callee_id, env);
-        if (!fn) return fn;
-        if (is_closure(*fn)) {
-            auto cid = as_closure_id(*fn);
-            auto it = closures_.find(cid);
-            if (it == closures_.end())
-                return std::unexpected(Diagnostic{ErrorKind::InvalidClosure, "eval_flat: invalid closure"});
-            auto& cl = it->second;
-            Env ne(cl.env ? cl.env : &top_);
-            ne.set_primitives(&primitives_);
-            for (std::size_t i = 0; i < cl.params.size() && i+1 < v.children.size(); ++i) {
-                auto ar = eval_flat(flat, pool, v.child(i+1), env);
-                if (!ar) return ar;
-                ne.bind(cl.params[i], *ar);
-            }
-            return eval_flat(*cl.flat, cl.pool ? *cl.pool : pool, cl.body_id, ne);
-        }
-        return std::unexpected(Diagnostic{ErrorKind::UnboundVariable,
-                                          "cannot call: " + std::string(pool.resolve(callee.sym_id))});
-    }
-    case aura::ast::NodeTag::IfExpr: {
-        if (v.children.size() < 3) return EvalResult(make_void());
-        auto c = eval_flat(flat, pool, v.child(0), env);
-        if (!c) return c;
-        return eval_flat(flat, pool, is_truthy(*c) ? v.child(1) : v.child(2), env);
-    }
-    case aura::ast::NodeTag::Lambda: {
-        // Capture params from FlatAST directly
-        auto pspan = v.params;
-        std::vector<std::string> params;
-        params.reserve(pspan.size());
-        for (auto pid : pspan)
-            params.push_back(std::string(pool.resolve(pid)));
-        auto* cap = copy_env(env);
-        auto cid = next_id();
-        auto body_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
-        closures_[cid] = Closure{std::move(params), &flat, &pool, body_id, cap};
-        return make_closure(cid);
-    }
-    case aura::ast::NodeTag::Let:
-    case aura::ast::NodeTag::LetRec: {
-        bool rec = (v.tag == aura::ast::NodeTag::LetRec);
-        auto name = pool.resolve(v.sym_id);
-        auto val_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
-        auto body_id = v.children.size() < 2 ? aura::ast::NULL_NODE : v.child(1);
-        if (rec) {
-            Env ne(&env);
-            ne.set_primitives(&primitives_);
-            ne.set_cells(&cells_);
-            std::size_t ci = cells_.size();
-            cells_.push_back(make_void());
-            ne.bind(std::string(name), make_cell(ci));
-            auto vv = eval_flat(flat, pool, val_id, ne);
-            if (!vv) return vv;
-            cells_[ci] = *vv;
-            return eval_flat(flat, pool, body_id, ne);
-        } else {
-            auto vv = eval_flat(flat, pool, val_id, env);
-            if (!vv) return vv;
-            Env ne(&env);
-            ne.set_primitives(&primitives_);
-            ne.bind(std::string(name), *vv);
-            return eval_flat(flat, pool, body_id, ne);
-        }
-    }
-    case aura::ast::NodeTag::Define: {
-        auto name = pool.resolve(v.sym_id);
-        auto val_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
-        Env& me = const_cast<Env&>(env);
-        me.set_cells(&cells_);
-        
-        // Check if already bound as a cell — update existing cell to maintain
-        // sequential define chains across multiple eval calls
-        // Use lookup_binding to get the raw cell sentinel (not dereferenced value)
-        auto existing = env.lookup_binding(std::string(name));
-        if (existing && is_cell(*existing)) {
-            auto ci = as_cell_id(*existing);
-            auto vv = eval_flat(flat, pool, val_id, env);
-            if (!vv) return vv;
-            cells_[ci] = *vv;
-            return *vv;
-        }
-        
-        // Create new cell binding
-        auto ci = alloc_cell(make_void());
-        me.bind(std::string(name), make_cell(ci));
-        auto vv = eval_flat(flat, pool, val_id, env);
-        if (!vv) return vv;
-        cells_[ci] = *vv;
-        return *vv;
-    }
-    case aura::ast::NodeTag::Begin: {
-        EvalResult last = EvalResult(make_void());
-        for (auto c : v.children) {
-            auto r = eval_flat(flat, pool, c, env);
-            if (!r) return r;
-            last = *r;
-        }
-        return last;
-    }
-    case aura::ast::NodeTag::Set: {
-        auto name = pool.resolve(v.sym_id);
-        auto val_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
-        auto val = eval_flat(flat, pool, val_id, env);
-        if (!val) return val;
-        auto* cell_ptr = env.lookup_cell_ptr(std::string(name), &cells_);
-        if (cell_ptr) {
-            *cell_ptr = *val;
-            return *val;
-        }
-        for (auto& b : const_cast<Env&>(env).bindings()) {
-            if (b.first == name) {
-                b.second = *val;
-                return *val;
-            }
-        }
-        // Suggest closest bound variables
-        {
+        case aura::ast::NodeTag::Variable: {
+            auto name = p->resolve(v.sym_id);
+            auto val = eval_env.lookup(std::string(name));
+            if (val) return *val;
+            // Suggest closest bound variables
+            std::string msg = "unbound variable: " + std::string(name);
             std::vector<std::string> candidates;
             {
-                const Env* e = &env;
+                const Env* e = &eval_env;
                 while (e) {
                     for (auto& b : const_cast<Env&>(*e).bindings())
                         candidates.push_back(b.first);
@@ -1839,67 +1813,286 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                 }
             }
             auto best = closest_match(name, candidates);
-            if (!best.empty())
-                return std::unexpected(Diagnostic{ErrorKind::UnboundVariable,
-                    "set!: unbound variable: " + std::string(name) + " (did you mean " + best + "?)"});
+            if (!best.empty()) msg += " (did you mean " + best + "?)";
+            return std::unexpected(Diagnostic{ErrorKind::UnboundVariable, msg});
         }
-        return std::unexpected(Diagnostic{ErrorKind::UnboundVariable,
-                                          "set!: unbound variable: " + std::string(name)});
-    }
-    case aura::ast::NodeTag::Quote: {
-        if (v.children.empty()) return EvalResult(make_void());
-        return EvalResult(ast_to_data(flat, pool, v.child(0)));
-    }
-    case aura::ast::NodeTag::TypeAnnotation: {
-        if (v.children.empty()) return EvalResult(make_void());
-        return eval_flat(flat, pool, v.child(0), env);
-    }
-    case aura::ast::NodeTag::MacroDef: {
-        auto name = pool.resolve(v.sym_id);
-        std::vector<std::string> param_names;
-        for (auto p : v.params)
-            param_names.push_back(std::string(pool.resolve(p)));
-        auto body_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
-        if (body_id == aura::ast::NULL_NODE) return EvalResult(make_void());
-
-        // ── Warn: unused macro parameters ──────────────────────────
-        // Scan the body for variable references and compare with params.
-        {
-            // Collect all variable names referenced in the macro body
-            std::unordered_set<std::string> used_vars;
-            auto collect_vars = [&](this const auto& self, aura::ast::NodeId nid) -> void {
-                if (nid == aura::ast::NULL_NODE || nid >= flat.size()) return;
-                auto nv = flat.get(nid);
-                if (nv.tag == aura::ast::NodeTag::Variable && nv.sym_id != aura::ast::INVALID_SYM) {
-                    used_vars.insert(std::string(pool.resolve(nv.sym_id)));
+        case aura::ast::NodeTag::Call: {
+            if (v.children.empty()) return EvalResult(make_void());
+            auto callee_id = v.child(0);
+            auto callee = f->get(callee_id);
+            // Inline lambda (arg evals are recursive; body is tail)
+            if (callee.tag == aura::ast::NodeTag::Lambda) {
+                auto pspan = callee.params;
+                // Evaluate args first (against eval_env) before creating tail env
+                std::vector<EvalValue> iargs;
+                iargs.reserve(pspan.size());
+                for (std::size_t i = 0; i < pspan.size() && i+1 < v.children.size(); ++i) {
+                    auto ar = eval_flat(*f, *p, v.child(i+1), eval_env);
+                    if (!ar) return ar;
+                    iargs.push_back(*ar);
                 }
-                for (auto c : nv.children)
-                    self(c);
-            };
-            collect_vars(body_id);
-
-            int used_count = 0;
-            for (auto& p : param_names) {
-                if (used_vars.count(p) == 0) {
-                    std::println(std::cerr, "warning: macro '{}': parameter '{}' never used",
-                                 std::string(name), p);
-                } else {
-                    ++used_count;
+                tail_env.emplace(&eval_env);
+                tail_env->set_primitives(&primitives_);
+                tail_env->set_cells(&cells_);
+                for (std::size_t i = 0; i < iargs.size(); ++i) {
+                    tail_env->bind(std::string(p->resolve(pspan[i])), std::move(iargs[i]));
+                }
+                auto body_id = callee.children.empty() ? aura::ast::NULL_NODE : callee.child(0);
+                current_env = &*tail_env;
+                current_id = body_id;
+                continue; // TCO: lambda body
+            }
+            // Macro expansion (arg evals are recursive; body is tail)
+            if (callee.tag == aura::ast::NodeTag::Variable) {
+                auto cname = std::string(p->resolve(callee.sym_id));
+                auto macro_it = macros_.find(cname);
+                if (macro_it != macros_.end()) {
+                    auto& md = macro_it->second;
+                    // Evaluate args first (against eval_env) before creating tail env
+                    std::vector<EvalValue> margs;
+                    margs.reserve(md.params.size());
+                    for (std::size_t i = 0; i < md.params.size() && i+1 < v.children.size(); ++i) {
+                        auto ar = eval_flat(*f, *p, v.child(i+1), eval_env);
+                        if (!ar) return ar;
+                        margs.push_back(*ar);
+                    }
+                    tail_env.emplace(&eval_env);
+                    tail_env->set_primitives(&primitives_);
+                    tail_env->set_cells(&cells_);
+                    for (std::size_t i = 0; i < margs.size(); ++i) {
+                        tail_env->bind(md.params[i], std::move(margs[i]));
+                    }
+                    f = md.flat;
+                    p = md.pool ? md.pool : p;
+                    current_id = md.body_id;
+                    current_env = &*tail_env;
+                    continue; // TCO: macro body
                 }
             }
-            if (used_count == 0) {
-                std::println(std::cerr, "warning: macro '{}': body does not reference any parameter",
-                             std::string(name));
+            // Primitive call (all arg evals are recursive)
+            if (callee.tag == aura::ast::NodeTag::Variable) {
+                auto cname = std::string(p->resolve(callee.sym_id));
+                auto prim = eval_env.lookup_primitive(cname);
+                if (prim) {
+                    std::vector<EvalValue> args;
+                    for (std::size_t i = 1; i < v.children.size(); ++i) {
+                        auto ar = eval_flat(*f, *p, v.child(i), eval_env);
+                        if (!ar) return ar;
+                        args.push_back(*ar);
+                    }
+                    return (*prim)(args);
+                }
             }
+            // Closure call (eval func + arg evals are recursive; body is tail)
+            auto fn = eval_flat(*f, *p, callee_id, eval_env);
+            if (!fn) return fn;
+            if (is_closure(*fn)) {
+                auto cid = as_closure_id(*fn);
+                auto it = closures_.find(cid);
+                if (it == closures_.end())
+                    return std::unexpected(Diagnostic{ErrorKind::InvalidClosure, "eval_flat: invalid closure"});
+                auto& cl = it->second;
+                // Evaluate args first (against eval_env) before creating tail env
+                std::vector<EvalValue> cargs;
+                cargs.reserve(cl.params.size());
+                for (std::size_t i = 0; i < cl.params.size() && i+1 < v.children.size(); ++i) {
+                    auto ar = eval_flat(*f, *p, v.child(i+1), eval_env);
+                    if (!ar) return ar;
+                    cargs.push_back(*ar);
+                }
+                tail_env.emplace(cl.env ? *cl.env : top_);
+                tail_env->set_primitives(&primitives_);
+                tail_env->set_cells(&cells_);
+                for (std::size_t i = 0; i < cargs.size(); ++i) {
+                    tail_env->bind(cl.params[i], std::move(cargs[i]));
+                }
+                f = cl.flat;
+                p = cl.pool ? cl.pool : p;
+                current_id = cl.body_id;
+                current_env = &*tail_env;
+                continue; // TCO: closure body
+            }
+            return std::unexpected(Diagnostic{ErrorKind::UnboundVariable,
+                                              "cannot call: " + std::string(p->resolve(callee.sym_id))});
         }
+        case aura::ast::NodeTag::IfExpr: {
+            if (v.children.size() < 3) return EvalResult(make_void());
+            auto c = eval_flat(*f, *p, v.child(0), eval_env);
+            if (!c) return c;
+            current_id = is_truthy(*c) ? v.child(1) : v.child(2);
+            continue; // TCO: branch
+        }
+        case aura::ast::NodeTag::Lambda: {
+            // Capture params from FlatAST directly
+            auto pspan = v.params;
+            std::vector<std::string> params;
+            params.reserve(pspan.size());
+            for (auto pid : pspan)
+                params.push_back(std::string(p->resolve(pid)));
+            auto* cap = copy_env(*current_env);
+            auto cid = next_id();
+            auto body_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
+            closures_[cid] = Closure{std::move(params), f, p, body_id, cap};
+            return make_closure(cid);
+        }
+        case aura::ast::NodeTag::Let:
+        case aura::ast::NodeTag::LetRec: {
+            bool rec = (v.tag == aura::ast::NodeTag::LetRec);
+            auto name = p->resolve(v.sym_id);
+            auto val_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
+            auto body_id = v.children.size() < 2 ? aura::ast::NULL_NODE : v.child(1);
+            if (rec) {
+                // For letrec, the init value is evaluated in the new env (with cell binding)
+                tail_env.emplace(&eval_env);
+                tail_env->set_primitives(&primitives_);
+                tail_env->set_cells(&cells_);
+                std::size_t ci = cells_.size();
+                cells_.push_back(make_void());
+                tail_env->bind(std::string(name), make_cell(ci));
+                // Evaluate value in *tail_env (has cell binding for self-reference)
+                auto vv = eval_flat(*f, *p, val_id, *tail_env);
+                if (!vv) return vv;
+                cells_[ci] = *vv;
+            } else {
+                // For let, evaluate value in parent env first, then create tail env
+                auto vv = eval_flat(*f, *p, val_id, eval_env);
+                if (!vv) return vv;
+                tail_env.emplace(&eval_env);
+                tail_env->set_primitives(&primitives_);
+                tail_env->set_cells(&cells_);
+                tail_env->bind(std::string(name), *vv);
+            }
+            current_env = &*tail_env;
+            current_id = body_id;
+            continue; // TCO: let body
+        }
+        case aura::ast::NodeTag::Define: {
+            auto name = p->resolve(v.sym_id);
+            auto val_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
+            Env& me = const_cast<Env&>(eval_env);
+            me.set_cells(&cells_);
+            
+            // Check if already bound as a cell — update existing cell to maintain
+            // sequential define chains across multiple eval calls
+            // Use lookup_binding to get the raw cell sentinel (not dereferenced value)
+            auto existing = eval_env.lookup_binding(std::string(name));
+            if (existing && is_cell(*existing)) {
+                auto ci = as_cell_id(*existing);
+                auto vv = eval_flat(*f, *p, val_id, eval_env);
+                if (!vv) return vv;
+                cells_[ci] = *vv;
+                return *vv;
+            }
+            
+            // Create new cell binding
+            auto ci = alloc_cell(make_void());
+            me.bind(std::string(name), make_cell(ci));
+            auto vv = eval_flat(*f, *p, val_id, eval_env);
+            if (!vv) return vv;
+            cells_[ci] = *vv;
+            return *vv;
+        }
+        case aura::ast::NodeTag::Begin: {
+            auto count = v.children.size();
+            if (count == 0) return EvalResult(make_void());
+            for (std::size_t i = 0; i < count - 1; ++i) {
+                auto r = eval_flat(*f, *p, v.child(i), eval_env);
+                if (!r) return r;
+            }
+            current_id = v.child(count - 1);
+            continue; // TCO: last expression in begin
+        }
+        case aura::ast::NodeTag::Set: {
+            auto name = p->resolve(v.sym_id);
+            auto val_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
+            auto val = eval_flat(*f, *p, val_id, eval_env);
+            if (!val) return val;
+            auto* cell_ptr = eval_env.lookup_cell_ptr(std::string(name), &cells_);
+            if (cell_ptr) {
+                *cell_ptr = *val;
+                return *val;
+            }
+            for (auto& b : const_cast<Env&>(eval_env).bindings()) {
+                if (b.first == name) {
+                    b.second = *val;
+                    return *val;
+                }
+            }
+            // Suggest closest bound variables
+            {
+                std::vector<std::string> candidates;
+                {
+                    const Env* e = &eval_env;
+                    while (e) {
+                        for (auto& b : const_cast<Env&>(*e).bindings())
+                            candidates.push_back(b.first);
+                        e = e->parent();
+                    }
+                }
+                auto best = closest_match(name, candidates);
+                if (!best.empty())
+                    return std::unexpected(Diagnostic{ErrorKind::UnboundVariable,
+                        "set!: unbound variable: " + std::string(name) + " (did you mean " + best + "?)"});
+            }
+            return std::unexpected(Diagnostic{ErrorKind::UnboundVariable,
+                                              "set!: unbound variable: " + std::string(name)});
+        }
+        case aura::ast::NodeTag::Quote: {
+            if (v.children.empty()) return EvalResult(make_void());
+            return EvalResult(ast_to_data(*f, *p, v.child(0)));
+        }
+        case aura::ast::NodeTag::TypeAnnotation: {
+            if (v.children.empty()) return EvalResult(make_void());
+            current_id = v.child(0);
+            continue; // TCO: annotated expression
+        }
+        case aura::ast::NodeTag::MacroDef: {
+            auto name = p->resolve(v.sym_id);
+            std::vector<std::string> param_names;
+            for (auto pn : v.params)
+                param_names.push_back(std::string(p->resolve(pn)));
+            auto body_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
+            if (body_id == aura::ast::NULL_NODE) return EvalResult(make_void());
 
-        // Store FlatAST pointer + NodeId directly -- no Expr* reconstruction needed
-        macros_[std::string(name)] = MacroDef{std::move(param_names), &flat, &pool, body_id};
-        return EvalResult(make_void());
-    }
-    default:
-        return std::unexpected(Diagnostic{ErrorKind::InternalError,
-                                          "eval_flat: unsupported node type"});
+            // ── Warn: unused macro parameters ──────────────────────────
+            // Scan the body for variable references and compare with params.
+            {
+                // Collect all variable names referenced in the macro body
+                std::unordered_set<std::string> used_vars;
+                auto collect_vars = [&](this const auto& self, aura::ast::NodeId nid) -> void {
+                    if (nid == aura::ast::NULL_NODE || nid >= f->size()) return;
+                    auto nv = f->get(nid);
+                    if (nv.tag == aura::ast::NodeTag::Variable && nv.sym_id != aura::ast::INVALID_SYM) {
+                        used_vars.insert(std::string(p->resolve(nv.sym_id)));
+                    }
+                    for (auto c : nv.children)
+                        self(c);
+                };
+                collect_vars(body_id);
+
+                int used_count = 0;
+                for (auto& pn : param_names) {
+                    if (used_vars.count(pn) == 0) {
+                        std::println(std::cerr, "warning: macro '{}': parameter '{}' never used",
+                                     std::string(name), pn);
+                    } else {
+                        ++used_count;
+                    }
+                }
+                if (used_count == 0) {
+                    std::println(std::cerr, "warning: macro '{}': body does not reference any parameter",
+                                 std::string(name));
+                }
+            }
+
+            // Store FlatAST pointer + NodeId directly -- no Expr* reconstruction needed
+            macros_[std::string(name)] = MacroDef{std::move(param_names), f, p, body_id};
+            return EvalResult(make_void());
+        }
+        default:
+            return std::unexpected(Diagnostic{ErrorKind::InternalError,
+                                              "eval_flat: unsupported node type"});
+        }
     }
 }
 
