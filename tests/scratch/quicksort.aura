@@ -1,0 +1,24 @@
+(define (quicksort lst)
+  (if (< (length lst) 2)
+    lst
+    (let ((pivot (car lst))
+          (rest (cdr lst)))
+      (let ((less (filter (lambda (x) (< x pivot)) rest))
+            (greater (filter (lambda (x) (>= x pivot)) rest)))
+        (append (quicksort less)
+                (cons pivot (quicksort greater)))))))
+
+(define (quicksort3 lst)
+  (if (< (length lst) 2)
+    lst
+    (let* ((pivot (car lst))
+           (rest (cdr lst))
+           (less (filter (lambda (x) (< x pivot)) rest))
+           (equal (filter (lambda (x) (= x pivot)) rest))
+           (greater (filter (lambda (x) (> x pivot)) rest)))
+      (append (quicksort3 less)
+              (cons pivot equal)
+              (quicksort3 greater)))))
+
+(display (quicksort (list 3 7 8 5 2 1 9 5 4)))
+(newline)
