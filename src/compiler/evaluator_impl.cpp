@@ -2418,17 +2418,32 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                 if (macro_it != macros_.end()) {
                     auto& md = macro_it->second;
                     // Convert AST args to data (NOT evaluate — macros receive syntax)
-                    std::vector<EvalValue> margs;
-                    margs.reserve(md.params.size());
-                    for (std::size_t i = 0; i < md.params.size() && i+1 < v.children.size(); ++i) {
-                        margs.push_back(ast_to_data(*f, *p, v.child(i+1)));
-                    }
-                    // Bind args in tail env
+                    // If there are more args than params, the last param is a rest param
+                    // (handles (defmacro (name . rest) body) syntax)
+                    std::size_t arg_count = v.children.size() - 1;
+                    bool is_rest = (arg_count > md.params.size() && md.params.size() > 0);
+                    
+                    // Bind regular params first (all but the last)
+                    std::size_t regular_count = is_rest ? md.params.size() - 1 : md.params.size();
                     tail_env.emplace(&eval_env);
                     tail_env->set_primitives(&primitives_);
                     tail_env->set_cells(&cells_);
-                    for (std::size_t i = 0; i < margs.size(); ++i) {
-                        tail_env->bind(md.params[i], std::move(margs[i]));
+                    
+                    for (std::size_t i = 0; i < regular_count && i+1 < v.children.size(); ++i) {
+                        tail_env->bind(md.params[i], ast_to_data(*f, *p, v.child(i+1)));
+                    }
+                    
+                    // Rest param: collect remaining args as a list
+                    if (is_rest) {
+                        auto& rest_name = md.params.back();
+                        EvalValue rest_list = make_void();
+                        for (std::size_t i = v.children.size() - 1; i >= regular_count + 1; --i) {
+                            auto item = ast_to_data(*f, *p, v.child(i));
+                            auto pid = pairs_.size();
+                            pairs_.push_back(Pair{std::move(item), rest_list});
+                            rest_list = make_pair(pid);
+                        }
+                        tail_env->bind(rest_name, std::move(rest_list));
                     }
                     // Evaluate macro body (quasiquote-expanded template) → produces data
                     auto template_result = eval_flat(*md.flat, md.pool ? *md.pool : *p, md.body_id, *tail_env);
@@ -2704,7 +2719,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
             }
 
             // Store FlatAST pointer + NodeId directly -- no Expr* reconstruction needed
-            macros_[std::string(name)] = MacroDef{std::move(param_names), f, p, body_id};
+            macros_[std::string(name)] = MacroDef{std::move(param_names), false, f, p, body_id};
             return EvalResult(make_void());
         }
         default:

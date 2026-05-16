@@ -52,7 +52,7 @@ export struct Pair {
     types::EvalValue cdr;
 };
 
-export struct MacroDef { std::vector<std::string> params; ast::FlatAST* flat=nullptr; ast::StringPool* pool=nullptr; ast::NodeId body_id=ast::NULL_NODE; };
+export struct MacroDef { std::vector<std::string> params; bool dotted=false; ast::FlatAST* flat=nullptr; ast::StringPool* pool=nullptr; ast::NodeId body_id=ast::NULL_NODE; };
 
 export struct Closure { std::vector<std::string> params; ast::FlatAST* flat=nullptr; ast::StringPool* pool=nullptr; ast::NodeId body_id=ast::NULL_NODE; const Env* env=nullptr; };
 

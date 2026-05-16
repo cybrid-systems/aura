@@ -484,7 +484,17 @@ NodeId FlatParser::parse_defmacro() {
     auto name = lexer_->consume();
     if (name.kind != TokenKind::Identifier) { skip_rparen(); return NULL_NODE; }
     std::vector<SymId> params;
+    bool dotted = false;
     while (lexer_->peek().kind != TokenKind::RParen) {
+        // Check for dotted rest parameter: (name . rest)
+        if (lexer_->peek().kind == TokenKind::Dot) {
+            lexer_->consume(); // consume '.'
+            if (lexer_->peek().kind != TokenKind::Identifier) break;
+            auto rest = lexer_->consume();
+            params.push_back(pool_.intern(std::string(rest.text)));
+            dotted = true;
+            break;
+        }
         auto p = lexer_->consume();
         if (p.kind != TokenKind::Identifier) { skip_rparen(); return NULL_NODE; }
         params.push_back(pool_.intern(std::string(p.text)));
