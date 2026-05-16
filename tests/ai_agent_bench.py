@@ -98,7 +98,7 @@ def run_task(tid, prompt, verify, timeout=EXEC_TIMEOUT):
                 log(f"  {tid}: r{rnd} timeout")
             else:
                 log(f"  {tid}: r{rnd} err={value[:40]}")
-            fb = f"Result: status={status} val={value if status=='ok' else error if status!='ok' else value} ({t_exec:.1f}s)\n"
+            fb = f"Result: status={status} val={value} ({t_exec:.1f}s)\n"
             fb += "Fix errors and retry.\n" if status != "ok" else "If correct say DONE, otherwise improve.\n"
             msgs.append({"role": "assistant", "content": resp})
             msgs.append({"role": "user", "content": fb})
