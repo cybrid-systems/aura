@@ -231,13 +231,13 @@ add_test(NAME macro_constant_body_warning
 
 # ── L6.8: Runtime type introspection tests ─────────────────────
 add_test(NAME type_of_int
-    COMMAND sh -c "printf '(display (type-of 42))' | timeout 5 ./aura 2>/dev/null | grep -q 'Int'"
+    COMMAND sh -c "printf '(display (type-of 42))' | timeout 5 ./aura 2>&1 | grep -q 'Int'"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 add_test(NAME type_of_pair
-    COMMAND sh -c "printf '(display (type-of (cons 1 2)))' | timeout 5 ./aura 2>/dev/null | grep -q 'Pair'"
+    COMMAND sh -c "printf '(display (type-of (cons 1 2)))' | timeout 5 ./aura 2>&1 | grep -q 'Pair'"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 add_test(NAME type_of_bool
-    COMMAND sh -c "printf '(display (type-of (if 1 0 1)))' | timeout 5 ./aura 2>/dev/null | grep -q 'Bool'"
+    COMMAND sh -c "printf '(display (type-of (if 1 0 1)))' | timeout 5 ./aura 2>&1 | grep -q 'Bool'"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 add_test(NAME type_check_true
     COMMAND sh -c "printf '(type? 42 \"Int\")' | timeout 5 ./aura | grep -q '^1$'"
