@@ -1,0 +1,40 @@
+; Aura standard math library
+; Import with: (import "std/math")
+
+(define pi 3.141592653589793)
+
+(define (square x) (* x x))
+
+(define (cube x) (* x x x))
+
+; Newton's method for sqrt
+(define (sqrt n)
+  (define (iter guess)
+    (let ((next (/ (+ guess (/ n guess)) 2)))
+      (if (< (abs (- next guess)) 0.0001)
+        next
+        (iter next))))
+  (iter 1.0))
+
+; Exponentiation: (expt base power)
+(define (expt b n)
+  (if (= n 0)
+    1
+    (* b (expt b (- n 1)))))
+
+; Factorial
+(define (factorial n)
+  (if (< n 2)
+    1
+    (* n (factorial (- n 1)))))
+
+; Sign
+(define (signum n)
+  (if (= n 0) 0
+    (if (< n 0) -1 1)))
+
+; Average
+(define (avg a b) (/ (+ a b) 2))
+
+; Mean of a list
+(define (mean lst) (/ (sum lst) (length lst)))

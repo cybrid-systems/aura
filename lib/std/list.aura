@@ -1,0 +1,69 @@
+; Aura standard list library
+; Import with: (import "std/list")
+
+(define (foldr f init lst)
+  (if (null? lst)
+    init
+    (f (car lst) (foldr f init (cdr lst)))))
+
+(define (zip a b)
+  (if (or (null? a) (null? b))
+    (list)
+    (cons (list (car a) (car b)) (zip (cdr a) (cdr b)))))
+
+(define (zip3 a b c)
+  (if (or (null? a) (null? b) (null? c))
+    (list)
+    (cons (list (car a) (car b) (car c))
+          (zip3 (cdr a) (cdr b) (cdr c)))))
+
+(define (take-while pred lst)
+  (if (or (null? lst) (not (pred (car lst))))
+    (list)
+    (cons (car lst) (take-while pred (cdr lst)))))
+
+(define (drop-while pred lst)
+  (if (or (null? lst) (not (pred (car lst))))
+    lst
+    (drop-while pred (cdr lst))))
+
+(define (partition pred lst)
+  (list (filter pred lst) (filter (lambda (x) (not (pred x))) lst)))
+
+(define (sort lst)
+  (if (< (length lst) 2)
+    lst
+    (let* ((pivot (car lst))
+           (rest (cdr lst))
+           (less (filter (lambda (x) (< x pivot)) rest))
+           (greater (filter (lambda (x) (>= x pivot)) rest)))
+      (append (sort less) (cons pivot (sort greater))))))
+
+(define (range start end)
+  (if (>= start end)
+    (list)
+    (cons start (range (+ start 1) end))))
+
+(define (sum lst)
+  (if (null? lst) 0
+    (+ (car lst) (sum (cdr lst)))))
+
+(define (product lst)
+  (if (null? lst) 1
+    (* (car lst) (product (cdr lst)))))
+
+(define (last lst)
+  (if (null? lst) (list)
+    (if (null? (cdr lst)) (car lst)
+      (last (cdr lst)))))
+
+(define (flatten lst)
+  (if (null? lst) (list)
+    (if (pair? (car lst))
+      (append (flatten (car lst)) (flatten (cdr lst)))
+      (cons (car lst) (flatten (cdr lst))))))
+
+(define (intersperse sep lst)
+  (if (or (null? lst) (null? (cdr lst)))
+    lst
+    (cons (car lst) (cons sep (intersperse sep (cdr lst))))))
