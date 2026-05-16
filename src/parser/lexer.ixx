@@ -3,7 +3,7 @@ import std;
 
 namespace aura::parser {
 
-export enum class TokenKind { Integer, Float, String, Identifier, LParen, RParen, Quote, QuasiQuote, Unquote, UnquoteSplicing, Bool, EndOfFile, Error };
+export enum class TokenKind { Integer, Float, String, Identifier, LParen, RParen, Quote, QuasiQuote, Unquote, UnquoteSplicing, Dot, Bool, EndOfFile, Error };
 export struct Token { TokenKind kind; std::string_view text; std::uint32_t line = 0, column = 0; bool is(TokenKind k) const { return kind == k; } };
 
 export class Lexer {
