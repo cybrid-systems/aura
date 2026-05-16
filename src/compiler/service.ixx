@@ -412,7 +412,8 @@ public:
     }
 
     EvalResult exec_with_cache(std::string_view code) {
-        return eval_ir(code);
+        // Use tree-walker (full language support including strings, modules)
+        return eval(code);
     }
 
     // ── Persistent AST for mutation workflows ───────────────────

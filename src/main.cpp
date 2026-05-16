@@ -269,7 +269,7 @@ int main(int argc, char* argv[]) {
                     auto result = cs.exec_with_cache(code);
                     if (result) {
                         std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
-                                     fmt_val(*result, cs));
+                                     json_escape(fmt_val(*result, cs)));
                     } else {
                         auto& d = result.error();
                         std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
@@ -412,7 +412,7 @@ int main(int argc, char* argv[]) {
 
                 auto r = cs.eval(line);
                 if (r) {
-                    std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}", fmt_val(*r, cs));
+                    std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}", json_escape(fmt_val(*r, cs)));
                 } else {
                     auto& d = r.error();
                     std::println("{{\"status\":\"error\",\"kind\":{},\"msg\":\"{}\",\"node_id\":{}}}",
