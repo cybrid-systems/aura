@@ -63,6 +63,13 @@ std::optional<EvalValue> Env::lookup(const std::string& n) const {
     return parent_ ? parent_->lookup(n) : std::nullopt;
 }
 
+// ── Env::lookup_binding: returns raw binding (cell sentinel as-is) ─
+std::optional<EvalValue> Env::lookup_binding(const std::string& n) const {
+    for (auto it = bindings_.rbegin(); it != bindings_.rend(); ++it)
+        if (it->first == n) return it->second;
+    return parent_ ? parent_->lookup_binding(n) : std::nullopt;
+}
+
 // ── Helper: coerce EvalValue to int (string → int parsing) ────
 namespace {
     static std::int64_t coerce_to_int(const EvalValue& v, const std::vector<std::string>* heap) {
@@ -1774,6 +1781,20 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
         auto val_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
         Env& me = const_cast<Env&>(env);
         me.set_cells(&cells_);
+        
+        // Check if already bound as a cell — update existing cell to maintain
+        // sequential define chains across multiple eval calls
+        // Use lookup_binding to get the raw cell sentinel (not dereferenced value)
+        auto existing = env.lookup_binding(std::string(name));
+        if (existing && is_cell(*existing)) {
+            auto ci = as_cell_id(*existing);
+            auto vv = eval_flat(flat, pool, val_id, env);
+            if (!vv) return vv;
+            cells_[ci] = *vv;
+            return *vv;
+        }
+        
+        // Create new cell binding
         auto ci = alloc_cell(make_void());
         me.bind(std::string(name), make_cell(ci));
         auto vv = eval_flat(flat, pool, val_id, env);

@@ -32,6 +32,8 @@ public:
     void set_cells(std::vector<types::EvalValue>* c) { cells_=c; }
     void bind(const std::string& n, types::EvalValue v) { bindings_.emplace_back(n,std::move(v)); }
     std::optional<types::EvalValue> lookup(const std::string& n) const;
+    // Look up the raw binding without dereferencing cells (returns cell sentinel as-is)
+    std::optional<types::EvalValue> lookup_binding(const std::string& n) const;
     std::optional<PrimFn> lookup_primitive(const std::string& n) const { return primitives_?primitives_->lookup(n):std::nullopt; }
     types::EvalValue* lookup_cell_ptr(const std::string& n, std::vector<types::EvalValue>* cells) const;
     const Env* parent() const { return parent_; }
