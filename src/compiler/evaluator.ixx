@@ -117,7 +117,8 @@ private:
 
 // Pair-aware value formatting (recursively prints lists)
 export inline std::string format_value(const types::EvalValue& v, const std::vector<std::string>* heap,
-                                        const std::vector<Pair>* pairs, int depth = 0) {
+                                        const std::vector<Pair>* pairs, int depth = 0,
+                                        const Primitives* primitives = nullptr) {
     const int max_depth = 64;
     if (depth > max_depth) return "...";
     if (types::is_void(v)) return "()";
@@ -142,7 +143,7 @@ export inline std::string format_value(const types::EvalValue& v, const std::vec
         while (types::is_pair(current)) {
             auto cidx = types::as_pair_idx(current);
             if (cidx >= pairs->size()) { break; }
-            elements.push_back(format_value((*pairs)[cidx].car, heap, pairs, depth + 1));
+            elements.push_back(format_value((*pairs)[cidx].car, heap, pairs, depth + 1, primitives));
             current = (*pairs)[cidx].cdr;
             if (elements.size() > 256) { elements.push_back("..."); break; }
         }
@@ -156,7 +157,7 @@ export inline std::string format_value(const types::EvalValue& v, const std::vec
             // proper list
         } else {
             if (!elements.empty()) result += " . ";
-            result += format_value(current, heap, pairs, depth + 1);
+            result += format_value(current, heap, pairs, depth + 1, primitives);
         }
         result += ")";
         return result;
@@ -165,7 +166,14 @@ export inline std::string format_value(const types::EvalValue& v, const std::vec
     if (types::is_hash(v)) return std::format("<hash[{}]>", types::as_hash_idx(v));
     if (types::is_closure(v)) return std::format("<closure[{}]>", types::as_closure_id(v));
     if (types::is_cell(v)) return std::format("<cell[{}]>", types::as_cell_id(v));
-    if (types::is_primitive(v)) return "<primitive>";
+    if (types::is_primitive(v)) {
+        if (primitives) {
+            auto slot = types::as_primitive_slot(v);
+            if (slot < primitives->slot_count())
+                return std::format("<primitive:{}>", primitives->name_for_slot(slot));
+        }
+        return "<primitive>";
+    }
     return "<unknown>";
 }
 
