@@ -224,6 +224,9 @@ void InferenceEngine::init_primitive_env() {
     register_primitive("member",  {Dyn, Dyn}, Dyn);
     register_primitive("append",  {Dyn, Dyn}, Dyn);
     register_primitive("reverse", {Dyn}, Dyn);
+    register_primitive("take",  {Int, Dyn}, Dyn);
+    register_primitive("drop",  {Int, Dyn}, Dyn);
+    register_primitive("foldl", {Dyn, Dyn, Dyn}, Dyn);
     // Polymorphic map/filter: ∀a b. ((a -> b), list a) -> b
     // The list types are approximated as Any for now (no proper List type).
     // The function contract (a→b) enforces type consistency between args and results.

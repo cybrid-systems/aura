@@ -452,7 +452,7 @@ void Evaluator::init_pair_primitives() {
     primitives_.add("list?", [this](const auto& a) {
         if (a.empty()) return make_bool(true);
         auto v = a[0];
-        while (!is_void(v)) {
+        while (!is_end_of_list(v)) {
             if (!is_pair(v)) return make_bool(false);
             auto idx = as_pair_idx(v);
             if (idx >= pairs_.size()) return make_bool(false);
@@ -461,12 +461,12 @@ void Evaluator::init_pair_primitives() {
         return make_int(1);
     });
     primitives_.add("null?", [](const auto& a) {
-        return make_int(a.empty() || is_void(a[0]) ? 1 : 0);
+        return make_int(a.empty() || is_void(a[0]) || (is_int(a[0]) && as_int(a[0]) == 0) ? 1 : 0);
     });
     primitives_.add("length", [this](const auto& a) {
         if (a.empty()) return make_int(0);
         auto v = a[0]; std::int64_t n = 0;
-        while (!is_void(v)) {
+        while (!is_end_of_list(v)) {
             if (!is_pair(v)) return make_int(0);
             auto idx = as_pair_idx(v);
             if (idx >= pairs_.size()) return make_int(0);
@@ -492,7 +492,7 @@ void Evaluator::init_pair_primitives() {
     primitives_.add("member", [this](const auto& a) {
         if (a.size() < 2) return make_int(0);
         auto& val = a[0]; auto v = a[1];
-        while (!is_void(v)) {
+        while (!is_end_of_list(v)) {
             if (!is_pair(v)) return make_int(0);
             auto idx = as_pair_idx(v);
             if (idx >= pairs_.size()) return make_int(0);
@@ -505,10 +505,10 @@ void Evaluator::init_pair_primitives() {
         if (a.empty()) return make_void();
         if (a.size() < 2) return a[0];
         auto list1 = a[0]; auto list2 = a[1];
-        if (is_void(list1)) return list2;
+        if (is_end_of_list(list1)) return list2;
         EvalValue result = make_void(); EvalValue tail = make_void();
         auto v = list1;
-        while (!is_void(v)) {
+        while (!is_end_of_list(v)) {
             if (!is_pair(v)) return list1;
             auto idx = as_pair_idx(v);
             if (idx >= pairs_.size()) return list1;
@@ -533,7 +533,7 @@ void Evaluator::init_pair_primitives() {
     primitives_.add("reverse", [this](const auto& a) {
         if (a.empty()) return make_int(0);
         auto v = a[0]; EvalValue result = make_void();
-        while (!is_void(v)) {
+        while (!is_end_of_list(v)) {
             if (!is_pair(v)) return a[0];
             auto idx = as_pair_idx(v);
             if (idx >= pairs_.size()) return a[0];
@@ -1280,6 +1280,81 @@ void Evaluator::init_pair_primitives() {
         if (a.empty()) return make_bool(false);
         // EOF is represented as void (the same as when read-line returns empty)
         return make_bool(is_void(a[0]));
+    });
+
+    // ── List utility primitives ────────────────────────────────────
+    primitives_.add("take", [this](const auto& a) {
+        if (a.size() < 2) return make_void();
+        auto n = static_cast<std::size_t>(as_int(a[0]));
+        auto v = a[1];
+        EvalValue result = make_void();
+        // Build result in reverse then reverse it
+        for (std::size_t i = 0; i < n; ++i) {
+            if (!is_pair(v)) return result;
+            auto idx = as_pair_idx(v);
+            if (idx >= pairs_.size()) return result;
+            auto new_id = pairs_.size();
+            pairs_.push_back({pairs_[idx].car, result});
+            result = make_pair(new_id);
+            v = pairs_[idx].cdr;
+        }
+        // Reverse to get correct order
+        EvalValue final = make_void();
+        while (!is_end_of_list(result)) {
+            if (!is_pair(result)) break;
+            auto idx = as_pair_idx(result);
+            if (idx >= pairs_.size()) break;
+            auto nid = pairs_.size();
+            pairs_.push_back({pairs_[idx].car, final});
+            final = make_pair(nid);
+            result = pairs_[idx].cdr;
+        }
+        return final;
+    });
+    primitives_.add("drop", [this](const auto& a) {
+        if (a.size() < 2) return make_void();
+        auto n = static_cast<std::size_t>(as_int(a[0]));
+        auto v = a[1];
+        for (std::size_t i = 0; i < n; ++i) {
+            if (is_end_of_list(v)) return v;
+            if (!is_pair(v)) return v;
+            auto idx = as_pair_idx(v);
+            if (idx >= pairs_.size()) return v;
+            v = pairs_[idx].cdr;
+        }
+        return v;
+    });
+    primitives_.add("foldl", [this](const auto& a) {
+        if (a.size() < 3) return make_void();
+        auto f = a[0];
+        if (!is_closure(f)) return make_void();
+        auto cid = as_closure_id(f);
+        auto it = closures_.find(cid);
+        if (it == closures_.end() || it->second.params.empty()) return make_void();
+        auto& closure = it->second;
+        auto param = closure.params[0];
+
+        auto acc = a[1];
+        auto lst = a[2];
+
+        while (!is_end_of_list(lst)) {
+            if (!is_pair(lst)) break;
+            auto idx = as_pair_idx(lst);
+            if (idx >= pairs_.size()) break;
+
+            Env ne(closure.env ? *closure.env : Env());
+            ne.set_primitives(&primitives_);
+            ne.set_cells(&cells_);
+            ne.bind(param, acc);
+            if (closure.params.size() > 1)
+                ne.bind(closure.params[1], pairs_[idx].car);
+
+            auto r = closure.flat ? eval_flat(*closure.flat, *closure.pool, closure.body_id, ne) : EvalResult(make_void());
+            if (!r) break;
+            acc = *r;
+            lst = pairs_[idx].cdr;
+        }
+        return acc;
     });
 
     // ── Typed mutation operators ──────────────────────────────────

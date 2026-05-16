@@ -104,6 +104,7 @@ NodeId FlatParser::parse_list() {
         if (kw == "if")     return parse_if();
         if (kw == "lambda") return parse_lambda();
         if (kw == "let")    return parse_let(false);
+        if (kw == "let*")   return parse_let_star();
         if (kw == "letrec") return parse_let(true);
         if (kw == "define") return parse_define();
         if (kw == "begin")  return parse_begin();
@@ -197,6 +198,12 @@ NodeId FlatParser::parse_define() {
 
 NodeId FlatParser::parse_let(bool rec) {
     auto tok = lexer_->consume(); // 'let' or 'letrec'
+    
+    // Named let: (let name ((binding...) body)
+    if (!rec && lexer_->peek().kind == TokenKind::Identifier) {
+        return parse_named_let();
+    }
+    
     if (lexer_->consume().kind != TokenKind::LParen) return NULL_NODE; // ((
     
     struct Binding { SymId name; NodeId val; };
@@ -223,6 +230,102 @@ NodeId FlatParser::parse_let(bool rec) {
             body = flat_.add_letrec(it->name, it->val, body);
         else
             body = flat_.add_let(it->name, it->val, body);
+    }
+    return body;
+}
+
+NodeId FlatParser::parse_named_let() {
+    auto name_tok = lexer_->peek(); // already peeked
+    if (name_tok.kind != TokenKind::Identifier) return NULL_NODE;
+    lexer_->consume(); // consume the name
+    auto name = pool_.intern(std::string(name_tok.text));
+    
+    // Expect '(' for binding list
+    if (lexer_->consume().kind != TokenKind::LParen) return NULL_NODE;
+    
+    struct Binding { SymId name; NodeId val; };
+    std::vector<Binding> bs;
+    
+    while (lexer_->peek().kind != TokenKind::RParen) {
+        if (lexer_->consume().kind != TokenKind::LParen) return NULL_NODE;
+        auto n = lexer_->consume();
+        if (n.kind != TokenKind::Identifier) return NULL_NODE;
+        auto v = parse_val();
+        if (v == NULL_NODE) return NULL_NODE;
+        bs.push_back({pool_.intern(std::string(n.text)), v});
+        if (lexer_->consume().kind != TokenKind::RParen) return NULL_NODE;
+    }
+    lexer_->consume(); // ')'
+    
+    // Read all body expressions and wrap in begin if >1
+    std::vector<NodeId> body_exprs;
+    while (lexer_->peek().kind != TokenKind::RParen && !lexer_->eof()) {
+        auto be = parse_expr();
+        if (be == NULL_NODE) break;
+        body_exprs.push_back(be);
+    }
+    lexer_->consume(); // ')'
+    if (body_exprs.empty()) return NULL_NODE;
+    NodeId body = (body_exprs.size() == 1) ? body_exprs[0]
+                : flat_.add_begin(body_exprs.data(), static_cast<std::uint32_t>(body_exprs.size()));
+    
+    // Desugar: (let name ((a1 v1) (a2 v2)) body...)
+    //       → (letrec ((name (lambda (a1 a2) body...))) (name v1 v2))
+    
+    // Collect param symbols and init values
+    std::vector<SymId> params;
+    std::vector<NodeId> init_vals;
+    for (auto& b : bs) {
+        params.push_back(b.name);
+        init_vals.push_back(b.val);
+    }
+    
+    // Create lambda: (lambda (a1 a2 ...) body)
+    auto lambda_id = flat_.add_lambda(params, body);
+    
+    // Create call: (name v1 v2 ...)
+    auto var_id = flat_.add_variable(name);
+    auto call_id = flat_.add_call(var_id, init_vals);
+    
+    // Create letrec: (letrec ((name lambda)) call)
+    return flat_.add_letrec(name, lambda_id, call_id);
+}
+
+NodeId FlatParser::parse_let_star() {
+    lexer_->consume(); // 'let*'
+    if (lexer_->consume().kind != TokenKind::LParen) return NULL_NODE;
+    
+    struct Binding { SymId name; NodeId val; };
+    std::vector<Binding> bs;
+    
+    while (lexer_->peek().kind != TokenKind::RParen) {
+        if (lexer_->consume().kind != TokenKind::LParen) return NULL_NODE;
+        auto n = lexer_->consume();
+        if (n.kind != TokenKind::Identifier) return NULL_NODE;
+        auto v = parse_val();
+        if (v == NULL_NODE) return NULL_NODE;
+        bs.push_back({pool_.intern(std::string(n.text)), v});
+        if (lexer_->consume().kind != TokenKind::RParen) return NULL_NODE;
+    }
+    lexer_->consume(); // ')'
+    
+    // Read all body expressions and wrap in begin if >1
+    std::vector<NodeId> body_exprs;
+    while (lexer_->peek().kind != TokenKind::RParen && !lexer_->eof()) {
+        auto be = parse_expr();
+        if (be == NULL_NODE) break;
+        body_exprs.push_back(be);
+    }
+    lexer_->consume(); // ')'
+    if (body_exprs.empty()) return NULL_NODE;
+    NodeId body = (body_exprs.size() == 1) ? body_exprs[0]
+                : flat_.add_begin(body_exprs.data(), static_cast<std::uint32_t>(body_exprs.size()));
+    
+    // Desugar: (let* ((a1 v1) (a2 v2)) body...)
+    //       → (let ((a1 v1)) (let ((a2 v2)) body...))
+    // Build from right to left so outermost wraps innermost
+    for (auto it = bs.rbegin(); it != bs.rend(); ++it) {
+        body = flat_.add_let(it->name, it->val, body);
     }
     return body;
 }
