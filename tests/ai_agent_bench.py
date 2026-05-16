@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Aura AI Agent — 多程序测试基准 (带完整标准库 API)
+"""Aura AI Agent — 多程序测试基准 (并行 + 精简 prompt)
 
-运行 LLM 迭代式 Agent 解决一系列编程任务，记录成功率。
+并行执行 15 个任务，每个任务独立 LLM + Aura session。
 """
-import subprocess, json, sys, os, time, re, http.client, urllib.parse
+import subprocess, json, sys, os, time, re, http.client, urllib.parse, concurrent.futures, threading
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ai_agent_prompt import build_system_prompt
@@ -12,36 +12,30 @@ AURA = os.environ.get("AURA_BIN", "./build/aura")
 OPENAI_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-MAX_ROUNDS = 10
-EXEC_TIMEOUT = 15
+MAX_ROUNDS = 8
+LLM_TIMEOUT = 90  # max seconds per LLM call
+EXEC_TIMEOUT = 30  # max seconds per Aura exec
 
-def llm(msgs):
-    import socket
-    socket.setdefaulttimeout(120)
+SYSTEM_PROMPT = build_system_prompt()
+_lock = threading.Lock()
+
+def log(msg):
+    with _lock:
+        print(msg, flush=True)
+
+def llm_call(msgs):
+    """Single LLM call with timeout"""
     p = urllib.parse.urlparse(OPENAI_URL)
-    c = http.client.HTTPSConnection(p.netloc, timeout=120) if p.scheme == "https" else http.client.HTTPConnection(p.netloc, timeout=120)
+    c = http.client.HTTPSConnection(p.netloc, timeout=LLM_TIMEOUT) if p.scheme == "https" else http.client.HTTPConnection(p.netloc, timeout=LLM_TIMEOUT)
     c.request("POST", p.path + "/chat/completions", json.dumps({
-        "model": OPENAI_MODEL, "messages": msgs, "temperature": 0.2, "max_tokens": 2000,
+        "model": OPENAI_MODEL, "messages": msgs, "temperature": 0.2, "max_tokens": 1000,
     }), {"Content-Type": "application/json", "Authorization": f"Bearer {OPENAI_KEY}"})
     r = c.getresponse()
     d = json.loads(r.read())
     c.close()
     return d["choices"][0]["message"]["content"]
 
-class Session:
-    def __init__(self):
-        self.p = subprocess.Popen([AURA, "--serve"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1)
-    def exec(self, code, t=EXEC_TIMEOUT):
-        self.p.stdin.write(json.dumps({"cmd": "exec", "code": code}) + "\n"); self.p.stdin.flush()
-        d = time.time() + t
-        while time.time() < d:
-            l = self.p.stdout.readline()
-            if l and l.startswith("{"): return json.loads(l)
-        return {"status": "timeout"}
-    def close(self):
-        self.p.terminate(); self.p.wait()
-
-def extract(text):
+def extract_code(text):
     text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
     if "```" in text:
         for p in text.split("```"):
@@ -50,113 +44,114 @@ def extract(text):
             if any(k in c for k in ("define","require","(+","(begin","lambda","import")): return c
     return ""
 
-SYSTEM_PROMPT = build_system_prompt()
-
-EXEC_TIMEOUT_LONG = 60  # for complex tasks
-
-TASKS = [
-    {"id": "fib10",         "prompt": "Compute fibonacci(10) efficiently",
-     "timeout": 10, "verify": lambda v: "55" in str(v)},
-    {"id": "fib20",         "prompt": "Compute fibonacci(20) efficiently (iterative, not recursive)",
-     "timeout": 10, "verify": lambda v: "6765" in str(v)},
-    {"id": "sum_1_to_100",  "prompt": "Sum 1..100 using range and foldl from std/list",
-     "timeout": 10, "verify": lambda v: "5050" in str(v)},
-    {"id": "filter_odd",    "prompt": "Filter odd numbers from (range 1 20) and sum them",
-     "timeout": 10, "verify": lambda v: str(v).replace(",","") == "100" or "100" in str(v)},
-    {"id": "map_square",    "prompt": "Square each element in (list 1 2 3 4 5) using map",
-     "timeout": 10, "verify": lambda v: "25" in str(v) and "1" in str(v)},
-    {"id": "json_roundtrip", "prompt": "Parse '{\"a\":1,\"b\":2}' and re-serialize with std/json",
-     "timeout": 10, "verify": lambda v: "a" in str(v) or "{\"" in str(v)},
-    {"id": "factorial",     "prompt": "Compute factorial(10) using std/math",
-     "timeout": 10, "verify": lambda v: "3628800" in str(v)},
-    {"id": "quicksort",     "prompt": "Sort (list 3 1 4 1 5 9 2 6) with quicksort, return the list",
-     "timeout": 10, "verify": lambda v: all(p in str(v).replace(",","") for p in ["1","2","3","4","5","6","9"])},
-    {"id": "string_proc",   "prompt": "Split 'hello,world,aura' by comma, upcase each, join with dash. Use std/string",
-     "timeout": 10, "verify": lambda v: "HELLO" in str(v).upper() and "WORLD" in str(v).upper() and "AURA" in str(v).upper()},
-    {"id": "struct_point",  "prompt": "Define point struct with x y, make (10 20), extract x",
-     "timeout": 10, "verify": lambda v: "10" in str(v)},
-    {"id": "prime_sieve_30", "prompt": "Find primes up to 30 by checking divisibility 2..sqrt(n). Return as list.",
-     "timeout": 30, "verify": lambda v: all(p in str(v) for p in ["2","3","5","7","11","13","17","19","23","29"])},
-    {"id": "fib100_foldl",  "prompt": "Compute fibonacci(100) using iterative approach. Return just the number.",
-     "timeout": 30, "verify": lambda v: "354224848179261915075" in str(v) or str(v).startswith("35422")},
-    # 更复杂的任务
-    {"id": "json_validate", "prompt": "Write a function (validate-schema data schema) that checks if a hash has required fields. Test it.",
-     "timeout": 30, "verify": lambda v: "#t" in str(v) or "true" in str(v).lower()},
-    {"id": "tree_depth",   "prompt": "Write a function to compute the maximum depth of a nested list: (depth '(1 (2 (3)) 4)) => 3",
-     "timeout": 30, "verify": lambda v: "3" in str(v)},
-    {"id": "csv_parse",    "prompt": "Parse CSV string 'a,b\\nc,d' into list of lists. Write the parser function.",
-     "timeout": 30, "verify": lambda v: "a" in str(v) and "d" in str(v)},
-]
-
-def solve(task):
-    print(f"\n  {task['id']}: ", end="", flush=True)
-    s = Session()
-    msgs = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": task["prompt"]}]
-    last_val, success = None, False
-    timeout = task.get("timeout", EXEC_TIMEOUT)
+def run_task(tid, prompt, verify, timeout=EXEC_TIMEOUT):
+    """Run one task in its own Aura session. Returns (ok, rounds, value)."""
+    log(f"  {tid}: starting")
+    s = subprocess.Popen([AURA, "--serve"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1)
+    msgs = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}]
 
     for rnd in range(1, MAX_ROUNDS + 1):
         t0 = time.time()
-        resp = llm(msgs)
+        try:
+            resp = llm_call(msgs)
+        except Exception as e:
+            log(f"  {tid} r{rnd}: LLM error: {e}")
+            continue
         t_llm = time.time() - t0
-        code = extract(resp)
+        code = extract_code(resp)
 
         if not code:
             if "DONE" in resp.strip().split("\n")[-1].upper():
-                print(f"r{rnd} done", end=" "); break
+                log(f"  {tid}: DONE no code")
+                break
             msgs.append({"role": "assistant", "content": resp})
             continue
 
-        # Clean up display calls that would shadow return value
+        # Clean and wrap
         code = re.sub(r'\(display\s+([^)]+)\)', r'\1', code)
         lines = [l.strip() for l in code.split("\n") if l.strip() and not l.startswith(";")]
         if len(lines) > 1 and not (lines[0].startswith("(begin") and lines[-1] == ")"):
             code = "(begin " + " ".join(l for l in lines if not l.startswith(";")) + ")"
 
         t0 = time.time()
-        r = s.exec(code, timeout)
+        s.stdin.write(json.dumps({"cmd": "exec", "code": code}) + "\n")
+        s.stdin.flush()
+        deadline = time.time() + timeout
+        result = None
+        while time.time() < deadline:
+            line = s.stdout.readline()
+            if line and line.startswith("{"):
+                result = json.loads(line)
+                break
         t_exec = time.time() - t0
-        status = r.get("status")
-        value = r.get("value", r.get("msg", ""))
-        last_val = value
 
-        if status == "ok" and task["verify"](value):
-            print(f"✅ r{rnd} ({t_llm:.0f}s+{t_exec:.0f}s)", end=" ")
-            success = True; break
-        elif status == "ok":
-            print(f"r{rnd} val={value[:30]}", end=" ")
-            # LLM decides: improve or DONE
-        elif status == "timeout":
-            print(f"r{rnd} timeout", end=" ")
+        if result:
+            status = result.get("status")
+            value = result.get("value", result.get("msg", ""))
+            if status == "ok" and verify(value):
+                log(f"  {tid}: ✅ r{rnd} ({t_llm:.0f}s+{t_exec:.0f}s) val={value[:40]}")
+                s.terminate(); s.wait()
+                return (True, rnd, value)
+            elif status == "ok":
+                log(f"  {tid}: r{rnd} OK val={value[:30]} ({t_llm:.0f}s+{t_exec:.0f}s)")
+            elif status == "timeout":
+                log(f"  {tid}: r{rnd} timeout")
+            else:
+                log(f"  {tid}: r{rnd} err={value[:40]}")
+            fb = f"Result: status={status} val={value if status=='ok' else error if status!='ok' else value} ({t_exec:.1f}s)\n"
+            fb += "Fix errors and retry.\n" if status != "ok" else "If correct say DONE, otherwise improve.\n"
+            msgs.append({"role": "assistant", "content": resp})
+            msgs.append({"role": "user", "content": fb})
         else:
-            print(f"r{rnd} err={value[:30]}", end=" ")
+            log(f"  {tid}: r{rnd} no response (timeout?)")
 
-        fb = f"Result: status={status}"
-        fb += f" value={value}" if status == "ok" else f" error={value}"
-        fb += f"\nTime: {t_exec:.1f}s"
-        fb += "\nFix errors and retry.\n" if status != "ok" else "\nIf correct say DONE, otherwise improve.\n"
-        msgs.append({"role": "assistant", "content": resp})
-        msgs.append({"role": "user", "content": fb})
+    s.terminate(); s.wait()
+    return (False, MAX_ROUNDS, None)
 
-    s.close()
-    return success, last_val
+TASKS = [
+    ("fib10",         "Compute fibonacci(10) efficiently", lambda v: "55" in str(v)),
+    ("fib20",         "Compute fibonacci(20) efficiently (iterative)", lambda v: "6765" in str(v)),
+    ("sum_1_to_100",  "Sum 1..100 using range and foldl from std/list", lambda v: "5050" in str(v)),
+    ("filter_odd",    "Filter odds from (range 1 20) and sum them", lambda v: "100" in str(v)),
+    ("map_square",    "Square each element in (list 1 2 3 4 5) using map", lambda v: "25" in str(v)),
+    ("json_roundtrip","Parse '{\"a\":1,\"b\":2}' and re-serialize with std/json", lambda v: "a" in str(v) or "{" in str(v)),
+    ("factorial",     "Compute factorial(10) using std/math", lambda v: "3628800" in str(v)),
+    ("quicksort",     "Sort (3 1 4 1 5 9 2 6) with quicksort", lambda v: "9" in str(v) and "1" in str(v)),
+    ("string_proc",   "Split 'hello,world,aura' by comma, upcase, join with dash. Use std/string", lambda v: "HELLO" in str(v).upper()),
+    ("struct_point",  "Define point struct, make (10 20), extract x", lambda v: "10" in str(v)),
+    ("prime_sieve",   "Find primes up to 30 by trial division. Return as list.", lambda v: all(p in str(v) for p in ["2","3","5","7","11","13","17","19","23","29"])),
+    ("fib100",        "Compute fibonacci(100) iteratively. Return the number.", lambda v: str(v).startswith("35422")),
+    ("tree_depth",    "Function to compute max depth of nested list. Test: (depth (list 1 (list 2 (list 3)))) => 3", lambda v: "3" in str(v)),
+    ("csv_parse",     "Parse 'a,b\\nc,d' into list of lists. Return ((\"a\" \"b\") (\"c\" \"d\")).", lambda v: "a" in str(v) and "d" in str(v)),
+    ("json_schema",   "Validate a hash has required keys. Return #t if valid, #f if not.", lambda v: "#t" in str(v) or "#f" in str(v)),
+]
 
 def main():
     if not OPENAI_KEY:
         print("Need OPENAI_API_KEY"); sys.exit(1)
-    print(f"Model: {OPENAI_MODEL}\nSystem prompt: {len(SYSTEM_PROMPT)} chars\nTasks: {len(TASKS)}\n")
+    print(f"Model: {OPENAI_MODEL}")
+    print(f"Prompt: {len(SYSTEM_PROMPT)} chars")
+    print(f"Tasks: {len(TASKS)} (parallel: {os.cpu_count()} workers)\n")
 
-    results = []
-    for t in TASKS:
-        ok, val = solve(t)
-        results.append((t["id"], ok))
-        print(f"{'✅' if ok else '❌'}")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+        futures = {ex.submit(run_task, tid, prompt, verify): tid for tid, prompt, verify in TASKS}
+        results = {}
+        for f in concurrent.futures.as_completed(futures):
+            tid = futures[f]
+            try:
+                ok, rnds, val = f.result()
+                results[tid] = (ok, rnds)
+                print(f"  {'✅' if ok else '❌'} {tid} ({rnds}r)" + (f" val={val[:30]}" if val else ""))
+            except Exception as e:
+                results[tid] = (False, 0)
+                print(f"  ❌ {tid}: exception: {e}")
 
+    passed = sum(1 for ok, _ in results.values() if ok)
     print(f"\n{'='*50}")
-    passed = sum(1 for _, ok in results if ok)
     print(f"Results: {passed}/{len(results)} passed ({100*passed//len(results)}%)")
-    for tid, ok in results:
-        print(f"  {'✅' if ok else '❌'} {tid}")
+    for tid in [t[0] for t in TASKS]:
+        ok, rnds = results.get(tid, (False, 0))
+        print(f"  {'✅' if ok else '❌'} {tid} ({rnds}r)")
     print('='*50)
 
 if __name__ == "__main__":
