@@ -1,8 +1,12 @@
-# Typed Mutation Operators — 设计文档
+# Typed Mutation Operators — 已实现
 
-## 1. 现状
+> **✅ 三周计划已全部完成 (2026.05.15)**
+> - W1: MutationRecord + MutationLog (FlatAST 存储)
+> - W2: TypedMutationOp 原语 (check-preconditions/replace-type)
+> - W3: Provenance + --serve + AI 协议集成
+> - 55/55 测试，~10800 行代码
 
-当前 Aura 的代码修改能力：
+## 1. 背景
 
 | 组件 | 能力 | 限制 |
 |------|------|------|
