@@ -255,7 +255,7 @@ export struct Patch {
 // ── FlatAST — SoA flat index-based AST ─────────────────────────
 export class FlatAST {
 private:
-    NodeId add_node(NodeTag tag, SyntaxMarker m = SyntaxMarker::User) {
+    [[nodiscard]] NodeId add_node(NodeTag tag, SyntaxMarker m = SyntaxMarker::User) {
         auto id = static_cast<NodeId>(tag_.size());
         tag_.push_back(tag);
         int_val_.push_back(0);
@@ -305,32 +305,32 @@ public:
 
     // ── Builders ───────────────────────────────────────────────
 
-    NodeId add_literal_float(double val) {
+    [[nodiscard]] NodeId add_literal_float(double val) {
         auto id = add_node(NodeTag::LiteralFloat);
         float_val_[id] = val;
         return id;
     }
 
-    NodeId add_literalstring(SymId name) {
+    [[nodiscard]] NodeId add_literalstring(SymId name) {
         auto id = add_node(NodeTag::LiteralString);
         sym_id_[id] = name;
         child_count_[id] = 0;
         return id;
     }
 
-    NodeId add_literal(std::int64_t val) {
+    [[nodiscard]] NodeId add_literal(std::int64_t val) {
         auto id = add_node(NodeTag::LiteralInt);
         int_val_[id] = val;
         return id;
     }
 
-    NodeId add_variable(SymId name) {
+    [[nodiscard]] NodeId add_variable(SymId name) {
         auto id = add_node(NodeTag::Variable);
         sym_id_[id] = name;
         return id;
     }
 
-    NodeId add_call(NodeId func, std::span<const NodeId> args) {
+    [[nodiscard]] NodeId add_call(NodeId func, std::span<const NodeId> args) {
         auto id = add_node(NodeTag::Call);
         child_data_.push_back(func);
         auto start = static_cast<std::uint32_t>(child_data_.size());
@@ -340,7 +340,7 @@ public:
         return id;
     }
 
-    NodeId add_if(NodeId cond, NodeId then_b, NodeId else_b) {
+    [[nodiscard]] NodeId add_if(NodeId cond, NodeId then_b, NodeId else_b) {
         auto id = add_node(NodeTag::IfExpr);
         auto start = static_cast<std::uint32_t>(child_data_.size());
         child_data_.push_back(cond);
@@ -351,7 +351,7 @@ public:
         return id;
     }
 
-    NodeId add_lambda(std::span<const SymId> params, NodeId body) {
+    [[nodiscard]] NodeId add_lambda(std::span<const SymId> params, NodeId body) {
         auto id = add_node(NodeTag::Lambda);
         auto pstart = static_cast<std::uint32_t>(param_data_.size());
         param_data_.insert(param_data_.end(), params.begin(), params.end());
@@ -363,7 +363,7 @@ public:
         return id;
     }
 
-    NodeId add_let(SymId name, NodeId val, NodeId body) {
+    [[nodiscard]] NodeId add_let(SymId name, NodeId val, NodeId body) {
         auto id = add_node(NodeTag::Let);
         sym_id_[id] = name;
         auto start = static_cast<std::uint32_t>(child_data_.size());
@@ -374,7 +374,7 @@ public:
         return id;
     }
 
-    NodeId add_letrec(SymId name, NodeId val, NodeId body) {
+    [[nodiscard]] NodeId add_letrec(SymId name, NodeId val, NodeId body) {
         auto id = add_node(NodeTag::LetRec);
         sym_id_[id] = name;
         auto start = static_cast<std::uint32_t>(child_data_.size());
@@ -385,7 +385,7 @@ public:
         return id;
     }
 
-    NodeId add_define(SymId name, NodeId val) {
+    [[nodiscard]] NodeId add_define(SymId name, NodeId val) {
         auto id = add_node(NodeTag::Define);
         sym_id_[id] = name;
         auto start = static_cast<std::uint32_t>(child_data_.size());
@@ -396,7 +396,7 @@ public:
     }
 
 
-    NodeId add_begin(NodeId* exprs, std::uint32_t count) {
+    [[nodiscard]] NodeId add_begin(NodeId* exprs, std::uint32_t count) {
         auto id = add_node(NodeTag::Begin);
         auto start = static_cast<std::uint32_t>(child_data_.size());
         for (std::uint32_t i = 0; i < count; ++i) child_data_.push_back(exprs[i]);
@@ -404,8 +404,16 @@ public:
         child_count_[id] = count;
         return id;
     }
+    [[nodiscard]] NodeId add_begin(std::span<const NodeId> exprs) {
+        auto id = add_node(NodeTag::Begin);
+        auto start = static_cast<std::uint32_t>(child_data_.size());
+        child_data_.insert(child_data_.end(), exprs.begin(), exprs.end());
+        child_begin_[id] = start;
+        child_count_[id] = static_cast<std::uint32_t>(exprs.size());
+        return id;
+    }
 
-    NodeId add_set(SymId name, NodeId val) {
+    [[nodiscard]] NodeId add_set(SymId name, NodeId val) {
         auto id = add_node(NodeTag::Set);
         sym_id_[id] = name;
         auto start = static_cast<std::uint32_t>(child_data_.size());
@@ -415,7 +423,7 @@ public:
         return id;
     }
 
-    NodeId add_macrodef(SymId name, const std::vector<SymId>& params, NodeId body) {
+    [[nodiscard]] NodeId add_macrodef(SymId name, const std::vector<SymId>& params, NodeId body) {
         auto id = add_node(NodeTag::MacroDef);
         sym_id_[id] = name;
         auto start = static_cast<std::uint32_t>(child_data_.size());
@@ -430,7 +438,7 @@ public:
         return id;
     }
 
-    NodeId add_quote(NodeId val) {
+    [[nodiscard]] NodeId add_quote(NodeId val) {
         auto id = add_node(NodeTag::Quote);
         auto start = static_cast<std::uint32_t>(child_data_.size());
         child_data_.push_back(val);
@@ -439,7 +447,7 @@ public:
         return id;
     }
 
-    NodeId add_type_annotation(SymId type_name, NodeId inner) {
+    [[nodiscard]] NodeId add_type_annotation(SymId type_name, NodeId inner) {
         auto id = add_node(NodeTag::TypeAnnotation);
         sym_id_[id] = type_name;
         auto start = static_cast<std::uint32_t>(child_data_.size());
@@ -449,7 +457,7 @@ public:
         return id;
     }
 
-    NodeId add_coercion(NodeId inner, std::uint32_t type_id) {
+    [[nodiscard]] NodeId add_coercion(NodeId inner, std::uint32_t type_id) {
         auto id = add_node(NodeTag::Coercion);
         auto start = static_cast<std::uint32_t>(child_data_.size());
         child_data_.push_back(inner);

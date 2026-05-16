@@ -2158,7 +2158,7 @@ static aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast:
         break;
     case NodeTag::Begin:
         if (!child_ids.empty())
-            new_id = target.add_begin(child_ids.data(), static_cast<std::uint32_t>(child_ids.size()));
+            new_id = target.add_begin(child_ids);
         break;
     case NodeTag::Set:
         if (!child_ids.empty()) new_id = target.add_set(transplant(v.sym_id), child_ids[0]);

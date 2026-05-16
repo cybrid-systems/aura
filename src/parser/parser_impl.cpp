@@ -31,7 +31,7 @@ FlatParseResult FlatParser::parse(std::string_view s) {
         if (lexer_->eof()) break;
         next = lexer_->peek();
     } while (next.kind != TokenKind::EndOfFile);
-    r.root = flat_.add_begin(exprs.data(), static_cast<std::uint32_t>(exprs.size()));
+    r.root = flat_.add_begin(exprs);
     r.success = true;
     return r;
 }
@@ -184,7 +184,7 @@ NodeId FlatParser::parse_define() {
         lexer_->consume(); // ')' closing define
         if (body_exprs.empty()) return NULL_NODE;
         NodeId body = (body_exprs.size() == 1) ? body_exprs[0]
-                    : flat_.add_begin(body_exprs.data(), static_cast<std::uint32_t>(body_exprs.size()));
+                    : flat_.add_begin(body_exprs);
         auto lambda = flat_.add_lambda(params, body);
         return flat_.add_define(pool_.intern(std::string(fn.text)), lambda);
     }
@@ -268,7 +268,7 @@ NodeId FlatParser::parse_named_let() {
     lexer_->consume(); // ')'
     if (body_exprs.empty()) return NULL_NODE;
     NodeId body = (body_exprs.size() == 1) ? body_exprs[0]
-                : flat_.add_begin(body_exprs.data(), static_cast<std::uint32_t>(body_exprs.size()));
+                : flat_.add_begin(body_exprs);
     
     // Desugar: (let name ((a1 v1) (a2 v2)) body...)
     //       → (letrec ((name (lambda (a1 a2) body...))) (name v1 v2))
@@ -320,7 +320,7 @@ NodeId FlatParser::parse_let_star() {
     lexer_->consume(); // ')'
     if (body_exprs.empty()) return NULL_NODE;
     NodeId body = (body_exprs.size() == 1) ? body_exprs[0]
-                : flat_.add_begin(body_exprs.data(), static_cast<std::uint32_t>(body_exprs.size()));
+                : flat_.add_begin(body_exprs);
     
     // Desugar: (let* ((a1 v1) (a2 v2)) body...)
     //       → (let ((a1 v1)) (let ((a2 v2)) body...))
@@ -372,7 +372,7 @@ NodeId FlatParser::parse_begin() {
         else break;
     }
     lexer_->consume(); // ')'
-    auto bid = flat_.add_begin(exprs.data(), static_cast<std::uint32_t>(exprs.size()));
+    auto bid = flat_.add_begin(exprs);
     flat_.set_loc(bid, tok.line, tok.column);
     return bid;
 }

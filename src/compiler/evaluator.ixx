@@ -31,7 +31,7 @@ public:
     void set_primitives(const Primitives* p) { primitives_=p; }
     void set_cells(std::vector<types::EvalValue>* c) { cells_=c; }
     void bind(const std::string& n, types::EvalValue v) { bindings_.emplace_back(n,std::move(v)); }
-    std::optional<types::EvalValue> lookup(const std::string& n) const;
+    [[nodiscard]] std::optional<types::EvalValue> lookup(const std::string& n) const;
     // Look up the raw binding without dereferencing cells (returns cell sentinel as-is)
     std::optional<types::EvalValue> lookup_binding(const std::string& n) const;
     std::optional<PrimFn> lookup_primitive(const std::string& n) const { return primitives_?primitives_->lookup(n):std::nullopt; }
@@ -64,18 +64,20 @@ public:
     void set_arena(ast::ASTArena* a) { arena_=a; }
     // Set current FlatAST/Pool for mutation primitives
     void set_flat_pool(ast::FlatAST* f, ast::StringPool* p) { current_flat_ = f; current_pool_ = p; }
-    EvalResult eval_flat(aura::ast::FlatAST& flat,
+    [[nodiscard]] EvalResult eval_flat(aura::ast::FlatAST& flat,
                           aura::ast::StringPool& pool,
                           aura::ast::NodeId id,
                           const Env& env);
     const Primitives& primitives() const { return primitives_; }
+    Primitives& primitives() { return primitives_; }
+    const Env& top_env() const { return top_; }
     Env& top_env() { return top_; }
     const std::vector<Pair>& pairs() const { return pairs_; }
 private:
     ClosureId next_id() { return next_id_++; }
-    std::size_t alloc_cell(const types::EvalValue& v) { cells_.push_back(v); return cells_.size()-1; }
+    [[nodiscard]] std::size_t alloc_cell(const types::EvalValue& v) { cells_.push_back(v); return cells_.size()-1; }
     // (apply_closure and expand_macro removed — use eval_flat directly)
-    EvalValue ast_to_data(const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool, aura::ast::NodeId nid);
+    [[nodiscard]] EvalValue ast_to_data(const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool, aura::ast::NodeId nid);
     Env* copy_env(const Env& env);
     void init_pair_primitives();
     Env top_; Primitives primitives_; ast::ASTArena* arena_=nullptr;
