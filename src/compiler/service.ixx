@@ -27,9 +27,11 @@ export class CompilerService {
 public:
     CompilerService() {
         evaluator_.set_arena(&arena_);
-        // Module caching TODO: recursive fn self-ref + fn-id remap during injection.
-        // Python stdlib_inliner handles imports for Agent code.
-        // evaluator_.set_module_loaded_callback(...)
+        // Cache module defines in IR after each import
+        evaluator_.set_module_loaded_callback(
+            [this](const std::string& content, const std::string& path) {
+                cache_module(content, path);
+            });
     }
 
     void reset() { arena_.reset(); }
