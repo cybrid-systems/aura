@@ -3,6 +3,7 @@ module;
 #include <cstdio>
 #include <unistd.h>
 #include <dirent.h>
+#include <regex>
 module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
@@ -1358,6 +1359,69 @@ void Evaluator::init_pair_primitives() {
         }
         closedir(dir);
         return result;
+    });
+
+    // ── Regex ──────────────────────────────────────────────────
+    primitives_.add("regex-match?", [this](const auto& a) {
+        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1])) return make_int(0);
+        auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
+        if (pi >= string_heap_.size() || si >= string_heap_.size()) return make_int(0);
+        try {
+            std::regex re(string_heap_[pi]);
+            return make_int(std::regex_search(string_heap_[si], re) ? 1 : 0);
+        } catch (...) { return make_int(0); }
+    });
+
+    primitives_.add("regex-find", [this](const auto& a) {
+        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1])) return make_void();
+        auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
+        if (pi >= string_heap_.size() || si >= string_heap_.size()) return make_void();
+        try {
+            std::regex re(string_heap_[pi]);
+            std::smatch m;
+            if (std::regex_search(string_heap_[si], m, re)) {
+                auto id = string_heap_.size();
+                string_heap_.push_back(m.str());
+                return make_string(id);
+            }
+        } catch (...) {}
+        return make_void();
+    });
+
+    primitives_.add("regex-replace", [this](const auto& a) {
+        if (a.size() < 3 || !is_string(a[0]) || !is_string(a[1]) || !is_string(a[2])) return make_void();
+        auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]), ri = as_string_idx(a[2]);
+        if (pi >= string_heap_.size() || si >= string_heap_.size() || ri >= string_heap_.size()) return make_void();
+        try {
+            std::regex re(string_heap_[pi]);
+            auto result = std::regex_replace(string_heap_[si], re, string_heap_[ri]);
+            auto id = string_heap_.size();
+            string_heap_.push_back(std::move(result));
+            return make_string(id);
+        } catch (...) { return make_void(); }
+    });
+
+    primitives_.add("regex-split", [this](const auto& a) {
+        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1])) return make_void();
+        auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
+        if (pi >= string_heap_.size() || si >= string_heap_.size()) return make_void();
+        try {
+            std::regex re(string_heap_[pi]);
+            std::sregex_token_iterator it(string_heap_[si].begin(), string_heap_[si].end(), re, -1);
+            std::sregex_token_iterator end;
+            EvalValue result = make_void();
+            std::vector<std::string> parts;
+            for (; it != end; ++it)
+                parts.push_back(it->str());
+            for (auto it2 = parts.rbegin(); it2 != parts.rend(); ++it2) {
+                auto sid = string_heap_.size();
+                string_heap_.push_back(*it2);
+                auto pid = pairs_.size();
+                pairs_.push_back({make_string(sid), result});
+                result = make_pair(pid);
+            }
+            return result;
+        } catch (...) { return make_void(); }
     });
 
     // ═══════════════════════════════════════════════════════════════
