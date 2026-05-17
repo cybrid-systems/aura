@@ -67,10 +67,11 @@ P10 大规模开发基础设施           🟡 设计完成，逐步实现
 - [x] `load_module_file` export 过滤 — 模块对象只包含 export 的绑定
 - [x] 与前缀注入配合：`(import "path" "p:")` 只注入 export 的符号
 
-#### Phase 4: 标准库迁移
-- [ ] std/list → require 默认加前缀
-- [ ] 所有 std 库改用前缀
-- [ ] 保留 `all:` 兼容开关
+#### Phase 4: 标准库迁移 ✅
+- [x] `(require std/list)` 默认加 `list:` 前缀
+- [x] 所有 std 库添加 `export` 声明
+- [x] `(require std/list all:)` 保持无前缀（向后兼容）
+- [x] 修复 string.aura 的 `drop-while` 依赖（模块隔离暴露的潜在 bug）
 
 ### P10 — 大规模开发基础设施
 

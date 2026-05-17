@@ -3141,6 +3141,8 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                 }
             }
             // Built-in require: (require mod-name) — symbol, not string
+            // Phase 4: prefix by default. (require std/list) → (import "std/list" "list:")
+            //          (require std/list all:) → (import "std/list")  (backward compat)
             if (callee.tag == aura::ast::NodeTag::Variable) {
                 auto cname = std::string(p->resolve(callee.sym_id));
                 if (cname == "require" && v.children.size() > 1) {
@@ -3155,12 +3157,38 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                         return std::unexpected(Diagnostic{ErrorKind::ParseError,
                             "require: expected a module name (symbol or string)"});
                     }
-                    // Build (import "...") and evaluate
+
+                    // Check for backward-compat flag: (require std/list all:)
+                    bool use_prefix = true;
+                    if (v.children.size() > 2) {
+                        auto compat_arg = v.child(2);
+                        auto cv = f->get(compat_arg);
+                        if (cv.tag == aura::ast::NodeTag::Variable) {
+                            auto compat_name = std::string(p->resolve(cv.sym_id));
+                            if (compat_name == "all:") use_prefix = false;
+                        }
+                    }
+
+                    // Derive prefix from module name (last path component)
+                    std::string prefix;
+                    if (use_prefix) {
+                        auto slash = mod_path.rfind('/');
+                        auto base = (slash == std::string::npos) ? mod_path : mod_path.substr(slash + 1);
+                        prefix = base + ":";
+                    }
+
+                    // Build (import "path" "prefix:") or (import "path")
+                    std::string import_expr;
+                    if (prefix.empty()) {
+                        import_expr = std::string("(import \"") + mod_path + "\")";
+                    } else {
+                        import_expr = std::string("(import \"") + mod_path + "\" \"" + prefix + "\")";
+                    }
+
                     if (!arena_) return make_void();
                     auto alloc = arena_->allocator();
                     auto* ipool = arena_->create<aura::ast::StringPool>(alloc);
                     auto* iflat = arena_->create<aura::ast::FlatAST>(alloc);
-                    auto import_expr = std::string("(import \"") + mod_path + "\")";
                     auto pr = aura::parser::parse_to_flat(import_expr, *iflat, *ipool);
                     if (!pr.success || pr.root == aura::ast::NULL_NODE) {
                         return std::unexpected(Diagnostic{ErrorKind::ParseError,

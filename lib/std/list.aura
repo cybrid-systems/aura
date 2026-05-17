@@ -1,6 +1,8 @@
 ; Aura standard list library
 ; Import with: (import "std/list")
 
+(export foldr zip zip3 take-while drop-while partition sort range sum product last flatten intersperse)
+
 (define (foldr f init lst)
   (if (null? lst)
     init

@@ -1,6 +1,8 @@
 ; Aura JSON library — clean version with letrec semantics
 ; (import "std/json") — json-parse + json-stringify
 
+(export json-parse json-stringify json-escape json-value c2s json-arr-items json-obj-items)
+
 (define (c2s c) (list->string (list c)))
 
 ; ── json-stringify ─────────────────────────────────────────────
