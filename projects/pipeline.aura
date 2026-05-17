@@ -1,0 +1,140 @@
+; pipeline.aura — Data Pipeline Tool
+; Usage: ./build/aura < pipeline.aura
+; Requires: /tmp/sales.csv (test data)
+
+(require std/string all:)
+
+; ── Helpers ────────────────────────────────────────────────────
+
+(define (list-index lst target)
+  (let loop ((i 0) (lst lst))
+    (if (null? lst) -1
+        (if (string=? (car lst) target) i
+            (loop (+ i 1) (cdr lst))))))
+
+(define (sum lst) (foldl + 0 lst))
+(define (mean lst) (/ (sum lst) (length lst)))
+
+; ── CSV IO ─────────────────────────────────────────────────────
+
+(define (read-csv path)
+  (let ((content (read-file path)))
+    (if (string=? content "") '()
+        (map (lambda (line) (regex-split "," line))
+             (regex-split "\n" content)))))
+
+(define (write-csv rows path)
+  (define (join-cols cols)
+    (if (null? cols) ""
+        (if (null? (cdr cols)) (car cols)
+            (string-append (car cols) ","
+                          (join-cols (cdr cols))))))
+  (define (join-rows rs)
+    (if (null? rs) ""
+        (string-append (join-cols (car rs)) "\n"
+                      (join-rows (cdr rs)))))
+  (write-file path (join-rows rows)))
+
+; ── Cleaning ───────────────────────────────────────────────────
+
+(define (trim-cell s)
+  (string-trim s))
+
+(define (clean-row row)
+  (map trim-cell row))
+
+(define (clean-rows rows)
+  (define (non-empty? row)
+    (not (null? (filter (lambda (c) (not (string=? c ""))) row))))
+  (filter non-empty? (map clean-row rows)))
+
+; ── Column Analysis ────────────────────────────────────────────
+
+(define (col-values rows col-idx)
+  (map (lambda (row) (list-ref row col-idx)) (cdr rows)))
+
+(define (col-numeric? rows col)
+  (let* ((headers (car rows))
+         (idx (list-index headers col)))
+    (if (< idx 0) #f
+        (let ((vals (col-values rows idx)))
+          (foldl (lambda (acc v)
+                   (and (number? (string->number v)) acc))
+                 #t vals)))))
+
+(define (stats-col rows col)
+  (let* ((headers (car rows))
+         (idx (list-index headers col)))
+    (if (< idx 0) (list "col not found")
+        (let* ((vals (col-values rows idx))
+               (nums (map string->number vals))
+               (n (length nums)))
+          (if (= n 0) (list 0 0 0 0 0 0)
+              (let ((mn (foldl min (car nums) (cdr nums)))
+                    (mx (foldl max (car nums) (cdr nums)))
+                    (s (foldl + 0 nums))
+                    (m (/ s n)))
+                (let ((deviations
+                       (map (lambda (x) (* (- x m) (- x m))) nums)))
+                  (list mn mx s n m (sqrt (/ (sum deviations) n))))))))))
+
+; ── Filtering ──────────────────────────────────────────────────
+
+(define (filter-rows rows col op val)
+  (let* ((headers (car rows))
+         (idx (list-index headers col)))
+    (if (< idx 0) rows
+        (let ((num-val (string->number val)))
+          (cons headers
+                (filter (lambda (row)
+                  (let ((cell (list-ref row idx))
+                        (num-cell (string->number cell)))
+                    (cond ((string=? op "=") (or (string=? cell val)
+                                                 (and num-cell num-val
+                                                      (= num-cell num-val))))
+                          ((string=? op ">") (and num-cell num-val
+                                                  (> num-cell num-val)))
+                          ((string=? op "<") (and num-cell num-val
+                                                  (< num-cell num-val)))
+                          ((string=? op ">=") (and num-cell num-val
+                                                   (>= num-cell num-val)))
+                          ((string=? op "<=") (and num-cell num-val
+                                                   (<= num-cell num-val)))
+                          (else #f))))
+                 (cdr rows)))))))
+
+; ── Pipeline ───────────────────────────────────────────────────
+
+(define (pipeline path)
+  (display "=== Data Pipeline ===") (newline)
+  (display "Reading: ") (display path) (newline)
+
+  (let* ((raw (read-csv path))
+         (data (clean-rows raw))
+         (headers (car data))
+         (rows (cdr data))
+         (ncols (length headers)))
+
+    (display "Headers: ") (display headers) (newline)
+    (display "Rows: ") (display (length rows)) (newline)
+    (newline)
+
+    ;; Show stats for numeric columns
+    (display "--- Numeric Column Stats ---") (newline)
+    (let loop ((i 0))
+      (when (< i ncols)
+        (let ((h (list-ref headers i)))
+          (when (col-numeric? data h)
+            (display h) (display ": ")
+            (display (stats-col data h)) (newline)))
+        (loop (+ i 1))))
+
+    ;; Write cleaned output
+    (write-csv data "/tmp/output.csv")
+    (display "---") (newline)
+    (display "Written to /tmp/output.csv") (newline)))
+
+; ── Main ───────────────────────────────────────────────────────
+
+(display "Running pipeline on /tmp/sales.csv...") (newline)
+(pipeline "/tmp/sales.csv")
