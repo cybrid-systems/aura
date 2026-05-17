@@ -17,36 +17,19 @@ MAX_ROUNDS = 25
 
 SYSTEM_PROMPT = build_system_prompt() + """
 
-## WORKSPACE + EDSL (Phase 2: precise fixes)
+## EDSL (Phase 2: precise fixes)
 
-**IMPORTANT: When Phase 1 code fails, switch to Phase 2 EDSL. NEVER rewrite the whole code.**
+When Phase 1 code fails: use EDSL to fix. NEVER rewrite the whole code.
 
-### Phase 2 workflow:
+(set-code "full source")          ; Lock, get stable node IDs
+(query:find "func")               ; Find node ID
+(query:children N)                ; See node structure
+(mutate:rebind "func" "(define ...)")   ; Replace entire define
+(mutate:set-body "name" "body")         ; Replace just the body
+(mutate:replace-value 3 "42")           ; Replace a literal
+(typecheck-current) + (eval-current)    ; Verify
 
-1. `(set-code "full source")` — Lock current code into workspace
-2. `(query:find "name")` — Find function definition node IDs
-3. `(query:children N)`, `(query:node N)` — Examine nodes
-4. `(mutate:rebind "name" "(define (name ...) ...)")` — Replace entire def
-5. `(mutate:set-body "name" "body code")` — Replace body only
-6. `(typecheck-current)` + `(eval-current)` — Verify
-
-### Example: fixing unbound variable
-
-ERROR: unbound variable: string-split
-
-→ Phase 2:
-```
-(set-code "(require std/string) (define (find-index lst target) (if (null? lst) #f ...))")
-(query:find "find-index")       → returns (5)
-(mutate:rebind "find-index" "(define (find-index lst target) (let loop ... (string=? ...)))")
-(typecheck-current)
-(eval-current)
-```
-
-### Rules
-- Phase 1: write full code (exec). Keep it simple.
-- Phase 2: EDSL to fix errors. MUST use set-code first.
-- Say DONE when correct.
+Say DONE when correct.
 """
 
 
