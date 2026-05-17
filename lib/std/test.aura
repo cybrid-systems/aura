@@ -5,26 +5,26 @@
 ;     (check expr)
 ;     (check= expected actual))
 ;
-; Check and check= are built-in primitives that return #t on success
-; or <error> on failure. Use with try/catch for graceful error handling.
+; Check and check= are built-in primitives that return 1 on success
+; or <error> on failure.
 ;
 ; Example:
 ;   (test-suite "math"
 ;     (check= 4 (square 2))
 ;     (check= 9 (square 3)))
 ;
-;   (run-tests)  → prints summary
+;   (run-tests)  → evaluate and print summary
 
-; test-suite macro: registers a named test suite
-(defmacro test-suite (name . body)
+; test-suite macro: registers check forms, evaluates at define time.
+; Stored as: ("suite-name" 1 1 ...) — flat pair chain, no nesting.
+(defmacro (test-suite name . body)
   (let ((collect-name (string-append "test:" name)))
-    `(begin
-       (define ,collect-name
-         (list ',name
-               (map (lambda (expr)
-                      (list (try expr
-                              (catch (e)
-                                (list 'failed e)))
-                            expr))
-                    (list ,@body))))
-       ,collect-name)))
+    (list 'begin
+      (list 'define collect-name
+        (cons 'cons (cons name
+          (list 'map (list 'lambda (list 'expr)
+                (list 'try 'expr
+                  (list 'catch (list 'e)
+                    (list 'list (list 'quote 'failed) 'e))))
+            (cons 'list body)))))
+      collect-name)))
