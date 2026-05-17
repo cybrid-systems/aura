@@ -27,9 +27,9 @@ export class CompilerService {
 public:
     CompilerService() {
         evaluator_.set_arena(&arena_);
-        // Module caching callback disabled — bridge data lifecycle TBD.
-        // Python stdlib_inliner.py handles imports for Agent code.
-        // To enable: evaluator_.set_module_loaded_callback(...)
+        // Module caching TODO: recursive fn self-ref + fn-id remap during injection.
+        // Python stdlib_inliner handles imports for Agent code.
+        // evaluator_.set_module_loaded_callback(...)
     }
 
     void reset() { arena_.reset(); }
@@ -447,18 +447,21 @@ public:
     // Parse module content and cache all top-level defines in ir_cache_.
     // Called by Evaluator after each successful module load.
     void cache_module(const std::string& content, const std::string& path) {
+        // Arena-allocate flat/pool so pointers survive (bridge data references them)
         auto alloc = arena_.allocator();
-        aura::ast::StringPool pool(alloc);
-        aura::ast::FlatAST flat(alloc);
-        auto pr = aura::parser::parse_to_flat(content, flat, pool);
+        auto* pool_ptr = arena_.create<aura::ast::StringPool>(alloc);
+        auto* flat_ptr = arena_.create<aura::ast::FlatAST>(alloc);
+        auto pr = aura::parser::parse_to_flat(content, *flat_ptr, *pool_ptr);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) return;
-        flat.root = pr.root;
+        flat_ptr->root = pr.root;
+
+        auto& flat = *flat_ptr;
+        auto& pool = *pool_ptr;
 
         // Macro expand
         auto expanded = aura::compiler::macro_expand_all(flat, pool, flat.root);
 
         // Walk top-level expressions to find (define ...) forms
-        // We walk the expanded root looking at each top-level expression
         struct DefineFinder {
             aura::ast::FlatAST& flat;
             aura::ast::StringPool& pool;
@@ -471,7 +474,6 @@ public:
                     auto name = pool.resolve(v.sym_id);
                     found.emplace_back(std::string(name), id);
                 }
-                // Top-level begin: walk children
                 if (v.tag == aura::ast::NodeTag::Begin) {
                     for (auto c : v.children) walk(c);
                 }
@@ -489,9 +491,16 @@ public:
             }
         }
 
-            // Cache each define (IR only — tree-walker already evaluated the module)
+        // Cache each define (IR only — tree-walker already evaluated the module)
         for (auto& [name, node_id] : finder.found) {
             if (ir_cache_.count(name)) continue;  // already cached
+
+            // Skip value defines (e.g., (define pi 3.14)) — only cache function defines
+            // A function define's body is a Lambda node
+            auto define_node = flat.get(node_id);
+            if (define_node.children.empty()) continue;
+            auto body_node = flat.get(define_node.child(0));
+            if (body_node.tag != aura::ast::NodeTag::Lambda) continue;
 
             // Create a temporary flat with just this define as root
             auto def_alloc = arena_.allocator();
