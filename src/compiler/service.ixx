@@ -10,6 +10,7 @@ import aura.compiler.ir_executor;
 import aura.compiler.pass_manager;
 import aura.compiler.type_checker;
 import aura.compiler.value;
+import aura.compiler.cache;
 import aura.diag;
 
 namespace aura::compiler {
@@ -377,6 +378,38 @@ public:
         bool dirty = true;                     // initially dirty (needs compile)
     };
 
+    // ── Cache helpers ────────────────────────────────────────────
+
+    // Cache directory for compiled modules (~/.cache/aura/modules/)
+    static std::string module_cache_dir() {
+        auto home = std::getenv("HOME");
+        if (!home) return "/tmp/aura-cache/modules/";
+        return std::string(home) + "/.cache/aura/modules/";
+    }
+
+    // Cache file path for a module name + source content hash.
+    // The hash prevents loading stale cache when source changes.
+    static std::string module_cache_path(const std::string& name,
+                                           const std::string& source = "") {
+        auto sanitized = name;
+        if (sanitized.empty()) sanitized = "__default__";
+        for (auto& c : sanitized) {
+            if (c == '/' || c == '\\' || c == ':' || c == ' ') c = '_';
+        }
+        // Append a hash of the source to invalidate on source change
+        if (!source.empty()) {
+            auto h = std::hash<std::string>{}(source);
+            sanitized += "_" + std::to_string(h);
+        }
+        return module_cache_dir() + sanitized + ".abfc";
+    }
+
+    // Ensure cache directory exists
+    static void ensure_cache_dir() {
+        std::error_code ec;
+        std::filesystem::create_directories(module_cache_dir(), ec);
+    }
+
     // Mark a module dirty when one of its IR dependencies changes.
     void mark_module_dirty(const std::string& changed_fn) {
         for (auto& [mname, state] : module_states_) {
@@ -466,7 +499,31 @@ public:
                 finder.walk(expanded);
         }
 
-        // Cache each define and eval via tree-walker for env
+        // Try disk cache: load cached IR bundles to skip lowering
+        auto cache_path = module_cache_path(name, source);
+        auto cached = aura::compiler::cache::open_cache(cache_path);
+        bool cache_hit = cached.valid() && cached.has_ir();
+        if (cache_hit) {
+            auto& all_funcs = cached.ir_functions();
+            for (auto& [fname, node_id] : finder.defs) {
+                if (ir_cache_.count(fname)) continue;
+                auto dv = flat.get(node_id);
+                if (dv.children.empty()) continue;
+                if (flat.get(dv.child(0)).tag != aura::ast::NodeTag::Lambda) continue;
+                for (auto& func : all_funcs) {
+                    if (func.name == fname && func.id != cached.ir_entry()) {
+                        ir_cache_[fname] = std::vector<aura::ir::IRFunction>{func};
+                        function_sources_[fname] = source;
+                        module_functions_[name].push_back(fname);
+                        break;
+                    }
+                }
+                evaluator_.eval_flat(flat, pool, node_id, evaluator_.top_env());
+            }
+        }
+
+        // Cache each define (only if not loaded from disk cache)
+        if (!cache_hit) {
         // Reuse the existing cache_define logic by using main arena for
         // the define-specific lowering (lowering doesn't depend on module arena).
         // After caching, the define is available in ir_cache_.
@@ -540,6 +597,7 @@ public:
             for (auto& cn : hits)
                 record_dependency(fname, cn);
         }
+        } // if (!cache_hit) — skip lowering when loaded from disk
 
         // Mark module as loaded
         loaded_modules_.insert(name);
@@ -554,6 +612,22 @@ public:
                 for (auto& callee : dit->second.calls)
                     state.deps.insert(callee);
             }
+        }
+
+        // Write disk cache (only when not loaded from cache)
+        if (!cache_hit) {
+        ensure_cache_dir();
+        auto cache_path = module_cache_path(name, source);
+        aura::ir::IRModule disk_mod;
+        for (auto& [fname, _] : finder.defs) {
+            auto it = ir_cache_.find(fname);
+            if (it != ir_cache_.end()) {
+                for (auto& func : it->second)
+                    disk_mod.functions.push_back(func);
+            }
+        }
+        aura::compiler::cache::write_cache(
+            cache_path, flat, pool, flat.root, 0, &disk_mod);
         }
 
         return EvalResult(types::make_void());
@@ -599,6 +673,24 @@ public:
 
         loaded_modules_.erase(name);
         module_states_.erase(name);
+
+        // Remove disk cache (find by name prefix, any hash)
+        auto sanitized = name;
+        for (auto& c : sanitized) {
+            if (c == '/' || c == '\\' || c == ':' || c == ' ') c = '_';
+        }
+        if (sanitized.empty()) sanitized = "__default__";
+        auto dir = module_cache_dir();
+        try {
+            for (auto& entry : std::filesystem::directory_iterator(dir)) {
+                auto fn = entry.path().filename().string();
+                if (fn.starts_with(sanitized) && fn.ends_with(".abfc")) {
+                    aura::compiler::cache::remove_cache(entry.path().string());
+                }
+            }
+        } catch (...) {}
+        // Also try without hash (legacy format)
+        aura::compiler::cache::remove_cache(module_cache_dir() + sanitized + ".abfc");
     }
 
     // Check if a module is loaded
