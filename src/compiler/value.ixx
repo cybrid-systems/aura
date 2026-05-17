@@ -41,6 +41,12 @@ export struct ModuleRef {
     constexpr auto operator<=>(const ModuleRef&) const = default;
 };
 
+// Error value (returned by error/raise, caught by try/catch)
+export struct ErrorRef {
+    std::uint64_t index = 0;  // index into error heap (stores cause value)
+    constexpr auto operator<=>(const ErrorRef&) const = default;
+};
+
 // The universal runtime value
 export using EvalValue = std::variant<
     std::monostate,    // Void (index 0)
@@ -54,7 +60,8 @@ export using EvalValue = std::variant<
     HashRef,           // Hash (index 8)
     double,            // Float (index 9)
     PrimitiveRef,      // Primitive (index 10)
-    ModuleRef          // Module (index 11)
+    ModuleRef,         // Module (index 11)
+    ErrorRef           // Error (index 12)
 >;
 
 export inline EvalValue make_int(std::int64_t v) { return EvalValue(std::in_place_index<1>, v); }
@@ -68,6 +75,7 @@ export inline EvalValue make_hash(std::uint64_t idx) { return EvalValue(std::in_
 export inline EvalValue make_float(double v) { return EvalValue(std::in_place_index<9>, v); }
 export inline EvalValue make_primitive(std::size_t slot) { return EvalValue(std::in_place_index<10>, PrimitiveRef{slot}); }
 export inline EvalValue make_module(std::uint64_t idx) { return EvalValue(std::in_place_index<11>, ModuleRef{idx}); }
+export inline EvalValue make_error(std::uint64_t idx) { return EvalValue(std::in_place_index<12>, ErrorRef{idx}); }
 export inline EvalValue make_void() { return EvalValue(std::in_place_index<0>); }
 
 export inline bool is_int(const EvalValue& v) noexcept { return std::holds_alternative<std::int64_t>(v); }
@@ -82,6 +90,7 @@ export inline bool is_hash(const EvalValue& v) noexcept { return std::holds_alte
 export inline bool is_float(const EvalValue& v) noexcept { return std::holds_alternative<double>(v); }
 export inline bool is_primitive(const EvalValue& v) noexcept { return std::holds_alternative<PrimitiveRef>(v); }
 export inline bool is_module(const EvalValue& v) noexcept { return std::holds_alternative<ModuleRef>(v); }
+export inline bool is_error(const EvalValue& v) noexcept { return std::holds_alternative<ErrorRef>(v); }
 
 export inline std::int64_t as_int(const EvalValue& v) { return std::get<std::int64_t>(v); }
 export inline bool as_bool(const EvalValue& v) { return std::get<bool>(v); }
@@ -94,6 +103,7 @@ export inline std::uint64_t as_hash_idx(const EvalValue& v) { return std::get<Ha
 export inline double as_float(const EvalValue& v) { return std::get<double>(v); }
 export inline std::size_t as_primitive_slot(const EvalValue& v) { return std::get<PrimitiveRef>(v).slot; }
 export inline std::uint64_t as_module_idx(const EvalValue& v) { return std::get<ModuleRef>(v).index; }
+export inline std::uint64_t as_error_idx(const EvalValue& v) { return std::get<ErrorRef>(v).index; }
 
 export inline bool is_truthy(const EvalValue& v) {
     if (is_bool(v)) return as_bool(v);
@@ -116,6 +126,7 @@ export inline std::string format_value(const EvalValue& v) {
     if (is_cell(v)) return std::format("<cell[{}]>", as_cell_id(v));
     if (is_primitive(v)) return "<primitive>";
     if (is_module(v)) return std::format("<module[{}]>", as_module_idx(v));
+    if (is_error(v)) return std::format("<error[{}]>", as_error_idx(v));
     return "<unknown>";
 }
 
@@ -137,6 +148,7 @@ export inline std::string format_value(const EvalValue& v, const std::vector<std
     if (is_closure(v)) return std::format("<closure[{}]>", as_closure_id(v));
     if (is_cell(v)) return std::format("<cell[{}]>", as_cell_id(v));
     if (is_module(v)) return std::format("<module[{}]>", as_module_idx(v));
+    if (is_error(v)) return std::format("<error[{}]>", as_error_idx(v));
     return "<unknown>";
 }
 

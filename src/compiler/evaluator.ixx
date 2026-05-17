@@ -112,6 +112,7 @@ private:
     std::vector<std::string> module_names_;  // display names for modules
     std::vector<types::EvalValue> cells_;
     std::vector<Pair> pairs_;
+    std::vector<types::EvalValue> error_values_;  // error cause values (indexed by ErrorRef)
     std::unique_ptr<std::unordered_set<std::string>> current_export_set_;
     std::vector<std::string> string_heap_;
     struct HashTable {
@@ -186,6 +187,7 @@ export inline std::string format_value(const types::EvalValue& v, const std::vec
         return "<primitive>";
     }
     if (types::is_module(v)) return "<module>";
+    if (types::is_error(v)) return "<error>";
     return "<unknown>";
 }
 

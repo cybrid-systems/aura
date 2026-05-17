@@ -1101,26 +1101,35 @@ void Evaluator::init_pair_primitives() {
         return make_int(1);
     });
     primitives_.add("newline", [](const auto&) { std::fprintf(stderr, "\n"); return make_int(1); });
-    primitives_.add("error", [](const auto& a) -> EvalValue {
-        std::string msg = a.empty() ? "error" : (is_int(a[0]) ? std::to_string(as_int(a[0])) : "error");
-        throw std::runtime_error(msg);
-        return make_int(0);
+    // (error msg) — Create an error value (no longer throws C++ exception)
+    primitives_.add("error", [this](const auto& a) -> EvalValue {
+        // Store the error cause in error heap (use string, int, or any arg)
+        types::EvalValue cause = make_string(0); // default
+        if (!a.empty()) cause = a[0];
+        auto eidx = error_values_.size();
+        error_values_.push_back(cause);
+        return make_error(eidx);
     });
+
+    // (assert expr msg) — Assertion, returns error on failure
     primitives_.add("assert", [this](const auto& a) -> EvalValue {
-        if (a.empty() || !is_truthy(a[0])) {
-            std::string msg = "assertion failed";
-            if (a.size() > 1) {
-                if (is_string(a[1])) {
-                    auto idx = as_string_idx(a[1]);
-                    if (idx < string_heap_.size()) msg = string_heap_[idx];
-                } else if (is_int(a[1])) {
-                    msg = std::to_string(as_int(a[1]));
-                }
-            }
-            throw std::runtime_error(msg);
-        }
-        return make_int(1);
+        if (!a.empty() && is_truthy(a[0])) return make_int(1);
+        // Assertion failed — return error
+        types::EvalValue cause = make_string(0);
+        if (a.size() > 1) cause = a[1];
+        auto eidx = error_values_.size();
+        error_values_.push_back(cause);
+        return make_error(eidx);
     });
+
+    // (raise val) — Create an error with arbitrary cause value
+    primitives_.add("raise", [this](const auto& a) -> EvalValue {
+        auto cause = a.empty() ? make_void() : a[0];
+        auto eidx = error_values_.size();
+        error_values_.push_back(cause);
+        return make_error(eidx);
+    });
+
     primitives_.add("read", [this](const auto&) {
         std::string line;
         std::getline(std::cin, line);
@@ -3200,6 +3209,52 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                     return eval_flat(*iflat, *ipool, expanded_root, eval_env);
                 }
             }
+            // try/catch: (try body (catch (var) handler))
+            // body is evaluated; if it returns an error, handler is evaluated with var bound
+            if (callee.tag == aura::ast::NodeTag::Variable) {
+                auto cname = std::string(p->resolve(callee.sym_id));
+                if (cname == "try" && v.children.size() >= 2) {
+                    auto body_id = v.child(1);
+                    auto result = eval_flat(*f, *p, body_id, eval_env);
+                    if (result && !is_error(*result)) {
+                        // Body succeeded — return result as-is
+                        return result;
+                    }
+                    // Body errored — find catch clause (child[2] or later)
+                    if (v.children.size() < 3) return make_void();
+                    for (std::size_t ci = 2; ci < v.children.size(); ++ci) {
+                        auto catch_id = v.child(ci);
+                        auto cv = f->get(catch_id);
+                        if (cv.tag == aura::ast::NodeTag::Call) {
+                            auto catch_fn = f->get(cv.child(0));
+                            if (catch_fn.tag == aura::ast::NodeTag::Variable
+                                && std::string(p->resolve(catch_fn.sym_id)) == "catch") {
+                                // (catch (var) handler) — child[0]=catch, child[1]=(var), child[2]=handler
+                                if (cv.children.size() < 3) continue;
+                                auto var_form = f->get(cv.child(1));
+                                // var_form is (var) — a Call where child[0]=Variable "var"
+                                std::string var_name;
+                                if (var_form.tag == aura::ast::NodeTag::Call && var_form.children.size() >= 1) {
+                                    auto var_node = f->get(var_form.child(0));
+                                    if (var_node.tag == aura::ast::NodeTag::Variable)
+                                        var_name = std::string(p->resolve(var_node.sym_id));
+                                }
+                                auto handler_id = cv.child(2);
+                                // Bind error value to var and evaluate handler
+                                Env catch_env(&eval_env);
+                                catch_env.set_cells(const_cast<std::vector<EvalValue>*>(&cells_));
+                                if (!var_name.empty() && result) {
+                                    catch_env.bind(var_name, *result);
+                                }
+                                return eval_flat(*f, *p, handler_id, catch_env);
+                            }
+                        }
+                    }
+                    // No matching catch — propagate error
+                    return result;
+                }
+            }
+
             // Primitive call (all arg evals are recursive)
             if (callee.tag == aura::ast::NodeTag::Variable) {
                 auto cname = std::string(p->resolve(callee.sym_id));
@@ -3209,6 +3264,8 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                     for (std::size_t i = 1; i < v.children.size(); ++i) {
                         auto ar = eval_flat(*f, *p, v.child(i), eval_env);
                         if (!ar) return ar;
+                        // Propagate error values through normal eval
+                        if (is_error(*ar)) return ar;
                         args.push_back(*ar);
                     }
                     return (*prim)(args);
@@ -3229,6 +3286,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                 for (std::size_t i = 0; i < cl.params.size() && i+1 < v.children.size(); ++i) {
                     auto ar = eval_flat(*f, *p, v.child(i+1), eval_env);
                     if (!ar) return ar;
+                    if (is_error(*ar)) return ar;
                     cargs.push_back(*ar);
                 }
                 tail_env.emplace(cl.env ? *cl.env : top_);

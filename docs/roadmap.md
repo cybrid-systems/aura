@@ -82,7 +82,7 @@ P10 大规模开发基础设施           🟡 设计完成，逐步实现
 
 | 项 | 优先级 | 状态 |
 |----|--------|------|
-| try/catch (error handling) | P0 | 设计完成 |
+| try/catch (error handling) | P0 | ✅ 已实现 |
 | check/check= 断言 | P1 | 设计完成 |
 | test-suite / run-tests | P2 | 设计完成 |
 | --fmt 格式化 | P3 | 设计完成 |
