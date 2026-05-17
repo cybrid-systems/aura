@@ -74,9 +74,9 @@ P9  生产后端                     ⬜ LLVM JIT / AOT / 自举
 - [x] `mutate:replace-value` — 扩展支持 LiteralFloat/Variable/LiteralString
 - [x] `insert_child` / `remove_child` — FlatAST 核心 API
 - [x] Dirtiness 标记 — mutate 时自动标脏（向上传播到祖先），`eval-current`/`typecheck-current` 清除
-- [x] `typecheck-current` — 类型检查当前 workspace AST，持久 TypeRegistry 跨调用复用
+- [x] `typecheck-current` — 增量类型检查：TypeChecker::synthesize_flat 按 dirty 状态跳过 clean 子树，结果缓存到 type_id_
 - [x] `mark_dirty_upward` / `has_dirty_subtree` — 增量编译基础设施
-- [ ] 增量类型检查 (只检查 dirty 子树) — 需修改 TypeChecker 接受 dirty filter
+- [ ] 增量求值 (跳过 clean 的 Define/Lambda)
 
 ### P9 — 生产后端
 - [ ] LLVM JIT 降级

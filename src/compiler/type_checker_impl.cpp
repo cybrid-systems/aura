@@ -442,46 +442,56 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id) {
     return cs_.normalize(result);
 }
 
-TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId /*id*/, NodeView v) {
+TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId id, NodeView v) {
     cur_loc_ = {v.line, v.col, 0};
 
+    // Incremental: if node is clean AND has cached type, return cached result.
+    // Dirty propagation ensures ancestors of mutated nodes are marked dirty,
+    // so clean nodes' cached types remain valid.
+    if (!flat.is_dirty(id)) {
+        auto cached = flat.type_id(id);
+        if (cached > 0 && cached < reg_.size()) {
+            return TypeId{cached, 1};
+        }
+        // Clean but not cached (first run or newly inserted node): fall through
+    }
+
+    TypeId result;
     using Tag = NodeTag;
     switch (v.tag) {
     case Tag::LiteralInt:
-        // #t/#f parsed with BoolLiteral marker
-        if (v.marker == SyntaxMarker::BoolLiteral)
-            return reg_.bool_type();
-        return reg_.int_type();
+        result = (v.marker == SyntaxMarker::BoolLiteral) ? reg_.bool_type() : reg_.int_type();
+        break;
     case Tag::LiteralFloat:
-        return reg_.lookup_type("Float");
+        result = reg_.lookup_type("Float"); break;
     case Tag::LiteralString:
-        return reg_.string_type();
+        result = reg_.string_type(); break;
     case Tag::Variable:
-        return synthesize_flat_var(pool, v);
+        result = synthesize_flat_var(pool, v); break;
     case Tag::Call:
-        return synthesize_flat_call(flat, pool, v);
+        result = synthesize_flat_call(flat, pool, v); break;
     case Tag::IfExpr:
-        return synthesize_flat_if(flat, pool, v);
+        result = synthesize_flat_if(flat, pool, v); break;
     case Tag::Lambda:
-        return synthesize_flat_lambda(flat, pool, v);
+        result = synthesize_flat_lambda(flat, pool, v); break;
     case Tag::Let:
-        return synthesize_flat_let(flat, pool, v, false);
+        result = synthesize_flat_let(flat, pool, v, false); break;
     case Tag::LetRec:
-        return synthesize_flat_let(flat, pool, v, true);
+        result = synthesize_flat_let(flat, pool, v, true); break;
     case Tag::Begin:
-        return synthesize_flat_begin(flat, pool, v);
+        result = synthesize_flat_begin(flat, pool, v); break;
     case Tag::TypeAnnotation:
-        return synthesize_flat_annotation(flat, pool, v);
+        result = synthesize_flat_annotation(flat, pool, v); break;
     case Tag::Coercion:
-        return synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
+        result = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
+        break;
     case Tag::Define:
-        return reg_.void_type();
+        result = reg_.void_type(); break;
     case Tag::Set:
-        return reg_.void_type();
+        result = reg_.void_type(); break;
     case Tag::Quote:
-        return reg_.dynamic_type();
+        result = reg_.dynamic_type(); break;
     case Tag::MacroDef: {
-        // Type-check macro body with params bound as Dyn
         env_.push_scope();
         std::vector<TypeId> param_types;
         for (auto pid : v.params) {
@@ -489,20 +499,22 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
             env_.bind(pname, reg_.dynamic_type());
             param_types.push_back(reg_.dynamic_type());
         }
-        // Type-check body
         TypeId body_type = reg_.void_type();
         if (!v.children.empty()) {
             auto body_id = v.child(0);
             body_type = synthesize_flat(flat, pool, body_id, flat.get(body_id));
         }
         env_.pop_scope();
-        // Register as a function type for display
-        auto macro_fn_type = reg_.register_func(std::move(param_types), body_type);
-        return macro_fn_type;
+        result = reg_.register_func(std::move(param_types), body_type);
+        break;
     }
     default:
-        return reg_.dynamic_type();
+        result = reg_.dynamic_type(); break;
     }
+
+    // Cache result for future incremental calls
+    flat.set_type(id, result.index);
+    return result;
 }
 
 TypeId InferenceEngine::synthesize_flat_var(StringPool& pool, NodeView v) {
