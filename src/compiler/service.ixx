@@ -762,8 +762,7 @@ private:
         return std::nullopt;
     }
 
-    // IR function cache: name → bundle of functions for cached defines.
-    // Stores ALL non-entry functions from the original lowering module.
+    // IR function cache: name → bundle of IR functions for cached defines.
     // The LAST function in the bundle is the user-defined lambda itself.
     // When inlined, all functions are added to the current module in order,
     // preserving func id references across cached calls.
