@@ -13,6 +13,7 @@ public:
 private:
     Token advance(); Token read_string(); Token read_number(); Token read_identifier(); void skip_ws(); Token make_tok(TokenKind k, std::string_view t);
     std::string_view source_; std::size_t pos_ = 0; std::uint32_t line_ = 1, col_ = 1; bool peeked_ = false; Token peek_token_ = {};
+    std::string string_buf_;  // temp storage for escape-resolved string tokens
 };
 
 } // namespace aura::parser

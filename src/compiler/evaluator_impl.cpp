@@ -1278,7 +1278,7 @@ void Evaluator::init_pair_primitives() {
         auto name_idx = as_string_idx(a[1]);
         if (mod_idx >= modules_.size() || name_idx >= string_heap_.size())
             return make_void();
-        auto result = modules_[mod_idx].lookup(string_heap_[name_idx]);
+        auto result = modules_[mod_idx]->lookup(string_heap_[name_idx]);
         return result ? *result : make_void();
     });
 
@@ -1288,7 +1288,7 @@ void Evaluator::init_pair_primitives() {
         auto mod_idx = as_module_idx(a[0]);
         if (mod_idx >= modules_.size()) return make_void();
         EvalValue result = make_void();
-        auto& bindings = modules_[mod_idx].bindings();
+        auto& bindings = modules_[mod_idx]->bindings();
         for (auto it = bindings.rbegin(); it != bindings.rend(); ++it) {
             auto sidx = string_heap_.size();
             string_heap_.push_back(it->first);
@@ -1335,15 +1335,15 @@ void Evaluator::init_pair_primitives() {
         if (mod_idx >= modules_.size()) return make_void();
 
         // Inject all bindings into top_ env
-        auto& mod_env = modules_[mod_idx];
+        auto* mod_env = modules_[mod_idx];
         if (prefix.empty()) {
             // No prefix: inject as-is (backward compat)
-            for (auto& [name, val] : mod_env.bindings()) {
+            for (auto& [name, val] : mod_env->bindings()) {
                 top_.bind(name, val);
             }
         } else {
             // Prefix injection: bind prefix:name for each export
-            for (auto& [name, val] : mod_env.bindings()) {
+            for (auto& [name, val] : mod_env->bindings()) {
                 auto prefixed = prefix + name;
                 // Inter the prefixed name into the workspace pool
                 auto psid = string_heap_.size();
@@ -2461,7 +2461,7 @@ std::string Evaluator::resolve_module_path(const std::string& path) const {
 types::EvalValue Evaluator::load_module_file(const std::string& path) {
     // 1. Resolve path
     auto resolved = resolve_module_path(path);
-    if (resolved.empty()) return types::make_void();
+    if (resolved.empty()) { std::println(std::cerr, "load_module_file: cannot resolve '{}'", path); return types::make_void(); }
 
     // 2. Check cache
     auto cache_it = module_cache_.find(resolved);
@@ -2484,29 +2484,35 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     if (content.empty()) { loading_stack_.erase(resolved); return types::make_void(); }
 
     // 5. Parse
-    if (!arena_) { loading_stack_.erase(resolved); return types::make_void(); }
+    if (!arena_) { loading_stack_.erase(resolved); std::println(std::cerr, "load_module_file: no arena"); return types::make_void(); }
     auto alloc = arena_->allocator();
     auto* pool_ptr = arena_->create<aura::ast::StringPool>(alloc);
     auto* flat_ptr = arena_->create<aura::ast::FlatAST>(alloc);
     auto pr = aura::parser::parse_to_flat(content, *flat_ptr, *pool_ptr);
     if (!pr.success || pr.root == aura::ast::NULL_NODE) {
         loading_stack_.erase(resolved);
+        std::println(std::cerr, "load_module_file: parse error for {}", resolved);
+        if (!pr.error.empty()) std::println(std::cerr, "  {}", pr.error);
         return types::make_void();
     }
     flat_ptr->root = pr.root;
 
     // 6. Create isolated module env (child of top_ for primitive access)
-    Env mod_env(&top_);
-    mod_env.set_primitives(&primitives_);
-    mod_env.set_cells(&cells_);
+    // Arena-allocate so closures captured during module eval stay valid
+    auto* mod_env = arena_->create<Env>(&top_);
+    mod_env->set_primitives(&primitives_);
+    mod_env->set_cells(&cells_);
 
-    // 7. Evaluate module in its own env
+    // 7. Clear any stale export set from previous module loads
+    if (current_export_set_) current_export_set_->clear();
+
+    // 8. Evaluate module in its own env
     auto expanded = aura::compiler::macro_expand_all(*flat_ptr, *pool_ptr, flat_ptr->root);
-    auto result = eval_flat(*flat_ptr, *pool_ptr, expanded, mod_env);
+    auto result = eval_flat(*flat_ptr, *pool_ptr, expanded, *mod_env);
 
-    // 8. Apply export filtering: if (export ...) was declared, remove unexported bindings
+    // 9. Apply export filtering: if (export ...) was declared, remove unexported bindings
     if (current_export_set_ && !current_export_set_->empty()) {
-        auto& bindings = mod_env.bindings();
+        auto& bindings = mod_env->bindings();
         for (auto it = bindings.begin(); it != bindings.end(); ) {
             if (!current_export_set_->count(it->first)) {
                 it = bindings.erase(it);
@@ -2517,9 +2523,9 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
         current_export_set_->clear();
     }
 
-    // 9. Store module
+    // 10. Store module (pointer to arena-allocated env — persists forever)
     auto mod_idx = modules_.size();
-    modules_.push_back(std::move(mod_env));
+    modules_.push_back(mod_env);
     module_cache_[resolved] = mod_idx;
     string_heap_.push_back(resolved);
     module_names_.push_back(resolved);

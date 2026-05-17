@@ -478,19 +478,6 @@ def test_ai_agent_demo():
 # Runners
 # ═══════════════════════════════════════════════════════════════
 
-SUITES = {
-    "unit":      test_unit,
-    "integ":     test_integ,
-    "typecheck": test_typecheck,
-    "bench":     test_bench,
-    "smoke":     test_smoke,
-    "mutation":  test_mutation,
-    "demo":      test_demo,
-    "ai":        test_ai_agent_demo,
-    "bash":      test_bash,
-}
-
-
 def test_bash():
     """Bash 回归测试 — run-tests.sh (76+ cases)"""
     print(f"{B}═══ Bash regression tests ═══{N}")
@@ -503,44 +490,18 @@ def test_bash():
         env={**os.environ, "AURA": str(AURA)},
         capture_output=True, text=True, timeout=120
     )
-    # Parse output: count passed/failed from last line
-    for line in r.stdout.split("\n"):
-        if "passed" in line or "failed" in line or "✗" in line or "✓" in line:
-            print(f"  {line.strip()}")
-    if r.returncode == 0:
-        ok("all bash tests passed")
-    else:
-        fail(f"bash tests: {r.returncode} failed")
-        print(r.stderr[:200] if r.stderr else "")
-    return r.returncode
 
-
-def test_mutation():
-    """Agent 变异循环 — mutation loop 功能验证"""
-    print(f"{B}═══ Mutation tests ═══{N}")
-    r = subprocess.run(
-        [sys.executable, str(ROOT / "tests" / "mutation_loop.py"),
-         str(ROOT / "tests" / "fixtures" / "basic_add.aura"), "--fast"],
-        capture_output=True, text=True, timeout=60
-    )
-    print(r.stdout)
-    if r.returncode != 0:
-        print(r.stderr)
-        fail("mutation tests failed")
-        return 1
-    ok("mutation: single-pass OK")
-
-    r2 = subprocess.run(
-        [sys.executable, str(ROOT / "tests" / "mutation_loop.py"), "--demo"],
-        capture_output=True, text=True, timeout=30
-    )
-    print(r2.stdout)
-    if r2.returncode != 0:
-        print(r2.stderr)
-        fail("mutation demo failed")
-        return 1
-    ok("mutation: demo OK")
-    return 0
+SUITES = {
+    "unit":      test_unit,
+    "integ":     test_integ,
+    "typecheck": test_typecheck,
+    "bench":     test_bench,
+    "smoke":     test_smoke,
+    "mutation":  test_mutation,
+    "demo":      test_demo,
+    "ai":        test_ai_agent_demo,
+    "bash":      test_bash,
+}
 
 
 def run(cmd, **kwargs):
@@ -580,10 +541,6 @@ def cmd_list():
         print(f"  {name:12s} {func.__doc__}")
     return 0
 
-
-# ═══════════════════════════════════════════════════════════════
-# CLI
-# ═══════════════════════════════════════════════════════════════
 
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):

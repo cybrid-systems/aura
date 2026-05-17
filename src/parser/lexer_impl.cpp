@@ -43,16 +43,27 @@ Token Lexer::advance() {
     }
 }
 Token Lexer::read_string() {
-    std::size_t s = pos_ + 1; // skip "
-    pos_++;
+    pos_++; // skip opening "
+    string_buf_.clear();
     while (pos_ < source_.size() && source_[pos_] != '"') {
-        if (source_[pos_] == '\\' && pos_ + 1 < source_.size())
-            pos_ += 2; // skip escape (prevents \" from ending the string)
-        else
+        if (source_[pos_] == '\\' && pos_ + 1 < source_.size()) {
+            char next = source_[pos_ + 1];
+            switch (next) {
+            case 'n':  string_buf_ += '\n'; break;
+            case 't':  string_buf_ += '\t'; break;
+            case 'r':  string_buf_ += '\r'; break;
+            case '"': string_buf_ += '"'; break;
+            case '\\': string_buf_ += '\\'; break;
+            default:   string_buf_ += next; break;
+            }
+            pos_ += 2;
+        } else {
+            string_buf_ += source_[pos_];
             pos_++;
+        }
     }
     if (pos_ < source_.size()) pos_++; // skip closing "
-    return make_tok(TokenKind::String, source_.substr(s, pos_ - s - 1));
+    return make_tok(TokenKind::String, string_buf_);
 }
 
 Token Lexer::read_number() {
