@@ -66,9 +66,11 @@
 ; 查找所有 (+ n 1) 模式的调用
 (query:pattern "(+ n 1)")  → (12 18)
 
-; 查找所有递归调用（函数体内调用自身）
-(query:pattern "(fib ...) inside (define (fib ...))")
-                           → (15)
+; 使用 `...` 通配符匹配任意子树
+(query:pattern "(fib ...)") → (15 22)  ; 所有调用 fib 的位置
+(query:pattern "(if ... ... ...)") → (19)  ; 所有 if 表达式
+
+; `...` 是 Ellipsis token，由 lexer 识别三个连续的点号
 ```
 
 ### 2.4 输出格式

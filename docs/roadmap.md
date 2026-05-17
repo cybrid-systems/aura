@@ -65,7 +65,7 @@ P9  生产后端                     ⬜ LLVM JIT / AOT / 自举
 ### P8 — 完整 EDSL + 增量编译
 - [x] `query:parent` — 查找父节点
 - [x] `query:siblings` — 查找兄弟节点
-- [x] `query:pattern` — 模式匹配搜索（`_` 通配符）
+- [x] `query:pattern` — 模式匹配搜索（`...` 通配符，lexer 新增 Ellipsis token）
 - [x] `mutate:set-body` — 按函数名替换函数体（修复：解析到工作区，跨 AST 引用 bug）
 - [x] `mutate:remove-node` — 删除节点 (从父节点断开)
 - [x] `mutate:rebind` — 修复：原地替换而非整体换 workspace（保留其他 mutation）
