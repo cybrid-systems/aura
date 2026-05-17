@@ -96,7 +96,7 @@ python3 build.py test integ     # 端到端管线
 
 # AI Agent（需 LLM API key）
 LLM_API_KEY="sk-..." LLM_BASE_URL="https://api.deepseek.com" \
-  LLM_MODEL="deepseek-chat" \
+  LLM_MODEL="deepseek-v4-flash" \
   python3 tests/ai_agent_edsl.py "your task"
 ```
 

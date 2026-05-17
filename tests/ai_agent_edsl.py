@@ -17,7 +17,7 @@ AURA = os.environ.get("AURA_BIN", "./build/aura")
 # LLM_* 优先, 兼容 OPENAI_* (任何 OpenAI-compatible provider: OpenAI / MiniMax / DeepSeek / Ollama)
 LLM_KEY = os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
 LLM_URL = os.environ.get("LLM_BASE_URL") or os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
-LLM_MODEL = os.environ.get("LLM_MODEL") or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+LLM_MODEL = os.environ.get("LLM_MODEL") or os.environ.get("OPENAI_MODEL", "deepseek-v4-flash")
 MAX_ROUNDS = 20
 
 SYSTEM_PROMPT = build_system_prompt() + """
