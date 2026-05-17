@@ -1,6 +1,6 @@
 # Aura — 路线图
 
-## 当前状态（2026-05-17 晚间）
+## 当前状态（2026-05-18 更新）
 
 **核心完成度：可写 500+ 行业务代码** ✅
 
@@ -35,6 +35,13 @@
 ✓ 函数热替换 + 依赖追踪（invalidate_function）
 ✓ 增量编译：dirty 标记 + 类型缓存
 ✓ EDSL 新增：query:pattern, query:node-type, mutate:insert-child
+
+=== 5/18 新增（持续增量演进）===
+✓ ArenaGroup 多模块管理：compile_module / unload_module / reload_module
+✓ 模块级增量编译：ModuleState dirty 追踪 + mark_module_dirty + 自动重编
+✓ 磁盘缓存 (mmap)：write_cache/open_cache 集成到 compile_module
+✓ --serve 新增 module 命令 (compile/unload/reload/list/stats)
+✓ 设计文档全面对齐（caas_integration / roadmap / design 仓库）
 ```
 
 ### 测试
@@ -93,6 +100,9 @@ tests/          C++ 61 + bash 106 + AI Agent
 | IR 管线默认 | eval() 统一 IR-first + fallback | 🟢 | ✅ **完成** |
 | 原语桥接 + 闭包桥接 | Primitive 值加载 + map/filter IR-closure 互通 | 🟢 | ✅ **完成** |
 | Bool/Quote/Pair IR 覆盖 | ConstBool, ConstVoid, 递归 cons chain | 🟢 | ✅ **完成** |
+| ArenaGroup 集成 | compile_module / unload_module / reload_module | 🟢 | ✅ **5/18** |
+| 模块级增量编译 | ModuleState dirty 追踪 + mark_module_dirty | 🟢 | ✅ **5/18** |
+| 磁盘缓存 (mmap) | write_cache/open_cache 集成到 compile_module | 🟢 | ✅ **5/18** |
 | Pair IR 指令优化 | 原生 MakePair/Car/Cdr opcode 替代 cons 调用 | 🟡 | ⬜ |
 | muddy skip 深度优化 | per-module skip | 🟡 | ⬜ |
 | IR 级 import/模块 | 消除模块 fallback | 🔴 | ⬜ |

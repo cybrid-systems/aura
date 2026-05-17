@@ -206,6 +206,7 @@ redefine("foldl"):
 | `rollback` | `id` | 撤销变异 |
 | `mutation-log` | `node` | 查询变异历史 |
 | `session` | `name` | 多会话切换/创建 |
+| `module` | `action`, `name`, `code` | 模块管理 (compile/unload/reload/list/stats) |
 
 ### 示例
 
@@ -231,7 +232,7 @@ redefine("foldl"):
 | ArenaGroup 集成到 Service | 🟡 → ✅ | `service.ixx` | compile_module + unload_module + reload_module |
 | 增量编译 (函数级) | ✅ v1 | `service.ixx` | cache_define + dep_graph + invalidate |
 | 增量编译 (模块级) | 🟡 → ✅ | `service.ixx` | ModuleState dirty 追踪 + mark_module_dirty + reload |
-| 磁盘缓存 (mmap) | 🟡 | `cache.ixx` | write_cache/open_cache 存在但未启用 |
+| 磁盘缓存 (mmap) | ✅ | `cache.ixx` + `service.ixx` | write_cache/open_cache 已集成到 compile_module |
 | Level 2 类型检查 | ✅ | `pass_manager.ixx` | TypeCheckWrap pass (non-fatal warnings) |
 | 函数热替换 + 依赖追踪 | ✅ | `service.ixx` | invalidate_function BFS re-lower |
 | EDSL mutation | ✅ | `evaluator.ixx` | set-code/query/mutate 15+ primitives |
@@ -242,7 +243,7 @@ redefine("foldl"):
 
 1. ✅ **ArenaGroup 集成到 eval 路径** — `compile_module()` + `unload_module()` + `reload_module()` (fcd95e0)
 2. ✅ **模块级增量编译** — ModuleState dirty 追踪 + `mark_module_dirty()` + `reload_module()` (e5393e0)
-3. **磁盘缓存启用** — 通过 mmap 缓存 FlatAST + IRModule（待做）
+3. ✅ **磁盘缓存启用** — 通过 mmap 缓存 FlatAST + IRModule (1e6fd2b)
 
 ## 文件清单
 
