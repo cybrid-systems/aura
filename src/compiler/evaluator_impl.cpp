@@ -599,16 +599,17 @@ void Evaluator::init_pair_primitives() {
         return make_string(id);
     });
     primitives_.add("string->number", [this](const auto& a) {
-        if (a.empty() || !is_string(a[0])) return make_int(0);
+        if (a.empty() || !is_string(a[0])) return make_bool(false);
         auto i = as_string_idx(a[0]);
-        if (i >= string_heap_.size()) return make_int(0);
+        if (i >= string_heap_.size()) return make_bool(false);
         try {
             auto& str = string_heap_[i];
+            if (str.empty()) return make_bool(false);
             if (str.find('.') != std::string::npos || str.find('e') != std::string::npos || str.find('E') != std::string::npos)
                 return make_float(std::stod(str));
             return make_int(static_cast<std::int64_t>(std::stoll(str)));
         }
-        catch (...) { return make_int(0); }
+        catch (...) { return make_bool(false); }
     });
     primitives_.add("list", [this](const auto& a) {
         // Build proper list (pair chain ending with void)

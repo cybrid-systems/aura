@@ -110,7 +110,7 @@ def main():
         code = extract_code(resp)
         if not code:
             last_line = resp.strip().split("\n")[-1].upper()
-            if "DONE" in last_line:
+            if "DONE" in last_line and "TRUNCATED" not in resp:
                 print("  DONE"); break
             msgs.append({"role": "assistant", "content": resp})
             continue
@@ -148,9 +148,6 @@ def main():
 
             last_line = resp.strip().split("\n")[-1].upper()
 
-            if status == "ok" and "DONE" in last_line:
-                print("  DONE"); break
-
             if status == "ok":
                 if in_phase2:
                     fb = f"Result: {value}\nPhase 2 fix applied. Say DONE if correct."
@@ -179,7 +176,7 @@ def main():
                             failed_funcs.append(fname)
 
                     test_blurb = "\n".join(test_results) if test_results else "  (no test ran)"
-                    if all_ok and status == "ok" and "DONE" in last_line:
+                    if all_ok and status == "ok" and "DONE" in last_line and "TRUNCATED" not in resp:
                         print("  DONE"); break
 
                     # Auto EDSL: lock workspace + query failing function nodes
