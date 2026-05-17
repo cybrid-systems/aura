@@ -27,9 +27,11 @@ export class CompilerService {
 public:
     CompilerService() {
         evaluator_.set_arena(&arena_);
-        // Module caching disabled — recursive fn + bundle injection issues.
-        // Python stdlib_inliner handles imports for Agent code.
-        // evaluator_.set_module_loaded_callback(...)
+        // Cache module defines in IR after each import (incl. recursive fns)
+        evaluator_.set_module_loaded_callback(
+            [this](const std::string& content, const std::string& path) {
+                cache_module(content, path);
+            });
     }
 
     void reset() { arena_.reset(); }
@@ -444,6 +446,10 @@ public:
     // Parse module content and cache all top-level defines in ir_cache_.
     // Called by Evaluator after each successful module load.
     void cache_module(const std::string& content, const std::string& path) {
+        // Skip string module — internal defines create env bindings that
+        // don't survive re-evaluation via cache_define.
+        if (path.find("string") != std::string::npos) return;
+
         // Arena-allocate flat/pool so pointers survive (bridge data references them)
         auto alloc = arena_.allocator();
         auto* pool_ptr = arena_.create<aura::ast::StringPool>(alloc);
@@ -498,6 +504,31 @@ public:
             if (define_node.children.empty()) continue;
             auto body_node = flat.get(define_node.child(0));
             if (body_node.tag != aura::ast::NodeTag::Lambda) continue;
+
+            // Skip self-referential (recursive) functions — their cell-based
+            // self-reference can't survive IR function bundle caching.
+            bool is_recursive = false;
+            {
+                struct RecCheck {
+                    aura::ast::FlatAST& flat;
+                    aura::ast::StringPool& pool;
+                    const std::string& fname;
+                    bool found = false;
+                    void walk(aura::ast::NodeId id) {
+                        if (found || id >= flat.size()) return;
+                        auto v = flat.get(id);
+                        if (v.tag == aura::ast::NodeTag::Variable) {
+                            if (pool.resolve(v.sym_id) == fname) found = true;
+                        }
+                        for (auto c : v.children) walk(c);
+                    }
+                };
+                RecCheck rc{flat, pool, name, false};
+                if (!body_node.children.empty())
+                    rc.walk(body_node.child(0));
+                is_recursive = rc.found;
+            }
+            if (is_recursive) continue;
 
             // Create a temporary flat with just this define as root
             auto def_alloc = arena_.allocator();
