@@ -2,6 +2,7 @@ module;
 #include <cstdlib>
 #include <cstdio>
 #include <unistd.h>
+#include <dirent.h>
 module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
@@ -1306,6 +1307,57 @@ void Evaluator::init_pair_primitives() {
         auto& path = string_heap_[idx];
         std::ifstream f(path);
         return make_int(f.good() ? 1 : 0);
+    });
+
+    // ── File I/O: copy, delete, size, directory list ─────────────
+    primitives_.add("file-copy", [this](const auto& a) {
+        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1])) return make_void();
+        auto sidx = as_string_idx(a[0]), didx = as_string_idx(a[1]);
+        if (sidx >= string_heap_.size() || didx >= string_heap_.size()) return make_void();
+        std::ifstream src(string_heap_[sidx], std::ios::binary);
+        if (!src) return make_void();
+        std::ofstream dst(string_heap_[didx], std::ios::binary);
+        if (!dst) return make_void();
+        dst << src.rdbuf();
+        return make_int(1);
+    });
+
+    primitives_.add("file-delete", [this](const auto& a) {
+        if (a.empty() || !is_string(a[0])) return make_int(0);
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size()) return make_int(0);
+        return make_int(std::remove(string_heap_[idx].c_str()) == 0 ? 1 : 0);
+    });
+
+    primitives_.add("file-size", [this](const auto& a) {
+        if (a.empty() || !is_string(a[0])) return make_int(0);
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size()) return make_int(0);
+        std::ifstream f(string_heap_[idx], std::ios::ate | std::ios::binary);
+        if (!f) return make_int(0);
+        return make_int(static_cast<std::int64_t>(f.tellg()));
+    });
+
+    primitives_.add("directory-list", [this](const auto& a) {
+        if (a.empty() || !is_string(a[0])) return make_void();
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size()) return make_void();
+        auto& dir_path = string_heap_[idx];
+        EvalValue result = make_void();
+        auto dir = opendir(dir_path.c_str());
+        if (!dir) return make_void();
+        struct dirent* entry;
+        while ((entry = readdir(dir)) != nullptr) {
+            std::string name(entry->d_name);
+            if (name == "." || name == "..") continue;
+            auto sid = string_heap_.size();
+            string_heap_.push_back(name);
+            auto pid = pairs_.size();
+            pairs_.push_back({make_string(sid), result});
+            result = make_pair(pid);
+        }
+        closedir(dir);
+        return result;
     });
 
     // ═══════════════════════════════════════════════════════════════
