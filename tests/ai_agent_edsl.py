@@ -14,9 +14,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ai_agent_prompt import build_system_prompt
 
 AURA = os.environ.get("AURA_BIN", "./build/aura")
-OPENAI_KEY = os.environ.get("OPENAI_API_KEY", "")
-OPENAI_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+# LLM_* 优先, 兼容 OPENAI_* (任何 OpenAI-compatible provider: OpenAI / MiniMax / DeepSeek / Ollama)
+LLM_KEY = os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
+LLM_URL = os.environ.get("LLM_BASE_URL") or os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+LLM_MODEL = os.environ.get("LLM_MODEL") or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 MAX_ROUNDS = 20
 
 SYSTEM_PROMPT = build_system_prompt() + """
@@ -135,11 +136,11 @@ class AuraSession:
         self.p.terminate(); self.p.wait()
 
 def llm_call(msgs):
-    p = urllib.parse.urlparse(OPENAI_URL)
+    p = urllib.parse.urlparse(LLM_URL)
     c = http.client.HTTPSConnection(p.netloc, timeout=90) if p.scheme == "https" else http.client.HTTPConnection(p.netloc, timeout=90)
     c.request("POST", p.path + "/chat/completions", json.dumps({
-        "model": OPENAI_MODEL, "messages": msgs, "temperature": 0.3, "max_tokens": 1200,
-    }), {"Content-Type": "application/json", "Authorization": f"Bearer {OPENAI_KEY}"})
+        "model": LLM_MODEL, "messages": msgs, "temperature": 0.3, "max_tokens": 1200,
+    }), {"Content-Type": "application/json", "Authorization": f"Bearer {LLM_KEY}"})
     r = c.getresponse()
     d = json.loads(r.read())
     c.close()
@@ -154,11 +155,11 @@ def extract_aura(text):
     return ""
 
 def main():
-    if not OPENAI_KEY:
-        print("Need OPENAI_API_KEY"); sys.exit(1)
+    if not LLM_KEY:
+        print("Need LLM_API_KEY or OPENAI_API_KEY"); sys.exit(1)
 
     prompt = " ".join(sys.argv[1:]) if len(sys.argv) > 1 else input("> ")
-    print(f"\n{'='*50}\nLLM: {OPENAI_MODEL}\nTask: {prompt}\n{'='*50}\n")
+    print(f"\n{'='*50}\nLLM: {LLM_MODEL}\nTask: {prompt}\n{'='*50}\n")
 
     aura = AuraSession()
     msgs = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}]

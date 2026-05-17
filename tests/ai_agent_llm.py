@@ -12,7 +12,7 @@
 
   或使用本地模型 (如 ollama):
   export OPENAI_BASE_URL="http://localhost:11434/v1"
-  export OPENAI_MODEL="llama3"
+  export LLM_MODEL="llama3"
   python3 tests/ai_agent_llm.py "写一个 map 函数的用法示例"
 """
 
@@ -25,21 +25,21 @@ import urllib.parse
 
 # ── 配置 ──────────────────────────────────────────────────────
 AURA = os.environ.get("AURA_BIN", "./build/aura")
-OPENAI_KEY = os.environ.get("OPENAI_API_KEY", "")
-OPENAI_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+LLM_KEY = os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
+LLM_URL = os.environ.get("LLM_BASE_URL") or os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+LLM_MODEL = os.environ.get("LLM_MODEL") or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 MAX_FIX_LOOP = 5  # 最大修复轮数
 
 # ── LLM 客户端 ────────────────────────────────────────────────
 def llm_chat(messages):
     """调用 OpenAI 兼容的 API"""
-    parsed = urllib.parse.urlparse(OPENAI_URL)
+    parsed = urllib.parse.urlparse(LLM_URL)
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {OPENAI_KEY}",
+        "Authorization": f"Bearer {LLM_KEY}",
     }
     body = json.dumps({
-        "model": OPENAI_MODEL,
+        "model": LLM_MODEL,
         "messages": messages,
         "temperature": 0.3,
     })
@@ -107,13 +107,13 @@ def main():
     else:
         prompt = " ".join(sys.argv[1:])
 
-    if not OPENAI_KEY:
+    if not LLM_KEY:
         print("❌ 需要设置 OPENAI_API_KEY 环境变量")
         print("   或使用本地模型: export OPENAI_BASE_URL=http://localhost:11434/v1")
         sys.exit(1)
 
     print(f"\n{'='*60}")
-    print(f"🤖 LLM: {OPENAI_MODEL}")
+    print(f"🤖 LLM: {LLM_MODEL}")
     print(f"👤 需求: {prompt}")
     print(f"{'='*60}\n")
 
