@@ -73,9 +73,9 @@ P9  生产后端                     ⬜ LLVM JIT / AOT / 自举
 - [x] `mutate:rebind` — 修复：原地替换而非整体换 workspace
 - [x] `mutate:replace-value` — 扩展支持 LiteralFloat/Variable/LiteralString
 - [x] `insert_child` / `remove_child` — FlatAST 核心 API
-- [ ] Dirtiness 标记 (被 mutate 的节点)
-- [ ] 增量类型检查 (只检查修改部分)
-- [ ] `typecheck-current` 原语
+- [x] Dirtiness 标记 — mutate 时自动标脏，`eval-current` 时清除
+- [x] `typecheck-current` — 类型检查当前 workspace AST，返回类型 + 错误
+- [ ] 增量类型检查 (只检查 dirty 子树)
 
 ### P9 — 生产后端
 - [ ] LLVM JIT 降级

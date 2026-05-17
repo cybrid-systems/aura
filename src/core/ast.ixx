@@ -269,6 +269,7 @@ private:
         col_.push_back(0);
         marker_.push_back(m);
         type_id_.push_back(0);
+        dirty_.push_back(0);
         node_first_mutation_.push_back(0);
         return id;
     }
@@ -289,6 +290,7 @@ private:
     std::pmr::vector<std::uint32_t> col_;
     // Type information (L6.5+): type_id per node, 0 = DYNAMIC
     std::pmr::vector<SyntaxMarker> marker_;
+    std::pmr::vector<std::uint8_t> dirty_;
     std::pmr::vector<std::uint32_t> type_id_;
     // Mutation audit log (heap-allocated, small+append-only)
     std::vector<MutationRecord> mutation_log_;
@@ -548,6 +550,26 @@ public:
         return id < marker_.size() ? marker_[id] : SyntaxMarker::User;
     }
 
+    // ── Dirty tracking (incremental compilation) ───────────────
+
+    void mark_dirty(NodeId id) {
+        if (id >= dirty_.size()) dirty_.resize(id + 1, false);
+        dirty_[id] = true;
+    }
+    void mark_subtree_dirty(NodeId id) {
+        mark_dirty(id);
+        auto v = get(id);
+        for (auto c : v.children) {
+            if (c != NULL_NODE) mark_subtree_dirty(c);
+        }
+    }
+    bool is_dirty(NodeId id) const {
+        return id < dirty_.size() && dirty_[id];
+    }
+    void clear_all_dirty() {
+        std::fill(dirty_.begin(), dirty_.end(), false);
+    }
+
     // ── Mutation audit ──────────────────────────────────────────
 
     // Record a mutation on a node. Returns the mutation_id.
@@ -577,6 +599,9 @@ public:
                                   std::string(old_type), std::string(new_type),
                                   std::string(summary), status,
                                   field_offset, old_value, new_value, has_rollback});
+        // Auto-mark node dirty on mutation
+        mark_dirty(node);
+
         // Update node_first_mutation_ index
         if (node < node_first_mutation_.size() && node_first_mutation_[node] == 0) {
             node_first_mutation_[node] = static_cast<std::uint32_t>(mutation_log_.size());

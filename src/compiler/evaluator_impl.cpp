@@ -5,7 +5,10 @@ module;
 module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
+import aura.core.type;
 import aura.compiler.value;
+import aura.compiler.type_checker;
+import aura.diag;
 import aura.parser.parser;
 
 namespace aura::compiler {
@@ -1813,6 +1816,8 @@ void Evaluator::init_pair_primitives() {
         auto expanded = aura::compiler::macro_expand_all(
             *workspace_flat_, *workspace_pool_, workspace_flat_->root);
         auto result = eval_flat(*workspace_flat_, *workspace_pool_, expanded, top_);
+        // Clear dirty flags after successful eval
+        workspace_flat_->clear_all_dirty();
         if (!result) return make_void();
         return *result;
     });
@@ -2228,6 +2233,41 @@ void Evaluator::init_pair_primitives() {
             ? string_heap_[as_string_idx(a[3])] : "insert child at " + std::to_string(pos);
         flat.add_mutation(parent, "insert-child", std::to_string(pos), summary, summary);
         return make_int(static_cast<std::int64_t>(pr.root));
+    });
+
+    // (typecheck-current) — Run the type checker on the workspace AST
+    // Returns a string describing the type of the root expression and any errors.
+    primitives_.add("typecheck-current", [this](const auto&) {
+        if (!workspace_flat_ || !workspace_pool_) {
+            auto eidx = string_heap_.size();
+            string_heap_.push_back("no workspace");
+            return make_string(eidx);
+        }
+
+        aura::core::TypeRegistry treg;
+        aura::compiler::TypeChecker tc(treg);
+        aura::diag::DiagnosticCollector diag;
+
+        auto result = tc.infer_flat(*workspace_flat_, *workspace_pool_,
+                                     workspace_flat_->root, diag);
+
+        std::string out = "type: " + treg.format_type(result) + "\n";
+
+        auto all_diags = diag.diagnostics();
+        if (all_diags.empty()) {
+            out += "no errors\n";
+        } else {
+            out += "diagnostics:\n";
+            for (auto& d : all_diags) {
+                out += "  [" + std::to_string(static_cast<int>(d.kind))
+                     + "] " + d.format() + "\n";
+            }
+        }
+
+        // Store result as string in heap
+        auto sidx = string_heap_.size();
+        string_heap_.push_back(out);
+        return make_string(sidx);
     });
 }
 
