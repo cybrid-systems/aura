@@ -203,6 +203,19 @@ int main(int argc, char* argv[]) {
                         cs.unload_module(name_it->second);
                         std::println("{{\"status\":\"ok\",\"unloaded\":\"{}\"}}",
                                     json_escape(name_it->second));
+                    } else if (action == "reload") {
+                        if (name_it == cmd.end()) {
+                            std::println("{{\"status\":\"error\",\"msg\":\"missing name field\"}}");
+                            continue;
+                        }
+                        auto result = cs.reload_module(name_it->second);
+                        if (result) {
+                            std::println("{{\"status\":\"ok\",\"reloaded\":\"{}\"}}",
+                                        json_escape(name_it->second));
+                        } else {
+                            std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
+                                        json_escape(result.error().message));
+                        }
                     } else if (action == "list") {
                         auto modules = cs.loaded_modules();
                         std::println("{{\"status\":\"ok\",\"modules\":[");
