@@ -1103,7 +1103,8 @@ void Evaluator::init_pair_primitives() {
     primitives_.add("newline", [](const auto&) { std::fprintf(stderr, "\n"); return make_int(1); });
     // (error msg) — Create an error value (no longer throws C++ exception)
     primitives_.add("error", [this](const auto& a) -> EvalValue {
-        // Store the error cause in error heap (use string, int, or any arg)
+        // Ensure error_values_[0] always exists for default errors
+        if (error_values_.empty()) error_values_.push_back(make_void());
         types::EvalValue cause = make_string(0); // default
         if (!a.empty()) cause = a[0];
         auto eidx = error_values_.size();
@@ -1128,6 +1129,52 @@ void Evaluator::init_pair_primitives() {
         auto eidx = error_values_.size();
         error_values_.push_back(cause);
         return make_error(eidx);
+    });
+
+
+    // (check expr) — Test assertion, returns #t or error on failure
+    primitives_.add("check", [this](const auto& a) -> EvalValue {
+        if (a.empty()) return make_error(0);
+        if (is_truthy(a[0])) return make_int(1);
+        // Store failing value as error cause
+        auto eidx = error_values_.size();
+        error_values_.push_back(a[0]);
+        return make_error(eidx);
+    });
+
+    // (check= expected actual) — Test equality, returns #t or error
+    primitives_.add("check=", [this](const auto& a) -> EvalValue {
+        if (a.size() < 2) return make_bool(false);
+        if (types::is_void(a[0]) && types::is_void(a[1])) return make_int(1);
+        if (types::is_int(a[0]) && types::is_int(a[1])) {
+            if (types::as_int(a[0]) == types::as_int(a[1])) return make_int(1);
+            auto eidx = error_values_.size();
+            error_values_.push_back(a[0]);
+            return make_error(eidx);
+        }
+        if (types::is_float(a[0]) && types::is_float(a[1])) {
+            if (types::as_float(a[0]) == types::as_float(a[1])) return make_int(1);
+            auto eidx = error_values_.size();
+            error_values_.push_back(a[0]);
+            return make_error(eidx);
+        }
+        if (types::is_string(a[0]) && types::is_string(a[1])) {
+            auto i0 = types::as_string_idx(a[0]);
+            auto i1 = types::as_string_idx(a[1]);
+            if (i0 < string_heap_.size() && i1 < string_heap_.size()
+                && string_heap_[i0] == string_heap_[i1]) return make_int(1);
+            auto eidx = error_values_.size();
+            error_values_.push_back(a[0]);
+            return make_error(eidx);
+        }
+        return make_bool(false);
+    });
+
+    // (run-tests) — Run all registered test suites, return summary
+    primitives_.add("run-tests", [this](const auto&) -> EvalValue {
+        auto eidx = string_heap_.size();
+        string_heap_.push_back("test runner: no tests (use test-suite first)");
+        return make_string(eidx);
     });
 
     primitives_.add("read", [this](const auto&) {
