@@ -154,7 +154,7 @@ def main():
                     # Auto-test: try calling each defined function
                     test_results = []
                     all_ok = True
-                    for fname in re.findall(r'\(define\s+\(?(\w+)', current_src):
+                    for fname in re.findall(r'\(define\s+\(?([\w-]+)', current_src):
                         if fname in ("pi", "e", "data"):
                             continue
                         tested = False
