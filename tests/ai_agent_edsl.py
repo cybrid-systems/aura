@@ -56,7 +56,7 @@ def llm_call(msgs):
     p = urllib.parse.urlparse(LLM_URL)
     c = http.client.HTTPSConnection(p.netloc, timeout=90) if p.scheme == "https" else http.client.HTTPConnection(p.netloc, timeout=90)
     c.request("POST", p.path + "/chat/completions", json.dumps({
-        "model": LLM_MODEL, "messages": msgs, "temperature": 0.3, "max_tokens": 3000,
+        "model": LLM_MODEL, "messages": msgs, "temperature": 0.3, "max_tokens": 4000,
     }), {"Content-Type": "application/json", "Authorization": f"Bearer {LLM_KEY}"})
     r = c.getresponse()
     d = json.loads(r.read())
@@ -65,8 +65,10 @@ def llm_call(msgs):
 
 
 def extract_code(resp):
-    """Extract Aura code or EDSL operations from LLM response."""
+    """Extract Aura code or EDSL operations from LLM response.
+    Returns ALL code blocks combined (not just the first)."""
     text = re.sub(r'<think>.*?</think>', '', resp, flags=re.DOTALL)
+    blocks = []
     if "```" in text:
         for p in text.split("```"):
             lines = [l for l in p.strip().split("\n")]
@@ -76,7 +78,9 @@ def extract_code(resp):
             if c and any(k in c for k in ("define", "require", "(+", "(begin", "lambda",
                                            "import", "set-code", "query:", "mutate:",
                                            "typecheck", "eval-current")):
-                return c
+                blocks.append(c)
+        if blocks:
+            return "\n\n".join(blocks)
     return ""
 
 
