@@ -320,6 +320,10 @@ void Evaluator::init_pair_primitives() {
         if (a.empty()) return make_bool(false);
         return make_bool(is_closure(a[0]) || is_primitive(a[0]));
     });
+    primitives_.add("void?", [](const auto& a) {
+        if (a.empty()) return make_bool(false);
+        return make_bool(is_void(a[0]));
+    });
 
     // ── Pair / List / String primitives ─────────────────────────
     primitives_.add("cons", [this](const auto& a) {
