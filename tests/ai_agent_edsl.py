@@ -54,17 +54,32 @@ class AuraSession:
 
 def llm_call(msgs):
     p = urllib.parse.urlparse(LLM_URL)
-    c = http.client.HTTPSConnection(p.netloc, timeout=90) if p.scheme == "https" else http.client.HTTPConnection(p.netloc, timeout=90)
+    c = http.client.HTTPSConnection(p.netloc, timeout=120) if p.scheme == "https" else http.client.HTTPConnection(p.netloc, timeout=90)
+    max_tok = 8000 if len(msgs) > 2 else 4000
     c.request("POST", p.path + "/chat/completions", json.dumps({
-        "model": LLM_MODEL, "messages": msgs, "temperature": 0.3, "max_tokens": 4000,
+        "model": LLM_MODEL, "messages": msgs, "temperature": 0.3, "max_tokens": max_tok,
     }), {"Content-Type": "application/json", "Authorization": f"Bearer {LLM_KEY}"})
     r = c.getresponse()
     d = json.loads(r.read())
     c.close()
     finish_reason = d["choices"][0].get("finish_reason", "")
     content = d["choices"][0]["message"]["content"]
+    # Auto-retry larger budget on truncation
+    retries = 0
+    while finish_reason == "length" and retries < 2 and max_tok < 16000:
+        max_tok *= 2
+        retries += 1
+        c = http.client.HTTPSConnection(p.netloc, timeout=120)
+        c.request("POST", p.path + "/chat/completions", json.dumps({
+            "model": LLM_MODEL, "messages": msgs, "temperature": 0.3, "max_tokens": max_tok,
+        }), {"Content-Type": "application/json", "Authorization": f"Bearer {LLM_KEY}"})
+        r = c.getresponse()
+        d = json.loads(r.read())
+        c.close()
+        finish_reason = d["choices"][0].get("finish_reason", "")
+        content = d["choices"][0]["message"]["content"]
     if finish_reason == "length":
-        content += "\n\n## TRUNCATED — increase max_tokens\n"
+        content += f"\n\n## TRUNCATED — still truncated at {max_tok} tokens\n"
     return content
 
 
