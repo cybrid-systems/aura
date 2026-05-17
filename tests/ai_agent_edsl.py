@@ -204,10 +204,12 @@ def main():
                     f"ERROR: {value}\n\n"
                     f"Current source: {current_src[:400]}\n\n"
                     f"{edsl_hint}"
-                    "Use Phase 2 EDSL to fix. Do NOT rewrite the whole program.\n"
-                    "1. (query:find \"func\") — locate the problematic function\n"
-                    "2. (mutate:rebind \"func\" \"new define code\") — fix it\n"
-                    "3. (eval-current) — verify\n"
+                    "SWITCH TO PHASE 2 EDSL NOW.\n"
+                    "1. (set-code \"...\") — lock current source\n"
+                    "2. (query:find \"func-name\") — find the broken function\n"
+                    "3. (mutate:rebind \"func\" \"(define (func ...) ...)\") — fix with exact code\n"
+                    "4. (eval-current) — verify the fix\n"
+                    "Do NOT rewrite the whole program. Only change the broken part.\n"
                 )
         else:
             print("  → no response")
@@ -215,6 +217,15 @@ def main():
 
         msgs.append({"role": "assistant", "content": resp})
         msgs.append({"role": "user", "content": fb})
+
+        # History truncation: keep system + original task + last 3 rounds
+        # [0] = system, [1] = user task, [2..] = rounds
+        if len(msgs) > 10:
+            keep = [msgs[0], msgs[1]]  # system + task
+            # Keep last 4 pairs (8 messages: 4 resp + 4 fb) = last 4 rounds
+            keep.extend(msgs[-8:])
+            msgs = keep
+            print(f"  (history trimmed to {len(msgs)} messages)")
 
     aura.close()
     print(f"\n{'='*50}\nDone after {rnd} rounds\n{'='*50}")
