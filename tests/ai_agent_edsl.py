@@ -61,7 +61,11 @@ def llm_call(msgs):
     r = c.getresponse()
     d = json.loads(r.read())
     c.close()
-    return d["choices"][0]["message"]["content"]
+    finish_reason = d["choices"][0].get("finish_reason", "")
+    content = d["choices"][0]["message"]["content"]
+    if finish_reason == "length":
+        content += "\n\n## TRUNCATED — increase max_tokens\n"
+    return content
 
 
 def extract_code(resp):

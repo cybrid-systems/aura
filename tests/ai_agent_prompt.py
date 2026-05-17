@@ -33,7 +33,7 @@ def build_system_prompt():
 
 ## Syntax
 (define (fn x) body)  (lambda (x) body)  (if c t e)  (begin e...)
-(let ((x v) (y v)) body)  (let* ...)  (letrec ...)  (cond ...)
+(let ((x v) (y v)) body)  (let* ...)  (letrec ...)  (cond ...)  (when cond body...)  (unless cond body...)
 (define name val)  (set! name val)
 
 ## Core primitives
