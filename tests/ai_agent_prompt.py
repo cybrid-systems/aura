@@ -43,6 +43,7 @@ not and or equal? zero? boolean? number? integer? float? string? pair? null? pro
 string=? string<? string-append string-length string-ref substring
 string->list list->string string->number number->string
 display write newline read read-line read-file write-file file-copy file-delete file-size directory-list
+regex-match? regex-find regex-replace regex-split
 map filter foldl member reverse take drop length
 hash hash-set! hash-ref hash-keys hash-remove! hash-length hash-values
 vector make-vector vector-ref vector-set! vector-length vector->list list->vector
