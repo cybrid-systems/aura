@@ -6,24 +6,26 @@
 
 ```
 M1  求值器                      ✅ 纯 FlatAST 管线
-M2  查询引擎 (C++)              🟡 C++ 完备，Aura 原语未暴露
+M2  查询引擎 (C++)              ✅ 已暴露为 Aura query:* 原语
 M3a 语言补全                    ✅ 布尔/序对/begin/set!/quote/cond/letrec
 M3b 宏系统                      ✅ defmacro + quasiquote + gensym
 M3c 反射                        ✅ P2996 auto_to_json
 M3d 类型系统                    ✅ L6.1-L6.8: 渐进类型 + forall + Float
 M3e 工具链                      ✅ Benchmark + --serve + AI Agent
-M3f AI 闭环                     🟡 Agent 演示 4 版本 + 15 任务基准
-M4a 缓存                        ✅ ABF v4 列式
+M3f AI 闭环                     🟡 Agent 演示 + EDSL 工作流
+M4a 缓存                        ✅ ABF v2 列式
 M4b AI 协议                     ✅ docs/ai_agent_protocol.md
-M4c 模块系统                    ✅ import + AURA_PATH + require
-M4d 自进化                      🟡 Typed Mutation (C++完备, 原语待扩展)
+M4c 模块系统 (v1)               ✅ import + AURA_PATH + require（注入式）
+M4d 自进化                      ✅ Typed Mutation + EDSL query/mutate/typecheck
 M4e 语言完善                    ✅ 变参算术/TCO/equal?/match/define-struct
 M4g 标准库                      ✅ list/math/string/json/struct/validate
 
-P6  Query/Transform EDSL 设计   🟡 docs/query_edsl_design.md
-P7  Aura 原语注册               ⬜ query:* + mutate:* + set-code
-P8  增量编译 + 类型系统          ⬜ Dirtiness + 增量 typecheck
-P9  生产后端                     ⬜ LLVM JIT / AOT / 自举
+M5  模块命名空间 (v2)           🟡 Phase 1 in progress
+P6  Query/Transform EDSL        ✅
+P7  EDSL 原语注册               ✅
+P8  增量编译                    ✅ (除增量求值)
+P9  生产后端                    ⬜ LLVM JIT / AOT / 自举
+P10 大规模开发基础设施           🟡 设计完成，逐步实现
 ```
 
 ## 当前能力
@@ -33,50 +35,57 @@ P9  生产后端                     ⬜ LLVM JIT / AOT / 自举
 | 语言核心 | ✅ ~70 原语 + TCO + match + define-struct |
 | 标准库 | ✅ list/math/string/json/struct/validate |
 | require | ✅ `(require std/list)` 符号形式 |
-| PrimitiveRef | ✅ `(foldl + 0 ...)` 基元可传值 |
+| 模块系统 | 🟡 注入式 → 命名空间迁移中 |
+| 增量 typecheck | ✅ 跳过 clean 子树 + 缓存 |
+| EDSL (query/mutate) | ✅ 完整工作区模型 |
 | --serve 协议 | ✅ JSON Lines, display 走 stderr |
-| AI Agent 演示 | ✅ serve/llm/iter/edsl 4 版本 |
+| AI Agent 演示 | 🟡 serve/llm/iter/edsl 4 版本 |
 | 基准测试 | ✅ 15 任务并行基准 |
-| QueryEngine (C++) | 🟡 完备，未暴露为 Aura 原语 |
-| TransformEngine (C++) | 🟡 完备，未暴露为 Aura 原语 |
-| Typed Mutation (C++) | 🟡 mutate:* 存在，需扩展 |
 
 ## 下一步计划
 
-### P6 — Query/Transform EDSL 设计 ✅
-- [x] `docs/query_edsl_design.md` — 工作区模型 + query/mutate 原语规范
-- [x] 类型系统 + CaaS 增量编译集成方案
-- [x] 性能估算 + 优先级
+### M5 — 模块命名空间 v2 🟡
 
-### P7 — Aura 原语注册 (核心 EDSL) ✅
-- [x] `set-code` — 锁定 AST 到工作区
-- [x] `eval-current` — 执行工作区 AST
-- [x] `query:find name` — 按名称查找节点
-- [x] `query:children node-id` — 获取子节点
-- [x] `query:node node-id` — 查看节点详情
-- [x] `query:calls name` — 查找函数调用
-- [x] `mutate:rebind name code` — 按函数名替换定义
-- [x] `mutate:replace-value` — 替换节点值
-- [x] `mutate:replace-type` — 替换类型注解
-- [x] `mutate:record-patch` — 记录变更
-- [x] `rollback / rollback-since` — 回滚
-- [x] `mutation-count / mutation-history / check-preconditions` — 查询
+**目标：** 从注入式模块升级到带前缀的命名空间模块。
 
-### P8 — 完整 EDSL + 增量编译
-- [x] `query:parent` — 查找父节点
-- [x] `query:siblings` — 查找兄弟节点
-- [x] `query:pattern` — 模式匹配搜索（`...` 通配符，lexer 新增 Ellipsis token）
-- [x] `query:node-type` — 按节点类型标签过滤
-- [x] `mutate:insert-child` — 在指定位置插入子节点（解析到工作区，保留所有 ID）
-- [x] `mutate:set-body` — 按函数名替换函数体（修复跨 AST 引用 bug）
-- [x] `mutate:remove-node` — 删除节点（设 NULL_NODE 断开）
-- [x] `mutate:rebind` — 修复：原地替换而非整体换 workspace
-- [x] `mutate:replace-value` — 扩展支持 LiteralFloat/Variable/LiteralString
-- [x] `insert_child` / `remove_child` — FlatAST 核心 API
-- [x] Dirtiness 标记 — mutate 时自动标脏（向上传播到祖先），`eval-current`/`typecheck-current` 清除
-- [x] `typecheck-current` — 增量类型检查：TypeChecker::synthesize_flat 按 dirty 状态跳过 clean 子树，结果缓存到 type_id_
-- [x] `mark_dirty_upward` / `has_dirty_subtree` — 增量编译基础设施
-- [ ] 增量求值 (跳过 clean 的 Define/Lambda)
+设计文档: `docs/module_namespace_design.md`
+
+#### Phase 1: 模块对象 + module-get (当前)
+- [x] 设计文档
+- [ ] EvalValue 新增 `<module>` 变体
+- [ ] `module-get` / `module-keys` / `module?` 原语
+- [ ] `load-module` 返回模块对象（同时保留旧注入行为）
+- [ ] 新增 `format_value` 对 `<module>` 的支持
+
+#### Phase 2: 前缀注入
+- [ ] `(import path prefix:)` 语法变换
+- [ ] 内部展开: `(define prefix:name (module-get mod 'name))`
+- [ ] `(use path)` — 返回模块对象，不注入
+
+#### Phase 3: 显式导出
+- [ ] `(export sym ...)` 语法
+- [ ] `load-module` 只暴露 export 的符号
+- [ ] 未 export 的函数对其他模块不可见
+
+#### Phase 4: 标准库迁移
+- [ ] std/list → require 默认加前缀
+- [ ] 所有 std 库改用前缀
+- [ ] 保留 `all:` 兼容开关
+
+### P10 — 大规模开发基础设施
+
+设计文档:
+- `docs/error_handling_v2.md` — try/catch/raise
+- `docs/testing_framework_design.md` — check/check=/test-suite
+- `docs/formatter_design.md` — --fmt CLI
+
+| 项 | 优先级 | 状态 |
+|----|--------|------|
+| try/catch (error handling) | P0 | 设计完成 |
+| check/check= 断言 | P1 | 设计完成 |
+| test-suite / run-tests | P2 | 设计完成 |
+| --fmt 格式化 | P3 | 设计完成 |
+| 增量求值 | P4 | 低优先级 |
 
 ### P9 — 生产后端
 - [ ] LLVM JIT 降级
