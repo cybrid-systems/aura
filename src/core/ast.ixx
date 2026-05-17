@@ -508,6 +508,24 @@ public:
         child_data_[child_begin_[id] + idx] = child;
     }
 
+    // Insert a child at position idx (0 = first, child_count = append)
+    // Shifts all subsequent children and updates child_begin_ for later nodes.
+    void insert_child(NodeId id, std::uint32_t idx, NodeId child) {
+        auto pos = child_begin_[id] + std::min(idx, child_count_[id]);
+        child_data_.insert(child_data_.begin() + pos, 1, child);
+        // Shift child_begin for all nodes after this one (insert grew child_data_)
+        for (auto i = id + 1; i < tag_.size(); ++i) {
+            child_begin_[i]++;
+        }
+        child_count_[id]++;
+    }
+
+    // Remove a child at position idx by replacing with NULL_NODE
+    void remove_child(NodeId id, std::uint32_t idx) {
+        if (idx < child_count_[id])
+            child_data_[child_begin_[id] + idx] = NULL_NODE;
+    }
+
     // ── Bulk ───────────────────────────────────────────────────
 
     void clear() {
@@ -640,6 +658,12 @@ public:
 
     void set_int(NodeId id, std::int64_t val) {
         if (id < int_val_.size()) int_val_[id] = val;
+    }
+    void set_float(NodeId id, double val) {
+        if (id < float_val_.size()) float_val_[id] = val;
+    }
+    void set_sym(NodeId id, SymId val) {
+        if (id < sym_id_.size()) sym_id_[id] = val;
     }
 
     // Resolve type names → TypeIds for all TypeAnnotation nodes

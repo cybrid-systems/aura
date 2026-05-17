@@ -66,9 +66,13 @@ P9  生产后端                     ⬜ LLVM JIT / AOT / 自举
 - [x] `query:parent` — 查找父节点
 - [x] `query:siblings` — 查找兄弟节点
 - [x] `query:pattern` — 模式匹配搜索（`...` 通配符，lexer 新增 Ellipsis token）
-- [x] `mutate:set-body` — 按函数名替换函数体（修复：解析到工作区，跨 AST 引用 bug）
-- [x] `mutate:remove-node` — 删除节点 (从父节点断开)
-- [x] `mutate:rebind` — 修复：原地替换而非整体换 workspace（保留其他 mutation）
+- [x] `query:node-type` — 按节点类型标签过滤
+- [x] `mutate:insert-child` — 在指定位置插入子节点（解析到工作区，保留所有 ID）
+- [x] `mutate:set-body` — 按函数名替换函数体（修复跨 AST 引用 bug）
+- [x] `mutate:remove-node` — 删除节点（设 NULL_NODE 断开）
+- [x] `mutate:rebind` — 修复：原地替换而非整体换 workspace
+- [x] `mutate:replace-value` — 扩展支持 LiteralFloat/Variable/LiteralString
+- [x] `insert_child` / `remove_child` — FlatAST 核心 API
 - [ ] Dirtiness 标记 (被 mutate 的节点)
 - [ ] 增量类型检查 (只检查修改部分)
 - [ ] `typecheck-current` 原语
