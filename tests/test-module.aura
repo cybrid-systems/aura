@@ -1,0 +1,30 @@
+; Module system tests
+; Tests: use, module-get, module-keys, import prefix, export, require
+
+(test-suite "module:use"
+  (check (module? (use "std/list")))
+  (check (module? (use "std/math"))))
+
+(test-suite "module:keys"
+  (check (pair? (module-keys (use "std/list"))))
+  (check (> (length (module-keys (use "std/list"))) 0)))
+
+(test-suite "module:get"
+  (check (procedure? (module-get (use "std/list") "sort")))
+  (check= () (module-get (use "std/list") "nonexistent")))
+
+(test-suite "module:import"
+  (import "std/list")
+  (check= (1 3 4) (sort (list 3 1 4))))
+
+(test-suite "module:prefix"
+  (import "std/list" "lst:")
+  (check= (1 3 4) (lst:sort (list 3 1 4))))
+
+(test-suite "module:require"
+  (require std/math)
+  (check= 4 (math:sqrt 16)))
+
+(test-suite "module:require-compat"
+  (require std/math all:)
+  (check (>= (sqrt 16) 4.0))))
