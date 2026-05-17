@@ -124,7 +124,12 @@ int main(int argc, char* argv[]) {
     // Each line of output is JSON. Agent reads with JSON.parse(line).
     // Messages: ok, error, fix, fixed, fix-fail
     if (argc > 1 && std::string_view(argv[1]) == "--serve") {
-        aura::compiler::CompilerService cs;
+        // ── Multi-session ────────────────────────────────────
+        std::unordered_map<std::string, aura::compiler::CompilerService> sessions;
+        std::string active_session = "default";
+        sessions.try_emplace(active_session);
+        auto& cs = sessions[active_session];
+
         std::string line;
         while (std::getline(std::cin, line)) {
             if (line.empty()) continue;
@@ -146,6 +151,28 @@ int main(int argc, char* argv[]) {
                     continue;
                 }
                 auto& type = cmd_type->second;
+
+                // Session management
+                if (type == "session") {
+                    auto name_it = cmd.find("name");
+                    if (name_it == cmd.end()) {
+                        std::println("{{\"status\":\"error\",\"msg\":\"missing name field\"}}");
+                        continue;
+                    }
+                    auto& sname = name_it->second;
+                    auto real_name = (sname.find("new:") == 0) ? sname.substr(4) : sname;
+                    if (!sessions.count(real_name)) {
+                        sessions.try_emplace(real_name);
+                        std::println("{{\"status\":\"created\",\"session\":\"{}\"}}", real_name);
+                    } else {
+                        std::println("{{\"status\":\"ok\",\"session\":\"{}\"}}", real_name);
+                    }
+                    active_session = (sname.find("new:") == 0) ? sname.substr(4) : sname;
+                    continue;
+                }
+
+                // Look up the current session
+                auto& cs = sessions[active_session];
 
                 // Commands that don't need a code field
                 if (type == "mutate") {
