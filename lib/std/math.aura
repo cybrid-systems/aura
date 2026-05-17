@@ -1,6 +1,8 @@
 ; Aura standard math library
 ; Import with: (import "std/math")
 
+(export pi square cube sqrt expt factorial odd? even? signum avg mean)
+
 (define pi 3.141592653589793)
 
 (define (square x) (* x x))

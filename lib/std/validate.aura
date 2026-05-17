@@ -1,6 +1,8 @@
 ; Aura JSON Schema Validator — 纯函数式
 ; (import "std/validate")
 ; 用法: (validate schema data) → 错误列表 (空=有效)
+(export json-type err check validate valid? error-count)
+
 
 (define (json-type v)
   (cond ((null? v) "null") ((boolean? v) "boolean")

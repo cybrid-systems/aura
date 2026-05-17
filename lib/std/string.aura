@@ -1,6 +1,11 @@
 ; Aura standard string library
 ; Import with: (import "std/string")
 
+(export string-split string-split-words string-join string-trim string-upcase string-downcase)
+
+; Note: string.aura intentionally avoids requiring std/list internally.
+; Module evaluation runs in isolated env; internal imports would pollute top_.
+
 ; Split string by a separator
 ; sep can be: a string (uses first char), or a char code (integer)
 (define (string-split s sep)
@@ -39,9 +44,14 @@
 
 ; Trim whitespace from both ends
 (define (string-trim s)
-  (define (not-space? c) (not (= c 32)))
   (define chars (string->list s))
-  (define trimmed (drop-while (lambda (c) (= c 32)) (reverse (drop-while (lambda (c) (= c 32)) (reverse chars)))))
+  ; Remove leading spaces
+  (define (drop-leading lst)
+    (if (or (null? lst) (not (= (car lst) 32)))
+      lst
+      (drop-leading (cdr lst))))
+  ; Remove trailing spaces (reverse, drop-leading, reverse)
+  (define trimmed (reverse (drop-leading (reverse (drop-leading chars)))))
   (list->string trimmed))
 
 ; Convert to upper case (ASCII only)
