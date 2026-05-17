@@ -8,7 +8,7 @@ import subprocess, json, sys, os, time, re, http.client, urllib.parse
 AURA = os.environ.get("AURA_BIN", "./build/aura")
 LLM_KEY = os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
 LLM_URL = os.environ.get("LLM_BASE_URL") or os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
-LLM_MODEL = os.environ.get("LLM_MODEL") or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+LLM_MODEL = os.environ.get("LLM_MODEL") or os.environ.get("OPENAI_MODEL", "deepseek-v4-flash")
 MAX_ITERATIONS = 12
 EXEC_TIMEOUT = 15
 
