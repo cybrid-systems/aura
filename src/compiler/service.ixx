@@ -353,13 +353,207 @@ public:
 
     // ---- Multi-module arena support ----------------------------------
 
+    // ---- Multi-module compilation (ArenaGroup) ----------------------
+
+    // Get or create a per-module arena.
     ast::ASTArena& module_arena(const std::string& name,
-                                std::size_t initial_size = 8 * 1024 * 1024) {
+                                 std::size_t initial_size = 8 * 1024 * 1024) {
         return arena_group_.module_arena(name, initial_size);
     }
 
+    // Reset a specific module's arena.
     void reset_module(const std::string& name) {
         arena_group_.reset_module(name);
+    }
+
+    // Compile a module into its own arena. Parses source, finds all
+    // top-level (define ...) forms, caches each as IR, and evaluates
+    // via tree-walker for environment persistence.
+    //
+    // This is like cache_module() but uses the module's dedicated arena
+    // instead of the main arena_. After compilation, the module's defines
+    // are available both in the evaluator env and in ir_cache_ for
+    // subsequent IR-first compilation in other modules.
+    EvalResult compile_module(const std::string& name,
+                               const std::string& source) {
+        auto& mod_arena = arena_group_.module_arena(name);
+        mod_arena.reset();
+
+        auto alloc = mod_arena.allocator();
+        auto* pool_ptr = mod_arena.create<aura::ast::StringPool>(alloc);
+        auto* flat_ptr = mod_arena.create<aura::ast::FlatAST>(alloc);
+        auto pr = aura::parser::parse_to_flat(source, *flat_ptr, *pool_ptr);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::ParseError,
+                pr.error.empty() ? "parse error" : pr.error});
+        }
+        flat_ptr->root = pr.root;
+
+        auto& flat = *flat_ptr;
+        auto& pool = *pool_ptr;
+
+        // Macro expand
+        auto expanded = aura::compiler::macro_expand_all(flat, pool, flat.root);
+
+        // Walk top-level defines
+        struct DefFinder {
+            aura::ast::FlatAST& f;
+            aura::ast::StringPool& p;
+            std::vector<std::pair<std::string, aura::ast::NodeId>> defs;
+            void walk(aura::ast::NodeId id) {
+                if (id == aura::ast::NULL_NODE || id >= f.size()) return;
+                auto v = f.get(id);
+                if (v.tag == aura::ast::NodeTag::Define) {
+                    defs.emplace_back(std::string(p.resolve(v.sym_id)), id);
+                }
+                if (v.tag == aura::ast::NodeTag::Begin) {
+                    for (auto c : v.children) walk(c);
+                }
+            }
+        };
+
+        DefFinder finder{flat, pool, {}};
+        if (expanded != aura::ast::NULL_NODE) {
+            auto ev = flat.get(expanded);
+            if (ev.tag == aura::ast::NodeTag::Begin)
+                for (auto c : ev.children) finder.walk(c);
+            else
+                finder.walk(expanded);
+        }
+
+        // Cache each define and eval via tree-walker for env
+        // Reuse the existing cache_define logic by using main arena for
+        // the define-specific lowering (lowering doesn't depend on module arena).
+        // After caching, the define is available in ir_cache_.
+        for (auto& [fname, node_id] : finder.defs) {
+            // Only cache function defines (Lambda body)
+            auto def_node = flat.get(node_id);
+            if (def_node.children.empty()) continue;
+            auto body = flat.get(def_node.child(0));
+            if (body.tag != aura::ast::NodeTag::Lambda) continue;
+
+            if (ir_cache_.count(fname)) continue;  // already cached
+
+            // Evaluate via tree-walker for env side-effects
+            auto result = evaluator_.eval_flat(flat, pool, node_id,
+                                                evaluator_.top_env());
+            if (!result) return result;
+
+            // Cache IR: use the define's source s-expr
+            // Extract just this define expression from the source
+            auto alloc2 = arena_.allocator();
+            auto* p2 = arena_.create<aura::ast::StringPool>(alloc2);
+            auto* f2 = arena_.create<aura::ast::FlatAST>(alloc2);
+            auto pr2 = aura::parser::parse_to_flat(source, *f2, *p2);
+            if (!pr2.success) continue;
+
+            // Walk to find the matching define
+            auto walk_for_name = [&](aura::ast::NodeId rid, auto& self_ref) -> std::optional<aura::ast::NodeId> {
+                if (rid >= f2->size()) return std::nullopt;
+                auto vv = f2->get(rid);
+                if (vv.tag == aura::ast::NodeTag::Define) {
+                    if (p2->resolve(vv.sym_id) == fname) return rid;
+                }
+                if (vv.tag == aura::ast::NodeTag::Begin) {
+                    for (auto c : vv.children) {
+                        auto r = self_ref(c, self_ref);
+                        if (r) return r;
+                    }
+                }
+                return std::nullopt;
+            };
+            auto define_id = walk_for_name(f2->root, walk_for_name);
+            if (!define_id) continue;
+
+            f2->root = *define_id;
+
+            auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
+            std::vector<std::string> hits;
+            auto ir_mod = aura::compiler::lower_to_ir_with_cache(
+                *f2, *p2, arena_, cache_ptr, &hits, &evaluator_.primitives());
+
+            // Run passes on non-entry functions
+            {
+                aura::compiler::ComputeKindWrap ck;
+                aura::compiler::ConstantFoldingWrap cf;
+                for (auto& func : ir_mod.functions) {
+                    if (func.id == ir_mod.entry_function_id) continue;
+                    ck.compute_function(func);
+                    cf.fold_function(func);
+                }
+            }
+
+            std::vector<aura::ir::IRFunction> bundle;
+            for (auto& func : ir_mod.functions) {
+                if (func.id != ir_mod.entry_function_id)
+                    bundle.push_back(std::move(func));
+            }
+            ir_cache_[fname] = std::move(bundle);
+            function_sources_[fname] = source;
+            module_functions_[name].push_back(fname);
+
+            for (auto& cn : hits)
+                record_dependency(fname, cn);
+        }
+
+        // Mark module as loaded
+        loaded_modules_.insert(name);
+
+        return EvalResult(types::make_void());
+    }
+
+    // Unload a module: reset its arena and remove cached defines.
+    // Does NOT remove evaluator env bindings (they persist for the session).
+    void unload_module(const std::string& name) {
+        arena_group_.reset_module(name);
+
+        // Collect all cached defines belonging to this module and remove them.
+        // Since function_sources_ stores per-define source, we rebuild:
+        // find all cached functions whose source matches the module source.
+        std::vector<std::string> to_remove;
+        for (auto& [fname, src] : function_sources_) {
+            // Simple heuristic: check if this function was cached from this module.
+            // We track module_name → function names via module_functions_ map.
+            (void)src;
+        }
+
+        // Track module function membership via a reverse map
+        if (auto it = module_functions_.find(name); it != module_functions_.end()) {
+            for (auto& fname : it->second) to_remove.push_back(fname);
+            module_functions_.erase(it);
+        }
+
+        for (auto& fname : to_remove) {
+            ir_cache_.erase(fname);
+            ir_cache_bridge_.erase(fname);
+            function_sources_.erase(fname);
+            // Clean dep_graph
+            auto dit = dep_graph_.find(fname);
+            if (dit != dep_graph_.end()) {
+                for (auto& callee : dit->second.calls) {
+                    dep_graph_[callee].called_by.erase(
+                        std::remove(dep_graph_[callee].called_by.begin(),
+                                    dep_graph_[callee].called_by.end(), fname),
+                        dep_graph_[callee].called_by.end());
+                }
+                dep_graph_.erase(dit);
+            }
+        }
+
+        loaded_modules_.erase(name);
+    }
+
+    // Check if a module is loaded
+    bool is_module_loaded(const std::string& name) const {
+        return loaded_modules_.count(name) > 0;
+    }
+
+    // List loaded module names
+    std::vector<std::string> loaded_modules() const {
+        std::vector<std::string> result;
+        for (auto& n : loaded_modules_) result.push_back(n);
+        return result;
     }
 
     // ---- Diagnostics ------------------------------------------------
@@ -588,6 +782,7 @@ public:
             }
             ir_cache_[name] = std::move(bundle);
             function_sources_[name] = content;
+            module_functions_[path].push_back(name);
 
             for (auto& cn : cache_hits)
                 record_dependency(name, cn);
@@ -651,6 +846,7 @@ public:
         ir_cache_[name_str] = std::move(bundle);
         ir_cache_bridge_[name_str] = std::move(bridge_bundle);
         function_sources_[name_str] = std::string(source);
+        module_functions_["__repl__"].push_back(name_str);
 
         for (auto& called_name : cache_hits) {
             record_dependency(name_str, called_name);
@@ -1020,6 +1216,12 @@ private:
     std::vector<aura::compiler::ClosureSnapshot> last_closures_;
     std::vector<aura::compiler::CellSnapshot> last_cells_;
     std::optional<aura::ir::IRModule> last_ir_mod_;
+
+    // Set of loaded module names (for ArenaGroup tracking).
+    std::unordered_set<std::string> loaded_modules_;
+
+    // Reverse map: module_name → set of cached function names from that module.
+    std::unordered_map<std::string, std::vector<std::string>> module_functions_;
 
     // Persistent AST for mutation workflows (set_code / typed_mutate).
     aura::ast::FlatAST* current_ast_ = nullptr;
