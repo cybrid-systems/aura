@@ -602,14 +602,21 @@ void Evaluator::init_pair_primitives() {
         if (a.empty() || !is_string(a[0])) return make_bool(false);
         auto i = as_string_idx(a[0]);
         if (i >= string_heap_.size()) return make_bool(false);
-        try {
-            auto& str = string_heap_[i];
-            if (str.empty()) return make_bool(false);
+        auto& str = string_heap_[i];
+        if (str.empty()) return make_bool(false);
+        // Use from_chars for strict parsing — entire string must be consumed
+        const char* start = str.data();
+        const char* end = start + str.size();
+        // Try float first (includes ints like "42" → 42.0)
+        double fval;
+        auto [pfloat, ec_float] = std::from_chars(start, end, fval);
+        if (ec_float == std::errc{} && pfloat == end) {
+            // Check if it has a decimal point or exponent → return float
             if (str.find('.') != std::string::npos || str.find('e') != std::string::npos || str.find('E') != std::string::npos)
-                return make_float(std::stod(str));
-            return make_int(static_cast<std::int64_t>(std::stoll(str)));
+                return make_float(fval);
+            return make_int(static_cast<std::int64_t>(fval));
         }
-        catch (...) { return make_bool(false); }
+        return make_bool(false);
     });
     primitives_.add("list", [this](const auto& a) {
         // Build proper list (pair chain ending with void)
