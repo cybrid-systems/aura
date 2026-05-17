@@ -164,7 +164,35 @@ def main():
                 if in_phase2:
                     fb = f"Result: {value}\nPhase 2 fix applied. Say DONE if correct."
                 else:
-                    fb = f"Result: {value}\nPhase 1 compiled.\nTest the function by calling it. Say DONE."
+                    # Auto-test: try calling each defined function
+                    test_results = []
+                    all_ok = True
+                    for fname in re.findall(r'\(define\s+\(?(\w+)', current_src):
+                        if fname in ("pi", "e", "data"):
+                            continue
+                        tested = False
+                        for test_input in ("5", "10", '"hello"', '"x"'):
+                            test_call = f"({fname} {test_input})"
+                            tr = aura.exec(test_call)
+                            if tr:
+                                ts = tr.get("status")
+                                tv = tr.get("value", tr.get("msg", ""))
+                                test_results.append(f"  ({fname} {test_input}) → {ts}: {tv}")
+                                tested = True
+                                if ts != "ok":
+                                    all_ok = False
+                                break
+                        if not tested:
+                            test_results.append(f"  {fname} → (no valid test)")
+
+                    test_blurb = "\n".join(test_results) if test_results else "  (no test ran)"
+                    if all_ok and status == "ok" and "DONE" in last_line:
+                        print("  DONE"); break
+                    fb = (
+                        f"Result: {value}\n"
+                        f"Auto-tests:\n{test_blurb}\n\n"
+                        "Say DONE if correct. If tests failed, fix with EDSL."
+                    )
             else:
                 # ERROR → auto Phase 2 EDSL: set-code + query for context
                 in_phase2 = True
