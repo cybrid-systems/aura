@@ -2235,8 +2235,10 @@ void Evaluator::init_pair_primitives() {
         return make_int(static_cast<std::int64_t>(pr.root));
     });
 
-    // (typecheck-current) — Run the type checker on the workspace AST
-    // Returns a string describing the type of the root expression and any errors.
+    // (typecheck-current) — Type check the workspace AST
+    // Uses a persistent TypeRegistry across calls so type IDs are stable.
+    // Full traversal for now; incremental skip (dirty-aware) requires
+    // TypeChecker to accept a dirty filter — future work.
     primitives_.add("typecheck-current", [this](const auto&) {
         if (!workspace_flat_ || !workspace_pool_) {
             auto eidx = string_heap_.size();
@@ -2244,15 +2246,28 @@ void Evaluator::init_pair_primitives() {
             return make_string(eidx);
         }
 
-        aura::core::TypeRegistry treg;
+        // Lazily create persistent type registry (stable TypeIds across calls)
+        if (!type_registry_) {
+            type_registry_ = new aura::core::TypeRegistry();
+        }
+        auto& treg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
         aura::compiler::TypeChecker tc(treg);
         aura::diag::DiagnosticCollector diag;
 
         auto result = tc.infer_flat(*workspace_flat_, *workspace_pool_,
                                      workspace_flat_->root, diag);
 
-        std::string out = "type: " + treg.format_type(result) + "\n";
+        // Cache inferred TypeIds back to type_id_ for future incremental use
+        auto& flat = *workspace_flat_;
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            // Only overwrite if dirty (clean nodes already have valid cached type)
+            if (flat.is_dirty(id)) {
+                // We'd need a per-node type query, which the TypeChecker doesn't expose
+                // For now: mark the full traversal as a TODO for incremental
+            }
+        }
 
+        std::string out = "type: " + treg.format_type(result) + "\n";
         auto all_diags = diag.diagnostics();
         if (all_diags.empty()) {
             out += "no errors\n";
@@ -2264,7 +2279,8 @@ void Evaluator::init_pair_primitives() {
             }
         }
 
-        // Store result as string in heap
+        flat.clear_all_dirty();
+
         auto sidx = string_heap_.size();
         string_heap_.push_back(out);
         return make_string(sidx);

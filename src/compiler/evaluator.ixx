@@ -99,6 +99,7 @@ private:
     ast::StringPool* current_pool_ = nullptr;
     ast::FlatAST* workspace_flat_ = nullptr;
     ast::StringPool* workspace_pool_ = nullptr;
+    void* type_registry_ = nullptr;  // points to aura::core::TypeRegistry
     std::unordered_map<ClosureId,Closure> closures_;
     std::unordered_map<std::string, MacroDef> macros_;
     std::unordered_set<std::string> loaded_modules_;

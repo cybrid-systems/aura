@@ -566,6 +566,31 @@ public:
     bool is_dirty(NodeId id) const {
         return id < dirty_.size() && dirty_[id];
     }
+    // Propagate dirty upward: mark this node AND all ancestors dirty
+    void mark_dirty_upward(NodeId id) {
+        mark_dirty(id);
+        // Scan for parent (linear, but mutate is infrequent)
+        for (NodeId pid = 0; pid < tag_.size(); ++pid) {
+            auto v = get(pid);
+            for (auto c : v.children) {
+                if (c == id) {
+                    mark_dirty_upward(pid);
+                    return;
+                }
+            }
+        }
+    }
+
+    // Check if any node in a subtree (including the root) is dirty
+    bool has_dirty_subtree(NodeId id) const {
+        if (is_dirty(id)) return true;
+        auto v = get(id);
+        for (auto c : v.children) {
+            if (c != NULL_NODE && has_dirty_subtree(c)) return true;
+        }
+        return false;
+    }
+
     void clear_all_dirty() {
         std::fill(dirty_.begin(), dirty_.end(), false);
     }
@@ -599,8 +624,8 @@ public:
                                   std::string(old_type), std::string(new_type),
                                   std::string(summary), status,
                                   field_offset, old_value, new_value, has_rollback});
-        // Auto-mark node dirty on mutation
-        mark_dirty(node);
+        // Auto-mark node AND ancestors dirty on mutation
+        mark_dirty_upward(node);
 
         // Update node_first_mutation_ index
         if (node < node_first_mutation_.size() && node_first_mutation_[node] == 0) {
