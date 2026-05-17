@@ -1234,16 +1234,37 @@ void Evaluator::init_pair_primitives() {
         if (idx >= string_heap_.size()) return make_void();
         auto& path = string_heap_[idx];
 
+        // Optional prefix: (import "path" "prefix:")
+        std::string prefix;
+        if (a.size() > 1 && is_string(a[1])) {
+            auto pidx = as_string_idx(a[1]);
+            if (pidx < string_heap_.size())
+                prefix = string_heap_[pidx];
+        }
+
         // Load module (cached, isolated env)
         auto mod_val = load_module_file(path);
         if (!is_module(mod_val)) return make_void();
         auto mod_idx = as_module_idx(mod_val);
         if (mod_idx >= modules_.size()) return make_void();
 
-        // Backward-compat: inject all bindings into top_ env
+        // Inject all bindings into top_ env
         auto& mod_env = modules_[mod_idx];
-        for (auto& [name, val] : mod_env.bindings()) {
-            top_.bind(name, val);
+        if (prefix.empty()) {
+            // No prefix: inject as-is (backward compat)
+            for (auto& [name, val] : mod_env.bindings()) {
+                top_.bind(name, val);
+            }
+        } else {
+            // Prefix injection: bind prefix:name for each export
+            for (auto& [name, val] : mod_env.bindings()) {
+                auto prefixed = prefix + name;
+                // Inter the prefixed name into the workspace pool
+                auto psid = string_heap_.size();
+                string_heap_.push_back(prefixed);
+                // Bind in top env
+                top_.bind(prefixed, val);
+            }
         }
         return make_bool(true);
     });
@@ -2316,6 +2337,19 @@ std::string Evaluator::resolve_module_path(const std::string& path) const {
             }
         }
     }
+
+    // Auto-discover: try ../lib/ and ./lib/ (relative to executable / CWD)
+    {
+        // Try ../lib/ (common for build/aura → lib/ layout)
+        auto hit = try_load("../lib/" + path);
+        if (hit) return *hit;
+    }
+    {
+        // Try ./lib/ (cwd-relative)
+        auto hit = try_load("./lib/" + path);
+        if (hit) return *hit;
+    }
+
     return {};
 }
 
