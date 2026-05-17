@@ -133,6 +133,20 @@ public:
             return evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
         }
 
+            // === Level 1: Type check (gradual — warn only, continue execution) ===
+        {
+            aura::diag::DiagnosticCollector diags;
+            aura::compiler::TypeChecker tc(type_registry_);
+            tc.infer_flat(*flat_ptr, *pool_ptr, expanded_root, diags);
+            auto all_diags = diags.diagnostics();
+            if (!all_diags.empty()) {
+                for (auto& d : all_diags) {
+                    if (d.kind == aura::diag::ErrorKind::TypeError)
+                        std::println(std::cerr, "type warning: {}", d.format());
+                }
+            }
+        }
+
         // Check for top-level (define ...) — cache IR + eval tree-walker for env persistence
         auto def = try_extract_define(*flat_ptr, *pool_ptr, expanded_root);
         if (def) {
@@ -414,6 +428,20 @@ public:
                              aura::ast::NodeId expanded_root,
                              const std::string& name_str) {
         bool is_redefine = ir_cache_.count(name_str) > 0;
+
+        // === Level 1: Type check the define body ===
+        {
+            aura::diag::DiagnosticCollector diags;
+            aura::compiler::TypeChecker tc(type_registry_);
+            tc.infer_flat(flat, pool, expanded_root, diags);
+            auto all_diags = diags.diagnostics();
+            if (!all_diags.empty()) {
+                for (auto& d : all_diags) {
+                    if (d.kind == aura::diag::ErrorKind::TypeError)
+                        std::println(std::cerr, "type warning ({}): {}", name_str, d.format());
+                }
+            }
+        }
 
         auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
         std::vector<std::string> cache_hits;
@@ -803,6 +831,7 @@ private:
     ast::ArenaGroup arena_group_;
     Evaluator evaluator_;
     aura::compiler::EvalStrategy strategy_;
+    aura::core::TypeRegistry type_registry_;  // persistent type registry (L6)
     std::vector<aura::compiler::ClosureSnapshot> last_closures_;
     std::vector<aura::compiler::CellSnapshot> last_cells_;
     std::optional<aura::ir::IRModule> last_ir_mod_;
