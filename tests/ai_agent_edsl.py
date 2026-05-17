@@ -154,6 +154,7 @@ def main():
                     # Auto-test: try calling each defined function
                     test_results = []
                     all_ok = True
+                    failed_funcs = []
                     for fname in re.findall(r'\(define\s+\(?([\w-]+)', current_src):
                         if fname in ("pi", "e", "data"):
                             continue
@@ -167,17 +168,33 @@ def main():
                                 test_results.append(f"  ({fname} {test_input}) → {ts}: {tv}")
                                 tested = True
                                 if ts != "ok":
-                                    all_ok = False
+                                    all_ok = False; failed_funcs.append(fname)
                                 break
                         if not tested:
                             test_results.append(f"  {fname} → (no valid test)")
+                            failed_funcs.append(fname)
 
                     test_blurb = "\n".join(test_results) if test_results else "  (no test ran)"
                     if all_ok and status == "ok" and "DONE" in last_line:
                         print("  DONE"); break
+
+                    # Auto EDSL: lock workspace + query failing function nodes
+                    edsl_nodes = ""
+                    if not all_ok and current_src:
+                        esc = current_src.replace("\\", "\\\\").replace('"', '\\"')
+                        aura.exec(f'(set-code "{esc}")')
+                        for ff in failed_funcs:
+                            qr = aura.exec(f'(query:find "{ff}")')
+                            if qr and qr.get("status") == "ok":
+                                edsl_nodes += f"  {ff} node: {qr.get("value")}\n"
+                    hint = ""
+                    if edsl_nodes:
+                        hint = f"Functions:\n{edsl_nodes}\nUse mutate:rebind to fix.\n"
+
                     fb = (
                         f"Result: {value}\n"
                         f"Auto-tests:\n{test_blurb}\n\n"
+                        f"{hint}"
                         "Say DONE if correct. If tests failed, fix with EDSL."
                     )
             else:
