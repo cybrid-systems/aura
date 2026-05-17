@@ -441,9 +441,10 @@ public:
         return id;
     }
 
-    [[nodiscard]] NodeId add_macrodef(SymId name, const std::vector<SymId>& params, NodeId body) {
+    [[nodiscard]] NodeId add_macrodef(SymId name, const std::vector<SymId>& params, NodeId body, bool dotted = false) {
         auto id = add_node(NodeTag::MacroDef);
         sym_id_[id] = name;
+        int_val_[id] = dotted ? 1 : 0;  // store dotted flag in unused int_val_
         auto start = static_cast<std::uint32_t>(child_data_.size());
         child_data_.push_back(body);
         child_begin_[id] = start;
