@@ -1,15 +1,38 @@
 # Aura 设计文档
 
-所有 Aura 的设计哲学、架构方案、序列化协议、AuraQuery eDSL 查询语言、C++26 模块划分等完整设计文档均在设计仓库：
-
-**https://github.com/cybrid-systems/ai-programming-language-design**
+## 当前实现文档（本地）
 
 | 文档 | 说明 |
 |------|------|
-| [design_philosophy.md](https://github.com/cybrid-systems/ai-programming-language-design/blob/main/docs/philosophy/design_philosophy.md) | 窄门哲学与核心设计原则 |
-| [aura_architecture.md](https://github.com/cybrid-systems/ai-programming-language-design/blob/main/docs/aura_architecture.md) | 三层系统架构与模块分解 |
-| [aura_serialization.md](https://github.com/cybrid-systems/ai-programming-language-design/blob/main/docs/aura_serialization.md) | Trees that Grow + ABF v2 序列化 |
-| [aura_query.md](https://github.com/cybrid-systems/ai-programming-language-design/blob/main/docs/aura_query.md) | Aura 原生 eDSL 查询与变换语法 |
-| [aura_modules.md](https://github.com/cybrid-systems/ai-programming-language-design/blob/main/docs/aura_modules.md) | C++26 模块划分与 CMake 配置 |
+| [roadmap.md](./roadmap.md) | 路线图与当前状态 |
+| [known_issues.md](./known_issues.md) | 已知问题与待修复项 |
 
-实现进度见 [roadmap.md](./roadmap.md)。
+### 语言
+
+| 文档 | 说明 |
+|------|------|
+| [module_namespace_design.md](./module_namespace_design.md) | 模块命名空间（`import`/`export`/`prefix`） |
+| [error_handling_v2.md](./error_handling_v2.md) | 错误处理（`try`/`catch`/`raise`） |
+| [testing_framework_design.md](./testing_framework_design.md) | 测试框架（`test-suite`/`run-tests`） |
+| [macro_system_v2.md](./macro_system_v2.md) | 宏系统 v2 |
+
+### 工具链
+
+| 文档 | 说明 |
+|------|------|
+| [query_edsl_design.md](./query_edsl_design.md) | EDSL query/mutate 设计 |
+| [formatter_design.md](./formatter_design.md) | `--fmt` 格式化器 |
+| [typed_mutation_design.md](./typed_mutation_design.md) | Typed Mutation（类型安全变换） |
+
+### 架构
+
+| 文档 | 说明 |
+|------|------|
+| [kernel_iteration_standard.md](./kernel_iteration_standard.md) | 内核迭代标准 |
+| [cpp26_guide.md](./cpp26_guide.md) | C++26 编程指南 |
+| [aura_language_plan.md](./aura_language_plan.md) | 语言扩展计划 |
+
+### 外部设计文档
+
+完整设计哲学、架构、序列化协议在：  
+**https://github.com/cybrid-systems/ai-programming-language-design**
