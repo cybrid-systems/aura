@@ -19,7 +19,14 @@ Token Lexer::advance() {
         }
         return make_tok(TokenKind::Unquote, source_.substr(pos_++, 1));
     }
-    case '.': return make_tok(TokenKind::Dot, source_.substr(pos_++, 1));
+    case '.': {
+        if (pos_ + 2 < source_.size() && source_[pos_+1] == '.' && source_[pos_+2] == '.') {
+            auto tok = make_tok(TokenKind::Ellipsis, "...");
+            pos_ += 3;
+            return tok;
+        }
+        return make_tok(TokenKind::Dot, source_.substr(pos_++, 1));
+    }
     default:
         if (std::isdigit((unsigned char)c) || (c == '-' && pos_+1<source_.size() && std::isdigit((unsigned char)source_[pos_+1]))) return read_number();
         if (std::isalpha((unsigned char)c) || c == '_' || c == '+' || c == '*' || c == '-' || c == '/' || c == '=' || c == '<' || c == '>' || c == '!' || c == '?') return read_identifier();

@@ -1992,11 +1992,11 @@ void Evaluator::init_pair_primitives() {
     // (query:pattern "expr") — Find all nodes matching a structural pattern
     //
     // Pattern syntax:
-    //   (+ 1 2)   — exact match: Call("+", 1, 2)
-    //   (+ 1 _)   — wildcard: "_" matches any single subtree
-    //   fib       — matches a Variable named "fib"
+    //   (+ 1 2)     — exact match: Call("+", 1, 2)
+    //   (+ 1 ...)   — wildcard: "..." matches any single subtree
+    //   fib         — matches a Variable named "fib"
     //
-    // The pattern is parsed as an S-expression. A Variable named "_" acts as
+    // The pattern is parsed as an S-expression. A Variable named "..." acts as
     // wildcard and matches any single node or subtree.
     primitives_.add("query:pattern", [this](const auto& a) {
         if (a.empty() || !is_string(a[0]) || !workspace_flat_ || !workspace_pool_)
@@ -2011,8 +2011,8 @@ void Evaluator::init_pair_primitives() {
         auto pr = aura::parser::parse_to_flat(string_heap_[idx], *pat_flat, *pat_pool);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) return make_void();
 
-        // Intern "_" in the pattern pool for wildcard matching
-        auto wildcard_sym = pat_pool->intern("_");
+        // Intern "..." in the pattern pool for wildcard matching
+        auto wildcard_sym = pat_pool->intern("...");
 
         // Recursive subtree matcher
         std::function<bool(aura::ast::NodeId, aura::ast::NodeId)> match_subtree;
@@ -2024,7 +2024,7 @@ void Evaluator::init_pair_primitives() {
             auto ws_node = workspace_flat_->get(ws_id);
             auto pat_node = pat_flat->get(pat_id);
 
-            // Wildcard "_" matches any single subtree
+            // Wildcard "..." matches any single subtree
             if (pat_node.tag == aura::ast::NodeTag::Variable && pat_node.sym_id == wildcard_sym)
                 return true;
 

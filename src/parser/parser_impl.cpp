@@ -70,6 +70,10 @@ NodeId FlatParser::parse_expr() {
         flat_.set_loc(id, tok.line, tok.column);
         return id;
     }
+    case TokenKind::Ellipsis: {
+        lexer_->consume();
+        return flat_.add_variable(pool_.intern("..."));
+    }
     case TokenKind::Identifier: {
         auto tok = lexer_->consume();
         auto id = flat_.add_variable(pool_.intern(std::string(tok.text)));
