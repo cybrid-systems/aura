@@ -171,6 +171,66 @@ int main(int argc, char* argv[]) {
                     continue;
                 }
 
+                // Module management (ArenaGroup)
+                if (type == "module") {
+                    auto action_it = cmd.find("action");
+                    auto name_it = cmd.find("name");
+                    if (action_it == cmd.end()) {
+                        std::println("{{\"status\":\"error\",\"msg\":\"missing action field\"}}");
+                        continue;
+                    }
+                    auto& action = action_it->second;
+
+                    if (action == "compile") {
+                        auto code_it = cmd.find("code");
+                        if (name_it == cmd.end() || code_it == cmd.end()) {
+                            std::println("{{\"status\":\"error\",\"msg\":\"missing name or code field\"}}");
+                            continue;
+                        }
+                        auto result = cs.compile_module(name_it->second, code_it->second);
+                        if (result) {
+                            std::println("{{\"status\":\"ok\",\"module\":\"{}\"}}",
+                                        json_escape(name_it->second));
+                        } else {
+                            std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
+                                        json_escape(result.error().message));
+                        }
+                    } else if (action == "unload") {
+                        if (name_it == cmd.end()) {
+                            std::println("{{\"status\":\"error\",\"msg\":\"missing name field\"}}");
+                            continue;
+                        }
+                        cs.unload_module(name_it->second);
+                        std::println("{{\"status\":\"ok\",\"unloaded\":\"{}\"}}",
+                                    json_escape(name_it->second));
+                    } else if (action == "list") {
+                        auto modules = cs.loaded_modules();
+                        std::println("{{\"status\":\"ok\",\"modules\":[");
+                        bool first = true;
+                        for (auto& m : modules) {
+                            if (!first) std::println(",");
+                            first = false;
+                            std::print("  \"{}\"", json_escape(m));
+                        }
+                        std::println("]}}");
+                    } else if (action == "stats") {
+                        auto stats = cs.module_memory_stats();
+                        std::println("{{\"status\":\"ok\",\"arenas\":[");
+                        bool first = true;
+                        for (auto& [name, s] : stats) {
+                            if (!first) std::println(",");
+                            first = false;
+                            std::print("  {{\"name\":\"{}\",\"used\":{},\"capacity\":{}}}",
+                                      json_escape(name), s.used, s.capacity);
+                        }
+                        std::println("]}}");
+                    } else {
+                        std::println("{{\"status\":\"error\",\"msg\":\"unknown action: {}\"}}",
+                                    json_escape(action));
+                    }
+                    continue;
+                }
+
                 // Look up the current session
                 auto& cs = sessions[active_session];
 

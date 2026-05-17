@@ -1,62 +1,104 @@
-# ASTArena + Compiler as a Service 集成方案
+# Compiler as a Service (CaaS) 集成方案
 
-## 架构总览
+## 架构总览（2026-05-18 更新）
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                  CompilerService                     │
-│  ┌──────────────┐  ┌──────────────┐  ┌───────────┐  │
-│  │   ASTArena    │  │   Parser     │  │ Evaluator │  │
-│  │  (pmr bump)   │──┤  (arena ref) │  │ (env +    │  │
-│  │  8MB backing  │  │              │  │  closure) │  │
-│  └──────┬───────┘  └──────────────┘  └─────┬─────┘  │
-│         │                                  │         │
-│         ▼                                  ▼         │
-│  ┌────────────────────────────────────────────────┐  │
-│  │            IR Pipeline (optional)               │  │
-│  │  LoweringPass → ComputeKind → Arity → Interp   │  │
-│  └────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                     CompilerService                           │
+│                                                               │
+│  ┌──────────────────────────────────────────────┐            │
+│  │               eval(input)                     │            │
+│  │   ┌──────────┐   ┌────────────┐              │            │
+│  │   │  parse    │──→│ macro-exp  │              │            │
+│  │   │ (FlatAST) │   │  (prepass) │              │            │
+│  │   └─────┬─────┘   └─────┬──────┘              │            │
+│  │         │               │                     │            │
+│  │         ▼               ▼                     │            │
+│  │   ┌────────────────────────────────────┐      │            │
+│  │   │ needs_tree_walker_fallback?         │      │            │
+│  │   ├── yes → Evaluator.eval_flat() ─────►│      │            │
+│  │   └── no  ──► IR Pipeline                │      │            │
+│  │              ├─ TypeCheckWrap (L2)       │      │            │
+│  │              ├─ (define?) → cache + eval │      │            │
+│  │              ├─ lower_to_ir_with_cache   │      │            │
+│  │              ├─ ComputeKindWrap          │      │            │
+│  │              ├─ ArityWrap                │      │            │
+│  │              ├─ ConstantFoldingWrap      │      │            │
+│  │              └─ IRInterpreter.execute()─►│      │            │
+│  └──────────────────────────────────────────┘      │            │
+│                                                     │            │
+│  ┌──────────────────────────────────────┐           │            │
+│  │   ArenaGroup（多模块内存管理）        │           │            │
+│  │   ├─ main_arena (REPL/默认)          │           │            │
+│  │   ├─ module_arena("lib/std") ≝ 8MB   │           │            │
+│  │   └─ module_arena("app")     ≝ 8MB   │           │            │
+│  └──────────────────────────────────────┘           │            │
+│                                                     │            │
+│  ┌──────────────────────────────────────┐           │            │
+│  │   ir_cache_（增量编译）               │           │            │
+│  │   ├─ "map"   → [IRFunction*]         │           │            │
+│  │   ├─ "foldl" → [IRFunction*]         │           │            │
+│  │   ├─ dep_graph_ (BFS 传递闭包)       │           │            │
+│  │   └─ function_sources_ (重编译源码)  │           │            │
+│  └──────────────────────────────────────┘           │            │
+└──────────────────────────────────────────────────────┘            │
          │
-         │ 每次请求：reset() → parse → eval → 返回结果
+         │  --serve JSON protocol (exec/define/mutate/rollback/session)
          ▼
-    main.cpp / REPL / ABF pipe / Compiler-as-a-Service
+    main.cpp / REPL / Agent
 ```
 
 ## 组件职责
 
-### ASTArena（pmr 内存池）
+### ASTArena（pmr 内存池 + SmallObjectPool）
 
 ```cpp
-// src/core/arena.ixx
+// src/core/arena.ixx (v3: SmallObjectPool)
 class ASTArena {
-    std::pmr::monotonic_buffer_resource resource_;  // bump alloc
-    std::vector<std::byte> buffer_;                 // 8MB backing
-    std::size_t bytes_allocated_;                   // 调试统计
-
-    template<typename T> T* create(args...);   // allocate + construct_at
-    void reset();                               // release all, O(1)
+    // 3-tier small-object pool (16/32/64 bytes, 3MB)
+    SmallObjectPool small_pool_;
+    // Main pmr monotonic_buffer_resource (8MB backing)
+    std::pmr::monotonic_buffer_resource resource_;
+    // Allocation path:
+    //   create<T>() → sizeof(T) ≤ 64 → SmallObjectPool
+    //               → else            → pmr monotonic buffer
 };
 ```
 
 **关键设计决策：**
-- 使用 `monotonic_buffer_resource`+ 自有 vector backing（无需依赖外部 allocator）
+- `monotonic_buffer_resource` + 自有 vector backing（无需依赖外部 allocator）
 - `null_memory_resource()` 为上游——不 fallback 到堆分配（避免碎片）
-- `reset()` = `release()` + 归零计数器，不释放 buffer（所以后续 `create()` 仍然可用）
-- 每个 `CompilerService` 实例持有一个 `ASTArena`，编译请求间复用
+- SmallObjectPool 3 层大小类（16/32/64 bytes）覆盖 90%+ AST 节点
+- `reset()` = 两级同时释放，O(1)
 
 ### CompilerService（会话生命周期）
 
 ```cpp
 // src/compiler/service.ixx
 class CompilerService {
-    ASTArena arena_;
-    Parser parser_;     // 引用 arena_
-    Evaluator evaluator_;  // 引用 arena_
+    ast::ASTArena arena_;           // 主 arena（REPL/单请求）
+    ast::ArenaGroup arena_group_;   // 多模块 arena 管理器
+    Evaluator evaluator_;
 
-    void reset();                 // 重置 arena（parser/evaluator 引用不变）
-    EvalResult eval(input);       // 树遍历模式
-    EvalResult eval_ir(input);    // IR 管线模式
+    void reset();                    // 重置主 arena
+    EvalResult eval(input);          // IR-first + fallback（统一入口）
+    EvalResult eval_ir(input);       // 纯 IR 管线（含 Pass Manager debug 输出）
+    std::string typecheck(input);    // L6 渐进类型检查
+
+    // 多模块
+    ast::ASTArena& module_arena(const std::string& name);
+    void reset_module(const std::string& name);
+
+    // 增量编译
+    EvalResult define_function(code);  // 定义 + 缓存 IR
+    EvalResult exec_with_cache(code);  // 带缓存执行
+    bool has_cached_function(name);
+    std::size_t cached_function_count();
+
+    // Mutation（EDSL）
+    void set_code(input);           // 加载持久 AST
+    MutationResult typed_mutate(code); // EDSL 变异
+    std::vector<MutationLogEntry> query_mutation_log(node);
 };
 ```
 
@@ -64,72 +106,154 @@ class CompilerService {
 
 ```
 1. cs.reset()            — 释放上次 AST 的全部内存（O(1)）
-2. cs.eval("(+ 1 2)")    — 在空 arena 上分配 AST → 求值
+2. cs.eval("(+ 1 2)")    — 空 arena 上分配 AST → 求值
 3. 返回结果              — arena 保留，等待下次请求
 ```
-
-对于 REPL 场景：循环 `reset → eval → 输出`，arena 自动复用。
 
 ## 多模块 / 增量编译模式
 
 ```
 ┌─────────────────────────────────────────────┐
-│           CompilerService Manager            │
+│           ArenaGroup                        │
 │                                              │
 │  ┌────────┐  ┌────────┐  ┌────────┐         │
 │  │ Module  │  │ Module │  │ Module │  ...    │
 │  │ Arena 1 │  │ Arena 2│  │ Arena 3│         │
 │  └────────┘  └────────┘  └────────┘         │
 │                                              │
-│  ModuleA.reset()   // 单独释放 module A      │
-│  ModuleB.create()  // module B 继续使用      │
+│  ArenaGroup::reset_module("core")            │
+│  ArenaGroup::module_arena("app")             │
 └─────────────────────────────────────────────┘
 ```
 
 每个模块独立 arena，支持：
 - 细粒度释放：只 reset 改动的模块
-- 并行编译：多 arena 安全
-- 持久化符号表：用 `std::pmr::vector` 从 arena 外部保留关键数据
+- 模块级 compile/unload
+- Per-module 内存统计
 
-## AI Agent 调用场景
-
-```cpp
-// Compiler as a Service — 持久进程 + pipe/UDS
-CompilerService cs;
-
-while (true) {
-    auto request = read_request(stdin);  // 从 Agent 收到编译请求
-    cs.reset();
-    auto result = cs.eval_ir(request.code);
-    auto diags = arity_checker.check(last_module);
-    write_response(stdout, {result, diags});
-    // arena 已 reset，准备下一请求
-}
-```
-
-## 内存对比
-
-| 指标 | 旧实现（vector bump） | 新实现（pmr monotonic） |
-|------|----------------------|------------------------|
-| 分配速度 | 指针偏移 | 指针偏移（同等）|
-| 对齐处理 | 手动 `(pos + align - 1) & ~(align - 1)` | 自动（传给 `allocate`） |
-| pmr 容器 | 不支持 | 原生支持 `pmr::vector/string/map` |
-| 释放 | 指针重置 | `release()` 等效 |
-| 安全性 | 直接 `construct_at` | 等效 |
-| 初始大小 | 64KB | 8MB（pmr 推荐） |
-
-## 文件变更清单
+## IR 管线（默认路径）
 
 ```
-NEW: src/compiler/service.ixx         — CompilerService
-MOD: src/core/arena.ixx               — pmr-based arena
-MOD: src/main.cpp                      — 使用 CompilerService
-NEW: docs/caas_integration.md          — 本文档
+eval(input)
+  │
+  ├─ parse → FlatAST
+  ├─ macro_expand_all (prepass)
+  ├─ needs_tree_walker_fallback?
+  │   (EDSL / import / special form / unknown var)
+  │
+  ├── yes ──► Evaluator.eval_flat()
+  │
+  └── no  ──► TypeCheckWrap (Level 2, non-fatal)
+               ├─ (define …) ──► cache_define() → IR cache → void
+               └─ expression ──► lower_to_ir_with_cache()
+                                  ├─ ComputeKindWrap
+                                  ├─ ArityWrap
+                                  ├─ ConstantFoldingWrap
+                                  └─ IRInterpreter.execute()
 ```
+
+### Fallback 情况
+
+| 触发条件 | 原因 |
+|----------|------|
+| `import`/`use`/`require` | 环境绑定副作用（IR 无法复制） |
+| EDSL `query:`/`mutate:` | 需要求值器内部状态 |
+| `try`/`catch`/`when`/`unless` | 没有对应 IR 指令 |
+| 未缓存的变量引用 | 运行时模块导入 |
+
+## 增量编译
+
+### 函数级缓存
+
+```
+cache_define(source, flat, pool, root, name)
+  │
+  ├─ TypeCheckWrap (Level 2, warning only)
+  ├─ lower_to_ir_with_cache(flat, pool, arena, ir_cache, &hits)
+  │   └─ 命中缓存函数时：inline 已编译的 IR，不重复 lowering
+  ├─ per-function pass: ComputeKind + ConstantFold
+  ├─ ir_cache_[name] = bundle of IRFunction[]
+  ├─ ir_cache_bridge_[name] = ClosureBridgeData[]
+  ├─ function_sources_[name] = raw source
+  └─ record_dependency(name, each hit)
+```
+
+### 依赖追踪
+
+```
+dep_graph_:
+  "foldl"  → { calls: [],            called_by: ["sum", "mean"] }
+  "sum"    → { calls: ["foldl"],     called_by: ["stats"] }
+  "mean"   → { calls: ["foldl"],     called_by: ["stats"] }
+  "stats"  → { calls: ["sum","mean"], called_by: [] }
+
+redefine("foldl"):
+  BFS: foldl → sum → mean → stats
+  → re-lower: sum, mean, stats (with updated foldl cache)
+```
+
+## --serve JSON 协议
+
+常驻进程，每行一个 JSON 请求/响应，AI Agent 通过 stdin/stdout 交互。
+
+### 支持的命令
+
+| 命令 | 参数 | 说明 |
+|------|------|------|
+| `exec` | `code` | 计算表达式，返回结果 |
+| `define` | `code` | 定义函数（缓存 IR），返回 |
+| `mutate` | `op`, `node`, `value` | EDSL 类型变异 |
+| `rollback` | `id` | 撤销变异 |
+| `mutation-log` | `node` | 查询变异历史 |
+| `session` | `name` | 多会话切换/创建 |
+
+### 示例
+
+```
+→ {"cmd":"define","code":"(define (foldl f acc lst) ...)"}
+← {"status":"ok","result":"#<void>"}
+
+→ {"cmd":"exec","code":"(foldl + 0 (list 1 2 3))"}
+← {"status":"ok","result":"6"}
+```
+
+## 实现状态（2026-05-18）
+
+| 组件 | 状态 | 位置 | 备注 |
+|------|------|------|------|
+| ASTArena (pmr + SmallObjectPool) | ✅ v3 | `arena.ixx` | 16/32/64 三级，3MB 小对象池 |
+| CompilerService | ✅ v2 | `service.ixx` | eval/define/mutate/typecheck |
+| eval() IR-first + fallback | ✅ | `service.ixx` | 统一入口，自动降级 |
+| eval_ir() 含 Pass Manager | ✅ | `service.ixx` | 纯 IR 管线 + debug 输出 |
+| --serve JSON 协议 | ✅ v2 | `main.cpp` | exec/define/mutate/rollback/session |
+| 多会话 (multi-session) | ✅ | `main.cpp` | `{"cmd":"session","name":"new:proj"}` |
+| ArenaGroup 基础设施 | ✅ v1 | `arena.ixx` | get-or-create / reset / stats |
+| ArenaGroup 集成到 Service | 🟡 | `service.ixx` | API 暴露但 eval 路径未使用 |
+| 增量编译 (函数级) | ✅ v1 | `service.ixx` | cache_define + dep_graph + invalidate |
+| 增量编译 (模块级) | 🟡 | `service.ixx` | cache_module 存在但无模块 dirty 标记 |
+| 磁盘缓存 (mmap) | 🟡 | `cache.ixx` | write_cache/open_cache 存在但未启用 |
+| Level 2 类型检查 | ✅ | `pass_manager.ixx` | TypeCheckWrap pass (non-fatal warnings) |
+| 函数热替换 + 依赖追踪 | ✅ | `service.ixx` | invalidate_function BFS re-lower |
+| EDSL mutation | ✅ | `evaluator.ixx` | set-code/query/mutate 15+ primitives |
+| IR 覆盖 | ✅ | `ir.ixx` | 算术、比较、if、let、lambda、pair/quote |
+| IR 管线默认启用 | ✅ | `service.ixx` | eval() 统一 IR-first |
 
 ## 后续步骤
 
-1. CompilerService 增加 `--serve` 模式（UDS pipe 长连接）
-2. ABF deserializer 集成到 CompilerService（`eval_abf()`）
-3. 多 module arena 管理器
-4. Pass Manager 注册到 CompilerService
+1. **ArenaGroup 集成到 eval 路径** — `compile_module()` 使用模块级 arena
+2. **模块级增量编译** — dirty 标记 + cache_module + 按模块重编
+3. **磁盘缓存启用** — 通过 mmap 缓存 FlatAST + IRModule
+
+## 文件清单
+
+```
+src/core/arena.ixx               — ASTArena + SmallObjectPool + ArenaGroup
+src/compiler/service.ixx         — CompilerService (eval/define/mutate/session)
+src/compiler/cache.ixx           — MappedCache + write_cache/open_cache
+src/compiler/pass_manager.ixx    — ComputeKind/Arity/ConstFold/TypeCheckWrap
+src/compiler/ir.ixx              — IR opcodes + IRModule + IRInterpreter
+src/compiler/lowering.ixx        — Expr → IR lowering
+src/compiler/evaluator.ixx       — Tree-walker Evaluator
+src/main.cpp                     — CLI + --serve
+docs/caas_integration.md         — 本文档
+```
