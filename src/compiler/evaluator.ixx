@@ -94,6 +94,10 @@ private:
     Env* copy_env(const Env& env);
     void init_pair_primitives();
     void build_primitive_slots();
+    // Load a module file, return module object (or void on failure)
+    types::EvalValue load_module_file(const std::string& path);
+    // Resolve a module path (supports AURA_PATH, .aura extension)
+    std::string resolve_module_path(const std::string& path) const;
     Env top_; Primitives primitives_; ast::ASTArena* arena_=nullptr;
     ast::FlatAST* current_flat_ = nullptr;
     ast::StringPool* current_pool_ = nullptr;
@@ -102,7 +106,10 @@ private:
     void* type_registry_ = nullptr;  // points to aura::core::TypeRegistry
     std::unordered_map<ClosureId,Closure> closures_;
     std::unordered_map<std::string, MacroDef> macros_;
-    std::unordered_set<std::string> loaded_modules_;
+    std::vector<Env> modules_;  // module objects (indexed by ModuleRef.index)
+    std::unordered_map<std::string, std::uint64_t> module_cache_;  // path → index
+    std::unordered_set<std::string> loading_stack_;  // circular dep detection
+    std::vector<std::string> module_names_;  // display names for modules
     std::vector<types::EvalValue> cells_;
     std::vector<Pair> pairs_;
     std::vector<std::string> string_heap_;
@@ -177,6 +184,7 @@ export inline std::string format_value(const types::EvalValue& v, const std::vec
         }
         return "<primitive>";
     }
+    if (types::is_module(v)) return "<module>";
     return "<unknown>";
 }
 

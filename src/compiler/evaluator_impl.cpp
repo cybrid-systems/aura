@@ -1175,31 +1175,57 @@ void Evaluator::init_pair_primitives() {
         return make_int(f.good() ? 1 : 0);
     });
 
+    // ═══════════════════════════════════════════════════════════════
+    // Module primitives (Phase 1: module objects)
+    // ═══════════════════════════════════════════════════════════════
+
+    // (module? v) — Check if value is a module object
+    primitives_.add("module?", [](const auto& a) {
+        return make_bool(!a.empty() && is_module(a[0]));
+    });
+
+    // (module-get mod name) — Get a binding from a module by symbol name
+    primitives_.add("module-get", [this](const auto& a) {
+        if (a.size() < 2 || !is_module(a[0]) || !is_string(a[1]))
+            return make_void();
+        auto mod_idx = as_module_idx(a[0]);
+        auto name_idx = as_string_idx(a[1]);
+        if (mod_idx >= modules_.size() || name_idx >= string_heap_.size())
+            return make_void();
+        auto result = modules_[mod_idx].lookup(string_heap_[name_idx]);
+        return result ? *result : make_void();
+    });
+
+    // (module-keys mod) — List all exported binding names from a module
+    primitives_.add("module-keys", [this](const auto& a) {
+        if (a.empty() || !is_module(a[0])) return make_void();
+        auto mod_idx = as_module_idx(a[0]);
+        if (mod_idx >= modules_.size()) return make_void();
+        EvalValue result = make_void();
+        auto& bindings = modules_[mod_idx].bindings();
+        for (auto it = bindings.rbegin(); it != bindings.rend(); ++it) {
+            auto sidx = string_heap_.size();
+            string_heap_.push_back(it->first);
+            auto pid = pairs_.size();
+            pairs_.push_back({make_string(sidx), result});
+            result = make_pair(pid);
+        }
+        return result;
+    });
+
+    // (use path) — Load module, return module object (no env injection)
+    primitives_.add("use", [this](const auto& a) {
+        if (a.empty() || !is_string(a[0])) return make_void();
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size()) return make_void();
+        return load_module_file(string_heap_[idx]);
+    });
+
     primitives_.add("load-module", [this](const auto& a) {
         if (a.empty() || !is_string(a[0])) return make_void();
         auto idx = as_string_idx(a[0]);
         if (idx >= string_heap_.size()) return make_void();
-        auto& path = string_heap_[idx];
-
-        // Read file content
-        std::ifstream f(path);
-        if (!f) return make_void();
-        std::string content((std::istreambuf_iterator<char>(f)), {});
-        if (content.empty()) return make_void();
-
-        // Parse in arena — arena-allocate so closures outlive this call
-        if (!arena_) return make_void();
-        auto alloc = arena_->allocator();
-        auto* pool_ptr = arena_->create<aura::ast::StringPool>(alloc);
-        auto* flat_ptr = arena_->create<aura::ast::FlatAST>(alloc);
-        auto pr = aura::parser::parse_to_flat(content, *flat_ptr, *pool_ptr);
-        if (!pr.success || pr.root == aura::ast::NULL_NODE) return make_void();
-        flat_ptr->root = pr.root;
-
-        // Evaluate in current top env
-        auto result = eval_flat(*flat_ptr, *pool_ptr, flat_ptr->root, top_env());
-        if (!result) return make_void();
-        return *result;
+        return load_module_file(string_heap_[idx]);
     });
 
     primitives_.add("import", [this](const auto& a) {
@@ -1208,119 +1234,19 @@ void Evaluator::init_pair_primitives() {
         if (idx >= string_heap_.size()) return make_void();
         auto& path = string_heap_[idx];
 
-        // ── Resolve path ────────────────────────────────────────────
-        // Strategy:
-        //   1. If absolute, try it directly.
-        //   2. If relative, try CWD/path first, then each AURA_PATH dir.
-        //   3. At each location, try the path as-is and with ".aura" appended.
-        //   4. First hit wins.
+        // Load module (cached, isolated env)
+        auto mod_val = load_module_file(path);
+        if (!is_module(mod_val)) return make_void();
+        auto mod_idx = as_module_idx(mod_val);
+        if (mod_idx >= modules_.size()) return make_void();
 
-        auto try_load = [&](const std::string& full) -> std::optional<std::string> {
-            for (auto candidate : {full, full + ".aura"}) {
-                std::ifstream probe(candidate);
-                if (probe) {
-                    probe.close();
-                    // Canonicalize for dedup
-                    char real[4096];
-                    if (::realpath(candidate.c_str(), real))
-                        return std::string(real);
-                    return candidate;
-                }
-            }
-            return std::nullopt;
-        };
-
-        std::string resolved;
-        if (!path.empty() && path[0] == '/') {
-            // Absolute path — try directly
-            auto hit = try_load(path);
-            if (hit) resolved = *hit;
-        } else {
-            // Relative / bare name — search path
-            // a) CWD first
-            {
-                char cwd_buf[4096];
-                if (::getcwd(cwd_buf, sizeof(cwd_buf))) {
-                    auto hit = try_load(std::string(cwd_buf) + "/" + path);
-                    if (hit) resolved = *hit;
-                }
-            }
-
-            // b) AURA_PATH directories
-            if (resolved.empty()) {
-                auto* env = ::getenv("AURA_PATH");
-                if (env) {
-                    std::string aura_path(env);
-                    std::size_t start = 0, end;
-                    while ((end = aura_path.find(':', start)) != std::string::npos) {
-                        auto dir = aura_path.substr(start, end - start);
-                        if (!dir.empty()) {
-                            auto hit = try_load(dir + "/" + path);
-                            if (hit) { resolved = *hit; break; }
-                        }
-                        start = end + 1;
-                    }
-                    // Last component
-                    if (resolved.empty() && start < aura_path.size()) {
-                        auto dir = aura_path.substr(start);
-                        if (!dir.empty()) {
-                            auto hit = try_load(dir + "/" + path);
-                            if (hit) resolved = *hit;
-                        }
-                    }
-                }
-            }
+        // Backward-compat: inject all bindings into top_ env
+        auto& mod_env = modules_[mod_idx];
+        for (auto& [name, val] : mod_env.bindings()) {
+            top_.bind(name, val);
         }
-
-        // Not found anywhere — report error
-        if (resolved.empty()) {
-            std::string err = "import: cannot find module '" + path + "'";
-            auto* env = ::getenv("AURA_PATH");
-            if (env) {
-                err += "\n  searched in: CWD";
-                std::string aura_path(env);
-                std::size_t start = 0, end;
-                while ((end = aura_path.find(':', start)) != std::string::npos) {
-                    auto dir = aura_path.substr(start, end - start);
-                    if (!dir.empty()) err += "\n    " + dir;
-                    start = end + 1;
-                }
-                if (start < aura_path.size()) {
-                    auto dir = aura_path.substr(start);
-                    if (!dir.empty()) err += "\n    " + dir;
-                }
-            }
-            std::println(std::cerr, "error: {}", err);
-            return make_void();
-        }
-
-        // Dedup: skip if already loaded
-        if (loaded_modules_.count(resolved)) return make_void();
-        loaded_modules_.insert(resolved);
-
-        // Read file
-        std::ifstream f(resolved);
-        if (!f) return make_void();
-        std::string content((std::istreambuf_iterator<char>(f)), {});
-        if (content.empty()) return make_void();
-
-        // Parse + eval — arena-allocate so closures outlive this call
-        if (!arena_) return make_void();
-        auto alloc = arena_->allocator();
-        auto* pool_ptr = arena_->create<aura::ast::StringPool>(alloc);
-        auto* flat_ptr = arena_->create<aura::ast::FlatAST>(alloc);
-        auto pr = aura::parser::parse_to_flat(content, *flat_ptr, *pool_ptr);
-        if (!pr.success || pr.root == aura::ast::NULL_NODE) return make_void();
-        flat_ptr->root = pr.root;
-
-        auto result = eval_flat(*flat_ptr, *pool_ptr, flat_ptr->root, top_env());
-        if (!result) return make_void();
-        return *result;
+        return make_bool(true);
     });
-
-    // ── Numeric extension primitives ──────────────────────────────
-
-    // modulo: (modulo n m) → remainder with sign of divisor (non-negative when m > 0)
     primitives_.add("modulo", [this](const auto& a) {
         if (a.size() < 2) return make_int(0);
         auto divisor = coerce_to_int(a[1], &string_heap_);
@@ -2336,6 +2262,119 @@ std::size_t Primitives::slot_for_name(const std::string& name) const {
 
 void Evaluator::build_primitive_slots() {
     // No longer needed — Primitives manages ordering internally
+}
+
+// ── Module path resolution ──────────────────────────────────
+std::string Evaluator::resolve_module_path(const std::string& path) const {
+    auto try_load = [](const std::string& full) -> std::optional<std::string> {
+        for (auto candidate : {full, full + ".aura"}) {
+            std::ifstream probe(candidate);
+            if (probe) {
+                probe.close();
+                char real[4096];
+                if (::realpath(candidate.c_str(), real))
+                    return std::string(real);
+                return candidate;
+            }
+        }
+        return std::nullopt;
+    };
+
+    if (!path.empty() && path[0] == '/') {
+        auto hit = try_load(path);
+        if (hit) return *hit;
+        return {};
+    }
+
+    // Search CWD first
+    {
+        char cwd_buf[4096];
+        if (::getcwd(cwd_buf, sizeof(cwd_buf))) {
+            auto hit = try_load(std::string(cwd_buf) + "/" + path);
+            if (hit) return *hit;
+        }
+    }
+
+    // Search AURA_PATH
+    auto* env = ::getenv("AURA_PATH");
+    if (env) {
+        std::string aura_path(env);
+        std::size_t start = 0, end;
+        while ((end = aura_path.find(':', start)) != std::string::npos) {
+            auto dir = aura_path.substr(start, end - start);
+            if (!dir.empty()) {
+                auto hit = try_load(dir + "/" + path);
+                if (hit) return *hit;
+            }
+            start = end + 1;
+        }
+        if (start < aura_path.size()) {
+            auto dir = aura_path.substr(start);
+            if (!dir.empty()) {
+                auto hit = try_load(dir + "/" + path);
+                if (hit) return *hit;
+            }
+        }
+    }
+    return {};
+}
+
+// ── Load module file, return module object ────────────────
+types::EvalValue Evaluator::load_module_file(const std::string& path) {
+    // 1. Resolve path
+    auto resolved = resolve_module_path(path);
+    if (resolved.empty()) return types::make_void();
+
+    // 2. Check cache
+    auto cache_it = module_cache_.find(resolved);
+    if (cache_it != module_cache_.end()) {
+        return types::make_module(cache_it->second);
+    }
+
+    // 3. Circular dependency detection
+    if (loading_stack_.count(resolved)) {
+        auto eidx = string_heap_.size();
+        string_heap_.push_back("circular dependency: " + resolved);
+        return types::make_void();
+    }
+    loading_stack_.insert(resolved);
+
+    // 4. Read file
+    std::ifstream f(resolved);
+    if (!f) { loading_stack_.erase(resolved); return types::make_void(); }
+    std::string content((std::istreambuf_iterator<char>(f)), {});
+    if (content.empty()) { loading_stack_.erase(resolved); return types::make_void(); }
+
+    // 5. Parse
+    if (!arena_) { loading_stack_.erase(resolved); return types::make_void(); }
+    auto alloc = arena_->allocator();
+    auto* pool_ptr = arena_->create<aura::ast::StringPool>(alloc);
+    auto* flat_ptr = arena_->create<aura::ast::FlatAST>(alloc);
+    auto pr = aura::parser::parse_to_flat(content, *flat_ptr, *pool_ptr);
+    if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+        loading_stack_.erase(resolved);
+        return types::make_void();
+    }
+    flat_ptr->root = pr.root;
+
+    // 6. Create isolated module env (child of top_ for primitive access)
+    Env mod_env(&top_);
+    mod_env.set_primitives(&primitives_);
+    mod_env.set_cells(&cells_);
+
+    // 7. Evaluate module in its own env
+    auto expanded = aura::compiler::macro_expand_all(*flat_ptr, *pool_ptr, flat_ptr->root);
+    auto result = eval_flat(*flat_ptr, *pool_ptr, expanded, mod_env);
+
+    // Store module
+    auto mod_idx = modules_.size();
+    modules_.push_back(std::move(mod_env));
+    module_cache_[resolved] = mod_idx;
+    string_heap_.push_back(resolved);
+    module_names_.push_back(resolved);
+
+    loading_stack_.erase(resolved);
+    return types::make_module(mod_idx);
 }
 
 Env* Evaluator::copy_env(const Env& e) {
