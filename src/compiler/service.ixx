@@ -27,6 +27,9 @@ export class CompilerService {
 public:
     CompilerService() {
         evaluator_.set_arena(&arena_);
+        // Module caching callback disabled — bridge data lifecycle TBD.
+        // Python stdlib_inliner.py handles imports for Agent code.
+        // To enable: evaluator_.set_module_loaded_callback(...)
     }
 
     void reset() { arena_.reset(); }
@@ -195,6 +198,7 @@ public:
             for (std::size_t i = 0; i < snap->func_params.size() && i < args.size(); ++i)
                 ne.bind(snap->func_params[i], args[i]);
 
+            // Try fast path: bridge data from current module
             if (snap->func_id < last_ir_mod_->closure_bridge.size()) {
                 auto& bd = last_ir_mod_->closure_bridge[snap->func_id];
                 if (bd.flat && bd.pool) {
@@ -203,6 +207,26 @@ public:
                         *const_cast<ast::StringPool*>(bd.pool),
                         bd.body_id, ne);
                     if (r) return *r;
+                }
+            }
+
+            // Fallback: re-parse from function_sources_ (survives arena resets)
+            auto func_name = snap->func_name;
+            auto src_it = function_sources_.find(func_name);
+            if (src_it != function_sources_.end()) {
+                auto fallback_alloc = arena_.allocator();
+                auto* f_pool = arena_.create<aura::ast::StringPool>(fallback_alloc);
+                auto* f_flat = arena_.create<aura::ast::FlatAST>(fallback_alloc);
+                auto f_pr = aura::parser::parse_to_flat(src_it->second, *f_flat, *f_pool);
+                if (f_pr.success && f_pr.root != aura::ast::NULL_NODE) {
+                    f_flat->root = f_pr.root;
+                    // The source is a (define name body) — body is child 0
+                    auto define_v = f_flat->get(f_pr.root);
+                    if (define_v.tag == aura::ast::NodeTag::Define && !define_v.children.empty()) {
+                        auto r = evaluator_.eval_flat(
+                            *f_flat, *f_pool, define_v.child(0), ne);
+                        if (r) return *r;
+                    }
                 }
             }
             return std::nullopt;
@@ -541,9 +565,10 @@ public:
         }
 
         auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
+        auto cache_bridge_ptr = ir_cache_bridge_.empty() ? nullptr : &ir_cache_bridge_;
         std::vector<std::string> cache_hits;
         auto ir_mod = aura::compiler::lower_to_ir_with_cache(
-            flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives());
+            flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), cache_bridge_ptr);
 
         // Run passes per-function on the new function bundle
         {
@@ -558,12 +583,19 @@ public:
 
         // Cache all non-entry functions as a bundle (preserving func id ordering)
         std::vector<aura::ir::IRFunction> bundle;
+        std::vector<aura::ir::ClosureBridgeData> bridge_bundle;
         for (auto& func : ir_mod.functions) {
             if (func.id != ir_mod.entry_function_id) {
                 bundle.push_back(std::move(func));
+                // Also save bridge data
+                if (func.id < ir_mod.closure_bridge.size())
+                    bridge_bundle.push_back(ir_mod.closure_bridge[func.id]);
+                else
+                    bridge_bundle.emplace_back();
             }
         }
         ir_cache_[name_str] = std::move(bundle);
+        ir_cache_bridge_[name_str] = std::move(bridge_bundle);
         function_sources_[name_str] = std::string(source);
 
         for (auto& called_name : cache_hits) {
@@ -767,6 +799,9 @@ private:
     // When inlined, all functions are added to the current module in order,
     // preserving func id references across cached calls.
     std::unordered_map<std::string, std::vector<aura::ir::IRFunction>> ir_cache_;
+
+    // Bridge data cached alongside ir_cache_ (same keys, parallel indices).
+    std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>> ir_cache_bridge_;
 
     // Source code for each cached function, used for re-lowering on dependency changes.
     std::unordered_map<std::string, std::string> function_sources_;
