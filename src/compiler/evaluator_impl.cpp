@@ -1108,16 +1108,16 @@ void Evaluator::init_pair_primitives() {
         return make_string(sid);
     });
     primitives_.add("display", [this](const auto& a) {
-        if (a.empty()) return make_int(1);
+        if (a.empty()) return make_void();
         io_print_val(a[0], &string_heap_, &pairs_, false);
-        return make_int(1);
+        return make_void();
     });
     primitives_.add("write", [this](const auto& a) -> EvalValue {
-        if (a.empty()) return make_int(1);
+        if (a.empty()) return make_void();
         io_print_val(a[0], &string_heap_, &pairs_, true);
-        return make_int(1);
+        return make_void();
     });
-    primitives_.add("newline", [](const auto&) { std::fprintf(stderr, "\n"); return make_int(1); });
+    primitives_.add("newline", [](const auto&) { std::fprintf(stderr, "\n"); return make_void(); });
     // (error msg) — Create an error value (no longer throws C++ exception)
     primitives_.add("error", [this](const auto& a) -> EvalValue {
         // Ensure error_values_[0] always exists for default errors

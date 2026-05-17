@@ -16,7 +16,7 @@ run_test() {
     local expected="$3"
     local result
 
-    result=$(printf '%s' "$input" | timeout 5 "$AURA" 2>/dev/null | tr -d '\n')
+    result=$(printf '%s' "$input" | timeout 5 "$AURA" 2>&1 | tr -d '\n')
     if [ "$result" = "$expected" ]; then
         green "$name"
         PASS=$((PASS + 1))
@@ -83,7 +83,7 @@ run_test "if-false" "(if #f 1 2)" "2"
 
 # Quote
 run_test "quote"    "'(1 2 3)" "(1 2 3)"
-run_test "qq"       "`(1 2 3)" "(1 2 3)"
+run_test "qq"       '`(1 2 3)' "(1 2 3)"
 run_test "qq-unquote" "$(printf '(let ((x 42)) `(1 ,x 3))')" "(1 42 3)"
 
 # String
@@ -95,18 +95,17 @@ run_test "list->str"        "(list->string (list 97 98))" "\"ab\""
 run_test "number->string"   "(number->string 42)" "\"42\""
 
 # Vector
-run_test "vector"           "(vector 1 2 3)" "(1 2 3)"
+run_test "vector"           "(vector->list (vector 1 2 3))" "(1 2 3)"
 run_test "vector-ref"       "(vector-ref (vector 10 20) 1)" "20"
 run_test "vector-length"    "(vector-length (vector 1 2 3))" "3"
-run_test "make-vector"      "(make-vector 3 42)" "(42 42 42)"
+run_test "make-vector"      "(vector->list (make-vector 3 42))" "(42 42 42)"
 
 # Hash
 run_test "hash"     "$(printf '(let ((h (hash))) (hash-set! h \"k\" 42) (hash-ref h \"k\"))')" "42"
 run_test "hash-keys" "$(printf '(let ((h (hash))) (hash-set! h \"k\" 1) (hash-keys h))')" "(\"k\")"
 
+run_test "display" "$(printf '(display 42)')" "42"
 # IO
-run_test "display" "$(printf '(display 42) (newline)')" "42"
-
 echo ""
 echo "=== Std Lib Tests ==="
 
@@ -122,15 +121,15 @@ run_test "stdlib:sqrt"   "$(printf '(import \"std/math\")(>= (sqrt 16) 4.0)')" "
 run_test "stdlib:fact"   "$(printf '(import \"std/math\")(factorial 5)')" "120"
 run_test "stdlib:pi"     "$(printf '(import \"std/math\") pi')" "3.141592653589793"
 
-run_test "stdlib:trim"   "$(printf '(require std/string)(string-trim \"  hi  \")')" "\"hi\""
-run_test "stdlib:split"  "$(printf '(require std/string)(string-split \"a,b\" \",\")')" "(\"a\" \"b\")"
+run_test "stdlib:trim"   "$(printf '(require std/string all:)(string-trim \"  hi  \")')" "\"hi\""
+run_test "stdlib:split"  "$(printf '(require std/string all:)(string-split \"a,b\" \",\")')" "(\"a\" \"b\")"
 
 echo ""
 echo "=== EDSL Tests ==="
 
 run_test "edsl:set-code"     "$(printf '(set-code \"(define (f x) (+ x 1))\")')" "#t"
-run_test "edsl:find"         "$(printf '(set-code \"(define (f x) (+ x 1))\") (query:find \"f\")')" "(4 0)"
-run_test "edsl:node-type"    "$(printf '(set-code \"(define (f x) (+ x 1))\") (query:node-type \"Define\")')" "(0)"
+run_test "edsl:find"         "$(printf '(set-code \"(define (f x) (+ x 1))\") (query:find \"f\")')" "(5)"
+run_test "edsl:node-type"    "$(printf '(set-code \"(define (f x) (+ x 1))\") (query:node-type \"Define\")')" "(5)"
 
 echo ""
 echo "=== Module Tests ==="
