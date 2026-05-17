@@ -2578,6 +2578,13 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
         }
         return tail;
     }
+    case ast::NodeTag::Pair: {
+        auto car = ast_to_data(flat, pool, v.child(0));
+        auto cdr = ast_to_data(flat, pool, v.child(1));
+        auto pair_idx = pairs_.size();
+        pairs_.push_back(Pair{std::move(car), std::move(cdr)});
+        return make_pair(pair_idx);
+    }
     default:
         return make_void();
     }

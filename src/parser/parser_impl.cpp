@@ -180,6 +180,22 @@ NodeId FlatParser::parse_list() {
 
     std::vector<NodeId> args;
     while (lexer_->peek().kind != TokenKind::RParen && !lexer_->eof()) {
+        // Dotted pair: (a . b) or (a b ... . c)
+        if (lexer_->peek().kind == TokenKind::Dot) {
+            lexer_->consume(); // consume '.'
+            auto cdr = parse_expr();
+            if (cdr == NULL_NODE) { skip_rparen(); return NULL_NODE; }
+            if (lexer_->peek().kind != TokenKind::RParen) { skip_rparen(); return NULL_NODE; }
+            lexer_->consume(); // ')'
+
+            // Build cons chain: cons(func, cons(arg1, ..., cons(argN, cdr)))
+            NodeId tail = cdr;
+            for (auto it = args.rbegin(); it != args.rend(); ++it)
+                tail = flat_.add_pair(*it, tail);
+            tail = flat_.add_pair(func, tail);
+            flat_.set_loc(tail, tok.line, tok.column);
+            return tail;
+        }
         auto a = parse_expr();
         if (a != NULL_NODE) args.push_back(a);
         else break;
@@ -283,7 +299,16 @@ NodeId FlatParser::parse_let(bool rec) {
     
     auto body = parse_expr();
     if (body == NULL_NODE) return NULL_NODE;
+    // Collect additional body expressions until closing paren
+    std::vector<NodeId> body_exprs = {body};
+    while (lexer_->peek().kind != TokenKind::RParen && !lexer_->eof()) {
+        auto be = parse_expr();
+        if (be == NULL_NODE) break;
+        body_exprs.push_back(be);
+    }
     if (lexer_->peek().kind == TokenKind::RParen) lexer_->consume();
+    if (body_exprs.size() > 1)
+        body = flat_.add_begin(body_exprs);
     
     // Wrap bindings: innermost first (so outer wraps inner)
     for (auto it = bs.rbegin(); it != bs.rend(); ++it) {
@@ -427,6 +452,12 @@ NodeId FlatParser::parse_val() {
         return flat_.add_variable(pool_.intern(std::string(lexer_->consume().text)));
     case TokenKind::LParen:
         lexer_->consume(); return parse_list();
+    case TokenKind::Quote: {
+        lexer_->consume();
+        auto quoted = parse_val();
+        if (quoted == NULL_NODE) return NULL_NODE;
+        return flat_.add_quote(quoted);
+    }
     default:
         return NULL_NODE;
     }

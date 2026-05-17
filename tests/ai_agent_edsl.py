@@ -22,77 +22,50 @@ MAX_ROUNDS = 20
 
 SYSTEM_PROMPT = build_system_prompt() + """
 
-## WORKSPACE + QUERY + MUTATE (EDSL)
+## WORKSPACE + EDSL (Phase 2: precise fixes)
 
-**两阶段工作流:**
+Two-phase workflow:
 
-### Phase 1: 写完整程序 (exec)
-先用普通 Aura 代码写完整程序，快速跑通。
+### Phase 1 (exec)
+Write complete Aura code and run it. Get it working first.
 
-### Phase 2: 精确修复 (mutate)
-当程序基本正确但有 bug 时，**不要重写整个函数**。改用 EDSL 精准修改：
+### Phase 2 (set-code + query + mutate)
+**ONLY** when code compiles but needs a small fix: lock into workspace and mutate.
 
-1. `set-code "当前程序"` — 锁定到工作区（节点 ID 稳定）
-2. `query:find / children / node-type` — 定位目标节点
-3. `mutate:set-body / replace-value / insert-child` — 精确改一个点
-4. `typecheck-current + eval-current` — 验证
-
-### 所有原语
-
-**Query** (必须在 set-code 后才能用):
 ```
-(query:find "name")          → (1 5 12)     ; 按名称查找节点
-(query:children node-id)      → (4 5 6)      ; 获取子节点 ID
-(query:node node-id)          → (3 "fib" 3)  ; (tag name/val children_count)
-(query:calls "fib")           → (8 15 22)    ; 查找函数调用点
-(query:parent node-id)        → (3)          ; 查找父节点
-(query:siblings node-id)      → (4 6)        ; 查找兄弟节点
-(query:pattern expr)          → (12 18)      ; 结构模式匹配
-(query:node-type "Call")      → (0 3 8 15)   ; 按节点类型过滤
+(set-code "the current program source")  ; Lock code, node IDs become stable
+(query:find "func-name")                  ; Find definition node IDs
+(query:children 5)                         ; See children of node 5
+(mutate:set-body "func-name" "new body")  ; Replace function body (keep signature)
+(mutate:rebind "func-name" "new def")     ; Replace entire function definition
+(mutate:replace-value 3 "42")             ; Replace literal value at node 3
+(typecheck-current)                        ; Run type checker
+(eval-current)                             ; Run the workspace and test
 ```
 
-**Mutate** (必须在 set-code 后才能用):
-```
-(mutate:rebind "name" new-code)             ; 替换整个函数定义
-(mutate:set-body "name" new-body-code)      ; 替换函数体（保留签名）
-(mutate:remove-node node-id)                ; 删除节点
-(mutate:insert-child parent pos child-code)  ; 插入子节点（返回新节点 ID）
-(mutate:replace-value node-id new-val)      ; 替换值
-(mutate:replace-type node-id new-type)      ; 替换类型注解
-(mutate:record-patch node-id op summary)    ; 记录操作
-```
+### EDSL Example: Change + to * in add
 
-**验证** (mutate 后用):
-```
-(typecheck-current)  ; 增量类型检查
-(eval-current)       ; 执行当前工作区
-```
-
-### EDSL 示例: 把 add 函数的 + 换成 *
-
-第一轮写程序:
-```
+Round 1 (exec - write):
+```lisp
 (define (add x y) (+ x y))
 ```
 
-第二轮用 EDSL 精确修改:
-```
-(set-code ")  ; 锁定代码到工作区
-(query:find "add") → (5)           ; Define 在节点 5
-(query:children 3) → (0 1 2)       ; (+ x y) 的 3 个子节点
-(mutate:replace-value 0 "*" "+"→"*")
+Round 2 (mutate - fix):
+```lisp
+(set-code "(define (add x y) (+ x y))")
+(query:find "add")       ; returns (5) — Define is node 5
+(query:children 5)        ; (0 1 2) = (name args body)
+(mutate:replace-value 2 "*" "plus→times")
 (typecheck-current)
 (eval-current)
-(add 1 2) → 2                      ; 验证: (* 1 2) = 2
+(add 1 2)                 ; now returns 2 because (* 1 2) = 2
 ```
 
-## 规则
-- Phase 1 用 **exec** 写完整代码（允许大步子）
-- Phase 2 用 **workspace + query + mutate** 做精确修改
-- mutate 后用 `typecheck-current` 验证，`eval-current` 执行
-- 只有修改很小（改一个数字/变量名）时可以一步搞定
-- 任何需要改完整函数的场景 → 用 `mutate:rebind` 或 `mutate:set-body`
-- 任务完成后说 DONE"""
+## RULES
+- Phase 1: write full code (exec), keep it simple
+- Phase 2: EDSL for tiny fixes only (one value, one body)
+- If a whole function needs rewriting → go back to Phase 1 exec
+- Say DONE when correct."""
 
 
 class AuraSession:
