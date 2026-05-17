@@ -141,12 +141,53 @@ run_test "module:import"    "$(printf '(import \"std/list\")(sort (list 3 1 4))'
 run_test "module:prefix"    "$(printf '(import \"std/list\" \"lst:\")(lst:sort (list 3 1 4))')" "(1 3 4)"
 
 echo ""
+# Dotted Pairs (improper lists)
+run_test "dotted-basic"    "(quote (1 . 2))" "(1 . 2)"
+run_test "dotted-in-list"  "(quote ((1 . 2) (3 . 4)))" "((1 . 2) (3 . 4))"
+run_test "dotted-improper" "(quote (1 2 . 3))" "(1 2 . 3)"
+run_test "dotted-pair"     "(pair? (quote (1 . 2)))" "#t"
+run_test "dotted-car"      "(car (quote (1 . 2)))" "1"
+run_test "dotted-cdr"      "(cdr (quote (1 . 2)))" "2"
+
+echo ""
+echo "=== List Predicate Tests ==="
+run_test "pred-null"      "(null? (list))" "#t"
+run_test "pred-pair"      "(pair? (list 1 2))" "#t"
+run_test "pred-not-pair"  "(pair? 42)" "#f"
+run_test "pred-number"    "(number? 42)" "#t"
+run_test "pred-string"    "(string? \"hello\")" "#t"
+run_test "pred-boolean"   "(boolean? #t)" "#t"
+run_test "pred-procedure" "(procedure? (lambda (x) x))" "#t"
+
+echo ""
+echo "=== Comparison Tests ==="
+run_test "cmp-le"         "(<= 1 2 3)" "#t"
+run_test "cmp-ge"         "(>= 3 2 1)" "#t"
+run_test "cmp-le-false"   "(<= 1 3 2)" "#f"
+run_test "cmp-ge-false"   "(>= 3 1 2)" "#f"
+run_test "cmp-eq-bool"    "(= 42 42)" "#t"
+run_test "cmp-chain-same" "(= 5 5 5)" "#t"
+
+echo ""
+echo "=== CxR Tests ==="
+run_test "cxr-caar"       "(caar (quote ((1 2) 3)))" "1"
+run_test "cxr-cadr"       "(cadr (quote (1 2 3)))" "2"
+run_test "cxr-cdar"       "(cdar (quote ((1 2) 3)))" "(2)"
+run_test "cxr-cddr"       "(cddr (quote (1 2 3)))" "(3)"
+run_test "cxr-caddr"      "(caddr (quote (1 2 3 4)))" "3"
+
 echo "=== Error Handling Tests ==="
 
 run_test "error:t-alive"    "$(printf '(try (+ 1 2) (catch (e) 0))')" "3"
 run_test "error:t-caught"   "$(printf '(try (error \"x\") (catch (e) 42))')" "42"
 run_test "error:car"        "$(printf '(try (car 42) (catch (e) \"ok\"))')" "\"ok\""
 run_test "error:mod0"       "$(printf '(try (modulo 5 0) (catch (e) \"ok\"))')" "\"ok\""
+run_test "error:raise"     "$(printf '(try (raise 42) (catch (e) "caught"))')" \"caught\"
+run_test "error:assert"    "$(printf '(try (assert #f "nope") (catch (e) "caught"))')" \"caught\"
+run_test "error:car-nonpair" "$(printf '(try (car 42) (catch (e) "err"))')" \"err\"
+run_test "error:cdr-nonpair" "$(printf '(try (cdr 42) (catch (e) "err"))')" \"err\"
+run_test "error:mod-divzero"  "$(printf '(try (modulo 10 0) (catch (e) "err"))')" \"err\"
+
 
 echo ""
 echo "============"
