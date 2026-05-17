@@ -3065,6 +3065,29 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
             return make_void();
         }
 
+        // ── when: (when cond body...) — like (if cond (begin body...) (void))
+        if (fn_name == "when" || fn_name == "unless") {
+            if (types::is_pair(cdr_val)) {
+                auto cond_pair = types::as_pair_idx(cdr_val);
+                auto cond_val = pairs_[cond_pair].car;
+                auto body_rest = pairs_[cond_pair].cdr;
+                auto cond_result = eval_data_as_code(cond_val, env, flat, pool);
+                if (!cond_result) return cond_result;
+                if (types::is_truthy(*cond_result)) {
+                    // Evaluate body expressions sequentially
+                    EvalResult last = make_void();
+                    while (types::is_pair(body_rest)) {
+                        auto bp = types::as_pair_idx(body_rest);
+                        last = eval_data_as_code(pairs_[bp].car, env, flat, pool);
+                        if (!last) return last;
+                        body_rest = pairs_[bp].cdr;
+                    }
+                    return last;
+                }
+            }
+            return make_void();
+        }
+
         // ── lambda: (lambda (params) body) ──
         // Needs flat/pool to create an AST closure
         if (fn_name == "lambda") {
@@ -3557,6 +3580,37 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
             // body is evaluated; if it returns an error, handler is evaluated with var bound
             if (callee.tag == aura::ast::NodeTag::Variable) {
                 auto cname = std::string(p->resolve(callee.sym_id));
+                // when: (when cond body...) — evaluate body only if cond is truthy
+                if (cname == "when" && v.children.size() >= 2) {
+                    auto cond_id = v.child(1);
+                    auto cond_result = eval_flat(*f, *p, cond_id, eval_env);
+                    if (!cond_result) return cond_result;
+                    if (is_truthy(*cond_result)) {
+                        // Evaluate all remaining children as body
+                        EvalResult last = make_void();
+                        for (std::size_t ci = 2; ci < v.children.size(); ++ci) {
+                            last = eval_flat(*f, *p, v.child(ci), eval_env);
+                            if (!last) return last;
+                        }
+                        return last;
+                    }
+                    return make_void();
+                }
+                // unless: (unless cond body...) — evaluate body only if cond is falsy
+                if (cname == "unless" && v.children.size() >= 2) {
+                    auto cond_id = v.child(1);
+                    auto cond_result = eval_flat(*f, *p, cond_id, eval_env);
+                    if (!cond_result) return cond_result;
+                    if (!is_truthy(*cond_result)) {
+                        EvalResult last = make_void();
+                        for (std::size_t ci = 2; ci < v.children.size(); ++ci) {
+                            last = eval_flat(*f, *p, v.child(ci), eval_env);
+                            if (!last) return last;
+                        }
+                        return last;
+                    }
+                    return make_void();
+                }
                 if (cname == "try" && v.children.size() >= 2) {
                     auto body_id = v.child(1);
                     auto result = eval_flat(*f, *p, body_id, eval_env);
