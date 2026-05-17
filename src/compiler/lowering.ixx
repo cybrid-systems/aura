@@ -28,6 +28,7 @@ struct LoweringState {
     const Primitives* primitives = nullptr;  // for loading primitive values
     const ast::FlatAST* current_flat = nullptr;  // for closure bridge data
     const ast::StringPool* current_pool = nullptr;
+    const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge = nullptr;
 
     explicit LoweringState(ast::ASTArena& a) : arena(a) {}
     std::uint32_t alloc_local() { return local_count++; }
@@ -67,7 +68,8 @@ export aura::ir::IRModule lower_to_ir_with_cache(
     ast::ASTArena& arena,
     const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache,
     std::vector<std::string>* cache_hits = nullptr,
-    const Primitives* primitives = nullptr);
+    const Primitives* primitives = nullptr,
+    const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge = nullptr);
 
 // FlatAST → S-expression source code (reverse of parse_to_flat)
 export std::string unparse_node(const ast::FlatAST& flat,

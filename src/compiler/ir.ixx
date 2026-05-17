@@ -139,6 +139,16 @@ export struct IRModule {
         }
     }
 
+    // Set bridge data by pointer (for cached function injection)
+    void set_closure_bridge_ptr(std::uint32_t func_id,
+                                 const ast::FlatAST* flat,
+                                 const ast::StringPool* pool,
+                                 ast::NodeId body_id) {
+        if (func_id < closure_bridge.size()) {
+            closure_bridge[func_id] = {flat, pool, body_id};
+        }
+    }
+
     std::vector<std::string> string_pool;  // string constants (for ConstString opcode)
 
     std::uint32_t add_string(std::string s) {

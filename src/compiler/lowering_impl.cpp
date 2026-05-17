@@ -110,10 +110,22 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
                 auto base_fid = static_cast<std::uint32_t>(state.module.functions.size());
                 // Add all bundle functions to module, remapping func ids
                 std::uint32_t lambda_fid = 0;
-                for (auto& func : cache_it->second) {
+                for (std::size_t ci = 0; ci < cache_it->second.size(); ++ci) {
+                    auto& func = cache_it->second[ci];
                     auto copy = func;
                     remap_func_ids(copy, base_fid);
-                    lambda_fid = state.module.add_function(std::move(copy));
+                    auto new_fid = state.module.add_function(std::move(copy));
+                    lambda_fid = new_fid;
+                    // Copy bridge data from cache bridge if available
+                    if (state.cache_bridge) {
+                        auto bridge_it = state.cache_bridge->find(std::string(name));
+                        if (bridge_it != state.cache_bridge->end() && ci < bridge_it->second.size()) {
+                            state.module.set_closure_bridge_ptr(new_fid,
+                                bridge_it->second[ci].flat,
+                                bridge_it->second[ci].pool,
+                                bridge_it->second[ci].body_id);
+                        }
+                    }
                 }
                 auto closure_slot = state.alloc_local();
                 state.emit(IROpcode::MakeClosure, closure_slot, lambda_fid, 0);
@@ -637,9 +649,11 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
 static IRModule lower_to_ir_impl(FlatAST& flat, StringPool& pool, ASTArena& arena,
                                   const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache,
                                   std::vector<std::string>* cache_hits = nullptr,
-                                  const Primitives* primitives = nullptr) {
+                                  const Primitives* primitives = nullptr,
+                                  const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge = nullptr) {
     LoweringState state(arena);
     state.primitives = primitives;
+    state.cache_bridge = cache_bridge;
     state.module = {};
     // Create top-level function
     IRFunction top_func;
@@ -672,8 +686,9 @@ IRModule lower_to_ir_with_cache(
     FlatAST& flat, StringPool& pool, ASTArena& arena,
     const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache,
     std::vector<std::string>* cache_hits,
-    const Primitives* primitives) {
-    return lower_to_ir_impl(flat, pool, arena, cache, cache_hits, primitives);
+    const Primitives* primitives,
+    const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge) {
+    return lower_to_ir_impl(flat, pool, arena, cache, cache_hits, primitives, cache_bridge);
 }
 
 // ── unparse_node — FlatAST → S-expression source ───────────────
