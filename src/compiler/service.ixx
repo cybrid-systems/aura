@@ -31,7 +31,83 @@ public:
 
     void reset() { arena_.reset(); }
 
-    // ---- Tree-walker evaluation --------------------------------------
+    // ---- Unified evaluation (IR-first with fallback) -----------------
+
+    // Check if an expression needs the tree-walker evaluator.
+    // IR pipeline cannot handle: EDSL primitives, quoted pairs, special forms,
+    // macro definitions, error handling, or non-primitive variable references
+    // (which may come from runtime imports).
+    bool needs_tree_walker_fallback(const aura::ast::FlatAST& flat,
+                                     const aura::ast::StringPool& pool,
+                                     aura::ast::NodeId root) const {
+        if (root == aura::ast::NULL_NODE || root >= flat.size()) return false;
+
+        static const std::unordered_set<std::string> special_forms = {
+            "when", "unless", "try", "catch", "raise", "export",
+            "and", "or", "cond", "case",
+        };
+
+        // Root-level bare variables (like `pi`, `sort`) may come from runtime imports.
+        // The lowering doesn't know about them, so fallback to tree-walker.
+        if (flat.get(root).tag == aura::ast::NodeTag::Variable) {
+            auto root_name = pool.resolve(flat.get(root).sym_id);
+            if (evaluator_.primitives().slot_for_name(std::string(root_name))
+                    >= evaluator_.primitives().slot_count()
+                && ir_cache_.count(std::string(root_name)) == 0)
+                return true;
+        }
+
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            auto nv = flat.get(id);
+
+            // MacroDef cannot be lowered to IR
+            if (nv.tag == aura::ast::NodeTag::MacroDef) return true;
+
+
+
+            if (nv.tag == aura::ast::NodeTag::Call) {
+                auto callee = nv.child(0);
+                if (callee != aura::ast::NULL_NODE && callee < flat.size()) {
+                    auto callee_v = flat.get(callee);
+                    if (callee_v.tag == aura::ast::NodeTag::Variable) {
+                        auto name = pool.resolve(callee_v.sym_id);
+
+                        // EDSL primitives — need evaluator state
+                        if (name == "set-code" ||
+                            name == "eval-current" ||
+                            name == "typecheck-current" ||
+                            name == "typed-mutate" ||
+                            name == "rollback" ||
+                            name == "mutation-log" ||
+                            name == "query-mutation-log" ||
+                            name.starts_with("query:") ||
+                            name.starts_with("mutate:"))
+                            return true;
+
+                        // Special forms not available as primitives in IR
+                        if (special_forms.count(std::string(name)))
+                            return true;
+
+                        // Import has env side-effects (binding names) that IR can't replicate
+                        if (name == "import" || name == "use" || name == "require")
+                            return true;
+
+                        // Call callee that's not a known primitive or cached define
+                        // may come from a runtime import — fallback to tree-walker.
+                        // Only check call callee, not general variables (lambda params,
+                        // let bindings are in scope during lowering).
+                        if (evaluator_.primitives().slot_for_name(std::string(name))
+                                >= evaluator_.primitives().slot_count()) {
+                            if (ir_cache_.count(std::string(name)) == 0) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
 
     [[nodiscard]] EvalResult eval(std::string_view input) {
         // Phase 4: parse directly into FlatAST, evaluator reads FlatAST directly.
@@ -48,12 +124,121 @@ public:
         // Store for mutation targeting
         current_ast_ = flat_ptr;
         current_pool_ = pool_ptr;
-        // Store for mutation targeting
-        current_ast_ = flat_ptr;
-        current_pool_ = pool_ptr;
+
         // Pre-expand all macros in this expression
         auto expanded_root = aura::compiler::macro_expand_all(*flat_ptr, *pool_ptr, flat_ptr->root);
-        return evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
+
+        // Check if we need the tree-walker fallback
+        if (needs_tree_walker_fallback(*flat_ptr, *pool_ptr, expanded_root)) {
+            return evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
+        }
+
+        // Check for top-level (define ...) — cache IR + eval tree-walker for env persistence
+        auto def = try_extract_define(*flat_ptr, *pool_ptr, expanded_root);
+        if (def) {
+            auto& [name, _body_id] = *def;
+            auto name_str = std::string(name);
+            bool is_redefine = ir_cache_.count(name_str) > 0;
+
+            auto cache_ptr_local = ir_cache_.empty() ? nullptr : &ir_cache_;
+            std::vector<std::string> cache_hits;
+            auto ir_mod = aura::compiler::lower_to_ir_with_cache(
+                *flat_ptr, *pool_ptr, arena_, cache_ptr_local, &cache_hits, &evaluator_.primitives());
+
+            // Run passes per-function on the new function bundle
+            {
+                ComputeKindWrap ck_pass;
+                ConstantFoldingWrap cf_pass;
+                for (auto& func : ir_mod.functions) {
+                    if (func.id == ir_mod.entry_function_id) continue;
+                    ck_pass.compute_function(func);
+                    cf_pass.fold_function(func);
+                }
+            }
+
+            // Cache all non-entry functions as a bundle
+            std::vector<aura::ir::IRFunction> bundle;
+            for (auto& func : ir_mod.functions) {
+                if (func.id != ir_mod.entry_function_id) {
+                    bundle.push_back(std::move(func));
+                }
+            }
+            ir_cache_[name_str] = std::move(bundle);
+            function_sources_[name_str] = std::string(input);
+
+            for (auto& called_name : cache_hits) {
+                record_dependency(name_str, called_name);
+            }
+            if (is_redefine) {
+                invalidate_function(name_str);
+            }
+
+            // Eval tree-walker for persistent runtime bindings
+            auto tree_result = evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
+            if (!tree_result) return tree_result;
+            return EvalResult(types::make_void());
+        }
+
+        // ========== IR pipeline (default path for non-define expressions) ==========
+        auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
+        auto ir_mod = aura::compiler::lower_to_ir_with_cache(
+            *flat_ptr, *pool_ptr, arena_, cache_ptr, nullptr, &evaluator_.primitives());
+
+        // Run passes (silent in default path — use eval_ir for debug)
+        ComputeKindWrap ck;
+        ArityWrap ar;
+        ConstantFoldingWrap cf;
+        ck.run(ir_mod);
+        ar.run(ir_mod);
+        cf.run(ir_mod);
+
+        if (ar.has_error()) {
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::ArityMismatch, "arity check failed"});
+        }
+
+        last_ir_mod_ = ir_mod;
+
+        aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, evaluator_.primitives());
+        ir_interp.set_strategy(strategy_);
+
+        // Set IR closure bridge: enables tree-walker primitives (map/filter/foldl)
+        // to call IR-produced closures.
+        evaluator_.set_closure_bridge(
+            [this, &ir_interp](aura::compiler::ClosureId cid,
+                                const std::vector<types::EvalValue>& args)
+                -> std::optional<types::EvalValue> {
+            auto snap = ir_interp.inspect_closure(cid);
+            if (!snap) return std::nullopt;
+
+            aura::compiler::Env ne;
+            ne.set_primitives(&evaluator_.primitives());
+            for (std::size_t i = 0; i < snap->env.size() && i < snap->func_free_vars.size(); ++i)
+                ne.bind(snap->func_free_vars[i], snap->env[i]);
+            for (std::size_t i = 0; i < snap->func_params.size() && i < args.size(); ++i)
+                ne.bind(snap->func_params[i], args[i]);
+
+            if (snap->func_id < last_ir_mod_->closure_bridge.size()) {
+                auto& bd = last_ir_mod_->closure_bridge[snap->func_id];
+                if (bd.flat && bd.pool) {
+                    auto r = evaluator_.eval_flat(
+                        *const_cast<ast::FlatAST*>(bd.flat),
+                        *const_cast<ast::StringPool*>(bd.pool),
+                        bd.body_id, ne);
+                    if (r) return *r;
+                }
+            }
+            return std::nullopt;
+        });
+
+        auto result = ir_interp.execute();
+
+        // Clear bridge after execution to avoid dangling references
+        evaluator_.set_closure_bridge(aura::compiler::Evaluator::ClosureBridgeFn());
+
+        last_closures_ = ir_interp.list_closures();
+        last_cells_ = ir_interp.list_cells();
+        return result;
     }
 
     // ---- IR pipeline ------------------------------------------------
@@ -95,7 +280,8 @@ public:
             // for cached dependencies (with proper func id remapping).
             auto cache_ptr_local = ir_cache_.empty() ? nullptr : &ir_cache_;
             std::vector<std::string> cache_hits;
-            auto ir_mod = aura::compiler::lower_to_ir_with_cache(*flat_ptr, *pool_ptr, arena_, cache_ptr_local, &cache_hits);
+            auto ir_mod = aura::compiler::lower_to_ir_with_cache(
+                *flat_ptr, *pool_ptr, arena_, cache_ptr_local, &cache_hits, &evaluator_.primitives());
 
             // Phase 4: Run passes per-function on the new function bundle.
             {
@@ -147,7 +333,7 @@ public:
 
         // === Normal IR path (with cache awareness) ===
         auto cache_ptr_local = ir_cache_.empty() ? nullptr : &ir_cache_;
-        auto ir_mod = aura::compiler::lower_to_ir_with_cache(*flat_ptr, *pool_ptr, arena_, cache_ptr_local);
+        auto ir_mod = aura::compiler::lower_to_ir_with_cache(*flat_ptr, *pool_ptr, arena_, cache_ptr_local, nullptr, &evaluator_.primitives());
 
         ComputeKindWrap ck;
         ArityWrap ar;
@@ -263,7 +449,7 @@ public:
         }
         flat.root = pr.root;
 
-        auto new_mod = aura::compiler::lower_to_ir(flat, pool, arena_);
+        auto new_mod = aura::compiler::lower_to_ir(flat, pool, arena_, &evaluator_.primitives());
 
         // Hot-swap each function from new_mod into the cached module
         for (auto& new_func : new_mod.functions) {
@@ -361,7 +547,8 @@ public:
             // for cached dependencies (with proper func id remapping).
             auto cache_ptr_local = ir_cache_.empty() ? nullptr : &ir_cache_;
             std::vector<std::string> cache_hits;
-            auto ir_mod = aura::compiler::lower_to_ir_with_cache(*flat_ptr, *pool_ptr, arena_, cache_ptr_local, &cache_hits);
+            auto ir_mod = aura::compiler::lower_to_ir_with_cache(
+                *flat_ptr, *pool_ptr, arena_, cache_ptr_local, &cache_hits, &evaluator_.primitives());
 
             // Phase 4: Run passes per-function on the new function bundle.
             {
@@ -676,7 +863,7 @@ private:
             // Re-lower with current cache to detect new dependencies
             auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
             std::vector<std::string> cache_hits;
-            auto ir_mod = aura::compiler::lower_to_ir_with_cache(flat, pool, arena_, cache_ptr, &cache_hits);
+            auto ir_mod = aura::compiler::lower_to_ir_with_cache(flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives());
 
             // Phase 4: Run passes per-function on the re-lowered function bundle.
             {

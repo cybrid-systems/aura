@@ -738,15 +738,8 @@ void Evaluator::init_pair_primitives() {
             }
             if (is_closure(fn)) {
                 auto cid = as_closure_id(fn);
-                auto it = closures_.find(cid);
-                if (it == closures_.end() || it->second.params.empty()) return make_void();
-                auto& cl = it->second;
-                Env ne(cl.env ? *cl.env : Env());
-                ne.set_primitives(&primitives_);
-                ne.set_cells(&cells_);
-                ne.bind(cl.params[0], arg);
-                auto r = cl.flat ? eval_flat(*cl.flat, *cl.pool, cl.body_id, ne) : EvalResult(make_void());
-                return r ? *r : make_void();
+                auto result = apply_closure(cid, {arg});
+                return result ? *result : make_void();
             }
             return make_void();
         };
@@ -798,15 +791,8 @@ void Evaluator::init_pair_primitives() {
             }
             if (is_closure(fn)) {
                 auto cid = as_closure_id(fn);
-                auto it = closures_.find(cid);
-                if (it == closures_.end() || it->second.params.empty()) return false;
-                auto& cl = it->second;
-                Env ne(cl.env ? *cl.env : Env());
-                ne.set_primitives(&primitives_);
-                ne.set_cells(&cells_);
-                ne.bind(cl.params[0], arg);
-                auto r = cl.flat ? eval_flat(*cl.flat, *cl.pool, cl.body_id, ne) : EvalResult(make_void());
-                return r ? types::is_truthy(*r) : false;
+                auto result = apply_closure(cid, {arg});
+                return result ? types::is_truthy(*result) : false;
             }
             return false;
         };
@@ -1842,26 +1828,17 @@ void Evaluator::init_pair_primitives() {
         // Handle closure function
         if (!is_closure(f)) return make_void();
         auto cid = as_closure_id(f);
-        auto it = closures_.find(cid);
-        if (it == closures_.end() || it->second.params.empty()) return make_void();
-        auto& closure = it->second;
-        auto param = closure.params[0];
 
         while (!is_end_of_list(lst)) {
             if (!is_pair(lst)) break;
             auto idx = as_pair_idx(lst);
             if (idx >= pairs_.size()) break;
 
-            Env ne(closure.env ? *closure.env : Env());
-            ne.set_primitives(&primitives_);
-            ne.set_cells(&cells_);
-            ne.bind(param, acc);
-            if (closure.params.size() > 1)
-                ne.bind(closure.params[1], pairs_[idx].car);
-
-            auto r = closure.flat ? eval_flat(*closure.flat, *closure.pool, closure.body_id, ne) : EvalResult(make_void());
-            if (!r) break;
-            acc = *r;
+            // Build args: (acc element) for binary foldl, (acc) for unary
+            std::vector<EvalValue> fargs = {acc, pairs_[idx].car};
+            auto result = apply_closure(cid, fargs);
+            if (!result) break;
+            acc = *result;
             lst = pairs_[idx].cdr;
         }
         return acc;
@@ -2776,7 +2753,33 @@ Env* Evaluator::copy_env(const Env& e) {
 
 // eval_in(ast::Expr*) removed — all evaluation uses eval_flat(FlatAST&) now
 
-// apply_closure removed — closure calls use eval_flat directly
+// apply_closure — looks up closure closures_ or IR bridge
+std::optional<EvalValue> Evaluator::apply_closure(
+    ClosureId cid,
+    const std::vector<EvalValue>& args) {
+    // Try tree-walker closures first
+    auto it = closures_.find(cid);
+    if (it != closures_.end()) {
+        auto& cl = it->second;
+        Env ne(cl.env ? *cl.env : Env());
+        ne.set_primitives(&primitives_);
+        ne.set_cells(&cells_);
+        for (std::size_t i = 0; i < cl.params.size() && i < args.size(); ++i)
+            ne.bind(cl.params[i], args[i]);
+        if (cl.flat) {
+            auto r = eval_flat(*cl.flat, *cl.pool, cl.body_id, ne);
+            if (r) return *r;
+        }
+        return std::nullopt;
+    }
+
+    // Try IR bridge
+    if (closure_bridge_) {
+        return closure_bridge_(cid, args);
+    }
+
+    return std::nullopt;
+}
 
 // ── ast_to_data: convert AST subtree to EvalValue data ───────
 EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool, aura::ast::NodeId nid) {
@@ -3381,6 +3384,11 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
     if (!fn) return fn;
     if (types::is_closure(*fn)) {
         auto cid = types::as_closure_id(*fn);
+        // Try tree-walker closure first, then IR bridge
+        auto result = apply_closure(cid, {});
+        if (result) return *result;
+
+        // Fallback: manual closure apply via eval_flat
         auto it = closures_.find(cid);
         if (it != closures_.end()) {
             auto& cl = it->second;

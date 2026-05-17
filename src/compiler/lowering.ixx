@@ -2,6 +2,7 @@ export module aura.compiler.lowering;
 import std;
 import aura.core;
 import aura.compiler.ir;
+import aura.compiler.evaluator;
 
 namespace aura::compiler {
 
@@ -24,6 +25,9 @@ struct LoweringState {
     std::uint32_t env_slot = 0;
     std::unordered_map<std::string, std::uint32_t> free_var_map;
     std::unordered_set<std::string> cell_free_vars;
+    const Primitives* primitives = nullptr;  // for loading primitive values
+    const ast::FlatAST* current_flat = nullptr;  // for closure bridge data
+    const ast::StringPool* current_pool = nullptr;
 
     explicit LoweringState(ast::ASTArena& a) : arena(a) {}
     std::uint32_t alloc_local() { return local_count++; }
@@ -44,9 +48,12 @@ struct LoweringState {
 // Free function — FlatAST path.
 // Natively lowers FlatAST (SoA) to IRModule without Expr* reconstruction.
 // Calls lower_flat_expr() which walks FlatAST directly.
+// primitives: optional — if provided, variable references to known primitives
+//             resolve to Primitive opcodes instead of ConstI64 0.
 export aura::ir::IRModule lower_to_ir(ast::FlatAST& flat,
                                        ast::StringPool& pool,
-                                       ast::ASTArena& arena);
+                                       ast::ASTArena& arena,
+                                       const Primitives* primitives = nullptr);
 
 // Lower with cached define support.
 // When cache is non-null, Call nodes whose callee is a VariableNode
@@ -59,7 +66,8 @@ export aura::ir::IRModule lower_to_ir_with_cache(
     ast::StringPool& pool,
     ast::ASTArena& arena,
     const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache,
-    std::vector<std::string>* cache_hits = nullptr);
+    std::vector<std::string>* cache_hits = nullptr,
+    const Primitives* primitives = nullptr);
 
 // FlatAST → S-expression source code (reverse of parse_to_flat)
 export std::string unparse_node(const ast::FlatAST& flat,
