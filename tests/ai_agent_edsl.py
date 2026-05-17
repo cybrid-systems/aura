@@ -22,21 +22,24 @@ MAX_ROUNDS = 20
 
 SYSTEM_PROMPT = build_system_prompt() + """
 
-## EDSL: WORKSPACE + QUERY + MUTATE (增量变换)
+## WORKSPACE + QUERY + MUTATE (EDSL)
 
-不要重写整个程序。用 workspace + query + mutate 做精确增量修改。
+**两阶段工作流:**
 
-### 工作区模型
-```
-set-code "..."           # 锁定 AST 到工作区（节点 ID 稳定）
-query:* ...              # 在工作区导航
-mutate:* ...             # 精确修改
-(typecheck-current)      # 验证类型正确性
-eval-current             # 执行修改后的程序
-```
-节点 ID 在 `set-code` 后稳定，跨 query/mutate 操作不变（直到下一次 set-code）。
+### Phase 1: 写完整程序 (exec)
+先用普通 Aura 代码写完整程序，快速跑通。
 
-### QUERY 原语
+### Phase 2: 精确修复 (mutate)
+当程序基本正确但有 bug 时，**不要重写整个函数**。改用 EDSL 精准修改：
+
+1. `set-code "当前程序"` — 锁定到工作区（节点 ID 稳定）
+2. `query:find / children / node-type` — 定位目标节点
+3. `mutate:set-body / replace-value / insert-child` — 精确改一个点
+4. `typecheck-current + eval-current` — 验证
+
+### 所有原语
+
+**Query** (必须在 set-code 后才能用):
 ```
 (query:find "name")          → (1 5 12)     ; 按名称查找节点
 (query:children node-id)      → (4 5 6)      ; 获取子节点 ID
@@ -44,73 +47,51 @@ eval-current             # 执行修改后的程序
 (query:calls "fib")           → (8 15 22)    ; 查找函数调用点
 (query:parent node-id)        → (3)          ; 查找父节点
 (query:siblings node-id)      → (4 6)        ; 查找兄弟节点
-(query:pattern expr)          → (12 18)      ; 结构模式匹配（...通配）
+(query:pattern expr)          → (12 18)      ; 结构模式匹配
 (query:node-type "Call")      → (0 3 8 15)   ; 按节点类型过滤
 ```
 
-### MUTATE 原语
+**Mutate** (必须在 set-code 后才能用):
 ```
 (mutate:rebind "name" new-code)             ; 替换整个函数定义
 (mutate:set-body "name" new-body-code)      ; 替换函数体（保留签名）
 (mutate:remove-node node-id)                ; 删除节点
 (mutate:insert-child parent pos child-code)  ; 插入子节点（返回新节点 ID）
-(mutate:replace-value node-id new-val)      ; 替换值（int/float/string自动适配）
+(mutate:replace-value node-id new-val)      ; 替换值
 (mutate:replace-type node-id new-type)      ; 替换类型注解
-(mutate:record-patch node-id op summary)    ; 记录操作（不修改 AST）
+(mutate:record-patch node-id op summary)    ; 记录操作
 ```
 
-### 增量验证
+**验证** (mutate 后用):
 ```
-(typecheck-current)  ; 增量类型检查（只重新推断被修改的子树）
+(typecheck-current)  ; 增量类型检查
 (eval-current)       ; 执行当前工作区
 ```
 
-### 示例: 用 EDSL 修改函数
+### EDSL 示例: 把 add 函数的 + 换成 *
 
-1. 设置工作区:
+第一轮写程序:
 ```
 (define (add x y) (+ x y))
 ```
 
-2. 用 query 定位节点:
+第二轮用 EDSL 精确修改:
 ```
-(query:find "add")        → (5)       ; Define "add" 是节点 5
-(query:children 5)         → (4)       ; 子节点 4 = Lambda
-(query:children 4)         → (3)       ; 子节点 3 = 函数体 (+ x y)
-(query:children 3)         → (0 1 2)   ; (+ x y): [Variable"+", x, y]
-```
-
-3. 用 mutate 精确修改:
-```
-(mutate:replace-value 0 "*" "改 + 为 *")  ; 节点 0 是 Variable "+"
-```
-
-4. 验证:
-```
+(set-code ")  ; 锁定代码到工作区
+(query:find "add") → (5)           ; Define 在节点 5
+(query:children 3) → (0 1 2)       ; (+ x y) 的 3 个子节点
+(mutate:replace-value 0 "*" "+"→"*")
 (typecheck-current)
 (eval-current)
-(add 1 2)  → 2  ; = (* 1 2)
+(add 1 2) → 2                      ; 验证: (* 1 2) = 2
 ```
-
-5. 或者在位置插入新参数:
-```
-(mutate:insert-child 3 1 "(* x x)" "插入乘法")  ; 在 Call 的 children[1] 插入
-(query:children 3)  → (0 6 1 2)  ; [+, (* x x), x, y]
-(eval-current)
-(add 2 3) → 12  ; = 2 + (2*2) + 3? 注意参数顺序
-```
-
-### 设计原则
-- 每个 mutate 做一步精确修改，不要一次写整段代码
-- mutate 后先用 `(typecheck-current)` 验证类型，再 `(eval-current)`
-- 节点 ID 在 `set-code` 后稳定，跨操作不变
-- `(mutate:rebind)` 和 `(mutate:set-body)` 按函数名查找，不需要节点 ID
-- `(mutate:insert-child)` 返回新插入的节点 ID，可链式使用
 
 ## 规则
-- 第一轮写完整程序代码
-- 之后用 query + mutate 做精确修改，一次改一个点
-- 每步后用 typecheck-current 验证 + eval-current 执行
+- Phase 1 用 **exec** 写完整代码（允许大步子）
+- Phase 2 用 **workspace + query + mutate** 做精确修改
+- mutate 后用 `typecheck-current` 验证，`eval-current` 执行
+- 只有修改很小（改一个数字/变量名）时可以一步搞定
+- 任何需要改完整函数的场景 → 用 `mutate:rebind` 或 `mutate:set-body`
 - 任务完成后说 DONE"""
 
 
