@@ -4,6 +4,7 @@ module;
 #include <unistd.h>
 #include <dirent.h>
 #include <regex>
+#include <cmath>
 module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
@@ -1422,6 +1423,70 @@ void Evaluator::init_pair_primitives() {
             }
             return result;
         } catch (...) { return make_void(); }
+    });
+
+    // ── Math ────────────────────────────────────────────────────
+    auto to_double = [this](const EvalValue& v) -> double {
+        if (is_float(v)) return as_float(v);
+        if (is_int(v)) return static_cast<double>(as_int(v));
+        return 0.0;
+    };
+
+    primitives_.add("sin", [to_double](const auto& a) {
+        if (a.empty()) return make_float(0.0);
+        return make_float(std::sin(to_double(a[0])));
+    });
+    primitives_.add("cos", [to_double](const auto& a) {
+        if (a.empty()) return make_float(0.0);
+        return make_float(std::cos(to_double(a[0])));
+    });
+    primitives_.add("tan", [to_double](const auto& a) {
+        if (a.empty()) return make_float(0.0);
+        return make_float(std::tan(to_double(a[0])));
+    });
+    primitives_.add("asin", [to_double](const auto& a) {
+        if (a.empty()) return make_float(0.0);
+        return make_float(std::asin(to_double(a[0])));
+    });
+    primitives_.add("acos", [to_double](const auto& a) {
+        if (a.empty()) return make_float(0.0);
+        return make_float(std::acos(to_double(a[0])));
+    });
+    primitives_.add("atan", [to_double](const auto& a) {
+        if (a.empty()) return make_float(0.0);
+        return make_float(std::atan(to_double(a[0])));
+    });
+    primitives_.add("log", [to_double](const auto& a) {
+        if (a.empty()) return make_float(0.0);
+        return make_float(std::log(to_double(a[0])));
+    });
+    primitives_.add("log10", [to_double](const auto& a) {
+        if (a.empty()) return make_float(0.0);
+        return make_float(std::log10(to_double(a[0])));
+    });
+    primitives_.add("exp", [to_double](const auto& a) {
+        if (a.empty()) return make_float(0.0);
+        return make_float(std::exp(to_double(a[0])));
+    });
+    primitives_.add("pow", [to_double](const auto& a) {
+        if (a.size() < 2) return make_float(0.0);
+        return make_float(std::pow(to_double(a[0]), to_double(a[1])));
+    });
+    primitives_.add("sqrt", [to_double](const auto& a) {
+        if (a.empty()) return make_float(0.0);
+        return make_float(std::sqrt(to_double(a[0])));
+    });
+    primitives_.add("floor", [to_double](const auto& a) {
+        if (a.empty()) return make_float(0.0);
+        return make_float(std::floor(to_double(a[0])));
+    });
+    primitives_.add("ceil", [to_double](const auto& a) {
+        if (a.empty()) return make_float(0.0);
+        return make_float(std::ceil(to_double(a[0])));
+    });
+    primitives_.add("round", [to_double](const auto& a) {
+        if (a.empty()) return make_float(0.0);
+        return make_float(std::round(to_double(a[0])));
     });
 
     // ═══════════════════════════════════════════════════════════════
