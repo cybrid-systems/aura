@@ -55,7 +55,7 @@ gensym symbol-append
 define-struct (from std/struct)
 type? type-of
 
-## foldl order: (foldl f init list), f = (lambda (acc elem) ...), acc first, elem second.
+## ⚠️ foldl: (foldl f init lst) calls (f acc element) — acc FIRST, elem SECOND. Always check this order!
 
 ## Stdlib: use (require std/name) (prefix default: std/name:func-name)
 {std}
@@ -71,7 +71,7 @@ type? type-of
 ```lisp
 (define (square x) (* x x))           ;; Function
 (define (word-freq words)
-  (define (add alist word)             ;; foldl: f = (lambda (acc elem) ...)
+  (define (add alist word)             ;; foldl: f = (lambda (acc elem) ...) — acc first, word second
     (if (null? alist) (cons (cons word 1) '())
         (if (string=? word (caar alist))
             (cons (cons word (+ (cdar alist) 1)) (cdr alist))
