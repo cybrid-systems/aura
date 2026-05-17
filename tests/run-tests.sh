@@ -193,3 +193,29 @@ echo ""
 echo "============"
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
+
+echo ""
+echo "=== Agent/EDSL Tests ==="
+
+# run-tests: define a test suite and run it
+
+# set-code + query:find
+run_test "agent:set-code-query" "$(printf '(set-code "(define (f x) (+ x 1))")(query:find \"f\")')" "(5)"
+
+# set-code + query:node-type
+run_test "agent:query-node-type" "$(printf '(set-code "(define (f x) (+ x 1))")(query:node-type \"Define\")')" "(5)"
+
+# set-code + query:calls
+run_test "agent:query-calls" "$(printf '(set-code "(define (f x) (+ x 1)) (define (g x) (f x))")(query:calls \"f\")')" "(8)"
+
+# Pipe mode: display side-effect + return value (newline returns void, not printed)
+run_test "agent:pipe-mode" "$(printf '(display 42)')" "42"
+
+# EDSL mutate: rebind function
+run_test "agent:mutate-rebind" "$(printf '(set-code "(define (add x y) (+ x y))")(query:find \"add\")(mutate:rebind \"add\" \"(define (add x y) (* x y))\")(eval-current)(add 1 2)')" "2"
+
+# query:pattern
+
+# EDSL query:pattern (use escaped quotes to avoid shell conflicts)
+
+# JSON commands via --serve pipe mode

@@ -1,0 +1,5 @@
+(require std/test all:)
+(test-suite "sm" (check= 3 (+ 1 2)))
+(define result (run-tests))
+(display result)
+(newline)
