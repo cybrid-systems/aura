@@ -521,7 +521,7 @@ NodeId FlatParser::parse_defmacro() {
     auto body = parse_expr();
     if (body == NULL_NODE) { skip_rparen(); return NULL_NODE; }
     lexer_->consume(); // ')'
-    auto mid = flat_.add_macrodef(pool_.intern(std::string(name.text)), params, body);
+    auto mid = flat_.add_macrodef(pool_.intern(std::string(name.text)), params, body, dotted);
     flat_.set_loc(mid, tok.line, tok.column);
     return mid;
 }
