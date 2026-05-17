@@ -49,6 +49,13 @@ STDLIB (use: require std/name):
   std/json: {', '.join(lib_summaries.get('json',[]))}
   std/struct: define-struct, make-<name>, <name>?, <name>-<field>
 
+EDSL (增量变换, 用于精确修改运行中的程序):
+  set-code / eval-current — 工作区生命周期
+  query:find / children / node / calls / parent / siblings / pattern / node-type
+  mutate:rebind / set-body / remove-node / insert-child / replace-value / replace-type
+  typecheck-current — 增量类型检查
+  详见 ai-agent-edsl 文档
+
 EXAMPLE:
 Compute sum to 100:  ```\n(require std/list)\n(foldl + 0 (range 1 101))\n```
 Factorial:  ```\n(require std/math)\n(factorial 10)\n```
