@@ -1187,25 +1187,53 @@ void Evaluator::init_pair_primitives() {
         return make_bool(false);
     });
 
-    // (run-tests) — Find all test:* bindings in top_ env, run them, report summary
+    // (run-tests) — Find all test:* bindings in top_ env, report summary
     primitives_.add("run-tests", [this](const auto&) -> EvalValue {
         auto& bindings = top_.bindings();
-        int total = 0, passed = 0, failed = 0;
-        EvalValue result = make_void();
+        int total_suites = 0, total_passed = 0, total_failed = 0;
 
         for (auto& [name, val] : bindings) {
-            if (name.size() > 5 && name.substr(0, 5) == "test:" && is_pair(val)) {
-                total++;
-                // Run each check in the suite
-                auto view = format_value(val, &string_heap_, &pairs_);
-                (void)view;
-                passed++;
+            if (name.size() <= 5 || name.substr(0, 5) != "test:")
+                continue;
+
+            // Dereference cell if needed (define stores via cell)
+            auto actual = val;
+            if (is_cell(val) && as_cell_id(val) < cells_.size())
+                actual = cells_[as_cell_id(val)];
+            if (!is_pair(actual))
+                continue;
+
+            total_suites++;
+            auto idx = as_pair_idx(actual);
+            if (idx >= pairs_.size()) { total_failed++; continue; }
+
+            // Suite name
+            std::string suite_name;
+            if (is_string(pairs_[idx].car)) {
+                auto sid = as_string_idx(pairs_[idx].car);
+                if (sid < string_heap_.size())
+                    suite_name = string_heap_[sid];
             }
+
+            // Walk result list: each = 1 (pass) or (failed e) (fail)
+            auto results = pairs_[idx].cdr;
+            int sp = 0, sf = 0;
+            while (is_pair(results)) {
+                auto ri = as_pair_idx(results);
+                if (ri >= pairs_.size()) break;
+                auto rv = pairs_[ri].car;
+                results = pairs_[ri].cdr;
+                if (is_int(rv) && as_int(rv) == 1) { sp++; total_passed++; }
+                else { sf++; total_failed++; }
+            }
+
+            std::fprintf(stderr, "  Suite '%s': %d/%d passed\n",
+                         suite_name.c_str(), sp, sp + sf);
         }
 
-        std::string summary = std::to_string(total) + " suites: "
-            + std::to_string(passed) + " passed, "
-            + std::to_string(failed) + " failed";
+        std::string summary = std::to_string(total_suites) + " suites: "
+            + std::to_string(total_passed) + " passed, "
+            + std::to_string(total_failed) + " failed";
         auto sidx = string_heap_.size();
         string_heap_.push_back(summary);
         return make_string(sidx);
