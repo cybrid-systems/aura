@@ -98,7 +98,7 @@ NodeId FlatParser::parse_expr() {
         if (inner == NULL_NODE) return NULL_NODE;
         // Represent (unquote inner) as a Call to variable 'unquote'
         auto unquote_var = flat_.add_variable(pool_.intern("unquote"));
-        auto id = flat_.add_call(unquote_var, {inner});
+        auto id = flat_.add_call(unquote_var, std::vector<aura::ast::NodeId>{inner});
         flat_.set_loc(id, tok.line, tok.column);
         return id;
     }
@@ -108,7 +108,7 @@ NodeId FlatParser::parse_expr() {
         if (inner == NULL_NODE) return NULL_NODE;
         // Represent (unquote-splicing inner) as a Call to variable 'unquote-splicing'
         auto unsplice_var = flat_.add_variable(pool_.intern("unquote-splicing"));
-        auto id = flat_.add_call(unsplice_var, {inner});
+        auto id = flat_.add_call(unsplice_var, std::vector<aura::ast::NodeId>{inner});
         flat_.set_loc(id, tok.line, tok.column);
         return id;
     }
@@ -785,7 +785,7 @@ NodeId FlatParser::expand_qq(NodeId expr, int depth) {
                     auto param_var = flat_.add_variable(pool_.intern(std::string(pool_.resolve(v.params[pi]))));
                     auto param_quoted = flat_.add_quote(param_var);
                     auto cv = flat_.add_variable(pool_.intern("cons"));
-                    params_list = flat_.add_call(cv, {param_quoted, params_list});
+                    params_list = flat_.add_call(cv, std::vector<aura::ast::NodeId>{param_quoted, params_list});
                 }
                 args_to_expand.push_back(params_list);
             }
@@ -803,10 +803,10 @@ NodeId FlatParser::expand_qq(NodeId expr, int depth) {
                         auto pvar = flat_.add_variable(pool_.intern(std::string(pool_.resolve(child_v.params[pi]))));
                         auto pquoted = flat_.add_quote(pvar);
                         auto cv = flat_.add_variable(pool_.intern("cons"));
-                        fn_params_list = flat_.add_call(cv, {pquoted, fn_params_list});
+                        fn_params_list = flat_.add_call(cv, std::vector<aura::ast::NodeId>{pquoted, fn_params_list});
                     }
                     auto cv = flat_.add_variable(pool_.intern("cons"));
-                    args_to_expand.push_back(flat_.add_call(cv, {fn_quoted, fn_params_list}));
+                    args_to_expand.push_back(flat_.add_call(cv, std::vector<aura::ast::NodeId>{fn_quoted, fn_params_list}));
                     has_fn_list = true;
                     // Also add the lambda body as args
                     for (std::size_t bci = 0; bci < child_v.children.size(); ++bci) {
@@ -828,14 +828,14 @@ NodeId FlatParser::expand_qq(NodeId expr, int depth) {
             NodeId result = flat_.add_quote(flat_.add_literal(0));
             for (int i = static_cast<int>(args_to_expand.size()) - 1; i >= 0; --i) {
                 auto cons_var = flat_.add_variable(pool_.intern("cons"));
-                result = flat_.add_call(cons_var, {args_to_expand[i], result});
+                result = flat_.add_call(cons_var, std::vector<aura::ast::NodeId>{args_to_expand[i], result});
             }
             
             // Prepend (quote <form-name>)
             auto form_var = flat_.add_variable(pool_.intern(form_name));
             auto form_quote = flat_.add_quote(form_var);
             auto cons_var2 = flat_.add_variable(pool_.intern("cons"));
-            result = flat_.add_call(cons_var2, {form_quote, result});
+            result = flat_.add_call(cons_var2, std::vector<aura::ast::NodeId>{form_quote, result});
             return result;
         }
         return flat_.add_quote(expr);
@@ -857,7 +857,7 @@ NodeId FlatParser::expand_qq(NodeId expr, int depth) {
         if (v.children.size() > 1) {
             auto inner = expand_qq(v.child(1), depth - 1);
             auto unq_var = flat_.add_variable(pool_.intern("unquote"));
-            return flat_.add_quote(flat_.add_call(unq_var, {inner}));
+            return flat_.add_quote(flat_.add_call(unq_var, std::vector<aura::ast::NodeId>{inner}));
         }
         return flat_.add_quote(expr);
     }
@@ -873,7 +873,7 @@ NodeId FlatParser::expand_qq(NodeId expr, int depth) {
         if (v.children.size() > 1) {
             auto inner = expand_qq(v.child(1), depth - 1);
             auto unsplice_var = flat_.add_variable(pool_.intern("unquote-splicing"));
-            return flat_.add_quote(flat_.add_call(unsplice_var, {inner}));
+            return flat_.add_quote(flat_.add_call(unsplice_var, std::vector<aura::ast::NodeId>{inner}));
         }
         return flat_.add_quote(expr);
     }
@@ -883,7 +883,7 @@ NodeId FlatParser::expand_qq(NodeId expr, int depth) {
         if (v.children.size() > 1) {
             auto inner = expand_qq(v.child(1), depth + 1);
             auto qq_var = flat_.add_variable(pool_.intern("quasiquote"));
-            return flat_.add_call(qq_var, {inner});
+            return flat_.add_call(qq_var, std::vector<aura::ast::NodeId>{inner});
         }
     }
 
@@ -905,11 +905,11 @@ NodeId FlatParser::expand_qq_pair(NodeId expr, int depth) {
             auto child_v = flat_.get(child);
             auto spliced = child_v.children.size() > 1 ? child_v.child(1) : child;
             auto append_var = flat_.add_variable(pool_.intern("append"));
-            result = flat_.add_call(append_var, {spliced, result});
+            result = flat_.add_call(append_var, std::vector<aura::ast::NodeId>{spliced, result});
         } else {
             auto expanded = expand_qq(child, depth);
             auto cons_var = flat_.add_variable(pool_.intern("cons"));
-            result = flat_.add_call(cons_var, {expanded, result});
+            result = flat_.add_call(cons_var, std::vector<aura::ast::NodeId>{expanded, result});
         }
     }
 

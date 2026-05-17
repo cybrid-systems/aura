@@ -179,11 +179,11 @@ Primitives::Primitives() {
         }
         return make_int(r);
     };
-    auto to_f = [this](const EvalValue& v) -> double {
-        return is_float(v) ? as_float(v) : static_cast<double>(coerce_to_int(v, string_heap_));
-    };
-    auto chain_cmp = [this,&to_f](const auto& a, auto fn_int, auto fn_float) -> EvalValue {
+    auto chain_cmp = [this](const auto& a, auto fn_int, auto fn_float) -> EvalValue {
         if (a.size() < 2) return make_int(1);
+        auto to_f = [this](const EvalValue& v) -> double {
+            return is_float(v) ? as_float(v) : static_cast<double>(coerce_to_int(v, string_heap_));
+        };
         bool any_f = false;
         for (auto& v : a) if (is_float(v)) { any_f = true; break; }
         if (any_f) {
@@ -195,11 +195,11 @@ Primitives::Primitives() {
             if (!fn_int(coerce_to_int(a[i-1], string_heap_), coerce_to_int(a[i], string_heap_))) return make_int(0);
         return make_int(1);
     };
-    table_["="]  = [&](auto& a) { return chain_cmp(a, [](auto x, auto y){ return x == y; }, [](auto x, auto y){ return x == y; }); };
-    table_["<"]  = [&](auto& a) { return chain_cmp(a, [](auto x, auto y){ return x < y; }, [](auto x, auto y){ return x < y; }); };
-    table_[">"]  = [&](auto& a) { return chain_cmp(a, [](auto x, auto y){ return x > y; }, [](auto x, auto y){ return x > y; }); };
-    table_["<="] = [&](auto& a) { return chain_cmp(a, [](auto x, auto y){ return x <= y; }, [](auto x, auto y){ return x <= y; }); };
-    table_[">="] = [&](auto& a) { return chain_cmp(a, [](auto x, auto y){ return x >= y; }, [](auto x, auto y){ return x >= y; }); };
+    table_["="]  = [chain_cmp](auto& a) { return chain_cmp(a, [](auto x, auto y){ return x == y; }, [](auto x, auto y){ return x == y; }); };
+    table_["<"]  = [chain_cmp](auto& a) { return chain_cmp(a, [](auto x, auto y){ return x < y; }, [](auto x, auto y){ return x < y; }); };
+    table_[">"]  = [chain_cmp](auto& a) { return chain_cmp(a, [](auto x, auto y){ return x > y; }, [](auto x, auto y){ return x > y; }); };
+    table_["<="] = [chain_cmp](auto& a) { return chain_cmp(a, [](auto x, auto y){ return x <= y; }, [](auto x, auto y){ return x <= y; }); };
+    table_[">="] = [chain_cmp](auto& a) { return chain_cmp(a, [](auto x, auto y){ return x >= y; }, [](auto x, auto y){ return x >= y; }); };
     // Ghuloum Step 9: booleans
     table_["not"]  = [](auto& a) { return make_bool(a.empty() || !is_truthy(a[0])); };
     table_["and"]  = [](auto& a) {
@@ -1585,8 +1585,8 @@ void Evaluator::init_pair_primitives() {
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto type_idx = as_string_idx(a[1]);
         if (type_idx >= string_heap_.size()) return make_int(0);
-        if (!current_flat_) return make_int(0);
-        auto& flat = *current_flat_;
+        if (!workspace_flat_) return make_int(0);
+        auto& flat = *workspace_flat_;
         if (node >= flat.size()) return make_int(0);
 
         auto old_tid = flat.type_id(node);
@@ -1621,8 +1621,8 @@ void Evaluator::init_pair_primitives() {
         auto new_val = static_cast<std::uint64_t>(as_int(a[1]));
         auto sum_idx = as_string_idx(a[2]);
         if (sum_idx >= string_heap_.size()) return make_int(0);
-        if (!current_flat_) return make_int(0);
-        auto& flat = *current_flat_;
+        if (!workspace_flat_) return make_int(0);
+        auto& flat = *workspace_flat_;
         if (node >= flat.size()) return make_int(0);
 
         // Check preconditions: node must exist and be the right tag
@@ -1649,8 +1649,8 @@ void Evaluator::init_pair_primitives() {
         auto sum_idx = as_string_idx(a[2]);
         if (op_idx >= string_heap_.size() || sum_idx >= string_heap_.size())
             return make_int(0);
-        if (!current_flat_) return make_int(0);
-        auto& flat = *current_flat_;
+        if (!workspace_flat_) return make_int(0);
+        auto& flat = *workspace_flat_;
         if (node >= flat.size()) return make_int(0);
 
         auto mid = flat.add_mutation(node, string_heap_[op_idx],
@@ -1660,15 +1660,15 @@ void Evaluator::init_pair_primitives() {
 
     // (mutation-count)
     primitives_.add("mutation-count", [this](const auto&) {
-        if (!current_flat_) return make_int(0);
-        return make_int(static_cast<std::int64_t>(current_flat_->mutation_count()));
+        if (!workspace_flat_) return make_int(0);
+        return make_int(static_cast<std::int64_t>(workspace_flat_->mutation_count()));
     });
 
     // (mutation-history node-id) → list of summary strings
     primitives_.add("mutation-history", [this](const auto& a) {
-        if (a.empty() || !is_int(a[0]) || !current_flat_) return make_int(0);
+        if (a.empty() || !is_int(a[0]) || !workspace_flat_) return make_int(0);
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        auto hist = current_flat_->mutation_history(node);
+        auto hist = workspace_flat_->mutation_history(node);
         EvalValue result = make_void();
         for (auto it = hist.rbegin(); it != hist.rend(); ++it) {
             auto& rec = *it;
@@ -1685,26 +1685,26 @@ void Evaluator::init_pair_primitives() {
 
     // (rollback mutation-id) → true if successful
     primitives_.add("rollback", [this](const auto& a) {
-        if (a.empty() || !is_int(a[0]) || !current_flat_) return make_bool(false);
+        if (a.empty() || !is_int(a[0]) || !workspace_flat_) return make_bool(false);
         auto mid = static_cast<std::uint64_t>(as_int(a[0]));
-        return make_bool(current_flat_->rollback(mid));
+        return make_bool(workspace_flat_->rollback(mid));
     });
 
     // (rollback-since mutation-id) → count of rolled-back mutations
     primitives_.add("rollback-since", [this](const auto& a) {
-        if (a.empty() || !is_int(a[0]) || !current_flat_) return make_int(0);
+        if (a.empty() || !is_int(a[0]) || !workspace_flat_) return make_int(0);
         auto mid = static_cast<std::uint64_t>(as_int(a[0]));
-        return make_int(static_cast<std::int64_t>(current_flat_->rollback_since(mid)));
+        return make_int(static_cast<std::int64_t>(workspace_flat_->rollback_since(mid)));
     });
 
     // (check-preconditions node-id (field-offset|new-type-str)) → true if valid
     // With int second arg: check field existence (0=int_val_, 1=type_id_)
     // With string second arg: check type compatibility (new type string)
     primitives_.add("check-preconditions", [this](const auto& a) {
-        if (a.size() < 2 || !is_int(a[0]) || !current_flat_)
+        if (a.size() < 2 || !is_int(a[0]) || !workspace_flat_)
             return make_bool(false);
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        auto& flat = *current_flat_;
+        auto& flat = *workspace_flat_;
         if (node >= flat.size()) return make_bool(false);
         auto nv = flat.get(node);
 
@@ -1749,6 +1749,388 @@ void Evaluator::init_pair_primitives() {
         case 1: return make_bool(true);            // type_id_ (always valid)
         default: return make_bool(false);
         }
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // P6: Query/Transform EDSL 原语
+    // ═══════════════════════════════════════════════════════════════
+
+    // (set-code code-string) — Parse code and set as current workspace AST
+    // Nodes in workspace AST have stable IDs across query/mutate operations
+    primitives_.add("set-code", [this](const auto& a) {
+        if (a.empty() || !is_string(a[0])) return make_bool(false);
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size()) return make_bool(false);
+        if (!arena_) return make_bool(false);
+        auto alloc = arena_->allocator();
+        auto* pool_ptr = arena_->create<aura::ast::StringPool>(alloc);
+        auto* flat_ptr = arena_->create<aura::ast::FlatAST>(alloc);
+        auto pr = aura::parser::parse_to_flat(string_heap_[idx], *flat_ptr, *pool_ptr);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) return make_bool(false);
+        flat_ptr->root = pr.root;
+        workspace_flat_ = flat_ptr;
+        workspace_pool_ = pool_ptr;
+        return make_bool(true);
+    });
+
+    // (eval-current) — Evaluate the current workspace AST
+    primitives_.add("eval-current", [this](const auto&) {
+        if (!workspace_flat_ || !workspace_pool_) return make_void();
+        auto expanded = aura::compiler::macro_expand_all(
+            *workspace_flat_, *workspace_pool_, workspace_flat_->root);
+        auto result = eval_flat(*workspace_flat_, *workspace_pool_, expanded, top_);
+        if (!result) return make_void();
+        return *result;
+    });
+
+    // (query:find name) — Find all node IDs with matching symbol name
+    primitives_.add("query:find", [this](const auto& a) {
+        if (a.empty() || !is_string(a[0])) return make_void();
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size() || !workspace_flat_ || !workspace_pool_) return make_void();
+        auto& flat = *workspace_flat_;
+        auto name = string_heap_[idx];
+        auto sym = workspace_pool_->intern(name);
+        EvalValue result = make_void();
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+            if (v.sym_id == sym) {
+                auto pid = pairs_.size();
+                pairs_.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                result = make_pair(pid);
+            }
+        }
+        return result;
+    });
+
+    // (query:children node-id) — Get children node IDs
+    primitives_.add("query:children", [this](const auto& a) {
+        if (a.empty() || !is_int(a[0]) || !workspace_flat_) return make_void();
+        auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto& flat = *workspace_flat_;
+        if (node >= flat.size()) return make_void();
+        auto v = flat.get(node);
+        EvalValue result = make_void();
+        for (std::size_t i = v.children.size(); i > 0; --i) {
+            auto pid = pairs_.size();
+            pairs_.push_back({make_int(static_cast<std::int64_t>(v.child(i - 1))), result});
+            result = make_pair(pid);
+        }
+        return result;
+    });
+
+    // (query:node node-id) — Get node details as list (tag value type sym-id)
+    primitives_.add("query:node", [this](const auto& a) {
+        if (a.empty() || !is_int(a[0]) || !workspace_flat_ || !workspace_pool_) return make_void();
+        auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto& flat = *workspace_flat_;
+        if (node >= flat.size()) return make_void();
+        auto v = flat.get(node);
+
+        // Build result: list of (tag-id value sym-name children-count)
+        EvalValue result = make_void();
+
+        // children-count
+        auto pid = pairs_.size();
+        pairs_.push_back({make_int(static_cast<std::int64_t>(v.children.size())), result});
+        result = make_pair(pid);
+
+        // value (int or string content for string literals)
+        if (v.has_int() && v.tag != aura::ast::NodeTag::LiteralString) {
+            pid = pairs_.size();
+            pairs_.push_back({make_int(v.int_value), result});
+            result = make_pair(pid);
+        } else if (v.sym_id != aura::ast::INVALID_SYM) {
+            auto sym_name = std::string(workspace_pool_->resolve(v.sym_id));
+            auto sid = string_heap_.size();
+            string_heap_.push_back(sym_name);
+            pid = pairs_.size();
+            pairs_.push_back({make_string(sid), result});
+            result = make_pair(pid);
+        }
+
+        // tag-id (integer tag == NodeTag enum value)
+        pid = pairs_.size();
+        pairs_.push_back({make_int(static_cast<std::int64_t>(v.tag)), result});
+        result = make_pair(pid);
+
+        return result;
+    });
+
+    // (query:calls name) — Find all call sites of a named function
+    primitives_.add("query:calls", [this](const auto& a) {
+        if (a.empty() || !is_string(a[0]) || !workspace_flat_ || !workspace_pool_) return make_void();
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size()) return make_void();
+        auto& flat = *workspace_flat_;
+        auto name = string_heap_[idx];
+        auto sym = workspace_pool_->intern(name);
+        EvalValue result = make_void();
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+            if (v.tag == aura::ast::NodeTag::Call && !v.children.empty()) {
+                auto callee = flat.get(v.child(0));
+                if (callee.tag == aura::ast::NodeTag::Variable && callee.sym_id == sym) {
+                    auto pid = pairs_.size();
+                    pairs_.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                    result = make_pair(pid);
+                }
+            }
+        }
+        return result;
+    });
+
+    // (mutate:rebind name new-code-string "summary") — Replace function definition by name
+    // Unlike mutate:replace-value, this works by function name (no node ID needed).
+    // Parses new code INTO the existing workspace FlatAST, then redirects the old
+    // Define's value reference to the newly parsed nodes. All pre-existing mutations
+    // on other nodes are preserved.
+    primitives_.add("mutate:rebind", [this](const auto& a) {
+        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !workspace_flat_ || !workspace_pool_)
+            return make_bool(false);
+        auto name_idx = as_string_idx(a[0]);
+        auto code_idx = as_string_idx(a[1]);
+        if (name_idx >= string_heap_.size() || code_idx >= string_heap_.size())
+            return make_bool(false);
+        auto& flat = *workspace_flat_;
+        auto name = string_heap_[name_idx];
+        auto sym = workspace_pool_->intern(name);
+
+        // Find old Define node by name
+        aura::ast::NodeId old_define = aura::ast::NULL_NODE;
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+            if (v.tag == aura::ast::NodeTag::Define && v.sym_id == sym) {
+                old_define = id;
+                break;
+            }
+        }
+        if (old_define == aura::ast::NULL_NODE) return make_bool(false);
+
+        // Parse new code INTO workspace flat (append mode). All new node IDs
+        // are valid in the same FlatAST and can be cross-referenced.
+        auto pr = aura::parser::parse_to_flat(string_heap_[code_idx], flat, *workspace_pool_);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) return make_bool(false);
+
+        // The parsed root may be a Define (if code includes "(define (name ...) ...)")
+        // or a bare expression (just the value/lambda). Extract the value.
+        aura::ast::NodeId new_value = pr.root;
+        auto root_v = flat.get(pr.root);
+        if (root_v.tag == aura::ast::NodeTag::Define) {
+            // New code is a full define — extract its value child
+            if (root_v.children.empty()) return make_bool(false);
+            new_value = root_v.child(0);
+        }
+
+        // Record mutation on the old define node
+        std::string summary = (a.size() > 2 && is_string(a[2]))
+            ? string_heap_[as_string_idx(a[2])] : "rebind " + name;
+        flat.add_mutation(old_define, "rebind", name, summary, summary);
+
+        // Redirect old Define's value child to the new nodes
+        // This is a valid NodeId in workspace_flat_ since we parsed into it
+        flat.set_child(old_define, 0, new_value);
+        return make_bool(true);
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // P1: Query/Transform EDSL 扩展
+    // ═══════════════════════════════════════════════════════════════
+
+    // (query:parent node-id) — Find parent node IDs (nodes whose children include this ID)
+    primitives_.add("query:parent", [this](const auto& a) {
+        if (a.empty() || !is_int(a[0]) || !workspace_flat_) return make_void();
+        auto target = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto& flat = *workspace_flat_;
+        if (target >= flat.size()) return make_void();
+        EvalValue result = make_void();
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+            for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
+                if (v.child(ci) == target) {
+                    auto pid = pairs_.size();
+                    pairs_.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                    result = make_pair(pid);
+                    break;
+                }
+            }
+        }
+        return result;
+    });
+
+    // (query:siblings node-id) — Find sibling node IDs (other children of same parent)
+    primitives_.add("query:siblings", [this](const auto& a) {
+        if (a.empty() || !is_int(a[0]) || !workspace_flat_) return make_void();
+        auto target = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto& flat = *workspace_flat_;
+        if (target >= flat.size()) return make_void();
+        EvalValue result = make_void();
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+            bool parent_of_target = false;
+            for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
+                if (v.child(ci) == target) { parent_of_target = true; break; }
+            }
+            if (parent_of_target) {
+                for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
+                    auto child = v.child(ci);
+                    if (child != target) {
+                        auto pid = pairs_.size();
+                        pairs_.push_back({make_int(static_cast<std::int64_t>(child)), result});
+                        result = make_pair(pid);
+                    }
+                }
+            }
+        }
+        return result;
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // P8: Query/Transform EDSL 扩展 — pattern matching
+    // ═══════════════════════════════════════════════════════════════
+
+    // (query:pattern "expr") — Find all nodes matching a structural pattern
+    //
+    // Pattern syntax:
+    //   (+ 1 2)   — exact match: Call("+", 1, 2)
+    //   (+ 1 _)   — wildcard: "_" matches any single subtree
+    //   fib       — matches a Variable named "fib"
+    //
+    // The pattern is parsed as an S-expression. A Variable named "_" acts as
+    // wildcard and matches any single node or subtree.
+    primitives_.add("query:pattern", [this](const auto& a) {
+        if (a.empty() || !is_string(a[0]) || !workspace_flat_ || !workspace_pool_)
+            return make_void();
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size()) return make_void();
+
+        // Parse pattern string into its own FlatAST (separate from workspace)
+        auto alloc = arena_->allocator();
+        auto* pat_pool = arena_->create<aura::ast::StringPool>(alloc);
+        auto* pat_flat = arena_->create<aura::ast::FlatAST>(alloc);
+        auto pr = aura::parser::parse_to_flat(string_heap_[idx], *pat_flat, *pat_pool);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) return make_void();
+
+        // Intern "_" in the pattern pool for wildcard matching
+        auto wildcard_sym = pat_pool->intern("_");
+
+        // Recursive subtree matcher
+        std::function<bool(aura::ast::NodeId, aura::ast::NodeId)> match_subtree;
+        match_subtree = [&, wildcard_sym](aura::ast::NodeId ws_id, aura::ast::NodeId pat_id) -> bool {
+            if (pat_id >= pat_flat->size()) return ws_id >= workspace_flat_->size();
+            if (ws_id >= workspace_flat_->size() || pat_id == aura::ast::NULL_NODE)
+                return (pat_id == aura::ast::NULL_NODE) ? (ws_id == aura::ast::NULL_NODE) : false;
+
+            auto ws_node = workspace_flat_->get(ws_id);
+            auto pat_node = pat_flat->get(pat_id);
+
+            // Wildcard "_" matches any single subtree
+            if (pat_node.tag == aura::ast::NodeTag::Variable && pat_node.sym_id == wildcard_sym)
+                return true;
+
+            // Same tag required
+            if (ws_node.tag != pat_node.tag) return false;
+
+            switch (pat_node.tag) {
+            case aura::ast::NodeTag::LiteralInt:
+                return ws_node.int_value == pat_node.int_value;
+            case aura::ast::NodeTag::LiteralFloat:
+                return ws_node.float_value == pat_node.float_value;
+            case aura::ast::NodeTag::Variable:
+            case aura::ast::NodeTag::LiteralString:
+                return workspace_pool_->resolve(ws_node.sym_id) == pat_pool->resolve(pat_node.sym_id);
+            case aura::ast::NodeTag::MacroDef:
+                return true;
+            default:
+                if (ws_node.children.size() != pat_node.children.size()) return false;
+                for (std::size_t ci = 0; ci < ws_node.children.size(); ++ci) {
+                    if (!match_subtree(ws_node.child(ci), pat_node.child(ci)))
+                        return false;
+                }
+                return true;
+            }
+        };
+
+        auto& flat = *workspace_flat_;
+        EvalValue result = make_void();
+
+        // Walk every node in workspace and try matching at each position
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            if (match_subtree(id, pr.root)) {
+                auto pid = pairs_.size();
+                pairs_.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                result = make_pair(pid);
+            }
+        }
+
+        return result;
+    });
+
+    // (mutate:set-body name-str new-body-code-str) — Replace function body by name
+    // Finds (define (name params) ...) and replaces the Lambda body.
+    // Parses new body INTO the workspace FlatAST so all node IDs are valid.
+    primitives_.add("mutate:set-body", [this](const auto& a) {
+        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !workspace_flat_ || !workspace_pool_)
+            return make_bool(false);
+        auto name_idx = as_string_idx(a[0]);
+        auto code_idx = as_string_idx(a[1]);
+        if (name_idx >= string_heap_.size() || code_idx >= string_heap_.size())
+            return make_bool(false);
+        auto& flat = *workspace_flat_;
+        auto name = string_heap_[name_idx];
+        auto sym = workspace_pool_->intern(name);
+
+        // Find Define node with matching symbol name
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+            if (v.tag == aura::ast::NodeTag::Define && v.sym_id == sym) {
+                // The Define should have one child: a Lambda
+                if (v.children.size() != 1) return make_bool(false);
+                auto lambda_id = v.child(0);
+                auto lv = flat.get(lambda_id);
+                if (lv.tag != aura::ast::NodeTag::Lambda) return make_bool(false);
+
+                // Parse new body INTO workspace flat (all IDs stay valid)
+                auto pr = aura::parser::parse_to_flat(string_heap_[code_idx], flat, *workspace_pool_);
+                if (!pr.success || pr.root == aura::ast::NULL_NODE) return make_bool(false);
+
+                // Record mutation
+                flat.add_mutation(id, "set-body", name, name,
+                    "set-body " + name);
+
+                // Replace the Lambda's body — pr.root is a valid node in workspace_flat_
+                flat.set_child(lambda_id, 0, pr.root);
+                return make_bool(true);
+            }
+        }
+        return make_bool(false);
+    });
+
+    // (mutate:remove-node node-id) — Remove a node by setting parent's reference to NULL_NODE
+    // The node entry remains in the FlatAST but is disconnected from the tree.
+    // The tree walker in eval_flat skips NULL_NODE children.
+    primitives_.add("mutate:remove-node", [this](const auto& a) {
+        if (a.empty() || !is_int(a[0]) || !workspace_flat_) return make_bool(false);
+        auto target = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto& flat = *workspace_flat_;
+        if (target >= flat.size()) return make_bool(false);
+
+        // Find parent and remove target from its children
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+            if (v.children.empty()) continue;
+            auto children = flat.children(id);
+            for (std::size_t ci = 0; ci < children.size(); ++ci) {
+                if (children[ci] == target) {
+                    children[ci] = aura::ast::NULL_NODE;
+                    flat.add_mutation(id, "remove-node",
+                        std::to_string(target), "",
+                        "remove node " + std::to_string(target));
+                    return make_bool(true);
+                }
+            }
+        }
+        return make_bool(false);
     });
 }
 

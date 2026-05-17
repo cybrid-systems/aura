@@ -97,6 +97,8 @@ private:
     Env top_; Primitives primitives_; ast::ASTArena* arena_=nullptr;
     ast::FlatAST* current_flat_ = nullptr;
     ast::StringPool* current_pool_ = nullptr;
+    ast::FlatAST* workspace_flat_ = nullptr;
+    ast::StringPool* workspace_pool_ = nullptr;
     std::unordered_map<ClosureId,Closure> closures_;
     std::unordered_map<std::string, MacroDef> macros_;
     std::unordered_set<std::string> loaded_modules_;

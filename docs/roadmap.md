@@ -48,19 +48,27 @@ P9  生产后端                     ⬜ LLVM JIT / AOT / 自举
 - [x] 类型系统 + CaaS 增量编译集成方案
 - [x] 性能估算 + 优先级
 
-### P7 — Aura 原语注册 (核心 EDSL)
-- [ ] `set-code` — 锁定 AST 到工作区 (已有 C++ 实现，需注册)
-- [ ] `eval-current` — 执行工作区 AST (已有，需注册)
-- [ ] `query:find name` — 按名称查找节点
-- [ ] `query:children node-id` — 获取子节点
-- [ ] `query:node node-id` — 查看节点详情
-- [ ] `query:calls name` — 查找函数调用
-- [ ] `mutate:rebind name code` — 按函数名替换定义
-- [ ] `mutate:replace-value` — 扩展支持任意节点类型
+### P7 — Aura 原语注册 (核心 EDSL) ✅
+- [x] `set-code` — 锁定 AST 到工作区
+- [x] `eval-current` — 执行工作区 AST
+- [x] `query:find name` — 按名称查找节点
+- [x] `query:children node-id` — 获取子节点
+- [x] `query:node node-id` — 查看节点详情
+- [x] `query:calls name` — 查找函数调用
+- [x] `mutate:rebind name code` — 按函数名替换定义
+- [x] `mutate:replace-value` — 替换节点值
+- [x] `mutate:replace-type` — 替换类型注解
+- [x] `mutate:record-patch` — 记录变更
+- [x] `rollback / rollback-since` — 回滚
+- [x] `mutation-count / mutation-history / check-preconditions` — 查询
 
 ### P8 — 完整 EDSL + 增量编译
-- [ ] `query:parent / query:siblings / query:pattern`
-- [ ] `mutate:set-body / mutate:remove-node`
+- [x] `query:parent` — 查找父节点
+- [x] `query:siblings` — 查找兄弟节点
+- [x] `query:pattern` — 模式匹配搜索（`_` 通配符）
+- [x] `mutate:set-body` — 按函数名替换函数体（修复：解析到工作区，跨 AST 引用 bug）
+- [x] `mutate:remove-node` — 删除节点 (从父节点断开)
+- [x] `mutate:rebind` — 修复：原地替换而非整体换 workspace（保留其他 mutation）
 - [ ] Dirtiness 标记 (被 mutate 的节点)
 - [ ] 增量类型检查 (只检查修改部分)
 - [ ] `typecheck-current` 原语
