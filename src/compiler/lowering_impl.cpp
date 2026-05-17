@@ -666,6 +666,12 @@ std::string unparse_node(const FlatAST& flat, const StringPool& pool,
              + unparse_node(flat, pool, v.child(0), indent + 1) + ")";
     }
 
+    case NodeTag::Pair: {
+        return "(" + unparse_node(flat, pool, v.child(0), indent + 1)
+             + " . " + unparse_node(flat, pool, v.child(1), indent + 1)
+             + ")";
+    }
+
     case NodeTag::Quote: {
         return "(quote " + unparse_node(flat, pool, v.child(0), indent + 1) + ")";
     }

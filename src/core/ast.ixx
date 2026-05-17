@@ -31,7 +31,7 @@ export enum class NodeTag : std::uint32_t {
     TypeAnnotation = 0x0F,
     Coercion = 0x10,
     LiteralFloat = 0x11,
-    // 0x12-0x14 reserved for try/catch/raise
+    Pair = 0x12,
     Export = 0x15,
 };
 
@@ -180,7 +180,7 @@ export constexpr std::array<NodeMeta, 21> kNodeMeta = {{
     {NodeTag::TypeAnnotation, "TypeAnnotation", 1, false, true,  false, false, false}, // 0x0F
     {NodeTag::Coercion, "Coercion", 1, false, true,  false, false, false},  // 0x10
     {NodeTag::LiteralFloat, "LiteralFloat", 0, false, false, false, true, false},  // 0x11
-    {NodeTag::LiteralInt, "<gap>",      0, false, false, false, false, false},  // 0x12 (gap)
+    {NodeTag::Pair,      "Pair",      2, false, false, false, false, false},  // 0x12
     {NodeTag::LiteralInt, "<gap>",      0, false, false, false, false, false},  // 0x13 (gap)
     {NodeTag::LiteralInt, "<gap>",      0, false, false, false, false, false},  // 0x14 (gap)
     {NodeTag::Export, "Export", 0, true, false, false, false, false},  // 0x15
@@ -463,6 +463,16 @@ public:
         child_data_.push_back(val);
         child_begin_[id] = start;
         child_count_[id] = 1;
+        return id;
+    }
+
+    [[nodiscard]] NodeId add_pair(NodeId car, NodeId cdr) {
+        auto id = add_node(NodeTag::Pair);
+        auto start = static_cast<std::uint32_t>(child_data_.size());
+        child_data_.push_back(car);
+        child_data_.push_back(cdr);
+        child_begin_[id] = start;
+        child_count_[id] = 2;
         return id;
     }
 
