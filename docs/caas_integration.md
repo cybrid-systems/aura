@@ -228,9 +228,9 @@ redefine("foldl"):
 | --serve JSON 协议 | ✅ v2 | `main.cpp` | exec/define/mutate/rollback/session |
 | 多会话 (multi-session) | ✅ | `main.cpp` | `{"cmd":"session","name":"new:proj"}` |
 | ArenaGroup 基础设施 | ✅ v1 | `arena.ixx` | get-or-create / reset / stats |
-| ArenaGroup 集成到 Service | 🟡 | `service.ixx` | API 暴露但 eval 路径未使用 |
+| ArenaGroup 集成到 Service | 🟡 → ✅ | `service.ixx` | compile_module + unload_module + reload_module |
 | 增量编译 (函数级) | ✅ v1 | `service.ixx` | cache_define + dep_graph + invalidate |
-| 增量编译 (模块级) | 🟡 | `service.ixx` | cache_module 存在但无模块 dirty 标记 |
+| 增量编译 (模块级) | 🟡 → ✅ | `service.ixx` | ModuleState dirty 追踪 + mark_module_dirty + reload |
 | 磁盘缓存 (mmap) | 🟡 | `cache.ixx` | write_cache/open_cache 存在但未启用 |
 | Level 2 类型检查 | ✅ | `pass_manager.ixx` | TypeCheckWrap pass (non-fatal warnings) |
 | 函数热替换 + 依赖追踪 | ✅ | `service.ixx` | invalidate_function BFS re-lower |
@@ -240,9 +240,9 @@ redefine("foldl"):
 
 ## 后续步骤
 
-1. **ArenaGroup 集成到 eval 路径** — `compile_module()` 使用模块级 arena
-2. **模块级增量编译** — dirty 标记 + cache_module + 按模块重编
-3. **磁盘缓存启用** — 通过 mmap 缓存 FlatAST + IRModule
+1. ✅ **ArenaGroup 集成到 eval 路径** — `compile_module()` + `unload_module()` + `reload_module()` (fcd95e0)
+2. ✅ **模块级增量编译** — ModuleState dirty 追踪 + `mark_module_dirty()` + `reload_module()` (e5393e0)
+3. **磁盘缓存启用** — 通过 mmap 缓存 FlatAST + IRModule（待做）
 
 ## 文件清单
 
