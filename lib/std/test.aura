@@ -8,23 +8,14 @@
 ; Check and check= are built-in primitives that return 1 on success
 ; or <error> on failure.
 ;
-; Example:
-;   (test-suite "math"
-;     (check= 4 (square 2))
-;     (check= 9 (square 3)))
-;
 ;   (run-tests)  → evaluate and print summary
 
-; test-suite macro: registers check forms, evaluates at define time.
-; Stored as: ("suite-name" 1 1 ...) — flat pair chain, no nesting.
+; test-suite macro: stores check forms as quoted data for run-tests.
+; (run-tests) evaluates each stored form one by one.
+; Format: ("name" form1 form2 ...) as flat pair chain.
 (defmacro (test-suite name . body)
   (let ((collect-name (string-append "test:" name)))
     (list 'begin
       (list 'define collect-name
-        (cons 'cons (cons name
-          (list 'map (list 'lambda (list 'expr)
-                (list 'try 'expr
-                  (list 'catch (list 'e)
-                    (list 'list (list 'quote 'failed) 'e))))
-            (cons 'list body)))))
+        (list 'cons name (list 'quote body)))
       collect-name)))

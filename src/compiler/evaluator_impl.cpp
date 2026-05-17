@@ -1215,15 +1215,30 @@ void Evaluator::init_pair_primitives() {
                     suite_name = string_heap_[sid];
             }
 
-            // Walk result list: each = 1 (pass) or (failed e) (fail)
-            auto results = pairs_[idx].cdr;
+            // Walk and evaluate each stored check form
+            auto forms = pairs_[idx].cdr;
             int sp = 0, sf = 0;
-            while (is_pair(results)) {
-                auto ri = as_pair_idx(results);
-                if (ri >= pairs_.size()) break;
-                auto rv = pairs_[ri].car;
-                results = pairs_[ri].cdr;
-                if (is_int(rv) && as_int(rv) == 1) { sp++; total_passed++; }
+
+            while (is_pair(forms)) {
+                auto fi = as_pair_idx(forms);
+                if (fi >= pairs_.size()) break;
+                auto check_form = pairs_[fi].car;
+                forms = pairs_[fi].cdr;
+
+                // Convert check_form data back to AST and evaluate
+                if (!arena_) { sf++; continue; }
+                auto alloc = arena_->allocator();
+                auto* cf_pool = arena_->create<aura::ast::StringPool>(alloc);
+                auto* cf_flat = arena_->create<aura::ast::FlatAST>(alloc);
+                auto ast_root = data_to_flat(check_form, *cf_flat, *cf_pool, 0);
+                if (ast_root == aura::ast::NULL_NODE) { sf++; continue; }
+                cf_flat->root = ast_root;
+
+                auto result = eval_flat(*cf_flat, *cf_pool, ast_root, top_);
+                if (!result) { sf++; continue; }
+
+                bool ok = is_int(*result) && as_int(*result) == 1;
+                if (ok) { sp++; total_passed++; }
                 else { sf++; total_failed++; }
             }
 
@@ -2909,10 +2924,21 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 auto lambda_id = flat->add_lambda(param_syms, body_node);
                 auto cid = next_id();
                 auto* copied_env = copy_env(env);
-                closures_[cid] = Closure{/*params*/{}, flat, pool, body_node, copied_env};
+
+                // Clone closure body to arena-allocated FlatAST so it survives
+                // the parent context (macro flat/pool is reused across expansions).
+                if (!arena_) { return make_void(); }
+                auto cl_alloc = arena_->allocator();
+                auto* cl_flat = arena_->create<aura::ast::FlatAST>(cl_alloc);
+                auto* cl_pool = arena_->create<aura::ast::StringPool>(cl_alloc);
+                auto cloned_body = clone_macro_body(*cl_flat, *cl_pool, *flat, *pool,
+                                                     body_node, nullptr);
+                cl_flat->root = cloned_body;
+                closures_[cid] = Closure{/*params*/{}, cl_flat, cl_pool, cloned_body, copied_env};
                 // Store param names as strings for the Closure
                 for (auto& ps : param_syms) {
-                    closures_[cid].params.push_back(std::string(pool->resolve(ps)));
+                    std::string pname(pool->resolve(ps));
+                    closures_[cid].params.push_back(std::move(pname));
                 }
                 return make_closure(cid);
             }
