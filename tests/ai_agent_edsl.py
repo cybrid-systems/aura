@@ -8,6 +8,7 @@ import subprocess, json, sys, os, time, re, http.client, urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ai_agent_prompt import build_system_prompt
+from stdlib_inliner import inline_stdlib
 
 AURA = os.environ.get("AURA_BIN", "./build/aura")
 LLM_KEY = os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
@@ -47,6 +48,8 @@ class AuraSession:
                 return json.loads(l)
         return {"status": "timeout"}
     def exec(self, code, timeout=30):
+        # Inline stdlib imports so code runs through the IR pipeline
+        code = inline_stdlib(code)
         return self.send({"cmd": "exec", "code": code}, timeout)
     def close(self):
         self.p.terminate(); self.p.wait()
