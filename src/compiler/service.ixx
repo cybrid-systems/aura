@@ -418,6 +418,103 @@ public:
     const aura::compiler::EvalStrategy& strategy() const { return strategy_; }
     void set_strategy(const aura::compiler::EvalStrategy& s) { strategy_ = s; }
 
+    // ---- Module caching (for on_module_loaded callback) ---------------
+
+    // Parse module content and cache all top-level defines in ir_cache_.
+    // Called by Evaluator after each successful module load.
+    void cache_module(const std::string& content, const std::string& path) {
+        auto alloc = arena_.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat(content, flat, pool);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) return;
+        flat.root = pr.root;
+
+        // Macro expand
+        auto expanded = aura::compiler::macro_expand_all(flat, pool, flat.root);
+
+        // Walk top-level expressions to find (define ...) forms
+        // We walk the expanded root looking at each top-level expression
+        struct DefineFinder {
+            aura::ast::FlatAST& flat;
+            aura::ast::StringPool& pool;
+            std::vector<std::pair<std::string, aura::ast::NodeId>> found;
+
+            void walk(aura::ast::NodeId id) {
+                if (id == aura::ast::NULL_NODE || id >= flat.size()) return;
+                auto v = flat.get(id);
+                if (v.tag == aura::ast::NodeTag::Define) {
+                    auto name = pool.resolve(v.sym_id);
+                    found.emplace_back(std::string(name), id);
+                }
+                // Top-level begin: walk children
+                if (v.tag == aura::ast::NodeTag::Begin) {
+                    for (auto c : v.children) walk(c);
+                }
+            }
+        };
+
+        DefineFinder finder{flat, pool, {}};
+        if (expanded != aura::ast::NULL_NODE) {
+            auto expanded_v = flat.get(expanded);
+            if (expanded_v.tag == aura::ast::NodeTag::Begin) {
+                for (auto c : expanded_v.children)
+                    finder.walk(c);
+            } else {
+                finder.walk(expanded);
+            }
+        }
+
+            // Cache each define (IR only — tree-walker already evaluated the module)
+        for (auto& [name, node_id] : finder.found) {
+            if (ir_cache_.count(name)) continue;  // already cached
+
+            // Create a temporary flat with just this define as root
+            auto def_alloc = arena_.allocator();
+            aura::ast::FlatAST def_flat(def_alloc);
+            aura::ast::StringPool def_pool(def_alloc);
+
+            // Re-parse just the define expression for a clean flat
+            // We use define source extraction: walk the content s-exprs
+            // Actually, easier: use the existing define by setting flat.root to the define node
+            // lower_to_ir_with_cache starts from flat.root
+            aura::ast::NodeId saved_root = flat.root;
+            flat.root = node_id;
+
+            bool is_redefine = ir_cache_.count(name) > 0;
+            auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
+            std::vector<std::string> cache_hits;
+            auto ir_mod = aura::compiler::lower_to_ir_with_cache(
+                flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives());
+            flat.root = saved_root;  // restore
+
+            // Run passes
+            {
+                aura::compiler::ComputeKindWrap ck_pass;
+                aura::compiler::ConstantFoldingWrap cf_pass;
+                for (auto& func : ir_mod.functions) {
+                    if (func.id == ir_mod.entry_function_id) continue;
+                    ck_pass.compute_function(func);
+                    cf_pass.fold_function(func);
+                }
+            }
+
+            // Cache bundle
+            std::vector<aura::ir::IRFunction> bundle;
+            for (auto& func : ir_mod.functions) {
+                if (func.id != ir_mod.entry_function_id)
+                    bundle.push_back(std::move(func));
+            }
+            ir_cache_[name] = std::move(bundle);
+            function_sources_[name] = content;
+
+            for (auto& cn : cache_hits)
+                record_dependency(name, cn);
+            if (is_redefine)
+                invalidate_function(name);
+        }
+    }
+
     // ---- Define caching (shared by eval, eval_ir, define_function) -----
 
     // Lower a define expression to IR, cache it, and eval tree-walker for env.
