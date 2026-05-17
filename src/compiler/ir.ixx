@@ -37,6 +37,12 @@ export enum class IROpcode : std::uint8_t {
     ConstString,    // load string constant: result_slot, string_index
     // Primitive call (for non-arithmetic primitives like string ops)
     PrimCall,       // call prim by id: prim_id, packed_args(arg_begin, arg_count), result_slot
+    // Primitive value (load a primitive function value)
+    Primitive,      // load primitive value: result_slot, prim_slot_index
+    // Boolean constant
+    ConstBool,      // load boolean constant: result_slot, value(0 or 1)
+    // Void constant (empty list)
+    ConstVoid,      // load void: result_slot
 };
 
 export struct IRInstruction {
@@ -100,14 +106,37 @@ export struct IRFunction {
     std::uint32_t arg_count = 0;    // number of arguments
 };
 
+// Closure bridge data: original tree-walker info for IR closures.
+// Only populated when the lowered closure has corresponding FlatAST data
+// (i.e. for lambda forms, not for cached defines).
+export struct ClosureBridgeData {
+    const ast::FlatAST* flat = nullptr;
+    const ast::StringPool* pool = nullptr;
+    ast::NodeId body_id = ast::NULL_NODE;
+};
+
 export struct IRModule {
     std::vector<IRFunction> functions;
+    std::vector<ClosureBridgeData> closure_bridge;  // indexed by func_id
     std::uint32_t entry_function_id = 0;
 
     std::uint32_t add_function(IRFunction func) {
         func.id = static_cast<std::uint32_t>(functions.size());
         functions.push_back(std::move(func));
+        // Ensure closure_bridge is in sync
+        if (closure_bridge.size() < functions.size())
+            closure_bridge.resize(functions.size());
         return func.id;
+    }
+
+    // Set bridge data for a function (for cross-evaluator lambda calls)
+    void set_closure_bridge(std::uint32_t func_id,
+                             const ast::FlatAST* flat,
+                             const ast::StringPool* pool,
+                             ast::NodeId body_id) {
+        if (func_id < functions.size()) {
+            closure_bridge[func_id] = {flat, pool, body_id};
+        }
     }
 
     std::vector<std::string> string_pool;  // string constants (for ConstString opcode)

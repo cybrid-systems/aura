@@ -82,6 +82,28 @@ public:
     const Env& top_env() const { return top_; }
     Env& top_env() { return top_; }
     const std::vector<Pair>& pairs() const { return pairs_; }
+
+    // IR closure bridge: called when a closure id is not in closures_.
+    // Expected to look up closure_id in an IR closure store, extract
+    // (flat, pool, body_id, params, env), build a tree-walker environment,
+    // and return eval_flat(flat, pool, body_id, ne).
+    using ClosureBridgeFn = std::function<
+        std::optional<EvalValue>(
+            ClosureId closure_id,
+            const std::vector<EvalValue>& args
+        )>;
+
+    // Set the IR closure bridge for cross-evaluator closure calls
+    void set_closure_bridge(ClosureBridgeFn bridge) {
+        closure_bridge_ = std::move(bridge);
+    }
+
+    // Look up a closure and apply it with given args.
+    // Tries closures_ first, then IR bridge.
+    std::optional<EvalValue> apply_closure(
+        ClosureId cid,
+        const std::vector<EvalValue>& args);
+
 private:
     ClosureId next_id() { return next_id_++; }
     [[nodiscard]] std::size_t alloc_cell(const types::EvalValue& v) { cells_.push_back(v); return cells_.size()-1; }
@@ -105,6 +127,7 @@ private:
     ast::StringPool* workspace_pool_ = nullptr;
     void* type_registry_ = nullptr;  // points to aura::core::TypeRegistry
     std::unordered_map<ClosureId,Closure> closures_;
+    ClosureBridgeFn closure_bridge_;
     std::unordered_map<std::string, MacroDef> macros_;
     std::vector<Env*> modules_;  // module objects (arena-allocated, indexed by ModuleRef.index)
     std::unordered_map<std::string, std::uint64_t> module_cache_;  // path → index

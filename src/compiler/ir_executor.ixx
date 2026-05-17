@@ -14,6 +14,11 @@ using EvalValue = types::EvalValue;
 export struct IRClosure {
     std::uint32_t func_id = 0;
     std::vector<EvalValue> env;
+    // Original tree-walker closure info for bridge (nullptr if not available)
+    const ast::FlatAST* flat = nullptr;
+    const ast::StringPool* pool = nullptr;
+    ast::NodeId body_id = ast::NULL_NODE;
+    std::vector<std::string> params;
 };
 
 // Call frame for recursive IR execution

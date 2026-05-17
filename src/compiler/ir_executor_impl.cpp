@@ -133,9 +133,9 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                 if (is_float(a) || is_float(b)) {
                     double x = is_float(a) ? as_float(a) : static_cast<double>(as_int(a));
                     double y = is_float(b) ? as_float(b) : static_cast<double>(as_int(b));
-                    locals[ops[0]] = make_int(x == y ? 1 : 0);
+                    locals[ops[0]] = make_bool(x == y);
                 } else
-                    locals[ops[0]] = make_int(as_int(a) == as_int(b) ? 1 : 0);
+                    locals[ops[0]] = make_bool(as_int(a) == as_int(b));
                 break;
             }
             case IROpcode::Lt: {
@@ -143,9 +143,9 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                 if (is_float(a) || is_float(b)) {
                     double x = is_float(a) ? as_float(a) : static_cast<double>(as_int(a));
                     double y = is_float(b) ? as_float(b) : static_cast<double>(as_int(b));
-                    locals[ops[0]] = make_int(x < y ? 1 : 0);
+                    locals[ops[0]] = make_bool(x < y);
                 } else
-                    locals[ops[0]] = make_int(as_int(a) < as_int(b) ? 1 : 0);
+                    locals[ops[0]] = make_bool(as_int(a) < as_int(b));
                 break;
             }
             case IROpcode::Gt: {
@@ -153,9 +153,9 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                 if (is_float(a) || is_float(b)) {
                     double x = is_float(a) ? as_float(a) : static_cast<double>(as_int(a));
                     double y = is_float(b) ? as_float(b) : static_cast<double>(as_int(b));
-                    locals[ops[0]] = make_int(x > y ? 1 : 0);
+                    locals[ops[0]] = make_bool(x > y);
                 } else
-                    locals[ops[0]] = make_int(as_int(a) > as_int(b) ? 1 : 0);
+                    locals[ops[0]] = make_bool(as_int(a) > as_int(b));
                 break;
             }
             case IROpcode::Le: {
@@ -163,9 +163,9 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                 if (is_float(a) || is_float(b)) {
                     double x = is_float(a) ? as_float(a) : static_cast<double>(as_int(a));
                     double y = is_float(b) ? as_float(b) : static_cast<double>(as_int(b));
-                    locals[ops[0]] = make_int(x <= y ? 1 : 0);
+                    locals[ops[0]] = make_bool(x <= y);
                 } else
-                    locals[ops[0]] = make_int(as_int(a) <= as_int(b) ? 1 : 0);
+                    locals[ops[0]] = make_bool(as_int(a) <= as_int(b));
                 break;
             }
             case IROpcode::Ge: {
@@ -173,20 +173,20 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                 if (is_float(a) || is_float(b)) {
                     double x = is_float(a) ? as_float(a) : static_cast<double>(as_int(a));
                     double y = is_float(b) ? as_float(b) : static_cast<double>(as_int(b));
-                    locals[ops[0]] = make_int(x >= y ? 1 : 0);
+                    locals[ops[0]] = make_bool(x >= y);
                 } else
-                    locals[ops[0]] = make_int(as_int(a) >= as_int(b) ? 1 : 0);
+                    locals[ops[0]] = make_bool(as_int(a) >= as_int(b));
                 break;
             }
 
             case IROpcode::And:
-                locals[ops[0]] = make_int(is_truthy(locals[ops[1]]) && is_truthy(locals[ops[2]]) ? 1 : 0);
+                locals[ops[0]] = make_bool(is_truthy(locals[ops[1]]) && is_truthy(locals[ops[2]]));
                 break;
             case IROpcode::Or:
-                locals[ops[0]] = make_int(is_truthy(locals[ops[1]]) || is_truthy(locals[ops[2]]) ? 1 : 0);
+                locals[ops[0]] = make_bool(is_truthy(locals[ops[1]]) || is_truthy(locals[ops[2]]));
                 break;
             case IROpcode::Not:
-                locals[ops[0]] = make_int(!is_truthy(locals[ops[1]]) ? 1 : 0);
+                locals[ops[0]] = make_bool(!is_truthy(locals[ops[1]]));
                 break;
 
             case IROpcode::CastOp: {
@@ -312,6 +312,17 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                     auto result = execute_function(callee_func, all_args);
                     if (!result) return result;
                     locals[ops[3]] = *result;
+                } else if (is_primitive(callee_val)) {
+                    // Primitive function call — look up and invoke
+                    auto slot = as_primitive_slot(callee_val);
+                    auto prim_name = primitives_.name_for_slot(slot);
+                    auto pfn = primitives_.lookup(prim_name);
+                    if (pfn) {
+                        auto result = (*pfn)(call_args);
+                        locals[ops[3]] = result;
+                    } else {
+                        locals[ops[3]] = callee_val;
+                    }
                 } else {
                     locals[ops[3]] = callee_val;
                 }
@@ -323,7 +334,17 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
 
             case IROpcode::MakeClosure: {
                 auto id = next_closure_id_++;
-                runtime_closures_[id] = IRClosure{ops[1], std::vector<EvalValue>(ops[2], make_void())};
+                IRClosure ircl{ops[1], std::vector<EvalValue>(ops[2], make_void())};
+                // Copy bridge data from IRModule if available
+                if (ops[1] < module_.closure_bridge.size()) {
+                    auto& bd = module_.closure_bridge[ops[1]];
+                    ircl.flat = bd.flat;
+                    ircl.pool = bd.pool;
+                    ircl.body_id = bd.body_id;
+                    if (ops[1] < module_.functions.size())
+                        ircl.params = module_.functions[ops[1]].params;
+                }
+                runtime_closures_[id] = std::move(ircl);
                 locals[ops[0]] = make_closure(id);
                 break;
             }
@@ -406,6 +427,29 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                     locals[ops[0]] = (it != cell_heap_.end()) ? it->second : make_void();
                 } else {
                     locals[ops[0]] = make_void();
+                }
+                break;
+            }
+
+            case IROpcode::ConstBool: {
+                locals[ops[0]] = make_bool(ops[1] != 0);
+                break;
+            }
+
+            case IROpcode::ConstVoid: {
+                locals[ops[0]] = make_void();
+                break;
+            }
+
+            case IROpcode::Primitive: {
+                // Load a primitive value by slot index from the Primitives table
+                auto prim_slot = ops[1];
+                auto prim_name = primitives_.name_for_slot(prim_slot);
+                auto pfn = primitives_.lookup(prim_name);
+                if (pfn) {
+                    locals[ops[0]] = types::make_primitive(prim_slot);
+                } else {
+                    locals[ops[0]] = types::make_void();
                 }
                 break;
             }

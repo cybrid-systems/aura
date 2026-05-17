@@ -1,5 +1,6 @@
 module aura.compiler.lowering;
 import aura.core.ast;
+import aura.compiler.value;
 
 namespace aura::compiler {
 
@@ -32,6 +33,9 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
                                       NodeId id,
                                       const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache = nullptr,
                                       std::vector<std::string>* cache_hits = nullptr) {
+    // Track current flat/pool for closure bridge data
+    state.current_flat = &flat;
+    state.current_pool = &pool;
     // Early exit for invalid ids (backup for contract-observe mode)
     if (id == NULL_NODE || id >= flat.size()) {
         auto slot = state.alloc_local();
@@ -50,10 +54,16 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
     }
     case NodeTag::LiteralInt: {
         auto slot = state.alloc_local();
-        auto val = static_cast<std::uint64_t>(v.int_value);
-        state.emit(IROpcode::ConstI64, slot,
-             static_cast<std::uint32_t>(val),
-             static_cast<std::uint32_t>(val >> 32));
+        auto marker = flat.marker(id);
+        if (marker == aura::ast::SyntaxMarker::BoolLiteral) {
+            // Bool literals (#t/#f) should produce make_bool, not make_int
+            state.emit(IROpcode::ConstBool, slot, v.int_value != 0 ? 1 : 0);
+        } else {
+            auto val = static_cast<std::uint64_t>(v.int_value);
+            state.emit(IROpcode::ConstI64, slot,
+                 static_cast<std::uint32_t>(val),
+                 static_cast<std::uint32_t>(val >> 32));
+        }
         return slot;
     }
     case NodeTag::LiteralString: {
@@ -110,6 +120,15 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
                 return closure_slot;
             }
         }
+        // Check if this variable names a known primitive
+        if (state.primitives) {
+            auto slot_idx = state.primitives->slot_for_name(std::string(name));
+            if (slot_idx < state.primitives->slot_count()) {
+                auto slot = state.alloc_local();
+                state.emit(IROpcode::Primitive, slot, static_cast<std::uint32_t>(slot_idx));
+                return slot;
+            }
+        }
         auto slot = state.alloc_local();
         state.emit(IROpcode::ConstI64, slot, 0, 0);
         return slot;
@@ -148,14 +167,38 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
                         } else {
                             state.emit(op, result_slot, prev, prev);
                         }
-                    } else {
-                        // For 2+ args, chain binary ops: ((a op b) op c) op ...
-                        // Emit the first binary op into a temp accumulator,
-                        // then chain the rest, with the LAST op writing to result_slot.
+                    } else if (arg_count == 2) {
                         auto arg1 = lower_flat_expr(state, flat, pool, v.child(2), cache, cache_hits);
-                        if (arg_count == 2) {
-                            state.emit(op, result_slot, prev, arg1);
+                        state.emit(op, result_slot, prev, arg1);
+                    } else {
+                        // 3+ args: comparison ops need pairwise AND (= a b c → (and (= a b) (= b c)))
+                        // arithmetic chains as before: ((a + b) + c)
+                        bool is_comp = (op == IROpcode::Eq || op == IROpcode::Lt ||
+                                        op == IROpcode::Gt || op == IROpcode::Le ||
+                                        op == IROpcode::Ge);
+                        if (is_comp) {
+                            // Adjacent pairs ANDed together
+                            bool first = true;
+                            auto pair_prev = prev;
+                            auto and_acc = state.alloc_local();
+                            for (std::size_t ai = 2; ai < v.children.size(); ++ai) {
+                                auto pair_next = lower_flat_expr(state, flat, pool, v.child(ai), cache, cache_hits);
+                                auto cmp = state.alloc_local();
+                                state.emit(op, cmp, pair_prev, pair_next);
+                                if (first) {
+                                    state.emit(IROpcode::And, and_acc, cmp, cmp);
+                                    first = false;
+                                } else {
+                                    auto t = state.alloc_local();
+                                    state.emit(IROpcode::And, t, and_acc, cmp);
+                                    and_acc = t;
+                                }
+                                pair_prev = pair_next;
+                            }
+                            state.emit(IROpcode::And, result_slot, and_acc, and_acc);
                         } else {
+                            // Arithmetic chaining: ((a + b) + c)
+                            auto arg1 = lower_flat_expr(state, flat, pool, v.child(2), cache, cache_hits);
                             auto acc = state.alloc_local();
                             state.emit(op, acc, prev, arg1);
                             for (std::size_t ai = 3; ai < v.children.size(); ++ai) {
@@ -379,6 +422,10 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
         state.free_var_map = std::move(saved_fv_map);
 
         auto fid = state.module.add_function(std::move(func));
+        // Store bridge data for tree-walker compatibility
+        if (state.current_flat && state.current_pool) {
+            state.module.set_closure_bridge(fid, state.current_flat, state.current_pool, v.child(0));
+        }
         auto slot = state.alloc_local();
         state.emit(IROpcode::MakeClosure, slot, fid,
              static_cast<std::uint32_t>(free_vars.size()));
@@ -474,25 +521,99 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
         return val_slot;
     }
     case NodeTag::Quote: {
-        // Inline literals (self-quoting), placeholder for complex data
+        // Inline simple literals
         if (!v.children.empty()) {
-            auto child = flat.get(v.child(0));
-            if (child.tag == NodeTag::LiteralInt) {
+            auto cv = flat.get(v.child(0));
+            if (cv.tag == NodeTag::LiteralInt) {
+                if (cv.int_value == 0) {
+                    // () empty list → make_void
+                    auto slot = state.alloc_local();
+                    state.emit(IROpcode::ConstVoid, slot);
+                    return slot;
+                }
                 auto slot = state.alloc_local();
-                state.emit(IROpcode::ConstI64, slot, child.int_value, 0);
+                state.emit(IROpcode::ConstI64, slot, cv.int_value, 0);
                 return slot;
             }
-            if (child.tag == NodeTag::LiteralFloat) {
-                return lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
-            }
-            if (child.tag == NodeTag::LiteralString) {
+            if (cv.tag == NodeTag::LiteralFloat || cv.tag == NodeTag::LiteralString) {
                 return lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
             }
         }
-        // Non-trivial quoted data: not supported in IR yet, emit 0
-        auto slot = state.alloc_local();
-        state.emit(IROpcode::ConstI64, slot, 0, 0);
-        return slot;
+        // Non-trivial quoted data: lower as (cons car cdr) chain
+        if (v.children.empty() || !state.primitives) {
+            auto slot = state.alloc_local();
+            state.emit(IROpcode::ConstI64, slot, 0, 0);
+            return slot;
+        }
+
+        auto cons_slot = state.primitives->slot_for_name("cons");
+        if (cons_slot >= state.primitives->slot_count()) {
+            auto slot = state.alloc_local();
+            state.emit(IROpcode::ConstI64, slot, 0, 0);
+            return slot;
+        }
+        auto cons_fn = state.alloc_local();
+        state.emit(IROpcode::Primitive, cons_fn, static_cast<std::uint32_t>(cons_slot));
+
+        // Recursive helper: lower a quoted value as data
+        // For lists/pairs, lower each car/cdr with Quote semantics
+        // i.e. (1 2) as data is cons(1, cons(2, 0))
+        std::function<std::uint32_t(NodeId)> lower_q;
+        lower_q = [&](NodeId nid) -> std::uint32_t {
+            if (nid == ast::NULL_NODE || nid >= flat.size()) {
+                auto s = state.alloc_local();
+                state.emit(IROpcode::ConstI64, s, 0, 0);
+                return s;
+            }
+            auto nv = flat.get(nid);
+            // Simple literals
+            if (nv.tag == NodeTag::LiteralInt) {
+                auto s = state.alloc_local();
+                state.emit(IROpcode::ConstI64, s, nv.int_value, 0);
+                return s;
+            }
+            if (nv.tag == NodeTag::LiteralFloat || nv.tag == NodeTag::LiteralString) {
+                return lower_flat_expr(state, flat, pool, nid, cache, cache_hits);
+            }
+            // Lists: Pair or Call as data
+            if (nv.tag == NodeTag::Pair) {
+                // Dotted pair: (car . cdr) → cons(lower_q(car), lower_q(cdr))
+                auto left = nv.children.empty() ? ast::NULL_NODE : nv.child(0);
+                auto right = nv.children.size() > 1 ? nv.child(1) : ast::NULL_NODE;
+                auto left_slot = lower_q(left);
+                auto right_slot = lower_q(right);
+                // Call cons(left, right)
+                auto ab = state.alloc_local();
+                state.emit(IROpcode::Local, ab, left_slot);
+                state.alloc_local();
+                auto cd = state.local_count - 1;
+                state.emit(IROpcode::Local, static_cast<std::uint32_t>(cd), right_slot);
+                auto rs = state.alloc_local();
+                state.emit(IROpcode::Call, cons_fn, ab, 2, rs);
+                return rs;
+            }
+            if (nv.tag == NodeTag::Call) {
+                // Proper list: (a b c) → cons(a, cons(b, cons(c, 0)))
+                auto tail_s = state.alloc_local();
+                state.emit(IROpcode::ConstVoid, tail_s);
+                for (int ci = static_cast<int>(nv.children.size()) - 1; ci >= 0; --ci) {
+                    auto elem_s = lower_q(nv.child(ci));
+                    auto ab = state.alloc_local();
+                    state.emit(IROpcode::Local, ab, elem_s);
+                    state.alloc_local();
+                    auto cd = state.local_count - 1;
+                    state.emit(IROpcode::Local, static_cast<std::uint32_t>(cd), tail_s);
+                    auto rs = state.alloc_local();
+                    state.emit(IROpcode::Call, cons_fn, ab, 2, rs);
+                    tail_s = rs;
+                }
+                return tail_s;
+            }
+            // Unknown node type
+            return lower_flat_expr(state, flat, pool, nid, cache, cache_hits);
+        };
+
+        return lower_q(v.child(0));
     }
     case NodeTag::TypeAnnotation:
         return lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
@@ -515,8 +636,10 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
 // ── Internal: lower_to_ir with optional cache ──────────────────
 static IRModule lower_to_ir_impl(FlatAST& flat, StringPool& pool, ASTArena& arena,
                                   const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache,
-                                  std::vector<std::string>* cache_hits = nullptr) {
+                                  std::vector<std::string>* cache_hits = nullptr,
+                                  const Primitives* primitives = nullptr) {
     LoweringState state(arena);
+    state.primitives = primitives;
     state.module = {};
     // Create top-level function
     IRFunction top_func;
@@ -539,16 +662,18 @@ static IRModule lower_to_ir_impl(FlatAST& flat, StringPool& pool, ASTArena& aren
 }
 
 // ── lower_to_ir (FlatAST path) — native, no full-tree reconstruct ──
-IRModule lower_to_ir(FlatAST& flat, StringPool& pool, ASTArena& arena) {
-    return lower_to_ir_impl(flat, pool, arena, nullptr);
+IRModule lower_to_ir(FlatAST& flat, StringPool& pool, ASTArena& arena,
+                      const Primitives* primitives) {
+    return lower_to_ir_impl(flat, pool, arena, nullptr, nullptr, primitives);
 }
 
 // ── lower_to_ir_with_cache ─────────────────────────────────────
 IRModule lower_to_ir_with_cache(
     FlatAST& flat, StringPool& pool, ASTArena& arena,
     const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache,
-    std::vector<std::string>* cache_hits) {
-    return lower_to_ir_impl(flat, pool, arena, cache, cache_hits);
+    std::vector<std::string>* cache_hits,
+    const Primitives* primitives) {
+    return lower_to_ir_impl(flat, pool, arena, cache, cache_hits, primitives);
 }
 
 // ── unparse_node — FlatAST → S-expression source ───────────────
