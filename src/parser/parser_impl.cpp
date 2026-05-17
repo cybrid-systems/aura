@@ -159,6 +159,20 @@ NodeId FlatParser::parse_list() {
         if (kw == "cond")   return parse_cond();
         if (kw == "defmacro") return parse_defmacro();
         if (kw == "match")  return parse_match();
+        if (kw == "export") {
+            lexer_->consume(); // consume 'export'
+            std::vector<aura::ast::NodeId> syms;
+            while (lexer_->peek().kind != TokenKind::RParen && !lexer_->eof()) {
+                auto sym = parse_expr();
+                if (sym != aura::ast::NULL_NODE)
+                    syms.push_back(sym);
+                else break;
+            }
+            if (lexer_->peek().kind == TokenKind::RParen) lexer_->consume();
+            auto id = flat_.add_export(syms);
+            flat_.set_loc(id, tok.line, tok.column);
+            return id;
+        }
     }
 
     auto func = parse_expr();

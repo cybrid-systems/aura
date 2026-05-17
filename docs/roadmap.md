@@ -63,9 +63,9 @@ P10 大规模开发基础设施           🟡 设计完成，逐步实现
 - [ ] `(use path)` — 返回模块对象，不注入
 
 #### Phase 3: 显式导出
-- [ ] `(export sym ...)` 语法
-- [ ] `load-module` 只暴露 export 的符号
-- [ ] 未 export 的函数对其他模块不可见
+- [x] (export sym ...) — 模块 API 声明，未 export 的函数对其他模块不可见
+- [x] `load_module_file` export 过滤 — 模块对象只包含 export 的绑定
+- [x] 与前缀注入配合：`(import "path" "p:")` 只注入 export 的符号
 
 #### Phase 4: 标准库迁移
 - [ ] std/list → require 默认加前缀
