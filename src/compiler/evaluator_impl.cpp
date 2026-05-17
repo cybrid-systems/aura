@@ -183,7 +183,7 @@ Primitives::Primitives() {
         return make_int(r);
     };
     auto chain_cmp = [this](const auto& a, auto fn_int, auto fn_float) -> EvalValue {
-        if (a.size() < 2) return make_int(1);
+        if (a.size() < 2) return make_bool(true);
         auto to_f = [this](const EvalValue& v) -> double {
             return is_float(v) ? as_float(v) : static_cast<double>(coerce_to_int(v, string_heap_));
         };
@@ -191,12 +191,12 @@ Primitives::Primitives() {
         for (auto& v : a) if (is_float(v)) { any_f = true; break; }
         if (any_f) {
             for (std::size_t i = 1; i < a.size(); ++i)
-                if (!fn_float(to_f(a[i-1]), to_f(a[i]))) return make_int(0);
-            return make_int(1);
+                if (!fn_float(to_f(a[i-1]), to_f(a[i]))) return make_bool(false);
+            return make_bool(true);
         }
         for (std::size_t i = 1; i < a.size(); ++i)
-            if (!fn_int(coerce_to_int(a[i-1], string_heap_), coerce_to_int(a[i], string_heap_))) return make_int(0);
-        return make_int(1);
+            if (!fn_int(coerce_to_int(a[i-1], string_heap_), coerce_to_int(a[i], string_heap_))) return make_bool(false);
+        return make_bool(true);
     };
     table_["="]  = [chain_cmp](auto& a) { return chain_cmp(a, [](auto x, auto y){ return x == y; }, [](auto x, auto y){ return x == y; }); };
     table_["<"]  = [chain_cmp](auto& a) { return chain_cmp(a, [](auto x, auto y){ return x < y; }, [](auto x, auto y){ return x < y; }); };
@@ -553,7 +553,7 @@ void Evaluator::init_pair_primitives() {
         return make_string(nid);
     });
     primitives_.add("string=?", [this](const auto& a) {
-        if (a.size() < 2) return make_int(0);
+        if (a.size() < 2) return make_bool(false);
         auto to_str = [this](const EvalValue& v) -> std::string {
             if (is_string(v)) {
                 auto idx = as_string_idx(v);
@@ -562,10 +562,10 @@ void Evaluator::init_pair_primitives() {
             if (is_int(v)) return std::to_string(as_int(v));
             return "";
         };
-        return make_int(to_str(a[0]) == to_str(a[1]) ? 1 : 0);
+        return make_bool(to_str(a[0]) == to_str(a[1]));
     });
     primitives_.add("string<?", [this](const auto& a) {
-        if (a.size() < 2) return make_int(0);
+        if (a.size() < 2) return make_bool(false);
         auto to_str = [this](const EvalValue& v) -> std::string {
             if (is_string(v)) {
                 auto idx = as_string_idx(v);
@@ -574,7 +574,7 @@ void Evaluator::init_pair_primitives() {
             if (is_int(v)) return std::to_string(as_int(v));
             return "";
         };
-        return make_int(to_str(a[0]) < to_str(a[1]) ? 1 : 0);
+        return make_bool(to_str(a[0]) < to_str(a[1]));
     });
     primitives_.add("number->string", [this](const auto& a) {
         if (a.empty()) return make_int(0);

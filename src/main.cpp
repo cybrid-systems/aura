@@ -1062,7 +1062,7 @@ int main(int argc, char* argv[]) {
         e = e.substr(s);
         auto r = cs.eval(e);
         if (!r) { std::println(std::cerr, "error: {}", r.error().message); err = true; }
-        else std::println("{}", fmt_val(*r, cs));
+        else if (&e == &exprs.back()) std::println("{}", fmt_val(*r, cs));
     }
     return err ? 1 : 0;
 }
