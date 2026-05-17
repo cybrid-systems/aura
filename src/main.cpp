@@ -547,24 +547,34 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    // ── --unparse: parse and output S-expression source code ─────
-    // Usage: ./aura --unparse [file]
-    //   file: write to file instead of stdout
-    if (argc > 1 && std::string_view(argv[1]) == "--unparse") {
-        aura::compiler::CompilerService cs;
-        std::string input;
-        // Check if next arg is a filename (not a flag)
-        bool write_file = false;
-        std::string out_path;
-        if (argc > 2 && std::string_view(argv[2])[0] != '-') {
-            out_path = argv[2];
-            write_file = true;
-            input = (argc > 3) ? argv[3] : "";
-        } else if (argc > 2) {
-            input = argv[2];
-        }
-        if (input.empty()) { std::getline(std::cin, input); }
+    // ── --fmt / --unparse: parse, format (reindent), output ─────
+    // Usage: ./aura --fmt file.aura    → stdout
+    //        ./aura --fmt -i file.aura  → in-place rewrite
+    //        ./aura --fmt --check file.aura → CI mode (exit 1 if unformatted)
+    if (argc > 1 && (std::string_view(argv[1]) == "--fmt" || std::string_view(argv[1]) == "--unparse")) {
+        bool in_place = false;
+        bool check_only = false;
+        std::string in_path, input;
 
+        for (int i = 2; i < argc; ++i) {
+            if (std::string_view(argv[i]) == "-i") in_place = true;
+            else if (std::string_view(argv[i]) == "--check") check_only = true;
+            else if (argv[i][0] != '-') { in_path = argv[i]; }
+        }
+
+        if (!in_path.empty()) {
+            // Read from file
+            std::ifstream f(in_path);
+            if (!f) { std::println(std::cerr, "error: cannot read {}", in_path); return 1; }
+            input = std::string((std::istreambuf_iterator<char>(f)), {});
+        } else {
+            // Read from stdin
+            std::getline(std::cin, input);
+        }
+
+        if (input.empty()) return 1;
+
+        aura::compiler::CompilerService cs;
         auto alloc = cs.arena().allocator();
         aura::ast::StringPool pool(alloc);
         aura::ast::FlatAST flat(alloc);
@@ -575,16 +585,29 @@ int main(int argc, char* argv[]) {
         }
         flat.root = pr.root;
         auto source = aura::compiler::unparse_node(flat, pool, flat.root);
-        if (write_file) {
-            std::ofstream f(out_path);
-            if (!f) {
-                std::println(std::cerr, "error: cannot write {}", out_path);
-                return 1;
+        source += "\n";
+
+        if (check_only) {
+            if (source == input) {
+                std::println(std::cerr, "formatted OK");
+                return 0;
             }
-            f << source << "\n";
-            std::println(std::cerr, "written to {}", out_path);
+            std::println(std::cerr, "needs formatting");
+            return 1;
+        }
+
+        if (in_place && !in_path.empty()) {
+            std::ofstream f(in_path);
+            if (!f) { std::println(std::cerr, "error: cannot write {}", in_path); return 1; }
+            f << source;
+            std::println(std::cerr, "formatted {}", in_path);
+        } else if (!in_path.empty()) {
+            std::ofstream f(in_path + ".fmt");
+            if (!f) { std::println(std::cerr, "error: cannot write {}.fmt", in_path); return 1; }
+            f << source;
+            std::println(std::cerr, "written to {}.fmt", in_path);
         } else {
-            std::println("{}", source);
+            std::print("{}", source);
         }
         return 0;
     }

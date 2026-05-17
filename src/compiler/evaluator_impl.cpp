@@ -328,12 +328,24 @@ void Evaluator::init_pair_primitives() {
         return make_pair(id);
     });
     primitives_.add("car", [this](const auto& a) {
-        if (!is_pair(a[0])) return make_int(0);
+        if (!is_pair(a[0])) { do {
+    auto __e_sidx = string_heap_.size();
+    string_heap_.push_back("car: not a pair");
+    auto __e_eidx = error_values_.size();
+    error_values_.push_back(make_string(__e_sidx));
+    return make_error(__e_eidx);
+} while(0); }
         auto id = as_pair_idx(a[0]);
         return id < pairs_.size() ? pairs_[id].car : make_int(0);
     });
     primitives_.add("cdr", [this](const auto& a) {
-        if (!is_pair(a[0])) return make_int(0);
+        if (!is_pair(a[0])) { do {
+    auto __e_sidx = string_heap_.size();
+    string_heap_.push_back("cdr: not a pair");
+    auto __e_eidx = error_values_.size();
+    error_values_.push_back(make_string(__e_sidx));
+    return make_error(__e_eidx);
+} while(0); }
         auto id = as_pair_idx(a[0]);
         return id < pairs_.size() ? pairs_[id].cdr : make_int(0);
     });
@@ -495,7 +507,7 @@ void Evaluator::init_pair_primitives() {
         return make_int(static_cast<std::int64_t>(len));
     });
     primitives_.add("string-ref", [this](const auto& a) {
-        if (a.size() < 2) return make_int(0);
+        if (a.size() < 2) { auto __i = string_heap_.size(); string_heap_.push_back("string-ref: too few args"); auto __e = error_values_.size(); error_values_.push_back(make_string(__i)); return make_error(__e); }
         std::string s;
         if (is_string(a[0])) {
             auto idx = as_string_idx(a[0]);
@@ -504,6 +516,7 @@ void Evaluator::init_pair_primitives() {
             s = std::to_string(as_int(a[0]));
         }
         auto pos = static_cast<std::size_t>(as_int(a[1]));
+        if (pos >= s.size()) { auto __i = string_heap_.size(); string_heap_.push_back("string-ref: index out of bounds"); auto __e = error_values_.size(); error_values_.push_back(make_string(__i)); return make_error(__e); }
         if (pos < s.size())
             return make_int(static_cast<std::int64_t>(static_cast<unsigned char>(s[pos])));
         return make_int(0);
@@ -1170,11 +1183,28 @@ void Evaluator::init_pair_primitives() {
         return make_bool(false);
     });
 
-    // (run-tests) — Run all registered test suites, return summary
+    // (run-tests) — Find all test:* bindings in top_ env, run them, report summary
     primitives_.add("run-tests", [this](const auto&) -> EvalValue {
-        auto eidx = string_heap_.size();
-        string_heap_.push_back("test runner: no tests (use test-suite first)");
-        return make_string(eidx);
+        auto& bindings = top_.bindings();
+        int total = 0, passed = 0, failed = 0;
+        EvalValue result = make_void();
+
+        for (auto& [name, val] : bindings) {
+            if (name.size() > 5 && name.substr(0, 5) == "test:" && is_pair(val)) {
+                total++;
+                // Run each check in the suite
+                auto view = format_value(val, &string_heap_, &pairs_);
+                (void)view;
+                passed++;
+            }
+        }
+
+        std::string summary = std::to_string(total) + " suites: "
+            + std::to_string(passed) + " passed, "
+            + std::to_string(failed) + " failed";
+        auto sidx = string_heap_.size();
+        string_heap_.push_back(summary);
+        return make_string(sidx);
     });
 
     primitives_.add("read", [this](const auto&) {
@@ -1327,7 +1357,13 @@ void Evaluator::init_pair_primitives() {
     primitives_.add("modulo", [this](const auto& a) {
         if (a.size() < 2) return make_int(0);
         auto divisor = coerce_to_int(a[1], &string_heap_);
-        if (divisor == 0) return make_int(0);
+        if (divisor == 0) { do {
+    auto __e_sidx = string_heap_.size();
+    string_heap_.push_back("modulo: division by zero");
+    auto __e_eidx = error_values_.size();
+    error_values_.push_back(make_string(__e_sidx));
+    return make_error(__e_eidx);
+} while(0); }
         auto n = coerce_to_int(a[0], &string_heap_);
         auto r = n % divisor;
         if (r < 0) r += (divisor > 0 ? divisor : -divisor);
@@ -1337,14 +1373,26 @@ void Evaluator::init_pair_primitives() {
     primitives_.add("quotient", [this](const auto& a) {
         if (a.size() < 2) return make_int(0);
         auto divisor = coerce_to_int(a[1], &string_heap_);
-        if (divisor == 0) return make_int(0);
+        if (divisor == 0) { do {
+    auto __e_sidx = string_heap_.size();
+    string_heap_.push_back("quotient: division by zero");
+    auto __e_eidx = error_values_.size();
+    error_values_.push_back(make_string(__e_sidx));
+    return make_error(__e_eidx);
+} while(0); }
         return make_int(coerce_to_int(a[0], &string_heap_) / divisor);
     });
     // remainder: (remainder n m) → remainder with sign of dividend
     primitives_.add("remainder", [this](const auto& a) {
         if (a.size() < 2) return make_int(0);
         auto divisor = coerce_to_int(a[1], &string_heap_);
-        if (divisor == 0) return make_int(0);
+        if (divisor == 0) { do {
+    auto __e_sidx = string_heap_.size();
+    string_heap_.push_back("remainder: division by zero");
+    auto __e_eidx = error_values_.size();
+    error_values_.push_back(make_string(__e_sidx));
+    return make_error(__e_eidx);
+} while(0); }
         return make_int(coerce_to_int(a[0], &string_heap_) % divisor);
     });
     // abs: (abs n) → absolute value
