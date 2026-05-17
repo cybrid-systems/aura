@@ -2400,7 +2400,20 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     auto expanded = aura::compiler::macro_expand_all(*flat_ptr, *pool_ptr, flat_ptr->root);
     auto result = eval_flat(*flat_ptr, *pool_ptr, expanded, mod_env);
 
-    // Store module
+    // 8. Apply export filtering: if (export ...) was declared, remove unexported bindings
+    if (current_export_set_ && !current_export_set_->empty()) {
+        auto& bindings = mod_env.bindings();
+        for (auto it = bindings.begin(); it != bindings.end(); ) {
+            if (!current_export_set_->count(it->first)) {
+                it = bindings.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        current_export_set_->clear();
+    }
+
+    // 9. Store module
     auto mod_idx = modules_.size();
     modules_.push_back(std::move(mod_env));
     module_cache_[resolved] = mod_idx;
@@ -3357,6 +3370,20 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
             }
             current_id = v.child(count - 1);
             continue; // TCO: last expression in begin
+        }
+        case aura::ast::NodeTag::Export: {
+            // (export sym ...) — record module API during loading
+            // No runtime effect; children are Variable nodes
+            if (!current_export_set_) {
+                current_export_set_ = std::make_unique<std::unordered_set<std::string>>();
+            }
+            for (auto cid : v.children) {
+                auto cv = f->get(cid);
+                if (cv.tag == aura::ast::NodeTag::Variable) {
+                    current_export_set_->insert(std::string(p->resolve(cv.sym_id)));
+                }
+            }
+            return types::make_void();
         }
         case aura::ast::NodeTag::Set: {
             auto name = p->resolve(v.sym_id);

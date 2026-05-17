@@ -31,6 +31,8 @@ export enum class NodeTag : std::uint32_t {
     TypeAnnotation = 0x0F,
     Coercion = 0x10,
     LiteralFloat = 0x11,
+    // 0x12-0x14 reserved for try/catch/raise
+    Export = 0x15,
 };
 
 
@@ -160,7 +162,7 @@ export struct NodeMeta {
 // Tag-to-metadata mapping, indexed by `tag - 1`.
 // Tags must be sequential starting from 1 (LiteralInt = 0x01).
 // Gap at 0x0C is filled with a sentinel.
-export constexpr std::array<NodeMeta, 17> kNodeMeta = {{
+export constexpr std::array<NodeMeta, 21> kNodeMeta = {{
     {NodeTag::LiteralInt, "LiteralInt", 0, false, false, true,  false, false},  // 0x01
     {NodeTag::Variable,   "Variable",   0, false, true,  false, false, false},  // 0x02
     {NodeTag::Call,       "Call",       1, true,  false, false, false, false},  // 0x03
@@ -178,6 +180,10 @@ export constexpr std::array<NodeMeta, 17> kNodeMeta = {{
     {NodeTag::TypeAnnotation, "TypeAnnotation", 1, false, true,  false, false, false}, // 0x0F
     {NodeTag::Coercion, "Coercion", 1, false, true,  false, false, false},  // 0x10
     {NodeTag::LiteralFloat, "LiteralFloat", 0, false, false, false, true, false},  // 0x11
+    {NodeTag::LiteralInt, "<gap>",      0, false, false, false, false, false},  // 0x12 (gap)
+    {NodeTag::LiteralInt, "<gap>",      0, false, false, false, false, false},  // 0x13 (gap)
+    {NodeTag::LiteralInt, "<gap>",      0, false, false, false, false, false},  // 0x14 (gap)
+    {NodeTag::Export, "Export", 0, true, false, false, false, false},  // 0x15
 }};
 
 
@@ -412,6 +418,16 @@ public:
         child_data_.insert(child_data_.end(), exprs.begin(), exprs.end());
         child_begin_[id] = start;
         child_count_[id] = static_cast<std::uint32_t>(exprs.size());
+        return id;
+    }
+
+    // Export: (export sym1 sym2 ...) — children = Variable nodes
+    [[nodiscard]] NodeId add_export(std::span<const NodeId> syms) {
+        auto id = add_node(NodeTag::Export);
+        auto start = static_cast<std::uint32_t>(child_data_.size());
+        child_data_.insert(child_data_.end(), syms.begin(), syms.end());
+        child_begin_[id] = start;
+        child_count_[id] = static_cast<std::uint32_t>(syms.size());
         return id;
     }
 

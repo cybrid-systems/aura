@@ -112,6 +112,7 @@ private:
     std::vector<std::string> module_names_;  // display names for modules
     std::vector<types::EvalValue> cells_;
     std::vector<Pair> pairs_;
+    std::unique_ptr<std::unordered_set<std::string>> current_export_set_;
     std::vector<std::string> string_heap_;
     struct HashTable {
         std::vector<std::uint8_t> metadata;  // 0xFF=empty, 0x00-0x7F=occupied(7-bit fingerprint)
