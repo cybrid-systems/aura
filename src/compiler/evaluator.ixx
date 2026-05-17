@@ -84,9 +84,6 @@ public:
     const std::vector<Pair>& pairs() const { return pairs_; }
 
     // IR closure bridge: called when a closure id is not in closures_.
-    // Expected to look up closure_id in an IR closure store, extract
-    // (flat, pool, body_id, params, env), build a tree-walker environment,
-    // and return eval_flat(flat, pool, body_id, ne).
     using ClosureBridgeFn = std::function<
         std::optional<EvalValue>(
             ClosureId closure_id,
@@ -103,6 +100,13 @@ public:
     std::optional<EvalValue> apply_closure(
         ClosureId cid,
         const std::vector<EvalValue>& args);
+
+    // Module loaded callback: called after a module file is successfully loaded.
+    using ModuleLoadedFn = std::function<void(const std::string& source, const std::string& path)>;
+
+    void set_module_loaded_callback(ModuleLoadedFn cb) {
+        module_loaded_cb_ = std::move(cb);
+    }
 
 private:
     ClosureId next_id() { return next_id_++; }
@@ -128,6 +132,7 @@ private:
     void* type_registry_ = nullptr;  // points to aura::core::TypeRegistry
     std::unordered_map<ClosureId,Closure> closures_;
     ClosureBridgeFn closure_bridge_;
+    ModuleLoadedFn module_loaded_cb_;
     std::unordered_map<std::string, MacroDef> macros_;
     std::vector<Env*> modules_;  // module objects (arena-allocated, indexed by ModuleRef.index)
     std::unordered_map<std::string, std::uint64_t> module_cache_;  // path → index

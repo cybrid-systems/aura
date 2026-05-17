@@ -2743,6 +2743,11 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     string_heap_.push_back(resolved);
     module_names_.push_back(resolved);
 
+    // 10b. IR caching callback (registered by CompilerService)
+    if (module_loaded_cb_) {
+        module_loaded_cb_(content, resolved);
+    }
+
     loading_stack_.erase(resolved);
     return types::make_module(mod_idx);
 }
