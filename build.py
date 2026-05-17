@@ -487,7 +487,32 @@ SUITES = {
     "mutation":  test_mutation,
     "demo":      test_demo,
     "ai":        test_ai_agent_demo,
+    "bash":      test_bash,
 }
+
+
+def test_bash():
+    """Bash 回归测试 — run-tests.sh (76+ cases)"""
+    print(f"{B}═══ Bash regression tests ═══{N}")
+    runner = ROOT / "tests" / "run-tests.sh"
+    if not runner.exists():
+        fail(f"{runner} not found")
+        return 1
+    r = subprocess.run(
+        ["bash", str(runner)],
+        env={**os.environ, "AURA": str(AURA)},
+        capture_output=True, text=True, timeout=120
+    )
+    # Parse output: count passed/failed from last line
+    for line in r.stdout.split("\n"):
+        if "passed" in line or "failed" in line or "✗" in line or "✓" in line:
+            print(f"  {line.strip()}")
+    if r.returncode == 0:
+        ok("all bash tests passed")
+    else:
+        fail(f"bash tests: {r.returncode} failed")
+        print(r.stderr[:200] if r.stderr else "")
+    return r.returncode
 
 
 def test_mutation():
@@ -505,7 +530,6 @@ def test_mutation():
         return 1
     ok("mutation: single-pass OK")
 
-    # Also run demo for coverage
     r2 = subprocess.run(
         [sys.executable, str(ROOT / "tests" / "mutation_loop.py"), "--demo"],
         capture_output=True, text=True, timeout=30
