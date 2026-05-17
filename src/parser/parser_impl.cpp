@@ -310,12 +310,24 @@ NodeId FlatParser::parse_let(bool rec) {
     if (body_exprs.size() > 1)
         body = flat_.add_begin(body_exprs);
     
-    // Wrap bindings: innermost first (so outer wraps inner)
-    for (auto it = bs.rbegin(); it != bs.rend(); ++it) {
-        if (rec)
-            body = flat_.add_letrec(it->name, it->val, body);
-        else
-            body = flat_.add_let(it->name, it->val, body);
+    // Multi-binding letrec: desugar to pre-allocated cells + set!
+    // (letrec ((a v1) (b v2)) body) → (begin (define a 0) (define b 0) (set! a v1) (set! b v2) body)
+    if (rec && bs.size() > 1) {
+        std::vector<NodeId> exprs;
+        for (auto& b : bs)
+            exprs.push_back(flat_.add_define(b.name, flat_.add_literal(0)));
+        for (auto& b : bs)
+            exprs.push_back(flat_.add_set(b.name, b.val));
+        exprs.push_back(body);
+        body = flat_.add_begin(exprs);
+    } else {
+        // Wrap bindings: innermost first (so outer wraps inner)
+        for (auto it = bs.rbegin(); it != bs.rend(); ++it) {
+            if (rec)
+                body = flat_.add_letrec(it->name, it->val, body);
+            else
+                body = flat_.add_let(it->name, it->val, body);
+        }
     }
     return body;
 }
