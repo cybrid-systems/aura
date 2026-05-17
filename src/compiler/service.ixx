@@ -366,16 +366,60 @@ public:
         arena_group_.reset_module(name);
     }
 
+    // ── Module-level state for incremental compilation ──────────────
+
+    // Per-module state: source content + dirty flag + dependency set.
+    // When any cached function that this module depends on is redefined,
+    // the module is marked dirty and will be recompiled on next access.
+    struct ModuleState {
+        std::string source;
+        std::unordered_set<std::string> deps;  // cached functions this module depends on
+        bool dirty = true;                     // initially dirty (needs compile)
+    };
+
+    // Mark a module dirty when one of its IR dependencies changes.
+    void mark_module_dirty(const std::string& changed_fn) {
+        for (auto& [mname, state] : module_states_) {
+            if (state.deps.count(changed_fn)) {
+                state.dirty = true;
+            }
+        }
+    }
+
+    // Check if a module is dirty and needs recompilation.
+    bool is_module_dirty(const std::string& name) const {
+        auto it = module_states_.find(name);
+        return it == module_states_.end() || it->second.dirty;
+    }
+
+    // Recompile a module only if it's dirty.
+    EvalResult reload_module(const std::string& name) {
+        auto it = module_states_.find(name);
+        if (it == module_states_.end()) {
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError,
+                "module not found: " + name});
+        }
+        if (!it->second.dirty) {
+            // Already up to date
+            return EvalResult(types::make_void());
+        }
+        return compile_module(name, it->second.source);
+    }
+
     // Compile a module into its own arena. Parses source, finds all
     // top-level (define ...) forms, caches each as IR, and evaluates
     // via tree-walker for environment persistence.
     //
-    // This is like cache_module() but uses the module's dedicated arena
-    // instead of the main arena_. After compilation, the module's defines
-    // are available both in the evaluator env and in ir_cache_ for
-    // subsequent IR-first compilation in other modules.
+    // Uses the module's dedicated arena instead of the main arena_.
+    // On success marks the module as clean and records its dependencies.
+    // Subsequent calls with the same name will detect dirty state
+    // and skip recompilation if nothing changed.
     EvalResult compile_module(const std::string& name,
                                const std::string& source) {
+        // Save source for future dirty checks / reloads
+        module_states_[name].source = source;
+
         auto& mod_arena = arena_group_.module_arena(name);
         mod_arena.reset();
 
@@ -500,6 +544,18 @@ public:
         // Mark module as loaded
         loaded_modules_.insert(name);
 
+        // Mark module clean and record dependencies from dep_graph_
+        auto& state = module_states_[name];
+        state.dirty = false;
+        state.deps.clear();
+        for (auto& [fname, _] : finder.defs) {
+            auto dit = dep_graph_.find(fname);
+            if (dit != dep_graph_.end()) {
+                for (auto& callee : dit->second.calls)
+                    state.deps.insert(callee);
+            }
+        }
+
         return EvalResult(types::make_void());
     }
 
@@ -542,6 +598,7 @@ public:
         }
 
         loaded_modules_.erase(name);
+        module_states_.erase(name);
     }
 
     // Check if a module is loaded
@@ -854,6 +911,7 @@ public:
 
         if (is_redefine) {
             invalidate_function(name_str);
+            mark_module_dirty(name_str);
         }
 
         // Eval tree-walker for persistent runtime bindings
@@ -1206,6 +1264,11 @@ private:
                 record_dependency(dep_name, called_name);
             }
         }
+
+        // Mark dependent modules dirty
+        mark_module_dirty(name);
+        for (auto& d : dependents)
+            mark_module_dirty(d);
     }
 
     ast::ASTArena arena_;
@@ -1222,6 +1285,9 @@ private:
 
     // Reverse map: module_name → set of cached function names from that module.
     std::unordered_map<std::string, std::vector<std::string>> module_functions_;
+
+    // Per-module state for incremental compilation (dirty tracking).
+    std::unordered_map<std::string, ModuleState> module_states_;
 
     // Persistent AST for mutation workflows (set_code / typed_mutate).
     aura::ast::FlatAST* current_ast_ = nullptr;
