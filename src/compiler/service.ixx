@@ -446,9 +446,8 @@ public:
     // Parse module content and cache all top-level defines in ir_cache_.
     // Called by Evaluator after each successful module load.
     void cache_module(const std::string& content, const std::string& path) {
-        // Skip string module — internal defines create env bindings that
         // don't survive re-evaluation via cache_define.
-        if (path.find("string") != std::string::npos) return;
+        
 
         // Arena-allocate flat/pool so pointers survive (bridge data references them)
         auto alloc = arena_.allocator();
@@ -529,6 +528,27 @@ public:
                 is_recursive = rc.found;
             }
             if (is_recursive) continue;
+
+            // Skip functions with internal (define ...) — their cell setup is
+            // in __top__ which isn't cached; the cached lambda can't create cells.
+            bool has_nested_defines = false;
+            {
+                struct NestCheck {
+                    aura::ast::FlatAST& flat;
+                    bool found = false;
+                    void walk(aura::ast::NodeId id) {
+                        if (found || id >= flat.size()) return;
+                        auto v = flat.get(id);
+                        if (v.tag == aura::ast::NodeTag::Define) found = true;
+                        for (auto c : v.children) walk(c);
+                    }
+                };
+                NestCheck nc{flat, false};
+                if (!body_node.children.empty())
+                    nc.walk(body_node.child(0));
+                has_nested_defines = nc.found;
+            }
+            if (has_nested_defines) continue;
 
             // Create a temporary flat with just this define as root
             auto def_alloc = arena_.allocator();
