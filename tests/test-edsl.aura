@@ -1,0 +1,61 @@
+; EDSL (query/mutate/workspace) tests
+; Tests: set-code, query:*, mutate:*, eval-current, typecheck-current
+
+(test-suite "edsl:workspace"
+  (check (set-code "(define (add x y) (+ x y))"))
+  (check (module? (use "std/list"))))
+
+(test-suite "edsl:query-find"
+  (set-code "(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))")
+  (check (> (length (query:find "fib")) 0)))
+
+(test-suite "edsl:query-children"
+  (set-code "(define (f x) (+ x 1))")
+  (check (> (length (query:children 0)) 0)))
+
+(test-suite "edsl:query-node"
+  (check (pair? (query:node 0))))
+
+(test-suite "edsl:query-calls"
+  (check (pair? (query:calls "fib"))))
+
+(test-suite "edsl:query-parent"
+  (check (pair? (query:parent 0))))
+
+(test-suite "edsl:query-siblings"
+  (check (pair? (query:siblings 0))))
+
+(test-suite "edsl:query-pattern"
+  (set-code "(define (f x) (+ x 1))")
+  (check (pair? (query:pattern "(+ ... ...)"))))
+
+(test-suite "edsl:node-type"
+  (set-code "(define (f x) (+ x 1))")
+  (check (pair? (query:node-type "Call"))))
+
+(test-suite "edsl:mutate-set-body"
+  (set-code "(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))")
+  (check (mutate:set-body "fib" "(iter 0 1 n)")))
+
+(test-suite "edsl:mutate-rebind"
+  (set-code "(define (add x y) (+ x y))")
+  (check (mutate:rebind "add" "(define (add x y) (* x y))")))
+
+(test-suite "edsl:mutate-remove-node"
+  (set-code "(define (f x) (+ x 1))")
+  (check (mutate:remove-node 0)))
+
+(test-suite "edsl:mutate-replace-value"
+  (set-code "(define (f x) (+ x 1))")
+  (check (mutate:replace-value 2 100 "change value")))
+
+(test-suite "edsl:mutate-insert-child"
+  (set-code "(define (f x) (+ x 1))")
+  (check (mutate:insert-child 0 1 "(* x x)" "insert")))
+
+(test-suite "edsl:eval-current"
+  (set-code "(define (add x y) (+ x y))")
+  (check (eval-current)))
+
+(test-suite "edsl:typecheck"
+  (check (string? (typecheck-current))))

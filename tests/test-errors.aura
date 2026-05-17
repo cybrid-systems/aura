@@ -1,0 +1,47 @@
+; Error handling tests
+; Tests: error, raise, try/catch, check, check=
+
+(test-suite "errors:error"
+  (check (is_error (error "msg"))))
+
+(test-suite "errors:raise"
+  (check (is_error (raise "cause"))))
+
+(test-suite "errors:try-success"
+  (check= 42 (try 42 (catch (e) 0))))
+
+(test-suite "errors:try-catch"
+  (check= "caught" (try (error "fail") (catch (e) "caught"))))
+
+(test-suite "errors:try-catch-value"
+  (check (try (error "fail") (catch (e) e))))
+
+(test-suite "errors:try-catch-raise"
+  (check (try (raise "hello") (catch (e) e))))
+
+(test-suite "errors:assert-pass"
+  (check (assert (= 1 1))))
+
+(test-suite "errors:assert-fail"
+  (check (is_error (assert (= 1 2)))))
+
+(test-suite "errors:check-pass"
+  (check (check 42)))
+
+(test-suite "errors:check-fail"
+  (check (is_error (check #f))))
+
+(test-suite "errors:check=-pass"
+  (check (check= 5 (+ 2 3))))
+
+(test-suite "errors:check=-fail"
+  (check (is_error (check= 5 3))))
+
+(test-suite "errors:car-on-nonpair"
+  (check (try (car 42) (catch (e) #t))))
+
+(test-suite "errors:modulo-by-zero"
+  (check (try (modulo 5 0) (catch (e) #t))))
+
+(test-suite "errors:string-ref-oob"
+  (check (try (string-ref "abc" 100) (catch (e) #t))))

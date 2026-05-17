@@ -1,0 +1,86 @@
+; Core Aura language tests
+; Tests: arithmetic, booleans, pairs, lists, strings, vectors, hashes, control flow
+
+(test-suite "core:arithmetic"
+  (check= 3 (+ 1 2))
+  (check= 0 (- 5 5))
+  (check= 6 (* 2 3))
+  (check= 2 (/ 4 2))
+  (check (try (/ 1 0) (catch (e) #t)))
+  (check= 1 (modulo 7 3))
+  (check= 2 (quotient 7 3))
+  (check= 1 (remainder 7 3))
+  (check (try (modulo 5 0) (catch (e) #t)))
+  (check= 5 (abs -5))
+  (check= 3 (gcd 6 9))
+  (check= 1 (min 3 5 1 9))
+  (check= 9 (max 3 5 1 9))
+  (check (< 1 2))
+  (check (> 2 1))
+  (check (= 42 42))
+  (check (not #f)))
+
+(test-suite "core:booleans"
+  (check #t)
+  (check (not #f))
+  (check (boolean? #t))
+  (check (boolean? #f))
+  (check (not (boolean? 42))))
+
+(test-suite "core:pairs"
+  (check (pair? (cons 1 2)))
+  (check= 1 (car (cons 1 2)))
+  (check= 2 (cdr (cons 1 2)))
+  (try (car 42) (catch (e) (check #t)))
+  (try (cdr 42) (catch (e) (check #t)))
+  (check (pair? (cons (cons 1 2) 3)))
+  (check= 1 (caar (cons (cons 1 2) 3)))
+  (check= 2 (cdar (cons (cons 1 2) 3))))
+
+(test-suite "core:lists"
+  (check= 3 (length (list 1 2 3)))
+  (check (null? (list)))
+  (check= 1 (car (list 1 2 3)))
+  (check= 3 (list-ref (list 10 20 30) 2))
+  (check= 6 (foldl + 0 (list 1 2 3)))
+  (check= 3 (length (map (lambda (x) (+ x 1)) (list 1 2 3))))
+  (check= 6 (length (append (list 1 2) (list 3 4 5 6))))
+  (check (list? (reverse (list 1 2 3))))
+  (check= 6 (length (take 3 (list 1 2 3 4 5))))
+  (check= 2 (length (drop 3 (list 1 2 3 4 5)))))
+
+(test-suite "core:strings"
+  (check= 5 (string-length "hello"))
+  (check (string=? "abc" "abc"))
+  (check= 101 (string-ref "abc" 0))
+  (try (string-ref "abc" 10) (catch (e) (check #t)))
+  (check= 3 (length (string->list "abc")))
+  (check= "abc" (list->string (list 97 98 99)))
+  (check= "100" (number->string 100)))
+
+(test-suite "core:vectors"
+  (check= 3 (vector-length (vector 1 2 3)))
+  (check= 2 (vector-ref (vector 10 20 30) 1))
+  (check= 3 (length (vector->list (vector 1 2 3))))
+  (check= 2 (vector-length (make-vector 2 42))))
+
+(test-suite "core:hashes"
+  (check (hash? (hash)))
+  (check= 42 (hash-ref (let ((h (hash))) (hash-set! h "key" 42) h) "key"))
+  (check (try (hash-ref (hash) "missing") (catch (e) #t))))
+
+(test-suite "core:control"
+  (check= 1 (if #t 1 2))
+  (check= 2 (if #f 1 2))
+  (check= 6 (+ 1 2 3) (begin (+ 1 2) (+ 1 2 3)))
+  (check= 5 (let ((x 2) (y 3)) (+ x y)))
+  (check= 10 (let* ((x 2) (y (* x 3))) (+ x y)))
+  (check= 6 (letrec ((even? (lambda (n) (if (= n 0) #t (odd? (- n 1)))))
+                     (odd? (lambda (n) (if (= n 0) #f (even? (- n 1))))))
+              (if (even? 6) 6 0)))
+  (check= 120 (let loop ((n 5) (acc 1))
+                (if (= n 0) acc (loop (- n 1) (* acc n))))))
+
+(test-suite "core:define"
+  (check= 3 (+ 1 2))
+  (check (defined? (list 'hello 'world))))

@@ -1,0 +1,21 @@
+; Macro system tests
+
+(test-suite "macros:defmacro"
+  (defmacro (twice expr) (list 'begin expr expr))
+  (check= 6 (twice (+ 1 2))))
+
+(test-suite "macros:quasiquote"
+  (defmacro (my-cons a b) `(cons ,a ,b))
+  (check (pair? (my-cons 1 2)))
+  (check= 1 (car (my-cons 1 2))))
+
+(test-suite "macros:gensym"
+  (defmacro (with-gensym)
+    (let ((g (gensym)))
+      `(list ',g ',g)))
+  (check (pair? (with-gensym))))
+
+(test-suite "macros:define-struct"
+  (define-struct point (x y))
+  (check (point? (make-point 1 2)))
+  (check= 1 (point-x (make-point 1 2))))

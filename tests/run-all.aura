@@ -1,0 +1,23 @@
+; Aura Test Runner
+; Loads and runs all test files
+; Usage: ./aura tests/run-all.aura
+
+(require std/test)
+(require std/list all:)
+
+(define test-files
+  (list "tests/test-core.aura"
+        "tests/test-stdlib.aura"
+        "tests/test-module.aura"
+        "tests/test-macros.aura"
+        "tests/test-errors.aura"
+        "tests/test-edsl.aura"))
+
+(display "=== Aura Test Suite ===") (newline)
+
+(for-each (lambda (f)
+  (display "Loading: ") (display f) (newline)
+  (import f))
+  test-files)
+
+(display "=== Done ===") (newline)

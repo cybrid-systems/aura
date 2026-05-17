@@ -1,0 +1,49 @@
+; Standard library tests
+
+(test-suite "stdlib:list"
+  (require std/list)
+  (check= (1 3 4) (sort (list 3 1 4)))
+  (check= 10 (sum (list 1 2 3 4)))
+  (check= 24 (product (list 2 3 4)))
+  (check= 15 (foldl + 0 (range 1 6)))
+  (check= 5 (last (list 1 2 3 4 5)))
+  (check= (1 2 3 4) (flatten (list 1 (list 2 3) 4)))
+  (check= (1 2 3) (take-while (lambda (x) (< x 4)) (list 1 2 3 4 5)))
+  (check= (4 5) (drop-while (lambda (x) (< x 4)) (list 1 2 3 4 5)))
+  (check= ((1 4) (2 5) (3 6)) (zip (list 1 2 3) (list 4 5 6)))))
+
+(test-suite "stdlib:math"
+  (require std/math)
+  (check= 25 (square 5))
+  (check= 125 (cube 5))
+  (check>= 4.0 (sqrt 16))
+  (check= 120 (factorial 5))
+  (check (odd? 3))
+  (check (even? 4))
+  (check>= 3.14 pi)))
+
+(test-suite "stdlib:string"
+  (require std/string)
+  (check= "hello" (string-trim "  hello  "))
+  (check= ("a" "b" "c") (string-split "a,b,c" ","))
+  (check= "a b" (string-join '("a" "b") " "))
+  (check= "HELLO" (string-upcase "hello"))
+  (check= "hello" (string-downcase "HELLO")))
+
+(test-suite "stdlib:json"
+  (require std/json)
+  (check= (1 2 3) (json-parse "[1,2,3]"))
+  (check (json-parse "true"))
+  (check (json-parse "false")))
+
+(test-suite "stdlib:struct"
+  (require std/struct all:)
+  (define-struct point (x y z))
+  (check (point? (make-point 1 2 3)))
+  (check= 1 (point-x (make-point 1 2 3)))
+  (check= 2 (point-y (make-point 1 2 3)))
+  (check= 3 (point-z (make-point 1 2 3))))
+
+(test-suite "stdlib:validate"
+  (require std/validate)
+  (check (valid? (validate '{"type": "number"} 42))))
