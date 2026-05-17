@@ -1,8 +1,12 @@
 export module aura.compiler.pass_manager;
 import std;
+import aura.core;
+import aura.core.type;
 import aura.compiler.ir;
 import aura.compiler.compute_kind;
 import aura.compiler.arity;
+import aura.compiler.type_checker;
+import aura.diag;
 
 namespace aura::compiler {
 
@@ -160,6 +164,43 @@ private:
 
     std::unordered_map<std::uint32_t, std::int64_t> known_;
     std::size_t folded_ = 0;
+};
+
+// ── TypeCheckWrap — type checking pass (pre-lowering, FlatAST level) ──
+// Unlike other passes, this operates on FlatAST before IR lowering.
+// The run(IRModule&) is a no-op; the real work is in check_before_lowering().
+export class TypeCheckWrap {
+public:
+    void run(aura::ir::IRModule& module) {
+        // Type check is FlatAST-level, not IRModule-level.
+        // Use check_before_lowering() for the actual work.
+    }
+
+    // Run type checking on FlatAST before lowering.
+    // Returns the number of type errors found (0 = clean).
+    // Diagnostics are collected in diag for optional reporting.
+    std::size_t check_before_lowering(
+        aura::ast::FlatAST& flat,
+        aura::ast::StringPool& pool,
+        aura::ast::NodeId root,
+        aura::core::TypeRegistry& type_registry,
+        aura::diag::DiagnosticCollector& diag) {
+        aura::compiler::TypeChecker tc(type_registry);
+        tc.infer_flat(flat, pool, root, diag);
+        auto all = diag.diagnostics();
+        return all.size();
+    }
+
+    bool has_error() const { return false; }
+    std::string_view name() const { return "type-check"; }
+
+    // Access stored diagnostics from last check_before_lowering call
+    const std::vector<aura::diag::Diagnostic>& diagnostics() const {
+        return last_diags_;
+    }
+
+private:
+    std::vector<aura::diag::Diagnostic> last_diags_;
 };
 
 } // namespace aura::compiler

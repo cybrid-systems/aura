@@ -27,11 +27,9 @@ export class CompilerService {
 public:
     CompilerService() {
         evaluator_.set_arena(&arena_);
-        // Cache module defines in IR after each import
-        evaluator_.set_module_loaded_callback(
-            [this](const std::string& content, const std::string& path) {
-                cache_module(content, path);
-            });
+        // Module caching disabled — recursive fn + bundle injection issues.
+        // Python stdlib_inliner handles imports for Agent code.
+        // evaluator_.set_module_loaded_callback(...)
     }
 
     void reset() { arena_.reset(); }
@@ -138,17 +136,14 @@ public:
             return evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
         }
 
-            // === Level 1: Type check (gradual — warn only, continue execution) ===
+        // === Level 2: Type check via TypeCheckWrap pass ===
         {
+            aura::compiler::TypeCheckWrap tc_pass;
             aura::diag::DiagnosticCollector diags;
-            aura::compiler::TypeChecker tc(type_registry_);
-            tc.infer_flat(*flat_ptr, *pool_ptr, expanded_root, diags);
-            auto all_diags = diags.diagnostics();
-            if (!all_diags.empty()) {
-                for (auto& d : all_diags) {
-                    if (d.kind == aura::diag::ErrorKind::TypeError)
-                        std::println(std::cerr, "type warning: {}", d.format());
-                }
+            tc_pass.check_before_lowering(*flat_ptr, *pool_ptr, expanded_root, type_registry_, diags);
+            for (auto& d : diags.diagnostics()) {
+                if (d.kind == aura::diag::ErrorKind::TypeError)
+                    std::println(std::cerr, "type warning: {}", d.format());
             }
         }
 
@@ -561,17 +556,14 @@ public:
                              const std::string& name_str) {
         bool is_redefine = ir_cache_.count(name_str) > 0;
 
-        // === Level 1: Type check the define body ===
+        // === Level 2: Type check via TypeCheckWrap pass ===
         {
+            aura::compiler::TypeCheckWrap tc_pass;
             aura::diag::DiagnosticCollector diags;
-            aura::compiler::TypeChecker tc(type_registry_);
-            tc.infer_flat(flat, pool, expanded_root, diags);
-            auto all_diags = diags.diagnostics();
-            if (!all_diags.empty()) {
-                for (auto& d : all_diags) {
-                    if (d.kind == aura::diag::ErrorKind::TypeError)
-                        std::println(std::cerr, "type warning ({}): {}", name_str, d.format());
-                }
+            tc_pass.check_before_lowering(flat, pool, expanded_root, type_registry_, diags);
+            for (auto& d : diags.diagnostics()) {
+                if (d.kind == aura::diag::ErrorKind::TypeError)
+                    std::println(std::cerr, "type warning ({}): {}", name_str, d.format());
             }
         }
 
