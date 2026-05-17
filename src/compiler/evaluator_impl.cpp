@@ -1613,31 +1613,65 @@ void Evaluator::init_pair_primitives() {
         return make_int(static_cast<std::int64_t>(mid));
     });
 
-    // (mutate:replace-value node-id new-int-value summary)
+    // (mutate:replace-value node-id new-value summary)
+    // Replaces the value of a node. The type of new-value must match the
+    // target node: int → LiteralInt, float → LiteralFloat, string → Variable/LiteralString.
     primitives_.add("mutate:replace-value", [this](const auto& a) {
-        if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_string(a[2]))
+        if (a.size() < 3 || !is_int(a[0]) || !is_string(a[2]))
             return make_int(0);
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        auto new_val = static_cast<std::uint64_t>(as_int(a[1]));
         auto sum_idx = as_string_idx(a[2]);
         if (sum_idx >= string_heap_.size()) return make_int(0);
         if (!workspace_flat_) return make_int(0);
         auto& flat = *workspace_flat_;
         if (node >= flat.size()) return make_int(0);
 
-        // Check preconditions: node must exist and be the right tag
         auto nv = flat.get(node);
-        if (!nv.has_int()) return make_int(0);  // not a LiteralInt
+        std::uint64_t old_val = 0;
 
-        // Check precondition: field 0 (int_val_) exists for this node
-        auto old_val = static_cast<std::uint64_t>(nv.int_value);
-
-        auto mid = flat.add_mutation_with_rollback(node, "replace-value",
-            "Int", "Int", string_heap_[sum_idx],
-            aura::ast::MutationStatus::Committed, 0, old_val, new_val, true);
-        // Apply the change
-        flat.set_int(node, static_cast<std::int64_t>(new_val));
-        return make_int(static_cast<std::int64_t>(mid));
+        switch (nv.tag) {
+        case aura::ast::NodeTag::LiteralInt: {
+            if (!is_int(a[1])) return make_int(0);
+            auto new_val = static_cast<std::int64_t>(as_int(a[1]));
+            old_val = static_cast<std::uint64_t>(nv.int_value);
+            auto mid = flat.add_mutation_with_rollback(node, "replace-value",
+                "Int", "Int", string_heap_[sum_idx],
+                aura::ast::MutationStatus::Committed, 0, old_val,
+                static_cast<std::uint64_t>(new_val), true);
+            flat.set_int(node, new_val);
+            return make_int(static_cast<std::int64_t>(mid));
+        }
+        case aura::ast::NodeTag::LiteralFloat: {
+            if (!is_float(a[1])) return make_int(0);
+            // Pack double as uint64 for mutation log
+            double new_val = as_float(a[1]);
+            std::uint64_t new_bits;
+            std::memcpy(&new_bits, &new_val, sizeof(new_bits));
+            std::uint64_t old_bits;
+            std::memcpy(&old_bits, &nv.float_value, sizeof(old_bits));
+            auto mid = flat.add_mutation_with_rollback(node, "replace-value",
+                "Float", "Float", string_heap_[sum_idx],
+                aura::ast::MutationStatus::Committed, 1, old_bits, new_bits, true);
+            flat.set_float(node, new_val);
+            return make_int(static_cast<std::int64_t>(mid));
+        }
+        case aura::ast::NodeTag::Variable:
+        case aura::ast::NodeTag::LiteralString: {
+            if (!is_string(a[1])) return make_int(0);
+            auto new_sym_idx = as_string_idx(a[1]);
+            if (new_sym_idx >= string_heap_.size()) return make_int(0);
+            auto new_name = string_heap_[new_sym_idx];
+            old_val = nv.sym_id;
+            auto new_sym = workspace_pool_->intern(new_name);
+            auto mid = flat.add_mutation_with_rollback(node, "replace-value",
+                "Sym", "Sym", string_heap_[sum_idx],
+                aura::ast::MutationStatus::Committed, 2, old_val, new_sym, true);
+            flat.set_sym(node, new_sym);
+            return make_int(static_cast<std::int64_t>(mid));
+        }
+        default:
+            return make_int(0);  // no replaceable value on this node type
+        }
     });
 
     // (mutate:record-patch node-id op-name summary)
@@ -1985,6 +2019,41 @@ void Evaluator::init_pair_primitives() {
         return result;
     });
 
+    // (query:node-type tag-name) — Find all nodes with a given NodeTag name
+    // Tag names: LiteralInt, Variable, Call, IfExpr, Lambda, Let, LetRec,
+    //            Define, Begin, Set, Quote, LiteralString, TypeAnnotation,
+    //            Coercion, LiteralFloat, MacroDef
+    primitives_.add("query:node-type", [this](const auto& a) {
+        if (a.empty() || !is_string(a[0]) || !workspace_flat_)
+            return make_void();
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size()) return make_void();
+        auto target_name = string_heap_[idx];
+        auto& flat = *workspace_flat_;
+
+        // Convert tag name to NodeTag enum
+        aura::ast::NodeTag target_tag = static_cast<aura::ast::NodeTag>(-1);
+        bool found_tag = false;
+        for (auto& m : aura::ast::kNodeMeta) {
+            if (m.name == target_name && m.name != "<gap>") {
+                target_tag = m.tag;
+                found_tag = true;
+                break;
+            }
+        }
+        if (!found_tag) return make_void();
+
+        EvalValue result = make_void();
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            if (flat.get(id).tag == target_tag) {
+                auto pid = pairs_.size();
+                pairs_.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                result = make_pair(pid);
+            }
+        }
+        return result;
+    });
+
     // ═══════════════════════════════════════════════════════════════
     // P8: Query/Transform EDSL 扩展 — pattern matching
     // ═══════════════════════════════════════════════════════════════
@@ -2131,6 +2200,34 @@ void Evaluator::init_pair_primitives() {
             }
         }
         return make_bool(false);
+    });
+
+    // (mutate:insert-child parent-id position code-string "summary")
+    // Insert a child node into a parent's children list at the given position.
+    // Position 0 = first child, child_count = append at end.
+    // Parses code-string INTO workspace, preserving all existing nodes/IDs.
+    primitives_.add("mutate:insert-child", [this](const auto& a) {
+        if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_string(a[2])
+            || !workspace_flat_ || !workspace_pool_)
+            return make_bool(false);
+        auto parent = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto pos = static_cast<std::uint32_t>(as_int(a[1]));
+        auto code_idx = as_string_idx(a[2]);
+        if (code_idx >= string_heap_.size()) return make_bool(false);
+        auto& flat = *workspace_flat_;
+        if (parent >= flat.size()) return make_bool(false);
+
+        // Parse child code INTO workspace (append mode — all IDs stay valid)
+        auto pr = aura::parser::parse_to_flat(string_heap_[code_idx], flat, *workspace_pool_);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) return make_bool(false);
+
+        // Insert the parsed node at position pos in parent's children
+        flat.insert_child(parent, pos, pr.root);
+
+        std::string summary = (a.size() > 3 && is_string(a[3]))
+            ? string_heap_[as_string_idx(a[3])] : "insert child at " + std::to_string(pos);
+        flat.add_mutation(parent, "insert-child", std::to_string(pos), summary, summary);
+        return make_int(static_cast<std::int64_t>(pr.root));
     });
 }
 

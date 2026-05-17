@@ -121,13 +121,22 @@
 ; 删除节点
 (mutate:remove-node node-id "remove dead code")
 
-; 插入子节点
+; 插入子节点（解析到工作区，保留所有已有节点 ID）
 (mutate:insert-child parent-id position child-code "add parameter")
+; 返回新插入节点 ID
+; 例: 向 Call (+ x y) 的 children[1] 插入 (* x x)
+(mutate:insert-child 3 1 "(* x x)" "insert mul")
+; → children 变成 (0 9 1 2): [+, new_call_9, x, y]
 
 ; 重设函数体（不改变参数签名）
 (mutate:set-body "fib"
   "(iter 0 1 n)"
   "fib 改成迭代")
+
+; 替换节点值（自动适配节点类型）
+(mutate:replace-value node-id new-int   "summary")  ; LiteralInt → int
+(mutate:replace-value node-id new-float "summary")  ; LiteralFloat → float
+(mutate:replace-value node-id "new-name" "summary")  ; Variable/LiteralString → string
 ```
 
 ---
