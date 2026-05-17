@@ -137,45 +137,8 @@ public:
         auto def = try_extract_define(*flat_ptr, *pool_ptr, expanded_root);
         if (def) {
             auto& [name, _body_id] = *def;
-            auto name_str = std::string(name);
-            bool is_redefine = ir_cache_.count(name_str) > 0;
-
-            auto cache_ptr_local = ir_cache_.empty() ? nullptr : &ir_cache_;
-            std::vector<std::string> cache_hits;
-            auto ir_mod = aura::compiler::lower_to_ir_with_cache(
-                *flat_ptr, *pool_ptr, arena_, cache_ptr_local, &cache_hits, &evaluator_.primitives());
-
-            // Run passes per-function on the new function bundle
-            {
-                ComputeKindWrap ck_pass;
-                ConstantFoldingWrap cf_pass;
-                for (auto& func : ir_mod.functions) {
-                    if (func.id == ir_mod.entry_function_id) continue;
-                    ck_pass.compute_function(func);
-                    cf_pass.fold_function(func);
-                }
-            }
-
-            // Cache all non-entry functions as a bundle
-            std::vector<aura::ir::IRFunction> bundle;
-            for (auto& func : ir_mod.functions) {
-                if (func.id != ir_mod.entry_function_id) {
-                    bundle.push_back(std::move(func));
-                }
-            }
-            ir_cache_[name_str] = std::move(bundle);
-            function_sources_[name_str] = std::string(input);
-
-            for (auto& called_name : cache_hits) {
-                record_dependency(name_str, called_name);
-            }
-            if (is_redefine) {
-                invalidate_function(name_str);
-            }
-
-            // Eval tree-walker for persistent runtime bindings
-            auto tree_result = evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
-            if (!tree_result) return tree_result;
+            auto result = cache_define(input, *flat_ptr, *pool_ptr, expanded_root, std::string(name));
+            if (!result) return result;
             return EvalResult(types::make_void());
         }
 
@@ -267,67 +230,11 @@ public:
         }
 
         // === Phase 1: Define separation (IR caching) ===
-        // Check if this expression is a define binding
         auto def = try_extract_define(*flat_ptr, *pool_ptr, flat_ptr->root);
         if (def) {
             auto& [name, _body_id] = *def;
-            auto name_str = std::string(name);
-
-            // Check if this is a redefinition before caching the new version
-            bool is_redefine = ir_cache_.count(name_str) > 0;
-
-            // Lower WITH cache so that the Variable handler creates MakeClosure
-            // for cached dependencies (with proper func id remapping).
-            auto cache_ptr_local = ir_cache_.empty() ? nullptr : &ir_cache_;
-            std::vector<std::string> cache_hits;
-            auto ir_mod = aura::compiler::lower_to_ir_with_cache(
-                *flat_ptr, *pool_ptr, arena_, cache_ptr_local, &cache_hits, &evaluator_.primitives());
-
-            // Phase 4: Run passes per-function on the new function bundle.
-            {
-                ComputeKindWrap ck_pass;
-                ConstantFoldingWrap cf_pass;
-                for (auto& func : ir_mod.functions) {
-                    if (func.id == ir_mod.entry_function_id) continue;
-                    ck_pass.compute_function(func);
-                    auto nf = cf_pass.fold_function(func);
-                    if (nf > 0) {
-                        std::println(std::cerr, "PM: folded {} instructions in function '{}'",
-                                     nf, func.name);
-                    }
-                }
-            }
-
-            // Extract any non-entry functions (lambda bodies) from the module
-            // and store as a bundle (preserving func ids for dependent fns).
-            std::vector<aura::ir::IRFunction> bundle;
-            for (auto& func : ir_mod.functions) {
-                if (func.id != ir_mod.entry_function_id) {
-                    bundle.push_back(std::move(func));
-                }
-            }
-            ir_cache_[name_str] = std::move(bundle);
-
-            // Store source for re-lowering on dependency changes
-            function_sources_[name_str] = std::string(input);
-
-            // Record dependencies from cache hits detected during lowering
-            for (auto& called_name : cache_hits) {
-                record_dependency(name_str, called_name);
-            }
-
-            // If redefining, invalidate dependents AFTER new function is cached,
-            // so they get re-lowered with the updated version
-            if (is_redefine) {
-                invalidate_function(name_str);
-            }
-
-            // Also evaluate via tree-walker for persistent runtime bindings
-            // (no Expr* reconstruction needed -- eval_flat reads FlatAST directly)
-            auto result = evaluator_.eval_flat(*flat_ptr, *pool_ptr, flat_ptr->root, evaluator_.top_env());
+            auto result = cache_define(input, *flat_ptr, *pool_ptr, flat_ptr->root, std::string(name));
             if (!result) return result;
-
-            // Return void for define (no visible result)
             return EvalResult(types::make_void());
         }
 
@@ -497,6 +404,55 @@ public:
     const aura::compiler::EvalStrategy& strategy() const { return strategy_; }
     void set_strategy(const aura::compiler::EvalStrategy& s) { strategy_ = s; }
 
+    // ---- Define caching (shared by eval, eval_ir, define_function) -----
+
+    // Lower a define expression to IR, cache it, and eval tree-walker for env.
+    // Returns tree-walker result (or void for success).
+    EvalResult cache_define(std::string_view source,
+                             aura::ast::FlatAST& flat,
+                             aura::ast::StringPool& pool,
+                             aura::ast::NodeId expanded_root,
+                             const std::string& name_str) {
+        bool is_redefine = ir_cache_.count(name_str) > 0;
+
+        auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
+        std::vector<std::string> cache_hits;
+        auto ir_mod = aura::compiler::lower_to_ir_with_cache(
+            flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives());
+
+        // Run passes per-function on the new function bundle
+        {
+            aura::compiler::ComputeKindWrap ck_pass;
+            aura::compiler::ConstantFoldingWrap cf_pass;
+            for (auto& func : ir_mod.functions) {
+                if (func.id == ir_mod.entry_function_id) continue;
+                ck_pass.compute_function(func);
+                cf_pass.fold_function(func);
+            }
+        }
+
+        // Cache all non-entry functions as a bundle (preserving func id ordering)
+        std::vector<aura::ir::IRFunction> bundle;
+        for (auto& func : ir_mod.functions) {
+            if (func.id != ir_mod.entry_function_id) {
+                bundle.push_back(std::move(func));
+            }
+        }
+        ir_cache_[name_str] = std::move(bundle);
+        function_sources_[name_str] = std::string(source);
+
+        for (auto& called_name : cache_hits) {
+            record_dependency(name_str, called_name);
+        }
+
+        if (is_redefine) {
+            invalidate_function(name_str);
+        }
+
+        // Eval tree-walker for persistent runtime bindings
+        return evaluator_.eval_flat(flat, pool, expanded_root, evaluator_.top_env());
+    }
+
     // ---- Accessors ---------------------------------------------------
 
     ast::ASTArena& arena() { return arena_; }
@@ -536,62 +492,9 @@ public:
 
         // Check if root is a Define node
         if (flat_ptr->get(flat_ptr->root).tag == aura::ast::NodeTag::Define) {
-            // Extract name for caching
             auto name = pool_ptr->resolve(flat_ptr->get(flat_ptr->root).sym_id);
-            auto name_str = std::string(name);
-
-            // Check if this is a redefinition before caching the new version
-            bool is_redefine = ir_cache_.count(name_str) > 0;
-
-            // Lower WITH cache so that the Variable handler creates MakeClosure
-            // for cached dependencies (with proper func id remapping).
-            auto cache_ptr_local = ir_cache_.empty() ? nullptr : &ir_cache_;
-            std::vector<std::string> cache_hits;
-            auto ir_mod = aura::compiler::lower_to_ir_with_cache(
-                *flat_ptr, *pool_ptr, arena_, cache_ptr_local, &cache_hits, &evaluator_.primitives());
-
-            // Phase 4: Run passes per-function on the new function bundle.
-            {
-                ComputeKindWrap ck_pass;
-                ConstantFoldingWrap cf_pass;
-                for (auto& func : ir_mod.functions) {
-                    if (func.id == ir_mod.entry_function_id) continue;
-                    ck_pass.compute_function(func);
-                    auto nf = cf_pass.fold_function(func);
-                    if (nf > 0) {
-                        std::println(std::cerr, "PM: folded {} instructions in function '{}'",
-                                     nf, func.name);
-                    }
-                }
-            }
-
-            // Cache all non-entry functions as a bundle (preserving func id ordering)
-            std::vector<aura::ir::IRFunction> bundle;
-            for (auto& func : ir_mod.functions) {
-                if (func.id != ir_mod.entry_function_id) {
-                    bundle.push_back(std::move(func));
-                }
-            }
-            ir_cache_[name_str] = std::move(bundle);
-
-            // Store source for re-lowering on dependency changes
-            function_sources_[name_str] = std::string(code);
-
-            // Record dependencies from cache hits detected during lowering
-            for (auto& called_name : cache_hits) {
-                record_dependency(name_str, called_name);
-            }
-
-            // If redefining, invalidate dependents AFTER new function is cached,
-            // so they get re-lowered with the updated version
-            if (is_redefine) {
-                invalidate_function(name_str);
-            }
-
-            // Tree-walker eval for persistent runtime bindings (reads FlatAST directly)
-            auto result = evaluator_.eval_flat(*flat_ptr, *pool_ptr, flat_ptr->root, evaluator_.top_env());
-            if (!result) return result;
-            return result;
+            auto result = cache_define(code, *flat_ptr, *pool_ptr, flat_ptr->root, std::string(name));
+            return result;  // tree-walker result (not void — serve protocol needs return value)
         }
 
         // Not a define -- just tree-walker eval
