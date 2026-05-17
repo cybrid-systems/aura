@@ -21,58 +21,95 @@ MAX_ROUNDS = 20
 
 SYSTEM_PROMPT = build_system_prompt() + """
 
-## TYPED MUTATION (增量变换)
+## EDSL: WORKSPACE + QUERY + MUTATE (增量变换)
 
-不要重写整个程序。用 mutate 做一步修改，exec 验证。
+不要重写整个程序。用 workspace + query + mutate 做精确增量修改。
 
-已注册的 mutate 原语（可在 Aura 中直接使用）:
+### 工作区模型
 ```
-(mutate:replace-value node-id new-value "summary")  — 替换节点值
-(mutate:replace-type node-id new-type "summary")    — 替换类型
-(mutate:record-patch node-id "op-name" "summary")   — 记录操作
+set-code "..."           # 锁定 AST 到工作区（节点 ID 稳定）
+query:* ...              # 在工作区导航
+mutate:* ...             # 精确修改
+(typecheck-current)      # 验证类型正确性
+eval-current             # 执行修改后的程序
+```
+节点 ID 在 `set-code` 后稳定，跨 query/mutate 操作不变（直到下一次 set-code）。
+
+### QUERY 原语
+```
+(query:find "name")          → (1 5 12)     ; 按名称查找节点
+(query:children node-id)      → (4 5 6)      ; 获取子节点 ID
+(query:node node-id)          → (3 "fib" 3)  ; (tag name/val children_count)
+(query:calls "fib")           → (8 15 22)    ; 查找函数调用点
+(query:parent node-id)        → (3)          ; 查找父节点
+(query:siblings node-id)      → (4 6)        ; 查找兄弟节点
+(query:pattern expr)          → (12 18)      ; 结构模式匹配（...通配）
+(query:node-type "Call")      → (0 3 8 15)   ; 按节点类型过滤
 ```
 
-### 示例: 改 fib 返回值
+### MUTATE 原语
+```
+(mutate:rebind "name" new-code)             ; 替换整个函数定义
+(mutate:set-body "name" new-body-code)      ; 替换函数体（保留签名）
+(mutate:remove-node node-id)                ; 删除节点
+(mutate:insert-child parent pos child-code)  ; 插入子节点（返回新节点 ID）
+(mutate:replace-value node-id new-val)      ; 替换值（int/float/string自动适配）
+(mutate:replace-type node-id new-type)      ; 替换类型注解
+(mutate:record-patch node-id op summary)    ; 记录操作（不修改 AST）
+```
 
-第一步: exec 定义程序
+### 增量验证
+```
+(typecheck-current)  ; 增量类型检查（只重新推断被修改的子树）
+(eval-current)       ; 执行当前工作区
+```
+
+### 示例: 用 EDSL 修改函数
+
+1. 设置工作区:
 ```
 (define (add x y) (+ x y))
 ```
 
-第二步: mutate 改函数体 (mutate:replace-value 节点 新值 "说明")
+2. 用 query 定位节点:
 ```
-(mutate:replace-value 4 100 "add 改成返回 100")
-```
-
-第三步: exec 验证
-```
-(add 1 2)
-```
-→ 100
-
-### 示例: 改 fib 从递归到迭代
-
-原始:
-```
-(define (fib n)
-  (if (< n 2) n
-    (+ (fib (- n 1)) (fib (- n 2)))))
+(query:find "add")        → (5)       ; Define "add" 是节点 5
+(query:children 5)         → (4)       ; 子节点 4 = Lambda
+(query:children 4)         → (3)       ; 子节点 3 = 函数体 (+ x y)
+(query:children 3)         → (0 1 2)   ; (+ x y): [Variable"+", x, y]
 ```
 
-一步替换为迭代:
+3. 用 mutate 精确修改:
 ```
-(mutate:replace-value 0 "(define (fib n) (define (iter a b count) (if (= count 0) a (iter b (+ a b) (- count 1)))) (iter 0 1 n))" "fib 改成迭代")
+(mutate:replace-value 0 "*" "改 + 为 *")  ; 节点 0 是 Variable "+"
 ```
 
-验证:
+4. 验证:
 ```
-(fib 30)
+(typecheck-current)
+(eval-current)
+(add 1 2)  → 2  ; = (* 1 2)
 ```
+
+5. 或者在位置插入新参数:
+```
+(mutate:insert-child 3 1 "(* x x)" "插入乘法")  ; 在 Call 的 children[1] 插入
+(query:children 3)  → (0 6 1 2)  ; [+, (* x x), x, y]
+(eval-current)
+(add 2 3) → 12  ; = 2 + (2*2) + 3? 注意参数顺序
+```
+
+### 设计原则
+- 每个 mutate 做一步精确修改，不要一次写整段代码
+- mutate 后先用 `(typecheck-current)` 验证类型，再 `(eval-current)`
+- 节点 ID 在 `set-code` 后稳定，跨操作不变
+- `(mutate:rebind)` 和 `(mutate:set-body)` 按函数名查找，不需要节点 ID
+- `(mutate:insert-child)` 返回新插入的节点 ID，可链式使用
 
 ## 规则
-- 第一轮写完整代码
-- 之后用 mutate 做一步修改
-- 每步后 exec 验证结果
+- 第一轮写完整程序代码
+- 之后用 query + mutate 做精确修改，一次改一个点
+- 每步后用 typecheck-current 验证 + eval-current 执行
 - 任务完成后说 DONE"""
 
 
