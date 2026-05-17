@@ -106,7 +106,7 @@ private:
     void* type_registry_ = nullptr;  // points to aura::core::TypeRegistry
     std::unordered_map<ClosureId,Closure> closures_;
     std::unordered_map<std::string, MacroDef> macros_;
-    std::vector<Env> modules_;  // module objects (indexed by ModuleRef.index)
+    std::vector<Env*> modules_;  // module objects (arena-allocated, indexed by ModuleRef.index)
     std::unordered_map<std::string, std::uint64_t> module_cache_;  // path → index
     std::unordered_set<std::string> loading_stack_;  // circular dep detection
     std::vector<std::string> module_names_;  // display names for modules
