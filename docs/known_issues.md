@@ -1,45 +1,39 @@
 # Aura 已知问题
 
-更新：2026-05-18 — AI Agent 实测后发现
+更新：2026-05-18 v2 — 修复后的真实状态
 
 ---
 
 ## P0 — 阻塞性
 
-### 1. `cache_define` 复杂 Lambda 体不持久化
+### 1. ~~`cache_define` 复杂 Lambda 体不持久化~~ ✅ 已修复
 
-**症状**：`(define (f ...) ...hash-ref/hash-set! body...)` 后，`f` 在后续表达式中不可访问。
+**提交**: `af04a12` + `37f1361`
 
-```
-> (define (inner words) (let ((h (hash))) (foldl (lambda (acc word)
-    (let ((cnt (hash-ref h word)))
-      (if (void? cnt) (hash-set! h word 1)
-          (hash-set! h word (+ cnt 1)))) acc) (list) words)))
-> inner
-error: unbound variable: inner
-```
+**根因**：Lambda lowering 计算的自由变量列表从未赋值给 `IRFunction.free_vars`，导致桥接器绑捕获变量为空（`func.free_vars = free_vars` 缺失）。同时 IR 和树遍历器的闭包 ID 命名空间冲突（均从 1 开始），`require` 加载 stdlib 后树遍历器占用了低 ID，后续 IR 闭包冲突导致 `apply_closure` 拿到错误的闭包。
 
-**可重现**：仅在 body 包含 hash-ref + hash-set! 组合时触发。简单 body（42, `(foldl + 0 ...)`）正常。
+**修复**：
+- `func.free_vars = free_vars`（`lowering_impl.cpp`）
+- `next_closure_id_` 起始值改为 `1ull << 48`（`ir_executor.ixx`）
+- 缓存函数 bundle 的 `lambda_fid` 取第一个函数而非最后一个
+- `remap_func_ids` 偏移量修正
 
-**原因推测**：`cache_define` 内 `eval_flat` 的 FlatAST arena 与顶层共享，复杂 body 的闭包捕获导致 arena 提前释放或 env 被覆盖。
+### 2. `require` 在函数体内不支持（IR 路径）
 
-**影响**：AI Agent 无法定义任何有用函数。**阻塞 AI 管线闭环**。
-
-### 2. `require` 不能放在函数体内部
-
-**症状**：LLM 生成的代码试图在函数体内放 `require`，解析错误。
-
-```
+**症状**：LLM 生成的代码试图在函数体内放 `require`：
+```lisp
 (define (word-count filename)
-  (require std/hash all:)        ← 非法
+  (require std/hash)        ← IR 路径下失效
   ...)
 ```
 
-**原因**：Aura 的 `require` 只允许在顶层，内嵌在 define/lambda/let 体内会解析失败。
+**原因**：tree-walker 路径（`eval_flat` 的 Call 分支 special form handler）确实支持 `require` 在函数体内。但 `cache_define` = lowering→IR 时，`require` 不在 `prim_call_map` 中，被降级为 `ConstI64 0`。缓存函数被 IR 调用时 `require` 不执行。
 
-**影响**：LLM 经常生成这种代码，导致 Phase 1 失败后进入 EDSL 修复死循环。
+**状态**：函数定义时会 fallback 到 tree-walker（因为 `needs_tree_walker_fallback` 检测到 `require`），所以 define 本身能过。但后续调用走 IR 缓存时出错。并非解析器问题，是 IR 缓存路径断裂。
 
-**临时方案**：在 system prompt 中明确禁止。
+**影响**：LLM 生成含 `require` 的函数时，定义成功但调用失败。
+
+**临时方案**：system prompt 明确禁止；或把 `require` 放在顶层，函数体内只使用已导入的名称。
 
 ### 3. Agent 脚本遇到 LLM 空响应时死循环
 
@@ -53,23 +47,25 @@ error: unbound variable: inner
 
 ## P1 — 严重
 
-### 4. Parser 错误恢复有限
-
-**症状**：当前实现跳过无效表达式继续解析，但 pipe 模式的表达式分割器（main.cpp）在传递给 parser 之前就检查了括号平衡，所以 parser 的恢复机制对 pipe 模式影响有限。
-
-### 5. `set-code` 内容截断
-
-**症状**：LLM 生成的代码超过 ~4000 tokens 时被截断，`set-code` 收到不完整的代码，产生模糊错误。
-
-**影响**：EDSL 修复循环中代码越来越大，最终必然截断。
-
-**当前缓解**：auto-retry 将 max_tokens 翻倍到 16000，但 LLM 仍可能输出截断。
-
-### 6. 错误信息不够详细
+### 4. 错误信息不够详细
 
 **症状**：`"unbound variable: n"` 之类的错误不让 LLM 明白根因（`n` 从哪里来？是变量名的一部分还是宏展开的临时名？）。
 
 **影响**：LLM 无法从错误信息推断修复方向，陷入猜测循环。
+
+**当前状态**：已添加行号列号和猜测补全（`did you mean x?`），但对 LLM 消费仍然不够。
+
+### 5. `set-code` 内容截断
+
+**症状**：LLM 生成的代码超过输入缓冲区限制时被截断，`set-code` 收到不完整的代码，产生模糊错误。
+
+**当前缓解**：auto-retry 将 max_tokens 翻倍到 16000。
+
+### 6. IR 桥接器依赖 FlatAST 指针持久性
+
+**症状**：缓存函数内部的内嵌 lambda 被 `foldl`/`map`/`filter` 等原语调用时，桥接器需要 FlatAST 和 StringPool 指针来 `eval_flat` lambda 体。这些指针保存自 `cache_define` 时的 arena 分配区，跨 eval() 调用后可能失效。
+
+**当前状态**：主路径已修复（`cache_strings_` + 字符串池重映射）。但深层嵌套场景或 `unload_module` / `reset` 后暴露的问题尚未完全验证。
 
 ---
 
@@ -81,20 +77,40 @@ error: unbound variable: inner
 
 **当前替代**：`foldl`。
 
-### 8. 缺少 `string-split-words` / 标准库补全
+### 8. 标准库导出不完整
 
-**症状**：LLM 尝试调用 `string-split-words` 但 import 前缀机制导致找不到。
+**症状**：LLM 尝试调用 `map`/`string-split-words`/`sort` 等但找不到。
 
-**状态**：函数实际存在于 `std/string.aura`，但使用了 `map` 等未导出的函数。
+**具体缺失**：
+- `list.aura` 未导出 `map`（`map` 可能在 `combinators` 中或 primitives 层面存在，但 LLM 从 list 模块找不到）
+- `string.aura` 的函数使用了未导出的依赖
+- 无 `sort` 标准实现（`list.aura` 内有 pivot-based sort 但不够健壮）
 
-### 9. 缺少标准排序函数
+### 9. `string->list` / `list->string` 链式操作不直观
 
-**症状**：LLM 生成 `sort` 但不存在。
+**症状**：LLM 经常写出 `(list->string (map ... (string->list s)))` 但 `map` 不可用。
 
 ---
 
 ## P3 — 增强
 
-### 10. `string->list` / `list->string` 对链式操作不够直观
+### 10. IR 覆盖不全
 
-**症状**：LLM 经常写出 `(list->string (map ... (string->list s)))` 但 `map` 不可用。
+**当前 fallback 项**：try/catch/raise、apply（primitive 但非 IR opcode）、when/unless、cond/case、宏定义。这些走 tree-walker，影响函数内联时的性能预测。
+
+### 11. 类型检查未完全增量
+
+**代码注释确认**：`typecheck-current` 当前全量遍历，增量跳过是 future work。
+
+---
+
+## ✅ 已修复（历史）
+
+| 问题 | 提交 | 状态 |
+|------|------|------|
+| `cache_define` 复杂 lambda 不持久化 | `af04a12` + `37f1361` | ✅ |
+| IR 闭包 ID 与树遍历器冲突 | `af04a12` | ✅ |
+| 缓存函数内 display 输出丢失 | `37f1361` | ✅ |
+| 缓存函数字符串池索引错位 | `37f1361` | ✅ |
+| IR 桥接器 `lambda_fid` 指向最后一个而非第一个函数 | `37f1361` | ✅ |
+| `remap_func_ids` 偏移量多加了 1 | `37f1361` | ✅ |
