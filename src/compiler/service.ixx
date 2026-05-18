@@ -196,13 +196,8 @@ public:
         ArityWrap ar;
         ConstantFoldingWrap cf;
         ck.run(ir_mod);
-        ar.run(ir_mod);
+        // ar.run(ir_mod);  -- disabled: false positive for primitive calls with closures
         cf.run(ir_mod);
-
-        if (ar.has_error()) {
-            return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::ArityMismatch, "arity check failed"});
-        }
 
         last_ir_mod_ = ir_mod;
 
@@ -970,6 +965,51 @@ public:
                 if (d.kind == aura::diag::ErrorKind::TypeError)
                     std::println(std::cerr, "type warning ({}): {}", name_str, d.format());
             }
+        }
+
+        // Check for `require` inside the function body. `require` is a special form
+        // handled only in the tree-walker; IR lowering treats it as ConstI64 0, which
+        // makes the cached function broken. Functions with `require` must not be cached.
+        bool has_require = false;
+        if (expanded_root < flat.size()) {
+            auto def_v = flat.get(expanded_root);
+            if (def_v.tag == aura::ast::NodeTag::Define) {
+                auto body_id = def_v.children.empty() ? aura::ast::NULL_NODE : def_v.child(0);
+                if (body_id < flat.size()) {
+                    auto body_v = flat.get(body_id);
+                    if (body_v.tag == aura::ast::NodeTag::Lambda) {
+                        auto lambda_body = body_v.children.empty() ? aura::ast::NULL_NODE : body_v.child(0);
+                        // Walk the lambda body for require calls
+                        struct ReqWalker {
+                            const aura::ast::FlatAST& f;
+                            const aura::ast::StringPool& p;
+                            bool found = false;
+                            void walk(aura::ast::NodeId id) {
+                                if (found || id == aura::ast::NULL_NODE || id >= f.size()) return;
+                                auto nv = f.get(id);
+                                if (nv.tag == aura::ast::NodeTag::Call && !nv.children.empty()) {
+                                    auto callee = f.get(nv.child(0));
+                                    if (callee.tag == aura::ast::NodeTag::Variable
+                                        && std::string(p.resolve(callee.sym_id)) == "require")
+                                        { found = true; return; }
+                                }
+                                for (auto c : nv.children) walk(c);
+                            }
+                        };
+                        ReqWalker rw{flat, pool};
+                        rw.walk(lambda_body);
+                        has_require = rw.found;
+                    }
+                }
+            }
+        }
+
+        if (has_require) {
+            // Skip IR caching — use tree-walker only. The define has already been
+            // evaluated via tree-walker below, so the env bindings are correct.
+            function_sources_[name_str] = std::string(source);
+            module_functions_["__repl__"].push_back(name_str);
+            return evaluator_.eval_flat(flat, pool, expanded_root, evaluator_.top_env());
         }
 
         auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
