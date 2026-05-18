@@ -31,6 +31,9 @@ struct LoweringState {
     const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge = nullptr;
     const std::unordered_map<std::string, std::vector<std::string>>* cache_strings = nullptr;
 
+    // Current source AST node being lowered (for type propagation to IR)
+    ast::NodeId current_source_id = ast::NULL_NODE;
+
     explicit LoweringState(ast::ASTArena& a) : arena(a) {}
     std::uint32_t alloc_local() { return local_count++; }
 
@@ -38,6 +41,13 @@ struct LoweringState {
         if (!cur_func || cur_block >= cur_func->blocks.size()) return;
         auto& blk = cur_func->blocks[cur_block];
         blk.instructions.push_back({op, {op0, op1, op2, op3}});
+        // Propagate type_id from source AST node to IR instruction
+        if (current_flat && current_source_id != ast::NULL_NODE 
+            && current_source_id < current_flat->size()) {
+            auto tid = current_flat->type_id(current_source_id);
+            if (tid != 0)
+                blk.instructions.back().type_id = tid;
+        }
     }
     std::uint32_t alloc_block() {
         if (!cur_func) return 0;
