@@ -311,6 +311,24 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                 break;
             }
 
+            case IROpcode::Raise: {
+                // Raise: result_slot=ops[0], cause_slot=ops[1]
+                // Create an error value by calling the raise primitive
+                auto pfn = primitives_.lookup("raise");
+                if (pfn) {
+                    locals[ops[0]] = (*pfn)({locals[ops[1]]});
+                } else {
+                    locals[ops[0]] = make_void();
+                }
+                break;
+            }
+
+            case IROpcode::IsError: {
+                // IsError: result_slot=ops[0], value_slot=ops[1]
+                locals[ops[0]] = make_bool(is_error(locals[ops[1]]));
+                break;
+            }
+
             case IROpcode::PrimCall: {
                 auto prim_id = static_cast<PrimId>(ops[0]);
                 auto arg_base = unpack_hi(ops[1]);
