@@ -442,6 +442,7 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
         state.env_slot = saved_env_slot;
         state.free_var_map = std::move(saved_fv_map);
 
+        func.free_vars = free_vars;
         auto fid = state.module.add_function(std::move(func));
         // Store bridge data for tree-walker compatibility
         if (state.current_flat && state.current_pool) {

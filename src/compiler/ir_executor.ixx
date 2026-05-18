@@ -99,7 +99,7 @@ private:
     EvalStrategy strategy_;
 
     // Per-instance closure storage
-    std::uint64_t next_closure_id_ = 1;
+    std::uint64_t next_closure_id_ = 1ull << 48;
     std::unordered_map<std::uint64_t, IRClosure> runtime_closures_;
 
     // Per-instance mutable cell heap (for letrec)
