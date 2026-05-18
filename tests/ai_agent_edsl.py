@@ -13,7 +13,7 @@ from stdlib_inliner import inline_stdlib
 AURA = os.environ.get("AURA_BIN", "./build/aura")
 LLM_KEY = os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
 LLM_URL = os.environ.get("LLM_BASE_URL") or os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
-LLM_MODEL = os.environ.get("LLM_MODEL") or os.environ.get("OPENAI_MODEL", "deepseek-v4-flash")
+LLM_MODEL = (os.environ.get("LLM_MODEL") or os.environ.get("OPENAI_MODEL", "deepseek-v4-flash")).split("/")[-1]
 MAX_ROUNDS = 25
 
 SYSTEM_PROMPT = build_system_prompt() + """
@@ -22,7 +22,8 @@ SYSTEM_PROMPT = build_system_prompt() + """
 
 When Phase 1 code fails: use EDSL to fix. NEVER rewrite the whole code.
 
-(set-code "full source")          ; Lock, get stable node IDs
+(set-code "(begin (define ...) (define ...) ...)")  ; Lock workspace (use (begin ...) for multi-expr)
+(current-source)              ; Get updated source after mutations
 (query:find "func")               ; Find node ID
 (query:children N)                ; See node structure
 (mutate:rebind "func" "(define ...)")   ; Replace entire define
