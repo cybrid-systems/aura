@@ -1,0 +1,30 @@
+; io.aura — File I/O utilities
+(export
+  read-lines file->string file->lines
+  copy-file move-file delete-file file-size
+  directory-files path-exists?)
+
+(define (read-lines path)
+  (string-split (read-file path) "\n"))
+
+(define (file->string path)
+  (read-file path))
+
+(define (file->lines path)
+  (read-lines path))
+
+(define (copy-file src dst)
+  (write-file dst (read-file src)))
+
+(define (move-file src dst)
+  (write-file dst (read-file src))
+  (file-delete src))
+
+(define (delete-file path)
+  (file-delete path))
+
+(define (directory-files path)
+  (directory-list path))
+
+(define (path-exists? path)
+  (file-exists? path))

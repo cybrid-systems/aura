@@ -103,7 +103,8 @@ tests/          C++ 61 + bash 106 + AI Agent
 | ArenaGroup 集成 | compile_module / unload_module / reload_module | 🟢 | ✅ **5/18** |
 | 模块级增量编译 | ModuleState dirty 追踪 + mark_module_dirty | 🟢 | ✅ **5/18** |
 | 磁盘缓存 (mmap) | write_cache/open_cache 集成到 compile_module | 🟢 | ✅ **5/18** |
-| Pair IR 指令优化 | 原生 MakePair/Car/Cdr opcode 替代 cons 调用 | 🟡 | ⬜ |
+| Pair IR 指令优化 | 原生 MakePair/Car/Cdr opcode 替代 cons 调用 | 🟢 | ✅ **5/18** |
+| 标准库扩充 (P0) | io / hash / combinators / maybe — 4 文件 ~150 行 | 🟢 | ✅ **5/18** |
 | muddy skip 深度优化 | per-module skip | 🟡 | ⬜ |
 | IR 级 import/模块 | 消除模块 fallback | 🔴 | ⬜ |
 | try/catch IR 支持 | 异常 IR 指令 | 🔴 | ⬜ |

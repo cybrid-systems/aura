@@ -1,0 +1,20 @@
+; maybe.aura — Maybe/Option type
+(export
+  maybe? maybe-ref maybe-default map-maybe filter-maybe)
+
+(define (maybe? v)
+  (not (null? v)))
+
+(define (maybe-ref m)
+  (if (null? m) (error "maybe-ref: nothing") m))
+
+(define (maybe-default d m)
+  (if (null? m) d m))
+
+(define (map-maybe f m)
+  (if (null? m) m (f m)))
+
+(define (filter-maybe pred lst)
+  (if (null? lst) '()
+    (let ((x (car lst)) (rest (filter-maybe pred (cdr lst))))
+      (if (pred x) (cons x rest) rest))))

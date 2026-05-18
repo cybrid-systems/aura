@@ -1,0 +1,39 @@
+; hash.aura — Hash table operations
+(require std/list)
+(export
+  hash-set hash-ref hash-get hash-remove
+  hash-keys hash-values hash-length hash->list
+  hash-merge hash-empty? alist->hash)
+
+(define (for-each f lst)
+  (if (null? lst) #t
+    (begin (f (car lst)) (for-each f (cdr lst)))))
+
+(define (hash-set h k v) (hash-set! h k v) h)
+
+(define (hash-ref h k)
+  (hash-ref h k))
+
+(define (hash-get h k)
+  (hash-ref h k))
+
+(define (hash-remove h k) (hash-remove! h k) h)
+
+(define (hash-empty? h) (= (hash-length h) 0))
+
+(define (hash->list h)
+  (map (lambda (k) (list k (hash-ref h k))) (hash-keys h)))
+
+(define (alist->hash alist)
+  (if (null? alist)
+      (hash)
+      (let ((h (hash)))
+        (for-each (lambda (kv)
+          (hash-set h (car kv) (car (cdr kv)))) alist)
+        h)))
+
+(define (hash-merge a b)
+  (let ((result (hash)))
+    (for-each (lambda (k) (hash-set result k (hash-ref a k))) (hash-keys a))
+    (for-each (lambda (k) (hash-set result k (hash-ref b k))) (hash-keys b))
+    result))

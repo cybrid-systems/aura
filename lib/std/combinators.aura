@@ -1,0 +1,27 @@
+; combinators.aura — Functional programming utilities
+(export
+  compose curry rcurry partial
+  const identity flip complement)
+
+(define (identity x) x)
+
+(define (const x)
+  (lambda (y) x))
+
+(define (flip f)
+  (lambda (a b) (f b a)))
+
+(define (compose f g)
+  (lambda (x) (f (g x))))
+
+(define (curry f a)
+  (lambda (x) (f a x)))
+
+(define (rcurry f a)
+  (lambda (x) (f x a)))
+
+(define (partial f a)
+  (lambda (x) (f a x)))
+
+(define (complement pred)
+  (lambda (x) (not (pred x))))
