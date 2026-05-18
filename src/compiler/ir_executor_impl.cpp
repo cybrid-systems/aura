@@ -319,23 +319,10 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                 for (std::uint32_t pi = 0; pi < arg_count; ++pi)
                     pargs.push_back(locals[arg_base + pi]);
                 EvalResult presult = make_int(0);
-                // Map PrimId to registered primitive name
-                static const char* prim_names[] = {
-                    "string-append", "string-length", "string-ref",
-                    "substring", "string=?", "string<?",
-                    "number->string", "string->number",
-                    "display", "write", "newline",
-                    "error", "assert",
-                    "read", "read-file", "write-file", "file-exists?",
-                    "gensym",
-                    "apply",
-                    "vector", "vector-ref", "vector-set!",
-                    "vector-length", "vector?", "make-vector",
-                    "import",
-                };
+                // Map PrimId to registered primitive name via kPrimNames
                 auto idx = static_cast<std::size_t>(prim_id);
-                if (idx < std::size(prim_names)) {
-                    auto pfn = primitives_.lookup(prim_names[idx]);
+                if (idx < std::size(kPrimNames)) {
+                    auto pfn = primitives_.lookup(std::string(kPrimNames[idx]));
                     if (pfn) presult = (*pfn)(pargs);
                 }
                 if (presult) locals[ops[2]] = *presult;
