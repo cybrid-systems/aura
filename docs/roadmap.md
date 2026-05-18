@@ -1,123 +1,148 @@
 # Aura — 路线图
 
-## 当前状态（2026-05-18 更新）
+**更新：2026-05-18** — 经过两轮 sprint（CaaS + 增量编译 + 语言打磨）后重新评估。
 
-**核心完成度：可写 500+ 行业务代码** ✅
+---
 
-### 已实现
+## 当前状态评估
+
+### 完成度评分
+
+| 维度 | 分数 | 说明 |
+|------|------|------|
+| 语言核心求值 | 🟢 7/10 | tree-walker + IR 双路径基本稳定，仍有少数 fallback 路径 |
+| 编译器基础设施 | 🟢 7/10 | ArenaGroup / 增量 / 缓存 / 热替换都已就位 |
+| 标准库覆盖 | 🟡 4/10 | 10 个文件 ~400 行，缺失 char/string 操作、format |
+| 测试覆盖 | 🟡 3/10 | 只有 67 个集成测试，大量新功能无测试覆盖 |
+| 错误处理 | 🔴 2/10 | 没有 proper diagnostics，parser 撞第一个错误就停 |
+| 类型系统 | 🟡 4/10 | 有 inference 但无 full type check |
+| 文档 | 🔴 1/10 | README 之外几乎没有文档 |
+| AI agent 集成 | 🟡 5/10 | 框架完整但未用真实 API 测过 |
+
+### 已实现（完整清单）
+
+**语言核心**
+- 100+ 原语 (arithmetic, string, vector, hash, pair, char, I/O, type predicates)
+- `apply` 内建原语 — variadic 函数动态调用
+- Variadic lambda — `(lambda (x . rest) ...)` / `(define (f . rest) ...)`
+- TCO (tail call optimization via eval_flat loop)
+- let / let\* / letrec / define / set!
+- cond / case / when / unless / and / or
+- try / catch / raise (仅 tree-walker，无 IR 指令)
+- quasiquote / unquote / unquote-splicing
+- Macro system (defmacro, recursive expansion, gensym)
+
+**数据结构**
+- Pair/list (MakePair/Car/Cdr IR 原生指令)
+- Vector (make-vector, vector-ref, vector-set!, vector->list, list->vector)
+- Hash table (hash, hash-ref, hash-set!, hash-length, hash-keys, hash-values, hash-remove!)
+- Standard library hash-set / hash-merge / hash->list / alist->hash
+
+**增量编译器**
+- IR pipeline (37 opcodes, const folding, compute-kind, arity check)
+- CompilerService eval() with IR-first + tree-walker fallback
+- Closure bridge: IR ↔ tree-walker closure interop (map/filter via IR)
+- `cache_define()` + `ir_cache_` — 函数级 IR 缓存
+- `cache_module()` — 标准库模块全量缓存
+- `invalidate_function()` + `mark_module_dirty()` — 重定义级联失效
+- ArenaGroup — 多模块独立 arena 管理
+- mmap 磁盘缓存（`~/.cache/aura/modules/`）
+- Hot-swap — 运行时替换已缓存函数
+
+**标准库（10 files, ~400 lines）**
+- `hash.aura` — hash-set, hash-ref, hash->list, hash-merge, alist->hash
+- `combinators.aura` — compose, curry, flip, complement, const, identity
+- `maybe.aura` — maybe-ref, maybe-default, map-maybe, filter-maybe
+- `csv.aura` — csv-parse (handles quoted fields)
+- `set.aura` — set, set-add, set-union (variadic API)
+- `io.aura` — read-lines, copy-file, move-file, delete-file, directory-files
+- `list.aura` — foldr, zip, zip3, take-while, drop-while, partition, sort, range, sum, product, last, flatten, intersperse
+- `math.aura` — sin, cos, tan, log, pow, sqrt, floor, ceil, round, abs
+- `string.aura` — string-split, string-trim, string-pad, string-reverse
+- `test.aura` — check, check=, test-suite, run-tests
+
+**服务**
+- `--serve`: eval / define / compile / module / fmt JSON protocol
+- `--serve`: set-code / query:* / mutate:* / typecheck-current / eval-current EDSL
+- `--serve`: AI agent 双阶段工作流（生成代码 → 编译 → 测试 → 修复循环）
+- `--serve`: 函数热替换 + 依赖追踪
+
+---
+
+## 下一步工作
+
+### P0 — 立即（补齐功能断点，让语言可写 200 行脚本）
+
+| # | 项 | 说明 | 工作量 | 依赖 |
+|---|-----|------|--------|------|
+| 1 | 🧪 **hash/variadic/apply 集成测试** | 新功能一个 test case 都没有 | 1h | — |
+| 2 | 📖 **快速入门文档** | 写 2-3 页语言教程 | 2h | — |
+| 3 | 🔤 **char 标准原语补齐** | `char-alphabetic?`, `char-numeric?`, `char-whitespace?`, `char-upcase`, `char-downcase` | 1h | #char 已实现 |
+| 4 | 🧶 **string 操作补齐** | `string-copy`, `string-fill!`, `string->list`, `list->string`, `string-join` | 1h | — |
+| 5 | 🎯 **format 原语** | `(format "~a = ~a" x y)` 替代字符串拼接 | 1.5h | — |
+| 6 | 🌐 **AI agent 管线实测** | 用真实 DeepSeek/OpenAI API 跑一遍 | 需 API key | — |
+
+### P1 — 短期（提升可靠性和体验，支持 1000 行项目）
+
+| # | 项 | 说明 | 工作量 |
+|---|-----|------|--------|
+| 7 | **Parser 错误恢复** | 当前遇第一个 parse error 就退出 | 3h |
+| 8 | **try/catch IR 指令** | 消除一个主要 fallback 路径 | 4h |
+| 9 | **proper Diagnostics** | 集中化错误信息，行号/列号/原因/建议 | 2h |
+| 10 | **Benchmark 基线** | 对比 IR vs tree-walker 性能 | 2h |
+| 11 | **标准库 v2** | 增加到 15-20 个文件，覆盖常见需求 | 8h |
+| 12 | **Module re-export** | `(export ...)` 支持多模块导出链 | 2h |
+
+### P2 — 中期（CaaS 生产化）
+
+| # | 项 | 说明 | 工作量 |
+|---|-----|------|--------|
+| 13 | **IR 级 import** | 消除模块系统 fallback | 6h |
+| 14 | **LLVM JIT 后端** | `--jit` 编译到原生代码 | 40h+ |
+| 15 | **AOT 编译** | 从 Aura 源码到静态二进制 | 20h |
+| 16 | **包管理** | 简单 registry + `(fetch "..." :as dep)` | 8h |
+
+### P3 — 长期
+
+| # | 项 | 说明 |
+|---|-----|------|
+| 17 | **自举** | 用 Aura 写 Aura 编译器 |
+| 18 | **GC 或引用计数** | 替换 arena-only 内存管理 |
+| 19 | **FFI** | 调用 C/Rust 库 |
+| 20 | **完整的类型系统** | Hinze 风格的 complete type checker |
+
+---
+
+## 测试状态
 
 ```
-✓ 语言核心：100+ 原语、TCO、lambda、let/let*/letrec、cond、match、when/unless
-✓ 宏系统：quasiquote、gensym、递归展开、dotted rest param
-✓ 模块命名空间：require/import prefix、export、循环检测、自动 lib 发现
-✓ 渐进类型：L6 推断、forall、Float、增量 typecheck（dirty skip + type cache）
-✓ 错误处理：try/catch/raise/assert、原语返回 error
-✓ 测试框架：check/check=、test-suite、run-tests
-✓ 正则：regex-match? regex-find regex-replace regex-split
-✓ 数学：sin cos tan asin acos atan log log10 exp pow sqrt floor ceil round
-✓ 文件 IO：read-file write-file file-copy file-delete file-size file-exists? directory-list
-✓ EDSL：set-code query:* mutate:* typecheck-current eval-current 15+ 原语
-✓ 格式化：--fmt / --fmt -i / --fmt --check
-✓ AI Agent：DeepSeek 默认 + 双阶段工作流 + 自动测试 + truncation 检测
-✓ 标准库：list math string json struct validate test（8 lib）
-
-=== 本周新增（5/17 高密度开发）===
-✓ IR 管线默认启用：eval() 统一走 IR-first + tree-walker fallback
-✓ 原语桥接：Variable 降级检查 Primitives 表，全量原语 IR 可调用
-✓ Bool 语义统一：ConstBool opcode，比较/逻辑返回 make_bool
-✓ 链式比较修复：pairwise AND 替代错误布尔 chaining
-✓ 常量折叠布尔感知：replace_bool 保持 bool 类型
-✓ 闭包桥接：IRClosure ↔ tree-walker Closure 互通
-  → map/filter/foldl + lambda-作为参数 全程走 IR
-✓ Pair/Quote IR 降级：递归 cons chain 替代 Quote fallback
-  → '(), '(a b c), '(a . b), '((a b) (c d)) 全部 IR 可执行
-✓ ConstVoid：'() 空列表正确表示为 void
-✓ 函数热替换 + 依赖追踪（invalidate_function）
-✓ 增量编译：dirty 标记 + 类型缓存
-✓ EDSL 新增：query:pattern, query:node-type, mutate:insert-child
-
-=== 5/18 新增（持续增量演进）===
-✓ ArenaGroup 多模块管理：compile_module / unload_module / reload_module
-✓ 模块级增量编译：ModuleState dirty 追踪 + mark_module_dirty + 自动重编
-✓ 磁盘缓存 (mmap)：write_cache/open_cache 集成到 compile_module
-✓ --serve 新增 module 命令 (compile/unload/reload/list/stats)
-✓ 设计文档全面对齐（caas_integration / roadmap / design 仓库）
+smoke:      5/5  ✅
+integ:     67/67  ✅
+unit:      15/19  ⚠️ (4 个比较器返回值偏离——#t/#f vs 0/1，远期对齐)
+bash:     106/106 ✅
+AI Agent:  —      ⬜ 需 API key
 ```
 
-### 测试
+## 代码统计（5/18 收盘）
 
 ```
-Bash 回归：    106 tests  ✅
-C++ test_ir：  61 cases    ✅
-集成管线：     50+ cases   ✅
+src/core/       ~2,500 行
+src/parser/     ~1,200 行
+src/compiler/   ~9,500 行
+lib/std/        10 files ~400 行 Aura
+tests/          3 suites + bash 回归
 ```
 
-### 代码统计
+## 今天的提交（9 commits）
 
 ```
-src/core/       ~2,500 行  — FlatAST、arena、type
-src/parser/     ~1,200 行  — lexer + parser
-src/compiler/   ~9,500 行  — evaluator + IR + passes + bridge + EDSL
-lib/std/        8 files    — ~300 行 Aura 代码
-tests/          C++ 61 + bash 106 + AI Agent
+8e313dc  Add 'apply' built-in: (apply fn list)
+49c3e0c  stdlib: rewrite with variadic lambda support
+dd69965  Variadic lambda support: (lambda (x . rest) ...) parser + tree-walker
+00109a6  Fix hash persistence + REPL value define env tracking
+186210f  IR opcode metadata table + consolidate tree-walker fallback names
+027421c  IR executor: kOpcodeInfo validation + deduplicate coercion
+5cb7689  ir: add kPrimNames table, replace prim_names[] in executor
+338f93d  string->number: trim whitespace; display/newline: fix stdout output
+fbb7a5a  Add char primitives: char=?, char<?, char->integer, integer->char
 ```
-
-### Fellback（有意保留，未来逐步消除）
-
-| 触发条件 | 原因 |
-|----------|------|
-| `import`/`use`/`require` | 环境绑定副作用（IR 无法复制） |
-| EDSL `query:`/`mutate:` | 需要求值器内部状态 |
-| 特殊形式 `try`/`catch`/`when`/`unless` | 没有对应 IR 指令 |
-
-## 下一步
-
-### P0 ✅ — 语言打磨（全部完成）
-
-| 项 | 说明 | 状态 |
-|----|------|------|
-| EDSL 自动修复 | 运行时错误 → set-code → query → mutate → eval-current | ✅ 完成 |
-| Agent history truncation | 只保留最近 3 轮避免窗口爆炸 | ✅ 完成 |
-| Agent 截断检测 | `finish_reason == "length"` 检测 + 警告 | ✅ 完成 |
-| `string->number` 非数字返回 #f | 符合 Scheme 语义 | ✅ 完成 |
-| `when`/`unless` 特殊形式 | Scheme 兼容 | ✅ 完成 |
-| Agent DONE 验证 | 编译后 auto-test 通过才接受 DONE | ✅ 完成 |
-
-### P1 ✅ — 功能扩展（全部完成）
-
-| 项 | 说明 | 状态 |
-|----|------|------|
-| IO 库 | file-copy, delete, size, directory-list | ✅ 完成 |
-| Regex 库 | match? find replace split | ✅ 完成 |
-| Math 库 | sin cos tan log exp pow sqrt floor ceil round | ✅ 完成 |
-| 函数缓存 + 依赖追踪 | ir_cache_ + 自动 re-lower | ✅ 完成 |
-| 标准库扩充 | list math string json struct validate test | ✅ 完成 |
-
-### P2 — 性能 & 基础设施
-
-| 项 | 说明 | 优先级 | 状态 |
-|----|------|--------|------|
-| IR 管线默认 | eval() 统一 IR-first + fallback | 🟢 | ✅ **完成** |
-| 原语桥接 + 闭包桥接 | Primitive 值加载 + map/filter IR-closure 互通 | 🟢 | ✅ **完成** |
-| Bool/Quote/Pair IR 覆盖 | ConstBool, ConstVoid, 递归 cons chain | 🟢 | ✅ **完成** |
-| ArenaGroup 集成 | compile_module / unload_module / reload_module | 🟢 | ✅ **5/18** |
-| 模块级增量编译 | ModuleState dirty 追踪 + mark_module_dirty | 🟢 | ✅ **5/18** |
-| 磁盘缓存 (mmap) | write_cache/open_cache 集成到 compile_module | 🟢 | ✅ **5/18** |
-| Pair IR 指令优化 | 原生 MakePair/Car/Cdr opcode 替代 cons 调用 | 🟢 | ✅ **5/18** |
-| 标准库扩充 (P0) | io / hash / combinators / maybe — 4 文件 ~150 行 | 🟢 | ✅ **5/18** |
-| muddy skip 深度优化 | per-module skip | 🟡 | ⬜ |
-| IR 级 import/模块 | 消除模块 fallback | 🔴 | ⬜ |
-| try/catch IR 支持 | 异常 IR 指令 | 🔴 | ⬜ |
-| LLVM JIT | `--jit` 模式编译到原生代码 | 🔴 | ⬜ |
-| AOT 编译 | 静态二进制 | 🔴 | ⬜ |
-| 自举 | 用 Aura 写 Aura 编译器 | 🔴 | ⬜ |
-
-### P3 — 类型检查 & 语言修复（5/18 启动）
-
-| 项 | 说明 | 工作量 | 状态 |
-|----|------|--------|------|
-| 运行时 coercion | IR Interpreter Add/Sub/Mul/Div 处理 string→int | ~1h | ⬜ |
-| consistent_unify | String~Int 渐进类型一致性 | ~1h | ⬜ |
-| arith 类型推断 | `(+ "42" 1)` 返回 Int 而非 String | ~1h | ⬜ |
-| 类型检查 exit code | err_arity/err_type 返回 exit 1 | ~1h | ⬜ |
-| 递归函数 IR 缓存 | cache_module 跳过递归函数的修复 | ~2h | ✅ **5/18** |
