@@ -110,3 +110,13 @@ tests/          C++ 61 + bash 106 + AI Agent
 | LLVM JIT | `--jit` 模式编译到原生代码 | 🔴 | ⬜ |
 | AOT 编译 | 静态二进制 | 🔴 | ⬜ |
 | 自举 | 用 Aura 写 Aura 编译器 | 🔴 | ⬜ |
+
+### P3 — 类型检查 & 语言修复（5/18 启动）
+
+| 项 | 说明 | 工作量 | 状态 |
+|----|------|--------|------|
+| 运行时 coercion | IR Interpreter Add/Sub/Mul/Div 处理 string→int | ~1h | ⬜ |
+| consistent_unify | String~Int 渐进类型一致性 | ~1h | ⬜ |
+| arith 类型推断 | `(+ "42" 1)` 返回 Int 而非 String | ~1h | ⬜ |
+| 类型检查 exit code | err_arity/err_type 返回 exit 1 | ~1h | ⬜ |
+| 递归函数 IR 缓存 | cache_module 跳过递归函数的修复 | ~2h | ⬜ |
