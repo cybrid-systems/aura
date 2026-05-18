@@ -10,14 +10,14 @@
 
 | 维度 | 分数 | 说明 |
 |------|------|------|
-| 语言核心求值 | 🟢 7/10 | tree-walker + IR 双路径基本稳定，仍有少数 fallback 路径 |
-| 编译器基础设施 | 🟢 7/10 | ArenaGroup / 增量 / 缓存 / 热替换都已就位 |
-| 标准库覆盖 | 🟡 4/10 | 10 个文件 ~400 行，缺失 char/string 操作、format |
-| 测试覆盖 | 🟡 3/10 | 只有 67 个集成测试，大量新功能无测试覆盖 |
-| 错误处理 | 🔴 2/10 | 没有 proper diagnostics，parser 撞第一个错误就停 |
-| 类型系统 | 🟡 4/10 | 有 inference 但无 full type check |
-| 文档 | 🔴 1/10 | README 之外几乎没有文档 |
-| AI agent 集成 | 🟡 5/10 | 框架完整但未用真实 API 测过 |
+| 语言核心求值 | 🟢 8/10 | tree-walker + IR 双路径稳定，IR 桥接器修复，pair 原生指令，TCO |
+| 编译器基础设施 | 🟢 8/10 | ArenaGroup / 增量 / 磁盘缓存 / 热替换 / 依赖级联 / 磁盘缓存 |
+| 标准库覆盖 | 🟡 5/10 | 12 个文件 ~450 行，char/string/format 补齐，缺少 string-split |
+| 测试覆盖 | 🟡 4/10 | integ 87/87，unit 61/61，smoke 5/5，仍缺 EDSL 管线测试 |
+| 错误处理 | 🟡 4/10 | Parser 多错误累积 + line:column，DCE 后显示所有错误 |
+| 类型系统 | 🟡 5/10 | L6 渐进类型 + occurrence typing + warnings-only 模式 |
+| 文档 | 🟡 4/10 | README + roadmap + tutorial + known_issues + 设计文档 |
+| AI agent 集成 | 🟡 6/10 | EDSL 管线完整，DeepSeek API 实测通过，空响应保护 |
 
 ### 已实现（完整清单）
 
@@ -73,25 +73,32 @@
 
 ### P0 — 立即（补齐功能断点，让语言可写 200 行脚本）
 
-| # | 项 | 说明 | 工作量 | 依赖 |
+| # | 项 | 说明 | 工作量 | 状态 |
 |---|-----|------|--------|------|
-| 1 | 🧪 **hash/variadic/apply 集成测试** | 新功能一个 test case 都没有 | 1h | — |
-| 2 | 📖 **快速入门文档** | 写 2-3 页语言教程 | 2h | — |
-| 3 | 🔤 **char 标准原语补齐** | `char-alphabetic?`, `char-numeric?`, `char-whitespace?`, `char-upcase`, `char-downcase` | 1h | #char 已实现 |
-| 4 | 🧶 **string 操作补齐** | `string-copy`, `string-fill!`, `string->list`, `list->string`, `string-join` | 1h | — |
-| 5 | 🎯 **format 原语** | `(format "~a = ~a" x y)` 替代字符串拼接 | 1.5h | — |
-| 6 | 🌐 **AI agent 管线实测** | 用真实 DeepSeek/OpenAI API 跑一遍 | 需 API key | — |
+| 1 | **`--strict` 模式** | `TypeCheckWrap` 从 warning-only 升级为可开关的严格模式 | 2h | ✅ 已实现 |
+| 2 | **增量类型缓存** | `synthesize_flat` 结果写入 `flat.type_id(id)`，dirty 节点自动重检查 | 2h | 🔴 |
+| 3 | **arity 检查完全修复** | 恢复 `eval()` 中 `ar.run(ir_mod)`，修复 `resolve_callee` Primitive 误报 | 3h | ⚡ |
 
 ### P1 — 短期（提升可靠性和体验，支持 1000 行项目）
 
+#### 类型系统增强
+
+| # | 项 | 说明 | 工作量 | 前置 |
+|---|-----|------|--------|------|
+| 4 | **类型信息流入 IR** | `IRInstruction.type_id` 可选字段 + lowering 时写入 + IRInterpreter 运行时断言 | 1-2d | P0#1 |
+| 5 | **Let-Poly 启用** | `synthesize_flat_let` 泛化 + `synthesize_flat_var` 实例化 forall | 1d | P0#2 |
+| 6 | **PassManager 集成** | TypeSpecializationPass — 类型感知常量折叠/死代码消除 | 1d | #4 |
+| 7 | **`--serve strict` 命令** | 运行时切换严格模式，EDSL 管线实时反馈 | 0.5d | #1 |
+
+#### 基础设施
+
 | # | 项 | 说明 | 工作量 |
 |---|-----|------|--------|
-| 7 | **Parser 错误恢复** | 当前遇第一个 parse error 就退出 | 3h |
-| 8 | **try/catch IR 指令** | 消除一个主要 fallback 路径 | 4h |
+| 8 | **Parser 错误恢复** | 多错误累积（已部分实现），`(export ...)` 多模块导出链 | 3h |
 | 9 | **proper Diagnostics** | 集中化错误信息，行号/列号/原因/建议 | 2h |
 | 10 | **Benchmark 基线** | 对比 IR vs tree-walker 性能 | 2h |
 | 11 | **标准库 v2** | 增加到 15-20 个文件，覆盖常见需求 | 8h |
-| 12 | **Module re-export** | `(export ...)` 支持多模块导出链 | 2h |
+| 12 | **try/catch IR 指令** | 消除一个主要 fallback 路径 | 4h |
 
 ### P2 — 中期（CaaS 生产化）
 
@@ -109,40 +116,94 @@
 | 17 | **自举** | 用 Aura 写 Aura 编译器 |
 | 18 | **GC 或引用计数** | 替换 arena-only 内存管理 |
 | 19 | **FFI** | 调用 C/Rust 库 |
-| 20 | **完整的类型系统** | Hinze 风格的 complete type checker |
+| 20 | **完整的类型系统** | 完整的类型检查 + 类型驱动优化 |
 
 ---
+
+## 类型系统增强路线图（详细）
+
+### Phase 0: `--strict` 模式（P0#1）
+
+在 `CompilerService::eval()` 中增加最简开关：
+
+```
+eval():
+  TypeCheckWrap tc_pass
+  tc_pass.check_before_lowering(...)
++ if (strict_mode_ && tc_pass.has_type_error()) return error
+```
+
+- 新增 `set_strict_mode(bool)` + `strict_mode_` 字段
+- `--serve` 新增 `config strict true` 命令
+- 改造 `TypeCheckWrap::has_error()` —— 当前永远返回 `false`
+- strict 默认为 false，不破坏现有 tests
+
+### Phase 1: 增量类型缓存（P0#2）
+
+现状：`dirty_` 存在，`synthesize_flat` 每次检查 `is_dirty(id)`，但只跳过 synthesis，不缓存结果。
+
+动作：
+- 在 `synthesize_flat` 每个分支末尾写 `flat.set_type_id(id, result.index)`
+- `infer_flat()` 的 `cs_.normalize()` 后也写入
+- 已有的 `mark_subtree_dirty` 自动触发重检查
+
+### Phase 2: 类型信息流入 IR（P1#4）
+
+- `IRInstruction` 增加 `uint32_t type_id = 0`（0=dynamic，向后兼容）
+- Lowering 时从 `flat.type_id(id)` 写入 `inst.type_id`
+- IRInterpreter 在 strict 模式下做运行时类型断言
+
+### Phase 3: Let-Poly（P1#5）
+
+- `synthesize_flat_let` 对 let 绑定做泛化（自由类型变量 → Forall）
+- `synthesize_flat_var` 已有 `instantiate_all` 骨架，替换自由变量
+- 只在 strict 模式下启用
+
+### Phase 4: PassManager 集成（P1#6）
+
+- 新建 `TypeSpecializationPass`（参考 `ConstantFoldingWrap` 写法）
+- 类型感知优化：已知类型解除 coercion 冗余、死代码消除
+- 插入 IR 管线：`lower → [TypeSpecialization] → ComputeKind → Arity → ConstFold → execute`
 
 ## 测试状态
 
 ```
 smoke:      5/5  ✅
-integ:     87/87  ✅
-unit:      15/19  ⚠️ (4 个比较器返回值偏离——#t/#f vs 0/1，远期对齐)
+integ:     87/87 ✅
+unit:      61/61 ✅
 bash:     106/106 ✅
-AI Agent:  —      ⬜ 需 API key
+AI Agent:   —   ✅ (DeepSeek v4 Flash, EDSL restore 工作正常)
 ```
 
 ## 代码统计（5/18 收盘）
 
 ```
-src/core/       ~2,500 行
-src/parser/     ~1,200 行
-src/compiler/   ~9,500 行
-lib/std/        10 files ~400 行 Aura
-tests/          3 suites + bash 回归
+src/core/       ~2,700 行
+src/parser/     ~1,400 行
+src/compiler/   ~10,000 行
+lib/std/        12 files ~450 行 Aura
+docs/           tutorial.md + known_issues.md + roadmap.md + 设计文档
+tests/          3 suites + bash 回归 + AI agent EDSL 管线
 ```
 
-## 今天的提交（9 commits）
+## 今天的提交（17 commits）
 
 ```
-8e313dc  Add 'apply' built-in: (apply fn list)
-49c3e0c  stdlib: rewrite with variadic lambda support
-dd69965  Variadic lambda support: (lambda (x . rest) ...) parser + tree-walker
-00109a6  Fix hash persistence + REPL value define env tracking
-186210f  IR opcode metadata table + consolidate tree-walker fallback names
-027421c  IR executor: kOpcodeInfo validation + deduplicate coercion
-5cb7689  ir: add kPrimNames table, replace prim_names[] in executor
-338f93d  string->number: trim whitespace; display/newline: fix stdout output
-fbb7a5a  Add char primitives: char=?, char<?, char->integer, integer->char
+fcd95e0  ArenaGroup 集成
+e5393e0  模块级增量编译
+1e6fd2b  磁盘缓存
+4dad634  docs 二次翻新（design 仓库）
+2d3abec  类型 coercion + arity 修复
+4de8f9b  递归函数 IR 缓存
+192c1b7  Pair IR 原生指令
+205071f  标准库 P0
+dd69965  Variadic lambda 支持
+49c3e0c  标准库 variadic 重构
+8e313dc  Add 'apply' built-in
+00109a6  Fix hash persistence + REPL env tracking
+338f93d  string->number trim + display/stdout fix
+fbb7a5a  Add char primitives
+b2ae103  Add format primitive (SRFI-28)
+5ba86d1  Parser error recovery
+3cb9a33  Fix recursive function IR caching
 ```

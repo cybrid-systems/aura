@@ -37,6 +37,10 @@ public:
 
     void reset() { arena_.reset(); }
 
+    // ---- Strict mode (type errors → rejected) ------------------------
+    void set_strict_mode(bool s) { strict_mode_ = s; }
+    bool strict_mode() const { return strict_mode_; }
+
     // ---- Unified evaluation (IR-first with fallback) -----------------
 
     // Check if an expression needs the tree-walker evaluator.
@@ -159,9 +163,16 @@ public:
             aura::compiler::TypeCheckWrap tc_pass;
             aura::diag::DiagnosticCollector diags;
             tc_pass.check_before_lowering(*flat_ptr, *pool_ptr, expanded_root, type_registry_, diags);
+            bool has_type_error = false;
             for (auto& d : diags.diagnostics()) {
-                if (d.kind == aura::diag::ErrorKind::TypeError)
+                if (d.kind == aura::diag::ErrorKind::TypeError) {
                     std::println(std::cerr, "type warning: {}", d.format());
+                    has_type_error = true;
+                }
+            }
+            if (strict_mode_ && has_type_error) {
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::TypeError, "type error (strict mode)"});
             }
         }
 
@@ -1016,9 +1027,16 @@ public:
             aura::compiler::TypeCheckWrap tc_pass;
             aura::diag::DiagnosticCollector diags;
             tc_pass.check_before_lowering(flat, pool, expanded_root, type_registry_, diags);
+            bool has_type_error = false;
             for (auto& d : diags.diagnostics()) {
-                if (d.kind == aura::diag::ErrorKind::TypeError)
+                if (d.kind == aura::diag::ErrorKind::TypeError) {
                     std::println(std::cerr, "type warning ({}): {}", name_str, d.format());
+                    has_type_error = true;
+                }
+            }
+            if (strict_mode_ && has_type_error) {
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::TypeError, "type error (strict mode)"});
             }
         }
 
@@ -1512,6 +1530,9 @@ private:
     // Track names defined via value define (tree-walker path) so subsequent
     // expressions referencing them fall back to tree-walker instead of IR.
     std::unordered_set<std::string> user_bindings_;
+
+    // Strict mode: type errors → rejected instead of warnings only
+    bool strict_mode_ = false;
 };
 
 } // namespace aura::compiler
