@@ -118,6 +118,8 @@ def main():
     current_src = ""      # full source code of the program being developed
     in_phase2 = False
 
+    empty_code_rounds = 0
+    phase2_rounds = 0
     for rnd in range(1, MAX_ROUNDS + 1):
         phase = "Phase 2 EDSL" if in_phase2 else "Phase 1 exec"
         print(f"\n── Round {rnd} ({phase}) ──")
@@ -130,8 +132,14 @@ def main():
             last_line = resp.strip().split("\n")[-1].upper()
             if "DONE" in last_line and "TRUNCATED" not in resp:
                 print("  DONE"); break
+            empty_code_rounds += 1
+            if empty_code_rounds >= 3:
+                print("  ⚠️ LLM kept returning text without code — ending")
+                break
             msgs.append({"role": "assistant", "content": resp})
+            msgs.append({"role": "user", "content": "You did not include any code in your response. Please either write Aura code in a code block, or say DONE if the task is complete."})
             continue
+        empty_code_rounds = 0
 
         print(f"  Code:\n    {code[:300]}")
 
@@ -140,6 +148,10 @@ def main():
 
         if is_edsl:
             in_phase2 = True
+            phase2_rounds += 1
+            if phase2_rounds > 10:
+                print("  ⚠️ Too many Phase 2 EDSL rounds — ending")
+                break
             if code.startswith("(set-code"):
                 # Extract source from set-code to track our program
                 m = re.match(r'\(set-code\s+"((?:[^"\\]|\\.)*)"', code)
