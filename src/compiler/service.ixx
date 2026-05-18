@@ -187,8 +187,9 @@ public:
 
         // ========== IR pipeline (default path for non-define expressions) ==========
         auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
+        auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
         auto ir_mod = aura::compiler::lower_to_ir_with_cache(
-            *flat_ptr, *pool_ptr, arena_, cache_ptr, nullptr, &evaluator_.primitives());
+            *flat_ptr, *pool_ptr, arena_, cache_ptr, nullptr, &evaluator_.primitives(), nullptr, cache_strings_ptr);
 
         // Run passes (silent in default path — use eval_ir for debug)
         ComputeKindWrap ck;
@@ -304,7 +305,8 @@ public:
 
         // === Normal IR path (with cache awareness) ===
         auto cache_ptr_local = ir_cache_.empty() ? nullptr : &ir_cache_;
-        auto ir_mod = aura::compiler::lower_to_ir_with_cache(*flat_ptr, *pool_ptr, arena_, cache_ptr_local, nullptr, &evaluator_.primitives());
+        auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
+        auto ir_mod = aura::compiler::lower_to_ir_with_cache(*flat_ptr, *pool_ptr, arena_, cache_ptr_local, nullptr, &evaluator_.primitives(), nullptr, cache_strings_ptr);
 
         ComputeKindWrap ck;
         ArityWrap ar;
@@ -596,9 +598,10 @@ public:
             f2->root = *define_id;
 
             auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
+            auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
             std::vector<std::string> hits;
             auto ir_mod = aura::compiler::lower_to_ir_with_cache(
-                *f2, *p2, arena_, cache_ptr, &hits, &evaluator_.primitives());
+                *f2, *p2, arena_, cache_ptr, &hits, &evaluator_.primitives(), nullptr, cache_strings_ptr);
 
             // Run passes on non-entry functions
             {
@@ -683,6 +686,7 @@ public:
         for (auto& fname : to_remove) {
             ir_cache_.erase(fname);
             ir_cache_bridge_.erase(fname);
+            ir_cache_strings_.erase(fname);
             function_sources_.erase(fname);
             // Clean dep_graph
             auto dit = dep_graph_.find(fname);
@@ -912,9 +916,10 @@ public:
 
             bool is_redefine = ir_cache_.count(name) > 0;
             auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
+            auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
             std::vector<std::string> cache_hits;
             auto ir_mod = aura::compiler::lower_to_ir_with_cache(
-                flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives());
+                flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), nullptr, cache_strings_ptr);
             flat.root = saved_root;  // restore
 
             // Run passes
@@ -969,9 +974,10 @@ public:
 
         auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
         auto cache_bridge_ptr = ir_cache_bridge_.empty() ? nullptr : &ir_cache_bridge_;
+        auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
         std::vector<std::string> cache_hits;
         auto ir_mod = aura::compiler::lower_to_ir_with_cache(
-            flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), cache_bridge_ptr);
+            flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), cache_bridge_ptr, cache_strings_ptr);
 
         // Run passes per-function on the new function bundle
         {
@@ -999,6 +1005,7 @@ public:
         }
         ir_cache_[name_str] = std::move(bundle);
         ir_cache_bridge_[name_str] = std::move(bridge_bundle);
+        ir_cache_strings_[name_str] = ir_mod.string_pool;
         function_sources_[name_str] = std::string(source);
         module_functions_["__repl__"].push_back(name_str);
 
@@ -1207,6 +1214,8 @@ private:
 
     // Bridge data cached alongside ir_cache_ (same keys, parallel indices).
     std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>> ir_cache_bridge_;
+    // String pool cached alongside ir_cache_ (same keys).
+    std::unordered_map<std::string, std::vector<std::string>> ir_cache_strings_;
 
     // Source code for each cached function, used for re-lowering on dependency changes.
     std::unordered_map<std::string, std::string> function_sources_;
@@ -1329,8 +1338,9 @@ private:
 
             // Re-lower with current cache to detect new dependencies
             auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
+            auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
             std::vector<std::string> cache_hits;
-            auto ir_mod = aura::compiler::lower_to_ir_with_cache(flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives());
+            auto ir_mod = aura::compiler::lower_to_ir_with_cache(flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), nullptr, cache_strings_ptr);
 
             // Phase 4: Run passes per-function on the re-lowered function bundle.
             {
