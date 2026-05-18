@@ -290,7 +290,15 @@ NodeId FlatParser::parse_lambda() {
     }
     lexer_->consume(); // ')'
 
-    auto body = parse_expr();
+    // Parse multiple body expressions and wrap in begin
+    std::vector<NodeId> body_exprs;
+    while (lexer_->peek().kind != TokenKind::RParen && !lexer_->eof()) {
+        auto be = parse_expr();
+        if (be != NULL_NODE) body_exprs.push_back(be);
+        if (lexer_->peek().kind == TokenKind::RParen) break;
+    }
+    auto body = body_exprs.empty() ? NULL_NODE
+        : (body_exprs.size() == 1 ? body_exprs[0] : flat_.add_begin(body_exprs.data(), body_exprs.size()));
     if (body == NULL_NODE) return NULL_NODE;
     lexer_->consume(); // ')'
     auto lid = flat_.add_lambda(params, body, dotted); flat_.set_loc(lid, tok.line, tok.column); return lid;
