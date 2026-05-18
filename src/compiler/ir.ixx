@@ -75,6 +75,8 @@ export enum class PrimId : std::uint8_t {
     WriteFile,
     FileExists,
     Gensym,
+    // Apply: (apply fn list) — call fn with list elements as args
+    Apply,
     // Vector primitives
     Vector,
     VectorRef,

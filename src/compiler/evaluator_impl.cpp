@@ -1104,6 +1104,33 @@ void Evaluator::init_pair_primitives() {
         string_heap_.push_back(result);
         return make_string(sid);
     });
+
+    // (apply fn list) — call fn with list elements as individual args
+    primitives_.add("apply", [this](const auto& a) -> EvalValue {
+        if (a.size() < 2) return make_void();
+        auto& fn = a[0];
+        auto& arg_list = a[1];
+        std::vector<EvalValue> args;
+        auto current = arg_list;
+        while (is_pair(current)) {
+            auto idx = as_pair_idx(current);
+            if (idx >= pairs_.size()) break;
+            args.push_back(pairs_[idx].car);
+            current = pairs_[idx].cdr;
+        }
+        if (is_primitive(fn)) {
+            auto slot = as_primitive_slot(fn);
+            auto pfn = primitives_.lookup(primitives_.name_for_slot(slot));
+            if (pfn) return (*pfn)(args);
+        }
+        if (is_closure(fn)) {
+            auto cid = as_closure_id(fn);
+            auto result = apply_closure(cid, args);
+            if (result) return *result;
+        }
+        return make_void();
+    });
+
     primitives_.add("display", [this](const auto& a) {
         if (a.empty()) return make_void();
         io_print_val(a[0], &string_heap_, &pairs_, false);

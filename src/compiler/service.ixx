@@ -86,6 +86,7 @@ public:
                         // EDSL primitives — need evaluator state
                         if (name == "set-code" ||
                             name == "eval-current" ||
+                            name == "apply" ||
                             name == "typecheck-current" ||
                             name == "typed-mutate" ||
                             name == "rollback" ||
