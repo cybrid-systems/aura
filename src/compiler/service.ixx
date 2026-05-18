@@ -847,30 +847,9 @@ public:
             auto body_node = flat.get(define_node.child(0));
             if (body_node.tag != aura::ast::NodeTag::Lambda) continue;
 
-            // Skip self-referential (recursive) functions — their cell-based
-            // self-reference can't survive IR function bundle caching.
-            bool is_recursive = false;
-            {
-                struct RecCheck {
-                    aura::ast::FlatAST& flat;
-                    aura::ast::StringPool& pool;
-                    const std::string& fname;
-                    bool found = false;
-                    void walk(aura::ast::NodeId id) {
-                        if (found || id >= flat.size()) return;
-                        auto v = flat.get(id);
-                        if (v.tag == aura::ast::NodeTag::Variable) {
-                            if (pool.resolve(v.sym_id) == fname) found = true;
-                        }
-                        for (auto c : v.children) walk(c);
-                    }
-                };
-                RecCheck rc{flat, pool, name, false};
-                if (!body_node.children.empty())
-                    rc.walk(body_node.child(0));
-                is_recursive = rc.found;
-            }
-            if (is_recursive) continue;
+            // Recursive functions are now cached: the self-call is lowered as
+            // a variable lookup; at runtime the evaluator's env dispatch handles
+            // the cell-based self-reference set up by the tree-walker pre-eval.
 
             // Skip functions with internal (define ...) — their cell setup is
             // in __top__ which isn't cached; the cached lambda can't create cells.
