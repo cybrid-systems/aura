@@ -57,6 +57,17 @@ TypeId ConstraintSystem::normalize(TypeId id) {
         if (idx >= subst_.size() || !subst_[idx].valid()) return id;
         id = subst_[idx];
     }
+    // Recurse into compound types to resolve inner variables
+    if (auto* f = reg_.func_of(id)) {
+        std::vector<TypeId> new_args;
+        for (auto& a : f->args) new_args.push_back(normalize(a));
+        auto new_ret = normalize(f->ret);
+        return reg_.register_func(std::move(new_args), new_ret);
+    }
+    if (auto* ft = reg_.forall_of(id)) {
+        auto new_body = normalize(ft->body);
+        return reg_.register_forall(ft->var, new_body);
+    }
     return id;
 }
 
@@ -608,6 +619,17 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
         return *arith_result;
     }
 
+    // Instantiate Forall types before extracting function signature.
+    // This is needed for Let-Polymorphism: (let ((f (lambda (x) ...))) (f 42))
+    // where f's type is generalized to ∀t. (t -> ret)
+    auto instantiate_all_direct = [&](this const auto& self, TypeId tid) -> TypeId {
+        auto* ft = reg_.forall_of(tid);
+        if (!ft) return tid;
+        auto inst = reg_.instantiate(tid, [this]() { return cs_.fresh_var(); });
+        return self(inst);
+    };
+    func_type = instantiate_all_direct(func_type);
+
     // COPY func type before processing args — synthesize_flat may call
     // register_func which can reallocate entries_, invalidating func_of* pointers.
     std::optional<FuncType> f_ty_copy;
@@ -775,7 +797,25 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool, Nod
     TypeId val_type = reg_.void_type();
     if (!v.children.empty() && v.child(0) != NULL_NODE)
         val_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
-    env_.bind(var_name, val_type);
+
+    // Let-Polymorphism: generalize over free type variables
+    // Normalize to substitute constrained variables before checking for free vars
+    // Let-Polymorphism: generalize over free type variables
+    // Normalize to substitute constrained variables before checking for free vars
+    auto val_norm = cs_.normalize(val_type);
+    auto fvs = reg_.free_vars(val_norm);
+    if (!fvs.empty()) {
+        // Wrap in Forall layers: ∀fv1. ∀fv2. ... type
+        // fvs contains exact TypeIds with correct generations from registry
+        TypeId poly = val_norm;
+        for (auto& fv_id : fvs) {
+            poly = reg_.register_forall(fv_id, poly);
+        }
+        env_.bind(var_name, poly);
+    } else {
+        env_.bind(var_name, val_norm);
+    }
+
     TypeId body_type = reg_.void_type();
     if (v.children.size() >= 2 && v.child(1) != NULL_NODE)
         body_type = synthesize_flat(flat, pool, v.child(1), flat.get(v.child(1)));
