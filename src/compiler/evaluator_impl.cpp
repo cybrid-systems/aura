@@ -327,6 +327,23 @@ void Evaluator::init_pair_primitives() {
         if (a.empty()) return make_bool(false);
         return make_bool(is_void(a[0]));
     });
+    // ── Character operations (chars are integers in Aura) ──────────
+    primitives_.add("char=?", [](const auto& a) {
+        if (a.size() < 2) return make_bool(false);
+        return make_bool(is_int(a[0]) && is_int(a[1]) && as_int(a[0]) == as_int(a[1]));
+    });
+    primitives_.add("char<?", [](const auto& a) {
+        if (a.size() < 2) return make_bool(false);
+        return make_bool(is_int(a[0]) && is_int(a[1]) && as_int(a[0]) < as_int(a[1]));
+    });
+    primitives_.add("char->integer", [](const auto& a) {
+        if (a.empty() || !is_int(a[0])) return make_bool(false);
+        return a[0];
+    });
+    primitives_.add("integer->char", [](const auto& a) {
+        if (a.empty() || !is_int(a[0])) return make_bool(false);
+        return a[0];
+    });
 
     // ── Pair / List / String primitives ─────────────────────────
     primitives_.add("cons", [this](const auto& a) {
