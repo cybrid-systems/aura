@@ -887,9 +887,49 @@ public:
             auto body_node = flat.get(define_node.child(0));
             if (body_node.tag != aura::ast::NodeTag::Lambda) continue;
 
-            // Recursive functions are now cached: the self-call is lowered as
-            // a variable lookup; at runtime the evaluator's env dispatch handles
-            // the cell-based self-reference set up by the tree-walker pre-eval.
+            // Check: can this function be lowered to IR?
+            // We skip functions where any variable reference in the body
+            // isn't resolvable: not a parameter, not a primitive, not in ir_cache_.
+            // This covers:
+            //   1. Self-recursive calls (function not in ir_cache_ yet)
+            //   2. Calls to other non-cached, non-primitive functions
+            //   3. Any variable reference that would fall through to ConstI64 0
+            bool skip_ir_cache_fn = false;
+            {
+                // Collect parameter names
+                auto params_span = body_node.params;
+                std::unordered_set<std::string> param_names;
+                for (auto pid : params_span)
+                    param_names.insert(std::string(pool.resolve(pid)));
+
+                struct FnCheck {
+                    const aura::ast::FlatAST& f;
+                    const aura::ast::StringPool& p;
+                    const std::unordered_set<std::string>& params;
+                    const Evaluator& eval;
+                    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>& ir_cache;
+                    bool skip = false;
+                    void walk(aura::ast::NodeId id) {
+                        if (skip || id >= f.size()) return;
+                        auto nv = f.get(id);
+                        if (nv.tag == aura::ast::NodeTag::Variable) {
+                            auto var_name = std::string(p.resolve(nv.sym_id));
+                            if (params.count(var_name)) return;
+                            if (eval.primitives().slot_for_name(var_name) < eval.primitives().slot_count()) return;
+                            if (ir_cache.count(var_name)) return;
+                            skip = true;
+                        }
+                        for (auto c : nv.children) walk(c);
+                    }
+                };
+                FnCheck fc{flat, pool, param_names, evaluator_, ir_cache_};
+                if (!body_node.children.empty())
+                    fc.walk(body_node.child(0));
+                skip_ir_cache_fn = fc.skip;
+            }
+            if (skip_ir_cache_fn) {
+                continue;
+            }
 
             // Skip functions with internal (define ...) — their cell setup is
             // in __top__ which isn't cached; the cached lambda can't create cells.
@@ -982,10 +1022,11 @@ public:
             }
         }
 
-        // Check for `require` inside the function body. `require` is a special form
-        // handled only in the tree-walker; IR lowering treats it as ConstI64 0, which
-        // makes the cached function broken. Functions with `require` must not be cached.
-        bool has_require = false;
+        // Check for reasons to skip IR caching:
+        // 1. `require` inside function body — IR lowering treats it as ConstI64 0
+        // 2. Self-recursive calls — function not in ir_cache_ yet → ConstI64 0
+        // 3. Calls to non-cached, non-primitive variables — not resolvable in IR
+        bool skip_ir_cache = false;
         if (expanded_root < flat.size()) {
             auto def_v = flat.get(expanded_root);
             if (def_v.tag == aura::ast::NodeTag::Define) {
@@ -994,32 +1035,45 @@ public:
                     auto body_v = flat.get(body_id);
                     if (body_v.tag == aura::ast::NodeTag::Lambda) {
                         auto lambda_body = body_v.children.empty() ? aura::ast::NULL_NODE : body_v.child(0);
-                        // Walk the lambda body for require calls
-                        struct ReqWalker {
+                        // Collect parameter names to distinguish them from external references
+                        auto params_list = body_v.params;
+                        std::unordered_set<std::string> param_names;
+                        for (auto pid : params_list)
+                            param_names.insert(std::string(pool.resolve(pid)));
+
+                        // Walk the lambda body for variables that can't be lowered
+                        struct LambdaBodyWalker {
                             const aura::ast::FlatAST& f;
                             const aura::ast::StringPool& p;
-                            bool found = false;
+                            const std::string& self_name;
+                            const std::unordered_set<std::string>& param_names;
+                            const Evaluator& eval;
+                            const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>& ir_cache;
+                            bool skip = false;
                             void walk(aura::ast::NodeId id) {
-                                if (found || id == aura::ast::NULL_NODE || id >= f.size()) return;
+                                if (skip || id == aura::ast::NULL_NODE || id >= f.size()) return;
                                 auto nv = f.get(id);
-                                if (nv.tag == aura::ast::NodeTag::Call && !nv.children.empty()) {
-                                    auto callee = f.get(nv.child(0));
-                                    if (callee.tag == aura::ast::NodeTag::Variable
-                                        && std::string(p.resolve(callee.sym_id)) == "require")
-                                        { found = true; return; }
+                                if (nv.tag == aura::ast::NodeTag::Variable) {
+                                    auto var_name = std::string(p.resolve(nv.sym_id));
+                                    // Skip params, primitives, cached functions
+                                    if (param_names.count(var_name)) return;
+                                    if (eval.primitives().slot_for_name(var_name) < eval.primitives().slot_count()) return;
+                                    if (ir_cache.count(var_name)) return;
+                                    // Unknown variable — IR will emit ConstI64 0
+                                    skip = true;
                                 }
                                 for (auto c : nv.children) walk(c);
                             }
                         };
-                        ReqWalker rw{flat, pool};
-                        rw.walk(lambda_body);
-                        has_require = rw.found;
+                        LambdaBodyWalker lbw{flat, pool, name_str, param_names, evaluator_, ir_cache_};
+                        lbw.walk(lambda_body);
+                        skip_ir_cache = lbw.skip;
                     }
                 }
             }
         }
 
-        if (has_require) {
+        if (skip_ir_cache) {
             // Skip IR caching — use tree-walker only. The define has already been
             // evaluated via tree-walker below, so the env bindings are correct.
             function_sources_[name_str] = std::string(source);
