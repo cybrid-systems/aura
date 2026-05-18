@@ -1,0 +1,42 @@
+; csv.aura — CSV parsing and generation
+; Characters are represented as integers in Aura.
+; 10 = newline, 44 = comma, 34 = double-quote.
+(export csv-parse csv->rows csv->table csv-select csv-filter csv-header column-names)
+
+(define (split-lines text)
+  (let loop ((chars (string->list text)) (current '()) (result '()))
+    (if (null? chars)
+        (append result (list (list->string (reverse current))))
+        (let ((c (car chars)) (rest (cdr chars)))
+          (if (= c 10)
+              (loop rest '() (append result (list (list->string (reverse current)))))
+              (loop rest (cons c current) result))))))
+
+(define (csv-split-line line)
+  (let loop ((chars (string->list line)) (current '()) (fields '()) (in-quotes #f))
+    (if (null? chars)
+        (append fields (list (list->string (reverse current))))
+        (let ((c (car chars)) (rest (cdr chars)))
+          (cond
+            ((and (not in-quotes) (= c 44))
+             (loop rest '() (append fields (list (list->string (reverse current)))) #f))
+            ((= c 34)
+             (loop rest current fields (not in-quotes)))
+            (else
+             (loop rest (cons c current) fields in-quotes)))))))
+
+(define (csv-parse text)
+  (map csv-split-line (split-lines text)))
+
+(define (csv->rows text) (csv-parse text))
+
+(define (csv->table text) (csv-parse text))
+
+(define (csv-select cols rows)
+  (map (lambda (row) (map (lambda (c) (list-ref row c)) cols)) rows))
+
+(define (csv-filter pred rows) (filter pred rows))
+
+(define (csv-header rows) (if (null? rows) '() (car rows)))
+
+(define (column-names rows) (csv-header rows))

@@ -1,0 +1,42 @@
+; set.aura — Set data structure (built on hash tables)
+(export set set-add set-remove set-member? set-empty? set-union set-intersect set-difference set->list list->set set-size set-subset? set-equal?)
+
+(define (for-each f lst)
+  (if (null? lst) #t
+    (begin (f (car lst)) (for-each f (cdr lst)))))
+
+(define (set->list s) (hash-keys s))
+
+(define (list->set lst)
+  (let ((s (hash)))
+    (for-each (lambda (x) (hash-set! s x #t)) lst) s))
+
+(define (set-from-args items) (list->set items))
+
+(define (set-add s x) (hash-set! s x #t) s)
+
+(define (set-remove s x) (hash-remove! s x) s)
+
+(define (set-member? s x) (not (null? (hash-ref s x))))
+
+(define (set-empty? s) (= (hash-length s) 0))
+
+(define (set-size s) (hash-length s))
+
+(define (set-union a b)
+  (let ((r (hash)))
+    (for-each (lambda (k) (hash-set! r k #t)) (hash-keys a))
+    (for-each (lambda (k) (hash-set! r k #t)) (hash-keys b)) r))
+
+(define (set-intersect a b)
+  (let ((r (hash)))
+    (for-each (lambda (k) (if (not (null? (hash-ref b k))) (hash-set! r k #t))) (hash-keys a)) r))
+
+(define (set-difference a b)
+  (let ((r (hash)))
+    (for-each (lambda (k) (if (null? (hash-ref b k)) (hash-set! r k #t))) (hash-keys a)) r))
+
+(define (set-subset? a b) (null? (hash-keys (set-difference a b))))
+
+(define (set-equal? a b)
+  (and (= (hash-length a) (hash-length b)) (null? (hash-keys (set-difference a b)))))
