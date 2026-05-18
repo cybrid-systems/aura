@@ -502,12 +502,59 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
             default:
                 break;
             }
+
+            // ── Runtime type assertion (strict mode only) ─────────
+            if (strict_mode_ && instr.type_id != 0) {
+                auto idx = static_cast<std::size_t>(instr.opcode);
+                bool has_result = idx < std::size(kOpcodeInfo) && kOpcodeInfo[idx].has_result_slot;
+                if (has_result) {
+                    auto rv = check_runtime_type(instr.type_id, locals[ops[0]],
+                        std::string(kOpcodeInfo[idx].name));
+                    if (rv) return std::unexpected(*rv);
+                }
+            }
         }
         ++current;
         next_block:;
     }
 
     return std::unexpected(Diagnostic{ErrorKind::IRNoReturn, "no return"});
+}
+
+// ── Runtime type checking implementation ─────────────────────
+
+std::optional<aura::core::TypeTag> IRInterpreter::value_type_tag(const EvalValue& val) {
+    using namespace aura::core;
+    if (types::is_int(val))     return TypeTag::INT;
+    if (types::is_float(val))   return TypeTag::FLOAT;
+    if (types::is_bool(val))    return TypeTag::BOOL;
+    if (types::is_string(val))  return TypeTag::STRING;
+    if (types::is_pair(val))    return TypeTag::PAIR;
+    if (types::is_vector(val))  return TypeTag::VECTOR;
+    if (types::is_closure(val)) return TypeTag::CLOSURE;
+    if (types::is_void(val))    return TypeTag::VOID;
+    if (types::is_hash(val))    return TypeTag::HASH;
+    return std::nullopt;
+}
+
+std::optional<aura::diag::Diagnostic> IRInterpreter::check_runtime_type(
+    std::uint32_t type_id, const EvalValue& val, std::string_view context) {
+    if (!strict_mode_ || !type_registry_ || type_id == 0) return std::nullopt;
+
+    auto runtime_tag = value_type_tag(val);
+    if (!runtime_tag) return std::nullopt;  // unknown runtime type, skip
+
+    auto expected_tid = aura::core::TypeId{type_id, 1};
+    if (!expected_tid.valid()) return std::nullopt;
+    auto expected_tag = type_registry_->tag_of(expected_tid);
+
+    if (*runtime_tag == expected_tag) return std::nullopt;  // match
+
+    return aura::diag::Diagnostic{
+        aura::diag::ErrorKind::TypeError,
+        std::format("runtime type mismatch in {}: expected {} got value of different type",
+                    context,
+                    type_registry_->name_of(expected_tid))};
 }
 
 // ── Runtime reflection implementation ─────────────────────────

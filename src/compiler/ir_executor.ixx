@@ -1,6 +1,7 @@
 export module aura.compiler.ir_executor;
 import std;
 import aura.core;
+import aura.core.type;
 import aura.compiler.ir;
 import aura.compiler.evaluator;  // for EvalResult
 import aura.diag;              // for Diagnostic
@@ -56,8 +57,9 @@ export struct EvalStrategy {
 export class IRInterpreter {
 public:
     explicit IRInterpreter(const aura::ir::IRModule& mod,
-                           const Primitives& prims)
-        : module_(mod), primitives_(prims) {}
+                           const Primitives& prims,
+                           const aura::core::TypeRegistry* types = nullptr)
+        : module_(mod), primitives_(prims), type_registry_(types) {}
 
     // Execute the top-level function and return result
     EvalResult execute();
@@ -75,6 +77,10 @@ public:
     // Get/set evaluation strategy
     const EvalStrategy& strategy() const { return strategy_; }
     void set_strategy(const EvalStrategy& s) { strategy_ = s; }
+
+    // Strict mode: runtime type assertions based on IR instruction type_id
+    void set_strict_mode(bool s) { strict_mode_ = s; }
+    bool strict_mode() const { return strict_mode_; }
 
     // Counters
     std::size_t closure_count() const { return runtime_closures_.size(); }
@@ -94,9 +100,19 @@ private:
     ClosureSnapshot make_snapshot(std::uint64_t id,
                                    const IRClosure& closure) const;
 
+    // Runtime type assertion: check if runtime value matches IR type_id
+    // Returns nullopt on match, or a diagnostic on mismatch (strict mode only)
+    std::optional<aura::diag::Diagnostic> check_runtime_type(
+        std::uint32_t type_id, const EvalValue& val, std::string_view context);
+
+    // Map runtime EvalValue to type tag (for type assertion)
+    static std::optional<aura::core::TypeTag> value_type_tag(const EvalValue& val);
+
     const aura::ir::IRModule& module_;
     const Primitives& primitives_;
+    const aura::core::TypeRegistry* type_registry_ = nullptr;
     EvalStrategy strategy_;
+    bool strict_mode_ = false;
 
     // Per-instance closure storage
     std::uint64_t next_closure_id_ = 1ull << 48;
