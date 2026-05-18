@@ -502,14 +502,15 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
         auto name = pool.resolve(v.sym_id);
         auto val_id = v.children.empty() ? NULL_NODE : v.child(0);
         auto val_slot = lower_flat_expr(state, flat, pool, val_id, cache, cache_hits);
-        // Define = letrec cell in top scope
-        state.scopes.push_back({});
-        auto& scope = state.scopes.back();
+        // Define = letrec cell. Bind in current (outermost) scope.
+        // Don't push/pop a scope — subsequent expressions in Begin need to see this binding.
+        auto& scope = state.scopes.empty()
+            ? (state.scopes.push_back({}), state.scopes.back())
+            : state.scopes.back();
         auto ci = state.alloc_local();
         state.emit(IROpcode::NewCell, ci);
         state.emit(IROpcode::CellSet, ci, val_slot);
         scope[std::string(name)] = Binding{BindingKind::Cell, ci};
-        state.scopes.pop_back();
         return val_slot;
     }
     case NodeTag::Begin: {
