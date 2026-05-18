@@ -117,7 +117,7 @@
 
 ```
 smoke:      5/5  ✅
-integ:     67/67  ✅
+integ:     87/87  ✅
 unit:      15/19  ⚠️ (4 个比较器返回值偏离——#t/#f vs 0/1，远期对齐)
 bash:     106/106 ✅
 AI Agent:  —      ⬜ 需 API key
