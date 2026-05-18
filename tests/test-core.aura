@@ -81,6 +81,49 @@
   (check= 120 (let loop ((n 5) (acc 1))
                 (if (= n 0) acc (loop (- n 1) (* acc n))))))
 
+(test-suite "core:variadic"
+  (check= 6 (apply + (list 1 2 3)))
+  (check= 3 (apply length (list (list 1 2 3))))
+  (check= 30 (apply (lambda (x y) (+ x y)) (list 10 20)))
+  (check= "hello world" (apply string-append (list "hello " "world")))
+  (check= 3 ((lambda xs (length xs)) 1 2 3))
+  (check= 6 (apply + (list 1 2 3))))
+
+(test-suite "core:char"
+  (check (char=? 65 65))
+  (check (not (char=? 65 66)))
+  (check (char<? 65 66))
+  (check (char-alphabetic? 65))
+  (check (char-alphabetic? 97))
+  (check (not (char-alphabetic? 48)))
+  (check (char-numeric? 48))
+  (check (not (char-numeric? 65)))
+  (check (char-whitespace? 32))
+  (check (char-whitespace? 10))
+  (check (not (char-whitespace? 65)))
+  (check= 65 (char-upcase 97))
+  (check= 97 (char-downcase 65))
+  (check= 65 (char-upcase 65)))
+
+(test-suite "core:string-ops"
+  (check= 3 (length (string->list "abc")))
+  (check= 65 (car (string->list "ABC")))
+  (check= "ABC" (list->string (list 65 66 67)))
+  (check= "a, b, c" (string-join (list "a" "b" "c") ", ")))
+
+(test-suite "core:string-number"
+  (check= 42 (string->number " 42 "))
+  (check= 42 (string->number "42"))
+  (check= -7 (string->number "\t-7\n"))
+  (check (not (string->number "  ")))
+  (check (not (string->number "abc")))
+  (check= 3.14 (string->number " 3.14 ")))
+
+(test-suite "core:format"
+  (check= "x = 42" (format "~a = ~a" "x" 42))
+  (check= "int: 99" (format "int: ~a" 99))
+  (check= ""x"" (format "~s" "x")))
+
 (test-suite "core:define"
   (check= 3 (+ 1 2))
   (check (defined? (list 'hello 'world))))

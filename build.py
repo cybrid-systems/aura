@@ -227,6 +227,36 @@ INTEG_TESTS = [
     IntegCase("ir_fold_arith", "(+ (* 2 3) 4)", "ir", expected="10"),
     IntegCase("ir_let_arith", "(let ((x (+ 1 2))) (* x 3))", "ir", expected="9"),
     IntegCase("ir_nested_arith", "(+ (* 2 3) (/ 10 2))", "ir", expected="11"),
+
+    # ── Apply / variadic ──────────────────────────────────────
+    IntegCase("apply_add", "(apply + (list 1 2 3))", "eval", expected="6"),
+    IntegCase("apply_str", '(apply string-append (list "hello " "world"))', "eval", expected="hello world"),
+    IntegCase("variadic_lambda", "(apply (lambda (x . rest) (cons x rest)) (list 1 2 3))", "eval", expected="(1 2 3)"),
+
+    # ── Char operations ──────────────────────────────────────
+    IntegCase("char_eq", "(char=? 65 65)", "eval", expected="#t"),
+    IntegCase("char_lt", "(char<? 65 66)", "eval", expected="#t"),
+    IntegCase("char_alpha", "(char-alphabetic? 65)", "eval", expected="#t"),
+    IntegCase("char_numeric", "(char-numeric? 48)", "eval", expected="#t"),
+    IntegCase("char_whitespace", "(char-whitespace? 32)", "eval", expected="#t"),
+    IntegCase("char_upcase", "(char-upcase 97)", "eval", expected="65"),
+    IntegCase("char_downcase", "(char-downcase 65)", "eval", expected="97"),
+    IntegCase("char_to_int", "(char->integer 65)", "eval", expected="65"),
+    IntegCase("int_to_char", "(integer->char 65)", "eval", expected="65"),
+
+    # ── String operations ────────────────────────────────────
+    IntegCase("str_to_list", "(car (string->list \"ABC\"))", "eval", expected="65"),
+    IntegCase("list_to_str", '(list->string (list 65 66 67))', "eval", expected="ABC"),
+    IntegCase("str_join", '(string-join (list "a" "b" "c") ",")', "eval", expected="a,b,c"),
+
+    # ── Format ────────────────────────────────────────────────
+    IntegCase("format_basic", '(format "~a = ~a" "x" 42)', "eval", expected="x = 42"),
+    IntegCase("format_write", '(format "~s" "hello")', "eval", expected='"hello"'),
+
+    # ── string->number whitespace ─────────────────────────────
+    IntegCase("str_num_trim", '(string->number " 42 ")', "eval", expected="42"),
+    IntegCase("str_num_tab", '(string->number "\t-7\n")', "eval", expected="-7"),
+    IntegCase("str_num_only_space", '(string->number "  ")', "eval", expected="#f"),
 ]
 
 
