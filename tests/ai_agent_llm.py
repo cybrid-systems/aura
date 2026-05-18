@@ -27,7 +27,7 @@ import urllib.parse
 AURA = os.environ.get("AURA_BIN", "./build/aura")
 LLM_KEY = os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
 LLM_URL = os.environ.get("LLM_BASE_URL") or os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
-LLM_MODEL = os.environ.get("LLM_MODEL") or os.environ.get("OPENAI_MODEL", "deepseek-v4-flash")
+LLM_MODEL = (os.environ.get("LLM_MODEL") or os.environ.get("OPENAI_MODEL", "deepseek-v4-flash")).split("/")[-1]
 MAX_FIX_LOOP = 5  # 最大修复轮数
 
 # ── LLM 客户端 ────────────────────────────────────────────────

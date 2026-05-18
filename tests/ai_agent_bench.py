@@ -11,7 +11,7 @@ from ai_agent_prompt import build_system_prompt
 AURA = os.environ.get("AURA_BIN", "./build/aura")
 LLM_KEY = os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
 LLM_URL = os.environ.get("LLM_BASE_URL") or os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
-LLM_MODEL = os.environ.get("LLM_MODEL") or os.environ.get("OPENAI_MODEL", "deepseek-v4-flash")
+LLM_MODEL = (os.environ.get("LLM_MODEL") or os.environ.get("OPENAI_MODEL", "deepseek-v4-flash")).split("/")[-1]
 MAX_ROUNDS = 8
 LLM_TIMEOUT = 90  # max seconds per LLM call
 EXEC_TIMEOUT = 30  # max seconds per Aura exec

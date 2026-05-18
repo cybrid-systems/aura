@@ -2305,6 +2305,7 @@ void Evaluator::init_pair_primitives() {
 
     // (set-code code-string) — Parse code and set as current workspace AST
     // Nodes in workspace AST have stable IDs across query/mutate operations
+    // Multi-expression code is automatically wrapped in (begin ...) by the parser.
     primitives_.add("set-code", [this](const auto& a) {
         if (a.empty() || !is_string(a[0])) return make_bool(false);
         auto idx = as_string_idx(a[0]);
@@ -2393,17 +2394,41 @@ void Evaluator::init_pair_primitives() {
                     s += " " + self(v.child(i), indent + 1);
                 return s + ")";
             }
-            case aura::ast::NodeTag::Begin:
-            case aura::ast::NodeTag::Set:
-            case aura::ast::NodeTag::Quote:
-            case aura::ast::NodeTag::MacroDef:
-            case aura::ast::NodeTag::Coercion:
+            case aura::ast::NodeTag::Begin: {
+                std::string s = "(begin";
+                for (std::size_t i = 0; i < v.children.size(); ++i)
+                    s += " " + self(v.child(i), indent + 1);
+                return s + ")";
+            }
+            case aura::ast::NodeTag::Set: {
+                return "(set! " + std::string(workspace_pool_->resolve(v.sym_id)) + " "
+                    + (v.children.empty() ? "()" : self(v.child(0), indent + 1)) + ")";
+            }
+            case aura::ast::NodeTag::Quote: {
+                return "(quote " + (v.children.empty() ? "()" : self(v.child(0), indent + 1)) + ")";
+            }
             case aura::ast::NodeTag::Pair: {
-                // Fallback: generic node dump
+                return "(" + (v.children.empty() ? "()" : self(v.child(0), indent + 1) + " . " + self(v.child(1), indent + 1)) + ")";
+            }
+            case aura::ast::NodeTag::Export: {
+                std::string s = "(export";
+                for (auto pid : v.params)
+                    s += " " + std::string(workspace_pool_->resolve(pid));
+                return s + ")";
+            }
+            case aura::ast::NodeTag::MacroDef: {
+                std::string s = "(defmacro (" + std::string(workspace_pool_->resolve(v.sym_id));
+                for (auto pid : v.params)
+                    s += " " + std::string(workspace_pool_->resolve(pid));
+                s += ")";
+                if (!v.children.empty())
+                    s += " " + self(v.child(0), indent + 1);
+                return s + ")";
+            }
+            default: {
+                // Fallback: generic node dump for unknown types
                 return std::format("<{}>", static_cast<int>(v.tag));
             }
-            default:
-                return "()";
             }
         };
         
