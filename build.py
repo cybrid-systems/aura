@@ -221,7 +221,7 @@ INTEG_TESTS = [
     IntegCase("err_div_zero", "(/ 1 0)", "eval", expected_err="", expected_status=0),
     IntegCase("err_unbound_var", "nonexistent", "eval", expected_err="unbound variable", expected_status=1),
     IntegCase("err_wrong_arg_type", '(/ "a" 1)', "typecheck", expected_err="", expected_status=0),
-    IntegCase("err_arity", "(+ 1)", "typecheck", expected="Any", expected_status=0),
+    IntegCase("err_arity", "(+ 1)", "typecheck", expected="Int", expected_status=0),
 
     # ─── IR pipeline edge cases ────────────────────────────
     IntegCase("ir_fold_arith", "(+ (* 2 3) 4)", "ir", expected="10"),
