@@ -55,6 +55,72 @@ export struct IRInstruction {
     std::uint32_t source_ast_node_id = 0;
 };
 
+// ── Opcode metadata table ─────────────────────────────────────
+// Describes properties of each IROpcode. Indexed by IROpcode enum value.
+// Order MUST match the IROpcode enum exactly.
+export struct OpcodeInfo {
+    std::string_view name;
+    std::uint8_t operand_count;  // 0-4, how many operands are meaningful
+    bool has_result_slot;        // true if operands[0] is the result slot
+};
+
+export constexpr OpcodeInfo kOpcodeInfo[] = {
+    // 0  Nop
+    {"nop",           0, false},
+    // 1-4  Data
+    {"const-i64",     1, true},   // ConstI64
+    {"const-f64",     1, true},   // ConstF64
+    {"local",         2, true},   // Local: result, src
+    {"arg",           2, true},   // Arg: result, arg_slot
+    // 5-8  Arithmetic
+    {"add",           3, true},   // Add: result, a, b
+    {"sub",           3, true},
+    {"mul",           3, true},
+    {"div",           3, true},
+    // 9-13  Comparison
+    {"eq",            3, true},   // Eq: result, a, b
+    {"lt",            3, true},
+    {"gt",            3, true},
+    {"le",            3, true},
+    {"ge",            3, true},
+    // 14-16  Logic
+    {"and",           3, true},   // And: result, a, b
+    {"or",            3, true},
+    {"not",           2, true},   // Not: result, a
+    // 17-18  Control flow
+    {"branch",        3, false},  // Branch: cond, true_block, false_block
+    {"jump",          1, false},  // Jump: target_block
+    // 19-20
+    {"call",          4, false},  // Call: callee, arg_base, arg_count, result
+    {"return",        1, false},  // Return: value
+    // 21-24  Closures
+    {"make-closure",  3, true},   // MakeClosure: result, func_id, env_size
+    {"capture",       3, false},  // Capture: closure, env_idx, var
+    {"capture-ref",   3, false},  // CaptureRef: closure, env_idx, cell
+    {"apply",         4, false},  // Apply: closure, arg_base, arg_count, result
+    // 25-27  Mutable cells
+    {"new-cell",      1, true},   // NewCell: result
+    {"cell-set",      2, false},  // CellSet: cell, value
+    {"cell-get",      2, true},   // CellGet: result, cell
+    // 28  Type coercion
+    {"cast",          3, true},   // CastOp: result, value, type_tag
+    // 29  String
+    {"const-string",  2, true},   // ConstString: result, string_index
+    // 30-31  Primitive
+    {"prim-call",     3, true},   // PrimCall: prim_id, packed_args, result
+    {"primitive",     2, true},   // Primitive: result, slot_index
+    // 32-33  Constants
+    {"const-bool",    2, true},   // ConstBool: result, value
+    {"const-void",    1, true},   // ConstVoid: result
+    // 34-36  Pair
+    {"make-pair",     3, true},   // MakePair: result, car, cdr
+    {"car",           2, true},   // Car: result, pair
+    {"cdr",           2, true},   // Cdr: result, pair
+};
+
+static_assert(std::size(kOpcodeInfo) == 37,
+    "kOpcodeInfo must have exactly one entry per IROpcode");
+
 // Primitive IDs for PrimCall opcode
 export enum class PrimId : std::uint8_t {
     StringAppend,
