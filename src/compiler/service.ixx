@@ -132,9 +132,14 @@ public:
         auto* pool_ptr = arena_.create<aura::ast::StringPool>(alloc);
         auto* flat_ptr = arena_.create<aura::ast::FlatAST>(alloc);
         auto pr = aura::parser::parse_to_flat(input, *flat_ptr, *pool_ptr);
-        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+        if (pr.root == aura::ast::NULL_NODE) {
             return std::unexpected(aura::diag::Diagnostic{
                 aura::diag::ErrorKind::ParseError, pr.error.empty() ? "parse error" : pr.error});
+        }
+        // If there were parse errors but we recovered, log them and continue
+        if (!pr.success && !pr.errors.empty()) {
+            for (auto& e : pr.errors)
+                std::println(std::cerr, "parse warning: {}", e);
         }
         flat_ptr->root = pr.root;
         // Store for mutation targeting

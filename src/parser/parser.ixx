@@ -9,7 +9,8 @@ namespace aura::parser {
 export struct FlatParseResult {
     aura::ast::NodeId root = aura::ast::NULL_NODE;
     bool success = false;
-    std::string error;
+    std::string error;              // first error (backward compat)
+    std::vector<std::string> errors; // all parse errors
 };
 
 // ── FlatParser — writes directly to FlatAST (SoA), bypasses Expr* ─
