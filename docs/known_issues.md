@@ -22,18 +22,19 @@
 
 ## P1 — 严重
 
-### 4. 缓存函数内嵌 lambda → foldl/map/filter 原语不工作
+### ~~4. 缓存函数内嵌 lambda → foldl/map/filter 原语不工作~~ ✅ 已修复
 
-**症状**：跨表达式定义并调用含 `foldl` + 内嵌 lambda 的缓存函数时，结果不正确或返回初始累加器。
+~~**症状**：跨表达式定义并调用含 `foldl` + 内嵌 lambda 的缓存函数时，结果不正确或返回初始累加器。~~
 
-```
-(define (test lst) (foldl (lambda (acc x) (+ acc 1)) 0 lst))
-(test (list "a" "b"))  → 1  (应为 2)
-```
+~~**根因**：分析中。`begin` 内一次性执行正常，表明 IR 缓存 + 跨表达式加载路径有问题。~~
 
-**根因**：分析中。`begin` 内一次性执行正常，表明 IR 缓存 + 跨表达式加载路径有问题。
+**修复**：`3cb9a33` — 根因为部分构建导致旧二进制未更新。完整重建后 `foldl`/`map`/`filter` 搭配内嵌 lambda 工作正常。
+  - `(define (test lst) (foldl (lambda (acc x) (+ acc 1)) 0 lst)) (test (list "a" "b"))` → `2` ✅
+  - `(define (double-all lst) (map (lambda (x) (* x 2)) lst)) (double-all (list 1 2 3))` → `(2 4 6)` ✅
 
-**影响**：缓存函数无法使用 `foldl`/`map`/`filter` 等接受闭包参数的原语。
+**另外加固**：`cache_module`/`cache_define` 现在会检查函数体中的变量引用是否能正确 lowering。自递归函数（如 `foldr`/`for-each`）和引用无法 lowering 的变量的函数会跳过 IR 缓存，确保不在 IR 中产生 ConstI64 0 的损坏代码。
+  - 所有 `list.aura` 的函数（全是自递归）现在正确走 tree-walker 路径。
+  - 之前那些函数被缓存时自递归调用降为 `ConstI64 0`，导致走 IR 路径时产生错误结果。
 
 ### 5. 错误信息不够详细
 
