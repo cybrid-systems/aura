@@ -261,6 +261,10 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
                 {"vector?",        PrimId::VectorP},
                 {"make-vector",    PrimId::MakeVector},
                 {"import",         PrimId::Import},
+                {"char=?",         PrimId::CharEq},
+                {"char<?",         PrimId::CharLt},
+                {"char->integer",  PrimId::CharToInteger},
+                {"integer->char",  PrimId::IntegerToChar},
             };
             auto pcit = prim_call_map.find(std::string(callee_name));
             if (pcit != prim_call_map.end()) {

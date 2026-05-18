@@ -152,6 +152,11 @@ export enum class PrimId : std::uint8_t {
     MakeVector,
     // Module primitives
     Import,
+    // Character operations (chars are integers in Aura)
+    CharEq,
+    CharLt,
+    CharToInteger,
+    IntegerToChar,
 };
 
 // Names for each PrimId, indexed by enum value.
@@ -168,9 +173,10 @@ export constexpr std::string_view kPrimNames[] = {
     "vector", "vector-ref", "vector-set!",
     "vector-length", "vector?", "make-vector",
     "import",
+    "char=?", "char<?", "char->integer", "integer->char",
 };
 
-static_assert(std::size(kPrimNames) == 26,
+static_assert(std::size(kPrimNames) == 30,
     "kPrimNames must have exactly one entry per PrimId");
 
 // Helper: pack two uint32 into one (for Call: args_begin << 16 | arg_count)
