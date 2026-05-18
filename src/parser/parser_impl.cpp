@@ -7,32 +7,82 @@ using namespace aura::ast;
 FlatParseResult FlatParser::parse(std::string_view s) {
     lexer_.emplace(s);
     FlatParseResult r;
+
+    // Helper: record a parse error and skip to next recoverable point
+    auto record_error = [&](const std::string& msg) {
+        if (r.error.empty()) r.error = msg;
+        r.errors.push_back(msg);
+        // Skip tokens until we can try parsing again
+        int depth = 0;
+        while (!lexer_->eof()) {
+            auto tok = lexer_->peek();
+            if (depth == 0) {
+                // At top level, try to find the start of a new expression
+                if (tok.kind == TokenKind::LParen ||
+                    tok.kind == TokenKind::Integer ||
+                    tok.kind == TokenKind::Float ||
+                    tok.kind == TokenKind::String ||
+                    tok.kind == TokenKind::Identifier ||
+                    tok.kind == TokenKind::Bool ||
+                    tok.kind == TokenKind::Quote ||
+                    tok.kind == TokenKind::QuasiQuote ||
+                    tok.kind == TokenKind::Unquote) {
+                    break;
+                }
+                lexer_->consume();
+            } else {
+                // Inside parens, skip until matching close
+                if (tok.kind == TokenKind::RParen) {
+                    depth--;
+                } else if (tok.kind == TokenKind::LParen) {
+                    depth++;
+                }
+                lexer_->consume();
+            }
+        }
+    };
+
     r.root = parse_expr();
     if (r.root == NULL_NODE) {
         auto tok = lexer_->peek();
-        if (tok.kind != TokenKind::EndOfFile)
-            r.error = "parse error at line " + std::to_string(tok.line)
-                    + ":" + std::to_string(tok.column);
-        else
-            r.error = "parse error";
-        return r;
+        if (tok.kind != TokenKind::EndOfFile) {
+            record_error("parse error at line " + std::to_string(tok.line)
+                        + ":" + std::to_string(tok.column));
+        } else {
+            record_error("parse error");
+        }
+        // If we recovered but got nothing, return as failure
+        if (r.root == NULL_NODE) return r;
     }
+
     // Check for multiple top-level expressions
     auto next = lexer_->peek();
     if (next.kind == TokenKind::EndOfFile || next.kind == TokenKind::Error) {
-        r.success = true; return r;
+        r.success = r.root != NULL_NODE;
+        return r;
     }
+
     // Multiple forms → wrap in begin
     std::vector<NodeId> exprs;
     exprs.push_back(r.root);
     do {
         auto e = parse_expr();
+        if (e == NULL_NODE) {
+            auto tok = lexer_->peek();
+            if (tok.kind != TokenKind::EndOfFile) {
+                record_error("parse error at line " + std::to_string(tok.line)
+                            + ":" + std::to_string(tok.column));
+                e = parse_expr();  // try again after skip
+            }
+            if (lexer_->eof()) break;
+        }
         if (e != NULL_NODE) exprs.push_back(e);
         if (lexer_->eof()) break;
         next = lexer_->peek();
     } while (next.kind != TokenKind::EndOfFile);
+
     r.root = flat_.add_begin(exprs);
-    r.success = true;
+    r.success = !exprs.empty();
     return r;
 }
 
