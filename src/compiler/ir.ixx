@@ -53,6 +53,7 @@ export struct IRInstruction {
     IROpcode opcode;
     std::array<std::uint32_t, 4> operands = {};
     std::uint32_t source_ast_node_id = 0;
+    std::uint32_t type_id = 0;  // 0 = unknown/dynamic, from FlatAST type_id
 };
 
 // ── Opcode metadata table ─────────────────────────────────────

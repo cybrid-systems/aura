@@ -40,6 +40,7 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
     // Track current flat/pool for closure bridge data
     state.current_flat = &flat;
     state.current_pool = &pool;
+    state.current_source_id = id;  // for type propagation to IR
     // Early exit for invalid ids (backup for contract-observe mode)
     if (id == NULL_NODE || id >= flat.size()) {
         auto slot = state.alloc_local();
@@ -581,11 +582,11 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
                     // () empty list → make_void
                     auto slot = state.alloc_local();
                     state.emit(IROpcode::ConstVoid, slot);
-                    return slot;
+                                return slot;
                 }
                 auto slot = state.alloc_local();
                 state.emit(IROpcode::ConstI64, slot, cv.int_value, 0);
-                return slot;
+                        return slot;
             }
             if (cv.tag == NodeTag::LiteralFloat || cv.tag == NodeTag::LiteralString) {
                 return lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
@@ -595,7 +596,7 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
         if (v.children.empty() || !state.primitives) {
             auto slot = state.alloc_local();
             state.emit(IROpcode::ConstI64, slot, 0, 0);
-            return slot;
+                return slot;
         }
 
         auto cons_slot = state.primitives->slot_for_name("cons");
