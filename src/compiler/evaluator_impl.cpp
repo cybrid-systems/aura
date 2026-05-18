@@ -2321,6 +2321,98 @@ void Evaluator::init_pair_primitives() {
         return make_bool(true);
     });
 
+    // (current-source) — Return the current workspace AST as source code string
+    // Implemented inline to avoid circular dependency with lowering module.
+    primitives_.add("current-source", [this](const auto&) -> EvalValue {
+        if (!workspace_flat_ || !workspace_pool_) return make_string(0);
+        
+        // Inline unparse for the workspace root
+        auto unparse = [&](this const auto& self, aura::ast::NodeId id, int indent) -> std::string {
+            if (id == aura::ast::NULL_NODE || id >= workspace_flat_->size()) return "()";
+            auto v = workspace_flat_->get(id);
+            switch (v.tag) {
+            case aura::ast::NodeTag::LiteralInt: {
+                if (workspace_flat_->marker(id) == aura::ast::SyntaxMarker::BoolLiteral)
+                    return v.int_value ? "#t" : "#f";
+                return std::to_string(v.int_value);
+            }
+            case aura::ast::NodeTag::LiteralFloat: {
+                auto s = std::to_string(v.float_value);
+                if (s.find('.') == std::string::npos) s += ".0";
+                return s;
+            }
+            case aura::ast::NodeTag::LiteralString: {
+                auto raw = workspace_pool_->resolve(v.sym_id);
+                std::string esc = "\"";
+                for (auto c : std::string_view(raw)) {
+                    if (c == '\\' || c == '"') esc += '\\';
+                    esc += c;
+                }
+                esc += '"';
+                return esc;
+            }
+            case aura::ast::NodeTag::Variable:
+                return std::string(workspace_pool_->resolve(v.sym_id));
+            case aura::ast::NodeTag::Call: {
+                std::string s = "(";
+                for (std::size_t i = 0; i < v.children.size(); ++i) {
+                    if (i > 0) s += " ";
+                    s += self(v.child(i), indent + 1);
+                }
+                return s + ")";
+            }
+            case aura::ast::NodeTag::Lambda: {
+                std::string s = "(lambda (";
+                for (std::size_t i = 0; i < v.params.size(); ++i) {
+                    if (i > 0) s += " ";
+                    s += std::string(workspace_pool_->resolve(v.params[i]));
+                }
+                s += ")";
+                if (!v.children.empty())
+                    s += " " + self(v.child(0), indent + 1);
+                return s + ")";
+            }
+            case aura::ast::NodeTag::Let:
+            case aura::ast::NodeTag::LetRec: {
+                auto kw = (v.tag == aura::ast::NodeTag::LetRec) ? std::string("letrec") : std::string("let");
+                std::string s = "(" + kw + " ((" + std::string(workspace_pool_->resolve(v.sym_id)) + " ";
+                if (!v.children.empty())
+                    s += self(v.child(0), indent + 1);
+                s += "))";
+                if (v.children.size() > 1)
+                    s += " " + self(v.child(1), indent + 1);
+                return s + ")";
+            }
+            case aura::ast::NodeTag::Define: {
+                return "(define " + std::string(workspace_pool_->resolve(v.sym_id)) + " "
+                    + (v.children.empty() ? "()" : self(v.child(0), indent + 1)) + ")";
+            }
+            case aura::ast::NodeTag::IfExpr: {
+                std::string s = "(if";
+                for (std::size_t i = 0; i < v.children.size(); ++i)
+                    s += " " + self(v.child(i), indent + 1);
+                return s + ")";
+            }
+            case aura::ast::NodeTag::Begin:
+            case aura::ast::NodeTag::Set:
+            case aura::ast::NodeTag::Quote:
+            case aura::ast::NodeTag::MacroDef:
+            case aura::ast::NodeTag::Coercion:
+            case aura::ast::NodeTag::Pair: {
+                // Fallback: generic node dump
+                return std::format("<{}>", static_cast<int>(v.tag));
+            }
+            default:
+                return "()";
+            }
+        };
+        
+        auto src = unparse(workspace_flat_->root, 0);
+        auto id = string_heap_.size();
+        string_heap_.push_back(std::move(src));
+        return make_string(id);
+    });
+
     // (eval-current) — Evaluate the current workspace AST
     primitives_.add("eval-current", [this](const auto&) {
         if (!workspace_flat_ || !workspace_pool_) return make_void();
