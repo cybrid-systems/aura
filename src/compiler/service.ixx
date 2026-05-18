@@ -203,9 +203,11 @@ public:
             *flat_ptr, *pool_ptr, arena_, cache_ptr, nullptr, &evaluator_.primitives(), nullptr, cache_strings_ptr);
 
         // Run passes (silent in default path — use eval_ir for debug)
+        TypeSpecializationWrap ts(&type_registry_);
         ComputeKindWrap ck;
         ArityWrap ar;
         ConstantFoldingWrap cf;
+        ts.run(ir_mod);
         ck.run(ir_mod);
         // ar.run(ir_mod);  -- disabled: false positive for primitive calls with closures
         cf.run(ir_mod);
@@ -330,13 +332,15 @@ public:
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
         auto ir_mod = aura::compiler::lower_to_ir_with_cache(*flat_ptr, *pool_ptr, arena_, cache_ptr_local, nullptr, &evaluator_.primitives(), nullptr, cache_strings_ptr);
 
+        TypeSpecializationWrap ts(&type_registry_);
         ComputeKindWrap ck;
         ArityWrap ar;
         ConstantFoldingWrap cf;
 
-        std::println(std::cerr, "PM: running {}->{}->{}",
-                     ck.name(), ar.name(), cf.name());
+        std::println(std::cerr, "PM: running {}->{}->{}->{}",
+                     ts.name(), ck.name(), ar.name(), cf.name());
 
+        ts.run(ir_mod);
         ck.run(ir_mod);
         ar.run(ir_mod);
         cf.run(ir_mod);
@@ -804,9 +808,11 @@ public:
         last_ir_mod_->entry_function_id = new_mod.entry_function_id;
 
         // Re-run passes on the hot-swapped module
+        TypeSpecializationWrap ts(&type_registry_);
         ComputeKindWrap ck;
         ArityWrap ar;
         ConstantFoldingWrap cf;
+        ts.run(*last_ir_mod_);
         ck.run(*last_ir_mod_);
         ar.run(*last_ir_mod_);
         cf.run(*last_ir_mod_);

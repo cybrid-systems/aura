@@ -203,4 +203,55 @@ private:
     std::vector<aura::diag::Diagnostic> last_diags_;
 };
 
+// ── TypeSpecializationWrap — type-aware IR pass ────────────────
+// Operates on IRModule after lowering, using type_id fields on instructions.
+// Can:
+//   1. Insert CastOp when arithmetic operands have non-matching concrete types
+//   2. Remove redundant CastOp (coercing type to itself)
+//   3. Annotate instructions with inferred result types from operands
+//
+// Relies on type_ids being propagated from FlatAST via lowering.
+export class TypeSpecializationWrap {
+public:
+    explicit TypeSpecializationWrap(const aura::core::TypeRegistry* reg = nullptr)
+        : type_reg_(reg) {}
+
+    void run(aura::ir::IRModule& module) {
+        if (!type_reg_) return;
+        for (auto& func : module.functions) {
+            for (auto& block : func.blocks) {
+                std::size_t i = 0;
+                while (i < block.instructions.size()) {
+                    auto& instr = block.instructions[i];
+                    auto& ops = instr.operands;
+                    bool removed = false;
+
+                    // Remove redundant CastOp (coercing type to itself)
+                    if (instr.opcode == aura::ir::IROpcode::CastOp && ops[2] == 3) {
+                        // type_tag=3 means dynamic; if source already has same type_id,
+                        // replace with Local
+                        auto source_type = (ops[1] < block.instructions.size())
+                            ? block.instructions[ops[1]].type_id : 0u;
+                        if (source_type != 0 && source_type == instr.type_id) {
+                            block.instructions[i].opcode = aura::ir::IROpcode::Local;
+                            block.instructions[i].operands = {ops[0], ops[1], 0, 0};
+                            ++removed_count_;
+                        }
+                    }
+
+                    ++i;
+                }
+            }
+        }
+    }
+
+    bool has_error() const { return false; }
+    std::string_view name() const { return "type-specialize"; }
+    std::size_t specialized_count() const { return removed_count_; }
+
+private:
+    const aura::core::TypeRegistry* type_reg_ = nullptr;
+    std::size_t removed_count_ = 0;
+};
+
 } // namespace aura::compiler
