@@ -1,0 +1,76 @@
+; random.aura — Simple pseudo-random number generator
+; Import with: (import "std/random")
+;
+; Linear Congruential Generator (LCG).
+; Uses integer arithmetic only — no external deps.
+; Default seed: 123456789
+
+(export
+  make-random random-next random-integer random-float
+  random-range random-vector shuffle random-seed)
+
+; (make-random) → generator (a pair (seed . state))
+; (make-random seed) → generator with given seed
+(define (make-random . rest)
+  (cons (if (null? rest) 123456789 (car rest)) 0))
+
+; (random-next gen) → (list next-val updated-gen)
+(define (random-next gen)
+  (define a 1103515245)
+  (define c 12345)
+  (define m 2147483648)    ; 2^31
+  (define seed (car gen))
+  (define next (modulo (+ (* a seed) c) m))
+  (list next (cons next 0)))
+
+; (random-integer gen) → (list 0..2^31-1 updated-gen)
+(define (random-integer gen)
+  (let ((result (random-next gen)))
+    (list (car result) (cadr result))))
+
+; (random-float gen) → (list 0.0..1.0 updated-gen)
+(define (random-float gen)
+  (let ((result (random-next gen)))
+    (list (/ (car result) 2147483648.0) (cadr result))))
+
+; (random-range lo hi gen) → (list lo..hi-1 updated-gen)
+(define (random-range lo hi gen)
+  (let ((result (random-next gen)))
+    (list (+ lo (modulo (car result) (- hi lo))) (cadr result))))
+
+; (random-vector n gen) → (list (vector of n floats) updated-gen)
+(define (random-vector n gen)
+  (let ((v (make-vector n)))
+    (let iter ((i 0) (g gen))
+      (if (>= i n) (list v g)
+        (let ((r (random-float g)))
+          (vector-set! v i (car r))
+          (iter (+ i 1) (cadr r)))))))
+
+; (shuffle lst gen) → (list shuffled-list updated-gen)
+(define (shuffle lst gen)
+  (let ((n (length lst)))
+    (if (<= n 1) (list lst gen)
+      (let* ((idx-result (random-range 0 n gen))
+             (idx (car idx-result))
+             (g2 (cadr idx-result))
+             (picked (list-ref lst idx))
+             (rest (remove-at lst idx)))
+        (let ((shuffled (shuffle rest g2)))
+          (list (cons (car shuffled) (car shuffled)) (cadr shuffled)))))))
+
+; remove-at: remove element at index from list
+(define (remove-at lst i)
+  (let iter ((n 0) (rest lst) (acc (list)))
+    (if (null? rest) (reverse acc)
+      (if (= n i) (append (reverse acc) (cdr rest))
+        (iter (+ n 1) (cdr rest) (cons (car rest) acc))))))
+
+; list-ref: get element at index
+(define (list-ref lst i)
+  (if (= i 0) (car lst)
+    (list-ref (cdr lst) (- i 1))))
+
+; Seed from current generator's state
+(define (random-seed gen)
+  (car gen))

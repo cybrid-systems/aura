@@ -1,0 +1,165 @@
+; iter.aura — Iterator and collection utilities
+; Import with: (import "std/iter")
+;
+; Provides generic operations over lists, vectors, and hash tables.
+
+(export
+  ;; List operations
+  any? every? find find-index count occurrences
+  group-by frequencies split-at
+  ;; Hash operations
+  hash-map hash-filter hash-keys-filter hash-vals hash-update!
+  hash-merge! hash-merge-into hash-keys-sorted
+  ;; Vector operations  
+  vector-map vector-reverse vector->list-rev
+  vector-slice vector-find
+
+  ;; Generic iteration
+  iterate unfold iota
+)
+
+;; ── List ─────────────────────────────────────────────────────
+
+(define (any? pred lst)
+  (if (null? lst) #f
+    (if (pred (car lst)) #t
+      (any? pred (cdr lst)))))
+
+(define (every? pred lst)
+  (if (null? lst) #t
+    (if (not (pred (car lst))) #f
+      (every? pred (cdr lst)))))
+
+(define (find pred lst)
+  (if (null? lst) ()
+    (if (pred (car lst)) (car lst)
+      (find pred (cdr lst)))))
+
+(define (find-index pred lst)
+  (let iter ((i 0) (rest lst))
+    (if (null? rest) -1
+      (if (pred (car rest)) i
+        (iter (+ i 1) (cdr rest))))))
+
+(define (count pred lst)
+  (if (null? lst) 0
+    (+ (if (pred (car lst)) 1 0) (count pred (cdr lst)))))
+
+(define (occurrences eq? lst)
+  (let iter ((rest lst) (seen (hash)))
+    (if (null? rest) seen
+      (let ((key (car rest)))
+        (hash-set! seen key (+ 1 (hash-ref seen key 0)))
+        (iter (cdr rest) seen)))))
+
+(define (group-by keyfn lst)
+  (let iter ((rest lst) (groups (hash)))
+    (if (null? rest) groups
+      (let* ((key (keyfn (car rest)))
+             (group (hash-ref groups key (list))))
+        (hash-set! groups key (cons (car rest) group))
+        (iter (cdr rest) groups)))))
+
+(define (frequencies lst)
+  (occurrences (lambda (x) x) lst))
+
+(define (split-at n lst)
+  (let iter ((i 0) (rest lst) (left (list)))
+    (if (or (>= i n) (null? rest))
+      (list (reverse left) rest)
+      (iter (+ i 1) (cdr rest) (cons (car rest) left)))))
+
+;; ── Hash table ─────────────────────────────────────────────
+
+(define (hash-map f h)
+  (let ((result (hash)))
+    (hash-keys-filter (lambda (k) (hash-set! result k (f (hash-ref h k)))) h)
+    result))
+
+(define (hash-filter pred h)
+  (let ((result (hash)))
+    (hash-keys-filter
+      (lambda (k) (if (pred (hash-ref h k))
+                     (hash-set! result k (hash-ref h k)) ()))
+      h)
+    result))
+
+(define (hash-keys-filter f h)
+  (let ((keys (hash-keys h)))
+    (if (null? keys) ()
+      (begin (f (car keys)) (hash-keys-filter f (cdr keys))))))
+
+(define (hash-vals h)
+  (hash-values h))
+
+(define (hash-update! h key f default)
+  (hash-set! h key (f (hash-ref h key default))))
+
+(define (hash-merge! target src)
+  (hash-keys-filter
+    (lambda (k) (hash-set! target k (hash-ref src k)))
+    src)
+  target)
+
+(define (hash-merge-into h . sources)
+  (let iter ((rest sources))
+    (if (null? rest) h
+      (begin (hash-merge! h (car rest)) (iter (cdr rest))))))
+
+(define (hash-keys-sorted h)
+  (sort (hash-keys h)))
+
+;; ── Vector ──────────────────────────────────────────────────
+
+(define (vector-map f v)
+  (let ((len (vector-length v))
+        (result (make-vector 0)))
+    (let iter ((i 0))
+      (if (>= i len) result
+        (begin (vector-set! result i (f (vector-ref v i)))
+               (iter (+ i 1)))))))
+
+(define (vector-reverse v)
+  (let ((len (vector-length v))
+        (result (make-vector len)))
+    (let iter ((i 0))
+      (if (>= i len) result
+        (begin (vector-set! result i (vector-ref v (- (- len 1) i)))
+               (iter (+ i 1)))))))
+
+(define (vector->list-rev v)
+  (let iter ((i 0) (acc (list)))
+    (if (>= i (vector-length v)) acc
+      (iter (+ i 1) (cons (vector-ref v i) acc)))))
+
+(define (vector-slice v start end)
+  (let ((len (min end (vector-length v)))
+        (result (make-vector (max 0 (- end start)))))
+    (let iter ((i start))
+      (if (>= i len) result
+        (begin (vector-set! result (- i start) (vector-ref v i))
+               (iter (+ i 1)))))))
+
+(define (vector-find pred v)
+  (let iter ((i 0))
+    (if (>= i (vector-length v)) -1
+      (if (pred (vector-ref v i)) i
+        (iter (+ i 1))))))
+
+;; ── Generic iteration ──────────────────────────────────────
+
+; (iterate f x n) — generate n elements: x, f(x), f(f(x)), ...
+(define (iterate f x n)
+  (if (<= n 0) (list)
+    (cons x (iterate f (f x) (- n 1)))))
+
+; (unfold p f g seed) — generate list until p holds
+(define (unfold p f g seed)
+  (if (p seed) (list)
+    (cons (f seed) (unfold p f g (g seed)))))
+
+; (iota n) — generate list 0..n-1
+(define (iota n)
+  (let iter ((i 0) (acc (list)))
+    (if (>= i n) (reverse acc)
+      (iter (+ i 1) (cons i acc)))))
