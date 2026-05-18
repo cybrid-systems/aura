@@ -60,7 +60,8 @@ void check_call_in_func(const IRFunction& func, const IRModule& mod,
             d.function_name = callee.name;
             d.message = "arity mismatch: call to '" + callee.name
                       + "' expects " + std::to_string(expected)
-                      + " args but got " + std::to_string(actual);
+                      + " args but got " + std::to_string(actual)
+                      + " (caller=" + func.name + ")";
             diags.push_back(d);
         }
     }
