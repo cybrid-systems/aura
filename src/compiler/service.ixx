@@ -60,7 +60,7 @@ public:
             "typecheck-current", "typed-mutate", "rollback",
             "mutation-log", "query-mutation-log",
             // Special forms not in IR
-            "when", "unless", "try", "catch", "raise", "export",
+            "when", "unless", "export",
             "and", "or", "cond", "case",
             // Module system (env side-effects)
             "import", "use", "require",
@@ -75,6 +75,13 @@ public:
                 && ir_cache_.count(std::string(root_name)) == 0)
                 return true;
         }
+
+        // Names that lowering explicitly handles (special forms lowered to IR)
+        // These should NOT trigger tree-walker fallback even though they're
+        // not primitives or cached defines.
+        static const std::unordered_set<std::string> lowering_known = {
+            "try", "catch", "raise",
+        };
 
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             auto nv = flat.get(id);
@@ -115,11 +122,19 @@ public:
                         if (tree_walker_only.count(name))
                             return true;
 
+                        // Catch binding forms like (catch (e) handler) have the
+                        // variable binding (e) as a Call node with callee="e".
+                        // These should not trigger fallback — the try lowering
+                        // handles them explicitly. Skip fallback check for nodes
+                        // whose parent is a catch form.
+                        if (name == "catch") continue;
+
                         // Call callee that's not a known primitive or cached define
                         // may come from a runtime import — fallback to tree-walker.
                         if (evaluator_.primitives().slot_for_name(name)
                                 >= evaluator_.primitives().slot_count()
-                            && ir_cache_.count(name) == 0) {
+                            && ir_cache_.count(name) == 0
+                            && !lowering_known.count(name)) {
                             return true;
                         }
                     }

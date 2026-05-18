@@ -258,6 +258,78 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
                 return result_slot;
             }
 
+            // Handle try/catch special form
+            if (std::string(callee_name) == "try") {
+                // (try body (catch (var) handler))
+                if (v.children.size() < 2) {
+                    auto slot = state.alloc_local();
+                    state.emit(IROpcode::ConstI64, slot, 0, 0);
+                    return slot;
+                }
+                auto body_slot = lower_flat_expr(state, flat, pool, v.child(1), cache, cache_hits);
+                auto is_err_slot = state.alloc_local();
+                state.emit(IROpcode::IsError, is_err_slot, body_slot);
+
+                auto handler_blk = state.alloc_block();
+                auto continue_blk = state.alloc_block();
+                auto end_blk = state.alloc_block();
+                state.emit(IROpcode::Branch, is_err_slot, handler_blk, continue_blk);
+
+                // Continue block: body succeeded, pass through
+                state.cur_block = continue_blk;
+                auto phi_slot = state.alloc_local();
+                state.emit(IROpcode::Local, phi_slot, body_slot);
+                state.emit(IROpcode::Jump, end_blk);
+
+                // Handler block: find catch clause and execute
+                state.cur_block = handler_blk;
+                bool caught = false;
+                for (std::size_t ci = 2; ci < v.children.size(); ++ci) {
+                    auto catch_id = v.child(ci);
+                    auto catch_v = flat.get(catch_id);
+                    if (catch_v.tag == NodeTag::Call) {
+                        auto catch_callee = flat.get(catch_v.child(0));
+                        if (catch_callee.tag == NodeTag::Variable) {
+                            auto catch_name = pool.resolve(catch_callee.sym_id);
+                            if (std::string(catch_name) == "catch") {
+                                // (catch (var) handler-body)
+                                if (catch_v.children.size() >= 3) {
+                                    auto var_form = flat.get(catch_v.child(1));
+                                    std::string var_name;
+                                    if (var_form.tag == NodeTag::Call && var_form.children.size() >= 1) {
+                                        auto var_node = flat.get(var_form.child(0));
+                                        if (var_node.tag == NodeTag::Variable)
+                                            var_name = std::string(pool.resolve(var_node.sym_id));
+                                    }
+                                    // Allocate slot and bind error value
+                                    auto err_slot = state.alloc_local();
+                                    state.emit(IROpcode::Local, err_slot, body_slot);
+                                    // Ensure a scope exists for the error variable binding
+                                    if (state.scopes.empty()) {
+                                        state.scopes.push_back({});
+                                    }
+                                    if (!var_name.empty()) {
+                                        state.scopes.back()[var_name] = Binding{BindingKind::Local, err_slot};
+                                    }
+                                    auto handler_slot = lower_flat_expr(state, flat, pool, catch_v.child(2), cache, cache_hits);
+                                    state.emit(IROpcode::Local, phi_slot, handler_slot);
+                                    caught = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                if (!caught) {
+                    // No catch clause: re-raise by passing error through
+                    state.emit(IROpcode::Local, phi_slot, body_slot);
+                }
+                state.emit(IROpcode::Jump, end_blk);
+
+                state.cur_block = end_blk;
+                return phi_slot;
+            }
+
             // Check if callee is a known non-arithmetic primitive (string ops, etc.)
             static const std::unordered_map<std::string, PrimId> prim_call_map = {
                 {"string-append", PrimId::StringAppend},
@@ -273,6 +345,8 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
                 {"newline",       PrimId::Newline},
                 {"error",         PrimId::Error},
                 {"assert",        PrimId::Assert},
+                {"raise",         PrimId::Raise},
+                {"error?",        PrimId::ErrorP},
                 {"read",          PrimId::Read},
                 {"read-file",     PrimId::ReadFile},
                 {"write-file",    PrimId::WriteFile},

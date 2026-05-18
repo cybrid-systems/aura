@@ -1384,6 +1384,12 @@ void Evaluator::init_pair_primitives() {
         return make_error(eidx);
     });
 
+    // (error? val) — Type predicate for error values
+    primitives_.add("error?", [this](const auto& a) -> EvalValue {
+        if (a.empty()) return make_bool(false);
+        return make_bool(is_error(a[0]));
+    });
+
 
     // (check expr) — Test assertion, returns #t or error on failure
     primitives_.add("check", [this](const auto& a) -> EvalValue {
@@ -3931,6 +3937,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                                 auto handler_id = cv.child(2);
                                 // Bind error value to var and evaluate handler
                                 Env catch_env(&eval_env);
+                                catch_env.set_primitives(&primitives_);
                                 catch_env.set_cells(const_cast<std::vector<EvalValue>*>(&cells_));
                                 if (!var_name.empty() && result) {
                                     catch_env.bind(var_name, *result);

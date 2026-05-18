@@ -47,6 +47,9 @@ export enum class IROpcode : std::uint8_t {
     MakePair,       // create pair: result_slot, car_slot, cdr_slot
     Car,            // car: result_slot, pair_slot
     Cdr,            // cdr: result_slot, pair_slot
+    // Error handling
+    Raise,          // raise error: result_slot, cause_slot
+    IsError,        // check if error: result_slot, value_slot
 };
 
 export struct IRInstruction {
@@ -117,9 +120,12 @@ export constexpr OpcodeInfo kOpcodeInfo[] = {
     {"make-pair",     3, true},   // MakePair: result, car, cdr
     {"car",           2, true},   // Car: result, pair
     {"cdr",           2, true},   // Cdr: result, pair
+    // 37-38  Error handling
+    {"raise",         2, true},   // Raise: result, cause
+    {"is-error",      2, true},   // IsError: result, value
 };
 
-static_assert(std::size(kOpcodeInfo) == 37,
+static_assert(std::size(kOpcodeInfo) == 39,
     "kOpcodeInfo must have exactly one entry per IROpcode");
 
 // Primitive IDs for PrimCall opcode
@@ -158,6 +164,9 @@ export enum class PrimId : std::uint8_t {
     CharLt,
     CharToInteger,
     IntegerToChar,
+    // Error handling
+    Raise,
+    ErrorP,
 };
 
 // Names for each PrimId, indexed by enum value.
@@ -175,9 +184,10 @@ export constexpr std::string_view kPrimNames[] = {
     "vector-length", "vector?", "make-vector",
     "import",
     "char=?", "char<?", "char->integer", "integer->char",
+    "raise", "error?",
 };
 
-static_assert(std::size(kPrimNames) == 30,
+static_assert(std::size(kPrimNames) == 32,
     "kPrimNames must have exactly one entry per PrimId");
 
 // Helper: pack two uint32 into one (for Call: args_begin << 16 | arg_count)
