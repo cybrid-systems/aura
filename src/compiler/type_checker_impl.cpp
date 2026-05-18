@@ -575,12 +575,22 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
     // and (Float, x) -> Float promotion without losing specificity to Dyn.
     auto infer_arith = [&]() -> std::optional<TypeId> {
         auto callee_of_func = flat.get(func_id);
-        if (v.children.size() < 3) return std::nullopt;
         if (callee_of_func.tag != NodeTag::Variable || callee_of_func.sym_id == INVALID_SYM)
             return std::nullopt;
         auto fname = pool.resolve(callee_of_func.sym_id);
         static const std::unordered_set<std::string> arith = {"+", "-", "*", "/"};
         if (!arith.count(std::string(fname))) return std::nullopt;
+
+        // Variadic arith with 0 or 1 args
+        // (+) → Int, (+ x) → type of x (or Int if unknown)
+        if (v.children.size() < 3) {
+            if (v.children.size() == 2) {
+                auto t0 = synthesize_flat(flat, pool, v.child(1), flat.get(v.child(1)));
+                t0 = cs_.normalize(t0);
+                if (!reg_.is_var(t0)) return t0;
+            }
+            return reg_.int_type();
+        }
 
         // Synthesize arg types (pure lookup for variables, no side effects)
         TypeId t0 = synthesize_flat(flat, pool, v.child(1), flat.get(v.child(1)));
