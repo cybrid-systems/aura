@@ -104,6 +104,12 @@ python3 build.py test integ    # 端到端 67/67
 python3 build.py test          # 全部
 ```
 
+## 文档
+
+- **[docs/tutorial.md](docs/tutorial.md)** — 10 分钟快速入门
+- [docs/roadmap.md](docs/roadmap.md) — 路线图
+- [docs/known_issues.md](docs/known_issues.md) — 已知问题
+
 ## License
 
 Apache 2.0
