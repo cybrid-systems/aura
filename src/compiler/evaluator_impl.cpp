@@ -344,6 +344,106 @@ void Evaluator::init_pair_primitives() {
         if (a.empty() || !is_int(a[0])) return make_bool(false);
         return a[0];
     });
+    // ── Character predicates ──────────────────────────────────────
+    primitives_.add("char-alphabetic?", [](const auto& a) {
+        if (a.empty() || !is_int(a[0])) return make_bool(false);
+        auto c = as_int(a[0]);
+        return make_bool((c >= 65 && c <= 90) || (c >= 97 && c <= 122));
+    });
+    primitives_.add("char-numeric?", [](const auto& a) {
+        if (a.empty() || !is_int(a[0])) return make_bool(false);
+        return make_bool(as_int(a[0]) >= 48 && as_int(a[0]) <= 57);
+    });
+    primitives_.add("char-whitespace?", [](const auto& a) {
+        if (a.empty() || !is_int(a[0])) return make_bool(false);
+        auto c = as_int(a[0]);
+        return make_bool(c == 32 || (c >= 9 && c <= 13));
+    });
+    primitives_.add("char-upcase", [](const auto& a) {
+        if (a.empty() || !is_int(a[0])) return make_bool(false);
+        auto c = as_int(a[0]);
+        if (c >= 97 && c <= 122) return make_int(c - 32);
+        return make_int(c);
+    });
+    primitives_.add("char-downcase", [](const auto& a) {
+        if (a.empty() || !is_int(a[0])) return make_bool(false);
+        auto c = as_int(a[0]);
+        if (c >= 65 && c <= 90) return make_int(c + 32);
+        return make_int(c);
+    });
+    // ── String operations ─────────────────────────────────────────
+    primitives_.add("string-copy", [this](const auto& a) {
+        if (a.empty() || !is_string(a[0])) return make_bool(false);
+        // Strings are immutable-like; just return the same reference
+        return a[0];
+    });
+    primitives_.add("string-fill!", [this](const auto& a) {
+        if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1])) return make_void();
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size()) return make_void();
+        auto fill_char = static_cast<char>(as_int(a[1]));
+        std::fill(string_heap_[idx].begin(), string_heap_[idx].end(), fill_char);
+        return make_void();
+    });
+    primitives_.add("string->list", [this](const auto& a) {
+        if (a.empty() || !is_string(a[0])) return make_bool(false);
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size()) return make_bool(false);
+        auto& s = string_heap_[idx];
+        EvalValue result = make_void();
+        for (auto it = s.rbegin(); it != s.rend(); ++it) {
+            auto pid = pairs_.size();
+            pairs_.push_back({make_int(static_cast<std::int64_t>(static_cast<unsigned char>(*it))), result});
+            result = make_pair(pid);
+        }
+        return result;
+    });
+    primitives_.add("list->string", [this](const auto& a) {
+        if (a.empty()) return make_bool(false);
+        auto v = a[0];
+        std::string result;
+        while (is_pair(v)) {
+            auto p = as_pair_idx(v);
+            if (p >= pairs_.size()) break;
+            auto car = pairs_[p].car;
+            if (is_int(car)) {
+                result += static_cast<char>(as_int(car));
+            } else if (is_string(car)) {
+                auto sidx = as_string_idx(car);
+                if (sidx < string_heap_.size()) result += string_heap_[sidx];
+            }
+            v = pairs_[p].cdr;
+        }
+        auto sidx = string_heap_.size();
+        string_heap_.push_back(result);
+        return make_string(sidx);
+    });
+    primitives_.add("string-join", [this](const auto& a) {
+        if (a.size() < 2 || !is_string(a[1])) return make_bool(false);
+        auto delim_idx = as_string_idx(a[1]);
+        if (delim_idx >= string_heap_.size()) return make_bool(false);
+        auto& delim = string_heap_[delim_idx];
+        std::string result;
+        bool first = true;
+        auto v = a[0];
+        while (is_pair(v)) {
+            auto p = as_pair_idx(v);
+            if (p >= pairs_.size()) break;
+            auto car = pairs_[p].car;
+            if (is_string(car)) {
+                auto sidx = as_string_idx(car);
+                if (sidx < string_heap_.size()) {
+                    if (!first) result += delim;
+                    result += string_heap_[sidx];
+                    first = false;
+                }
+            }
+            v = pairs_[p].cdr;
+        }
+        auto sidx = string_heap_.size();
+        string_heap_.push_back(result);
+        return make_string(sidx);
+    });
 
     // ── Pair / List / String primitives ─────────────────────────
     primitives_.add("cons", [this](const auto& a) {
