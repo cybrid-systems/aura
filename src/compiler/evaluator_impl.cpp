@@ -238,29 +238,29 @@ namespace {
     }
     static void io_print_val(const EvalValue& v, const std::vector<std::string>* heap,
                              const std::vector<Pair>* pairs, bool quote, int depth = 0) {
-        if (depth > 64) { std::fprintf(stderr, "..."); return; }
-        if (is_void(v))         { std::fprintf(stderr, "()"); return; }
-        if (is_bool(v))         { std::fprintf(stderr, "%s", as_bool(v) ? "#t" : "#f"); return; }
-        if (is_float(v))        { std::fprintf(stderr, "%g", as_float(v)); return; }
-        if (is_int(v))          { std::fprintf(stderr, "%ld", (long)as_int(v)); return; }
+        if (depth > 64) { std::fprintf(stdout, "..."); return; }
+        if (is_void(v))         { std::fprintf(stdout, "()"); return; }
+        if (is_bool(v))         { std::fprintf(stdout, "%s", as_bool(v) ? "#t" : "#f"); return; }
+        if (is_float(v))        { std::fprintf(stdout, "%g", as_float(v)); return; }
+        if (is_int(v))          { std::fprintf(stdout, "%ld", (long)as_int(v)); return; }
         if (is_string(v) && heap) {
             auto idx = as_string_idx(v);
             if (idx < heap->size()) {
-                if (quote) std::fprintf(stderr, "\"%s\"", (*heap)[idx].c_str());
-                else       std::fprintf(stderr, "%s",       (*heap)[idx].c_str());
+                if (quote) std::fprintf(stdout, "\"%s\"", (*heap)[idx].c_str());
+                else       std::fprintf(stdout, "%s",       (*heap)[idx].c_str());
                 return;
             }
         }
         if (is_pair(v) && pairs) {
             auto idx = as_pair_idx(v);
-            if (idx >= pairs->size()) { std::fprintf(stderr, "<pair[%zu]>", (size_t)idx); return; }
+            if (idx >= pairs->size()) { std::fprintf(stdout, "<pair[%zu]>", (size_t)idx); return; }
             // Check if it's a proper list (cdr chain ends in void or int 0 sentinel)
             auto cdr = (*pairs)[idx].cdr;
             if (is_end_of_list(cdr) && !quote) {
                 // Single-element list: (x)
-                std::fprintf(stderr, "(");
+                std::fprintf(stdout, "(");
                 io_print_val((*pairs)[idx].car, heap, pairs, quote, depth + 1);
-                std::fprintf(stderr, ")");
+                std::fprintf(stdout, ")");
                 return;
             }
             // Walk the chain to see if it's a proper list
@@ -275,23 +275,23 @@ namespace {
                 elements.push_back((*pairs)[nidx].car);
                 next = (*pairs)[nidx].cdr;
             }
-            std::fprintf(stderr, "(");
+            std::fprintf(stdout, "(");
             for (std::size_t i = 0; i < elements.size(); ++i) {
-                if (i > 0) std::fprintf(stderr, " ");
+                if (i > 0) std::fprintf(stdout, " ");
                 io_print_val(elements[i], heap, pairs, quote, depth + 1);
             }
             if (!is_end_of_list(next)) {
-                std::fprintf(stderr, " . ");
+                std::fprintf(stdout, " . ");
                 io_print_val(next, heap, pairs, quote, depth + 1);
             }
-            std::fprintf(stderr, ")");
+            std::fprintf(stdout, ")");
             return;
         }
-        if (is_vector(v))       { std::fprintf(stderr, "<vector[%zu]>", (size_t)as_vector_idx(v)); return; }
-        if (is_hash(v))         { std::fprintf(stderr, "<hash[%zu]>", (size_t)as_hash_idx(v)); return; }
-        if (is_closure(v))      { std::fprintf(stderr, "<closure[%zu]>", (size_t)as_closure_id(v)); return; }
-        if (is_cell(v))         { std::fprintf(stderr, "<cell[%zu]>", (size_t)as_cell_id(v)); return; }
-        std::fprintf(stderr, "<unknown>");
+        if (is_vector(v))       { std::fprintf(stdout, "<vector[%zu]>", (size_t)as_vector_idx(v)); return; }
+        if (is_hash(v))         { std::fprintf(stdout, "<hash[%zu]>", (size_t)as_hash_idx(v)); return; }
+        if (is_closure(v))      { std::fprintf(stdout, "<closure[%zu]>", (size_t)as_closure_id(v)); return; }
+        if (is_cell(v))         { std::fprintf(stdout, "<cell[%zu]>", (size_t)as_cell_id(v)); return; }
+        std::fprintf(stdout, "<unknown>");
     }
 }
 
@@ -604,15 +604,20 @@ void Evaluator::init_pair_primitives() {
         if (i >= string_heap_.size()) return make_bool(false);
         auto& str = string_heap_[i];
         if (str.empty()) return make_bool(false);
-        // Use from_chars for strict parsing — entire string must be consumed
-        const char* start = str.data();
-        const char* end = start + str.size();
+        // Trim leading/trailing whitespace (CSV fields, user input)
+        auto first = str.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos) return make_bool(false);
+        auto last = str.find_last_not_of(" \t\r\n");
+        std::string_view trimmed(str.data() + first, last - first + 1);
+        // Use from_chars — entire trimmed string must be consumed
+        const char* start = trimmed.data();
+        const char* end = start + trimmed.size();
         // Try float first (includes ints like "42" → 42.0)
         double fval;
         auto [pfloat, ec_float] = std::from_chars(start, end, fval);
         if (ec_float == std::errc{} && pfloat == end) {
             // Check if it has a decimal point or exponent → return float
-            if (str.find('.') != std::string::npos || str.find('e') != std::string::npos || str.find('E') != std::string::npos)
+            if (trimmed.find('.') != std::string_view::npos || trimmed.find('e') != std::string_view::npos || trimmed.find('E') != std::string_view::npos)
                 return make_float(fval);
             return make_int(static_cast<std::int64_t>(fval));
         }
@@ -1141,7 +1146,7 @@ void Evaluator::init_pair_primitives() {
         io_print_val(a[0], &string_heap_, &pairs_, true);
         return make_void();
     });
-    primitives_.add("newline", [](const auto&) { std::fprintf(stderr, "\n"); return make_void(); });
+    primitives_.add("newline", [](const auto&) { std::println(""); return make_void(); });
     // (error msg) — Create an error value (no longer throws C++ exception)
     primitives_.add("error", [this](const auto& a) -> EvalValue {
         // Ensure error_values_[0] always exists for default errors
