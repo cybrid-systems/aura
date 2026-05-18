@@ -119,4 +119,4 @@ tests/          C++ 61 + bash 106 + AI Agent
 | consistent_unify | String~Int 渐进类型一致性 | ~1h | ⬜ |
 | arith 类型推断 | `(+ "42" 1)` 返回 Int 而非 String | ~1h | ⬜ |
 | 类型检查 exit code | err_arity/err_type 返回 exit 1 | ~1h | ⬜ |
-| 递归函数 IR 缓存 | cache_module 跳过递归函数的修复 | ~2h | ⬜ |
+| 递归函数 IR 缓存 | cache_module 跳过递归函数的修复 | ~2h | ✅ **5/18** |
