@@ -47,6 +47,12 @@ void check_call_in_func(const IRFunction& func, const IRModule& mod,
         auto& callee = mod.functions[callee_id];
         auto expected = callee.arg_count;
         auto actual = ops[2];
+        // Variadic functions: accept any count >= fixed params
+        // Fixed param count = arg_count - 1 (minus the rest param)
+        if (callee.variadic) {
+            std::uint32_t fixed = expected > 0 ? expected - 1 : 0;
+            if (actual >= fixed) return;  // OK: captures rest as list
+        }
         if (actual != expected) {
             ArityDiagnostic d;
             d.func_id = func.id; d.block_id = block_id; d.instr_index = instr_index;

@@ -359,8 +359,9 @@ public:
         return id;
     }
 
-    [[nodiscard]] NodeId add_lambda(std::span<const SymId> params, NodeId body) {
+    [[nodiscard]] NodeId add_lambda(std::span<const SymId> params, NodeId body, bool dotted = false) {
         auto id = add_node(NodeTag::Lambda);
+        int_val_[id] = dotted ? 1 : 0;  // store dotted flag
         auto pstart = static_cast<std::uint32_t>(param_data_.size());
         param_data_.insert(param_data_.end(), params.begin(), params.end());
         param_begin_[id] = pstart;
