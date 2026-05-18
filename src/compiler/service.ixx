@@ -26,7 +26,7 @@ namespace aura::compiler {
 //
 export class CompilerService {
 public:
-    CompilerService() {
+    CompilerService() : user_bindings_{"#t", "#f", "nil"} {
         evaluator_.set_arena(&arena_);
         // Cache module defines in IR after each import (incl. recursive fns)
         evaluator_.set_module_loaded_callback(
@@ -74,7 +74,18 @@ public:
             if (nv.tag == aura::ast::NodeTag::Lambda && nv.int_value != 0)
                 return true;
 
+            // General variable references to user-defined top-level values
+            // (from (define name val) where val is not a lambda) need tree-walker
+            // because IR lowering can't resolve them (they live in evaluator's env).
+            // Lambda params and let-bound vars are NOT in user_bindings_, so they
+            // won't trigger fallback.
+            if (nv.tag == aura::ast::NodeTag::Variable) {
+                auto var_name = pool.resolve(nv.sym_id);
+                if (user_bindings_.count(std::string(var_name))) {
 
+                    return true;
+                }
+            }
 
             if (nv.tag == aura::ast::NodeTag::Call) {
                 auto callee = nv.child(0);
@@ -159,10 +170,21 @@ public:
         // Check for top-level (define ...) — cache IR + eval tree-walker for env persistence
         auto def = try_extract_define(*flat_ptr, *pool_ptr, expanded_root);
         if (def) {
-            auto& [name, _body_id] = *def;
-            auto result = cache_define(input, *flat_ptr, *pool_ptr, expanded_root, std::string(name));
-            if (!result) return result;
-            return EvalResult(types::make_void());
+            auto& [name, body_id] = *def;
+            // Only cache function defines (Lambda body) are cached as IR
+            // Value defines must go through tree-walker for env persistence
+            auto body_node = body_id < flat_ptr->size() ? flat_ptr->get(body_id) : aura::ast::NodeView{};
+            if (body_node.tag == aura::ast::NodeTag::Lambda) {
+                // Function define: cache IR + eval tree-walker for env persistence
+                auto result = cache_define(input, *flat_ptr, *pool_ptr, expanded_root, std::string(name));
+                if (!result) return result;
+                return EvalResult(types::make_void());
+            }
+            // Value define: send through tree-walker for env persistence,
+            // then track the name for subsequent IR fallback detection.
+            auto result = evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
+            user_bindings_.insert(std::string(name));
+            return result;
         }
 
         // ========== IR pipeline (default path for non-define expressions) ==========
@@ -1369,6 +1391,10 @@ private:
     // Persistent AST for mutation workflows (set_code / typed_mutate).
     aura::ast::FlatAST* current_ast_ = nullptr;
     aura::ast::StringPool* current_pool_ = nullptr;
+
+    // Track names defined via value define (tree-walker path) so subsequent
+    // expressions referencing them fall back to tree-walker instead of IR.
+    std::unordered_set<std::string> user_bindings_;
 };
 
 } // namespace aura::compiler

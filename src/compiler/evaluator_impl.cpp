@@ -1591,14 +1591,16 @@ void Evaluator::init_pair_primitives() {
                 top_.bind(name, val);
             }
         } else {
-            // Prefix injection: bind prefix:name for each export
+            // Prefix injection: bind both prefix:name and bare name for each export
             for (auto& [name, val] : mod_env->bindings()) {
                 auto prefixed = prefix + name;
                 // Inter the prefixed name into the workspace pool
                 auto psid = string_heap_.size();
                 string_heap_.push_back(prefixed);
-                // Bind in top env
+                // Bind in top env with prefix
                 top_.bind(prefixed, val);
+                // Also bind bare name (no prefix) so tree-walker can find it
+                top_.bind(name, val);
             }
         }
         return make_bool(true);

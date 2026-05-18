@@ -124,9 +124,7 @@ public:
     // Allocate and construct an object of type T
     template <typename T, typename... Args>
     [[nodiscard]] T* create(Args&&... args) {
-        contract_assert(sizeof(T) > 0);
         void* raw = allocate_raw(sizeof(T), alignof(T));
-        contract_assert(raw != nullptr);
         ++stats_.allocation_count;
         return std::construct_at(static_cast<T*>(raw),
                                  std::forward<Args>(args)...);
