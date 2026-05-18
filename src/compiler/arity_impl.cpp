@@ -21,6 +21,8 @@ int resolve_callee(const IRFunction& func, const IRModule& mod, std::uint32_t sl
             case IROpcode::Le: case IROpcode::Ge: case IROpcode::And:
             case IROpcode::Or: case IROpcode::Not: case IROpcode::Call:
                 dst = instr.operands[0]; writes = true; break;
+            case IROpcode::Primitive:
+                dst = instr.operands[0]; writes = true; break;
             case IROpcode::MakeClosure:
                 dst = instr.operands[0]; writes = true; break;
             default: break;
@@ -91,3 +93,4 @@ ArityCheckResult check_arity(const IRModule& mod) {
 }
 
 } // namespace aura::compiler
+// arity fix
