@@ -11,7 +11,7 @@
   (let ((s (hash)))
     (for-each (lambda (x) (hash-set! s x #t)) lst) s))
 
-(define (set-from-args items) (list->set items))
+(define (set . items) (list->set items))
 
 (define (set-add s x) (hash-set! s x #t) s)
 

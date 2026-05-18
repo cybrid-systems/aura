@@ -1,7 +1,7 @@
 ; combinators.aura — Functional programming utilities
 (export
-  compose curry rcurry partial
-  const identity flip complement)
+  compose curry rcurry partial2
+  const identity flip complement thrush)
 
 (define (identity x) x)
 
@@ -11,8 +11,24 @@
 (define (flip f)
   (lambda (a b) (f b a)))
 
-(define (compose f g)
-  (lambda (x) (f (g x))))
+(define (compose-internal fns)
+  (if (null? (cdr fns))
+      (car fns)
+      (let ((f (car fns)) (rest (compose-internal (cdr fns))))
+        (lambda (x) (f (rest x))))))
+
+(define (compose f . rest)
+  (if (null? rest) f
+    (let ((g (compose-internal rest)))
+      (lambda (x) (f (g x))))))
+
+(define (thrush-internal x fns)
+  (if (null? fns) x
+    ((car fns) (thrush-internal x (cdr fns)))))
+
+(define (thrush x . fns)
+  (if (null? fns) x
+    ((car fns) (thrush-internal x fns))))
 
 (define (curry f a)
   (lambda (x) (f a x)))
@@ -20,7 +36,7 @@
 (define (rcurry f a)
   (lambda (x) (f x a)))
 
-(define (partial f a)
+(define (partial2 f a)
   (lambda (x) (f a x)))
 
 (define (complement pred)
