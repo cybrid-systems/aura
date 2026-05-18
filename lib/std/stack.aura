@@ -1,0 +1,32 @@
+; stack.aura — LIFO stack (pair-based)
+; Import with: (import "std/stack")
+;
+; Most efficient collection: push is O(1), pop is O(1).
+
+(export
+  make-stack stack-push stack-pop stack-top
+  stack-empty? stack-length stack->list list->stack)
+
+(define (make-stack) (list))
+
+(define (stack-push s elem)
+  (cons elem s))
+
+(define (stack-pop s)
+  (if (null? s) (list () (list))
+    (list (car s) (cdr s))))
+
+(define (stack-top s)
+  (if (null? s) () (car s)))
+
+(define (stack-empty? s)
+  (null? s))
+
+(define (stack-length s)
+  (length s))
+
+(define (stack->list s)
+  s)
+
+(define (list->stack lst)
+  lst)

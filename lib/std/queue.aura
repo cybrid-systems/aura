@@ -1,0 +1,43 @@
+; queue.aura — FIFO queue (pair-based, immutable)
+; Import with: (import "std/queue")
+;
+; Enqueue at front, dequeue from back. Inefficient for large queues
+; but fine for small ones (~100 elements). For production, use
+; ring-buffer or list reversal pattern.
+;
+; Alternative: use enqueue/dequeue-of-list pattern:
+;   queue = (list rear-front-cached) where q = (cadr queue)
+;   (queue-ref queue) → first element
+;   (queue-rest queue) → queue without first
+;   (queue-append queue elem) → queue with elem appended
+
+(export
+  make-queue enqueue dequeue queue-front queue-rest
+  queue-empty? queue-length queue->list list->queue)
+
+(define (make-queue) (list))
+
+(define (enqueue q elem)
+  (append q (list elem)))
+
+(define (dequeue q)
+  (if (null? q) (list () ())
+    (list (car q) (cdr q))))
+
+(define (queue-front q)
+  (if (null? q) () (car q)))
+
+(define (queue-rest q)
+  (if (null? q) (list) (cdr q)))
+
+(define (queue-empty? q)
+  (null? q))
+
+(define (queue-length q)
+  (length q))
+
+(define (queue->list q)
+  q)
+
+(define (list->queue lst)
+  lst)

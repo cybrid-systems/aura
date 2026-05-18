@@ -13,9 +13,9 @@
 | 语言核心求值 | 🟢 9/10 | tree-walker + IR 双路径稳定，IR 桥接器修复，pair 原生指令，TCO，format |
 | 类型系统 | 🟢 8/10 | L6 + strict 模式 + 增量缓存 + Let-Poly + IR 类型特化 pass，缺 full type check |
 | 编译器基础设施 | 🟢 8/10 | ArenaGroup / 增量 / 磁盘缓存 / 热替换 / 依赖级联 |
-| 标准库覆盖 | 🟡 5/10 | 12 个文件 ~650 行，缺 string-split, format 扩展 |
+| 标准库覆盖 | 🟡 7/10 | 18 个文件 ~1k 行，iter/queue/stack/random 新增，string 扩展 |
 | 测试覆盖 | 🟡 5/10 | integ 87/87，unit 74/74，smoke 5/5，bench 44/44，bash 106/106 |
-| 错误处理 | 🟡 5/10 | Parser 多错误累积 + line:column，try/catch IR 待做 |
+| 错误处理 | 🟡 6/10 | Parser 多错误累积 + line:column，try/catch IR ✅，Diagnostics 统一待做 |
 | 文档 | 🟡 5/10 | README + roadmap + tutorial + known_issues + 设计文档 |
 | AI agent 集成 | 🟡 6/10 | EDSL 管线完整，DeepSeek API 实测通过，空响应保护 |
 
@@ -71,7 +71,7 @@
 - Hot-swap — 运行时替换已缓存函数
 - 闭包桥接 lambda body source 存备份, fallback 时 re-parse
 
-**标准库（10 files, ~650 lines）**
+**标准库（18 files, ~1k lines）**
 - `hash.aura` — hash-set, hash-ref, hash->list, hash-merge, alist->hash
 - `combinators.aura` — compose, curry, flip, complement, const, identity
 - `maybe.aura` — maybe-ref, maybe-default, map-maybe, filter-maybe
@@ -120,8 +120,8 @@
 | 8 | **Parser 错误恢复** | 多错误累积 + 跳过 malformed | 3h | ✅ |
 | 9 | **proper Diagnostics** | 集中化错误信息，行号/列号/原因/建议 | 2h | 🔴 |
 | 10 | **Benchmark 基线** | 对比 IR vs tree-walker 性能 | 2h | 🔴 |
-| 11 | **标准库 v2** | 增加到 15-20 个文件，覆盖常见需求 | 8h | 🔴 |
-| 12 | **try/catch IR 指令** | 消除一个主要 fallback 路径 | 4h | 🔴 |
+| 11 | **标准库 v2** | 增加到 18-20 个文件，覆盖常见需求 | 8h | ✅ |
+| 12 | **try/catch IR 指令** | 消除一个主要 fallback 路径 | 4h | ✅ |
 
 ### P2 — 中期（CaaS 生产化）
 
@@ -144,6 +144,28 @@
 ---
 
 ## 已完成里程碑
+
+### try/catch IR 指令 ✅ 2026-05-19
+
+```
+IROpcode::Raise   — (raise val) 创建 error value
+IROpcode::IsError — 检查值是否为 error，返回 bool
+Lowering: (try body (catch (var) handler)) → IsError + Branch
+树遍历求值器 bug 修复: catch_env 缺少 set_primitives
+```
+
+### 标准库 v2 ✅ 2026-05-19
+
+```
+iter.aura     — any?/every?/find/split-at/frequencies/hash-map/hash-filter/
+                vector-map/iota/iterate  (165 行)
+queue.aura    — FIFO 队列 (enqueue/dequeue/queue-front) (43 行)
+stack.aura    — LIFO 栈 (push/pop/top) (32 行)
+random.aura   — LCG 伪随机数生成器 (76 行)
+string.aura   — 12 个新函数: contains?/prefix?/suffix?/replace/
+                pad-left/pad-right/reverse/repeat/chars->string 等
+stdlib total  → 18 files, 1,041 行
+```
 
 ### 类型系统增强（P0–P4）✅ 2026-05-19
 
@@ -185,7 +207,7 @@ AI Agent:   —      ✅ (DeepSeek v4 Flash, EDSL restore 工作正常)
 src/core/       ~2,700 行
 src/parser/     ~1,400 行
 src/compiler/   ~12,700 行
-lib/std/        10 files ~650 行 Aura
+lib/std/        18 files ~1,041 行 Aura
 tests/          bash 回归 + 3 C++ suites + 集成测试 + 基准 + AI agent
 docs/           tutorial.md + known_issues.md + roadmap.md + 设计文档
 ```

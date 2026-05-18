@@ -1,7 +1,11 @@
 ; Aura standard string library
 ; Import with: (import "std/string")
 
-(export string-split string-split-words string-join string-trim string-upcase string-downcase)
+(export string-split string-split-words string-join string-trim
+        string-upcase string-downcase
+        string-contains? string-prefix? string-suffix? string-replace
+        string-pad-left string-pad-right string-reverse string-repeat
+        string->chars chars->string string-take string-drop)
 
 ; Note: string.aura intentionally avoids requiring std/list internally.
 ; Module evaluation runs in isolated env; internal imports would pollute top_.
@@ -45,12 +49,10 @@
 ; Trim whitespace from both ends
 (define (string-trim s)
   (define chars (string->list s))
-  ; Remove leading spaces
   (define (drop-leading lst)
     (if (or (null? lst) (not (= (car lst) 32)))
       lst
       (drop-leading (cdr lst))))
-  ; Remove trailing spaces (reverse, drop-leading, reverse)
   (define trimmed (reverse (drop-leading (reverse (drop-leading chars)))))
   (list->string trimmed))
 
@@ -69,3 +71,83 @@
       (+ c 32)
       c))
   (list->string (map down (string->list s))))
+
+;; ── New v2 functions ───────────────────────────────────────
+
+; Check if string contains a substring
+(define (string-contains? haystack needle)
+  (define hlen (string-length haystack))
+  (define nlen (string-length needle))
+  (if (> nlen hlen) #f
+    (let iter ((i 0))
+      (if (> i (- hlen nlen)) #f
+        (if (equal? (substring haystack i (+ i nlen)) needle) #t
+          (iter (+ i 1)))))))
+
+; Check if string starts with prefix
+(define (string-prefix? s prefix)
+  (define plen (string-length prefix))
+  (if (> plen (string-length s)) #f
+    (equal? (substring s 0 plen) prefix)))
+
+; Check if string ends with suffix
+(define (string-suffix? s suffix)
+  (define slen (string-length s))
+  (define suflen (string-length suffix))
+  (if (> suflen slen) #f
+    (equal? (substring s (- slen suflen) slen) suffix)))
+
+; Replace all occurrences of old with new in s
+(define (string-replace s old new)
+  (define slen (string-length s))
+  (define olen (string-length old))
+  (define nlen (string-length new))
+  (if (or (= olen 0) (> olen slen)) s
+    (let iter ((i 0) (result ""))
+      (if (>= i slen) result
+        (if (and (<= (+ i olen) slen)
+                 (equal? (substring s i (+ i olen)) old))
+          (iter (+ i olen) (string-append result new))
+          (iter (+ i 1) (string-append result (list->string (list (string-ref s i))))))))))
+
+; Pad string to width by adding spaces on the left
+(define (string-pad-left s width)
+  (let ((len (string-length s)))
+    (if (>= len width) s
+      (string-append (make-spaces (- width len)) s))))
+
+; Pad string to width by adding spaces on the right
+(define (string-pad-right s width)
+  (let ((len (string-length s)))
+    (if (>= len width) s
+      (string-append s (make-spaces (- width len))))))
+
+; Make a string of n spaces (helper)
+(define (make-spaces n)
+  (if (<= n 0) ""
+    (string-append " " (make-spaces (- n 1)))))
+
+; Reverse a string
+(define (string-reverse s)
+  (list->string (reverse (string->list s))))
+
+; Repeat string n times
+(define (string-repeat s n)
+  (if (<= n 1) (if (= n 1) s "")
+    (string-append s (string-repeat s (- n 1)))))
+
+; Convert string to list of char codes
+(define (string->chars s)
+  (string->list s))
+
+; Convert list of char codes to string
+(define (chars->string cs)
+  (list->string cs))
+
+; Take first n characters
+(define (string-take s n)
+  (substring s 0 (min n (string-length s))))
+
+; Drop first n characters
+(define (string-drop s n)
+  (substring s (min n (string-length s)) (string-length s)))

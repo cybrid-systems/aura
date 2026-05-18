@@ -31,7 +31,7 @@ echo '(- 5 (* 2 3))' | ./build/aura --typecheck    # type: Int, result: -1
 | **错误处理** | `try`/`catch`/`raise`/`assert`, 原语返回 error 不崩溃 |
 | **数据结构** | pair/list, vector, hash table, variadic functions |
 | **I/O** | `display`, `write`, `read-file`, `write-file`, `file-copy`, `file-delete` |
-| **标准库** | `hash`, `combinators`, `maybe`, `csv`, `set`, `io`, `list`, `math`, `string`, `test` (10 lib) |
+| **标准库** | `hash`, `combinators`, `maybe`, `csv`, `set`, `io`, `list`, `math`, `string`, `test`, `iter`, `queue`, `stack`, `random` (14 lib) |
 | **CaaS 服务** | `--serve` with `compile`/`eval`/`module`/`define`/`config` 命令 |
 | **增量编译** | ArenaGroup 多模块, `reload_module` dirty-only, mmap 磁盘缓存, 函数热替换 |
 | **IR 管线** | 37 opcode, const folding, compute-kind, arity check, 闭包桥接, 类型特化 pass |
@@ -46,7 +46,8 @@ src/compiler/     IR(lowering+passes+interpreter), 树遍历求值器,
                   类型检查(typeck + let-poly + specialization),
                   CaaS 服务, EDSL                                    ~10k
 lib/std/          hash, combinator, maybe, csv, set, io, list, map,
-                  for-each, math, string, test                       ~650 lines
+                  for-each, math, string, test, iter, queue,
+                  stack, random, json, struct, validate             ~1k lines
 tests/            bash(106), C++ unit(74), integ(87), smoke(5),
                   benchmark(44), mutation, AI agent demo              ~6k
 ```
@@ -97,9 +98,9 @@ Aura 当前适用于：
 ## 下一步重点
 
 ```
-立即 ─── 标准库扩充（string-split, format 扩展, hash 迭代）
-  ├── 类型系统打磨（fulfilling 模式严格化、Let-Poly 常规启用）
-  ├── try/catch IR 指令（消除最后一个主要 fallback）
+立即 ─── Diagnostics 统一（错误格式标准化、行号/建议）
+  ├── Benchmark 基线（量化 IR 管线性能对比）
+  ├── 标准库 v3（format 扩展、regex、时间函数）
   └── AI agent 管线实测（需 API key）
 ```
 
