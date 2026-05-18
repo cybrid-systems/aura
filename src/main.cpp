@@ -572,7 +572,7 @@ int main(int argc, char* argv[]) {
         if (argc > 2) {
             auto result = cs.eval_ir(argv[2]);
             if (!result) {
-                std::println(std::cerr, "error: {}", result.error().message);
+                std::println(std::cerr, "error: {}", result.error().format());
                 return 1;
             }
             std::println("{}", fmt_val(*result, cs));
@@ -581,7 +581,7 @@ int main(int argc, char* argv[]) {
             buf << std::cin.rdbuf();
             auto result = cs.eval_ir(buf.str());
             if (!result) {
-                std::println(std::cerr, "error: {}", result.error().message);
+                std::println(std::cerr, "error: {}", result.error().format());
                 return 1;
             }
             std::println("{}", fmt_val(*result, cs));
@@ -795,7 +795,7 @@ int main(int argc, char* argv[]) {
         aura::compiler::CompilerService cs;
         auto result = cs.eval_ir(input);
         if (!result) {
-            std::println(std::cerr, "eval error: {}", result.error().message);
+            std::println(std::cerr, "eval error: {}", result.error().format());
             return 1;
         }
         std::println("{}", fmt_val(*result, cs));
@@ -865,7 +865,7 @@ int main(int argc, char* argv[]) {
             aura::compiler::IRInterpreter interp(cached_mod, cs_tmp.evaluator().primitives());
             auto result = interp.execute();
             if (!result) {
-                std::println(std::cerr, "error: {}", result.error().message);
+                std::println(std::cerr, "error: {}", result.error().format());
                 return 1;
             }
             std::println("{}", fmt_val(*result, cs_tmp));
@@ -905,7 +905,7 @@ int main(int argc, char* argv[]) {
         else { std::getline(std::cin, input); }
         auto result = cs.hot_swap(input);
         if (!result) {
-            std::println(std::cerr, "error: {}", result.error().message);
+            std::println(std::cerr, "error: {}", result.error().format());
             return 1;
         }
         std::println("{}", fmt_val(*result, cs));
@@ -925,7 +925,7 @@ int main(int argc, char* argv[]) {
         auto result = cs.eval_ir(input);
 
         if (!result) {
-            std::println(std::cerr, "error: {}", result.error().message);
+            std::println(std::cerr, "error: {}", result.error().format());
         } else {
             std::println("result: {}", fmt_val(*result, cs));
         }
@@ -979,7 +979,7 @@ int main(int argc, char* argv[]) {
         if (result) {
             std::println("result: {}", fmt_val(*result, cs));
         } else {
-            std::println(std::cerr, "error: {}", result.error().message);
+            std::println(std::cerr, "error: {}", result.error().format());
         }
 
         auto closures = cs.last_closures();
@@ -1053,7 +1053,7 @@ int main(int argc, char* argv[]) {
         while (std::print("> "), std::getline(std::cin, line)) {
             if (line.empty()) continue;
             auto r = cs.eval(line);
-            if (!r) std::println(std::cerr, "error: {}", r.error().message);
+            if (!r) std::println(std::cerr, "error: {}", r.error().format());
             else std::println("{}", fmt_val(*r, cs));
         }
         return 0;
@@ -1184,7 +1184,7 @@ int main(int argc, char* argv[]) {
         if (s == std::string::npos) continue;
         e = e.substr(s);
         auto r = cs.eval(e);
-        if (!r) { std::println(std::cerr, "error: {}", r.error().message); err = true; }
+        if (!r) { std::println(std::cerr, "error: {}", r.error().format()); err = true; }
         else if (&e == &exprs.back() && !is_void(*r)) std::println("{}", fmt_val(*r, cs));
     }
     return err ? 1 : 0;
