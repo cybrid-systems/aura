@@ -42,7 +42,7 @@ target_sources(aura PRIVATE
     src/main.cpp)
 
 target_include_directories(aura PRIVATE ${CMAKE_SOURCE_DIR})
-target_compile_options(aura PRIVATE -Wall -Wextra -Wpedantic -fcontracts -fcontract-evaluation-semantic=observe)
+target_compile_options(aura PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(aura PRIVATE stdc++ stdc++exp)
 
 enable_testing()
@@ -101,7 +101,7 @@ target_sources(test_ir PRIVATE
     src/compiler/query_impl.cpp
     src/compiler/type_checker_impl.cpp
     src/compiler/arity_impl.cpp)
-target_compile_options(test_ir PRIVATE -Wall -Wextra -Wpedantic -fcontracts -fcontract-evaluation-semantic=observe)
+target_compile_options(test_ir PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(test_ir PRIVATE stdc++ stdc++exp)
 
 add_test(NAME ir_basic COMMAND ./test_ir
@@ -176,7 +176,7 @@ add_test(NAME inspect_env
 # ── validate_node_layout: P2996 ABF struct layout validation ────
 add_executable(validate-node-layout tests/validate_node_layout.cpp)
 target_include_directories(validate-node-layout PRIVATE ${CMAKE_SOURCE_DIR})
-target_compile_options(validate-node-layout PRIVATE -std=c++26 -freflection)
+target_compile_options(validate-node-layout PRIVATE -std=c++26)
 target_link_libraries(validate-node-layout PRIVATE stdc++)
 
 add_test(NAME validate_node_layout
@@ -192,7 +192,7 @@ add_test(NAME cache_write
 # Built WITHOUT modules to avoid -freflection / import std; conflicts.
 add_executable(aura-reflect tools/aura-reflect.cpp)
 target_include_directories(aura-reflect PRIVATE ${CMAKE_SOURCE_DIR})
-target_compile_options(aura-reflect PRIVATE -std=c++26 -freflection)
+target_compile_options(aura-reflect PRIVATE -std=c++26)
 target_link_libraries(aura-reflect PRIVATE stdc++)
 
 add_test(NAME reflect_ir_instruction
@@ -205,7 +205,7 @@ add_test(NAME reflect_schema
 # ── aura-schema: standalone JSON Schema generator ────────────────
 add_executable(aura-schema tools/aura-schema.cpp)
 target_include_directories(aura-schema PRIVATE ${CMAKE_SOURCE_DIR})
-target_compile_options(aura-schema PRIVATE -std=c++26 -freflection)
+target_compile_options(aura-schema PRIVATE -std=c++26)
 target_link_libraries(aura-schema PRIVATE stdc++)
 
 add_test(NAME schema_ir_instruction
