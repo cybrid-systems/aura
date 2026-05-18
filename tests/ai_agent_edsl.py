@@ -180,7 +180,16 @@ def main():
 
             if status == "ok":
                 if in_phase2:
-                    fb = f"Result: {value}\nPhase 2 fix applied. Say DONE if correct."
+                    # After successful EDSL operation, get the updated source
+                    src_result = aura.exec("(current-source)")
+                    updated_src = ""
+                    if src_result and src_result.get("status") == "ok":
+                        updated_src = src_result.get("value", "")
+                        current_src = updated_src
+                    if updated_src:
+                        fb = f"Phase 2 fix applied.\n\nUpdated source:\n{updated_src}\n\nSay DONE if correct."
+                    else:
+                        fb = f"Result: {value}\nPhase 2 fix applied. Say DONE if correct."
                 else:
                     # Auto-test: try calling each defined function
                     test_results = []
@@ -248,9 +257,15 @@ def main():
                 if funcs_found:
                     edsl_hint = "Functions in workspace:\n" + "\n".join(funcs_found) + "\n\n"
 
+                # Get current source for context
+                src_result = aura.exec("(current-source)")
+                current_ws_src = ""
+                if src_result and src_result.get("status") == "ok":
+                    current_ws_src = src_result.get("value", "")
+
                 fb = (
                     f"ERROR: {value}\n\n"
-                    f"Current source: {current_src[:400]}\n\n"
+                    f"Current source: {current_ws_src or current_src[:400]}\n\n"
                     f"{edsl_hint}"
                     "SWITCH TO PHASE 2 EDSL NOW.\n"
                     "1. (set-code \"...\") — lock current source\n"
