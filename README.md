@@ -42,9 +42,9 @@ src/core/         FlatAST(SoA), StringPool, arena, type system   ~2.5k
 src/parser/       lexer + s-expr → FlatAST                       ~1.2k
 src/compiler/     IR(lowering+passes+interpreter), 树遍历求值器  ~10k
                   类型检查, CaaS 服务, EDSL
-lib/std/          hash, combinator, maybe, csv, set, io, list,   10 files
+lib/std/          hash, combinator, maybe, csv, set, io, list, map, for-each
                   math, string, test                              ~400 lines
-tests/            bash(106), C++ unit(61), integ(67), smoke(5)
+tests/            bash(106), C++ unit(61), integ(87), smoke(5)
 ```
 
 ## 快速体验
