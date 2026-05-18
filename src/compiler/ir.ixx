@@ -211,6 +211,7 @@ export struct ClosureBridgeData {
     const ast::FlatAST* flat = nullptr;
     const ast::StringPool* pool = nullptr;
     ast::NodeId body_id = ast::NULL_NODE;
+    std::string body_source;  // serialized source for bridge fallback re-parse
 };
 
 export struct IRModule {
@@ -244,6 +245,12 @@ export struct IRModule {
                                  ast::NodeId body_id) {
         if (func_id < closure_bridge.size()) {
             closure_bridge[func_id] = {flat, pool, body_id};
+        }
+    }
+
+    void set_closure_body_source(std::uint32_t func_id, const std::string& src) {
+        if (func_id < closure_bridge.size()) {
+            closure_bridge[func_id].body_source = src;
         }
     }
 
