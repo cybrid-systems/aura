@@ -3731,8 +3731,10 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                 }
             }
             auto best = closest_match(name, candidates);
-            if (!best.empty()) msg += " (did you mean " + best + "?)";
-            return std::unexpected(Diagnostic{ErrorKind::UnboundVariable, msg});
+            Diagnostic d(ErrorKind::UnboundVariable, std::string(name));
+            if (!best.empty())
+                d = std::move(d).with_suggestion("did you mean '" + best + "'?");
+            return std::unexpected(std::move(d));
         }
         case aura::ast::NodeTag::Call: {
             if (v.children.empty()) return EvalResult(make_void());
@@ -4025,7 +4027,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                     }
                 }
             }
-            return std::unexpected(Diagnostic{ErrorKind::UnboundVariable,
+            return std::unexpected(Diagnostic{ErrorKind::TypeError,
                                               "cannot call: " + std::string(p->resolve(callee.sym_id))});
         }
         case aura::ast::NodeTag::IfExpr: {
@@ -4210,12 +4212,13 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                     }
                 }
                 auto best = closest_match(name, candidates);
+                Diagnostic d(ErrorKind::UnboundVariable, "set!: " + std::string(name));
                 if (!best.empty())
-                    return std::unexpected(Diagnostic{ErrorKind::UnboundVariable,
-                        "set!: unbound variable: " + std::string(name) + " (did you mean " + best + "?)"});
+                    d = std::move(d).with_suggestion("did you mean '" + best + "'?");
+                return std::unexpected(std::move(d));
             }
             return std::unexpected(Diagnostic{ErrorKind::UnboundVariable,
-                                              "set!: unbound variable: " + std::string(name)});
+                                              "set!: " + std::string(name)});
         }
         case aura::ast::NodeTag::Quote: {
             if (v.children.empty()) return EvalResult(make_void());

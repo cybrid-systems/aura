@@ -412,10 +412,8 @@ public:
         if (all_diags.empty()) {
             out += "no errors\n";
         } else {
-            out += "diagnostics:\n";
             for (auto& d : all_diags) {
-                out += "  [" + std::to_string(static_cast<int>(d.kind))
-                     + "] " + d.format() + "\n";
+                out += d.format() + "\n";
             }
         }
 
