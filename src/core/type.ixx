@@ -97,6 +97,9 @@ public:
     // Lookup type by name (returns invalid TypeId if not found)
     TypeId lookup_type(const std::string& name) const;
 
+    // Collect all type variables in a type (for let-polymorphism)
+    std::vector<TypeId> free_vars(TypeId id) const;
+
 private:
     struct Entry {
         TypeTag tag;

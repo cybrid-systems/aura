@@ -127,6 +127,30 @@ TypeId TypeRegistry::lookup_type(const std::string& name) const {
     return TypeId{};
 }
 
+std::vector<TypeId> TypeRegistry::free_vars(TypeId id) const {
+    std::vector<TypeId> result;
+    if (!id.valid() || id.index >= entries_.size()) return result;
+    std::vector<TypeId> stack = {id};
+    std::unordered_set<std::uint32_t> seen;
+    while (!stack.empty()) {
+        auto cur = stack.back(); stack.pop_back();
+        if (!cur.valid() || cur.index >= entries_.size()) continue;
+        if (!seen.insert(cur.index).second) continue;
+        if (entries_[cur.index].tag == TypeTag::TYPE_VAR) {
+            result.push_back(cur);  // preserve exact TypeId with generation
+            continue;
+        }
+        if (auto* f = func_of(cur)) {
+            stack.push_back(f->ret);
+            for (auto& a : f->args) stack.push_back(a);
+        }
+        if (auto* ft = forall_of(cur)) {
+            stack.push_back(ft->body);
+        }
+    }
+    return result;
+}
+
 std::string TypeRegistry::format_type(TypeId id) const {
     auto tag = tag_of(id);
     switch (tag) {

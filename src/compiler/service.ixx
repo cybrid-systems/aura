@@ -212,8 +212,9 @@ public:
 
         last_ir_mod_ = ir_mod;
 
-        aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, evaluator_.primitives());
+        aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, evaluator_.primitives(), &type_registry_);
         ir_interp.set_strategy(strategy_);
+        if (strict_mode_) ir_interp.set_strict_mode(true);
 
         // Set IR closure bridge: enables tree-walker primitives (map/filter/foldl)
         // to call IR-produced closures.
@@ -354,8 +355,9 @@ public:
 
         last_ir_mod_ = ir_mod;
 
-        aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, evaluator_.primitives());
+        aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, evaluator_.primitives(), &type_registry_);
         ir_interp.set_strategy(strategy_);
+        if (strict_mode_) ir_interp.set_strict_mode(true);
         auto result = ir_interp.execute();
 
         // Capture runtime state for --inspect
@@ -814,8 +816,9 @@ public:
                 aura::diag::ErrorKind::ArityMismatch, "arity check failed"});
         }
 
-        aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, evaluator_.primitives());
+        aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, evaluator_.primitives(), &type_registry_);
         ir_interp.set_strategy(strategy_);
+        if (strict_mode_) ir_interp.set_strict_mode(true);
         auto result = ir_interp.execute();
 
         last_closures_ = ir_interp.list_closures();
