@@ -43,6 +43,10 @@ export enum class IROpcode : std::uint8_t {
     ConstBool,      // load boolean constant: result_slot, value(0 or 1)
     // Void constant (empty list)
     ConstVoid,      // load void: result_slot
+    // Pair operations (native, avoids PrimCall dispatch)
+    MakePair,       // create pair: result_slot, car_slot, cdr_slot
+    Car,            // car: result_slot, pair_slot
+    Cdr,            // cdr: result_slot, pair_slot
 };
 
 export struct IRInstruction {

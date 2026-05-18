@@ -321,6 +321,32 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                 current = ops[0];
                 goto next_block;
 
+            case IROpcode::MakePair: {
+                // Use the evaluator's cons primitive so pairs are in the same table
+                auto pfn = primitives_.lookup("cons");
+                if (pfn)
+                    locals[ops[0]] = (*pfn)({locals[ops[1]], locals[ops[2]]});
+                else
+                    locals[ops[0]] = make_void();
+                break;
+            }
+            case IROpcode::Car: {
+                auto pfn = primitives_.lookup("car");
+                if (pfn)
+                    locals[ops[0]] = (*pfn)({locals[ops[1]]});
+                else
+                    locals[ops[0]] = make_void();
+                break;
+            }
+            case IROpcode::Cdr: {
+                auto pfn = primitives_.lookup("cdr");
+                if (pfn)
+                    locals[ops[0]] = (*pfn)({locals[ops[1]]});
+                else
+                    locals[ops[0]] = make_void();
+                break;
+            }
+
             case IROpcode::PrimCall: {
                 auto prim_id = static_cast<PrimId>(ops[0]);
                 auto arg_base = unpack_hi(ops[1]);

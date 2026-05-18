@@ -158,6 +158,9 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
                 {"=", IROpcode::Eq},  {"<", IROpcode::Lt},
                 {">", IROpcode::Gt},  {"<=", IROpcode::Le},
                 {">=", IROpcode::Ge},
+                {"cons", IROpcode::MakePair},
+                {"car", IROpcode::Car},
+                {"cdr", IROpcode::Cdr},
             };
             auto it = prim_map.find(std::string(callee_name));
             if (it != prim_map.end()) {
