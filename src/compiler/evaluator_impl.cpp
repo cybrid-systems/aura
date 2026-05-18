@@ -236,6 +236,50 @@ namespace {
     static bool is_end_of_list(const EvalValue& v) {
         return is_void(v) || (is_int(v) && as_int(v) == 0);
     }
+    // Format a value to string (same formatting as io_print_val but returns string)
+    static std::string fmt_val_to_string(const EvalValue& v, const std::vector<std::string>& heap,
+                                          const std::vector<Pair>& pairs, bool quote, int depth = 0) {
+        std::string out;
+        auto app = [&](const auto&... args) { (out += ... += args); };
+        if (depth > 64) return "...";
+        if (is_void(v))         return "()";
+        if (is_bool(v))         return as_bool(v) ? "#t" : "#f";
+        if (is_float(v))        return std::to_string(as_float(v));
+        if (is_int(v))          return std::to_string(as_int(v));
+        if (is_string(v)) {
+            auto idx = as_string_idx(v);
+            if (idx < heap.size()) {
+                if (quote) return "\"" + heap[idx] + "\"";
+                return heap[idx];
+            }
+            return "";
+        }
+        if (is_pair(v)) {
+            auto idx = as_pair_idx(v);
+            if (idx >= pairs.size()) return "<pair>";
+            out = "(";
+            out += fmt_val_to_string(pairs[idx].car, heap, pairs, quote, depth + 1);
+            auto cdr = pairs[idx].cdr;
+            while (is_pair(cdr)) {
+                out += " ";
+                auto nidx = as_pair_idx(cdr);
+                if (nidx >= pairs.size()) { out += "<pair>"; break; }
+                out += fmt_val_to_string(pairs[nidx].car, heap, pairs, quote, depth + 1);
+                cdr = pairs[nidx].cdr;
+            }
+            if (!is_end_of_list(cdr)) {
+                out += " . ";
+                out += fmt_val_to_string(cdr, heap, pairs, quote, depth + 1);
+            }
+            out += ")";
+            return out;
+        }
+        if (is_vector(v))       return std::format("<vector[{}]>", as_vector_idx(v));
+        if (is_hash(v))         return std::format("<hash[{}]>", as_hash_idx(v));
+        if (is_closure(v))      return std::format("<closure[{}]>", as_closure_id(v));
+        return "<unknown>";
+    }
+
     static void io_print_val(const EvalValue& v, const std::vector<std::string>* heap,
                              const std::vector<Pair>* pairs, bool quote, int depth = 0) {
         if (depth > 64) { std::fprintf(stdout, "..."); return; }
@@ -1264,6 +1308,52 @@ void Evaluator::init_pair_primitives() {
         return make_void();
     });
     primitives_.add("newline", [](const auto&) { std::println(""); return make_void(); });
+    // (format template args...) — Simple string formatting (SRFI-28 subset)
+    // ~a  display arg    ~s  write arg    ~%  newline    ~~  literal ~
+    primitives_.add("format", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0])) return make_bool(false);
+        auto tidx = as_string_idx(a[0]);
+        if (tidx >= string_heap_.size()) return make_bool(false);
+        auto& tmpl = string_heap_[tidx];
+        std::string result;
+        std::size_t arg_idx = 1;  // first arg in a[1..]
+        for (std::size_t i = 0; i < tmpl.size(); ++i) {
+            if (tmpl[i] == '~' && i + 1 < tmpl.size()) {
+                switch (tmpl[i + 1]) {
+                case 'a':  // display arg
+                    if (arg_idx < a.size()) {
+                        auto val = a[arg_idx++];
+                        result += fmt_val_to_string(val, string_heap_, pairs_, false);
+                    }
+                    ++i;
+                    break;
+                case 's':  // write arg (quoted)
+                    if (arg_idx < a.size()) {
+                        auto val = a[arg_idx++];
+                        result += fmt_val_to_string(val, string_heap_, pairs_, true);
+                    }
+                    ++i;
+                    break;
+                case '%':  // newline
+                    result += '\n';
+                    ++i;
+                    break;
+                case '~':  // literal ~
+                    result += '~';
+                    ++i;
+                    break;
+                default:
+                    result += tmpl[i];
+                    break;
+                }
+            } else {
+                result += tmpl[i];
+            }
+        }
+        auto sidx = string_heap_.size();
+        string_heap_.push_back(result);
+        return make_string(sidx);
+    });
     // (error msg) — Create an error value (no longer throws C++ exception)
     primitives_.add("error", [this](const auto& a) -> EvalValue {
         // Ensure error_values_[0] always exists for default errors
