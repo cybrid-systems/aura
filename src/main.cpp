@@ -334,6 +334,29 @@ int main(int argc, char* argv[]) {
                     }
                     continue;
                 }
+
+                // ── Configuration commands ─────────────────────────────
+                if (type == "config") {
+                    auto key_it = cmd.find("key");
+                    auto val_it = cmd.find("value");
+                    if (key_it != cmd.end() && val_it != cmd.end()) {
+                        auto& key = key_it->second;
+                        if (key == "strict") {
+                            cs.set_strict_mode(val_it->second == "true" || val_it->second == "1");
+                            auto val_str = val_it->second == "true" ? "true" : "false";
+                            std::string out = "{\"status\":\"ok\",\"config\":{\""
+                                + json_escape(key) + "\":" + val_str + "}}";
+                            std::println("{}", out);
+                            continue;
+                        }
+                        std::println("{{\"status\":\"error\",\"msg\":\"unknown config key: {}\"}}",
+                                    json_escape(key));
+                    } else {
+                        std::println("{{\"status\":\"error\",\"msg\":\"missing key or value fields\"}}");
+                    }
+                    continue;
+                }
+
                 {
                     auto code_it = cmd.find("code");
                     if (code_it == cmd.end()) {
