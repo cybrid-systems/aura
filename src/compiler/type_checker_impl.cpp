@@ -107,6 +107,14 @@ bool ConstraintSystem::consistent_unify(TypeId t1, TypeId t2) {
         return consistent_unify(f1->ret, f2->ret);
     }
 
+    // Ground type consistency: any two ground/base types are CONSISTENT
+    // (they may need runtime coercion, but the type system allows it)
+    // Ground types: Int, Float, String, Bool, Char
+    if (!reg_.is_var(t1) && !reg_.is_var(t2) && !f1 && !f2) {
+        // Both are concrete non-function types → CONSISTENT
+        return true;
+    }
+
     // Base type mismatch — caller can use coercion
     return false;
 }
@@ -163,6 +171,7 @@ void InferenceEngine::init_primitive_env() {
     auto Int = reg_.int_type();
     auto Bool = reg_.bool_type();
     auto Float = reg_.register_type(TypeTag::FLOAT, "Float");
+    (void)Float;
     auto String = reg_.string_type();
     auto Dyn = reg_.dynamic_type();
     auto Void = reg_.void_type();
@@ -579,6 +588,13 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
             if (tag0 == TypeTag::INT) cs_.consistent_unify(t0, reg_.lookup_type("Float"));
             if (tag1 == TypeTag::INT) cs_.consistent_unify(t1, reg_.lookup_type("Float"));
             return reg_.lookup_type("Float");
+        }
+
+        // Both concrete but not INT/FLOAT: runtime will coerce to numeric
+        // e.g., (+ "42" 1) → String coerce to Int at runtime
+        if (!reg_.is_var(t0) && !reg_.is_var(t1)) {
+            // Return Int for arithmetic (runtime handles coercion)
+            return reg_.int_type();
         }
 
         // At least one is a type variable: create a fresh result var and constrain

@@ -52,14 +52,17 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                 break;
             }
             case IROpcode::ConstString: {
-                // Store string in the shared string heap so primitives can find it
-                auto& heap = const_cast<std::vector<std::string>&>(primitives_.string_heap());
-                auto sidx = heap.size();
-                if (ops[1] < module_.string_pool.size())
-                    heap.push_back(module_.string_pool[ops[1]]);
-                else
-                    heap.push_back("");
-                locals[ops[0]] = make_string(sidx);
+                // Store string in both heaps: primitives (for primitives) and local (for coercion)
+                auto& prim_heap = const_cast<std::vector<std::string>&>(primitives_.string_heap());
+                auto prim_idx = prim_heap.size();
+                if (ops[1] < module_.string_pool.size()) {
+                    prim_heap.push_back(module_.string_pool[ops[1]]);
+                    string_heap_.push_back(module_.string_pool[ops[1]]);
+                } else {
+                    prim_heap.push_back("");
+                    string_heap_.push_back("");
+                }
+                locals[ops[0]] = make_string(prim_idx);
                 break;
             }
 
@@ -85,45 +88,109 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                 break;
 
             case IROpcode::Add: {
+                auto coerce_i = [&](const types::EvalValue& v) -> std::int64_t {
+                    if (is_int(v)) return as_int(v);
+                    if (is_float(v)) return static_cast<std::int64_t>(as_float(v));
+                    if (is_string(v)) {
+                        auto idx = as_string_idx(v);
+                        if (idx < string_heap_.size()) {
+                            try { return static_cast<std::int64_t>(std::stoll(string_heap_[idx])); }
+                            catch (...) { return 0; }
+                        }
+                    }
+                    if (is_bool(v)) return as_bool(v) ? 1 : 0;
+                    return 0;
+                };
+                auto coerce_f = [&](const types::EvalValue& v) -> double {
+                    if (is_float(v)) return as_float(v);
+                    return static_cast<double>(coerce_i(v));
+                };
                 auto& a = locals[ops[1]]; auto& b = locals[ops[2]];
-                if (is_float(a) || is_float(b)) {
-                    double x = is_float(a) ? as_float(a) : static_cast<double>(as_int(a));
-                    double y = is_float(b) ? as_float(b) : static_cast<double>(as_int(b));
-                    locals[ops[0]] = make_float(x + y);
-                } else
-                    locals[ops[0]] = make_int(as_int(a) + as_int(b));
+                if (is_float(a) || is_float(b))
+                    locals[ops[0]] = make_float(coerce_f(a) + coerce_f(b));
+                else
+                    locals[ops[0]] = make_int(coerce_i(a) + coerce_i(b));
                 break;
             }
             case IROpcode::Sub: {
+                auto coerce_i = [&](const types::EvalValue& v) -> std::int64_t {
+                    if (is_int(v)) return as_int(v);
+                    if (is_float(v)) return static_cast<std::int64_t>(as_float(v));
+                    if (is_string(v)) {
+                        auto idx = as_string_idx(v);
+                        if (idx < string_heap_.size()) {
+                            try { return static_cast<std::int64_t>(std::stoll(string_heap_[idx])); }
+                            catch (...) { return 0; }
+                        }
+                    }
+                    if (is_bool(v)) return as_bool(v) ? 1 : 0;
+                    return 0;
+                };
+                auto coerce_f = [&](const types::EvalValue& v) -> double {
+                    if (is_float(v)) return as_float(v);
+                    return static_cast<double>(coerce_i(v));
+                };
                 auto& a = locals[ops[1]]; auto& b = locals[ops[2]];
-                if (is_float(a) || is_float(b)) {
-                    double x = is_float(a) ? as_float(a) : static_cast<double>(as_int(a));
-                    double y = is_float(b) ? as_float(b) : static_cast<double>(as_int(b));
-                    locals[ops[0]] = make_float(x - y);
-                } else
-                    locals[ops[0]] = make_int(as_int(a) - as_int(b));
+                if (is_float(a) || is_float(b))
+                    locals[ops[0]] = make_float(coerce_f(a) - coerce_f(b));
+                else
+                    locals[ops[0]] = make_int(coerce_i(a) - coerce_i(b));
                 break;
             }
             case IROpcode::Mul: {
+                auto coerce_i = [&](const types::EvalValue& v) -> std::int64_t {
+                    if (is_int(v)) return as_int(v);
+                    if (is_float(v)) return static_cast<std::int64_t>(as_float(v));
+                    if (is_string(v)) {
+                        auto idx = as_string_idx(v);
+                        if (idx < string_heap_.size()) {
+                            try { return static_cast<std::int64_t>(std::stoll(string_heap_[idx])); }
+                            catch (...) { return 0; }
+                        }
+                    }
+                    if (is_bool(v)) return as_bool(v) ? 1 : 0;
+                    return 0;
+                };
+                auto coerce_f = [&](const types::EvalValue& v) -> double {
+                    if (is_float(v)) return as_float(v);
+                    return static_cast<double>(coerce_i(v));
+                };
                 auto& a = locals[ops[1]]; auto& b = locals[ops[2]];
-                if (is_float(a) || is_float(b)) {
-                    double x = is_float(a) ? as_float(a) : static_cast<double>(as_int(a));
-                    double y = is_float(b) ? as_float(b) : static_cast<double>(as_int(b));
-                    locals[ops[0]] = make_float(x * y);
-                } else
-                    locals[ops[0]] = make_int(as_int(a) * as_int(b));
+                if (is_float(a) || is_float(b))
+                    locals[ops[0]] = make_float(coerce_f(a) * coerce_f(b));
+                else
+                    locals[ops[0]] = make_int(coerce_i(a) * coerce_i(b));
                 break;
             }
             case IROpcode::Div: {
+                auto coerce_i = [&](const types::EvalValue& v) -> std::int64_t {
+                    if (is_int(v)) return as_int(v);
+                    if (is_float(v)) return static_cast<std::int64_t>(as_float(v));
+                    if (is_string(v)) {
+                        auto idx = as_string_idx(v);
+                        if (idx < string_heap_.size()) {
+                            try { return static_cast<std::int64_t>(std::stoll(string_heap_[idx])); }
+                            catch (...) { return 0; }
+                        }
+                    }
+                    if (is_bool(v)) return as_bool(v) ? 1 : 0;
+                    return 0;
+                };
+                auto coerce_f = [&](const types::EvalValue& v) -> double {
+                    if (is_float(v)) return as_float(v);
+                    return static_cast<double>(coerce_i(v));
+                };
                 auto& a = locals[ops[1]]; auto& b = locals[ops[2]];
                 if (is_float(a) || is_float(b)) {
-                    double x = is_float(a) ? as_float(a) : static_cast<double>(as_int(a));
-                    double y = is_float(b) ? as_float(b) : static_cast<double>(as_int(b));
-                    if (y == 0.0) return std::unexpected(Diagnostic{ErrorKind::DivisionByZero, "division by zero"});
-                    locals[ops[0]] = make_float(x / y);
+                    auto y = coerce_f(b);
+                    if (y == 0.0)
+                        return std::unexpected(Diagnostic{ErrorKind::DivisionByZero, "division by zero"});
+                    locals[ops[0]] = make_float(coerce_f(a) / y);
                 } else {
-                    if (as_int(b) == 0) return std::unexpected(Diagnostic{ErrorKind::DivisionByZero, "division by zero"});
-                    locals[ops[0]] = make_int(as_int(a) / as_int(b));
+                    auto y = coerce_i(b);
+                    if (y == 0)
+                        return std::unexpected(Diagnostic{ErrorKind::DivisionByZero, "division by zero"});
+                    locals[ops[0]] = make_int(coerce_i(a) / y);
                 }
                 break;
             }
