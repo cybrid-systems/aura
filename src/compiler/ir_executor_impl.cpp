@@ -27,6 +27,25 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
     if (func.blocks.empty())
         return std::unexpected(Diagnostic{ErrorKind::IRNoReturn, "empty function"});
 
+    // ── Coercion helpers shared across arithmetic opcodes ────────
+    auto coerce_i = [&](const types::EvalValue& v) -> std::int64_t {
+        if (is_int(v)) return as_int(v);
+        if (is_float(v)) return static_cast<std::int64_t>(as_float(v));
+        if (is_string(v)) {
+            auto idx = as_string_idx(v);
+            if (idx < string_heap_.size()) {
+                try { return static_cast<std::int64_t>(std::stoll(string_heap_[idx])); }
+                catch (...) { return 0; }
+            }
+        }
+        if (is_bool(v)) return as_bool(v) ? 1 : 0;
+        return 0;
+    };
+    auto coerce_f = [&](const types::EvalValue& v) -> double {
+        if (is_float(v)) return as_float(v);
+        return static_cast<double>(coerce_i(v));
+    };
+
     std::uint32_t current = func.entry_block;
 
     while (current < func.blocks.size()) {
@@ -34,6 +53,19 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
 
         for (auto& instr : block.instructions) {
             auto& ops = instr.operands;
+
+            // ── Operand validation via kOpcodeInfo ─────────────────
+            if constexpr (true) {
+                auto idx = static_cast<std::size_t>(instr.opcode);
+                if (idx < std::size(kOpcodeInfo)) {
+                    auto& info = kOpcodeInfo[idx];
+                    if (info.has_result_slot && ops[0] >= locals.size()) {
+                        return std::unexpected(Diagnostic{
+                            ErrorKind::IRCorruption,
+                            std::format("{}: result slot {} out of bounds", info.name, ops[0])});
+                    }
+                }
+            }
 
             switch (instr.opcode) {
             case IROpcode::Nop:
@@ -88,23 +120,6 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                 break;
 
             case IROpcode::Add: {
-                auto coerce_i = [&](const types::EvalValue& v) -> std::int64_t {
-                    if (is_int(v)) return as_int(v);
-                    if (is_float(v)) return static_cast<std::int64_t>(as_float(v));
-                    if (is_string(v)) {
-                        auto idx = as_string_idx(v);
-                        if (idx < string_heap_.size()) {
-                            try { return static_cast<std::int64_t>(std::stoll(string_heap_[idx])); }
-                            catch (...) { return 0; }
-                        }
-                    }
-                    if (is_bool(v)) return as_bool(v) ? 1 : 0;
-                    return 0;
-                };
-                auto coerce_f = [&](const types::EvalValue& v) -> double {
-                    if (is_float(v)) return as_float(v);
-                    return static_cast<double>(coerce_i(v));
-                };
                 auto& a = locals[ops[1]]; auto& b = locals[ops[2]];
                 if (is_float(a) || is_float(b))
                     locals[ops[0]] = make_float(coerce_f(a) + coerce_f(b));
@@ -113,23 +128,6 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                 break;
             }
             case IROpcode::Sub: {
-                auto coerce_i = [&](const types::EvalValue& v) -> std::int64_t {
-                    if (is_int(v)) return as_int(v);
-                    if (is_float(v)) return static_cast<std::int64_t>(as_float(v));
-                    if (is_string(v)) {
-                        auto idx = as_string_idx(v);
-                        if (idx < string_heap_.size()) {
-                            try { return static_cast<std::int64_t>(std::stoll(string_heap_[idx])); }
-                            catch (...) { return 0; }
-                        }
-                    }
-                    if (is_bool(v)) return as_bool(v) ? 1 : 0;
-                    return 0;
-                };
-                auto coerce_f = [&](const types::EvalValue& v) -> double {
-                    if (is_float(v)) return as_float(v);
-                    return static_cast<double>(coerce_i(v));
-                };
                 auto& a = locals[ops[1]]; auto& b = locals[ops[2]];
                 if (is_float(a) || is_float(b))
                     locals[ops[0]] = make_float(coerce_f(a) - coerce_f(b));
@@ -138,23 +136,6 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                 break;
             }
             case IROpcode::Mul: {
-                auto coerce_i = [&](const types::EvalValue& v) -> std::int64_t {
-                    if (is_int(v)) return as_int(v);
-                    if (is_float(v)) return static_cast<std::int64_t>(as_float(v));
-                    if (is_string(v)) {
-                        auto idx = as_string_idx(v);
-                        if (idx < string_heap_.size()) {
-                            try { return static_cast<std::int64_t>(std::stoll(string_heap_[idx])); }
-                            catch (...) { return 0; }
-                        }
-                    }
-                    if (is_bool(v)) return as_bool(v) ? 1 : 0;
-                    return 0;
-                };
-                auto coerce_f = [&](const types::EvalValue& v) -> double {
-                    if (is_float(v)) return as_float(v);
-                    return static_cast<double>(coerce_i(v));
-                };
                 auto& a = locals[ops[1]]; auto& b = locals[ops[2]];
                 if (is_float(a) || is_float(b))
                     locals[ops[0]] = make_float(coerce_f(a) * coerce_f(b));
@@ -163,23 +144,6 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                 break;
             }
             case IROpcode::Div: {
-                auto coerce_i = [&](const types::EvalValue& v) -> std::int64_t {
-                    if (is_int(v)) return as_int(v);
-                    if (is_float(v)) return static_cast<std::int64_t>(as_float(v));
-                    if (is_string(v)) {
-                        auto idx = as_string_idx(v);
-                        if (idx < string_heap_.size()) {
-                            try { return static_cast<std::int64_t>(std::stoll(string_heap_[idx])); }
-                            catch (...) { return 0; }
-                        }
-                    }
-                    if (is_bool(v)) return as_bool(v) ? 1 : 0;
-                    return 0;
-                };
-                auto coerce_f = [&](const types::EvalValue& v) -> double {
-                    if (is_float(v)) return as_float(v);
-                    return static_cast<double>(coerce_i(v));
-                };
                 auto& a = locals[ops[1]]; auto& b = locals[ops[2]];
                 if (is_float(a) || is_float(b)) {
                     auto y = coerce_f(b);
