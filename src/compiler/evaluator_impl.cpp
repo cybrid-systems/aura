@@ -2769,8 +2769,23 @@ std::optional<EvalValue> Evaluator::apply_closure(
         Env ne(cl.env ? *cl.env : Env());
         ne.set_primitives(&primitives_);
         ne.set_cells(&cells_);
-        for (std::size_t i = 0; i < cl.params.size() && i < args.size(); ++i)
-            ne.bind(cl.params[i], args[i]);
+        if (cl.dotted) {
+            // Dotted rest param: bind named params, collect rest into list
+            std::size_t named_count = cl.params.size() - 1;
+            for (std::size_t i = 0; i < named_count && i < args.size(); ++i)
+                ne.bind(cl.params[i], args[i]);
+            // Collect remaining args into a pair list for the rest param
+            types::EvalValue rest = make_void();
+            for (std::size_t i = args.size(); i > named_count; --i) {
+                auto pid = pairs_.size();
+                pairs_.push_back({args[i - 1], rest});
+                rest = make_pair(pid);
+            }
+            ne.bind(cl.params.back(), rest);
+        } else {
+            for (std::size_t i = 0; i < cl.params.size() && i < args.size(); ++i)
+                ne.bind(cl.params[i], args[i]);
+        }
         if (cl.flat) {
             auto r = eval_flat(*cl.flat, *cl.pool, cl.body_id, ne);
             if (r) return *r;
@@ -3479,10 +3494,12 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
             // Inline lambda (arg evals are recursive; body is tail)
             if (callee.tag == aura::ast::NodeTag::Lambda) {
                 auto pspan = callee.params;
-                // Evaluate args first (against eval_env) before creating tail env
+                bool dotted = callee.int_value != 0;
+                std::size_t named_count = dotted && !pspan.empty() ? pspan.size() - 1 : pspan.size();
+                // Evaluate named args
                 std::vector<EvalValue> iargs;
-                iargs.reserve(pspan.size());
-                for (std::size_t i = 0; i < pspan.size() && i+1 < v.children.size(); ++i) {
+                iargs.reserve(named_count);
+                for (std::size_t i = 0; i < named_count && i+1 < v.children.size(); ++i) {
                     auto ar = eval_flat(*f, *p, v.child(i+1), eval_env);
                     if (!ar) return ar;
                     iargs.push_back(*ar);
@@ -3492,6 +3509,18 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                 tail_env->set_cells(&cells_);
                 for (std::size_t i = 0; i < iargs.size(); ++i) {
                     tail_env->bind(std::string(p->resolve(pspan[i])), std::move(iargs[i]));
+                }
+                // Dotted rest: collect remaining args into a pair list
+                if (dotted && !pspan.empty()) {
+                    types::EvalValue rest = make_void();
+                    for (std::size_t i = v.children.size() - 1; i > named_count; --i) {
+                        auto ar = eval_flat(*f, *p, v.child(i), eval_env);
+                        if (!ar) return ar;
+                        auto pid = pairs_.size();
+                        pairs_.push_back({*ar, rest});
+                        rest = make_pair(pid);
+                    }
+                    tail_env->bind(std::string(p->resolve(pspan.back())), rest);
                 }
                 auto body_id = callee.children.empty() ? aura::ast::NULL_NODE : callee.child(0);
                 if (body_id != aura::ast::NULL_NODE)
@@ -3699,10 +3728,11 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                 if (it == closures_.end())
                     return std::unexpected(Diagnostic{ErrorKind::InvalidClosure, "eval_flat: invalid closure"});
                 auto& cl = it->second;
-                // Evaluate args first (against eval_env) before creating tail env
+                // Evaluate named args first
+                std::size_t named_count = cl.dotted && !cl.params.empty() ? cl.params.size() - 1 : cl.params.size();
                 std::vector<EvalValue> cargs;
-                cargs.reserve(cl.params.size());
-                for (std::size_t i = 0; i < cl.params.size() && i+1 < v.children.size(); ++i) {
+                cargs.reserve(named_count);
+                for (std::size_t i = 0; i < named_count && i+1 < v.children.size(); ++i) {
                     auto ar = eval_flat(*f, *p, v.child(i+1), eval_env);
                     if (!ar) return ar;
                     if (is_error(*ar)) return ar;
@@ -3713,6 +3743,19 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                 tail_env->set_cells(&cells_);
                 for (std::size_t i = 0; i < cargs.size(); ++i) {
                     tail_env->bind(cl.params[i], std::move(cargs[i]));
+                }
+                // Dotted rest: collect remaining args into a pair list
+                if (cl.dotted && !cl.params.empty()) {
+                    types::EvalValue rest = make_void();
+                    for (std::size_t i = v.children.size() - 1; i > named_count; --i) {
+                        auto ar = eval_flat(*f, *p, v.child(i), eval_env);
+                        if (!ar) return ar;
+                        if (is_error(*ar)) return ar;
+                        auto pid = pairs_.size();
+                        pairs_.push_back({*ar, rest});
+                        rest = make_pair(pid);
+                    }
+                    tail_env->bind(cl.params.back(), rest);
                 }
                 if (cl.body_id != aura::ast::NULL_NODE)
                     return eval_flat(*cl.flat, cl.pool ? *cl.pool : *p, cl.body_id, *tail_env);
@@ -3751,10 +3794,11 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
             params.reserve(pspan.size());
             for (auto pid : pspan)
                 params.push_back(std::string(p->resolve(pid)));
+            bool dotted = v.int_value != 0;
             auto* cap = copy_env(*current_env);
             auto cid = next_id();
             auto body_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
-            closures_[cid] = Closure{std::move(params), f, p, body_id, cap};
+            closures_[cid] = Closure{std::move(params), f, p, body_id, cap, dotted};
             return make_closure(cid);
         }
         case aura::ast::NodeTag::Let:

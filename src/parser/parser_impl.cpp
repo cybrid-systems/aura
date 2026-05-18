@@ -222,7 +222,18 @@ NodeId FlatParser::parse_lambda() {
     if (lexer_->consume().kind != TokenKind::LParen) return NULL_NODE;
 
     std::vector<SymId> params;
+    bool dotted = false;
     while (lexer_->peek().kind != TokenKind::RParen) {
+        // Check for dotted rest parameter: (lambda (x . rest) body)
+        if (lexer_->peek().kind == TokenKind::Dot) {
+            lexer_->consume(); // consume '.'
+            if (lexer_->peek().kind == TokenKind::RParen) { dotted = true; break; }  // (lambda rest .) = all args
+            auto rest = lexer_->consume();
+            if (rest.kind != TokenKind::Identifier) return NULL_NODE;
+            params.push_back(pool_.intern(std::string(rest.text)));
+            dotted = true;
+            break;
+        }
         auto t = lexer_->consume();
         if (t.kind != TokenKind::Identifier) return NULL_NODE;
         params.push_back(pool_.intern(std::string(t.text)));
@@ -232,7 +243,7 @@ NodeId FlatParser::parse_lambda() {
     auto body = parse_expr();
     if (body == NULL_NODE) return NULL_NODE;
     lexer_->consume(); // ')'
-    auto lid = flat_.add_lambda(params, body); flat_.set_loc(lid, tok.line, tok.column); return lid;
+    auto lid = flat_.add_lambda(params, body, dotted); flat_.set_loc(lid, tok.line, tok.column); return lid;
 }
 
 NodeId FlatParser::parse_define() {
@@ -244,7 +255,18 @@ NodeId FlatParser::parse_define() {
         auto fn = lexer_->consume();
         if (fn.kind != TokenKind::Identifier) { skip_rparen(); return NULL_NODE; }
         std::vector<SymId> params;
+        bool dotted = false;
         while (lexer_->peek().kind != TokenKind::RParen) {
+            // Check for dotted rest parameter: (define (f . rest) body)
+            if (lexer_->peek().kind == TokenKind::Dot) {
+                lexer_->consume(); // consume '.'
+                if (lexer_->peek().kind == TokenKind::RParen) { dotted = true; break; }
+                auto rest = lexer_->consume();
+                if (rest.kind != TokenKind::Identifier) { skip_rparen(); return NULL_NODE; }
+                params.push_back(pool_.intern(std::string(rest.text)));
+                dotted = true;
+                break;
+            }
             auto p = lexer_->consume();
             if (p.kind != TokenKind::Identifier) { skip_rparen(); return NULL_NODE; }
             params.push_back(pool_.intern(std::string(p.text)));
@@ -261,7 +283,7 @@ NodeId FlatParser::parse_define() {
         if (body_exprs.empty()) return NULL_NODE;
         NodeId body = (body_exprs.size() == 1) ? body_exprs[0]
                     : flat_.add_begin(body_exprs);
-        auto lambda = flat_.add_lambda(params, body);
+        auto lambda = flat_.add_lambda(params, body, dotted);
         return flat_.add_define(pool_.intern(std::string(fn.text)), lambda);
     }
     // Normal: (define name value)

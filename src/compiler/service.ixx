@@ -69,6 +69,11 @@ public:
             // MacroDef cannot be lowered to IR
             if (nv.tag == aura::ast::NodeTag::MacroDef) return true;
 
+            // Dotted rest lambda cannot be lowered to IR (rest param is
+            // lowered as single Arg slot, not as pair list)
+            if (nv.tag == aura::ast::NodeTag::Lambda && nv.int_value != 0)
+                return true;
+
 
 
             if (nv.tag == aura::ast::NodeTag::Call) {

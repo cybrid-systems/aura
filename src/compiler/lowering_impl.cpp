@@ -373,6 +373,7 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
         func.blocks.push_back({0, {}, {}});
         func.params = param_names;
         func.arg_count = static_cast<std::uint32_t>(param_names.size());
+        func.variadic = (v.int_value != 0);
 
         // Save parent state
         auto* saved_func = state.cur_func;

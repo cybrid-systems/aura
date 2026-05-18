@@ -108,6 +108,7 @@ export struct IRFunction {
     std::vector<std::string> free_vars;
     std::uint32_t local_count = 0;  // number of local slots needed
     std::uint32_t arg_count = 0;    // number of arguments
+    bool variadic = false;          // dotted rest param
 };
 
 // Closure bridge data: original tree-walker info for IR closures.
