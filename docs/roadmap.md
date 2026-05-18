@@ -1,6 +1,6 @@
 # Aura — 路线图
 
-**更新：2026-05-18** — 经过两轮 sprint（CaaS + 增量编译 + 语言打磨）后重新评估。
+**更新：2026-05-19** — 类型系统增强计划（P0–P4）全部完成。全量类型信息流入 IR 管线。
 
 ---
 
@@ -10,13 +10,13 @@
 
 | 维度 | 分数 | 说明 |
 |------|------|------|
-| 语言核心求值 | 🟢 8/10 | tree-walker + IR 双路径稳定，IR 桥接器修复，pair 原生指令，TCO |
-| 编译器基础设施 | 🟢 8/10 | ArenaGroup / 增量 / 磁盘缓存 / 热替换 / 依赖级联 / 磁盘缓存 |
-| 标准库覆盖 | 🟡 5/10 | 12 个文件 ~450 行，char/string/format 补齐，缺少 string-split |
-| 测试覆盖 | 🟡 4/10 | integ 87/87，unit 61/61，smoke 5/5，仍缺 EDSL 管线测试 |
-| 错误处理 | 🟡 4/10 | Parser 多错误累积 + line:column，DCE 后显示所有错误 |
-| 类型系统 | 🟡 5/10 | L6 渐进类型 + occurrence typing + warnings-only 模式 |
-| 文档 | 🟡 4/10 | README + roadmap + tutorial + known_issues + 设计文档 |
+| 语言核心求值 | 🟢 9/10 | tree-walker + IR 双路径稳定，IR 桥接器修复，pair 原生指令，TCO，format |
+| 类型系统 | 🟢 8/10 | L6 + strict 模式 + 增量缓存 + Let-Poly + IR 类型特化 pass，缺 full type check |
+| 编译器基础设施 | 🟢 8/10 | ArenaGroup / 增量 / 磁盘缓存 / 热替换 / 依赖级联 |
+| 标准库覆盖 | 🟡 5/10 | 12 个文件 ~650 行，缺 string-split, format 扩展 |
+| 测试覆盖 | 🟡 5/10 | integ 87/87，unit 74/74，smoke 5/5，bench 44/44，bash 106/106 |
+| 错误处理 | 🟡 5/10 | Parser 多错误累积 + line:column，try/catch IR 待做 |
+| 文档 | 🟡 5/10 | README + roadmap + tutorial + known_issues + 设计文档 |
 | AI agent 集成 | 🟡 6/10 | EDSL 管线完整，DeepSeek API 实测通过，空响应保护 |
 
 ### 已实现（完整清单）
@@ -31,12 +31,33 @@
 - try / catch / raise (仅 tree-walker，无 IR 指令)
 - quasiquote / unquote / unquote-splicing
 - Macro system (defmacro, recursive expansion, gensym)
+- `format` 原语 (SRFI-28 子集: ~a ~s ~% ~~)
+- char predicates + string operations (char=?, char<?, char->integer, integer->char, string-split, string-trim, string-pad, string-reverse)
 
 **数据结构**
 - Pair/list (MakePair/Car/Cdr IR 原生指令)
 - Vector (make-vector, vector-ref, vector-set!, vector->list, list->vector)
 - Hash table (hash, hash-ref, hash-set!, hash-length, hash-keys, hash-values, hash-remove!)
 - Standard library hash-set / hash-merge / hash->list / alist->hash
+
+**类型系统（全量）**
+- `--strict` 模式 — TypeCheckWrap 从 warning-only 升级为可开关的严格模式
+  - `set_strict_mode(bool)` + `strict_mode_` 字段
+  - `--serve` `config strict true/false` 命令
+  - 默认为 false，不破坏现有 tests
+- **增量类型缓存** — `synthesize_flat` 结果写入 `flat.type_id(id)`
+  - `mark_subtree_dirty` 自动触发重检查
+- **类型信息流入 IR** — `IRInstruction.type_id` 可选字段
+  - Lowering 时从 `flat.type_id(id)` 写入 `inst.type_id`
+  - 0=dynamic 向后兼容
+- **IRInterpreter 运行时类型断言** — strict 模式下做 runtime 类型校验
+- **Let-Polymorphism** — `synthesize_flat_let` 泛化绑定 → `Forall`
+  - `synthesize_flat_var` `instantiate_all` 替换自由变量
+  - 递归 normalize 处理嵌套 forall
+  - 只在 strict 模式下启用
+- **TypeSpecializationPass** — 类型感知的 IR pass
+  - 运行位置: `lower → [TypeSpecialization] → ComputeKind → Arity → ConstFold → execute`
+  - 了解已知类型，解除 coercion 冗余，死代码消除
 
 **增量编译器**
 - IR pipeline (37 opcodes, const folding, compute-kind, arity check)
@@ -48,21 +69,22 @@
 - ArenaGroup — 多模块独立 arena 管理
 - mmap 磁盘缓存（`~/.cache/aura/modules/`）
 - Hot-swap — 运行时替换已缓存函数
+- 闭包桥接 lambda body source 存备份, fallback 时 re-parse
 
-**标准库（10 files, ~400 lines）**
+**标准库（10 files, ~650 lines）**
 - `hash.aura` — hash-set, hash-ref, hash->list, hash-merge, alist->hash
 - `combinators.aura` — compose, curry, flip, complement, const, identity
 - `maybe.aura` — maybe-ref, maybe-default, map-maybe, filter-maybe
 - `csv.aura` — csv-parse (handles quoted fields)
 - `set.aura` — set, set-add, set-union (variadic API)
 - `io.aura` — read-lines, copy-file, move-file, delete-file, directory-files
-- `list.aura` — foldr, zip, zip3, take-while, drop-while, partition, sort, range, sum, product, last, flatten, intersperse
+- `list.aura` — foldr, zip, zip3, take-while, drop-while, partition, sort, range, sum, product, last, flatten, intersperse, member?
 - `math.aura` — sin, cos, tan, log, pow, sqrt, floor, ceil, round, abs
 - `string.aura` — string-split, string-trim, string-pad, string-reverse
 - `test.aura` — check, check=, test-suite, run-tests
 
 **服务**
-- `--serve`: eval / define / compile / module / fmt JSON protocol
+- `--serve`: eval / define / compile / module / fmt / config JSON protocol
 - `--serve`: set-code / query:* / mutate:* / typecheck-current / eval-current EDSL
 - `--serve`: AI agent 双阶段工作流（生成代码 → 编译 → 测试 → 修复循环）
 - `--serve`: 函数热替换 + 依赖追踪
@@ -75,30 +97,31 @@
 
 | # | 项 | 说明 | 工作量 | 状态 |
 |---|-----|------|--------|------|
-| 1 | **`--strict` 模式** | `TypeCheckWrap` 从 warning-only 升级为可开关的严格模式 | 2h | ✅ 已实现 |
-| 2 | **增量类型缓存** | `synthesize_flat` 结果写入 `flat.type_id(id)`，dirty 节点自动重检查 | 2h | 🔴 |
-| 3 | **arity 检查完全修复** | 恢复 `eval()` 中 `ar.run(ir_mod)`，修复 `resolve_callee` Primitive 误报 | 3h | ⚡ |
+| 1 | **`--strict` 模式** | TypeCheckWrap + config strict command | 2h | ✅ |
+| 2 | **增量类型缓存** | flat.type_id(id) + dirty 自动重检查 | 2h | ✅ |
+| 3 | **arity 检查完全修复** | 恢复 `ar.run(ir_mod)`，修复 `resolve_callee` Primitive 误报 | 3h | ✅ |
+| - | **require 内缓存函数** | 修复 cached 函数中 require 的空绑定 | 2h | ✅ |
 
-### P1 — 短期（提升可靠性和体验，支持 1000 行项目）
+### P1 — 短期
 
 #### 类型系统增强
 
-| # | 项 | 说明 | 工作量 | 前置 |
+| # | 项 | 说明 | 工作量 | 状态 |
 |---|-----|------|--------|------|
-| 4 | **类型信息流入 IR** | `IRInstruction.type_id` 可选字段 + lowering 时写入 + IRInterpreter 运行时断言 | 1-2d | P0#1 |
-| 5 | **Let-Poly 启用** | `synthesize_flat_let` 泛化 + `synthesize_flat_var` 实例化 forall | 1d | P0#2 |
-| 6 | **PassManager 集成** | TypeSpecializationPass — 类型感知常量折叠/死代码消除 | 1d | #4 |
-| 7 | **`--serve strict` 命令** | 运行时切换严格模式，EDSL 管线实时反馈 | 0.5d | #1 |
+| 4 | **类型信息流入 IR** | `IRInstruction.type_id` + lowering 写入 | 1-2d | ✅ |
+| 5 | **Let-Poly 启用** | generalize + instantiate forall | 1d | ✅ |
+| 6 | **TypeSpecializationPass** | 类型感知常量折叠/死代码消除 | 1d | ✅ |
+| 7 | **`--serve strict` 命令** | 运行时切换严格模式 | 0.5d | ✅ |
 
 #### 基础设施
 
-| # | 项 | 说明 | 工作量 |
-|---|-----|------|--------|
-| 8 | **Parser 错误恢复** | 多错误累积（已部分实现），`(export ...)` 多模块导出链 | 3h |
-| 9 | **proper Diagnostics** | 集中化错误信息，行号/列号/原因/建议 | 2h |
-| 10 | **Benchmark 基线** | 对比 IR vs tree-walker 性能 | 2h |
-| 11 | **标准库 v2** | 增加到 15-20 个文件，覆盖常见需求 | 8h |
-| 12 | **try/catch IR 指令** | 消除一个主要 fallback 路径 | 4h |
+| # | 项 | 说明 | 工作量 | 状态 |
+|---|-----|------|--------|------|
+| 8 | **Parser 错误恢复** | 多错误累积 + 跳过 malformed | 3h | ✅ |
+| 9 | **proper Diagnostics** | 集中化错误信息，行号/列号/原因/建议 | 2h | 🔴 |
+| 10 | **Benchmark 基线** | 对比 IR vs tree-walker 性能 | 2h | 🔴 |
+| 11 | **标准库 v2** | 增加到 15-20 个文件，覆盖常见需求 | 8h | 🔴 |
+| 12 | **try/catch IR 指令** | 消除一个主要 fallback 路径 | 4h | 🔴 |
 
 ### P2 — 中期（CaaS 生产化）
 
@@ -116,94 +139,79 @@
 | 17 | **自举** | 用 Aura 写 Aura 编译器 |
 | 18 | **GC 或引用计数** | 替换 arena-only 内存管理 |
 | 19 | **FFI** | 调用 C/Rust 库 |
-| 20 | **完整的类型系统** | 完整的类型检查 + 类型驱动优化 |
+| 20 | **完整的类型系统** | 全类型检查 + 类型驱动优化 |
 
 ---
 
-## 类型系统增强路线图（详细）
+## 已完成里程碑
 
-### Phase 0: `--strict` 模式（P0#1）
-
-在 `CompilerService::eval()` 中增加最简开关：
+### 类型系统增强（P0–P4）✅ 2026-05-19
 
 ```
-eval():
-  TypeCheckWrap tc_pass
-  tc_pass.check_before_lowering(...)
-+ if (strict_mode_ && tc_pass.has_type_error()) return error
+Phase 0   → ―strict 模式             [2b1de7e] ✅
+Phase 1   → 增量类型缓存              [2b1de7e] ✅ (同一 commit)
+Phase 2   → 类型信息流入 IR            [9e10331] ✅
+Phase 2b  → IR 运行时类型断言          [e9c53ab] ✅
+Phase 3   → Let-Polymorphism          [4fb9783] ✅
+Phase 4   → TypeSpecializationPass    [6795204] ✅
 ```
 
-- 新增 `set_strict_mode(bool)` + `strict_mode_` 字段
-- `--serve` 新增 `config strict true` 命令
-- 改造 `TypeCheckWrap::has_error()` —— 当前永远返回 `false`
-- strict 默认为 false，不破坏现有 tests
+### IR 管线全面覆盖 ✅ 2026-05-17
 
-### Phase 1: 增量类型缓存（P0#2）
-
-现状：`dirty_` 存在，`synthesize_flat` 每次检查 `is_dirty(id)`，但只跳过 synthesis，不缓存结果。
-
-动作：
-- 在 `synthesize_flat` 每个分支末尾写 `flat.set_type_id(id, result.index)`
-- `infer_flat()` 的 `cs_.normalize()` 后也写入
-- 已有的 `mark_subtree_dirty` 自动触发重检查
-
-### Phase 2: 类型信息流入 IR（P1#4）
-
-- `IRInstruction` 增加 `uint32_t type_id = 0`（0=dynamic，向后兼容）
-- Lowering 时从 `flat.type_id(id)` 写入 `inst.type_id`
-- IRInterpreter 在 strict 模式下做运行时类型断言
-
-### Phase 3: Let-Poly（P1#5）
-
-- `synthesize_flat_let` 对 let 绑定做泛化（自由类型变量 → Forall）
-- `synthesize_flat_var` 已有 `instantiate_all` 骨架，替换自由变量
-- 只在 strict 模式下启用
-
-### Phase 4: PassManager 集成（P1#6）
-
-- 新建 `TypeSpecializationPass`（参考 `ConstantFoldingWrap` 写法）
-- 类型感知优化：已知类型解除 coercion 冗余、死代码消除
-- 插入 IR 管线：`lower → [TypeSpecialization] → ComputeKind → Arity → ConstFold → execute`
+```
+算术 → IR       比较 → IR        if → IR        let → IR
+lambda → IR      map/filter/foldl → IR (+ 闭包桥接)
+cons/car/cdr →  MakePair/Car/Cdr 原生指令
+Quote/Pair → IR (ConstVoid + (cons ...) 链展开)
+format → IR     char ops → IR    hash/vector/string → IR
+const folding → IR pass
+```
 
 ## 测试状态
 
 ```
-smoke:      5/5  ✅
-integ:     87/87 ✅
-unit:      61/61 ✅
-bash:     106/106 ✅
-AI Agent:   —   ✅ (DeepSeek v4 Flash, EDSL restore 工作正常)
+smoke:       5/5   ✅
+integ:      87/87  ✅
+unit:       74/74  ✅ (含 TypeChecker 8 新增)
+bash:      106/106 ✅
+bench:      44/44  ✅
+mutation:   varies  ⚠️ (TypeSpecialization 改变常量折叠行为)
+AI Agent:   —      ✅ (DeepSeek v4 Flash, EDSL restore 工作正常)
 ```
 
-## 代码统计（5/18 收盘）
+## 代码统计（5/19 收盘）
 
 ```
 src/core/       ~2,700 行
 src/parser/     ~1,400 行
-src/compiler/   ~10,000 行
-lib/std/        12 files ~450 行 Aura
+src/compiler/   ~12,700 行
+lib/std/        10 files ~650 行 Aura
+tests/          bash 回归 + 3 C++ suites + 集成测试 + 基准 + AI agent
 docs/           tutorial.md + known_issues.md + roadmap.md + 设计文档
-tests/          3 suites + bash 回归 + AI agent EDSL 管线
 ```
 
-## 今天的提交（17 commits）
+## 最近提交
 
 ```
-fcd95e0  ArenaGroup 集成
-e5393e0  模块级增量编译
-1e6fd2b  磁盘缓存
-4dad634  docs 二次翻新（design 仓库）
-2d3abec  类型 coercion + arity 修复
-4de8f9b  递归函数 IR 缓存
-192c1b7  Pair IR 原生指令
-205071f  标准库 P0
-dd69965  Variadic lambda 支持
-49c3e0c  标准库 variadic 重构
-8e313dc  Add 'apply' built-in
-00109a6  Fix hash persistence + REPL env tracking
-338f93d  string->number trim + display/stdout fix
-fbb7a5a  Add char primitives
-b2ae103  Add format primitive (SRFI-28)
-5ba86d1  Parser error recovery
+6795204  Phase 4: TypeSpecializationWrap — type-aware IR pass
+4fb9783  Phase 3: Let-Polymorphism (generalize + instantiate + recursive normalize)
+e9c53ab  Phase 2b: IRInterpreter runtime type assertions (strict mode)
+9e10331  Phase 2: type information flows into IR (IRInstruction.type_id)
+2b1de7e  P0: strict mode for type checker + serve config command
 3cb9a33  Fix recursive function IR caching
+6dfbfb4  Refresh docs after today's fixes
+02681ac  Bridge: save lambda body source for fallback re-parse
+1a9b261  Fix require inside cached functions + disable arity false positive
+e5335d1  Arity diagnostic: add caller name to mismatch message
+cdf6cc9  stdlib: export map, for-each, member? from list.aura
+e4705a8  Update known_issues.md + fix agent empty-response infinite loop
+37f1361  Fix cached function IR issues: string pool, func refs, bridge data
+af04a12  Fix IR closure env capture and closure ID collision
+dbb961c  Fix parse_lambda: handle multiple body expressions
+5ba86d1  Parser error recovery: skip malformed expressions and continue
+0c16afb  Fix unit tests: comparison returns #t/#f, define scope in lowering
+65f2dbe  Add tutorial.md — 10-minute quickstart
+ca6a7d0  Add integration tests: apply, variadic, char, string ops, format
+b2ae103  Add format primitive (SRFI-28 subset: ~a ~s ~% ~~)
+e36895d  Add char predicates + string operations (10 primitives)
 ```
