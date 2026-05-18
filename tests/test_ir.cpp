@@ -152,41 +152,41 @@ int main() {
 
     if (!test_quote()) return 1;
 
-    // Test cases: (input, expected)
-    struct Test { std::string input; std::int64_t expected; };
+    // Test cases: (input, expected_string)
+    struct Test { std::string input; std::string expected; };
     Test tests[] = {
         // Literals and arithmetic
-        {"42", 42},
-        {"(+ 1 2)", 3},
-        {"(* 2 3)", 6},
-        {"(+ 1 (* 2 3))", 7},
-        {"(- 5 3)", 2},
-        {"(/ 6 2)", 3},
+        {"42", "42"},
+        {"(+ 1 2)", "3"},
+        {"(* 2 3)", "6"},
+        {"(+ 1 (* 2 3))", "7"},
+        {"(- 5 3)", "2"},
+        {"(/ 6 2)", "3"},
 
-        // Comparisons
-        {"(= 1 1)", 1},
-        {"(= 1 2)", 0},
-        {"(< 1 2)", 1},
-        {"(> 2 1)", 1},
+        // Comparisons (return #t/#f, consistent with Scheme)
+        {"(= 1 1)", "#t"},
+        {"(= 1 2)", "#f"},
+        {"(< 1 2)", "#t"},
+        {"(> 2 1)", "#t"},
 
         // Conditionals
-        {"(if 1 42 0)", 42},
-        {"(if 0 0 99)", 99},
-        {"(if (> 3 2) 1 0)", 1},
+        {"(if 1 42 0)", "42"},
+        {"(if 0 0 99)", "99"},
+        {"(if (> 3 2) 1 0)", "1"},
 
         // Let bindings
-        {"(let ((x 10)) x)", 10},
-        {"(let ((x 10)) (let ((y 20)) (+ x y)))", 30},
+        {"(let ((x 10)) x)", "10"},
+        {"(let ((x 10)) (let ((y 20)) (+ x y)))", "30"},
 
         // Lambda + application (tree-walker style closures)
-        {"((lambda (x) (* x 2)) 5)", 10},
-        {"((lambda (x y) (+ x y)) 3 4)", 7},
+        {"((lambda (x) (* x 2)) 5)", "10"},
+        {"((lambda (x y) (+ x y)) 3 4)", "7"},
 
         // Closure with free variable
-        {"(let ((x 10)) ((lambda (y) (+ x y)) 5))", 15},
+        {"(let ((x 10)) ((lambda (y) (+ x y)) 5))", "15"},
 
         // Nested let + lambda
-        {"(let ((x 2)) (let ((f (lambda (y) (* x y)))) (f 3)))", 6},
+        {"(let ((x 2)) (let ((f (lambda (y) (* x y)))) (f 3)))", "6"},
     };
 
     int passed = 0, failed = 0;
@@ -207,13 +207,11 @@ int main() {
         aura::compiler::IRInterpreter ir_interp(ir_mod, evaluator.primitives());
         auto result = ir_interp.execute();
 
-        if (result && aura::compiler::types::is_int(*result) && aura::compiler::types::as_int(*result) == t.expected) {
+        auto got = result ? aura::compiler::types::format_value(*result) : std::string(result.error().message);
+        if (result && got == t.expected) {
             ++passed;
         } else {
-            std::print(std::cerr, "FAIL: {}", t.input);
-            if (!result) std::print(std::cerr, " error: {}", result.error().message);
-            else std::print(std::cerr, " got {} expected {}", aura::compiler::types::format_value(*result), t.expected);
-            std::println(std::cerr, "");
+            std::println(std::cerr, "FAIL: {} (got '{}', expected '{}')", t.input, got, t.expected);
             ++failed;
         }
     }
@@ -516,7 +514,7 @@ int main() {
     int cf_passed = 0, cf_failed = 0;
 
     auto test_const_fold = [&](const std::string& input,
-                                std::int64_t expected,
+                                std::string expected,
                                 std::size_t expected_folds,
                                 const std::string& desc) {
         arena.reset();
@@ -537,30 +535,31 @@ int main() {
         aura::compiler::IRInterpreter interp(mod, evaluator.primitives());
         auto result = interp.execute();
 
-        bool ok = result && aura::compiler::types::is_int(*result) && aura::compiler::types::as_int(*result) == expected;
+        auto got = result ? aura::compiler::types::format_value(*result) : std::string("<error>");
+        bool ok = result && got == expected;
         if (ok && cf_pass.folded_count() == expected_folds) {
-            std::println("CF OK: {} (folded {}, got {})", desc, cf_pass.folded_count(), aura::compiler::types::format_value(*result));
+            std::println("CF OK: {} (folded {}, got {})", desc, cf_pass.folded_count(), got);
             ++cf_passed;
         } else {
-            std::println(std::cerr, "CF FAIL: {} (expected {} folds, got {}; result={} expected={})",
-                         desc, expected_folds, cf_pass.folded_count(), aura::compiler::types::format_value(*result), expected);
+            std::println(std::cerr, "CF FAIL: {} (expected {} folds, got {}; result='{}' expected='{}')",
+                         desc, expected_folds, cf_pass.folded_count(), got, expected);
             ++cf_failed;
         }
     };
 
-    test_const_fold("(+ 1 2)", 3, 1, "add_const");
-    test_const_fold("(* 2 3)", 6, 1, "mul_const");
-    test_const_fold("(+ 1 (* 2 3))", 7, 2, "nested_const");  // Mul(2,3) folds, Add(1,6) folds
-    test_const_fold("(if 1 42 0)", 42, 2, "if_condition_const");  // both branches' Local copies from Knowns fold
-    test_const_fold("(= 1 1)", 1, 1, "eq_const");
-    test_const_fold("(> 3 2)", 1, 1, "gt_const");
-    test_const_fold("(let ((x 10)) x)", 10, 1, "let_copy");  // Local from Known → folded
+    test_const_fold("(+ 1 2)", "3", 1, "add_const");
+    test_const_fold("(* 2 3)", "6", 1, "mul_const");
+    test_const_fold("(+ 1 (* 2 3))", "7", 2, "nested_const");  // Mul(2,3) folds, Add(1,6) folds
+    test_const_fold("(if 1 42 0)", "42", 2, "if_condition_const");  // both branches' Local copies from Knowns fold
+    test_const_fold("(= 1 1)", "#t", 1, "eq_const");
+    test_const_fold("(> 3 2)", "#t", 1, "gt_const");
+    test_const_fold("(let ((x 10)) x)", "10", 1, "let_copy");  // Local from Known → folded
     // (let ((x 10)) (+ x 5)): Local(x_copy, x_slot) folds, Add(x_copy, 5) also folds → 2
-    test_const_fold("(let ((x 10)) (+ x 5))", 15, 2, "let_add");
+    test_const_fold("(let ((x 10)) (+ x 5))", "15", 2, "let_add");
     // lambda call: caller's Local(arg_copy, ConstI64) folds, but lambda's Arg doesn't → 1
-    test_const_fold("((lambda (x) (* x 2)) 5)", 10, 1, "lambda_arg_unknown");
+    test_const_fold("((lambda (x) (* x 2)) 5)", "10", 1, "lambda_arg_unknown");
     // (+ 1 (+ 2 3)): inner Add(2,3) folds, outer Add(1,5) folds → 2
-    test_const_fold("(+ 1 (+ 2 3))", 6, 2, "nested_add");
+    test_const_fold("(+ 1 (+ 2 3))", "6", 2, "nested_add");
 
     std::println("Constant-fold test: {}/{}/{} passed/failed/total",
                  cf_passed, cf_failed, cf_passed + cf_failed);
