@@ -48,9 +48,18 @@ public:
                                      aura::ast::NodeId root) const {
         if (root == aura::ast::NULL_NODE || root >= flat.size()) return false;
 
-        static const std::unordered_set<std::string> special_forms = {
+        // ── Known names that must go through tree-walker ───────────────
+        // Includes: EDSL primitives, special forms, module system operations.
+        static const std::unordered_set<std::string> tree_walker_only = {
+            // EDSL / AI agent primitives
+            "set-code", "eval-current", "apply",
+            "typecheck-current", "typed-mutate", "rollback",
+            "mutation-log", "query-mutation-log",
+            // Special forms not in IR
             "when", "unless", "try", "catch", "raise", "export",
             "and", "or", "cond", "case",
+            // Module system (env side-effects)
+            "import", "use", "require",
         };
 
         // Root-level bare variables (like `pi`, `sort`) may come from runtime imports.
@@ -92,38 +101,22 @@ public:
                 if (callee != aura::ast::NULL_NODE && callee < flat.size()) {
                     auto callee_v = flat.get(callee);
                     if (callee_v.tag == aura::ast::NodeTag::Variable) {
-                        auto name = pool.resolve(callee_v.sym_id);
+                        auto name = std::string(pool.resolve(callee_v.sym_id));
 
-                        // EDSL primitives — need evaluator state
-                        if (name == "set-code" ||
-                            name == "eval-current" ||
-                            name == "apply" ||
-                            name == "typecheck-current" ||
-                            name == "typed-mutate" ||
-                            name == "rollback" ||
-                            name == "mutation-log" ||
-                            name == "query-mutation-log" ||
-                            name.starts_with("query:") ||
-                            name.starts_with("mutate:"))
+                        // Names starting with query: / mutate:[ ] trigger AST server fallback
+                        if (name.starts_with("query:") || name.starts_with("mutate:"))
                             return true;
 
-                        // Special forms not available as primitives in IR
-                        if (special_forms.count(std::string(name)))
-                            return true;
-
-                        // Import has env side-effects (binding names) that IR can't replicate
-                        if (name == "import" || name == "use" || name == "require")
+                        // Known tree-walker-only names (EDSL, special forms, module)
+                        if (tree_walker_only.count(name))
                             return true;
 
                         // Call callee that's not a known primitive or cached define
                         // may come from a runtime import — fallback to tree-walker.
-                        // Only check call callee, not general variables (lambda params,
-                        // let bindings are in scope during lowering).
-                        if (evaluator_.primitives().slot_for_name(std::string(name))
-                                >= evaluator_.primitives().slot_count()) {
-                            if (ir_cache_.count(std::string(name)) == 0) {
-                                return true;
-                            }
+                        if (evaluator_.primitives().slot_for_name(name)
+                                >= evaluator_.primitives().slot_count()
+                            && ir_cache_.count(name) == 0) {
+                            return true;
                         }
                     }
                 }
