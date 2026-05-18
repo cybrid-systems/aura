@@ -228,7 +228,22 @@ public:
                         *const_cast<ast::FlatAST*>(bd.flat),
                         *const_cast<ast::StringPool*>(bd.pool),
                         bd.body_id, ne);
-                    if (r) return *r;
+                    if (r) {
+                        return *r;
+                    }
+                }
+                // Fallback: re-parse lambda body from body_source
+                // (needed when cached function's inner lambda has stale FlatAST ptr)
+                if (!bd.body_source.empty()) {
+                    auto fallback_alloc = arena_.allocator();
+                    auto* f_pool = arena_.create<aura::ast::StringPool>(fallback_alloc);
+                    auto* f_flat = arena_.create<aura::ast::FlatAST>(fallback_alloc);
+                    auto f_pr = aura::parser::parse_to_flat(bd.body_source, *f_flat, *f_pool);
+                    if (f_pr.success && f_pr.root != aura::ast::NULL_NODE) {
+                        f_flat->root = f_pr.root;
+                        auto r = evaluator_.eval_flat(*f_flat, *f_pool, f_pr.root, ne);
+                        if (r) return *r;
+                    }
                 }
             }
 

@@ -142,6 +142,12 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
                                 bridge_it->second[ci].flat,
                                 bridge_it->second[ci].pool,
                                 bridge_it->second[ci].body_id);
+                            // Copy body_source for bridge fallback re-parse
+                            if (!bridge_it->second[ci].body_source.empty() &&
+                                new_fid < state.module.closure_bridge.size()) {
+                                state.module.closure_bridge[new_fid].body_source =
+                                    bridge_it->second[ci].body_source;
+                            }
                         }
                     }
                 }
@@ -467,6 +473,9 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
         // Store bridge data for tree-walker compatibility
         if (state.current_flat && state.current_pool) {
             state.module.set_closure_bridge(fid, state.current_flat, state.current_pool, v.child(0));
+            // Save lambda body source for bridge fallback re-parse
+            auto body_src = unparse_node(*state.current_flat, *state.current_pool, v.child(0));
+            state.module.set_closure_body_source(fid, body_src);
         }
         auto slot = state.alloc_local();
         state.emit(IROpcode::MakeClosure, slot, fid,
