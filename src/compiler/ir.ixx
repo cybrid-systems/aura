@@ -245,7 +245,7 @@ export struct IRModule {
                              const ast::StringPool* pool,
                              ast::NodeId body_id) {
         if (func_id < functions.size()) {
-            closure_bridge[func_id] = {flat, pool, body_id};
+            closure_bridge[func_id] = {flat, pool, body_id, ""};
         }
     }
 
@@ -255,7 +255,7 @@ export struct IRModule {
                                  const ast::StringPool* pool,
                                  ast::NodeId body_id) {
         if (func_id < closure_bridge.size()) {
-            closure_bridge[func_id] = {flat, pool, body_id};
+            closure_bridge[func_id] = {flat, pool, body_id, ""};
         }
     }
 

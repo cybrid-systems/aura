@@ -854,7 +854,7 @@ static IRModule lower_to_ir_impl(FlatAST& flat, StringPool& pool, ASTArena& aren
     top_func.id = 0;
     top_func.name = "__top__";
     top_func.entry_block = 0;
-    top_func.blocks.push_back({0});
+    top_func.blocks.push_back({0, {}, {}});
     state.cur_func = &top_func;
     state.cur_block = 0;
     state.local_count = 0;
