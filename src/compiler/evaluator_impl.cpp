@@ -3064,6 +3064,51 @@ Evaluator::Evaluator() {
     });
 
     build_primitive_slots();
+
+    // ── HTTP primitives (via curl CLI) ─────────────────────
+    primitives_.add("http-get", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !types::is_string(a[0])) return make_void();
+        auto url = string_heap_[types::as_string_idx(a[0])];
+        std::string cmd = "curl -s -f \"" + url + "\" 2>/dev/null";
+        std::array<char, 4096> buf;
+        std::string result;
+        auto fp = ::popen(cmd.c_str(), "r");
+        if (!fp) return make_void();
+        while (::fgets(buf.data(), static_cast<int>(buf.size()), fp))
+            result += buf.data();
+        auto rc = ::pclose(fp);
+        if (rc != 0 && result.empty()) return make_void();
+        auto sidx = string_heap_.size();
+        string_heap_.push_back(std::move(result));
+        return types::make_string(sidx);
+    });
+
+    primitives_.add("http-post", [this](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
+            return make_void();
+        auto url = string_heap_[types::as_string_idx(a[0])];
+        auto body = string_heap_[types::as_string_idx(a[1])];
+        // Escape body for shell (simple: single-quote and escape single quotes)
+        std::string escaped_body;
+        escaped_body.push_back('\'');
+        for (auto c : body) {
+            if (c == '\'') escaped_body += "'\\''";
+            else escaped_body.push_back(c);
+        }
+        escaped_body.push_back('\'');
+        std::string cmd = "curl -s -f -X POST -d " + escaped_body;
+        cmd += " \"" + url + "\" 2>/dev/null";
+        std::array<char, 4096> buf;
+        std::string result;
+        auto fp = ::popen(cmd.c_str(), "r");
+        if (!fp) return make_void();
+        while (::fgets(buf.data(), static_cast<int>(buf.size()), fp))
+            result += buf.data();
+        ::pclose(fp);
+        auto sidx = string_heap_.size();
+        string_heap_.push_back(std::move(result));
+        return types::make_string(sidx);
+    });
 }
 
 // slot_for_name: find the slot for a primitive name
