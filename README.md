@@ -85,6 +85,11 @@ lib/std/       19 个库                             ~1k
 tests/         bash(117)+unit+integ+bench+agent    ~6k
 ```
 
+## 基准
+
+- [docs/benchmark.md](docs/benchmark.md) — EDSL 模型能力基准 (deepseek-v4-flash: 65%)
+- [tests/edsl_benchmark.py](tests/edsl_benchmark.py) — 运行：`LLM_API_KEY="..." python3 tests/edsl_benchmark.py`
+
 ## 文档
 
 - [docs/tutorial.md](docs/tutorial.md) — 10 分钟入门
