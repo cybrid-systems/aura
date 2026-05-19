@@ -219,3 +219,18 @@ run_test "agent:mutate-rebind" "$(printf '(set-code "(define (add x y) (+ x y))"
 # EDSL query:pattern (use escaped quotes to avoid shell conflicts)
 
 # JSON commands via --serve pipe mode
+
+# ── Bridge tests (closure bridge + body_source fallback) ─────
+
+run_test "bridge:map-lambda"   "$(printf '(map (lambda (x) (+ x 10)) (list 1 2 3))')" "(11 12 13)"
+run_test "bridge:filter-lambda" "$(printf '(filter (lambda (x) (> x 2)) (list 1 2 3 4 5))')" "(3 4 5)"
+run_test "bridge:foldl-lambda" "$(printf '(foldl (lambda (acc x) (+ acc x)) 0 (list 1 2 3 4 5))')" "15"
+
+# Cached function with inner lambda bridge
+run_test "bridge:cached-fn" "$(printf '(define (my-map f lst) (if (null? lst) () (cons (f (car lst)) (my-map f (cdr lst)))))(my-map (lambda (x) (* x 2)) (list 1 2 3))')" "(2 4 6)"
+
+# Nested closure bridge via cached function
+run_test "bridge:nested-lambda" "$(printf '(define (twice f) (lambda (x) (f (f x))))((twice (lambda (x) (+ x 1))) 5)')" "7"
+
+# Closure bridge via --serve (EDSL pipeline)
+run_test "bridge:edsl-pipe" "$(printf '(set-code "(define (f x) (+ x 1))(f 5)") (eval-current)')" "6"
