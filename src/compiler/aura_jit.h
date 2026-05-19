@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <memory>
 #include <functional>
+#include <string>
+#include <vector>
 
 namespace aura::jit {
 
@@ -34,14 +36,25 @@ struct FlatFunction {
 };
 
 using ScalarFn = int64_t(*)(int64_t*, uint32_t);
+// Alias for runtime registration with same signature
+using ScalarFn32 = int64_t(*)(int64_t*, uint32_t);
 
 // Runtime function pointer types for JIT symbol registration
 using JitAllocClosureFn   = int64_t(*)(int64_t func_id);
-using JitClosureCaptureFn = void(*)(int64_t closure_id, int32_t idx, int64_t val);
-using JitClosureCallFn    = int64_t(*)(int64_t closure_id, int64_t* args, int32_t argc);
+using JitClosureCaptureFn = void(*)(int64_t closure_id, int64_t idx, int64_t val);
+using JitClosureCallFn    = int64_t(*)(int64_t closure_id, int64_t* args, int64_t argc);
 using JitNewCellFn        = int64_t(*)();
 using JitCellGetFn        = int64_t(*)(int64_t cell_id);
 using JitCellSetFn        = void(*)(int64_t cell_id, int64_t val);
+
+// Function metadata for registering compiled functions with runtime
+struct FunctionMeta {
+    std::string name;
+    ScalarFn fn_ptr;
+    uint32_t local_count;
+    uint32_t arg_count;
+    uint32_t env_count;
+};
 
 class AuraJIT {
 public:
@@ -51,6 +64,14 @@ public:
     bool available() const;
     ScalarFn compile(const FlatFunction& fn);
     void* get_function_ptr(const char* name);
+
+    // Register a compiled function with the runtime for closure calls
+    void register_function(int64_t func_id, ScalarFn fn_ptr,
+                           uint32_t local_count, uint32_t arg_count,
+                           uint32_t env_count);
+
+    // Get all compiled functions metadata
+    const std::vector<FunctionMeta>& compiled_functions() const;
 
 private:
     struct Impl;

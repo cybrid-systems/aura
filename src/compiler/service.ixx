@@ -410,6 +410,7 @@ public:
     }
 
     // ── --jit: compile via LLVM ORC JIT and execute ──────────────
+    // --jit: compile via LLVM ORC JIT and execute
     [[nodiscard]] EvalResult exec_jit(std::string_view input) {
         #ifdef AURA_HAVE_LLVM
         // Parse expression
@@ -425,60 +426,111 @@ public:
         current_ast_ = flat_ptr;
         current_pool_ = pool_ptr;
 
-        // Lower to IR (no cache for now)
+        // Lower to IR
         auto ir_mod = aura::compiler::lower_to_ir(*flat_ptr, *pool_ptr, arena_,
             &evaluator_.primitives());
 
-        // Build flat function from entry function
+        // Run passes
+        {
+            aura::compiler::TypeSpecializationWrap ts(&type_registry_);
+            aura::compiler::ComputeKindWrap ck;
+            aura::compiler::ArityWrap ar;
+            aura::compiler::ConstantFoldingWrap cf;
+            ts.run(ir_mod); ck.run(ir_mod); ar.run(ir_mod); cf.run(ir_mod);
+        }
+
         if (ir_mod.functions.empty()) {
             return EvalResult(types::make_void());
         }
 
-        // Collect all blocks + instructions into flat arrays
-        auto& entry = ir_mod.entry();
-        std::vector<std::vector<aura::jit::FlatInstruction>> flat_instrs(entry.blocks.size());
-        std::vector<aura::jit::FlatBlock> flat_blocks(entry.blocks.size());
-
-        for (std::size_t bi = 0; bi < entry.blocks.size(); ++bi) {
-            auto& block = entry.blocks[bi];
-            for (auto& instr : block.instructions) {
-                flat_instrs[bi].push_back({
-                    static_cast<std::uint32_t>(instr.opcode),
-                    {instr.operands[0], instr.operands[1],
-                     instr.operands[2], instr.operands[3]}
-                });
-            }
-            flat_blocks[bi] = {
-                block.id,
-                flat_instrs[bi].data(),
-                static_cast<std::uint32_t>(flat_instrs[bi].size())
-            };
+        // Register primitives with JIT runtime (first call only)
+        if (!jit_initialized_) {
+            register_jit_primitives();
+            jit_initialized_ = true;
         }
 
-        aura::jit::FlatFunction flat_fn{
-            entry.name.c_str(),
-            entry.entry_block,
-            entry.local_count,
-            entry.arg_count,
-            flat_blocks.data(),
-            static_cast<std::uint32_t>(flat_blocks.size())
+        // Helper: convert IR function to FlatFunction
+        struct FlatFnBuilder {
+            std::vector<std::vector<aura::jit::FlatInstruction>> flat_instrs;
+            std::vector<aura::jit::FlatBlock> flat_blocks;
+            aura::jit::FlatFunction flat_fn;
+            std::string name_storage;
+
+            FlatFnBuilder(const aura::ir::IRFunction& ir_fn) {
+                flat_instrs.resize(ir_fn.blocks.size());
+                flat_blocks.resize(ir_fn.blocks.size());
+
+                for (std::size_t bi = 0; bi < ir_fn.blocks.size(); ++bi) {
+                    auto& block = ir_fn.blocks[bi];
+                    for (auto& instr : block.instructions) {
+                        flat_instrs[bi].push_back({
+                            static_cast<std::uint32_t>(instr.opcode),
+                            {instr.operands[0], instr.operands[1],
+                             instr.operands[2], instr.operands[3]}
+                        });
+                    }
+                    flat_blocks[bi] = {
+                        block.id,
+                        flat_instrs[bi].data(),
+                        static_cast<std::uint32_t>(flat_instrs[bi].size())
+                    };
+                }
+
+                name_storage = ir_fn.name;
+                flat_fn = {
+                    name_storage.c_str(),
+                    ir_fn.entry_block,
+                    ir_fn.local_count,
+                    ir_fn.arg_count,
+                    flat_blocks.data(),
+                    static_cast<std::uint32_t>(flat_blocks.size()),
+                    nullptr, 0  // func_id_map not used for entry
+                };
+            }
         };
 
-        // Compile via JIT
-        aura::jit::AuraJIT jit;
-        auto fn_ptr = jit.compile(flat_fn);
-        if (!fn_ptr) {
-            return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::InternalError, "JIT compilation failed"});
+        // Compile ALL functions and register with runtime
+        int64_t entry_func_id = -1;
+        for (auto& ir_fn : ir_mod.functions) {
+            if (ir_fn.id == ir_mod.entry_function_id) {
+                entry_func_id = static_cast<int64_t>(ir_fn.id);
+            }
+
+            FlatFnBuilder builder(ir_fn);
+            auto fn_ptr = jit_.compile(builder.flat_fn);
+            if (!fn_ptr) {
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::InternalError,
+                    std::string("JIT compilation failed for function '") + ir_fn.name + "'"});
+            }
+
+            // Register with runtime for closure calls
+            // env_count = number of captured free variables (used as offset for Arg instr)
+            uint32_t env_count = static_cast<uint32_t>(ir_fn.free_vars.size());
+            jit_.register_function(static_cast<int64_t>(ir_fn.id), fn_ptr,
+                                    ir_fn.local_count, ir_fn.arg_count, env_count);
         }
 
-        // Execute with args array
-        // For entry function, args come from the passed arguments
-        // For now: function takes (locals*, argc) where locals hold
-        // the initial values. Arg instruction reads from argc.
-        // We pass argc = number of function params.
+        // Find entry function and execute it
+        auto entry_it = std::find_if(ir_mod.functions.begin(), ir_mod.functions.end(),
+            [&](const aura::ir::IRFunction& f) {
+                return f.id == ir_mod.entry_function_id;
+            });
+        if (entry_it == ir_mod.functions.end()) {
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError, "Entry function not found"});
+        }
+
+        auto& entry = *entry_it;
         std::vector<std::int64_t> locals(entry.local_count, 0);
-        auto result = fn_ptr(locals.data(), entry.arg_count);
+        auto fn_ptr = jit_.get_function_ptr(entry.name.c_str());
+        if (!fn_ptr) {
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError, "JIT entry function lookup failed"});
+        }
+
+        auto result = reinterpret_cast<aura::jit::ScalarFn>(fn_ptr)(
+            locals.data(), entry.arg_count);
 
         return EvalResult(types::make_int(result));
         #else
@@ -1781,6 +1833,42 @@ private:
 
     // Strict mode: type errors → rejected instead of warnings only
     bool strict_mode_ = false;
+
+    // Persistent JIT for --jit mode
+    aura::jit::AuraJIT jit_;
+    bool jit_initialized_ = false;
+
+    // Register evaluator primitives with JIT runtime
+    void register_jit_primitives() {
+        // Register primitive wrappers for JIT runtime
+        // Each primitive wrapper takes (int64_t* args, int32_t argc) and returns int64_t
+        // This bridges between JIT-called primitives and the evaluator's PrimFn table.
+        // For now, we register the most commonly used primitives.
+
+        // The primitives table has 180+ entries. We register a general-purpose
+        // dispatcher that converts int64_t args to EvalValues and calls the evaluator's PrimFn.
+        //
+        // For the minimal P4, we only need:
+        //   1. Arithmetic: + - * / = < > <= >= — these are already handled as IR instructions
+        //   2. display, write, newline — display bridge already registered in JIT symbols
+        //   3. General primitive dispatch for string/vector/hash operations
+
+        // The primitives bridge function
+        auto& prims = evaluator_.primitives();
+        for (std::size_t s = 0; s < prims.slot_count(); ++s) {
+            auto name = prims.name_for_slot(s);
+            (void)name;
+            // For now, register all primitives through a simple wrapper
+            // We'll use the existing aura_prim_call mechanism
+            // Registering C-linkage wrappers for each slot is complex because
+            // PrimFn returns EvalValue, not int64_t.
+            // For P4, we'll handle this by routing OpPrimCall/OpPrimitive
+            // to the evaluator through a fallback in exec_jit.
+        }
+
+        // Primitive registration is deferred to a per-call basis.
+        // Individual primitive wrappers will be registered in a follow-up.
+    }
 };
 
 } // namespace aura::compiler
