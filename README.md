@@ -35,7 +35,7 @@ echo '(- 5 (* 2 3))' | ./build/aura --typecheck    # type: Int, result: -1
 | **CaaS 服务** | `--serve` with `compile`/`eval`/`module`/`define`/`config` 命令 |
 | **增量编译** | ArenaGroup 多模块, `reload_module` dirty-only, mmap 磁盘缓存, 函数热替换 |
 | **IR 管线** | 37 opcode, const folding, compute-kind, arity check, 闭包桥接, 类型特化 pass |
-| **EDSL** | `set-code`, `query:*`, `mutate:*`, `typecheck-current`, `eval-current`, `apply` |
+| **EDSL / AI Agent** | `set-code`, `query:*`, `mutate:*`, `typecheck-current`, `eval-current`, `current-source`, LLM auto-test pipeline |
 
 ## 项目结构
 
@@ -87,7 +87,7 @@ Aura 当前适用于：
 - 单文件 500 行以内的脚本
 - 哈希表/CSV 数据处理
 - 函数式组合（compose/curry/filter/map/foldl）
-- EDSL 驱动的 AI agent 代码变换
+- EDSL 驱动的 AI agent 代码变换（`set-code` → `mutate:rebind` → `current-source` → `eval-current`）
 - 通过 `--serve` 做 CaaS 增量服务
 - 类型安全的表达式求值（`--strict` 模式）
 
@@ -95,14 +95,55 @@ Aura 当前适用于：
 - 大型面向对象系统（无 class、无 GC）
 - 需要高吞吐 JSON/网络 IO（无 socket 原语）
 
-## 下一步重点
+## LLM Agent 开发（EDSL 管线）
 
+Aura 内建 EDSL 管线支持 LLM 驱动的代码生成 → 执行 → AST 变换修复循环。
+
+```bash
+# 安装依赖：DeepSeek v4 Flash
+pip install requests
+
+# 运行 AI agent（需要 LLM_API_KEY）
+LLM_API_KEY="sk-..." LLM_MODEL="deepseek-v4-flash" \
+  python3 tests/ai_agent_iter.py "Write (fact n) that computes factorial"
+
+# EDSL 精确修复（set-code + query + mutate + current-source）
+LLM_API_KEY="sk-..." LLM_MODEL="deepseek-v4-flash" \
+  python3 tests/ai_agent_edsl.py "Write (range start end) that returns list of ints"
 ```
-立即 ─── Diagnostics 统一（错误格式标准化、行号/建议）
-  ├── Benchmark 基线（量化 IR 管线性能对比）
-  ├── 标准库 v3（format 扩展、regex、时间函数）
-  └── AI agent 管线实测（需 API key）
+
+### EDSL AST→Source 桥接
+
+```lisp
+;; 1. 锁定破损代码到工作区
+(set-code "(define (bad-fact n) (if (= n 0) 1 (* n (bad-fac (- n 1)))))")
+
+;; 2. 定位函数节点
+(query:find "bad-fact")  ;; → (16)
+
+;; 3. 用 mutate:rebind 修复
+(mutate:rebind "bad-fact"
+  "(define (bad-fact n) (if (= n 0) 1 (* n (bad-fact (- n 1)))))"
+  "fix typo")
+
+;; 4. AST→Source 给 LLM 看更新后的代码
+(current-source)
+;; → "(define bad-fact (lambda (n) (if (= n 0) 1 (* n (bad-fact (- n 1))))))"
+
+;; 5. 验证
+(eval-current)
+(bad-fact 5)  ;; → 120
 ```
+
+### LLM 自动测试报告（5/19）
+
+| 任务 | 结果 |
+|------|------|
+| factorial, fibonacci, map, prime? | ✅ 一次性 |
+| merge-sort, flatten-tree, palindrome? | ✅ 一次性 |
+| `set!` closure counter, try/catch, hash operations | ✅ 已验证 |
+| EDSL typo fix (bad-fac → bad-fact) | ✅ 完整管线 |
+| pluck/where with hashes + stdlib | ✅ |
 
 ## 测试
 
