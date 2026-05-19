@@ -88,7 +88,10 @@ def llm_call(msgs):
     d = json.loads(r.read())
     c.close()
     finish_reason = d["choices"][0].get("finish_reason", "")
-    content = d["choices"][0]["message"]["content"]
+    msg = d["choices"][0]["message"]
+    content = msg.get("content", "") or ""
+    if not content and "reasoning_content" in msg:
+        content = msg["reasoning_content"]
     # Auto-retry larger budget on truncation
     retries = 0
     while finish_reason == "length" and retries < 2 and max_tok < 16000:
@@ -102,7 +105,10 @@ def llm_call(msgs):
         d = json.loads(r.read())
         c.close()
         finish_reason = d["choices"][0].get("finish_reason", "")
-        content = d["choices"][0]["message"]["content"]
+        msg = d["choices"][0]["message"]
+    content = msg.get("content", "") or ""
+    if not content and "reasoning_content" in msg:
+        content = msg["reasoning_content"]
     if finish_reason == "length":
         content += f"\n\n## TRUNCATED — still truncated at {max_tok} tokens\n"
     return content

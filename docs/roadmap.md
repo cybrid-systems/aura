@@ -158,7 +158,16 @@
 | C3 | **Hygienic Macros** | Ghuloum Step 16 — 卫生宏 rename | 8h |
 | C4 | **编译期 AST 验证** | Ghuloum Step 17 | 4h |
 
-### Phase C — 战略级（2周+）
+### Phase C — 已全部完成 ✅（2026-05-19）
+
+| # | 项 | 状态 |
+|---|-----|------|
+| C1 | IR 级 import | ✅ |
+| C2 | 标准库 v3 (19 files) | ✅ |
+| C3 | 卫生宏 | ✅ |
+| C4 | 编译期 AST 验证 | ✅ |
+
+### Phase D — 战略级
 
 | # | 项 | 说明 |
 |---|-----|------|
