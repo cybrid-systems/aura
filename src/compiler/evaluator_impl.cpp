@@ -3065,6 +3065,17 @@ Evaluator::Evaluator() {
 
     build_primitive_slots();
 
+    // ── Environment + HTTP primitives ────────────────────────
+    primitives_.add("getenv", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !types::is_string(a[0])) return make_void();
+        auto name = string_heap_[types::as_string_idx(a[0])];
+        auto* val = ::getenv(name.c_str());
+        if (!val) return make_void();
+        auto sidx = string_heap_.size();
+        string_heap_.push_back(std::string(val));
+        return types::make_string(sidx);
+    });
+
     // ── HTTP primitives (via curl CLI) ─────────────────────
     primitives_.add("http-get", [this](const auto& a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0])) return make_void();
@@ -3088,23 +3099,28 @@ Evaluator::Evaluator() {
             return make_void();
         auto url = string_heap_[types::as_string_idx(a[0])];
         auto body = string_heap_[types::as_string_idx(a[1])];
-        // Escape body for shell (simple: single-quote and escape single quotes)
-        std::string escaped_body;
-        escaped_body.push_back('\'');
-        for (auto c : body) {
-            if (c == '\'') escaped_body += "'\\''";
-            else escaped_body.push_back(c);
+        // Write body to temp file to avoid shell escaping issues
+        std::string tmpfile = "/tmp/_aura_body_" + std::to_string(::time(nullptr));
+        {
+            std::ofstream ofs(tmpfile);
+            ofs << body;
         }
-        escaped_body.push_back('\'');
-        std::string cmd = "curl -s -f -X POST -d " + escaped_body;
+        std::string cmd = "curl -s -X POST --data-binary @" + tmpfile;
+        cmd += " -H \"Content-Type: application/json\"";
+        // Add auth if provided (3rd arg = auth token)
+        if (a.size() >= 3 && types::is_string(a[2])) {
+            auto auth = string_heap_[types::as_string_idx(a[2])];
+            cmd += " -H \"Authorization: Bearer " + auth + "\"";
+        }
         cmd += " \"" + url + "\" 2>/dev/null";
         std::array<char, 4096> buf;
         std::string result;
         auto fp = ::popen(cmd.c_str(), "r");
-        if (!fp) return make_void();
+        if (!fp) { std::remove(tmpfile.c_str()); return make_void(); }
         while (::fgets(buf.data(), static_cast<int>(buf.size()), fp))
             result += buf.data();
         ::pclose(fp);
+        std::remove(tmpfile.c_str());
         auto sidx = string_heap_.size();
         string_heap_.push_back(std::move(result));
         return types::make_string(sidx);
