@@ -211,6 +211,7 @@ NodeId FlatParser::parse_list() {
         if (kw == "match")  return parse_match();
         if (kw == "cast")   return parse_cast();
         if (kw == "check")  return parse_check();
+        if (kw == ":")      return parse_type_annot();
         if (kw == "export") {
             lexer_->consume(); // consume 'export'
             std::vector<aura::ast::NodeId> syms;
@@ -755,6 +756,28 @@ NodeId FlatParser::parse_check() {
     if (lexer_->peek().kind == TokenKind::RParen) lexer_->consume();
 
     auto id = flat_.add_type_annotation(type_sym, expr);
+    flat_.set_loc(id, tok.line, tok.column);
+    return id;
+}
+
+NodeId FlatParser::parse_type_annot() {
+    // Syntax: (: name TypeName)  — annotate variable name with type
+    auto tok = lexer_->consume(); // :
+    
+    auto name_tok = lexer_->peek();
+    if (name_tok.kind != TokenKind::Identifier) { skip_rparen(); return NULL_NODE; }
+    auto var_sym = pool_.intern(name_tok.text);
+    lexer_->consume(); // name
+    
+    auto type_tok = lexer_->peek();
+    if (type_tok.kind != TokenKind::Identifier) { skip_rparen(); return NULL_NODE; }
+    auto type_sym = pool_.intern(type_tok.text);
+    lexer_->consume(); // TypeName
+    
+    if (lexer_->peek().kind == TokenKind::RParen) lexer_->consume();
+    
+    auto var_node = flat_.add_variable(var_sym);
+    auto id = flat_.add_type_annotation(type_sym, var_node);
     flat_.set_loc(id, tok.line, tok.column);
     return id;
 }
