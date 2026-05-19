@@ -63,6 +63,7 @@ struct LLVMBuilder {
     llvm::Function* fn_display_int = nullptr;
     llvm::Function* fn_display_char = nullptr;
     llvm::Function* fn_newline = nullptr;
+    llvm::Function* fn_cast_op = nullptr;
 
     void declare_runtime() {
         auto i64 = llvm::Type::getInt64Ty(ctx);
@@ -122,6 +123,10 @@ struct LLVMBuilder {
         fn_newline = llvm::Function::Create(
             llvm::FunctionType::get(void_ty, false),
             llvm::Function::ExternalLinkage, "aura_newline", mod);
+
+        fn_cast_op = llvm::Function::Create(
+            llvm::FunctionType::get(i64, {i64, i64}, false),
+            llvm::Function::ExternalLinkage, "aura_cast_op", mod);
     }
 
     llvm::Value* load(uint32_t slot) {
@@ -239,6 +244,15 @@ struct LLVMBuilder {
             return true;
         }
 
+        // CastOp: runtime type check
+        case OpCastOp: {
+            // ops[0] = result_slot, ops[1] = value_slot, ops[2] = type_tag
+            auto val = load(inst.ops[1]);
+            auto call = irb->CreateCall(fn_cast_op, {val, c64(inst.ops[2])});
+            store(inst.ops[0], call);
+            return true;
+        }
+
         // Primitive calls
         case OpPrimCall: {
             // IR: operands[0]=prim_id, operands[1]=packed(arg_base<<16|arg_count),
@@ -293,6 +307,7 @@ extern "C" {
     void aura_display_char(char);
     void aura_newline();
     int64_t aura_jit_prim_dispatch(int64_t, int64_t*, int32_t);
+    int64_t aura_cast_op(int64_t, int64_t);
     void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t),
                            int32_t local_count, int32_t arg_count, int32_t env_count);
     void aura_reset_runtime();
@@ -349,6 +364,7 @@ struct AuraJIT::Impl {
         reg("aura_newline",  (void*)aura_newline);
         reg("aura_jit_prim_dispatch", (void*)aura_jit_prim_dispatch);
         reg("aura_register_fn", (void*)aura_register_fn);
+        reg("aura_cast_op",   (void*)aura_cast_op);
         reg("aura_reset_runtime", (void*)aura_reset_runtime);
 
         // C standard library functions
