@@ -3121,6 +3121,7 @@ Evaluator::Evaluator() {
             result += buf.data();
         ::pclose(fp);
         std::remove(tmpfile.c_str());
+        if (result.empty()) return make_void();
         auto sidx = string_heap_.size();
         string_heap_.push_back(std::move(result));
         return types::make_string(sidx);
