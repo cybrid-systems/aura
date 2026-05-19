@@ -224,8 +224,14 @@ public:
         ConstantFoldingWrap cf;
         ts.run(ir_mod);
         ck.run(ir_mod);
-        // ar.run(ir_mod);  -- disabled: false positive for primitive calls with closures
+        ar.run(ir_mod);
         cf.run(ir_mod);
+
+        if (ar.has_error()) {
+            for (auto& d : ar.result().diagnostics) {
+                std::println(std::cerr, "arity warning: {}", d.message);
+            }
+        }
 
         last_ir_mod_ = ir_mod;
 
