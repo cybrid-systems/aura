@@ -126,8 +126,7 @@ bool write_cache(const std::string& path,
     }
 
     // ── Write header (will update IR fields after IR data is written) ─
-    CacheHeader header;
-    std::memset(&header, 0, sizeof(header));
+    CacheHeader header = {};
     std::memcpy(header.magic, "AURACACHE", 8);
     header.version = 3;
     header.num_nodes = static_cast<std::uint32_t>(n);
