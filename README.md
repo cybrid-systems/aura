@@ -16,7 +16,7 @@ cmake -B build && cmake --build build --target aura -j
 
 echo '(+ 1 2)' | ./build/aura                     # → 3
 echo '(- 5 (* 2 3))' | ./build/aura --typecheck    # type: Int, result: -1
-echo '(letrec ((fact ...)) (fact 10))' | ./build/aura --jit  # → 3628800 (LLVM JIT)
+echo '(letrec ((fact ...)) (fact 10))' | ./build/aura --jit  # → 3628800 (LLVM JIT, 7.55x vs TW)
 ```
 
 ## 执行管线
@@ -53,7 +53,7 @@ echo '(letrec ((fact ...)) (fact 10))' | ./build/aura --jit  # → 3628800 (LLVM
 | **CaaS 服务** | `--serve` with `compile`/`eval`/`module`/`define`/`config` 命令 |
 | **增量编译** | ArenaGroup 多模块, `reload_module` dirty-only, mmap 磁盘缓存, 函数热替换 |
 | **IR 管线** | 38 opcode, const folding, compute-kind, arity check, 闭包桥接, 类型特化 pass, **IR 级 import** |
-| **LLVM JIT** | **ORC JIT 后端**, 38 opcode native code, LLVM -O2 优化, 增量 JIT 缓存, 闭包/Cell/Pair/PrimCall bridge, `--jit` flag |
+| **LLVM JIT** | **ORC JIT 后端**, 38 opcode native code, LLVM -O2 优化, 增量 JIT 缓存, 闭包/Cell/Pair/PrimCall bridge, `--jit` flag (fib-20 **7.55x** vs TW) |
 | **EDSL / AI Agent** | `set-code`, `query:*`, `mutate:*`, `typecheck-current`, `eval-current`, `current-source`, LLM auto-test pipeline |
 
 ## 项目结构
