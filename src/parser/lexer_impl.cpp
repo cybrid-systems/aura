@@ -29,7 +29,7 @@ Token Lexer::advance() {
     }
     default:
         if (std::isdigit((unsigned char)c) || (c == '-' && pos_+1<source_.size() && std::isdigit((unsigned char)source_[pos_+1]))) return read_number();
-        if (std::isalpha((unsigned char)c) || c == '_' || c == '+' || c == '*' || c == '-' || c == '/' || c == '=' || c == '<' || c == '>' || c == '!' || c == '?') return read_identifier();
+        if (std::isalpha((unsigned char)c) || c == '_' || c == '+' || c == '*' || c == '-' || c == '/' || c == '=' || c == '<' || c == '>' || c == '!' || c == '?' || c == ':') return read_identifier();
         if (c == '"') return read_string();
         // Ghuloum Step 9: #f, #t boolean literals and # identifiers (eq?) 
         if (c == '#' && pos_ + 1 < source_.size()) {
