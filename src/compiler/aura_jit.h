@@ -10,10 +10,9 @@
 namespace aura::jit {
 
 // Flat instruction format for JIT compilation (C-compatible)
-// Avoids dependency on Aura's C++ module IR types.
 struct FlatInstruction {
-    uint32_t opcode;  // IROpcode as uint32_t
-    uint32_t ops[4];  // operands
+    uint32_t opcode;
+    uint32_t ops[4];
 };
 
 struct FlatBlock {
@@ -29,22 +28,29 @@ struct FlatFunction {
     uint32_t arg_count;
     const FlatBlock* blocks;
     uint32_t num_blocks;
+    // Closure support: func_id mapping
+    const uint32_t* func_id_map;  // [arg_count] maps local slots to IR func IDs
+    uint32_t num_callees;         // number of entries in func_id_map
 };
 
-// Function pointer type returned by JIT compilation.
 using ScalarFn = int64_t(*)(int64_t*, uint32_t);
 
-// AuraJIT manages an LLVM ORC JIT session.
+// Runtime function pointer types for JIT symbol registration
+using JitAllocClosureFn   = int64_t(*)(int64_t func_id);
+using JitClosureCaptureFn = void(*)(int64_t closure_id, int32_t idx, int64_t val);
+using JitClosureCallFn    = int64_t(*)(int64_t closure_id, int64_t* args, int32_t argc);
+using JitNewCellFn        = int64_t(*)();
+using JitCellGetFn        = int64_t(*)(int64_t cell_id);
+using JitCellSetFn        = void(*)(int64_t cell_id, int64_t val);
+
 class AuraJIT {
 public:
     AuraJIT();
     ~AuraJIT();
 
     bool available() const;
-
-    // Compile a flat IR function → native function pointer.
-    // Takes (locals array, arg_count) and returns int64_t.
     ScalarFn compile(const FlatFunction& fn);
+    void* get_function_ptr(const char* name);
 
 private:
     struct Impl;

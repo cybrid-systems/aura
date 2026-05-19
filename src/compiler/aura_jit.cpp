@@ -11,6 +11,8 @@
 #include <llvm/IR/Verifier.h>
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
 #include <llvm/ExecutionEngine/Orc/ThreadSafeModule.h>
+#include <llvm/ExecutionEngine/Orc/Shared/ExecutorSymbolDef.h>
+#include <llvm/ExecutionEngine/Orc/ExecutorProcessControl.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/raw_ostream.h>
 
@@ -21,243 +23,220 @@
 
 namespace aura::jit {
 
-// Opcode enum values (must match ir.ixx IROpcode)
 enum Op : uint32_t {
-    // Data
     OpConstI64 = 1, OpConstF64 = 2, OpLocal = 3, OpArg = 4,
-    // Arithmetic
     OpAdd = 5, OpSub = 6, OpMul = 7, OpDiv = 8,
-    // Comparison
     OpEq = 9, OpLt = 10, OpGt = 11, OpLe = 12, OpGe = 13,
-    // Logic
     OpAnd = 14, OpOr = 15, OpNot = 16,
-    // Control flow
     OpBranch = 17, OpJump = 18, OpCall = 19, OpReturn = 20,
+    OpMakeClosure = 21, OpCapture = 22, OpCaptureRef = 23, OpApply = 24,
+    OpNewCell = 25, OpCellSet = 26, OpCellGet = 27, OpCastOp = 28,
+    OpConstString = 29, OpPrimCall = 30, OpPrimitive = 31,
+    OpConstBool = 32, OpConstVoid = 33,
+    OpMakePair = 34, OpCar = 35, OpCdr = 36,
+    OpRaise = 37, OpIsError = 38,
 };
 
-// ── LLVM IR Builder ───────────────────────────────────────────
-// Converts Aura IR flat instructions into LLVM IR.
-
+// LLVM IR Builder
 struct LLVMBuilder {
     llvm::LLVMContext& ctx;
     llvm::Module* mod = nullptr;
     llvm::Function* func = nullptr;
     llvm::IRBuilder<>* irb = nullptr;
-    std::vector<llvm::Value*> llvm_locals;  // alloca'd slots
+    std::vector<llvm::Value*> llvm_locals{};
+    std::unordered_map<uint32_t, llvm::BasicBlock*> block_map{};
 
-    // Block map: Aura block id → LLVM BasicBlock*
-    std::unordered_map<uint32_t, llvm::BasicBlock*> block_map;
+    // Runtime function declarations
+    llvm::Function* fn_alloc_closure = nullptr;
+    llvm::Function* fn_closure_capture = nullptr;
+    llvm::Function* fn_closure_call = nullptr;
+    llvm::Function* fn_new_cell = nullptr;
+    llvm::Function* fn_cell_get = nullptr;
+    llvm::Function* fn_cell_set = nullptr;
+    llvm::Function* fn_alloc_pair = nullptr;
+    llvm::Function* fn_pair_car = nullptr;
+    llvm::Function* fn_pair_cdr = nullptr;
 
-    bool build_function(const FlatFunction& fn) {
-        // Create LLVM function type: i64 (i64*, i32)
-        auto ptr_i64 = llvm::PointerType::getUnqual(llvm::Type::getInt64Ty(ctx));
-        auto i32_ty = llvm::Type::getInt32Ty(ctx);
-        auto ret_ty = llvm::Type::getInt64Ty(ctx);
-        auto fn_type = llvm::FunctionType::get(ret_ty, {ptr_i64, i32_ty}, false);
-        func = llvm::Function::Create(fn_type, llvm::Function::ExternalLinkage,
-                                      fn.name, mod);
+    void declare_runtime() {
+        auto i64 = llvm::Type::getInt64Ty(ctx);
+        auto i32 = llvm::Type::getInt32Ty(ctx);
+        auto ptr_i64 = llvm::PointerType::getUnqual(i64);
 
-        // Name arguments
-        auto arg_it = func->arg_begin();
-        arg_it->setName("locals_ptr"); ++arg_it;
-        arg_it->setName("argc"); ++arg_it;
+        fn_alloc_closure = llvm::Function::Create(
+            llvm::FunctionType::get(i64, {i64}, false),
+            llvm::Function::ExternalLinkage, "aura_alloc_closure", mod);
 
-        // Create all basic blocks first
-        for (uint32_t i = 0; i < fn.num_blocks; ++i) {
-            auto& fb = fn.blocks[i];
-            auto bb = llvm::BasicBlock::Create(ctx, "", func);
-            block_map[fb.id] = bb;
-        }
+        fn_closure_capture = llvm::Function::Create(
+            llvm::FunctionType::get(llvm::Type::getVoidTy(ctx), {i64, i32, i64}, false),
+            llvm::Function::ExternalLinkage, "aura_closure_capture", mod);
 
-        // Create alloca instructions in entry block for local slots
-        auto entry_bb = block_map[fn.entry_block];
-        irb = new llvm::IRBuilder<>(ctx);
-        irb->SetInsertPoint(entry_bb);
+        fn_closure_call = llvm::Function::Create(
+            llvm::FunctionType::get(i64, {i64, ptr_i64, i32}, false),
+            llvm::Function::ExternalLinkage, "aura_closure_call", mod);
 
-        llvm::Value* locals_ptr = func->arg_begin();
-        llvm::Value* argc_val = func->arg_begin() + 1;
+        fn_new_cell = llvm::Function::Create(
+            llvm::FunctionType::get(i64, false),
+            llvm::Function::ExternalLinkage, "aura_new_cell", mod);
 
-        // Allocate local slots
-        for (uint32_t i = 0; i < fn.local_count; ++i) {
-            auto gep = irb->CreateGEP(
-                llvm::Type::getInt64Ty(ctx), locals_ptr,
-                llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), i));
-            llvm_locals.push_back(gep);
-        }
+        fn_cell_get = llvm::Function::Create(
+            llvm::FunctionType::get(i64, {i64}, false),
+            llvm::Function::ExternalLinkage, "aura_cell_get", mod);
 
-        // Fill in each block
-        for (uint32_t bi = 0; bi < fn.num_blocks; ++bi) {
-            auto& fb = fn.blocks[bi];
-            auto bb = block_map[fb.id];
-            irb->SetInsertPoint(bb);
+        fn_cell_set = llvm::Function::Create(
+            llvm::FunctionType::get(llvm::Type::getVoidTy(ctx), {i64, i64}, false),
+            llvm::Function::ExternalLinkage, "aura_cell_set", mod);
 
-            for (uint32_t ii = 0; ii < fb.num_instructions; ++ii) {
-                auto& inst = fb.instructions[ii];
-                if (!lower_instruction(inst, fb.id, fn)) {
-                    delete irb;
-                    return false;
-                }
-            }
-        }
+        fn_alloc_pair = llvm::Function::Create(
+            llvm::FunctionType::get(i64, {i64, i64}, false),
+            llvm::Function::ExternalLinkage, "aura_alloc_pair", mod);
 
-        delete irb;
-        return true;
+        fn_pair_car = llvm::Function::Create(
+            llvm::FunctionType::get(i64, {i64}, false),
+            llvm::Function::ExternalLinkage, "aura_pair_car", mod);
+
+        fn_pair_cdr = llvm::Function::Create(
+            llvm::FunctionType::get(i64, {i64}, false),
+            llvm::Function::ExternalLinkage, "aura_pair_cdr", mod);
     }
 
-    bool lower_instruction(const FlatInstruction& inst,
-                           uint32_t block_id,
-                           const FlatFunction& fn) {
-        auto i64 = llvm::Type::getInt64Ty(ctx);
-        auto i1 = llvm::Type::getInt1Ty(ctx);
-        auto i32 = llvm::Type::getInt32Ty(ctx);
+    llvm::Value* load(uint32_t slot) {
+        return irb->CreateLoad(llvm::Type::getInt64Ty(ctx), llvm_locals[slot]);
+    }
+    void store(uint32_t slot, llvm::Value* val) {
+        irb->CreateStore(val, llvm_locals[slot]);
+    }
+    llvm::Value* c64(int64_t v) {
+        return llvm::ConstantInt::get(llvm::Type::getInt64Ty(ctx), v);
+    }
 
-        auto load = [&](uint32_t slot) -> llvm::Value* {
-            return irb->CreateLoad(i64, llvm_locals[slot]);
-        };
-        auto store = [&](uint32_t slot, llvm::Value* val) {
-            irb->CreateStore(val, llvm_locals[slot]);
-        };
-        auto const_i64 = [&](int64_t v) -> llvm::Value* {
-            return llvm::ConstantInt::get(i64, v);
-        };
-
+    bool lower(const FlatInstruction& inst, uint32_t block_id, const FlatFunction& fn) {
+        (void)block_id; (void)fn;
         switch (inst.opcode) {
         case OpConstI64:
-            store(inst.ops[0], const_i64(
-                static_cast<int64_t>(inst.ops[1]) |
-                (static_cast<int64_t>(inst.ops[2]) << 32)));
+            store(inst.ops[0], c64(static_cast<int64_t>(inst.ops[1]) |
+                                   (static_cast<int64_t>(inst.ops[2]) << 32)));
             return true;
-
-        case OpConstF64:
-            store(inst.ops[0], const_i64(0));  // placeholder
-            return true;
-
-        case OpLocal:
-            store(inst.ops[0], load(inst.ops[1]));
-            return true;
-
+        case OpLocal:  store(inst.ops[0], load(inst.ops[1])); return true;
         case OpArg: {
-            // Arg: result_slot, arg_index
-            // Load from locals_ptr (which points to function args array)
-            auto gep = irb->CreateGEP(i64, func->arg_begin(),
-                         llvm::ConstantInt::get(i32, inst.ops[1]));
-            auto val = irb->CreateLoad(i64, gep);
-            store(inst.ops[0], val);
+            auto gep = irb->CreateGEP(llvm::Type::getInt64Ty(ctx),
+                func->arg_begin(), c64(inst.ops[1]));
+            store(inst.ops[0], irb->CreateLoad(llvm::Type::getInt64Ty(ctx), gep));
             return true;
         }
-
-        case OpAdd: {
-            auto a = load(inst.ops[1]), b = load(inst.ops[2]);
-            store(inst.ops[0], irb->CreateAdd(a, b));
-            return true;
-        }
-        case OpSub: {
-            auto a = load(inst.ops[1]), b = load(inst.ops[2]);
-            store(inst.ops[0], irb->CreateSub(a, b));
-            return true;
-        }
-        case OpMul: {
-            auto a = load(inst.ops[1]), b = load(inst.ops[2]);
-            store(inst.ops[0], irb->CreateMul(a, b));
-            return true;
-        }
-        case OpDiv: {
-            auto a = load(inst.ops[1]), b = load(inst.ops[2]);
-            store(inst.ops[0], irb->CreateSDiv(a, b));
-            return true;
-        }
-
-        // Comparisons: result = (cmp ? 1 : 0)
-        case OpEq: {
-            auto a = load(inst.ops[1]), b = load(inst.ops[2]);
-            auto cmp = irb->CreateICmpEQ(a, b);
-            store(inst.ops[0], irb->CreateZExt(cmp, i64));
-            return true;
-        }
-        case OpLt: {
-            auto a = load(inst.ops[1]), b = load(inst.ops[2]);
-            auto cmp = irb->CreateICmpSLT(a, b);
-            store(inst.ops[0], irb->CreateZExt(cmp, i64));
-            return true;
-        }
-        case OpGt: {
-            auto a = load(inst.ops[1]), b = load(inst.ops[2]);
-            auto cmp = irb->CreateICmpSGT(a, b);
-            store(inst.ops[0], irb->CreateZExt(cmp, i64));
-            return true;
-        }
-        case OpLe: {
-            auto a = load(inst.ops[1]), b = load(inst.ops[2]);
-            auto cmp = irb->CreateICmpSLE(a, b);
-            store(inst.ops[0], irb->CreateZExt(cmp, i64));
-            return true;
-        }
-        case OpGe: {
-            auto a = load(inst.ops[1]), b = load(inst.ops[2]);
-            auto cmp = irb->CreateICmpSGE(a, b);
-            store(inst.ops[0], irb->CreateZExt(cmp, i64));
-            return true;
-        }
-
-        // Logic
-        case OpAnd: {
-            auto a = load(inst.ops[1]), b = load(inst.ops[2]);
-            auto az = irb->CreateICmpNE(a, zero64());
-            auto bz = irb->CreateICmpNE(b, zero64());
-            store(inst.ops[0], irb->CreateZExt(irb->CreateAnd(az, bz), i64));
-            return true;
-        }
-        case OpOr: {
-            auto a = load(inst.ops[1]), b = load(inst.ops[2]);
-            auto az = irb->CreateICmpNE(a, zero64());
-            auto bz = irb->CreateICmpNE(b, zero64());
-            store(inst.ops[0], irb->CreateZExt(irb->CreateOr(az, bz), i64));
-            return true;
-        }
-        case OpNot: {
-            auto a = load(inst.ops[1]);
-            auto az = irb->CreateICmpEQ(a, zero64());
-            store(inst.ops[0], irb->CreateZExt(az, i64));
-            return true;
-        }
-
+        case OpAdd:  store(inst.ops[0], irb->CreateAdd(load(inst.ops[1]), load(inst.ops[2]))); return true;
+        case OpSub:  store(inst.ops[0], irb->CreateSub(load(inst.ops[1]), load(inst.ops[2]))); return true;
+        case OpMul:  store(inst.ops[0], irb->CreateMul(load(inst.ops[1]), load(inst.ops[2]))); return true;
+        case OpDiv:  store(inst.ops[0], irb->CreateSDiv(load(inst.ops[1]), load(inst.ops[2]))); return true;
+        case OpEq: { auto c = irb->CreateICmpEQ(load(inst.ops[1]), load(inst.ops[2])); store(inst.ops[0], irb->CreateZExt(c, llvm::Type::getInt64Ty(ctx))); return true; }
+        case OpLt: { auto c = irb->CreateICmpSLT(load(inst.ops[1]), load(inst.ops[2])); store(inst.ops[0], irb->CreateZExt(c, llvm::Type::getInt64Ty(ctx))); return true; }
+        case OpGt: { auto c = irb->CreateICmpSGT(load(inst.ops[1]), load(inst.ops[2])); store(inst.ops[0], irb->CreateZExt(c, llvm::Type::getInt64Ty(ctx))); return true; }
+        case OpLe: { auto c = irb->CreateICmpSLE(load(inst.ops[1]), load(inst.ops[2])); store(inst.ops[0], irb->CreateZExt(c, llvm::Type::getInt64Ty(ctx))); return true; }
+        case OpGe: { auto c = irb->CreateICmpSGE(load(inst.ops[1]), load(inst.ops[2])); store(inst.ops[0], irb->CreateZExt(c, llvm::Type::getInt64Ty(ctx))); return true; }
+        case OpAnd: { auto a = irb->CreateICmpNE(load(inst.ops[1]), c64(0)), b = irb->CreateICmpNE(load(inst.ops[2]), c64(0)); store(inst.ops[0], irb->CreateZExt(irb->CreateAnd(a, b), llvm::Type::getInt64Ty(ctx))); return true; }
+        case OpOr:  { auto a = irb->CreateICmpNE(load(inst.ops[1]), c64(0)), b = irb->CreateICmpNE(load(inst.ops[2]), c64(0)); store(inst.ops[0], irb->CreateZExt(irb->CreateOr(a, b), llvm::Type::getInt64Ty(ctx))); return true; }
+        case OpNot: { auto a = irb->CreateICmpEQ(load(inst.ops[1]), c64(0)); store(inst.ops[0], irb->CreateZExt(a, llvm::Type::getInt64Ty(ctx))); return true; }
         case OpBranch: {
-            // Branch: cond, true_block, false_block
-            auto cond = load(inst.ops[0]);
-            auto cond_bool = irb->CreateICmpNE(cond, zero64());
-            auto true_bb = block_map[inst.ops[1]];
-            auto false_bb = block_map[inst.ops[2]];
-            irb->CreateCondBr(cond_bool, true_bb, false_bb);
+            auto cond = irb->CreateICmpNE(load(inst.ops[0]), c64(0));
+            irb->CreateCondBr(cond, block_map[inst.ops[1]], block_map[inst.ops[2]]);
+            return true;
+        }
+        case OpJump: irb->CreateBr(block_map[inst.ops[0]]); return true;
+        case OpReturn: irb->CreateRet(load(inst.ops[0])); return true;
+        case OpConstBool: store(inst.ops[0], c64(inst.ops[1] ? 1 : 0)); return true;
+        case OpConstVoid: store(inst.ops[0], c64(0)); return true;
+        case OpConstF64: store(inst.ops[0], c64(0)); return true;
+        case OpConstString: store(inst.ops[0], c64(0)); return true;
+
+        // Closures
+        case OpMakeClosure: {
+            // inst.ops[0] = result_slot, ops[1] = func_id, ops[2] = env_size
+            auto call = irb->CreateCall(fn_alloc_closure, {c64(inst.ops[1])});
+            store(inst.ops[0], call);
+            return true;
+        }
+        case OpCapture: {
+            // inst.ops[0] = closure_slot, ops[1] = env_idx, ops[2] = var_slot
+            auto closure_val = load(inst.ops[0]);
+            auto env_val = load(inst.ops[2]);
+            irb->CreateCall(fn_closure_capture,
+                {closure_val, c64(inst.ops[1]), env_val});
+            return true;
+        }
+        case OpCall: {
+            // ops[0] = callee_slot, ops[1] = arg_base, ops[2] = arg_count, ops[3] = result_slot
+            auto callee = load(inst.ops[0]);
+            auto arg_base = inst.ops[1];
+            auto arg_count = inst.ops[2];
+            // Build args array from locals
+            auto alloca_ty = llvm::ArrayType::get(llvm::Type::getInt64Ty(ctx), arg_count);
+            auto args_arr = irb->CreateAlloca(alloca_ty);
+            for (uint32_t i = 0; i < arg_count; ++i) {
+                auto gep = irb->CreateGEP(llvm::Type::getInt64Ty(ctx), args_arr, c64(i));
+                irb->CreateStore(load(arg_base + i), gep);
+            }
+            auto call = irb->CreateCall(fn_closure_call, {
+                callee,
+                irb->CreateBitCast(args_arr, llvm::PointerType::getUnqual(llvm::Type::getInt64Ty(ctx))),
+                c64(arg_count)
+            });
+            store(inst.ops[3], call);
             return true;
         }
 
-        case OpJump: {
-            auto target_bb = block_map[inst.ops[0]];
-            irb->CreateBr(target_bb);
+        // Cells
+        case OpNewCell: {
+            auto call = irb->CreateCall(fn_new_cell);
+            store(inst.ops[0], call);
+            return true;
+        }
+        case OpCellGet: {
+            auto call = irb->CreateCall(fn_cell_get, {load(inst.ops[1])});
+            store(inst.ops[0], call);
+            return true;
+        }
+        case OpCellSet: {
+            irb->CreateCall(fn_cell_set, {load(inst.ops[0]), load(inst.ops[1])});
             return true;
         }
 
-        case OpReturn: {
-            auto val = load(inst.ops[0]);
-            irb->CreateRet(val);
+        // Pairs
+        case OpMakePair: {
+            auto call = irb->CreateCall(fn_alloc_pair, {load(inst.ops[1]), load(inst.ops[2])});
+            store(inst.ops[0], call);
+            return true;
+        }
+        case OpCar: {
+            auto call = irb->CreateCall(fn_pair_car, {load(inst.ops[1])});
+            store(inst.ops[0], call);
+            return true;
+        }
+        case OpCdr: {
+            auto call = irb->CreateCall(fn_pair_cdr, {load(inst.ops[1])});
+            store(inst.ops[0], call);
             return true;
         }
 
         default:
-            // Unsupported opcodes: store 0 and continue
-            if (inst.ops[0] < fn.local_count) {
-                store(inst.ops[0], zero64());
-            }
-            return true;  // skip for now
+            if (inst.ops[0] < fn.local_count) store(inst.ops[0], c64(0));
+            return true;
         }
-    }
-
-    llvm::Value* zero64() {
-        return llvm::ConstantInt::get(llvm::Type::getInt64Ty(ctx), 0);
     }
 };
 
 // ── AuraJIT implementation ────────────────────────────────────
+
+// Runtime function declarations (C linkage, defined in aura_jit_runtime.cpp)
+extern "C" {
+    int64_t aura_alloc_closure(int64_t);
+    void aura_closure_capture(int64_t, int32_t, int64_t);
+    int64_t aura_closure_call(int64_t, int64_t*, int32_t);
+    int64_t aura_new_cell();
+    int64_t aura_cell_get(int64_t);
+    void aura_cell_set(int64_t, int64_t);
+    int64_t aura_alloc_pair(int64_t, int64_t);
+    int64_t aura_pair_car(int64_t);
+    int64_t aura_pair_cdr(int64_t);
+}
 
 struct AuraJIT::Impl {
     std::unique_ptr<llvm::orc::LLJIT> jit;
@@ -271,13 +250,33 @@ struct AuraJIT::Impl {
         llvm::InitializeNativeTarget();
         llvm::InitializeNativeTargetAsmPrinter();
         auto jit_or_err = llvm::orc::LLJITBuilder().create();
-        if (!jit_or_err) {
-            fprintf(stderr, "JIT: failed to create LLJIT\n");
-            return false;
-        }
+        if (!jit_or_err) { fprintf(stderr, "JIT: LLJIT create failed\n"); return false; }
         jit = std::move(*jit_or_err);
         main_dylib = &jit->getMainJITDylib();
         initialized = true;
+
+        // Register runtime function symbols
+        auto reg = [&](const char* name, void* ptr) {
+            auto sym = llvm::orc::ExecutorSymbolDef(
+                llvm::orc::ExecutorAddr::fromPtr(ptr),
+                llvm::JITSymbolFlags::Callable);
+            auto pool = jit->getExecutionSession().getSymbolStringPool();
+            auto k = pool->intern(name);
+            auto map = llvm::orc::absoluteSymbols({{k, sym}});
+            if (auto err = main_dylib->define(std::move(map)))
+                fprintf(stderr, "JIT: failed to define symbol '%s'\n", name);
+        };
+
+        reg("aura_alloc_closure",   (void*)aura_alloc_closure);
+        reg("aura_closure_capture", (void*)aura_closure_capture);
+        reg("aura_closure_call",    (void*)aura_closure_call);
+        reg("aura_new_cell",  (void*)aura_new_cell);
+        reg("aura_cell_get",  (void*)aura_cell_get);
+        reg("aura_cell_set",  (void*)aura_cell_set);
+        reg("aura_alloc_pair", (void*)aura_alloc_pair);
+        reg("aura_pair_car",  (void*)aura_pair_car);
+        reg("aura_pair_cdr",  (void*)aura_pair_cdr);
+
         return true;
     }
 
@@ -289,47 +288,82 @@ struct AuraJIT::Impl {
 
         LLVMBuilder builder{ctx};
         builder.mod = mod.get();
-        if (!builder.build_function(fn)) return nullptr;
+        builder.declare_runtime();
+
+        // Build function
+        auto ptr_i64 = llvm::PointerType::getUnqual(llvm::Type::getInt64Ty(ctx));
+        auto i32_ty = llvm::Type::getInt32Ty(ctx);
+        auto ret_ty = llvm::Type::getInt64Ty(ctx);
+        auto fn_type = llvm::FunctionType::get(ret_ty, {ptr_i64, i32_ty}, false);
+        builder.func = llvm::Function::Create(fn_type, llvm::Function::ExternalLinkage,
+                                             fn.name, mod.get());
+        auto arg_it = builder.func->arg_begin();
+        arg_it->setName("locals_ptr"); ++arg_it;
+        arg_it->setName("argc");
+
+        // Create blocks
+        for (uint32_t i = 0; i < fn.num_blocks; ++i)
+            builder.block_map[fn.blocks[i].id] =
+                llvm::BasicBlock::Create(ctx, "", builder.func);
+
+        // Alloc locals in entry
+        builder.irb = new llvm::IRBuilder<>(ctx);
+        builder.irb->SetInsertPoint(builder.block_map[fn.entry_block]);
+        for (uint32_t i = 0; i < fn.local_count; ++i)
+            builder.llvm_locals.push_back(
+                builder.irb->CreateAlloca(llvm::Type::getInt64Ty(ctx)));
+
+        // Lower each block
+        for (uint32_t bi = 0; bi < fn.num_blocks; ++bi) {
+            auto& fb = fn.blocks[bi];
+            builder.irb->SetInsertPoint(builder.block_map[fb.id]);
+            for (uint32_t ii = 0; ii < fb.num_instructions; ++ii) {
+                if (!builder.lower(fb.instructions[ii], fb.id, fn)) {
+                    delete builder.irb; return nullptr;
+                }
+            }
+        }
+        delete builder.irb;
 
         if (llvm::verifyModule(*mod, &llvm::errs())) {
-            fprintf(stderr, "JIT: module verification failed\n");
-            return nullptr;
+            fprintf(stderr, "JIT: verification failed\n"); return nullptr;
         }
 
-        auto tsm = llvm::orc::ThreadSafeModule(
-            std::move(mod), std::make_unique<llvm::LLVMContext>());
+        auto tsm = llvm::orc::ThreadSafeModule(std::move(mod),
+            std::make_unique<llvm::LLVMContext>());
         if (auto err = jit->addIRModule(std::move(tsm))) {
-            fprintf(stderr, "JIT: failed to add module\n");
-            return nullptr;
+            fprintf(stderr, "JIT: addIRModule failed\n"); return nullptr;
         }
 
         auto sym = jit->lookup(std::string(fn.name));
-        if (!sym) {
-            fprintf(stderr, "JIT: symbol lookup failed\n");
-            return nullptr;
-        }
+        if (!sym) { fprintf(stderr, "JIT: lookup failed\n"); return nullptr; }
         return sym->toPtr<ScalarFn>();
     }
-};
 
-// ── Public API ────────────────────────────────────────────────
+    void* get_function_ptr(const char* name) {
+        if (!init()) return nullptr;
+        auto sym = jit->lookup(name);
+        if (!sym) return nullptr;
+        return sym->toPtr<void*>();
+    }
+};
 
 AuraJIT::AuraJIT() : impl_(std::make_unique<Impl>()) {}
 AuraJIT::~AuraJIT() = default;
 bool AuraJIT::available() const { return impl_->initialized; }
 ScalarFn AuraJIT::compile(const FlatFunction& fn) { return impl_->compile(fn); }
+void* AuraJIT::get_function_ptr(const char* name) { return impl_->get_function_ptr(name); }
 
 } // namespace aura::jit
 
-#else // !AURA_HAVE_LLVM
+#else
 
 namespace aura::jit {
-
 AuraJIT::AuraJIT() : impl_(nullptr) {}
 AuraJIT::~AuraJIT() = default;
 bool AuraJIT::available() const { return false; }
 ScalarFn AuraJIT::compile(const FlatFunction&) { return nullptr; }
-
+void* AuraJIT::get_function_ptr(const char*) { return nullptr; }
 } // namespace aura::jit
 
 #endif
