@@ -817,7 +817,10 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
         auto slot = state.alloc_local();
         // Use int_value = type_tag (0=Int, 1=String, 2=Bool, 3=Dynamic)
         std::uint32_t type_tag = static_cast<std::uint32_t>(v.int_value);
-        state.emit(IROpcode::CastOp, slot, inner, type_tag);
+        // Pack blame location: (line << 16) | col in ops[3]
+        std::uint32_t blame_loc = (static_cast<std::uint32_t>(v.line) << 16) | 
+                                   (static_cast<std::uint32_t>(v.col) & 0xFFFFu);
+        state.emit(IROpcode::CastOp, slot, inner, type_tag, blame_loc);
         return slot;
     }
     case NodeTag::MacroDef:
