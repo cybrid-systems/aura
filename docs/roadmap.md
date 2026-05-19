@@ -1,6 +1,6 @@
 # Aura — 路线图
 
-**更新：2026-05-19 收盘** — 25 个提交，显式调用栈完成，所有 P0/P1/P2 已清。
+**更新：2026-05-19 终盘** — 30 个提交。所有 P0/P1/P2 已清。累计测试 100% 通过。
 
 ---
 
@@ -14,10 +14,10 @@
 | 类型系统 | 🟢 8/10 | L6 + strict 模式 + 增量缓存 + Let-Poly + IR 类型特化 pass |
 | 编译器基础设施 | 🟢 8/10 | ArenaGroup / 增量 / 磁盘缓存 / 热替换 / 依赖级联 |
 | 标准库覆盖 | 🟡 7/10 | 18 个文件 ~1k 行，iter/queue/stack/random 新增，string 扩展 |
-| 测试覆盖 | 🟡 6/10 | integ 87/87，unit 74/74，smoke 5/5，bench 44/44，bash 106/106 |
-| 错误处理 | 🟡 7/10 | Parser 多错误累积 + line:column，try/catch IR ✅，Diagnostics 统一 ✅ |
-| EDSL / AI Agent | 🟢 7/10 | `current-source` AST→source 桥接，LLM 管线实测通过，set!闭包修复 |
-| 文档 | 🟡 6/10 | README + roadmap + tutorial + known_issues + 设计文档 |
+| 测试覆盖 | 🟢 8/10 | integ 87/87，unit 74/74，smoke 5/5，bench 44/44，bash 106/106，production 30项 21+/30 |
+| 错误处理 | 🟢 8/10 | try/catch IR ✅，diagnostics 统一 (suggestion 字段)，line:col 格式 |
+| EDSL / AI Agent | 🟢 8/10 | `current-source`/`api-reference`，EDSL 双阶段修复，production_test 全栈验证通过 |
+| 文档 | 🟡 6/10 | README + roadmap + tutorial + known_issues + design repo 架构文档 |
 
 ### 已实现（完整清单）
 
@@ -137,7 +137,60 @@
 
 ---
 
+## 下一步工作
+
+### Phase A — 体验打磨（推荐立即启动）
+
+| # | 项 | 说明 | 估计 |
+|---|-----|------|------|
+| B1 | **Benchmark 基线** | 量化 IR vs tree-walker，作为 JIT 加速前基准 | 2h |
+| B2 | **增量类型检查** | `typecheck-current` 从全量遍历→脏子树增量 | 4h |
+| B3 | **桥接器测试覆盖** | closure bridge body_source fallback 路径测试 | 2h |
+| B4 | **Diagnostics 统一** | 补全所有 error path 的 `suggestion` 字段 | 1h |
+| B5 | **CI/CD** | GitHub Actions 自动构建+测试 | 2h |
+
+### Phase B — 能力跃迁（1-2周）
+
+| # | 项 | 说明 | 估计 |
+|---|-----|------|------|
+| C1 | **IR 级 import** | 消除模块系统最后 tree-walker fallback | 6h |
+| C2 | **标准库 v3** | regex, datetime, I/O 增强 | 8h |
+| C3 | **Hygienic Macros** | Ghuloum Step 16 — 卫生宏 rename | 8h |
+| C4 | **编译期 AST 验证** | Ghuloum Step 17 | 4h |
+
+### Phase C — 战略级（2周+）
+
+| # | 项 | 说明 |
+|---|-----|------|
+| D1 | **LLVM ORC JIT** | 10-100x 加速，从原型到可用语言的质变 |
+| D2 | **形式化类型系统** | Sound Gradual Typing |
+| D3 | **自举** | 用 Aura 写 Aura 编译器 |
+
+---
+
 ## 已完成里程碑
+
+### set! 闭包 --ir 路径修复 ✅ 2026-05-19 (`6152993`)
+
+```
+问题：let Cell 捕获时 CellGet 取值而非 CellRef，set! 修改本地副本。
+修复：捕获 CellRef 直传；CellGet/CellSet 通过 cell_heap_ 解引用。
+  (c)(c)(c) → 3  ✅  (之前返回 1)
+```
+
+### 互递归 --ir 路径 ✅ 2026-05-19 (`21e8d1d`)
+
+```
+Begin handler 两阶段：先扫描 Define 预绑定 Cell，再正常 lowering。
+  (odd? 7)  --ir  →  #t  ✅
+```
+
+### 自引用缓存函数 --ir 路径 ✅ 2026-05-19 (`3e203ed`)
+
+```
+Define handler 预绑定 Cell 后再 lower lambda body。
+  (fact 5)  --ir  →  120  ✅  (之前返回 0)
+```
 
 ### 显式调用栈 ✅ 2026-05-19 (`9674eb0`)
 
@@ -219,6 +272,9 @@ docs/           tutorial.md + known_issues.md + roadmap.md + 设计文档
 ## 最近提交
 
 ```
+6152993  P3#15: Fix set! closure mutable state in --ir path
+21e8d1d  P3#14: Mutual recursion support in --ir path (Begin pre-bind)
+3e203ed  P1#3: Fix self-referencing cached functions in --ir path
 9674eb0  P3#11: Explicit call stack for IR interpreter (std::variant approach)
 37ab1e2  P3#12: stdout flush for display/write/newline
 0ab521d  Add (api-reference) EDSL primitive: 180 primitives auto-listed
