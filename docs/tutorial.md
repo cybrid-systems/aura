@@ -180,7 +180,27 @@ echo '(+ "hi" 1)' | ./build/aura --strict   ;; TypeError
 
 ---
 
-## 七、LLM 自生长 Agent
+## 七、TCP 网络编程
+
+```scheme
+(begin
+  (define fd (tcp-connect "httpbin.org" 80))
+  (tcp-send fd "GET /get HTTP/1.0\r\nHost: httpbin.org\r\n\r\n")  ;; → 40 bytes
+  (define resp (tcp-recv fd 4096))      ;; → "HTTP/1.1 200 OK..."
+  (display resp)
+  (tcp-close fd))
+
+;; HTTP via curl helper (不需要解析 DNS)
+(require std/socket)
+(http-get "https://httpbin.org/get")             ;; → JSON 响应
+(http-post "https://httpbin.org/post" "{\"a\":1}")  ;; → POST
+```
+
+**注意:** TCP 操作必须放在 `(begin ...)` 内（不要在 define 和 send 之间跨表达式）。
+
+---
+
+## 八、LLM 自生长 Agent
 
 Aura 可以自己调用 LLM 生成、执行、修复代码：
 
