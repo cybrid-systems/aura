@@ -3,10 +3,10 @@
 
 用法:
   # 单模型
-  LLM_API_KEY="..." ./tests/edsl_benchmark.py --model deepseek-chat
+  LLM_API_KEY="..." ./tests/edsl_benchmark.py
 
-  # 多模型对比
-  LLM_API_KEY="..." ./tests/edsl_benchmark.py --models deepseek-chat,minimax,gpt4
+  # 指定模型
+  LLM_MODEL=deepseek-v4-flash LLM_API_KEY="..." ./tests/edsl_benchmark.py
 """
 import subprocess, json, sys, os, time, re, http.client, urllib.parse
 
@@ -61,19 +61,29 @@ TASKS = [
 ]
 
 # ── LLM 调用 ──────────────────────────────────────────────
-def llm_complete(model, base_url, key, messages):
+def llm_complete(model, base_url, key, messages, retries=3):
     parsed = urllib.parse.urlparse(base_url)
-    conn_cls = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
-    h = conn_cls(parsed.netloc, timeout=120)
     path = parsed.path.rstrip("/") + "/chat/completions"
-    h.request("POST", path, json.dumps({
-        "model": model, "messages": messages, "temperature": 0.3,
-        "max_tokens": 4096,
-    }), {"Content-Type": "application/json", "Authorization": f"Bearer {key}"})
-    r = h.getresponse()
-    d = json.loads(r.read())
-    h.close()
-    return d.get("choices", [{}])[0].get("message", {}).get("content", "")
+    for attempt in range(retries):
+        try:
+            conn_cls = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+            h = conn_cls(parsed.netloc, timeout=120)
+            h.request("POST", path, json.dumps({
+                "model": model, "messages": messages, "temperature": 0.3,
+                "max_tokens": 4096,
+            }), {"Content-Type": "application/json", "Authorization": f"Bearer {key}"})
+            r = h.getresponse()
+            d = json.loads(r.read())
+            h.close()
+            content = d.get("choices", [{}])[0].get("message", {}).get("content", "")
+            if content:
+                return content
+        except Exception as e:
+            if attempt < retries - 1:
+                time.sleep(2)
+            else:
+                raise e
+    return ""
 
 # ── 代码提取 ──────────────────────────────────────────────
 def extract_code(text):
@@ -115,7 +125,7 @@ def get_api_ref():
 
 # ── 主流程 ────────────────────────────────────────────────
 def main():
-    models = os.environ.get("LLM_MODEL", "deepseek-chat").split(",")
+    models = os.environ.get("LLM_MODEL", "deepseek-v4-flash").split(",")
     base_url = os.environ.get("LLM_BASE_URL", "https://api.deepseek.com/v1")
     api_key = os.environ.get("LLM_API_KEY", "")
     
@@ -182,6 +192,7 @@ def main():
             
             status = "✅" if success else "❌"
             print(f"  {status} {name} ({llm_time:.1f}s) {out[:60] if out else err[:60]}")
+            sys.stdout.flush()
             
             if success:
                 results[model]["pass"] += 1
