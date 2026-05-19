@@ -83,7 +83,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                         std::vector<EvalValue>& locals,
                                         const std::vector<EvalValue>& args) {
     if (func.blocks.empty())
-        return std::unexpected(Diagnostic{ErrorKind::IRNoReturn, "empty function"});
+        return std::unexpected(Diagnostic{ErrorKind::IRNoReturn, "empty function"}.with_suggestion("the function body is empty"));
 
     // ── Coercion helpers shared across arithmetic opcodes ────────
     auto coerce_i = [&](const types::EvalValue& v) -> std::int64_t {
@@ -212,12 +212,12 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 if (is_float(a) || is_float(b)) {
                     auto y = coerce_f(b);
                     if (y == 0.0)
-                        return std::unexpected(Diagnostic{ErrorKind::DivisionByZero, "division by zero"});
+                        return std::unexpected(Diagnostic{ErrorKind::DivisionByZero, "division by zero"}.with_suggestion("use a non-zero denominator"));
                     locals[ops[0]] = make_float(coerce_f(a) / y);
                 } else {
                     auto y = coerce_i(b);
                     if (y == 0)
-                        return std::unexpected(Diagnostic{ErrorKind::DivisionByZero, "division by zero"});
+                        return std::unexpected(Diagnostic{ErrorKind::DivisionByZero, "division by zero"}.with_suggestion("use a non-zero denominator"));
                     locals[ops[0]] = make_int(coerce_i(a) / y);
                 }
                 break;
@@ -424,11 +424,11 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     auto closure_id = as_closure_id(callee_val);
                     auto it = runtime_closures_.find(closure_id);
                     if (it == runtime_closures_.end())
-                        return std::unexpected(Diagnostic{ErrorKind::InvalidClosure, "invalid closure reference"});
+                        return std::unexpected(Diagnostic{ErrorKind::InvalidClosure, "invalid closure reference"}.with_suggestion("the function was redefined (--hot-swap)"));
 
                     auto& closure = it->second;
                     if (closure.func_id >= module_.functions.size())
-                        return std::unexpected(Diagnostic{ErrorKind::IRCorruption, "invalid closure function id"});
+                        return std::unexpected(Diagnostic{ErrorKind::IRCorruption, "invalid closure function id"}.with_suggestion("internal error: IR module corrupted"));
 
                     auto& callee_func = module_.functions[closure.func_id];
 
@@ -510,11 +510,11 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     auto closure_id = as_closure_id(closure_val);
                     auto it = runtime_closures_.find(closure_id);
                     if (it == runtime_closures_.end())
-                        return std::unexpected(Diagnostic{ErrorKind::InvalidClosure, "invalid closure in apply"});
+                        return std::unexpected(Diagnostic{ErrorKind::InvalidClosure, "invalid closure in apply"}.with_suggestion("the function was redefined (--hot-swap)"));
 
                     auto& closure = it->second;
                     if (closure.func_id >= module_.functions.size())
-                        return std::unexpected(Diagnostic{ErrorKind::IRCorruption, "invalid function id in apply"});
+                        return std::unexpected(Diagnostic{ErrorKind::IRCorruption, "invalid function id in apply"}.with_suggestion("internal error: IR module corrupted"));
 
                     auto& callee_func = module_.functions[closure.func_id];
                     std::vector<EvalValue> all_args;
@@ -600,7 +600,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
         next_block:;
     }
 
-    return std::unexpected(Diagnostic{ErrorKind::IRNoReturn, "no return"});
+    return std::unexpected(Diagnostic{ErrorKind::IRNoReturn, "no return"}.with_suggestion("all code paths must reach a return"));
 }
 
 // ── Runtime type checking implementation ─────────────────────
