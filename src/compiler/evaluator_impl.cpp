@@ -54,7 +54,8 @@ using namespace aura::diag;
 // Forward decl: macro body cloner (defined at end of file)
 static aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
     aura::ast::FlatAST& source, aura::ast::StringPool& source_pool, aura::ast::NodeId body_id,
-    const std::unordered_map<std::string, aura::ast::NodeId>* subst = nullptr);
+    const std::unordered_map<std::string, aura::ast::NodeId>* subst = nullptr,
+    std::unordered_map<std::string, std::string>* name_map = nullptr);
 
 // ── Env::lookup: returns EvalValue variant ─────────────────────
 std::optional<EvalValue> Env::lookup(const std::string& n) const {
@@ -4464,20 +4465,36 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
 // Clone a FlatAST subtree with MacroIntroduced markers.
 // When a Variable matches a macro param, substitute with the arg expression.
 // All new nodes are marked MacroIntroduced for hygiene tracking.
+//
+// name_map: when non-null, enables hygienic renaming — template-introduced
+// binding positions (let, lambda, define) auto-gensym to avoid capture.
+// References to gensym'd names are updated via the name_map.
 static aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
     aura::ast::FlatAST& source, aura::ast::StringPool& source_pool, aura::ast::NodeId body_id,
-    const std::unordered_map<std::string, aura::ast::NodeId>* subst) {
+    const std::unordered_map<std::string, aura::ast::NodeId>* subst,
+    std::unordered_map<std::string, std::string>* name_map) {
     using namespace aura::ast;
     if (body_id == NULL_NODE || body_id >= source.size()) return NULL_NODE;
     auto v = source.get(body_id);
 
+    // Set of built-in names that should never be gensym'd
+    static const std::unordered_set<std::string> builtins = {
+        "if", "cond", "let", "let*", "letrec", "lambda", "define",
+        "begin", "set!", "quote", "unquote", "quasiquote", "case", "when", "unless",
+        "car", "cdr", "cons", "list", "pair?", "null?", "eq?", "equal?",
+        "+", "-", "*", "/", "=", "<", ">", "<=", ">=",
+        "not", "and", "or", "void", "display", "write", "newline",
+        "number?", "integer?", "float?", "boolean?", "string?", "symbol?",
+        "string-append", "string-length", "string-ref", "substring",
+        "number->string", "string->number", "apply", "map", "filter", "foldl",
+    };
+
     // Variable substitution: if this variable is a macro param, return the arg clone
     if (subst && v.tag == NodeTag::Variable && v.sym_id != INVALID_SYM) {
-        auto name = source_pool.resolve(v.sym_id);
-        auto it = subst->find(std::string(name));
+        auto name = std::string(source_pool.resolve(v.sym_id));
+        auto it = subst->find(name);
         if (it != subst->end()) {
-            // Clone the argument expression from source FlatAST
-            return clone_macro_body(target, target_pool, source, source_pool, it->second, subst);
+            return clone_macro_body(target, target_pool, source, source_pool, it->second, subst, name_map);
         }
     }
 
@@ -4486,15 +4503,41 @@ static aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast:
         return (sid == INVALID_SYM) ? sid : target_pool.intern(std::string(source_pool.resolve(sid)));
     };
 
+    // Resolve a name through name_map (hygiene: renamed binding)
+    auto resolve_name = [&](SymId sid) -> std::string {
+        if (sid == INVALID_SYM) return "";
+        auto name = std::string(source_pool.resolve(sid));
+        if (name_map) {
+            auto it = name_map->find(name);
+            if (it != name_map->end()) return it->second;
+        }
+        return name;
+    };
+
+    // Rename a binding position for hygiene: gensym if macro-introduced
+    static std::uint64_t hyg_ctr = 0;
+    auto rename_binding = [&](SymId sid) -> SymId {
+        if (sid == INVALID_SYM || !name_map) return transplant(sid);
+        auto name = std::string(source_pool.resolve(sid));
+        // Macro params, builtins, and already-renamed names keep their name
+        if ((subst && subst->count(name)) || builtins.count(name)) return transplant(sid);
+        auto it = name_map->find(name);
+        if (it != name_map->end()) return target_pool.intern(it->second);
+        // Gensym! Create fresh name and track in name_map
+        auto fresh = std::string("__") + name + "_" + std::to_string(hyg_ctr++);
+        (*name_map)[name] = fresh;
+        return target_pool.intern(fresh);
+    };
+
     // Clone children recursively
     std::vector<aura::ast::NodeId> child_ids;
     for (std::uint32_t i = 0; i < v.children.size(); ++i)
-        child_ids.push_back(clone_macro_body(target, target_pool, source, source_pool, v.child(i), subst));
+        child_ids.push_back(clone_macro_body(target, target_pool, source, source_pool, v.child(i), subst, name_map));
 
-    // Clone params (for Lambda nodes)
+    // Clone params (for Lambda nodes) — with hygienic renaming
     std::vector<aura::ast::SymId> param_syms;
     for (auto pid : v.params)
-        param_syms.push_back(transplant(pid));
+        param_syms.push_back(rename_binding(pid));
 
     aura::ast::NodeId new_id = NULL_NODE;
     switch (v.tag) {
@@ -4502,8 +4545,16 @@ static aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast:
         new_id = target.add_literal(v.int_value); break;
     case NodeTag::LiteralString:
         new_id = target.add_literalstring(transplant(v.sym_id)); break;
-    case NodeTag::Variable:
-        new_id = target.add_variable(transplant(v.sym_id)); break;
+    case NodeTag::Variable: {
+        // Hygienic: check name_map for renamed bindings
+        if (name_map) {
+            auto name = resolve_name(v.sym_id);
+            new_id = target.add_variable(target_pool.intern(name));
+        } else {
+            new_id = target.add_variable(transplant(v.sym_id));
+        }
+        break;
+    }
     case NodeTag::Call: {
         std::vector<aura::ast::NodeId> args(child_ids.begin() + 1, child_ids.end());
         if (!child_ids.empty()) new_id = target.add_call(child_ids[0], args);
@@ -4519,8 +4570,8 @@ static aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast:
     case NodeTag::LetRec:
         if (child_ids.size() >= 2)
             new_id = (v.tag == NodeTag::Let)
-                ? target.add_let(transplant(v.sym_id), child_ids[0], child_ids[1])
-                : target.add_letrec(transplant(v.sym_id), child_ids[0], child_ids[1]);
+                ? target.add_let(rename_binding(v.sym_id), child_ids[0], child_ids[1])
+                : target.add_letrec(rename_binding(v.sym_id), child_ids[0], child_ids[1]);
         break;
     case NodeTag::Begin:
         if (!child_ids.empty())
@@ -4533,7 +4584,7 @@ static aura::ast::NodeId clone_macro_body(aura::ast::FlatAST& target, aura::ast:
         if (!child_ids.empty()) new_id = target.add_quote(child_ids[0]);
         break;
     case NodeTag::Define:
-        if (!child_ids.empty()) new_id = target.add_define(transplant(v.sym_id), child_ids[0]);
+        if (!child_ids.empty()) new_id = target.add_define(rename_binding(v.sym_id), child_ids[0]);
         break;
     default: break;
     }
@@ -4628,7 +4679,8 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
                             // macros_ handles it correctly. This path is only for same-expression macros.
                         }
                         // Clone macro body with substitution
-                        auto expanded = clone_macro_body(flat, pool, *md.src_flat, *md.src_pool, md.body_id, &subst);
+                        std::unordered_map<std::string, std::string> rename_map;
+                        auto expanded = clone_macro_body(flat, pool, *md.src_flat, *md.src_pool, md.body_id, &subst, &rename_map);
                         if (expanded != NULL_NODE) {
                             if (id == root) new_root = expanded;
                             expanded_any = true;
