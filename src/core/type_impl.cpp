@@ -20,7 +20,7 @@ TypeId TypeRegistry::register_type(TypeTag tag, std::string name) {
         .index = static_cast<std::uint32_t>(entries_.size()),
         .generation = next_generation_,
     };
-    entries_.push_back(Entry{tag, std::move(name), std::nullopt});
+    entries_.push_back(Entry{tag, std::move(name), std::nullopt, std::nullopt});
     name_to_id_[entries_.back().name] = id;
     return id;
 }
@@ -33,7 +33,7 @@ TypeId TypeRegistry::register_func(std::vector<TypeId> args, TypeId ret) {
     auto ft = FuncType{std::move(args), ret};
     auto tag = TypeTag::FUNC;
     std::string tmp_name = "(" + std::to_string(ft.args.size()) + "->)";
-    entries_.push_back(Entry{tag, tmp_name, std::move(ft)});
+    entries_.push_back(Entry{tag, tmp_name, std::move(ft), std::nullopt});
     std::string name = "(";
     for (auto& a : entries_.back().func->args)
         name += std::string(name_of(a)) + " ";
@@ -60,7 +60,7 @@ TypeId TypeRegistry::make_var(std::string name) {
         .index = static_cast<std::uint32_t>(entries_.size()),
         .generation = next_generation_,
     };
-    entries_.push_back(Entry{TypeTag::TYPE_VAR, std::move(name), std::nullopt});
+    entries_.push_back(Entry{TypeTag::TYPE_VAR, std::move(name), std::nullopt, std::nullopt});
     return id;
 }
 
