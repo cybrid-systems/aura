@@ -922,7 +922,7 @@ public:
                         break;
                     }
                 }
-                evaluator_.eval_flat(flat, pool, node_id, evaluator_.top_env());
+                (void)evaluator_.eval_flat(flat, pool, node_id, evaluator_.top_env());
             }
         }
 
@@ -1724,7 +1724,7 @@ private:
 
         // Top-level standalone require: execute, no body left
         if (is_require_call(flat, pool, root)) {
-            evaluator_.eval_flat(flat, pool, root, evaluator_.top_env());
+            (void)evaluator_.eval_flat(flat, pool, root, evaluator_.top_env());
             return aura::ast::NULL_NODE;
         }
 
@@ -1733,7 +1733,7 @@ private:
             bool has_require = false;
             for (auto c : v.children) {
                 if (is_require_call(flat, pool, c)) {
-                    evaluator_.eval_flat(flat, pool, c, evaluator_.top_env());
+                    (void)evaluator_.eval_flat(flat, pool, c, evaluator_.top_env());
                     has_require = true;
                 }
             }
@@ -1771,8 +1771,9 @@ private:
             case aura::ast::NodeTag::Lambda:
                 if (v.children.empty())
                     notes.push_back({id, "lambda requires a body expression"});
-                if (v.params.empty() && !v.children.empty() && flat.get(v.child(0)).tag == aura::ast::NodeTag::Lambda)
-                    ; // (lambda () (lambda ...)) — ok
+                if (v.params.empty() && !v.children.empty() && flat.get(v.child(0)).tag == aura::ast::NodeTag::Lambda) {
+                    // (lambda () (lambda ...)) — ok
+                }
                 break;
 
             case aura::ast::NodeTag::Let:

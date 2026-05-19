@@ -49,7 +49,12 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_G
 endif()
 
 target_include_directories(aura PRIVATE ${CMAKE_SOURCE_DIR})
-target_compile_options(aura PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
+target_compile_options(aura PRIVATE -Wall -Wextra -Wpedantic
+    -Wno-missing-field-initializers
+    -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter
+    -Wno-misleading-indentation -Wno-parentheses
+)
 
 # LLVM JIT (optional, skipped if not found)
 find_package(LLVM QUIET CONFIG)
@@ -124,7 +129,10 @@ target_sources(test_ir PRIVATE
     src/compiler/query_impl.cpp
     src/compiler/type_checker_impl.cpp
     src/compiler/arity_impl.cpp)
-target_compile_options(test_ir PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(test_ir PRIVATE -Wall -Wextra -Wpedantic
+    -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter
+)
 target_link_libraries(test_ir PRIVATE stdc++ stdc++exp)
 
 add_test(NAME ir_basic COMMAND ./test_ir

@@ -26,7 +26,7 @@ using types::EvalValue;
 using namespace types;
 
 // ── Edit distance for error suggestions ────────────────────────
-static std::size_t edit_distance(std::string_view a, std::string_view b) {
+[[maybe_unused]] static std::size_t edit_distance(std::string_view a, std::string_view b) {
     auto m = a.size(), n = b.size();
     if (m == 0) return n;
     if (n == 0) return m;
@@ -110,7 +110,7 @@ namespace {
         return 0;
     }
 
-    static double coerce_to_double(const EvalValue& v, const std::vector<std::string>* heap) {
+    [[maybe_unused]] static double coerce_to_double(const EvalValue& v, const std::vector<std::string>* heap) {
         if (is_float(v)) return as_float(v);
         return static_cast<double>(coerce_to_int(v, heap));
     }
