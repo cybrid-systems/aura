@@ -1,6 +1,6 @@
 # Aura
 
-**AI-native Lisp** — C++26 实现，IR 管线默认启用，全量类型系统增强已完成。
+**AI-native Lisp** — C++26 实现，IR 管线默认启用，**LLVM ORC JIT 后端** (fib-20: 7.55x vs tree-walker)。
 
 **Status:** `build:ok` `test:100%` (`smoke 5/5 · unit 74/74 · integ 87/87 · typecheck 10/10 · bash 117/117`)
 
@@ -15,8 +15,8 @@ python3 build.py check
 cmake -B build && cmake --build build --target aura -j
 
 echo '(+ 1 2)' | ./build/aura                     # → 3
-echo '(apply + (list 1 2 3))' | ./build/aura       # → 6
 echo '(- 5 (* 2 3))' | ./build/aura --typecheck    # type: Int, result: -1
+echo '(letrec ((fact ...)) (fact 10))' | ./build/aura --jit  # → 3628800 (LLVM JIT)
 ```
 
 ## 执行管线
@@ -24,9 +24,17 @@ echo '(- 5 (* 2 3))' | ./build/aura --typecheck    # type: Int, result: -1
 ```
 输入 → 解析(lex+parse) → 宏展开 → fallback检测
   ├── 需求值器状态(EDSL/模块/特殊形式/副作用) → 树遍历求值器 (eval_flat)
-  └── 其他(算术/原语/lambda/quote/闭包/hash/pair) → IR lowering
-       → TypeSpecializationPass → ComputeKind → ArityCheck → ConstFold → IRInterpreter
+  ├── 纯算术/原语/闭包/hash/pair → IR lowering → passes → IRInterpreter
+  └── 使用 --jit flag        → IR lowering → passes → LLVM ORC JIT (native code)
 ```
+
+## 基准 (fib-20)
+
+| 执行模式 | 时间 | 加速比 |
+|---------|------|-------|
+| Tree-walker | 48.6ms | 1.00x |
+| IR interpreter | 23.0ms | **2.11x** |
+| LLVM JIT (-O2) | **6.4ms** | **7.55x** |
 
 ## 已实现
 
@@ -45,6 +53,7 @@ echo '(- 5 (* 2 3))' | ./build/aura --typecheck    # type: Int, result: -1
 | **CaaS 服务** | `--serve` with `compile`/`eval`/`module`/`define`/`config` 命令 |
 | **增量编译** | ArenaGroup 多模块, `reload_module` dirty-only, mmap 磁盘缓存, 函数热替换 |
 | **IR 管线** | 38 opcode, const folding, compute-kind, arity check, 闭包桥接, 类型特化 pass, **IR 级 import** |
+| **LLVM JIT** | **ORC JIT 后端**, 38 opcode native code, LLVM -O2 优化, 增量 JIT 缓存, 闭包/Cell/Pair/PrimCall bridge, `--jit` flag |
 | **EDSL / AI Agent** | `set-code`, `query:*`, `mutate:*`, `typecheck-current`, `eval-current`, `current-source`, LLM auto-test pipeline |
 
 ## 项目结构
