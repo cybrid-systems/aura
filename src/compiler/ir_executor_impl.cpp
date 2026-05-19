@@ -86,6 +86,16 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
         return std::unexpected(Diagnostic{ErrorKind::IRNoReturn, "empty function"}.with_suggestion("the function body is empty"));
 
     // ── Coercion helpers shared across arithmetic opcodes ────────
+    // Report CastOp blame with source location
+    auto report_blame = [&](const char* expected, const char* got, std::uint32_t blame_loc) {
+        if (blame_loc != 0) {
+            auto line = (blame_loc >> 16) & 0xFFFFu;
+            auto col = blame_loc & 0xFFFFu;
+            std::cerr << "TypeError at " << line << ":" << col
+                      << ": expected " << expected << ", got " << got << std::endl;
+        }
+    };
+
     auto coerce_i = [&](const types::EvalValue& v) -> std::int64_t {
         if (is_int(v)) return as_int(v);
         if (is_float(v)) return static_cast<std::int64_t>(as_float(v));
@@ -286,8 +296,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
 
             case IROpcode::CastOp: {
                 // CastOp: result_slot=ops[0], value_slot=ops[1], type_tag=ops[2]
+                // ops[3] = blame_loc packed (line<<16)|col (or 0)
                 // type_tag: 0=Int, 1=String, 2=Bool, 3+=Dynamic
                 auto& val = locals[ops[1]];
+                auto blame_loc = ops[3];
                 
                 switch (ops[2]) {
                     case 0: { // Coerce to Int
@@ -308,6 +320,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         } else if (is_bool(val)) {
                             locals[ops[0]] = make_int(as_bool(val) ? 1 : 0);
                         } else {
+                            report_blame("Int", "unknown", blame_loc);
                             locals[ops[0]] = make_int(0);
                         }
                         break;

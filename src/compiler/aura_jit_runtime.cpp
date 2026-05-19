@@ -140,11 +140,11 @@ int64_t aura_prim_call(int64_t slot, int64_t a, int64_t b, int64_t count) {
 // === Type coercion (CastOp) ===
 // Checks if value matches expected type_tag and coerces if needed.
 // type_tag: 0=Int, 1=String, 2=Bool, 3=Dynamic/Any (always passes)
-// Returns the (possibly coerced) value, or calls aura_type_error on failure.
+// Returns the (possibly coerced) value.
+// The IR interpreter path reports blame with source location.
 int64_t aura_cast_op(int64_t val, int64_t type_tag) {
-    (void)val;
-    if (type_tag == 3) return val;  // Dynamic = no-op
-    // For now: all values are int64_t, so Int (0) and Dynamic (3) always pass.
+    (void)type_tag;
+    // For now: all values are int64_t, so Int/Dynamic always pass.
     // Future: proper runtime type checks when EvalValue is fully tagged.
     return val;
 }
