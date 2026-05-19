@@ -47,6 +47,11 @@ class AuraSession:
 
 def extract_code(text):
     text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+    # Strip MiniMax tool-calling XML
+    text = re.sub(r'<minimax:[^>]+>.*?</minimax:[^>]+>', '', text, flags=re.DOTALL)
+    text = re.sub(r'<invoke[^>]*>.*?</invoke>', '', text, flags=re.DOTALL)
+    text = re.sub(r'<parameter[^>]*>.*?</parameter>', '', text, flags=re.DOTALL)
+    text = re.sub(r'</?[a-z_]+[^>]*>', '', text, flags=re.DOTALL)
     if "```" in text:
         for p in text.split("```"):
             lines = p.strip().split("\n")

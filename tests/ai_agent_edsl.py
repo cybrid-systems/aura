@@ -117,6 +117,10 @@ def llm_call(msgs):
 def extract_code(resp):
     """Extract Aura code or EDSL operations from LLM response.
     Returns ALL code blocks combined (not just the first)."""
+    text = re.sub(r'<minimax:[^>]+>.*?</minimax:[^>]+>', '', text, flags=re.DOTALL)
+    text = re.sub(r'<invoke[^>]*>.*?</invoke>', '', text, flags=re.DOTALL)
+    text = re.sub(r'<parameter[^>]*>.*?</parameter>', '', text, flags=re.DOTALL)
+    text = re.sub(r'</?[a-z_]+[^>]*>', '', text, flags=re.DOTALL)
     text = re.sub(r'<think>.*?</think>', '', resp, flags=re.DOTALL)
     blocks = []
     if "```" in text:
