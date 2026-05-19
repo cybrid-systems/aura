@@ -3054,35 +3054,84 @@ Evaluator::Evaluator() {
         return make_int(static_cast<std::int64_t>(idx));
     });
 
-    primitives_.add("c-func", [this](const auto& a) -> EvalValue {
-        // (c-func lib-id "name" ret-type arg-type...)
-        // type tags: 1=Int, 2=Float, 4=String, 0=Void
-        if (a.size() < 3 || !types::is_int(a[0]) || !types::is_string(a[1]) || !types::is_int(a[2]))
+    // Parse type signature string like "(Int Float) -> Float" or "(String) -> Int"
+    auto parse_ffi_sig = [](const std::string& sig, int& ret_type, std::vector<int>& arg_types) -> bool {
+        auto arrow = sig.find("->");
+        if (arrow == std::string::npos) return false;
+        auto arg_part = sig.substr(1, arrow - 1);
+        auto ret_part = sig.substr(arrow + 2);
+        auto type_to_int = [](const std::string& tn) -> int {
+            auto t = tn;
+            while (!t.empty() && t.front() == ' ') t = t.substr(1);
+            while (!t.empty() && t.back() == ' ') t.pop_back();
+            if (t == "Int")    return 1;
+            if (t == "Float")  return 2;
+            if (t == "String") return 3;
+            if (t == "Opaque") return 4;
+            if (t == "Void")   return 0;
+            return -1;
+        };
+        std::string cur;
+        for (auto c : arg_part) {
+            if (c == ' ' || c == '(' || c == ')') {
+                if (!cur.empty()) {
+                    int at = type_to_int(cur);
+                    if (at < 0) return false;
+                    arg_types.push_back(at);
+                    cur.clear();
+                }
+                continue;
+            }
+            cur += c;
+        }
+        if (!cur.empty()) {
+            int at = type_to_int(cur);
+            if (at < 0) return false;
+            arg_types.push_back(at);
+        }
+        ret_type = type_to_int(ret_part);
+        if (ret_type < 0) return false;
+        return true;
+    };
+
+    primitives_.add("c-func", [this, &parse_ffi_sig](const auto& a) -> EvalValue {
+        // (c-func lib-id "name" sig-string)  e.g. (c-func 0 "sqrt" "(Float) -> Float")
+        // Or legacy: (c-func lib-id "name" ret-int arg-int...)
+        if (a.size() < 3 || !types::is_int(a[0]) || !types::is_string(a[1])) {
+            fprintf(stderr, "c-func: expected (c-func lib-id \"name\" signature\n");
             return make_int(0);
+        }
         auto lib_idx = static_cast<std::size_t>(types::as_int(a[0]));
-        if (lib_idx >= g_ffi_libs.size()) return make_int(0);
+        if (lib_idx >= g_ffi_libs.size()) {
+            fprintf(stderr, "c-func: invalid library handle %zu\n", lib_idx);
+            return make_int(0);
+        }
         auto lib = g_ffi_libs[lib_idx];
         auto name = string_heap_[types::as_string_idx(a[1])];
-        auto ret_type = static_cast<int>(types::as_int(a[2]));
-
-        auto* fn_ptr = ::dlsym(lib, name.c_str());
-        if (!fn_ptr) {
-            fprintf(stderr, "c-func: symbol '%s' not found\n", name.c_str());
+        int ret_type = 1;
+        std::vector<int> arg_types;
+        if (types::is_string(a[2])) {
+            auto sig = string_heap_[types::as_string_idx(a[2])];
+            if (!parse_ffi_sig(sig, ret_type, arg_types)) {
+                fprintf(stderr, "c-func: invalid signature '%s' -- expected '(Type) -> Type'\n", sig.c_str());
+                return make_int(0);
+            }
+        } else if (types::is_int(a[2])) {
+            ret_type = static_cast<int>(types::as_int(a[2]));
+            for (std::size_t i = 3; i < a.size(); ++i)
+                if (types::is_int(a[i])) arg_types.push_back(static_cast<int>(types::as_int(a[i])));
+        } else {
+            fprintf(stderr, "c-func: third arg must be signature string or ret-type int\n");
             return make_int(0);
         }
-
-        // Collect arg types from remaining args
-        std::vector<int> arg_types;
-        for (std::size_t i = 3; i < a.size(); ++i) {
-            if (types::is_int(a[i]))
-                arg_types.push_back(static_cast<int>(types::as_int(a[i])));
+        auto* fn_ptr = ::dlsym(lib, name.c_str());
+        if (!fn_ptr) {
+            auto* err = ::dlerror();
+            fprintf(stderr, "c-func: symbol '%s' not found: %s\n", name.c_str(), err ? err : "unknown");
+            return make_int(0);
         }
-
-        // Store as foreign function with type info
         auto fidx = g_ffi_funcs.size();
         g_ffi_funcs.push_back({fn_ptr, name, ret_type, std::move(arg_types)});
-
-        // Return closure with special high bit set
         auto closure_id = static_cast<std::uint64_t>(fidx) | (1ULL << 63);
         return types::make_closure(closure_id);
     });
