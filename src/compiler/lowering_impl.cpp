@@ -815,7 +815,9 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
     case NodeTag::Coercion: {
         auto inner = lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
         auto slot = state.alloc_local();
-        state.emit(IROpcode::CastOp, slot, inner, 3); // dynamic
+        // Use int_value = type_tag (0=Int, 1=String, 2=Bool, 3=Dynamic)
+        std::uint32_t type_tag = static_cast<std::uint32_t>(v.int_value);
+        state.emit(IROpcode::CastOp, slot, inner, type_tag);
         return slot;
     }
     case NodeTag::MacroDef:

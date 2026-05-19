@@ -496,6 +496,16 @@ public:
         type_id_[id] = type_id;
         return id;
     }
+    [[nodiscard]] NodeId add_coercion(NodeId inner, std::uint32_t type_tag, std::uint32_t type_id) {
+        auto id = add_node(NodeTag::Coercion);
+        auto start = static_cast<std::uint32_t>(child_data_.size());
+        child_data_.push_back(inner);
+        child_begin_[id] = start;
+        child_count_[id] = 1;
+        int_val_[id] = static_cast<std::int64_t>(type_tag);
+        type_id_[id] = type_id;
+        return id;
+    }
     // ── Access ─────────────────────────────────────────────────
 
     NodeView get(NodeId id) const {
