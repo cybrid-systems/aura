@@ -218,24 +218,50 @@ public:
 
     void run(aura::ir::IRModule& module) {
         if (!type_reg_) return;
+        auto dyn_id = type_reg_->lookup_type("Any");
         for (auto& func : module.functions) {
             for (auto& block : func.blocks) {
                 std::size_t i = 0;
                 while (i < block.instructions.size()) {
                     auto& instr = block.instructions[i];
                     auto& ops = instr.operands;
-                    bool removed = false;
 
-                    // Remove redundant CastOp (coercing type to itself)
+                    // ── Insert CastOp for Add/Sub/Mul/Div with non-matching types ──
+                    // If both operands have known concrete type_ids and they differ,
+                    // insert CastOp to coerce the second operand to match the first.
+                    if (instr.opcode == aura::ir::IROpcode::Add ||
+                        instr.opcode == aura::ir::IROpcode::Sub ||
+                        instr.opcode == aura::ir::IROpcode::Mul ||
+                        instr.opcode == aura::ir::IROpcode::Div) {
+                        auto t1 = (ops[1] < block.instructions.size())
+                            ? block.instructions[ops[1]].type_id : 0u;
+                        auto t2 = (ops[2] < block.instructions.size())
+                            ? block.instructions[ops[2]].type_id : 0u;
+                        // If both are concrete (non-zero) and differ, insert CastOp on ops[2]
+                        if (t1 != 0 && t2 != 0 && t1 != t2
+            && t1 != dyn_id.index && t2 != dyn_id.index) {
+                            auto cast_slot = func.local_count++;
+                            aura::ir::IRInstruction cast_instr;
+                            cast_instr.opcode = aura::ir::IROpcode::CastOp;
+                            cast_instr.operands = {cast_slot, ops[2], 0, 0};
+                            cast_instr.type_id = t1;
+                            block.instructions.insert(
+                                block.instructions.begin() + static_cast<std::ptrdiff_t>(i),
+                                cast_instr);
+                            ++i;
+                            ops[2] = cast_slot;
+                        }
+                        ++i;
+                        continue;
+                    }
+
+                    // ── Remove redundant CastOp ──
                     if (instr.opcode == aura::ir::IROpcode::CastOp && ops[2] == 3) {
-                        // type_tag=3 means dynamic; if source already has same type_id,
-                        // replace with Local
                         auto source_type = (ops[1] < block.instructions.size())
                             ? block.instructions[ops[1]].type_id : 0u;
                         if (source_type != 0 && source_type == instr.type_id) {
                             block.instructions[i].opcode = aura::ir::IROpcode::Local;
                             block.instructions[i].operands = {ops[0], ops[1], 0, 0};
-                            ++removed_count_;
                         }
                     }
 
