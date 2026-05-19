@@ -3,27 +3,48 @@
 #define AURA_JIT_H
 
 #include <cstdint>
+#include <cstddef>
 #include <memory>
 #include <functional>
 
 namespace aura::jit {
 
+// Flat instruction format for JIT compilation (C-compatible)
+// Avoids dependency on Aura's C++ module IR types.
+struct FlatInstruction {
+    uint32_t opcode;  // IROpcode as uint32_t
+    uint32_t ops[4];  // operands
+};
+
+struct FlatBlock {
+    uint32_t id;
+    const FlatInstruction* instructions;
+    uint32_t num_instructions;
+};
+
+struct FlatFunction {
+    const char* name;
+    uint32_t entry_block;
+    uint32_t local_count;
+    uint32_t arg_count;
+    const FlatBlock* blocks;
+    uint32_t num_blocks;
+};
+
 // Function pointer type returned by JIT compilation.
-// Takes (argc, argv) and returns int64_t.
-using JitFunction = int64_t(*)();
+using ScalarFn = int64_t(*)(int64_t*, uint32_t);
 
 // AuraJIT manages an LLVM ORC JIT session.
-// Handles IR module compilation, symbol resolution, and caching.
 class AuraJIT {
 public:
     AuraJIT();
     ~AuraJIT();
 
-    // Check if JIT is available (LLVM initialized, ORC ready).
     bool available() const;
 
-    // Compile an empty test function that returns 42.
-    JitFunction compile_empty();
+    // Compile a flat IR function → native function pointer.
+    // Takes (locals array, arg_count) and returns int64_t.
+    ScalarFn compile(const FlatFunction& fn);
 
 private:
     struct Impl;
