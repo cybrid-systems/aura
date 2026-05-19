@@ -1,457 +1,60 @@
 # Aura — 路线图
 
-**更新：2026-05-19 Phase D 完毕** — 43 个提交。D1 LLVM JIT 五阶段全部完成。累计测试 100% 通过。
+**更新：2026-05-19** — D1 LLVM JIT + D2 Sound Gradual Typing 完成。106/106 测试全绿。
 
 ---
 
-## 当前状态评估
-
-### 完成度评分
+## 完成度评分
 
 | 维度 | 分数 | 说明 |
 |------|------|------|
-| 语言核心求值 | 🟢 10/10 | tree-walker + IR 双路径，显式调用栈（无 C++ 递归深度限制）|
-| 类型系统 | 🟢 10/10 | Sound Gradual Typing + coercion + CastOp + occurrence + let-poly + type query + blame |
-| 编译器基础设施 | 🟢 9/10 | ArenaGroup / 增量 / 磁盘缓存 / 热替换 / 依赖级联 / IR 级 import |
-| 标准库覆盖 | 🟢 8/10 | 19 个文件 ~1.1k 行，datetime/json/validate/iter/queue/stack/random |
-| 测试覆盖 | 🟢 8/10 | integ 87/87, unit 74/74, smoke 5/5, bench 44/44, bash 117/117, production 30项 |
-| 错误处理 | 🟢 9/10 | try/catch IR, diagnostics 统一 (suggestion 字段), AST 编译期验证, line:col |
-| EDSL / AI Agent | 🟢 9/10 | `current-source`、`api-reference`、卫生宏、EDSL 双阶段修复、production_test |
-| 文档 | 🟢 8/10 | README + roadmap + tutorial + known_issues + design repo + 7 篇设计文档 |
-| **LLVM JIT** | 🟢 10/10 | ORC JIT 后端完成（P1-P5）。JIT 7.55x vs TW（fib-20）|
-
-### 已实现（完整清单）
-
-**语言核心**
-- 100+ 原语 (arithmetic, string, vector, hash, pair, char, I/O, type predicates)
-- `apply` 内建原语 — variadic 函数动态调用
-- Variadic lambda — `(lambda (x . rest) ...)` / `(define (f . rest) ...)`
-- TCO (tail call optimization via eval_flat loop)
-- let / let\* / letrec / define / set!
-- cond / case / when / unless / and / or
-- try / catch / raise (IR + tree-walker)
-- quasiquote / unquote / unquote-splicing
-- Macro system (defmacro, recursive expansion, gensym)
-- `format` 原语 (SRFI-28 子集: ~a ~s ~% ~~)
-- char predicates + string operations (char=?, char<?, char->integer, integer->char, string-split, string-trim, string-pad, string-reverse)
-- **显式调用栈** — `std::variant<EvalResult, PendingCall>` + 外层 while 循环，无 C++ 递归深度限制
-
-**数据结构**
-- Pair/list (MakePair/Car/Cdr IR 原生指令)
-- Vector (make-vector, vector-ref, vector-set!, vector->list, list->vector)
-- Hash table (hash, hash-ref, hash-set!, hash-length, hash-keys, hash-values, hash-remove!)
-- Standard library hash-set / hash-merge / hash->list / alist->hash
-
-**类型系统（全量）**
-- `--strict` 模式 — TypeCheckWrap 从 warning-only 升级为可开关的严格模式
-  - `set_strict_mode(bool)` + `strict_mode_` 字段
-  - `--serve` `config strict true/false` 命令
-  - 默认为 false，不破坏现有 tests
-- **增量类型缓存** — `synthesize_flat` 结果写入 `flat.type_id(id)`
-  - `mark_subtree_dirty` 自动触发重检查
-- **类型信息流入 IR** — `IRInstruction.type_id` 可选字段
-  - Lowering 时从 `flat.type_id(id)` 写入 `inst.type_id`
-  - 0=dynamic 向后兼容
-- **IRInterpreter 运行时类型断言** — strict 模式下做 runtime 类型校验
-- **Let-Polymorphism** — `synthesize_flat_let` 泛化绑定 → `Forall`
-  - `synthesize_flat_var` `instantiate_all` 替换自由变量
-  - 递归 normalize 处理嵌套 forall
-  - 只在 strict 模式下启用
-- **TypeSpecializationPass** — 类型感知的 IR pass
-  - 运行位置: `lower → [TypeSpecialization] → ComputeKind → Arity → ConstFold → execute`
-  - 了解已知类型，解除 coercion 冗余，死代码消除
-
-**增量编译器**
-- IR pipeline (37 opcodes, const folding, compute-kind, arity check)
-- CompilerService eval() with IR-first + tree-walker fallback
-- Closure bridge: IR ↔ tree-walker closure interop (map/filter via IR)
-- `cache_define()` + `ir_cache_` — 函数级 IR 缓存
-- `cache_module()` — 标准库模块全量缓存
-- `invalidate_function()` + `mark_module_dirty()` — 重定义级联失效
-- ArenaGroup — 多模块独立 arena 管理
-- mmap 磁盘缓存（`~/.cache/aura/modules/`）
-- Hot-swap — 运行时替换已缓存函数
-- 闭包桥接 lambda body source 存备份, fallback 时 re-parse
-
-**标准库（18 files, ~1k lines）**
-- `hash.aura` — hash-set, hash-ref, hash->list, hash-merge, alist->hash
-- `combinators.aura` — compose, curry, flip, complement, const, identity
-- `maybe.aura` — maybe-ref, maybe-default, map-maybe, filter-maybe
-- `csv.aura` — csv-parse (handles quoted fields)
-- `set.aura` — set, set-add, set-union (variadic API)
-- `io.aura` — read-lines, copy-file, move-file, delete-file, directory-files
-- `list.aura` — foldr, zip, zip3, take-while, drop-while, partition, sort, range, sum, product, last, flatten, intersperse, member?
-- `math.aura` — sin, cos, tan, log, pow, sqrt, floor, ceil, round, abs
-- `string.aura` — string-split, string-trim, string-pad, string-reverse
-- `test.aura` — check, check=, test-suite, run-tests
-
-**服务**
-- `--serve`: eval / define / compile / module / fmt / config JSON protocol
-- `--serve`: set-code / query:* / mutate:* / typecheck-current / eval-current EDSL
-- `--serve`: AI agent 双阶段工作流（生成代码 → 编译 → 测试 → 修复循环）
-- `--serve`: 函数热替换 + 依赖追踪
+| 语言核心求值 | 🟢 10/10 | TW + IR 双路径 + 显式调用栈 |
+| **类型系统** | 🟢 10/10 | Sound Gradual + coercion + occurrence + let-poly + type query + blame |
+| LLVM JIT | 🟢 10/10 | ORC JIT, 38 opcode native, -O2, 增量 cache, 闭包/Pair/PrimCall |
+| 编译器基础设施 | 🟢 9/10 | ArenaGroup / 增量 / 磁盘缓存 / 热替换 / IR import |
+| 测试覆盖 | 🟢 8/10 | integ 87 + unit 74 + smoke 5 + bash 117 + bench 44 |
+| 标准库 | 🟢 8/10 | 19 文件 ~1k 行 |
+| 错误处理 | 🟢 9/10 | try/catch IR + diag + AST validate |
+| EDSL / AI Agent | 🟢 9/10 | set-code/query/mutate/typecheck + LLM pipeline |
+| 文档 | 🟢 8/10 | README + tutorial + design repo |
 
 ---
 
-## 下一步工作
+## 已完成
 
-### P0 — 无（全部完成）
+### Phase A-D: 核心功能
+| Phase | 主要内容 | 状态 |
+|-------|---------|------|
+| A | Tree-walker, 宏, 模块, eval-var, closure bridge | ✅ |
+| B | 增量编译, 类型系统 L6, diagnostics, CI/CD | ✅ |
+| C | 卫生宏, AST 验证, IR import, stdlib v3 | ✅ |
+| **D1** | **LLVM JIT** — ORC 编译, 算术/闭包/Cell/Pair/CastOp, PrimCall bridge, -O2, 增量 cache | ✅ |
+| **D2** | **Sound Gradual Typing** — Coercion, CastOp, bi-directional check, occurrence, type-of, blame, type query | ✅ |
 
-| # | 项 | 说明 | 状态 |
-|---|-----|------|------|
-| 1 | `--strict` 模式 | TypeCheckWrap + config strict command | ✅ |
-| 2 | 增量类型缓存 | flat.type_id(id) + dirty 自动重检查 | ✅ |
-| 3 | arity 检查完全修复 | 恢复 `ar.run(ir_mod)`，修复 false positive | ✅ |
-| - | require 内缓存函数 | 修复 cached 函数中 require 的空绑定 | ✅ |
+### Phase D1: LLVM ORC JIT
+```
+fib-20: TW 48.6ms → IR 23.0ms → JIT 6.4ms (7.55x)
+```
+- P1 基础架构: AuraJIT, ORC LLJIT ✅
+- P2 算术: 38 opcode, 控制流, 比较 ✅
+- P3 闭包+Cell: 捕获修复, 递归闭包 ✅
+- P4 运行时: PrimCall bridge, display, eval 集成 ✅
+- P5 优化: LLVM -O2 PassBuilder, 增量 cache ✅
 
-### P1 — 全部完成
-
-| # | 项 | 说明 | 工作量 | 状态 |
-|---|-----|------|--------|------|
-| 4 | 类型信息流入 IR | `IRInstruction.type_id` + lowering 写入 | 1-2d | ✅ |
-| 5 | Let-Poly 启用 | generalize + instantiate forall | 1d | ✅ |
-| 6 | TypeSpecializationPass | 类型感知常量折叠/死代码消除 | 1d | ✅ |
-| 7 | `--serve strict` 命令 | 运行时切换严格模式 | 0.5d | ✅ |
-| 8 | Parser 错误恢复 | 多错误累积 + 跳过 malformed | 3h | ✅ |
-| 9 | proper Diagnostics | 集中化错误信息，行号/列号/原因/建议 | 2h | ✅ |
-| 10 | Benchmark 基线 | 对比 IR vs tree-walker 性能 | 2h | 🔴 |
-| 11 | 标准库 v2 | 增加到 18 个文件，覆盖常见需求 | 8h | ✅ |
-| 12 | try/catch IR 指令 | 消除一个主要 fallback 路径 | 4h | ✅ |
-
-### P2 — 中期（CaaS 生产化）
-
-| # | 项 | 说明 | 工作量 |
-|---|-----|------|--------|
-| 13 | **IR 级 import** | 消除模块系统 fallback | 6h |
-| 14 | **LLVM JIT 后端** | `--jit` 编译到原生代码 | 40h+ |
-| 15 | **AOT 编译** | 从 Aura 源码到静态二进制 | 20h |
-| 16 | **包管理** | 简单 registry + `(fetch ... :as dep)` | 8h |
-
-### P3 — 长期
-
-| # | 项 | 说明 |
-|---|-----|------|
-| 17 | **自举** | 用 Aura 写 Aura 编译器 |
-| 18 | **GC 或引用计数** | 替换 arena-only 内存管理 |
-| 19 | **FFI** | 调用 C/Rust 库 |
-| 20 | **完整的类型系统** | 全类型检查 + 类型驱动优化 |
+### Phase D2: Sound Gradual Typing
+- P1 Coercion: CastOp JIT + IR, `(cast expr : Type)` ✅
+- P2 Bidirectional: `(check expr : Type)`, TypeAnnotation ✅
+- P3 Type Language: `(: name Type)`, type-of, blame labels, type query ✅
+- P4 Occurrence: predicate narrowing (string? → String, number? → Int) ✅
 
 ---
 
-## 下一步工作
-
-### Phase A — 体验打磨（推荐立即启动）
-
-| # | 项 | 说明 | 估计 |
-|---|-----|------|------|
-| B1 | **Benchmark 基线** | 量化 IR vs tree-walker，作为 JIT 加速前基准 | 2h |
-| B2 | **增量类型检查** | `typecheck-current` 从全量遍历→脏子树增量 | 4h |
-| B3 | **桥接器测试覆盖** | closure bridge body_source fallback 路径测试 | 2h |
-| B4 | **Diagnostics 统一** | 补全所有 error path 的 `suggestion` 字段 | 1h |
-| B5 | **CI/CD** | GitHub Actions 自动构建+测试 | 2h |
-
-### Phase B — 能力跃迁（1-2周）
-
-| # | 项 | 说明 | 估计 |
-|---|-----|------|------|
-| C1 | **IR 级 import** | 消除模块系统最后 tree-walker fallback | 6h |
-| C2 | **标准库 v3** | regex, datetime, I/O 增强 | 8h |
-| C3 | **Hygienic Macros** | Ghuloum Step 16 — 卫生宏 rename | 8h |
-| C4 | **编译期 AST 验证** | Ghuloum Step 17 | 4h |
-
-### Phase C — 已全部完成 ✅（2026-05-19）
-
-| # | 项 | 状态 |
-|---|-----|------|
-| C1 | IR 级 import | ✅ |
-| C2 | 标准库 v3 (19 files) | ✅ |
-| C3 | 卫生宏 | ✅ |
-| C4 | 编译期 AST 验证 | ✅ |
-
-### Phase D — LLVM ORC JIT 后端 ✅ 完成
-
-环境：**LLVM 22.1.5**，AArch64 target。设计文档：`docs/design/llvm_jit.md`
-
-| Benchmark | TW | IR | JIT | 加速比 |
-|-----------|----|-----|-----|-------|
-| fib-20 | 48.6ms | 23.0ms | 6.4ms | **7.55x vs TW, 3.58x vs IR** |
-| fact-10 | 2.3ms | 2.2ms | 4.3ms | 编译开销主导（~3ms）|
-| 总测试 | 106/106 | 106/106 | 106/106 | 无回归 |
-
-#### D1-P1: 基础架构 ✅
-
-| # | 项 | 状态 |
-|---|-----|------|
-| 1.1 | CMake: `find_package(LLVM)` + 链接 | ✅ `AURA_HAVE_LLVM` |
-| 1.2 | `AuraJIT` 类 (LLJIT 包装) | ✅ ORC JIT session |
-| 1.3 | 空函数编译 + 调用 | ✅ `--jit` → 42 |
-
-验收：`echo '(+ 1 2 3)' | ./build/aura --jit` → **6** ✅
-
-#### D1-P2: 算术运算 ✅
-
-| # | 项 | 状态 |
-|---|-----|------|
-| 2.1 | `LLVMBuilder` + 指令降维 | ✅ 38 opcodes |
-| 2.2 | Branch/Jump 控制流 | ✅ if/cond 编译 |
-| 2.3 | 函数参数 + Return | ✅ locals_ptr + argc ABI |
-| 2.4 | 比较 + Bool | ✅ Eq/Lt/Gt/Le/Ge/And/Or/Not |
-
-验收：`echo '(+ 1 2 3)' | ./build/aura --jit` → **6** ✅
-
-#### D1-P3: 闭包 + Cell ✅
-
-| # | 项 | 状态 |
-|---|-----|------|
-| 3.1 | MakeClosure — `aura_alloc_closure` | ✅ C runtime bridge |
-| 3.2 | Capture — env 填充 | ✅ env 排列修复 (env 在前, args 在后) |
-| 3.3 | Call — `aura_closure_call` | ✅ 递归闭包 ✅ |
-| 3.4 | NewCell/CellGet/CellSet | ✅ 全局 cell heap |
-| 3.5 | MakePair/Car/Cdr | ✅ 负编码 pair sentinel |
-
-验收：`fact(10)` → **3628800** ✅ | `((lambda (y) (+ x y)) 1)` (captured x=42) → **43** ✅
-
-#### D1-P4: 运行时集成 ✅
-
-| # | 项 | 状态 |
-|---|-----|------|
-| 4.1 | PrimCall bridge | ✅ `aura_jit_prim_dispatch` via kPrimNames |
-| 4.2 | 字符串/向量/哈希 bridge | ⬜ OpConstString 仍需实现 |
-| 4.3 | Closure call bridge | ✅ locals env+args 布局修正 |
-| 4.4 | 集成到 `CompilerService` | ✅ 持久化 AuraJIT + 编译所有函数 |
-| 4.5 | `eq?` 内联 OpEq | ✅ lowering prim_map 添加 eq?/eqv?/equal? |
-
-验收：`(display 42)` → 输出可见 ✅ | `test all` → 106/106 ✅
-
-#### D1-P5: 优化 ✅
-
-| # | 项 | 状态 |
-|---|-----|------|
-| 5.1 | LLVM PassBuilder -O2 | ✅ inline, GVN, DCE, LICM (无 O2 则 JIT = TW) |
-| 5.2 | 函数内联 | ✅ LLVM 自动处理 |
-| 5.3 | 尾调用优化 | ✅ LLVM 自动处理 |
-| 5.4 | 增量 JIT 缓存 | ✅ `jit_cache_` + `invalidate_function` 集成 |
-| 5.5 | Benchmark 对比 | ✅ JIT 7.55x vs TW, 3.58x vs IR (fib-20) |
-
-### D2 — Sound Gradual Typing ✅ 完成（16h）
-
-**目标**：从当前 L6 Level-Only TypeChecker 升级为完整的 Sound Gradual Typing：
-- Consistent subtyping + coercion insertion
-- Blame tracking 在 `(cast ...)` 边界
-- Type language as S-expressions（类型是一等值）
-- Occurrence typing 分支细化
-
-**设计参考**：`docs/design/aura_typesystem.md`（正式规则 ~400 行）
-
----
-
-#### D2-P1: Coercion Infrastructure（4h）✅
-
-| # | 子任务 | 说明 | 验收 |
-|---|--------|------|------|
-| 1.1 | **Type lattice** | 实现 `Type::is_subtype(T1, T2)` 偏序关系（Int<:Any, String<:Any, Any<:Any）| `(subtype? Int Any)` → #t |
-| 1.2 | **Consistency relation** | `T1 ~ T2` 核心：T1~Any, Any~T2, concrete types 当 T1==T2 | `(consistent? Int Any)` → #t |
-| 1.3 | **CoercionInsertionPass** | IR pass: 遍历 IR 函数，在类型不一致边界插入 CastOp。已知 callee 类型 → check arg → cast arg 或 cast result | `(+ "a" 1)` → IR 含 CastOp(Int) |
-| 1.4 | **CastOp lowering** | CastOp(result, value, type_tag) → JIT lowere: compare type_tag, if mismatch → call `aura_type_error` | `(--strict (cast "hi" : Int))` → TypeError |
-| 1.5 | **CastOp IR interpreter** | IR executor case IROpcode::CastOp → runtime type check | `(--ir (cast "hi" : Int))` → TypeError |
-
-**验收**：`(cast 42 : Any)` → 42 | `(cast "hi" : Int)` → TypeError | `(--strict (+ 1 "a"))` → implicit CastOp error
-
----
-
-#### D2-P2: Bidirectional Type Checker（4h）✅
-
-| # | 子任务 | 说明 | 验收 |
-|---|--------|------|------|
-| 2.1 | **Synthesize / Check 分离** | TypeChecker 重构为 bi-directional：`synthesize(expr) -> Type` + `check(expr, expected)`。当前只有 synthesize | `(check (+ 1 2) Int)` → ok |
-| 2.2 | **Lambda annotation** | `(lambda ([x : Int]) x)` → synth 得 `(-> Int Int)`。无标注时得 `(-> Any Any)` | `(: (lambda ([x : Int]) x))` → `(-> Int Int)` |
-| 2.3 | **Let-Poly 完善** | 当前有 forall 泛化，需完善实例化路径 (instantiate → normalize) | `(define id (lambda ([x : Any]) x)) (id 42)` → Int |
-| 2.4 | **Recursive function types** | letrec 绑定的函数有完整递归类型 | `(letrec ((fact (lambda ([n : Int]) : Int ...))) (fact 10))` → Int |
-| 2.5 | **Top-level define typing** | `(define (f [x : Int]) : Int (+ x 1))` 检查定义类型，缓存类型结果 | `(type-of f)` → `(-> Int Int)` |
-
-**验收**：完整 bi-directional checker 通过现有 typecheck 10 测试
-
----
-
-#### D2-P3: Type Language + Blame（4h）✅
-
-| # | 子任务 | 说明 | 验收 |
-|---|--------|------|------|
-| 3.1 | **Type values** | 类型是一等 S-表达式值：`Int`, `(-> Int String)`, `(Pair Int Int)`。解析 `(: ...)` 标签为 type value | `(type-of 42)` → `Int`, `(type-of (lambda ([x : Int]) x))` → `(-> Int Any)` |
-| 3.2 | **`(: ...)` annotation syntax** | 标注语法 `(: x Int)` 在 define/let/lambda 参数中解析并存储 type_id | `(let ([x : Int 42]) x)` → 类型通过 |
-| 3.3 | **Blame labels** | 每个 cast 点分配 blame label（源位置 + 种类：caller/callee）。CastOp 失败时报告 blame | `(+ "a" 1)` → `TypeError: line:col: expected Int, got String (blamed: caller)` |
-| 3.4 | **Type query integration** | QueryEngine 扩展 `(node-type Call) (return-type Int)` — 通过 type_id 字段查询 | `(query (return-type Int))` → 匹配 |
-| 3.5 | **`type-of` primitive** | 运行时从 EvalValue 返回类型 S-表达式 | `(type-of 42)` → `Int` |
-
-**验收**：`(type-of 42) → Int` | `(: (lambda ([x : Int]) x) (-> Int Int))` → 通过 | TypeError 带 blame
-
----
-
-#### D2-P4: Occurrence Typing（4h）✅
-
-| # | 子任务 | 说明 | 验收 |
-|---|--------|------|------|
-| 4.1 | **Predicate type map** | `number?` → Int, `string?` → String, `pair?` → Pair, `boolean?` → Bool, `integer?` → Int, `null?` → Void | 注册 10+ predicates |
-| 4.2 | **If-path narrowing** | `(if (string? x) (string-append x "!") x)` — true 分支 x: String, false 分支 x: not(String) | occurrence 测试通过 |
-| 4.3 | **Cond clause refinement** | `(cond [(number? x) (+ x 1)] ...)` 每个 clause 逐步细化 | cond occurrence 测试 |
-| 4.4 | **TypeSpecializationPass 增强** | 已知 `f : (-> Int Int)` 时，call `(f x)` 特化结果类型 | `(define f (lambda ([x : Int]) : Int (+ x 1)))` → `(f 42)` → Int |
-| 4.5 | **Dead branch elimination** | `(if (number? x) e1 "str")` 中 else 分支已知 x 非 number | 仅 warning（非错误）|
-
-**验收**：`(if (string? x) (string-append x "!") x)` → 正确类型推断
-
----
-
-#### D2 验收标准
-
-```scheme
-;; static type annotation
-(: x Int) (set! x "hi")           → TypeError (strict) ✅
-
-;; consistent subtyping
-(: f (-> Int Int)) (f "hi")        → TypeError (blamed: caller) ✅
-
-;; occurrence typing
-(if (number? x) (+ x 1) x)        → x 分支正确 ✅
-
-;; cast boundary
-(cast "hello" : Int)              → TypeError (blamed: cast site) ✅
-
-;; type values
-(type-of 42)                      → Int ✅
-(type-of +)                       → (-> Int Int Int ...) ✅
-
-;; query integration
-(query (has-type? Int))           → 所有 Int 类型节点 ✅
-
-;; all existing tests pass
-bash 117/117, integ 87/87, ...   → 无回归 ✅
-```
-
-### D3 — 自举（40h，待启动）
-
-Aura 编译器用 Aura 写。
-
----
-
-## 已完成里程碑
-
-### set! 闭包 --ir 路径修复 ✅ 2026-05-19 (`6152993`)
-
-```
-问题：let Cell 捕获时 CellGet 取值而非 CellRef，set! 修改本地副本。
-修复：捕获 CellRef 直传；CellGet/CellSet 通过 cell_heap_ 解引用。
-  (c)(c)(c) → 3  ✅  (之前返回 1)
-```
-
-### 互递归 --ir 路径 ✅ 2026-05-19 (`21e8d1d`)
-
-```
-Begin handler 两阶段：先扫描 Define 预绑定 Cell，再正常 lowering。
-  (odd? 7)  --ir  →  #t  ✅
-```
-
-### 自引用缓存函数 --ir 路径 ✅ 2026-05-19 (`3e203ed`)
-
-```
-Define handler 预绑定 Cell 后再 lower lambda body。
-  (fact 5)  --ir  →  120  ✅  (之前返回 0)
-```
-
-### 显式调用栈 ✅ 2026-05-19 (`9674eb0`)
-
-```
-使用 std::variant<EvalResult, PendingCall> 实现：
-- run_function 返回 RunResult = variant<EvalResult, PendingCall>
-- Call/Apply handler 返回 PendingCall（不再 C++ 递归）
-- execute() 改为外层 while 循环驱动
-- 支持任意深度的闭包递归调用
-```
-
-### try/catch IR 指令 ✅ 2026-05-19
-
-```
-IROpcode::Raise   — (raise val) 创建 error value
-IROpcode::IsError — 检查值是否为 error，返回 bool
-Lowering: (try body (catch (var) handler)) → IsError + Branch
-树遍历求值器 bug 修复: catch_env 缺少 set_primitives
-```
-
-### 标准库 v2 ✅ 2026-05-19
-
-```
-iter.aura     — any?/every?/find/split-at/frequencies/hash-map/hash-filter/
-                vector-map/iota/iterate  (165 行)
-queue.aura    — FIFO 队列 (enqueue/dequeue/queue-front) (43 行)
-stack.aura    — LIFO 栈 (push/pop/top) (32 行)
-random.aura   — LCG 伪随机数生成器 (76 行)
-string.aura   — 12 个新函数: contains?/prefix?/suffix?/replace/
-                pad-left/pad-right/reverse/repeat/chars->string 等
-stdlib total  → 18 files, 1,041 行
-```
-
-### 类型系统增强（P0–P4）✅ 2026-05-19
-
-```
-Phase 0   → ―strict 模式             [2b1de7e] ✅
-Phase 1   → 增量类型缓存              [2b1de7e] ✅ (同一 commit)
-Phase 2   → 类型信息流入 IR            [9e10331] ✅
-Phase 2b  → IR 运行时类型断言          [e9c53ab] ✅
-Phase 3   → Let-Polymorphism          [4fb9783] ✅
-Phase 4   → TypeSpecializationPass    [6795204] ✅
-```
-
-### IR 管线全面覆盖 ✅ 2026-05-17
-
-```
-算术 → IR       比较 → IR        if → IR        let → IR
-lambda → IR      map/filter/foldl → IR (+ 闭包桥接)
-cons/car/cdr →  MakePair/Car/Cdr 原生指令
-Quote/Pair → IR (ConstVoid + (cons ...) 链展开)
-format → IR     char ops → IR    hash/vector/string → IR
-const folding → IR pass
-```
-
-## 测试状态
-
-```
-smoke:       5/5   ✅
-integ:      87/87  ✅
-unit:       74/74  ✅
-bash:      106/106 ✅
-bench:      44/44  ✅
-mutation:   varies  ⚠️ (semantics-changing mutations correctly rejected)
-AI Agent:   —      ✅ (DeepSeek v4 Flash, EDSL restore 工作正常)
-```
-
-## 代码统计（5/19 收盘）
-
-```
-src/core/       ~2,700 行
-src/parser/     ~1,400 行
-src/compiler/   ~13,000 行
-lib/std/        18 files ~1,041 行 Aura
-tests/          bash 回归 + 3 C++ suites + 集成测试 + 基准 + AI agent
-docs/           tutorial.md + known_issues.md + roadmap.md + 设计文档
-```
-
-## 最近提交
-
-```
-6152993  P3#15: Fix set! closure mutable state in --ir path
-21e8d1d  P3#14: Mutual recursion support in --ir path (Begin pre-bind)
-3e203ed  P1#3: Fix self-referencing cached functions in --ir path
-9674eb0  P3#11: Explicit call stack for IR interpreter (std::variant approach)
-37ab1e2  P3#12: stdout flush for display/write/newline
-0ab521d  Add (api-reference) EDSL primitive: 180 primitives auto-listed
-6c22c5d  README + roadmap: add LLM agent demo section, EDSL pipeline, update scores
-d639ef7  EDSL: enhanced AST-to-source feedback + prompt improvements for LLM repair
-b991b3a  Agent: fix code extraction for non-Aura lang tags + prompt hardening
-85c3815  P3#11: Deep recursion friendly error instead of segfault
-e334194  Fix: self-referencing cached functions → tree-walker fallback
-3392d77  Fix: set! closure mutable state + add hash-has-key? primitive
-07c196d  Re-enable arity check in eval() path
-c8e8baf  Unify diagnostics: kind_name(), suggestion, format() chain
-09e71f0  Fix pre-existing type-check errors: wrong_arity/type_of
-4b85e46  stdlib v2: iter/queue/stack/random + string.aura extended
-6d06e67  try/catch IR: Raise + IsError opcodes, lowering, eval integration
-```
+## 待启动
+
+### D3: 自举 (40h)
+Aura 编译器用 Aura 写。等前面稳定后再启。
+
+### 短期改善 (1-3h/each)
+- JIT EvalValue 兼容: Bool/Pair/String 正确编码 → auto-JIT 覆盖全量
+- stdlib 补全: json/validate/struct 生产级
+- `--serve` AI agent 优化
