@@ -43,7 +43,7 @@ target_sources(aura PRIVATE
     src/main.cpp)
 
 target_include_directories(aura PRIVATE ${CMAKE_SOURCE_DIR})
-target_compile_options(aura PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(aura PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
 
 # LLVM JIT (optional, skipped if not found)
 find_package(LLVM QUIET CONFIG)
@@ -54,6 +54,7 @@ if(LLVM_FOUND)
     target_include_directories(aura PRIVATE ${LLVM_INCLUDE_DIRS})
     set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
     set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+    set_source_files_properties(src/compiler/cache_impl.cpp PROPERTIES COMPILE_FLAGS "-O2")
     target_link_libraries(aura PRIVATE ${llvm_libs})
     target_compile_definitions(aura PRIVATE AURA_HAVE_LLVM=1)
 else()
