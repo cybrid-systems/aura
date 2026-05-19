@@ -2,6 +2,15 @@
 
 **AI-native Lisp** — C++26 实现，IR 管线默认启用，全量类型系统增强已完成。
 
+**Status:** `build:ok` `test:100%` (`smoke 5/5 · unit 74/74 · integ 87/87 · typecheck 10/10 · bash 117/117`)
+
+**Requirements:** GCC >= 16 (C++26 modules), CMake >= 4.0, Ninja >= 1.12
+
+```bash
+# CI (requires GCC 16+):
+python3 build.py check
+```
+
 ```bash
 cmake -B build && cmake --build build --target aura -j
 
