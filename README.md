@@ -69,6 +69,9 @@ hash, combinators, maybe, csv, set, io, list, math, string, test, iter, queue, s
 ```
 LLM 驱动闭循环 (iter + EDSL), 支持 DeepSeek v4 Flash
 
+### C FFI 🟢
+`c-load`/`c-func`: dlopen 动态库, Int/Float/String/Opaque marshalling, JIT 符号注册
+
 ### CaaS 服务
 `--serve` JSON 协议: compile / eval / module / define / config / ml 热替换
 

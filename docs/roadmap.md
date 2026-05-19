@@ -54,7 +54,11 @@ fib-20: TW 48.6ms → IR 23.0ms → JIT 6.4ms (7.55x)
 ### D3: 自举 (40h)
 Aura 编译器用 Aura 写。等前面稳定后再启。
 
+### 已完成 (最新)
+- **C FFI**: `c-load`/`c-func` — dlopen/dlsym, Int/Float/String/Opaque marshalling, JIT symbol API
+
 ### 短期改善 (1-3h/each)
 - JIT EvalValue 兼容: Bool/Pair/String 正确编码 → auto-JIT 覆盖全量
 - stdlib 补全: json/validate/struct 生产级
 - `--serve` AI agent 优化
+- FFI: JIT 符号表集成 → 零开销 C 调用

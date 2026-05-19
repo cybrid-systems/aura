@@ -13,6 +13,7 @@
 | [type system](./design/aura_typesystem.md) | Sound Gradual Typing 完整设计 |
 | [type system formal](./design/aura_typesystem_formal.md) | 形式规则附录 |
 | [LLVM JIT](./design/llvm_jit.md) | ORC JIT 后端设计 |
+| [C FFI](./design/ffi_c.md) | C 互操作 (c-load/c-func) |
 | [hygienic macros](./design/hygienic_macros.md) | 卫生宏实现 |
 | [AST validation](./design/ast_validate.md) | 编译期 AST 验证 |
 | [IR import](./design/ir_import.md) | IR 级模块导入 |
