@@ -22,7 +22,15 @@ SYSTEM_PROMPT = build_system_prompt() + """
 
 When Phase 1 code fails: use EDSL to fix. NEVER rewrite the whole code.
 
-(set-code "(begin (define ...) (define ...) ...)")  ; Lock workspace (use (begin ...) for multi-expr)
+### IMPORTANT: (current-source) gives you the updated source after mutations
+After any mutate:rebind / mutate:set-body / mutate:replace-value, ALWAYS:
+1. (current-source) -> get the updated source as a string
+2. Put the updated source in your response to show the new code
+
+The updated source shows you exactly what the workspace contains after the AST transformation.
+
+### Workflow
+(set-code "(begin (define ...) (define ...) ...)")  ; Lock workspace
 (current-source)              ; Get updated source after mutations
 (query:find "func")               ; Find node ID
 (query:children N)                ; See node structure
@@ -31,7 +39,18 @@ When Phase 1 code fails: use EDSL to fix. NEVER rewrite the whole code.
 (mutate:replace-value 3 "42")           ; Replace a literal
 (typecheck-current) + (eval-current)    ; Verify
 
-Say DONE when correct.
+### Example: fix a typo in recursive call
+
+
+### Example: defmacro (Aura syntax)
+
+
+### Rules
+- Use (begin ...) for multi-expression set-code
+- ALWAYS call (current-source) after mutations
+- Only change the broken part, not the whole program
+- Say DONE when correct.
+
 """
 
 
@@ -191,7 +210,7 @@ def main():
                     src_result = aura.exec("(current-source)")
                     updated_src = ""
                     if src_result and src_result.get("status") == "ok":
-                        updated_src = src_result.get("value", "")
+                        updated_src = src_result.get("value", "").strip('\"')
                         current_src = updated_src
                     if updated_src:
                         fb = f"Phase 2 fix applied.\n\nUpdated source:\n{updated_src}\n\nSay DONE if correct."
@@ -268,7 +287,7 @@ def main():
                 src_result = aura.exec("(current-source)")
                 current_ws_src = ""
                 if src_result and src_result.get("status") == "ok":
-                    current_ws_src = src_result.get("value", "")
+                    current_ws_src = src_result.get("value", "").strip('\"')
 
                 fb = (
                     f"ERROR: {value}\n\n"

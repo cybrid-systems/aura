@@ -51,25 +51,36 @@ def extract_code(text):
     return ""
 
 SYSTEM_PROMPT = """You are an agent for the Aura programming language (Scheme-like Lisp).
-Generate Aura code between ``` markers.
+ONLY write Aura Lisp code. NEVER output Python, JavaScript, Racket, or other languages.
 
 AVAILABLE:
 - (define (fn x) body), (lambda (x) body)
-- (if cond t e), (begin expr...)
+- (if cond t e), (begin expr...), (cond ...), (when cond body...), (unless cond body...)
+- (let ((x v)) body), (let* ...), (letrec ...), (set! name val)
 - (+ 1 2 3), (- x y), (* x y), (/ x y), (modulo n m)
-- (list 1 2 3), (cons 1 2), (car x), (cdr x)
+- (list 1 2 3), (cons 1 2), (car x), (cdr x), (cadr x) = (car (cdr x))
 - (map fn lst), (filter fn lst), (foldl fn init lst)
-- (display val), (write val)
-- (require std/list) -> sum, sort, range 1..N, foldl, zip
-- (require std/math) -> factorial, sqrt, pi
-- (require std/json) -> json-stringify, json-parse
+- (display val), (write val), (newline)
+- (require std/list) -> sum, sort, range, foldl, zip, flatten, last
+- (require std/math) -> factorial, sqrt, pi, sin, cos, tan
+- (require std/string) -> string-split, string-join, string-trim, string-contains?
+- (require std/iter) -> any?, every?, find, frequencies, iota, iterate, hash-map
+- (hash "k1" v1 "k2" v2), (hash-ref h key default), (hash-set! h key val), hash-has-key?
+- (try body (catch (e) handler)), (raise val)
+- (defmacro (name . args) body) -- macros expand at compile time
+- (apply fn list) -- call fn with elements of list as args
+- format: (format "~a = ~a" name val)
 
-DO NOT USE: displayln, println, print, apply, reduce (don't exist)
+Defmacro example (ONLY this syntax works):
+```lisp
+(defmacro (twice expr)
+  (list (quote begin) expr expr))
+```
 
 FLOW:
-1. Write code in ``` block
+1. Write Aura code in ``` block
 2. I execute it and return result
-3. You see the result, then either fix errors or say DONE"""
+3. You see the result, then either fix errors or say DONE"""""
 
 def main():
     if len(sys.argv) < 2:
