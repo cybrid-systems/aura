@@ -13,6 +13,7 @@
 #include <llvm/ExecutionEngine/Orc/ThreadSafeModule.h>
 #include <llvm/ExecutionEngine/Orc/Shared/ExecutorSymbolDef.h>
 #include <llvm/ExecutionEngine/Orc/ExecutorProcessControl.h>
+#include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/raw_ostream.h>
 
@@ -306,6 +307,7 @@ struct AuraJIT::Impl {
     llvm::LLVMContext ctx;
     uint64_t module_counter = 0;
     bool initialized = false;
+    bool optimize = true;
     std::vector<FunctionMeta> compiled_fns_{};
 
     bool init() {
@@ -405,6 +407,24 @@ struct AuraJIT::Impl {
             }
         }
         delete builder.irb;
+
+        // Run LLVM optimization passes
+        if (optimize) {
+            llvm::PassBuilder pb;
+            llvm::LoopAnalysisManager lam;
+            llvm::FunctionAnalysisManager fam;
+            llvm::CGSCCAnalysisManager cgam;
+            llvm::ModuleAnalysisManager mam;
+
+            pb.registerModuleAnalyses(mam);
+            pb.registerCGSCCAnalyses(cgam);
+            pb.registerFunctionAnalyses(fam);
+            pb.registerLoopAnalyses(lam);
+            pb.crossRegisterProxies(lam, fam, cgam, mam);
+
+            auto mpm = pb.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
+            mpm.run(*mod, mam);
+        }
 
         if (llvm::verifyModule(*mod, &llvm::errs())) {
             fprintf(stderr, "JIT: verification failed\n"); return nullptr;
