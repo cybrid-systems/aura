@@ -1102,6 +1102,29 @@ void Evaluator::init_pair_primitives() {
         }
         return make_void();
     });
+
+    // (hash-has-key? hash key) — Check if key exists in hash
+    primitives_.add("hash-has-key?", [this](const auto& a) {
+        if (a.size() < 2 || !is_hash(a[0])) return make_bool(false);
+        auto hidx = as_hash_idx(a[0]);
+        if (hidx >= hash_heap_.size()) return make_bool(false);
+        auto& ht = hash_heap_[hidx];
+        auto sh = &string_heap_;
+        for (std::size_t i = 0; i < ht.capacity; ++i) {
+            if (ht.metadata[i] == 0xFF) continue;
+            auto& k = ht.keys[i];
+            bool eq = false;
+            if (is_int(k) && is_int(a[1])) eq = as_int(k) == as_int(a[1]);
+            else if (is_string(k) && is_string(a[1])) {
+                auto ai = as_string_idx(k), bi = as_string_idx(a[1]);
+                eq = (ai < sh->size() && bi < sh->size()) && (*sh)[ai] == (*sh)[bi];
+            }
+            else eq = k == a[1];
+            if (eq) return make_bool(true);
+        }
+        return make_bool(false);
+    });
+
     primitives_.add("hash-set!", [this](const auto& a) {
         if (a.size() < 3 || !is_hash(a[0])) return make_void();
         auto hidx = as_hash_idx(a[0]); if (hidx >= hash_heap_.size()) return make_void();
@@ -4188,12 +4211,16 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                 cells_[ci] = *vv;
             } else {
                 // For let, evaluate value in parent env first, then create tail env
+                // with Cell binding (like letrec) so set! mutations persist across
+                // closure calls and recursive lambdas.
                 auto vv = eval_flat(*f, *p, val_id, eval_env);
                 if (!vv) return vv;
                 tail_env.emplace(&eval_env);
                 tail_env->set_primitives(&primitives_);
                 tail_env->set_cells(&cells_);
-                tail_env->bind(std::string(name), *vv);
+                std::size_t ci = cells_.size();
+                cells_.push_back(*vv);
+                tail_env->bind(std::string(name), make_cell(ci));
             }
             if (body_id != aura::ast::NULL_NODE)
                 return eval_flat(*f, *p, body_id, *tail_env);
