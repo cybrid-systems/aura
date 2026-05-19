@@ -11,13 +11,13 @@
 | 维度 | 分数 | 说明 |
 |------|------|------|
 | 语言核心求值 | 🟢 9/10 | tree-walker + IR 双路径稳定，IR 桥接器修复，pair 原生指令，TCO，format |
-| 类型系统 | 🟢 8/10 | L6 + strict 模式 + 增量缓存 + Let-Poly + IR 类型特化 pass，缺 full type check |
+| 类型系统 | 🟢 8/10 | L6 + strict 模式 + 增量缓存 + Let-Poly + IR 类型特化 pass |
 | 编译器基础设施 | 🟢 8/10 | ArenaGroup / 增量 / 磁盘缓存 / 热替换 / 依赖级联 |
 | 标准库覆盖 | 🟡 7/10 | 18 个文件 ~1k 行，iter/queue/stack/random 新增，string 扩展 |
-| 测试覆盖 | 🟡 5/10 | integ 87/87，unit 74/74，smoke 5/5，bench 44/44，bash 106/106 |
-| 错误处理 | 🟡 6/10 | Parser 多错误累积 + line:column，try/catch IR ✅，Diagnostics 统一待做 |
-| 文档 | 🟡 5/10 | README + roadmap + tutorial + known_issues + 设计文档 |
-| AI agent 集成 | 🟡 6/10 | EDSL 管线完整，DeepSeek API 实测通过，空响应保护 |
+| 测试覆盖 | 🟡 6/10 | integ 87/87，unit 74/74，smoke 5/5，bench 44/44，bash 106/106 |
+| 错误处理 | 🟡 6/10 | Parser 多错误累积 + line:column，try/catch IR ✅，Diagnostics 统一 ✅ |
+| EDSL / AI Agent | 🟢 7/10 | `current-source` AST→source 桥接，LLM 管线实测通过，set!闭包修复 |
+| 文档 | 🟡 6/10 | README + roadmap + tutorial + known_issues + 设计文档 |
 
 ### 已实现（完整清单）
 
@@ -206,7 +206,7 @@ AI Agent:   —      ✅ (DeepSeek v4 Flash, EDSL restore 工作正常)
 ```
 src/core/       ~2,700 行
 src/parser/     ~1,400 行
-src/compiler/   ~12,700 行
+src/compiler/   ~12,800 行
 lib/std/        18 files ~1,041 行 Aura
 tests/          bash 回归 + 3 C++ suites + 集成测试 + 基准 + AI agent
 docs/           tutorial.md + known_issues.md + roadmap.md + 设计文档
