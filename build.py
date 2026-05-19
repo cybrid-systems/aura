@@ -524,6 +524,14 @@ def test_bash():
         env={**os.environ, "AURA": str(AURA)},
         capture_output=True, text=True, timeout=120
     )
+    print(r.stdout)
+    if r.stderr:
+        print(r.stderr)
+    if r.returncode == 0:
+        ok("bash tests passed")
+    else:
+        fail("bash tests failed")
+    return r.returncode
 
 SUITES = {
     "unit":      test_unit,

@@ -2143,9 +2143,11 @@ private:
         g_jit_prim_ctx = &evaluator_.primitives();
         
         // Register the dispatcher with JIT runtime
+        #ifdef AURA_HAVE_LLVM
         // aura_jit_prim_dispatch is defined at file scope (after imports)
-        // and aura_set_prim_dispatcher is declared in the module; fragment
+        // and aura_set_prim_dispatcher is declared at file scope.
         aura_set_prim_dispatcher(aura_jit_prim_dispatch);
+        #endif
     }
 };
 

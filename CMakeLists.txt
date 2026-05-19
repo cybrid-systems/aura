@@ -135,6 +135,16 @@ target_compile_options(test_ir PRIVATE -Wall -Wextra -Wpedantic
 )
 target_link_libraries(test_ir PRIVATE stdc++ stdc++exp)
 
+# Link JIT for test_ir when LLVM is available (service.ixx references JIT types)
+if(LLVM_FOUND)
+    target_sources(test_ir PRIVATE src/compiler/aura_jit.cpp src/compiler/aura_jit_runtime.cpp)
+    target_include_directories(test_ir PRIVATE ${LLVM_INCLUDE_DIRS})
+    set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+    set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+    target_link_libraries(test_ir PRIVATE ${llvm_libs})
+    target_compile_definitions(test_ir PRIVATE AURA_HAVE_LLVM=1)
+endif()
+
 add_test(NAME ir_basic COMMAND ./test_ir
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
