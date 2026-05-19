@@ -533,5 +533,67 @@
       "stdout": "5",
       "stderr": ""
     }
+  ],
+  "ir_vs_treewalker": [
+    {
+      "name": "arithmetic",
+      "tw_ms": "4.0",
+      "ir_ms": "3.1",
+      "ratio": "1.29x",
+      "tw_ok": "\u2705",
+      "ir_ok": "\u2705",
+      "tw_val": "55",
+      "ir_val": "55"
+    },
+    {
+      "name": "fib-20",
+      "tw_ms": "74.9",
+      "ir_ms": "33.0",
+      "ratio": "2.27x",
+      "tw_ok": "\u2705",
+      "ir_ok": "\u2705",
+      "tw_val": "6765",
+      "ir_val": "6765"
+    },
+    {
+      "name": "fact-10",
+      "tw_ms": "3.0",
+      "ir_ms": "3.0",
+      "ratio": "1.01x",
+      "tw_ok": "\u2705",
+      "ir_ok": "\u2705",
+      "tw_val": "3628800",
+      "ir_val": "3628800"
+    },
+    {
+      "name": "closure-set!",
+      "tw_ms": "3.0",
+      "ir_ms": "3.0",
+      "ratio": "1.02x",
+      "tw_ok": "\u2705",
+      "ir_ok": "\u2705",
+      "tw_val": "5",
+      "ir_val": "5"
+    },
+    {
+      "name": "try-catch",
+      "tw_ms": "2.0",
+      "ir_ms": "3.0",
+      "ratio": "0.66x",
+      "tw_ok": "\u2705",
+      "ir_ok": "\u2705",
+      "tw_val": "3",
+      "ir_val": "3"
+    },
+    {
+      "name": "self-ref-fact",
+      "tw_ms": "3.0",
+      "ir_ms": "3.0",
+      "ratio": "1.00x",
+      "tw_ok": "\u2705",
+      "ir_ok": "\u2705",
+      "tw_val": "3628800",
+      "ir_val": "3628800"
+    }
   ]
 }
