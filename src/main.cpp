@@ -916,6 +916,28 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
+    // ── --jit: compile and execute via LLVM ORC JIT ─────────────
+    if (argc > 1 && std::string_view(argv[1]) == "--jit") {
+        aura::compiler::CompilerService cs;
+        std::string input;
+        if (argc > 2) { input = argv[2]; }
+        else { std::getline(std::cin, input); }
+
+        // Quick test: compile empty function and call it
+        #ifdef AURA_HAVE_LLVM
+        auto result = cs.exec_jit(input);
+        if (!result) {
+            std::println(std::cerr, "error: {}", result.error().format());
+            return 1;
+        }
+        std::println("{}", fmt_val(*result, cs));
+        return 0;
+        #else
+        std::println(std::cerr, "JIT not available — rebuild with LLVM");
+        return 1;
+        #endif
+    }
+
     // ── --inspect: eval with full runtime reflection dump ────────
     if (argc > 1 && std::string_view(argv[1]) == "--inspect") {
         aura::compiler::CompilerService cs;

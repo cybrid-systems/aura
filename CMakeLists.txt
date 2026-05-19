@@ -39,10 +39,25 @@ target_sources(aura PRIVATE
     src/compiler/query_impl.cpp
     src/compiler/type_checker_impl.cpp
     src/compiler/arity_impl.cpp
+    src/compiler/aura_jit_bridge.cpp
     src/main.cpp)
 
 target_include_directories(aura PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_options(aura PRIVATE -Wall -Wextra -Wpedantic)
+
+# LLVM JIT (optional, skipped if not found)
+find_package(LLVM QUIET CONFIG)
+if(LLVM_FOUND)
+    message(STATUS "LLVM JIT: ${LLVM_PACKAGE_VERSION}")
+    llvm_map_components_to_libnames(llvm_libs core orcjit native nativecodegen)
+    target_sources(aura PRIVATE src/compiler/aura_jit.cpp)
+    target_include_directories(aura PRIVATE ${LLVM_INCLUDE_DIRS})
+    target_link_libraries(aura PRIVATE ${llvm_libs})
+    target_compile_definitions(aura PRIVATE AURA_HAVE_LLVM=1)
+else()
+    message(STATUS "LLVM JIT: disabled (not found)")
+endif()
+
 target_link_libraries(aura PRIVATE stdc++ stdc++exp)
 
 enable_testing()

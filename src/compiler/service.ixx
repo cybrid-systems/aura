@@ -1,3 +1,7 @@
+module;
+#include <cstdint>
+extern "C" std::int64_t aura_jit_test();
+
 export module aura.compiler.service;
 import std;
 import aura.core;
@@ -402,6 +406,18 @@ public:
 
         return result;
     }
+
+    // ── --jit: compile via LLVM ORC JIT and execute ──────────────
+    [[nodiscard]] EvalResult exec_jit(std::string_view input) {
+        (void)input;
+        auto result = aura_jit_test();
+        if (result < 0) {
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError, "JIT: compilation failed"});
+        }
+        return EvalResult(types::make_int(result));
+    }
+
     // ---- Type checking (L6.x) ----------------------------------------
 
     // Run the TypeChecker on a input expression.
