@@ -339,7 +339,7 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
             }
 
             // Pre-executed require/import/use: skip (already handled by pre_exec_requires)
-            if (std::string(callee_name) == "require" || std::string(callee_name) == "use") {
+            if (std::string(callee_name) == "require") {
                 auto slot = state.alloc_local();
                 state.emit(IROpcode::ConstVoid, slot);
                 return slot;

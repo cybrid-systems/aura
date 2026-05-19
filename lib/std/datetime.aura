@@ -1,0 +1,120 @@
+; datetime.aura — Date and time utilities
+; Import with: (import "std/datetime")
+;
+; Depends on: (current-time) primitive (seconds since Unix epoch)
+;
+; All functions are pure (no side effects) except timestamp.
+
+(export
+  ; Core
+  timestamp timestamp->year timestamp->month timestamp->day
+  timestamp->hour timestamp->minute timestamp->second
+  timestamp->weekday timestamp->yday
+  ; Formatting
+  timestamp->iso-date timestamp->iso-datetime
+  timestamp->date-string
+  ; Calendar
+  leap-year? days-in-month day-of-week
+  ; Timing
+  time-diff)
+
+; ── Core: get current time ────────────────────────────────────
+(define (timestamp) (current-time))
+
+; ── Decompose Unix timestamp (UTC) ────────────────────────────
+; Based on algorithm from gmtime(3)
+(define (timestamp->year t)
+  ; 86400 seconds per day
+  (let ((d (quotient t 86400)))
+    ; Adjust epoch from 1970 to 0
+    (letrec ((y 1970) (remaining d)
+             (count (lambda (y d)
+               (let ((days (if (leap-year? y) 366 365)))
+                 (if (< d days) y (count (+ y 1) (- d days)))))))
+      (count y remaining))))
+
+(define (timestamp->yday t)
+  (let ((d (quotient t 86400)))
+    (letrec ((y 1970) (remaining d)
+             (count (lambda (y d)
+               (let ((days (if (leap-year? y) 366 365)))
+                 (if (< d days) d (count (+ y 1) (- d days)))))))
+      (count y remaining))))
+
+(define (leap-year? y)
+  (and (= (modulo y 4) 0)
+       (or (not (= (modulo y 100) 0))
+           (= (modulo y 400) 0))))
+
+(define (days-in-month y m)
+  (if (= m 2)
+    (if (leap-year? y) 29 28)
+    (if (= m 4) 30
+      (if (= m 6) 30
+        (if (= m 9) 30
+          (if (= m 11) 30 31))))))
+
+(define (timestamp->month t)
+  (let ((y (timestamp->year t))
+        (yd (timestamp->yday t)))
+    (letrec ((m 1) (remaining yd)
+             (walk (lambda (m r)
+               (let ((dm (days-in-month y m)))
+                 (if (< r dm) m (walk (+ m 1) (- r dm)))))))
+      (walk m remaining))))
+
+(define (timestamp->day t)
+  (let ((y (timestamp->year t))
+        (yd (timestamp->yday t)))
+    (letrec ((m 1) (remaining yd)
+             (walk (lambda (m r)
+               (let ((dm (days-in-month y m)))
+                 (if (< r dm) (+ r 1) (walk (+ m 1) (- r dm)))))))
+      (walk m remaining))))
+
+(define (timestamp->hour t)
+  (quotient (modulo t 86400) 3600))
+
+(define (timestamp->minute t)
+  (quotient (modulo (modulo t 86400) 3600) 60))
+
+(define (timestamp->second t)
+  (modulo (modulo (modulo t 86400) 3600) 60))
+
+(define (timestamp->weekday t)
+  ; Jan 1, 1970 was Thursday (4)
+  (modulo (+ (quotient t 86400) 4) 7))
+
+; ── Formatting ────────────────────────────────────────────────
+(define (pad2 n)
+  (if (< n 10) (string-append "0" (number->string n))
+    (number->string n)))
+
+(define (timestamp->iso-date t)
+  (string-append (number->string (timestamp->year t)) "-"
+    (pad2 (timestamp->month t)) "-"
+    (pad2 (timestamp->day t))))
+
+(define (timestamp->iso-datetime t)
+  (string-append (timestamp->iso-date t) "T"
+    (pad2 (timestamp->hour t)) ":"
+    (pad2 (timestamp->minute t)) ":"
+    (pad2 (timestamp->second t)) "Z"))
+
+(define (timestamp->date-string t)
+  (let ((weekday (list "Thu" "Fri" "Sat" "Sun" "Mon" "Tue" "Wed")))
+    (string-append
+      (list-ref weekday (timestamp->weekday t)) " "
+      (number->string (timestamp->day t)) " "
+      (number->string (timestamp->year t)))))
+
+(define (day-of-week y m d)
+  ; Zeller-like: 0=Sun, 6=Sat
+  ; Tomohiko Sakamoto's algorithm
+  (let ((t (list 0 3 2 5 0 3 5 1 4 6 2 4)))
+    (let ((y (if (< m 3) (- y 1) y)))
+      (modulo (+ y (quotient y 4) (- (quotient y 100))
+                 (quotient y 400) (list-ref t (- m 1)) d) 7))))
+
+; ── Stopwatch / timing ────────────────────────────────────────
+(define (time-diff t1 t2) (- t2 t1))
