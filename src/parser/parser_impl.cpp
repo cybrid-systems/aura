@@ -209,6 +209,7 @@ NodeId FlatParser::parse_list() {
         if (kw == "cond")   return parse_cond();
         if (kw == "defmacro") return parse_defmacro();
         if (kw == "match")  return parse_match();
+        if (kw == "cast")   return parse_cast();
         if (kw == "export") {
             lexer_->consume(); // consume 'export'
             std::vector<aura::ast::NodeId> syms;
@@ -704,6 +705,34 @@ NodeId FlatParser::parse_match() {
     result = flat_.add_let(tmp, subject, result);
     flat_.set_loc(result, tok.line, tok.column);
     return result;
+}
+
+NodeId FlatParser::parse_cast() {
+    // Syntax: (cast expr : TypeName) or (cast expr TypeName)
+    // Creates Coercion node: child[0]=expr, int_val=type_tag
+    auto tok = lexer_->consume(); // 'cast'
+    auto expr = parse_expr();
+    if (expr == NULL_NODE) { skip_rparen(); return NULL_NODE; }
+
+    // Parse optional : then type name
+    if (lexer_->peek().kind == TokenKind::Identifier && lexer_->peek().text == ":") {
+        lexer_->consume(); // :
+    }
+
+    auto type_tok = lexer_->peek();
+    auto type_name = type_tok.text;
+    std::uint32_t type_tag = 3; // default: Dynamic
+    if (type_name == "Int")           type_tag = 0;
+    else if (type_name == "String")  type_tag = 1;
+    else if (type_name == "Bool")    type_tag = 2;
+    else if (type_name == "Any")     type_tag = 3;
+    lexer_->consume(); // TypeName
+
+    if (lexer_->peek().kind == TokenKind::RParen) lexer_->consume();
+
+    auto id = flat_.add_coercion(expr, type_tag, 0);
+    flat_.set_loc(id, tok.line, tok.column);
+    return id;
 }
 
 std::vector<std::pair<SymId, NodeId>> FlatParser::compile_pattern(NodeId pattern_node, SymId tmp, NodeId* out_test) {
