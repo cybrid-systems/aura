@@ -52,12 +52,13 @@ def info(msg): print(f"  {B}→{N} {msg}")
 # ═══════════════════════════════════════════════════════════════
 
 def cmd_build():
-    """CMake 构建"""
+    """CMake 构建 (Ninja)"""
     print(f"{B}═══ Build ═══{N}")
     BUILD.mkdir(parents=True, exist_ok=True)
-    r = run(["cmake", "-B", str(BUILD)], cwd=ROOT)
+    nproc = os.cpu_count() or 4
+    r = run(["cmake", "-B", str(BUILD), "-G", "Ninja"], cwd=ROOT)
     if r != 0: return r
-    r = run(["cmake", "--build", str(BUILD), "-j$(nproc)"], cwd=ROOT)
+    r = run(["cmake", "--build", str(BUILD), "--target", "aura", "-j", str(nproc)], cwd=ROOT)
     if r == 0: ok("build OK")
     else:      fail("build failed")
     return r
