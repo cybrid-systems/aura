@@ -616,21 +616,56 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
     case NodeTag::Define: {
         auto name = pool.resolve(v.sym_id);
         auto val_id = v.children.empty() ? NULL_NODE : v.child(0);
-        // Pre-bind the name as a Cell BEFORE lowering the value so that
-        // self-references in the lambda body find the cell (like letrec)
-        // instead of falling through to ConstI64 0.
         auto& scope = state.scopes.empty()
             ? (state.scopes.push_back({}), state.scopes.back())
             : state.scopes.back();
-        auto ci = state.alloc_local();
-        state.emit(IROpcode::NewCell, ci);
-        scope[std::string(name)] = Binding{BindingKind::Cell, ci};
+        // Check if already pre-bound by Begin handler (for mutual recursion).
+        // If a Cell binding exists, reuse it (no NewCell needed).
+        auto existing = scope.find(std::string(name));
+        bool has_cell = (existing != scope.end() && existing->second.kind == BindingKind::Cell);
+        std::uint32_t ci;
+        if (has_cell) {
+            ci = existing->second.slot;
+        } else {
+            // Pre-bind the name as a Cell BEFORE lowering the value so that
+            // self-references in the lambda body find the cell (like letrec).
+            ci = state.alloc_local();
+            state.emit(IROpcode::NewCell, ci);
+            scope[std::string(name)] = Binding{BindingKind::Cell, ci};
+        }
         // Now lower the value — self-references will CellGet the pre-bound cell
         auto val_slot = lower_flat_expr(state, flat, pool, val_id, cache, cache_hits);
         state.emit(IROpcode::CellSet, ci, val_slot);
         return val_slot;
     }
     case NodeTag::Begin: {
+        // First pass: pre-bind all define names for mutual recursion support.
+        // Each define gets a Cell that all sibling defines can reference.
+        if (!state.scopes.empty()) {
+            auto& scope = state.scopes.back();
+            for (auto c : v.children) {
+                if (c < flat.size() && flat.get(c).tag == NodeTag::Define) {
+                    auto name = pool.resolve(flat.get(c).sym_id);
+                    if (scope.find(std::string(name)) == scope.end()) {
+                        auto ci = state.alloc_local();
+                        state.emit(IROpcode::NewCell, ci);
+                        scope[std::string(name)] = Binding{BindingKind::Cell, ci};
+                    }
+                }
+            }
+        } else {
+            state.scopes.push_back({});
+            auto& scope = state.scopes.back();
+            for (auto c : v.children) {
+                if (c < flat.size() && flat.get(c).tag == NodeTag::Define) {
+                    auto name = pool.resolve(flat.get(c).sym_id);
+                    auto ci = state.alloc_local();
+                    state.emit(IROpcode::NewCell, ci);
+                    scope[std::string(name)] = Binding{BindingKind::Cell, ci};
+                }
+            }
+        }
+        // Second pass: lower all children — defines find their pre-bound cells
         std::uint32_t last_slot = 0;
         for (auto c : v.children)
             last_slot = lower_flat_expr(state, flat, pool, c, cache, cache_hits);
