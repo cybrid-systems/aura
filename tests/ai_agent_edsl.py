@@ -145,7 +145,13 @@ def main():
         print(f"  Code:\n    {code[:300]}")
 
         # Route: Phase 2 EDSL or Phase 1 exec
-        is_edsl = code.startswith(("(set-code", "(query:", "(mutate:", "(typecheck", "(eval-current"))
+        is_edsl = code.startswith(("(set-code", "(query:", "(mutate:", "(typecheck", "(eval-current", "(current-source"))
+
+        # Wrap multi-line EDSL in (begin ...)
+        if is_edsl and "\n" in code:
+            lines = [l.strip() for l in code.split("\n") if l.strip() and not l.startswith(";")]
+            if len(lines) > 1:
+                code = "(begin " + " ".join(lines) + ")"
 
         if is_edsl:
             in_phase2 = True

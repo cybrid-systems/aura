@@ -106,12 +106,15 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                 if (ops[1] < args.size()) {
                     auto& val = args[ops[1]];
                     // Check if this is a cell reference (negative encoding in IR)
+                    // Only treat as cell ref if the index is within the heap
                     if (is_int(val) && as_int(val) < 0) {
                         auto cell_slot = static_cast<std::size_t>(-as_int(val) - 1);
-                        if (cell_slot < locals.size())
+                        if (cell_slot < cell_heap_.size()) {
                             locals[ops[0]] = locals[cell_slot];
-                        else
-                            locals[ops[0]] = make_void();
+                        } else {
+                            // Not a cell reference — actual negative int
+                            locals[ops[0]] = val;
+                        }
                     } else {
                         locals[ops[0]] = val;
                     }
