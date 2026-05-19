@@ -63,7 +63,7 @@ public:
             "when", "unless", "export",
             "and", "or", "cond", "case",
             // Module system (env side-effects)
-            "import", "use", "require",
+            // "import", "use", "require" — now in lowering_known
         };
 
         // Root-level bare variables (like `pi`, `sort`) may come from runtime imports.
@@ -81,6 +81,7 @@ public:
         // not primitives or cached defines.
         static const std::unordered_set<std::string> lowering_known = {
             "try", "catch", "raise",
+            "require", "import", "use",
         };
 
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
@@ -167,6 +168,10 @@ public:
 
         // Pre-expand all macros in this expression
         auto expanded_root = aura::compiler::macro_expand_all(*flat_ptr, *pool_ptr, flat_ptr->root);
+
+        // Pre-execute top-level require/import/use calls to fill ir_cache_
+        // so the remaining expression can go through the IR path without fallback.
+        pre_exec_requires(*flat_ptr, *pool_ptr, expanded_root);
 
         // Check if we need the tree-walker fallback
         if (needs_tree_walker_fallback(*flat_ptr, *pool_ptr, expanded_root)) {
@@ -1364,6 +1369,64 @@ private:
             return std::make_pair(std::string(name), body);
         }
         return std::nullopt;
+    }
+
+    // Check if a node is a require/import/use call.
+    static bool is_require_call(const aura::ast::FlatAST& flat,
+                                 const aura::ast::StringPool& pool,
+                                 aura::ast::NodeId id) {
+        if (id >= flat.size()) return false;
+        auto v = flat.get(id);
+        if (v.tag != aura::ast::NodeTag::Call) return false;
+        auto callee = v.child(0);
+        if (callee >= flat.size()) return false;
+        auto cv = flat.get(callee);
+        if (cv.tag != aura::ast::NodeTag::Variable) return false;
+        auto name = pool.resolve(cv.sym_id);
+        return name == "require"sv || name == "import"sv || name == "use"sv;
+    }
+
+    // Pre-execute top-level require/import/use calls, removing them from
+    // the expression so the remaining body can go through IR without fallback.
+    // Returns the new root node (with requires removed), or original root.
+    // Side effect: fills ir_cache_ + evaluator env via compile_module.
+    aura::ast::NodeId pre_exec_requires(aura::ast::FlatAST& flat,
+                                         aura::ast::StringPool& pool,
+                                         aura::ast::NodeId root) {
+        if (root >= flat.size()) return root;
+        auto v = flat.get(root);
+
+        // Top-level standalone require: execute, no body left
+        if (is_require_call(flat, pool, root)) {
+            evaluator_.eval_flat(flat, pool, root, evaluator_.top_env());
+            return aura::ast::NULL_NODE;
+        }
+
+        // (begin ...) — scan children for require calls
+        if (v.tag == aura::ast::NodeTag::Begin) {
+            bool has_require = false;
+            for (auto c : v.children) {
+                if (is_require_call(flat, pool, c)) {
+                    evaluator_.eval_flat(flat, pool, c, evaluator_.top_env());
+                    has_require = true;
+                }
+            }
+            if (!has_require) return root;  // no require → unchanged
+
+            // Collect non-require children
+            std::vector<aura::ast::NodeId> remaining;
+            for (auto c : v.children) {
+                if (!is_require_call(flat, pool, c))
+                    remaining.push_back(c);
+            }
+            if (remaining.empty()) return aura::ast::NULL_NODE;
+            if (remaining.size() == 1) return remaining[0];
+
+            // Rebuild begin with only non-require children
+            flat.set_children(root, remaining);
+        }
+
+        return root;
     }
 
     // IR function cache: name → bundle of IR functions for cached defines.

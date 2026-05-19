@@ -338,6 +338,13 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
                 return phi_slot;
             }
 
+            // Pre-executed require/import/use: skip (already handled by pre_exec_requires)
+            if (std::string(callee_name) == "require" || std::string(callee_name) == "use") {
+                auto slot = state.alloc_local();
+                state.emit(IROpcode::ConstVoid, slot);
+                return slot;
+            }
+
             // Check if callee is a known non-arithmetic primitive (string ops, etc.)
             static const std::unordered_map<std::string, PrimId> prim_call_map = {
                 {"string-append", PrimId::StringAppend},
