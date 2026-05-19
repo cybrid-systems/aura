@@ -42,6 +42,12 @@ target_sources(aura PRIVATE
     src/compiler/aura_jit_bridge.cpp
     src/main.cpp)
 
+# GCC 16 has an ICE in ealias pass at -O3 on x86_64 for cache_impl.cpp (memcpy-heavy)
+# see https://gcc.gnu.org/bugzilla/show_bug.cgi?id=nonnull_arg_p_ice
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "16")
+    set_source_files_properties(src/compiler/cache_impl.cpp PROPERTIES COMPILE_FLAGS "-O2 -fno-tree-pta")
+endif()
+
 target_include_directories(aura PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_options(aura PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
 
