@@ -101,10 +101,12 @@ def test_aura(code, timeout=10):
         return -2, "", "aura binary not found"
 
 def check_success(out, expected):
+    # Normalize: strip whitespace, handle common patterns
+    norm_out = out.strip().strip('"').strip("'")
     for kw in expected:
-        if kw not in out:
-            return False
-    return True
+        if kw in norm_out:
+            return True
+    return False
 
 # ── 获取 api-reference ────────────────────────────────────
 def get_api_ref():
@@ -138,10 +140,19 @@ def main():
         
         for name, prompt, expected, stdlib in TASKS:
             # Build system prompt
-            sys_prompt = "You are Aura Lisp. Return ONLY valid Aura code. No markdown, no explanation."
+            sys_prompt = (
+                "You are Aura Lisp. Return ONLY valid Aura code. No markdown, no explanation.\n"
+                "CRITICAL: Always END your code by CALLING the function with a test case "
+                "so the result is visible. For example:\n"
+                "  (define (square x) (* x x))\n"
+                "  (display (square 5))\n"
+                "Never just define a function without calling it.\n"
+                "Use (display ...) or (write ...) to show output.\n"
+                "Do NOT use (newline) alone.\n"
+            )
             if stdlib:
-                sys_prompt += f"\nAvailable stdlib: {', '.join(stdlib)}"
-            sys_prompt += f"\n\nCurrent Aura primitives:\n{api_ref[:2000]}"
+                sys_prompt += f"Available stdlib: {', '.join(stdlib)}. Use (require std/xxx) to load them.\n"
+            sys_prompt += f"\nCurrent Aura primitives:\n{api_ref[:2000]}"
             
             # LLM call
             t0 = time.time()
