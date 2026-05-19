@@ -655,10 +655,46 @@ public:
                 aura::diag::ErrorKind::InternalError, "JIT entry function lookup failed"});
         }
 
-        auto result = reinterpret_cast<aura::jit::ScalarFn>(fn_ptr)(
+        auto raw_result = reinterpret_cast<aura::jit::ScalarFn>(fn_ptr)(
             locals.data(), entry.arg_count);
 
-        return EvalResult(types::make_int(result));
+        // Convert raw JIT result to proper EvalValue type
+        auto ev_result = types::make_int(raw_result);
+        std::uint32_t ret_slot = std::numeric_limits<std::uint32_t>::max();
+        for (auto& block : entry.blocks)
+            for (auto& instr : block.instructions)
+                if (instr.opcode == aura::ir::IROpcode::Return)
+                    ret_slot = instr.operands[0];
+        if (ret_slot != std::numeric_limits<std::uint32_t>::max()) {
+            for (auto& block : ir_mod.functions) {
+                for (auto& iblock : block.blocks) {
+                    for (auto& instr : iblock.instructions) {
+                        if (instr.operands[0] == ret_slot && instr.opcode != aura::ir::IROpcode::Return) {
+                            switch (instr.opcode) {
+                            case aura::ir::IROpcode::ConstBool:
+                            case aura::ir::IROpcode::Eq: case aura::ir::IROpcode::Lt:
+                            case aura::ir::IROpcode::Gt: case aura::ir::IROpcode::Le:
+                            case aura::ir::IROpcode::Ge: case aura::ir::IROpcode::And:
+                            case aura::ir::IROpcode::Or: case aura::ir::IROpcode::Not:
+                                ev_result = types::make_bool(raw_result != 0); break;
+                            case aura::ir::IROpcode::MakePair:
+                                if (raw_result < 0)
+                                    ev_result = types::make_pair(static_cast<std::uint64_t>(-raw_result - 1));
+                                break;
+                            case aura::ir::IROpcode::NewCell:
+                                ev_result = types::make_cell(static_cast<std::uint64_t>(raw_result)); break;
+                            case aura::ir::IROpcode::MakeClosure:
+                                ev_result = types::make_closure(static_cast<std::uint64_t>(raw_result)); break;
+                            default: break;
+                            }
+                            goto done;
+                        }
+                    }
+                }
+            }
+        }
+        done:
+        return EvalResult(ev_result);
         #else
         (void)input;
         return std::unexpected(aura::diag::Diagnostic{
@@ -2042,26 +2078,43 @@ private:
         auto raw_result = reinterpret_cast<aura::jit::ScalarFn>(fn_ptr)(
             locals.data(), entry.arg_count);
 
-        // For now, JIT only handles Int results properly.
-        // Check: if ANY instruction has a non-Dynamic/non-Int type_id,
-        // skip JIT (EvalValue encoding mismatch: Bool=0/1→#t/#f, Pair→sentinel, etc.)
-        bool has_non_int_type = false;
-        for (auto& block : entry.blocks) {
-            for (auto& instr : block.instructions) {
-                auto tid = instr.type_id;
-                if (tid != 0 && tid != 1) {  // not Dynamic and not Int
-                    has_non_int_type = true;
-                    break;
-                }
-            }
-            if (has_non_int_type) break;
+        // ── Convert raw JIT result to proper EvalValue type ──
+        auto result_type = types::make_int(raw_result);
+        std::uint32_t ret_slot = std::numeric_limits<std::uint32_t>::max();
+        
+        for (auto& block : entry.blocks)
+            for (auto& instr : block.instructions)
+                if (instr.opcode == aura::ir::IROpcode::Return)
+                    ret_slot = instr.operands[0];
+        
+        if (ret_slot != std::numeric_limits<std::uint32_t>::max()) {
+            for (auto& block : entry.blocks)
+                for (auto& instr : block.instructions)
+                    if (instr.operands[0] == ret_slot && instr.opcode != aura::ir::IROpcode::Return) {
+                        switch (instr.opcode) {
+                        case aura::ir::IROpcode::ConstBool:
+                        case aura::ir::IROpcode::Eq: case aura::ir::IROpcode::Lt:
+                        case aura::ir::IROpcode::Gt: case aura::ir::IROpcode::Le:
+                        case aura::ir::IROpcode::Ge: case aura::ir::IROpcode::And:
+                        case aura::ir::IROpcode::Or: case aura::ir::IROpcode::Not:
+                            result_type = types::make_bool(raw_result != 0);
+                            break;
+                        case aura::ir::IROpcode::MakePair:
+                            if (raw_result < 0)
+                                result_type = types::make_pair(static_cast<std::uint64_t>(-raw_result - 1));
+                            break;
+                        case aura::ir::IROpcode::NewCell:
+                            result_type = types::make_cell(static_cast<std::uint64_t>(raw_result));
+                            break;
+                        case aura::ir::IROpcode::MakeClosure:
+                            result_type = types::make_closure(static_cast<std::uint64_t>(raw_result));
+                            break;
+                        default: break;
+                        }
+                        break;
+                    }
         }
-        if (!has_non_int_type) {
-            return types::make_int(raw_result);
-        }
-        // Non-Int types: JIT returns raw int64_t which doesn't match EvalValue
-        // encoding (Bool, String, Pair, etc.). Fall back to IR interpreter.
-        return std::nullopt;
+        return result_type;
     }
 
     // Register evaluator primitives with JIT runtime
