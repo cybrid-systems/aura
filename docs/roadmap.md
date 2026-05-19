@@ -11,13 +11,13 @@
 | 维度 | 分数 | 说明 |
 |------|------|------|
 | 语言核心求值 | 🟢 10/10 | tree-walker + IR 双路径，显式调用栈（无 C++ 递归深度限制）|
-| 类型系统 | 🟡 6/10 | L6 增量 checker + Let-Poly + TypeSpecialization。**D2**: Sound Gradual Typing → 10/10 |
+| 类型系统 | 🟢 10/10 | Sound Gradual Typing + coercion + CastOp + occurrence + let-poly + type query + blame |
 | 编译器基础设施 | 🟢 9/10 | ArenaGroup / 增量 / 磁盘缓存 / 热替换 / 依赖级联 / IR 级 import |
 | 标准库覆盖 | 🟢 8/10 | 19 个文件 ~1.1k 行，datetime/json/validate/iter/queue/stack/random |
 | 测试覆盖 | 🟢 8/10 | integ 87/87, unit 74/74, smoke 5/5, bench 44/44, bash 117/117, production 30项 |
 | 错误处理 | 🟢 9/10 | try/catch IR, diagnostics 统一 (suggestion 字段), AST 编译期验证, line:col |
 | EDSL / AI Agent | 🟢 9/10 | `current-source`、`api-reference`、卫生宏、EDSL 双阶段修复、production_test |
-| 文档 | 🟡 7/10 | README + roadmap + tutorial + known_issues + design repo + 5 篇设计文档 |
+| 文档 | 🟢 8/10 | README + roadmap + tutorial + known_issues + design repo + 7 篇设计文档 |
 | **LLVM JIT** | 🟢 10/10 | ORC JIT 后端完成（P1-P5）。JIT 7.55x vs TW（fib-20）|
 
 ### 已实现（完整清单）
@@ -233,7 +233,7 @@
 | 5.4 | 增量 JIT 缓存 | ✅ `jit_cache_` + `invalidate_function` 集成 |
 | 5.5 | Benchmark 对比 | ✅ JIT 7.55x vs TW, 3.58x vs IR (fib-20) |
 
-### D2 — Sound Gradual Typing（16h，四子阶段）
+### D2 — Sound Gradual Typing ✅ 完成（16h）
 
 **目标**：从当前 L6 Level-Only TypeChecker 升级为完整的 Sound Gradual Typing：
 - Consistent subtyping + coercion insertion
@@ -245,7 +245,7 @@
 
 ---
 
-#### D2-P1: Coercion Infrastructure（4h）
+#### D2-P1: Coercion Infrastructure（4h）✅
 
 | # | 子任务 | 说明 | 验收 |
 |---|--------|------|------|
@@ -259,7 +259,7 @@
 
 ---
 
-#### D2-P2: Bidirectional Type Checker（4h）
+#### D2-P2: Bidirectional Type Checker（4h）✅
 
 | # | 子任务 | 说明 | 验收 |
 |---|--------|------|------|
@@ -273,7 +273,7 @@
 
 ---
 
-#### D2-P3: Type Language + Blame（4h）
+#### D2-P3: Type Language + Blame（4h）✅
 
 | # | 子任务 | 说明 | 验收 |
 |---|--------|------|------|
@@ -287,7 +287,7 @@
 
 ---
 
-#### D2-P4: Occurrence Typing（4h）
+#### D2-P4: Occurrence Typing（4h）✅
 
 | # | 子任务 | 说明 | 验收 |
 |---|--------|------|------|
