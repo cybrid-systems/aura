@@ -322,6 +322,7 @@ void InferenceEngine::init_primitive_env() {
     register_primitive("hash-values",   {Hash}, Dyn);
     register_primitive("hash?",         {Dyn}, Bool);
     register_primitive("hash-remove!",  {Hash, Dyn}, Bool);
+    register_primitive("hash-has-key?", {Hash, Dyn}, Bool);
 
     // Numeric extension primitives
     register_primitive("modulo",    {Int, Int}, Int);

@@ -42,7 +42,7 @@ not and or equal? zero? boolean? number? integer? float? string? pair? null? pro
 string=? string<? string-append string-length string-ref substring
 string->number number->string
 display write newline
-hash hash-set! hash-ref hash-keys hash-remove! hash-length hash-values
+hash hash-set! hash-ref hash-keys hash-remove! hash-length hash-values hash-has-key?
 vector make-vector vector-ref vector-set! vector-length vector->list list->vector
 map filter foldl member reverse take drop length
 caar cadr cdar cddr
