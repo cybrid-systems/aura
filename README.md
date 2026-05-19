@@ -33,18 +33,18 @@ echo '(- 5 (* 2 3))' | ./build/aura --typecheck    # type: Int, result: -1
 | 类别 | 内容 |
 |------|------|
 | **语言核心** | `apply`, variadic lambda, TCO, `let`/`let*`/`letrec`, `cond`, `when`/`unless` |
-| **显式调用栈** | `std::variant` 驱动的外层 while 循环，无 C++ 递归深度限制 |
-| **宏系统** | quasiquote, gensym, 递归展开, dotted rest param |
+| **显式调用栈** | `std::variant` 驱动的外层 while 循环，支持 10 万级深递归 |
+| **宏系统** | quasiquote, gensym, 递归展开, dotted rest param, **卫生宏 (name_map自动重命名)** |
 | **模块** | `require`/`import` 前缀注入, `export` 控制, 循环检测, 自动 lib 发现 |
 | **类型系统** | 渐进类型 L6, `--strict` 模式, `forall` 多态, 增量类型缓存, Float, occurrence typing |
 | **类型 IR 集成** | `IRInstruction.type_id`, 运行时类型断言(strict), Let-Poly, TypeSpecializationPass |
-| **错误处理** | `try`/`catch`/`raise`/`assert`, 原语返回 error 不崩溃 |
+| **错误处理** | `try`/`catch`/`raise`/`assert`, 原语返回 error 不崩溃, **编译期 AST 验证** |
 | **数据结构** | pair/list, vector, hash table, variadic functions |
 | **I/O** | `display`, `write`, `read-file`, `write-file`, `file-copy`, `file-delete` |
-| **标准库** | `hash`, `combinators`, `maybe`, `csv`, `set`, `io`, `list`, `math`, `string`, `test`, `iter`, `queue`, `stack`, `random` (14 lib) |
+| **标准库** | `hash`, `combinators`, `maybe`, `csv`, `set`, `io`, `list`, `math`, `string`, `test`, `iter`, `queue`, `stack`, `random`, **`datetime`**, **`json`**, **`validate`**, **`struct`** (19 lib) |
 | **CaaS 服务** | `--serve` with `compile`/`eval`/`module`/`define`/`config` 命令 |
 | **增量编译** | ArenaGroup 多模块, `reload_module` dirty-only, mmap 磁盘缓存, 函数热替换 |
-| **IR 管线** | 37 opcode, const folding, compute-kind, arity check, 闭包桥接, 类型特化 pass |
+| **IR 管线** | 38 opcode, const folding, compute-kind, arity check, 闭包桥接, 类型特化 pass, **IR 级 import** |
 | **EDSL / AI Agent** | `set-code`, `query:*`, `mutate:*`, `typecheck-current`, `eval-current`, `current-source`, LLM auto-test pipeline |
 
 ## 项目结构
@@ -58,13 +58,17 @@ src/compiler/     IR(lowering+passes+interpreter), 树遍历求值器,
 lib/std/          hash, combinator, maybe, csv, set, io, list, map,
                   for-each, math, string, test, iter, queue,
                   stack, random, json, struct, validate             ~1k lines
-tests/            bash(106), C++ unit(74), integ(87), smoke(5),
+tests/            bash(117), C++ unit(74/74), integ(87/87), smoke(5/5),
                   benchmark(44), mutation, AI agent demo              ~6k
 ```
 
 ## 快速体验
 
 ```bash
+# hash 表
+# current-time + datetime
+printf '(require std/datetime)(timestamp->iso-date (timestamp))\n' | ./build/aura
+
 # hash 表
 printf '(require std/hash)(define h (hash "a" 1))(hash-set h "b" 2)\n(hash->list h)\n' | ./build/aura
 
@@ -149,7 +153,7 @@ LLM_API_KEY="sk-..." LLM_MODEL="deepseek-v4-flash" \
 
 | 任务 | 结果 |
 |------|------|
-| factorial, fibonacci, map, prime? | ✅ 一次性 |
+| factorial, fibonacci, map, prime?, **datetime** | ✅ 一次性 |
 | merge-sort, flatten-tree, palindrome? | ✅ 一次性 |
 | `set!` closure counter, try/catch, hash operations | ✅ 已验证 |
 | EDSL typo fix (bad-fac → bad-fact) | ✅ 完整管线 |
@@ -161,7 +165,7 @@ LLM_API_KEY="sk-..." LLM_MODEL="deepseek-v4-flash" \
 python3 build.py test smoke    # 冒烟 5/5
 python3 build.py test unit     # C++ 单元 74/74
 python3 build.py test integ    # 端到端 87/87
-python3 build.py test bash     # 回归 106/106
+python3 build.py test bash     # 回归 117/117
 python3 build.py test bench    # 基准 44/44
 python3 build.py test          # 全部
 ```

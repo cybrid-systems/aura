@@ -17,11 +17,17 @@ def llm_chat(messages):
     h = http.client.HTTPSConnection(parsed.netloc, timeout=60) if parsed.scheme == "https" else http.client.HTTPConnection(parsed.netloc, timeout=60)
     h.request("POST", parsed.path + "/chat/completions", json.dumps({
         "model": LLM_MODEL, "messages": messages, "temperature": 0.4,
+        "max_tokens": 4096,
     }), {"Content-Type": "application/json", "Authorization": f"Bearer {LLM_KEY}"})
     r = h.getresponse()
     d = json.loads(r.read())
     h.close()
-    return d["choices"][0]["message"]["content"]
+    msg = d["choices"][0]["message"]
+    content = msg.get("content", "") or ""
+    # DeepSeek v4 may return reasoning_content before content
+    if not content and "reasoning_content" in msg:
+        content = msg["reasoning_content"]
+    return content
 
 class AuraSession:
     def __init__(self):
