@@ -1,6 +1,7 @@
 module;
 #include <cstdlib>
 #include <cstdio>
+#include <ctime>
 #include <unistd.h>
 #include <dirent.h>
 #include <regex>
@@ -219,6 +220,7 @@ Primitives::Primitives() {
         return a.empty() ? make_int(0) : a.back();
     };
     table_["eq?"]  = [](auto& a) { return make_bool(a.size() >= 2 && a[0] == a[1]); };
+    table_["current-time"]  = [](auto& a) { (void)a; return make_int(static_cast<std::int64_t>(::time(nullptr))); };
     // Populate ordered_names_ with all primitives registered directly via table_[]
     for (auto& [name, _] : table_) {
         if (std::find(ordered_names_.begin(), ordered_names_.end(), name) == ordered_names_.end()) {

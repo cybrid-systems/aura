@@ -1383,7 +1383,7 @@ private:
         auto cv = flat.get(callee);
         if (cv.tag != aura::ast::NodeTag::Variable) return false;
         auto name = pool.resolve(cv.sym_id);
-        return name == "require"sv || name == "import"sv || name == "use"sv;
+        return name == "require" || name == "import";  // use returns a value (module object)
     }
 
     // Pre-execute top-level require/import/use calls, removing them from
@@ -1413,17 +1413,6 @@ private:
             }
             if (!has_require) return root;  // no require → unchanged
 
-            // Collect non-require children
-            std::vector<aura::ast::NodeId> remaining;
-            for (auto c : v.children) {
-                if (!is_require_call(flat, pool, c))
-                    remaining.push_back(c);
-            }
-            if (remaining.empty()) return aura::ast::NULL_NODE;
-            if (remaining.size() == 1) return remaining[0];
-
-            // Rebuild begin with only non-require children
-            flat.set_children(root, remaining);
         }
 
         return root;
