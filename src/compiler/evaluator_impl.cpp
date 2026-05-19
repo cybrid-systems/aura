@@ -1765,6 +1765,12 @@ void Evaluator::init_pair_primitives() {
         return make_float(std::round(to_double(a[0])));
     });
 
+    primitives_.add("inexact->exact", [](const auto& a) -> EvalValue {
+        if (a.empty()) return make_int(0);
+        if (types::is_float(a[0])) return types::make_int(static_cast<std::int64_t>(types::as_float(a[0])));
+        return a[0];
+    });
+
     // ═══════════════════════════════════════════════════════════════
     // Module primitives (Phase 1: module objects)
     // ═══════════════════════════════════════════════════════════════
