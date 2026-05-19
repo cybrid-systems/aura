@@ -666,6 +666,14 @@ public:
                     bundle.push_back(std::move(func));
             }
             ir_cache_[fname] = std::move(bundle);
+            // When this is the first cache_define and ir_cache_ was empty,
+            // the cached IR has broken self-references (the function body's
+            // self-referencing Variable was lowered as ConstI64 0).
+            // Add to user_bindings_ so needs_tree_walker_fallback routes
+            // future calls to the tree-walker (which handles self-recursion).
+            if (cache_ptr == nullptr ) {
+                user_bindings_.insert(fname);
+            }
             function_sources_[fname] = source;
             module_functions_[name].push_back(fname);
 
@@ -1029,6 +1037,8 @@ public:
                     bundle.push_back(std::move(func));
             }
             ir_cache_[name] = std::move(bundle);
+            // Self-referencing cached functions need tree-walker fallback
+            user_bindings_.insert(name);
             function_sources_[name] = content;
             module_functions_[path].push_back(name);
 
