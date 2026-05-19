@@ -3834,6 +3834,15 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
     aura::ast::NodeId current_id = id;
     std::optional<Env> tail_env;
 
+    // Recursion depth guard: friendly error vs segfault
+    // MAX_C_STACK_DEPTH must be low enough to fit in the C++ call stack (~550 frames)
+    static constexpr std::size_t MAX_C_STACK_DEPTH = 400;
+    struct DepthGuard { std::size_t& d; ~DepthGuard() { --d; } } _dg{eval_depth_};
+    if (++eval_depth_ > MAX_C_STACK_DEPTH)
+        return std::unexpected(Diagnostic{
+            ErrorKind::InternalError,
+            std::format("recursion depth exceeded (>{})", MAX_C_STACK_DEPTH)});
+
     while (true) {
         current_flat_ = f;
         current_pool_ = p;
