@@ -310,6 +310,61 @@ public:
 
         last_ir_mod_ = ir_mod;
 
+        // ── Try JIT execution when LLVM available ──────────────
+        #ifdef AURA_HAVE_LLVM
+        {
+            if (!jit_initialized_) {
+                register_jit_primitives();
+                jit_initialized_ = true;
+            }
+
+            // Only use JIT when expression only involves Int-typed operations
+            // JIT returns raw int64_t; Bool/Pair/String need EvalValue encoding.
+            static const std::unordered_set<std::string> jit_safe_primitives = {
+                "+", "-", "*", "/",
+                // Comparisons return Bool (0/1) which needs EvalValue encoding.
+                // Excluded until JIT produces proper EvalValue results.
+                // "=", "<", ">", "<=", ">=",
+            };
+            bool has_non_int_nodes = false;
+            for (aura::ast::NodeId nid = 0; nid < flat_ptr->size(); ++nid) {
+                auto nv = flat_ptr->get(nid);
+                auto tag = nv.tag;
+                if (tag == aura::ast::NodeTag::LiteralString ||
+                    tag == aura::ast::NodeTag::LiteralFloat ||
+                    tag == aura::ast::NodeTag::Coercion ||
+                    tag == aura::ast::NodeTag::Quote ||
+                    tag == aura::ast::NodeTag::MacroDef ||
+                    tag == aura::ast::NodeTag::LetRec) {
+                    has_non_int_nodes = true; break;
+                }
+                if (tag == aura::ast::NodeTag::LiteralInt && nv.marker == aura::ast::SyntaxMarker::BoolLiteral) {
+                    has_non_int_nodes = true; break;
+                }
+                // Check Call nodes for non-arithmetic callees (cons, eq?, display, etc.)
+                if (tag == aura::ast::NodeTag::Call && !nv.children.empty()) {
+                    auto callee_id = nv.child(0);
+                    if (callee_id < flat_ptr->size()) {
+                        auto callee_v = flat_ptr->get(callee_id);
+                        if (callee_v.tag == aura::ast::NodeTag::Variable) {
+                            auto callee_name = pool_ptr->resolve(callee_v.sym_id);
+                            if (!jit_safe_primitives.count(std::string(callee_name))) {
+                                has_non_int_nodes = true; break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!has_non_int_nodes) {
+                auto jit_result = try_jit_execute(ir_mod);
+                if (jit_result) {
+                    return *jit_result;
+                }
+            }
+        }
+        #endif
+
         aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, evaluator_.primitives(), &type_registry_);
         ir_interp.set_strategy(strategy_);
         if (strict_mode_) ir_interp.set_strict_mode(true);
@@ -1923,6 +1978,91 @@ private:
         std::uint32_t env_count = 0;
     };
     std::unordered_map<std::string, JitCachedFn> jit_cache_;
+
+    // Try to execute an IRModule via LLVM JIT
+    // Returns EvalResult on success, nullopt on failure (falls back to IR interpreter)
+    std::optional<types::EvalValue> try_jit_execute(const aura::ir::IRModule& ir_mod) {
+        if (ir_mod.functions.empty()) return std::nullopt;
+
+        // Compile ALL functions (with JIT cache) and register with runtime
+        for (auto& ir_fn : ir_mod.functions) {
+            std::uint32_t env_count = static_cast<std::uint32_t>(ir_fn.free_vars.size());
+
+            // Check JIT cache
+            aura::jit::ScalarFn fn_ptr = nullptr;
+            auto cache_it = jit_cache_.find(ir_fn.name);
+            if (cache_it != jit_cache_.end()) {
+                fn_ptr = cache_it->second.fn_ptr;
+            } else {
+                // Build FlatFunction from IR function
+                std::vector<std::vector<aura::jit::FlatInstruction>> flat_instrs(ir_fn.blocks.size());
+                std::vector<aura::jit::FlatBlock> flat_blocks(ir_fn.blocks.size());
+                for (std::size_t bi = 0; bi < ir_fn.blocks.size(); ++bi) {
+                    auto& block = ir_fn.blocks[bi];
+                    for (auto& instr : block.instructions) {
+                        flat_instrs[bi].push_back({
+                            static_cast<std::uint32_t>(instr.opcode),
+                            {instr.operands[0], instr.operands[1],
+                             instr.operands[2], instr.operands[3]}
+                        });
+                    }
+                    flat_blocks[bi] = {block.id, flat_instrs[bi].data(),
+                        static_cast<std::uint32_t>(flat_instrs[bi].size())};
+                }
+                aura::jit::FlatFunction flat_fn{
+                    ir_fn.name.c_str(), ir_fn.entry_block,
+                    ir_fn.local_count, ir_fn.arg_count,
+                    flat_blocks.data(),
+                    static_cast<std::uint32_t>(flat_blocks.size()),
+                    nullptr, 0
+                };
+
+                fn_ptr = jit_.compile(flat_fn);
+                if (!fn_ptr) return std::nullopt;
+                jit_cache_[ir_fn.name] = {fn_ptr, ir_fn.local_count, ir_fn.arg_count, env_count};
+            }
+
+            // Register with runtime for closure calls
+            jit_.register_function(static_cast<int64_t>(ir_fn.id), fn_ptr,
+                                    ir_fn.local_count, ir_fn.arg_count, env_count);
+        }
+
+        // Find and execute entry function
+        auto entry_it = std::find_if(ir_mod.functions.begin(), ir_mod.functions.end(),
+            [&](const aura::ir::IRFunction& f) {
+                return f.id == ir_mod.entry_function_id;
+            });
+        if (entry_it == ir_mod.functions.end()) return std::nullopt;
+
+        auto& entry = *entry_it;
+        std::vector<std::int64_t> locals(entry.local_count, 0);
+        auto fn_ptr = jit_.get_function_ptr(entry.name.c_str());
+        if (!fn_ptr) return std::nullopt;
+
+        auto raw_result = reinterpret_cast<aura::jit::ScalarFn>(fn_ptr)(
+            locals.data(), entry.arg_count);
+
+        // For now, JIT only handles Int results properly.
+        // Check: if ANY instruction has a non-Dynamic/non-Int type_id,
+        // skip JIT (EvalValue encoding mismatch: Bool=0/1→#t/#f, Pair→sentinel, etc.)
+        bool has_non_int_type = false;
+        for (auto& block : entry.blocks) {
+            for (auto& instr : block.instructions) {
+                auto tid = instr.type_id;
+                if (tid != 0 && tid != 1) {  // not Dynamic and not Int
+                    has_non_int_type = true;
+                    break;
+                }
+            }
+            if (has_non_int_type) break;
+        }
+        if (!has_non_int_type) {
+            return types::make_int(raw_result);
+        }
+        // Non-Int types: JIT returns raw int64_t which doesn't match EvalValue
+        // encoding (Bool, String, Pair, etc.). Fall back to IR interpreter.
+        return std::nullopt;
+    }
 
     // Register evaluator primitives with JIT runtime
     void register_jit_primitives() {
