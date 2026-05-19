@@ -24,6 +24,7 @@ echo '(- 5 (* 2 3))' | ./build/aura --typecheck    # type: Int, result: -1
 | 类别 | 内容 |
 |------|------|
 | **语言核心** | `apply`, variadic lambda, TCO, `let`/`let*`/`letrec`, `cond`, `when`/`unless` |
+| **显式调用栈** | `std::variant` 驱动的外层 while 循环，无 C++ 递归深度限制 |
 | **宏系统** | quasiquote, gensym, 递归展开, dotted rest param |
 | **模块** | `require`/`import` 前缀注入, `export` 控制, 循环检测, 自动 lib 发现 |
 | **类型系统** | 渐进类型 L6, `--strict` 模式, `forall` 多态, 增量类型缓存, Float, occurrence typing |

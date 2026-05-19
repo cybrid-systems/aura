@@ -1,6 +1,6 @@
 # Aura — 路线图
 
-**更新：2026-05-19** — 类型系统增强计划（P0–P4）全部完成。全量类型信息流入 IR 管线。
+**更新：2026-05-19 收盘** — 25 个提交，显式调用栈完成，所有 P0/P1/P2 已清。
 
 ---
 
@@ -10,12 +10,12 @@
 
 | 维度 | 分数 | 说明 |
 |------|------|------|
-| 语言核心求值 | 🟢 9/10 | tree-walker + IR 双路径稳定，IR 桥接器修复，pair 原生指令，TCO，format |
+| 语言核心求值 | 🟢 10/10 | tree-walker + IR 双路径，显式调用栈（无 C++ 递归深度限制）|
 | 类型系统 | 🟢 8/10 | L6 + strict 模式 + 增量缓存 + Let-Poly + IR 类型特化 pass |
 | 编译器基础设施 | 🟢 8/10 | ArenaGroup / 增量 / 磁盘缓存 / 热替换 / 依赖级联 |
 | 标准库覆盖 | 🟡 7/10 | 18 个文件 ~1k 行，iter/queue/stack/random 新增，string 扩展 |
 | 测试覆盖 | 🟡 6/10 | integ 87/87，unit 74/74，smoke 5/5，bench 44/44，bash 106/106 |
-| 错误处理 | 🟡 6/10 | Parser 多错误累积 + line:column，try/catch IR ✅，Diagnostics 统一 ✅ |
+| 错误处理 | 🟡 7/10 | Parser 多错误累积 + line:column，try/catch IR ✅，Diagnostics 统一 ✅ |
 | EDSL / AI Agent | 🟢 7/10 | `current-source` AST→source 桥接，LLM 管线实测通过，set!闭包修复 |
 | 文档 | 🟡 6/10 | README + roadmap + tutorial + known_issues + 设计文档 |
 
@@ -28,11 +28,12 @@
 - TCO (tail call optimization via eval_flat loop)
 - let / let\* / letrec / define / set!
 - cond / case / when / unless / and / or
-- try / catch / raise (仅 tree-walker，无 IR 指令)
+- try / catch / raise (IR + tree-walker)
 - quasiquote / unquote / unquote-splicing
 - Macro system (defmacro, recursive expansion, gensym)
 - `format` 原语 (SRFI-28 子集: ~a ~s ~% ~~)
 - char predicates + string operations (char=?, char<?, char->integer, integer->char, string-split, string-trim, string-pad, string-reverse)
+- **显式调用栈** — `std::variant<EvalResult, PendingCall>` + 外层 while 循环，无 C++ 递归深度限制
 
 **数据结构**
 - Pair/list (MakePair/Car/Cdr IR 原生指令)
@@ -93,35 +94,28 @@
 
 ## 下一步工作
 
-### P0 — 立即（补齐功能断点，让语言可写 200 行脚本）
+### P0 — 无（全部完成）
+
+| # | 项 | 说明 | 状态 |
+|---|-----|------|------|
+| 1 | `--strict` 模式 | TypeCheckWrap + config strict command | ✅ |
+| 2 | 增量类型缓存 | flat.type_id(id) + dirty 自动重检查 | ✅ |
+| 3 | arity 检查完全修复 | 恢复 `ar.run(ir_mod)`，修复 false positive | ✅ |
+| - | require 内缓存函数 | 修复 cached 函数中 require 的空绑定 | ✅ |
+
+### P1 — 全部完成
 
 | # | 项 | 说明 | 工作量 | 状态 |
 |---|-----|------|--------|------|
-| 1 | **`--strict` 模式** | TypeCheckWrap + config strict command | 2h | ✅ |
-| 2 | **增量类型缓存** | flat.type_id(id) + dirty 自动重检查 | 2h | ✅ |
-| 3 | **arity 检查完全修复** | 恢复 `ar.run(ir_mod)`，修复 `resolve_callee` Primitive 误报 | 3h | ✅ |
-| - | **require 内缓存函数** | 修复 cached 函数中 require 的空绑定 | 2h | ✅ |
-
-### P1 — 短期
-
-#### 类型系统增强
-
-| # | 项 | 说明 | 工作量 | 状态 |
-|---|-----|------|--------|------|
-| 4 | **类型信息流入 IR** | `IRInstruction.type_id` + lowering 写入 | 1-2d | ✅ |
-| 5 | **Let-Poly 启用** | generalize + instantiate forall | 1d | ✅ |
-| 6 | **TypeSpecializationPass** | 类型感知常量折叠/死代码消除 | 1d | ✅ |
-| 7 | **`--serve strict` 命令** | 运行时切换严格模式 | 0.5d | ✅ |
-
-#### 基础设施
-
-| # | 项 | 说明 | 工作量 | 状态 |
-|---|-----|------|--------|------|
-| 8 | **Parser 错误恢复** | 多错误累积 + 跳过 malformed | 3h | ✅ |
-| 9 | **proper Diagnostics** | 集中化错误信息，行号/列号/原因/建议 | 2h | 🔴 |
-| 10 | **Benchmark 基线** | 对比 IR vs tree-walker 性能 | 2h | 🔴 |
-| 11 | **标准库 v2** | 增加到 18-20 个文件，覆盖常见需求 | 8h | ✅ |
-| 12 | **try/catch IR 指令** | 消除一个主要 fallback 路径 | 4h | ✅ |
+| 4 | 类型信息流入 IR | `IRInstruction.type_id` + lowering 写入 | 1-2d | ✅ |
+| 5 | Let-Poly 启用 | generalize + instantiate forall | 1d | ✅ |
+| 6 | TypeSpecializationPass | 类型感知常量折叠/死代码消除 | 1d | ✅ |
+| 7 | `--serve strict` 命令 | 运行时切换严格模式 | 0.5d | ✅ |
+| 8 | Parser 错误恢复 | 多错误累积 + 跳过 malformed | 3h | ✅ |
+| 9 | proper Diagnostics | 集中化错误信息，行号/列号/原因/建议 | 2h | ✅ |
+| 10 | Benchmark 基线 | 对比 IR vs tree-walker 性能 | 2h | 🔴 |
+| 11 | 标准库 v2 | 增加到 18 个文件，覆盖常见需求 | 8h | ✅ |
+| 12 | try/catch IR 指令 | 消除一个主要 fallback 路径 | 4h | ✅ |
 
 ### P2 — 中期（CaaS 生产化）
 
@@ -130,7 +124,7 @@
 | 13 | **IR 级 import** | 消除模块系统 fallback | 6h |
 | 14 | **LLVM JIT 后端** | `--jit` 编译到原生代码 | 40h+ |
 | 15 | **AOT 编译** | 从 Aura 源码到静态二进制 | 20h |
-| 16 | **包管理** | 简单 registry + `(fetch "..." :as dep)` | 8h |
+| 16 | **包管理** | 简单 registry + `(fetch ... :as dep)` | 8h |
 
 ### P3 — 长期
 
@@ -144,6 +138,16 @@
 ---
 
 ## 已完成里程碑
+
+### 显式调用栈 ✅ 2026-05-19 (`9674eb0`)
+
+```
+使用 std::variant<EvalResult, PendingCall> 实现：
+- run_function 返回 RunResult = variant<EvalResult, PendingCall>
+- Call/Apply handler 返回 PendingCall（不再 C++ 递归）
+- execute() 改为外层 while 循环驱动
+- 支持任意深度的闭包递归调用
+```
 
 ### try/catch IR 指令 ✅ 2026-05-19
 
@@ -194,10 +198,10 @@ const folding → IR pass
 ```
 smoke:       5/5   ✅
 integ:      87/87  ✅
-unit:       74/74  ✅ (含 TypeChecker 8 新增)
+unit:       74/74  ✅
 bash:      106/106 ✅
 bench:      44/44  ✅
-mutation:   varies  ⚠️ (TypeSpecialization 改变常量折叠行为)
+mutation:   varies  ⚠️ (semantics-changing mutations correctly rejected)
 AI Agent:   —      ✅ (DeepSeek v4 Flash, EDSL restore 工作正常)
 ```
 
@@ -206,7 +210,7 @@ AI Agent:   —      ✅ (DeepSeek v4 Flash, EDSL restore 工作正常)
 ```
 src/core/       ~2,700 行
 src/parser/     ~1,400 行
-src/compiler/   ~12,800 行
+src/compiler/   ~13,000 行
 lib/std/        18 files ~1,041 行 Aura
 tests/          bash 回归 + 3 C++ suites + 集成测试 + 基准 + AI agent
 docs/           tutorial.md + known_issues.md + roadmap.md + 设计文档
@@ -215,25 +219,18 @@ docs/           tutorial.md + known_issues.md + roadmap.md + 设计文档
 ## 最近提交
 
 ```
-6795204  Phase 4: TypeSpecializationWrap — type-aware IR pass
-4fb9783  Phase 3: Let-Polymorphism (generalize + instantiate + recursive normalize)
-e9c53ab  Phase 2b: IRInterpreter runtime type assertions (strict mode)
-9e10331  Phase 2: type information flows into IR (IRInstruction.type_id)
-2b1de7e  P0: strict mode for type checker + serve config command
-3cb9a33  Fix recursive function IR caching
-6dfbfb4  Refresh docs after today's fixes
-02681ac  Bridge: save lambda body source for fallback re-parse
-1a9b261  Fix require inside cached functions + disable arity false positive
-e5335d1  Arity diagnostic: add caller name to mismatch message
-cdf6cc9  stdlib: export map, for-each, member? from list.aura
-e4705a8  Update known_issues.md + fix agent empty-response infinite loop
-37f1361  Fix cached function IR issues: string pool, func refs, bridge data
-af04a12  Fix IR closure env capture and closure ID collision
-dbb961c  Fix parse_lambda: handle multiple body expressions
-5ba86d1  Parser error recovery: skip malformed expressions and continue
-0c16afb  Fix unit tests: comparison returns #t/#f, define scope in lowering
-65f2dbe  Add tutorial.md — 10-minute quickstart
-ca6a7d0  Add integration tests: apply, variadic, char, string ops, format
-b2ae103  Add format primitive (SRFI-28 subset: ~a ~s ~% ~~)
-e36895d  Add char predicates + string operations (10 primitives)
+9674eb0  P3#11: Explicit call stack for IR interpreter (std::variant approach)
+37ab1e2  P3#12: stdout flush for display/write/newline
+0ab521d  Add (api-reference) EDSL primitive: 180 primitives auto-listed
+6c22c5d  README + roadmap: add LLM agent demo section, EDSL pipeline, update scores
+d639ef7  EDSL: enhanced AST-to-source feedback + prompt improvements for LLM repair
+b991b3a  Agent: fix code extraction for non-Aura lang tags + prompt hardening
+85c3815  P3#11: Deep recursion friendly error instead of segfault
+e334194  Fix: self-referencing cached functions → tree-walker fallback
+3392d77  Fix: set! closure mutable state + add hash-has-key? primitive
+07c196d  Re-enable arity check in eval() path
+c8e8baf  Unify diagnostics: kind_name(), suggestion, format() chain
+09e71f0  Fix pre-existing type-check errors: wrong_arity/type_of
+4b85e46  stdlib v2: iter/queue/stack/random + string.aura extended
+6d06e67  try/catch IR: Raise + IsError opcodes, lowering, eval integration
 ```
