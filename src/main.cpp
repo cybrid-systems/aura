@@ -1068,7 +1068,7 @@ int main(int argc, char* argv[]) {
         return result ? 0 : 1;
     }
 
-    // ── Normal REPL / pipe mode (tree-walker) ─────────────────────
+    // ── Normal REPL / pipe mode ─────────────────────
     aura::compiler::CompilerService cs;
     bool interactive = false;
     try { std::cin.sync(); interactive = (argc == 1 && std::cin.peek() == std::char_traits<char>::eof()); }
