@@ -1323,14 +1323,20 @@ void Evaluator::init_pair_primitives() {
     primitives_.add("display", [this](const auto& a) {
         if (a.empty()) return make_void();
         io_print_val(a[0], &string_heap_, &pairs_, false);
+        std::fflush(stdout);
         return make_void();
     });
     primitives_.add("write", [this](const auto& a) -> EvalValue {
         if (a.empty()) return make_void();
         io_print_val(a[0], &string_heap_, &pairs_, true);
+        std::fflush(stdout);
         return make_void();
     });
-    primitives_.add("newline", [](const auto&) { std::println(""); return make_void(); });
+    primitives_.add("newline", [](const auto&) -> EvalValue {
+        std::fprintf(stdout, "\n");
+        std::fflush(stdout);
+        return make_void();
+    });
     // (format template args...) — Simple string formatting (SRFI-28 subset)
     // ~a  display arg    ~s  write arg    ~%  newline    ~~  literal ~
     primitives_.add("format", [this](const auto& a) -> EvalValue {
