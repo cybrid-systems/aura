@@ -245,7 +245,19 @@ public:
 
         // Check if we need the tree-walker fallback
         if (needs_tree_walker_fallback(*flat_ptr, *pool_ptr, expanded_root)) {
-            return evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
+            auto result = evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
+            // Track all value define names so subsequent eval calls don't fall
+            // through to the IR pipeline for them (which can't resolve runtime vars).
+            auto extract_defs = [&](aura::ast::NodeId nid, auto& self) -> void {
+                if (nid >= flat_ptr->size()) return;
+                auto nv = flat_ptr->get(nid);
+                if (nv.tag == aura::ast::NodeTag::Define)
+                    user_bindings_.insert(std::string(pool_ptr->resolve(nv.sym_id)));
+                if (nv.tag == aura::ast::NodeTag::Begin)
+                    for (auto c : nv.children) self(c, self);
+            };
+            extract_defs(expanded_root, extract_defs);
+            return result;
         }
 
         // === Level 2: Type check via TypeCheckWrap pass ===
