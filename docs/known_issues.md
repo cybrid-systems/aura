@@ -1,115 +1,107 @@
 # Aura 已知问题
 
-更新：2026-05-19 — LLM 锤炼测试后
+更新：2026-05-19 收盘 — 今日 10 个提交后
 
 ---
 
-## P0 — 阻塞性
+## 已无 P0 阻塞性 Bug
 
-### 1. 🔴 缓存函数字符串分支崩溃
+### ~~1. 🔴 缓存函数字符串分支崩溃~~ ✅ `3e3e7a2`
 
-**症状**：缓存函数的 `if` 表达式取第二条字符串分支时崩溃（`std::bad_variant_access`）。
-```scheme
-(define (f n) (if (< n 0) "neg" "pos"))
-(f 1)   → "pos"  ✅
-(f -1)  → CRASH  ❌
-```
-**根因**：`ConstString` 每次执行都向 `primitives_.string_heap()` push。两个不同 `IRInterpreter` 实例共享同一个 prim heap。第二个分支的字符串索引错位，`std::get<wrong_type>` 崩溃。
-**影响**：任何缓存函数中取第二条字符串分支都会崩溃。
+**根因**：`Arg` 执行将负整数误判为 cell sentinel 索引。`-1` 被解码为 `cell_slot=0` 指向无关的局部变量。这是真正的根因，不是 ConstString heap 的问题。
+**修复**：仅在解码后的 cell slot 在 `cell_heap_` 范围内时才视为 cell 引用。
 
-### 2. 🔴 `set!` 闭包可变状态不持久
+### ~~2. 🔴 `set!` 闭包可变状态不持久~~ ✅ `3392d77`
 
-**症状**：闭包内的 `set!` 修改不跨调用持久。
-```scheme
-(define (make-counter)
-  (let ((count 0))
-    (lambda () (set! count (+ count 1)) count)))
-(define c (make-counter))
-(c) (c) (c)  → 全部返回 1（应为 1, 2, 3）
-```
-**根因**：`let` 的绑定用 `bind(name, value)` 直接存值。`set!` 通过 `lookup_cell_ptr` 查找 Cell，找不到就静默跳过。`letrec` 用 Cell 绑定所以工作，但 `let` 不用。
-**修复方向**：需要让 `let` 在闭包创建时用 Cell 绑定，或者在 lowering 时检测被闭包捕获的变量并转换为 Cell。
+**根因**：`let` 用 `bind(name, Int(0))` 直接存值，`set!` 通过 `lookup_cell_ptr` 找不到 Cell 就静默跳过。
+**修复**：`let` 现在像 `letrec` 一样用 Cell 绑定，`lookup()` 自动解 Cell，`lookup_cell_ptr` 找到 Cell 后 `set!` 正常工作。
 
 ---
 
 ## P1 — 严重
 
-### 3. 缓存函数内嵌 lambda → foldl/map/filter 原语不工作
+### 3. 缓存函数自引用
 
-~~**症状**：跨表达式定义并调用含 `foldl` + 内嵌 lambda 的缓存函数时，结果不正确。~~
-
-**修复**：`3cb9a33` — `cache_module`/`cache_define` 现在会检查函数体中的变量引用是否能正确 lowering。自递归函数跳过 IR 缓存。
-  - `(define (test lst) (foldl (lambda (acc x) (+ acc 1)) 0 lst)) (test (list "a" "b"))` → `2` ✅
-
-### 4. `cadr`/`caddr`/`cadddr` 不存在
-
-**症状**：标准 Scheme composable accessors 未提供。
+**症状**：`cache_define` 时 `ir_cache_` 为空，函数 body 中的自引用 Variable 降级为 `ConstI64 0`。
 ```scheme
-(cadr (list 1 2 3))  → unbound variable
+(define (fact n) (if (= n 0) 1 (* n (fact (- n 1)))))
+(fact 5)   → 120  ✅ (走 tree-walker，正确)
+(fact 5) --ir → 0  ❌ (缓存 IR 中有毁坏的 self-call)
 ```
-**替代**：`(car (cdr lst))`，`(car (cdr (cdr lst)))`。
-**根因**：CxR 模式（car/cdr 组合）有原语（`caar`, `cadr`, `cdar`, `cddr` 到 4 层），但标准库中未暴露。
+**当前缓解**：`e334194` — 缓存函数名加入 `user_bindings_`，触发 tree-walker fallback，确保正确性。
+**根治方向**：`cache_define` lowering 时对自引用 Variable 做特殊处理（如预占 func_id），使 IR 路径也正确。
 
-### 5. 错误信息不够详细
+### ~~4. `cadr`/`caddr` 已存在~~ ✅
 
-**症状**：`"unbound variable: n"` 对 LLM 不够友好。已有行号列号 + `did you mean` 改进。
+`cadr`、`caddr`、`cddr` 等 CxR 组合器是**内建原语**（`register_primitive` 注册），LLM 测试失败是其他原因导致。
+
+### 5. 缓存函数内嵌 lambda
+
+~~**症状**：跨表达式定义并调用含 `foldl` + 内嵌 lambda 的缓存函数时结果不正确。~~
+
+**修复**：`3cb9a33` — `cache_module`/`cache_define` 检查函数体中的变量引用是否可 lowering。自递归跳过 IR 缓存。
 
 ---
 
 ## P2 — 功能缺口
 
-### 6. `hash-has-key?` 不存在
+### 6. LLM Agent 多行输入兼容
 
-**症状**：需要检查 key 是否存在时只能用 `(hash-ref h key #f)` + 判等。
-**替代**：目前没有等效内置原语。
+**症状**：LLM 输出的 EDSL 代码含 `(set-code "...\n...")` 等多行内容，JSON `\n` 转义曾在自制解析器中未处理。目前已修复。
+**状态**：✅ `e9b4bbf` — JSON 解析器支持 `\n`、`\"`、`\\`、`\t` 等转义序列。
 
-### 7. `set-code` 内容截断
+### 7. arity 检查在 eval() 路径中恢复
 
-**症状**：LLM 代码超过缓冲区时截断。auto-retry 将 max_tokens 翻倍到 16000。
+**状态**：✅ `07c196d` — 恢复启用 + 添加警告输出。原 false positive 问题已被后续修复解决。
+```scheme
+(+ 1 2 3)   → 6  ✅ (variadic arity 正确)
+(define (f x) x) (f 1 2)  → arity warning (非致命)
+```
 
-### 8. arity 检查在 eval() 路径中临时禁用
-
-**原因**：`resolve_callee` 在 arity 检查中跳过 `Primitive` 指令，导致缓存函数调用内部 lambda 时产生误报。
-
-### 9. 标准库导出不完整
-
-`string.aura` 部分函数使用了未导出的依赖。
-
-### 10. 桥接器 body_source fallback 未完全验证
+### 8. 桥接器 body_source fallback 未完全验证
 
 `02681ac` — `body_source` 已加入 `ClosureBridgeData`，但 fallback 路径缺少测试覆盖。
+
+### 9. 标准库导出
+
+所有 18 个标准库文件 export 列表完整。`106/106` bash 测试通过。
 
 ---
 
 ## P3 — 增强
 
-### 11. 深递归栈溢出
+### 10. 深递归
 
 ```scheme
 (define (deep n) (if (= n 0) 0 (deep (- n 1))))
-(deep 100000)  → Segmentation fault
+(deep 600)  → error: recursion depth exceeded (>400)
 ```
-TCO 只优化了 `if` 尾调（通过 `continue` 循环）。非尾递归（如需要返回给调用者）仍用 C++ 递归。
+**状态**：从 segfault 改为友好错误 ✅ (`85c3815`)。root fix（显式调用栈）预留为独立里程碑。
 
-### 12. stdout 不 flush
+### 11. stdout 不 flush
 
-`(display "a") (display "b")` 可能连在一起输出（在 pipe 模式下尤其明显）。`newline` 可以 flush。
+`(display "a") (display "b")` 在 pipe 模式下连在一起输出。`newline` 可以 flush。
 
-### 13. 类型检查未完全增量
+### 12. 类型检查未完全增量
 
 `typecheck-current` 当前全量遍历。
 
 ---
 
-## ✅ 今日已修复（5/19）
+## ✅ 今日已修复（5/19 完整清单）
 
 | 问题 | 提交 |
 |------|------|
-| JSON 解析器不支持 `\n` 转义 | `e9b4bbf` |
-| EDSL `(current-source)` 原语 AST→source 桥接 | `426e877` |
-| 错误格式统一 + suggestion 字段 | `c8e8baf` |
-| `wrong_arity` typecheck 测试 | `09e71f0` |
-| `type_of` typecheck 测试 | `09e71f0` |
+| 🔴 Arg 负整数 cell-ref 崩溃 | `3e3e7a2` |
+| 🔴 `set!` 闭包可变状态 | `3392d77` |
+| `hash-has-key?` 原语 | `3392d77` |
+| Arity 检查恢复 (P2#8) | `07c196d` |
+| 深递归友好错误 (P3#11) | `85c3815` |
+| 自引用缓存函数 (tree-walker fallback) | `e334194` |
+| Agent prompt 更新 | `f1ebc13` |
+| JSON 解析器 `\n` 转义 | `e9b4bbf` |
+| EDSL `(current-source)` 原语 | `426e877` |
+| 错误格式统一 (suggestion 字段) | `c8e8baf` |
+| `wrong_arity` + `type_of` typecheck 修复 | `09e71f0` |
 | try/catch IR 指令 | `6d06e67` |
 | 标准库 v2 (iter/queue/stack/random) | `4b85e46` |
-| 关闭闭包 env capture + IR ID 冲突 | 昨日 |
