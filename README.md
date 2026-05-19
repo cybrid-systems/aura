@@ -4,8 +4,8 @@
 
 ```bash
 cmake -B build && cmake --build build --target aura -j
-echo '(+ 1 2 3)' | ./build/aura          # → 6 (JIT auto)
-echo '(letrec ((fact ...)) (fact 10))' | ./build/aura --jit  # → 3628800 (forced JIT)
+echo '(+ 1 2 3)' | ./build/aura                  # → 6 (JIT auto)
+printf '(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 10))' | ./build/aura --jit  # → 3628800 (LLVM JIT)
 echo '(- 5 (* 2 3))' | ./build/aura --typecheck  # type: Int, result: -1
 ```
 
