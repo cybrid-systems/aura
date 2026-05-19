@@ -44,7 +44,7 @@ def extract_code(text):
     if "```" in text:
         for p in text.split("```"):
             lines = p.strip().split("\n")
-            lines = [l for l in lines if not l.startswith(("aura", "scheme", "lisp"))]
+            lines = [l for l in lines if not l.startswith(("aura", "scheme", "lisp", "racket", "python"))]
             c = "\n".join(lines).strip()
             if any(k in c for k in ("define", "require", "(+", "(begin", "lambda", "import")):
                 return c
