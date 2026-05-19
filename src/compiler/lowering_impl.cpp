@@ -518,14 +518,18 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
                 }
             }
             if (is_cell) {
-                // Cell capture: env[i] is cell_id, load via CellGet
-                auto result = state.alloc_local();
-                state.emit(IROpcode::CellGet, result, slot);
-                state.scopes.back()[fv] = Binding{BindingKind::Local, result};
+                // Cell capture: keep the binding as Cell so that:
+                // - read access uses CellGet (dereferences via cell_heap_)
+                // - write access uses CellSet (updates shared cell)
+                // CaptureRef stores the cell_index in closure env; Arg
+                // decodes it back to cell_index; CellGet/CellSet use it.
+                state.scopes.back()[fv] = Binding{BindingKind::Cell, slot};
+                state.free_var_map[fv] = static_cast<std::uint32_t>(i);
+                state.cell_free_vars.insert(fv);
             } else {
                 state.scopes.back()[fv] = Binding{BindingKind::Captured, slot};
+                state.free_var_map[fv] = static_cast<std::uint32_t>(i);
             }
-            state.free_var_map[fv] = static_cast<std::uint32_t>(i);
         }
 
         // Bind parameters
@@ -567,6 +571,8 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
              static_cast<std::uint32_t>(free_vars.size()));
 
         // Capture each free variable into the closure
+        // Cell values (CellRef) are captured directly — CellGet/CellSet
+        // in the lambda body dereference via cell_heap_ for read/write.
         for (std::size_t i = 0; i < free_vars.size(); ++i) {
             auto& fv = free_vars[i];
             for (auto it = state.scopes.rbegin(); it != state.scopes.rend(); ++it) {
@@ -604,10 +610,15 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
             state.scopes.pop_back();
             return body_slot;
         } else {
+            // let: use Cell binding (like evaluator fix 3392d77)
+            // so that set! can find the mutable Cell inside closures
+            auto ci = state.alloc_local();
+            state.emit(IROpcode::NewCell, ci);
             auto val_slot = lower_flat_expr(state, flat, pool, val_id, cache, cache_hits);
+            state.emit(IROpcode::CellSet, ci, val_slot);
             state.scopes.push_back({});
             auto& scope = state.scopes.back();
-            scope[std::string(name)] = Binding{BindingKind::Local, val_slot};
+            scope[std::string(name)] = Binding{BindingKind::Cell, ci};
             auto body_slot = lower_flat_expr(state, flat, pool, body_id, cache, cache_hits);
             state.scopes.pop_back();
             return body_slot;
