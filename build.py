@@ -59,6 +59,9 @@ def cmd_build():
     r = run(["cmake", "-B", str(BUILD), "-G", "Ninja", "-Wno-dev"], cwd=ROOT)
     if r != 0: return r
     r = run(["cmake", "--build", str(BUILD), "--target", "aura", "-j", str(nproc)], cwd=ROOT)
+    if r != 0: return r
+    # Also build test_ir so unit tests can run
+    r = run(["cmake", "--build", str(BUILD), "--target", "test_ir", "-j", str(nproc)], cwd=ROOT)
     if r == 0: ok("build OK")
     else:      fail("build failed")
     return r
