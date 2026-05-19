@@ -31,6 +31,11 @@ struct LoweringState {
     const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge = nullptr;
     const std::unordered_map<std::string, std::vector<std::string>>* cache_strings = nullptr;
 
+    // Self-reference support: function name and its pre-allocated func_id
+    // Used by cached define functions to emit correct MakeClosure for self-recursion.
+    std::string self_name;
+    std::uint32_t self_func_id = 0;
+
     // Current source AST node being lowered (for type propagation to IR)
     ast::NodeId current_source_id = ast::NULL_NODE;
 
@@ -81,7 +86,8 @@ export aura::ir::IRModule lower_to_ir_with_cache(
     std::vector<std::string>* cache_hits = nullptr,
     const Primitives* primitives = nullptr,
     const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge = nullptr,
-    const std::unordered_map<std::string, std::vector<std::string>>* cache_strings = nullptr);
+    const std::unordered_map<std::string, std::vector<std::string>>* cache_strings = nullptr,
+    const std::string* self_name = nullptr);
 
 // FlatAST → S-expression source code (reverse of parse_to_flat)
 export std::string unparse_node(const ast::FlatAST& flat,

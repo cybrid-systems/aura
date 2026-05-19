@@ -666,14 +666,6 @@ public:
                     bundle.push_back(std::move(func));
             }
             ir_cache_[fname] = std::move(bundle);
-            // When this is the first cache_define and ir_cache_ was empty,
-            // the cached IR has broken self-references (the function body's
-            // self-referencing Variable was lowered as ConstI64 0).
-            // Add to user_bindings_ so needs_tree_walker_fallback routes
-            // future calls to the tree-walker (which handles self-recursion).
-            if (cache_ptr == nullptr ) {
-                user_bindings_.insert(fname);
-            }
             function_sources_[fname] = source;
             module_functions_[name].push_back(fname);
 
@@ -1081,6 +1073,7 @@ public:
         // Check for reasons to skip IR caching:
         // 1. `require` inside function body — IR lowering treats it as ConstI64 0
         // 2. Self-recursive calls — function not in ir_cache_ yet → ConstI64 0
+        // (mitigated: self_name passed to lowering for MakeClosure pre-allocation)
         // 3. Calls to non-cached, non-primitive variables — not resolvable in IR
         bool skip_ir_cache = false;
         if (expanded_root < flat.size()) {
@@ -1111,8 +1104,9 @@ public:
                                 auto nv = f.get(id);
                                 if (nv.tag == aura::ast::NodeTag::Variable) {
                                     auto var_name = std::string(p.resolve(nv.sym_id));
-                                    // Skip params, primitives, cached functions
+                                    // Skip params, the function's own name (self-reference handled by lowering), primitives, cached functions
                                     if (param_names.count(var_name)) return;
+                                    if (var_name == self_name) return;
                                     if (eval.primitives().slot_for_name(var_name) < eval.primitives().slot_count()) return;
                                     if (ir_cache.count(var_name)) return;
                                     // Unknown variable — IR will emit ConstI64 0
@@ -1141,8 +1135,9 @@ public:
         auto cache_bridge_ptr = ir_cache_bridge_.empty() ? nullptr : &ir_cache_bridge_;
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
         std::vector<std::string> cache_hits;
+        // Pass self_name so lowering can emit correct MakeClosure for self-references
         auto ir_mod = aura::compiler::lower_to_ir_with_cache(
-            flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), cache_bridge_ptr, cache_strings_ptr);
+            flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), cache_bridge_ptr, cache_strings_ptr, &name_str);
 
         // Run passes per-function on the new function bundle
         {
