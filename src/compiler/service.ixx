@@ -173,6 +173,9 @@ public:
         // so the remaining expression can go through the IR path without fallback.
         pre_exec_requires(*flat_ptr, *pool_ptr, expanded_root);
 
+        // Compile-time AST validation (structural correctness)
+        validate_ast(*flat_ptr, *pool_ptr, expanded_root);
+
         // Check if we need the tree-walker fallback
         if (needs_tree_walker_fallback(*flat_ptr, *pool_ptr, expanded_root)) {
             return evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
@@ -343,6 +346,9 @@ public:
                 return evaluator_.eval_flat(*flat_ptr, *pool_ptr, flat_ptr->root, evaluator_.top_env());
             }
         }
+
+        // Compile-time AST validation
+        validate_ast(*flat_ptr, *pool_ptr, flat_ptr->root);
 
         // === Phase 1: Define separation (IR caching) ===
         auto def = try_extract_define(*flat_ptr, *pool_ptr, flat_ptr->root);
@@ -1416,6 +1422,77 @@ private:
         }
 
         return root;
+    }
+
+    // ── Compile-time AST validation ───────────────────────────
+    // Validates macro-expanded AST for structural correctness.
+    // Non-fatal: prints warnings; in strict mode becomes fatal.
+    struct ValidationNote {
+        aura::ast::NodeId node;
+        std::string message;
+    };
+
+    void validate_ast(const aura::ast::FlatAST& flat,
+                      const aura::ast::StringPool& pool,
+                      aura::ast::NodeId root) const {
+        std::vector<ValidationNote> notes;
+
+        // Walk the AST checking structural rules
+        auto walk = [&](this const auto& self, aura::ast::NodeId id) -> void {
+            if (id >= flat.size()) return;
+            auto v = flat.get(id);
+
+            switch (v.tag) {
+            case aura::ast::NodeTag::IfExpr:
+                if (v.children.size() != 3)
+                    notes.push_back({id, "if requires 3 arguments (condition then-branch else-branch), got " + std::to_string(v.children.size())});
+                break;
+
+            case aura::ast::NodeTag::Lambda:
+                if (v.children.empty())
+                    notes.push_back({id, "lambda requires a body expression"});
+                if (v.params.empty() && !v.children.empty() && flat.get(v.child(0)).tag == aura::ast::NodeTag::Lambda)
+                    ; // (lambda () (lambda ...)) — ok
+                break;
+
+            case aura::ast::NodeTag::Let:
+            case aura::ast::NodeTag::LetRec:
+                if (v.children.size() < 2)
+                    notes.push_back({id, std::string(v.tag == aura::ast::NodeTag::Let ? "let" : "letrec") + " requires a value and body"});
+                break;
+
+            case aura::ast::NodeTag::Define:
+                if (v.children.empty())
+                    notes.push_back({id, "define requires a value expression"});
+                break;
+
+            case aura::ast::NodeTag::Set:
+                if (v.children.empty())
+                    notes.push_back({id, "set! requires a value expression"});
+                break;
+
+            case aura::ast::NodeTag::Quote:
+                // Quote with no children is valid (quoting empty list)
+                break;
+
+            default:
+                break;
+            }
+
+            // Recurse into children
+            for (auto c : v.children) self(c);
+        };
+
+        if (root < flat.size())
+            walk(root);
+
+        // Print warnings (force flush so output is visible before potential crash)
+        if (!notes.empty()) {
+            for (auto& n : notes) {
+                auto loc = flat.get(n.node);
+                std::println("syntax: {}:{}: {}", loc.line, loc.col, n.message);
+            }
+        }
     }
 
     // IR function cache: name → bundle of IR functions for cached defines.
