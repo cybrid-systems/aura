@@ -18,6 +18,8 @@ MAX_ROUNDS = 25
 
 SYSTEM_PROMPT = build_system_prompt() + """
 
+When starting, run (api-reference) to see available primitives. This is always up to date.
+
 ## EDSL (Phase 2: precise fixes)
 
 When Phase 1 code fails: use EDSL to fix. NEVER rewrite the whole code.
