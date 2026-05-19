@@ -1,0 +1,97 @@
+; agent.aura — Self-growing AI agent library
+; Implements the complete auto-fix loop within Aura.
+; (require std/agent) → auto-grow, llm-ask, safe-eval
+
+(export auto-grow safe-eval llm-ask extract-code)
+(require std/json)
+(require std/string)
+
+; ── Configuration ──────────────────────────────────────────────
+(define api-key (getenv "LLM_API_KEY"))
+(define api-url (getenv "LLM_API_URL"))
+(define llm-model (getenv "LLM_MODEL"))
+
+; Defaults
+(if (void? api-url) (set! api-url "https://api.deepseek.com/chat/completions"))
+(if (void? llm-model) (set! llm-model "deepseek-chat"))
+
+; ── LLM API call ──────────────────────────────────────────────
+(define (llm-ask prompt)
+  (let* ((body (string-append
+          "{\"model\":\"" llm-model "\",\"messages\":["
+          "{\"role\":\"system\",\"content\":\"You are Aura Lisp. Return ONLY valid Aura code. No markdown, no explanation.\"},"
+          "{\"role\":\"user\",\"content\":\"" prompt "\"}]}"))
+         (resp (http-post api-url body api-key)))
+    resp))
+
+; ── Extract code from LLM response ────────────────────────────
+(define (extract-code response)
+  (let* ((data (json-parse response))
+         (choices (hash-ref data "choices")))
+    (if (pair? choices)
+      (let* ((first (car choices))
+             (msg (hash-ref first "message"))
+             (content (hash-ref msg "content")))
+        (if (string? content)
+          (begin
+            ; Strip markdown code blocks
+            (define parts (string-split content "```"))
+            (if (> (length parts) 1)
+              (let* ((after (list-ref parts 1))
+                     (nl-pos (string-find after "\n")))
+                (if (>= nl-pos 0)
+                  (substring after (+ nl-pos 1) (string-length after))
+                  after))
+              content))
+          ""))
+      "")))
+
+; ── Safe eval with error handling ────────────────────────────
+(define (safe-eval code)
+  (try
+    (let ((result (eval code)))
+      (cons 1 result))       ; (1 . value) = success
+    (catch (e)
+      (cons 0 e))))          ; (0 . error) = failure
+
+; ── Auto-grow loop ────────────────────────────────────────────
+(define (auto-grow task . max-tries)
+  (let ((tries (if (null? max-tries) 5 (car max-tries))))
+    (display (string-append "\n=== Auto-grow: " task " ===\n"))
+    
+    (let loop ((n 1))
+      (if (> n tries)
+        (begin
+          (display "  ❌ Failed after ")(display tries)(display " attempts\n")
+          #f)
+        (begin
+          (display "  [")(display n)("/")(display tries)("] LLM generating...\n")
+          (define response (llm-ask task))
+          (define code (extract-code response))
+          (define result (safe-eval code))
+          
+          (if (= (car result) 1)
+            (begin
+              (display "  ✅ Success!\n")
+              (cdr result))   ; return the result value
+            (begin
+              (display "  ❌ Error: ")
+              (display (cdr result))
+              (newline)
+              (loop (+ n 1))))))))))
+
+; ── EDSL auto-fix ────────────────────────────────────────────
+(define (edsl-fix task source)
+  (display "  [EDSL] Setting code...\n")
+  (set-code source)
+  (display "  [EDSL] Asking LLM to fix...\n")
+  (define prompt (string-append task " Fix the code above using mutate:rebind"))
+  (define response (llm-ask prompt))
+  (display "  [EDSL] Applying fix...\n")
+  (try
+    (eval response)
+    (catch (e)
+      (display "  [EDSL] Fix failed: ")
+      (display e)
+      (newline)))
+  (current-source))
