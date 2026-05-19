@@ -3096,17 +3096,22 @@ Evaluator::Evaluator() {
 
     primitives_.add("c-func", [this, &parse_ffi_sig](const auto& a) -> EvalValue {
         // (c-func lib-id "name" sig-string)  e.g. (c-func 0 "sqrt" "(Float) -> Float")
+        // lib-id -1 uses RTLD_DEFAULT (no c-load needed) — architecture independent.
         // Or legacy: (c-func lib-id "name" ret-int arg-int...)
         if (a.size() < 3 || !types::is_int(a[0]) || !types::is_string(a[1])) {
             fprintf(stderr, "c-func: expected (c-func lib-id \"name\" signature\n");
             return make_int(0);
         }
-        auto lib_idx = static_cast<std::size_t>(types::as_int(a[0]));
-        if (lib_idx >= g_ffi_libs.size()) {
-            fprintf(stderr, "c-func: invalid library handle %zu\n", lib_idx);
-            return make_int(0);
+        auto raw_lib_id = types::as_int(a[0]);
+        void* lib = RTLD_DEFAULT;
+        if (raw_lib_id >= 0) {
+            auto lib_idx = static_cast<std::size_t>(raw_lib_id);
+            if (lib_idx >= g_ffi_libs.size()) {
+                fprintf(stderr, "c-func: invalid library handle %zu\n", lib_idx);
+                return make_int(0);
+            }
+            lib = g_ffi_libs[lib_idx];
         }
-        auto lib = g_ffi_libs[lib_idx];
         auto name = string_heap_[types::as_string_idx(a[1])];
         int ret_type = 1;
         std::vector<int> arg_types;
