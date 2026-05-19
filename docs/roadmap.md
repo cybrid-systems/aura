@@ -11,13 +11,14 @@
 | 维度 | 分数 | 说明 |
 |------|------|------|
 | 语言核心求值 | 🟢 10/10 | tree-walker + IR 双路径，显式调用栈（无 C++ 递归深度限制）|
-| 类型系统 | 🟢 8/10 | L6 + strict 模式 + 增量缓存 + Let-Poly + IR 类型特化 pass |
-| 编译器基础设施 | 🟢 8/10 | ArenaGroup / 增量 / 磁盘缓存 / 热替换 / 依赖级联 |
-| 标准库覆盖 | 🟡 7/10 | 18 个文件 ~1k 行，iter/queue/stack/random 新增，string 扩展 |
-| 测试覆盖 | 🟢 8/10 | integ 87/87，unit 74/74，smoke 5/5，bench 44/44，bash 106/106，production 30项 21+/30 |
-| 错误处理 | 🟢 8/10 | try/catch IR ✅，diagnostics 统一 (suggestion 字段)，line:col 格式 |
-| EDSL / AI Agent | 🟢 8/10 | `current-source`/`api-reference`，EDSL 双阶段修复，production_test 全栈验证通过 |
-| 文档 | 🟡 6/10 | README + roadmap + tutorial + known_issues + design repo 架构文档 |
+| 类型系统 | 🟢 8/10 | L6 + strict + 增量缓存 + Let-Poly + TypeSpecializationPass |
+| 编译器基础设施 | 🟢 9/10 | ArenaGroup / 增量 / 磁盘缓存 / 热替换 / 依赖级联 / IR 级 import |
+| 标准库覆盖 | 🟢 8/10 | 19 个文件 ~1.1k 行，datetime/json/validate/iter/queue/stack/random |
+| 测试覆盖 | 🟢 8/10 | integ 87/87, unit 74/74, smoke 5/5, bench 44/44, bash 117/117, production 30项 |
+| 错误处理 | 🟢 9/10 | try/catch IR, diagnostics 统一 (suggestion 字段), AST 编译期验证, line:col |
+| EDSL / AI Agent | 🟢 9/10 | `current-source`、`api-reference`、卫生宏、EDSL 双阶段修复、production_test |
+| 文档 | 🟡 7/10 | README + roadmap + tutorial + known_issues + design repo + 5 篇设计文档 |
+| **LLVM JIT** | ⬜ 0/10 | 环境已就绪: **LLVM 22.1.5** — Phase D1 待启动 |
 
 ### 已实现（完整清单）
 
@@ -167,13 +168,66 @@
 | C3 | 卫生宏 | ✅ |
 | C4 | 编译期 AST 验证 | ✅ |
 
-### Phase D — 战略级
+### Phase D — LLVM ORC JIT 后端
 
-| # | 项 | 说明 |
+环境：**LLVM 22.1.5** 已安装。设计文档：`docs/design/llvm_jit.md`
+
+每个 Phase 产出独立可测试的 `--jit` 功能。
+
+#### D1-P1: 基础架构（8h）
+
+| # | 项 | 产出 |
 |---|-----|------|
-| D1 | **LLVM ORC JIT** | 10-100x 加速，从原型到可用语言的质变 |
-| D2 | **形式化类型系统** | Sound Gradual Typing |
-| D3 | **自举** | 用 Aura 写 Aura 编译器 |
+| 1.1 | CMake: `find_package(LLVM)` + 链接 | 构建通过 |
+| 1.2 | `AuraJIT` 类 (LLJIT 包装) | JIT 实例化成功 |
+| 1.3 | 空函数编译 + 调用 | `--jit` flag 不崩溃 |
+
+#### D1-P2: 算术运算（8h）
+
+| # | 项 | 产出 |
+|---|-----|------|
+| 2.1 | `lower_instruction()`: ConstI64/Add/Sub/Mul/Div | 基本 IR 降维 |
+| 2.2 | Branch/Jump 控制流 | if 条件编译 |
+| 2.3 | 函数参数 + Return | `(+ 1 2)` JIT 编译 → 3 |
+| 2.4 | 比较 (Eq/Lt/Gt/Le/Ge) + Bool | 条件表达式 JIT |
+
+验收：`echo '(+ 1 2 3)' | ./build/aura --jit` → **6**
+
+#### D1-P3: 闭包 + Cell（8h）
+
+| # | 项 | 产出 |
+|---|-----|------|
+| 3.1 | MakeClosure — 闭包 struct `{fn_ptr, env*}` | 闭包创建 |
+| 3.2 | Capture — 填充 env 字段 | 自由变量捕获 |
+| 3.3 | Call — 函数指针间接调用 | 闭包调用 |
+| 3.4 | NewCell/CellGet/CellSet | 可变状态 |
+| 3.5 | MakePair/Car/Cdr | 序对操作 |
+
+验收：`echo '(letrec ((fact ...)) (fact 10)) | ./build/aura --jit` → **3628800**
+
+#### D1-P4: 运行时集成（8h）
+
+| # | 项 | 产出 |
+|---|-----|------|
+| 4.1 | 注册运行时 bridge 函数 | PrimCall → C++ bridge |
+| 4.2 | 字符串/向量/哈希 bridge | 复合类型 JIT |
+| 4.3 | `--jit` 继承 `--strict` / 增量缓存 | 全特性兼容 |
+| 4.4 | 集成到 `CompilerService::eval()` | 自动选择 JIT |
+
+验收：`python3 build.py test all --jit` → 全绿
+
+#### D1-P5: 优化（8h）
+
+| # | 项 | 产出 |
+|---|-----|------|
+| 5.1 | LLVM opt passes (-O2) | 原生码优化 |
+| 5.2 | 函数内联 (inline small fns) | 减少调用开销 |
+| 5.3 | 尾调用优化 (TCO) | 深递归不爆栈 |
+| 5.4 | 增量 JIT 缓存 | 热替换重新编译 |
+| 5.5 | Benchmark 对比 | JIT vs IR vs TW |
+
+### D2 — 形式化类型系统（16h，待启动）
+| D3 — 自举（40h，待启动）
 
 ---
 
