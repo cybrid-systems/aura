@@ -4176,6 +4176,9 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                                  aura::ast::StringPool& pool,
                                  aura::ast::NodeId id,
                                  const Env& env) {
+    // Catch bad_variant_access and return friendly error instead of crash.
+    // This happens when user code passes wrong argument types to primitives.
+    try {
     // TCO loop state: f/p point to the current FlatAST/Pool,
     // which may change during closure/macro tail calls.
     aura::ast::FlatAST* f = &flat;
@@ -4796,6 +4799,10 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
             return std::unexpected(Diagnostic{ErrorKind::InternalError,
                                               "eval_flat: unsupported node type"});
         }
+    }
+    } catch (const std::bad_variant_access& e) {
+        return std::unexpected(Diagnostic{ErrorKind::TypeError,
+            std::format("type mismatch (wrong argument type passed to primitive): {}", e.what())});
     }
 }
 
