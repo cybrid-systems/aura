@@ -83,7 +83,12 @@ static std::unordered_map<std::string, std::string> parse_json_command(std::stri
             while (p < end && *p != '"') {
                 if (*p == '\\' && p + 1 < end) {
                     ++p;
-                    value += *p;
+                    if (*p == 'n') value += '\n';
+                    else if (*p == 't') value += '\t';
+                    else if (*p == 'r') value += '\r';
+                    else if (*p == '"') value += '"';
+                    else if (*p == '\\') value += '\\';
+                    else value += *p;
                 } else {
                     value += *p;
                 }
@@ -134,7 +139,6 @@ int main(int argc, char* argv[]) {
         while (std::getline(std::cin, line)) {
             if (line.empty()) continue;
 
-            // Check if this is a JSON command (starts with '{')
             auto trimmed = line;
             auto first_non_space = trimmed.find_first_not_of(" \t");
             if (first_non_space != std::string::npos && trimmed[first_non_space] == '{') {
@@ -374,7 +378,7 @@ int main(int argc, char* argv[]) {
                     } else {
                         auto& d = result.error();
                         std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
-                                     json_escape(d.message));
+                                     json_escape(d.format()));
                     }
                 }
                 else if (type == "define") {
@@ -386,7 +390,7 @@ int main(int argc, char* argv[]) {
                     } else {
                         auto& d = result.error();
                         std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
-                                     json_escape(d.message));
+                                     json_escape(d.format()));
                     }
                 }
                 else if (type == "exec") {
@@ -397,7 +401,7 @@ int main(int argc, char* argv[]) {
                     } else {
                         auto& d = result.error();
                         std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
-                                     json_escape(d.message));
+                                     json_escape(d.format()));
                     }
                 }
                 else if (type == "redefine") {
@@ -409,7 +413,7 @@ int main(int argc, char* argv[]) {
                     } else {
                         auto& d = result.error();
                         std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
-                                     json_escape(d.message));
+                                     json_escape(d.format()));
                     }
                 }
                 else if (type == "unparse") {
@@ -541,7 +545,7 @@ int main(int argc, char* argv[]) {
                     auto& d = r.error();
                     std::println("{{\"status\":\"error\",\"kind\":{},\"msg\":\"{}\",\"node_id\":{}}}",
                                  static_cast<int>(d.kind),
-                                 json_escape(d.message), d.node_id);
+                                 json_escape(d.format()), d.node_id);
 
                     // Auto-fix
                     aura::compiler::AutoFixEngine fixer(flat, pool);
