@@ -1,5 +1,7 @@
 module;
 #include <cstdint>
+#include "aura_jit.h"
+
 extern "C" std::int64_t aura_jit_test();
 
 export module aura.compiler.service;
@@ -409,13 +411,81 @@ public:
 
     // ── --jit: compile via LLVM ORC JIT and execute ──────────────
     [[nodiscard]] EvalResult exec_jit(std::string_view input) {
-        (void)input;
-        auto result = aura_jit_test();
-        if (result < 0) {
+        #ifdef AURA_HAVE_LLVM
+        // Parse expression
+        auto alloc = arena_.allocator();
+        auto* pool_ptr = arena_.create<aura::ast::StringPool>(alloc);
+        auto* flat_ptr = arena_.create<aura::ast::FlatAST>(alloc);
+        auto pr = aura::parser::parse_to_flat(input, *flat_ptr, *pool_ptr);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
             return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::InternalError, "JIT: compilation failed"});
+                aura::diag::ErrorKind::ParseError, pr.error});
         }
+        flat_ptr->root = pr.root;
+        current_ast_ = flat_ptr;
+        current_pool_ = pool_ptr;
+
+        // Lower to IR (no cache for now)
+        auto ir_mod = aura::compiler::lower_to_ir(*flat_ptr, *pool_ptr, arena_,
+            &evaluator_.primitives());
+
+        // Build flat function from entry function
+        if (ir_mod.functions.empty()) {
+            return EvalResult(types::make_void());
+        }
+
+        // Collect all blocks + instructions into flat arrays
+        auto& entry = ir_mod.entry();
+        std::vector<std::vector<aura::jit::FlatInstruction>> flat_instrs(entry.blocks.size());
+        std::vector<aura::jit::FlatBlock> flat_blocks(entry.blocks.size());
+
+        for (std::size_t bi = 0; bi < entry.blocks.size(); ++bi) {
+            auto& block = entry.blocks[bi];
+            for (auto& instr : block.instructions) {
+                flat_instrs[bi].push_back({
+                    static_cast<std::uint32_t>(instr.opcode),
+                    {instr.operands[0], instr.operands[1],
+                     instr.operands[2], instr.operands[3]}
+                });
+            }
+            flat_blocks[bi] = {
+                block.id,
+                flat_instrs[bi].data(),
+                static_cast<std::uint32_t>(flat_instrs[bi].size())
+            };
+        }
+
+        aura::jit::FlatFunction flat_fn{
+            entry.name.c_str(),
+            entry.entry_block,
+            entry.local_count,
+            entry.arg_count,
+            flat_blocks.data(),
+            static_cast<std::uint32_t>(flat_blocks.size())
+        };
+
+        // Compile via JIT
+        aura::jit::AuraJIT jit;
+        auto fn_ptr = jit.compile(flat_fn);
+        if (!fn_ptr) {
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError, "JIT compilation failed"});
+        }
+
+        // Execute with args array
+        // For entry function, args come from the passed arguments
+        // For now: function takes (locals*, argc) where locals hold
+        // the initial values. Arg instruction reads from argc.
+        // We pass argc = number of function params.
+        std::vector<std::int64_t> locals(entry.local_count, 0);
+        auto result = fn_ptr(locals.data(), entry.arg_count);
+
         return EvalResult(types::make_int(result));
+        #else
+        (void)input;
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::InternalError, "JIT not available — rebuild with LLVM"});
+        #endif
     }
 
     // ---- Type checking (L6.x) ----------------------------------------
