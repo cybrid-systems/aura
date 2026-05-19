@@ -4199,8 +4199,10 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                     }
                 }
             }
+            auto callee_name = std::string(p->resolve(callee.sym_id));
             return std::unexpected(Diagnostic{ErrorKind::TypeError,
-                                              "cannot call: " + std::string(p->resolve(callee.sym_id))});
+                                              "cannot call: " + callee_name}
+                .with_suggestion("did you forget to define '" + callee_name + "'?"));
         }
         case aura::ast::NodeTag::IfExpr: {
             if (v.children.size() < 3) return EvalResult(make_void());
