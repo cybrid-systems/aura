@@ -41,33 +41,60 @@ car cdr cons list pair? null? length append reverse list-ref
 not and or equal? zero? boolean? number? integer? float? string? pair? null? procedure?
 string=? string<? string-append string-length string-ref substring
 string->number number->string
-display write newline
-hash hash-set! hash-ref hash-keys hash-remove! hash-length hash-values hash-has-key?
+display write newline newline
+
+hash hash-set! hash-ref hash-keys hash-remove! hash-length hash-values
+hash-has-key?        ;; (hash-has-key? h key) → Bool -- check key existence
+
 vector make-vector vector-ref vector-set! vector-length vector->list list->vector
 map filter foldl member reverse take drop length
-caar cadr cdar cddr
-error raise assert try try/catch gensym
-format (format "~a = ~a" x 42)    ;; ~a display, ~s write, ~% newline, ~~ literal~
+caar cadr cdar cddr          ;; (cadr x) = (car (cdr x)), works as built-in
+
+error raise assert try catch  ;; try/catch works even with --ir flag
+gensym
+format                        ;; (format "~a = ~a" x 42) ~a display, ~s write, ~% newline
+
 string->list list->string string-join string-copy string-fill!
 char=? char<? char-alphabetic? char-numeric? char-whitespace? char-upcase char-downcase
 read read-file write-file file-copy file-delete file-size directory-list
-regex-match? regex-find regex-replace regex-split
 sin cos tan asin acos atan log log10 exp pow sqrt floor ceil round
 define-struct (from std/struct) type? type-of
+
+## CRITICAL RULES
+- **set! closures work**: (let ((count 0)) (lambda () (set! count (+ count 1)) count))
+- **order of evaluation**: arguments evaluated left to right
+- **NO brackets**: Use only parentheses (no Racket-style `[...]`)
+- **NO cadr?/caddr?**: Use explicit (car (cdr x)), (car (cdr (cdr x)))
+- **foldl**: (foldl f init lst) — f takes (acc element), acc FIRST
+- **apply IS available**: (apply + (list 1 2 3)) → 6
+- **string-join**: (string-join list-of-strings delimiter)
+- **hash**: (hash "k1" v1 "k2" v2) or (hash) for empty
+- **hash-has-key?**: (hash-has-key? h key) — direct check, no need for hash-ref workaround
+- **hash-ref default**: (hash-ref h key default-val) — returns default if key missing
+- **hash-set! modifies in place**: (hash-set! h key val) — no return value
+- **NO for-each**: Use foldl or map instead
+- **NO list comprehension**: Use map/filter/foldl
+- **string->list returns char codes** (integers), **list->string takes char codes**
+- **Dotted pairs**: write (cons 1 2), not (1 . 2) syntax
+- **format**: (format "~a + ~a = ~a" x y (+ x y))
+- **Recursion limit**: ~400 frames (error: recursion depth exceeded)
+- **Use if or cond for branching**: when/unless are special forms (not functions)
+- **Multiple expressions**: Wrap in (begin ...) when used as single expression
 
 ## Stdlib: (require std/name) loads with prefix (std/name:func-name)
 ## Or (require std/name all:) for bare names
 {std}
 
-## CRITICAL RULES
-- foldl: (foldl f init lst) — f takes (acc element), acc FIRST
-- apply IS available: (apply fn args-list)
-- string-join: (string-join list-of-strings delimiter)
-- hash from stdlib: (require std/hash) for hash-set, hash-merge, hash->list
-- NO: for-each, reduce — use foldl instead
-- Use list->string for char lists, string->list to get char codes
-- Dotted pairs: write (cons 1 2) in code, not (1 . 2) syntax
-- format: (format "~a + ~a = ~a" x y (+ x y))
+## Stdlib string (extra functions from std/string)
+string-contains? string-prefix? string-suffix? string-replace
+string-pad-left string-pad-right string-reverse string-repeat
+string->chars chars->string string-take string-drop
+
+## Stdlib iter (from std/iter)
+any? every? find find-index split-at frequencies group-by
+hash-map hash-filter hash-update! hash-merge!
+vector-map vector-reverse vector-slice
+iota iterate unfold
 
 ## Example: word frequency
 ```lisp
@@ -75,10 +102,21 @@ define-struct (from std/struct) type? type-of
 (define (freq words)
   (let ((h (hash)))
     (foldl (lambda (acc word)
-      (let ((c (hash-ref h word)))
-        (if (void? c) (hash-set! h word 1) (hash-set! h word (+ c 1))))
-      acc) '() words)
+      (let ((c (hash-ref h word 0)))
+        (hash-set! h word (+ c 1))
+        acc) '() words)
     (hash->list h)))
+```
+
+## Example: closure with mutable state
+```lisp
+(define (make-counter)
+  (let ((count 0))
+    (lambda ()
+      (set! count (+ count 1))
+      count)))
+(define c (make-counter))
+(display (c)) (display (c)) (display (c))  ;; → 1 2 3
 ```""" + (f"""
 
 ## Stdlib Exports
