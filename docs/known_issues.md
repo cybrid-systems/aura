@@ -16,18 +16,19 @@
 
 ---
 
-## P1 — 严重
+## ~~P1 — 严重~~
 
-### 3. 缓存函数自引用（--ir 路径）
+### ~~3. 缓存函数自引用（--ir 路径）~~ ✅
 
-**症状**：`cache_define` 时 `ir_cache_` 为空，函数 body 中的自引用 Variable 降级为 `ConstI64 0`。
+**根因**：`Define` handler 在 lowering 时先将值 body 降低为 IR，再将名字绑定到 scope。自引用 Variable 找不到绑定，降级为 `ConstI64 0`。
+**根治**：将名字预绑定为 Cell（类似 letrec），在 lower 值 body 之前就创建 Cell 并加入 scope。自引用 Variable 从 scope 中找到 Cell 绑定，CellGet 获取闭包，然后在 call 时正确递归。`--ir` 路径和 `cache_define` 路径均生效。
+**commit**: `待定`
+
 ```scheme
 (define (fact n) (if (= n 0) 1 (* n (fact (- n 1)))))
-(fact 5)   → 120  ✅ (走 tree-walker，正确)
-(fact 5) --ir → 0  ❌ (缓存 IR 中有毁坏的 self-call)
+(fact 5)          → 120 ✅
+(fact 5) --ir    → 120 ✅
 ```
-**当前缓解**：`e334194` — 缓存函数名加入 `user_bindings_`，触发 tree-walker fallback，确保正确性。
-**根治方向**：`cache_define` lowering 时对自引用 Variable 做特殊处理（如预占 func_id），使 IR 路径也正确。
 
 ### ~~4. `cadr`/`caddr` 已存在~~ ✅
 

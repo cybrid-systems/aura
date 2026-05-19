@@ -166,6 +166,14 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
                 return slot;
             }
         }
+        // Self-reference: function being defined calls itself by name.
+        // When the lambda has been pre-allocated in the module, emit
+        // MakeClosure with the correct func_id instead of ConstI64 0.
+        if (state.self_func_id != 0 && std::string(name) == state.self_name) {
+            auto slot = state.alloc_local();
+            state.emit(IROpcode::MakeClosure, slot, state.self_func_id, 0);
+            return slot;
+        }
         auto slot = state.alloc_local();
         state.emit(IROpcode::ConstI64, slot, 0, 0);
         return slot;
@@ -486,6 +494,7 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
         auto saved_scopes = std::move(state.scopes);
         auto saved_env_slot = state.env_slot;
         auto saved_fv_map = std::move(state.free_var_map);
+        auto saved_self_func_id = state.self_func_id;
 
         state.cur_func = &func;
         state.cur_block = 0;
@@ -540,6 +549,7 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
         state.scopes = std::move(saved_scopes);
         state.env_slot = saved_env_slot;
         state.free_var_map = std::move(saved_fv_map);
+        state.self_func_id = saved_self_func_id;
 
         func.free_vars = free_vars;
         if (!state.current_flat) std::println("DEBUG: current_flat NULL at lambda bridge data");
@@ -606,16 +616,18 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
     case NodeTag::Define: {
         auto name = pool.resolve(v.sym_id);
         auto val_id = v.children.empty() ? NULL_NODE : v.child(0);
-        auto val_slot = lower_flat_expr(state, flat, pool, val_id, cache, cache_hits);
-        // Define = letrec cell. Bind in current (outermost) scope.
-        // Don't push/pop a scope — subsequent expressions in Begin need to see this binding.
+        // Pre-bind the name as a Cell BEFORE lowering the value so that
+        // self-references in the lambda body find the cell (like letrec)
+        // instead of falling through to ConstI64 0.
         auto& scope = state.scopes.empty()
             ? (state.scopes.push_back({}), state.scopes.back())
             : state.scopes.back();
         auto ci = state.alloc_local();
         state.emit(IROpcode::NewCell, ci);
-        state.emit(IROpcode::CellSet, ci, val_slot);
         scope[std::string(name)] = Binding{BindingKind::Cell, ci};
+        // Now lower the value — self-references will CellGet the pre-bound cell
+        auto val_slot = lower_flat_expr(state, flat, pool, val_id, cache, cache_hits);
+        state.emit(IROpcode::CellSet, ci, val_slot);
         return val_slot;
     }
     case NodeTag::Begin: {
@@ -766,11 +778,15 @@ static IRModule lower_to_ir_impl(FlatAST& flat, StringPool& pool, ASTArena& aren
                                   std::vector<std::string>* cache_hits = nullptr,
                                   const Primitives* primitives = nullptr,
                                   const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge = nullptr,
-                                  const std::unordered_map<std::string, std::vector<std::string>>* cache_strings = nullptr) {
+                                  const std::unordered_map<std::string, std::vector<std::string>>* cache_strings = nullptr,
+                                  const std::string* self_name = nullptr) {
     LoweringState state(arena);
     state.primitives = primitives;
     state.cache_bridge = cache_bridge;
     state.cache_strings = cache_strings;
+    if (self_name && !self_name->empty()) {
+        state.self_name = *self_name;
+    }
     state.module = {};
     // Create top-level function
     IRFunction top_func;
@@ -805,8 +821,9 @@ IRModule lower_to_ir_with_cache(
     std::vector<std::string>* cache_hits,
     const Primitives* primitives,
     const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge,
-    const std::unordered_map<std::string, std::vector<std::string>>* cache_strings) {
-    return lower_to_ir_impl(flat, pool, arena, cache, cache_hits, primitives, cache_bridge, cache_strings);
+    const std::unordered_map<std::string, std::vector<std::string>>* cache_strings,
+    const std::string* self_name) {
+    return lower_to_ir_impl(flat, pool, arena, cache, cache_hits, primitives, cache_bridge, cache_strings, self_name);
 }
 
 // ── unparse_node — FlatAST → S-expression source ───────────────
