@@ -56,7 +56,7 @@ def cmd_build():
     print(f"{B}═══ Build ═══{N}")
     BUILD.mkdir(parents=True, exist_ok=True)
     nproc = os.cpu_count() or 4
-    r = run(["cmake", "-B", str(BUILD), "-G", "Ninja"], cwd=ROOT)
+    r = run(["cmake", "-B", str(BUILD), "-G", "Ninja", "-Wno-dev"], cwd=ROOT)
     if r != 0: return r
     r = run(["cmake", "--build", str(BUILD), "--target", "aura", "-j", str(nproc)], cwd=ROOT)
     if r == 0: ok("build OK")
