@@ -20,9 +20,11 @@
 #include <vector>
 #include <unordered_map>
 #include <memory>
+#include <string>
 
 namespace aura::jit {
 
+// Opcode enum values (must match ir.ixx IROpcode)
 enum Op : uint32_t {
     OpConstI64 = 1, OpConstF64 = 2, OpLocal = 3, OpArg = 4,
     OpAdd = 5, OpSub = 6, OpMul = 7, OpDiv = 8,
@@ -56,22 +58,28 @@ struct LLVMBuilder {
     llvm::Function* fn_alloc_pair = nullptr;
     llvm::Function* fn_pair_car = nullptr;
     llvm::Function* fn_pair_cdr = nullptr;
+    llvm::Function* fn_prim_call = nullptr;
+    llvm::Function* fn_display_int = nullptr;
+    llvm::Function* fn_display_char = nullptr;
+    llvm::Function* fn_newline = nullptr;
 
     void declare_runtime() {
         auto i64 = llvm::Type::getInt64Ty(ctx);
         auto i32 = llvm::Type::getInt32Ty(ctx);
         auto ptr_i64 = llvm::PointerType::getUnqual(i64);
+        auto void_ty = llvm::Type::getVoidTy(ctx);
+        auto i8_ty = llvm::Type::getInt8Ty(ctx);
 
         fn_alloc_closure = llvm::Function::Create(
             llvm::FunctionType::get(i64, {i64}, false),
             llvm::Function::ExternalLinkage, "aura_alloc_closure", mod);
 
         fn_closure_capture = llvm::Function::Create(
-            llvm::FunctionType::get(llvm::Type::getVoidTy(ctx), {i64, i32, i64}, false),
+            llvm::FunctionType::get(void_ty, {i64, i64, i64}, false),
             llvm::Function::ExternalLinkage, "aura_closure_capture", mod);
 
         fn_closure_call = llvm::Function::Create(
-            llvm::FunctionType::get(i64, {i64, ptr_i64, i32}, false),
+            llvm::FunctionType::get(i64, {i64, ptr_i64, i64}, false),
             llvm::Function::ExternalLinkage, "aura_closure_call", mod);
 
         fn_new_cell = llvm::Function::Create(
@@ -83,7 +91,7 @@ struct LLVMBuilder {
             llvm::Function::ExternalLinkage, "aura_cell_get", mod);
 
         fn_cell_set = llvm::Function::Create(
-            llvm::FunctionType::get(llvm::Type::getVoidTy(ctx), {i64, i64}, false),
+            llvm::FunctionType::get(void_ty, {i64, i64}, false),
             llvm::Function::ExternalLinkage, "aura_cell_set", mod);
 
         fn_alloc_pair = llvm::Function::Create(
@@ -97,6 +105,22 @@ struct LLVMBuilder {
         fn_pair_cdr = llvm::Function::Create(
             llvm::FunctionType::get(i64, {i64}, false),
             llvm::Function::ExternalLinkage, "aura_pair_cdr", mod);
+
+        fn_prim_call = llvm::Function::Create(
+            llvm::FunctionType::get(i64, {i64, i64, i64, i64}, false),
+            llvm::Function::ExternalLinkage, "aura_prim_call", mod);
+
+        fn_display_int = llvm::Function::Create(
+            llvm::FunctionType::get(void_ty, {i64}, false),
+            llvm::Function::ExternalLinkage, "aura_display_int", mod);
+
+        fn_display_char = llvm::Function::Create(
+            llvm::FunctionType::get(void_ty, {i8_ty}, false),
+            llvm::Function::ExternalLinkage, "aura_display_char", mod);
+
+        fn_newline = llvm::Function::Create(
+            llvm::FunctionType::get(void_ty, false),
+            llvm::Function::ExternalLinkage, "aura_newline", mod);
     }
 
     llvm::Value* load(uint32_t slot) {
@@ -149,13 +173,12 @@ struct LLVMBuilder {
 
         // Closures
         case OpMakeClosure: {
-            // inst.ops[0] = result_slot, ops[1] = func_id, ops[2] = env_size
             auto call = irb->CreateCall(fn_alloc_closure, {c64(inst.ops[1])});
             store(inst.ops[0], call);
             return true;
         }
         case OpCapture: {
-            // inst.ops[0] = closure_slot, ops[1] = env_idx, ops[2] = var_slot
+            // ops[0] = closure_slot, ops[1] = env_idx, ops[2] = var_slot
             auto closure_val = load(inst.ops[0]);
             auto env_val = load(inst.ops[2]);
             irb->CreateCall(fn_closure_capture,
@@ -167,7 +190,6 @@ struct LLVMBuilder {
             auto callee = load(inst.ops[0]);
             auto arg_base = inst.ops[1];
             auto arg_count = inst.ops[2];
-            // Build args array from locals
             auto alloca_ty = llvm::ArrayType::get(llvm::Type::getInt64Ty(ctx), arg_count);
             auto args_arr = irb->CreateAlloca(alloca_ty);
             for (uint32_t i = 0; i < arg_count; ++i) {
@@ -216,6 +238,24 @@ struct LLVMBuilder {
             return true;
         }
 
+        // Primitive calls
+        case OpPrimCall: {
+            // ops[0] = result, ops[1] = slot, ops[2] = arg1, ops[3] = arg2
+            auto call = irb->CreateCall(fn_prim_call, {
+                c64(inst.ops[1]), load(inst.ops[2]), load(inst.ops[3]), c64(2)
+            });
+            store(inst.ops[0], call);
+            return true;
+        }
+        case OpPrimitive: {
+            // ops[0] = result, ops[1] = slot, ops[2] = arg_slot
+            auto call = irb->CreateCall(fn_prim_call, {
+                c64(inst.ops[1]), load(inst.ops[2]), c64(0), c64(1)
+            });
+            store(inst.ops[0], call);
+            return true;
+        }
+
         default:
             if (inst.ops[0] < fn.local_count) store(inst.ops[0], c64(0));
             return true;
@@ -228,15 +268,25 @@ struct LLVMBuilder {
 // Runtime function declarations (C linkage, defined in aura_jit_runtime.cpp)
 extern "C" {
     int64_t aura_alloc_closure(int64_t);
-    void aura_closure_capture(int64_t, int32_t, int64_t);
-    int64_t aura_closure_call(int64_t, int64_t*, int32_t);
+    void aura_closure_capture(int64_t, int64_t, int64_t);
+    int64_t aura_closure_call(int64_t, int64_t*, int64_t);
     int64_t aura_new_cell();
     int64_t aura_cell_get(int64_t);
     void aura_cell_set(int64_t, int64_t);
     int64_t aura_alloc_pair(int64_t, int64_t);
     int64_t aura_pair_car(int64_t);
     int64_t aura_pair_cdr(int64_t);
+    int64_t aura_prim_call(int64_t, int64_t, int64_t, int64_t);
+    void aura_display_int(int64_t);
+    void aura_display_char(char);
+    void aura_newline();
+    void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t),
+                           int32_t local_count, int32_t arg_count, int32_t env_count);
+    void aura_reset_runtime();
+    void aura_set_prim_dispatcher(int64_t (*fn)(int64_t, int64_t*, int32_t));
 }
+
+// C standard library functions (declared in <cstdio>, registered as JIT symbols)
 
 struct AuraJIT::Impl {
     std::unique_ptr<llvm::orc::LLJIT> jit;
@@ -244,6 +294,7 @@ struct AuraJIT::Impl {
     llvm::LLVMContext ctx;
     uint64_t module_counter = 0;
     bool initialized = false;
+    std::vector<FunctionMeta> compiled_fns_{};
 
     bool init() {
         if (initialized) return true;
@@ -267,6 +318,7 @@ struct AuraJIT::Impl {
                 fprintf(stderr, "JIT: failed to define symbol '%s'\n", name);
         };
 
+        // Runtime functions
         reg("aura_alloc_closure",   (void*)aura_alloc_closure);
         reg("aura_closure_capture", (void*)aura_closure_capture);
         reg("aura_closure_call",    (void*)aura_closure_call);
@@ -276,6 +328,22 @@ struct AuraJIT::Impl {
         reg("aura_alloc_pair", (void*)aura_alloc_pair);
         reg("aura_pair_car",  (void*)aura_pair_car);
         reg("aura_pair_cdr",  (void*)aura_pair_cdr);
+        reg("aura_prim_call", (void*)aura_prim_call);
+        reg("aura_set_prim_dispatcher", (void*)aura_set_prim_dispatcher);
+        reg("aura_display_int", (void*)aura_display_int);
+        reg("aura_display_char", (void*)aura_display_char);
+        reg("aura_newline",  (void*)aura_newline);
+        reg("aura_register_fn", (void*)aura_register_fn);
+        reg("aura_reset_runtime", (void*)aura_reset_runtime);
+
+        // C standard library functions
+        reg("printf", (void*)printf);
+        reg("fprintf", (void*)fprintf);
+        reg("fflush", (void*)fflush);
+        reg("fputc",  (void*)fputc);
+
+        // Reset runtime state for fresh session
+        aura_reset_runtime();
 
         return true;
     }
@@ -346,6 +414,16 @@ struct AuraJIT::Impl {
         if (!sym) return nullptr;
         return sym->toPtr<void*>();
     }
+
+    void register_fn_func(int64_t func_id, ScalarFn fn_ptr,
+                           uint32_t local_count, uint32_t arg_count,
+                           uint32_t env_count) {
+        aura_register_fn(func_id, fn_ptr,
+                         static_cast<int32_t>(local_count),
+                         static_cast<int32_t>(arg_count),
+                         static_cast<int32_t>(env_count));
+        compiled_fns_.push_back({std::string(), fn_ptr, local_count, arg_count, env_count});
+    }
 };
 
 AuraJIT::AuraJIT() : impl_(std::make_unique<Impl>()) {}
@@ -354,16 +432,30 @@ bool AuraJIT::available() const { return impl_->initialized; }
 ScalarFn AuraJIT::compile(const FlatFunction& fn) { return impl_->compile(fn); }
 void* AuraJIT::get_function_ptr(const char* name) { return impl_->get_function_ptr(name); }
 
+void AuraJIT::register_function(int64_t func_id, ScalarFn fn_ptr,
+                                 uint32_t local_count, uint32_t arg_count,
+                                 uint32_t env_count) {
+    impl_->register_fn_func(func_id, fn_ptr, local_count, arg_count, env_count);
+}
+
+const std::vector<FunctionMeta>& AuraJIT::compiled_functions() const {
+    return impl_->compiled_fns_;
+}
+
 } // namespace aura::jit
 
 #else
 
 namespace aura::jit {
+
 AuraJIT::AuraJIT() : impl_(nullptr) {}
 AuraJIT::~AuraJIT() = default;
 bool AuraJIT::available() const { return false; }
 ScalarFn AuraJIT::compile(const FlatFunction&) { return nullptr; }
 void* AuraJIT::get_function_ptr(const char*) { return nullptr; }
+void AuraJIT::register_function(int64_t, ScalarFn, uint32_t, uint32_t, uint32_t) {}
+const std::vector<FunctionMeta>& AuraJIT::compiled_functions() const { static std::vector<FunctionMeta> empty; return empty; }
+
 } // namespace aura::jit
 
 #endif
