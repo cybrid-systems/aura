@@ -44,7 +44,7 @@ echo '(letrec ((fact ...)) (fact 10))' | ./build/aura --jit  # → 3628800 (LLVM
 | **显式调用栈** | `std::variant` 驱动的外层 while 循环，支持 10 万级深递归 |
 | **宏系统** | quasiquote, gensym, 递归展开, dotted rest param, **卫生宏 (name_map自动重命名)** |
 | **模块** | `require`/`import` 前缀注入, `export` 控制, 循环检测, 自动 lib 发现 |
-| **类型系统** | 渐进类型 L6, `--strict` 模式, `forall` 多态, 增量类型缓存, Float, occurrence typing |
+| **类型系统** | **Sound Gradual Typing**: coercion + CastOp, `forall` let-poly, occurrence typing, type query, blame labels, `(cast ...)`, `(check ...)`, `(: ...)` 标注语法 |
 | **类型 IR 集成** | `IRInstruction.type_id`, 运行时类型断言(strict), Let-Poly, TypeSpecializationPass |
 | **错误处理** | `try`/`catch`/`raise`/`assert`, 原语返回 error 不崩溃, **编译期 AST 验证** |
 | **数据结构** | pair/list, vector, hash table, variadic functions |
