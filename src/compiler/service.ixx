@@ -550,24 +550,34 @@ public:
             }
         };
 
-        // Compile ALL functions and register with runtime
+        // Compile ALL functions (with JIT cache) and register with runtime
         int64_t entry_func_id = -1;
         for (auto& ir_fn : ir_mod.functions) {
             if (ir_fn.id == ir_mod.entry_function_id) {
                 entry_func_id = static_cast<int64_t>(ir_fn.id);
             }
 
-            FlatFnBuilder builder(ir_fn);
-            auto fn_ptr = jit_.compile(builder.flat_fn);
-            if (!fn_ptr) {
-                return std::unexpected(aura::diag::Diagnostic{
-                    aura::diag::ErrorKind::InternalError,
-                    std::string("JIT compilation failed for function '") + ir_fn.name + "'"});
+            // env_count = number of captured free variables
+            std::uint32_t env_count = static_cast<std::uint32_t>(ir_fn.free_vars.size());
+
+            // Check JIT cache
+            aura::jit::ScalarFn fn_ptr = nullptr;
+            auto cache_it = jit_cache_.find(ir_fn.name);
+            if (cache_it != jit_cache_.end()) {
+                fn_ptr = cache_it->second.fn_ptr;
+            } else {
+                FlatFnBuilder builder(ir_fn);
+                fn_ptr = jit_.compile(builder.flat_fn);
+                if (!fn_ptr) {
+                    return std::unexpected(aura::diag::Diagnostic{
+                        aura::diag::ErrorKind::InternalError,
+                        std::string("JIT compilation failed for function '") + ir_fn.name + "'"});
+                }
+                // Cache compiled function
+                jit_cache_[ir_fn.name] = {fn_ptr, ir_fn.local_count, ir_fn.arg_count, env_count};
             }
 
             // Register with runtime for closure calls
-            // env_count = number of captured free variables (used as offset for Arg instr)
-            uint32_t env_count = static_cast<uint32_t>(ir_fn.free_vars.size());
             jit_.register_function(static_cast<int64_t>(ir_fn.id), fn_ptr,
                                     ir_fn.local_count, ir_fn.arg_count, env_count);
         }
@@ -943,6 +953,7 @@ public:
             ir_cache_.erase(fname);
             ir_cache_bridge_.erase(fname);
             ir_cache_strings_.erase(fname);
+            jit_cache_.erase(fname);
             function_sources_.erase(fname);
             // Clean dep_graph
             auto dit = dep_graph_.find(fname);
@@ -1801,6 +1812,11 @@ private:
                 dep_graph_.erase(f);
             }
         }
+        // Invalidate JIT cache for affected functions
+        jit_cache_.erase(name);
+        for (auto& dep_name : dependents)
+            jit_cache_.erase(dep_name);
+
         // Clean up the original function's dep info
         auto it = dep_graph_.find(name);
         if (it != dep_graph_.end()) {
@@ -1898,6 +1914,15 @@ private:
     // Persistent JIT for --jit mode
     aura::jit::AuraJIT jit_;
     bool jit_initialized_ = false;
+
+    // JIT function cache — maps function name → compiled function pointer + metadata
+    struct JitCachedFn {
+        aura::jit::ScalarFn fn_ptr = nullptr;
+        std::uint32_t local_count = 0;
+        std::uint32_t arg_count = 0;
+        std::uint32_t env_count = 0;
+    };
+    std::unordered_map<std::string, JitCachedFn> jit_cache_;
 
     // Register evaluator primitives with JIT runtime
     void register_jit_primitives() {
