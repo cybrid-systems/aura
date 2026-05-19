@@ -240,19 +240,30 @@ struct LLVMBuilder {
 
         // Primitive calls
         case OpPrimCall: {
-            // ops[0] = result, ops[1] = slot, ops[2] = arg1, ops[3] = arg2
+            // IR: operands[0]=prim_id, operands[1]=packed(arg_base<<16|arg_count),
+            //     operands[2]=result_slot
+            auto prim_id = inst.ops[0];
+            auto packed = inst.ops[1];
+            auto arg_count = packed & 0xFFFFu;          // lower 16 bits = arg_count
+            auto arg_base = (packed >> 16) & 0xFFFFu;   // upper 16 bits = arg_base
+            auto result_slot = inst.ops[2];
+            // Call prim dispatcher with first 2 args (most common case)
+            auto a1 = (arg_count > 0) ? load(arg_base) : c64(0);
+            auto a2 = (arg_count > 1) ? load(arg_base + 1) : c64(0);
             auto call = irb->CreateCall(fn_prim_call, {
-                c64(inst.ops[1]), load(inst.ops[2]), load(inst.ops[3]), c64(2)
+                c64(prim_id), a1, a2, c64(arg_count)
             });
-            store(inst.ops[0], call);
+            store(result_slot, call);
             return true;
         }
         case OpPrimitive: {
-            // ops[0] = result, ops[1] = slot, ops[2] = arg_slot
+            // IR: operands[0]=result_slot, operands[1]=prim_slot_index
+            auto result_slot = inst.ops[0];
+            auto prim_slot = inst.ops[1];
             auto call = irb->CreateCall(fn_prim_call, {
-                c64(inst.ops[1]), load(inst.ops[2]), c64(0), c64(1)
+                c64(prim_slot), c64(0), c64(0), c64(0)
             });
-            store(inst.ops[0], call);
+            store(result_slot, call);
             return true;
         }
 
@@ -280,6 +291,7 @@ extern "C" {
     void aura_display_int(int64_t);
     void aura_display_char(char);
     void aura_newline();
+    int64_t aura_jit_prim_dispatch(int64_t, int64_t*, int32_t);
     void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t),
                            int32_t local_count, int32_t arg_count, int32_t env_count);
     void aura_reset_runtime();
@@ -333,6 +345,7 @@ struct AuraJIT::Impl {
         reg("aura_display_int", (void*)aura_display_int);
         reg("aura_display_char", (void*)aura_display_char);
         reg("aura_newline",  (void*)aura_newline);
+        reg("aura_jit_prim_dispatch", (void*)aura_jit_prim_dispatch);
         reg("aura_register_fn", (void*)aura_register_fn);
         reg("aura_reset_runtime", (void*)aura_reset_runtime);
 

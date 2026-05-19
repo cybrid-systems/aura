@@ -3,6 +3,8 @@ module;
 #include "aura_jit.h"
 
 extern "C" std::int64_t aura_jit_test();
+extern "C" void aura_set_prim_dispatcher(
+    std::int64_t (*fn)(std::int64_t, std::int64_t*, std::int32_t));
 
 export module aura.compiler.service;
 import std;
@@ -18,6 +20,65 @@ import aura.compiler.type_checker;
 import aura.compiler.value;
 import aura.compiler.cache;
 import aura.diag;
+
+// ── JIT primitive call dispatcher ────────────────────────
+// Bridges OpPrimCall/OpPrimitive from JIT code to evaluator PrimFn table.
+// The PrimId enum value is used as an index into kPrimNames to find
+// the primitive name, then looked up in the evaluator's primitives table.
+// Uses a global primitives pointer set by CompilerService::register_jit_primitives().
+
+// PrimId name table (mirrors ir.ixx kPrimNames — must stay in sync)
+static constexpr const char* kPrimNameTable[] = {
+    "string-append", "string-length", "string-ref",
+    "substring",     "string=?",      "string<?",
+    "number->string", "string->number",
+    "display", "write", "newline",
+    "error", "assert",
+    "read", "read-file", "write-file", "file-exists?",
+    "gensym",
+    "apply",
+    "vector", "vector-ref", "vector-set!",
+    "vector-length", "vector?", "make-vector",
+    "import",
+    "char=?", "char<?", "char->integer", "integer->char",
+    "raise", "error?",
+};
+
+static const aura::compiler::Primitives* g_jit_prim_ctx = nullptr;
+
+extern "C" std::int64_t aura_jit_prim_dispatch(std::int64_t prim_id,
+                                                 std::int64_t* args,
+                                                 std::int32_t argc) {
+    auto* prims = g_jit_prim_ctx;
+    if (!prims) return 0;
+    
+    // Look up primitive by PrimId → kPrimNameTable → evaluator name
+    std::string_view pname;
+    if (prim_id >= 0 && static_cast<std::size_t>(prim_id) < std::size(kPrimNameTable))
+        pname = kPrimNameTable[static_cast<std::size_t>(prim_id)];
+    if (pname.empty()) return 0;
+    
+    auto pfn = prims->lookup(std::string(pname));
+    if (!pfn) return 0;
+    
+    // Convert int64_t args to EvalValue vector
+    std::vector<aura::compiler::types::EvalValue> eval_args;
+    eval_args.reserve(static_cast<std::size_t>(argc));
+    for (std::int32_t i = 0; i < argc; ++i)
+        eval_args.push_back(aura::compiler::types::make_int(args[i]));
+    
+    // Call the primitive function
+    auto result = (*pfn)(eval_args);
+    
+    // Convert result back to int64_t
+    if (aura::compiler::types::is_int(result)) 
+        return aura::compiler::types::as_int(result);
+    if (aura::compiler::types::is_void(result)) 
+        return 0;
+    if (aura::compiler::types::is_bool(result)) 
+        return aura::compiler::types::as_bool(result) ? 1 : 0;
+    return 0;
+}
 
 namespace aura::compiler {
 
@@ -1840,34 +1901,13 @@ private:
 
     // Register evaluator primitives with JIT runtime
     void register_jit_primitives() {
-        // Register primitive wrappers for JIT runtime
-        // Each primitive wrapper takes (int64_t* args, int32_t argc) and returns int64_t
-        // This bridges between JIT-called primitives and the evaluator's PrimFn table.
-        // For now, we register the most commonly used primitives.
-
-        // The primitives table has 180+ entries. We register a general-purpose
-        // dispatcher that converts int64_t args to EvalValues and calls the evaluator's PrimFn.
-        //
-        // For the minimal P4, we only need:
-        //   1. Arithmetic: + - * / = < > <= >= — these are already handled as IR instructions
-        //   2. display, write, newline — display bridge already registered in JIT symbols
-        //   3. General primitive dispatch for string/vector/hash operations
-
-        // The primitives bridge function
-        auto& prims = evaluator_.primitives();
-        for (std::size_t s = 0; s < prims.slot_count(); ++s) {
-            auto name = prims.name_for_slot(s);
-            (void)name;
-            // For now, register all primitives through a simple wrapper
-            // We'll use the existing aura_prim_call mechanism
-            // Registering C-linkage wrappers for each slot is complex because
-            // PrimFn returns EvalValue, not int64_t.
-            // For P4, we'll handle this by routing OpPrimCall/OpPrimitive
-            // to the evaluator through a fallback in exec_jit.
-        }
-
-        // Primitive registration is deferred to a per-call basis.
-        // Individual primitive wrappers will be registered in a follow-up.
+        // Set the global primitives pointer for the JIT dispatcher
+        g_jit_prim_ctx = &evaluator_.primitives();
+        
+        // Register the dispatcher with JIT runtime
+        // aura_jit_prim_dispatch is defined at file scope (after imports)
+        // and aura_set_prim_dispatcher is declared in the module; fragment
+        aura_set_prim_dispatcher(aura_jit_prim_dispatch);
     }
 };
 
