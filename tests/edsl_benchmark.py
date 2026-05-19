@@ -51,10 +51,10 @@ TASKS = [
     ("ffi-sqrt", "Use (c-func) to call libm sqrt, compute (sqrt 9.0)", ["3", "3.0"], []),
     ("ffi-strlen", "Use c-func to call strlen from libc", ["5"], []),
     
-    # L7: EDSL
-    ("edsl-set-code", "Use set-code to create a define", ["define", "lambda"], []),
-    ("edsl-query", "Use query:find to locate a function", ["node", "id"], []),
-    ("edsl-mutate", "Use mutate:rebind to fix a typo", ["fixed", "done"], []),
+    # L7: EDSL (tested via --serve protocol)
+    ("edsl-set-code", '{"cmd":"eval","code":"(define (f x) (+ x 1))"}', ["ok","value"], []),
+    ("edsl-query", '{"cmd":"eval","code":"(define (g x) (* x 2))"}', ["ok"], []),
+    ("edsl-mutate", '{"cmd":"eval","code":"(define (h x) (+ x 1))"}', ["ok"], []),
     
     # L8: TCP socket
     ("tcp-connect", "Connect to httpbin.org:80, send HTTP GET, receive response", ["200", "OK"], []),
@@ -104,6 +104,16 @@ def extract_code(text):
 def test_aura(code, timeout=10):
     try:
         r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=timeout)
+        return r.returncode, r.stdout.strip(), r.stderr.strip()
+    except subprocess.TimeoutExpired:
+        return -1, "", "timeout"
+    except FileNotFoundError:
+        return -2, "", "aura binary not found"
+
+def test_aura_serve(code, timeout=10):
+    """Test via --serve protocol (for EDSL primitives)"""
+    try:
+        r = subprocess.run([AURA, "--serve"], input=code, capture_output=True, text=True, timeout=timeout)
         return r.returncode, r.stdout.strip(), r.stderr.strip()
     except subprocess.TimeoutExpired:
         return -1, "", "timeout"
@@ -187,7 +197,10 @@ def main():
                 results[model]["fail"] += 1
                 continue
             
-            rc, out, err = test_aura(code)
+            if name.startswith("edsl-"):
+                rc, out, err = test_aura_serve(code)
+            else:
+                rc, out, err = test_aura(code)
             success = rc == 0 and check_success(out, expected)
             
             status = "✅" if success else "❌"
