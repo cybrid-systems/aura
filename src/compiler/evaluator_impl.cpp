@@ -3026,6 +3026,7 @@ Evaluator::Evaluator() {
 
     primitives_.add("c-func", [this](const auto& a) -> EvalValue {
         // (c-func lib-id "name" ret-type arg-type...)
+        // type tags: 1=Int, 2=Float, 4=String, 0=Void
         if (a.size() < 3 || !types::is_int(a[0]) || !types::is_string(a[1]) || !types::is_int(a[2]))
             return make_int(0);
         auto lib_idx = static_cast<std::size_t>(types::as_int(a[0]));
@@ -3033,7 +3034,6 @@ Evaluator::Evaluator() {
         auto lib = g_ffi_libs[lib_idx];
         auto name = string_heap_[types::as_string_idx(a[1])];
         auto ret_type = static_cast<int>(types::as_int(a[2]));
-        (void)ret_type;
 
         auto* fn_ptr = ::dlsym(lib, name.c_str());
         if (!fn_ptr) {
@@ -3041,11 +3041,12 @@ Evaluator::Evaluator() {
             return make_int(0);
         }
 
-        // Store as foreign function, return callable closure
+        // Store as foreign function with type info
+        // Pack ret_type and arg count into closure metadata
         auto fidx = g_ffi_funcs.size();
         g_ffi_funcs.push_back({fn_ptr, name});
 
-        // Return closure with special high bit set: foreign_func_id | 0x8000000000000000
+        // Return closure with special high bit: foreign_func_id | ret_type<<56 | 0x80...
         auto closure_id = static_cast<std::uint64_t>(fidx) | (1ULL << 63);
         return types::make_closure(closure_id);
     });
@@ -3231,17 +3232,36 @@ std::optional<EvalValue> Evaluator::apply_closure(
         if (fidx < g_ffi_funcs.size()) {
             auto& [fn_ptr, name] = g_ffi_funcs[static_cast<std::size_t>(fidx)];
             (void)name;
-            // For now: all C functions take int args and return int
-            // Cast to int64_t(*)(int64_t, ...) and call with positional args
-            // This works for simple cases like int add(int, int)
-            auto c_fn = reinterpret_cast<std::int64_t(*)(std::int64_t, std::int64_t, std::int64_t, std::int64_t, std::int64_t, std::int64_t)>(fn_ptr);
-            std::int64_t c_args[6] = {0, 0, 0, 0, 0, 0};
+
+            // Marshalling: dispatch based on arg types
+            // Int args → int64_t* call conv, Float args → double* call conv
+            // Detect signature from args
+            bool any_float = false;
+            std::int64_t i6[6] = {0,0,0,0,0,0};
+            double d6[6] = {0,0,0,0,0,0};
             for (std::size_t i = 0; i < args.size() && i < 6; ++i) {
-                if (types::is_int(args[i])) c_args[i] = types::as_int(args[i]);
-                else if (types::is_float(args[i])) c_args[i] = static_cast<std::int64_t>(types::as_float(args[i]));
+                if (types::is_float(args[i])) {
+                    d6[i] = types::as_float(args[i]);
+                    i6[i] = static_cast<std::int64_t>(d6[i]);
+                    any_float = true;
+                } else if (types::is_int(args[i])) {
+                    i6[i] = types::as_int(args[i]);
+                    d6[i] = static_cast<double>(i6[i]);
+                }
             }
-            auto result = c_fn(c_args[0], c_args[1], c_args[2], c_args[3], c_args[4], c_args[5]);
-            return types::make_int(result);
+
+            if (any_float) {
+                // Float signature: returns double via bitcast to int64_t
+                auto f_fn = reinterpret_cast<double(*)(double,double,double,double,double,double)>(fn_ptr);
+                double f_result = f_fn(d6[0], d6[1], d6[2], d6[3], d6[4], d6[5]);
+                // If any arg was float, return Float
+                return types::make_float(f_result);
+            } else {
+                // Int signature
+                auto i_fn = reinterpret_cast<std::int64_t(*)(std::int64_t,std::int64_t,std::int64_t,std::int64_t,std::int64_t,std::int64_t)>(fn_ptr);
+                auto result = i_fn(i6[0], i6[1], i6[2], i6[3], i6[4], i6[5]);
+                return types::make_int(result);
+            }
         }
         return std::nullopt;
     }

@@ -73,6 +73,9 @@ public:
     // Get all compiled functions metadata
     const std::vector<FunctionMeta>& compiled_functions() const;
 
+    // Register an external C symbol with the JIT (e.g., from dlopen)
+    void register_symbol(const char* name, void* ptr);
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
