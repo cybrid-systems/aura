@@ -2969,7 +2969,13 @@ void Evaluator::init_pair_primitives() {
 // Global FFI state (shared across all evaluator instances)
 // In production, this should be per-evaluator.
 static std::vector<void*> g_ffi_libs;
-static std::vector<std::pair<void*, std::string>> g_ffi_funcs;  // (fn_ptr, name)
+struct FFIFunc {
+    void* fn_ptr;
+    std::string name;
+    int ret_type;          // 0=void, 1=Int, 2=Float, 3=String, 4=Opaque
+    std::vector<int> arg_types;  // per-arg type tags
+};
+static std::vector<FFIFunc> g_ffi_funcs;
 
 // ── Env::lookup_cell_ptr: returns EvalValue* ──────────────────
 EvalValue* Env::lookup_cell_ptr(const std::string& n, std::vector<EvalValue>* cells) const {
@@ -3041,12 +3047,18 @@ Evaluator::Evaluator() {
             return make_int(0);
         }
 
-        // Store as foreign function with type info
-        // Pack ret_type and arg count into closure metadata
-        auto fidx = g_ffi_funcs.size();
-        g_ffi_funcs.push_back({fn_ptr, name});
+        // Collect arg types from remaining args
+        std::vector<int> arg_types;
+        for (std::size_t i = 3; i < a.size(); ++i) {
+            if (types::is_int(a[i]))
+                arg_types.push_back(static_cast<int>(types::as_int(a[i])));
+        }
 
-        // Return closure with special high bit: foreign_func_id | ret_type<<56 | 0x80...
+        // Store as foreign function with type info
+        auto fidx = g_ffi_funcs.size();
+        g_ffi_funcs.push_back({fn_ptr, name, ret_type, std::move(arg_types)});
+
+        // Return closure with special high bit set
         auto closure_id = static_cast<std::uint64_t>(fidx) | (1ULL << 63);
         return types::make_closure(closure_id);
     });
@@ -3230,37 +3242,67 @@ std::optional<EvalValue> Evaluator::apply_closure(
     if (cid & (1ULL << 63)) {
         auto fidx = cid & ~(1ULL << 63);
         if (fidx < g_ffi_funcs.size()) {
-            auto& [fn_ptr, name] = g_ffi_funcs[static_cast<std::size_t>(fidx)];
-            (void)name;
+            auto& ff = g_ffi_funcs[static_cast<std::size_t>(fidx)];
+            void* fn_ptr = ff.fn_ptr;
+            int ret_type = ff.ret_type;
+            auto& arg_types = ff.arg_types;
 
-            // Marshalling: dispatch based on arg types
-            // Int args → int64_t* call conv, Float args → double* call conv
-            // Detect signature from args
-            bool any_float = false;
+            // Marshalling: dispatch based on type info
             std::int64_t i6[6] = {0,0,0,0,0,0};
             double d6[6] = {0,0,0,0,0,0};
+            const char* s6[6] = {nullptr,nullptr,nullptr,nullptr,nullptr,nullptr};
+            std::vector<std::string> str_bufs;  // keep strings alive
+            bool any_float = false;
+
             for (std::size_t i = 0; i < args.size() && i < 6; ++i) {
-                if (types::is_float(args[i])) {
-                    d6[i] = types::as_float(args[i]);
+                int atype = (i < arg_types.size()) ? arg_types[i] : 1;  // default Int
+                if (atype == 2) {  // Float
+                    if (types::is_float(args[i])) d6[i] = types::as_float(args[i]);
+                    else if (types::is_int(args[i])) d6[i] = static_cast<double>(types::as_int(args[i]));
                     i6[i] = static_cast<std::int64_t>(d6[i]);
                     any_float = true;
-                } else if (types::is_int(args[i])) {
-                    i6[i] = types::as_int(args[i]);
+                } else if (atype == 3) {  // String → char*
+                    if (types::is_string(args[i])) {
+                        auto idx = types::as_string_idx(args[i]);
+                        if (idx < string_heap_.size()) {
+                            str_bufs.push_back(string_heap_[idx]);
+                            s6[i] = str_bufs.back().c_str();
+                            i6[i] = reinterpret_cast<std::int64_t>(s6[i]);
+                            d6[i] = 0.0;
+                        }
+                    }
+                } else if (atype == 4) {  // Opaque (void*)
+                    i6[i] = types::is_int(args[i]) ? types::as_int(args[i]) : 0;
+                    d6[i] = 0.0;
+                } else {  // Int (default)
+                    if (types::is_int(args[i])) i6[i] = types::as_int(args[i]);
+                    else if (types::is_float(args[i])) { i6[i] = static_cast<std::int64_t>(types::as_float(args[i])); any_float = true; }
                     d6[i] = static_cast<double>(i6[i]);
                 }
             }
 
+            std::int64_t result_i = 0;
+            double result_f = 0.0;
+
             if (any_float) {
-                // Float signature: returns double via bitcast to int64_t
                 auto f_fn = reinterpret_cast<double(*)(double,double,double,double,double,double)>(fn_ptr);
-                double f_result = f_fn(d6[0], d6[1], d6[2], d6[3], d6[4], d6[5]);
-                // If any arg was float, return Float
-                return types::make_float(f_result);
+                result_f = f_fn(d6[0], d6[1], d6[2], d6[3], d6[4], d6[5]);
+                if (ret_type == 2) return types::make_float(result_f);
+                if (ret_type == 1) return types::make_int(static_cast<std::int64_t>(result_f));
+                return types::make_float(result_f);
             } else {
-                // Int signature
                 auto i_fn = reinterpret_cast<std::int64_t(*)(std::int64_t,std::int64_t,std::int64_t,std::int64_t,std::int64_t,std::int64_t)>(fn_ptr);
-                auto result = i_fn(i6[0], i6[1], i6[2], i6[3], i6[4], i6[5]);
-                return types::make_int(result);
+                result_i = i_fn(i6[0], i6[1], i6[2], i6[3], i6[4], i6[5]);
+                if (ret_type == 2) return types::make_float(*reinterpret_cast<double*>(&result_i));
+                if (ret_type == 3 && result_i != 0) {
+                    // String return: char* → string_heap
+                    auto s = reinterpret_cast<const char*>(static_cast<std::intptr_t>(result_i));
+                    auto sidx = string_heap_.size();
+                    string_heap_.emplace_back(s ? s : "");
+                    return types::make_string(sidx);
+                }
+                if (ret_type == 4) return types::make_int(result_i);  // Opaque: pass as int
+                return types::make_int(result_i);
             }
         }
         return std::nullopt;
@@ -4240,6 +4282,20 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
             if (!fn) return fn;
             if (is_closure(*fn)) {
                 auto cid = as_closure_id(*fn);
+                // Check for foreign function (high bit set)
+                if (cid & (1ULL << 63)) {
+                    // Dispatch FFI through apply_closure
+                    std::size_t named_count = 0;
+                    std::vector<EvalValue> cargs;
+                    for (std::size_t i = 0; i+1 < v.children.size(); ++i) {
+                        auto ar = eval_flat(*f, *p, v.child(i+1), eval_env);
+                        if (!ar) return ar;
+                        cargs.push_back(*ar);
+                    }
+                    auto result = apply_closure(cid, cargs);
+                    if (result) return *result;
+                    return std::unexpected(Diagnostic{ErrorKind::InvalidClosure, "eval_flat: foreign call failed"});
+                }
                 auto it = closures_.find(cid);
                 if (it == closures_.end())
                     return std::unexpected(Diagnostic{ErrorKind::InvalidClosure, "eval_flat: invalid closure"});
