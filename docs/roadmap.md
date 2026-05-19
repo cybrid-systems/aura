@@ -11,7 +11,7 @@
 | 维度 | 分数 | 说明 |
 |------|------|------|
 | 语言核心求值 | 🟢 10/10 | tree-walker + IR 双路径，显式调用栈（无 C++ 递归深度限制）|
-| 类型系统 | 🟢 8/10 | L6 + strict + 增量缓存 + Let-Poly + TypeSpecializationPass |
+| 类型系统 | 🟡 6/10 | L6 增量 checker + Let-Poly + TypeSpecialization。**D2**: Sound Gradual Typing → 10/10 |
 | 编译器基础设施 | 🟢 9/10 | ArenaGroup / 增量 / 磁盘缓存 / 热替换 / 依赖级联 / IR 级 import |
 | 标准库覆盖 | 🟢 8/10 | 19 个文件 ~1.1k 行，datetime/json/validate/iter/queue/stack/random |
 | 测试覆盖 | 🟢 8/10 | integ 87/87, unit 74/74, smoke 5/5, bench 44/44, bash 117/117, production 30项 |
@@ -233,9 +233,99 @@
 | 5.4 | 增量 JIT 缓存 | ✅ `jit_cache_` + `invalidate_function` 集成 |
 | 5.5 | Benchmark 对比 | ✅ JIT 7.55x vs TW, 3.58x vs IR (fib-20) |
 
-### D2 — 形式化类型系统（16h，待启动）
+### D2 — Sound Gradual Typing（16h，四子阶段）
 
-渐进式类型：Sound Gradual Typing，L5 → L7，运行时断言。
+**目标**：从当前 L6 Level-Only TypeChecker 升级为完整的 Sound Gradual Typing：
+- Consistent subtyping + coercion insertion
+- Blame tracking 在 `(cast ...)` 边界
+- Type language as S-expressions（类型是一等值）
+- Occurrence typing 分支细化
+
+**设计参考**：`docs/design/aura_typesystem.md`（正式规则 ~400 行）
+
+---
+
+#### D2-P1: Coercion Infrastructure（4h）
+
+| # | 子任务 | 说明 | 验收 |
+|---|--------|------|------|
+| 1.1 | **Type lattice** | 实现 `Type::is_subtype(T1, T2)` 偏序关系（Int<:Any, String<:Any, Any<:Any）| `(subtype? Int Any)` → #t |
+| 1.2 | **Consistency relation** | `T1 ~ T2` 核心：T1~Any, Any~T2, concrete types 当 T1==T2 | `(consistent? Int Any)` → #t |
+| 1.3 | **CoercionInsertionPass** | IR pass: 遍历 IR 函数，在类型不一致边界插入 CastOp。已知 callee 类型 → check arg → cast arg 或 cast result | `(+ "a" 1)` → IR 含 CastOp(Int) |
+| 1.4 | **CastOp lowering** | CastOp(result, value, type_tag) → JIT lowere: compare type_tag, if mismatch → call `aura_type_error` | `(--strict (cast "hi" : Int))` → TypeError |
+| 1.5 | **CastOp IR interpreter** | IR executor case IROpcode::CastOp → runtime type check | `(--ir (cast "hi" : Int))` → TypeError |
+
+**验收**：`(cast 42 : Any)` → 42 | `(cast "hi" : Int)` → TypeError | `(--strict (+ 1 "a"))` → implicit CastOp error
+
+---
+
+#### D2-P2: Bidirectional Type Checker（4h）
+
+| # | 子任务 | 说明 | 验收 |
+|---|--------|------|------|
+| 2.1 | **Synthesize / Check 分离** | TypeChecker 重构为 bi-directional：`synthesize(expr) -> Type` + `check(expr, expected)`。当前只有 synthesize | `(check (+ 1 2) Int)` → ok |
+| 2.2 | **Lambda annotation** | `(lambda ([x : Int]) x)` → synth 得 `(-> Int Int)`。无标注时得 `(-> Any Any)` | `(: (lambda ([x : Int]) x))` → `(-> Int Int)` |
+| 2.3 | **Let-Poly 完善** | 当前有 forall 泛化，需完善实例化路径 (instantiate → normalize) | `(define id (lambda ([x : Any]) x)) (id 42)` → Int |
+| 2.4 | **Recursive function types** | letrec 绑定的函数有完整递归类型 | `(letrec ((fact (lambda ([n : Int]) : Int ...))) (fact 10))` → Int |
+| 2.5 | **Top-level define typing** | `(define (f [x : Int]) : Int (+ x 1))` 检查定义类型，缓存类型结果 | `(type-of f)` → `(-> Int Int)` |
+
+**验收**：完整 bi-directional checker 通过现有 typecheck 10 测试
+
+---
+
+#### D2-P3: Type Language + Blame（4h）
+
+| # | 子任务 | 说明 | 验收 |
+|---|--------|------|------|
+| 3.1 | **Type values** | 类型是一等 S-表达式值：`Int`, `(-> Int String)`, `(Pair Int Int)`。解析 `(: ...)` 标签为 type value | `(type-of 42)` → `Int`, `(type-of (lambda ([x : Int]) x))` → `(-> Int Any)` |
+| 3.2 | **`(: ...)` annotation syntax** | 标注语法 `(: x Int)` 在 define/let/lambda 参数中解析并存储 type_id | `(let ([x : Int 42]) x)` → 类型通过 |
+| 3.3 | **Blame labels** | 每个 cast 点分配 blame label（源位置 + 种类：caller/callee）。CastOp 失败时报告 blame | `(+ "a" 1)` → `TypeError: line:col: expected Int, got String (blamed: caller)` |
+| 3.4 | **Type query integration** | QueryEngine 扩展 `(node-type Call) (return-type Int)` — 通过 type_id 字段查询 | `(query (return-type Int))` → 匹配 |
+| 3.5 | **`type-of` primitive** | 运行时从 EvalValue 返回类型 S-表达式 | `(type-of 42)` → `Int` |
+
+**验收**：`(type-of 42) → Int` | `(: (lambda ([x : Int]) x) (-> Int Int))` → 通过 | TypeError 带 blame
+
+---
+
+#### D2-P4: Occurrence Typing（4h）
+
+| # | 子任务 | 说明 | 验收 |
+|---|--------|------|------|
+| 4.1 | **Predicate type map** | `number?` → Int, `string?` → String, `pair?` → Pair, `boolean?` → Bool, `integer?` → Int, `null?` → Void | 注册 10+ predicates |
+| 4.2 | **If-path narrowing** | `(if (string? x) (string-append x "!") x)` — true 分支 x: String, false 分支 x: not(String) | occurrence 测试通过 |
+| 4.3 | **Cond clause refinement** | `(cond [(number? x) (+ x 1)] ...)` 每个 clause 逐步细化 | cond occurrence 测试 |
+| 4.4 | **TypeSpecializationPass 增强** | 已知 `f : (-> Int Int)` 时，call `(f x)` 特化结果类型 | `(define f (lambda ([x : Int]) : Int (+ x 1)))` → `(f 42)` → Int |
+| 4.5 | **Dead branch elimination** | `(if (number? x) e1 "str")` 中 else 分支已知 x 非 number | 仅 warning（非错误）|
+
+**验收**：`(if (string? x) (string-append x "!") x)` → 正确类型推断
+
+---
+
+#### D2 验收标准
+
+```scheme
+;; static type annotation
+(: x Int) (set! x "hi")           → TypeError (strict) ✅
+
+;; consistent subtyping
+(: f (-> Int Int)) (f "hi")        → TypeError (blamed: caller) ✅
+
+;; occurrence typing
+(if (number? x) (+ x 1) x)        → x 分支正确 ✅
+
+;; cast boundary
+(cast "hello" : Int)              → TypeError (blamed: cast site) ✅
+
+;; type values
+(type-of 42)                      → Int ✅
+(type-of +)                       → (-> Int Int Int ...) ✅
+
+;; query integration
+(query (has-type? Int))           → 所有 Int 类型节点 ✅
+
+;; all existing tests pass
+bash 117/117, integ 87/87, ...   → 无回归 ✅
+```
 
 ### D3 — 自举（40h，待启动）
 
