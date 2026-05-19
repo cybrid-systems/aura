@@ -67,7 +67,6 @@ struct LLVMBuilder {
 
     void declare_runtime() {
         auto i64 = llvm::Type::getInt64Ty(ctx);
-        auto i32 = llvm::Type::getInt32Ty(ctx);
         auto ptr_i64 = llvm::PointerType::getUnqual(i64);
         auto void_ty = llvm::Type::getVoidTy(ctx);
         auto i8_ty = llvm::Type::getInt8Ty(ctx);
