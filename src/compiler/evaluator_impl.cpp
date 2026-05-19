@@ -4,6 +4,7 @@ module;
 #include <ctime>
 #include <unistd.h>
 #include <dirent.h>
+#include <dlfcn.h>
 #include <regex>
 #include <cmath>
 module aura.compiler.evaluator;
@@ -2964,6 +2965,12 @@ void Evaluator::init_pair_primitives() {
     });
 }
 
+// ── C FFI: c-load / c-func ─────────────────────────────────
+// Global FFI state (shared across all evaluator instances)
+// In production, this should be per-evaluator.
+static std::vector<void*> g_ffi_libs;
+static std::vector<std::pair<void*, std::string>> g_ffi_funcs;  // (fn_ptr, name)
+
 // ── Env::lookup_cell_ptr: returns EvalValue* ──────────────────
 EvalValue* Env::lookup_cell_ptr(const std::string& n, std::vector<EvalValue>* cells) const {
     if (!cells) return nullptr;
@@ -3000,6 +3007,49 @@ Evaluator::Evaluator() {
     top_.set_cells(&cells_);
     primitives_.set_string_heap(&string_heap_);
     init_pair_primitives();
+
+    // ── C FFI primitives ────────────────────────────────
+    primitives_.add("c-load", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !types::is_string(a[0])) return make_int(0);
+        auto path = string_heap_[types::as_string_idx(a[0])];
+        void* lib = ::dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+        if (!lib) {
+            auto err = ::dlerror();
+            auto msg = err ? std::string(err) : "dlopen failed";
+            fprintf(stderr, "c-load: %s\n", msg.c_str());
+            return make_int(0);
+        }
+        auto idx = g_ffi_libs.size();
+        g_ffi_libs.push_back(lib);
+        return make_int(static_cast<std::int64_t>(idx));
+    });
+
+    primitives_.add("c-func", [this](const auto& a) -> EvalValue {
+        // (c-func lib-id "name" ret-type arg-type...)
+        if (a.size() < 3 || !types::is_int(a[0]) || !types::is_string(a[1]) || !types::is_int(a[2]))
+            return make_int(0);
+        auto lib_idx = static_cast<std::size_t>(types::as_int(a[0]));
+        if (lib_idx >= g_ffi_libs.size()) return make_int(0);
+        auto lib = g_ffi_libs[lib_idx];
+        auto name = string_heap_[types::as_string_idx(a[1])];
+        auto ret_type = static_cast<int>(types::as_int(a[2]));
+        (void)ret_type;
+
+        auto* fn_ptr = ::dlsym(lib, name.c_str());
+        if (!fn_ptr) {
+            fprintf(stderr, "c-func: symbol '%s' not found\n", name.c_str());
+            return make_int(0);
+        }
+
+        // Store as foreign function, return callable closure
+        auto fidx = g_ffi_funcs.size();
+        g_ffi_funcs.push_back({fn_ptr, name});
+
+        // Return closure with special high bit set: foreign_func_id | 0x8000000000000000
+        auto closure_id = static_cast<std::uint64_t>(fidx) | (1ULL << 63);
+        return types::make_closure(closure_id);
+    });
+
     build_primitive_slots();
 }
 
@@ -3171,10 +3221,31 @@ Env* Evaluator::copy_env(const Env& e) {
 
 // eval_in(ast::Expr*) removed — all evaluation uses eval_flat(FlatAST&) now
 
-// apply_closure — looks up closure closures_ or IR bridge
+// apply_closure — looks up closures_, foreign functions, or IR bridge
 std::optional<EvalValue> Evaluator::apply_closure(
     ClosureId cid,
     const std::vector<EvalValue>& args) {
+    // Check for foreign function closure (high bit set)
+    if (cid & (1ULL << 63)) {
+        auto fidx = cid & ~(1ULL << 63);
+        if (fidx < g_ffi_funcs.size()) {
+            auto& [fn_ptr, name] = g_ffi_funcs[static_cast<std::size_t>(fidx)];
+            (void)name;
+            // For now: all C functions take int args and return int
+            // Cast to int64_t(*)(int64_t, ...) and call with positional args
+            // This works for simple cases like int add(int, int)
+            auto c_fn = reinterpret_cast<std::int64_t(*)(std::int64_t, std::int64_t, std::int64_t, std::int64_t, std::int64_t, std::int64_t)>(fn_ptr);
+            std::int64_t c_args[6] = {0, 0, 0, 0, 0, 0};
+            for (std::size_t i = 0; i < args.size() && i < 6; ++i) {
+                if (types::is_int(args[i])) c_args[i] = types::as_int(args[i]);
+                else if (types::is_float(args[i])) c_args[i] = static_cast<std::int64_t>(types::as_float(args[i]));
+            }
+            auto result = c_fn(c_args[0], c_args[1], c_args[2], c_args[3], c_args[4], c_args[5]);
+            return types::make_int(result);
+        }
+        return std::nullopt;
+    }
+
     // Try tree-walker closures first
     auto it = closures_.find(cid);
     if (it != closures_.end()) {
