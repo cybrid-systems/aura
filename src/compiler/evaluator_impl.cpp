@@ -2461,6 +2461,23 @@ void Evaluator::init_pair_primitives() {
         return make_string(id);
     });
 
+    // (api-reference) — Return all registered primitives as a string for LLM reference
+    primitives_.add("api-reference", [this](const auto&) -> EvalValue {
+        std::string out = "Available Aura primitives:\n\n";
+        for (std::size_t i = 0; i < primitives_.slot_count(); ++i) {
+            auto name = primitives_.name_for_slot(i);
+            if (!name.empty()) {
+                out += "  " + std::string(name) + "\n";
+            }
+        }
+        out += "\nStandard library: (require std/name) loads with prefix (std/name:func-name)\n";
+        out += "Or (require std/name all:) for bare names\n";
+        out += "Try it: (require std/list all:) then (sort (list 3 1 2))\n";
+        auto id = string_heap_.size();
+        string_heap_.push_back(std::move(out));
+        return make_string(id);
+    });
+
     // (eval-current) — Evaluate the current workspace AST
     primitives_.add("eval-current", [this](const auto&) {
         if (!workspace_flat_ || !workspace_pool_) return make_void();
