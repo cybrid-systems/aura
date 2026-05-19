@@ -5,6 +5,10 @@ module;
 #include <unistd.h>
 #include <dirent.h>
 #include <dlfcn.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
 #include <regex>
 #include <cmath>
 module aura.compiler.evaluator;
@@ -3140,6 +3144,62 @@ Evaluator::Evaluator() {
         string_heap_.push_back(std::move(result));
         return types::make_string(sidx);
     });
+    // ── TCP socket primitives ────────────────────────────────
+    primitives_.add("tcp-connect", [this](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !types::is_string(a[0]) || !types::is_int(a[1]))
+            return make_void();
+        auto host = string_heap_[types::as_string_idx(a[0])];
+        auto port_str = std::to_string(types::as_int(a[1]));
+        struct addrinfo hints{}, *res;
+        hints.ai_family = AF_UNSPEC;
+        hints.ai_socktype = SOCK_STREAM;
+        if (::getaddrinfo(host.c_str(), port_str.c_str(), &hints, &res) != 0 || !res)
+            return make_void();
+        int fd = ::socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+        if (fd < 0) { ::freeaddrinfo(res); return make_void(); }
+        struct timeval tv;
+        tv.tv_sec = 10; tv.tv_usec = 0;
+        ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+        if (::connect(fd, res->ai_addr, res->ai_addrlen) < 0) {
+            ::close(fd); ::freeaddrinfo(res); return make_void();
+        }
+        ::freeaddrinfo(res);
+        return types::make_int(static_cast<std::int64_t>(fd));
+    });
+
+    primitives_.add("tcp-send", [this](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !types::is_int(a[0]) || !types::is_string(a[1]))
+            return make_int(-1);
+        auto fd = static_cast<int>(types::as_int(a[0]));
+        auto sidx = types::as_string_idx(a[1]);
+        if (sidx >= string_heap_.size()) return types::make_int(0);
+        auto& data = string_heap_[sidx];
+        auto sent = ::send(fd, data.data(), data.size(), MSG_NOSIGNAL);
+        return types::make_int(static_cast<std::int64_t>(sent));
+    });
+
+    primitives_.add("tcp-recv", [this](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !types::is_int(a[0]) || !types::is_int(a[1]))
+            return make_void();
+        auto fd = static_cast<int>(types::as_int(a[0]));
+        auto maxlen = static_cast<std::size_t>(types::as_int(a[1]));
+        if (maxlen > 65536) maxlen = 65536;
+        std::string buf(maxlen, '\0');
+        auto n = ::recv(fd, buf.data(), maxlen, 0);
+        if (n <= 0) return make_void();
+        buf.resize(static_cast<std::size_t>(n));
+        auto sidx = string_heap_.size();
+        string_heap_.push_back(std::move(buf));
+        return types::make_string(sidx);
+    });
+
+    primitives_.add("tcp-close", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !types::is_int(a[0])) return make_void();
+        ::close(static_cast<int>(types::as_int(a[0])));
+        return make_void();
+    });
+
 }
 
 // slot_for_name: find the slot for a primitive name

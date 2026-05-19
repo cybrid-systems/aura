@@ -1,38 +1,18 @@
-; socket.aura — TCP socket library (via libc FFI)
+; socket.aura — TCP socket library
 ; (require std/socket) → tcp-connect, tcp-send, tcp-recv, tcp-close
 ;
-; Uses (c-load "") to access libc socket functions via FFI.
-; This is a pure Aura implementation on top of the C FFI.
-;
-; Note: low-level socket API requires struct sockaddr setup
-; which FFI can't handle. Use curl-based http-get/http-post
-; for HTTP requests, or this libc FFI for custom TCP.
+; Uses native C++ socket primitives (not FFI).
 
 (export tcp-connect tcp-send tcp-recv tcp-close)
 
-; Load libc
-(define lib (c-load ""))
-(define c-socket  (c-func lib "socket" 4 1 1 1))
-(define c-connect (c-func lib "connect" 1 4 4 4))
-(define c-send    (c-func lib "send" 1 4 4 1 1))
-(define c-recv    (c-func lib "recv" 1 4 4 1 1))
-(define c-close   (c-func lib "close" 1 4))
-
-; AF_INET = 2, SOCK_STREAM = 1
-(define AF_INET 2)
-(define SOCK_STREAM 1)
-
 (define (tcp-connect host port)
-  ; TODO: proper DNS resolution + struct sockaddr_in setup
-  ; For now, use curl-based http primitives for networking
-  (display "tcp-connect: use http-get/http-post for HTTP\n")
-  #f)
+  (tcp-connect host port))
 
-(define (tcp-send fd data)
-  (c-send fd data (string-length data) 0))
+(define (tcp-send socket data)
+  (tcp-send socket data))
 
-(define (tcp-recv fd maxlen)
-  (c-recv fd (make-bytes maxlen) maxlen 0))
+(define (tcp-recv socket maxlen)
+  (tcp-recv socket maxlen))
 
-(define (tcp-close fd)
-  (c-close fd))
+(define (tcp-close socket)
+  (tcp-close socket))
