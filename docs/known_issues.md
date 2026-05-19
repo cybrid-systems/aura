@@ -2,6 +2,14 @@
 
 更新：2026-05-19 收盘 — 今日 10 个提交后
 
+## 显式调用栈尝试（2026-05-19 晚）
+
+尝试用 `std::variant<EvalResult, PendingCall>` 的方式在 `execute()` 中实现显式 while 循环调用栈，避免 `execute_function()` 的 C++ 递归。
+
+**结果**：失败并 revert。`run_function` 的 500+ 行 switch dispatch + `goto next_block` 使得追踪 resume 位置、处理 aggregate init 字段顺序、在 on re-entry 跳过已处理指令变得极其脆弱。每次 `run_function` 返回 `EvalResult` 后重新调用整个函数时无法正确从中间恢复，导致 `__top__ → __lambda__ → __top__ → __lambda__` 无限循环。
+
+**最终结论**：保留当前 depth guard（~400 帧友好错误，不会 segfault）。显式调用栈需要完全重写 `run_function` 为状态机（独立 PR）或者使用 `setjmp`/`longjmp` 宏（推荐——只改 Call handler 的 3 行代码，不碰 dispatch）。
+
 ---
 
 ## 已无 P0 阻塞性 Bug
@@ -70,13 +78,23 @@
 
 ## P3 — 增强
 
-### 10. 深递归
+### 10. 深递归 + 显式调用栈
 
 ```scheme
 (define (deep n) (if (= n 0) 0 (deep (- n 1))))
 (deep 600)  → error: recursion depth exceeded (>400)
 ```
-**状态**：从 segfault 改为友好错误 ✅ (`85c3815`)。root fix（显式调用栈）预留为独立里程碑。
+**状态**：从 segfault 改为友好错误 ✅ (`85c3815`)。
+
+**显式调用栈尝试**：P3#10 尝试用 `std::variant<EvalResult, PendingCall>` + 外层 while 循环替换 `execute_function()` 的递归调用。`Call` handler 返回 `PendingCall`，外层 `execute()` 推帧并循环。唯一需修改的地方是 `run_function()` 内部（500+ 行 switch dispatch + `goto next_block`）。
+
+**失败原因**：`run_function` 内部结构决定：
+- `for (auto& instr : block.instructions)` 遍历所有指令，on re-entry 必须跳过已处理的指令 → 需跟踪 `resume_instr`。
+- `block` 和 `instr` 都是 `auto&` 引用，与 `goto next_block` 耦合，索引偏移计算 (`&instr - &block.instructions[0]`) 被外部代码打乱。
+- `call_stack_` aggregate init 字段顺序与 `ExecFrame` 成员声明顺序不一致导致 `is_top_level` 未正确设置。
+- 每次 `run_function` 返回 EvalResult 后，外层必须重新调用整个函数，无法从中间恢复。
+
+**最终结论**：不要碰 `run_function` 内部。正确的解法：(a) 完全重写为状态机，(b) 保持当前 depth guard。当前 depth guard 在 ~400 帧时给友好错误，不会 segfault，足够日常使用。
 
 ### 11. stdout 不 flush
 

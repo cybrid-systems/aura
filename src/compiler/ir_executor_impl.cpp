@@ -11,17 +11,75 @@ using namespace types;
 EvalResult IRInterpreter::execute() {
     if (module_.functions.empty())
         return std::unexpected(Diagnostic{ErrorKind::IRNoReturn, "empty module"});
-    return execute_function(module_.entry(), {});
+
+    const auto& entry = module_.entry();
+    auto local_count = entry.local_count + 64;
+    call_stack_.clear();
+    call_stack_.push_back({
+        .func          = &entry,
+        .current_block = entry.entry_block,
+        .locals        = std::vector<EvalValue>(local_count, make_void()),
+        .args          = {},
+        .resume_instr  = 0,
+        .is_top_level  = true,
+        .result_slot   = 0
+    });
+
+    while (!call_stack_.empty()) {
+        auto& frame = call_stack_.back();
+        auto result = run_function(*frame.func, frame.locals, frame.args);
+
+        if (std::holds_alternative<PendingCall>(result)) {
+            auto& pc = std::get<PendingCall>(result);
+            auto new_count = pc.func->local_count
+                + std::max(std::size_t(64), pc.args.size());
+            std::vector<EvalValue> new_locals(new_count, make_void());
+            call_stack_.push_back({
+                .func          = pc.func,
+                .current_block = pc.func->entry_block,
+                .locals        = std::move(new_locals),
+                .args          = std::move(pc.args),
+                .resume_instr  = 0,
+                .is_top_level  = false,
+                .result_slot   = pc.result_slot
+            });
+            continue;
+        }
+
+        auto& eval_res = std::get<EvalResult>(result);
+        if (!eval_res) {
+            call_stack_.clear();
+            return eval_res;
+        }
+
+        if (frame.is_top_level) {
+            call_stack_.pop_back();
+            return eval_res;
+        }
+
+        auto retval = *eval_res;
+        call_stack_.pop_back();
+        if (!call_stack_.empty()) {
+            auto& caller_frame = call_stack_.back();
+            if (frame.result_slot < caller_frame.locals.size())
+                caller_frame.locals[frame.result_slot] = retval;
+        }
+    }
+
+    return std::unexpected(Diagnostic{ErrorKind::IRCorruption, "stack underflow"});
 }
 
 EvalResult IRInterpreter::execute_function(const IRFunction& func,
                                             const std::vector<EvalValue>& args) {
     auto local_count = func.local_count + std::max(std::size_t(64), args.size());
     std::vector<EvalValue> locals(local_count, make_void());
-    return run_function(func, locals, args);
+    auto result = run_function(func, locals, args);
+    if (std::holds_alternative<EvalResult>(result))
+        return std::get<EvalResult>(std::move(result));
+    return std::unexpected(Diagnostic{ErrorKind::IRCorruption, "unexpected pending call"});
 }
 
-EvalResult IRInterpreter::run_function(const IRFunction& func,
+IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                         std::vector<EvalValue>& locals,
                                         const std::vector<EvalValue>& args) {
     if (func.blocks.empty())
@@ -51,7 +109,10 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
     while (current < func.blocks.size()) {
         auto& block = func.blocks[current];
 
-        for (auto& instr : block.instructions) {
+        std::size_t resume_pos = call_stack_.empty() ? 0 : call_stack_.back().resume_instr;
+        std::size_t start_idx = (resume_pos < block.instructions.size()) ? resume_pos : 0;
+        for (std::size_t ii = start_idx; ii < block.instructions.size(); ++ii) {
+            auto& instr = block.instructions[ii];
             auto& ops = instr.operands;
 
             // ── Operand validation via kOpcodeInfo ─────────────────
@@ -375,9 +436,9 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                     for (auto& ev : closure.env) all_args.push_back(ev);
                     for (auto& a : call_args) all_args.push_back(a);
 
-                    auto result = execute_function(callee_func, all_args);
-                    if (!result) return result;
-                    locals[ops[3]] = *result;
+                    if (!call_stack_.empty())
+                        call_stack_.back().resume_instr = &instr - &block.instructions[0] + 1;
+                    return PendingCall{&callee_func, std::move(all_args), ops[3]};
                 } else if (is_primitive(callee_val)) {
                     // Primitive function call — look up and invoke
                     auto slot = as_primitive_slot(callee_val);
@@ -460,9 +521,9 @@ EvalResult IRInterpreter::run_function(const IRFunction& func,
                     for (auto& ev : closure.env) all_args.push_back(ev);
                     for (auto& a : apply_args) all_args.push_back(a);
 
-                    auto result = execute_function(callee_func, all_args);
-                    if (!result) return result;
-                    locals[ops[2]] = *result;
+                    if (!call_stack_.empty())
+                        call_stack_.back().resume_instr = &instr - &block.instructions[0] + 1;
+                    return PendingCall{&callee_func, std::move(all_args), ops[2]};
                 } else {
                     locals[ops[2]] = closure_val;
                 }

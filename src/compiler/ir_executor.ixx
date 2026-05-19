@@ -22,12 +22,25 @@ export struct IRClosure {
     std::vector<std::string> params;
 };
 
-// Call frame for recursive IR execution
-struct CallFrame {
-    const aura::ir::IRFunction* func = nullptr;
-    std::uint32_t current_block = 0;
-    std::vector<EvalValue> locals;
-    std::size_t instr_index = 0;
+// Returned by run_function's Call handler to signal a new call is needed.
+// The outer while loop in execute() will push a new frame and continue.
+export struct PendingCall {
+    const aura::ir::IRFunction* func;
+    std::vector<EvalValue>      args;
+    std::uint32_t               result_slot;
+};
+
+// Frame managed by the explicit call stack in execute().
+// run_function still uses its `args` parameter (not this frame);
+// the outer loop passes frame.args as the args= argument.
+struct ExecFrame {
+    const aura::ir::IRFunction* func   = nullptr;
+    std::uint32_t               current_block = 0;
+    std::vector<EvalValue>      locals;
+    std::vector<EvalValue>      args;
+    std::size_t                 resume_instr = 0;
+    bool                        is_top_level = false;
+    std::uint32_t               result_slot  = 0;
 };
 
 // IR interpreter — lowered code execution with closure support
@@ -87,14 +100,19 @@ public:
     std::size_t cell_count() const { return cell_heap_.size(); }
 
 private:
-    // Execute a specific function with given args
+    // Result of run_function: either an EvalResult (Return/error) or PendingCall (need to push frame)
+    using RunResult = std::variant<EvalResult, PendingCall>;
+
+    // Execute a specific function with given args (backward compat wrapper)
     EvalResult execute_function(const aura::ir::IRFunction& func,
                                  const std::vector<EvalValue>& args);
 
-    // Step through instructions (args are separate from locals for Arg opcode)
-    EvalResult run_function(const aura::ir::IRFunction& func,
-                             std::vector<EvalValue>& locals,
-                             const std::vector<EvalValue>& args);
+    // Step through instructions. Returns RunResult:
+    //   - EvalResult on Return/error
+    //   - PendingCall on Call/Apply (outer loop will push new frame and continue)
+    RunResult run_function(const aura::ir::IRFunction& func,
+                            std::vector<EvalValue>& locals,
+                            const std::vector<EvalValue>& args);
 
     // Build a snapshot from runtime closure data
     ClosureSnapshot make_snapshot(std::uint64_t id,
@@ -122,8 +140,11 @@ private:
     std::uint64_t next_cell_id_ = 1;
     std::unordered_map<std::uint64_t, EvalValue> cell_heap_;
 
-    // Runtime string heap (for Int→String coercion)
+    // Runtime string heap (for Int\xE2\x86\x92String coercion)
     std::vector<std::string> string_heap_;
+
+    // Explicit call stack: replaces C++ recursion for closure calls
+    std::vector<ExecFrame> call_stack_;
 };
 
 } // namespace aura::compiler
