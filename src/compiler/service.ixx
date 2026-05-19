@@ -381,6 +381,8 @@ public:
         ir_interp.set_strategy(strategy_);
         if (strict_mode_) ir_interp.set_strict_mode(true);
 
+        try {
+
         // Set IR closure bridge: enables tree-walker primitives (map/filter/foldl)
         // to call IR-produced closures.
         evaluator_.set_closure_bridge(
@@ -454,6 +456,11 @@ public:
         last_closures_ = ir_interp.list_closures();
         last_cells_ = ir_interp.list_cells();
         return result;
+        } catch (const std::exception& e) {
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::TypeError,
+                std::string("runtime type error: ") + e.what()});
+        }
     }
 
     // ---- IR pipeline ------------------------------------------------
