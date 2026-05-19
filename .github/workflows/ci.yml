@@ -1,17 +1,6 @@
 # Aura CI — GitHub Actions
 #
-# Requirements:
-#   GCC >= 16 (C++26 modules support)
-#   CMake >= 4.0
-#   Ninja >= 1.12
-#
-# Hosted runners don't yet provide GCC 16. This workflow is ready to
-# run when a suitable container or self-hosted runner is configured.
-#
-# Usage with Docker:
-#   docker run -v $(pwd):/workspace ghcr.io/cybrid-systems/aura-ci
-#
-# The image can be built from .github/Dockerfile.ci
+# Uses ghcr.io/cybrid-systems/dev:latest (GCC 16 + CMake 4.x + Ninja)
 
 name: CI
 
@@ -25,7 +14,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/aura-ci:latest
+      image: ghcr.io/cybrid-systems/dev:latest
 
     steps:
     - uses: actions/checkout@v4
@@ -42,5 +31,5 @@ jobs:
     - name: Quick smoke test
       run: echo '(+ 1 2 3)' | ./build/aura | grep -q 6
 
-    - name: Full test suite (build + all tests)
+    - name: Full test suite
       run: python3 build.py check
