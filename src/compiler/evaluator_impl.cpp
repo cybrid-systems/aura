@@ -2357,6 +2357,20 @@ void Evaluator::init_pair_primitives() {
 
     // (current-source) — Return the current workspace AST as source code string
     // Implemented inline to avoid circular dependency with lowering module.
+    // (eval code) — Parse and evaluate a string of Aura code
+    primitives_.add("eval", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !types::is_string(a[0])) return make_void();
+        auto code = string_heap_[types::as_string_idx(a[0])];
+        aura::ast::StringPool pool;
+        aura::ast::FlatAST flat;
+        auto pr = aura::parser::parse_to_flat(code, flat, pool);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) return make_void();
+        flat.root = pr.root;
+        auto result = eval_flat(flat, pool, pr.root, top_);
+        if (result) return *result;
+        return make_void();
+    });
+
     primitives_.add("current-source", [this](const auto&) -> EvalValue {
         if (!workspace_flat_ || !workspace_pool_) return make_string(0);
         
