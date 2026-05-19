@@ -464,6 +464,18 @@ struct AuraJIT::Impl {
         return sym->toPtr<void*>();
     }
 
+    void register_symbol_func(const char* name, void* ptr) {
+        if (!init()) return;
+        auto sym = llvm::orc::ExecutorSymbolDef(
+            llvm::orc::ExecutorAddr::fromPtr(ptr),
+            llvm::JITSymbolFlags::Callable);
+        auto pool = jit->getExecutionSession().getSymbolStringPool();
+        auto k = pool->intern(name);
+        auto map = llvm::orc::absoluteSymbols({{k, sym}});
+        if (auto err = main_dylib->define(std::move(map)))
+            fprintf(stderr, "JIT: failed to define symbol '%s'\n", name);
+    }
+
     void register_fn_func(int64_t func_id, ScalarFn fn_ptr,
                            uint32_t local_count, uint32_t arg_count,
                            uint32_t env_count) {
@@ -480,6 +492,10 @@ AuraJIT::~AuraJIT() = default;
 bool AuraJIT::available() const { return impl_->initialized; }
 ScalarFn AuraJIT::compile(const FlatFunction& fn) { return impl_->compile(fn); }
 void* AuraJIT::get_function_ptr(const char* name) { return impl_->get_function_ptr(name); }
+
+void AuraJIT::register_symbol(const char* name, void* ptr) {
+    impl_->register_symbol_func(name, ptr);
+}
 
 void AuraJIT::register_function(int64_t func_id, ScalarFn fn_ptr,
                                  uint32_t local_count, uint32_t arg_count,
@@ -502,6 +518,7 @@ AuraJIT::~AuraJIT() = default;
 bool AuraJIT::available() const { return false; }
 ScalarFn AuraJIT::compile(const FlatFunction&) { return nullptr; }
 void* AuraJIT::get_function_ptr(const char*) { return nullptr; }
+void AuraJIT::register_symbol(const char*, void*) {}
 void AuraJIT::register_function(int64_t, ScalarFn, uint32_t, uint32_t, uint32_t) {}
 const std::vector<FunctionMeta>& AuraJIT::compiled_functions() const { static std::vector<FunctionMeta> empty; return empty; }
 
