@@ -1,7 +1,6 @@
 ; Aura std/llm — LLM 交互模块
 ;
-; Generator 和 Fixer 直接从 Python 接收 JSON-escape 后的字符串。
-; 不执行递归字符处理（避免 C++ 栈溢出）。
+; 使用 json-encode 构建 API 请求体，避免手工字符串转义。
 
 (define aura-llm-call
   (lambda (body)
