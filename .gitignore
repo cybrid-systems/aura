@@ -21,3 +21,4 @@ Thumbs.db
 .vscode/
 *.zo
 build_dbg/
+/Testing/
