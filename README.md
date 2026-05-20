@@ -87,8 +87,8 @@ tests/         bash(117)+unit+integ+bench+agent    ~6k
 
 ## 基准
 
-- [docs/benchmark.md](docs/benchmark.md) — EDSL 模型能力基准 (deepseek-v4-flash: 65%)
-- [tests/edsl_benchmark.py](tests/edsl_benchmark.py) — 运行：`LLM_API_KEY="..." python3 tests/edsl_benchmark.py`
+- [docs/benchmark.md](docs/benchmark.md) — EDSL 模型能力基准 (deepseek-v4-flash: 92% stable)
+- [tests/edsl_benchmark.py](tests/edsl_benchmark.py) — 运行：`LLM_API_KEY="..." python3 tests/edsl_benchmark.py --rounds 3 --fix --max-attempts 5`
 
 ## 文档
 
