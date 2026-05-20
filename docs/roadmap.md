@@ -1,6 +1,6 @@
 # Aura — 路线图
 
-**更新：2026-05-20** — 55/57 (96%)。自适应 PID 控制 + 执行轨迹反馈。全部 hint 清理为方向提示。3 个语言级 bug 修复 (append/mod/tcp-recv)。
+**更新：2026-05-21** — 双模型 57/57 (100%) 🎯 修复 extract_code 正则 bug。
 
 ---
 
@@ -165,3 +165,6 @@ Aura 编译器用 Aura 写。等前面稳定后再启。
 | 05-20 | E4 Phase 1: intend-analytics | 结构化历史 + 错误分类 |
 | 05-20 | E4 设计文档 | docs/design/e4_evolvable_strategies.md — Phase 1-4 方案 |
 | 05-20 | 自适应 Intend 完成 | 55/57, PID control + trace feedback + append/mod/tcp-recv fixes |
+| 05-21 | MiniMax-M2.7 评测 | 46/57 (81%) → 53/57 (93%)，max-attempts=3→5 多救回8个任务 |
+| 05-21 | DeepSeek max-attempts=5 | 54/57 (95%)，无提升，旧版 extract_code bug 导致 |
+| 05-21 | **extract_code 修复** | **57/57 (100%)** 🔧 `<[^>]+>` 吞噬比较操作符 → 双模型全过 |

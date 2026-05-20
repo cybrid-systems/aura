@@ -100,7 +100,8 @@ def llm_complete(model, base_url, key, messages, retries=3):
 # ── 代码提取 ──────────────────────────────────────────────
 def extract_code(text):
     text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
-    text = re.sub(r'<[^>]+>', '', text, flags=re.DOTALL)
+    # Strip remaining XML/HTML tags (not comparison operators like (< x) or (-> x))
+    text = re.sub(r'</?\w[^>]*>', '', text, flags=re.DOTALL)
     if "```" in text:
         for p in text.split("```"):
             lines = p.strip().split("\n")
@@ -217,26 +218,6 @@ def build_sys_prompt(stdlib, api_ref, task_name=""):
     sp += f"\nCurrent Aura primitives:\n{api_ref[:2000]}"
     return sp
 
-# ── 构建 correction prompt ────────────────────────────────
-def build_correction_prompt(code, error, expected):
-    """Build a follow-up prompt asking LLM to fix its code."""
-    err_preview = error[:200]
-    exp_preview = ", ".join(expected)
-    return (
-        "Your previous code FAILED. Please fix it.\n"
-        f"Your previous code:\n{code}\n\n"
-        f"Aura produced: {err_preview}\n\n"
-        f"Expected output to contain: [{exp_preview}]\n\n"
-        "Checklist:\n"
-        "- Did you forget (require ...)?\n"
-        "- Did you call (display ...)?\n"
-        "- Did you use non-existent primitives? Check the banned list above.\n"
-        "- (display <hash>) shows <hash[N]>, use (hash-keys h) to see keys.\n"
-        "- For TCP: use (tcp-connect \"host\" port), NOT c-func.\n"
-        "Output ONLY corrected Aura code, nothing else."
-    )
-
-# ── 单任务（支持迭代修正）──────────────────────────────────
 def run_single_task(model, base_url, api_key, name, prompt, expected, stdlib, api_ref):
     """Run one task with optional multi-turn correction.
 
@@ -271,8 +252,19 @@ def run_single_task(model, base_url, api_key, name, prompt, expected, stdlib, ap
             if attempts >= max_att:
                 return False, "", "no code extracted", total_llm_time, attempts
             messages.append({"role": "assistant", "content": resp or ""})
-            messages.append({"role": "user", "content":
-                "No Aura code found. Output ONLY Aura code, no markdown."})
+            messages.append({"role": "user", "content": (
+                "No valid Aura code was found in your response.\n"
+                "You MUST output ONLY the Aura code itself:\n"
+                "  ❌ WRONG: ```aura\\n(define (f x) (* x 2))\\n```\n"
+                "  ❌ WRONG: Here is the code: (define (f x) (* x 2))\n"
+                "  ✅ CORRECT: (define (f x) (* x 2))\\n(display (f 5))\n"
+                "Do NOT include:\n"
+                "  - markdown ``` fences\n"
+                "  - <think> or <minimax:tool_call> tags\n"
+                "  - explanatory text before or after\n"
+                "  - any text that is not valid Aura code\n"
+                "Output ONLY the corrected Aura code, nothing else."
+            )})
             continue
 
         if name.startswith("edsl-"):
@@ -287,18 +279,30 @@ def run_single_task(model, base_url, api_key, name, prompt, expected, stdlib, ap
         if attempts >= max_att:
             return False, out if rc == 0 else "", err or out, total_llm_time, attempts
 
-        msg = err or out
-        if not msg:
-            msg = f"exit code {rc}, no output"
+        actual_output = out if rc == 0 else err or f"exit code {rc}, no output"
+        # Build adaptive feedback (shared with --intend mode)
+        ada_fb, phase, temp_v, tokens_v = build_adaptive_feedback(
+            name, out if rc == 0 else "", expected, stdlib,
+            sys_prompt, prompt, current_src=code)
+        correction = (
+            "Your previous code FAILED. " + ("(compile error)" if rc != 0 else "(output mismatch)") + "\n"
+            f"Aura produced: {actual_output[:300]}\n\n"
+            + ada_fb + "\n\n"
+            "Output ONLY corrected Aura code, nothing else."
+        )
         messages.append({"role": "assistant", "content": resp})
-        messages.append({"role": "user", "content": build_correction_prompt(code, msg, expected)})
+        messages.append({"role": "user", "content": correction})
 
     return False, "", "max attempts", total_llm_time, attempts
 
 # ── Adaptive.aura 调用封装 ────────────────────────────────
 
 def _ada_esc(s):
-    return s.replace('\\', '\\\\').replace('"', '\\"').replace('\\n', '\\n')
+    # Escape for embedding in Aura string literals
+    s = s.replace('\\', '\\\\')   # backslash -> double backslash
+    s = s.replace('"', '\\"')       # double quote -> backslash-quote
+    s = s.replace('\n', '\\n')      # actual newline -> literal \\n
+    return s
 
 def _ada_list(items):
     if not items:
@@ -344,6 +348,93 @@ def call_api_ref(stdlib_list):
     except Exception:
         pass
     return ""
+
+# ── 共享的 Adaptive 反馈逻辑 ──────────────────────────────
+def build_adaptive_feedback(name, actual_output, expected, stdlib,
+                             sys_prompt, prompt, current_src=""):
+    """Build structured feedback for adaptive retry.
+    Shared between --fix and --intend modes.
+    Returns (structured_feedback, phase, temperature, max_tokens).
+    """
+    p, ratio, diag, diag_text = call_adaptive(0, actual_output, expected)
+
+    missing_kws = [kw for kw in expected if kw not in actual_output]
+    fix_instructions = []
+    if missing_kws:
+        fix_instructions.append("- Missing in output: " + ", ".join(missing_kws[:5]))
+    if "<hash" in actual_output:
+        fix_instructions.append(
+            "- display <hash> shows reference, not content. Use hash-keys/hash-values.")
+    if actual_output.strip() in ("", "()"):
+        fix_instructions.append(
+            "- Output is empty. Did you forget (display ...)?")
+    fix_instructions.append(
+        "- Keep the existing function structure. Only modify display/output code.")
+
+    fb = [
+        "=== OUTPUT MISMATCH ===",
+        "Phase: " + p + " (ratio: " + str(ratio) + ")",
+        "Expected to contain: " + str(expected),
+        "Actual output: " + actual_output[:300],
+    ]
+    if missing_kws:
+        fb.append("Missing keywords: " + ", ".join(missing_kws[:5]))
+
+    # Execution trace for algorithm-debug tasks
+    if current_src:
+        if name in ("primes-list", "quicksort", "prime-test"):
+            trace_out, trace_err = get_execution_trace(current_src, timeout=5)
+            if trace_out:
+                fb.append("")
+                fb.append("=== Execution Trace ===")
+                fb.append(trace_out[:500])
+            if trace_err:
+                fb.append("")
+                fb.append("=== Execution Errors ===")
+                fb.append(trace_err[:200])
+        elif name == "tcp-connect":
+            trace_out, trace_err = get_execution_trace(current_src, timeout=15)
+            if trace_out:
+                fb.append("")
+                fb.append("=== Execution Trace ===")
+                fb.append("HTTP Response (first 500 chars):")
+                fb.append(trace_out[:500])
+            if trace_err:
+                fb.append("")
+                fb.append("=== Connection Errors ===")
+                fb.append(trace_err[:200])
+
+    if fix_instructions:
+        fb.append("")
+        fb.append("### Fix Instructions ###")
+        fb.extend(fix_instructions)
+    if diag and diag != "":
+        fb.append("")
+        fb.append("Diagnosis: " + diag)
+    if diag_text:
+        fb.append(diag_text)
+    fb.append("")
+    fb.append("=== Current Source (AST) ===")
+    fb.append(current_src if current_src else "(not available)")
+    fb.append("")
+    fb.append("=== Goal ===")
+    fb.append(prompt)
+
+    ada_api_ref = call_api_ref(stdlib)
+    if p in ("fine", "putt") and ada_api_ref:
+        fb.append("")
+        fb.append(ada_api_ref)
+
+    structured_feedback = "\n".join(fb)
+
+    if p == "coarse":
+        temp_v, tokens_v = 0.3, 4096
+    elif p == "fine":
+        temp_v, tokens_v = 0.2, 2048
+    else:
+        temp_v, tokens_v = 0.1, 1024
+
+    return structured_feedback, p, temp_v, tokens_v
 
 # ── 单任务（通过内置 intend 原语）────────────────────────
 
@@ -440,7 +531,7 @@ def run_single_task_intend(model, base_url, api_key, name, prompt, expected, std
     m_iter = re.search(r'iterations:(\d+)', out)
     iterations = int(m_iter.group(1)) if m_iter else 0
 
-    # Adaptive retry loop: call_adaptive for phase-based control
+    # Adaptive retry loop (shared with --fix mode via build_adaptive_feedback)
     for retry_attempt in range(max_att):
         expected_match = check_success(out, expected)
         if '"ok"' in out and not expected_match:
@@ -448,86 +539,12 @@ def run_single_task_intend(model, base_url, api_key, name, prompt, expected, std
             status_pos = actual.rfind('#')
             actual_output = actual[:status_pos].strip() if status_pos > 0 else actual[:200]
 
-            # Call adaptive.aura for phase/diagnosis
-            p, ratio, diag, diag_text = call_adaptive(0, actual_output, expected)
+            # Build adaptive feedback (shared)
+            structured_feedback, p, temp_v, tokens_v = build_adaptive_feedback(
+                name, actual_output, expected, stdlib,
+                sys_prompt, prompt, current_src=current_src)
 
-            # Find missing keywords for structured feedback
-            missing_kws = [kw for kw in expected if kw not in actual_output]
-            
-            # Build fix instructions
-            fix_instructions = []
-            if missing_kws:
-                fix_instructions.append("- Missing in output: " + ", ".join(missing_kws[:5]))
-            if "<hash" in actual_output:
-                fix_instructions.append("- display <hash> shows reference, not content. Use hash-keys/hash-values.")
-            if actual_output.strip() in ("", "()"):
-                fix_instructions.append("- Output is empty. Did you forget (display ...)?")
-            fix_instructions.append("- Keep the existing function structure. Only modify display/output code.")
-
-            fb = [
-                "=== OUTPUT MISMATCH ===",
-                "Phase: " + p + " (ratio: " + str(ratio) + ")",
-                "Expected to contain: " + str(expected),
-                "Actual output: " + actual_output[:300],
-            ]
-            if missing_kws:
-                fb.append("Missing keywords: " + ", ".join(missing_kws[:5]))
-            # Get execution trace for algorithm-debug tasks
-            if name in ("primes-list", "quicksort"):
-                trace_out, trace_err = get_execution_trace(current_src, timeout=5)
-                if trace_out:
-                    fb.append("")
-                    fb.append("=== Execution Trace ===")
-                    fb.append(trace_out[:500])
-                if trace_err:
-                    fb.append("")
-                    fb.append("=== Execution Errors ===")
-                    fb.append(trace_err[:200])
-            elif name == "tcp-connect":
-                trace_out, trace_err = get_execution_trace(current_src, timeout=15)
-                if trace_out:
-                    fb.append("")
-                    fb.append("=== Execution Trace ===")
-                    fb.append("HTTP Response (first 500 chars):")
-                    fb.append(trace_out[:500])
-                if trace_err:
-                    fb.append("")
-                    fb.append("=== Connection Errors ===")
-                    fb.append(trace_err[:200])
-
-            if fix_instructions:
-                fb.append("")
-                fb.append("### Fix Instructions ###")
-                fb.extend(fix_instructions)
-            if diag and diag != "":
-                fb.append("")
-                fb.append("Diagnosis: " + diag)
-            if diag_text:
-                fb.append(diag_text)
-            fb.append("")
-            fb.append("=== Current Source (AST) ===")
-            fb.append(current_src if current_src else "(not available)")
-            fb.append("")
-            fb.append("=== Goal ===")
-            fb.append(prompt)
-
-            # Inject API ref for fine/putt phases
-            ada_api_ref = call_api_ref(stdlib)
-            if p in ("fine", "putt") and ada_api_ref:
-                fb.append("")
-                fb.append(ada_api_ref)
-
-            structured_feedback = "\n".join(fb)
             updated_sp = sys_prompt + "\n\n" + structured_feedback
-
-            # Adjust params by phase
-            if p == "coarse":
-                temp_v, tokens_v = 0.3, 4096
-            elif p == "fine":
-                temp_v, tokens_v = 0.2, 2048
-            else:
-                temp_v, tokens_v = 0.1, 1024
-
             retry_code = build_aura_code(updated_sp, temp_v, tokens_v)
             rc2, out2, err2, elapsed2, current_src2 = run_intend(retry_code)
             elapsed += elapsed2

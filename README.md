@@ -87,10 +87,12 @@ tests/         bash(117)+unit+integ+bench+agent    ~6k
 
 ## 基准
 
-### EDSL 模型能力基准 (47/47, 100%)
-- [docs/benchmark.md](docs/benchmark.md) — 详细结果
-- 运行：`LLM_API_KEY="..." python3 tests/edsl_benchmark.py --rounds 3 --intend`
-- 覆盖：算术/函数/列表/哈希/递归/FFI/EDSL/TCP 等 8 个能力域
+### EDSL 模型能力基准 (57 任务)
+- **DeepSeek v4 Flash**: 57/57 (100%) ✅
+- **MiniMax-M2.7**: 57/57 (100%) ✅
+- 运行：`LLM_API_KEY="..." python3 tests/edsl_benchmark.py --fix --max-attempts 5`
+- 多模型：`LLM_MODEL=deepseek-v4-flash,minimax-m2.7 python3 tests/edsl_benchmark.py --fix --max-attempts 5`
+- [详情](docs/benchmark.md) — 覆盖算术/函数/列表/哈希/递归/FFI/EDSL/TCP/LeetCode 等 9 个能力域
 
 ### LLM 驱动 Fuzz 测试
 - [tests/test_fuzz.py](tests/test_fuzz.py) — 用 LLM 生成代码检测编译器崩溃/信号/timeout

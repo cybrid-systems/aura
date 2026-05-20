@@ -604,7 +604,7 @@ int main(int argc, char* argv[]) {
         if (argc > 3) { input = argv[3]; }
         else { std::getline(std::cin, input); }
         auto pr = aura::parser::parse_to_flat(input, flat, pool);
-        if (!pr.success || pr.root == aura::ast::NULL_NODE) { std::println(std::cerr, "parse error"); return 1; }
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) { std::println(std::cerr, "parse error{}", pr.error.empty() ? "" : ": " + pr.error); return 1; }
         flat.root = pr.root;
         aura::core::TypeRegistry tr;
         flat.resolve_type_ids(tr, pool);
@@ -626,7 +626,7 @@ int main(int argc, char* argv[]) {
         if (argc > 4) { input = argv[4]; }
         else { std::getline(std::cin, input); }
         auto pr = aura::parser::parse_to_flat(input, flat, pool);
-        if (!pr.success || pr.root == aura::ast::NULL_NODE) { std::println(std::cerr, "parse error"); return 1; }
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) { std::println(std::cerr, "parse error{}", pr.error.empty() ? "" : ": " + pr.error); return 1; }
         flat.root = pr.root;
         aura::core::TypeRegistry tr;
         flat.resolve_type_ids(tr, pool);
@@ -659,7 +659,7 @@ int main(int argc, char* argv[]) {
         if (argc > 2) input = argv[2];
         else std::getline(std::cin, input);
         auto pr = aura::parser::parse_to_flat(input, flat, pool);
-        if (!pr.success || pr.root == aura::ast::NULL_NODE) { std::println(std::cerr, "parse error"); return 1; }
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) { std::println(std::cerr, "parse error{}", pr.error.empty() ? "" : ": " + pr.error); return 1; }
         flat.root = pr.root;
         aura::core::TypeRegistry tr;
         flat.resolve_type_ids(tr, pool);
@@ -708,7 +708,7 @@ int main(int argc, char* argv[]) {
         aura::ast::FlatAST flat(alloc);
         auto pr = aura::parser::parse_to_flat(input, flat, pool);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-            std::println(std::cerr, "parse error");
+            std::println(std::cerr, "parse error{}", pr.error.empty() ? "" : ": " + pr.error);
             return 1;
         }
         flat.root = pr.root;
