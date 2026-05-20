@@ -1,0 +1,21 @@
+;; task: is-anagram
+;; goal: Write (anagram? a b) that checks if two strings are anagrams using hash, test with "listen" and "silent"
+;; expect: #t
+;; depend: std/hash
+;; depend: std/iter
+;; hint: --- WORKING Aura anagram check ---
+;; hint: (require std/hash all:)
+;; hint: (define (freq s)
+;; hint:   (let ((h (hash)))
+;; hint:     (for-each (lambda (c) (hash-set! h c (+ 1 (if (hash-has-key? h c) (hash-ref h c) 0)))) (string->list s))
+;; hint:     h))
+;; hint: (define (hash-equal? a b)
+;; hint:   (and (= (hash-length a) (hash-length b))
+;; hint:     (let ((ka (hash-keys a)))
+;; hint:       (let loop ((keys ka))
+;; hint:         (if (null? keys) #t
+;; hint:           (and (hash-has-key? b (car keys))
+;; hint:                (= (hash-ref a (car keys)) (hash-ref b (car keys)))
+;; hint:                (loop (cdr keys))))))))
+;; hint: (define (anagram? a b) (hash-equal? (freq a) (freq b)))
+;; hint: (display (anagram? "listen" "silent"))
