@@ -3,23 +3,42 @@
 > 26 个 LLM 代码生成任务，覆盖基础语法、标准库、类型系统、C FFI、EDSL、TCP。
 > 多轮聚合消除 LLM 方差，迭代修正循环让 LLM 自修编译错误。
 
-## Latest: 2026-05-20 — deepseek-v4-flash: 24/26 (92%) stable
+## Latest: 2026-05-20 — deepseek-v4-flash
 
-### Features
+### 双模式：Python fix loop vs 原生 intend 原语
+
+| 模式 | 命令 | ✅ Stable PASS | ❌ Stable FAIL | 🔄 Volatile | 说明 |
+|------|------|:---:|:---:|:---:|------|
+| `--fix` (Python) | `--rounds 3 --fix --max-attempts 5` | **24/26 (92%)** | 0 | 2 | Python HTTP + 手动修正循环 |
+| `--intend` (C++) | `--rounds 3 --intend` | **20/26 (77%)** | 1 | 5 | 原生 `(intend ...)` 原语 + curl |
+
+`--intend` 模式用 1 个 C++ 原语替代了整个 Python LLM 调用 + 修正循环。
+差 4 个的主要原因：C++ 用 curl 调 LLM 比 Python http.client 慢，复杂任务超时概率更高。
+
+### 运行模式
 
 | 功能 | 说明 |
 |------|------|
 | `--rounds N` | 每个任务跑 N 轮独立 LLM 调用，聚合过率 |
-| `--fix` | 失败后自动把 Aura 报错喂回 LLM，迭代修正 |
+| `--fix` | Python 手动 LLM 调用 + 迭代修正 |
+| `--intend` | 原生 `(intend ...)` C++ 原语迭代修正 |
 | `--max-attempts N` | 每任务每轮最多 LLM 调用次数（默认 3） |
-| `--json` | 结构化 JSON 输出，含过率、平均时间、attempt 统计 |
+| `--json` | 结构化 JSON 输出 |
 
-### Results (3 rounds × 5 attempts)
+### Python --fix 模式 (3 rounds × 5 attempts)
 
 ```
 ✅  Stable PASS:  24/26 (92%)
 🔄  Volatile:      2/26 (8%)
 ❌  Stable FAIL:   0/26 (0%)
+```
+
+### C++ --intend 模式 (3 rounds × 3 attempts)
+
+```
+✅  Stable PASS:  20/26 (77%)
+🔄  Volatile:      5/26 (19%)
+❌  Stable FAIL:   1/26 (4%) — unique-hash (timeout)
 ```
 
 | 等级 | 任务 | 状态 | 过率 | avg attempts | 说明 |
@@ -59,6 +78,7 @@
 | 05-20 | +任务提示 | 21 | 2 | 3 |
 | 05-20 | +`--fix` attempts=3 | 22 | 1 | 3 |
 | 05-20 | +`--fix` attempts=5 | **24** | **0** | **2** |
+| 05-20 | +`--intend` (原生C++原语) | **20** | **1** | **5** |
 
 ## 关键设计决策
 
@@ -106,11 +126,14 @@ LLM_API_KEY="***" ./tests/edsl_benchmark.py
 # 多轮聚合
 LLM_API_KEY="***" ./tests/edsl_benchmark.py --rounds 5
 
-# 多轮 + 迭代修正（推荐）
+# 多轮 + 迭代修正（Python，推荐）
 LLM_API_KEY="***" ./tests/edsl_benchmark.py --rounds 3 --fix
 
 # 多轮 + 修正 + 最多 5 次尝试 + JSON
 LLM_API_KEY="***" ./tests/edsl_benchmark.py --rounds 3 --fix --max-attempts 5 --json
+
+# 原生 intend 原语（C++ 内置，不需 Python HTTP）
+LLM_API_KEY="***" ./tests/edsl_benchmark.py --rounds 3 --intend
 
 # 多模型对比
 LLM_MODEL=deepseek-v4-flash,gpt-4o LLM_API_KEY="***" ./tests/edsl_benchmark.py --rounds 3
