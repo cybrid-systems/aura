@@ -1,194 +1,134 @@
 # Aura EDSL Benchmark
 
-> 47 个 LLM 代码生成任务，覆盖基础语法、标准库、类型系统、C FFI、EDSL、TCP、递归算法。
-> 多轮聚合消除 LLM 方差，迭代修正循环让 LLM 自修编译错误。
+> 57 个 LLM 代码生成任务，覆盖基础语法、标准库、类型系统、C FFI、EDSL、TCP、递归算法、LeetCode 风格。
+> 自适应用迭代修正 + 执行轨迹反馈（PID 控制理论）。
 
-## Latest: 2026-05-20 — deepseek-v4-flash, 57 任务, 52/57 (91%)
+## Latest: 2026-05-20 — deepseek-v4-flash, 57 任务, 55/57 (96%)
 
-### 双模式：Python fix loop vs 原生 intend 原语
+### 三模式对比
 
-| 模式 | 命令 | ✅ 通过 | ❌ 失败 | 🔄 波动 | 说明 |
-|------|------|:---:|:---:|:---:|------|
-| `--fix` (Python) | `--rounds 3 --fix --max-attempts 5` | 26/26 (100%) | 0 | 0 | Python HTTP + 手动修正循环 |
-| `--intend` (C++) | `--rounds 3 --intend` | **52/57 (91%)** | 6 | 0 | 原生 intend + 结构化 fixer `check_success` |
-| `--intend --evolve` | `--rounds 3 --intend --evolve` | 52/57 (91%) | 6 | 0 | E4 自进化 + hints 注入 + 结构化 fixer |
+| 模式 | 命令 | ✅ 通过 | ❌ 失败 | 说明 |
+|------|------|:---:|:---:|------|
+| `--fix` (Python) | `--rounds 3 --fix --max-attempts 5` | 26/26 (100%) | 0 | 仅旧任务子集 (提示含完整代码) |
+| `--intend` (C++) | `--intend` | **55/57 (96%)** | 2 | 自适应 PID + 结构化 fixer + trace 反馈 |
+| `--intend --evolve` | `--intend --evolve` | 55/57 (96%) | 2 | E4 自进化 + hints 注入 |
 
-### Fuzz 测试
+### 改进轨迹
+
+| 阶段 | 日期 | 通过率 | 关键变更 |
+|------|------|--------|---------|
+| 基线 | 05-19 | 17/26 (65%) | 无提示，单次生成 |
+| 任务提示 | 05-20 | 21/26 (81%) | 加方向提示 + 迭代修正 |
+| 验证器升级 | 05-20 | 44/57 (77%) | 校验输出匹配期望值 |
+| `current-source` 捕获 | 05-20 | 51/57 (89%) | fixer 能看到 LLM 写的代码 |
+| 自适应 PID 控制 | 05-20 | 52/57 (91%) | `measure-distance` + phase 切换 |
+| API Reference 注入 | 05-20 | 54/57 (95%) | std/hash, list, socket 签名 |
+| 执行轨迹反馈 | 05-20 | 55/57 (96%) | retry 时显示代码运行结果 |
+| 修复 append/mod/tcp-recv | 05-20 | 55/57 (96%) | 3 个语言级 bug 修复 |
+| Hint 清理 | 05-20 | 55/57 (96%) | 93 行完整代码删除→纯方向提示 |
+
+### 新增控制论特性
+
+#### 自适应 PID 循环 (`call_adaptive`)
+
+```
+measure-distance(rc, output, expected) → (phase, ratio, diagnosis)
+
+  phase=coarse (rc!=0)        → 完整重写, temperature=0.3, tokens=4096
+  phase=fine   (0<ratio<85%)  → 精修, temperature=0.2, tokens=2048
+  phase=putt   (ratio>=85%)   → 微调, temperature=0.1, tokens=1024
+```
+
+#### 结构化诊断
+
+- 检测 `<hash[N]>` 输出 → 告警使用 hash-keys/values
+- 列出 output 中缺失的 expected 关键词
+- 注入 API Reference（std/hash, std/list, std/socket...）
+- 执行轨迹反馈（运行代码并输出中间结果）
+
+#### 语言级 Bug 修复
+
+| Bug | 影响的任务 | 修复 |
+|-----|-----------|------|
+| `append` 只处理 2 参数 | quicksort (只排3个元素) | 改为 variadic，循环拼接所有参数 |
+| `mod` 未定义 | primes-list (prime? 错误) | 注册 `mod` 为 `modulo` 别名 |
+| `tcp-recv` 需要 2 参数 | tcp-connect (返回空) | 第2参数可选，默认 4096 |
+
+#### 运行模式
+
+```
+  --rounds N       每个任务跑 N 轮独立 LLM 调用 (默认 1)
+  --fix            Python 手动 LLM 调用 + 迭代修正
+  --intend         原生 (intend ...) C++ 原语迭代修正
+  --max-attempts N 每任务每轮最多 LLM 调用次数 (默认 3)
+  --json           结构化 JSON 输出
+  --trace          输出失败任务的详细诊断
+  --tasks X,Y,Z    只运行指定的任务 (逗号分隔)
+  --failed         只运行已知失败的任务
+```
+
+#### 任务列表
+
+57 个任务，4 个难度等级 + 扩展：
+
+##### 基础 (12)
+`arith-basic`, `arith-chain`, `lambda-simple`, `letrec-fact`, `named-let`,
+`string-reverse`, `string-split-join`, `type-check`, `type-of`,
+`occurrence`, `ffi-sqrt`, `ffi-strlen`
+
+##### 列表/集合 (11)
+`list-range`, `list-filter`, `list-map`, `list-foldl`, `list-reverse`,
+`list-zip`, `list-partition`, `list-flatten`, `unique-hash`,
+`merge-sort`, `binary-search`
+
+##### 哈希/字符串 (8)
+`hash-basic`, `hash-stats`, `word-freq`, `palindrome`,
+`hash-invert`, `table-lookup`, `json-roundtrip`, `memoize`
+
+##### 递归/算法 (8)
+`prime-test`, `primes-list`, `fibonacci`, `gcd-euclid`,
+`combinations`, `quicksort`, `sieve`, `tree-dfs`
+
+##### 高阶/系统 (8)
+`compose-n`, `deep-equal`, `macro-definer`, `tcp-connect`,
+`vector-ops`, `edsl-set-code`, `edsl-query`, `edsl-mutate`
+
+##### LeetCode 风格 (10)
+`two-sum`, `reverse-list`, `valid-parens`, `max-subarray`,
+`contains-duplicate`, `merge-sorted`, `climbing-stairs`,
+`majority-element`, `first-unique`, `is-anagram`
+
+## 运行
+
+```bash
+# 快速单轮
+LLM_API_KEY="xxx" ./tests/edsl_benchmark.py
+
+# 原生 intend 模式（推荐）
+LLM_API_KEY="xxx" ./tests/edsl_benchmark.py --intend
+
+# 只跑失败任务
+LLM_API_KEY="xxx" ./tests/edsl_benchmark.py --intend --failed
+
+# 多模型对比
+LLM_MODEL=deepseek-v4-flash,gpt-4o LLM_API_KEY="xxx" ./tests/edsl_benchmark.py --rounds 3
+```
+
+## 剩余不稳定任务
+
+| 任务 | 状态 | 问题 | 根本原因 |
+|------|------|------|---------|
+| **tcp-connect** | 🔄 50-75% | HTTP 连接网络抖动 | `tcp-recv` 有时返回空，LLM 代码本身正确 |
+| **valid-parens** | 🔄 50-75% | 栈逻辑写不对 | 方向提示不精确，LLM 需要自己推理 char code 匹配 |
+
+## Fuzz 测试
 
 | 指标 | 值 |
 |------|-----|
 | 编译器崩溃 | 0 |
 | 内部错误 | 0 |
 | 超时 | 0 |
-| 通过 | 46/47 (无 API key LLM 方差) |
-| 失败 | 1（边缘情况） |
+| 通过 | 46/47 |
 | 已知 bug 回归 | 4/4 通过 (CI 每次 push) |
 
-详见 [tests/test_fuzz.py](../tests/test_fuzz.py) 和 [docs/design/llm_fuzz_testing.md](design/llm_fuzz_testing.md)。
-
-`--intend` 模式用 1 个 C++ 原语替代了整个 Python LLM 调用 + 修正循环。
-差 4 个的主要原因：C++ 用 curl 调 LLM 比 Python http.client 慢，复杂任务超时概率更高。
-
-### 运行模式
-
-| 功能 | 说明 |
-|------|------|
-| `--rounds N` | 每个任务跑 N 轮独立 LLM 调用，聚合过率 |
-| `--fix` | Python 手动 LLM 调用 + 迭代修正 |
-| `--intend` | 原生 `(intend ...)` C++ 原语迭代修正 |
-| `--max-attempts N` | 每任务每轮最多 LLM 调用次数（默认 3） |
-| `--json` | 结构化 JSON 输出 |
-
-### Python --fix 模式 (3 rounds × 5 attempts)
-
-```
-✅  Stable PASS:  24/26 (92%)
-🔄  Volatile:      2/26 (8%)
-❌  Stable FAIL:   0/26 (0%)
-```
-
-### C++ --intend 模式 (1 round × 3 attempts)
-
-```
-✅  Stable PASS:  26/26 (100%)
-🔄  Volatile:      0/26 (0%)
-❌  Stable FAIL:   0/26 (0%)
-```
-
-| 等级 | 任务 | 状态 | 过率 | avg attempts | 说明 |
-|------|------|------|------|-------------|------|
-| L0 | arith-basic | ✅ | 100% | 1.0 | `(+ 1 2 3 4 5)` |
-| L0 | arith-chain | ✅ | 100% | 1.0 | `(square 5)` |
-| L1 | lambda-simple | ✅ | 100% | 1.0 | `(double 10)` |
-| L1 | letrec-fact | ✅ | 100% | 1.0 | `(fact 5)` |
-| L1 | named-let | ✅ | 100% | 1.0 | sum 1..10 |
-| L2 | list-range | ✅ | 100% | 1.0 | std/list |
-| L2 | list-filter | ✅ | 100% | 1.0 | std/list |
-| L2 | list-map | ✅ | 100% | 1.0 | std/list |
-| L2 | list-foldl | ✅ | 100% | 1.0 | std/list |
-| L2 | list-reverse | ✅ | 100% | 1.0 | std/list |
-| L3 | prime-test | ✅ | 100% | 1.0 | 任务提示 + 修正 |
-| L3 | primes-list | ✅ | 100% | 1.0 | 任务提示 |
-| L3 | unique-hash | ✅ | 100% | 1.0 | hash 去重 |
-| L3 | merge-sort | ✅ | 100% | 1.0 | 任务提示给完整示例 |
-| L4 | hash-basic | ✅ | 100% | 1.0 | hash create + read |
-| L4 | hash-stats | ✅ | 100% | 1.7 | 迭代修正，`hash-keys` 显示内容 |
-| L4 | word-freq | 🔄 | 67% | 3.7 | 最复杂任务，3-5 attempts 通过 |
-| L5 | type-check | ✅ | 100% | 1.0 | `(check 42 : Int)` |
-| L5 | type-of | ✅ | 100% | 1.0 | `(type-of 42)` |
-| L5 | occurrence | ✅ | 100% | 1.0 | 类型精化 |
-| L6 | ffi-sqrt | ✅ | 100% | 1.0 | `(c-func -1 "sqrt" ...)` |
-| L6 | ffi-strlen | ✅ | 100% | 1.0 | `(c-func -1 "strlen" ...)` |
-| L7 | edsl-set-code | ✅ | 100% | 1.0 | `--serve` 协议 |
-| L7 | edsl-query | ✅ | 100% | 1.0 | `--serve` 协议 |
-| L7 | edsl-mutate | ✅ | 100% | 1.0 | `--serve` 协议 |
-| L8 | tcp-connect | 🔄 | 33% | 3.7 | LLM 强写 raw HTTP，偶用 `tcp-connect` |
-
-## 改进历程
-
-| 日期 | 策略 | ✅ Stable | ❌ Stable FAIL | 🔄 Volatile |
-|------|------|-----------|---------------|-------------|
-| 05-19 | 无提示 | 17 | 4 | 5 |
-| 05-20 | +任务提示 | 21 | 2 | 3 |
-| 05-20 | +`--fix` attempts=3 | 22 | 1 | 3 |
-| 05-20 | +`--fix` attempts=5 | **24** | **0** | **2** |
-| 05-20 | +`--intend` (原生C++原语) | **20** | **1** | **5** |
-| 05-20 | +`--intend` JSON预转义(修复递归) | **26** | **0** | **0** |
-
-## 关键设计决策
-
-### 1. 多轮聚合 (`--rounds`)
-
-LLM 生成代码有内在方差。单次失败可能是 LLM 抽风而非编译器 bug。
-N 轮聚合后按过率分类：
-- **100%**: Stable PASS — 编译器 + LLM 都靠谱
-- **0%**: Stable FAIL — 可能是编译器缺陷或 LLM 知识盲区
-- **1-99%**: Volatile — LLM 方差，改 prompt 或加示例
-
-### 2. 迭代修正 (`--fix`)
-
-遵循 Aura 设计哲学：不是"一次写对"，而是闭环迭代。
-
-```
-LLM 初稿 → Aura 编译 → 报错信息
-    ↑                      ↓
-    修正 ←── LLM 看到错误 ←──┘
-```
-
-每次修正的消息包含：
-- LLM 上次生成的代码
-- Aura 的实际报错/输出
-- 期望输出
-- 常见错误 checklist
-
-### 3. 任务针对性提示
-
-对 9 个困难任务（prime-test, merge-sort, hash-stats, word-freq 等）挂了可直接 copy 的工作示例。减少 LLM 摸索时间。
-
-### 4. Prompt 优化
-
-- 准确 ban 不存在的原语（`cadddr` 等 4+ 级 cxr）
-- 明确指出 `(display <hash>)` 输出 `<hash[N]>` 不显示 key
-- 用 `hash-keys` 代替不存在的 `hash->list`
-- 给出完整的 stdlib 函数列表而非仅 import 示例
-
-## 运行
-
-```bash
-# 快速单轮
-LLM_API_KEY="***" ./tests/edsl_benchmark.py
-
-# 多轮聚合
-LLM_API_KEY="***" ./tests/edsl_benchmark.py --rounds 5
-
-# 多轮 + 迭代修正（Python，推荐）
-LLM_API_KEY="***" ./tests/edsl_benchmark.py --rounds 3 --fix
-
-# 多轮 + 修正 + 最多 5 次尝试 + JSON
-LLM_API_KEY="***" ./tests/edsl_benchmark.py --rounds 3 --fix --max-attempts 5 --json
-
-# 原生 intend 原语（C++ 内置，不需 Python HTTP）
-LLM_API_KEY="***" ./tests/edsl_benchmark.py --rounds 3 --intend
-
-# 多模型对比
-LLM_MODEL=deepseek-v4-flash,gpt-4o LLM_API_KEY="***" ./tests/edsl_benchmark.py --rounds 3
-```
-
-## 剩 2 个 volatile 任务
-
-| 任务 | 问题 | 根本原因 |
-|------|------|---------|
-| **word-freq** (67%) | LLM 常生成 `()` 结尾代码 | 组合太多（string-split + hash + 递归 + hash-keys），LLM 知识弱 |
-| **tcp-connect** (33%) | LLM 强写 raw HTTP 包 | 通用 LLM 知识里 socket 编程是 C 风格的，Aura 的 `(tcp-connect "host" port)` 对它来说太陌生 |
-
-治本方案：在 stdlib 加 `frequencies` 等高阶原语，让 LLM 自然发现而非手写组合逻辑。## 任务列表
-
-47 个任务，分为 4 个难度等级：
-
-### 基础 (12)
-`arith-basic`, `arith-chain`, `lambda-simple`, `letrec-fact`, `named-let`,
-`string-reverse`, `string-split-join`, `type-check`, `type-of`,
-`occurrence`, `ffi-sqrt`, `ffi-strlen`
-
-### 列表/集合 (11)
-`list-range`, `list-filter`, `list-map`, `list-foldl`, `list-reverse`,
-`list-zip`, `list-partition`, `list-flatten`, `unique-hash`,
-`merge-sort`, `binary-search`
-
-### 哈希/字符串 (8)
-`hash-basic`, `hash-stats`, `word-freq`, `palindrome`,
-`hash-invert`, `table-lookup`, `json-roundtrip`, `memoize`
-
-### 递归/算法 (8)
-`prime-test`, `primes-list`, `fibonacci`, `gcd-euclid`,
-`combinations`, `quicksort`, `sieve`, `tree-dfs`
-
-### 高阶/系统 (8)
-`compose-n`, `deep-equal`, `macro-definer`, `tcp-connect`,
-`vector-ops`, `edsl-set-code`, `edsl-query`, `edsl-mutate`
-
-### LeetCode 风格 (10)
-`two-sum`, `reverse-list`, `valid-parens`, `max-subarray`,
-`contains-duplicate`, `merge-sorted`, `climbing-stairs`,
-`majority-element`, `first-unique`, `is-anagram`
-
+详见 [tests/test_fuzz.py](../tests/test_fuzz.py) 和 [design/llm_fuzz_testing.md](design/llm_fuzz_testing.md)。
