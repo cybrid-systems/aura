@@ -7,11 +7,13 @@
 ;; depend: std/list
 ;; hint: --- WORKING Aura primes list (COPY THIS) ---
 ;; hint: (require std/list all:)
+;; hint: ;;; CORRECT prime? — uses (> i*i n) NOT (>= i*i n)
 ;; hint: (define (prime? n)
-;; hint:   (let loop ((i 2))
-;; hint:     (if (>= (* i i) n) #t
-;; hint:       (if (= (modulo n i) 0) #f
-;; hint:         (loop (+ i 1))))))
+;; hint:   (if (< n 2) #f
+;; hint:     (let loop ((i 2))
+;; hint:       (if (> (* i i) n) #t
+;; hint:         (if (= (modulo n i) 0) #f
+;; hint:           (loop (+ i 1)))))))
 ;; hint: (define (primes n)
 ;; hint:   (filter (lambda (x) (prime? x)) (range 2 n)))
 ;; hint: (display (primes 20))
