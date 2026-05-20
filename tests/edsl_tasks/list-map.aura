@@ -1,0 +1,6 @@
+;; task: list-map
+;; goal: Use std/list map to double elements
+;; expect: 2
+;; expect: 4
+;; expect: 6
+;; depend: std/list

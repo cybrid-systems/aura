@@ -1,0 +1,6 @@
+;; task: list-reverse
+;; goal: Write reverse using foldl from std/list
+;; expect: 3
+;; expect: 2
+;; expect: 1
+;; depend: std/list

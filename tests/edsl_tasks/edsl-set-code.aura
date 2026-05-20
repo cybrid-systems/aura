@@ -1,0 +1,4 @@
+;; task: edsl-set-code
+;; goal: {"cmd":"eval","code":"(define (f x) (+ x 1))"}
+;; expect: ok
+;; expect: value
