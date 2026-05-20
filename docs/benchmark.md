@@ -3,15 +3,15 @@
 > 47 个 LLM 代码生成任务，覆盖基础语法、标准库、类型系统、C FFI、EDSL、TCP、递归算法。
 > 多轮聚合消除 LLM 方差，迭代修正循环让 LLM 自修编译错误。
 
-## Latest: 2026-05-20 — deepseek-v4-flash, 57 任务, 51/57 (89%)
+## Latest: 2026-05-20 — deepseek-v4-flash, 57 任务, 52/57 (91%)
 
 ### 双模式：Python fix loop vs 原生 intend 原语
 
 | 模式 | 命令 | ✅ 通过 | ❌ 失败 | 🔄 波动 | 说明 |
 |------|------|:---:|:---:|:---:|------|
 | `--fix` (Python) | `--rounds 3 --fix --max-attempts 5` | 26/26 (100%) | 0 | 0 | Python HTTP + 手动修正循环 |
-| `--intend` (C++) | `--rounds 3 --intend` | **51/57 (89%)** | 6 | 0 | 原生 intend + 结构化 fixer `check_success` |
-| `--intend --evolve` | `--rounds 3 --intend --evolve` | 51/57 (89%) | 6 | 0 | E4 自进化 + hints 注入 + 结构化 fixer |
+| `--intend` (C++) | `--rounds 3 --intend` | **52/57 (91%)** | 6 | 0 | 原生 intend + 结构化 fixer `check_success` |
+| `--intend --evolve` | `--rounds 3 --intend --evolve` | 52/57 (91%) | 6 | 0 | E4 自进化 + hints 注入 + 结构化 fixer |
 
 ### Fuzz 测试
 

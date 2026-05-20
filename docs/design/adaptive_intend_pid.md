@@ -649,6 +649,67 @@ Aura 模块实现核心控制逻辑：
 - [ ] putt fixer template
 - [ ] 表达式级 diff 生成
 
+### Phase 5: 可观测性 / 执行轨迹反馈（关键路径）
+
+**动机**：54/57 后的 3 个稳定失败（primes-list、quicksort、tcp-connect）
+全部是**可观测性不足**问题。
+
+```
+当前误差信号："输出不匹配"
+          ↓
+改进后信号："输出不匹配 + 中间trace"
+          ↓
+           "算法 pr>=imes(10) 返回 (2 3 5)，缺少 7"
+```
+
+可观测性控制理论分析：
+
+| 维度 | primes-list / quicksort | tcp-connect |
+|------|------------------------|-------------|
+| 可控性 | ✅ 理论上可控 | ✅ 理论上可控 |
+| 可观测性 | ❌ 误差信号太粗 | ⚠️ 中等 |
+| 模型精度 | ⚠️ 算法正确但细节错 | ❌ TCP/HTTP 领域知识缺失 |
+| 修复路径 | 需要 **trace 级反馈** | 需要 **HTTP 模板 + trace** |
+
+**实现方案**：
+
+1. 在 Python retry 循环中，用 Aura 调用获取代码的中间 trace：
+   - 用 `set-code` + `eval-current` 运行被测试代码
+   - 截取其 display 输出作为 trace
+   - 将 trace 注入到 fixer 的 system prompt 中
+
+2. 具体做法：
+```python
+def get_execution_trace(code_str, test_input=None):
+    """Run the code in Aura and capture all output as trace."""
+    aura_code = f'(set-code "{escape(code_str)}")(eval-current)'
+    r = subprocess.run([AURA], input=aura_code, capture_output=True, text=True, timeout=10)
+    stdout = r.stdout.strip()
+    stderr = r.stderr.strip()
+    return stdout, stderr
+```
+
+3. trace 反馈在 system prompt 中的格式：
+```
+=== Execution Trace ===
+Display output: 42
+
+Expected: 15
+Note: The function returned the wrong value.
+```
+
+4. 对 primes-list / quicksort 的特别处理：
+   - primes-list: 让 LLM 生成的代码先跑 `(primes 10)` 并将结果放入 trace
+   - quicksort: 让 LLM 生成的代码先跑 `(quicksort (list 3 7 4 9 5 2 6 1))`
+   - tcp-connect: 代码运行时自动产生 HTTP 响应文本
+
+**预期效果**：
+- primes-list: trace 显示缺少素数，LLM 可以诊断筛法循环
+- quicksort: trace 显示部分排序，LLM 可以诊断递归/partition
+- tcp-connect: trace 显示 HTTP 响应全文，LLM 可以定位 200 OK
+
+**工作量**：2-3h
+
 ---
 
 ## 附录 A: 完整 classify_error 参考
