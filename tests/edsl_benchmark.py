@@ -311,8 +311,6 @@ def run_single_task_intend(model, base_url, api_key, name, prompt, expected, std
     goal_esc = js(prompt)
 
     lines = ['(require "std/llm" all:)']
-    lines.append('(require "std/verify" all:)')
-    lines.append('(require "std/list" all:)')
     lines.append('(define __sp__ "' + sp_esc + '")')
     lines.append('(define __gen__ (lambda (g)')
     lines.append('  (json-get-string (aura-llm-call (json-encode (hash')
@@ -322,8 +320,6 @@ def run_single_task_intend(model, base_url, api_key, name, prompt, expected, std
     lines.append('      (hash "role" "user" "content" g))')
     lines.append('    "temperature" 0.3')
     lines.append('    "max_tokens" 4096))) "content")))')
-    exp_list = 'list ' + ' '.join(f'"{js(e)}"' for e in expected) if expected else ''
-    lines.append(f'(define __verify__ (lambda (code) (verify-output code {exp_list})))')
     lines.append('(define __fix__ (lambda (code err goal)')
     lines.append('  (json-get-string (aura-llm-call (json-encode (hash')
     lines.append('    "model" "deepseek-v4-flash"')
@@ -333,7 +329,7 @@ def run_single_task_intend(model, base_url, api_key, name, prompt, expected, std
     lines.append('        (string-append "Previous code:\\n" code "\\nError:\\n" err "\\nGoal:\\n" goal))')
     lines.append('    "temperature" 0.3')
     lines.append('    "max_tokens" 4096)))) "content")))')
-    lines.append('(display (intend "' + goal_esc + '" __gen__ __verify__ __fix__ ' + str(max_att) + '))')
+    lines.append('(display (intend "' + goal_esc + '" __gen__ aura-verify __fix__ ' + str(max_att) + '))')
     aura_code = '\n'.join(lines)
     t0 = time.time()
     try:
@@ -348,7 +344,7 @@ def run_single_task_intend(model, base_url, api_key, name, prompt, expected, std
         return False, '', err or 'intend failed', elapsed, 0
     m_iter = re.search(r'iterations:(\d+)', out)
     iterations = int(m_iter.group(1)) if m_iter else 0
-    success = '"ok"' in out
+    success = '"ok"' in out and check_success(out, expected)
     return success, out.strip('"'), err, elapsed, iterations
 
 
