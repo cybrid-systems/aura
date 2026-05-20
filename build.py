@@ -588,6 +588,54 @@ def cmd_list():
     return 0
 
 
+
+# ── Regression: replay known compiler bug reproducers ─────────
+def test_regression():
+    """Run tests/regression/*.aura as compiler regression checks."""
+    from pathlib import Path
+    base = Path(__file__).resolve().parent
+    reg_dir = base / "tests" / "regression"
+    aura_bin = os.environ.get("AURA_BIN", str(base / "build" / "aura"))
+    if not reg_dir.exists():
+        print("  No regression tests found", flush=True)
+        return True
+    failed = 0
+    total = 0
+    for fpath in sorted(reg_dir.glob("*.aura")):
+        total += 1
+        text = fpath.read_text()
+        expected = ""
+        for line in text.splitlines():
+            if line.startswith(";; expect:"):
+                expected = line[len(";; expect:"):].strip()
+                break
+        name = fpath.stem
+        code_lines = []
+        in_code = False
+        for line in text.splitlines():
+            if not in_code and not line.startswith(";;") and line.strip():
+                in_code = True
+            if in_code:
+                code_lines.append(line)
+        code = "\n".join(code_lines)
+        try:
+            r = subprocess.run([aura_bin], input=code, capture_output=True, text=True, timeout=10)
+            if r.returncode != 0:
+                print(f"    FAIL {name}: exit {r.returncode}", flush=True)
+                if r.stderr: print(f"      {r.stderr[:80]}", flush=True)
+                failed += 1
+            elif expected and expected not in (r.stdout or ""):
+                print(f"    FAIL {name}: expected '{expected}', got '{r.stdout.strip()}'")
+                failed += 1
+            else:
+                print(f"    PASS {name}")
+        except subprocess.TimeoutExpired:
+            print(f"    TIMEOUT {name}", flush=True)
+            failed += 1
+    print(f"  Regression: {total - failed}/{total} passed", flush=True)
+    return failed == 0
+
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
         print(__doc__.strip())

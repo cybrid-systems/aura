@@ -1,0 +1,5 @@
+;; bug: json-parse hash insertion used EvalValue== which failed on strings
+;; fixed: string content comparison in parse_object
+;; expect: 1
+(define h (json-parse "{\"a\":1}"))
+(display (hash-ref h "a"))

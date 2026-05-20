@@ -1,0 +1,4 @@
+;; bug: json-get-string extracted wrong position (comma instead of value)
+;; fixed: fix_json_str + json-encode/json-parse
+;; expect: hello
+(display (json-get-string "{\"msg\":\"hello\"}" "msg"))

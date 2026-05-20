@@ -19,3 +19,6 @@ jobs:
 
     - name: Build & Test
       run: python3 build.py check
+
+      - name: Regression tests (no API key needed)
+        run: python3 build.py regression

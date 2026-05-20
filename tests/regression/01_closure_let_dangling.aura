@@ -1,0 +1,7 @@
+;; bug: let env parent_ pointer dangling when captured by closure
+;; fixed: 953d6c4
+;; expect: 10
+(define (f fn)
+  (let ((x 1))
+    (lambda (y) (fn y))))
+(display ((f (lambda (z) (* z 2))) 5))

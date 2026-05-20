@@ -1,0 +1,5 @@
+;; bug: division-by-zero UB: compiler reordered check before ternary
+;; fixed: ternary (d==0)?0:(r/d) instead of if(d==0)return;r/=d;
+;; expect: 0
+(define (safe-div r d) (if (= d 0) 0 (/ r d)))
+(display (safe-div 10 0))
