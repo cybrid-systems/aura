@@ -1,0 +1,6 @@
+;; task: list-foldl
+;; goal: Use std/list foldl to sum a list
+;; expect: 10
+;; expect: 15
+;; expect: 55
+;; depend: std/list

@@ -1,0 +1,3 @@
+;; task: arith-chain
+;; goal: Define (square x) (* x x), call (square 5)
+;; expect: 25

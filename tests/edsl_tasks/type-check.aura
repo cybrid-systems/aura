@@ -1,0 +1,5 @@
+;; task: type-check
+;; goal: Use (check 42 : Int) to verify type
+;; expect: 42
+;; hint: --- type-check ---
+;; hint: (display (check 42 : Int))  ; prints 42 (the VALUE, NOT "done")

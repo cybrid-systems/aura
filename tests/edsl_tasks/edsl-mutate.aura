@@ -1,0 +1,3 @@
+;; task: edsl-mutate
+;; goal: {"cmd":"eval","code":"(define (h x) (+ x 1))"}
+;; expect: ok

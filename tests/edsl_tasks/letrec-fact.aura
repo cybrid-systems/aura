@@ -1,0 +1,3 @@
+;; task: letrec-fact
+;; goal: Define factorial with letrec, compute (fact 5)
+;; expect: 120

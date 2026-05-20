@@ -1,0 +1,4 @@
+;; task: ffi-sqrt
+;; goal: Use (c-func) to call libm sqrt, compute (sqrt 9.0)
+;; expect: 3
+;; expect: 3.0

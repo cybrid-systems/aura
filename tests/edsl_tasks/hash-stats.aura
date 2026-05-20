@@ -1,0 +1,20 @@
+;; task: hash-stats
+;; goal: Write (stats nums) returning hash with count/sum/mean/min/max
+;; expect: count
+;; expect: sum
+;; expect: mean
+;; hint: --- WORKING Aura hash stats ---
+;; hint: (require std/list all:)
+;; hint: (require std/hash all:)
+;; hint: (define (stats nums)
+;; hint:   (let ((n (length nums)))
+;; hint:     (let ((s (foldl + 0 nums)))
+;; hint:       (hash
+;; hint:         "count" n
+;; hint:         "sum" s
+;; hint:         "mean" (/ s n)
+;; hint:         "min" (foldl (lambda (acc x) (if (< x acc) x acc)) (car nums) nums)
+;; hint:         "max" (foldl (lambda (acc x) (if (> x acc) x acc)) (car nums) nums)))))
+;; hint: ; (display <hash>) shows <hash[N]>, NOT keys!
+;; hint: ; MUST use hash-keys to show key names:
+;; hint: (display (hash-keys (stats (list 1 2 3 4 5))))

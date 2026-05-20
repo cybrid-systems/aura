@@ -20,153 +20,55 @@
   LLM_API_KEY="***" ./tests/edsl_benchmark.py --rounds 3 --fix --max-attempts 5 --json
 """
 import subprocess, json, sys, os, time, re, http.client, urllib.parse
+from pathlib import Path
 from collections import defaultdict
 
 AURA = os.environ.get("AURA_BIN", "./build/aura")
 
 # ── 任务定义 ─────────────────────────────────────────────
-TASKS = [
-    ("arith-basic",   "Write (+ 1 2 3 4 5)", ["15", "6"], []),
-    ("arith-chain",   "Define (square x) (* x x), call (square 5)", ["25"], []),
-    ("lambda-simple", "Define (double x) (* x 2), call (double 10)", ["20"], []),
-    ("letrec-fact",   "Define factorial with letrec, compute (fact 5)", ["120"], []),
-    ("named-let",     "Use named let to sum 1..10", ["55"], []),
-    ("list-range",    "Use std/list range to get 1..10", ["1", "2", "10"], ["std/list"]),
-    ("list-filter",   "Use std/list filter to get evens from 1..10", ["2", "4", "6", "8"], ["std/list"]),
-    ("list-map",      "Use std/list map to double elements", ["2", "4", "6"], ["std/list"]),
-    ("list-foldl",    "Use std/list foldl to sum a list", ["10", "15", "55"], ["std/list"]),
-    ("list-reverse",  "Write reverse using foldl from std/list", ["3", "2", "1"], ["std/list"]),
-    ("prime-test",    "Write prime? that checks if n is prime, test with 17", ["#t"], []),
-    ("primes-list",   "Write (primes n) returning all primes <= n using std/list filter",
-                      ["2", "3", "5", "7"], ["std/list"]),
-    ("unique-hash",   "Write (unique lst) removing duplicates using hash", ["1", "2", "3", "4"], []),
-    ("merge-sort",    "Write merge sort using std/list", ["1", "2", "3", "4", "5"], ["std/list"]),
-    ("hash-basic",    'Create hash with (hash "a" 1), read with hash-ref', ["1"], []),
-    ("hash-stats",    "Write (stats nums) returning hash with count/sum/mean/min/max",
-                      ["count", "sum", "mean"], []),
-    ("word-freq",     "Write word frequency counter using hash",
-                      ["hello", "world"], ["std/string"]),
-    ("type-check",    "Use (check 42 : Int) to verify type", ["42"], []),
-    ("type-of",       "Use (type-of 42) to get type", ["Int"], []),
-    ("occurrence",    "Use if string? to narrow type, call string-append", ["hello"], []),
-    ("ffi-sqrt",      "Use (c-func) to call libm sqrt, compute (sqrt 9.0)", ["3", "3.0"], []),
-    ("ffi-strlen",    "Use c-func to call strlen from libc", ["5"], []),
-    ("edsl-set-code", '{"cmd":"eval","code":"(define (f x) (+ x 1))"}', ["ok","value"], []),
-    ("edsl-query",    '{"cmd":"eval","code":"(define (g x) (* x 2))"}', ["ok"], []),
-    ("edsl-mutate",   '{"cmd":"eval","code":"(define (h x) (+ x 1))"}', ["ok"], []),
-    ("tcp-connect",   "Connect to httpbin.org:80, send HTTP GET, receive response", ["200", "OK"], []),
-]
+# ── 从 edsl_tasks/ 目录加载任务 ────────────────────────
+TASKS_DIR = Path(__file__).resolve().parent / "edsl_tasks"
+_TASK_HINTS = {}
+
+def load_tasks():
+    """从 edsl_tasks/*.aura 加载任务定义"""
+    tasks = []
+    if not TASKS_DIR.exists():
+        print(f"Warning: {TASKS_DIR} not found")
+        return tasks
+    for fpath in sorted(TASKS_DIR.glob("*.aura")):
+        name = fpath.stem
+        if name == "README":
+            continue
+        text = fpath.read_text()
+        goal = ""
+        expected = []
+        stdlib = []
+        hints = []
+        for line in text.splitlines():
+            if line.startswith(";; goal:"):
+                goal = line[len(";; goal:"):].strip()
+            elif line.startswith(";; expect:"):
+                expected.append(line[len(";; expect:"):].strip())
+            elif line.startswith(";; depend:"):
+                stdlib.append(line[len(";; depend:"):].strip())
+            elif line.startswith(";; hint:"):
+                hints.append(line[len(";; hint:"):].strip())
+        if goal:
+            tasks.append((name, goal, expected, stdlib))
+        else:
+            print(f"Warning: {fpath} has no ;; goal: metadata")
+        if hints:
+            _TASK_HINTS[name] = "\\n".join(hints)
+    return tasks
+
+TASKS = load_tasks()
 
 # ── CLI 配置默认值 ───────────────────────────────────────
 ROUNDS = 1
 FIX_MODE = False
 INTEND_MODE = False
 MAX_ATTEMPTS = 3
-
-# ── 按任务的针对性提示 ────────────────────────────────
-TASK_HINTS = {
-
-"prime-test": """
---- WORKING Aura prime check (COPY THIS) ---
-(define (prime? n)
-  (let loop ((i 2))
-    (if (>= (* i i) n) #t
-      (if (= (modulo n i) 0) #f
-        (loop (+ i 1))))))
-(display (prime? 17))
---- RULES ---
-Every (if COND THEN ELSE) needs exactly 3 sub-forms.
-""",
-
-"primes-list": """
---- WORKING Aura primes list (COPY THIS) ---
-(require std/list all:)
-(define (prime? n)
-  (let loop ((i 2))
-    (if (>= (* i i) n) #t
-      (if (= (modulo n i) 0) #f
-        (loop (+ i 1))))))
-(define (primes n)
-  (filter (lambda (x) (prime? x)) (range 2 n)))
-(display (primes 20))
-""",
-
-"merge-sort": """
---- WORKING Aura merge sort ---
-(require std/list all:)
-(define (merge a b)
-  (cond
-    ((null? a) b)
-    ((null? b) a)
-    ((< (car a) (car b)) (cons (car a) (merge (cdr a) b)))
-    (else (cons (car b) (merge a (cdr b))))))
-(define (merge-sort lst)
-  (if (or (null? lst) (null? (cdr lst))) lst
-    (let ((mid (quotient (length lst) 2)))
-      (merge (merge-sort (take mid lst)) (merge-sort (drop mid lst))))))
-(display (merge-sort (list 3 1 4 1 5 9 2 6)))
-""",
-
-"hash-stats": """
---- WORKING Aura hash stats ---
-(require std/list all:)
-(require std/hash all:)
-(define (stats nums)
-  (let ((n (length nums)))
-    (let ((s (foldl + 0 nums)))
-      (hash
-        "count" n
-        "sum" s
-        "mean" (/ s n)
-        "min" (foldl (lambda (acc x) (if (< x acc) x acc)) (car nums) nums)
-        "max" (foldl (lambda (acc x) (if (> x acc) x acc)) (car nums) nums)))))
-; (display <hash>) shows <hash[N]>, NOT keys!
-; MUST use hash-keys to show key names:
-(display (hash-keys (stats (list 1 2 3 4 5))))
-""",
-
-"word-freq": """
---- WORKING Aura word frequency ---
-(require std/string all:)
-(define (word-freq text)
-  (let ((words (string-split text " ")))
-    (let loop ((ws words) (h (hash)))
-      (if (null? ws) h
-        (let ((w (car ws)))
-          (if (hash-has-key? h w)
-            (loop (cdr ws) (hash-set! h w (+ (hash-ref h w) 1)))
-            (loop (cdr ws) (hash-set! h w 1))))))))
-; (display <hash>) shows <hash[N]>, NOT keys!
-; MUST use hash-keys to show words:
-(display (hash-keys (word-freq "hello world hello")))
-""",
-
-"type-check": """
---- type-check ---
-(display (check 42 : Int))  ; prints 42 (the VALUE, NOT "done")
-""",
-
-"occurrence": """
---- occurrence typing ---
-(let ((x "hello"))
-  (if (string? x)
-    (string-append x " world")
-    0))
-""",
-
-"ffi-strlen": """
---- strlen FFI ---
-(define strlen-fn (c-func -1 "strlen" "(String) -> Int"))
-(display (strlen-fn "hello"))
-""",
-
-"tcp-connect": """
---- TCP socket ---
-Aura has (tcp-connect "host" port). DO NOT use c-func for networking.
-(define s (tcp-connect "httpbin.org" 80))
-(display "ok")
-""",
-}
 
 # ── LLM 调用 ──────────────────────────────────────────────
 def llm_complete(model, base_url, key, messages, retries=3):
@@ -302,10 +204,10 @@ def build_sys_prompt(stdlib, api_ref, task_name=""):
     )
     if stdlib:
         sp += f"Available stdlib: {', '.join(stdlib)}. Use (require std/name all:) to load them.\n"
-    if task_name and task_name in TASK_HINTS:
+    if task_name and task_name in _TASK_HINTS:
         sp += "\n" + "=" * 40 + "\n"
         sp += f"TASK-SPECIFIC HINT for \"{task_name}\":\n"
-        sp += TASK_HINTS[task_name]
+        sp += _TASK_HINTS[task_name]
     sp += f"\nCurrent Aura primitives:\n{api_ref[:2000]}"
     return sp
 

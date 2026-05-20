@@ -1,0 +1,18 @@
+;; task: word-freq
+;; goal: Write word frequency counter using hash
+;; expect: hello
+;; expect: world
+;; depend: std/string
+;; hint: --- WORKING Aura word frequency ---
+;; hint: (require std/string all:)
+;; hint: (define (word-freq text)
+;; hint:   (let ((words (string-split text " ")))
+;; hint:     (let loop ((ws words) (h (hash)))
+;; hint:       (if (null? ws) h
+;; hint:         (let ((w (car ws)))
+;; hint:           (if (hash-has-key? h w)
+;; hint:             (loop (cdr ws) (hash-set! h w (+ (hash-ref h w) 1)))
+;; hint:             (loop (cdr ws) (hash-set! h w 1))))))))
+;; hint: ; (display <hash>) shows <hash[N]>, NOT keys!
+;; hint: ; MUST use hash-keys to show words:
+;; hint: (display (hash-keys (word-freq "hello world hello")))

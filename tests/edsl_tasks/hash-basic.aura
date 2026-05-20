@@ -1,0 +1,3 @@
+;; task: hash-basic
+;; goal: Create hash with (hash "a" 1), read with hash-ref
+;; expect: 1
