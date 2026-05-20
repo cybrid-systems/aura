@@ -547,19 +547,19 @@ def main():
         print(f"{'─'*70}")
         print(f"  {model} — Per-Task Results ({ROUNDS} rounds)")
         print(f"{'─'*70}")
-        task_rows = [(n, s["passes"], s["total"]) for n, s in task_stats.items() if n != "__meta__"]
+        task_rows = [(n, s["passes"], s["total"]) for n, s in task_stats.items() if n not in ("__meta__", "__errors__")]
         sp, sf, sv = print_task_table(task_rows)
 
         if FIX_MODE:
             print(f"\n  📊 Attempt stats:")
-            for n in sorted(s for s in task_stats if s != "__meta__"):
+            for n in sorted(s for s in task_stats if s not in ("__meta__", "__errors__")):
                 s = task_stats[n]
                 if s["attempts"]:
                     avg = sum(s["attempts"]) / len(s["attempts"])
                     print(f"    {n:22s} avg {avg:.1f} attempts, {s['passes']}/{s['total']} passed")
 
         volatile_tasks = [n for n, s in task_stats.items()
-                          if n != "__meta__" and 0 < s["passes"] < s["total"]]
+                          if n not in ("__meta__", "__errors__") and 0 < s["passes"] < s["total"]]
         if volatile_tasks:
             print(f"\n  ⚠️  Volatile tasks:")
             for n in sorted(volatile_tasks):
