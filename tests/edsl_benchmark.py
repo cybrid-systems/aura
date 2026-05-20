@@ -344,8 +344,11 @@ def run_single_task_intend(model, base_url, api_key, name, prompt, expected, std
         return False, '', err or 'intend failed', elapsed, 0
     m_iter = re.search(r'iterations:(\d+)', out)
     iterations = int(m_iter.group(1)) if m_iter else 0
-    success = '"ok"' in out
-    return success, out.strip('"'), err, elapsed, iterations
+    success = '"ok"' in out and check_success(out, expected)
+    if success:
+        return True, out.strip('"'), err, elapsed, iterations
+    # Output mismatch — give intent another chance through fixer
+    return False, out, err or 'output mismatch', elapsed, iterations
 
 
 # ── 打印结果表 ────────────────────────────────────────────
