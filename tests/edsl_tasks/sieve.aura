@@ -4,10 +4,7 @@
 ;; expect: 2 3 5 7 11 13
 ;; hint: --- WORKING Aura sieve ---
 ;; hint: (require std/list all:)
-;; hint: (define (sieve n)
-;; hint:   (let loop ((lst (range 2 n)) (result ()))
 ;; hint:     (if (null? lst) (reverse result)
-;; hint:       (let ((p (car lst)))
 ;; hint:         (loop (filter (lambda (x) (not (= (modulo x p) 0))) (cdr lst))
 ;; hint:               (cons p result))))))
 ;; hint: (display (sieve 15))

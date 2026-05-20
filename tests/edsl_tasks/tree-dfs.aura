@@ -2,7 +2,6 @@
 ;; goal: Write (tree-sum tree) that sums all numbers in a nested list structure recursively
 ;; expect: 15
 ;; hint: --- WORKING Aura tree sum ---
-;; hint: (define (tree-sum tree)
 ;; hint:   (if (null? tree) 0
 ;; hint:     (if (pair? tree)
 ;; hint:       (+ (tree-sum (car tree)) (tree-sum (cdr tree)))

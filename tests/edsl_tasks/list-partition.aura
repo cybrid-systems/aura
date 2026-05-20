@@ -6,8 +6,6 @@
 ;; depend: std/list
 ;; hint: --- WORKING Aura partition ---
 ;; hint: (require std/list all:)
-;; hint: (define (odd? n) (= (modulo n 2) 1))
-;; hint: (define (partition pred lst)
 ;; hint:   (list (filter pred lst)
 ;; hint:         (filter (lambda (x) (not (pred x))) lst)))
 ;; hint: (display (partition odd? (list 1 2 3 4 5)))

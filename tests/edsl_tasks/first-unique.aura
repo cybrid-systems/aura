@@ -3,10 +3,7 @@
 ;; expect: 108
 ;; hint: --- WORKING Aura first unique char ---
 ;; hint: (require std/hash all:)
-;; hint: (define (first-unique s)
-;; hint:   (let ((counts (hash)) (chars (string->list s)))
 ;; hint:     (for-each (lambda (c) (hash-set! counts c (+ 1 (if (hash-has-key? counts c) (hash-ref counts c) 0)))) chars)
-;; hint:     (let loop ((cs chars))
 ;; hint:       (if (null? cs) -1
 ;; hint:         (if (= (hash-ref counts (car cs)) 1) (car cs) (loop (cdr cs)))))))
 ;; hint: (display (first-unique "leetcode"))

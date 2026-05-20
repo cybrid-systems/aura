@@ -5,9 +5,6 @@
 ;; depend: std/list
 ;; hint: --- WORKING Aura majority element ---
 ;; hint: (require std/hash all:)
-;; hint: (define (majority lst)
-;; hint:   (let ((counts (hash)))
-;; hint:     (let loop ((rest lst) (half (/ (length lst) 2)))
 ;; hint:       (if (null? rest) ()
 ;; hint:         (let* ((n (car rest)) (c (+ 1 (if (hash-has-key? counts n) (hash-ref counts n) 0))))
 ;; hint:           (hash-set! counts n c)

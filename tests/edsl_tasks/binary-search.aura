@@ -4,7 +4,6 @@
 ;; depend: std/list
 ;; hint: --- WORKING Aura binary search ---
 ;; hint: (require std/list all:)
-;; hint: (define (binary-search target lst)
 ;; hint:   (if (null? lst) #f
 ;; hint:     (let* ((mid (quotient (length lst) 2))
 ;; hint:            (val (list-ref lst mid)))

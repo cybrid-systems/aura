@@ -6,11 +6,7 @@
 ;; depend: std/string
 ;; hint: --- WORKING Aura word frequency ---
 ;; hint: (require std/string all:)
-;; hint: (define (word-freq text)
-;; hint:   (let ((words (string-split text " ")))
-;; hint:     (let loop ((ws words) (h (hash)))
 ;; hint:       (if (null? ws) h
-;; hint:         (let ((w (car ws)))
 ;; hint:           (if (hash-has-key? h w)
 ;; hint:             (loop (cdr ws) (hash-set! h w (+ (hash-ref h w) 1)))
 ;; hint:             (loop (cdr ws) (hash-set! h w 1))))))))

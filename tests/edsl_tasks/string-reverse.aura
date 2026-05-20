@@ -3,7 +3,6 @@
 ;; expect: !dlroW olleH
 ;; depend: std/list
 ;; hint: --- WORKING Aura string reverse ---
-;; hint: (define (str-rev s)
 ;; hint:   (list->string (reverse (string->list s))))
 ;; hint: (display (str-rev "Hello World!"))
 ;; hint: --- NOTE ---
