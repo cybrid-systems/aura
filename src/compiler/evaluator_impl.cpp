@@ -3597,11 +3597,28 @@ Evaluator::Evaluator() {
             max_attempts = static_cast<int>(types::as_int(a[idx]));
         }
 
+        auto t0 = std::chrono::steady_clock::now();
         timeline_.clear();
         timeline_.push_back("start:" + goal);
 
         std::string current_code_str;
         std::string last_error;
+        std::vector<std::string> errors;
+        std::vector<std::string> error_types;
+        std::vector<std::string> generated_codes;
+        std::uint64_t llm_call_count = 0;
+
+        auto classify_error = [](const std::string& err) -> std::string {
+            if (err.find("unbound variable") != std::string::npos) return "unbound-variable";
+            if (err.find("type mismatch") != std::string::npos) return "type-mismatch";
+            if (err.find("division by zero") != std::string::npos) return "div-zero";
+            if (err.find("syntax") != std::string::npos || err.find("unbalanced") != std::string::npos) return "syntax-error";
+            if (err.find("timeout") != std::string::npos) return "timeout";
+            if (err.find("recursion") != std::string::npos || err.find("stack") != std::string::npos) return "recursion-limit";
+            if (err.find("bad-code") != std::string::npos) return "bad-code";
+            if (err.find("verification failed") != std::string::npos) return "verification-failed";
+            return "other";
+        };
 
         // Call a closure, return string result
         auto call_fn = [&](std::uint64_t cid,
@@ -3620,12 +3637,14 @@ Evaluator::Evaluator() {
         for (int attempt = 1; attempt <= max_attempts; ++attempt) {
             std::string code_str;
             if (attempt == 1 || current_code_str.empty()) {
-                // Call generator with goal
                 auto gs = string_heap_.size();
                 string_heap_.push_back(goal);
                 code_str = call_fn(gen_cid, {types::make_string(gs)});
+                llm_call_count++;
                 if (code_str.empty()) {
                     timeline_.push_back("attempt_" + std::to_string(attempt) + ":empty from generator");
+                    errors.push_back("empty from generator");
+                    error_types.push_back("empty");
                     continue;
                 }
             } else {
@@ -3644,13 +3663,16 @@ Evaluator::Evaluator() {
                     types::make_string(es),
                     types::make_string(gs)
                 });
+                llm_call_count++;
                 if (code_str.empty()) {
                     timeline_.push_back("attempt_" + std::to_string(attempt) + ":empty from fixer");
+                    errors.push_back("empty from fixer");
+                    error_types.push_back("empty");
                     continue;
                 }
             }
+            generated_codes.push_back(code_str);
 
-            // Call verifier with code
             auto cv = string_heap_.size();
             string_heap_.push_back(code_str);
             auto ver = call_fn(ver_cid, {types::make_string(cv)});
@@ -3661,13 +3683,55 @@ Evaluator::Evaluator() {
                 auto result = "#(status:\"ok\" goal:\"" + goal + "\" iterations:" + std::to_string(attempt) + ")";
                 auto rs = string_heap_.size();
                 string_heap_.push_back(result);
+
+                auto t1 = std::chrono::steady_clock::now();
+                auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+                IntendRecord rec;
+                rec.record_id = next_record_id_++;
+                rec.strategy_name = "default";
+                rec.task_desc = goal;
+                rec.success = true;
+                rec.attempts = attempt;
+                rec.errors = errors;
+                rec.error_types = error_types;
+                rec.generated_codes = generated_codes;
+                rec.llm_call_count = llm_call_count;
+                rec.llm_tokens = 0;
+                rec.duration_ms = static_cast<std::uint64_t>(duration);
+                rec.timestamp = static_cast<std::uint64_t>(std::time(nullptr));
+                rec.parent_record_id = 0;
+                intend_history_.push_back(rec);
+                if (intend_history_.size() > MAX_HISTORY_SIZE)
+                    intend_history_.erase(intend_history_.begin());
                 return types::make_string(rs);
             }
 
             current_code_str = code_str;
             last_error = ver.empty() ? "verification failed" : ver;
+            errors.push_back(last_error);
+            error_types.push_back(classify_error(last_error));
             timeline_.push_back("attempt_" + std::to_string(attempt) + ":" + last_error);
         }
+
+        auto t1 = std::chrono::steady_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+        IntendRecord rec;
+        rec.record_id = next_record_id_++;
+        rec.strategy_name = "default";
+        rec.task_desc = goal;
+        rec.success = false;
+        rec.attempts = max_attempts;
+        rec.errors = errors;
+        rec.error_types = error_types;
+        rec.generated_codes = generated_codes;
+        rec.llm_call_count = llm_call_count;
+        rec.llm_tokens = 0;
+        rec.duration_ms = static_cast<std::uint64_t>(duration);
+        rec.timestamp = static_cast<std::uint64_t>(std::time(nullptr));
+        rec.parent_record_id = 0;
+        intend_history_.push_back(rec);
+        if (intend_history_.size() > MAX_HISTORY_SIZE)
+            intend_history_.erase(intend_history_.begin());
 
         auto result = "#(status:\"failed\" goal:\"" + goal + "\" iterations:" + std::to_string(max_attempts)
                     + " last-error:\"" + last_error + "\")";
@@ -3676,47 +3740,88 @@ Evaluator::Evaluator() {
         string_heap_.push_back(result);
         return types::make_string(rs);
     });
-
-    // (define-strategy name body-string)
-    primitives_.add("define-strategy", [this](const auto& a) -> EvalValue {
-        if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
-            return make_bool(false);
-        auto name = string_heap_[types::as_string_idx(a[0])];
-        auto body = string_heap_[types::as_string_idx(a[1])];
-        // Check for existing strategy with same name
-        for (auto& s : strategies_) {
-            if (s.name == name) {
-                s.body = body;
-                return make_bool(true);  // updated
-            }
-        }
-        strategies_.push_back({name, body});
-        return make_bool(true);
-    });
-
-    // ── register-strategy! — 运行时注册/修改策略 ──────────────
-    primitives_.add("register-strategy!", [this](const auto& a) -> EvalValue {
-        if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
-            return make_bool(false);
-        auto name = string_heap_[types::as_string_idx(a[0])];
-        auto body = string_heap_[types::as_string_idx(a[1])];
-        for (auto& s : strategies_) {
-            if (s.name == name) {
-                s.body = body;
-                return make_bool(true);
-            }
-        }
-        strategies_.push_back({name, body});
-        return make_bool(true);
-    });
-
-    // ── intend-history — 查询意图执行时间线 ────────────────────
+// ── intend-history — 查询意图执行时间线 ────────────────────
     primitives_.add("intend-history", [this](const auto&) -> EvalValue {
         std::string result;
         for (std::size_t i = 0; i < timeline_.size(); ++i) {
             result += std::to_string(i) + ":" + timeline_[i] + "\n";
         }
         if (result.empty()) result = "(empty)";
+        auto sidx = string_heap_.size();
+        string_heap_.push_back(result);
+        return types::make_string(sidx);
+    });
+
+    // ── intend-analytics — 聚合 intend 历史数据 ────────────────
+    primitives_.add("intend-analytics", [this](const auto& a) -> EvalValue {
+        std::string filter_strategy;
+        std::string filter_field;
+        std::string filter_value;
+        std::size_t arg_idx = 0;
+
+        if (a.size() > arg_idx && types::is_string(a[arg_idx])) {
+            filter_strategy = string_heap_[types::as_string_idx(a[arg_idx])];
+            arg_idx++;
+        }
+        if (a.size() > arg_idx + 2 && types::is_string(a[arg_idx])
+            && string_heap_[types::as_string_idx(a[arg_idx])] == ":filter") {
+            if (types::is_string(a[arg_idx + 1]))
+                filter_field = string_heap_[types::as_string_idx(a[arg_idx + 1])];
+            if (types::is_string(a[arg_idx + 2]))
+                filter_value = string_heap_[types::as_string_idx(a[arg_idx + 2])];
+        }
+
+        std::uint64_t total = 0, successes = 0, total_attempts = 0;
+        std::uint64_t total_llm_calls = 0, total_duration = 0;
+        std::map<std::string, std::uint64_t> error_type_counts;
+        std::map<std::string, std::pair<std::uint64_t, std::uint64_t>> task_stats;
+
+        for (auto& rec : intend_history_) {
+            if (!filter_strategy.empty() && rec.strategy_name != filter_strategy) continue;
+            if (!filter_field.empty()) {
+                if (filter_field == "error-type") {
+                    bool matches = false;
+                    for (auto& et : rec.error_types) {
+                        if (et.find(filter_value) != std::string::npos) { matches = true; break; }
+                    }
+                    if (!matches) continue;
+                } else continue;
+            }
+            total++;
+            if (rec.success) successes++;
+            total_attempts += rec.attempts;
+            total_llm_calls += rec.llm_call_count;
+            total_duration += rec.duration_ms;
+            for (auto& et : rec.error_types) error_type_counts[et]++;
+            auto key = rec.task_desc.substr(0, std::min<std::size_t>(rec.task_desc.size(), std::size_t{60}));
+            auto& ts = task_stats[key];
+            ts.second++;
+            if (rec.success) ts.first++;
+        }
+
+        std::string result = "#(analytics";
+        result += " total-runs:" + std::to_string(total);
+        result += " success-rate:";
+        if (total > 0) result += std::to_string(static_cast<double>(successes) / static_cast<double>(total));
+        else result += "0";
+        result += " avg-attempts:";
+        if (total > 0) result += std::to_string(static_cast<double>(total_attempts) / static_cast<double>(total));
+        else result += "0";
+        result += " total-llm-calls:" + std::to_string(total_llm_calls);
+        result += " avg-duration-ms:";
+        if (total > 0) result += std::to_string(total_duration / total);
+        else result += "0";
+        result += " top-errors:(";
+        for (auto& [et, count] : error_type_counts) {
+            result += " " + et + ":" + std::to_string(count);
+        }
+        result += ")";
+        result += " by-task:(";
+        for (auto& [task, stats] : task_stats) {
+            result += " (" + task + " " + std::to_string(stats.first) + "/" + std::to_string(stats.second) + ")";
+        }
+        result += "))";
+
         auto sidx = string_heap_.size();
         string_heap_.push_back(result);
         return types::make_string(sidx);
