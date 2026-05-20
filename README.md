@@ -67,7 +67,7 @@ hash, combinators, maybe, csv, set, io, list, math, string, test, iter, queue, s
 (current-source)                   ; → 源码
 (eval-current)                     ; → 验证
 ```
-LLM 驱动闭循环 (iter + EDSL), 支持 DeepSeek v4 Flash
+LLM 驱动闭循环 (iter + EDSL + intent), 支持 DeepSeek v4 Flash
 
 ### C FFI 🟢
 `c-load`/`c-func`: dlopen 动态库, Int/Float/String/Opaque marshalling, JIT 符号注册
@@ -87,7 +87,7 @@ tests/         bash(117)+unit+integ+bench+agent    ~6k
 
 ## 基准
 
-- [docs/benchmark.md](docs/benchmark.md) — EDSL 模型能力基准 (deepseek-v4-flash: 92% stable)
+- [docs/benchmark.md](docs/benchmark.md) — EDSL 模型能力基准 (deepseek-v4-flash: 47/47, 100%)
 - [docs/design/intent_orchestration.md](docs/design/intent_orchestration.md) — 高层意图编排原语设计
 - [docs/design/llm_stdlib.md](docs/design/llm_stdlib.md) — LLM stdlib 模块设计
 - [tests/edsl_benchmark.py](tests/edsl_benchmark.py) — 运行：`LLM_API_KEY="..." python3 tests/edsl_benchmark.py --rounds 3 --fix --max-attempts 5`
