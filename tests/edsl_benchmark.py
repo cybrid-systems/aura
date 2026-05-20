@@ -336,7 +336,7 @@ def run_single_task_intend(model, base_url, api_key, name, prompt, expected, std
     lines.append('              "\n=== Goal ===\n" goal)))))')
     lines.append('    "temperature" 0.3')
     lines.append('    "max_tokens" 4096))) "content")))')
-
+    lines.append('(display (intend "' + goal_esc + '" __gen__ aura-verify __fix__ ' + str(max_att) + '))')
 
     aura_code = '\n'.join(lines)
     t0 = time.time()
