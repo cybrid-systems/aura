@@ -87,10 +87,25 @@ tests/         bash(117)+unit+integ+bench+agent    ~6k
 
 ## 基准
 
-- [docs/benchmark.md](docs/benchmark.md) — EDSL 模型能力基准 (deepseek-v4-flash: 47/47, 100%)
+### EDSL 模型能力基准 (47/47, 100%)
+- [docs/benchmark.md](docs/benchmark.md) — 详细结果
+- 运行：`LLM_API_KEY="..." python3 tests/edsl_benchmark.py --rounds 3 --fix --intend --max-attempts 5`
+- 覆盖：算术/函数/列表/哈希/递归/FFI/EDSL/TCP 等 8 个能力域
+
+### LLM 驱动 Fuzz 测试
+- [tests/test_fuzz.py](tests/test_fuzz.py) — 用 LLM 生成代码检测编译器崩溃/信号/timeout
+- 运行：`LLM_API_KEY="..." python3 tests/test_fuzz.py`
+- 无 API key 时自动跳过（CI 安全）
+- **结果**：46 pass / 1 fail / 0 crash / 0 timeout
+- [tests/regression/](tests/regression/) — 4 个已修复编译器 bug 的回归守卫
+- [docs/design/llm_fuzz_testing.md](docs/design/llm_fuzz_testing.md) — 全量设计文档 (Phase 1-3)
+- 运行回归：`python3 build.py regression`（无 API key，CI 每次 push 跑）
+
+### E4 Intent Orchestration
 - [docs/design/intent_orchestration.md](docs/design/intent_orchestration.md) — 高层意图编排原语设计
-- [docs/design/llm_stdlib.md](docs/design/llm_stdlib.md) — LLM stdlib 模块设计
-- [tests/edsl_benchmark.py](tests/edsl_benchmark.py) — 运行：`LLM_API_KEY="..." python3 tests/edsl_benchmark.py --rounds 3 --fix --max-attempts 5`
+- [docs/design/e4_evolvable_strategies.md](docs/design/e4_evolvable_strategies.md) — 可演化策略设计
+- `(intend)`, `(intend-analytics)`, `(evolve-strategy)` — 自进化闭环
+- 运行：`LLM_API_KEY="..." python3 tests/edsl_benchmark.py --rounds 3 --intend --evolve`
 
 ## 文档
 
