@@ -351,6 +351,23 @@ def call_api_ref(stdlib_list):
 
 
 
+
+def get_execution_trace(code_str, timeout=10):
+    """Run the generated code in Aura and capture all output as trace.
+    Returns (stdout, stderr) or empty strings on failure.
+    """
+    if not code_str or code_str == "(not available)":
+        return "", ""
+    # Escape the code for embedding in set-code
+    esc = code_str.replace('\\', '\\\\').replace('"', '\\"')
+    aura = '(set-code "' + esc + '")(eval-current)'
+    try:
+        r = subprocess.run([AURA], input=aura, capture_output=True, text=True, timeout=timeout)
+        return r.stdout.strip() if r.returncode == 0 else "", r.stderr.strip()
+    except Exception:
+        return "", ""
+
+
 def run_single_task_intend(model, base_url, api_key, name, prompt, expected, stdlib, api_ref):
     max_att = MAX_ATTEMPTS if FIX_MODE else 3
     sys_prompt = build_sys_prompt(stdlib, api_ref, task_name=name)
@@ -403,9 +420,9 @@ def run_single_task_intend(model, base_url, api_key, name, prompt, expected, std
             rc, out, err = r.returncode, r.stdout.strip(), r.stderr.strip()
             elapsed = time.time() - t0
         except subprocess.TimeoutExpired:
-            return False, '', 'timeout', time.time() - t0, 0, ''
+            return False, '', 'timeout', time.time() - t0, 0
         except FileNotFoundError:
-            return False, '', 'aura binary not found', time.time() - t0, 0, ''
+            return False, '', 'aura binary not found', time.time() - t0, 0
         # Parse out current-source from output
         src_start = out.find('||CURRENT_SRC_START||')
         src_end = out.find('||CURRENT_SRC_END||')
@@ -455,6 +472,29 @@ def run_single_task_intend(model, base_url, api_key, name, prompt, expected, std
             ]
             if missing_kws:
                 fb.append("Missing keywords: " + ", ".join(missing_kws[:5]))
+            # Get execution trace for algorithm-debug tasks
+            if name in ("primes-list", "quicksort"):
+                trace_out, trace_err = get_execution_trace(current_src, timeout=5)
+                if trace_out:
+                    fb.append("")
+                    fb.append("=== Execution Trace ===")
+                    fb.append(trace_out[:500])
+                if trace_err:
+                    fb.append("")
+                    fb.append("=== Execution Errors ===")
+                    fb.append(trace_err[:200])
+            elif name == "tcp-connect":
+                trace_out, trace_err = get_execution_trace(current_src, timeout=15)
+                if trace_out:
+                    fb.append("")
+                    fb.append("=== Execution Trace ===")
+                    fb.append("HTTP Response (first 500 chars):")
+                    fb.append(trace_out[:500])
+                if trace_err:
+                    fb.append("")
+                    fb.append("=== Connection Errors ===")
+                    fb.append(trace_err[:200])
+
             if fix_instructions:
                 fb.append("")
                 fb.append("### Fix Instructions ###")
@@ -505,7 +545,7 @@ def run_single_task_intend(model, base_url, api_key, name, prompt, expected, std
         else:
             break
 
-        success = '"ok"' in out and check_success(out, expected)
+    success = '"ok"' in out and check_success(out, expected)
     if not success and TRACE_MODE:
         err_type = "output-mismatch" if '"ok"' in out else "compile-fail"
         ph = p if 'p' in dir() else "?"
