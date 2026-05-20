@@ -3827,6 +3827,76 @@ Evaluator::Evaluator() {
         return types::make_string(sidx);
     });
 
+
+    // ── define-strategy — 定义策略 ──────────────────────────
+    primitives_.add("define-strategy", [this](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
+            return make_bool(false);
+        auto name = string_heap_[types::as_string_idx(a[0])];
+        auto body = string_heap_[types::as_string_idx(a[1])];
+        for (auto& s : strategies_) {
+            if (s.name == name) { s.body = body; return make_bool(true); }
+        }
+        strategies_.push_back({name, body});
+        return make_bool(true);
+    });
+    // ── register-strategy! — 注册/更新策略 ──────────────
+    primitives_.add("register-strategy!", [this](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
+            return make_bool(false);
+        auto name = string_heap_[types::as_string_idx(a[0])];
+        auto body = string_heap_[types::as_string_idx(a[1])];
+        for (auto& s : strategies_) {
+            if (s.name == name) { s.body = body; return make_bool(true); }
+        }
+        strategies_.push_back({name, body});
+        return make_bool(true);
+    });
+    // ── strategy-field — 读取策略字段 ──────────────────────
+    primitives_.add("strategy-field", [this](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
+            return make_void();
+        auto name = string_heap_[types::as_string_idx(a[0])];
+        auto field = string_heap_[types::as_string_idx(a[1])];
+        for (auto& s : strategies_) {
+            if (s.name == name && field == "body") {
+                auto sid = string_heap_.size();
+                string_heap_.push_back(s.body);
+                return types::make_string(sid);
+            }
+        }
+        return make_void();
+    });
+    // ── strategy-set-field! — 修改策略字段（白名单）───────────
+    primitives_.add("strategy-set-field!", [this](const auto& a) -> EvalValue {
+        if (a.size() < 3 || !types::is_string(a[0]) || !types::is_string(a[1]))
+            return make_bool(false);
+        auto field = string_heap_[types::as_string_idx(a[1])];
+        if (field != "body" || !types::is_string(a[2])) return make_bool(false);
+        auto name = string_heap_[types::as_string_idx(a[0])];
+        auto new_body = string_heap_[types::as_string_idx(a[2])];
+        for (auto& s : strategies_) {
+            if (s.name == name) { s.body = new_body; return make_bool(true); }
+        }
+        return make_bool(false);
+    });
+    // ── strategy-inspect — 一键检视 ────────────────────────
+    primitives_.add("strategy-inspect", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !types::is_string(a[0])) return make_void();
+        auto name = string_heap_[types::as_string_idx(a[0])];
+        for (auto& s : strategies_) {
+            if (s.name == name) {
+                std::string result = "#(strategy-inspect name:\"";
+                result += s.name + "\" body:\"";
+                result += s.body + "\")";
+                auto sid = string_heap_.size();
+                string_heap_.push_back(result);
+                return types::make_string(sid);
+            }
+        }
+        return make_void();
+    });
+
 }
 
 // slot_for_name: find the slot for a primitive name
