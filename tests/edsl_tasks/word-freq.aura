@@ -2,6 +2,7 @@
 ;; goal: Write word frequency counter using hash
 ;; expect: hello
 ;; expect: world
+;; expect: hash
 ;; depend: std/string
 ;; hint: --- WORKING Aura word frequency ---
 ;; hint: (require std/string all:)
