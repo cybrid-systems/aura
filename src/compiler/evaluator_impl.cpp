@@ -3267,21 +3267,21 @@ Evaluator::Evaluator() {
             return make_void();
         auto goal = string_heap_[types::as_string_idx(a[0])];
 
-        // Parse optional args: [strategy-name] [max-attempts]
-        std::string strategy_name = "generate-and-fix";
+        // Parse optional args: [max-attempts] [system-prompt]
         int max_attempts = 3;
+        std::string custom_prompt;
         std::size_t arg_idx = 1;
-        if (a.size() >= 2 && types::is_string(a[1])) {
-            strategy_name = string_heap_[types::as_string_idx(a[1])];
-            arg_idx = 2;
-        }
-        if (a.size() > arg_idx && types::is_int(a[arg_idx]))
-            max_attempts = static_cast<int>(types::as_int(a[arg_idx]));
+        if (a.size() >= 2 && types::is_int(a[1]))
+            max_attempts = static_cast<int>(types::as_int(a[1]));
+        if (a.size() >= 3 && types::is_string(a[2]))
+            custom_prompt = string_heap_[types::as_string_idx(a[2])];
+        else if (a.size() >= 2 && types::is_string(a[1]) && !types::is_int(a[1]))
+            // Second arg is a prompt string (no max-attempts specified)
+            custom_prompt = string_heap_[types::as_string_idx(a[1])];
 
         // Clear timeline for new intend session
         timeline_.clear();
         timeline_.push_back("start:goal=" + goal);
-        timeline_.push_back("strategy:" + strategy_name);
 
         // Config from env vars
         std::string api_key = ::getenv("LLM_API_KEY") ? ::getenv("LLM_API_KEY") : "";
@@ -3301,15 +3301,21 @@ Evaluator::Evaluator() {
 
             if (current_code.empty()) {
                 // First attempt: generate from goal
-                sys_msg = "You are Aura Lisp. Return ONLY valid Aura code. "
-                         "Always END by CALLING the function with (display ...). "
-                         "No markdown, no explanation.";
+                if (!custom_prompt.empty())
+                    sys_msg = custom_prompt;
+                else
+                    sys_msg = "You are Aura Lisp. Return ONLY valid Aura code. "
+                             "Always END by CALLING the function with (display ...). "
+                             "No markdown, no explanation.";
                 user_msg = goal;
             } else {
                 // Correction: feed error back
-                sys_msg = "You are Aura Lisp. Fix the code below based on the error. "
-                         "Return ONLY valid Aura code with (display ...). "
-                         "No markdown, no explanation.";
+                if (!custom_prompt.empty())
+                    sys_msg = "Fix the code per these rules:\n" + custom_prompt;
+                else
+                    sys_msg = "You are Aura Lisp. Fix the code below based on the error. "
+                             "Return ONLY valid Aura code with (display ...). "
+                             "No markdown, no explanation.";
                 user_msg = "Your previous code:\n" + current_code + "\n\n"
                            "Aura produced: " + last_error + "\n\n"
                            "Goal: " + goal + "\n\n"
