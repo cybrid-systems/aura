@@ -1,16 +1,30 @@
 # Aura EDSL Benchmark
 
-> 26 个 LLM 代码生成任务，覆盖基础语法、标准库、类型系统、C FFI、EDSL、TCP。
+> 47 个 LLM 代码生成任务，覆盖基础语法、标准库、类型系统、C FFI、EDSL、TCP、递归算法。
 > 多轮聚合消除 LLM 方差，迭代修正循环让 LLM 自修编译错误。
 
-## Latest: 2026-05-20 — deepseek-v4-flash
+## Latest: 2026-05-20 — deepseek-v4-flash, 47/47 (100%)
 
 ### 双模式：Python fix loop vs 原生 intend 原语
 
-| 模式 | 命令 | ✅ Stable PASS | ❌ Stable FAIL | 🔄 Volatile | 说明 |
+| 模式 | 命令 | ✅ 通过 | ❌ 失败 | 🔄 波动 | 说明 |
 |------|------|:---:|:---:|:---:|------|
-| `--fix` (Python) | `--rounds 3 --fix --max-attempts 5` | **24/26 (92%)** | 0 | 2 | Python HTTP + 手动修正循环 |
-| `--intend` (C++) | `--rounds 3 --intend` | **26/26 (100%)** | 0 | 0 | 原生 intend + JSON 预转义 |
+| `--fix` (Python) | `--rounds 3 --fix --max-attempts 5` | 26/26 (100%) | 0 | 0 | Python HTTP + 手动修正循环 |
+| `--intend` (C++) | `--rounds 3 --intend` | **47/47 (100%)** | 0 | 0 | 原生 intend + json-encode 动态 body |
+| `--intend --evolve` | `--rounds 3 --intend --evolve` | 47/47 (100%) | 0 | 0 | E4 自进化 + hints 注入 |
+
+### Fuzz 测试
+
+| 指标 | 值 |
+|------|-----|
+| 编译器崩溃 | 0 |
+| 内部错误 | 0 |
+| 超时 | 0 |
+| 通过 | 46/47 |
+| 失败 | 1（json-roundtrip，转义边缘情况） |
+| 已知 bug 回归 | 4/4 通过 |
+
+详见 [tests/test_fuzz.py](../tests/test_fuzz.py) 和 [docs/design/llm_fuzz_testing.md](design/llm_fuzz_testing.md)。
 
 `--intend` 模式用 1 个 C++ 原语替代了整个 Python LLM 调用 + 修正循环。
 差 4 个的主要原因：C++ 用 curl 调 LLM 比 Python http.client 慢，复杂任务超时概率更高。
