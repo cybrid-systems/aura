@@ -1,64 +1,171 @@
 #!/usr/bin/env python3
-"""Aura EDSL Benchmark — 多模型 × 多任务，系统化发现问题。
+"""Aura EDSL Benchmark — 多模型 × 多任务 × 多轮 × 迭代修正。
+
+支持：
+  - 多轮运行抵消 LLM 方差 (--rounds N)
+  - 迭代修正：失败后自动反馈错误给 LLM 重试 (--fix)
+  - JSON 输出 (--json)
 
 用法:
-  # 单模型
-  LLM_API_KEY="..." ./tests/edsl_benchmark.py
+  # 单轮单次（原始行为）
+  LLM_API_KEY="***" ./tests/edsl_benchmark.py
 
-  # 指定模型
-  LLM_MODEL=deepseek-v4-flash LLM_API_KEY="..." ./tests/edsl_benchmark.py
+  # 多轮聚合
+  LLM_API_KEY="***" ./tests/edsl_benchmark.py --rounds 5
+
+  # 多轮 + 迭代修正（失败后自动反馈错误给 LLM 重试，最多 3 次）
+  LLM_API_KEY="***" ./tests/edsl_benchmark.py --rounds 3 --fix
+
+  # 多轮 + 修正 + 最多 5 次尝试
+  LLM_API_KEY="***" ./tests/edsl_benchmark.py --rounds 3 --fix --max-attempts 5 --json
 """
 import subprocess, json, sys, os, time, re, http.client, urllib.parse
+from collections import defaultdict
 
 AURA = os.environ.get("AURA_BIN", "./build/aura")
 
 # ── 任务定义 ─────────────────────────────────────────────
-# 每个任务: (name, prompt, expected_keywords, stdlib_needed)
 TASKS = [
-    # L0: 基础算术 (无 stdlib)
-    ("arith-basic", "Write (+ 1 2 3 4 5)", ["15", "6"], []),
-    ("arith-chain", "Define (square x) (* x x), call (square 5)", ["25"], []),
-    
-    # L1: lambda + let (无 stdlib)
+    ("arith-basic",   "Write (+ 1 2 3 4 5)", ["15", "6"], []),
+    ("arith-chain",   "Define (square x) (* x x), call (square 5)", ["25"], []),
     ("lambda-simple", "Define (double x) (* x 2), call (double 10)", ["20"], []),
-    ("letrec-fact", "Define factorial with letrec, compute (fact 5)", ["120"], []),
-    ("named-let", "Use named let to sum 1..10", ["55"], []),
-    
-    # L2: 列表操作 (require std/list)
-    ("list-range", "Use std/list range to get 1..10", ["1", "2", "10"], ["std/list"]),
-    ("list-filter", "Use std/list filter to get evens from 1..10", ["2", "4", "6", "8"], ["std/list"]),
-    ("list-map", "Use std/list map to double elements", ["2", "4", "6"], ["std/list"]),
-    ("list-foldl", "Use std/list foldl to sum a list", ["10", "15", "55"], ["std/list"]),
-    ("list-reverse", "Write reverse using foldl from std/list", ["3", "2", "1"], ["std/list"]),
-    
-    # L3: 高阶函数
-    ("prime-test", "Write prime? that checks if n is prime, test with 17", ["#t"], []),
-    ("primes-list", "Write (primes n) returning all primes ≤ n using std/list filter", ["2", "3", "5", "7"], ["std/list"]),
-    ("unique-hash", "Write (unique lst) removing duplicates using hash", ["1", "2", "3", "4"], []),
-    ("merge-sort", "Write merge sort using std/list", ["1", "2", "3", "4", "5"], ["std/list"]),
-    
-    # L4: 哈希表
-    ("hash-basic", "Create hash with (hash \"a\" 1), read with hash-ref", ["1"], []),
-    ("hash-stats", "Write (stats nums) returning hash with count/sum/mean/min/max", ["count", "sum", "mean"], []),
-    ("word-freq", "Write word frequency counter using hash", ["hello", "world"], ["std/string"]),
-    
-    # L5: 类型系统
-    ("type-check", "Use (check 42 : Int) to verify type", ["42"], []),
-    ("type-of", "Use (type-of 42) to get type", ["Int"], []),
-    ("occurrence", "Use if string? to narrow type, call string-append", ["hello"], []),
-    
-    # L6: C FFI
-    ("ffi-sqrt", "Use (c-func) to call libm sqrt, compute (sqrt 9.0)", ["3", "3.0"], []),
-    ("ffi-strlen", "Use c-func to call strlen from libc", ["5"], []),
-    
-    # L7: EDSL (tested via --serve protocol)
+    ("letrec-fact",   "Define factorial with letrec, compute (fact 5)", ["120"], []),
+    ("named-let",     "Use named let to sum 1..10", ["55"], []),
+    ("list-range",    "Use std/list range to get 1..10", ["1", "2", "10"], ["std/list"]),
+    ("list-filter",   "Use std/list filter to get evens from 1..10", ["2", "4", "6", "8"], ["std/list"]),
+    ("list-map",      "Use std/list map to double elements", ["2", "4", "6"], ["std/list"]),
+    ("list-foldl",    "Use std/list foldl to sum a list", ["10", "15", "55"], ["std/list"]),
+    ("list-reverse",  "Write reverse using foldl from std/list", ["3", "2", "1"], ["std/list"]),
+    ("prime-test",    "Write prime? that checks if n is prime, test with 17", ["#t"], []),
+    ("primes-list",   "Write (primes n) returning all primes <= n using std/list filter",
+                      ["2", "3", "5", "7"], ["std/list"]),
+    ("unique-hash",   "Write (unique lst) removing duplicates using hash", ["1", "2", "3", "4"], []),
+    ("merge-sort",    "Write merge sort using std/list", ["1", "2", "3", "4", "5"], ["std/list"]),
+    ("hash-basic",    'Create hash with (hash "a" 1), read with hash-ref', ["1"], []),
+    ("hash-stats",    "Write (stats nums) returning hash with count/sum/mean/min/max",
+                      ["count", "sum", "mean"], []),
+    ("word-freq",     "Write word frequency counter using hash",
+                      ["hello", "world"], ["std/string"]),
+    ("type-check",    "Use (check 42 : Int) to verify type", ["42"], []),
+    ("type-of",       "Use (type-of 42) to get type", ["Int"], []),
+    ("occurrence",    "Use if string? to narrow type, call string-append", ["hello"], []),
+    ("ffi-sqrt",      "Use (c-func) to call libm sqrt, compute (sqrt 9.0)", ["3", "3.0"], []),
+    ("ffi-strlen",    "Use c-func to call strlen from libc", ["5"], []),
     ("edsl-set-code", '{"cmd":"eval","code":"(define (f x) (+ x 1))"}', ["ok","value"], []),
-    ("edsl-query", '{"cmd":"eval","code":"(define (g x) (* x 2))"}', ["ok"], []),
-    ("edsl-mutate", '{"cmd":"eval","code":"(define (h x) (+ x 1))"}', ["ok"], []),
-    
-    # L8: TCP socket
-    ("tcp-connect", "Connect to httpbin.org:80, send HTTP GET, receive response", ["200", "OK"], []),
+    ("edsl-query",    '{"cmd":"eval","code":"(define (g x) (* x 2))"}', ["ok"], []),
+    ("edsl-mutate",   '{"cmd":"eval","code":"(define (h x) (+ x 1))"}', ["ok"], []),
+    ("tcp-connect",   "Connect to httpbin.org:80, send HTTP GET, receive response", ["200", "OK"], []),
 ]
+
+# ── CLI 配置默认值 ───────────────────────────────────────
+ROUNDS = 1
+FIX_MODE = False
+MAX_ATTEMPTS = 3
+
+# ── 按任务的针对性提示 ────────────────────────────────
+TASK_HINTS = {
+
+"prime-test": """
+--- WORKING Aura prime check (COPY THIS) ---
+(define (prime? n)
+  (let loop ((i 2))
+    (if (>= (* i i) n) #t
+      (if (= (modulo n i) 0) #f
+        (loop (+ i 1))))))
+(display (prime? 17))
+--- RULES ---
+Every (if COND THEN ELSE) needs exactly 3 sub-forms.
+""",
+
+"primes-list": """
+--- WORKING Aura primes list (COPY THIS) ---
+(require std/list all:)
+(define (prime? n)
+  (let loop ((i 2))
+    (if (>= (* i i) n) #t
+      (if (= (modulo n i) 0) #f
+        (loop (+ i 1))))))
+(define (primes n)
+  (filter (lambda (x) (prime? x)) (range 2 n)))
+(display (primes 20))
+""",
+
+"merge-sort": """
+--- WORKING Aura merge sort ---
+(require std/list all:)
+(define (merge a b)
+  (cond
+    ((null? a) b)
+    ((null? b) a)
+    ((< (car a) (car b)) (cons (car a) (merge (cdr a) b)))
+    (else (cons (car b) (merge a (cdr b))))))
+(define (merge-sort lst)
+  (if (or (null? lst) (null? (cdr lst))) lst
+    (let ((mid (quotient (length lst) 2)))
+      (merge (merge-sort (take mid lst)) (merge-sort (drop mid lst))))))
+(display (merge-sort (list 3 1 4 1 5 9 2 6)))
+""",
+
+"hash-stats": """
+--- WORKING Aura hash stats ---
+(require std/list all:)
+(require std/hash all:)
+(define (stats nums)
+  (let ((n (length nums)))
+    (let ((s (foldl + 0 nums)))
+      (hash
+        "count" n
+        "sum" s
+        "mean" (/ s n)
+        "min" (foldl (lambda (acc x) (if (< x acc) x acc)) (car nums) nums)
+        "max" (foldl (lambda (acc x) (if (> x acc) x acc)) (car nums) nums)))))
+; (display <hash>) shows <hash[N]>, NOT keys!
+; MUST use hash-keys to show key names:
+(display (hash-keys (stats (list 1 2 3 4 5))))
+""",
+
+"word-freq": """
+--- WORKING Aura word frequency ---
+(require std/string all:)
+(define (word-freq text)
+  (let ((words (string-split text " ")))
+    (let loop ((ws words) (h (hash)))
+      (if (null? ws) h
+        (let ((w (car ws)))
+          (if (hash-has-key? h w)
+            (loop (cdr ws) (hash-set! h w (+ (hash-ref h w) 1)))
+            (loop (cdr ws) (hash-set! h w 1))))))))
+; (display <hash>) shows <hash[N]>, NOT keys!
+; MUST use hash-keys to show words:
+(display (hash-keys (word-freq "hello world hello")))
+""",
+
+"type-check": """
+--- type-check ---
+(display (check 42 : Int))  ; prints 42 (the VALUE, NOT "done")
+""",
+
+"occurrence": """
+--- occurrence typing ---
+(let ((x "hello"))
+  (if (string? x)
+    (string-append x " world")
+    0))
+""",
+
+"ffi-strlen": """
+--- strlen FFI ---
+(define strlen-fn (c-func -1 "strlen" "(String) -> Int"))
+(display (strlen-fn "hello"))
+""",
+
+"tcp-connect": """
+--- TCP socket ---
+Aura has (tcp-connect "host" port). DO NOT use c-func for networking.
+(define s (tcp-connect "httpbin.org" 80))
+(display "ok")
+""",
+}
 
 # ── LLM 调用 ──────────────────────────────────────────────
 def llm_complete(model, base_url, key, messages, retries=3):
@@ -111,7 +218,6 @@ def test_aura(code, timeout=10):
         return -2, "", "aura binary not found"
 
 def test_aura_serve(code, timeout=10):
-    """Test via --serve protocol (for EDSL primitives)"""
     try:
         r = subprocess.run([AURA, "--serve"], input=code, capture_output=True, text=True, timeout=timeout)
         return r.returncode, r.stdout.strip(), r.stderr.strip()
@@ -121,7 +227,6 @@ def test_aura_serve(code, timeout=10):
         return -2, "", "aura binary not found"
 
 def check_success(out, expected):
-    # Normalize: strip whitespace, handle common patterns
     norm_out = out.strip().strip('"').strip("'")
     for kw in expected:
         if kw in norm_out:
@@ -133,197 +238,311 @@ def get_api_ref():
     r = subprocess.run([AURA, "--eval"], input="(api-reference)", capture_output=True, text=True, timeout=5)
     return r.stdout.strip() if r.returncode == 0 else ""
 
+# ── 构建 system prompt ────────────────────────────────────
+def build_sys_prompt(stdlib, api_ref, task_name=""):
+    sp = (
+        "You are Aura Lisp. THIS IS NOT Common Lisp, Racket, or Scheme.\n"
+        "Do NOT use: defun, let*, letrec* (use letrec), dolist, "
+        "loop, progn, setf, gethash, incf, decf, push, pop,\n"
+        "first, rest, second, third, cadddr, caaaar, caaadr, caadar, "
+        "caaddr, cadaar, cadadr, caddar,\n"
+        "cdaaar, cdaadr, cdadar, cdaddr, cddaar, cddadr, cdddar, cddddr,\n"
+        "format, princ, print, terpri, make-hash-table, mapcar, funcall,\n"
+        "Return ONLY valid Aura code. No markdown, no explanation.\n"
+        "CRITICAL: Always END your code by CALLING the function with (display ...).\n"
+        "  (define (square x) (* x x))\n"
+        "  (display (square 5))\n"
+        "\n"
+        "=== STD LIBRARY ===\n"
+        "Load with (require std/name all:).\n"
+        "  std/list:  filter, map, foldl, range, sort, take, drop, length, reverse, zip\n"
+        "  std/string: string-split, string-trim, string-join\n"
+        "  std/hash:   hash-keys, hash-values, hash-has-key?, hash-ref, hash-set!\n"
+        "  std/iter:   for-each, for\n"
+        "  std/math:   square, sqrt, factorial\n"
+        "\n"
+        "Examples:\n"
+        "  (require std/list all:)\n"
+        "  (filter (lambda (x) (> x 5)) (list 1 2 3 4 5 6))\n"
+        "  (sort (list 3 1 2) (lambda (a b) (< a b)))\n"
+        "  (take 3 (list 1 2 3 4 5))\n"
+        "  (require std/string all:)\n"
+        "  (string-split \"a,b,c\" \",\")\n"
+        "  (require std/hash all:)\n"
+        "  (hash-keys h)           ; (\"a\" \"b\" ...)\n"
+        "  (hash-values h)         ; (1 2 ...)\n"
+        "\n"
+        "=== C FFI ===\n"
+        "  lib-id -1 = RTLD_DEFAULT. No c-load for libc/libm.\n"
+        "  (define sqrt-fn (c-func -1 \"sqrt\" \"(Float) -> Float\"))\n"
+        "  (display (sqrt-fn 9.0))  ; 3\n"
+        "  (define strlen-fn (c-func -1 \"strlen\" \"(String) -> Int\"))\n"
+        "  (display (strlen-fn \"hello\"))  ; 5\n"
+        "\n"
+        "=== HASH DISPLAY WARNING ===\n"
+        "(display <hash>) prints <hash[N]> which does NOT show keys!\n"
+        "To show hash contents, use (hash-keys h) or (hash-values h).\n"
+        "  (display (hash-keys (hash \"a\" 1 \"b\" 2)))  ; shows (\"a\" \"b\")\n"
+        "\n"
+        "=== LOOPING ===\n"
+        "  (let loop ((i 0) (acc 0))       ; named let\n"
+        "    (if (= i 10) acc\n"
+        "      (loop (+ i 1) (+ acc i))))\n"
+        "  (letrec ((fact (lambda (n) ...))) (fact 5))\n"
+        "\n"
+        "=== TYPE SYSTEM ===\n"
+        "  (check 42 : Int)       ; compile-time check, returns 42\n"
+        "  (type-of 42)           ; runtime -> Int\n"
+        "  (string? x)            ; predicate for occurrence typing\n"
+        "  (if (string? x) (string-append x \"!\") 0)\n"
+        "\n"
+        "=== TCP ===\n"
+        "  (tcp-connect \"host\" port)  ; DO NOT use c-func for networking.\n"
+    )
+    if stdlib:
+        sp += f"Available stdlib: {', '.join(stdlib)}. Use (require std/name all:) to load them.\n"
+    if task_name and task_name in TASK_HINTS:
+        sp += "\n" + "=" * 40 + "\n"
+        sp += f"TASK-SPECIFIC HINT for \"{task_name}\":\n"
+        sp += TASK_HINTS[task_name]
+    sp += f"\nCurrent Aura primitives:\n{api_ref[:2000]}"
+    return sp
+
+# ── 构建 correction prompt ────────────────────────────────
+def build_correction_prompt(code, error, expected):
+    """Build a follow-up prompt asking LLM to fix its code."""
+    err_preview = error[:200]
+    exp_preview = ", ".join(expected)
+    return (
+        "Your previous code FAILED. Please fix it.\n"
+        f"Your previous code:\n{code}\n\n"
+        f"Aura produced: {err_preview}\n\n"
+        f"Expected output to contain: [{exp_preview}]\n\n"
+        "Checklist:\n"
+        "- Did you forget (require ...)?\n"
+        "- Did you call (display ...)?\n"
+        "- Did you use non-existent primitives? Check the banned list above.\n"
+        "- (display <hash>) shows <hash[N]>, use (hash-keys h) to see keys.\n"
+        "- For TCP: use (tcp-connect \"host\" port), NOT c-func.\n"
+        "Output ONLY corrected Aura code, nothing else."
+    )
+
+# ── 单任务（支持迭代修正）──────────────────────────────────
+def run_single_task(model, base_url, api_key, name, prompt, expected, stdlib, api_ref):
+    """Run one task with optional multi-turn correction.
+
+    When FIX_MODE is enabled, keeps feeding errors back to LLM
+    up to MAX_ATTEMPTS.
+
+    Returns (success, output, error, total_llm_time, attempts).
+    """
+    sys_prompt = build_sys_prompt(stdlib, api_ref, task_name=name)
+    messages = [
+        {"role": "system", "content": sys_prompt},
+        {"role": "user", "content": prompt}
+    ]
+
+    attempts = 0
+    total_llm_time = 0.0
+    max_att = MAX_ATTEMPTS if FIX_MODE else 1
+
+    while attempts < max_att:
+        attempts += 1
+        t0 = time.time()
+        try:
+            resp = llm_complete(model, base_url, api_key, messages)
+        except Exception as e:
+            total_llm_time += time.time() - t0
+            return False, "", str(e), total_llm_time, attempts
+        llm_t = time.time() - t0
+        total_llm_time += llm_t
+
+        code = extract_code(resp)
+        if not code:
+            if attempts >= max_att:
+                return False, "", "no code extracted", total_llm_time, attempts
+            messages.append({"role": "assistant", "content": resp or ""})
+            messages.append({"role": "user", "content":
+                "No Aura code found. Output ONLY Aura code, no markdown."})
+            continue
+
+        if name.startswith("edsl-"):
+            rc, out, err = test_aura_serve(code)
+        else:
+            rc, out, err = test_aura(code)
+
+        success = rc == 0 and check_success(out, expected)
+        if success:
+            return True, out, "", total_llm_time, attempts
+
+        if attempts >= max_att:
+            return False, out if rc == 0 else "", err or out, total_llm_time, attempts
+
+        msg = err or out
+        if not msg:
+            msg = f"exit code {rc}, no output"
+        messages.append({"role": "assistant", "content": resp})
+        messages.append({"role": "user", "content": build_correction_prompt(code, msg, expected)})
+
+    return False, "", "max attempts", total_llm_time, attempts
+
+# ── 打印结果表 ────────────────────────────────────────────
+def print_task_table(task_results):
+    print(f"  {'Task':22s} {'Pass/Total':>10s} {'Rate':>6s}  {'Verdict':>12s}")
+    print(f"  {'─'*22} {'─'*10} {'─'*6}  {'─'*12}")
+    stable_pass = stable_fail = volatile = 0
+    for name, passes, total in sorted(task_results):
+        rate = passes / total * 100 if total > 0 else 0
+        if rate == 100:
+            verdict = "✅  Stable PASS"
+            stable_pass += 1
+        elif rate == 0:
+            verdict = "❌  Stable FAIL"
+            stable_fail += 1
+        elif rate >= 50:
+            verdict = "🔄  Volatile (pass)"
+            volatile += 1
+        else:
+            verdict = "🔄  Volatile (fail)"
+            volatile += 1
+        print(f"  {name:22s} {passes:3d}/{total:<4d}  {rate:5.0f}%  {verdict}")
+    print(f"\n  ➤ Stable: {stable_pass}✅ / {stable_fail}❌ + Volatile: {volatile}🔄 = {stable_pass+stable_fail+volatile}")
+    return stable_pass, stable_fail, volatile
+
 # ── 主流程 ────────────────────────────────────────────────
 def main():
+    global ROUNDS, FIX_MODE, MAX_ATTEMPTS
+
     models = os.environ.get("LLM_MODEL", "deepseek-v4-flash").split(",")
     base_url = os.environ.get("LLM_BASE_URL", "https://api.deepseek.com/v1")
     api_key = os.environ.get("LLM_API_KEY", "")
-    
+    output_json = False
+
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        if args[i] in ("-r", "--rounds"):
+            i += 1
+            if i < len(args):
+                try:
+                    ROUNDS = int(args[i])
+                except ValueError:
+                    pass
+        elif args[i] == "--json":
+            output_json = True
+        elif args[i] == "--fix":
+            FIX_MODE = True
+        elif args[i] == "--max-attempts":
+            i += 1
+            if i < len(args):
+                try:
+                    MAX_ATTEMPTS = int(args[i])
+                except ValueError:
+                    pass
+        i += 1
+
     if not api_key:
         print("❌ LLM_API_KEY not set")
         sys.exit(1)
-    
-    # Get current API capabilities
+
     api_ref = get_api_ref()
-    
-    results = {}
+
+    mode_tag = ""
+    if FIX_MODE:
+        mode_tag = f"  (fix mode: up to {MAX_ATTEMPTS} attempts per task per round)"
+
     print(f"\n{'='*70}")
     print(f"Aura EDSL Benchmark")
     print(f"Models: {', '.join(models)}")
     print(f"Tasks: {len(TASKS)}")
+    print(f"Rounds: {ROUNDS}{mode_tag}")
     print(f"{'='*70}\n")
-    
+
+    all_results = {}
+
     for model in models:
         model = model.strip()
-        results[model] = {"pass": 0, "fail": 0, "errors": []}
-        print(f"\n── Model: {model} ──")
-        
+        all_results[model] = {}
+        task_stats = defaultdict(lambda: {"passes": 0, "total": 0, "errors": [], "llm_times": [], "attempts": []})
+        print(f"\n{'─'*70}")
+        print(f"  Model: {model}")
+        print(f"{'─'*70}")
+
+        start_time = time.time()
+
         for name, prompt, expected, stdlib in TASKS:
-            # Build system prompt
-            sys_prompt = (
-                "You are Aura Lisp. THIS IS NOT Common Lisp, Racket, or Scheme.\n"
-                "Do NOT use: defun, let*, letrec* (use letrec), dolist, loop, progn, \n"
-                "setf, gethash, incf, decf, push, pop, first, rest, second, third, \n"
-                "format, princ, print, terpri, make-hash-table, mapcar, funcall, \n"
-                "lambda (use (lambda (x) ...) - same but no &rest), car/cdr (same).\n"
-                "Return ONLY valid Aura code. No markdown, no explanation.\n"
-                "CRITICAL: Always END your code by CALLING the function with a test case "
-                "so the result is visible. For example:\n"
-                "  (define (square x) (* x x))\n"
-                "  (display (square 5))\n"
-                "Never just define a function without calling it.\n"
-                "Use (display ...) or (write ...) to show output.\n"
-                "Do NOT use (newline) alone.\n"
-                "\n"
-                "Aura is a lexically-scoped Lisp with parentheses syntax.\n"
-                "Key differences from Common Lisp:\n"
-                "  - No defun: use (define (name args) body)\n"
-                "  - No dolist: use named-let recursion or (for-each ...) from std/iter\n"
-                "  - No setf: use (set! var value)\n"
-                "  - No gethash: use (hash-ref h key), (hash-set! h key val)\n"
-                "  - No loop: use letrec or named-let for iteration\n"
-                "  - Hash iteration: (hash-keys h), (hash->list h) from std/hash\n"
-                "\n"
-                "=== STD LIBRARY USAGE ===\n"
-                "Aura stdlib modules must be loaded with (require std/name all:).\n"
-                "Examples:\n"
-                "  (require std/list all:)\n"
-                "  (filter (lambda (x) (> x 5)) (list 1 2 3 4 5 6))\n"
-                "  (sort (list 3 1 2))\n"
-                "  (take 3 (list 1 2 3 4 5))\n"
-                "  (drop 3 (list 1 2 3 4 5))\n"
-                "  (require std/string all:)\n"
-                "  (string-split \"a,b,c\" \",\")\n"
-                "  (require std/hash all:)\n"
-                "  (hash-keys h) (hash->list h)\n"
-                "  (require std/iter all:)\n"
-                "  (for-each (lambda (x) (display x)) lst)\n"
-                "\n"
-                "=== C FFI USAGE ===\n"
-                "Foreign function interface (architecture independent):\n"
-                "  lib-id -1 means RTLD_DEFAULT (already-loaded symbols).\n"
-                "  No c-load needed for libc/libm functions.\n"
-                "  (define sqrt (c-func -1 \"sqrt\" \"(Float) -> Float\"))\n"
-                "  (display (sqrt 9.0))  ; shows 3\n"
-                "  (define strlen (c-func -1 \"strlen\" \"(String) -> Int\"))\n"
-                "  (display (strlen \"hello\"))  ; shows 5\n"
-                "\n"
-                "=== DO NOT USE ===\n"
-                "These Scheme/Racket primitives do NOT exist in Aura:\n"
-                "  zero?, negative?, even?, odd?, for-each, printf, format, displayln,\n"
-                "  define-syntax, syntax-rules, match, λ, unless, when (use if instead),\n"
-                "  let*, let-values, call/cc, call-with-current-continuation,\n"
-                "  call-with-input-file, with-input-from-file, open-input-file,\n"
-                "  with-output-to-file, current-output-port, current-input-port\n"
-                "Use (require std/io all:) for file I/O instead.\n"
-                "\n"
-                "=== LOOPING ===\n"
-                "Named let works (all loops use recursion):\n"
-                "  (let loop ((i 0) (acc 0))\n"
-                "    (if (= i 10) acc\n"
-                "      (loop (+ i 1) (+ acc i))))\n"
-                "\n"
-                "=== TYPE ANNOTATIONS ===\n"
-                "  (check 42 : Int)       ; type check at compile time\n"
-                "  (type-of 42)           ; runtime type query -> Int\n"
-            )
-            if stdlib:
-                sys_prompt += f"Available stdlib: {', '.join(stdlib)}. Use (require std/name all:) to load them.\n"
-            sys_prompt += f"\nCurrent Aura primitives:\n{api_ref[:2000]}"
-            
-            # LLM call
-            t0 = time.time()
-            try:
-                resp = llm_complete(model, base_url, api_key, [
-                    {"role": "system", "content": sys_prompt},
-                    {"role": "user", "content": prompt}
-                ])
-            except Exception as e:
-                print(f"  ⏱️  {name}: LLM error: {e}")
-                results[model]["errors"].append((name, str(e)))
-                results[model]["fail"] += 1
-                continue
-            
-            llm_time = time.time() - t0
-            
-            # Extract and test
-            code = extract_code(resp)
-            if not code:
-                print(f"  ⏱️  {name}: no code extracted ({llm_time:.1f}s)")
-                results[model]["errors"].append((name, "no code"))
-                results[model]["fail"] += 1
-                continue
-            
-            if name.startswith("edsl-"):
-                rc, out, err = test_aura_serve(code)
-            else:
-                rc, out, err = test_aura(code)
-            success = rc == 0 and check_success(out, expected)
-            
-            status = "✅" if success else "❌"
-            print(f"  {status} {name} ({llm_time:.1f}s) {out[:60] if out else err[:60]}")
-            sys.stdout.flush()
-            
-            if success:
-                results[model]["pass"] += 1
-            else:
-                results[model]["errors"].append((name, err or out))
-                results[model]["fail"] += 1
-    
-    # ── Summary ──────────────────────────────────────────
-    print(f"\n{'='*70}")
-    print("Summary")
-    print(f"{'='*70}")
-    for model, r in results.items():
-        total = r["pass"] + r["fail"]
-        rate = r["pass"] / total * 100 if total > 0 else 0
-        print(f"\n{model}: {r['pass']}/{total} ({rate:.0f}%)")
-        if r["errors"]:
-            print("  Failures:")
-            for name, err in r["errors"][:10]:
-                err_short = err[:80].replace("\n", " ")
-                print(f"    {name}: {err_short}")
-    
-    # ── 生成 stdlib/compiler gap 报告 ─────────────────────
-    print(f"\n{'='*70}")
-    print("Stdlib / Compiler Gaps")
-    print(f"{'='*70}")
-    
-    # Collect all error patterns
-    all_errors = []
-    for model, r in results.items():
-        for name, err in r["errors"]:
-            all_errors.append((name, err))
-    
-    # Categorize errors
-    gaps = {
-        "missing-primitive": set(),
-        "stdlib-gap": set(),
-        "compiler-bug": set(),
-        "llm-misunderstanding": set(),
-    }
-    
-    for name, err in all_errors:
-        el = err.lower()
-        if "unbound variable" in el or "unbound" in el:
-            var = err.split("unbound variable")[-1].strip().strip(": ")
-            if any(s in var for s in ["std/", "require", "import"]):
-                gaps["stdlib-gap"].add(f"{name}: missing require/module '{var}'")
-            else:
-                gaps["missing-primitive"].add(f"{name}: missing primitive '{var}'")
-        elif "parse error" in el:
-            gaps["compiler-bug"].add(f"{name}: parse error - {err[:60]}")
-        elif "type error" in el:
-            gaps["compiler-bug"].add(f"{name}: type error - {err[:60]}")
-        else:
-            gaps["llm-misunderstanding"].add(f"{name}: {err[:80]}")
-    
-    for category, items in gaps.items():
-        if items:
-            print(f"\n{category}:")
-            for item in sorted(items)[:5]:
-                print(f"  • {item}")
-    
+            task_passes = 0
+            print(f"\n  ── {name} ──")
+            for round_i in range(1, ROUNDS + 1):
+                success, out, err, llm_t, attempts = run_single_task(
+                    model, base_url, api_key, name, prompt, expected, stdlib, api_ref
+                )
+                task_stats[name]["llm_times"].append(llm_t)
+                task_stats[name]["attempts"].append(attempts)
+                if success:
+                    task_passes += 1
+                    att = f" (attempts={attempts})" if FIX_MODE else ""
+                    line = f"    Round {round_i:2d}/{ROUNDS}: ✅ ({llm_t:.1f}s{att})"
+                else:
+                    task_stats[name]["errors"].append(err[:80])
+                    att = f" in {attempts}" if FIX_MODE else ""
+                    line = f"    Round {round_i:2d}/{ROUNDS}: ❌ {err[:50]} ({llm_t:.1f}s{att})"
+                print(line)
+                sys.stdout.flush()
+
+            task_stats[name]["passes"] = task_passes
+            task_stats[name]["total"] = task_stats[name]["passes"] + len(task_stats[name]["errors"])
+
+        elapsed = time.time() - start_time
+        task_stats["__meta__"] = {"elapsed": round(elapsed, 1)}
+
+        print(f"\n{'─'*70}")
+        print(f"  {model} — Per-Task Results ({ROUNDS} rounds)")
+        print(f"{'─'*70}")
+        task_rows = [(n, s["passes"], s["total"]) for n, s in task_stats.items() if n != "__meta__"]
+        sp, sf, sv = print_task_table(task_rows)
+
+        if FIX_MODE:
+            print(f"\n  📊 Attempt stats:")
+            for n in sorted(s for s in task_stats if s != "__meta__"):
+                s = task_stats[n]
+                if s["attempts"]:
+                    avg = sum(s["attempts"]) / len(s["attempts"])
+                    print(f"    {n:22s} avg {avg:.1f} attempts, {s['passes']}/{s['total']} passed")
+
+        volatile_tasks = [n for n, s in task_stats.items()
+                          if n != "__meta__" and 0 < s["passes"] < s["total"]]
+        if volatile_tasks:
+            print(f"\n  ⚠️  Volatile tasks:")
+            for n in sorted(volatile_tasks):
+                s = task_stats[n]
+                print(f"    {n}: {s['passes']}/{s['total']} ({s['passes']/s['total']*100:.0f}%)")
+                for err in s["errors"][:3]:
+                    print(f"      · {err}")
+
+        all_results[model] = dict(task_stats)
+
+    if output_json:
+        output = {}
+        for model, tasks in all_results.items():
+            mout = {}
+            for task_name, stats in tasks.items():
+                if task_name == "__meta__":
+                    mout["__meta__"] = stats
+                else:
+                    entry = {
+                        "passes": stats["passes"],
+                        "total": stats["total"],
+                        "pass_rate": round(stats["passes"] / stats["total"] * 100, 1) if stats["total"] else 0,
+                        "avg_llm_time": round(sum(stats["llm_times"]) / len(stats["llm_times"]), 2) if stats["llm_times"] else 0,
+                    }
+                    if stats["attempts"]:
+                        entry["avg_attempts"] = round(sum(stats["attempts"]) / len(stats["attempts"]), 1)
+                    mout[task_name] = entry
+            output[model] = mout
+        print(f"\n{'='*70}")
+        print(json.dumps(output, indent=2))
+
     print(f"\n{'='*70}")
     print("Done")
     print(f"{'='*70}")
