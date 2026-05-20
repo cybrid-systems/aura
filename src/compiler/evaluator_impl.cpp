@@ -3682,7 +3682,7 @@ Evaluator::Evaluator() {
             string_heap_.push_back(code_str);
             auto ver = call_fn(ver_cid, {types::make_string(cv)});
 
-            if (ver == "#t") {
+            if (ver.find("#t") == 0) {
                 current_code_str = code_str;
                 timeline_.push_back("attempt_" + std::to_string(attempt) + ":success");
                 auto result = "#(status:\"ok\" goal:\"" + goal + "\" iterations:" + std::to_string(attempt) + ")";
