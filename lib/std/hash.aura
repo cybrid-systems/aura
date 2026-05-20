@@ -3,7 +3,7 @@
 (export
   hash-set hash-ref hash-get hash-remove
   hash-keys hash-values hash-length hash->list
-  hash-merge hash-empty? alist->hash)
+  hash-merge hash-empty? alist->hash frequencies)
 
 (define (for-each f lst)
   (if (null? lst) #t
@@ -37,3 +37,12 @@
     (for-each (lambda (k) (hash-set result k (hash-ref a k))) (hash-keys a))
     (for-each (lambda (k) (hash-set result k (hash-ref b k))) (hash-keys b))
     result))
+
+(define (frequencies lst)
+  (let ((h (hash)))
+    (for-each (lambda (x)
+      (let ((v (hash-ref h x)))
+        (if v
+          (hash-set h x (+ v 1))
+          (hash-set h x 1)))) lst)
+    h))
