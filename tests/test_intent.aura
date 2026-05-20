@@ -1,16 +1,53 @@
-; Aura intend — 高层意图编排原语测试
-; E1: 基础 intend 原语
-;
-; 测试依赖 LLM_API_KEY 环境变量（跳过测试则失败但不会崩溃）
+; Aura intend — E1 测试套件
+; 测试 intend 原语的生命周期和边界条件
 
-(display "=== intent E1 tests ===")
+(display "╔════════════════════════════════════════╗")
+(display "║  intend E1 Tests                      ║")
+(display "╚════════════════════════════════════════╝")
 
-; 1. 无 API key 时优雅失败（不崩溃）
-(display "--- test: no api key graceful fail ---")
-(display (intend "test" 1))
+; ── 1. 无 API key → 优雅失败 ──────────────────────────
+(display "")
+(display "=== 1. Graceful failure (no API key) ===")
 
-; 2. 无效 API key 时也优雅失败
-(display "--- test: bad api key graceful fail ---")
-(display (intend "bad test" 1))
+(let ((r (intend "test" 1)))
+  (display r))
 
-(display "=== E1 tests complete ===")
+; ── 2. 缺参数（空调用）─────────────────────────────
+(display "")
+(display "=== 2. No arguments ===")
+(display (intend))  
+
+; ── 3. 空字符串 goal ──────────────────────────────
+(display "")
+(display "=== 3. Empty goal ===")
+(display (intend "" 1))
+
+; ── 4. max-attempts = 0 ──────────────────────────
+(display "")
+(display "=== 4. max-attempts = 0 ===")
+(display (intend "test" 0))
+
+; ── 5. max-attempts = 5（也能跑）─────────────────
+(display "")
+(display "=== 5. max-attempts = 5 ===")
+(display (intend "test" 5))
+
+; ── 6. 作为 EDSL 管线的一部分 ─────────────────────
+(display "")
+(display "=== 6. With set-code pipeline ===")
+(set-code "(intend \"test\" 1)")
+(display (eval-current))
+
+; ── 7. 返回格式验证 ──────────────────────────────
+(display "")
+(display "=== 7. Result format inspection ===")
+(let ((r (intend "hello" 1)))
+  (display "result type: ")
+  (display (type-of r))
+  (display "result: ")
+  (display r))
+
+(display "")
+(display "╔════════════════════════════════════════╗")
+(display "║  E1 tests complete                    ║")
+(display "╚════════════════════════════════════════╝")
