@@ -1,0 +1,12 @@
+;; task: table-lookup
+;; goal: Write (lookup key table) that searches a list of pairs by key using std/list filter
+;; expect: 30
+;; depend: std/list
+;; hint: --- WORKING Aura table lookup ---
+;; hint: (require std/list all:)
+;; hint: (define table (list (list "a" 10) (list "b" 20) (list "c" 30)))
+;; hint: (define (lookup key table)
+;; hint:   (let ((matches (filter (lambda (row) (= (car row) key)) table)))
+;; hint:     (if (null? matches) ()
+;; hint:       (car (cdr (car matches))))))
+;; hint: (display (lookup "c" table))

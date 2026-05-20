@@ -1,0 +1,12 @@
+;; task: vector-ops
+;; goal: Use make-vector, vector-set!, and vector-ref to create and multiply elements of a vector
+;; expect: 24
+;; hint: --- WORKING Aura vector ops ---
+;; hint: (define v (make-vector 4))
+;; hint: (vector-set! v 0 1)
+;; hint: (vector-set! v 1 2)
+;; hint: (vector-set! v 2 3)
+;; hint: (vector-set! v 3 4)
+;; hint: (let loop ((i 0) (p 1))
+;; hint:   (if (= i (vector-length v)) (display p)
+;; hint:     (loop (+ i 1) (* p (vector-ref v i)))))

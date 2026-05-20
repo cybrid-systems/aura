@@ -1,0 +1,12 @@
+;; task: list-zip
+;; goal: Write (zip a b) using map from std/list that combines two lists into pairs, test with (list 1 2) and (list 3 4)
+;; expect: 1 3
+;; expect: 2 4
+;; depend: std/list
+;; hint: --- WORKING Aura zip ---
+;; hint: (require std/list all:)
+;; hint: (define (zip a b)
+;; hint:   (if (or (null? a) (null? b)) ()
+;; hint:     (cons (list (car a) (car b))
+;; hint:           (zip (cdr a) (cdr b)))))
+;; hint: (display (zip (list 1 2) (list 3 4)))
