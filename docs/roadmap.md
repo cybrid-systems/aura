@@ -86,10 +86,12 @@ Aura 编译器用 Aura 写。等前面稳定后再启。
 - 评测从"代码正确率"变成"意图达成率"
 
 #### E4: 可演化策略
-- LLM 通过 `(mutate:rebind "strategy" new-def)` 动态修改策略
-- 多意图协作：`(intend A)` 内部调 `(intend B)`
-- 从 `intend-history` 自动学习：哪些 prompt 有效、哪些任务总是卡在哪里
-- 意图树可视化
+- [设计文档](design/e4_evolvable_strategies.md)
+- 结构化 `intend-history`：`intend-analytics` 原语—按策略/任务聚合统计
+- `strategy-field` / `strategy-set-field!` 原语—运行时检视和修改策略
+- `evolve-strategy` 函数—根据历史数据自动调优参数（temperature/max-attempts/sys-prompt）
+- LLM 通过 `mutate:rebind` 动态修改策略字段
+- 多意图协作与意图树
 
 ---
 
