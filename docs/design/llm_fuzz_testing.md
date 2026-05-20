@@ -217,6 +217,89 @@ Compiler coverage by LLM fuzz (47 tasks):
 
 ---
 
+## 实施现状
+
+| Phase | 状态 | 交付 |
+|-------|------|------|
+| Phase 1: 编译器崩溃检测 | ✅ | tests/test_fuzz.py, tests/reproducers/ |
+| Phase 2: 回归守卫 | ✅ | tests/regression/, build.py regression, CI 集成 |
+| Phase 3: 覆盖率引导 | ✅ | coverage-report 原语 + 9 路径埋点 |
+
+---
+
+## Phase 3: 覆盖率引导实现
+
+### 编译器埋点
+
+在 `evaluator_impl.cpp` 的关键路径插入计数器：
+
+```cpp
+// 全局或 Evaluator 成员
+std::array<std::uint64_t, 16> coverage_counters_ = {};
+
+// 在关键节点递增：
+// counter 0: parser (每次 parse)
+// counter 1: typecheck (每次 typecheck-current)
+// counter 2: tree-walker eval_flat (每次调用)
+// counter 3: JIT compile (每次编译)
+// counter 4: macro expand (每次宏展开)
+// counter 5: set-code (EDSL)
+// counter 6: query (EDSL query)
+// counter 7: mutate (EDSL mutate)
+// counter 8-15: 预留
+```
+
+### 覆盖率报告原语
+
+```scheme
+(coverage-report) → 返回 16 个计数器的 hash
+;; → (hash "parser" 42 "typecheck" 38 "eval" 156 "jit" 12 "macro" 3 ...)
+```
+
+### fuzz 集成
+
+`test_fuzz.py` 在每个任务后收集 `coverage-report`：
+
+```python
+# 在 task 完成后
+r2 = subprocess.run([aura_bin], input='(coverage-report)\n',
+                    capture_output=True, text=True, timeout=2)
+# 解析 hash → 累加到覆盖率统计
+coverage["parser"] += count_from(r2.stdout, "parser")
+```
+
+运行完 47 个任务后输出覆盖率热图：
+
+```
+Compiler coverage by LLM fuzz (47 tasks):
+  parser:        ████████████████ 152
+  typecheck:     ████████████████ 138
+  eval:          ████████████████ 267
+  jit:           ████              12  ← LLM 很少触发 JIT
+  macro:         ██                  5
+  edsl:          ████████           28
+  ffi:           ████               12
+```
+
+### 引导策略
+
+根据覆盖率热图，补充触发低覆盖区域的 benchmark 任务：
+
+| 低覆盖区域 | 补充任务类型 | 示例 |
+|-----------|-------------|------|
+| JIT (12) | 大量算术/循环 | `(let loop ...) + 复杂算术` |
+| Macro (5) | 使用 defmacro 的任务 | 宏定义 + 展开 |
+| FFI (12) | 调用 c-func 的任务 | 数学函数、字符串操作 |
+
+### 实现计划
+
+1. `coverage_counters_` 数组 + 16 个关键节点埋点（~30min）
+2. `(coverage-report)` 原语 + service.ixx 注册（~10min）
+3. test_fuzz.py 收集覆盖率 + 输出热图（~20min）
+4. 跑一轮 fuzz → 分析低覆盖区域 → 补充任务（~30min）
+
+---
+
 ## 对比：传统 fuzzing vs LLM fuzzing
 
 | 维度 | 传统 fuzzer (AFL/libFuzzer) | LLM fuzzer (本方案) |
