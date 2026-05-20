@@ -1,0 +1,32 @@
+{
+"rules": [
+{
+"primary-output": "CMakeFiles/aura.dir/src/compiler/lowering.ixx.o",
+"provides": [
+{
+"logical-name": "aura.compiler.lowering",
+"is-interface": true
+}
+],
+"requires": [
+{
+"logical-name": "aura.core"
+}
+,
+{
+"logical-name": "aura.compiler.evaluator"
+}
+,
+{
+"logical-name": "aura.compiler.ir"
+}
+,
+{
+"logical-name": "std"
+}
+]
+}
+],
+"version": 0,
+"revision": 0
+}

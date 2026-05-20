@@ -1,0 +1,28 @@
+{
+"rules": [
+{
+"primary-output": "CMakeFiles/aura.dir/src/compiler/query.ixx.o",
+"provides": [
+{
+"logical-name": "aura.compiler.query",
+"is-interface": true
+}
+],
+"requires": [
+{
+"logical-name": "aura.core"
+}
+,
+{
+"logical-name": "aura.diag"
+}
+,
+{
+"logical-name": "std"
+}
+]
+}
+],
+"version": 0,
+"revision": 0
+}

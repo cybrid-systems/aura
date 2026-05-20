@@ -1,0 +1,14 @@
+{
+"rules": [
+{
+"primary-output": "CMakeFiles/test_ir.dir/src/compiler/type_checker_impl.cpp.o",
+"requires": [
+{
+"logical-name": "aura.compiler.type_checker"
+}
+]
+}
+],
+"version": 0,
+"revision": 0
+}

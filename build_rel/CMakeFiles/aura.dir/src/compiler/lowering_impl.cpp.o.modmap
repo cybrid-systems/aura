@@ -1,0 +1,4 @@
+$root .
+aura.compiler.value CMakeFiles/aura.dir/aura.compiler.value.gcm
+aura.core.ast CMakeFiles/aura.dir/aura.core.ast.gcm
+aura.compiler.lowering CMakeFiles/aura.dir/aura.compiler.lowering.gcm

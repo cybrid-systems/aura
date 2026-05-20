@@ -1,0 +1,68 @@
+{
+"rules": [
+{
+"primary-output": "CMakeFiles/test_ir.dir/src/compiler/service.ixx.o",
+"provides": [
+{
+"logical-name": "aura.compiler.service",
+"is-interface": true
+}
+],
+"requires": [
+{
+"logical-name": "aura.core"
+}
+,
+{
+"logical-name": "aura.compiler.lowering"
+}
+,
+{
+"logical-name": "aura.parser.parser"
+}
+,
+{
+"logical-name": "aura.compiler.evaluator"
+}
+,
+{
+"logical-name": "aura.diag"
+}
+,
+{
+"logical-name": "aura.compiler.ir"
+}
+,
+{
+"logical-name": "aura.compiler.value"
+}
+,
+{
+"logical-name": "aura.compiler.type_checker"
+}
+,
+{
+"logical-name": "aura.compiler.cache"
+}
+,
+{
+"logical-name": "aura.compiler.ir_executor"
+}
+,
+{
+"logical-name": "std"
+}
+,
+{
+"logical-name": "aura.compiler.pass_manager"
+}
+,
+{
+"logical-name": "aura.core.type"
+}
+]
+}
+],
+"version": 0,
+"revision": 0
+}

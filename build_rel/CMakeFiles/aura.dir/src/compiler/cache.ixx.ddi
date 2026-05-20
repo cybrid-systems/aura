@@ -1,0 +1,28 @@
+{
+"rules": [
+{
+"primary-output": "CMakeFiles/aura.dir/src/compiler/cache.ixx.o",
+"provides": [
+{
+"logical-name": "aura.compiler.cache",
+"is-interface": true
+}
+],
+"requires": [
+{
+"logical-name": "aura.core"
+}
+,
+{
+"logical-name": "std"
+}
+,
+{
+"logical-name": "aura.compiler.ir"
+}
+]
+}
+],
+"version": 0,
+"revision": 0
+}

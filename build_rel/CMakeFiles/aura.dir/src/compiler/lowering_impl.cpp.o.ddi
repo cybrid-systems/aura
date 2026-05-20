@@ -1,0 +1,22 @@
+{
+"rules": [
+{
+"primary-output": "CMakeFiles/aura.dir/src/compiler/lowering_impl.cpp.o",
+"requires": [
+{
+"logical-name": "aura.compiler.value"
+}
+,
+{
+"logical-name": "aura.core.ast"
+}
+,
+{
+"logical-name": "aura.compiler.lowering"
+}
+]
+}
+],
+"version": 0,
+"revision": 0
+}

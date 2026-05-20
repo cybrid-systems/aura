@@ -1,0 +1,18 @@
+{
+"rules": [
+{
+"primary-output": "CMakeFiles/test_ir.dir/src/core/ast_impl.cpp.o",
+"requires": [
+{
+"logical-name": "aura.core.type"
+}
+,
+{
+"logical-name": "aura.core.ast"
+}
+]
+}
+],
+"version": 0,
+"revision": 0
+}

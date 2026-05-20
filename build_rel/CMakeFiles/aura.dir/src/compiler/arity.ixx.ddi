@@ -1,0 +1,24 @@
+{
+"rules": [
+{
+"primary-output": "CMakeFiles/aura.dir/src/compiler/arity.ixx.o",
+"provides": [
+{
+"logical-name": "aura.compiler.arity",
+"is-interface": true
+}
+],
+"requires": [
+{
+"logical-name": "aura.compiler.ir"
+}
+,
+{
+"logical-name": "std"
+}
+]
+}
+],
+"version": 0,
+"revision": 0
+}

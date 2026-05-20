@@ -1,0 +1,14 @@
+{
+"rules": [
+{
+"primary-output": "CMakeFiles/test_ir.dir/src/core/type_impl.cpp.o",
+"requires": [
+{
+"logical-name": "aura.core.type"
+}
+]
+}
+],
+"version": 0,
+"revision": 0
+}

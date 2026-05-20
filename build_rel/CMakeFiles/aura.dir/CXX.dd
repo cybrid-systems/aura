@@ -1,0 +1,90 @@
+ninja_dyndep_version = 1.0
+build CMakeFiles/aura.dir/src/core/ast_impl.cpp.o: dyndep | CMakeFiles/aura.dir/aura.core.type.gcm CMakeFiles/aura.dir/aura.core.ast.gcm
+
+build CMakeFiles/aura.dir/src/core/type_impl.cpp.o: dyndep | CMakeFiles/aura.dir/aura.core.type.gcm
+
+build CMakeFiles/aura.dir/src/parser/lexer_impl.cpp.o: dyndep | CMakeFiles/aura.dir/aura.parser.lexer.gcm CMakeFiles/__cmake_cxx_std_26.dir/std.gcm
+
+build CMakeFiles/aura.dir/src/parser/parser_impl.cpp.o: dyndep | CMakeFiles/aura.dir/aura.parser.parser.gcm
+
+build CMakeFiles/aura.dir/src/compiler/evaluator_impl.cpp.o: dyndep | CMakeFiles/aura.dir/aura.compiler.value.gcm CMakeFiles/aura.dir/aura.core.type.gcm CMakeFiles/aura.dir/aura.parser.parser.gcm CMakeFiles/__cmake_cxx_std_26.dir/std.gcm CMakeFiles/aura.dir/aura.compiler.evaluator.gcm CMakeFiles/aura.dir/aura.core.ast.gcm CMakeFiles/aura.dir/aura.compiler.type_checker.gcm CMakeFiles/aura.dir/aura.diag.gcm
+
+build CMakeFiles/aura.dir/src/compiler/cache_impl.cpp.o: dyndep | CMakeFiles/aura.dir/aura.compiler.cache.gcm
+
+build CMakeFiles/aura.dir/src/compiler/lowering_impl.cpp.o: dyndep | CMakeFiles/aura.dir/aura.compiler.value.gcm CMakeFiles/aura.dir/aura.core.ast.gcm CMakeFiles/aura.dir/aura.compiler.lowering.gcm
+
+build CMakeFiles/aura.dir/src/compiler/ir_executor_impl.cpp.o: dyndep | CMakeFiles/aura.dir/aura.compiler.ir_executor.gcm CMakeFiles/__cmake_cxx_std_26.dir/std.gcm CMakeFiles/aura.dir/aura.compiler.value.gcm
+
+build CMakeFiles/aura.dir/src/compiler/compute_kind_impl.cpp.o: dyndep | CMakeFiles/aura.dir/aura.compiler.compute_kind.gcm CMakeFiles/__cmake_cxx_std_26.dir/std.gcm
+
+build CMakeFiles/aura.dir/src/compiler/query_impl.cpp.o: dyndep | CMakeFiles/aura.dir/aura.compiler.query.gcm CMakeFiles/__cmake_cxx_std_26.dir/std.gcm
+
+build CMakeFiles/aura.dir/src/compiler/type_checker_impl.cpp.o: dyndep | CMakeFiles/aura.dir/aura.compiler.type_checker.gcm
+
+build CMakeFiles/aura.dir/src/compiler/arity_impl.cpp.o: dyndep | CMakeFiles/aura.dir/aura.compiler.arity.gcm CMakeFiles/__cmake_cxx_std_26.dir/std.gcm
+
+build CMakeFiles/aura.dir/src/compiler/aura_jit_bridge.cpp.o: dyndep
+
+build CMakeFiles/aura.dir/src/main.cpp.o: dyndep | CMakeFiles/aura.dir/aura.compiler.cache.gcm CMakeFiles/aura.dir/aura.compiler.value.gcm CMakeFiles/aura.dir/aura.core.gcm CMakeFiles/aura.dir/aura.compiler.ir_executor.gcm CMakeFiles/aura.dir/aura.compiler.query.gcm CMakeFiles/aura.dir/aura.compiler.pass_manager.gcm CMakeFiles/aura.dir/aura.core.type.gcm CMakeFiles/aura.dir/aura.compiler.service.gcm CMakeFiles/__cmake_cxx_std_26.dir/std.gcm CMakeFiles/aura.dir/aura.parser.parser.gcm CMakeFiles/aura.dir/aura.compiler.evaluator.gcm CMakeFiles/aura.dir/aura.compiler.ir.gcm CMakeFiles/aura.dir/aura.compiler.lowering.gcm
+
+build CMakeFiles/aura.dir/src/compiler/aura_jit.cpp.o: dyndep
+
+build CMakeFiles/aura.dir/src/compiler/aura_jit_runtime.cpp.o: dyndep
+
+build CMakeFiles/aura.dir/src/core/arena.ixx.o | CMakeFiles/aura.dir/aura.core.arena.gcm: dyndep | CMakeFiles/__cmake_cxx_std_26.dir/std.gcm
+  restat = 1
+
+build CMakeFiles/aura.dir/src/core/ast.ixx.o | CMakeFiles/aura.dir/aura.core.ast.gcm: dyndep | CMakeFiles/__cmake_cxx_std_26.dir/std.gcm CMakeFiles/aura.dir/aura.core.type.gcm
+  restat = 1
+
+build CMakeFiles/aura.dir/src/core/core.ixx.o | CMakeFiles/aura.dir/aura.core.gcm: dyndep | CMakeFiles/aura.dir/aura.core.arena.gcm CMakeFiles/aura.dir/aura.core.ast.gcm
+  restat = 1
+
+build CMakeFiles/aura.dir/src/core/type.ixx.o | CMakeFiles/aura.dir/aura.core.type.gcm: dyndep | CMakeFiles/__cmake_cxx_std_26.dir/std.gcm
+  restat = 1
+
+build CMakeFiles/aura.dir/src/parser/lexer.ixx.o | CMakeFiles/aura.dir/aura.parser.lexer.gcm: dyndep | CMakeFiles/__cmake_cxx_std_26.dir/std.gcm
+  restat = 1
+
+build CMakeFiles/aura.dir/src/parser/parser.ixx.o | CMakeFiles/aura.dir/aura.parser.parser.gcm: dyndep | CMakeFiles/aura.dir/aura.parser.lexer.gcm CMakeFiles/__cmake_cxx_std_26.dir/std.gcm CMakeFiles/aura.dir/aura.core.gcm
+  restat = 1
+
+build CMakeFiles/aura.dir/src/compiler/evaluator.ixx.o | CMakeFiles/aura.dir/aura.compiler.evaluator.gcm: dyndep | CMakeFiles/__cmake_cxx_std_26.dir/std.gcm CMakeFiles/aura.dir/aura.compiler.value.gcm CMakeFiles/aura.dir/aura.core.gcm CMakeFiles/aura.dir/aura.diag.gcm
+  restat = 1
+
+build CMakeFiles/aura.dir/src/compiler/cache.ixx.o | CMakeFiles/aura.dir/aura.compiler.cache.gcm: dyndep | CMakeFiles/aura.dir/aura.core.gcm CMakeFiles/aura.dir/aura.compiler.ir.gcm CMakeFiles/__cmake_cxx_std_26.dir/std.gcm
+  restat = 1
+
+build CMakeFiles/aura.dir/src/compiler/value.ixx.o | CMakeFiles/aura.dir/aura.compiler.value.gcm: dyndep | CMakeFiles/__cmake_cxx_std_26.dir/std.gcm
+  restat = 1
+
+build CMakeFiles/aura.dir/src/compiler/ir.ixx.o | CMakeFiles/aura.dir/aura.compiler.ir.gcm: dyndep | CMakeFiles/aura.dir/aura.core.gcm CMakeFiles/__cmake_cxx_std_26.dir/std.gcm
+  restat = 1
+
+build CMakeFiles/aura.dir/src/compiler/lowering.ixx.o | CMakeFiles/aura.dir/aura.compiler.lowering.gcm: dyndep | CMakeFiles/aura.dir/aura.core.gcm CMakeFiles/aura.dir/aura.compiler.evaluator.gcm CMakeFiles/aura.dir/aura.compiler.ir.gcm CMakeFiles/__cmake_cxx_std_26.dir/std.gcm
+  restat = 1
+
+build CMakeFiles/aura.dir/src/compiler/ir_executor.ixx.o | CMakeFiles/aura.dir/aura.compiler.ir_executor.gcm: dyndep | CMakeFiles/aura.dir/aura.compiler.ir.gcm CMakeFiles/aura.dir/aura.core.type.gcm CMakeFiles/aura.dir/aura.core.gcm CMakeFiles/aura.dir/aura.compiler.evaluator.gcm CMakeFiles/aura.dir/aura.diag.gcm CMakeFiles/__cmake_cxx_std_26.dir/std.gcm CMakeFiles/aura.dir/aura.compiler.value.gcm
+  restat = 1
+
+build CMakeFiles/aura.dir/src/compiler/compute_kind.ixx.o | CMakeFiles/aura.dir/aura.compiler.compute_kind.gcm: dyndep | CMakeFiles/aura.dir/aura.compiler.ir.gcm CMakeFiles/__cmake_cxx_std_26.dir/std.gcm
+  restat = 1
+
+build CMakeFiles/aura.dir/src/compiler/arity.ixx.o | CMakeFiles/aura.dir/aura.compiler.arity.gcm: dyndep | CMakeFiles/aura.dir/aura.compiler.ir.gcm CMakeFiles/__cmake_cxx_std_26.dir/std.gcm
+  restat = 1
+
+build CMakeFiles/aura.dir/src/compiler/diag.ixx.o | CMakeFiles/aura.dir/aura.diag.gcm: dyndep | CMakeFiles/__cmake_cxx_std_26.dir/std.gcm
+  restat = 1
+
+build CMakeFiles/aura.dir/src/compiler/service.ixx.o | CMakeFiles/aura.dir/aura.compiler.service.gcm: dyndep | CMakeFiles/aura.dir/aura.compiler.ir_executor.gcm CMakeFiles/aura.dir/aura.compiler.cache.gcm CMakeFiles/aura.dir/aura.compiler.evaluator.gcm CMakeFiles/aura.dir/aura.compiler.value.gcm CMakeFiles/__cmake_cxx_std_26.dir/std.gcm CMakeFiles/aura.dir/aura.compiler.pass_manager.gcm CMakeFiles/aura.dir/aura.diag.gcm CMakeFiles/aura.dir/aura.compiler.ir.gcm CMakeFiles/aura.dir/aura.compiler.type_checker.gcm CMakeFiles/aura.dir/aura.compiler.lowering.gcm CMakeFiles/aura.dir/aura.core.type.gcm CMakeFiles/aura.dir/aura.parser.parser.gcm CMakeFiles/aura.dir/aura.core.gcm
+  restat = 1
+
+build CMakeFiles/aura.dir/src/compiler/pass_manager.ixx.o | CMakeFiles/aura.dir/aura.compiler.pass_manager.gcm: dyndep | CMakeFiles/aura.dir/aura.core.type.gcm CMakeFiles/aura.dir/aura.compiler.ir.gcm CMakeFiles/aura.dir/aura.compiler.type_checker.gcm CMakeFiles/aura.dir/aura.compiler.compute_kind.gcm CMakeFiles/__cmake_cxx_std_26.dir/std.gcm CMakeFiles/aura.dir/aura.compiler.arity.gcm CMakeFiles/aura.dir/aura.core.gcm CMakeFiles/aura.dir/aura.diag.gcm
+  restat = 1
+
+build CMakeFiles/aura.dir/src/compiler/query.ixx.o | CMakeFiles/aura.dir/aura.compiler.query.gcm: dyndep | CMakeFiles/aura.dir/aura.core.gcm CMakeFiles/aura.dir/aura.diag.gcm CMakeFiles/__cmake_cxx_std_26.dir/std.gcm
+  restat = 1
+
+build CMakeFiles/aura.dir/src/compiler/type_checker.ixx.o | CMakeFiles/aura.dir/aura.compiler.type_checker.gcm: dyndep | CMakeFiles/aura.dir/aura.diag.gcm CMakeFiles/aura.dir/aura.core.type.gcm CMakeFiles/__cmake_cxx_std_26.dir/std.gcm CMakeFiles/aura.dir/aura.core.gcm
+  restat = 1
+

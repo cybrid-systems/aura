@@ -1,0 +1,22 @@
+{
+"rules": [
+{
+"primary-output": "CMakeFiles/test_ir.dir/src/compiler/ir_executor_impl.cpp.o",
+"requires": [
+{
+"logical-name": "aura.compiler.value"
+}
+,
+{
+"logical-name": "aura.compiler.ir_executor"
+}
+,
+{
+"logical-name": "std"
+}
+]
+}
+],
+"version": 0,
+"revision": 0
+}

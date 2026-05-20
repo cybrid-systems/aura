@@ -1,0 +1,28 @@
+{
+"rules": [
+{
+"primary-output": "CMakeFiles/test_ir.dir/src/parser/parser.ixx.o",
+"provides": [
+{
+"logical-name": "aura.parser.parser",
+"is-interface": true
+}
+],
+"requires": [
+{
+"logical-name": "aura.core"
+}
+,
+{
+"logical-name": "aura.parser.lexer"
+}
+,
+{
+"logical-name": "std"
+}
+]
+}
+],
+"version": 0,
+"revision": 0
+}

@@ -1,0 +1,18 @@
+{
+"rules": [
+{
+"primary-output": "CMakeFiles/test_ir.dir/src/parser/lexer_impl.cpp.o",
+"requires": [
+{
+"logical-name": "aura.parser.lexer"
+}
+,
+{
+"logical-name": "std"
+}
+]
+}
+],
+"version": 0,
+"revision": 0
+}

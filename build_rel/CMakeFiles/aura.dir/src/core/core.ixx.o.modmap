@@ -1,0 +1,4 @@
+$root .
+aura.core CMakeFiles/aura.dir/aura.core.gcm
+aura.core.arena CMakeFiles/aura.dir/aura.core.arena.gcm
+aura.core.ast CMakeFiles/aura.dir/aura.core.ast.gcm

@@ -1,0 +1,17 @@
+$root .
+aura.compiler.ir CMakeFiles/test_ir.dir/aura.compiler.ir.gcm
+aura.compiler.evaluator CMakeFiles/test_ir.dir/aura.compiler.evaluator.gcm
+aura.compiler.pass_manager CMakeFiles/test_ir.dir/aura.compiler.pass_manager.gcm
+aura.diag CMakeFiles/test_ir.dir/aura.diag.gcm
+aura.compiler.type_checker CMakeFiles/test_ir.dir/aura.compiler.type_checker.gcm
+aura.compiler.arity CMakeFiles/test_ir.dir/aura.compiler.arity.gcm
+aura.parser.parser CMakeFiles/test_ir.dir/aura.parser.parser.gcm
+aura.compiler.ir_executor CMakeFiles/test_ir.dir/aura.compiler.ir_executor.gcm
+aura.compiler.service CMakeFiles/test_ir.dir/aura.compiler.service.gcm
+aura.compiler.value CMakeFiles/test_ir.dir/aura.compiler.value.gcm
+std CMakeFiles/__cmake_cxx_std_26.dir/std.gcm
+aura.compiler.query CMakeFiles/test_ir.dir/aura.compiler.query.gcm
+aura.core CMakeFiles/test_ir.dir/aura.core.gcm
+aura.core.type CMakeFiles/test_ir.dir/aura.core.type.gcm
+aura.compiler.compute_kind CMakeFiles/test_ir.dir/aura.compiler.compute_kind.gcm
+aura.compiler.lowering CMakeFiles/test_ir.dir/aura.compiler.lowering.gcm

@@ -1,0 +1,18 @@
+{
+"rules": [
+{
+"primary-output": "CMakeFiles/test_ir.dir/src/compiler/arity_impl.cpp.o",
+"requires": [
+{
+"logical-name": "aura.compiler.arity"
+}
+,
+{
+"logical-name": "std"
+}
+]
+}
+],
+"version": 0,
+"revision": 0
+}

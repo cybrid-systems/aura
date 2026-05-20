@@ -1,0 +1,9 @@
+$root .
+aura.compiler.value CMakeFiles/aura.dir/aura.compiler.value.gcm
+aura.core.type CMakeFiles/aura.dir/aura.core.type.gcm
+aura.parser.parser CMakeFiles/aura.dir/aura.parser.parser.gcm
+std CMakeFiles/__cmake_cxx_std_26.dir/std.gcm
+aura.compiler.evaluator CMakeFiles/aura.dir/aura.compiler.evaluator.gcm
+aura.core.ast CMakeFiles/aura.dir/aura.core.ast.gcm
+aura.compiler.type_checker CMakeFiles/aura.dir/aura.compiler.type_checker.gcm
+aura.diag CMakeFiles/aura.dir/aura.diag.gcm
