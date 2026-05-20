@@ -744,6 +744,40 @@ void Evaluator::init_pair_primitives() {
         string_heap_.push_back(result);
         return types::make_string(sid);
     });
+    // json-get-string: extract string value of a JSON field
+    // (json-get-string json-str field-name) → string
+    primitives_.add("json-get-string", [this](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
+            return make_void();
+        auto json = string_heap_[types::as_string_idx(a[0])];
+        auto field = string_heap_[types::as_string_idx(a[1])];
+
+        // Search for "fieldName":" in the JSON string
+        std::string search = "\"" + field + "\":\"";
+        std::size_t pos = json.find(search);
+        if (pos == std::string::npos) return make_void();
+        std::size_t start = pos + search.size();
+        // Read until closing quote (handle escaped quotes)
+        std::string result;
+        for (std::size_t i = start; i < json.size(); ++i) {
+            if (json[i] == '"') break;
+            if (json[i] == '\\' && i + 1 < json.size()) {
+                ++i;
+                if (json[i] == '"') result += '"';
+                else if (json[i] == 'n') result += '\n';
+                else if (json[i] == 't') result += '\t';
+                else if (json[i] == 'r') result += '\r';
+                else { result += '\\'; result += json[i]; }
+            } else {
+                result += json[i];
+            }
+        }
+        auto sid = string_heap_.size();
+        string_heap_.push_back(result);
+        return types::make_string(sid);
+    });
+
+
 
     primitives_.add("string-append", [this](const auto& a) {
         std::string result;
