@@ -84,28 +84,28 @@
 
 ; == API Reference ==
 
+(define aura-pitfalls
+  "=== Aura Common Pitfalls ===\n\1. (display <hash>) shows <hash[N]>, NOT the content.\n\   Use (hash-keys h) or (hash-values h) or (hash->alist h).\n\2. (display 42) prints 42. To show multiple values, call (display) each.\n\3. Strings use double quotes: \"hello\". Single quotes are NOT string delimiters.\n\4. (if cond expr) returns () when cond is false (no else clause).\n\5. Booleans: #t and #f, NOT true/false.\n\6. Lists display inline: (display '(1 2 3)) shows (1 2 3).\n\7. Functions are not hoisted: define BEFORE use.\n")
+
 (define api-for-module
   (lambda (mod)
     (cond
       ((string=? mod "std/hash")
-       "=== std/hash ===\n\
-(hash key val ...)      -> <hash[N]>\n\
-(hash-ref hash key)     -> value | ()\n\
-(hash-set! hash key v)  -> void (BUG across modules)\n\
-(hash-keys hash)        -> list\n\
-(hash-values hash)      -> list\n\
-CAUTION: (display <hash>) shows <hash[N]>, not content.\n")
+       "=== std/hash ===\n\(hash key val ...)      -> <hash[N]>  Create hash\n\(hash-ref hash key)     -> value | ()  Lookup key\n\(hash-set! hash key v)  -> void  Mutate hash (BUG across modules)\n\(hash-keys hash)        -> list  Get all keys\n\(hash-values hash)      -> list  Get all values\n\(hash-length hash)      -> int   Number of entries\n")
       ((string=? mod "std/list")
-       "=== std/list ===\n\
-(filter pred lst)       -> list\n\
-(map fn lst)            -> list\n\
-(foldl fn init lst)     -> any\n\
-(for-each fn lst)       -> void\n\
-NOTE: (display '(1 2)) shows (1 2) inline.\n")
-      (#t ""))))
+       "=== std/list ===\n\(filter pred lst)       -> list  pred: element -> bool\n\(map fn lst)            -> list\n\(foldl fn init lst)     -> any   (accumulator, element) -> any\n\(for-each fn lst)       -> void  Side effect only\n\(range start end)       -> list  [start, end)\n\(append a b)            -> list  Concatenate\n\(reverse lst)           -> list\n\(length lst)            -> int\n\(list-ref lst i)        -> any   0-based index\n")
+      ((string=? mod "std/iter")
+       "=== std/iter ===\n\(iterator lst)            -> iter  Create iterator\n\(iterator-next! iter)     -> element | ()  Mutates iter\n\(iterator-empty? iter)    -> bool\n\(iterate fn init n)       -> any  Apply fn n times\n")
+      ((string=? mod "std/json")
+       "=== std/json ===\n\(json-encode value)       -> string  Serialize Aura value to JSON\n\(json-parse json-str)     -> value   Parse JSON string to Aura value\n\(json-get-string js f)    -> string  Extract string field from JSON\n")
+      ((string=? mod "std/llm")
+       "=== std/llm ===\n\(aura-llm-call json-body) -> string  Call LLM API\n\(aura-verify code)         -> \"#t\" | error-string  Verify code compiles+eval\n")
+      ((string=? mod "std/socket")
+       "=== std/socket ===\n\(tcp-connect host port)   -> socket | ()  TCP connect to host:port\n\(tcp-send socket data)    -> void  Send data\n\(tcp-recv socket)         -> string  Receive response\n\(tcp-close socket)        -> void  Close connection\n\HTTP response format: \"HTTP/1.1 200 OK\\n...\"\n\Parse status line to extract code (200) and message (OK).\n")
+      (#t (string-append "=== " mod " === (no detailed reference)\n")))))
 
 (define get-api-ref
   (lambda (stdlib-list)
     (let loop ((libs stdlib-list) (result ""))
-      (if (null? libs) result
+      (if (null? libs) (string-append aura-pitfalls result)
           (loop (cdr libs) (string-append result (api-for-module (car libs))))))))
