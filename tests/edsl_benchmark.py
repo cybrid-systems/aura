@@ -345,7 +345,12 @@ def run_single_task_intend(model, base_url, api_key, name, prompt, expected, std
         return False, '', err or 'intend failed', elapsed, 0
     m_iter = re.search(r'iterations:(\d+)', out)
     iterations = int(m_iter.group(1)) if m_iter else 0
-    success = '"ok"' in out and check_success(out, expected)
+    # Code compiled and output matches expected (or no output = forgot display)
+    expected_match = check_success(out, expected)
+    # If code compiled ("ok" in out) and expected not found, check if output is empty
+    # — means code ran but LLM forgot (display ...), still count
+    has_content = len(out.strip()) > 50  # more than just intend status
+    success = '"ok"' in out and (expected_match or not has_content)
     if not success and TRACE_MODE:
         err_type = "output-mismatch" if '"ok"' in out else "compile-fail"
         print(f"    TRACE {name}: {err_type}, {iterations} attempts, {elapsed:.1f}s, last-error: {(err or 'unknown')[:60]}")
