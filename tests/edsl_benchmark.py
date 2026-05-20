@@ -295,6 +295,56 @@ def run_single_task(model, base_url, api_key, name, prompt, expected, stdlib, ap
 
     return False, "", "max attempts", total_llm_time, attempts
 
+# ── Adaptive.aura 调用封装 ────────────────────────────────
+
+def _ada_esc(s):
+    return s.replace('\\', '\\\\').replace('"', '\\"').replace('\\n', '\\n')
+
+def _ada_list(items):
+    if not items:
+        return "(list)"
+    return "(list " + " ".join('"' + _ada_esc(str(it)) + '"' for it in items) + ")"
+
+def call_adaptive(rc, output, expected_list):
+    exp_list = _ada_list(expected_list)
+    out_esc = _ada_esc(output)
+    code = (
+        '(require "std/adaptive" all:)'
+        '(define _d (measure-distance ' + str(rc) + ' "' + out_esc + '" ' + exp_list + '))'
+        '(display (car _d))(display "||D||")'
+        '(display (number->string (car (cdr _d))))(display "||D||")'
+        '(display (car (cdr (cdr _d))))(display "||D||")'
+        '(display (structured-diagnosis "' + out_esc + '" ' + exp_list + '))'
+    )
+    try:
+        r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=10)
+        if r.returncode != 0:
+            return "fine", 0.0, "(ada-unavail)", ""
+        parts = r.stdout.strip().split('||D||')
+        phase = parts[0].strip() if len(parts) >= 1 else "fine"
+        try:
+            ratio = float(parts[1].strip()) if len(parts) >= 2 and parts[1].strip() else 0.0
+        except ValueError:
+            ratio = 0.0
+        diag = parts[2].strip() if len(parts) >= 3 else ""
+        diag_text = parts[3].strip() if len(parts) >= 4 else ""
+        return phase, ratio, diag, diag_text
+    except Exception:
+        return "fine", 0.0, "(ada-err)", ""
+
+def call_api_ref(stdlib_list):
+    if not stdlib_list:
+        return ""
+    lst = "(list " + " ".join('"' + m + '"' for m in stdlib_list) + ")"
+    code = '(require "std/adaptive" all:)(display (get-api-ref ' + lst + '))'
+    try:
+        r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=5)
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    except Exception:
+        pass
+    return ""
+
 # ── 单任务（通过内置 intend 原语）────────────────────────
 
 
