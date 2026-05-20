@@ -391,10 +391,13 @@ def run_single_task(model, base_url, api_key, name, prompt, expected, stdlib, ap
 def run_single_task_intend(model, base_url, api_key, name, prompt, expected, stdlib, api_ref):
     """Run one task using (intend ...) primitive instead of Python fix loop.
 
+    Escapes the prompt string to avoid S-expression breakage.
     Returns (success, output, error, total_time, iterations).
     """
     max_att = MAX_ATTEMPTS if FIX_MODE else 3
-    intend_code = f'(intend "{prompt}" {max_att})'
+    # Escape backslashes and double quotes for safe embedding in S-expression
+    safe_prompt = prompt.replace('\\', '\\\\').replace('"', '\\"')
+    intend_code = f'(intend "{safe_prompt}" {max_att})'
     t0 = time.time()
     rc, out, err = test_aura(intend_code)
     elapsed = time.time() - t0
