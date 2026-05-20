@@ -69,6 +69,7 @@ ROUNDS = 1
 FIX_MODE = False
 INTEND_MODE = False
 EVOLVE_MODE = False
+TRACE_MODE = False
 MAX_ATTEMPTS = 3
 
 # ── LLM 调用 ──────────────────────────────────────────────
@@ -345,6 +346,9 @@ def run_single_task_intend(model, base_url, api_key, name, prompt, expected, std
     m_iter = re.search(r'iterations:(\d+)', out)
     iterations = int(m_iter.group(1)) if m_iter else 0
     success = '"ok"' in out and check_success(out, expected)
+    if not success and TRACE_MODE:
+        err_type = "output-mismatch" if '"ok"' in out else "compile-fail"
+        print(f"    TRACE {name}: {err_type}, {iterations} attempts, {elapsed:.1f}s, last-error: {(err or 'unknown')[:60]}")
     return success, out.strip('"'), err, elapsed, iterations
 
 
@@ -373,7 +377,7 @@ def print_task_table(task_results):
 
 # ── 主流程 ────────────────────────────────────────────────
 def main():
-    global ROUNDS, FIX_MODE, INTEND_MODE, EVOLVE_MODE, MAX_ATTEMPTS
+    global ROUNDS, FIX_MODE, INTEND_MODE, EVOLVE_MODE, TRACE_MODE, MAX_ATTEMPTS
 
     models = os.environ.get("LLM_MODEL", "deepseek-v4-flash").split(",")
     base_url = os.environ.get("LLM_BASE_URL", "https://api.deepseek.com/v1")
@@ -397,6 +401,8 @@ def main():
         elif args[i] == "--intend":
             INTEND_MODE = True
             FIX_MODE = True
+        elif args[i] == '--trace':
+            TRACE_MODE = True
         elif args[i] == '--evolve':
             EVOLVE_MODE = True
         elif args[i] == "--max-attempts":
@@ -497,7 +503,17 @@ def main():
         elapsed = time.time() - start_time
         task_stats["__meta__"] = {"elapsed": round(elapsed, 1)}
 
-        print(f"\n{'─'*70}")
+        if task_stats.get("__errors__"):
+            errors = task_stats["__errors__"]
+            print(f"\n  ❌ Failure Analysis ({len(errors)} tasks):")
+            # Group by error type
+            by_type = {}
+            for name, etype, att, t in errors:
+                by_type.setdefault(etype, []).append(name)
+            for etype, names in sorted(by_type.items()):
+                print(f"    {etype:25s}: {len(names)} tasks — {', '.join(names[:5])}{'...' if len(names) > 5 else ''}")
+
+        print(f"{'─'*70}")
         print(f"  {model} — Per-Task Results ({ROUNDS} rounds)")
         print(f"{'─'*70}")
         task_rows = [(n, s["passes"], s["total"]) for n, s in task_stats.items() if n != "__meta__"]
