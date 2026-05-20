@@ -394,18 +394,35 @@ def run_single_task(model, base_url, api_key, name, prompt, expected, stdlib, ap
 
 
 def run_single_task_intend(model, base_url, api_key, name, prompt, expected, stdlib, api_ref):
-    import json
     max_att = MAX_ATTEMPTS if FIX_MODE else 3
     sys_prompt = build_sys_prompt(stdlib, api_ref, task_name=name)
-    spj = json.dumps(sys_prompt)[1:-1]
-    goj = json.dumps(prompt)[1:-1]
-    body = '{"model":"deepseek-v4-flash","messages":[{"role":"system","content":"' + spj + '"},{"role":"user","content":"' + goj + '"}],"temperature":0.3,"max_tokens":4096}'
+
     def js(s):
         return s.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+
+    sp_esc = js(sys_prompt)
+    goal_esc = js(prompt)
+
     lines = ['(require "std/llm" all:)']
-    lines.append('(define __body__ "' + js(body) + '")')
-    lines.append('(define __gen__ (lambda (g) (aura-llm-call __body__)))')
-    lines.append('(display (intend "' + js(prompt) + '" __gen__ aura-verify ' + str(max_att) + '))')
+    lines.append('(define __sp__ "' + sp_esc + '")')
+    lines.append('(define __gen__ (lambda (g)')
+    lines.append('  (json-get-string (aura-llm-call (json-encode (hash')
+    lines.append('    "model" "deepseek-v4-flash"')
+    lines.append('    "messages" (list')
+    lines.append('      (hash "role" "system" "content" __sp__)')
+    lines.append('      (hash "role" "user" "content" g))')
+    lines.append('    "temperature" 0.3')
+    lines.append('    "max_tokens" 4096))) "content")))')
+    lines.append('(define __fix__ (lambda (code err goal)')
+    lines.append('  (json-get-string (aura-llm-call (json-encode (hash')
+    lines.append('    "model" "deepseek-v4-flash"')
+    lines.append('    "messages" (list')
+    lines.append('      (hash "role" "system" "content" __sp__)')
+    lines.append('      (hash "role" "user" "content"')
+    lines.append('        (string-append "Previous code:\\n" code "\\nError:\\n" err "\\nGoal:\\n" goal))')
+    lines.append('    "temperature" 0.3')
+    lines.append('    "max_tokens" 4096)))) "content")))')
+    lines.append('(display (intend "' + goal_esc + '" __gen__ aura-verify __fix__ ' + str(max_att) + '))')
     aura_code = '\n'.join(lines)
     t0 = time.time()
     try:
