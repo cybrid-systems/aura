@@ -127,6 +127,7 @@ public:
             "typecheck-current", "typed-mutate", "rollback",
             "mutation-log", "query-mutation-log",
             "intend", "define-strategy", "register-strategy!", "intend-history",
+            "intend-analytics",
             "json-encode",
             "json-get-string",
             "json-parse",

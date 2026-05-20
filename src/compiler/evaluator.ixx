@@ -148,7 +148,26 @@ private:
         std::string body;  // strategy body as S-expression string
     };
     std::vector<StrategyDef> strategies_;
-    // ── Timeline for intend (E2) ───────────────────────────────
+    // ── Intend history (E4 Phase 1) ────────────────────────────
+    struct IntendRecord {
+        std::uint64_t record_id;
+        std::string strategy_name;
+        std::string task_desc;
+        bool success;
+        int attempts;
+        std::vector<std::string> errors;
+        std::vector<std::string> error_types;
+        std::vector<std::string> generated_codes;
+        std::uint64_t llm_call_count;
+        std::uint64_t llm_tokens;
+        std::uint64_t duration_ms;
+        std::uint64_t timestamp;
+        std::uint64_t parent_record_id;
+    };
+    std::vector<IntendRecord> intend_history_;
+    std::uint64_t next_record_id_ = 1;
+    static constexpr std::size_t MAX_HISTORY_SIZE = 1000;
+    // ── Timeline for intend (E2, backward compat) ───────────────
     std::vector<std::string> timeline_;  // 
     std::vector<std::string> string_heap_;
     std::size_t eval_depth_ = 0;  // recursion counter for friendly stack overflow
