@@ -5229,22 +5229,26 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                 auto vv = eval_flat(*f, *p, val_id, *tail_env);
                 if (!vv) return vv;
                 cells_[ci] = *vv;
+                // Body evaluated in *tail_env (recursive refs need the child env)
+                if (body_id != aura::ast::NULL_NODE)
+                    return eval_flat(*f, *p, body_id, *tail_env);
+                return make_void();
             } else {
-                // For let, evaluate value in parent env first, then create tail env
-                // with Cell binding (like letrec) so set! mutations persist across
-                // closure calls and recursive lambdas.
+                // For let, bind directly to current eval_env (like define) to avoid
+                // creating a stack-local child env whose parent_ pointer becomes
+                // dangling when captured by a closure (bug: closure capture copies
+                // the env but parent_ still points to the original stack env).
                 auto vv = eval_flat(*f, *p, val_id, eval_env);
                 if (!vv) return vv;
-                tail_env.emplace(&eval_env);
-                tail_env->set_primitives(&primitives_);
-                tail_env->set_cells(&cells_);
-                std::size_t ci = cells_.size();
+                auto& me = const_cast<Env&>(eval_env);
+                me.set_cells(&cells_);
+                auto ci = cells_.size();
                 cells_.push_back(*vv);
-                tail_env->bind(std::string(name), make_cell(ci));
+                me.bind(std::string(name), make_cell(ci));
+                if (body_id != aura::ast::NULL_NODE)
+                    return eval_flat(*f, *p, body_id, eval_env);
+                return make_void();
             }
-            if (body_id != aura::ast::NULL_NODE)
-                return eval_flat(*f, *p, body_id, *tail_env);
-            return make_void();
         }
         case aura::ast::NodeTag::Define: {
             auto name = p->resolve(v.sym_id);
