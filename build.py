@@ -599,10 +599,12 @@ def main():
     commands = {
         "build": cmd_build,
         "clean": cmd_clean,
-        "check": lambda: (cmd_build(), cmd_test([]))[1],
+        "check": lambda: (cmd_build(), cmd_test([]), test_fuzz() if os.environ.get("LLM_API_KEY","") else True)[2],
         "test":  lambda: cmd_test(args or ["all"]),
         "list":  cmd_list,
         "demo":  test_demo,
+        "fuzz":  test_fuzz,
+        "test_fuzz":  test_fuzz,
     }
 
     if cmd in commands:
@@ -615,5 +617,104 @@ def main():
     sys.exit(rc)
 
 
-if __name__ == "__main__":
-    main()
+
+# ── Fuzz: LLM-driven compiler crash detection ─────────────
+def test_fuzz():
+    """Run --intend benchmark, detect compiler crashes/signals/timeouts.
+    Only runs when LLM_API_KEY is set (not in CI)."""
+    import subprocess, sys, os, datetime
+    from pathlib import Path
+    
+    api_key = os.environ.get("LLM_API_KEY", "")
+    if not api_key:
+        print("  Skipping fuzz: LLM_API_KEY not set")
+        return True
+    
+    print("  Running LLM fuzz tests...", flush=True)
+    
+    base = Path(__file__).resolve().parent
+    repro_dir = base / "tests" / "reproducers"
+    repro_dir.mkdir(exist_ok=True)
+    
+    aura_bin = os.environ.get("AURA_BIN", str(base / "build" / "aura"))
+    task_dir = base / "tests" / "edsl_tasks"
+    
+    results = {"crashes": [], "timeouts": [], "internal_errors": [],
+               "pass": 0, "fail": 0}
+    
+    for fpath in sorted(task_dir.glob("*.aura")):
+        if fpath.stem == "README": continue
+        text = fpath.read_text()
+        goal = ""
+        for line in text.splitlines():
+            if line.startswith(";; goal:"):
+                goal = line[len(";; goal:"):].strip()
+                break
+        if not goal: continue
+        
+        name = fpath.stem
+        # Escape for Aura string
+        esc_goal = goal.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+        
+        aura_code = ('(require "std/llm" all:)\n'
+                     '(define __sp__ "Return ONLY Aura code.")\n'
+                     '(define __gen__ (lambda (g)\n'
+                     '  (json-get-string (aura-llm-call (json-encode (hash\n'
+                     '    "model" "deepseek-v4-flash"\n'
+                     '    "messages" (list\n'
+                     '      (hash "role" "system" "content" __sp__)\n'
+                     '      (hash "role" "user" "content" g))\n'
+                     '    "temperature" 0.3\n'
+                     '    "max_tokens" 4096))) "content")))\n'
+                     '(define __fix__ (lambda (code err goal) ""))\n'
+                     '(display (intend "' + esc_goal + '" __gen__ aura-verify __fix__ 3))\n')
+        
+        try:
+            r = subprocess.run(
+                [aura_bin], input=aura_code, capture_output=True,
+                text=True, timeout=30, env=os.environ
+            )
+            
+            # Check signals (SIGABRT=6, SIGFPE=8, SIGSEGV=11)
+            if r.returncode < 0:
+                sig = -r.returncode
+                if sig in (6, 8, 11):
+                    sig_name = {6: "SIGABRT", 8: "SIGFPE", 11: "SIGSEGV"}.get(sig, f"signal-{sig}")
+                    results["crashes"].append((name, sig_name))
+                    repro_path = repro_dir / (datetime.date.today().isoformat() + "_" + name + "_" + sig_name + ".aura")
+                    repro_path.write_text(";; compiler bug: " + sig_name + " in task '" + name + "'\n" + aura_code)
+                    print("    CRASH " + name + ": " + sig_name)
+                    continue
+            
+            # Check internal errors
+            stderr = r.stderr or ""
+            if "internal error" in stderr:
+                results["internal_errors"].append(name)
+                repro_path = repro_dir / (datetime.date.today().isoformat() + "_" + name + "_internal.aura")
+                repro_path.write_text(";; compiler bug: internal error in '" + name + "'\n;; stderr: " + stderr[:200] + "\n" + aura_code)
+                print("    INTERNAL " + name)
+                continue
+            
+            if '"ok"' in (r.stdout or ""):
+                results["pass"] += 1
+            else:
+                results["fail"] += 1
+                
+        except subprocess.TimeoutExpired:
+            results["timeouts"].append(name)
+            repro_path = repro_dir / (datetime.date.today().isoformat() + "_" + name + "_timeout.aura")
+            repro_path.write_text(";; compiler bug: timeout in task '" + name + "'\n" + aura_code)
+            print("    TIMEOUT " + name)
+    
+    total = results["pass"] + results["fail"] + len(results["crashes"]) + len(results["timeouts"]) + len(results["internal_errors"])
+    print("  Fuzz results: " + str(results["pass"]) + " pass, " + str(results["fail"]) + " fail, " +
+          str(len(results["crashes"])) + " crashes, " + str(len(results["timeouts"])) + " timeouts, " +
+          str(len(results["internal_errors"])) + " internal errors")
+    
+    if results["crashes"] or results["timeouts"] or results["internal_errors"]:
+        return False
+    return True
+
+
+# ── Main ──────────────────────────────────────────────────
+
