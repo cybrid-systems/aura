@@ -361,8 +361,10 @@ def run_single_task_intend(model, base_url, api_key, name, prompt, expected, std
     sp_esc = js(sys_prompt)
     goal_esc = js(prompt)
 
-    def build_aura_code(sp):
+    def build_aura_code(sp, temp_val=0.3, tokens_val=4096):
         sp_e = js(sp)
+        t_str = str(temp_val)
+        tk_str = str(tokens_val)
         lines = ['(require "std/llm" all:)']
         lines.append('(define __sp__ "' + sp_e + '")')
         lines.append('(define __gen__ (lambda (g)')
@@ -371,8 +373,8 @@ def run_single_task_intend(model, base_url, api_key, name, prompt, expected, std
         lines.append('    "messages" (list')
         lines.append('      (hash "role" "system" "content" __sp__)')
         lines.append('      (hash "role" "user" "content" g))')
-        lines.append('    "temperature" 0.3')
-        lines.append('    "max_tokens" 4096))) "content")))')
+        lines.append('    "temperature" ' + t_str)
+        lines.append('    "max_tokens" ' + tk_str + '))) "content")))')
         lines.append('(define __fix__ (lambda (code err goal)')
         lines.append('  (json-get-string (aura-llm-call (json-encode (hash')
         lines.append('    "model" "deepseek-v4-flash"')
@@ -386,15 +388,14 @@ def run_single_task_intend(model, base_url, api_key, name, prompt, expected, std
         lines.append('              "=== Source ===\n" src')
         lines.append('              "\n=== Error ===\n" err')
         lines.append('              "\n=== Goal ===\n" goal)))))')
-        lines.append('    "temperature" 0.3')
-        lines.append('    "max_tokens" 4096))) "content")))')
+        lines.append('    "temperature" ' + t_str)
+        lines.append('    "max_tokens" ' + tk_str + '))) "content")))')
         lines.append('(display (intend "' + goal_esc + '" __gen__ aura-verify __fix__ ' + str(max_att) + '))')
-        # Capture current-source in the same process for output-mismatch diagnostics
+        # Capture current-source for diagnostics
         lines.append('(display "||CURRENT_SRC_START||")')
         lines.append('(display (current-source))')
         lines.append('(display "||CURRENT_SRC_END||")')
         return '\n'.join(lines)
-
     def run_intend(code):
         t0 = time.time()
         try:
@@ -422,36 +423,52 @@ def run_single_task_intend(model, base_url, api_key, name, prompt, expected, std
     m_iter = re.search(r'iterations:(\d+)', out)
     iterations = int(m_iter.group(1)) if m_iter else 0
 
-    # Output-mismatch retry loop (up to max_att additional attempts)
+    # Adaptive retry loop: call_adaptive for phase-based control
     for retry_attempt in range(max_att):
         expected_match = check_success(out, expected)
         if '"ok"' in out and not expected_match:
-            # Build structured feedback with current-source
             actual = out.strip()
             status_pos = actual.rfind('#')
             actual_output = actual[:status_pos].strip() if status_pos > 0 else actual[:200]
-            err_detail = ''
-            # Add display-format hints based on what the task expects
-            task_hints = ''
-            for kw in expected:
-                if kw.startswith('#'):
-                    task_hints += f'- Expected boolean result (like {kw}): make sure the function returns a boolean, then (display it)\n'
-                    break
-                if any(c in kw for c in '()'):
-                    task_hints += f'- Expected list output (like {kw}): use (display (my-fn args)) or (display-ln ...) to show the list\n'
-                    break
-            structured_feedback = (
-                "=== OUTPUT MISMATCH ERROR ===\n"
-                f"Expected to contain: {expected}\n"
-                f"Actual output: '{actual_output[:300]}'\n"
-                + (f"{task_hints}\n" if task_hints else "")
-                + "=== Current Source (AST formatted) ===\n"
-                + (current_src if current_src else "(source not available)\n")
-                + "\n=== Goal ===\n"
-                + prompt + "\n"
-            )
+
+            # Call adaptive.aura for phase/diagnosis
+            p, ratio, diag, diag_text = call_adaptive(0, actual_output, expected)
+
+            fb = [
+                "=== OUTPUT MISMATCH ===",
+                "Phase: " + p + " (ratio: " + str(ratio) + ")",
+                "Expected: " + str(expected),
+                "Actual: " + actual_output[:300],
+            ]
+            if diag and diag != "":
+                fb.append("Diagnosis: " + diag)
+            if diag_text:
+                fb.append(diag_text)
+            fb.append("")
+            fb.append("=== Current Source (AST) ===")
+            fb.append(current_src if current_src else "(not available)")
+            fb.append("")
+            fb.append("=== Goal ===")
+            fb.append(prompt)
+
+            # Inject API ref for fine/putt phases
+            ada_api_ref = call_api_ref(stdlib)
+            if p in ("fine", "putt") and ada_api_ref:
+                fb.append("")
+                fb.append(ada_api_ref)
+
+            structured_feedback = "\n".join(fb)
             updated_sp = sys_prompt + "\n\n" + structured_feedback
-            retry_code = build_aura_code(updated_sp)
+
+            # Adjust params by phase
+            if p == "coarse":
+                temp_v, tokens_v = 0.3, 4096
+            elif p == "fine":
+                temp_v, tokens_v = 0.2, 2048
+            else:
+                temp_v, tokens_v = 0.1, 1024
+
+            retry_code = build_aura_code(updated_sp, temp_v, tokens_v)
             rc2, out2, err2, elapsed2, current_src2 = run_intend(retry_code)
             elapsed += elapsed2
             if current_src2:
@@ -468,10 +485,11 @@ def run_single_task_intend(model, base_url, api_key, name, prompt, expected, std
         else:
             break
 
-    success = '"ok"' in out and check_success(out, expected)
+        success = '"ok"' in out and check_success(out, expected)
     if not success and TRACE_MODE:
         err_type = "output-mismatch" if '"ok"' in out else "compile-fail"
-        print(f"    TRACE {name}: {err_type}, {iterations} attempts, {elapsed:.1f}s, last-error: {(err or 'unknown')[:60]}")
+        ph = p if 'p' in dir() else "?"
+        print(f"    TRACE {name}: {err_type}, {iterations} attempts, {elapsed:.1f}s, phase:{ph} last-error: {(err or 'unknown')[:60]}")
     return success, out, err, elapsed, iterations
 
 
