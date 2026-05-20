@@ -3267,10 +3267,21 @@ Evaluator::Evaluator() {
             return make_void();
         auto goal = string_heap_[types::as_string_idx(a[0])];
 
-        // Parse optional second arg: max-attempts
+        // Parse optional args: [strategy-name] [max-attempts]
+        std::string strategy_name = "generate-and-fix";
         int max_attempts = 3;
-        if (a.size() >= 2 && types::is_int(a[1]))
-            max_attempts = static_cast<int>(types::as_int(a[1]));
+        std::size_t arg_idx = 1;
+        if (a.size() >= 2 && types::is_string(a[1])) {
+            strategy_name = string_heap_[types::as_string_idx(a[1])];
+            arg_idx = 2;
+        }
+        if (a.size() > arg_idx && types::is_int(a[arg_idx]))
+            max_attempts = static_cast<int>(types::as_int(a[arg_idx]));
+
+        // Clear timeline for new intend session
+        timeline_.clear();
+        timeline_.push_back("start:goal=" + goal);
+        timeline_.push_back("strategy:" + strategy_name);
 
         // Config from env vars
         std::string api_key = ::getenv("LLM_API_KEY") ? ::getenv("LLM_API_KEY") : "";
@@ -3429,19 +3440,10 @@ Evaluator::Evaluator() {
             current_code = code;
             success = true;
 
-            // Build result string with timeline
-            auto total = string_heap_.size();
-            string_heap_.push_back("ok");
-            string_heap_.push_back(goal);
-            string_heap_.push_back(code);
-            string_heap_.push_back(std::to_string(attempt));
-            // Concatenate timeline into one string
-            std::string tl;
-            for (auto& t : timeline)
-                tl += t + "|";
-            string_heap_.push_back(tl);
+            // Copy local timeline to member for (intend-history)
+            timeline_.push_back("attempt_" + std::to_string(attempt) + ":success");
+            for (auto& t : timeline) timeline_.push_back(t);
 
-            // Return as a simple tagged string
             auto result_str = "#(status:\"ok\" goal:\"" + goal + "\" iterations:" + std::to_string(attempt) + ")";
             auto rsidx = string_heap_.size();
             string_heap_.push_back(result_str);
@@ -3449,14 +3451,59 @@ Evaluator::Evaluator() {
         }
 
         // All attempts failed
-        std::string tl;
-        for (auto& t : timeline)
-            tl += t + "|";
+        for (auto& t : timeline) timeline_.push_back(t);
+        timeline_.push_back("failed:attempts=" + std::to_string(max_attempts) + " error=" + last_error);
         auto result_str = "#(status:\"failed\" goal:\"" + goal + "\" iterations:" + std::to_string(max_attempts)
                        + " last-error:\"" + last_error + "\")";
         auto rsidx = string_heap_.size();
         string_heap_.push_back(result_str);
         return types::make_string(rsidx);
+    });
+
+    // ── define-strategy — 定义策略 ──────────────────────────
+    // (define-strategy name body-string)
+    primitives_.add("define-strategy", [this](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
+            return make_bool(false);
+        auto name = string_heap_[types::as_string_idx(a[0])];
+        auto body = string_heap_[types::as_string_idx(a[1])];
+        // Check for existing strategy with same name
+        for (auto& s : strategies_) {
+            if (s.name == name) {
+                s.body = body;
+                return make_bool(true);  // updated
+            }
+        }
+        strategies_.push_back({name, body});
+        return make_bool(true);
+    });
+
+    // ── register-strategy! — 运行时注册/修改策略 ──────────────
+    primitives_.add("register-strategy!", [this](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
+            return make_bool(false);
+        auto name = string_heap_[types::as_string_idx(a[0])];
+        auto body = string_heap_[types::as_string_idx(a[1])];
+        for (auto& s : strategies_) {
+            if (s.name == name) {
+                s.body = body;
+                return make_bool(true);
+            }
+        }
+        strategies_.push_back({name, body});
+        return make_bool(true);
+    });
+
+    // ── intend-history — 查询意图执行时间线 ────────────────────
+    primitives_.add("intend-history", [this](const auto&) -> EvalValue {
+        std::string result;
+        for (std::size_t i = 0; i < timeline_.size(); ++i) {
+            result += std::to_string(i) + ":" + timeline_[i] + "\n";
+        }
+        if (result.empty()) result = "(empty)";
+        auto sidx = string_heap_.size();
+        string_heap_.push_back(result);
+        return types::make_string(sidx);
     });
 
 }

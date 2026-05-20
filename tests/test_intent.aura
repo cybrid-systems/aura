@@ -1,53 +1,48 @@
-; Aura intend — E1 测试套件
-; 测试 intend 原语的生命周期和边界条件
-
+; Aura intend E2 — Strategy 系统测试
 (display "╔════════════════════════════════════════╗")
-(display "║  intend E1 Tests                      ║")
+(display "║  intend E2 Tests                      ║")
 (display "╚════════════════════════════════════════╝")
 
-; ── 1. 无 API key → 优雅失败 ──────────────────────────
+; ── 1. define-strategy ──────────────────────────
 (display "")
-(display "=== 1. Graceful failure (no API key) ===")
+(display "=== 1. define-strategy ===")
 
-(let ((r (intend "test" 1)))
-  (display r))
+(display (define-strategy "test-strategy" "(phase generate (llm-generate goal))"))
+(display (define-strategy "second-strategy" "(phase check (typecheck-current))"))
 
-; ── 2. 缺参数（空调用）─────────────────────────────
+; ── 2. register-strategy! (更新已有) ────────────
 (display "")
-(display "=== 2. No arguments ===")
-(display (intend))  
+(display "=== 2. register-strategy! (update) ===")
+(display (register-strategy! "test-strategy" "(phase generate (llm-generate goal) :max-attempts 5)"))
 
-; ── 3. 空字符串 goal ──────────────────────────────
+; ── 3. define-strategy 缺参数 ───────────────────
 (display "")
-(display "=== 3. Empty goal ===")
-(display (intend "" 1))
+(display "=== 3. define-strategy bad args ===")
+(display (define-strategy "only-name"))
+(display (define-strategy))
+(display (define-strategy 42 "body"))
 
-; ── 4. max-attempts = 0 ──────────────────────────
+; ── 4. intend-history（空 → 应有输出）────────────
 (display "")
-(display "=== 4. max-attempts = 0 ===")
-(display (intend "test" 0))
+(display "=== 4. intend-history ===")
+(display (intend-history))
 
-; ── 5. max-attempts = 5（也能跑）─────────────────
+; ── 5. intend with strategy name ────────────────
 (display "")
-(display "=== 5. max-attempts = 5 ===")
-(display (intend "test" 5))
+(display "=== 5. intend (no api key) ===")
+(display (intend "test" "test-strategy" 1))
 
-; ── 6. 作为 EDSL 管线的一部分 ─────────────────────
+; ── 6. intend-history after intend ──────────────
 (display "")
-(display "=== 6. With set-code pipeline ===")
-(set-code "(intend \"test\" 1)")
-(display (eval-current))
+(display "=== 6. intend-history after intend ===")
+(display (intend-history))
 
-; ── 7. 返回格式验证 ──────────────────────────────
+; ── 7. 原始用法兼容（intend goal max-attempts）───
 (display "")
-(display "=== 7. Result format inspection ===")
-(let ((r (intend "hello" 1)))
-  (display "result type: ")
-  (display (type-of r))
-  (display "result: ")
-  (display r))
+(display "=== 7. backward compat ===")
+(display (intend "hello" 1))
 
 (display "")
 (display "╔════════════════════════════════════════╗")
-(display "║  E1 tests complete                    ║")
+(display "║  E2 tests complete                    ║")
 (display "╚════════════════════════════════════════╝")

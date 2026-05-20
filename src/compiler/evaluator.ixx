@@ -142,6 +142,14 @@ private:
     std::vector<Pair> pairs_;
     std::vector<types::EvalValue> error_values_;  // error cause values (indexed by ErrorRef)
     std::unique_ptr<std::unordered_set<std::string>> current_export_set_;
+    // ── Strategy storage (E2) ──────────────────────────────────
+    struct StrategyDef {
+        std::string name;
+        std::string body;  // strategy body as S-expression string
+    };
+    std::vector<StrategyDef> strategies_;
+    // ── Timeline for intend (E2) ───────────────────────────────
+    std::vector<std::string> timeline_;  // 
     std::vector<std::string> string_heap_;
     std::size_t eval_depth_ = 0;  // recursion counter for friendly stack overflow
     static constexpr std::size_t MAX_EVAL_DEPTH = 10000;
