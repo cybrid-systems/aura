@@ -1,0 +1,10 @@
+;; task: list-flatten
+;; goal: Write (flatten lst) that flattens nested lists into one level, test with ((1 2) 3 (4 (5 6)))
+;; expect: 1 2 3 4 5 6
+;; hint: --- WORKING Aura list flatten ---
+;; hint: (define (flatten lst)
+;; hint:   (if (null? lst) ()
+;; hint:     (if (pair? (car lst))
+;; hint:       (append (flatten (car lst)) (flatten (cdr lst)))
+;; hint:       (cons (car lst) (flatten (cdr lst))))))
+;; hint: (display (flatten (list (list 1 2) 3 (list 4 (list 5 6)))))

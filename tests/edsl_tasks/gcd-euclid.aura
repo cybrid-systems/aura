@@ -1,0 +1,9 @@
+;; task: gcd-euclid
+;; goal: Write (gcd a b) using Euclidean algorithm with named let, compute (gcd 48 18)
+;; expect: 6
+;; hint: --- WORKING Aura GCD ---
+;; hint: (define (gcd a b)
+;; hint:   (let loop ((a a) (b b))
+;; hint:     (if (= b 0) a
+;; hint:       (loop b (modulo a b)))))
+;; hint: (display (gcd 48 18))

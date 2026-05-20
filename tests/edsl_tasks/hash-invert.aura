@@ -1,0 +1,17 @@
+;; task: hash-invert
+;; goal: Write (hash-invert h) that swaps keys and values of a hash, test inverted with original's values
+;; depend: std/hash
+;; expect: hello
+;; expect: foo
+;; hint: --- WORKING Aura hash invert ---
+;; hint: (require std/hash all:)
+;; hint: (define (hash-invert h)
+;; hint:   (let ((r (hash)))
+;; hint:     (for-each (lambda (k)
+;; hint:       (hash-set r (hash-ref h k) k)) (hash-keys h))
+;; hint:     r))
+;; hint: (define h (hash "hello" "world" "foo" "bar"))
+;; hint: (define inv (hash-invert h))
+;; hint: (display (hash-ref inv "world"))
+;; hint: (display " ")
+;; hint: (display (hash-ref inv "bar"))
