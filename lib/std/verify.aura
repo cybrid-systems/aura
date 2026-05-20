@@ -1,0 +1,20 @@
+; verify.aura — Output-verified code checking
+; Replaces aura-verify when you need to check eval output matches expected
+; (require "std/llm" all:) required before loading this
+
+(export verify-output)
+
+(define (verify-output code . expected)
+  (let ((compile-ok (aura-verify code)))
+    (if (not (= compile-ok "#t")) compile-ok
+      (begin
+        (set-code code)
+        (typecheck-current)
+        (let ((r (eval-current)))
+          (if (error? r)
+            (string-append "err:" (type-of r))
+            (if (null? expected) "#t"
+              (let ((out-str (number->string r)))
+                (if (member out-str expected) "#t"
+                  (string-append "output-mismatch: got "
+                    out-str " expected " (car expected)))))))))))
