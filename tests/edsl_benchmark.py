@@ -463,7 +463,10 @@ def main():
 
         if EVOLVE_MODE:
             # Evolve strategy based on this round's analytics
-            evolve_code = '(require "std/evolve" all:)(display (evolve-strategy "default"))\n'
+            # Ensure base strategy exists, then evolve
+            evolve_code = ('(require "std/evolve" all:)'
+                           '(register-strategy! "default" "")'
+                           '(display (evolve-strategy "default"))\n')
             try:
                 r = subprocess.run([AURA], input=evolve_code, capture_output=True, text=True, timeout=10)
                 evolved = r.stdout.strip()
