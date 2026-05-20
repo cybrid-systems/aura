@@ -31,7 +31,8 @@ jobs:
     - name: Quick smoke test
       run: echo '(+ 1 2 3)' | ./build/aura | grep -q 6
 
-    - name: Clean rebuild for test suite
+    - name: Full test suite (using already-built Release binary)
       run: |
-        rm -rf build
-        python3 build.py check
+        # test_ir is needed by unit tests
+        cmake --build build --target test_ir -j$(nproc)
+        python3 build.py test
