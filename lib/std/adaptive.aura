@@ -72,13 +72,35 @@
 
 ; == structured-diagnosis ==
 
+(define find-missing
+  (lambda (output expected-list)
+    (if (null? expected-list) ()
+        (let ((kw (car expected-list)))
+          (if (string-contains? output kw)
+              (find-missing output (cdr expected-list))
+              (cons kw (find-missing output (cdr expected-list))))))))
+
 (define structured-diagnosis
   (lambda (output expected-list)
-    (let ((d (measure-distance 0 output expected-list)))
+    (let ((d (measure-distance 0 output expected-list))
+          (missing (find-missing output expected-list)))
       (string-append
         "=== Diagnosis ===\n"
         "Phase: " (car d) "\n"
         "Ratio: " (number->string (car (cdr d))) "\n"
+        (if (null? missing) ""
+            (let ((first (car missing)))
+          (string-append
+            "Missing in output: " first
+            (let join ((rest (cdr missing)) (acc ""))
+              (if (null? rest) acc
+                  (join (cdr rest) (string-append acc ", " (car rest)))))
+            "\n")))
+        (if (string-contains? output "<hash")
+            (string-append
+              "WARNING: (display <hash>) shows reference, not content.\n"
+              "Use (hash-keys ...) or (hash-values ...) to extract.\n")
+            "")
         (let ((diag (car (cdr (cdr d)))))
           (if (string=? diag "") "" (string-append "Note: " diag "\n")))))))
 
