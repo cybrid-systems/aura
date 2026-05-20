@@ -1,11 +1,16 @@
-; Aura JSON library — clean version with letrec semantics
-; (import "std/json") — json-parse + json-stringify
+; Aura JSON library — delegates to built-in json-parse / json-encode
+; Built-in versions are O(n), no recursion depth limit.
+; (require "std/json" all:) — json-parse + json-stringify
 
 (export json-parse json-stringify json-escape json-value c2s json-arr-items json-obj-items)
 
 (define (c2s c) (list->string (list c)))
 
-; ── json-stringify ─────────────────────────────────────────────
+; ── Delegated to built-in primitives ──────────────────────────
+(define (json-parse s)   (builtin:json-parse s))
+(define (json-stringify v) (builtin:json-encode v))
+
+; ── json-escape — string → JSON-safe string ───────────────────
 (define (json-escape s)
   (define (esc-char c)
     (if (= c 34) (list 92 34) (if (= c 92) (list 92 92) (list c))))
@@ -13,78 +18,12 @@
     (if (null? cs) (list) (append (esc-char (car cs)) (escape-all (cdr cs)))))
   (list->string (escape-all (string->list s))))
 
+; ── json-value — value → JSON string (uses builtin json-encode) ─
+(define (json-value v) (json-stringify v))
+
+; ── json-arr-items / json-obj-items — kept for backward compat ──
 (define (json-arr-items lst json-fn)
   (if (null? lst) "" (string-append (json-fn (car lst)) (if (null? (cdr lst)) "" (string-append (c2s 44) (json-arr-items (cdr lst) json-fn))))))
 
 (define (json-obj-items h keys json-fn)
   (if (null? keys) "" (string-append (c2s 34) (json-escape (car keys)) (c2s 34) (c2s 58) (json-fn (hash-ref h (car keys))) (if (null? (cdr keys)) "" (string-append (c2s 44) (json-obj-items h (cdr keys) json-fn))))))
-
-(define (json-value v)
-  (if (null? v) "null"
-    (if (boolean? v) (if v "true" "false")
-      (if (integer? v) (number->string v)
-        (if (float? v) (number->string v)
-          (if (string? v) (string-append (c2s 34) (json-escape v) (c2s 34))
-            (if (pair? v) (string-append (c2s 91) (json-arr-items v json-value) (c2s 93))
-              (if (hash? v) (string-append (c2s 123) (json-obj-items v (hash-keys v) json-value) (c2s 125))
-                "null"))))))))
-
-(define (json-stringify v) (json-value v))
-
-; ── json-parse ─────────────────────────────────────────────────
-(define (json-parse s)
-  (define (ch i) (if (< i (string-length s)) (string-ref s i) -1))
-  (define (ws i)
-    (if (< i (string-length s)) (let ((c (ch i))) (if (or (= c 32) (= c 10) (= c 13) (= c 9)) (ws (+ i 1)) i)) i))
-  (define (parse-str i)
-    (let lp ((i i) (acc (list)))
-      (if (>= i (string-length s)) (cons (list->string (reverse acc)) i)
-        (let ((c (ch i)))
-          (if (= c 34) (cons (list->string (reverse acc)) (+ i 1))
-            (if (= c 92)
-              (let ((e (ch (+ i 1))))
-                (lp (+ i 2) (cons (cond ((= e 34) 34) ((= e 92) 92) ((= e 110) 10)
-                                        ((= e 114) 13) ((= e 116) 9) ((= e 98) 8)
-                                        ((= e 102) 12) (else e)) acc)))
-              (lp (+ i 1) (cons c acc))))))))
-  (define (parse-digits i)
-    (if (and (< i (string-length s)) (>= (ch i) 48) (<= (ch i) 57)) (parse-digits (+ i 1)) i))
-  (define (parse-num i)
-    (let* ((start i) (after-sign (if (= (ch i) 45) (+ i 1) i)) (int-end (parse-digits after-sign))
-           (frac-end (if (= (ch int-end) 46) (let ((e (parse-digits (+ int-end 1)))) (if (> e (+ int-end 1)) e int-end)) int-end))
-           (exp-end (if (or (= (ch frac-end) 101) (= (ch frac-end) 69))
-                       (let* ((e-start (+ frac-end 1)) (e-sign (if (or (= (ch e-start) 43) (= (ch e-start) 45)) (+ e-start 1) e-start)) (e-end (parse-digits e-sign)))
-                         (if (> e-end e-sign) e-end frac-end)) frac-end)))
-      (cons (string->number (substring s start exp-end)) exp-end)))
-  (define (build-hash keys vals)
-    (let ((h (hash))) (let lp ((keys keys) (vals vals)) (if (null? keys) h (begin (hash-set! h (car keys) (car vals)) (lp (cdr keys) (cdr vals)))))))
-  (define (parse-val i)
-    (let* ((i (ws i)) (c (ch i)))
-      (if (= c 110) (cons () (+ i 4))
-        (if (= c 116) (cons #t (+ i 4))
-          (if (= c 102) (cons #f (+ i 5))
-            (if (= c 34) (parse-str (+ i 1))
-              (if (= c 91)
-                (let ((a (ws (+ i 1))))
-                  (if (= (ch a) 93) (cons (list) (+ a 1))
-                    (let lp ((i a) (acc (list)))
-                      (let* ((elem (parse-val i)) (val (car elem)) (i2 (cdr elem)) (i3 (ws i2)))
-                        (if (= (ch i3) 44) (lp (ws (+ i3 1)) (cons val acc))
-                          (if (= (ch i3) 93) (cons (reverse (cons val acc)) (+ i3 1))
-                            (cons (reverse (cons val acc)) i3)))))))
-                (if (= c 123)
-                  (let ((o (ws (+ i 1))))
-                    (if (= (ch o) 125) (cons (hash) (+ o 1))
-                      (let lp ((i o) (keys (list)) (vals (list)))
-                        (let* ((key-result (parse-str (+ i 1))) (key (car key-result)) (i2 (cdr key-result)) (i3 (ws i2)))
-                          (if (not (= (ch i3) 58))
-                            (cons (build-hash keys vals) i3)
-                            (let* ((val-result (parse-val (ws (+ i3 1)))) (val (car val-result)) (i4 (cdr val-result)) (i5 (ws i4)))
-                              (if (= (ch i5) 44)
-                                (lp (ws (+ i5 1)) (cons key keys) (cons val vals))
-                                (if (= (ch i5) 125)
-                                  (cons (build-hash (cons key keys) (cons val vals)) (+ i5 1))
-                                  (cons (build-hash (cons key keys) (cons val vals)) i5)))))))))
-                  (if (or (= c 45) (and (>= c 48) (<= c 57))) (parse-num i)
-                    (cons () i))))))))))
-  (car (parse-val 0)))

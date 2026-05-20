@@ -1,6 +1,6 @@
 # Aura — 路线图
 
-**更新：2026-05-19** — D1 LLVM JIT + D2 Sound Gradual Typing 完成。106/106 测试全绿。
+**更新：2026-05-20** — E1-E3 intend 完成。json-encode/json-parse/json-get-string 原语。frequencies stdlib。26/26 基准测试全过。
 
 ---
 
@@ -85,9 +85,10 @@ Aura 编译器用 Aura 写。等前面稳定后再启。
 - Benchmark 报告包含 iteration 数、strategy 名、timeline
 - 评测从"代码正确率"变成"意图达成率"
 
-#### E4: 可演化策略 (远期)
-- LLM 通过 `(mutate:rebind "strategy" new-def)` 修改策略
+#### E4: 可演化策略
+- LLM 通过 `(mutate:rebind "strategy" new-def)` 动态修改策略
 - 多意图协作：`(intend A)` 内部调 `(intend B)`
+- 从 `intend-history` 自动学习：哪些 prompt 有效、哪些任务总是卡在哪里
 - 意图树可视化
 
 ---
@@ -98,7 +99,8 @@ Aura 编译器用 Aura 写。等前面稳定后再启。
 - stdlib 补全: json/validate/struct 生产级
 - `--serve` AI agent 优化
 - FFI: JIT 符号表集成 → 零开销 C 调用
-- stdlib 加 `frequencies` 原语（减少 LLM 手写 word-freq 的复杂度）
+- `--intend` 多轮聚合：`--rounds N` 在 intend 模式输出稳定度报告
+- 验证器升级：不只验代码能跑，还要验输出匹配期望值
 
 ---
 
@@ -118,3 +120,8 @@ Aura 编译器用 Aura 写。等前面稳定后再启。
 | 05-20 | E2: strategy system ✅ | define-strategy + timeline + intend-history |
 | 05-20 | E3: benchmark integration ✅ | --intend flag in edsl_benchmark.py |
 | 05-20 | E3b: --intend 26/26 ✅ | JSON预转义修复递归栈溢出 |
+| 05-20 | json-encode 原语 | Aura → JSON 序列化，支持 Int/Float/String/Bool/Void/List/Hash |
+| 05-20 | json-get-string 原语 | JSON 字符串字段提取（轻量版，不解析完整树） |
+| 05-20 | json-parse 原语 | JSON → Aura 解析，null/true/false/number/string/array/object 全支持 |
+| 05-20 | 动态 generator/fixer | --intend 模式用 json-encode + json-get-string 代替静态预转义 body |
+| 05-20 | frequencies stdlib | 一行统计列表频次，hash-stats/word-freq 任务直接调用 |
