@@ -1157,32 +1157,37 @@ primitives_.add("string-append", [this](const auto& a) {
         }
         return make_int(0);
     });
+    // (append list ...) — Variadic: concatenate all provided lists
     primitives_.add("append", [this](const auto& a) {
         if (a.empty()) return make_void();
         if (a.size() < 2) return a[0];
-        auto list1 = a[0]; auto list2 = a[1];
-        if (is_end_of_list(list1)) return list2;
-        EvalValue result = make_void(); EvalValue tail = make_void();
-        auto v = list1;
-        while (!is_end_of_list(v)) {
-            if (!is_pair(v)) return list1;
-            auto idx = as_pair_idx(v);
-            if (idx >= pairs_.size()) return list1;
-            auto new_id = pairs_.size();
-            pairs_.push_back({pairs_[idx].car, make_void()});
-            auto new_pair = make_pair(new_id);
-            if (is_void(result)) result = new_pair;
-            else {
-                auto tidx = as_pair_idx(tail);
-                pairs_[tidx].cdr = new_pair;
+        // Iteratively append all arguments
+        auto result = a[0];
+        for (std::size_t i = 1; i < a.size(); ++i) {
+            auto list2 = a[i];
+            if (is_end_of_list(result)) { result = list2; continue; }
+            EvalValue new_result = make_void(); EvalValue tail = make_void();
+            auto v = result;
+            while (!is_end_of_list(v)) {
+                if (!is_pair(v)) { result = a[0]; break; }
+                auto idx = as_pair_idx(v);
+                if (idx >= pairs_.size()) { result = a[0]; break; }
+                auto new_id = pairs_.size();
+                pairs_.push_back({pairs_[idx].car, make_void()});
+                auto new_pair = make_pair(new_id);
+                if (is_void(new_result)) new_result = new_pair;
+                else {
+                    auto tidx = as_pair_idx(tail);
+                    pairs_[tidx].cdr = new_pair;
+                }
+                tail = new_pair;
+                v = pairs_[idx].cdr;
             }
-            tail = new_pair;
-            v = pairs_[idx].cdr;
-        }
-        // Set last cdr to list2
-        if (!is_void(tail)) {
-            auto tidx = as_pair_idx(tail);
-            pairs_[tidx].cdr = list2;
+            if (!is_void(tail)) {
+                auto tidx = as_pair_idx(tail);
+                pairs_[tidx].cdr = list2;
+            }
+            if (!is_void(new_result)) result = new_result;
         }
         return result;
     });
