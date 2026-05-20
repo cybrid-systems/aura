@@ -2,7 +2,6 @@
 ;; goal: Use if string? to narrow type, call string-append
 ;; expect: hello
 ;; hint: --- occurrence typing ---
-;; hint: (let ((x "hello"))
 ;; hint:   (if (string? x)
 ;; hint:     (string-append x " world")
 ;; hint:     0))

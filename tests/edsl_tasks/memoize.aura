@@ -4,15 +4,9 @@
 ;; depend: std/hash
 ;; hint: --- WORKING Aura memoize ---
 ;; hint: (require std/hash all:)
-;; hint: (define (memoize fn)
-;; hint:   (let ((cache (hash)))
-;; hint:     (lambda (x)
 ;; hint:       (if (hash-has-key? cache x)
 ;; hint:         (hash-ref cache x)
-;; hint:         (let ((r (fn x)))
 ;; hint:           (hash-set! cache x r)
 ;; hint:           r))))))
-;; hint: (define (fib n)
 ;; hint:   (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))
-;; hint: (define memo-fib (memoize fib))
 ;; hint: (display (memo-fib 10))

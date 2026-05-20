@@ -5,9 +5,7 @@
 ;; expect: (1 2 3 4 5 6 7 9)
 ;; hint: --- WORKING Aura quicksort ---
 ;; hint: (require std/list all:)
-;; hint: (define (quicksort lst)
 ;; hint:   (if (< (length lst) 2) lst
-;; hint:     (let ((pivot (car lst))
 ;; hint:           (rest (cdr lst)))
 ;; hint:       (append (quicksort (filter (lambda (x) (< x pivot)) rest))
 ;; hint:               (list pivot)

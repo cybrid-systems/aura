@@ -4,7 +4,6 @@
 ;; expect: OK
 ;; hint: --- TCP socket ---
 ;; hint: Aura has (tcp-connect "host" port). DO NOT use c-func for networking.
-;; hint: (define s (tcp-connect "httpbin.org" 80))
 ;; hint: (display "ok")
 ;; hint: }
 ;; hint: 

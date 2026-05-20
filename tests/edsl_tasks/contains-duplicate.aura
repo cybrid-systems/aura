@@ -4,11 +4,6 @@
 ;; depend: std/hash
 ;; hint: --- WORKING Aura contains duplicate ---
 ;; hint: (require std/hash all:)
-;; hint: (define (has-duplicate? lst)
-;; hint:   (let ((seen (hash)))
-;; hint:     (let loop ((rest lst))
 ;; hint:       (if (null? rest) #f
-;; hint:         (let ((n (car rest)))
 ;; hint:           (or (hash-has-key? seen n)
-;; hint:               (begin (hash-set! seen n #t) (loop (cdr rest))))))))))
 ;; hint: (display (has-duplicate? (list 1 2 3 1)))

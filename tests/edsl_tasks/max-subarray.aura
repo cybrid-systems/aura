@@ -4,8 +4,6 @@
 ;; depend: std/list
 ;; hint: --- WORKING Aura max subarray ---
 ;; hint: (require std/list all:)
-;; hint: (define (max-subarray lst)
-;; hint:   (let loop ((rest (cdr lst)) (cur (car lst)) (best (car lst)))
 ;; hint:     (if (null? rest) best
 ;; hint:       (let* ((n (car rest)) (new-cur (max n (+ cur n))))
 ;; hint:         (loop (cdr rest) new-cur (max best new-cur))))))

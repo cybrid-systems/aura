@@ -2,8 +2,6 @@
 ;; goal: Write (climb n) that counts ways to climb n stairs taking 1 or 2 steps, test with (climb 5)
 ;; expect: 8
 ;; hint: --- WORKING Aura climbing stairs ---
-;; hint: (define (climb n)
-;; hint:   (let loop ((i 2) (a 1) (b 1))
 ;; hint:     (if (> i n) b
 ;; hint:       (loop (+ i 1) b (+ a b)))))
 ;; hint: (display (climb 5))

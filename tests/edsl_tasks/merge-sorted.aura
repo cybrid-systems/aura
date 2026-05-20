@@ -4,8 +4,6 @@
 ;; depend: std/list
 ;; hint: --- WORKING Aura merge sorted ---
 ;; hint: (require std/list all:)
-;; hint: (define (merge a b)
-;; hint:   (cond ((null? a) b)
 ;; hint:         ((null? b) a)
 ;; hint:         ((< (car a) (car b)) (cons (car a) (merge (cdr a) b)))
 ;; hint:         (#t (cons (car b) (merge a (cdr b))))))

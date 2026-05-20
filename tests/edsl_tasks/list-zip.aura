@@ -6,7 +6,6 @@
 ;; depend: std/list
 ;; hint: --- WORKING Aura zip ---
 ;; hint: (require std/list all:)
-;; hint: (define (zip a b)
 ;; hint:   (if (or (null? a) (null? b)) ()
 ;; hint:     (cons (list (car a) (car b))
 ;; hint:           (zip (cdr a) (cdr b)))))

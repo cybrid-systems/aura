@@ -2,5 +2,4 @@
 ;; goal: Use c-func to call strlen from libc
 ;; expect: 5
 ;; hint: --- strlen FFI ---
-;; hint: (define strlen-fn (c-func -1 "strlen" "(String) -> Int"))
 ;; hint: (display (strlen-fn "hello"))

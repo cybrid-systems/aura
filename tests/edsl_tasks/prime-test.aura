@@ -2,8 +2,6 @@
 ;; goal: Write prime? that checks if n is prime, test with 17
 ;; expect: #t
 ;; hint: --- WORKING Aura prime check (COPY THIS) ---
-;; hint: (define (prime? n)
-;; hint:   (let loop ((i 2))
 ;; hint:     (if (>= (* i i) n) #t
 ;; hint:       (if (= (modulo n i) 0) #f
 ;; hint:         (loop (+ i 1))))))

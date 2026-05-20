@@ -2,8 +2,6 @@
 ;; goal: Write (fact n) using letrec to compute factorial with a helper (fact-iter acc n) that is tail-recursive
 ;; expect: 120
 ;; hint: --- WORKING Aura tail-recursive factorial ---
-;; hint: (define (fact n)
-;; hint:   (letrec ((iter (lambda (acc m)
 ;; hint:              (if (= m 0) acc
 ;; hint:                (iter (* acc m) (- m 1))))))
 ;; hint:     (iter 1 n)))

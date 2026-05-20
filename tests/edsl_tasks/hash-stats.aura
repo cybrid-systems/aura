@@ -6,9 +6,6 @@
 ;; hint: --- WORKING Aura hash stats ---
 ;; hint: (require std/list all:)
 ;; hint: (require std/hash all:)
-;; hint: (define (stats nums)
-;; hint:   (let ((n (length nums)))
-;; hint:     (let ((s (foldl + 0 nums)))
 ;; hint:       (hash
 ;; hint:         "count" n
 ;; hint:         "sum" s
