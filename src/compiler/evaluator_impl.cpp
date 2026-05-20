@@ -655,6 +655,96 @@ void Evaluator::init_pair_primitives() {
         if (a.empty()) return make_bool(false);
         return make_bool(is_string(a[0]));
     });
+    // json-encode: convert Aura value to JSON string
+    // (json-encode value) → string
+    // Supports: Int, Float, String, Bool, Void→null, Pair→array, Hash→obj
+    // json-encode: convert Aura value to JSON string
+    // (json-encode value) → string
+    primitives_.add("json-encode", [this](const auto& a) -> EvalValue {
+        if (a.empty()) {
+            auto sid = string_heap_.size();
+            string_heap_.push_back("null");
+            return types::make_string(sid);
+        }
+
+        // Use explicit std::function for recursion
+        std::function<std::string(const types::EvalValue&)> to_json;
+        to_json = [&](const types::EvalValue& v) -> std::string {
+            if (types::is_int(v)) return std::to_string(types::as_int(v));
+            if (types::is_float(v)) {
+                auto s = std::to_string(types::as_float(v));
+                if (s.find('.') != std::string::npos) {
+                    s.erase(s.find_last_not_of('0') + 1, std::string::npos);
+                    if (s.back() == '.') s.pop_back();
+                }
+                return s;
+            }
+            if (types::is_string(v)) {
+                auto idx = types::as_string_idx(v);
+                std::string str = (idx < string_heap_.size()) ? string_heap_[idx] : "";
+                std::string r = "\"";
+                for (auto c : str) {
+                    switch (c) {
+                        case '"': r += "\\\""; break;
+                        case '\\': r += "\\\\"; break;
+                        case '\n': r += "\\n"; break;
+                        case '\r': r += "\\r"; break;
+                        case '\t': r += "\\t"; break;
+                        default: r += c;
+                    }
+                }
+                r += '\"';
+                return r;
+            }
+            if (types::is_bool(v)) return types::as_bool(v) ? "true" : "false";
+            if (types::is_void(v)) return "null";
+            if (types::is_pair(v)) {
+                std::string r = "[";
+                bool first = true;
+                auto cur = v;
+                while (types::is_pair(cur)) {
+                    auto pidx = types::as_pair_idx(cur);
+                    if (pidx >= pairs_.size()) break;
+                    if (!first) r += ",";
+                    first = false;
+                    r += to_json(pairs_[pidx].car);
+                    cur = pairs_[pidx].cdr;
+                }
+                if (!types::is_void(cur)) {
+                    r += ",";
+                    r += to_json(cur);
+                }
+                r += "]";
+                return r;
+            }
+
+            if (types::is_hash(v)) {
+                auto hidx = types::as_hash_idx(v);
+                if (hidx >= hash_heap_.size()) return "null";
+                auto& ht = hash_heap_[hidx];
+                std::string r = "{";
+                bool first = true;
+                for (std::size_t i = ht.capacity; i > 0; --i) {
+                    if (ht.metadata[i - 1] != 0xFF) {
+                        if (!first) r += ",";
+                        first = false;
+                        r += to_json(ht.keys[i - 1]);
+                        r += ":";
+                        r += to_json(ht.values[i - 1]);
+                    }
+                }
+                r += "}";
+                return r;
+            }
+            return "null";
+        };
+
+        auto result = to_json(a[0]);
+        auto sid = string_heap_.size();
+        string_heap_.push_back(result);
+        return types::make_string(sid);
+    });
+
     primitives_.add("string-append", [this](const auto& a) {
         std::string result;
         for (auto& v : a) {

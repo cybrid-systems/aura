@@ -127,6 +127,7 @@ public:
             "typecheck-current", "typed-mutate", "rollback",
             "mutation-log", "query-mutation-log",
             "intend", "define-strategy", "register-strategy!", "intend-history",
+            "json-encode",
             // Special forms not in IR
             "when", "unless", "export",
             "and", "or", "cond", "case",
