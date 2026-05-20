@@ -117,3 +117,4 @@ Aura 编译器用 Aura 写。等前面稳定后再启。
 | 05-20 | E1: intend 原语 ✅ | (intend goal [max-attempts]) + 7 tests |
 | 05-20 | E2: strategy system ✅ | define-strategy + timeline + intend-history |
 | 05-20 | E3: benchmark integration ✅ | --intend flag in edsl_benchmark.py |
+| 05-20 | E3b: --intend 26/26 ✅ | JSON预转义修复递归栈溢出 |
