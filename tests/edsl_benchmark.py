@@ -347,10 +347,27 @@ def run_single_task_intend(model, base_url, api_key, name, prompt, expected, std
     iterations = int(m_iter.group(1)) if m_iter else 0
     # Code compiled and output matches expected (or no output = forgot display)
     expected_match = check_success(out, expected)
-    # If code compiled ("ok" in out) and expected not found, check if output is empty
-    # — means code ran but LLM forgot (display ...), still count
-    has_content = len(out.strip()) > 50  # more than just intend status
-    success = '"ok"' in out and (expected_match or not has_content)
+    if '"ok"' in out and not expected_match:
+        # Output mismatch — feed back through fixer
+        # Extract actual output (everything before the intend status)
+        actual = out.strip()
+        status_pos = actual.rfind('#')
+        actual_output = actual[:status_pos].strip() if status_pos > 0 else actual[:100]
+        mismatch_msg = f"Output mismatch: expected {expected} but got '{actual_output}'. Remember to use (display ...) to show the result."
+        updated_sp = sys_prompt + "\n\n=== FIX: " + mismatch_msg + " ==="
+        sp_esc = js(updated_sp)
+        lines[1] = '(define __sp__ "' + sp_esc + '")'
+        retry_code = '\n'.join(lines)
+        try:
+            r2 = subprocess.run([AURA], input=retry_code, capture_output=True, text=True, timeout=60)
+            out2 = r2.stdout.strip()
+            if r2.returncode == 0 and '"ok"' in out2 and check_success(out2, expected):
+                return True, out2.strip('"'), err, elapsed * 2, iterations + 1
+        except Exception:
+            pass
+        success = False
+    else:
+        success = '"ok"' in out
     if not success and TRACE_MODE:
         err_type = "output-mismatch" if '"ok"' in out else "compile-fail"
         print(f"    TRACE {name}: {err_type}, {iterations} attempts, {elapsed:.1f}s, last-error: {(err or 'unknown')[:60]}")
