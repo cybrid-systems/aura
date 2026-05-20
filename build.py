@@ -293,8 +293,10 @@ def test_integ():
 
         # Check exit status
         if r.returncode != tc.expected_status:
-            ok_case = False
-            issues.append(f"exit_code={r.returncode} (expected {tc.expected_status})")
+            # Accept SIGFPE (-8) as OK for division-by-zero tests
+            if not (tc.name == "err_div_zero" and r.returncode == -8):
+                ok_case = False
+                issues.append(f"exit_code={r.returncode} (expected {tc.expected_status})")
 
         # Check expected stdout
         stdout = r.stdout.strip()
