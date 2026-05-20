@@ -1,4 +1,4 @@
-; Aura std/llm — LLM 交互模块
+; Aura std/llm -- LLM 交互模块
 ;
 ; 使用 json-encode 构建 API 请求体，避免手工字符串转义。
 

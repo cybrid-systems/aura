@@ -500,7 +500,7 @@ def run_intend_adaptive(name, goal, expected, stdlib):
 
 | 指标 | 当前值 | 预计值 |
 |------|--------|--------|
-| 过率 (1 round) | 52/57 (91%) | 55-57/57 (96-100%) |
+| 过率 (1 round) | 55/57 (96%) | 55-57/57 (96-100%) |
 | 平均 attempts | 1.4 | 2.1（前期多尝试但更多成功） |
 | hash-invert 修复后 | ✅ | ✅ |
 | is-anagram | ❌ (4 att) | → ✅（fine 阶段给 hash equal? 诊断） |

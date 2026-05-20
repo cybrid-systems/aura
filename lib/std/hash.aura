@@ -1,4 +1,4 @@
-; hash.aura — Hash table operations
+; hash.aura -- Hash table operations
 (require std/list)
 (export
   hash-set hash-ref hash-get hash-remove
