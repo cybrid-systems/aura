@@ -1,5 +1,0 @@
-$root .
-aura.parser.parser CMakeFiles/test_ir.dir/aura.parser.parser.gcm
-aura.core CMakeFiles/test_ir.dir/aura.core.gcm
-aura.parser.lexer CMakeFiles/test_ir.dir/aura.parser.lexer.gcm
-std CMakeFiles/__cmake_cxx_std_26.dir/std.gcm

@@ -1,7 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"/home/dev/code/aura/build_rel/cmake_install.cmake"
-	],
-	"Parallel" : false
-}
