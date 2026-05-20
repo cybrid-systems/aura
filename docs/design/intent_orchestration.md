@@ -280,13 +280,27 @@ success = aura_eval(f'(intend "Write merge sort")') → check
 
 ## 5. 实现路径
 
-### Phase 1: `intend` 原语（2-3 天）
+### Phase 1: `intend` 原语（2-3 天）✅
 
-- 在 `src/compiler/` 加 `intend.ixx` / `intend_impl.cpp`
-- 注册 `(intend goal ...)` 为内置原语
-- 执行最简单的 strategy: `generate-and-fix`（等价于 `--fix` 循环）
-- 返回 `#(...)` status record
-- 测试：`tests/test_intent.aura`
+- 在 `src/compiler/evaluator_impl.cpp` 注册 `(intend goal [max-attempts])` 为内置原语
+- 内置 generate-and-fix 循环：
+  - LLM 生成代码 → `parse_to_flat` + `eval_flat` 编译验证
+  - 报错 → JSON 安全转义 → 构建 correction prompt → 喂回 LLM
+  - 重复至 max-attempts 次
+- 配置通过环境变量：`LLM_API_KEY`、`LLM_MODEL`、`LLM_BASE_URL`
+- LLM 调用通过 `curl` + JSON API（复用 `http-post` 相同模式）
+- 返回 `"#(status:ok/failed goal:... iterations:...)"` 字符串
+- 无 API key 时优雅返回失败，不崩溃
+- 注册在 `service.ixx` 的 tree-walker-only EDSL 列表
+- 7 个边界测试：空参数、空 goal、max-attempts=0/5、EDSL 管线集成
+- 文件：`src/compiler/evaluator_impl.cpp` (+199行)、`src/compiler/service.ixx`、`tests/test_intent.aura`
+
+**当前局限：**
+- 仅支持 generate-and-fix 一种 strategy（硬编码在 C++ lambda 中）
+- 无 timeline 记录（设计中应有 `(intend-history)`）
+- 返回值是字符串而非结构化 record（`#(...)` 的字符串表示）
+- 无 keyword arguments 支持（`:` 开头的命名参数）
+- 不回调 eds l_benchmark：`--fix` 循环尚未迁移
 
 ### Phase 2: Strategy 系统（3-5 天）
 
