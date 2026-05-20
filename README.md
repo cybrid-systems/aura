@@ -89,7 +89,7 @@ tests/         bash(117)+unit+integ+bench+agent    ~6k
 
 ### EDSL 模型能力基准 (47/47, 100%)
 - [docs/benchmark.md](docs/benchmark.md) — 详细结果
-- 运行：`LLM_API_KEY="..." python3 tests/edsl_benchmark.py --rounds 3 --fix --intend --max-attempts 5`
+- 运行：`LLM_API_KEY="..." python3 tests/edsl_benchmark.py --rounds 3 --intend`
 - 覆盖：算术/函数/列表/哈希/递归/FFI/EDSL/TCP 等 8 个能力域
 
 ### LLM 驱动 Fuzz 测试

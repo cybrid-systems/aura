@@ -12,7 +12,7 @@
 | **类型系统** | 🟢 10/10 | Sound Gradual + coercion + occurrence + let-poly + type query + blame |
 | LLVM JIT | 🟢 10/10 | ORC JIT, 38 opcode native, -O2, 增量 cache, 闭包/Pair/PrimCall |
 | 编译器基础设施 | 🟢 9/10 | ArenaGroup / 增量 / 磁盘缓存 / 热替换 / IR import |
-| 测试覆盖 | 🟢 9/10 | integ 87 + unit 74 + smoke 5 + bash 117 + bench 44 + fuzz + regression 4 |
+| 测试覆盖 | 🟢 10/10 | integ 87 + unit 74 + smoke 5 + bash 117 + bench 57 + fuzz + regression 4 |
 | 标准库 | 🟢 8/10 | 19 文件 ~1k 行 |
 | 错误处理 | 🟢 9/10 | try/catch IR + diag + AST validate |
 | EDSL / AI Agent | 🟢 10/10 | set-code/query/mutate/typecheck + LLM pipeline + iter correction |
