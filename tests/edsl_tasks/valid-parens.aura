@@ -1,0 +1,17 @@
+;; task: valid-parens
+;; goal: Write (valid-parens? s) that checks if parentheses [] {} () are balanced, test with "({[]})"
+;; expect: #t
+;; hint: --- WORKING Aura balanced parentheses ---
+;; hint: (define (valid-parens? s)
+;; hint:   (let ((chars (string->list s)))
+;; hint:     (let loop ((cs chars) (stack ()))
+;; hint:       (if (null? cs) (null? stack)
+;; hint:         (let ((c (car cs)))
+;; hint:           (cond ((= c 40) (loop (cdr cs) (cons c stack)))        ; (
+;; hint:                 ((= c 91) (loop (cdr cs) (cons c stack)))        ; [
+;; hint:                 ((= c 123) (loop (cdr cs) (cons c stack)))       ; {
+;; hint:                 ((= c 41) (if (and (pair? stack) (= (car stack) 40)) (loop (cdr cs) (cdr stack)) #f))   ; )
+;; hint:                 ((= c 93) (if (and (pair? stack) (= (car stack) 91)) (loop (cdr cs) (cdr stack)) #f))   ; ]
+;; hint:                 ((= c 125) (if (and (pair? stack) (= (car stack) 123)) (loop (cdr cs) (cdr stack)) #f))  ; }
+;; hint:                 (#t (loop (cdr cs) stack)))))))))
+;; hint: (display (valid-parens? "({[]})"))

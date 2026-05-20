@@ -1,0 +1,16 @@
+;; task: two-sum
+;; goal: Write (two-sum lst target) using hash that returns pair of indices summing to target, test with (list 2 7 11 15) target 9
+;; expect: 0 1
+;; depend: std/list
+;; hint: --- WORKING Aura two-sum ---
+;; hint: (require std/list all:)
+;; hint: (require std/hash all:)
+;; hint: (define (two-sum lst target)
+;; hint:   (let ((h (hash)))
+;; hint:     (let loop ((i 0) (nums lst))
+;; hint:       (if (null? nums) ()
+;; hint:         (let* ((n (car nums)) (complement (- target n)))
+;; hint:           (if (hash-has-key? h complement)
+;; hint:             (list (hash-ref h complement) i)
+;; hint:             (begin (hash-set! h n i) (loop (+ i 1) (cdr nums)))))))))
+;; hint: (display (two-sum (list 2 7 11 15) 9))
