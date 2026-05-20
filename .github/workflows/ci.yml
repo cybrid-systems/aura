@@ -31,5 +31,7 @@ jobs:
     - name: Quick smoke test
       run: echo '(+ 1 2 3)' | ./build/aura | grep -q 6
 
-    - name: Full test suite
-      run: python3 build.py check
+    - name: Clean rebuild for test suite
+      run: |
+        rm -rf build
+        python3 build.py check
