@@ -434,13 +434,33 @@ def run_single_task_intend(model, base_url, api_key, name, prompt, expected, std
             # Call adaptive.aura for phase/diagnosis
             p, ratio, diag, diag_text = call_adaptive(0, actual_output, expected)
 
+            # Find missing keywords for structured feedback
+            missing_kws = [kw for kw in expected if kw not in actual_output]
+            
+            # Build fix instructions
+            fix_instructions = []
+            if missing_kws:
+                fix_instructions.append("- Missing in output: " + ", ".join(missing_kws[:5]))
+            if "<hash" in actual_output:
+                fix_instructions.append("- display <hash> shows reference, not content. Use hash-keys/hash-values.")
+            if actual_output.strip() in ("", "()"):
+                fix_instructions.append("- Output is empty. Did you forget (display ...)?")
+            fix_instructions.append("- Keep the existing function structure. Only modify display/output code.")
+
             fb = [
                 "=== OUTPUT MISMATCH ===",
                 "Phase: " + p + " (ratio: " + str(ratio) + ")",
-                "Expected: " + str(expected),
-                "Actual: " + actual_output[:300],
+                "Expected to contain: " + str(expected),
+                "Actual output: " + actual_output[:300],
             ]
+            if missing_kws:
+                fb.append("Missing keywords: " + ", ".join(missing_kws[:5]))
+            if fix_instructions:
+                fb.append("")
+                fb.append("### Fix Instructions ###")
+                fb.extend(fix_instructions)
             if diag and diag != "":
+                fb.append("")
                 fb.append("Diagnosis: " + diag)
             if diag_text:
                 fb.append(diag_text)
