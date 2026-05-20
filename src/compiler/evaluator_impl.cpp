@@ -3260,6 +3260,205 @@ Evaluator::Evaluator() {
         return make_void();
     });
 
+    // ── intend — 高层意图编排原语 ────────────────────────────
+    // (intend goal-str :max-attempts N :api-key "..." :model "...")
+    primitives_.add("intend", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !types::is_string(a[0]))
+            return make_void();
+        auto goal = string_heap_[types::as_string_idx(a[0])];
+
+        // Parse optional second arg: max-attempts
+        int max_attempts = 3;
+        if (a.size() >= 2 && types::is_int(a[1]))
+            max_attempts = static_cast<int>(types::as_int(a[1]));
+
+        // Config from env vars
+        std::string api_key = ::getenv("LLM_API_KEY") ? ::getenv("LLM_API_KEY") : "";
+        std::string model = ::getenv("LLM_MODEL") ? ::getenv("LLM_MODEL") : "deepseek-v4-flash";
+        std::string base_url = ::getenv("LLM_BASE_URL") ? ::getenv("LLM_BASE_URL") : "https://api.deepseek.com/v1";
+
+        // Timeline entries stored as strings: "iter:msg"
+        std::vector<std::string> timeline;
+        std::string current_code;
+        std::string last_error;
+        bool success = false;
+
+        for (int attempt = 1; attempt <= max_attempts; ++attempt) {
+            // Build LLM prompt
+            std::string sys_msg;
+            std::string user_msg;
+
+            if (current_code.empty()) {
+                // First attempt: generate from goal
+                sys_msg = "You are Aura Lisp. Return ONLY valid Aura code. "
+                         "Always END by CALLING the function with (display ...). "
+                         "No markdown, no explanation.";
+                user_msg = goal;
+            } else {
+                // Correction: feed error back
+                sys_msg = "You are Aura Lisp. Fix the code below based on the error. "
+                         "Return ONLY valid Aura code with (display ...). "
+                         "No markdown, no explanation.";
+                user_msg = "Your previous code:\n" + current_code + "\n\n"
+                           "Aura produced: " + last_error + "\n\n"
+                           "Goal: " + goal + "\n\n"
+                           "Please fix the code.";
+            }
+
+            // Escape strings for JSON
+            auto json_escape = [](const std::string& s) -> std::string {
+                std::string r;
+                r.reserve(s.size() + 16);
+                for (auto c : s) {
+                    switch (c) {
+                        case '"': r += "\\\""; break;
+                        case '\\': r += "\\\\"; break;
+                        case '\n': r += "\\n"; break;
+                        case '\r': r += "\\r"; break;
+                        case '\t': r += "\\t"; break;
+                        default: r += c;
+                    }
+                }
+                return r;
+            };
+
+            // Build JSON request body
+            std::string body = R"({"model":")" + json_escape(model);
+            body += R"(","messages":[{"role":"system","content":")";
+            body += json_escape(sys_msg);
+            body += R"("},{"role":"user","content":")";
+            body += json_escape(user_msg);
+            body += R"("}],"temperature":0.3,"max_tokens":4096})";
+
+            // Call LLM API via curl
+            std::string tmpfile = "/tmp/_aura_intend_" + std::to_string(::time(nullptr)) + "_" + std::to_string(attempt);
+            {
+                std::ofstream ofs(tmpfile);
+                ofs << body;
+            }
+
+            std::string url = base_url + "/chat/completions";
+            std::string cmd = "curl -s -X POST --data-binary @" + tmpfile;
+            cmd += " -H \"Content-Type: application/json\"";
+            if (!api_key.empty())
+                cmd += " -H \"Authorization: Bearer " + api_key + "\"";
+            cmd += " \"" + url + "\" 2>/dev/null";
+
+            std::array<char, 8192> buf;
+            std::string response;
+            auto fp = ::popen(cmd.c_str(), "r");
+            if (fp) {
+                while (::fgets(buf.data(), static_cast<int>(buf.size()), fp))
+                    response += buf.data();
+                ::pclose(fp);
+            }
+            std::remove(tmpfile.c_str());
+
+            if (response.empty()) {
+                timeline.push_back("attempt_" + std::to_string(attempt) + ":LLM call failed");
+                continue;
+            }
+
+            // Extract content from JSON response
+            auto extract_json_str = [](const std::string& json, const std::string& key) -> std::string {
+                auto kpos = json.find(key);
+                if (kpos == std::string::npos) return {};
+                auto cpos = json.find('"', kpos + key.size());
+                if (cpos == std::string::npos) return {};
+                auto end = json.find('"', cpos + 1);
+                if (end == std::string::npos) return {};
+                return json.substr(cpos + 1, end - cpos - 1);
+            };
+
+            auto content = extract_json_str(response, "\"content\":\"");
+            if (content.empty()) {
+                timeline.push_back("attempt_" + std::to_string(attempt) + ":empty LLM response");
+                continue;
+            }
+
+            // Extract code from content (try code block first, then raw)
+            std::string code;
+            auto cb = content.find("```");
+            if (cb != std::string::npos) {
+                auto ce = content.find("```", cb + 3);
+                if (ce != std::string::npos) {
+                    code = content.substr(cb + 3, ce - cb - 3);
+                    // Skip first line if it's a language name
+                    auto nl = code.find('\n');
+                    if (nl != std::string::npos && nl < 20)
+                        code = code.substr(nl + 1);
+                }
+            }
+            if (code.empty()) code = content;
+
+            // Parse and evaluate the generated code
+            if (!arena_) {
+                timeline.push_back("attempt_" + std::to_string(attempt) + ":no arena");
+                continue;
+            }
+            auto alloc = arena_->allocator();
+            auto* pool_ptr = arena_->create<aura::ast::StringPool>(alloc);
+            auto* flat_ptr = arena_->create<aura::ast::FlatAST>(alloc);
+            auto pr = aura::parser::parse_to_flat(code, *flat_ptr, *pool_ptr);
+            if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+                current_code = code;
+                last_error = "parse error";
+                timeline.push_back("attempt_" + std::to_string(attempt) + ":parse error");
+                continue;
+            }
+            flat_ptr->root = pr.root;
+
+            auto expanded = aura::compiler::macro_expand_all(*flat_ptr, *pool_ptr, flat_ptr->root);
+            auto result = eval_flat(*flat_ptr, *pool_ptr, expanded, top_);
+
+            if (!result || types::is_error(*result)) {
+                std::string err_str;
+                if (result && types::is_error(*result)) {
+                    auto eidx = types::as_error_idx(*result);
+                    err_str = eidx < string_heap_.size() ? string_heap_[eidx] : "eval error";
+                } else {
+                    err_str = "eval returned nothing";
+                }
+                last_error = err_str;
+                current_code = code;
+                timeline.push_back("attempt_" + std::to_string(attempt) + ":" + err_str);
+                continue;
+            }
+
+            // Success!
+            current_code = code;
+            success = true;
+
+            // Build result string with timeline
+            auto total = string_heap_.size();
+            string_heap_.push_back("ok");
+            string_heap_.push_back(goal);
+            string_heap_.push_back(code);
+            string_heap_.push_back(std::to_string(attempt));
+            // Concatenate timeline into one string
+            std::string tl;
+            for (auto& t : timeline)
+                tl += t + "|";
+            string_heap_.push_back(tl);
+
+            // Return as a simple tagged string
+            auto result_str = "#(status:\"ok\" goal:\"" + goal + "\" iterations:" + std::to_string(attempt) + ")";
+            auto rsidx = string_heap_.size();
+            string_heap_.push_back(result_str);
+            return types::make_string(rsidx);
+        }
+
+        // All attempts failed
+        std::string tl;
+        for (auto& t : timeline)
+            tl += t + "|";
+        auto result_str = "#(status:\"failed\" goal:\"" + goal + "\" iterations:" + std::to_string(max_attempts)
+                       + " last-error:\"" + last_error + "\")";
+        auto rsidx = string_heap_.size();
+        string_heap_.push_back(result_str);
+        return types::make_string(rsidx);
+    });
+
 }
 
 // slot_for_name: find the slot for a primitive name
