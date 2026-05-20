@@ -179,16 +179,14 @@ Primitives::Primitives() {
             double r = to_f(a[0]);
             for (std::size_t i = 1; i < a.size(); ++i) {
                 double d = to_f(a[i]);
-                if (d == 0.0) return make_int(0);
-                r /= d;
+                r = (d == 0.0) ? 0.0 : (r / d);
             }
             return make_float(r);
         }
         std::int64_t r = coerce_to_int(a[0], string_heap_);
         for (std::size_t i = 1; i < a.size(); ++i) {
             auto d = coerce_to_int(a[i], string_heap_);
-            if (d == 0) return make_int(0);
-            r /= d;
+            r = (d == 0) ? 0 : (r / d);
         }
         return make_int(r);
     };
