@@ -388,41 +388,45 @@ def run_single_task(model, base_url, api_key, name, prompt, expected, stdlib, ap
     return False, "", "max attempts", total_llm_time, attempts
 
 # ── 单任务（通过内置 intend 原语）────────────────────────
-def run_single_task_intend(model, base_url, api_key, name, prompt, expected, stdlib, api_ref):
-    """Run one task using (intend ...) primitive instead of Python fix loop.
 
-    Passes the full system prompt (with task hints) to the C++ intend
-    primitive so it can use the same rich context as the Python fix loop.
-    Returns (success, output, error, total_time, iterations).
+
+
+def run_single_task_intend(model, base_url, api_key, name, prompt, expected, stdlib, api_ref):
+    """Run one task using (intend ...) with std/llm helper.
+
+    Loads lib/std/llm.aura, defines generator/verifier/fixer closures,
+    calls (intend goal gen ver fix max). Returns (success, out, err, time, iters).
     """
     max_att = MAX_ATTEMPTS if FIX_MODE else 3
-    # Build the full system prompt (same as Python fix loop)
     sys_prompt = build_sys_prompt(stdlib, api_ref, task_name=name)
-    # Escape backslashes and double quotes for safe embedding in S-expression
-    safe_goal = prompt.replace('\\', '\\\\').replace('"', '\\"')
-    safe_prompt = sys_prompt.replace('\\', '\\\\').replace('"', '\\"')
-    intend_code = f'(intend "{safe_goal}" {max_att} "{safe_prompt}")'
-    # Intend mode needs longer timeout (internal curl + LLM + eval)
+
+    def js(s):
+        return s.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+
+    lines = ['(require "std/llm" all:)']
+    lines.append('(define __sp__ "' + js(sys_prompt) + '")')
+    lines.append('(define __gen__ (aura-make-gen __sp__))')
+    lines.append('(define __fix__ (aura-make-fix __sp__))')
+    lines.append('(display (intend "' + js(prompt) + '" __gen__ aura-verify __fix__ ' + str(max_att) + '))')
+    aura_code = '\n'.join(lines)
+
     t0 = time.time()
     try:
-        r = subprocess.run([AURA], input=intend_code, capture_output=True,
-                          text=True, timeout=30)
+        r = subprocess.run([AURA], input=aura_code, capture_output=True, text=True, timeout=60)
         rc, out, err = r.returncode, r.stdout.strip(), r.stderr.strip()
     except subprocess.TimeoutExpired:
-        return False, "", "timeout", time.time() - t0, 0
+        return False, '', 'timeout', time.time() - t0, 0
     except FileNotFoundError:
-        return False, "", "aura binary not found", time.time() - t0, 0
+        return False, '', 'aura binary not found', time.time() - t0, 0
     elapsed = time.time() - t0
 
     if rc != 0 or not out:
-        return False, "", err or "intend failed", elapsed, 0
+        return False, '', err or 'intend failed', elapsed, 0
 
-    import re
     m_iter = re.search(r'iterations:(\d+)', out)
     iterations = int(m_iter.group(1)) if m_iter else 0
     success = '"ok"' in out
-    out_clean = out.strip('"')
-    return success, out_clean, err, elapsed, iterations
+    return success, out.strip('"'), err, elapsed, iterations
 
 
 # ── 打印结果表 ────────────────────────────────────────────
