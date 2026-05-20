@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Aura EDSL Benchmark — 多模型 × 多任务 × 多轮 × 迭代修正。
+"""Aura EDSL Benchmark -- 多模型 × 多任务 × 多轮 × 迭代修正。
 
 支持：
   - 多轮运行抵消 LLM 方差 (--rounds N)
@@ -724,10 +724,10 @@ def main():
             for name, etype, att, t in errors:
                 by_type.setdefault(etype, []).append(name)
             for etype, names in sorted(by_type.items()):
-                print(f"    {etype:25s}: {len(names)} tasks — {', '.join(names[:5])}{'...' if len(names) > 5 else ''}")
+                print(f"    {etype:25s}: {len(names)} tasks -- {', '.join(names[:5])}{'...' if len(names) > 5 else ''}")
 
         print(f"{'─'*70}")
-        print(f"  {model} — Per-Task Results ({ROUNDS} rounds)")
+        print(f"  {model} -- Per-Task Results ({ROUNDS} rounds)")
         print(f"{'─'*70}")
         task_rows = [(n, s["passes"], s["total"]) for n, s in task_stats.items() if n not in ("__meta__", "__errors__")]
         sp, sf, sv = print_task_table(task_rows)

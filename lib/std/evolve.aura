@@ -1,4 +1,4 @@
-; evolve.aura — Strategy evolution from intend analytics
+; evolve.aura -- Strategy evolution from intend analytics
 ;
 ; (require "std/evolve" all:)
 ; (evolve-strategy name) → new-variant-name
@@ -12,7 +12,7 @@
          (old-body (strategy-field name "body"))
          (new-body old-body))
 
-    ; Build new body — single begin block avoids Aura if/set! interaction bug
+    ; Build new body -- single begin block avoids Aura if/set! interaction bug
     (begin
       (if (regex-match? "unbound-variable" analytics-str)
         (set! new-body (string-append new-body

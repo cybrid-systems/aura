@@ -1,4 +1,4 @@
-; lib/std/adaptive.aura — adaptive intend decision module
+; lib/std/adaptive.aura -- adaptive intend decision module
 ;
 ; Returns lists, not hashes (avoids cross-module hash mutation bug).
 ; Uses cond, not if (avoids cross-module if-in-begin bug).

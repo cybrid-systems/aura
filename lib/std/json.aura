@@ -1,6 +1,6 @@
-; Aura JSON library — delegates to built-in json-parse / json-encode
+; Aura JSON library -- delegates to built-in json-parse / json-encode
 ; Built-in versions are O(n), no recursion depth limit.
-; (require "std/json" all:) — json-parse + json-stringify
+; (require "std/json" all:) -- json-parse + json-stringify
 
 (export json-parse json-stringify json-escape json-value c2s json-arr-items json-obj-items)
 
@@ -10,7 +10,7 @@
 (define (json-parse s)   (builtin:json-parse s))
 (define (json-stringify v) (builtin:json-encode v))
 
-; ── json-escape — string → JSON-safe string ───────────────────
+; ── json-escape -- string → JSON-safe string ───────────────────
 (define (json-escape s)
   (define (esc-char c)
     (if (= c 34) (list 92 34) (if (= c 92) (list 92 92) (list c))))
@@ -18,10 +18,10 @@
     (if (null? cs) (list) (append (esc-char (car cs)) (escape-all (cdr cs)))))
   (list->string (escape-all (string->list s))))
 
-; ── json-value — value → JSON string (uses builtin json-encode) ─
+; ── json-value -- value → JSON string (uses builtin json-encode) ─
 (define (json-value v) (json-stringify v))
 
-; ── json-arr-items / json-obj-items — kept for backward compat ──
+; ── json-arr-items / json-obj-items -- kept for backward compat ──
 (define (json-arr-items lst json-fn)
   (if (null? lst) "" (string-append (json-fn (car lst)) (if (null? (cdr lst)) "" (string-append (c2s 44) (json-arr-items (cdr lst) json-fn))))))
 
