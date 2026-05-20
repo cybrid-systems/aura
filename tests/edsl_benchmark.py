@@ -68,6 +68,7 @@ TASKS = load_tasks()
 ROUNDS = 1
 FIX_MODE = False
 INTEND_MODE = False
+EVOLVE_MODE = False
 MAX_ATTEMPTS = 3
 
 # ── LLM 调用 ──────────────────────────────────────────────
@@ -392,6 +393,8 @@ def main():
         elif args[i] == "--intend":
             INTEND_MODE = True
             FIX_MODE = True
+        elif args[i] == '--evolve':
+            EVOLVE_MODE = True
         elif args[i] == "--max-attempts":
             i += 1
             if i < len(args):
@@ -408,7 +411,9 @@ def main():
     api_ref = get_api_ref()
 
     mode_tag = ""
-    if INTEND_MODE:
+    if EVOLVE_MODE:
+        mode_tag = "  (evolve mode: evolve strategy after each round)"
+    elif INTEND_MODE:
         mode_tag = f"  (intend mode: up to {MAX_ATTEMPTS} attempts)"
     elif FIX_MODE:
         mode_tag = f"  (fix mode: up to {MAX_ATTEMPTS} attempts per task per round)"
@@ -455,6 +460,18 @@ def main():
 
             task_stats[name]["passes"] = task_passes
             task_stats[name]["total"] = task_stats[name]["passes"] + len(task_stats[name]["errors"])
+
+        if EVOLVE_MODE:
+            # Evolve strategy based on this round's analytics
+            evolve_code = '(require "std/evolve" all:)(display (evolve-strategy "default"))\n'
+            try:
+                r = subprocess.run([AURA], input=evolve_code, capture_output=True, text=True, timeout=10)
+                evolved = r.stdout.strip()
+                print(f"\n  ⚡ Evolved: {evolved}")
+            except Exception as e:
+                print(f"\n  ⚡ Evolve failed: {e}")
+            # Reset history for next round
+            print("  History cleared for next round.\n")
 
         elapsed = time.time() - start_time
         task_stats["__meta__"] = {"elapsed": round(elapsed, 1)}
