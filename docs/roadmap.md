@@ -1,6 +1,6 @@
 # Aura — 路线图
 
-**更新：2026-05-20** — E4 Phase 1-3 完成 + 闭环。47/47 全过。let/closure 悬空指针修复。llm-fuzz 设计文档。
+**更新：2026-05-20** — 52/57 (91%)。结构化 fixer + output-mismatch 闭环。自适应 Intend (PID) 设计文档。
 
 ---
 
@@ -93,6 +93,37 @@ Aura 编译器用 Aura 写。等前面稳定后再启。
 - 闭环 ✅: evolved hints 注入下一轮 system prompt
 - Phase 4: 多意图协作与意图树（远期）
 
+### 自适应 Intend (PID 控制 — 设计中)
+
+[自适应 Intend 设计文档](design/adaptive_intend_pid.md)
+
+**核心思想**：高尔夫隐喻 + 控制理论。误差大→高增益（完整重写），误差小→低增益（EDSL 定点修改）。
+
+#### Phase 1: 距离度量 + 结构化诊断 ✅
+- [x] `measure_distance()` — rc + 输出匹配率 → phase (coarse/fine/putt)
+- [x] `structured_diagnosis()` — 输出特征（`<hash[N]>` / 空输出 / 缺关键词）→ 诊断文本
+- [x] `current-source` 捕获 → 输出不匹配时 LLM 能看到自己的源码
+- [x] 回路闭环：3 次 Python 层 output-mismatch retry 带结构化反馈
+- 效果：hash-invert 修复，52/57 (91%)
+
+#### Phase 2: 两阶段 prompt 切换（~3h）
+- [ ] 定义 coarse / fine 两套 `__fix__` template
+- [ ] Python 层策略切换逻辑（按 `measure_distance` 结果）
+- [ ] 滞后保护防止震荡
+- 预期：53-55/57
+
+#### Phase 3: 动态 API Reference 注入（~2h）
+- [ ] std/hash, std/list, std/llm 的精简 API 参考
+- [ ] `build_sys_prompt` 按 stdlib 依赖动态注入
+- [ ] Display 行为说明（`<hash[N]>` != hash 内容）
+- 预期：55-56/57
+
+#### Phase 4: EDSL 定点修改 / putt 阶段（~4h）
+- [ ] `query:find` + `mutate:rebind` 表达式级修改
+- [ ] putt fixer template (temperature=0.1, max_tokens=1024)
+- [ ] AST diff 生成
+- 预期：56-57/57
+
 ---
 
 ## 短期改善 (1-3h/each)
@@ -100,7 +131,6 @@ Aura 编译器用 Aura 写。等前面稳定后再启。
 - JIT EvalValue 兼容: Bool/Pair/String 正确编码 → auto-JIT 覆盖全量
 - stdlib 补全: json/validate/struct 生产级
 - FFI: JIT 符号表集成 → 零开销 C 调用
-- 验证器升级：不只验代码能跑，还要验输出匹配期望值
 - `--intend` 多轮聚合：`--rounds N` 在 intend 模式输出稳定度报告
 - 扩 benchmark: 加入 LeetCode 风格任务，覆盖更多能力域
 
@@ -135,4 +165,5 @@ Aura 编译器用 Aura 写。等前面稳定后再启。
 | 05-20 | E4 Phase 3: evolve-strategy | lib/std/evolve.aura + benchmark --evolve |
 | 05-20 | E4 Phase 2: strategy-field/set-field!/inspect | 策略字段读写原语 |
 | 05-20 | E4 Phase 1: intend-analytics | 结构化历史 + 错误分类 |
-| 05-20 | E4 设计文档| 05-20 | E4 设计文档 | docs/design/e4_evolvable_strategies.md — Phase 1-4 方案 |
+| 05-20 | E4 设计文档 | docs/design/e4_evolvable_strategies.md — Phase 1-4 方案 |
+| 05-20 | 自适应 Intend 设计 | 52/57, structured fixer + output-mismatch closure, PID design doc |
