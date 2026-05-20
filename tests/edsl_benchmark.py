@@ -402,8 +402,16 @@ def run_single_task_intend(model, base_url, api_key, name, prompt, expected, std
     safe_goal = prompt.replace('\\', '\\\\').replace('"', '\\"')
     safe_prompt = sys_prompt.replace('\\', '\\\\').replace('"', '\\"')
     intend_code = f'(intend "{safe_goal}" {max_att} "{safe_prompt}")'
+    # Intend mode needs longer timeout (internal curl + LLM + eval)
     t0 = time.time()
-    rc, out, err = test_aura(intend_code)
+    try:
+        r = subprocess.run([AURA], input=intend_code, capture_output=True,
+                          text=True, timeout=30)
+        rc, out, err = r.returncode, r.stdout.strip(), r.stderr.strip()
+    except subprocess.TimeoutExpired:
+        return False, "", "timeout", time.time() - t0, 0
+    except FileNotFoundError:
+        return False, "", "aura binary not found", time.time() - t0, 0
     elapsed = time.time() - t0
 
     if rc != 0 or not out:

@@ -3380,11 +3380,10 @@ Evaluator::Evaluator() {
             auto extract_json_str = [](const std::string& json, const std::string& key) -> std::string {
                 auto kpos = json.find(key);
                 if (kpos == std::string::npos) return {};
-                auto cpos = json.find('"', kpos + key.size());
-                if (cpos == std::string::npos) return {};
-                auto end = json.find('"', cpos + 1);
+                auto start = kpos + key.size();  // first char after "content":"
+                auto end = json.find('"', start);  // closing quote of content value
                 if (end == std::string::npos) return {};
-                return json.substr(cpos + 1, end - cpos - 1);
+                return json.substr(start, end - start);
             };
 
             auto content = extract_json_str(response, "\"content\":\"");
