@@ -80,7 +80,7 @@ Aura 编译器用 Aura 写。等前面稳定后再启。
 - 内置策略：generate-and-fix, error-feedback-loop, refactor, optimize
 - Timeline 记录 + `(intend-history)` 查询
 
-#### E3: 集成 (2-3d)
+#### E3: 集成 (2-3d) ✅
 - `edsl_benchmark.py` 的 `--fix` 循环用 `intend` 替换
 - Benchmark 报告包含 iteration 数、strategy 名、timeline
 - 评测从"代码正确率"变成"意图达成率"
@@ -115,3 +115,5 @@ Aura 编译器用 Aura 写。等前面稳定后再启。
 | 05-20 | EDSL Agent Benchmark | 17→24 stable, 多轮聚合+迭代修正 |
 | 05-20 | Intent Orchestration Design | intend 原语设计文档 |
 | 05-20 | E1: intend 原语 ✅ | (intend goal [max-attempts]) + 7 tests |
+| 05-20 | E2: strategy system ✅ | define-strategy + timeline + intend-history |
+| 05-20 | E3: benchmark integration ✅ | --intend flag in edsl_benchmark.py |
