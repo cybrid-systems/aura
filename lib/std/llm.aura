@@ -1,0 +1,75 @@
+; Aura std/llm — LLM 交互模块
+;
+; 提供 LLM 调用、JSON 构建、代码验证等原语。
+; 不依赖 Python，纯 Aura。
+;
+; 用法: (require std/llm all:)
+;   (aura-make-gen sys-prompt) → generator closure
+;   (aura-verify code) → "#t" or error string
+;   (aura-make-fix sys-prompt) → fixer closure
+
+; ── Helper characters ──────────────────────────────────
+(define dq (list->string (list 34)))    ; "
+(define qq (list->string (list 92 34)))  ; \"
+(define bs (list->string (list 92)))     ; \
+(define nn (list->string (list 92 110))) ; \n
+(define rr (list->string (list 92 114))) ; \r
+(define tt (list->string (list 92 116))) ; \t
+
+; ── JSON escape a string ──────────────────────────────
+(define aura-json-escape
+  (lambda (s)
+    (let loop ((i 0) (r ""))
+      (if (>= i (string-length s)) r
+        (let ((c (string-ref s i)))
+          (loop (+ i 1)
+            (string-append r
+              (cond
+                ((= c 34) qq)
+                ((= c 92) bs)
+                ((= c 10) nn)
+                ((= c 13) rr)
+                ((= c 9)  tt)
+                (else (list->string (list c))))))))))))
+
+; ── Build JSON request body ───────────────────────────
+(define aura-json-body
+  (lambda (escaped-sys escaped-goal)
+    (string-append
+      "{" dq "model" dq ":" dq "deepseek-v4-flash" dq
+      "," dq "messages" dq ":[{"
+      dq "role" dq ":" dq "system" dq "," dq "content" dq ":" dq escaped-sys dq
+      "},{"
+      dq "role" dq ":" dq "user" dq "," dq "content" dq ":" dq escaped-goal dq
+      "}]"
+      "," dq "temperature" dq ":0.3," dq "max_tokens" dq ":4096}")))
+
+; ── Call LLM API, return full JSON response ────────────
+(define aura-llm-call
+  (lambda (sys goal)
+    (let ((key (getenv "LLM_API_KEY")))
+      (if (or (not key) (= (string-length key) 0)) ""
+        (http-post "https://api.deepseek.com/v1/chat/completions"
+          (aura-json-body (aura-json-escape sys) (aura-json-escape goal))
+          key)))))
+
+; ── Generator factory ──────────────────────────────────
+(define aura-make-gen
+  (lambda (sp)
+    (lambda (goal)
+      (aura-llm-call sp goal))))
+
+; ── Verifier: code → "#t" or error ─────────────────────
+(define aura-verify
+  (lambda (code)
+    (if (set-code code)
+      (begin (typecheck-current)
+        (let ((r (eval-current)))
+          (if (void? r) "#t" (string-append "fail:" (type-of r)))))
+      "bad-code")))
+
+; ── Fixer factory ──────────────────────────────────────
+(define aura-make-fix
+  (lambda (sp)
+    (lambda (code err goal)
+      (aura-llm-call (string-append sp "Fix: " err) goal))))
