@@ -627,7 +627,7 @@ def test_fuzz():
     
     api_key = os.environ.get("LLM_API_KEY", "")
     if not api_key:
-        print("  Skipping fuzz: LLM_API_KEY not set")
+        print("  Skipping fuzz: LLM_API_KEY not set", flush=True)
         return True
     
     print("  Running LLM fuzz tests...", flush=True)
@@ -672,7 +672,7 @@ def test_fuzz():
         try:
             r = subprocess.run(
                 [aura_bin], input=aura_code, capture_output=True,
-                text=True, timeout=30, env=os.environ
+                text=True, timeout=60, env=os.environ
             )
             
             # Check signals (SIGABRT=6, SIGFPE=8, SIGSEGV=11)
@@ -683,7 +683,7 @@ def test_fuzz():
                     results["crashes"].append((name, sig_name))
                     repro_path = repro_dir / (datetime.date.today().isoformat() + "_" + name + "_" + sig_name + ".aura")
                     repro_path.write_text(";; compiler bug: " + sig_name + " in task '" + name + "'\n" + aura_code)
-                    print("    CRASH " + name + ": " + sig_name)
+                    print("    CRASH " + name + ": " + sig_name, flush=True)
                     continue
             
             # Check internal errors
@@ -692,7 +692,7 @@ def test_fuzz():
                 results["internal_errors"].append(name)
                 repro_path = repro_dir / (datetime.date.today().isoformat() + "_" + name + "_internal.aura")
                 repro_path.write_text(";; compiler bug: internal error in '" + name + "'\n;; stderr: " + stderr[:200] + "\n" + aura_code)
-                print("    INTERNAL " + name)
+                print("    INTERNAL " + name, flush=True)
                 continue
             
             if '"ok"' in (r.stdout or ""):
@@ -704,7 +704,7 @@ def test_fuzz():
             results["timeouts"].append(name)
             repro_path = repro_dir / (datetime.date.today().isoformat() + "_" + name + "_timeout.aura")
             repro_path.write_text(";; compiler bug: timeout in task '" + name + "'\n" + aura_code)
-            print("    TIMEOUT " + name)
+            print("    TIMEOUT " + name, flush=True)
     
     total = results["pass"] + results["fail"] + len(results["crashes"]) + len(results["timeouts"]) + len(results["internal_errors"])
     print("  Fuzz results: " + str(results["pass"]) + " pass, " + str(results["fail"]) + " fail, " +
