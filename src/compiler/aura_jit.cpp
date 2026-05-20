@@ -155,7 +155,16 @@ struct LLVMBuilder {
         case OpAdd:  store(inst.ops[0], irb->CreateAdd(load(inst.ops[1]), load(inst.ops[2]))); return true;
         case OpSub:  store(inst.ops[0], irb->CreateSub(load(inst.ops[1]), load(inst.ops[2]))); return true;
         case OpMul:  store(inst.ops[0], irb->CreateMul(load(inst.ops[1]), load(inst.ops[2]))); return true;
-        case OpDiv:  store(inst.ops[0], irb->CreateSDiv(load(inst.ops[1]), load(inst.ops[2]))); return true;
+        case OpDiv: {
+            auto dividend = load(inst.ops[1]);
+            auto divisor = load(inst.ops[2]);
+            auto is_zero = irb->CreateICmpEQ(divisor, c64(0));
+            // Avoid CPU #DE (SIGFPE) on zero divisor: substitute 1, then select 0 as result
+            auto safe_div = irb->CreateSelect(is_zero, c64(1), divisor);
+            auto div_result = irb->CreateSDiv(dividend, safe_div);
+            store(inst.ops[0], irb->CreateSelect(is_zero, c64(0), div_result));
+            return true;
+        }
         case OpEq: { auto c = irb->CreateICmpEQ(load(inst.ops[1]), load(inst.ops[2])); store(inst.ops[0], irb->CreateZExt(c, llvm::Type::getInt64Ty(ctx))); return true; }
         case OpLt: { auto c = irb->CreateICmpSLT(load(inst.ops[1]), load(inst.ops[2])); store(inst.ops[0], irb->CreateZExt(c, llvm::Type::getInt64Ty(ctx))); return true; }
         case OpGt: { auto c = irb->CreateICmpSGT(load(inst.ops[1]), load(inst.ops[2])); store(inst.ops[0], irb->CreateZExt(c, llvm::Type::getInt64Ty(ctx))); return true; }
