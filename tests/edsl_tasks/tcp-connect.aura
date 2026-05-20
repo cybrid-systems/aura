@@ -2,17 +2,8 @@
 ;; goal: Connect to httpbin.org:80, send HTTP GET, receive response
 ;; expect: 200
 ;; expect: OK
-;; hint: --- TCP socket ---
-;; hint: Aura has (tcp-connect "host" port). DO NOT use c-func for networking.
-;; hint: (display "ok")
-;; hint: }
-;; hint: 
-;; hint: # ── LLM 调用 ──────────────────────────────────────────────
-;; hint: def llm_complete(model, base_url, key, messages, retries=3):
-;; hint:     parsed = urllib.parse.urlparse(base_url)
-;; hint:     path = parsed.path.rstrip("/") + "/chat/completions"
-;; hint:     for attempt in range(retries):
-;; hint:         try:
-;; hint:             conn_cls = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
-;; hint:             h = conn_cls(parsed.netloc, timeout=120)
-;; hint:             h.request("POST", path, json.dumps({
+;; hint: Use (tcp-connect "httpbin.org" 80) to get a socket
+;; hint: Send HTTP GET with (tcp-send socket "GET / HTTP/1.0\r\nHost: httpbin.org\r\n\r\n")
+;; hint: Receive response with (tcp-recv socket)
+;; hint: HTTP response starts with "HTTP/1.1 200 OK" — extract the status code and message
+;; hint: Use (display ...) to show the socket operations result
