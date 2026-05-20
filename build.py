@@ -392,7 +392,9 @@ def test_bench():
     if not AURA.exists():
         fail(f"{AURA} not found")
         return 1
-    return run([sys.executable, str(BENCH)])
+    # Pass AURA_BIN so subprocess benchmark.py doesn't need hardcoded paths
+    env = {**os.environ, "AURA_BIN": str(AURA)}
+    return run([sys.executable, str(BENCH)], env=env)
 
 
 # ═══════════════════════════════════════════════════════════════
