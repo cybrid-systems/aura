@@ -779,7 +779,188 @@ void Evaluator::init_pair_primitives() {
 
 
 
-    primitives_.add("string-append", [this](const auto& a) {
+    
+    // json-parse: parse JSON string into Aura value
+    // (json-parse json-str) → value (Int/Float/String/Bool/Void/List/Hash)
+    primitives_.add("json-parse", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !types::is_string(a[0])) return make_void();
+        auto json_str = string_heap_[types::as_string_idx(a[0])];
+
+        std::size_t pos = 0;
+        auto skip_ws = [&]() {
+            while (pos < json_str.size() && (json_str[pos] == ' ' || json_str[pos] == '\t' || json_str[pos] == '\n' || json_str[pos] == '\r'))
+                pos++;
+        };
+
+        // Forward declarations for recursive parsing
+        std::function<EvalValue()> parse_value;
+
+        auto parse_string = [&]() -> EvalValue {
+            // Expected at ": advance past it
+            if (pos >= json_str.size() || json_str[pos] != '"') return make_void();
+            pos++; // skip opening quote
+            std::string result;
+            while (pos < json_str.size()) {
+                if (json_str[pos] == '"') { pos++; break; }
+                if (json_str[pos] == '\\' && pos + 1 < json_str.size()) {
+                    pos++;
+                    switch (json_str[pos]) {
+                        case '"': result += '"'; break;
+                        case '\\': result += '\\'; break;
+                        case '/': result += '/'; break;
+                        case 'b': result += '\b'; break;
+                        case 'f': result += '\f'; break;
+                        case 'n': result += '\n'; break;
+                        case 't': result += '\t'; break;
+                        case 'r': result += '\r'; break;
+                        default: result += json_str[pos]; break;
+                    }
+                } else {
+                    result += json_str[pos];
+                }
+                pos++;
+            }
+            auto sid = string_heap_.size();
+            string_heap_.push_back(result);
+            return types::make_string(sid);
+        };
+
+        auto parse_number = [&]() -> EvalValue {
+            std::size_t start = pos;
+            bool is_float = false;
+            if (pos < json_str.size() && json_str[pos] == '-') pos++;
+            while (pos < json_str.size() && json_str[pos] >= '0' && json_str[pos] <= '9') pos++;
+            if (pos < json_str.size() && json_str[pos] == '.') {
+                is_float = true;
+                pos++;
+                while (pos < json_str.size() && json_str[pos] >= '0' && json_str[pos] <= '9') pos++;
+            }
+            if (pos < json_str.size() && (json_str[pos] == 'e' || json_str[pos] == 'E')) {
+                is_float = true;
+                pos++;
+                if (pos < json_str.size() && (json_str[pos] == '+' || json_str[pos] == '-')) pos++;
+                while (pos < json_str.size() && json_str[pos] >= '0' && json_str[pos] <= '9') pos++;
+            }
+            auto num_str = json_str.substr(start, pos - start);
+            if (is_float) {
+                return types::make_float(std::stod(num_str));
+            } else {
+                return types::make_int(std::stoll(num_str));
+            }
+        };
+
+        auto parse_keyword = [&](const std::string& kw, EvalValue val) -> bool {
+            if (pos + kw.size() <= json_str.size() && json_str.substr(pos, kw.size()) == kw) {
+                pos += kw.size();
+                return true;
+            }
+            return false;
+        };
+
+        auto parse_array = [&]() -> EvalValue {
+            pos++; // skip [
+            skip_ws();
+            std::vector<EvalValue> elems;
+            while (pos < json_str.size() && json_str[pos] != ']') {
+                skip_ws();
+                elems.push_back(parse_value());
+                skip_ws();
+                if (pos < json_str.size() && json_str[pos] == ',') pos++;
+                skip_ws();
+            }
+            if (pos < json_str.size() && json_str[pos] == ']') pos++;
+            // Build list in correct order
+            EvalValue result = make_void();
+            for (std::size_t i = elems.size(); i > 0; --i) {
+                auto pid = pairs_.size();
+                pairs_.push_back({elems[i - 1], result});
+                result = types::make_pair(pid);
+            }
+            return result;
+        };
+
+        auto parse_object = [&]() -> EvalValue {
+            pos++; // skip {
+            HashTable ht;
+            ht.capacity = 8;
+            ht.metadata.resize(ht.capacity, 0xFF);
+            ht.keys.resize(ht.capacity);
+            ht.values.resize(ht.capacity);
+            while (pos < json_str.size() && json_str[pos] != '}') {
+                skip_ws();
+                auto key_val = parse_string();
+                skip_ws();
+                if (pos < json_str.size() && json_str[pos] == ':') pos++;
+                skip_ws();
+                auto val = parse_value();
+                // Compute hash for key (string or number keys)
+                std::uint64_t kh = 0x9e3779b97f4a7c15ull;
+                if (types::is_string(key_val)) {
+                    auto ksid = types::as_string_idx(key_val);
+                    if (ksid < string_heap_.size()) {
+                        auto& ks = string_heap_[ksid];
+                        kh = 0xcbf29ce484222325ull;
+                        for (char c : ks) kh = (kh ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    }
+                } else if (types::is_int(key_val)) {
+                    kh = static_cast<std::uint64_t>(types::as_int(key_val)) * 0x9e3779b97f4a7c15ull;
+                }
+                auto fp = static_cast<std::uint8_t>(kh >> 57) | 0x80;
+                // Check if key already exists (need string content comparison)
+                bool found = false;
+                for (std::size_t at = 0; at < ht.capacity; ++at) {
+                    auto idx = ((kh >> 1) + at) & (ht.capacity - 1);
+                    if (ht.metadata[idx] != 0xFF) {
+                        bool eq = false;
+                        auto& existing_key = ht.keys[idx];
+                        if (types::is_string(existing_key) && types::is_string(key_val)) {
+                            auto ai = types::as_string_idx(existing_key);
+                            auto bi = types::as_string_idx(key_val);
+                            eq = (ai < string_heap_.size() && bi < string_heap_.size()) && string_heap_[ai] == string_heap_[bi];
+                        } else {
+                            eq = existing_key == key_val;
+                        }
+                        if (eq) { ht.values[idx] = val; found = true; break; }
+                    }
+                }
+                if (!found) {
+                    for (std::size_t at = 0; at < ht.capacity; ++at) {
+                        auto idx = ((kh >> 1) + at) & (ht.capacity - 1);
+                        if (ht.metadata[idx] == 0xFF) {
+                            ht.metadata[idx] = fp; ht.keys[idx] = key_val; ht.values[idx] = val;
+                            ht.size++;
+                            break;
+                        }
+                    }
+                }
+                skip_ws();
+                if (pos < json_str.size() && json_str[pos] == ',') pos++;
+                skip_ws();
+            }
+            if (pos < json_str.size() && json_str[pos] == '}') pos++;
+            auto hidx = hash_heap_.size();
+            hash_heap_.push_back(std::move(ht));
+            return types::make_hash(hidx);
+        };
+
+        parse_value = [&]() -> EvalValue {
+            skip_ws();
+            if (pos >= json_str.size()) return make_void();
+            char c = json_str[pos];
+            if (c == '"') return parse_string();
+            if (c == '-' || (c >= '0' && c <= '9')) return parse_number();
+            if (c == '[') return parse_array();
+            if (c == '{') return parse_object();
+            if (parse_keyword("true", make_bool(true))) return make_bool(true);
+            if (parse_keyword("false", make_bool(false))) return make_bool(false);
+            if (parse_keyword("null", make_void())) return make_void();
+            return make_void();
+        };
+
+        return parse_value();
+    });
+
+primitives_.add("string-append", [this](const auto& a) {
         std::string result;
         for (auto& v : a) {
             if (is_string(v)) {

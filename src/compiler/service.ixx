@@ -129,6 +129,7 @@ public:
             "intend", "define-strategy", "register-strategy!", "intend-history",
             "json-encode",
             "json-get-string",
+            "json-parse",
             // Special forms not in IR
             "when", "unless", "export",
             "and", "or", "cond", "case",
