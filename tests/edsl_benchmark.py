@@ -391,13 +391,17 @@ def run_single_task(model, base_url, api_key, name, prompt, expected, stdlib, ap
 def run_single_task_intend(model, base_url, api_key, name, prompt, expected, stdlib, api_ref):
     """Run one task using (intend ...) primitive instead of Python fix loop.
 
-    Escapes the prompt string to avoid S-expression breakage.
+    Passes the full system prompt (with task hints) to the C++ intend
+    primitive so it can use the same rich context as the Python fix loop.
     Returns (success, output, error, total_time, iterations).
     """
     max_att = MAX_ATTEMPTS if FIX_MODE else 3
+    # Build the full system prompt (same as Python fix loop)
+    sys_prompt = build_sys_prompt(stdlib, api_ref, task_name=name)
     # Escape backslashes and double quotes for safe embedding in S-expression
-    safe_prompt = prompt.replace('\\', '\\\\').replace('"', '\\"')
-    intend_code = f'(intend "{safe_prompt}" {max_att})'
+    safe_goal = prompt.replace('\\', '\\\\').replace('"', '\\"')
+    safe_prompt = sys_prompt.replace('\\', '\\\\').replace('"', '\\"')
+    intend_code = f'(intend "{safe_goal}" {max_att} "{safe_prompt}")'
     t0 = time.time()
     rc, out, err = test_aura(intend_code)
     elapsed = time.time() - t0
