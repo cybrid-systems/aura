@@ -67,11 +67,13 @@ Aura 编译器用 Aura 写。等前面稳定后再启。
 
 详情：[intent orchestration design](design/intent_orchestration.md)
 
-#### E1: intend 原语 (2-3d)
-- 注册 `(intend goal ...)` 为内置原语
-- 实现 `generate-and-fix` 策略（等价于当前 `--fix` 循环）
-- 返回 `#(status code iterations timeline)` record
-- 测试：`tests/test_intent.aura`
+#### E1: intend 原语 (2-3d) ✅
+- 注册 `(intend goal [max-attempts])` 为内置原语
+- generate-and-fix 循环：LLM 生成 → parse + eval_flat → 报错修正 → 重试
+- 通过 curl + JSON API 调 LLM，支持 env var 配置（LLM_API_KEY / LLM_MODEL / LLM_BASE_URL）
+- 返回 `"#(status:... goal:... iterations:...)"` 字符串
+- 7 个生命周期测试：优雅失败、边界参数、EDSL 管线集成
+- 无 API key 时不崩溃，返回失败记录
 
 #### E2: Strategy 系统 (3-5d)
 - `define-strategy` 宏 → 策略展开为可 mutate 的 strategy record
@@ -112,3 +114,4 @@ Aura 编译器用 Aura 写。等前面稳定后再启。
 | 05-19 | C FFI | dlopen/dlsym, marshalling, JIT symbol |
 | 05-20 | EDSL Agent Benchmark | 17→24 stable, 多轮聚合+迭代修正 |
 | 05-20 | Intent Orchestration Design | intend 原语设计文档 |
+| 05-20 | E1: intend 原语 ✅ | (intend goal [max-attempts]) + 7 tests |
