@@ -89,6 +89,7 @@ tests/         bash(117)+unit+integ+bench+agent    ~6k
 
 - [docs/benchmark.md](docs/benchmark.md) — EDSL 模型能力基准 (deepseek-v4-flash: 92% stable)
 - [docs/design/intent_orchestration.md](docs/design/intent_orchestration.md) — 高层意图编排原语设计
+- [docs/design/llm_stdlib.md](docs/design/llm_stdlib.md) — LLM stdlib 模块设计
 - [tests/edsl_benchmark.py](tests/edsl_benchmark.py) — 运行：`LLM_API_KEY="..." python3 tests/edsl_benchmark.py --rounds 3 --fix --max-attempts 5`
 
 ## 文档
