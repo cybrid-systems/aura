@@ -597,6 +597,12 @@ def main():
                     pass
         elif args[i] == "--json":
             output_json = True
+        elif args[i] == "--tasks":
+            i += 1
+            if i < len(args):
+                os.environ["BENCH_TASK_FILTER"] = args[i]
+        elif args[i] == "--failed":
+            os.environ["BENCH_TASK_FILTER"] = "primes-list,quicksort,tcp-connect"
         elif args[i] == "--fix":
             FIX_MODE = True
         elif args[i] == "--intend":
@@ -648,7 +654,11 @@ def main():
 
         start_time = time.time()
 
+        task_filter = os.environ.get("BENCH_TASK_FILTER", "")
+        filter_list = [t.strip() for t in task_filter.split(",") if t.strip()] if task_filter else []
         for name, prompt, expected, stdlib in TASKS:
+            if filter_list and name not in filter_list:
+                continue
             task_passes = 0
             print(f"\n  ── {name} ──")
             for round_i in range(1, ROUNDS + 1):
