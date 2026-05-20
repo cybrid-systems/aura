@@ -3568,10 +3568,10 @@ Evaluator::Evaluator() {
     });
 
     primitives_.add("tcp-recv", [this](const auto& a) -> EvalValue {
-        if (a.size() < 2 || !types::is_int(a[0]) || !types::is_int(a[1]))
+        if (a.empty() || !types::is_int(a[0]))
             return make_void();
         auto fd = static_cast<int>(types::as_int(a[0]));
-        auto maxlen = static_cast<std::size_t>(types::as_int(a[1]));
+        auto maxlen = static_cast<std::size_t>(a.size() >= 2 && types::is_int(a[1]) ? types::as_int(a[1]) : 4096);
         if (maxlen > 65536) maxlen = 65536;
         std::string buf(maxlen, '\0');
         auto n = ::recv(fd, buf.data(), maxlen, 0);
