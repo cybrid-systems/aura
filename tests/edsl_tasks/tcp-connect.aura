@@ -2,8 +2,9 @@
 ;; goal: Connect to httpbin.org:80, send HTTP GET, receive response
 ;; expect: 200
 ;; expect: OK
-;; hint: Use (tcp-connect "httpbin.org" 80) to get a socket
-;; hint: Send HTTP GET with (tcp-send socket "GET / HTTP/1.0\r\nHost: httpbin.org\r\n\r\n")
-;; hint: Receive response with (tcp-recv socket)
-;; hint: HTTP response starts with "HTTP/1.1 200 OK" — extract the status code and message
-;; hint: Use (display ...) to show the socket operations result
+;; hint: TCP flow: connect → send → receive → display result
+;; hint: (tcp-connect "httpbin.org" 80) → socket fd (integer)
+;; hint: (tcp-send fd "GET / HTTP/1.0\r\nHost: httpbin.org\r\n\r\n")
+;; hint: (tcp-recv fd) returns HTTP response string (head + body)
+;; hint: HTTP response starts with "HTTP/1.1 200 OK" — display the full response
+;; hint: Use (display (tcp-recv socket)) to show the raw result
