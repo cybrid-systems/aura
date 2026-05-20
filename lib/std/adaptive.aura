@@ -1,0 +1,111 @@
+; lib/std/adaptive.aura — adaptive intend decision module
+;
+; Returns lists, not hashes (avoids cross-module hash mutation bug).
+; Uses cond, not if (avoids cross-module if-in-begin bug).
+(export measure-distance structured-diagnosis get-api-ref)
+
+; == Primitives ==
+
+(define string-index
+  (lambda (text substr start)
+    (let ((n (string-length text))
+          (m (string-length substr)))
+      (let loop ((i start))
+        (if (> i (- n m)) -1
+            (if (string=? (substring text i (+ i m)) substr) i
+                (loop (+ i 1))))))))
+
+(define string-contains?
+  (lambda (text substr)
+    (not (= (string-index text substr 0) -1))))
+
+(define string-downcase
+  (lambda (str)
+    (list->string
+      (map (lambda (c)
+             (if (and (>= c 65) (<= c 90)) (+ c 32) c))
+           (string->list str)))))
+
+(define string-trim
+  (lambda (str)
+    (let ((n (string-length str)))
+      (let lp ((i 0))
+        (if (or (>= i n) (> (string-ref str i) 32))
+            (let rp ((j (- n 1)))
+              (if (or (< j i) (> (string-ref str j) 32))
+                  (substring str i (+ j 1))
+                  (rp (- j 1))))
+            (lp (+ i 1)))))))
+
+(define count-matches
+  (lambda (output keys)
+    (if (null? keys) 0
+        (+ (if (string-contains? output (car keys)) 1 0)
+           (count-matches output (cdr keys))))))
+
+; == measure-distance ==
+; Returns (list phase-string ratio-number diagnosis-string)
+
+(define measure-distance
+  (lambda (rc output expected-list)
+    (let ((trimmed (string-trim output))
+          (n-expected (length expected-list))
+          (lower-out (string-downcase output))
+          (lower-exp (map (lambda (kw) (string-downcase kw)) expected-list))
+          (m (count-matches (string-downcase output)
+                            (map (lambda (kw) (string-downcase kw)) expected-list))))
+      (let ((ratio (/ m (max n-expected 1))))
+        (cond
+          ((not (= rc 0))
+           (list "coarse" 0.0 "compile error: code did not compile or run"))
+          ((or (string=? trimmed "") (string=? trimmed "()"))
+           (list "coarse" 0.0 "empty output: did you forget (display ...)?"))
+          ((= n-expected 0)
+           (list "putt" 1.0 ""))
+          ((>= ratio 0.85)
+           (list "putt" ratio ""))
+          ((= ratio 0.0)
+           (list "fine" ratio "no expected keywords found in output"))
+          (#t
+           (list "fine" ratio
+                 (string-append "partial match (ratio: " (number->string ratio) ")"))))))))
+
+; == structured-diagnosis ==
+
+(define structured-diagnosis
+  (lambda (output expected-list)
+    (let ((d (measure-distance 0 output expected-list)))
+      (string-append
+        "=== Diagnosis ===\n"
+        "Phase: " (car d) "\n"
+        "Ratio: " (number->string (car (cdr d))) "\n"
+        (let ((diag (car (cdr (cdr d)))))
+          (if (string=? diag "") "" (string-append "Note: " diag "\n")))))))
+
+; == API Reference ==
+
+(define api-for-module
+  (lambda (mod)
+    (cond
+      ((string=? mod "std/hash")
+       "=== std/hash ===\n\
+(hash key val ...)      -> <hash[N]>\n\
+(hash-ref hash key)     -> value | ()\n\
+(hash-set! hash key v)  -> void (BUG across modules)\n\
+(hash-keys hash)        -> list\n\
+(hash-values hash)      -> list\n\
+CAUTION: (display <hash>) shows <hash[N]>, not content.\n")
+      ((string=? mod "std/list")
+       "=== std/list ===\n\
+(filter pred lst)       -> list\n\
+(map fn lst)            -> list\n\
+(foldl fn init lst)     -> any\n\
+(for-each fn lst)       -> void\n\
+NOTE: (display '(1 2)) shows (1 2) inline.\n")
+      (#t ""))))
+
+(define get-api-ref
+  (lambda (stdlib-list)
+    (let loop ((libs stdlib-list) (result ""))
+      (if (null? libs) result
+          (loop (cdr libs) (string-append result (api-for-module (car libs))))))))

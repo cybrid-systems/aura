@@ -521,50 +521,126 @@ def run_intend_adaptive(name, goal, expected, stdlib):
 
 ---
 
-## 9. 与现有架构的关系
+## 9. 架构决策 — 控制模块写在 Aura 层
+
+### 9.1 三层的职责边界
+
+```
+┌─────────────────────────────────────┐
+│  Python 外层 (edsl_benchmark.py)     │  编排层（shell）
+│                                     │
+│  run_intend_adaptive()               │
+│  ├── 按 phase 调 temperature/tokens  │
+│  ├── 选 __gen__ / __fix__ template   │
+│  └── 调用 adaptive.aura 作决策       │
+└──────────────┬──────────────────────┘
+               │ 调用
+               ▼
+┌─────────────────────────────────────┐
+│  lib/std/adaptive.aura               │  策略层（Aura stdlib）
+│  (measure-distance rc out exp)       │
+│    → (phase ratio diagnosis)         │
+│  (structured-diagnosis out exp)      │
+│    → 诊断文本                        │
+│  (get-api-ref mod ...)               │
+│    → API 参考文本                     │
+│                                     │
+│  不依赖编译器内部，纯数据变换          │
+└──────────────┬──────────────────────┘
+               │ 通过现有原语调用
+               ▼
+┌─────────────────────────────────────┐
+│  编译器 C++                           │  传感器层（不修改）
+│                                     │
+│  intend 原语                          │
+│  aura-verify                          │
+│  current-source / query:find          │
+│  typecheck-current / eval-current     │
+└─────────────────────────────────────┘
+```
+
+### 9.2 为什么放 Aura 而不是 Python 或 C++
+
+| 维度 | C++ 编译器 | Python benchmark | Aura stdlib ✅ |
+|------|-----------|----------------|---------------|
+| 热迭代 | ❌ 每次 rebuild | ✅ | ✅ 不需编译 |
+| 复用性 | ❌ 绑死编译器 | ❌ 绑死 benchmark | ✅ 所有工具共用 |
+| 测试 | ❌ 编译测试慢 | ✅ Python test 快 | ✅ Aura test 快 |
+| E4 兼容 | ❌ | ❌ | ✅ `define-strategy` 直接对接 |
+| 解耦度 | ❌ 最差 | ❌ 中度 | ✅ 最优 |
+| LLM 可读 | ❌ | ✅ | ✅ 自己能读自己 |
+| 运行时成本 | ❌ 膨胀编译器 | ❌ 子进程调用 | ✅ 同进程函数调用 |
+
+### 9.3 Python 层只做编排
+
+Python 侧最小必要职责：
+
+```python
+def run_intend_adaptive(name, goal, exp_str, stdlib):
+    phase, ratio, diag = call_adaptive_measure_distance(rc, out, exp_str)
+    if phase == "coarse":
+        temp, tokens = 0.3, 4096
+        sys_prompt = build_coarse_prompt(goal)
+    elif phase == "fine":
+        temp, tokens = 0.2, 2048
+        api_ref = call_adaptive_get_api_ref(stdlib)
+        sys_prompt = build_fine_prompt(goal, diag, api_ref)
+    else:  # putt
+        temp, tokens = 0.1, 1024
+        sys_prompt = build_putt_prompt(...)
+
+    result = run_intend(sys_prompt, temp, tokens)
+    return result
+```
+
+### 9.4 与 E2-E4 的关系
 
 ```
 E2 (define-strategy / register-strategy!)
     │
-    ├── E3 (intend-history / intend-analytics)
-    │       │
-    │       └── E4 Phase 2 (strategy-inspect / strategy-set-field!)
-    │               │
-    │               └── 自适应 Intend（本文）
-    │                       │
-    │                       ├── 使用 E3 analytics 判断策略效果
-    │                       ├── 使用 E4 strategy-set-field! 调参
-    │                       └── 使用 intend 的三参数形式
+    ├── adaptive.aura 可注册为一个正式 strategy
+    │   (register-strategy! "adaptive-golf" adaptive-strategy)
     │
-    └── 不是替换，是在现有 intend 之上增加策略调度层
+    ├── E3 analytics 用来评估 phase 切换是否有效
+    │
+    ├── E4 evolve-strategy 可在 benchmark 跑完后
+    │   调整 measure-distance 的阈值
+    │
+    └── 自适应 intend 是策略调度层，不是新原语
 ```
-
-- 自适应 intend 不是新原语，是 Python 层的策略编排器
-- Aura 侧的 `__gen__` / `__fix__` 保持不变（只改 prompt 内容）
-- `intend` 原语本身不需要修改
 
 ---
 
 ## 10. 路线图
 
-### Phase 1: classify_error + 诊断生成（低工作量）
+### Phase 1: lib/std/adaptive.aura（低工作量）
 
-- [x] 实现 `measure_distance()` 函数
-- [x] 实现 `structured_diagnosis()` 函数
-- [x] 集成到现有 `run_single_task_intend` 的 output-mismatch 分支
-- [ ] （已完成）替换简单的文本反馈为结构化诊断
+Aura 模块实现核心控制逻辑：
 
-### Phase 2: 两阶段 fixer（中工作量）
+- [x] `(measure-distance rc output expected-list)` → `(phase ratio diag)`
+- [x] 规则表：`<hash[N]>`、`<list[N]>`、空输出、编译错误、结构正确值错误
+- [x] `(structured-diagnosis output expected-list)` → 结构化诊断文本
+- [x] `(get-api-ref stdlib-list)` → 按模块生成 API 参考
 
-- [ ] 定义 coarse / fine 两套 `__fix__` template
-- [ ] 定义对应的 system prompt
-- [ ] Python 层实现策略切换逻辑
-- [ ] 延迟满足保证（hysteresis）
+```scheme
+;; 使用示例
+(let ((distance (measure-distance 0 "<hash[2]>" '("hello" "foo"))))
+  ; → (phase: "fine" ratio: 0.0 diag: "display hash shows <hash[N]>...")
+  (case (phase distance)
+    ("coarse" ...)   ; 完整重写
+    ("fine" ...)     ; 精修
+    ("putt" ...)))   ; 定点修改
+```
+
+### Phase 2: Python 编排层（低工作量）
+
+- [ ] `run_intend_adaptive()` 调用 adaptive.aura 的 measure-distance
+- [ ] 按 phase 选择 fixer template / temperature / max_tokens
+- [ ] 滞后保护：MIN_COARSE_ATTEMPTS=2, MIN_FINE_ATTEMPTS=2
 
 ### Phase 3: API Reference 注入（中工作量）
 
-- [ ] 编写 std/hash, std/list, std/llm, std/iter 的 API 参考
-- [ ] `build_sys_prompt` 动态注入
+- [ ] adaptive.aura 的 `get-api-ref` 输出注入到 system prompt
 - [ ] 按任务依赖裁剪
 
 ### Phase 4: putt / EDSL 定点修改（高工作量）
