@@ -295,12 +295,19 @@ success = aura_eval(f'(intend "Write merge sort")') → check
 - 7 个边界测试：空参数、空 goal、max-attempts=0/5、EDSL 管线集成
 - 文件：`src/compiler/evaluator_impl.cpp` (+199行)、`src/compiler/service.ixx`、`tests/test_intent.aura`
 
-**当前局限：**
-- 仅支持 generate-and-fix 一种 strategy（硬编码在 C++ lambda 中）
-- 无 timeline 记录（设计中应有 `(intend-history)`）
-- 返回值是字符串而非结构化 record（`#(...)` 的字符串表示）
-- 无 keyword arguments 支持（`:` 开头的命名参数）
-- 不回调 eds l_benchmark：`--fix` 循环尚未迁移
+**当前状态 (E4 Phase 1-3 完成):**
+- 结构化 intend-history ✓ — 14 字段 IntendRecord + 滑动窗口
+- intend-analytics 原语 ✓ — 按策略/任务聚合统计
+- 错误类型分类 ✓ — 8 种错误模式自动标注
+- strategy-field / strategy-set-field! ✓ — 策略字段读写
+- evolve-strategy ✓ — 根据错误模式追加针对性提示
+- benchmark --evolve ✓ — hints 自动注入下一轮 system prompt
+- 闭包捕获 bug 修复 ✓ — memoize 任务 47/47 通过
+
+**待办：**
+- Phase 4: 多意图协作与意图树（远期）
+- `build.py` fuzz 测试套件（见 llm-fuzz 设计文档）
+- 验证器升级：不只验代码能跑，还要验输出匹配期望值
 
 ### Phase 2: Strategy 系统（3-5 天）
 

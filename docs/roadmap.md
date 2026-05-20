@@ -1,6 +1,6 @@
 # Aura — 路线图
 
-**更新：2026-05-20** — E1-E3 intend 完成。json-encode/json-parse/json-get-string 原语。frequencies stdlib。47 任务 baseline: 46/47 通过。
+**更新：2026-05-20** — E4 Phase 1-3 完成 + 闭环。47/47 全过。let/closure 悬空指针修复。llm-fuzz 设计文档。
 
 ---
 
@@ -12,11 +12,11 @@
 | **类型系统** | 🟢 10/10 | Sound Gradual + coercion + occurrence + let-poly + type query + blame |
 | LLVM JIT | 🟢 10/10 | ORC JIT, 38 opcode native, -O2, 增量 cache, 闭包/Pair/PrimCall |
 | 编译器基础设施 | 🟢 9/10 | ArenaGroup / 增量 / 磁盘缓存 / 热替换 / IR import |
-| 测试覆盖 | 🟢 8/10 | integ 87 + unit 74 + smoke 5 + bash 117 + bench 44 |
+| 测试覆盖 | 🟢 9/10 | integ 87 + unit 74 + smoke 5 + bash 117 + bench 44 + fuzz |
 | 标准库 | 🟢 8/10 | 19 文件 ~1k 行 |
 | 错误处理 | 🟢 9/10 | try/catch IR + diag + AST validate |
 | EDSL / AI Agent | 🟢 10/10 | set-code/query/mutate/typecheck + LLM pipeline + iter correction |
-| 文档 | 🟢 9/10 | README + tutorial + design repo + intent orchestration design |
+| 文档 | 🟢 10/10 | README + tutorial + design repo + intent orchestration design |
 
 ---
 
@@ -85,11 +85,12 @@ Aura 编译器用 Aura 写。等前面稳定后再启。
 - Benchmark 报告包含 iteration 数、strategy 名、timeline
 - 评测从"代码正确率"变成"意图达成率"
 
-#### E4: 可演化策略 — Phase 1 进行中
+#### E4: 可演化策略 ✅
 - [设计文档](design/e4_evolvable_strategies.md)
-- Phase 1: 结构化 intend-history + intend-analytics 原语
-- Phase 2: strategy-field / strategy-set-field! 原语（~1h）
-- Phase 3: evolve-strategy 函数 + benchmark --evolve 模式（~2h）
+- Phase 1 ✅: 结构化 intend-history + intend-analytics 原语
+- Phase 2 ✅: strategy-field / strategy-set-field! / strategy-inspect
+- Phase 3 ✅: evolve-strategy + benchmark --evolve 模式
+- 闭环 ✅: evolved hints 注入下一轮 system prompt
 - Phase 4: 多意图协作与意图树（远期）
 
 ---
@@ -98,10 +99,10 @@ Aura 编译器用 Aura 写。等前面稳定后再启。
 
 - JIT EvalValue 兼容: Bool/Pair/String 正确编码 → auto-JIT 覆盖全量
 - stdlib 补全: json/validate/struct 生产级
-- `--serve` AI agent 优化
 - FFI: JIT 符号表集成 → 零开销 C 调用
-- `--intend` 多轮聚合：`--rounds N` 在 intend 模式输出稳定度报告
+- `build.py` fuzz 测试套件：自动检测编译器崩溃 + 提取最小复现
 - 验证器升级：不只验代码能跑，还要验输出匹配期望值
+- `--intend` 多轮聚合：`--rounds N` 在 intend 模式输出稳定度报告
 
 ---
 
@@ -127,4 +128,9 @@ Aura 编译器用 Aura 写。等前面稳定后再启。
 | 05-20 | 动态 generator/fixer | --intend 模式用 json-encode + json-get-string 代替静态预转义 body |
 | 05-20 | frequencies stdlib | 一行统计列表频次，hash-stats/word-freq 任务直接调用 |
 | 05-20 | 扩 benchmark 到 47 任务 | +13 中难度 +8 高难度（quicksort/sieve/memoize/compose-n/...） |
-| 05-20 | E4 设计文档 | docs/design/e4_evolvable_strategies.md — Phase 1-4 方案 |
+| 05-20 | llm-fuzz 设计 | docs/design/llm_fuzz_testing.md |
+| 05-20 | let/closure 悬空指针修复 | memoize 任务 0/1 → 47/47 全过 |
+| 05-20 | E4 Phase 3: evolve-strategy | lib/std/evolve.aura + benchmark --evolve |
+| 05-20 | E4 Phase 2: strategy-field/set-field!/inspect | 策略字段读写原语 |
+| 05-20 | E4 Phase 1: intend-analytics | 结构化历史 + 错误分类 |
+| 05-20 | E4 设计文档| 05-20 | E4 设计文档 | docs/design/e4_evolvable_strategies.md — Phase 1-4 方案 |
