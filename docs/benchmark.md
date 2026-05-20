@@ -1,60 +1,126 @@
 # Aura EDSL Benchmark
 
-## Latest: 2026-05-19 v3 — deepseek-v4-flash: 19/26 (73%)
+> 26 个 LLM 代码生成任务，覆盖基础语法、标准库、类型系统、C FFI、EDSL、TCP。
+> 多轮聚合消除 LLM 方差，迭代修正循环让 LLM 自修编译错误。
 
-### Fixes applied this session
+## Latest: 2026-05-20 — deepseek-v4-flash: 24/26 (92%) stable
 
-| Fix | Impact |
-|-----|--------|
-| **C FFI string signatures** | `(c-func lib "sqrt" "(Float) -> Float")` → ffi-sqrt passes ✅ |
-| **user_bindings_ tracking** | Fixes `(define f ...) (display f)` showing `0` vs closure |
-| **bad_variant_access catch** | Instead of crash, shows friendly type error |
-| **Prompt v3** | stdlib examples, DO NOT USE list, C FFI examples |
+### Features
 
-### Results
+| 功能 | 说明 |
+|------|------|
+| `--rounds N` | 每个任务跑 N 轮独立 LLM 调用，聚合过率 |
+| `--fix` | 失败后自动把 Aura 报错喂回 LLM，迭代修正 |
+| `--max-attempts N` | 每任务每轮最多 LLM 调用次数（默认 3） |
+| `--json` | 结构化 JSON 输出，含过率、平均时间、attempt 统计 |
 
-| 等级 | 任务 | 状态 | 说明 |
-|------|------|------|------|
-| L0 | arith-basic | ✅ | `(+ 1 2 3 4 5)` → 15 |
-| L0 | arith-chain | ✅ | `(square 5)` → 25 |
-| L1 | lambda-simple | ✅ | `(double 10)` → 20 |
-| L1 | letrec-fact | ✅ | `(fact 5)` → 120 |
-| L1 | named-let | ✅ | sum 1..10 → 55 |
-| L2 | list-range | ✅ | `(range 1 10)` → (1..10) |
-| L2 | list-filter | ✅ | `(filter ...)` → (2 4 6 8 10) |
-| L2 | list-map | ✅ | `(map double (list 1 2 3 4 5))` |
-| L2 | list-foldl | ✅ | `(foldl + 0 (list 1 2 3 4 5))` → 15 |
-| L2 | list-reverse | ✅ | `(reverse (list 1 2 3 4 5))` |
-| L3 | prime-test | ❌ | LLM parse error |
-| L3 | primes-list | ❌ | LLM variance (was ✅ in v2) |
-| L3 | unique-hash | ✅ | `(unique (list 1 2 2 3 3 3))` |
-| L3 | merge-sort | ❌ | `(take lst half)` arg order reversed → friendly error now |
-| L4 | hash-basic | ✅ | hash create + read |
-| L4 | hash-stats | ❌ | LLM outputs Common Lisp (defun/dolist/gethash) |
-| L4 | word-freq | ❌ | raw `<hash[0]>` — needs `hash->list` |
-| L5 | type-check | ✅ | `(check 42 : Int)` |
-| L5 | type-of | ✅ | `(type-of 42)` → Int |
-| L5 | occurrence | ✅ | `(if (string? x) ...)` narrowing works |
-| L6 | ffi-sqrt | ✅ | `(c-func lib "sqrt" "(Float) -> Float")` → 3 |
-| L6 | ffi-strlen | ❌ | LLM uses wrong lib path (x86_64 vs arm64) |
-| L7 | edsl-set-code | ✅ | `--serve` protocol |
-| L7 | edsl-query | ✅ | `--serve` protocol |
-| L7 | edsl-mutate | ✅ | `--serve` protocol |
-| L8 | tcp-connect | ❌ | LLM uses wrong libc path |
+### Results (3 rounds × 5 attempts)
 
-## 问题分布
+```
+✅  Stable PASS:  24/26 (92%)
+🔄  Volatile:      2/26 (8%)
+❌  Stable FAIL:   0/26 (0%)
+```
 
-| 类别 | 数量 | 说明 |
-|------|------|------|
-| LLM 误解 (Common Lisp 习惯) | 3 | hash-stats, word-freq, ffi-strlen — 写了 CL 代码 |
-| LLM 方差 | 2 | prime-test, primes-list — 解析错误的随机代码 |
-| LLM 参数顺序 | 1 | merge-sort — (take lst half) 反了 |
-| CI 环境差异 | 1 | tcp-connect — libc 路径不对 |
+| 等级 | 任务 | 状态 | 过率 | avg attempts | 说明 |
+|------|------|------|------|-------------|------|
+| L0 | arith-basic | ✅ | 100% | 1.0 | `(+ 1 2 3 4 5)` |
+| L0 | arith-chain | ✅ | 100% | 1.0 | `(square 5)` |
+| L1 | lambda-simple | ✅ | 100% | 1.0 | `(double 10)` |
+| L1 | letrec-fact | ✅ | 100% | 1.0 | `(fact 5)` |
+| L1 | named-let | ✅ | 100% | 1.0 | sum 1..10 |
+| L2 | list-range | ✅ | 100% | 1.0 | std/list |
+| L2 | list-filter | ✅ | 100% | 1.0 | std/list |
+| L2 | list-map | ✅ | 100% | 1.0 | std/list |
+| L2 | list-foldl | ✅ | 100% | 1.0 | std/list |
+| L2 | list-reverse | ✅ | 100% | 1.0 | std/list |
+| L3 | prime-test | ✅ | 100% | 1.0 | 任务提示 + 修正 |
+| L3 | primes-list | ✅ | 100% | 1.0 | 任务提示 |
+| L3 | unique-hash | ✅ | 100% | 1.0 | hash 去重 |
+| L3 | merge-sort | ✅ | 100% | 1.0 | 任务提示给完整示例 |
+| L4 | hash-basic | ✅ | 100% | 1.0 | hash create + read |
+| L4 | hash-stats | ✅ | 100% | 1.7 | 迭代修正，`hash-keys` 显示内容 |
+| L4 | word-freq | 🔄 | 67% | 3.7 | 最复杂任务，3-5 attempts 通过 |
+| L5 | type-check | ✅ | 100% | 1.0 | `(check 42 : Int)` |
+| L5 | type-of | ✅ | 100% | 1.0 | `(type-of 42)` |
+| L5 | occurrence | ✅ | 100% | 1.0 | 类型精化 |
+| L6 | ffi-sqrt | ✅ | 100% | 1.0 | `(c-func -1 "sqrt" ...)` |
+| L6 | ffi-strlen | ✅ | 100% | 1.0 | `(c-func -1 "strlen" ...)` |
+| L7 | edsl-set-code | ✅ | 100% | 1.0 | `--serve` 协议 |
+| L7 | edsl-query | ✅ | 100% | 1.0 | `--serve` 协议 |
+| L7 | edsl-mutate | ✅ | 100% | 1.0 | `--serve` 协议 |
+| L8 | tcp-connect | 🔄 | 33% | 3.7 | LLM 强写 raw HTTP，偶用 `tcp-connect` |
 
-**所有 7 个失败都是 LLM prompt 问题**，编译器 bug 已全部修完。
+## 改进历程
+
+| 日期 | 策略 | ✅ Stable | ❌ Stable FAIL | 🔄 Volatile |
+|------|------|-----------|---------------|-------------|
+| 05-19 | 无提示 | 17 | 4 | 5 |
+| 05-20 | +任务提示 | 21 | 2 | 3 |
+| 05-20 | +`--fix` attempts=3 | 22 | 1 | 3 |
+| 05-20 | +`--fix` attempts=5 | **24** | **0** | **2** |
+
+## 关键设计决策
+
+### 1. 多轮聚合 (`--rounds`)
+
+LLM 生成代码有内在方差。单次失败可能是 LLM 抽风而非编译器 bug。
+N 轮聚合后按过率分类：
+- **100%**: Stable PASS — 编译器 + LLM 都靠谱
+- **0%**: Stable FAIL — 可能是编译器缺陷或 LLM 知识盲区
+- **1-99%**: Volatile — LLM 方差，改 prompt 或加示例
+
+### 2. 迭代修正 (`--fix`)
+
+遵循 Aura 设计哲学：不是"一次写对"，而是闭环迭代。
+
+```
+LLM 初稿 → Aura 编译 → 报错信息
+    ↑                      ↓
+    修正 ←── LLM 看到错误 ←──┘
+```
+
+每次修正的消息包含：
+- LLM 上次生成的代码
+- Aura 的实际报错/输出
+- 期望输出
+- 常见错误 checklist
+
+### 3. 任务针对性提示
+
+对 9 个困难任务（prime-test, merge-sort, hash-stats, word-freq 等）挂了可直接 copy 的工作示例。减少 LLM 摸索时间。
+
+### 4. Prompt 优化
+
+- 准确 ban 不存在的原语（`cadddr` 等 4+ 级 cxr）
+- 明确指出 `(display <hash>)` 输出 `<hash[N]>` 不显示 key
+- 用 `hash-keys` 代替不存在的 `hash->list`
+- 给出完整的 stdlib 函数列表而非仅 import 示例
 
 ## 运行
 
 ```bash
-LLM_API_KEY="..." LLM_MODEL="deepseek-v4-flash" python3 tests/edsl_benchmark.py
+# 快速单轮
+LLM_API_KEY="***" ./tests/edsl_benchmark.py
+
+# 多轮聚合
+LLM_API_KEY="***" ./tests/edsl_benchmark.py --rounds 5
+
+# 多轮 + 迭代修正（推荐）
+LLM_API_KEY="***" ./tests/edsl_benchmark.py --rounds 3 --fix
+
+# 多轮 + 修正 + 最多 5 次尝试 + JSON
+LLM_API_KEY="***" ./tests/edsl_benchmark.py --rounds 3 --fix --max-attempts 5 --json
+
+# 多模型对比
+LLM_MODEL=deepseek-v4-flash,gpt-4o LLM_API_KEY="***" ./tests/edsl_benchmark.py --rounds 3
 ```
+
+## 剩 2 个 volatile 任务
+
+| 任务 | 问题 | 根本原因 |
+|------|------|---------|
+| **word-freq** (67%) | LLM 常生成 `()` 结尾代码 | 组合太多（string-split + hash + 递归 + hash-keys），LLM 知识弱 |
+| **tcp-connect** (33%) | LLM 强写 raw HTTP 包 | 通用 LLM 知识里 socket 编程是 C 风格的，Aura 的 `(tcp-connect "host" port)` 对它来说太陌生 |
+
+治本方案：在 stdlib 加 `frequencies` 等高阶原语，让 LLM 自然发现而非手写组合逻辑。
