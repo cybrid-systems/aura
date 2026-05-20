@@ -31,8 +31,25 @@ jobs:
     - name: Quick smoke test
       run: echo '(+ 1 2 3)' | ./build/aura | grep -q 6
 
-    - name: Full test suite (using already-built Release binary)
-      run: |
-        # test_ir is needed by unit tests
-        cmake --build build --target test_ir -j$(nproc)
-        python3 build.py test
+    - name: Build test_ir
+      run: cmake --build build --target test_ir -j$(nproc)
+
+    # Run each test suite individually to pinpoint failures
+    - name: test smoke
+      run: python3 build.py test smoke
+    - name: test unit
+      run: python3 build.py test unit
+    - name: test integ
+      run: python3 build.py test integ
+    - name: test typecheck
+      run: python3 build.py test typecheck
+    - name: test bench
+      run: python3 build.py test bench
+    - name: test mutation
+      run: python3 build.py test mutation
+    - name: test demo
+      run: python3 build.py test demo
+    - name: test ai
+      run: python3 build.py test ai
+    - name: test bash
+      run: python3 build.py test bash
