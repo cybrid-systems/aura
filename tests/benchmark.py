@@ -22,8 +22,10 @@ from pathlib import Path
 from dataclasses import dataclass, field, asdict
 from typing import Any
 
-AURA = os.path.expanduser("~/code/aura/build/aura")
-BASELINE_FILE = os.path.expanduser("~/code/aura/tests/benchmark_baseline.json")
+# Use AURA_BIN env var if set (CI), otherwise default to build/aura relative to this file
+_SCRIPT_DIR = Path(__file__).resolve().parent
+AURA = os.environ.get("AURA_BIN") or str(_SCRIPT_DIR.parent / "build" / "aura")
+BASELINE_FILE = _SCRIPT_DIR / "benchmark_baseline.json"
 
 # ── Benchmark definitions ──────────────────────────────────────
 
