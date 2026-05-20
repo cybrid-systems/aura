@@ -9,6 +9,27 @@ FlatParseResult FlatParser::parse(std::string_view s) {
     FlatParseResult r;
 
     // Helper: record a parse error and skip to next recoverable point
+    // Token kind to readable string for error messages
+    auto token_desc = [&](const Token& t) -> std::string {
+        switch (t.kind) {
+            case TokenKind::Identifier: return "identifier '" + std::string(t.text) + "'";
+            case TokenKind::Integer:    return "integer '" + std::string(t.text) + "'";
+            case TokenKind::Float:      return "float '" + std::string(t.text) + "'";
+            case TokenKind::String:     return "string literal '" + std::string(t.text) + "'";
+            case TokenKind::Bool:       return "boolean '" + std::string(t.text) + "'";
+            case TokenKind::LParen:     return "'('";
+            case TokenKind::RParen:     return "')'";
+            case TokenKind::Quote:      return "''";
+            case TokenKind::QuasiQuote: return "'`'";
+            case TokenKind::Unquote:    return "','";
+            case TokenKind::Dot:        return "'.'";
+            case TokenKind::Ellipsis:   return "'...'";
+            case TokenKind::EndOfFile:  return "end of input";
+            case TokenKind::Error:      return "invalid character";
+            default:                    return "token";
+        }
+    };
+
     auto record_error = [&](const std::string& msg) {
         if (r.error.empty()) r.error = msg;
         r.errors.push_back(msg);
@@ -47,9 +68,10 @@ FlatParseResult FlatParser::parse(std::string_view s) {
         auto tok = lexer_->peek();
         if (tok.kind != TokenKind::EndOfFile) {
             record_error("parse error at line " + std::to_string(tok.line)
-                        + ":" + std::to_string(tok.column));
+                        + ":" + std::to_string(tok.column)
+                        + ": expected expression, got " + token_desc(tok));
         } else {
-            record_error("parse error");
+            record_error("parse error: expected expression, reached end of input");
         }
         // If we recovered but got nothing, return as failure
         if (r.root == NULL_NODE) return r;
@@ -71,7 +93,8 @@ FlatParseResult FlatParser::parse(std::string_view s) {
             auto tok = lexer_->peek();
             if (tok.kind != TokenKind::EndOfFile) {
                 record_error("parse error at line " + std::to_string(tok.line)
-                            + ":" + std::to_string(tok.column));
+                            + ":" + std::to_string(tok.column)
+                            + ": expected expression, got " + token_desc(tok));
                 e = parse_expr();  // try again after skip
             }
             if (lexer_->eof()) break;
