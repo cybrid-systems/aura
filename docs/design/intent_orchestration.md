@@ -285,7 +285,7 @@ success = aura_eval(f'(intend "Write merge sort")') → check
 - 在 `src/compiler/evaluator_impl.cpp` 注册 `(intend goal [max-attempts])` 为内置原语
 - 内置 generate-and-fix 循环：
   - LLM 生成代码 → `parse_to_flat` + `eval_flat` 编译验证
-  - 报错 → JSON 安全转义 → 构建 correction prompt → 喂回 LLM
+  - 报错 → 构建 correction prompt → 喂回 LLM（使用内置 `json-encode`/`json-get-string` 原语，零手工转义）
   - 重复至 max-attempts 次
 - 配置通过环境变量：`LLM_API_KEY`、`LLM_MODEL`、`LLM_BASE_URL`
 - LLM 调用通过 `curl` + JSON API（复用 `http-post` 相同模式）

@@ -107,6 +107,10 @@ echo '(+ 1 2 3)' | ./build/aura          # → 6 (JIT 自动加速)
 (require std/hash)
 (hash->list (hash "x" 10))              ;; → (("x" 10))
 (hash-merge (hash "a" 1) (hash "b" 2))
+
+;; 频次统计
+(require std/hash all:)
+(frequencies (list 1 2 1 3 1 2))         ;; → hash{1:3, 2:2, 3:1}
 ```
 
 ---
@@ -146,6 +150,11 @@ echo '(+ "hi" 1)' | ./build/aura --strict   ;; TypeError
 
 (require std/json all:)
 (json-parse "{\"a\":1}")                  ;; → hash
+(json-stringify (hash "a" 1 "b" 2))       ;; → {"a":1,"b":2}
+
+;; 纯内置 JSON 原语（无需 require）
+(json-encode (list 1 "two" #t))            ;; → [1,"two",true]
+(json-parse "{\"a\":[1,2,3]}")            ;; → hash key:"a" val:(1 2 3)
 
 (require std/datetime)
 (timestamp->iso-date (current-time))      ;; → "2026-05-19"
