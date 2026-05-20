@@ -209,6 +209,10 @@ def build_sys_prompt(stdlib, api_ref, task_name=""):
         sp += "\n" + "=" * 40 + "\n"
         sp += f"TASK-SPECIFIC HINT for \"{task_name}\":\n"
         sp += _TASK_HINTS[task_name]
+    evolved = os.environ.get("EVOLVED_HINTS", "")
+    if evolved:
+        sp += "\n" + "=" * 40 + "\n"
+        sp += f"EVOLVED HINTS (from past runs):\n{evolved}\n"
     sp += f"\nCurrent Aura primitives:\n{api_ref[:2000]}"
     return sp
 
@@ -473,6 +477,20 @@ def main():
                 print(f"\n  ⚡ Evolved: {evolved}")
             except Exception as e:
                 print(f"\n  ⚡ Evolve failed: {e}")
+            # Read evolved body and inject hints into system prompt for next round
+            if evolved:
+                try:
+                    r2 = subprocess.run([AURA],
+                        input=f'(display (strategy-field "{evolved}" "body"))\n',
+                        capture_output=True, text=True, timeout=5)
+                    evolved_body = r2.stdout.strip()
+                    if evolved_body and evolved_body != "()":
+                        # Store for build_sys_prompt to inject
+                        evolved_hints = evolved_body.replace('"', '\\"')
+                        os.environ["EVOLVED_HINTS"] = evolved_hints
+                        print(f"  ⚡ Injected {len(evolved_body)} chars of hints")
+                except Exception:
+                    pass
             # Reset history for next round
             print("  History cleared for next round.\n")
 
