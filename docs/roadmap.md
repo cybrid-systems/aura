@@ -1,6 +1,6 @@
 # Aura — 路线图
 
-**更新：2026-05-20** — E1-E3 intend 完成。json-encode/json-parse/json-get-string 原语。frequencies stdlib。26/26 基准测试全过。
+**更新：2026-05-20** — E1-E3 intend 完成。json-encode/json-parse/json-get-string 原语。frequencies stdlib。47 任务 baseline: 46/47 通过。
 
 ---
 
@@ -85,13 +85,12 @@ Aura 编译器用 Aura 写。等前面稳定后再启。
 - Benchmark 报告包含 iteration 数、strategy 名、timeline
 - 评测从"代码正确率"变成"意图达成率"
 
-#### E4: 可演化策略
+#### E4: 可演化策略 — Phase 1 进行中
 - [设计文档](design/e4_evolvable_strategies.md)
-- 结构化 `intend-history`：`intend-analytics` 原语—按策略/任务聚合统计
-- `strategy-field` / `strategy-set-field!` 原语—运行时检视和修改策略
-- `evolve-strategy` 函数—根据历史数据自动调优参数（temperature/max-attempts/sys-prompt）
-- LLM 通过 `mutate:rebind` 动态修改策略字段
-- 多意图协作与意图树
+- Phase 1: 结构化 intend-history + intend-analytics 原语
+- Phase 2: strategy-field / strategy-set-field! 原语（~1h）
+- Phase 3: evolve-strategy 函数 + benchmark --evolve 模式（~2h）
+- Phase 4: 多意图协作与意图树（远期）
 
 ---
 
@@ -127,3 +126,5 @@ Aura 编译器用 Aura 写。等前面稳定后再启。
 | 05-20 | json-parse 原语 | JSON → Aura 解析，null/true/false/number/string/array/object 全支持 |
 | 05-20 | 动态 generator/fixer | --intend 模式用 json-encode + json-get-string 代替静态预转义 body |
 | 05-20 | frequencies stdlib | 一行统计列表频次，hash-stats/word-freq 任务直接调用 |
+| 05-20 | 扩 benchmark 到 47 任务 | +13 中难度 +8 高难度（quicksort/sieve/memoize/compose-n/...） |
+| 05-20 | E4 设计文档 | docs/design/e4_evolvable_strategies.md — Phase 1-4 方案 |
