@@ -152,7 +152,7 @@ private:
     std::vector<std::string> timeline_;  // 
     std::vector<std::string> string_heap_;
     std::size_t eval_depth_ = 0;  // recursion counter for friendly stack overflow
-    static constexpr std::size_t MAX_EVAL_DEPTH = 10000;
+    static constexpr std::size_t MAX_EVAL_DEPTH = 50000;
     struct HashTable {
         std::vector<std::uint8_t> metadata;  // 0xFF=empty, 0x00-0x7F=occupied(7-bit fingerprint)
         std::vector<types::EvalValue> keys;
