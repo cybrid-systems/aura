@@ -465,6 +465,8 @@ def main():
                     task_stats[name]["errors"].append(err[:80])
                     att = f" in {attempts}" if (FIX_MODE or INTEND_MODE) else ""
                     line = f"    Round {round_i:2d}/{ROUNDS}: ❌ {err[:50]} ({llm_t:.1f}s{att})"
+                    etype = "output-mismatch" if ('"ok"' in (out or '')[:50] and not success) else (err[:25] or "unknown")
+                    task_stats.setdefault("__errors__", []).append((name, etype, attempts, llm_t))
                 print(line)
                 sys.stdout.flush()
 

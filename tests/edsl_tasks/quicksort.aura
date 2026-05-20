@@ -2,6 +2,7 @@
 ;; goal: Write (quicksort lst) using std/list, test (quicksort (list 3 7 4 9 5 2 6 1))
 ;; depend: std/list
 ;; expect: 1 2 3 4 5 6 7 9
+;; expect: (1 2 3 4 5 6 7 9)
 ;; hint: --- WORKING Aura quicksort ---
 ;; hint: (require std/list all:)
 ;; hint: (define (quicksort lst)

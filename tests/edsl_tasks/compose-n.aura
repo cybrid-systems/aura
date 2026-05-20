@@ -1,6 +1,6 @@
 ;; task: compose-n
 ;; goal: Write (compose . fns) that composes multiple functions right-to-left, test double then add1
-;; expect: 11
+;; expect: 12
 ;; hint: --- WORKING Aura compose-n ---
 ;; hint: (define (compose . fns)
 ;; hint:   (if (null? fns) (lambda (x) x)
