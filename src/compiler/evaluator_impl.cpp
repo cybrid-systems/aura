@@ -2189,6 +2189,21 @@ primitives_.add("string-append", [this](const auto& a) {
         if (r < 0) r += (divisor > 0 ? divisor : -divisor);
         return make_int(r);
     });
+    primitives_.add("mod", [this](const auto& a) {
+        if (a.size() < 2) return make_int(0);
+        auto divisor = coerce_to_int(a[1], &string_heap_);
+        if (divisor == 0) { do {
+    auto __e_sidx = string_heap_.size();
+    string_heap_.push_back("mod: division by zero");
+    auto __e_eidx = error_values_.size();
+    error_values_.push_back(make_string(__e_sidx));
+    return make_error(__e_eidx);
+} while(0); }
+        auto n = coerce_to_int(a[0], &string_heap_);
+        auto r = n % divisor;
+        if (r < 0) r += (divisor > 0 ? divisor : -divisor);
+        return make_int(r);
+    });
     // quotient: (quotient n m) → integer division truncating toward zero
     primitives_.add("quotient", [this](const auto& a) {
         if (a.size() < 2) return make_int(0);
