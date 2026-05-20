@@ -167,6 +167,10 @@ private:
     std::vector<IntendRecord> intend_history_;
     std::uint64_t next_record_id_ = 1;
     static constexpr std::size_t MAX_HISTORY_SIZE = 1000;
+    // ── Coverage counters (fuzz Phase 3) ──────────────────────
+    // 0=parser, 1=typecheck, 2=eval, 3=jit, 4=macro, 5=edsl-set-code,
+    // 6=edsl-query, 7=edsl-mutate, 8=ffi, 9-15=reserved
+    std::array<std::uint64_t, 16> coverage_counters_ = {};
     // ── Timeline for intend (E2, backward compat) ───────────────
     std::vector<std::string> timeline_;  // 
     std::vector<std::string> string_heap_;

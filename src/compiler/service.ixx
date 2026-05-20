@@ -131,6 +131,7 @@ public:
             "strategy-field",
             "strategy-set-field!",
             "strategy-inspect",
+            "coverage-report",
             "json-encode",
             "json-get-string",
             "json-parse",

@@ -2653,6 +2653,7 @@ primitives_.add("string-append", [this](const auto& a) {
     // Nodes in workspace AST have stable IDs across query/mutate operations
     // Multi-expression code is automatically wrapped in (begin ...) by the parser.
     primitives_.add("set-code", [this](const auto& a) {
+        coverage_counters_[0]++; coverage_counters_[5]++;
         if (a.empty() || !is_string(a[0])) return make_bool(false);
         auto idx = as_string_idx(a[0]);
         if (idx >= string_heap_.size()) return make_bool(false);
@@ -2817,9 +2818,11 @@ primitives_.add("string-append", [this](const auto& a) {
 
     // (eval-current) — Evaluate the current workspace AST
     primitives_.add("eval-current", [this](const auto&) {
+        coverage_counters_[2]++;
         if (!workspace_flat_ || !workspace_pool_) return make_void();
         auto expanded = aura::compiler::macro_expand_all(
             *workspace_flat_, *workspace_pool_, workspace_flat_->root);
+        coverage_counters_[4]++;
         auto result = eval_flat(*workspace_flat_, *workspace_pool_, expanded, top_);
         // Clear dirty flags after successful eval
         workspace_flat_->clear_all_dirty();
@@ -3245,6 +3248,7 @@ primitives_.add("string-append", [this](const auto& a) {
     // Full traversal for now; incremental skip (dirty-aware) requires
     // TypeChecker to accept a dirty filter — future work.
     primitives_.add("typecheck-current", [this](const auto&) {
+        coverage_counters_[1]++;
         if (!workspace_flat_ || !workspace_pool_) {
             auto eidx = string_heap_.size();
             string_heap_.push_back("no workspace");
@@ -3398,6 +3402,7 @@ Evaluator::Evaluator() {
     };
 
     primitives_.add("c-func", [this, &parse_ffi_sig](const auto& a) -> EvalValue {
+        coverage_counters_[8]++;
         // (c-func lib-id "name" sig-string)  e.g. (c-func 0 "sqrt" "(Float) -> Float")
         // lib-id -1 uses RTLD_DEFAULT (no c-load needed) — architecture independent.
         // Or legacy: (c-func lib-id "name" ret-int arg-int...)
@@ -3896,6 +3901,34 @@ Evaluator::Evaluator() {
         }
         return make_void();
     });
+
+    // ── coverage-report — 编译器路径覆盖率 ──────────────────
+    primitives_.add("coverage-report", [this](const auto&) -> EvalValue {
+        std::string result = "#(coverage";
+        for (int i = 0; i < 16; i++) {
+            if (coverage_counters_[i] > 0) {
+                std::string name;
+                switch (i) {
+                    case 0: name = "parser"; break;
+                    case 1: name = "typecheck"; break;
+                    case 2: name = "eval"; break;
+                    case 3: name = "jit"; break;
+                    case 4: name = "macro"; break;
+                    case 5: name = "edsl-set-code"; break;
+                    case 6: name = "edsl-query"; break;
+                    case 7: name = "edsl-mutate"; break;
+                    case 8: name = "ffi"; break;
+                    default: name = "reserved-" + std::to_string(i); break;
+                }
+                result += " " + name + ":" + std::to_string(coverage_counters_[i]);
+            }
+        }
+        result += ")";
+        auto sidx = string_heap_.size();
+        string_heap_.push_back(result);
+        return types::make_string(sidx);
+    });
+
 
 }
 
