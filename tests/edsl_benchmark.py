@@ -60,6 +60,7 @@ TASKS = [
 # ── CLI 配置默认值 ───────────────────────────────────────
 ROUNDS = 1
 FIX_MODE = False
+INTEND_MODE = False
 MAX_ATTEMPTS = 3
 
 # ── 按任务的针对性提示 ────────────────────────────────
@@ -386,6 +387,29 @@ def run_single_task(model, base_url, api_key, name, prompt, expected, stdlib, ap
 
     return False, "", "max attempts", total_llm_time, attempts
 
+# ── 单任务（通过内置 intend 原语）────────────────────────
+def run_single_task_intend(model, base_url, api_key, name, prompt, expected, stdlib, api_ref):
+    """Run one task using (intend ...) primitive instead of Python fix loop.
+
+    Returns (success, output, error, total_time, iterations).
+    """
+    max_att = MAX_ATTEMPTS if FIX_MODE else 3
+    intend_code = f'(intend "{prompt}" {max_att})'
+    t0 = time.time()
+    rc, out, err = test_aura(intend_code)
+    elapsed = time.time() - t0
+
+    if rc != 0 or not out:
+        return False, "", err or "intend failed", elapsed, 0
+
+    import re
+    m_iter = re.search(r'iterations:(\d+)', out)
+    iterations = int(m_iter.group(1)) if m_iter else 0
+    success = '"ok"' in out
+    out_clean = out.strip('"')
+    return success, out_clean, err, elapsed, iterations
+
+
 # ── 打印结果表 ────────────────────────────────────────────
 def print_task_table(task_results):
     print(f"  {'Task':22s} {'Pass/Total':>10s} {'Rate':>6s}  {'Verdict':>12s}")
@@ -411,7 +435,7 @@ def print_task_table(task_results):
 
 # ── 主流程 ────────────────────────────────────────────────
 def main():
-    global ROUNDS, FIX_MODE, MAX_ATTEMPTS
+    global ROUNDS, FIX_MODE, INTEND_MODE, MAX_ATTEMPTS
 
     models = os.environ.get("LLM_MODEL", "deepseek-v4-flash").split(",")
     base_url = os.environ.get("LLM_BASE_URL", "https://api.deepseek.com/v1")
@@ -432,6 +456,9 @@ def main():
             output_json = True
         elif args[i] == "--fix":
             FIX_MODE = True
+        elif args[i] == "--intend":
+            INTEND_MODE = True
+            FIX_MODE = True
         elif args[i] == "--max-attempts":
             i += 1
             if i < len(args):
@@ -448,7 +475,9 @@ def main():
     api_ref = get_api_ref()
 
     mode_tag = ""
-    if FIX_MODE:
+    if INTEND_MODE:
+        mode_tag = f"  (intend mode: up to {MAX_ATTEMPTS} attempts)"
+    elif FIX_MODE:
         mode_tag = f"  (fix mode: up to {MAX_ATTEMPTS} attempts per task per round)"
 
     print(f"\n{'='*70}")
@@ -474,18 +503,19 @@ def main():
             task_passes = 0
             print(f"\n  ── {name} ──")
             for round_i in range(1, ROUNDS + 1):
-                success, out, err, llm_t, attempts = run_single_task(
+                runner_fn = run_single_task_intend if INTEND_MODE else run_single_task
+                success, out, err, llm_t, attempts = runner_fn(
                     model, base_url, api_key, name, prompt, expected, stdlib, api_ref
                 )
                 task_stats[name]["llm_times"].append(llm_t)
                 task_stats[name]["attempts"].append(attempts)
                 if success:
                     task_passes += 1
-                    att = f" (attempts={attempts})" if FIX_MODE else ""
+                    att = f" (attempts={attempts})" if (FIX_MODE or INTEND_MODE) else ""
                     line = f"    Round {round_i:2d}/{ROUNDS}: ✅ ({llm_t:.1f}s{att})"
                 else:
                     task_stats[name]["errors"].append(err[:80])
-                    att = f" in {attempts}" if FIX_MODE else ""
+                    att = f" in {attempts}" if (FIX_MODE or INTEND_MODE) else ""
                     line = f"    Round {round_i:2d}/{ROUNDS}: ❌ {err[:50]} ({llm_t:.1f}s{att})"
                 print(line)
                 sys.stdout.flush()
