@@ -125,7 +125,7 @@ public:
             // EDSL / AI agent primitives
             "set-code", "eval-current", "apply",
             "typecheck-current", "typed-mutate", "rollback",
-            "mutation-log", "query-mutation-log",
+            "mutation-log", "query-mutation-log", "intend",
             // Special forms not in IR
             "when", "unless", "export",
             "and", "or", "cond", "case",

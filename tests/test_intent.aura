@@ -1,0 +1,16 @@
+; Aura intend — 高层意图编排原语测试
+; E1: 基础 intend 原语
+;
+; 测试依赖 LLM_API_KEY 环境变量（跳过测试则失败但不会崩溃）
+
+(display "=== intent E1 tests ===")
+
+; 1. 无 API key 时优雅失败（不崩溃）
+(display "--- test: no api key graceful fail ---")
+(display (intend "test" 1))
+
+; 2. 无效 API key 时也优雅失败
+(display "--- test: bad api key graceful fail ---")
+(display (intend "bad test" 1))
+
+(display "=== E1 tests complete ===")
