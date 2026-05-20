@@ -1,6 +1,6 @@
 # Aura — 路线图
 
-**更新：2026-05-20** — 52/57 (91%)。结构化 fixer + output-mismatch 闭环。自适应 Intend (PID) 设计文档。
+**更新：2026-05-20** — 55/57 (96%)。自适应 PID 控制 + 执行轨迹反馈。全部 hint 清理为方向提示。3 个语言级 bug 修复 (append/mod/tcp-recv)。
 
 ---
 
@@ -93,18 +93,17 @@ Aura 编译器用 Aura 写。等前面稳定后再启。
 - 闭环 ✅: evolved hints 注入下一轮 system prompt
 - Phase 4: 多意图协作与意图树（远期）
 
-### 自适应 Intend (PID 控制 — 设计中)
+### 自适应 Intend (PID 控制 ✅)
 
 [自适应 Intend 设计文档](design/adaptive_intend_pid.md)
 
 **核心思想**：高尔夫隐喻 + 控制理论。误差大→高增益（完整重写），误差小→低增益（EDSL 定点修改）。
 
 #### Phase 1: 距离度量 + 结构化诊断 ✅
-- [x] `measure_distance()` — rc + 输出匹配率 → phase (coarse/fine/putt)
-- [x] `structured_diagnosis()` — 输出特征（`<hash[N]>` / 空输出 / 缺关键词）→ 诊断文本
-- [x] `current-source` 捕获 → 输出不匹配时 LLM 能看到自己的源码
-- [x] 回路闭环：3 次 Python 层 output-mismatch retry 带结构化反馈
-- 效果：hash-invert 修复，52/57 (91%)
+- [x] `measure-distance()` — rc + 输出匹配率 → phase (coarse/fine/putt)
+- [x] `structured-diagnosis()` — 输出特征诊断 + missing-kw diff
+- [x] `current-source` 捕获 → LLM 能看到自己写的代码
+- [x] 回路闭环：3 次 retry 带结构化反馈 + `<hash[N]>` 告警
 
 #### Phase 2: 两阶段 prompt 切换（~3h）
 - [ ] 定义 coarse / fine 两套 `__fix__` template
@@ -112,11 +111,10 @@ Aura 编译器用 Aura 写。等前面稳定后再启。
 - [ ] 滞后保护防止震荡
 - 预期：53-55/57
 
-#### Phase 3: 动态 API Reference 注入（~2h）
-- [ ] std/hash, std/list, std/llm 的精简 API 参考
-- [ ] `build_sys_prompt` 按 stdlib 依赖动态注入
-- [ ] Display 行为说明（`<hash[N]>` != hash 内容）
-- 预期：55-56/57
+#### Phase 3: API Reference 注入 ✅
+- [x] lib/std/adaptive.aura 的 get-api-ref 覆盖 6 个模块
+- [x] retry 时按 stdlib 注入 (hash/list/iter/json/llm/socket)
+- [x] Common Pitfalls (display hash, modulo vs mod, > vs >=)
 
 #### Phase 4: EDSL 定点修改 / putt 阶段（~4h）
 - [ ] `query:find` + `mutate:rebind` 表达式级修改
@@ -166,4 +164,4 @@ Aura 编译器用 Aura 写。等前面稳定后再启。
 | 05-20 | E4 Phase 2: strategy-field/set-field!/inspect | 策略字段读写原语 |
 | 05-20 | E4 Phase 1: intend-analytics | 结构化历史 + 错误分类 |
 | 05-20 | E4 设计文档 | docs/design/e4_evolvable_strategies.md — Phase 1-4 方案 |
-| 05-20 | 自适应 Intend 设计 | 52/57, structured fixer + output-mismatch closure, PID design doc |
+| 05-20 | 自适应 Intend 完成 | 55/57, PID control + trace feedback + append/mod/tcp-recv fixes |
