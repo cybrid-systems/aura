@@ -1,0 +1,46 @@
+; evolve.aura — Strategy evolution from intend analytics
+;
+; (require "std/evolve" all:)
+; (evolve-strategy name) → new-variant-name
+;   reads (intend-analytics), adjusts strategy body,
+;   registers new version as "<name>-v<N>"
+
+(export evolve-strategy)
+
+(define (evolve-strategy name)
+  (let* ((analytics-str (intend-analytics))
+         (old-body (strategy-field name "body"))
+         (new-body old-body))
+
+    ; Build new body — single begin block avoids Aura if/set! interaction bug
+    (begin
+      (if (regex-match? "unbound-variable" analytics-str)
+        (set! new-body (string-append new-body
+          "\nCRITICAL: Always (define ...) before use. Never use undeclared variables."))
+        #f)
+      (if (regex-match? "type-mismatch" analytics-str)
+        (set! new-body (string-append new-body
+          "\nCRITICAL: Use (check x : Type) before operations. Match types exactly."))
+        #f)
+      (if (regex-match? "syntax-error" analytics-str)
+        (set! new-body (string-append new-body
+          "\nCRITICAL: Check parentheses. Every (if COND THEN ELSE) needs exactly 3 forms."))
+        #f)
+      (if (regex-match? "div-zero" analytics-str)
+        (set! new-body (string-append new-body
+          "\nCRITICAL: Guard division: (if (= d 0) 0 (/ n d))."))
+        #f)
+      (if (regex-match? "success-rate:0[.]" analytics-str)
+        (set! new-body (string-append new-body
+          "\nCRITICAL: Keep solutions simple. One function at a time. Test each step."))
+        #f))
+
+    ; Find next version number
+    (let find-ver ((n 1))
+      (if (strategy-field (string-append name "-v" (number->string n)) "body")
+        (find-ver (+ n 1))
+        (let* ((version n)
+               (new-name (string-append name "-v" (number->string version))))
+          (strategy-set-field! new-name "body" new-body)
+          (register-strategy! new-name new-body)
+          new-name)))))
