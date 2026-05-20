@@ -202,32 +202,46 @@ echo '(+ "hi" 1)' | ./build/aura --strict   ;; TypeError
 
 ## 八、LLM 自生长 Agent
 
-Aura 可以自己调用 LLM 生成、执行、修复代码：
+Aura 内置 `(intend ...)` 原语，自动调 LLM 生成、验证、修复代码：
 
 ```scheme
-(define key (getenv "LLM_API_KEY"))
-(define url "https://api.deepseek.com/chat/completions")
+(require std/llm all:)
+(define __sp__ "Return ONLY Aura code. Always call (display ...).")
+(define __gen__ (aura-make-gen __sp__))
+(define __fix__ (aura-make-fix __sp__))
 
-(define (llm-ask prompt)
-  (http-post url 
-    (string-append "{\"model\":\"deepseek-chat\",\"messages\":"
-      "[{\"role\":\"user\",\"content\":\"" prompt "\"}]}") key))
-
-;; 让 LLM 生成代码并执行
-(define response (llm-ask "Write (reverse lst) in Aura"))
-(define code (extract-code response))  ;; 解析 JSON → 提取代码
-(define result (eval code))            ;; 执行生成代码
+;; 一键生成并验证
+(intend "Write (+ 1 2 3 4 5)" __gen__ aura-verify __fix__ 3)
+;; → #(status:"ok" goal:"..." iterations:1)
 ```
 
-**自生长循环:** `llm-prompt → extract-code → try-eval → fix → repeat`
+`(intend ...)` 内部流程：
+
+```
+生成器 (http-post LLM) → 代码 → 验证器 (typecheck + eval)
+  ↑                                        ↓
+  └──── 修正器 (报错反馈给 LLM) ←──── 失败 ────┘
+```
+
+也支持通过 Python 脚本批量评测（26 个任务覆盖基础语法、标准库、类型系统、FFI）：
+
+```bash
+# Python 手动修正循环（推荐）
+LLM_API_KEY="***" python3 tests/edsl_benchmark.py --rounds 3 --fix
+
+# 原生 intend 原语（C++ 循环管理器，零 Python HTTP）
+LLM_API_KEY="***" python3 tests/edsl_benchmark.py --rounds 3 --intend
+```
+
+两种模式均支持 `--fix`（迭代修正）和 `--max-attempts N`（最多尝试次数）。
 
 ---
 
-## 八、EDSL / AI Agent 开发
+## 九、EDSL / AI Agent 开发
+
+AST 查询和变更是 Aura 的核心差异化能力，所有操作都是原生原语：
 
 ```lisp
-;; AST 查询和变更是 Aura 的核心差异化能力
-
 ;; 1. 设置代码
 (set-code "(define (bad-fact n) (* n (bad-fac (- n 1))))")
 
@@ -246,6 +260,22 @@ Aura 可以自己调用 LLM 生成、执行、修复代码：
 (eval-current)
 (bad-fact 5)                  ;; → 120
 ```
+
+EDSL API 完整列表：
+
+| 原语 | 功能 |
+|------|------|
+| `set-code` | 设工作区源码 |
+| `current-source` | 取当前源码 |
+| `query:find` | 按符号名查节点 ID |
+| `query:node-type` | 按节点类型过滤 |
+| `query:calls` | 查哪些节点调用了某函数 |
+| `query:pattern` | 模式匹配 |
+| `mutate:rebind` | 整体替换函数定义 |
+| `mutate:set-body` | 替换函数体 |
+| `typecheck-current` | 类型检查 |
+| `eval-current` | 执行当前源码 |
+| `intend` | 高层意图编排（LLM + 迭代修正）|
 
 ---
 

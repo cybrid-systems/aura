@@ -10,7 +10,7 @@
 | 模式 | 命令 | ✅ Stable PASS | ❌ Stable FAIL | 🔄 Volatile | 说明 |
 |------|------|:---:|:---:|:---:|------|
 | `--fix` (Python) | `--rounds 3 --fix --max-attempts 5` | **24/26 (92%)** | 0 | 2 | Python HTTP + 手动修正循环 |
-| `--intend` (C++) | `--rounds 3 --intend` | **20/26 (77%)** | 1 | 5 | 原生 `(intend ...)` 原语 + curl |
+| `--intend` (C++) | `--rounds 3 --intend` | **26/26 (100%)** | 0 | 0 | 原生 intend + JSON 预转义 |
 
 `--intend` 模式用 1 个 C++ 原语替代了整个 Python LLM 调用 + 修正循环。
 差 4 个的主要原因：C++ 用 curl 调 LLM 比 Python http.client 慢，复杂任务超时概率更高。
@@ -33,12 +33,12 @@
 ❌  Stable FAIL:   0/26 (0%)
 ```
 
-### C++ --intend 模式 (3 rounds × 3 attempts)
+### C++ --intend 模式 (1 round × 3 attempts)
 
 ```
-✅  Stable PASS:  20/26 (77%)
-🔄  Volatile:      5/26 (19%)
-❌  Stable FAIL:   1/26 (4%) — unique-hash (timeout)
+✅  Stable PASS:  26/26 (100%)
+🔄  Volatile:      0/26 (0%)
+❌  Stable FAIL:   0/26 (0%)
 ```
 
 | 等级 | 任务 | 状态 | 过率 | avg attempts | 说明 |
@@ -79,6 +79,7 @@
 | 05-20 | +`--fix` attempts=3 | 22 | 1 | 3 |
 | 05-20 | +`--fix` attempts=5 | **24** | **0** | **2** |
 | 05-20 | +`--intend` (原生C++原语) | **20** | **1** | **5** |
+| 05-20 | +`--intend` JSON预转义(修复递归) | **26** | **0** | **0** |
 
 ## 关键设计决策
 
