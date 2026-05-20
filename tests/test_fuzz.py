@@ -58,6 +58,7 @@ def test_fuzz():
             '    "max_tokens" 4096))) "content")))\n'
             '(define __fix__ (lambda (code err goal) ""))\n'
             '(display (intend "' + esc_goal + '" __gen__ aura-verify __fix__ 3))\n'
+            '(display (coverage-report))\n'
         )
 
         try:
@@ -90,6 +91,12 @@ def test_fuzz():
                 results["pass"] += 1
             else:
                 results["fail"] += 1
+
+            # Coverage is collected from the task's own stdout (appended to aura_code)
+            if "#(coverage" in (r.stdout or ""):
+                for line in (r.stdout or "").split("\n"):
+                    if "#(coverage" in line:
+                        print("      " + line.strip(), flush=True)
 
         except subprocess.TimeoutExpired:
             results["timeouts"].append(name)

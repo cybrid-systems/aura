@@ -311,74 +311,118 @@ def run_single_task_intend(model, base_url, api_key, name, prompt, expected, std
     sp_esc = js(sys_prompt)
     goal_esc = js(prompt)
 
-    lines = ['(require "std/llm" all:)']
-    lines.append('(define __sp__ "' + sp_esc + '")')
-    lines.append('(define __gen__ (lambda (g)')
-    lines.append('  (json-get-string (aura-llm-call (json-encode (hash')
-    lines.append('    "model" "deepseek-v4-flash"')
-    lines.append('    "messages" (list')
-    lines.append('      (hash "role" "system" "content" __sp__)')
-    lines.append('      (hash "role" "user" "content" g))')
-    lines.append('    "temperature" 0.3')
-    lines.append('    "max_tokens" 4096))) "content")))')
-    lines.append('(define __fix__ (lambda (code err goal)')
-    lines.append('  (json-get-string (aura-llm-call (json-encode (hash')
-    lines.append('    "model" "deepseek-v4-flash"')
-    lines.append('    "messages" (list')
-    lines.append('      (hash "role" "system" "content" __sp__)')
-    lines.append('      (hash "role" "user" "content"')
-    lines.append('        (begin')
-    lines.append('          (set-code code)')
-    lines.append('          (let ((src (current-source)))')
-    lines.append('            (string-append')
-    lines.append('              "=== Source ===\n" src')
-    lines.append('              "\n=== Error ===\n" err')
-    lines.append('              "\n=== Goal ===\n" goal)))))')
-    lines.append('    "temperature" 0.3')
-    lines.append('    "max_tokens" 4096))) "content")))')
-    lines.append('(display (intend "' + goal_esc + '" __gen__ aura-verify __fix__ ' + str(max_att) + '))')
+    def build_aura_code(sp):
+        sp_e = js(sp)
+        lines = ['(require "std/llm" all:)']
+        lines.append('(define __sp__ "' + sp_e + '")')
+        lines.append('(define __gen__ (lambda (g)')
+        lines.append('  (json-get-string (aura-llm-call (json-encode (hash')
+        lines.append('    "model" "deepseek-v4-flash"')
+        lines.append('    "messages" (list')
+        lines.append('      (hash "role" "system" "content" __sp__)')
+        lines.append('      (hash "role" "user" "content" g))')
+        lines.append('    "temperature" 0.3')
+        lines.append('    "max_tokens" 4096))) "content")))')
+        lines.append('(define __fix__ (lambda (code err goal)')
+        lines.append('  (json-get-string (aura-llm-call (json-encode (hash')
+        lines.append('    "model" "deepseek-v4-flash"')
+        lines.append('    "messages" (list')
+        lines.append('      (hash "role" "system" "content" __sp__)')
+        lines.append('      (hash "role" "user" "content"')
+        lines.append('        (begin')
+        lines.append('          (set-code code)')
+        lines.append('          (let ((src (current-source)))')
+        lines.append('            (string-append')
+        lines.append('              "=== Source ===\n" src')
+        lines.append('              "\n=== Error ===\n" err')
+        lines.append('              "\n=== Goal ===\n" goal)))))')
+        lines.append('    "temperature" 0.3')
+        lines.append('    "max_tokens" 4096))) "content")))')
+        lines.append('(display (intend "' + goal_esc + '" __gen__ aura-verify __fix__ ' + str(max_att) + '))')
+        # Capture current-source in the same process for output-mismatch diagnostics
+        lines.append('(display "||CURRENT_SRC_START||")')
+        lines.append('(display (current-source))')
+        lines.append('(display "||CURRENT_SRC_END||")')
+        return '\n'.join(lines)
 
-    aura_code = '\n'.join(lines)
-    t0 = time.time()
-    try:
-        r = subprocess.run([AURA], input=aura_code, capture_output=True, text=True, timeout=60)
-        rc, out, err = r.returncode, r.stdout.strip(), r.stderr.strip()
-    except subprocess.TimeoutExpired:
-        return False, '', 'timeout', time.time() - t0, 0
-    except FileNotFoundError:
-        return False, '', 'aura binary not found', time.time() - t0, 0
-    elapsed = time.time() - t0
+    def run_intend(code):
+        t0 = time.time()
+        try:
+            r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=60)
+            rc, out, err = r.returncode, r.stdout.strip(), r.stderr.strip()
+            elapsed = time.time() - t0
+        except subprocess.TimeoutExpired:
+            return False, '', 'timeout', time.time() - t0, 0, ''
+        except FileNotFoundError:
+            return False, '', 'aura binary not found', time.time() - t0, 0, ''
+        # Parse out current-source from output
+        src_start = out.find('||CURRENT_SRC_START||')
+        src_end = out.find('||CURRENT_SRC_END||')
+        current_src = ''
+        if src_start >= 0 and src_end > src_start:
+            src_body_start = src_start + len('||CURRENT_SRC_START||')
+            current_src = out[src_body_start:src_end].strip()
+            out = out[:src_start].strip()
+        return rc, out, err, elapsed, current_src
+
+    aura_code = build_aura_code(sys_prompt)
+    rc, out, err, elapsed, current_src = run_intend(aura_code)
     if rc != 0 or not out:
         return False, '', err or 'intend failed', elapsed, 0
     m_iter = re.search(r'iterations:(\d+)', out)
     iterations = int(m_iter.group(1)) if m_iter else 0
-    # Code compiled and output matches expected (or no output = forgot display)
-    expected_match = check_success(out, expected)
-    if '"ok"' in out and not expected_match:
-        # Output mismatch — feed back through fixer
-        # Extract actual output (everything before the intend status)
-        actual = out.strip()
-        status_pos = actual.rfind('#')
-        actual_output = actual[:status_pos].strip() if status_pos > 0 else actual[:100]
-        mismatch_msg = f"Output mismatch: expected {expected} but got '{actual_output}'. Remember to use (display ...) to show the result."
-        updated_sp = sys_prompt + "\n\n=== FIX: " + mismatch_msg + " ==="
-        sp_esc = js(updated_sp)
-        lines[1] = '(define __sp__ "' + sp_esc + '")'
-        retry_code = '\n'.join(lines)
-        try:
-            r2 = subprocess.run([AURA], input=retry_code, capture_output=True, text=True, timeout=60)
-            out2 = r2.stdout.strip()
-            if r2.returncode == 0 and '"ok"' in out2 and check_success(out2, expected):
-                return True, out2.strip('"'), err, elapsed * 2, iterations + 1
-        except Exception:
-            pass
-        success = False
-    else:
-        success = '"ok"' in out
+
+    # Output-mismatch retry loop (up to max_att additional attempts)
+    for retry_attempt in range(max_att):
+        expected_match = check_success(out, expected)
+        if '"ok"' in out and not expected_match:
+            # Build structured feedback with current-source
+            actual = out.strip()
+            status_pos = actual.rfind('#')
+            actual_output = actual[:status_pos].strip() if status_pos > 0 else actual[:200]
+            err_detail = ''
+            # Add display-format hints based on what the task expects
+            task_hints = ''
+            for kw in expected:
+                if kw.startswith('#'):
+                    task_hints += f'- Expected boolean result (like {kw}): make sure the function returns a boolean, then (display it)\n'
+                    break
+                if any(c in kw for c in '()'):
+                    task_hints += f'- Expected list output (like {kw}): use (display (my-fn args)) or (display-ln ...) to show the list\n'
+                    break
+            structured_feedback = (
+                "=== OUTPUT MISMATCH ERROR ===\n"
+                f"Expected to contain: {expected}\n"
+                f"Actual output: '{actual_output[:300]}'\n"
+                + (f"{task_hints}\n" if task_hints else "")
+                + "=== Current Source (AST formatted) ===\n"
+                + (current_src if current_src else "(source not available)\n")
+                + "\n=== Goal ===\n"
+                + prompt + "\n"
+            )
+            updated_sp = sys_prompt + "\n\n" + structured_feedback
+            retry_code = build_aura_code(updated_sp)
+            rc2, out2, err2, elapsed2, current_src2 = run_intend(retry_code)
+            elapsed += elapsed2
+            if current_src2:
+                current_src = current_src2
+            if rc2 != 0 or not out2:
+                iterations += 1
+                break
+            m_iter2 = re.search(r'iterations:(\d+)', out2)
+            iterations += int(m_iter2.group(1)) if m_iter2 else 0
+            out = out2.strip()
+            err = err2 or err
+        elif '"ok"' in out and expected_match:
+            return True, out, '', elapsed, iterations
+        else:
+            break
+
+    success = '"ok"' in out and check_success(out, expected)
     if not success and TRACE_MODE:
         err_type = "output-mismatch" if '"ok"' in out else "compile-fail"
         print(f"    TRACE {name}: {err_type}, {iterations} attempts, {elapsed:.1f}s, last-error: {(err or 'unknown')[:60]}")
-    return success, out.strip('"'), err, elapsed, iterations
+    return success, out, err, elapsed, iterations
 
 
 # ── 打印结果表 ────────────────────────────────────────────
