@@ -399,41 +399,80 @@ def get_api_ref():
     return r.stdout.strip() if r.returncode == 0 else ""
 
 # ── 构建 system prompt ────────────────────────────────────
-def build_sys_prompt(stdlib, api_ref, task_name=""):
-    sp = (
+# ── Prompt 模板 ── 解耦为字典，方便增删改 ────────────
+PROMPT_SECTIONS = {
+    "identity": (
         "You are Aura Lisp — NOT Common Lisp/Racket/Scheme.\n"
         "Return ONLY valid Aura code ending with (display ...).\n"
         "  (define (square x) (* x x))\n"
         "  (display (square 5))\n"
-        "\n"
-        "=== STDLIB (require std/name all:) ===\n"
+    ),
+    "stdlib": (
+        "\n=== STDLIB (require std/name all:) ===\n"
         "  list:   filter, map, foldl, range, sort, take, drop, length, reverse, zip\n"
         "  string: string-split, string-trim, string-join\n"
         "  hash:   hash-keys, hash-values, hash-has-key?, hash-ref, hash-set!\n"
         "    ⚠️ hash-set! MUTATES in-place, returns void\n"
         "  iter:   for-each, for\n"
         "  math:   square, sqrt, factorial\n"
-        "\n"
-        "=== HASH DISPLAY ===\n"
+    ),
+    "hash_display": (
+        "\n=== HASH DISPLAY ===\n"
         "(display h) with hash shows <hash[N]>, not keys. Use (hash-keys h).\n"
-        "\n"
-        "=== STRINGS ===\n"        "  (string->list s) returns integer char codes (40=(, 41=), 91=[, 93=], 123={, 125=})\n"        "  NOT characters. Compare with (= c 40) not (char=? c #\\().\n"        "\n"        "=== LOOPING ===\n"
+    ),
+    "strings": (
+        "\n=== STRINGS ===\n"
+        "  (string->list s) returns integer char codes (40=(, 41=), 91=[, 93=], 123={, 125=})\n"
+        "  NOT characters. Compare with (= c 40) not (char=? c #\\().\n"
+    ),
+    "looping": (
+        "\n=== LOOPING ===\n"
         "  (let loop ((i 0) (acc 0)) (if (= i 10) acc (loop (+ i 1) (+ acc i))))\n"
         "  (letrec ((fact (lambda (n) ...))) (fact 5))\n"
-        "\n"
-        "=== C FFI ===\n"
+    ),
+    "c_ffi": (
+        "\n=== C FFI ===\n"
         "  (define sqrt-fn (c-func -1 \"sqrt\" \"(Float) -> Float\"))\n"
         "  (define strlen-fn (c-func -1 \"strlen\" \"(String) -> Int\"))\n"
         "  (display (sqrt-fn 9.0))  ; 3.0\n"
         "  (display (strlen-fn \"hello\"))  ; 5\n"
-        "\n"
-        "=== TCP ===\n"
+    ),
+    "tcp": (
+        "\n=== TCP ===\n"
         "  (tcp-connect \"host\" port)\n"
-        "\n"
-        "=== EDSL ===\n"
+    ),
+    "edsl": (
+        "\n=== EDSL ===\n"
         "  (set-code \"...\")(query:find \"fn\")(mutate:rebind id code)(eval-current)\n"
-        "\n"
-    )
+    ),
+}
+
+# Default section order (can be overridden per task)
+DEFAULT_SECTION_ORDER = [
+    "identity", "stdlib", "hash_display", "strings", "looping",
+    "c_ffi", "tcp", "edsl"
+]
+
+# Task → section overrides for fine-grained control
+TASK_SECTION_OVERRIDES = {
+    "hash-": ["identity", "stdlib", "hash_display", "looping", "edsl"],
+    "tcp-":  ["identity", "stdlib", "tcp", "looping", "edsl"],
+    "ffi-":  ["identity", "stdlib", "c_ffi", "looping", "edsl"],
+    "valid-parens": ["identity", "stdlib", "strings", "looping", "edsl"],
+    "edsl-": ["identity", "stdlib", "edsl"],
+}
+
+def build_sys_prompt(stdlib, api_ref, task_name=""):
+    # Select sections for this task
+    sections = DEFAULT_SECTION_ORDER
+    for prefix, override in TASK_SECTION_OVERRIDES.items():
+        if task_name.startswith(prefix):
+            sections = override
+            break
+    
+    # Build prompt from selected sections
+    sp = "".join(PROMPT_SECTIONS[s] for s in sections if s in PROMPT_SECTIONS)
+
     if stdlib:
         sp += f"Available stdlib: {', '.join(stdlib)}. Use (require std/name all:) to load them.\n"
     if task_name and task_name in _TASK_HINTS:
