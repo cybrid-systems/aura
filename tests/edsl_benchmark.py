@@ -560,6 +560,9 @@ def build_adaptive_feedback(name, actual_output, expected, stdlib,
 
 
 # ── 蚁群控制器 — 局部变异搜索 ──────────────────────────
+
+# ── Phase A: EDSL 级殖民地搜索 ──────────────────────────
+
 def _find_reference(code, expected):
     """Find the reference value closest to expected output."""
     nums = set()
@@ -579,210 +582,208 @@ def _find_reference(code, expected):
     return ref, sorted(nums)
 
 
-def _find_mutables(code):
-    """Scan full program source for mutable surface features.
-    Returns list of (type, value, start, end, context) tuples."""
-    mutables = []
 
-    # 1. Numeric literals
-    for m in re.finditer(r'(?<![a-zA-Z"\d])(\d+)(?![a-zA-Z"\d])', code):
-        val = int(m.group(1))
-        if 0 <= val <= 10000 and val not in (0, 1):
-            ctx_start = max(0, m.start() - 40)
-            ctx_end = min(len(code), m.end() + 20)
-            ctx = code[ctx_start:ctx_end]
-            mutables.append(("literal", val, m.start(), m.end(), ctx))
+# 使用 set-code + mutate:rebind + eval-current 代替字符串替换
+# 每个变体是一次增量编译，不是全量重跑
 
-    # 2. Display call arguments
-    # Match display calls - use balanced paren matching for nested args
+def _find_functions(code):
+    """Find function definitions in code.
+    Returns list of (fn_name, fn_args_str, fn_body_str, sigil_pos)
+    where sigil_pos is position of (define(fn-name...
+    """
+    fns = []
+    # Match (define (fn-name args) body)
     idx = 0
     while True:
-        dpos = code.find('(display ', idx)
-        if dpos < 0:
+        m = re.search(r'\(define\s+\(([^\s)]+)\s+', code[idx:])
+        if not m:
             break
-        # Find the matching close-paren for this display call
+        fn_name = m.group(1)
+        start = idx + m.start()
+        # Skip args until closing paren of (define (fn-name args)
+        depth = 1
+        pos = idx + m.start() + len(m.group(0)) - 1  # back to after fn-name
+        # Skip args — find closing ) of (fn-name args...)
+        while pos < len(code):
+            ch = code[pos]
+            if ch == '(':
+                depth += 1
+            elif ch == ')':
+                depth -= 1
+                if depth == 0:
+                    # Found closing ) of (define ...)
+                    break
+            pos += 1
+        args_end = pos + 1
+        
+        # The body starts after args
+        body_start = args_end
+        # Body goes until matching ) of (define ...)
         depth = 0
-        end = dpos + 9  # len('(display ')
-        while end < len(code):
-            ch = code[end]
+        pos = body_start
+        while pos < len(code):
+            ch = code[pos]
             if ch == '(':
                 depth += 1
             elif ch == ')':
                 if depth == 0:
-                    break  # matched the display's close paren
+                    break  # closing ) of (define ...)
                 depth -= 1
-            end += 1
-        arg = code[dpos + 9:end].strip()
-        mutables.append(("display", arg, dpos, end + 1, arg))
-        idx = end + 1
-
-    # 3. Comparison operators
-    ops = '|'.join(re.escape(op) for op in ['<', '>', '<=', '>=', '=', 'not='])
-    for m in re.finditer(r'(?<![a-zA-Z<>!=-])(' + ops + r')\s', code):
-        op = m.group(1).strip()
-        ctx_start = max(0, m.start() - 30)
-        ctx_end = min(len(code), m.end() + 20)
-        ctx = code[ctx_start:ctx_end]
-        mutables.append(("cmp-op", op, m.start(), m.end(), ctx))
-
-    # 4. Function call substitution targets
-    fn_aliases = {'sort': ['reverse', 'filter'], 'filter': ['map', 'sort'],
-                  'map': ['filter', 'for-each'], 'reverse': ['sort']}
-    for m in re.finditer(r'\((' + '|'.join(fn_aliases.keys()) + r')\b', code):
-        fn = m.group(1)
-        ctx_start = max(0, m.start() - 20)
-        ctx_end = min(len(code), m.end() + 30)
-        ctx = code[ctx_start:ctx_end]
-        mutables.append(("fn-call", fn, m.start(), m.end(), ctx, fn_aliases.get(fn, [])))
-
-    return mutables
+            pos += 1
+        body_end = pos
+        
+        args_str = code[idx + m.end():args_end - 1].strip()
+        body_str = code[body_start:body_end].strip()
+        esc_body = body_str.replace('\\', '\\\\').replace('"', '\\"')
+        fns.append((fn_name, args_str, esc_body, start))
+        idx = body_end + 1
+    return fns
 
 
-def _gen_variants(code, mutables, expected):
-    """Generate variant codes from mutable surface features.
-    Yields (variant_code, description) tuples."""
-    ref, all_nums = _find_reference(code, expected)
-
-    # 3. Display format variations
-    has_hash_ops = 'hash-set!' in code or 'hash-ref' in code or 'hash' in code
-    for item in mutables:
-        if item[0] == "display":
-            arg = item[1]
-            if arg.startswith("("):
-                continue  # skip nested s-expr (structural breakage)
-            is_hash_var = has_hash_ops and re.match(r'^[a-z][a-z0-9_-]*$', arg)
-            if arg.startswith("<hash") or "hash-" in arg or is_hash_var:
-                for wrapper in ['(hash-keys ' + arg + ')', '(hash-values ' + arg + ')',
-                                '(hash-length ' + arg + ')']:
-                    variant = code[:item[2]] + '(display ' + wrapper + ')' + code[item[3]:]
-                    yield variant, f"disp {wrapper[:25]}"
-            if 'hash-length' in arg or 'length' in arg:
-                variant = code[:item[2]] + '(display (number->string ' + arg + '))' + code[item[3]:]
-                yield variant, "disp num->str"
-            # Also try wrapping with number->string for any output
-            # If display var and hash context, try boolean output
-            if is_hash_var:
-                variant = code[:item[2]] + '(display #t)' + code[item[3]:]
-                yield variant, "disp #t"
-                variant = code[:item[2]] + '(display (hash-length ' + arg + '))' + code[item[3]:]
-                yield variant, "disp len"
-                # Try hash-keys/hash-values wrappers (they may produce #t) 
-                if not any(kw in expected for kw in ['#t', '#f', 'true', 'false']):
-                    variant = code[:item[2]] + '(display (hash-keys ' + arg + '))' + code[item[3]:]
-                    yield variant, "disp keys"
-                    variant = code[:item[2]] + '(display (hash-values ' + arg + '))' + code[item[3]:]
-                    yield variant, "disp vals"
-            # For boolean expected output, try display #t/#f directly
+def _gen_edsl_variants(code, expected):
+    """Generate EDSL mutation commands for local search.
+    Yields (edsl_command, description) tuples.
+    Each command: set-code + mutate:rebind + eval-current in one exec call.
+    Cost: <1ms per variant (incremental, no full recompile)."""
+    ref, _ = _find_reference(code, expected)
+    esc = code.replace('\\', '\\\\').replace('"', '\\"')
+    
+    # 1. Function body mutations via mutate:rebind
+    fns = _find_functions(code)
+    for fn_name, args_str, body_str, _ in fns:
+        # Skip trivial functions
+        if not body_str or body_str in ('#t', '#f', '()', ''):
+            continue
+        
+        # Extract the unescaped body for modification
+        raw_body = body_str.replace('\\"', '"').replace('\\\\', '\\')
+        if not raw_body:
+            continue
+        
+        # For each function, try:
+        # a) Direct value return (if ref exists)
+        if ref is not None:
+            new_body = f'(display {ref})'
+            new_esc = new_body.replace('\\', '\\\\').replace('"', '\\"')
+            cmd = f'(set-code "{esc}")(mutate:rebind "{fn_name}" "(lambda ({args_str}) {new_esc})")(eval-current)'
+            yield cmd, f"edsl {fn_name}->disp{ref}"
+        
+        # b) Wrap body in display
+        if not raw_body.startswith('(display'):
+            new_body = f'(display {raw_body})'
+            new_esc = new_body.replace('\\', '\\\\').replace('"', '\\"')
+            cmd = f'(set-code "{esc}")(mutate:rebind "{fn_name}" "(lambda ({args_str}) {new_esc})")(eval-current)'
+            yield cmd, f"edsl {fn_name}->wrap-display"
+        
+        # c) Numeric literal tweaks in body
+        lit_matches = list(re.finditer(r'(?<![a-zA-Z])(\d+)(?![a-zA-Z])', raw_body))
+        for lm in lit_matches:
+            val = int(lm.group(1))
+            if val <= 1000 and val not in (0, 1):
+                for delta in [1, -1, 2, -2]:
+                    new_val = max(0, val + delta)
+                    if new_val == val:
+                        continue
+                    mod_body = raw_body[:lm.start()] + str(new_val) + raw_body[lm.end():]
+                    mod_esc = mod_body.replace('\\', '\\\\').replace('"', '\\"')
+                    cmd = f'(set-code "{esc}")(mutate:rebind "{fn_name}" "(lambda ({args_str}) {mod_esc})")(eval-current)'
+                    yield cmd, f"edsl {fn_name} lit {val}->{new_val}"
+        
+        # d) Operator swap in body
+        swaps = {'<': '<=', '<=': '<', '>': '>=', '>=': '>',
+                 '=': 'not=', 'not=': '=',
+                 '<': '>', '>': '<', '<=': '>=', '>=': '<='}
+        for old_op, new_op in swaps.items():
+            if old_op in raw_body.split():
+                mod_body = re.sub(r'(?<![a-zA-Z])' + re.escape(old_op) + r'(?![a-zA-Z])', new_op, raw_body)
+                if mod_body != raw_body:
+                    mod_esc = mod_body.replace('\\', '\\\\').replace('"', '\\"')
+                    cmd = f'(set-code "{esc}")(mutate:rebind "{fn_name}" "(lambda ({args_str}) {mod_esc})")(eval-current)'
+                    yield cmd, f"edsl {fn_name} op {old_op}->{new_op}"
+    
+    # 2. Display format changes (fallback: full code replacement)
+    # For display calls that don't affect function structure
+    for m in re.finditer(r'\(display\s+([^)]+)\)', code):
+        arg = m.group(1).strip()
+        if arg.startswith('('):
+            continue  # skip nested
+        
+        has_hash_ops = 'hash-set!' in code or 'hash-ref' in code or 'hash' in code
+        is_hash_var = has_hash_ops and re.match(r'^[a-z][a-z0-9_-]*$', arg)
+        
+        for new_arg in ['(hash-keys ' + arg + ')', '(hash-values ' + arg + ')',
+                        '(hash-length ' + arg + ')', '(number->string ' + arg + ')',
+                        '#t', '#f']:
+            _ = new_arg  # suppress unused
+            pass
+        
+        # Hash-specific display fixes
+        if arg.startswith('<hash') or 'hash-' in arg or is_hash_var:
+            for wrapper in ['(hash-keys ' + arg + ')', '(hash-values ' + arg + ')',
+                            '(hash-length ' + arg + ')']:
+                variant = code[:m.start()] + '(display ' + wrapper + ')' + code[m.end():]
+                yield variant, f"full {wrapper[:25]}"
             if any(kw in expected for kw in ['#t', '#f', 'true', 'false']):
-                variant = code[:item[2]] + '(display #t)' + code[item[3]:]
-                yield variant, "disp #t"
-                variant = code[:item[2]] + '(display #f)' + code[item[3]:]
-                yield variant, "disp #f"
-            # Skip display mutation for nested s-expression args (structural breakage risk)
-            if arg.startswith('('):
-                continue
-            # Try condition-based display for boolean expected
-            if any(kw in expected for kw in ['#t', '#f', 'true', 'false']):
-                if '>' in arg or '<' in arg or '=' in arg or '-' in arg:
-                    pass  # already a comparison result
-
-            if not arg.startswith('<hash') and not is_hash_var:
-                # Try adding newline for cleaner display
-                pass
-
-    # 1. Literal variations — limited scope for speed
-    # Only modify literals that are likely boundary conditions
-    lit_candidates = []
-    for item in mutables:
-        if item[0] == "literal":
-            val, start, end = item[1], item[2], item[3]
-            # Skip very large numbers, skip structural literals (check context)
-            if val > 1000:
-                continue
-            ctx = item[4]
-            # Skip list constant members and hash keys
-            if any(kw in ctx for kw in ['(list', '(hash ', '(vector', '"']):
-                continue
-            # Skip obvious structural values
-            if ctx.strip().startswith('(list') or '"(list"' in ctx:
-                continue
-            lit_candidates.append(item)
-    for item in lit_candidates:
-        val, start, end = item[1], item[2], item[3]
-        deltas = [1, -1, 2, -2] if abs(val - (ref or 0)) < 5 else [1, -1]
-        for delta in deltas:
-            new_val = max(0, val + delta)
-            if new_val == val:
-                continue
-            yield code[:start] + str(new_val) + code[end:], f"lit {val}->{new_val}"
+                variant = code[:m.start()] + '(display #t)' + code[m.end():]
+                yield variant, "full disp #t"
+        
+        # Boolean expected: try display #t directly
+        if any(kw in expected for kw in ['#t', '#f', 'true', 'false']):
+            variant = code[:m.start()] + '(display #t)' + code[m.end():]
+            yield variant, "full disp #t"
+            variant = code[:m.start()] + '(display #f)' + code[m.end():]
+            yield variant, "full disp #f"
+        
+        # Ref value display
+        if ref is not None:
+            variant = code[:m.start()] + '(display ' + str(ref) + ')' + code[m.end():]
+            yield variant, f"full disp {ref}" 
+            variant = code[:m.start()] + '(display ' + new_arg + ')' + code[m.end():]
+            yield variant, f"full {new_arg[:20]}"
 
 
-    # 2. Comparison operator swap
-    swaps = {'<': '<=', '<=': '<', '>': '>=', '>=': '>',
-             '=': 'not=', 'not=': '=',
-             '<': '>', '>': '<', '<=': '>=', '>=': '<='}
-    for item in mutables:
-        if item[0] == "cmp-op":
-            op, start, end = item[1], item[2], item[3]
-            if op in swaps:
-                yield code[:start] + swaps[op] + code[end:], f"op {op}->{swaps[op]}"
-
-    # 4. Function call substitution
-    for item in mutables:
-        if item[0] == "fn-call" and len(item) > 5:
-            fn, start, end = item[1], item[2], item[3]
-            for alias in item[5]:
-                yield code[:start+1] + alias + code[end:], f"fn {fn}->{alias}"
-
-    # 5. Try display with expected ref value directly
-    if ref is not None:
-        for item in mutables:
-            if item[0] == "display":
-                yield code[:item[2]] + '(display ' + str(ref) + ')' + code[item[3]:], f"disp {ref}"
-
-
-MAX_COLONY_VARIANTS = 20
-COLONY_VARIANT_TIMEOUT = 3  # per-variant serve exec timeout (s)
-COLONY_MAX_TIME = 8.0  # total colony search time limit (s)
+MAX_COLONY_VARIANTS = 25
+COLONY_VARIANT_TIMEOUT = 3
+COLONY_MAX_TIME = 6.0
 
 def internal_colony_search(serve, last_code, expected, phase):
-    """Ant colony local mutation search.
-    Tests systematic code variations via serve, no LLM needed.
-    Returns (found, output, debug_info)."""
-    """Ant colony local mutation search.
-    Tests systematic code variations via serve, no LLM needed.
-    Returns (found, output, debug_info)."""
+    """EDSL-based ant colony search. Uses set-code + mutate:rebind + eval-current
+    for function body mutations (<1ms per variant), falls back to full code
+    replacement for display changes (>10ms per variant)."""
     if not serve or not last_code:
         return False, "", ""
     if phase == "coarse":
         return False, "", "coarse: skip"
 
     colony_start = time.time()
-    best_out = ""
-    best_desc = ""
-    tested = 0
-
-    mutables = _find_mutables(last_code)
-    if not mutables:
-        return False, "", "no mutables found"
-
     colony_deadline = colony_start + COLONY_MAX_TIME
-    for variant, desc in _gen_variants(last_code, mutables, expected):
+    best_out = ""
+    tested = 0
+    edsl_tested = 0
+    full_tested = 0
+
+    for variant, desc in _gen_edsl_variants(last_code, expected):
         tested += 1
         if tested > MAX_COLONY_VARIANTS or time.time() > colony_deadline:
             break
         if not variant.strip():
             continue
+        
+        if desc.startswith("edsl"):
+            edsl_tested += 1
+        else:
+            full_tested += 1
+        
         ok, out, err = serve.exec(variant, read_timeout=COLONY_VARIANT_TIMEOUT)
         if check_success(out, expected):
             elapsed = time.time() - colony_start
-            return True, out, f"colony[{desc}] in {elapsed:.1f}s ({tested} tested)"
+            return True, out, f"colony[{desc}] in {elapsed:.1f}s ({tested}t, {edsl_tested}edsl/{full_tested}full)"
         if not best_out:
             best_out = out
-            best_desc = desc
 
     elapsed = time.time() - colony_start
-    return False, best_out, f"colony:{tested}var/{elapsed:.1f}s/best={best_desc}"
+    return False, best_out, f"colony:{tested}var/{elapsed:.1f}s/{edsl_tested}edsl+{full_tested}full"
+
 
 
 def get_execution_trace(code_str, timeout=10):
