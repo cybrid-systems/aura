@@ -523,6 +523,198 @@ bool auto_validate(const T& obj, std::string* error = nullptr) {
     return ok;
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  Recursive binary serialization — auto_bin_write / auto_bin_read
+//
+//  Uses P1306 template for + P2996 reflection to recursively
+//  serialize ANY struct to/from binary buffers.
+//
+//  Supported: all arithmetic types, enums (as uint8),
+//  std::string (length-prefixed), std::vector<T>
+//  (count + recursive), std::array<T,N> (recursive),
+//  nested structs (recursive), pointers (skipped).
+//
+//  MUST be compiled with -freflection (GCC 16+).
+// ═══════════════════════════════════════════════════════════════
+
+// ── BufferReader — binary read cursor ──────────────────────────
+
+class BufferReader {
+public:
+    BufferReader() = default;
+    BufferReader(const char* data, std::size_t size)
+        : data_(data), size_(size), pos_(0) {}
+
+    void read(void* out, std::size_t n) {
+        std::memcpy(out, data_ + pos_, n);
+        pos_ += n;
+    }
+
+    template <typename T>
+    T read() {
+        T val{};
+        read(&val, sizeof(T));
+        return val;
+    }
+
+    const char* data() const { return data_; }
+    std::size_t position() const { return pos_; }
+    std::size_t remaining() const { return size_ - pos_; }
+
+    // Advance position (after string data read)
+    void seek(std::size_t n) { pos_ += n; }
+
+    bool valid() const { return data_ != nullptr && pos_ <= size_; }
+    void reset(const char* d, std::size_t sz) { data_ = d; size_ = sz; pos_ = 0; }
+
+private:
+    const char* data_ = nullptr;
+    std::size_t size_ = 0;
+    std::size_t pos_ = 0;
+};
+
+
+// ── Type traits for container detection ───────────────────────-
+
+template <typename T> struct is_std_string      : std::false_type {};
+template <> struct is_std_string<std::string>    : std::true_type {};
+template <typename T> constexpr bool is_std_string_v  = is_std_string<T>::value;
+
+template <typename T> struct is_std_vector      : std::false_type {};
+template <typename T, typename A> struct is_std_vector<std::vector<T, A>> : std::true_type {};
+template <typename T> constexpr bool is_std_vector_v  = is_std_vector<T>::value;
+
+template <typename T> struct is_std_array       : std::false_type {};
+template <typename T, std::size_t N> struct is_std_array<std::array<T, N>> : std::true_type {};
+template <typename T> constexpr bool is_std_array_v   = is_std_array<T>::value;
+
+template <typename T> struct always_false       : std::false_type {};
+template <typename T> constexpr bool always_false_v = always_false<T>::value;
+
+
+// ── consteval bridge: runtime vector → compile-time array ─────
+
+template <typename T>
+consteval std::size_t count_members_of() {
+    using namespace std::meta;
+    return nonstatic_data_members_of(^^T, access_context::unchecked()).size();
+}
+
+template <typename T>
+consteval auto get_data_members() {
+    using namespace std::meta;
+    constexpr std::size_t N = count_members_of<T>();
+    auto vec = nonstatic_data_members_of(^^T, access_context::unchecked());
+    std::array<std::meta::info, N> arr{};
+    for (std::size_t i = 0; i < N; ++i)
+        arr[i] = vec[i];
+    return arr;
+}
+
+
+// ── bin_write — recursive binary serializer ────────────────────
+// Handles any single value: scalar, enum, string, vector, array,
+// pointer (skip), or struct (recursive via template for).
+
+template <typename T>
+void bin_write(Buffer& buf, const T& val) {
+    if constexpr (std::is_enum_v<T>) {
+        // Enums → serialize as uint8
+        auto v = static_cast<std::uint8_t>(val);
+        buf.write(v);
+
+    } else if constexpr (is_std_string_v<T>) {
+        // String → length-prefixed
+        auto len = static_cast<std::uint32_t>(val.size());
+        buf.write(len);
+        buf.write(val.data(), len);
+
+    } else if constexpr (is_std_vector_v<T>) {
+        // Vector → count + elements (recursive)
+        using Elem = typename T::value_type;
+        buf.write(static_cast<std::uint32_t>(val.size()));
+        for (auto& e : val) bin_write(buf, e);
+
+    } else if constexpr (is_std_array_v<T>) {
+        // std::array → elements (recursive, known count)
+        for (auto& e : val) bin_write(buf, e);
+
+    } else if constexpr (std::is_pointer_v<T> || std::is_null_pointer_v<T>) {
+        // Pointers → not persisted (skip)
+
+    } else if constexpr (std::is_arithmetic_v<T>) {
+        // Arithmetic scalars → direct binary write
+        buf.write(val);
+
+    } else if constexpr (std::is_class_v<T>) {
+        // Struct → iterate nonstatic data members via P1306 template for
+        static constexpr auto aura_members = get_data_members<T>();
+        template for (constexpr auto m : aura_members) {
+            bin_write(buf, val.[:m:]);
+        }
+
+    } else {
+        static_assert(always_false_v<T>, "unsupported type for bin_write");
+    }
+}
+
+
+// ── bin_read — recursive binary deserializer ───────────────────
+// Reads into a reference. Handles same type set as bin_write.
+
+template <typename T>
+void bin_read(BufferReader& reader, T& val) {
+    if constexpr (std::is_enum_v<T>) {
+        // Enums → read uint8, cast
+        auto v = reader.read<std::uint8_t>();
+        val = static_cast<T>(v);
+
+    } else if constexpr (is_std_string_v<T>) {
+        // String → length-prefixed
+        auto len = reader.read<std::uint32_t>();
+        val.assign(reader.data() + reader.position(), len);
+        reader.seek(len);
+
+    } else if constexpr (is_std_vector_v<T>) {
+        // Vector → count + elements (recursive)
+        using Elem = typename T::value_type;
+        auto sz = reader.read<std::uint32_t>();
+        val.resize(sz);
+        for (auto& e : val) bin_read(reader, e);
+
+    } else if constexpr (is_std_array_v<T>) {
+        // std::array → elements (recursive, known count)
+        for (auto& e : val) bin_read(reader, e);
+
+    } else if constexpr (std::is_pointer_v<T> || std::is_null_pointer_v<T>) {
+        // Pointers → not persisted; leave as default (nullptr)
+
+    } else if constexpr (std::is_arithmetic_v<T>) {
+        // Arithmetic scalars → direct read
+        reader.read(&val, sizeof(T));
+
+    } else if constexpr (std::is_class_v<T>) {
+        // Struct → iterate members via P1306 template for
+        static constexpr auto aura_members = get_data_members<T>();
+        template for (constexpr auto m : aura_members) {
+            bin_read(reader, val.[:m:]);
+        }
+
+    } else {
+        static_assert(always_false_v<T>, "unsupported type for bin_read");
+    }
+}
+
+
+// ── Convenience: bin_read<T>(reader) — return by value ─────────
+
+template <typename T>
+T bin_read(BufferReader& reader) {
+    T val{};
+    bin_read(reader, val);
+    return val;
+}
+
 } // namespace aura::reflect
 
 #endif // AURA_REFLECT_REFLECT_HH

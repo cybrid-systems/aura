@@ -6,6 +6,13 @@ module;
 #include "../reflect/cache_format.h"
 module aura.compiler.cache;
 
+// C-linkage bridge to reflection-based IR serialization
+// (implemented in ir_reflect_serialize.cpp, compiled with -freflection)
+extern "C" {
+void aura_ir_serialize(const void* mod, const char** out_data, size_t* out_size);
+void aura_ir_deserialize(const char* data, size_t size, void* out_mod);
+}
+
 namespace aura::compiler::cache {
 
 using namespace aura::ast;
@@ -129,7 +136,7 @@ bool write_cache(const std::string& path,
     // ── Write header via std::meta reflection (auto_serialize<CacheHeader>) ─
     CacheHeader header = {};
     std::memcpy(header.magic, "AURACACHE", 8);
-    header.version = 3;
+    header.version = 4;
     header.num_nodes = static_cast<std::uint32_t>(n);
     header.num_strings = static_cast<std::uint32_t>(stbl.strings.size());
     header.content_hash = static_cast<std::uint64_t>(root);
@@ -167,64 +174,22 @@ bool write_cache(const std::string& path,
         f.write(s.data(), len);
     }
 
-    // ── IR data section (immediately after string table) ─────────
+    // ── IR data section — auto-serialized via P2996 reflection ─────────
     auto ir_start = f.tellp();
-    std::uint32_t num_functions_from_ir = 0;
 
     if (ir_mod) {
-        auto write_str = [&](const std::string& s) {
-            std::uint32_t len = static_cast<std::uint32_t>(s.size());
-            f.write(reinterpret_cast<const char*>(&len), 4);
-            f.write(s.data(), len);
-        };
-
-        // Write string pool
-        std::uint32_t sp_sz = static_cast<std::uint32_t>(ir_mod->string_pool.size());
-        f.write(reinterpret_cast<const char*>(&sp_sz), 4);
-        for (auto& s : ir_mod->string_pool) write_str(s);
-
-        // Write functions
-        std::uint32_t nf = static_cast<std::uint32_t>(ir_mod->functions.size());
-        f.write(reinterpret_cast<const char*>(&nf), 4);
-        for (auto& fn : ir_mod->functions) {
-            f.write(reinterpret_cast<const char*>(&fn.id), 4);
-            f.write(reinterpret_cast<const char*>(&fn.entry_block), 4);
-            f.write(reinterpret_cast<const char*>(&fn.local_count), 4);
-            f.write(reinterpret_cast<const char*>(&fn.arg_count), 4);
-            write_str(fn.name);
-
-            std::uint32_t np = static_cast<std::uint32_t>(fn.params.size());
-            f.write(reinterpret_cast<const char*>(&np), 4);
-            for (auto& p : fn.params) write_str(p);
-
-            std::uint32_t nfv = static_cast<std::uint32_t>(fn.free_vars.size());
-            f.write(reinterpret_cast<const char*>(&nfv), 4);
-            for (auto& fv : fn.free_vars) write_str(fv);
-
-            std::uint32_t nb = static_cast<std::uint32_t>(fn.blocks.size());
-            f.write(reinterpret_cast<const char*>(&nb), 4);
-            for (auto& blk : fn.blocks) {
-                f.write(reinterpret_cast<const char*>(&blk.id), 4);
-                std::uint32_t ni = static_cast<std::uint32_t>(blk.instructions.size());
-                f.write(reinterpret_cast<const char*>(&ni), 4);
-                for (auto& instr : blk.instructions) {
-                    auto op = static_cast<std::uint8_t>(instr.opcode);
-                    f.write(reinterpret_cast<const char*>(&op), 1);
-                    f.write(reinterpret_cast<const char*>(instr.operands.data()), 16);
-                    f.write(reinterpret_cast<const char*>(&instr.source_ast_node_id), 4);
-                }
-                std::uint32_t ns = static_cast<std::uint32_t>(blk.successors.size());
-                f.write(reinterpret_cast<const char*>(&ns), 4);
-                if (ns > 0)
-                    f.write(reinterpret_cast<const char*>(blk.successors.data()), ns * 4);
-            }
-        }
-        num_functions_from_ir = nf;
+        const char* ir_buf_data = nullptr;
+        size_t ir_buf_size = 0;
+        aura_ir_serialize(ir_mod, &ir_buf_data, &ir_buf_size);
+        auto ir_size = static_cast<std::uint32_t>(ir_buf_size);
+        f.write(reinterpret_cast<const char*>(&ir_size), sizeof(ir_size));
+        f.write(ir_buf_data, ir_buf_size);
+        delete[] ir_buf_data;
     }
 
-    // ── Rewrite header with IR offset and function count ──────────
+    // ── Rewrite header with IR offset ─────────────────────────────
     header.ir_offset = static_cast<std::uint64_t>(ir_start);
-    header.num_functions = num_functions_from_ir;
+    header.num_functions = ir_mod ? 1 : 0;  // signal: 1 = has IR section, 0 = no IR
     f.seekp(0);
     f.write(reinterpret_cast<const char*>(&header), sizeof(header));
 
@@ -368,86 +333,30 @@ MappedCache open_cache(const std::string& path) {
     cache.str_offsets_ = reinterpret_cast<const std::uint32_t*>(sp + 4);  // skip num_strings
     cache.str_data_base_ = sp;  // base for offset resolution
 
-    // ── Load IR cache (if present) ──────────────────────────────────────
+    // ── Load IR cache (if present) — auto-deserialized via P2996 reflection ─
     cache.ir_functions_.clear();
     cache.ir_string_pool_.clear();
     cache.ir_entry_function_id_ = 0;
     cache.has_ir_cache_ = false;
 
-    if (hdr->ir_offset > 0 && hdr->num_functions > 0) {
-        auto* irp = static_cast<const std::uint8_t*>(data) + hdr->ir_offset;
+    // Version 4+ uses reflection-based IR format (size-prefixed blob)
+    // Version 3 used a hand-written format — safe to skip (rebuilt on miss)
+    if (hdr->ir_offset > 0 && hdr->num_functions > 0 && hdr->version >= 4) {
+        auto* ir_data = static_cast<const char*>(data) + hdr->ir_offset;
 
-        auto read_str = [&]() -> std::string {
-            std::uint32_t len = 0;
-            std::memcpy(&len, irp, 4); irp += 4;
-            std::string s(reinterpret_cast<const char*>(irp), len);
-            irp += len;
-            return s;
-        };
+        // Read size prefix
+        std::uint32_t ir_size = 0;
+        std::memcpy(&ir_size, ir_data, 4);
+        ir_data += 4;
 
-        // Read string pool
-        std::uint32_t sp_sz = 0;
-        std::memcpy(&sp_sz, irp, 4); irp += 4;
-        cache.ir_string_pool_.reserve(sp_sz);
-        for (std::uint32_t i = 0; i < sp_sz; ++i)
-            cache.ir_string_pool_.push_back(read_str());
+        // Deserialize via reflection
+        aura::ir::IRModule ir_mod;
+        aura_ir_deserialize(ir_data, ir_size, &ir_mod);
 
-        // Read functions
-        std::uint32_t nf = 0;
-        std::memcpy(&nf, irp, 4); irp += 4;
-        cache.ir_functions_.reserve(nf);
-        for (std::uint32_t fi = 0; fi < nf; ++fi) {
-            aura::ir::IRFunction fn;
-            std::memcpy(&fn.id, irp, 4); irp += 4;
-            std::memcpy(&fn.entry_block, irp, 4); irp += 4;
-            std::memcpy(&fn.local_count, irp, 4); irp += 4;
-            std::memcpy(&fn.arg_count, irp, 4); irp += 4;
-            fn.name = read_str();
-
-            std::uint32_t np = 0;
-            std::memcpy(&np, irp, 4); irp += 4;
-            fn.params.reserve(np);
-            for (std::uint32_t pi = 0; pi < np; ++pi)
-                fn.params.push_back(read_str());
-
-            std::uint32_t nfv = 0;
-            std::memcpy(&nfv, irp, 4); irp += 4;
-            fn.free_vars.reserve(nfv);
-            for (std::uint32_t fvi = 0; fvi < nfv; ++fvi)
-                fn.free_vars.push_back(read_str());
-
-            std::uint32_t nb = 0;
-            std::memcpy(&nb, irp, 4); irp += 4;
-            fn.blocks.reserve(nb);
-            for (std::uint32_t bi = 0; bi < nb; ++bi) {
-                aura::ir::BasicBlock blk;
-                std::memcpy(&blk.id, irp, 4); irp += 4;
-
-                std::uint32_t ni = 0;
-                std::memcpy(&ni, irp, 4); irp += 4;
-                blk.instructions.reserve(ni);
-                for (std::uint32_t ii = 0; ii < ni; ++ii) {
-                    aura::ir::IRInstruction instr;
-                    std::uint8_t op = 0;
-                    std::memcpy(&op, irp, 1); irp += 1;
-                    instr.opcode = static_cast<aura::ir::IROpcode>(op);
-                    std::memcpy(instr.operands.data(), irp, 16); irp += 16;
-                    std::memcpy(&instr.source_ast_node_id, irp, 4); irp += 4;
-                    blk.instructions.push_back(std::move(instr));
-                }
-
-                std::uint32_t ns = 0;
-                std::memcpy(&ns, irp, 4); irp += 4;
-                blk.successors.resize(ns);
-                if (ns > 0) {
-                    std::memcpy(blk.successors.data(), irp, ns * 4);
-                    irp += ns * 4;
-                }
-                fn.blocks.push_back(std::move(blk));
-            }
-            cache.ir_functions_.push_back(std::move(fn));
-        }
-        cache.ir_entry_function_id_ = 0;  // first function is entry
+        // Populate MappedCache fields
+        cache.ir_functions_ = std::move(ir_mod.functions);
+        cache.ir_string_pool_ = std::move(ir_mod.string_pool);
+        cache.ir_entry_function_id_ = ir_mod.entry_function_id;
         cache.has_ir_cache_ = true;
     }
 
