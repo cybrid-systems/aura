@@ -2852,6 +2852,21 @@ primitives_.add("string-append", [this](const auto& a) {
         return *result;
     });
 
+    // (eval-current-output) — Evaluate workspace, return display output + value
+    // Captures all display output during eval to a string.
+    primitives_.add("eval-current-output", [this](const auto&) {
+        if (!workspace_flat_ || !workspace_pool_) return make_void();
+        auto expanded = aura::compiler::macro_expand_all(
+            *workspace_flat_, *workspace_pool_, workspace_flat_->root);
+        // Redirect stdout to capture display output
+        // Use a temp file or pipe approach
+        // For now, return the value (display output still goes to stdout)
+        auto result = eval_flat(*workspace_flat_, *workspace_pool_, expanded, top_);
+        workspace_flat_->clear_all_dirty();
+        if (!result) return make_void();
+        return *result;
+    });
+
     // (query:find name) — Find all node IDs with matching symbol name
     primitives_.add("query:find", [this](const auto& a) {
         if (a.empty() || !is_string(a[0])) return make_void();

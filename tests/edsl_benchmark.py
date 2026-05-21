@@ -225,6 +225,92 @@ class ServeClient:
                 out = val if val not in ("()", "") else ""
             return True, out.strip(), ""
         return False, display_text, resp.get("msg", str(resp))
+    def exec_batch(self, codes, read_timeout=3):
+        """Execute multiple code strings in a batch, minimizing IPC overhead.
+        Sends all commands at once via stdin, then reads all responses.
+        Returns list of (ok, out, err) tuples, one per code."""
+        if not codes:
+            return []
+        if self.proc.poll() is not None:
+            self._restart()
+            return [(False, "", "serve restarted")] * len(codes)
+        
+        # Send all commands at once
+        batch = ""
+        for code in codes:
+            batch += json.dumps({"cmd": "exec", "code": code}) + "\n"
+        self.proc.stdin.write(batch)
+        self.proc.stdin.flush()
+        
+        # Non-blocking read loop
+        fd = self.proc.stdout.fileno()
+        old_flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, old_flags | os.O_NONBLOCK)
+        
+        buf = ""
+        try:
+            for _ in range(read_timeout):
+                if self.proc.poll() is not None:
+                    self._restart()
+                    return [(False, "", "serve died")] * len(codes)
+                try:
+                    chunk = os.read(fd, 4096)
+                    if chunk:
+                        buf += chunk.decode("utf-8", errors="replace")
+                except (BlockingIOError, OSError):
+                    pass
+                if buf.count("\n") >= len(codes):
+                    time.sleep(0.02)
+                    try:
+                        more = os.read(fd, 4096)
+                        if more:
+                            buf += more.decode("utf-8", errors="replace")
+                    except:
+                        pass
+                    break
+                time.sleep(0.05)
+        finally:
+            try:
+                fcntl.fcntl(fd, fcntl.F_SETFL, old_flags)
+            except:
+                pass
+        
+        # Parse responses (one per line)
+        lines = buf.strip().split("\n")
+        results = []
+        for line in lines[:len(codes)]:
+            stripped = line.strip()
+            if not stripped:
+                results.append((False, "", "empty response"))
+                continue
+            if stripped.startswith("{"):
+                json_line = stripped
+                display_text = ""
+            else:
+                brace = stripped.rfind("{")
+                if brace >= 0:
+                    display_text = stripped[:brace]
+                    json_line = stripped[brace:]
+                else:
+                    results.append((False, stripped, "no JSON"))
+                    continue
+            try:
+                resp = json.loads(json_line)
+            except json.JSONDecodeError:
+                results.append((False, stripped, "invalid JSON"))
+                continue
+            if resp.get("status") == "ok":
+                val = resp.get("value", "")
+                if display_text:
+                    out = display_text + (" " + val if val not in ("()", "") else "")
+                else:
+                    out = val if val not in ("()", "") else ""
+                results.append((True, out.strip(), ""))
+            else:
+                results.append((False, display_text, resp.get("msg", str(resp))))
+        
+        return results
+    
     def close(self):
         if self.proc and self.proc.poll() is None:
             self.proc.terminate()
@@ -719,7 +805,7 @@ def internal_colony_search(serve, last_code, expected, phase):
     edsl_tested = 0
     full_tested = 0
 
-    # Get pheromone ranking to prioritize mutation types
+    # Get pheromone ranking
     _, pheromone_out, _ = serve.exec('(require "std/ant" all:)(display (pheromone:rank (list "edsl-disp-ref" "edsl-body-wrap" "edsl-lit-tweak" "edsl-op-swap" "full-hash-wrap" "full-disp-bool" "full-disp-ref")))')
     if pheromone_out:
         rank = [t.strip() for t in pheromone_out.strip('()').split() if t.strip()]
@@ -729,42 +815,45 @@ def internal_colony_search(serve, last_code, expected, phase):
     # Collect all variants from generator
     all_variants = list(_gen_edsl_variants(last_code, expected))
     
-    # Sort by pheromone rank: higher-ranked types first
+    # Sort by pheromone rank
     def _variant_key(item):
         desc = item[1]
-        # Extract mutation type from description
         mtype = desc.split('[')[0] if '[' in desc else desc.split(' ')[0]
         if mtype in rank:
             return rank.index(mtype)
-        return len(rank)  # unknown types go last
-    
+        return len(rank)
     all_variants.sort(key=_variant_key)
     
-    for variant, desc in all_variants:
+    # Cap variant count
+    candidates = all_variants[:MAX_COLONY_VARIANTS]
+    if not candidates:
+        return False, "", "no variants"
+    
+    # Batch exec: send all variants at once, read all responses
+    codes = [v for v, d in candidates]
+    results = serve.exec_batch(codes, read_timeout=COLONY_VARIANT_TIMEOUT)
+    
+    tested = 0
+    for i, ((variant, desc), (ok, out, err)) in enumerate(zip(candidates, results)):
         tested += 1
-        if tested > MAX_COLONY_VARIANTS or time.time() > colony_deadline:
+        if time.time() > colony_deadline:
             break
-        if not variant.strip():
-            continue
         
         if desc.startswith("edsl"):
             edsl_tested += 1
         else:
             full_tested += 1
         
-        ok, out, err = serve.exec(variant, read_timeout=COLONY_VARIANT_TIMEOUT)
-        # Extract mutation type from description for pheromone tracking
         mut_type = desc.split('[')[0] if '[' in desc else desc.split(' ')[0]
         if check_success(out, expected):
-            # Found! Update pheromone with strong positive signal
             serve.exec('(require "std/ant" all:)(pheromone:update "' + mut_type + '" 3.0)')
             elapsed = time.time() - colony_start
             return True, out, f"colony[{desc}] in {elapsed:.1f}s ({tested}t, {edsl_tested}edsl/{full_tested}full)"
         if not best_out:
             best_out = out
-        # Update pheromone: small negative for failed variant
-        serve.exec('(require "std/ant" all:)(pheromone:update "' + mut_type + '" -1.0)')
-
+    
+    # Update pheromone for all failed variants
+    serve.exec('(require "std/ant" all:)(pheromone:update "batch" -1.0)')
     elapsed = time.time() - colony_start
     return False, best_out, f"colony:{tested}var/{elapsed:.1f}s/{edsl_tested}edsl+{full_tested}full"
 
