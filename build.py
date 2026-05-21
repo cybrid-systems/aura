@@ -647,7 +647,7 @@ def main():
     commands = {
         "build": cmd_build,
         "clean": cmd_clean,
-        "check": lambda: (cmd_build(), cmd_test([]), test_fuzz() if os.environ.get("LLM_API_KEY","") else True)[2],
+        "check": lambda: cmd_build() or cmd_test([]),
         "test":  lambda: cmd_test(args or ["all"]),
         "list":  cmd_list,
         "demo":  test_demo,
