@@ -119,6 +119,9 @@ class ServeClient:
                 # Skip void () return value appended to display output
                 if display_text and val in ("()", ""):
                     out = display_text
+                elif not display_text and val in ("()", ""):
+                    out = ""
+                    return False, out, "empty output (only void return)"
                 elif display_text:
                     out = display_text + " " + val
                 else:
