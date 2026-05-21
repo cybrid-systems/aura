@@ -8,7 +8,8 @@ Aura 不是给人类写的语言——是给 AI 写的。
 ```bash
 cmake -B build && cmake --build build --target aura -j
 echo '(+ 1 2 3)' | ./build/aura          # → 6
-echo '(display (primes 10))' | ./build/aura  # → (2 3 5 7)
+echo '(display 42)' | ./build/aura  # → 42
+echo '(display (list 1 2 3))' | ./build/aura  # → (1 2 3)
 ```
 
 ---
