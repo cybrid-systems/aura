@@ -73,6 +73,25 @@ endif()
 
 target_link_libraries(aura PRIVATE stdc++ stdc++exp)
 
+
+# ── Reflect: compile-time reflection (header-only, optional) ────
+option(AURA_ENABLE_REFLECTION "Enable compile-time reflection via std::meta" ON)
+if(AURA_ENABLE_REFLECTION)
+    add_library(aura-reflect INTERFACE)
+    target_include_directories(aura-reflect INTERFACE ${CMAKE_SOURCE_DIR}/src)
+    target_compile_options(aura-reflect INTERFACE -std=c++26 -freflection)
+endif()
+
+# ── validate_node_layout: P2996 ABF struct layout validation ────
+if(AURA_ENABLE_REFLECTION)
+    add_executable(validate-node-layout tests/validate_node_layout.cpp)
+    target_link_libraries(validate-node-layout PRIVATE aura-reflect)
+    target_link_libraries(validate-node-layout PRIVATE stdc++)
+    add_test(NAME validate_node_layout
+        COMMAND ./validate-node-layout
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+endif()
+
 enable_testing()
 macro(AT N I E)
     add_test(NAME ${N}
