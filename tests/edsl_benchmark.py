@@ -373,6 +373,15 @@ def build_sys_prompt(stdlib, api_ref, task_name=""):
         "\n"
         "=== TCP ===\n"
         "  (tcp-connect \"host\" port)  ; DO NOT use c-func for networking.\n"
+        "\n"
+        "=== EDSL (Code Mutation) ===\n"
+        "Use these for targeted changes instead of full rewrite:\n"
+        "  (set-code \"<full code>\")      - Set current code workspace\n"
+        "  (query:find \"<name>\")         - Find AST node IDs by name\n"
+        "  (mutate:rebind id \"<new>\")     - Replace node with new code\n"
+        "  (eval-current)                - Evaluate mutated workspace\n"
+        "Example: (set-code \"(define (f x) x)\")(mutate:rebind (car (query:find \"f\")) \"(lambda (x) (* x 2))\")(eval-current)\n"
+        "\n"
     )
     if stdlib:
         sp += f"Available stdlib: {', '.join(stdlib)}. Use (require std/name all:) to load them.\n"
@@ -622,33 +631,21 @@ def run_single_task(model, base_url, api_key, name, prompt, expected, stdlib, ap
             name, out if ok else "", expected, stdlib,
             sys_prompt, prompt, current_src=code)
 
-        # Build correction prompt based on phase
-        if phase in ("fine", "putt") and last_full_code:
-            # EDSL mode: tell LLM to output mutations
-            edsl_hint = (
-                "\n=== EDSL MODE ===\n"
-                "You are in fine-tuning phase. Output ONLY Aura EDSL code that:\n"
-                "1. Uses (set-code \"...\") to set the current source\n"
-                "2. Uses (query:find \"...\") to locate target nodes\n"
-                "3. Uses (mutate:rebind node-id \"new-code\") to change them\n"
-                "4. Uses (eval-current) to verify\n"
-                "Do NOT rewrite the entire program. Only modify the relevant parts.\n"
-                "Current code:\n" + last_full_code[:800] + "\n"
-            )
-            correction = (
-                "Your previous code FAILED (output mismatch).\n"
-                + ada_fb + "\n\n"
-                + edsl_hint + "\n\n"
-                "Output ONLY the EDSL mutation code, nothing else."
-            )
-        else:
-            # Coarse mode: full code rewrite (current behavior)
-            correction = (
-                "Your previous code FAILED. " + ("(compile error)" if not ok else "(output mismatch)") + "\n"
-                f"Aura produced: {actual_output[:300]}\n\n"
-                + ada_fb + "\n\n"
-                "Output ONLY corrected Aura code, nothing else."
-            )
+        # Build correction prompt (phase affects only feedback tone, not output format)
+        distance_note = {
+            "coarse": "Stil far from goal - the code needs major changes.",
+            "fine": "Getting closer - only a few things off.",
+            "putt": "Almost there! Just minor fixes needed.",
+        }.get(phase, "Fix the code.")
+
+        correction = (
+            ("(compile error) " if not ok else "(output mismatch) ")
+            + distance_note + "\n\n"
+            f"Aura produced: {actual_output[:300]}\n\n"
+            + ada_fb + "\n\n"
+            "Current code:\n" + (last_full_code[:400] if last_full_code else code[:400]) + "\n\n"
+            "Output the corrected Aura code (complete program with (display ...))."
+        )
 
         messages.append({"role": "assistant", "content": resp})
         messages.append({"role": "user", "content": correction})
