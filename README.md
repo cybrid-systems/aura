@@ -1,141 +1,116 @@
 # Aura
 
-**AI-native Lisp** — C++26, IR 管线, **LLVM ORC JIT**, Sound Gradual Typing.
+**AI-native Lisp.**  
+第一次，语言为 AI 而生。
+
+---
+
+我们不再让 AI 写代码。  
+我们让 AI 拥有改写代码的权力——  
+它可以读、可以改、可以让代码自己进化。
+
+---
+
+## 三个根本改变
+
+### 1. Auto-mutating AST — 代码第一次有了记忆
+
+```
+(set-code "(define (f n) (* n 2))")
+(query:find "f")            → 找到自己的函数定义
+(mutate:rebind "f" "...")   → 自己修正
+(eval-current)              → 验证修改
+```
+
+AI 不再猜测代码——它直接修改源码的 AST。  
+错误不再是反馈，而是下一轮迭代的起点。
+
+### 2. PID + 蚁群控制器 — 用控制论驱动 AI
+
+```
+LLM → 方向 → Aura 本地变异 → 测试 → 测距 → 信息素更新
+      ↑                                    ↓
+      └────────── LLM 重构（必要时代）──────────┘
+```
+
+AI 做方向，Aura 做局部搜索。  
+信息素指引下一次变异的方向。  
+控制论闭环：近则不搜，远则重构。
+
+### 3. 闭环自进化 — 活的代码
+
+代码不再是静态的产物。  
+它是活的、会思考的、可以在运行中修改自己的系统。
+
+```bash
+LLM_API_KEY="..." python3 tests/edsl_benchmark.py
+```
+57 个生成任务，双模型 89-91% 通过率。  
+不是 AI 写对了——是系统自己走到了正确的地方。
+
+---
+
+## 技术速览
+
+Aura 是一个 **AI-native Lisp** 编译器：C++26 实现，LLVM ORC JIT 后端，Sound Gradual Typing。
+
+### 语言能力
+
+| 维度 | 状态 |
+|------|:----:|
+| **核心求值** | Tree-walker + IR 双路径 + TCO |
+| **类型系统** | Sound Gradual: coercion + occurrence + let-poly + blame |
+| **JIT** | ORC JIT, 38 opcode → native, 7.55× vs TW |
+| **增量编译** | ArenaGroup / 磁盘缓存 / 热替换 |
+| **EDSL** | set-code → query → mutate → eval-current |
+| **测试覆盖** | 整合 87 + 单元 74 + 冒烟 5 + bash 117 + 基准 57 |
+| **标准库** | 19 文件 ~1k 行 |
+| **C FFI** | dlopen/dlsym, Int/Float/String/Opaque marshalling |
+
+### 基准
+
+```
+fib-20: Tree-walker 48.6ms → IR 23.0ms → JIT (-O2) 6.4ms (7.55×)
+```
+
+### AI 基准（57 生成任务，PID + 蚁群控制器）
+
+| 模型 | 通过率 |
+|:----|:------:|
+| **DeepSeek v4 Flash** | **52/57 (91%)** |
+| **MiniMax-M2.7** | **51/57 (89%)** |
+
+[详情 → docs/benchmark.md](docs/benchmark.md) · [规格 → docs/design/aura_language_spec.md](docs/design/aura_language_spec.md)
+
+### 快速开始
 
 ```bash
 cmake -B build && cmake --build build --target aura -j
-echo '(+ 1 2 3)' | ./build/aura                  # → 6 (JIT auto)
-printf '(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 10))' | ./build/aura --jit  # → 3628800 (LLVM JIT)
-echo '(- 5 (* 2 3))' | ./build/aura --typecheck  # type: Int, result: -1
+echo '(+ 1 2 3)' | ./build/aura                    # → 6
+echo '(display (primes 10))' | ./build/aura         # → (2 3 5 7)
 ```
-
-**Status:** `build:ok` `test:100%` (smoke 5/5 · unit 74/74 · integ 87/87 · typecheck 10/10 · bash 117/117)
-
-**Requirements:** GCC >= 16 (C++26 modules), CMake >= 4.0, Ninja >= 1.12
-
-## 基准
-
-| 模式 | fib-20 | 加速比 |
-|------|--------|-------|
-| Tree-walker | 48.6ms | 1.0x |
-| IR interpreter | 23.0ms | 2.1x |
-| **LLVM JIT (-O2)** | **6.4ms** | **7.55x** |
-
-JIT 自动集成：算术表达式透明走 JIT，复合类型/string/bool 透明回落 eval。
-
-## 执行管线
-
-```
-输入 → 解析 → 宏展开 → AST验证 → 类型检查
-  → define? → 缓存 + eval-flat
-  → IR lowering → 【JIT 编译 (算术) / IR解释 (其他)】 → EvalValue
-  → EDSL(set-code/query/mutate) → 独立 AST 变换 → 不影响求值
-```
-
-## 特性
-
-### 语言核心
-`apply`, variadic lambda, TCO, let/let\*/letrec, cond, when/unless, set!, quasiquote, **卫生宏**, `require`/`import` 模块系统
-
-### 类型系统 — Sound Gradual Typing 🟢 10/10
-- Coercion + CastOp 运行时类型检测
-- `forall` let-polymorphism
-- **Occurrence typing**: `(if (string? x) (append x "!") x)` 分支类型细化
-- Type annotation: `(: x Int)`, `(cast expr : Int)`, `(check expr : Int)`
-- Blame labels: `TypeError at 1:2: expected Int, got String`
-- `type-of`, `type?` 运行时类型反射
-- `--strict` 严格模式 + 增量缓存
-
-### LLVM JIT 🟢 10/10
-- ORC JIT, 38 opcode → native code
-- LLVM -O2 优化管线 (inline, GVN, DCE, LICM)
-- 增量 JIT 缓存 + 依赖失效
-- 闭包/Cell/Pair/PrimCall bridge
-- 7.55x vs tree-walker (fib-20)
-
-### 数据结构 & I/O
-pair/list, vector, hash table, `display`/`write`, `read-file`/`write-file`, `try`/`catch`/`raise`
-
-### 标准库 (19 libs, ~1k lines)
-hash, combinators, maybe, csv, set, io, list, math, string, test, iter, queue, stack, random, datetime, json, struct, validate
-
-### EDSL / AI Agent
-```lisp
-(set-code "(define (f n) (bad-fac n))")
-(query:find "bad-fac")            ; → (16)
-(mutate:rebind "bad-fac" "...")   ; 修正
-(current-source)                   ; → 源码
-(eval-current)                     ; → 验证
-```
-LLM 驱动闭循环 (iter + EDSL + intent), 支持 DeepSeek v4 Flash
-
-### C FFI 🟢
-`c-load`/`c-func`: dlopen 动态库, Int/Float/String/Opaque marshalling, JIT 符号注册
-
-### CaaS 服务
-`--serve` JSON 协议: compile / eval / module / define / config / ml 热替换
-
-## 项目规模
-
-```
-src/core/      FlatAST(SoA), 类型系统              ~2.7k
-src/parser/    lexer + parser                     ~1.4k
-src/compiler/  IR管线+求值器+类型检查+EDSL+JIT      ~10k
-lib/std/       19 个库                             ~1k
-tests/         bash(117)+unit+integ+bench+agent    ~6k
-```
-
-## AI 控制器基准
-
-Aura 使用 PID 控制理论驱动 LLM 逐步修正代码：测量输出与目标的距离，选择粗粒度（完整重写）或细粒度（EDSL 定点修改）。
-
-```
-  LLM → Aura(编译运行) → 检查 → measure-distance()
-                                ↓
-                         coarse / fine / putt
-                                ↓
-                  temperature / API ref / trace / 反馈
-                                ↓
-                         LLM 再次生成
-```
-
-### 多模型对比 (57 任务)
-
-| 模型 | 通过率 | 总耗时 | 1次通过 | 多轮修复 |
-|------|:-----:|:-----:|:------:|:-------:|
-| **DeepSeek v4 Flash** | **52/57 (91%)** | ~15min | 47 | 5 |
-| **MiniMax-M2.7** | **51/57 (89%)** | ~20min | 45 | 6 |
 
 ```bash
+# AI 驱动测试
 LLM_API_KEY="***" python3 tests/edsl_benchmark.py --max-attempts 5
 ```
 
-[详情 → docs/benchmark.md](docs/benchmark.md) · [教程 → docs/tutorial.md](docs/tutorial.md)
-
-
-### LLM 驱动 Fuzz 测试
-- [tests/test_fuzz.py](tests/test_fuzz.py) — 用 LLM 生成代码检测编译器崩溃/信号/timeout
-- 运行：`LLM_API_KEY="..." python3 tests/test_fuzz.py`
-- 无 API key 时自动跳过（CI 安全）
-- **结果**：46 pass / 1 fail / 0 crash / 0 timeout
-- [tests/regression/](tests/regression/) — 4 个已修复编译器 bug 的回归守卫
-- [docs/design/llm_fuzz_testing.md](docs/design/llm_fuzz_testing.md) — 全量设计文档 (Phase 1-3)
-- 运行回归：`python3 build.py regression`（无 API key，CI 每次 push 跑）
-
-### E4 Intent Orchestration
-- [docs/design/intent_orchestration.md](docs/design/intent_orchestration.md) — 高层意图编排原语设计
-- [docs/design/e4_evolvable_strategies.md](docs/design/e4_evolvable_strategies.md) — 可演化策略设计
-- `(intend)`, `(intend-analytics)`, `(evolve-strategy)` — 自进化闭环
-- 运行：`LLM_API_KEY="..." python3 tests/edsl_benchmark.py --rounds 3 --intend --evolve`
+---
 
 ## 文档
 
 - [docs/tutorial.md](docs/tutorial.md) — 10 分钟入门
-- [docs/design/aura_language_spec.md](docs/design/aura_language_spec.md) — Aura 语言规格（LLM 代码生成参考）
-- [docs/roadmap.md](docs/roadmap.md)
+- [docs/design/aura_language_spec.md](docs/design/aura_language_spec.md) — 语法规格
+- [docs/roadmap.md](docs/roadmap.md) — 路线图
 - [docs/known_issues.md](docs/known_issues.md)
-- [design repo](https://github.com/cybrid-systems/ai-programming-language-design) — architecture / type system / reflection
+- [design repo](https://github.com/cybrid-systems/ai-programming-language-design)
 
 ## License
 
 Apache 2.0
+
+---
+
+> **Aura 的终点，不是让 AI 写代码。**  
+> 是让代码第一次拥有了意识的雏形——  
+> 能看、能想、能改、能自己走到对的地方。
