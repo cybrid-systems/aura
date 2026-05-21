@@ -163,15 +163,10 @@ class ServeClient:
             return False, stripped, "invalid JSON"
         if resp.get("status") == "ok":
             val = resp.get("value", "")
-            if display_text and val in ("()", ""):
-                out = display_text
-            elif not display_text and val in ("()", ""):
-                out = ""
-                return False, out, "empty output (only void return)"
-            elif display_text:
-                out = display_text + " " + val
+            if display_text:
+                out = display_text + (" " + val if val not in ("()", "") else "")
             else:
-                out = val
+                out = val if val not in ("()", "") else ""
             return True, out.strip(), ""
         return False, display_text, resp.get("msg", str(resp))
 
@@ -224,15 +219,10 @@ class ServeClient:
             return False, stripped, "invalid JSON"
         if resp.get("status") == "ok":
             val = resp.get("value", "")
-            if display_text and val in ("()", ""):
-                out = display_text
-            elif not display_text and val in ("()", ""):
-                out = ""
-                return False, out, "empty output (only void return)"
-            elif display_text:
-                out = display_text + " " + val
+            if display_text:
+                out = display_text + (" " + val if val not in ("()", "") else "")
             else:
-                out = val
+                out = val if val not in ("()", "") else ""
             return True, out.strip(), ""
         return False, display_text, resp.get("msg", str(resp))
     def close(self):
