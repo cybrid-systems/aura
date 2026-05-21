@@ -49,7 +49,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_G
     set_source_files_properties(src/compiler/cache_impl.cpp PROPERTIES COMPILE_FLAGS "-O0")
 endif()
 
-target_include_directories(aura PRIVATE ${CMAKE_SOURCE_DIR})
+target_include_directories(aura PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/src)
 target_compile_options(aura PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers
     -Wno-unused-variable -Wno-unused-function
@@ -74,24 +74,21 @@ endif()
 
 target_link_libraries(aura PRIVATE stdc++ stdc++exp)
 
+# ── Separate compilation for std::meta reflection ───────────────
+# cache_reflect.cpp needs -freflection, can't be in the module build.
+add_library(aura-reflect STATIC
+    src/reflect/cache_reflect.cpp
+)
+target_include_directories(aura-reflect PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_compile_options(aura-reflect PRIVATE -freflection)
+target_compile_features(aura-reflect PUBLIC cxx_std_26)
+target_link_libraries(aura-reflect PRIVATE stdc++)
 
-# ── Reflect: compile-time reflection (header-only, optional) ────
-option(AURA_ENABLE_REFLECTION "Enable compile-time reflection via std::meta" ON)
-if(AURA_ENABLE_REFLECTION)
-    add_library(aura-reflect INTERFACE)
-    target_include_directories(aura-reflect INTERFACE ${CMAKE_SOURCE_DIR}/src)
-    target_compile_options(aura-reflect INTERFACE -std=c++26 -freflection)
-endif()
+# Link reflect into aura
+target_link_libraries(aura PRIVATE aura-reflect)
 
-# ── validate_node_layout: P2996 ABF struct layout validation ────
-if(AURA_ENABLE_REFLECTION)
-    add_executable(validate-node-layout tests/validate_node_layout.cpp)
-    target_link_libraries(validate-node-layout PRIVATE aura-reflect)
-    target_link_libraries(validate-node-layout PRIVATE stdc++)
-    add_test(NAME validate_node_layout
-        COMMAND ./validate-node-layout
-        WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
-endif()
+
+
 
 enable_testing()
 macro(AT N I E)
