@@ -290,6 +290,8 @@ def extract_code(text):
     return stripped
 
 # ── 执行测试 ──────────────────────────────────────────────
+# ── 执行测试 ──────────────────────────────────────────────
+
 def test_aura(code, timeout=10):
     try:
         r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=timeout)
@@ -817,7 +819,13 @@ def run_single_task(model, base_url, api_key, name, prompt, expected, stdlib, ap
     last_full_code = ""
     phase = "coarse"
 
+
     def run_code(code):
+        # Light Scheme dialect fix: (def ...) → (define ...), nil→'()
+        code = code.replace('(def ', '(define ')
+        code = code.replace(' nil ', " '() ").replace('(nil ', '(() ')
+        code = code.replace(' null ', " '() ").replace('(null ', '(() ')
+        code = re.sub(r'\bt\b', '#t', code)  # standalone t → #t
         if serve:
             return serve.exec(code)
         try:
