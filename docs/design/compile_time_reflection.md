@@ -144,33 +144,172 @@ Fuzz 测试中的编译器路径覆盖埋点，当前是手动插入的。反射
 constexpr auto branches = reflect_eval_branches();
 ```
 
-## 4. 实现计划
+## 4. 实现计划（详细）
 
-### Phase 1: 基础反射工具（已完成框架）
+### 前置条件
 
-- [x] `reflect.ixx` — `reflect_members<T>()`, `classify_member_type()`
-- [ ] 添加 `MemberKind::Vector`, `MemberKind::String`, `MemberKind::Struct`
-- [ ] 添加嵌套 struct 的递归反射支持
-- [ ] 添加 enum 序列化支持
+- GCC 16.1 已支持 `std::meta`，但有以下已知限制
+- CMake 集成已完成：`aura-reflect INTERFACE` 库 + `-freflection`
+- `src/reflect/*.hh` 已通过编译测试（`auto_to_json<T>()` 已验证）
 
-### Phase 2: 自动序列化（~2-3h）
+### Phase 1: 基础反射工具（已完成）
 
-- [ ] `auto_serialize<T>(buf, obj)` — 任意 struct → bytes
-- [ ] `auto_deserialize<T>(buf)` → bytes → struct
-- [ ] 接入 `cache_module()`，替换当前手写序列化
-- [ ] 验证 round-trip（序列化 → 反序列化 → 相等）
+已完成（`src/reflect/*.hh`）或可以直接用头文件库：
+- `reflect.hh`:
+  - `reflect_members<T>()` — 编译期枚举所有成员
+  - `classify_member_type()` — 判断成员类型
+  - `auto_to_json<T>()` — 任意 struct → JSON（已完成、已验证）
+- `opcode_reflect.hh`: IR 指令枚举反射
+- `reflect_schema.hh`: Schema 生成框架
+- `read_auto_validate.hh`: 读取后自动验证
+- `tag_dispatch.hh`: 标签分发工具
+- `type_validate.hh`: 类型验证
+
+### Phase 1.5: 增强反射能力（~1h）
+
+需要扩展 `reflect.hh` 支持更多类型：
+
+```cpp
+// 1. 添加容器类型支持
+enum class MemberKind : uint8_t {
+    // ... 已有类型 ...
+    // + 新增:
+    Vector,    // std::vector<T>
+    Array,     // std::array<T,N>
+    Struct,    // 嵌套 struct（递归反射）
+    Enum,      // enum（自动映射整数）
+    Optional,  // std::optional<T>
+    Variant,   // std::variant<T...>
+};
+
+// 2. 递归 struct 支持
+// 当前 auto_to_json 遇到嵌套 struct 输出 "null"
+// 改为递归调用 reflect_members 遍历嵌套
+
+// 3. enum 序列化支持
+// 当前 enum 序列化为整数（不直观）
+// 改为序列化为 enum 名 + 整数 pairs
+```
+
+**文件修改:** `src/reflect/reflect.hh`
+
+### Phase 2: 自动序列化 — 接入 cache_module（~3h）
+
+目标：用 `auto_serialize<T>()` 替换 `cache_module()` 中的手写 AST 遍历。
+
+**步骤：**
+
+```cpp
+// 2a. 实现 auto_serialize（新增 serialize.hh）
+// 位置: src/reflect/serialize.hh
+// 依赖: reflect.hh (reflect_members)
+
+template <typename T>
+void auto_serialize(Buffer& buf, const T& obj) {
+    constexpr auto members = reflect_members<T>();
+    for (auto [name, offset, kind] : members) {
+        const auto& field = *reinterpret_cast<const char*>(
+            reinterpret_cast<const char*>(&obj) + offset);
+        switch (kind) {
+        case MemberKind::Int32:
+            buf.write(static_cast<int32_t>(field)); break;
+        case MemberKind::String:
+            buf.write(field); break;
+        case MemberKind::Vector: {
+            auto& vec = reinterpret_cast<const std::vector<...>&>(field);
+            buf.write(vec.size());
+            for (auto& elem : vec) auto_serialize(buf, elem);
+            break;
+        }
+        // ... 其他类型
+        }
+    }
+}
+
+// 2b. 实现 auto_deserialize（增量）
+// 位置: src/reflect/deserialize.hh
+
+// 2c. 接入 cache_module()
+// 文件: src/compiler/service.ixx
+// 当前: cache_module() 手动遍历 AST 节点
+// 改为: auto_serialize(flat) / auto_deserialize(flat)
+
+// 2d. 验证
+// - 序列化 → 反序列化 round-trip
+// - 与当前手写序列化结果对比
+// - 所有模块缓存测试通过
+```
+
+**涉及文件:**
+- `src/reflect/serialize.hh` (新增)
+- `src/reflect/deserialize.hh` (新增)
+- `src/compiler/service.ixx` (修改)
 
 ### Phase 3: 自动验证（~1h）
 
-- [ ] `auto_validate<T>(obj)` — 字段级约束检查
-- [ ] 接入 `validate_ast()`，替换手写验证
-- [ ] `check-preconditions` EDSL 原语接入反射
+```cpp
+// 3a. 实现 auto_validate
+// 位置: src/reflect/validate.hh
+// 功能: 字段级约束检查（非空、范围、类型匹配）
+
+template <typename T>
+bool auto_validate(const T& obj, std::string& error) {
+    constexpr auto members = reflect_members<T>();
+    for (auto [name, offset, kind] : members) {
+        const auto& field = ...;
+        switch (kind) {
+        case MemberKind::Pointer:
+            if (!field) { error = name + " is null"; return false; }
+            break;
+        case MemberKind::Int32:
+            // 范围检查: 已知约束从 schema 读取
+            break;
+        }
+    }
+    return true;
+}
+```
+
+**涉及文件:**
+- `src/reflect/validate.hh` (新增)
+- `src/compiler/evaluator_impl.cpp` — `validate_ast()` 接入
 
 ### Phase 4: 模块导出表（~2h）
 
-- [ ] `reflect_module_exports(name)` — 编译期扫描 stdlib 源码
-- [ ] 自动生成 `(require std/name all:)` 的符号映射
-- [ ] 减少手写错误（当前 std/hash 和 primitives 的 hash 函数冲突）
+```cpp
+// 4a. 编译期扫描 stdlib 源码
+// 输入: lib/std/list.aura
+// 输出: {"filter", "map", "foldl", "range", "sort", ...}
+// 方法: 编译期 parse + reflect_members 找 export 节点
+
+// 4b. 自动生成 require 符号映射
+// 当前: require.cpp 手写维护符号表
+// 改为: 编译期从 stdlib 源码生成
+
+// 4c. 修复 std/hash 冲突
+// 当前: primitives 的 hash 和 std/hash 的 hash 冲突
+// 反射可以自动检测导出符号冲突
+```
+
+**涉及文件:**
+- `src/reflect/module_export.hh` (新增)
+- `lib/std/*.aura` (源码)
+- `src/compiler/require.cpp` (修改)
+
+### Phase 5: 编译器埋点（~1h）
+
+```cpp
+// 5a. 枚举 eval_flat 所有分支
+// 编译期: reflect_members 遍历 all eval paths
+// 生成: 覆盖计数数组（替换手写 coverage_counters_[N]++）
+
+// 5b. 接入 fuzz 测试
+// 配合 tests/test_fuzz.py 使用
+```
+
+**涉及文件:**
+- `src/reflect/coverage.hh` (新增)
+- `src/compiler/evaluator_impl.cpp` (修改)
 
 ## 5. 收益
 
