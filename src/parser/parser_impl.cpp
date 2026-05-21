@@ -634,8 +634,16 @@ NodeId FlatParser::parse_cond() {
         if (cn == NULL_NODE) { skip_rparen(); break; }
         auto v = parse_expr();
         if (v == NULL_NODE) { skip_rparen(); break; }
+        // R5RS: (cond (test expr1 expr2 ...)) — read ALL exprs, wrap in begin
+        std::vector<NodeId> exprs;
+        exprs.push_back(v);
+        while (lexer_->peek().kind != TokenKind::RParen) {
+            auto more = parse_expr();
+            if (more == NULL_NODE) break;
+            exprs.push_back(more);
+        }
         lexer_->consume(); // ')'
-        clauses.push_back({cn, v});
+        clauses.push_back({cn, exprs.size() == 1 ? v : flat_.add_begin(exprs.data(), exprs.size())});
     }
     lexer_->consume(); // ')'
     if (clauses.empty()) return NULL_NODE;
