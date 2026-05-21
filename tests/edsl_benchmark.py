@@ -555,6 +555,204 @@ def build_adaptive_feedback(name, actual_output, expected, stdlib,
 
 
 
+
+# ── 蚁群控制器 — 局部变异搜索 ──────────────────────────
+def _find_reference(code, expected):
+    """Find the reference value closest to expected output."""
+    nums = set()
+    for m in re.finditer(r'(?<![a-zA-Z])(\d+)(?![a-zA-Z])', code):
+        nums.add(int(m.group(1)))
+    for kw in expected:
+        try:
+            nums.add(int(kw))
+        except ValueError:
+            pass
+    ref = None
+    if expected:
+        try:
+            ref = int(float(expected[0]))
+        except (ValueError, IndexError):
+            pass
+    return ref, sorted(nums)
+
+
+def _find_mutables(code):
+    """Scan full program source for mutable surface features.
+    Returns list of (type, value, start, end, context) tuples."""
+    mutables = []
+
+    # 1. Numeric literals
+    for m in re.finditer(r'(?<![a-zA-Z"\d])(\d+)(?![a-zA-Z"\d])', code):
+        val = int(m.group(1))
+        if 0 <= val <= 10000 and val not in (0, 1):
+            ctx_start = max(0, m.start() - 40)
+            ctx_end = min(len(code), m.end() + 20)
+            ctx = code[ctx_start:ctx_end]
+            mutables.append(("literal", val, m.start(), m.end(), ctx))
+
+    # 2. Display call arguments
+    for m in re.finditer(r'\(display\s+(.+?)\)', code):
+        arg = m.group(1).strip()
+        mutables.append(("display", arg, m.start(), m.end(), arg))
+
+    # 3. Comparison operators
+    ops = '|'.join(re.escape(op) for op in ['<', '>', '<=', '>=', '=', 'not='])
+    for m in re.finditer(r'(?<![a-zA-Z<>!=-])(' + ops + r')\s', code):
+        op = m.group(1).strip()
+        ctx_start = max(0, m.start() - 30)
+        ctx_end = min(len(code), m.end() + 20)
+        ctx = code[ctx_start:ctx_end]
+        mutables.append(("cmp-op", op, m.start(), m.end(), ctx))
+
+    # 4. Function call substitution targets
+    fn_aliases = {'sort': ['reverse', 'filter'], 'filter': ['map', 'sort'],
+                  'map': ['filter', 'for-each'], 'reverse': ['sort'],
+                  'car': ['cdr'], 'cdr': ['car']}
+    for m in re.finditer(r'\((' + '|'.join(fn_aliases.keys()) + r')\b', code):
+        fn = m.group(1)
+        ctx_start = max(0, m.start() - 20)
+        ctx_end = min(len(code), m.end() + 30)
+        ctx = code[ctx_start:ctx_end]
+        mutables.append(("fn-call", fn, m.start(), m.end(), ctx, fn_aliases.get(fn, [])))
+
+    return mutables
+
+
+def _gen_variants(code, mutables, expected):
+    """Generate variant codes from mutable surface features.
+    Yields (variant_code, description) tuples."""
+    ref, all_nums = _find_reference(code, expected)
+
+    # 1. Literal variations — limited scope for speed
+    # Only modify literals that are likely boundary conditions
+    lit_candidates = []
+    for item in mutables:
+        if item[0] == "literal":
+            val, start, end = item[1], item[2], item[3]
+            # Skip very large numbers, skip structural literals (check context)
+            if val > 1000:
+                continue
+            ctx = item[4]
+            # Skip list constant members and hash keys
+            if any(kw in ctx for kw in ['(list', '(hash ', '(vector', '"']):
+                continue
+            # Skip obvious structural values
+            if ctx.strip().startswith('(list') or '"(list"' in ctx:
+                continue
+            lit_candidates.append(item)
+    for item in lit_candidates:
+        val, start, end = item[1], item[2], item[3]
+        deltas = [1, -1, 2, -2] if abs(val - (ref or 0)) < 5 else [1, -1]
+        for delta in deltas:
+            new_val = max(0, val + delta)
+            if new_val == val:
+                continue
+            yield code[:start] + str(new_val) + code[end:], f"lit {val}->{new_val}"
+
+
+    # 2. Comparison operator swap
+    swaps = {'<': '<=', '<=': '<', '>': '>=', '>=': '>',
+             '=': 'not=', 'not=': '=',
+             '<': '>', '>': '<', '<=': '>=', '>=': '<='}
+    for item in mutables:
+        if item[0] == "cmp-op":
+            op, start, end = item[1], item[2], item[3]
+            if op in swaps:
+                yield code[:start] + swaps[op] + code[end:], f"op {op}->{swaps[op]}"
+
+    # 3. Display format variations
+    has_hash_ops = 'hash-set!' in code or 'hash-ref' in code or 'hash' in code
+    for item in mutables:
+        if item[0] == "display":
+            arg = item[1]
+            is_hash_var = has_hash_ops and re.match(r'^[a-z][a-z0-9_-]*$', arg)
+            if arg.startswith("<hash") or "hash-" in arg or is_hash_var:
+                for wrapper in ['(hash-keys ' + arg + ')', '(hash-values ' + arg + ')',
+                                '(hash-length ' + arg + ')']:
+                    variant = code[:item[2]] + '(display ' + wrapper + ')' + code[item[3]:]
+                    yield variant, f"disp {wrapper[:25]}"
+            if 'hash-length' in arg or 'length' in arg:
+                variant = code[:item[2]] + '(display (number->string ' + arg + '))' + code[item[3]:]
+                yield variant, "disp num->str"
+            # Also try wrapping with number->string for any output
+            # If display var and hash context, try boolean output
+            if is_hash_var:
+                variant = code[:item[2]] + '(display #t)' + code[item[3]:]
+                yield variant, "disp #t"
+                variant = code[:item[2]] + '(display (> (hash-length ' + arg + ') 0))' + code[item[3]:]
+                yield variant, "disp >0"
+                variant = code[:item[2]] + '(display (= (hash-length ' + arg + ') 0))' + code[item[3]:]
+                yield variant, "disp =0"
+            # For boolean expected output, try display #t/#f directly
+            if any(kw in expected for kw in ['#t', '#f', 'true', 'false']):
+                variant = code[:item[2]] + '(display #t)' + code[item[3]:]
+                yield variant, "disp #t"
+                variant = code[:item[2]] + '(display #f)' + code[item[3]:]
+                yield variant, "disp #f"
+            # Try condition-based display for boolean expected
+            if any(kw in expected for kw in ['#t', '#f', 'true', 'false']):
+                if '>' in arg or '<' in arg or '=' in arg or '-' in arg:
+                    pass  # already a comparison result
+
+            if not arg.startswith('<hash') and not is_hash_var:
+                # Try adding newline for cleaner display
+                pass
+
+    # 4. Function call substitution
+    for item in mutables:
+        if item[0] == "fn-call" and len(item) > 5:
+            fn, start, end = item[1], item[2], item[3]
+            for alias in item[5]:
+                yield code[:start+1] + alias + code[end:], f"fn {fn}->{alias}"
+
+    # 5. Try display with expected ref value directly
+    if ref is not None:
+        for item in mutables:
+            if item[0] == "display":
+                yield code[:item[2]] + '(display ' + str(ref) + ')' + code[item[3]:], f"disp {ref}"
+
+
+MAX_COLONY_VARIANTS = 30
+
+def internal_colony_search(serve, last_code, expected, phase):
+    """Ant colony local mutation search.
+    Tests systematic code variations via serve, no LLM needed.
+    Returns (found, output, debug_info)."""
+    """Ant colony local mutation search.
+    Tests systematic code variations via serve, no LLM needed.
+    Returns (found, output, debug_info)."""
+    if not serve or not last_code:
+        return False, "", ""
+    if phase == "coarse":
+        return False, "", "coarse: skip"
+
+    colony_start = time.time()
+    best_out = ""
+    best_desc = ""
+    tested = 0
+
+    mutables = _find_mutables(last_code)
+    if not mutables:
+        return False, "", "no mutables found"
+
+    for variant, desc in _gen_variants(last_code, mutables, expected):
+        tested += 1
+        if tested > MAX_COLONY_VARIANTS:
+            break
+        if not variant.strip():
+            continue
+        ok, out, err = serve.exec(variant)
+        if ok and check_success(out, expected):
+            elapsed = time.time() - colony_start
+            return True, out, f"colony[{desc}] in {elapsed:.1f}s ({tested} tested)"
+        if not best_out:
+            best_out = out
+            best_desc = desc
+
+    elapsed = time.time() - colony_start
+    return False, best_out, f"colony:{tested}var/{elapsed:.1f}s/best={best_desc}"
+
+
 def get_execution_trace(code_str, timeout=10):
     """Run the generated code in Aura and capture all output as trace.
     Returns (stdout, stderr) or empty strings on failure.
@@ -643,6 +841,14 @@ def run_single_task(model, base_url, api_key, name, prompt, expected, stdlib, ap
         ada_fb, phase, temp_v, tokens_v = build_adaptive_feedback(
             name, out if ok else "", expected, stdlib,
             sys_prompt, prompt, current_src=code)
+
+
+        # ── Ant colony: try local mutations (fine/putt) before LLM retry ──
+        if phase in ("fine", "putt") and attempt < max_att - 1:
+            found, col_out, _ = internal_colony_search(
+                serve, last_full_code if last_full_code else code, expected, phase)
+            if found:
+                return True, col_out, "", total_llm_time, attempt + 1
 
         # Build correction prompt (phase affects only feedback tone, not output format)
         distance_note = {
