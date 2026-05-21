@@ -612,6 +612,90 @@ consteval auto get_data_members() {
 }
 
 
+// ── to_json — recursive JSON serializer (for --inspect) ────────
+// Uses P1306 template for to recursively serialize ANY type to JSON.
+// Unlike auto_to_json, this properly handles vectors and nested structs.
+
+inline void json_escape_to(std::string& out, std::string_view s) {
+    for (auto c : s) {
+        switch (c) {
+        case '"':  out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\n': out += "\\n";  break;
+        case '\r': out += "\\r";  break;
+        case '\t': out += "\\t";  break;
+        default:   out += c;
+        }
+    }
+}
+
+template <typename T>
+void to_json_impl(std::string& out, const T& val);
+
+template <typename T>
+std::string to_json(const T& val) {
+    std::string out;
+    to_json_impl(out, val);
+    return out;
+}
+
+template <typename T>
+void to_json_impl(std::string& out, const T& val) {
+    if constexpr (std::is_enum_v<T>) {
+        out += std::to_string(static_cast<int>(val));
+
+    } else if constexpr (is_std_string_v<T>) {
+        out += '"';
+        json_escape_to(out, val);
+        out += '"';
+
+    } else if constexpr (is_std_vector_v<T>) {
+        using Elem = typename T::value_type;
+        out += '[';
+        for (std::size_t i = 0; i < val.size(); ++i) {
+            if (i > 0) out += ',';
+            to_json_impl(out, val[i]);
+        }
+        out += ']';
+
+    } else if constexpr (is_std_array_v<T>) {
+        out += '[';
+        for (std::size_t i = 0; i < val.size(); ++i) {
+            if (i > 0) out += ',';
+            to_json_impl(out, val[i]);
+        }
+        out += ']';
+
+    } else if constexpr (std::is_pointer_v<T> || std::is_null_pointer_v<T>) {
+        out += "null";
+
+    } else if constexpr (std::is_same_v<T, bool>) {
+        out += val ? "true" : "false";
+
+    } else if constexpr (std::is_arithmetic_v<T>) {
+        out += std::to_string(val);
+
+    } else if constexpr (std::is_class_v<T>) {
+        // Struct — iterate members via P1306 template for
+        out += '{';
+        bool first = true;
+        static constexpr auto aura_members = get_data_members<T>();
+        template for (constexpr auto m : aura_members) {
+            using namespace std::meta;
+            if (!first) out += ',';
+            first = false;
+            out += '"'; json_escape_to(out, identifier_of(m)); out += '"';
+            out += ':';
+            to_json_impl(out, val.[:m:]);
+        }
+        out += '}';
+
+    } else {
+        out += "null";
+    }
+}
+
+
 // ── bin_write — recursive binary serializer ────────────────────
 // Handles any single value: scalar, enum, string, vector, array,
 // pointer (skip), or struct (recursive via template for).

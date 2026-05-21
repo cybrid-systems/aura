@@ -1688,6 +1688,9 @@ public:
     aura::ast::FlatAST* current_ast() const { return current_ast_; }
     aura::ast::StringPool* current_pool() const { return current_pool_; }
 
+    // Get last compiled IR module (for --inspect dump).
+    const std::optional<aura::ir::IRModule>& last_ir_module() const { return last_ir_mod_; }
+
 private:
     // Try to extract a define/let/letrec binding from the FlatAST root.
     // Returns {name, body_node_id} if root is a Define node.
