@@ -798,8 +798,9 @@ _COLONY_PHEROMONE = {"initialized": False}
 def _colony_load_pheromone(serve, task_name):
     """Load pheromone table from cross-task state."""
     global _COLONY_PHEROMONE
+    if not serve:
+        return
     if _COLONY_PHEROMONE.get("initialized"):
-        # Already have state — import into this task's serve
         export_json = _COLONY_PHEROMONE.get("export", "")
         if export_json:
             serve.exec('(require "std/ant" all:)(pheromone:import "' + export_json + '")')
@@ -807,6 +808,8 @@ def _colony_load_pheromone(serve, task_name):
 def _colony_save_pheromone(serve):
     """Save pheromone table for next task."""
     global _COLONY_PHEROMONE
+    if not serve:
+        return
     _, phero_out, _ = serve.exec('(require "std/ant" all:)(display (pheromone:export))')
     if phero_out:
         # Extract just the JSON part (before the serve's JSON response)
