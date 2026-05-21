@@ -352,7 +352,7 @@ MappedCache open_cache(const std::string& path) {
 
     cache.data_ = data;
     auto* hdr = static_cast<const CacheHeader*>(data);
-    if (std::memcmp(hdr->magic, "AURACACHE", 8) != 0 || hdr->version != 3) {
+    if (cache_validate_header(hdr) != 0) {
         ::munmap(data, cache.file_size_);
         cache.data_ = nullptr; cache.file_size_ = 0; return cache;
     }
