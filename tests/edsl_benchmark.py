@@ -3,21 +3,16 @@
 
 支持：
   - 多轮运行抵消 LLM 方差 (--rounds N)
-  - 迭代修正：失败后自动反馈错误给 LLM 重试 (--fix)
+  - 原生 intend 迭代修正（默认）
+  - Phase 自适应温度/tokens控制
+  - Execution trace 注入算法任务
   - JSON 输出 (--json)
 
 用法:
-  # 单轮单次（原始行为）
-  LLM_API_KEY="***" ./tests/edsl_benchmark.py
-
-  # 多轮聚合
-  LLM_API_KEY="***" ./tests/edsl_benchmark.py --rounds 5
-
-  # 多轮 + 迭代修正（失败后自动反馈错误给 LLM 重试，最多 3 次）
-  LLM_API_KEY="***" ./tests/edsl_benchmark.py --rounds 3 --fix
-
-  # 多轮 + 修正 + 最多 5 次尝试
-  LLM_API_KEY="***" ./tests/edsl_benchmark.py --rounds 3 --fix --max-attempts 5 --json
+  LLM_API_KEY="***" python3 tests/edsl_benchmark.py
+  LLM_API_KEY="***" python3 tests/edsl_benchmark.py --max-attempts 5
+  LLM_API_KEY="***" python3 tests/edsl_benchmark.py --rounds 3 --max-attempts 5 --json
+  LLM_MODEL=minimax-m2.7 LLM_API_KEY="***" python3 tests/edsl_benchmark.py --max-attempts 5
 """
 import subprocess, json, sys, os, time, re, http.client, urllib.parse
 from pathlib import Path
@@ -66,8 +61,7 @@ TASKS = load_tasks()
 
 # ── CLI 配置默认值 ───────────────────────────────────────
 ROUNDS = 1
-FIX_MODE = False
-INTEND_MODE = False
+
 EVOLVE_MODE = False
 TRACE_MODE = False
 MAX_ATTEMPTS = 3
@@ -217,85 +211,6 @@ def build_sys_prompt(stdlib, api_ref, task_name=""):
         sp += f"EVOLVED HINTS (from past runs):\n{evolved}\n"
     sp += f"\nCurrent Aura primitives:\n{api_ref[:2000]}"
     return sp
-
-def run_single_task(model, base_url, api_key, name, prompt, expected, stdlib, api_ref):
-    """Run one task with optional multi-turn correction.
-
-    When FIX_MODE is enabled, keeps feeding errors back to LLM
-    up to MAX_ATTEMPTS.
-
-    Returns (success, output, error, total_llm_time, attempts).
-    """
-    sys_prompt = build_sys_prompt(stdlib, api_ref, task_name=name)
-    messages = [
-        {"role": "system", "content": sys_prompt},
-        {"role": "user", "content": prompt}
-    ]
-
-    attempts = 0
-    total_llm_time = 0.0
-    max_att = MAX_ATTEMPTS if FIX_MODE else 1
-
-    while attempts < max_att:
-        attempts += 1
-        t0 = time.time()
-        try:
-            resp = llm_complete(model, base_url, api_key, messages)
-        except Exception as e:
-            total_llm_time += time.time() - t0
-            return False, "", str(e), total_llm_time, attempts
-        llm_t = time.time() - t0
-        total_llm_time += llm_t
-
-        code = extract_code(resp)
-        if not code:
-            if attempts >= max_att:
-                return False, "", "no code extracted", total_llm_time, attempts
-            messages.append({"role": "assistant", "content": resp or ""})
-            messages.append({"role": "user", "content": (
-                "No valid Aura code was found in your response.\n"
-                "You MUST output ONLY the Aura code itself:\n"
-                "  ❌ WRONG: ```aura\\n(define (f x) (* x 2))\\n```\n"
-                "  ❌ WRONG: Here is the code: (define (f x) (* x 2))\n"
-                "  ✅ CORRECT: (define (f x) (* x 2))\\n(display (f 5))\n"
-                "Do NOT include:\n"
-                "  - markdown ``` fences\n"
-                "  - <think> or <minimax:tool_call> tags\n"
-                "  - explanatory text before or after\n"
-                "  - any text that is not valid Aura code\n"
-                "Output ONLY the corrected Aura code, nothing else."
-            )})
-            continue
-
-        if name.startswith("edsl-"):
-            rc, out, err = test_aura_serve(code)
-        else:
-            rc, out, err = test_aura(code)
-
-        success = rc == 0 and check_success(out, expected)
-        if success:
-            return True, out, "", total_llm_time, attempts
-
-        if attempts >= max_att:
-            return False, out if rc == 0 else "", err or out, total_llm_time, attempts
-
-        actual_output = out if rc == 0 else err or f"exit code {rc}, no output"
-        # Build adaptive feedback (shared with --intend mode)
-        ada_fb, phase, temp_v, tokens_v = build_adaptive_feedback(
-            name, out if rc == 0 else "", expected, stdlib,
-            sys_prompt, prompt, current_src=code)
-        correction = (
-            "Your previous code FAILED. " + ("(compile error)" if rc != 0 else "(output mismatch)") + "\n"
-            f"Aura produced: {actual_output[:300]}\n\n"
-            + ada_fb + "\n\n"
-            "Output ONLY corrected Aura code, nothing else."
-        )
-        messages.append({"role": "assistant", "content": resp})
-        messages.append({"role": "user", "content": correction})
-
-    return False, "", "max attempts", total_llm_time, attempts
-
-# ── Adaptive.aura 调用封装 ────────────────────────────────
 
 def _ada_esc(s):
     # Escape for embedding in Aura string literals
@@ -459,8 +374,8 @@ def get_execution_trace(code_str, timeout=10):
         return "", ""
 
 
-def run_single_task_intend(model, base_url, api_key, name, prompt, expected, stdlib, api_ref):
-    max_att = MAX_ATTEMPTS if FIX_MODE else 3
+def run_single_task(model, base_url, api_key, name, prompt, expected, stdlib, api_ref):
+    max_att = MAX_ATTEMPTS
     sys_prompt = build_sys_prompt(stdlib, api_ref, task_name=name)
 
     def js(s):
@@ -477,7 +392,7 @@ def run_single_task_intend(model, base_url, api_key, name, prompt, expected, std
         lines.append('(define __sp__ "' + sp_e + '")')
         lines.append('(define __gen__ (lambda (g)')
         lines.append('  (json-get-string (aura-llm-call (json-encode (hash')
-        lines.append('    "model" "deepseek-v4-flash"')
+        lines.append('    "model" "' + model + '"')
         lines.append('    "messages" (list')
         lines.append('      (hash "role" "system" "content" __sp__)')
         lines.append('      (hash "role" "user" "content" g))')
@@ -485,7 +400,7 @@ def run_single_task_intend(model, base_url, api_key, name, prompt, expected, std
         lines.append('    "max_tokens" ' + tk_str + '))) "content")))')
         lines.append('(define __fix__ (lambda (code err goal)')
         lines.append('  (json-get-string (aura-llm-call (json-encode (hash')
-        lines.append('    "model" "deepseek-v4-flash"')
+        lines.append('    "model" "' + model + '"')
         lines.append('    "messages" (list')
         lines.append('      (hash "role" "system" "content" __sp__)')
         lines.append('      (hash "role" "user" "content"')
@@ -595,7 +510,7 @@ def print_task_table(task_results):
 
 # ── 主流程 ────────────────────────────────────────────────
 def main():
-    global ROUNDS, FIX_MODE, INTEND_MODE, EVOLVE_MODE, TRACE_MODE, MAX_ATTEMPTS
+    global ROUNDS, EVOLVE_MODE, TRACE_MODE, MAX_ATTEMPTS
 
     models = os.environ.get("LLM_MODEL", "deepseek-v4-flash").split(",")
     base_url = os.environ.get("LLM_BASE_URL", "https://api.deepseek.com/v1")
@@ -620,11 +535,7 @@ def main():
                 os.environ["BENCH_TASK_FILTER"] = args[i]
         elif args[i] == "--failed":
             os.environ["BENCH_TASK_FILTER"] = "primes-list,quicksort,tcp-connect"
-        elif args[i] == "--fix":
-            FIX_MODE = True
-        elif args[i] == "--intend":
-            INTEND_MODE = True
-            FIX_MODE = True
+
         elif args[i] == '--trace':
             TRACE_MODE = True
         elif args[i] == '--evolve':
@@ -644,13 +555,7 @@ def main():
 
     api_ref = get_api_ref()
 
-    mode_tag = ""
-    if EVOLVE_MODE:
-        mode_tag = "  (evolve mode: evolve strategy after each round)"
-    elif INTEND_MODE:
-        mode_tag = f"  (intend mode: up to {MAX_ATTEMPTS} attempts)"
-    elif FIX_MODE:
-        mode_tag = f"  (fix mode: up to {MAX_ATTEMPTS} attempts per task per round)"
+    mode_tag = f"  (intend mode: up to {MAX_ATTEMPTS} attempts)" if not EVOLVE_MODE else "  (evolve mode)"
 
     print(f"\n{'='*70}")
     print(f"Aura EDSL Benchmark")
@@ -679,19 +584,18 @@ def main():
             task_passes = 0
             print(f"\n  ── {name} ──")
             for round_i in range(1, ROUNDS + 1):
-                runner_fn = run_single_task_intend if INTEND_MODE else run_single_task
-                success, out, err, llm_t, attempts = runner_fn(
+                success, out, err, llm_t, attempts = run_single_task(
                     model, base_url, api_key, name, prompt, expected, stdlib, api_ref
                 )
                 task_stats[name]["llm_times"].append(llm_t)
                 task_stats[name]["attempts"].append(attempts)
                 if success:
                     task_passes += 1
-                    att = f" (attempts={attempts})" if (FIX_MODE or INTEND_MODE) else ""
+                    att = f" (attempts={attempts})"
                     line = f"    Round {round_i:2d}/{ROUNDS}: ✅ ({llm_t:.1f}s{att})"
                 else:
                     task_stats[name]["errors"].append(err[:80])
-                    att = f" in {attempts}" if (FIX_MODE or INTEND_MODE) else ""
+                    att = f" in {attempts}"
                     line = f"    Round {round_i:2d}/{ROUNDS}: ❌ {err[:50]} ({llm_t:.1f}s{att})"
                     etype = "output-mismatch" if ('"ok"' in (out or '')[:50] and not success) else (err[:25] or "unknown")
                     task_stats.setdefault("__errors__", []).append((name, etype, attempts, llm_t))
@@ -749,7 +653,7 @@ def main():
         task_rows = [(n, s["passes"], s["total"]) for n, s in task_stats.items() if n not in ("__meta__", "__errors__")]
         sp, sf, sv = print_task_table(task_rows)
 
-        if FIX_MODE:
+        if True:
             print(f"\n  📊 Attempt stats:")
             for n in sorted(s for s in task_stats if s not in ("__meta__", "__errors__")):
                 s = task_stats[n]
