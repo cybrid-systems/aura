@@ -13,6 +13,10 @@ import aura.compiler.ir;
 import aura.compiler.cache;
 import aura.compiler.value;
 
+// C-linkage bridge to reflection-based --inspect
+// (implemented in ir_reflect_serialize.cpp, compiled with -freflection)
+extern "C" char* aura_inspect_ir_json(const void* mod, std::size_t* out_size);
+
 // Format helper: format EvalValue with access to string heap
 static std::string fmt_val(const aura::compiler::types::EvalValue& v,
                            aura::compiler::CompilerService& cs) {
@@ -591,6 +595,56 @@ int main(int argc, char* argv[]) {
             }
             std::println("{}", fmt_val(*result, cs));
         }
+        return 0;
+    }
+
+    // ── --inspect: evaluate and dump compiler state as JSON ───────
+    // Usage: echo '(+ 1 2)' | ./aura --inspect
+    if (argc > 1 && std::string_view(argv[1]) == "--inspect") {
+        aura::compiler::CompilerService cs;
+        std::string mode = (argc > 2) ? argv[2] : "ir";
+
+        // Evaluate the input first
+        {
+            std::ostringstream buf;
+            buf << std::cin.rdbuf();
+            auto input = buf.str();
+            if (!input.empty()) {
+                auto result = cs.eval_ir(input);
+                if (!result) {
+                    std::println(std::cerr, "error: {}", result.error().format());
+                    return 1;
+                }
+            }
+        }
+
+        // Dump inspection output
+        if (mode == "ir" || mode == "all") {
+            auto& last_mod = cs.last_ir_module();
+            if (last_mod) {
+                std::size_t json_size = 0;
+                char* json_data = aura_inspect_ir_json(&*last_mod, &json_size);
+                std::string_view json(json_data, json_size);
+                std::println("{}", json);
+                delete[] json_data;
+            } else {
+                std::println(std::cerr, "inspect: no IR module available");
+            }
+        }
+
+        if (mode == "closures" || mode == "all") {
+            auto closures = cs.last_closures();
+            std::println("closures: {}", closures.size());
+            for (auto& c : closures) {
+                std::println("  [{}] func[{}] '{}': env[{}]",
+                    c.id, c.func_id, c.func_name, c.env.size());
+            }
+        }
+
+        if (mode == "cache" || mode == "all") {
+            std::println("cached functions: {}", cs.cached_function_count());
+        }
+
         return 0;
     }
 

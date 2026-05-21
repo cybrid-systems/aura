@@ -96,3 +96,20 @@ void aura_ir_deserialize(const char* data, size_t size, void* out_mod) {
 }
 
 } // extern "C"
+
+
+// ── --inspect: auto_to_json dump ────────────────────────────
+
+extern "C" {
+
+char* aura_inspect_ir_json(const void* mod, size_t* out_size) {
+    const auto& module = *static_cast<const aura::ir::IRModule*>(mod);
+    auto json = aura::reflect::to_json(module);
+    *out_size = json.size();
+    char* data = new char[*out_size + 1];
+    std::memcpy(data, json.data(), *out_size);
+    data[*out_size] = '\0';
+    return data;
+}
+
+} // extern "C"
