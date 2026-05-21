@@ -818,6 +818,13 @@ def run_single_task(model, base_url, api_key, name, prompt, expected, stdlib, ap
     ]
     last_full_code = ""
     phase = "coarse"
+    # ── Scheme 兼容注册 ── MiniMax 常写 first/rest/cadr 等
+    if serve:
+        serve.exec('(define (first x) (car x))')
+        serve.exec('(define (rest x) (cdr x))')
+        serve.exec('(define (second x) (car (cdr x)))')
+        serve.exec('(define (cadr x) (car (cdr x)))')
+        serve.exec('(define (list? x) (pair? x))')
 
 
     def run_code(code):
@@ -881,7 +888,7 @@ def run_single_task(model, base_url, api_key, name, prompt, expected, stdlib, ap
 
 
         # ── Ant colony: try local mutations (fine/putt) before LLM retry ──
-        if phase in ("fine", "putt") and attempt < max_att - 1:
+        if phase in ("fine", "putt") and attempt == 0:
             found, col_out, _ = internal_colony_search(
                 serve, last_full_code if last_full_code else code, expected, phase)
             if found:
