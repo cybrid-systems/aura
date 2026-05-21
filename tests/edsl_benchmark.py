@@ -79,58 +79,76 @@ class ServeClient:
     def _restart(self):
         if self.proc and self.proc.poll() is None:
             self.proc.terminate()
+            try:
+                self.proc.stdout.close()
+                self.proc.stdin.close()
+            except:
+                pass
             self.proc.wait()
         self.proc = subprocess.Popen(
             [self.binary, "--serve"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             text=True, bufsize=1, close_fds=True)
+        time.sleep(0.3)
 
-    def exec(self, code):
+    def exec(self, code, read_timeout=15):
         """Execute Aura code via serve. Returns (ok, output, error).
-        Handles display output that precedes the JSON response on the same line."""
+        Timeout kills serve if no response within read_timeout seconds."""
         if not code:
             return False, "", "no code"
-        try:
-            self.proc.stdin.write(json.dumps({"cmd": "exec", "code": code}) + "\n")
-            self.proc.stdin.flush()
-            line = self.proc.stdout.readline()
-            if not line:
-                return False, "", "no response from serve"
-            stripped = line.strip()
-            # JSON always starts with '{'. If we don't see it, display output
-            # is mixed in (e.g., "42{...}"). Extract JSON from the end.
-            if stripped.startswith("{"):
-                json_line = stripped
-                display_text = ""
-            else:
-                # display text + JSON on same line: find the JSON suffix
-                brace = stripped.find("{")
-                if brace >= 0:
-                    display_text = stripped[:brace]
-                    json_line = stripped[brace:]
-                else:
-                    return False, stripped, "no JSON in response"
+        if self.proc.poll() is not None:
+            self._restart()
+            return False, "", "serve restarted (was dead)"
+        self.proc.stdin.write(json.dumps({"cmd": "exec", "code": code}) + "\n")
+        self.proc.stdin.flush()
+        import threading
+        result = []
+        done = threading.Event()
+        def reader():
             try:
-                resp = json.loads(json_line)
-            except json.JSONDecodeError:
-                return False, stripped, "invalid JSON"
-            if resp.get("status") == "ok":
-                val = resp.get("value", "")
-                # Skip void () return value appended to display output
-                if display_text and val in ("()", ""):
-                    out = display_text
-                elif not display_text and val in ("()", ""):
-                    out = ""
-                    return False, out, "empty output (only void return)"
-                elif display_text:
-                    out = display_text + " " + val
-                else:
-                    out = val
-                return True, out.strip(), ""
-            return False, display_text, resp.get("msg", str(resp))
-        except Exception as e:
-            return False, "", str(e)
-
+                result.append(self.proc.stdout.readline())
+            except:
+                result.append(None)
+            done.set()
+        t = threading.Thread(target=reader, daemon=True)
+        t.start()
+        if not done.wait(read_timeout):
+            self.proc.kill()
+            self.proc.wait()
+            self._restart()
+            return False, "", "serve timeout (" + str(read_timeout) + "s), restarted"
+        line = (result[0] or "") if result else ""
+        if not line:
+            self._restart()
+            return False, "", "serve response empty, restarted"
+        stripped = line.strip()
+        if stripped.startswith("{"):
+            json_line = stripped
+            display_text = ""
+        else:
+            brace = stripped.find("{")
+            if brace >= 0:
+                display_text = stripped[:brace]
+                json_line = stripped[brace:]
+            else:
+                return False, stripped, "no JSON in response"
+        try:
+            resp = json.loads(json_line)
+        except json.JSONDecodeError:
+            return False, stripped, "invalid JSON"
+        if resp.get("status") == "ok":
+            val = resp.get("value", "")
+            if display_text and val in ("()", ""):
+                out = display_text
+            elif not display_text and val in ("()", ""):
+                out = ""
+                return False, out, "empty output (only void return)"
+            elif display_text:
+                out = display_text + " " + val
+            else:
+                out = val
+            return True, out.strip(), ""
+        return False, display_text, resp.get("msg", str(resp))
     def close(self):
         if self.proc and self.proc.poll() is None:
             self.proc.terminate()
