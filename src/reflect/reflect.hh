@@ -457,6 +457,37 @@ T auto_deserialize(const std::vector<char>& buf) {
     return auto_deserialize<T>(buf, pos);
 }
 
+
+// ── Binary Buffer for cache serialization ─────────────────────
+
+class Buffer {
+public:
+    void write(const void* data, std::size_t size) {
+        buf_.insert(buf_.end(), static_cast<const char*>(data),
+                    static_cast<const char*>(data) + size);
+    }
+    
+    template <typename T>
+    void write(const T& val) {
+        write(&val, sizeof(T));
+    }
+    
+    template <typename T>
+    void write_vector(const std::vector<T>& vec) {
+        auto sz = static_cast<std::uint32_t>(vec.size());
+        write(sz);
+        write(vec.data(), vec.size() * sizeof(T));
+    }
+    
+    std::uint64_t tell() const { return buf_.size(); }
+    
+    const std::vector<char>& data() const { return buf_; }
+    std::vector<char> take() { return std::move(buf_); }
+
+private:
+    std::vector<char> buf_;
+};
+
 } // namespace aura::reflect
 
 #endif // AURA_REFLECT_REFLECT_HH
