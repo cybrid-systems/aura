@@ -76,6 +76,7 @@ consteval MemberKind classify_type(std::meta::info type) {
     if (is_same_type(type, ^^std::size_t))       return MemberKind::UInt64;
 
     // enum → treat as integer (use underlying type size)
+    // Enum name available via enumerators_of at compile time
     if (is_enum_type(type)) {
         auto sz = size_of(type);
         if (sz <= 1) return MemberKind::Int8;
@@ -324,6 +325,73 @@ template <typename T>
 std::string auto_to_json_pretty(const T& obj, int indent = 0) {
     // Compact for now — pretty-print is future work
     return auto_to_json(obj);
+}
+
+
+// ── auto_serialize<T> — binary serialization (for cache_module) ──
+
+template <typename T>
+void auto_serialize(std::vector<char>& buf, const T& obj) {
+    constexpr auto members = reflect_members<T>();
+    const auto* base = reinterpret_cast<const char*>(&obj);
+    for (auto& m : members) {
+        const auto* field = base + m.offset;
+        switch (m.kind) {
+        case MemberKind::Int8:
+        case MemberKind::UInt8: {
+            char v; std::memcpy(&v, field, 1);
+            buf.push_back(v); break;
+        }
+        case MemberKind::Int16:
+        case MemberKind::UInt16: {
+            short v; std::memcpy(&v, field, 2);
+            buf.insert(buf.end(), reinterpret_cast<char*>(&v), reinterpret_cast<char*>(&v) + 2);
+            break;
+        }
+        case MemberKind::Int32:
+        case MemberKind::UInt32:
+        case MemberKind::Float: {
+            buf.insert(buf.end(), field, field + 4); break;
+        }
+        case MemberKind::Int64:
+        case MemberKind::UInt64:
+        case MemberKind::Double: {
+            buf.insert(buf.end(), field, field + 8); break;
+        }
+        case MemberKind::Bool: {
+            buf.push_back(*reinterpret_cast<const bool*>(field) ? 1 : 0);
+            break;
+        }
+        case MemberKind::String: {
+            auto& s = *reinterpret_cast<const std::string*>(field);
+            uint32_t len = s.size();
+            buf.insert(buf.end(), reinterpret_cast<char*>(&len), reinterpret_cast<char*>(&len) + 4);
+            buf.insert(buf.end(), s.begin(), s.end());
+            break;
+        }
+        case MemberKind::Array: {
+            // Array: write raw bytes (elem_size * array_len)
+            buf.insert(buf.end(), field, field + m.elem_size * m.array_len);
+            break;
+        }
+        case MemberKind::Vector: {
+            // Vector: write count + elements (each needs type-specific serialization)
+            // At runtime, we don't know the element type — requires template approach
+            break;
+        }
+        case MemberKind::Other:
+        case MemberKind::Unknown:
+            break;
+        }
+    }
+}
+
+template <typename T>
+std::vector<char> auto_serialize(const T& obj) {
+    std::vector<char> buf;
+    buf.reserve(1024);
+    auto_serialize(buf, obj);
+    return buf;
 }
 
 } // namespace aura::reflect
