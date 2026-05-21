@@ -164,7 +164,7 @@ def llm_complete(model, base_url, key, messages, retries=3):
 
 # ── 代码提取 ──────────────────────────────────────────────
 def extract_code(text):
-    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+    text = re.sub(r'<think>.*?(</think>|$)', '', text, flags=re.DOTALL)
     # Strip remaining XML/HTML tags (not comparison operators like (< x) or (-> x))
     text = re.sub(r'</?\w[^>]*>', '', text, flags=re.DOTALL)
     if "```" in text:
@@ -176,7 +176,11 @@ def extract_code(text):
                                      "set-code", "query:", "mutate:", "typecheck", "eval-current",
                                      "c-load", "c-func", "tcp-connect", "http-post")):
                 return c
-    return text.strip()
+    # Validate: must start with Aura syntax ( or digit or quote, not plain text
+    stripped = text.strip()
+    if stripped and not stripped.startswith(('(', '#', '"', "'", '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9')):
+        return ''
+    return stripped
 
 # ── 执行测试 ──────────────────────────────────────────────
 def test_aura(code, timeout=10):
