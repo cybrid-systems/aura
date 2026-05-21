@@ -9,6 +9,8 @@ module;
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <poll.h>
+#include <fcntl.h>
 #include <regex>
 #include <cmath>
 module aura.compiler.evaluator;
@@ -3549,9 +3551,32 @@ Evaluator::Evaluator() {
         tv.tv_sec = 10; tv.tv_usec = 0;
         ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-        if (::connect(fd, res->ai_addr, res->ai_addrlen) < 0) {
-            ::close(fd); ::freeaddrinfo(res); return make_void();
+        // Non-blocking connect with 8s timeout
+        int flags = ::fcntl(fd, F_GETFL, 0);
+        ::fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        int conn_ret = ::connect(fd, res->ai_addr, res->ai_addrlen);
+        if (conn_ret < 0) {
+            if (errno == EINPROGRESS) {
+                // Wait for connection with timeout
+                struct pollfd pfd = {fd, POLLOUT, 0};
+                conn_ret = ::poll(&pfd, 1, 8000);
+                if (conn_ret <= 0) {
+                    ::close(fd); ::freeaddrinfo(res);
+                    return make_void();  // timeout or error
+                }
+                // Check if connect succeeded
+                int so_error = 0;
+                socklen_t len = sizeof(so_error);
+                if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_error, &len) < 0 || so_error != 0) {
+                    ::close(fd); ::freeaddrinfo(res);
+                    return make_void();
+                }
+            } else {
+                ::close(fd); ::freeaddrinfo(res);
+                return make_void();
+            }
         }
+        ::fcntl(fd, F_SETFL, flags);  // restore blocking
         ::freeaddrinfo(res);
         return types::make_int(static_cast<std::int64_t>(fd));
     });
