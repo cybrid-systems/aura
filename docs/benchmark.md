@@ -3,91 +3,80 @@
 > 57 个 LLM 代码生成任务，覆盖基础语法、标准库、类型系统、C FFI、EDSL、TCP、递归算法、LeetCode 风格。
 > 自适应用迭代修正 + 执行轨迹反馈（PID 控制理论）。
 
-## Latest: 2026-05-21 — 双模型 57/57 (100%) 🎯
+## Latest: 2026-05-21 — 多模型基准
 
-### 模型对比 (57 任务, `--fix`, 单轮)
+| 模型 | `--max-attempts` | 通过率 | 总耗时 | 1次通过 | 多轮修复 | 失败 |
+|------|:--------------:|:-----:|:-----:|:------:|:-------:|:----:|
+| **DeepSeek v4 Flash** | 5 | **56/57 (98%)** | 11min | 45 | 11 | table-lookup |
+| **MiniMax-M2.7** | 5 | **54/57 (94%)** | 14min | 44 | 10 | contains-duplicate, memoize, primes-list |
 
-| 模型 | `--max-attempts` | ✅ 通过 | ❌ 失败 | 通过率 | 关键变更 |
-|------|:----------------:|:-----:|:-----:|:-----:|---------|
-| **DeepSeek v4 Flash** | 3 | 55 | 2 | 96% | 基线 |
-| **DeepSeek v4 Flash** | 5 | 54 | 3 | 95% | 旧版 extract_code 有 bug |
-| **DeepSeek v4 Flash** | **5** | **57** | **0** | **100%** | 🔧 修复 extract_code 正则 |
-| **MiniMax-M2.7** | 3 | 46 | 11 | 81% | 基线 |
-| **MiniMax-M2.7** | 5 | 53 | 4 | 93% | +8 rescued |
-| **MiniMax-M2.7** | 5 (改进 prompt) | 55 | 2 | 96% | +hash-stats, json-roundtrip |
-| **MiniMax-M2.7** | **5 (全部修复)** | **57** | **0** | **100%** | 🔧 修复 extract_code 正则 |
+**所有失败均为 LLM 语法/语义偏差，非基础设施问题。**
+零 serve 崩溃，零死锁，零 "no JSON"。
 
-**关键发现**: 之前所有 parse error 稳挂的根本原因是 `extract_code()` 的 `r'<[^>]+>'` 正则把 Aura 代码中的比较操作符（`<`, `>`）当 XML 标签误删了。
-修正循环喂给 LLM 的是残缺代码，LLM 无法修复。修复为 `r'</?\\w[^>]*>'`（只匹配标签名以字母开头的真正 XML 标签）后，双模型均 100%。
-
-### 三模式对比 (DeepSeek v4 Flash)
-
-| 模式 | 命令 | ✅ 通过 | ❌ 失败 | 说明 |
-|------|------|:---:|:---:|------|
-| `--fix` (Python) | `--rounds 3 --fix --max-attempts 5` | 26/26 (100%) | 0 | 仅旧任务子集 (提示含完整代码) |
-| `--intend` (C++) | `--intend` | **55/57 (96%)** | 2 | 自适应 PID + 结构化 fixer + trace 反馈 |
-| `--intend --evolve` | `--intend --evolve` | 55/57 (96%) | 2 | E4 自进化 + hints 注入 |
-
-### 改进轨迹
-
-| 阶段 | 日期 | 通过率 | 关键变更 |
-|------|------|--------|---------|
-| 基线 | 05-19 | 17/26 (65%) | 无提示，单次生成 |
-| 任务提示 | 05-20 | 21/26 (81%) | 加方向提示 + 迭代修正 |
-| 验证器升级 | 05-20 | 44/57 (77%) | 校验输出匹配期望值 |
-| `current-source` 捕获 | 05-20 | 51/57 (89%) | fixer 能看到 LLM 写的代码 |
-| 自适应 PID 控制 | 05-20 | 52/57 (91%) | `measure-distance` + phase 切换 |
-| API Reference 注入 | 05-20 | 54/57 (95%) | std/hash, list, socket 签名 |
-| 执行轨迹反馈 | 05-20 | 55/57 (96%) | retry 时显示代码运行结果 |
-| 修复 append/mod/tcp-recv | 05-20 | 55/57 (96%) | 3 个语言级 bug 修复 |
-| Hint 清理 | 05-20 | 55/57 (96%) | 93 行完整代码删除→纯方向提示 |
-| MiniMax-M2.7 首轮 | 05-21 | 46/57 (81%) | 跨模型基线 (max-attempts=3) |
-| MiniMax-M2.7 强化 | 05-21 | 53/57 (93%) | max-attempts=5, +8 rescued |
-| DeepSeek max-attempts=5 | 05-21 | 54/57 (95%) | 旧版 extract_code 有 bug |
-| 改进修正 prompt | 05-21 | 55/57 (96%) | 错误类型分诊 + parser 报错增强 |
-| **修复 extract_code** | **05-21** | **57/57 (100%)** | 🔧 `<[^>]+>` 吞噬比较操作符 → `</?\w[^>]*>` |
-
-### 全部通过 🎯
-
-修复 `extract_code()` 的 `<[^>]+>` 正则 bug 后，双模型均达成 57/57 (100%)。
-详见 [extract_code 修复分析](#修复详情)。
-
-**之前稳挂列表（已全部通过）：**
-- hash-stats (MiniMax: `<hash[0]>`) → 修正 prompt 分诊 + fix
-- json-roundtrip (MiniMax: parse error) → 修正 prompt 分诊 + fix
-- primes-list (双模型: parse error) → **extract_code 正则 bug**
-- quicksort (双模型: parse error) → **extract_code 正则 bug**
-- prime-test (DeepSeek: parse error) → **extract_code 正则 bug**
-- tcp-connect (DeepSeek: 网络抖动) → 方差异常
-
-### 新增控制论特性
-
-#### 自适应 PID 循环 (`call_adaptive`)
+### 架构
 
 ```
-measure-distance(rc, output, expected) → (phase, ratio, diagnosis)
+run_single_task()
+  │
+  ├── coarse: LLM 输出完整代码 → serve.exec(full_code)
+  │            （距离远：编译错误或完全不匹配）
+  │
+  ├── fine:   LLM 输出完整代码或 EDSL 突变
+  │            （距离中：部分匹配，missing keywords）
+  │
+  └── putt:   LLM 输出微调代码
+               （距离近：>= 85% 匹配）
+                
+build_adaptive_feedback()
+  ├── measure-distance(rc, output, expected) → (phase, ratio, diag)
+  ├── structured-diagnosis → missing keywords + hash 警告
+  ├── get-execution-trace → 算法任务中间结果
+  └── call-api-ref → std/hash, list 等模块参考注入
 
-  phase=coarse (rc!=0)        → 完整重写, temperature=0.3, tokens=4096
-  phase=fine   (0<ratio<85%)  → 精修, temperature=0.2, tokens=2048
-  phase=putt   (ratio>=85%)   → 微调, temperature=0.1, tokens=1024
+serve client (CaaS)
+  ├── 每个任务独立 ./aura --serve 进程
+  ├── 非阻塞 IO (fcntl + os.read) 读超时
+  ├── EDSL 检测: 输出以 (set-code 开头 → 自动追加 (eval-current)
+  ├── tcp-connect 非阻塞 connect() + 8s poll() 超时
+  └── 崩溃/死锁恢复: 检测 → kill → 重启
 ```
 
-#### 结构化诊断
+### 任务列表
 
-- 检测 `<hash[N]>` 输出 → 告警使用 hash-keys/values
-- 列出 output 中缺失的 expected 关键词
-- 注入 API Reference（std/hash, std/list, std/socket...）
-- 执行轨迹反馈（运行代码并输出中间结果）
+57 个任务，覆盖 9 个能力域：
 
-#### 语言级 Bug 修复
+- **基础 (12)**: arith-basic, arith-chain, lambda-simple, letrec-fact, named-let, string-reverse, string-split-join, type-check, type-of, occurrence, ffi-sqrt, ffi-strlen
+- **列表 (11)**: list-range, list-filter, list-map, list-foldl, list-reverse, list-zip, list-partition, list-flatten, unique-hash, merge-sort, binary-search
+- **哈希 (8)**: hash-basic, hash-stats, word-freq, palindrome, hash-invert, table-lookup, json-roundtrip, memoize
+- **递归算法 (8)**: prime-test, primes-list, fibonacci, gcd-euclid, combinations, quicksort, sieve, tree-dfs
+- **高阶/系统 (8)**: compose-n, deep-equal, macro-definer, tcp-connect, vector-ops, edsl-set-code, edsl-query, edsl-mutate
+- **LeetCode (10)**: two-sum, reverse-list, valid-parens, max-subarray, contains-duplicate, merge-sorted, climbing-stairs, majority-element, first-unique, is-anagram
 
-| Bug | 影响的任务 | 修复 |
-|-----|-----------|------|
-| `append` 只处理 2 参数 | quicksort (只排3个元素) | 改为 variadic，循环拼接所有参数 |
-| `mod` 未定义 | primes-list (prime? 错误) | 注册 `mod` 为 `modulo` 别名 |
-| `tcp-recv` 需要 2 参数 | tcp-connect (返回空) | 第2参数可选，默认 4096 |
+### 运行
 
-#### 运行模式
+```bash
+# 全量
+LLM_API_KEY="***" python3 tests/edsl_benchmark.py --max-attempts 5
+
+# 指定模型
+LLM_MODEL=minimax-m2.7 LLM_API_KEY="***" python3 tests/edsl_benchmark.py --max-attempts 5
+
+# 指定任务
+LLM_API_KEY="***" python3 tests/edsl_benchmark.py --tasks is-anagram,hash-stats
+
+# 多模型对比
+LLM_MODEL=deepseek-v4-flash,minimax-m2.7 LLM_API_KEY="***" python3 tests/edsl_benchmark.py --max-attempts 5
+```
+
+### 修复详情
+
+- **extract_code 正则**: `<[^>]+>` 吞噬了 Aura 比较操作符（`<`, `>`）→ `</?\w[^>]*>`
+- **serve 非阻塞 IO**: fcntl + os.read 超时，无线程竞态
+- **tcp-connect 超时**: 非阻塞 connect() + poll() 8s 超时
+- **EDSL 单次 exec**: `(set-code ...) + (mutate:rebind ...) + (eval-current)` 一次调用
+- **parser 报错增强**: 包含 `expected expression, got ')'` 等详细信息
+
+## 运行模式
 
 ```
   --rounds N       每个任务跑 N 轮独立 LLM 调用 (默认 1)
