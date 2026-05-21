@@ -32,6 +32,7 @@ static_assert(sizeof(CacheHeader) == 64, "CacheHeader must be 64 bytes");
 extern "C" {
     void cache_serialize_header(const void* h, unsigned char* buf, size_t* out_size);
     int  cache_deserialize_header(const unsigned char* buf, size_t size, void* h);
+    int  cache_validate_header(const void* h);
 }
 #endif
 

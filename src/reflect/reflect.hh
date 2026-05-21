@@ -488,6 +488,41 @@ private:
     std::vector<char> buf_;
 };
 
+
+// ── auto_validate<T> — compile-time struct validation ─────
+
+template <typename T>
+bool auto_validate(const T& obj, std::string* error = nullptr) {
+    constexpr auto members = reflect_members<T>();
+    const auto* base = reinterpret_cast<const char*>(&obj);
+    bool ok = true;
+    
+    for (auto& m : members) {
+        const auto* field = base + m.offset;
+        switch (m.kind) {
+        case MemberKind::Vector: {
+            auto& vec = *reinterpret_cast<const std::vector<char>*>(field);
+            if (vec.size() > 100000000) {
+                if (error) *error = std::string(m.name) + " too large: " + std::to_string(vec.size());
+                ok = false;
+            }
+            break;
+        }
+        case MemberKind::String: {
+            auto& s = *reinterpret_cast<const std::string*>(field);
+            if (s.size() > 100000000) {
+                if (error) *error = std::string(m.name) + " string too long: " + std::to_string(s.size());
+                ok = false;
+            }
+            break;
+        }
+        default:
+            break;
+        }
+    }
+    return ok;
+}
+
 } // namespace aura::reflect
 
 #endif // AURA_REFLECT_REFLECT_HH
