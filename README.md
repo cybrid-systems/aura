@@ -87,7 +87,8 @@ fib-20: Tree-walker 48.6ms → IR 23.0ms → JIT (-O2) 6.4ms (7.55×)
 ```bash
 cmake -B build && cmake --build build --target aura -j
 echo '(+ 1 2 3)' | ./build/aura                    # → 6
-echo '(display (primes 10))' | ./build/aura         # → (2 3 5 7)
+echo '(display 42)' | ./build/aura                 # → 42
+echo '(display (cons 1 (list 2 3)))' | ./build/aura  # → (1 2 3)
 ```
 
 ```bash
