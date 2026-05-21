@@ -404,63 +404,45 @@ PROMPT_SECTIONS = {
     "identity": (
         "You are Aura Lisp — NOT Common Lisp/Racket/Scheme.\n"
         "Return ONLY valid Aura code ending with (display ...).\n"
-        "  (define (square x) (* x x))\n"
-        "  (display (square 5))\n"
+        "Full spec: docs/design/aura_language_spec.md\n"
+        "\n"
+        "=== CRITICAL (models get these wrong) ===\n"
+        "  (display h) with hash shows <hash[N]>, NOT keys. Use (hash-keys h).\n"
+        "  hash-set! MUTATES in-place, returns void — NOT the hash\n"
+        "  string->list returns INTEGER char codes: 40=( 41=)  91=[ 93=]  123={ 125=}\n"
+        "  Compare (= c 40) NOT (char=? c #\\().\n"
+        "  Use (c-func -1 \"name\" \"sig\") — NOT (c-func 'int ...). lib-id -1 = RTLD_DEFAULT.\n"
+        "  Use (modulo n i) NOT (mod n i).\n"
+        "\n"
     ),
     "stdlib": (
-        "\n=== STDLIB (require std/name all:) ===\n"
-        "  list:   filter, map, foldl, range, sort, take, drop, length, reverse, zip\n"
+        "\n=== STD LIB (require std/name all:) ===\n"
+        "  list: filter, map, foldl, range, sort, take, drop, length, reverse, zip\n"
         "  string: string-split, string-trim, string-join\n"
-        "  hash:   hash-keys, hash-values, hash-has-key?, hash-ref, hash-set!\n"
-        "    ⚠️ hash-set! MUTATES in-place, returns void\n"
-        "  iter:   for-each, for\n"
-        "  math:   square, sqrt, factorial\n"
+        "  hash: hash-keys, hash-values, hash-has-key?, hash-ref, hash-set!\n"
+        "  iter: for-each, for\n"
+        "  math: square, sqrt, factorial\n"
+        "  tcp: tcp-connect, tcp-send, tcp-recv, tcp-close\n"
+        "  ffi: (c-func -1 \"name\" \"(Args) -> Ret\")\n"
+        "  edsl: (set-code)(query:find)(mutate:rebind)(eval-current)\n"
     ),
-    "hash_display": (
-        "\n=== HASH DISPLAY ===\n"
-        "(display h) with hash shows <hash[N]>, not keys. Use (hash-keys h).\n"
-    ),
-    "strings": (
-        "\n=== STRINGS ===\n"
-        "  (string->list s) returns integer char codes (40=(, 41=), 91=[, 93=], 123={, 125=})\n"
-        "  NOT characters. Compare with (= c 40) not (char=? c #\\().\n"
-    ),
-    "looping": (
-        "\n=== LOOPING ===\n"
-        "  (let loop ((i 0) (acc 0)) (if (= i 10) acc (loop (+ i 1) (+ acc i))))\n"
-        "  (letrec ((fact (lambda (n) ...))) (fact 5))\n"
-    ),
-    "c_ffi": (
-        "\n=== C FFI ===\n"
-        "  (define sqrt-fn (c-func -1 \"sqrt\" \"(Float) -> Float\"))\n"
-        "  (define strlen-fn (c-func -1 \"strlen\" \"(String) -> Int\"))\n"
-        "  (display (sqrt-fn 9.0))  ; 3.0\n"
-        "  (display (strlen-fn \"hello\"))  ; 5\n"
-    ),
-    "tcp": (
-        "\n=== TCP ===\n"
-        "  (tcp-connect \"host\" port)\n"
-    ),
-    "edsl": (
-        "\n=== EDSL ===\n"
-        "  (set-code \"...\")(query:find \"fn\")(mutate:rebind id code)(eval-current)\n"
+    "examples": (
+        "\n=== QUICK REFERENCE ===\n"
+        "  (define (f x) (* x 2)) (display (f 5))        ; function\n"
+        "  (let loop ((i 0) (s 0)) (if (= i 5) s (loop (+ i 1) (+ s i))))\n"
+        "  (require std/list all:)(filter odd? (list 1 2 3))\n"
+        "  (require std/hash all:)(hash-keys (hash \"a\" 1))\n"
+        "  (for-each (lambda (x) (display x)) (list 1 2)) ; require std/iter\n"
+        "  (define str-fn (c-func -1 \"strlen\" \"(String) -> Int\"))\n"
     ),
 }
 
 # Default section order (can be overridden per task)
-DEFAULT_SECTION_ORDER = [
-    "identity", "stdlib", "hash_display", "strings", "looping",
-    "c_ffi", "tcp", "edsl"
-]
+DEFAULT_SECTION_ORDER = ["identity", "stdlib", "examples"]
 
 # Task → section overrides for fine-grained control
-TASK_SECTION_OVERRIDES = {
-    "hash-": ["identity", "stdlib", "hash_display", "looping", "edsl"],
-    "tcp-":  ["identity", "stdlib", "tcp", "looping", "edsl"],
-    "ffi-":  ["identity", "stdlib", "c_ffi", "looping", "edsl"],
-    "valid-parens": ["identity", "stdlib", "strings", "looping", "edsl"],
-    "edsl-": ["identity", "stdlib", "edsl"],
-}
+TASK_SECTION_OVERRIDES = {}
+# Task-specific overrides not needed — prompt is compact enough for all tasks.
 
 def build_sys_prompt(stdlib, api_ref, task_name=""):
     # Select sections for this task
