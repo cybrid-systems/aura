@@ -74,6 +74,8 @@ class ServeClient:
     def __init__(self, binary=None):
         self.binary = binary or AURA
         self.proc = None
+        self._gen = 0
+        self._reader_thread = None
         self._restart()
 
     def _restart(self):
@@ -87,7 +89,7 @@ class ServeClient:
             self.proc.wait()
         self.proc = subprocess.Popen(
             [self.binary, "--serve"],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, bufsize=1, close_fds=True)
         time.sleep(0.3)
 
@@ -96,19 +98,24 @@ class ServeClient:
         Timeout kills serve if no response within read_timeout seconds."""
         if not code:
             return False, "", "no code"
+        import threading
+        self._gen += 1
+        my_gen = self._gen
         if self.proc.poll() is not None:
             self._restart()
             return False, "", "serve restarted (was dead)"
         self.proc.stdin.write(json.dumps({"cmd": "exec", "code": code}) + "\n")
         self.proc.stdin.flush()
-        import threading
         result = []
         done = threading.Event()
         def reader():
             try:
-                result.append(self.proc.stdout.readline())
+                line = self.proc.stdout.readline()
+                if my_gen == self._gen:  # only accept if we're still the active generation
+                    result.append(line)
             except:
-                result.append(None)
+                if my_gen == self._gen:
+                    result.append(None)
             done.set()
         t = threading.Thread(target=reader, daemon=True)
         t.start()
@@ -131,6 +138,17 @@ class ServeClient:
                 display_text = stripped[:brace]
                 json_line = stripped[brace:]
             else:
+                print(f"  [EXEC DEBUG] no JSON: {repr(stripped[:200])}", file=sys.stderr)
+                if stripped and not stripped.startswith("{"):
+                    try:
+                        if self.proc.stderr:
+                            import time
+                            time.sleep(0.2)
+                            err_all = self.proc.stderr.read()
+                            if err_all and err_all.strip():
+                                print(f"  [EXEC DEBUG] stderr ({len(err_all)}b): {repr(err_all[:300])}", file=sys.stderr)
+                    except:
+                        pass
                 return False, stripped, "no JSON in response"
         try:
             resp = json.loads(json_line)
