@@ -312,3 +312,90 @@ EDSL API 完整列表：
 ---
 
 **下一步:** `docs/roadmap.md` · `docs/design/ffi_c.md` · `python3 tests/ai_agent_iter.py "task"`
+
+---
+
+## 十一、AI 控制器 — PID 多轮修复
+
+Aura 内置一个**控制论反馈循环**，驱动 LLM 逐步修正代码到目标。
+
+### 工作原理
+
+```
+LLM 生成 → Aura 编译运行 → 检查输出 → 测量距离
+                                      ↓
+                               coarse  fine  putt
+                              (大步伐)  (中)   (微调)
+                                      ↓
+                                自适应反馈
+                          temperature / tokens / API ref
+                                      ↓
+                               LLM 再次生成...
+```
+
+### 运行示例
+
+```bash
+# 一行命令跑全部 57 个 EDSL 任务
+LLM_API_KEY="..." python3 tests/edsl_benchmark.py
+
+# 指定模型和修复次数
+LLM_MODEL=minimax-m2.7 LLM_API_KEY="..." python3 tests/edsl_benchmark.py --max-attempts 5
+
+# 只跑特定任务
+LLM_API_KEY="..." python3 tests/edsl_benchmark.py --tasks is-anagram,hash-stats
+```
+
+### 多轮修复演示: is-anagram
+
+`is-anagram` 判断两个字符串是否是变位词。LLM 首先生成有 bug 的代码：
+
+```scheme
+;; Attempt 1 — ❌ 用了不存在的 hash-ref
+(require std/hash all:)
+(define (anagram? a b) (= (hash-ref (hash) a) (hash-ref (hash) b)))
+```
+
+控制器回传诊断，LLM 修复：
+
+```scheme
+;; Attempt 5 — ✅ 通过
+(require std/hash all:)
+(define (freq s)
+  (define h (hash))
+  (for-each (lambda (c) (hash-set! h c (+ 1 (or (hash-ref h c) 0))))
+            (string->list s))
+  h)
+(define (is-anagram? a b) (= (hash-length (freq a)) (hash-length (freq b))))
+(display (is-anagram? "listen" "silent"))  ; → #t
+```
+
+5 轮修复过程：
+
+| 轮次 | 问题 | 控制器动作 |
+|:---:|------|-----------|
+| 1 | `hash-ref` 不存在 | coarse：显示编译错误 |
+| 2 | 逻辑不对 | fine：告诉缺少哪些输出关键词 |
+| 3 | 哈希用错 | fine：注入 std/hash API 参考 |
+| 4 | 差一条件 | fine：提供 structured-diagnosis |
+| **5** | **#t** | putt→通过 |
+
+### 架构
+
+```
+Python 编排层                           Aura 层
+═══════════                           ════════
+
+serve.exec("(define ...)")     ──→    ./aura --serve (CaaS)
+  │                                       │
+  ├── coarse: 完整代码重写                ├── compile + eval
+  ├── fine:  EDSL 定点修改               ├── set-code + mutate + eval-current
+  └── putt:  表达式级微调                └── json 响应
+
+measure-distance(rc, output, expected) → (phase, ratio, diagnosis)
+  ratio >= 85% → putt  (微调)
+  ratio >   0% → fine  (精修)
+  ratio ==  0% → coarse (重写)
+```
+
+详情 → [docs/benchmark.md](docs/benchmark.md) · [docs/roadmap.md](docs/roadmap.md)
