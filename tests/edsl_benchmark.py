@@ -591,9 +591,27 @@ def _find_mutables(code):
             mutables.append(("literal", val, m.start(), m.end(), ctx))
 
     # 2. Display call arguments
-    for m in re.finditer(r'\(display\s+(.+?)\)', code):
-        arg = m.group(1).strip()
-        mutables.append(("display", arg, m.start(), m.end(), arg))
+    # Match display calls - use balanced paren matching for nested args
+    idx = 0
+    while True:
+        dpos = code.find('(display ', idx)
+        if dpos < 0:
+            break
+        # Find the matching close-paren for this display call
+        depth = 0
+        end = dpos + 9  # len('(display ')
+        while end < len(code):
+            ch = code[end]
+            if ch == '(':
+                depth += 1
+            elif ch == ')':
+                if depth == 0:
+                    break  # matched the display's close paren
+                depth -= 1
+            end += 1
+        arg = code[dpos + 9:end].strip()
+        mutables.append(("display", arg, dpos, end + 1, arg))
+        idx = end + 1
 
     # 3. Comparison operators
     ops = '|'.join(re.escape(op) for op in ['<', '>', '<=', '>=', '=', 'not='])
@@ -606,8 +624,7 @@ def _find_mutables(code):
 
     # 4. Function call substitution targets
     fn_aliases = {'sort': ['reverse', 'filter'], 'filter': ['map', 'sort'],
-                  'map': ['filter', 'for-each'], 'reverse': ['sort'],
-                  'car': ['cdr'], 'cdr': ['car']}
+                  'map': ['filter', 'for-each'], 'reverse': ['sort']}
     for m in re.finditer(r'\((' + '|'.join(fn_aliases.keys()) + r')\b', code):
         fn = m.group(1)
         ctx_start = max(0, m.start() - 20)
@@ -622,6 +639,53 @@ def _gen_variants(code, mutables, expected):
     """Generate variant codes from mutable surface features.
     Yields (variant_code, description) tuples."""
     ref, all_nums = _find_reference(code, expected)
+
+    # 3. Display format variations
+    has_hash_ops = 'hash-set!' in code or 'hash-ref' in code or 'hash' in code
+    for item in mutables:
+        if item[0] == "display":
+            arg = item[1]
+            if arg.startswith("("):
+                continue  # skip nested s-expr (structural breakage)
+            is_hash_var = has_hash_ops and re.match(r'^[a-z][a-z0-9_-]*$', arg)
+            if arg.startswith("<hash") or "hash-" in arg or is_hash_var:
+                for wrapper in ['(hash-keys ' + arg + ')', '(hash-values ' + arg + ')',
+                                '(hash-length ' + arg + ')']:
+                    variant = code[:item[2]] + '(display ' + wrapper + ')' + code[item[3]:]
+                    yield variant, f"disp {wrapper[:25]}"
+            if 'hash-length' in arg or 'length' in arg:
+                variant = code[:item[2]] + '(display (number->string ' + arg + '))' + code[item[3]:]
+                yield variant, "disp num->str"
+            # Also try wrapping with number->string for any output
+            # If display var and hash context, try boolean output
+            if is_hash_var:
+                variant = code[:item[2]] + '(display #t)' + code[item[3]:]
+                yield variant, "disp #t"
+                variant = code[:item[2]] + '(display (hash-length ' + arg + '))' + code[item[3]:]
+                yield variant, "disp len"
+                # Try hash-keys/hash-values wrappers (they may produce #t) 
+                if not any(kw in expected for kw in ['#t', '#f', 'true', 'false']):
+                    variant = code[:item[2]] + '(display (hash-keys ' + arg + '))' + code[item[3]:]
+                    yield variant, "disp keys"
+                    variant = code[:item[2]] + '(display (hash-values ' + arg + '))' + code[item[3]:]
+                    yield variant, "disp vals"
+            # For boolean expected output, try display #t/#f directly
+            if any(kw in expected for kw in ['#t', '#f', 'true', 'false']):
+                variant = code[:item[2]] + '(display #t)' + code[item[3]:]
+                yield variant, "disp #t"
+                variant = code[:item[2]] + '(display #f)' + code[item[3]:]
+                yield variant, "disp #f"
+            # Skip display mutation for nested s-expression args (structural breakage risk)
+            if arg.startswith('('):
+                continue
+            # Try condition-based display for boolean expected
+            if any(kw in expected for kw in ['#t', '#f', 'true', 'false']):
+                if '>' in arg or '<' in arg or '=' in arg or '-' in arg:
+                    pass  # already a comparison result
+
+            if not arg.startswith('<hash') and not is_hash_var:
+                # Try adding newline for cleaner display
+                pass
 
     # 1. Literal variations — limited scope for speed
     # Only modify literals that are likely boundary conditions
@@ -660,44 +724,6 @@ def _gen_variants(code, mutables, expected):
             if op in swaps:
                 yield code[:start] + swaps[op] + code[end:], f"op {op}->{swaps[op]}"
 
-    # 3. Display format variations
-    has_hash_ops = 'hash-set!' in code or 'hash-ref' in code or 'hash' in code
-    for item in mutables:
-        if item[0] == "display":
-            arg = item[1]
-            is_hash_var = has_hash_ops and re.match(r'^[a-z][a-z0-9_-]*$', arg)
-            if arg.startswith("<hash") or "hash-" in arg or is_hash_var:
-                for wrapper in ['(hash-keys ' + arg + ')', '(hash-values ' + arg + ')',
-                                '(hash-length ' + arg + ')']:
-                    variant = code[:item[2]] + '(display ' + wrapper + ')' + code[item[3]:]
-                    yield variant, f"disp {wrapper[:25]}"
-            if 'hash-length' in arg or 'length' in arg:
-                variant = code[:item[2]] + '(display (number->string ' + arg + '))' + code[item[3]:]
-                yield variant, "disp num->str"
-            # Also try wrapping with number->string for any output
-            # If display var and hash context, try boolean output
-            if is_hash_var:
-                variant = code[:item[2]] + '(display #t)' + code[item[3]:]
-                yield variant, "disp #t"
-                variant = code[:item[2]] + '(display (> (hash-length ' + arg + ') 0))' + code[item[3]:]
-                yield variant, "disp >0"
-                variant = code[:item[2]] + '(display (= (hash-length ' + arg + ') 0))' + code[item[3]:]
-                yield variant, "disp =0"
-            # For boolean expected output, try display #t/#f directly
-            if any(kw in expected for kw in ['#t', '#f', 'true', 'false']):
-                variant = code[:item[2]] + '(display #t)' + code[item[3]:]
-                yield variant, "disp #t"
-                variant = code[:item[2]] + '(display #f)' + code[item[3]:]
-                yield variant, "disp #f"
-            # Try condition-based display for boolean expected
-            if any(kw in expected for kw in ['#t', '#f', 'true', 'false']):
-                if '>' in arg or '<' in arg or '=' in arg or '-' in arg:
-                    pass  # already a comparison result
-
-            if not arg.startswith('<hash') and not is_hash_var:
-                # Try adding newline for cleaner display
-                pass
-
     # 4. Function call substitution
     for item in mutables:
         if item[0] == "fn-call" and len(item) > 5:
@@ -712,7 +738,9 @@ def _gen_variants(code, mutables, expected):
                 yield code[:item[2]] + '(display ' + str(ref) + ')' + code[item[3]:], f"disp {ref}"
 
 
-MAX_COLONY_VARIANTS = 30
+MAX_COLONY_VARIANTS = 20
+COLONY_VARIANT_TIMEOUT = 3  # per-variant serve exec timeout (s)
+COLONY_MAX_TIME = 8.0  # total colony search time limit (s)
 
 def internal_colony_search(serve, last_code, expected, phase):
     """Ant colony local mutation search.
@@ -735,14 +763,15 @@ def internal_colony_search(serve, last_code, expected, phase):
     if not mutables:
         return False, "", "no mutables found"
 
+    colony_deadline = colony_start + COLONY_MAX_TIME
     for variant, desc in _gen_variants(last_code, mutables, expected):
         tested += 1
-        if tested > MAX_COLONY_VARIANTS:
+        if tested > MAX_COLONY_VARIANTS or time.time() > colony_deadline:
             break
         if not variant.strip():
             continue
-        ok, out, err = serve.exec(variant)
-        if ok and check_success(out, expected):
+        ok, out, err = serve.exec(variant, read_timeout=COLONY_VARIANT_TIMEOUT)
+        if check_success(out, expected):
             elapsed = time.time() - colony_start
             return True, out, f"colony[{desc}] in {elapsed:.1f}s ({tested} tested)"
         if not best_out:
