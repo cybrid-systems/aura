@@ -1,12 +1,35 @@
 # Aura 语言入门
 
-AI-native Lisp — C++26 + LLVM JIT + Sound Gradual Typing + C FFI。
+**语言为 AI 而生。**
+
+Aura 不是给人类写的语言——是给 AI 写的。
+但你仍然可以用它，就像你会骑 AI 设计的自行车。
 
 ```bash
 cmake -B build && cmake --build build --target aura -j
-echo '(+ 1 2 3)' | ./build/aura          # → 6 (JIT 自动加速)
-./build/aura                              # REPL
+echo '(+ 1 2 3)' | ./build/aura          # → 6
+echo '(display (primes 10))' | ./build/aura  # → (2 3 5 7)
 ```
+
+---
+
+### 这一设计的背后
+
+Aura 的语法像 Scheme，但它的灵魂不是。
+大多数语言为可读性优化——Aura 为 AI 的可操作性优化。
+
+具体来说：
+- **EDSL**: 代码不是写出来的，是自己长出来的（`set-code` → `mutate` → `eval-current`）
+- **控制论修复**: 不是一次写对，而是测量距离、局部搜索、逐步逼近
+- **Scheme 兼容**: LLM 写 `(first x)` 或 `(char=? c #\()` 自然通过
+
+先学会常规用法，再深入 AI 驱动开发。
+
+---
+
+## 一、基础
+
+### 算术与比较
 
 ---
 
