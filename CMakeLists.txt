@@ -232,7 +232,7 @@ add_test(NAME cache_write
 # ── aura-reflect: standalone P2996 reflection tool ───────────────
 # Built WITHOUT modules to avoid -freflection / import std; conflicts.
 add_executable(aura-reflect tools/aura-reflect.cpp)
-target_include_directories(aura-reflect PRIVATE ${CMAKE_SOURCE_DIR})
+target_include_directories(aura-reflect PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_compile_options(aura-reflect PRIVATE -std=c++26)
 target_link_libraries(aura-reflect PRIVATE stdc++)
 
