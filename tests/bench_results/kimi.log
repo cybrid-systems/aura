@@ -1,0 +1,21 @@
+
+======================================================================
+Aura EDSL Benchmark
+Models: kimi-k2.6
+Tasks: 57
+Rounds: 1  (intend mode: up to 3 attempts)
+======================================================================
+
+
+──────────────────────────────────────────────────────────────────────
+  Model: kimi-k2.6
+──────────────────────────────────────────────────────────────────────
+
+  ── arith-basic ──
+    Round  1/1: ❌ no code extracted (10.3s in 3)
+
+  ── arith-chain ──
+    Round  1/1: ❌ no code extracted (9.8s in 3)
+
+  ── binary-search ──
+    Round  1/1: ❌ no code extracted (9.7s in 3)

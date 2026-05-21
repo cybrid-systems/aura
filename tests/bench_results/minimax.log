@@ -1,0 +1,317 @@
+
+======================================================================
+Aura EDSL Benchmark
+Models: minimax-2.7
+Tasks: 57
+Rounds: 1  (intend mode: up to 3 attempts)
+======================================================================
+
+
+──────────────────────────────────────────────────────────────────────
+  Model: minimax-2.7
+──────────────────────────────────────────────────────────────────────
+
+  ── arith-basic ──
+    Round  1/1: ❌ no code extracted (7.6s in 3)
+
+  ── arith-chain ──
+    Round  1/1: ❌ no code extracted (7.1s in 3)
+
+  ── binary-search ──
+    Round  1/1: ❌ no code extracted (8.9s in 3)
+
+  ── climbing-stairs ──
+    Round  1/1: ❌ no code extracted (7.8s in 3)
+
+  ── combinations ──
+    Round  1/1: ❌ no code extracted (8.5s in 3)
+
+  ── compose-n ──
+    Round  1/1: ❌ no code extracted (6.5s in 3)
+
+  ── contains-duplicate ──
+    Round  1/1: ❌ no code extracted (7.9s in 3)
+
+  ── deep-equal ──
+    Round  1/1: ❌ no code extracted (7.0s in 3)
+
+  ── edsl-mutate ──
+    Round  1/1: ❌ no code extracted (6.6s in 3)
+
+  ── edsl-query ──
+    Round  1/1: ❌ no code extracted (8.2s in 3)
+
+  ── edsl-set-code ──
+    Round  1/1: ❌ no code extracted (7.0s in 3)
+
+  ── ffi-sqrt ──
+    Round  1/1: ❌ no code extracted (7.1s in 3)
+
+  ── ffi-strlen ──
+    Round  1/1: ❌ no code extracted (7.1s in 3)
+
+  ── fibonacci ──
+    Round  1/1: ❌ no code extracted (7.6s in 3)
+
+  ── first-unique ──
+    Round  1/1: ❌ no code extracted (8.0s in 3)
+
+  ── gcd-euclid ──
+    Round  1/1: ❌ no code extracted (7.1s in 3)
+
+  ── hash-basic ──
+    Round  1/1: ❌ no code extracted (7.7s in 3)
+
+  ── hash-invert ──
+    Round  1/1: ❌ no code extracted (7.7s in 3)
+
+  ── hash-stats ──
+    Round  1/1: ❌ no code extracted (7.0s in 3)
+
+  ── is-anagram ──
+    Round  1/1: ❌ no code extracted (6.6s in 3)
+
+  ── json-roundtrip ──
+    Round  1/1: ❌ no code extracted (7.6s in 3)
+
+  ── lambda-simple ──
+    Round  1/1: ❌ no code extracted (7.7s in 3)
+
+  ── letrec-fact ──
+    Round  1/1: ❌ no code extracted (6.9s in 3)
+
+  ── list-filter ──
+    Round  1/1: ❌ no code extracted (7.3s in 3)
+
+  ── list-flatten ──
+    Round  1/1: ❌ no code extracted (7.5s in 3)
+
+  ── list-foldl ──
+    Round  1/1: ❌ no code extracted (6.6s in 3)
+
+  ── list-map ──
+    Round  1/1: ❌ no code extracted (7.1s in 3)
+
+  ── list-partition ──
+    Round  1/1: ❌ no code extracted (7.1s in 3)
+
+  ── list-range ──
+    Round  1/1: ❌ no code extracted (7.6s in 3)
+
+  ── list-reverse ──
+    Round  1/1: ❌ no code extracted (8.3s in 3)
+
+  ── list-zip ──
+    Round  1/1: ❌ no code extracted (7.2s in 3)
+
+  ── macro-definer ──
+    Round  1/1: ❌ no code extracted (6.9s in 3)
+
+  ── majority-element ──
+    Round  1/1: ❌ no code extracted (7.0s in 3)
+
+  ── max-subarray ──
+    Round  1/1: ❌ no code extracted (7.3s in 3)
+
+  ── memoize ──
+    Round  1/1: ❌ no code extracted (7.0s in 3)
+
+  ── merge-sort ──
+    Round  1/1: ❌ no code extracted (7.2s in 3)
+
+  ── merge-sorted ──
+    Round  1/1: ❌ no code extracted (6.6s in 3)
+
+  ── named-let ──
+    Round  1/1: ❌ no code extracted (6.8s in 3)
+
+  ── occurrence ──
+    Round  1/1: ❌ no code extracted (8.1s in 3)
+
+  ── palindrome ──
+    Round  1/1: ❌ no code extracted (6.9s in 3)
+
+  ── prime-test ──
+    Round  1/1: ❌ no code extracted (7.7s in 3)
+
+  ── primes-list ──
+    Round  1/1: ❌ no code extracted (6.6s in 3)
+
+  ── quicksort ──
+    Round  1/1: ❌ no code extracted (6.6s in 3)
+
+  ── reverse-list ──
+    Round  1/1: ❌ no code extracted (6.9s in 3)
+
+  ── sieve ──
+    Round  1/1: ❌ no code extracted (7.8s in 3)
+
+  ── string-reverse ──
+    Round  1/1: ❌ no code extracted (7.5s in 3)
+
+  ── string-split-join ──
+    Round  1/1: ❌ no code extracted (8.3s in 3)
+
+  ── table-lookup ──
+    Round  1/1: ❌ no code extracted (7.8s in 3)
+
+  ── tcp-connect ──
+    Round  1/1: ❌ no code extracted (7.0s in 3)
+
+  ── tree-dfs ──
+    Round  1/1: ❌ no code extracted (6.6s in 3)
+
+  ── two-sum ──
+    Round  1/1: ❌ no code extracted (6.8s in 3)
+
+  ── type-check ──
+    Round  1/1: ❌ no code extracted (7.0s in 3)
+
+  ── type-of ──
+    Round  1/1: ❌ no code extracted (6.8s in 3)
+
+  ── unique-hash ──
+    Round  1/1: ❌ no code extracted (6.7s in 3)
+
+  ── valid-parens ──
+    Round  1/1: ❌ no code extracted (6.7s in 3)
+
+  ── vector-ops ──
+    Round  1/1: ❌ no code extracted (6.7s in 3)
+
+  ── word-freq ──
+    Round  1/1: ❌ no code extracted (6.8s in 3)
+
+  ❌ Failure Analysis (57 tasks):
+    no code extracted        : 57 tasks -- arith-basic, arith-chain, binary-search, climbing-stairs, combinations...
+──────────────────────────────────────────────────────────────────────
+  minimax-2.7 -- Per-Task Results (1 rounds)
+──────────────────────────────────────────────────────────────────────
+  Task                   Pass/Total   Rate       Verdict
+  ────────────────────── ────────── ──────  ────────────
+  arith-basic              0/1         0%  ❌  Stable FAIL
+  arith-chain              0/1         0%  ❌  Stable FAIL
+  binary-search            0/1         0%  ❌  Stable FAIL
+  climbing-stairs          0/1         0%  ❌  Stable FAIL
+  combinations             0/1         0%  ❌  Stable FAIL
+  compose-n                0/1         0%  ❌  Stable FAIL
+  contains-duplicate       0/1         0%  ❌  Stable FAIL
+  deep-equal               0/1         0%  ❌  Stable FAIL
+  edsl-mutate              0/1         0%  ❌  Stable FAIL
+  edsl-query               0/1         0%  ❌  Stable FAIL
+  edsl-set-code            0/1         0%  ❌  Stable FAIL
+  ffi-sqrt                 0/1         0%  ❌  Stable FAIL
+  ffi-strlen               0/1         0%  ❌  Stable FAIL
+  fibonacci                0/1         0%  ❌  Stable FAIL
+  first-unique             0/1         0%  ❌  Stable FAIL
+  gcd-euclid               0/1         0%  ❌  Stable FAIL
+  hash-basic               0/1         0%  ❌  Stable FAIL
+  hash-invert              0/1         0%  ❌  Stable FAIL
+  hash-stats               0/1         0%  ❌  Stable FAIL
+  is-anagram               0/1         0%  ❌  Stable FAIL
+  json-roundtrip           0/1         0%  ❌  Stable FAIL
+  lambda-simple            0/1         0%  ❌  Stable FAIL
+  letrec-fact              0/1         0%  ❌  Stable FAIL
+  list-filter              0/1         0%  ❌  Stable FAIL
+  list-flatten             0/1         0%  ❌  Stable FAIL
+  list-foldl               0/1         0%  ❌  Stable FAIL
+  list-map                 0/1         0%  ❌  Stable FAIL
+  list-partition           0/1         0%  ❌  Stable FAIL
+  list-range               0/1         0%  ❌  Stable FAIL
+  list-reverse             0/1         0%  ❌  Stable FAIL
+  list-zip                 0/1         0%  ❌  Stable FAIL
+  macro-definer            0/1         0%  ❌  Stable FAIL
+  majority-element         0/1         0%  ❌  Stable FAIL
+  max-subarray             0/1         0%  ❌  Stable FAIL
+  memoize                  0/1         0%  ❌  Stable FAIL
+  merge-sort               0/1         0%  ❌  Stable FAIL
+  merge-sorted             0/1         0%  ❌  Stable FAIL
+  named-let                0/1         0%  ❌  Stable FAIL
+  occurrence               0/1         0%  ❌  Stable FAIL
+  palindrome               0/1         0%  ❌  Stable FAIL
+  prime-test               0/1         0%  ❌  Stable FAIL
+  primes-list              0/1         0%  ❌  Stable FAIL
+  quicksort                0/1         0%  ❌  Stable FAIL
+  reverse-list             0/1         0%  ❌  Stable FAIL
+  sieve                    0/1         0%  ❌  Stable FAIL
+  string-reverse           0/1         0%  ❌  Stable FAIL
+  string-split-join        0/1         0%  ❌  Stable FAIL
+  table-lookup             0/1         0%  ❌  Stable FAIL
+  tcp-connect              0/1         0%  ❌  Stable FAIL
+  tree-dfs                 0/1         0%  ❌  Stable FAIL
+  two-sum                  0/1         0%  ❌  Stable FAIL
+  type-check               0/1         0%  ❌  Stable FAIL
+  type-of                  0/1         0%  ❌  Stable FAIL
+  unique-hash              0/1         0%  ❌  Stable FAIL
+  valid-parens             0/1         0%  ❌  Stable FAIL
+  vector-ops               0/1         0%  ❌  Stable FAIL
+  word-freq                0/1         0%  ❌  Stable FAIL
+
+  ➤ Stable: 0✅ / 57❌ + Volatile: 0🔄 = 57
+
+  📊 Attempt stats:
+    arith-basic            avg 3.0 attempts, 0/1 passed
+    arith-chain            avg 3.0 attempts, 0/1 passed
+    binary-search          avg 3.0 attempts, 0/1 passed
+    climbing-stairs        avg 3.0 attempts, 0/1 passed
+    combinations           avg 3.0 attempts, 0/1 passed
+    compose-n              avg 3.0 attempts, 0/1 passed
+    contains-duplicate     avg 3.0 attempts, 0/1 passed
+    deep-equal             avg 3.0 attempts, 0/1 passed
+    edsl-mutate            avg 3.0 attempts, 0/1 passed
+    edsl-query             avg 3.0 attempts, 0/1 passed
+    edsl-set-code          avg 3.0 attempts, 0/1 passed
+    ffi-sqrt               avg 3.0 attempts, 0/1 passed
+    ffi-strlen             avg 3.0 attempts, 0/1 passed
+    fibonacci              avg 3.0 attempts, 0/1 passed
+    first-unique           avg 3.0 attempts, 0/1 passed
+    gcd-euclid             avg 3.0 attempts, 0/1 passed
+    hash-basic             avg 3.0 attempts, 0/1 passed
+    hash-invert            avg 3.0 attempts, 0/1 passed
+    hash-stats             avg 3.0 attempts, 0/1 passed
+    is-anagram             avg 3.0 attempts, 0/1 passed
+    json-roundtrip         avg 3.0 attempts, 0/1 passed
+    lambda-simple          avg 3.0 attempts, 0/1 passed
+    letrec-fact            avg 3.0 attempts, 0/1 passed
+    list-filter            avg 3.0 attempts, 0/1 passed
+    list-flatten           avg 3.0 attempts, 0/1 passed
+    list-foldl             avg 3.0 attempts, 0/1 passed
+    list-map               avg 3.0 attempts, 0/1 passed
+    list-partition         avg 3.0 attempts, 0/1 passed
+    list-range             avg 3.0 attempts, 0/1 passed
+    list-reverse           avg 3.0 attempts, 0/1 passed
+    list-zip               avg 3.0 attempts, 0/1 passed
+    macro-definer          avg 3.0 attempts, 0/1 passed
+    majority-element       avg 3.0 attempts, 0/1 passed
+    max-subarray           avg 3.0 attempts, 0/1 passed
+    memoize                avg 3.0 attempts, 0/1 passed
+    merge-sort             avg 3.0 attempts, 0/1 passed
+    merge-sorted           avg 3.0 attempts, 0/1 passed
+    named-let              avg 3.0 attempts, 0/1 passed
+    occurrence             avg 3.0 attempts, 0/1 passed
+    palindrome             avg 3.0 attempts, 0/1 passed
+    prime-test             avg 3.0 attempts, 0/1 passed
+    primes-list            avg 3.0 attempts, 0/1 passed
+    quicksort              avg 3.0 attempts, 0/1 passed
+    reverse-list           avg 3.0 attempts, 0/1 passed
+    sieve                  avg 3.0 attempts, 0/1 passed
+    string-reverse         avg 3.0 attempts, 0/1 passed
+    string-split-join      avg 3.0 attempts, 0/1 passed
+    table-lookup           avg 3.0 attempts, 0/1 passed
+    tcp-connect            avg 3.0 attempts, 0/1 passed
+    tree-dfs               avg 3.0 attempts, 0/1 passed
+    two-sum                avg 3.0 attempts, 0/1 passed
+    type-check             avg 3.0 attempts, 0/1 passed
+    type-of                avg 3.0 attempts, 0/1 passed
+    unique-hash            avg 3.0 attempts, 0/1 passed
+    valid-parens           avg 3.0 attempts, 0/1 passed
+    vector-ops             avg 3.0 attempts, 0/1 passed
+    word-freq              avg 3.0 attempts, 0/1 passed
+Traceback (most recent call last):
+  File "/home/dev/code/aura/tests/edsl_benchmark.py", line 1270, in <module>
+    main()
+    ~~~~^^
+  File "/home/dev/code/aura/tests/edsl_benchmark.py", line 1251, in main
+    "passes": stats["passes"],
+              ~~~~~^^^^^^^^^^
+TypeError: list indices must be integers or slices, not str

@@ -324,12 +324,20 @@ class ServeClient:
 def llm_complete(model, base_url, key, messages, retries=3):
     parsed = urllib.parse.urlparse(base_url)
     path = parsed.path.rstrip("/") + "/chat/completions"
+    # Some models require specific temperature settings
+    model_lower = model.lower()
+    if "kimi" in model_lower:
+        temp = 1.0  # Kimi k2.6 only accepts temp=1.0
+        request_timeout = 20  # Kimi can be very slow; cap at 45s
+    else:
+        temp = 0.3
+        request_timeout = 120
     for attempt in range(retries):
         try:
             conn_cls = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
-            h = conn_cls(parsed.netloc, timeout=120)
+            h = conn_cls(parsed.netloc, timeout=request_timeout)
             h.request("POST", path, json.dumps({
-                "model": model, "messages": messages, "temperature": 0.3,
+                "model": model, "messages": messages, "temperature": temp,
                 "max_tokens": 4096,
             }), {"Content-Type": "application/json", "Authorization": f"Bearer {key}"})
             r = h.getresponse()
@@ -347,9 +355,17 @@ def llm_complete(model, base_url, key, messages, retries=3):
 
 # ── 代码提取 ──────────────────────────────────────────────
 def extract_code(text):
+    # Some models (MiniMax m2.7) wrap entire response in <think> tags
+    original = text
     text = re.sub(r'<think>.*?(</think>|$)', '', text, flags=re.DOTALL)
     # Strip remaining XML/HTML tags (not comparison operators like (< x) or (-> x))
     text = re.sub(r'</?\w[^>]*>', '', text, flags=re.DOTALL)
+    # If stripping think tags left nothing, try extracting from WITHIN the think tags
+    if not text.strip():
+        m = re.search(r'<think>(.*?)</think>', original, flags=re.DOTALL)
+        if m:
+            text = m.group(1)
+            text = re.sub(r'</?\w[^>]*>', '', text, flags=re.DOTALL)
     if "```" in text:
         for p in text.split("```"):
             lines = p.strip().split("\n")
@@ -1244,18 +1260,19 @@ def main():
         for model, tasks in all_results.items():
             mout = {}
             for task_name, stats in tasks.items():
-                if task_name == "__meta__":
-                    mout["__meta__"] = stats
-                else:
-                    entry = {
-                        "passes": stats["passes"],
-                        "total": stats["total"],
-                        "pass_rate": round(stats["passes"] / stats["total"] * 100, 1) if stats["total"] else 0,
-                        "avg_llm_time": round(sum(stats["llm_times"]) / len(stats["llm_times"]), 2) if stats["llm_times"] else 0,
-                    }
-                    if stats["attempts"]:
-                        entry["avg_attempts"] = round(sum(stats["attempts"]) / len(stats["attempts"]), 1)
-                    mout[task_name] = entry
+                if task_name in ("__meta__", "__errors__"):
+                    if task_name == "__meta__":
+                        mout["__meta__"] = stats
+                    continue
+                entry = {
+                    "passes": stats["passes"],
+                    "total": stats["total"],
+                    "pass_rate": round(stats["passes"] / stats["total"] * 100, 1) if stats["total"] else 0,
+                    "avg_llm_time": round(sum(stats["llm_times"]) / len(stats["llm_times"]), 2) if stats["llm_times"] else 0,
+                }
+                if stats["attempts"]:
+                    entry["avg_attempts"] = round(sum(stats["attempts"]) / len(stats["attempts"]), 1)
+                mout[task_name] = entry
             output[model] = mout
         print(f"\n{'='*70}")
         print(json.dumps(output, indent=2))
