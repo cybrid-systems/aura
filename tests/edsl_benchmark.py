@@ -342,6 +342,7 @@ def build_sys_prompt(stdlib, api_ref, task_name=""):
         "  std/list:  filter, map, foldl, range, sort, take, drop, length, reverse, zip\n"
         "  std/string: string-split, string-trim, string-join\n"
         "  std/hash:   hash-keys, hash-values, hash-has-key?, hash-ref, hash-set!\n"
+        "  ⚠️ hash-set! MUTATES in-place, returns void. Use (hash-set! h k v) (loop (cdr xs)) NOT (loop (hash-set! ...) ...)\n"
         "  std/iter:   for-each, for\n"
         "  std/math:   square, sqrt, factorial\n"
         "\n"
@@ -818,13 +819,20 @@ def run_single_task(model, base_url, api_key, name, prompt, expected, stdlib, ap
     ]
     last_full_code = ""
     phase = "coarse"
-    # ── Scheme 兼容注册 ── MiniMax 常写 first/rest/cadr 等
+    # ── Scheme 兼容注册 ── MiniMax 常写 Scheme 函数名
     if serve:
         serve.exec('(define (first x) (car x))')
         serve.exec('(define (rest x) (cdr x))')
         serve.exec('(define (second x) (car (cdr x)))')
         serve.exec('(define (cadr x) (car (cdr x)))')
         serve.exec('(define (list? x) (pair? x))')
+        serve.exec('(define (odd? n) (not (= (modulo n 2) 0)))')
+        serve.exec('(define (even? n) (= (modulo n 2) 0))')
+        serve.exec('(define (zero? n) (= n 0))')
+        serve.exec('(define (positive? n) (> n 0))')
+        serve.exec('(define (negative? n) (< n 0))')
+        serve.exec('(define (add1 n) (+ n 1))')
+        serve.exec('(define (sub1 n) (- n 1))')
 
 
     def run_code(code):
