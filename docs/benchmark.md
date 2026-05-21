@@ -3,15 +3,89 @@
 > 57 个 LLM 代码生成任务，覆盖基础语法、标准库、类型系统、C FFI、EDSL、TCP、递归算法、LeetCode 风格。
 > 自适应用迭代修正 + 执行轨迹反馈（PID 控制理论）。
 
-## Latest: 2026-05-21 — 多模型基准
+## Latest: 2026-05-22 — 4 模型对比 (max-attempts=3, 1 round)
 
-| 模型 | `--max-attempts` | 通过率 | 总耗时 | 1次通过 | 多轮修复 | 失败 |
-|------|:--------------:|:-----:|:-----:|:------:|:-------:|:----:|
-| **DeepSeek v4 Flash** | 5 | **52/57 (91%)** | ~15min | 40 | 7 | deep-equal, ffi-strlen, merge-sorted, primes-list, valid-parens |
-| **MiniMax-M2.7** | 5 | **51/57 (89%)** | ~20min | 41 | 10 | binary-search, deep-equal, edsl-set-code, is-anagram, majority-element, primes-list |
+| 模型 | 通过率 | 总耗时 | 失败任务 |
+|------|:-----:|:-----:|:--------|
+| **Grok 4.3** | **54/57 (94.7%)** | ~11min | deep-equal, merge-sorted, primes-list |
+| **DeepSeek v4 Flash** | **51/57 (89.5%)** | ~16min | binary-search, deep-equal, ffi-sqrt, ffi-strlen, is-anagram, primes-list |
+| **MiniMax-M2.7** | **45/57 (78.9%)** | ~15min | contains-duplicate, deep-equal, edsl-set-code, ffi-sqrt, ffi-strlen, first-unique, is-anagram, list-zip, merge-sorted, prime-test, primes-list, tcp-connect |
+| **Kimi k2.6** | **N/A** | — | Moonshot API 响应极慢（单请求超 30s+），无法完成 benchmark |
 
-**所有失败均为 LLM 方差（不同 run 漂移 2-5 个任务）。零 serve 崩溃，零死锁，零 "no JSON"。**
-零 serve 崩溃，零死锁，零 "no JSON"。
+**共享失败 (3 模型均不能):** `deep-equal`, `primes-list` — 可能是 Aura 编译器自身限制或 task 设计问题。
+**独家失败:** `binary-search` 仅 DeepSeek 不能；MiniMax 独有 7 个额外失败。
+**Grok 为当前最优模型**，且速度最快（~66% 时间即完成）。
+
+### 逐任务对比
+
+| 任务 | DeepSeek | MiniMax | Grok |
+|------|:--------:|:-------:|:----:|
+| arith-basic | ✅ | ✅ | ✅ |
+| arith-chain | ✅ | ✅ | ✅ |
+| binary-search | ❌ | ✅ | ✅ |
+| climbing-stairs | ✅ | ✅ | ✅ |
+| combinations | ✅ | ✅ | ✅ |
+| compose-n | ✅ | ✅ | ✅ |
+| contains-duplicate | ✅ | ❌ | ✅ |
+| deep-equal | ❌ | ❌ | ❌ |
+| edsl-mutate | ✅ | ✅ | ✅ |
+| edsl-query | ✅ | ✅ | ✅ |
+| edsl-set-code | ✅ | ❌ | ✅ |
+| ffi-sqrt | ❌ | ❌ | ✅ |
+| ffi-strlen | ❌ | ❌ | ✅ |
+| fibonacci | ✅ | ✅ | ✅ |
+| first-unique | ✅ | ❌ | ✅ |
+| gcd-euclid | ✅ | ✅ | ✅ |
+| hash-basic | ✅ | ✅ | ✅ |
+| hash-invert | ✅ | ✅ | ✅ |
+| hash-stats | ✅ | ✅ | ✅ |
+| is-anagram | ❌ | ❌ | ✅ |
+| json-roundtrip | ✅ | ✅ | ✅ |
+| lambda-simple | ✅ | ✅ | ✅ |
+| letrec-fact | ✅ | ✅ | ✅ |
+| list-filter | ✅ | ✅ | ✅ |
+| list-flatten | ✅ | ✅ | ✅ |
+| list-foldl | ✅ | ✅ | ✅ |
+| list-map | ✅ | ✅ | ✅ |
+| list-partition | ✅ | ✅ | ✅ |
+| list-range | ✅ | ✅ | ✅ |
+| list-reverse | ✅ | ✅ | ✅ |
+| list-zip | ✅ | ❌ | ✅ |
+| macro-definer | ✅ | ✅ | ✅ |
+| majority-element | ✅ | ✅ | ✅ |
+| max-subarray | ✅ | ✅ | ✅ |
+| memoize | ✅ | ✅ | ✅ |
+| merge-sort | ✅ | ✅ | ✅ |
+| merge-sorted | ✅ | ❌ | ❌ |
+| named-let | ✅ | ✅ | ✅ |
+| occurrence | ✅ | ✅ | ✅ |
+| palindrome | ✅ | ✅ | ✅ |
+| prime-test | ✅ | ❌ | ✅ |
+| primes-list | ❌ | ❌ | ❌ |
+| quicksort | ✅ | ✅ | ✅ |
+| reverse-list | ✅ | ✅ | ✅ |
+| sieve | ✅ | ✅ | ✅ |
+| string-reverse | ✅ | ✅ | ✅ |
+| string-split-join | ✅ | ✅ | ✅ |
+| table-lookup | ✅ | ✅ | ✅ |
+| tcp-connect | ✅ | ❌ | ✅ |
+| tree-dfs | ✅ | ✅ | ✅ |
+| two-sum | ✅ | ✅ | ✅ |
+| type-check | ✅ | ✅ | ✅ |
+| type-of | ✅ | ✅ | ✅ |
+| unique-hash | ✅ | ✅ | ✅ |
+| valid-parens | ✅ | ✅ | ✅ |
+| vector-ops | ✅ | ✅ | ✅ |
+| word-freq | ✅ | ✅ | ✅ |
+
+## 2026-05-21 — 旧版结果 (max-attempts=5)
+
+| 模型 | 通过率 | 总耗时 |
+|------|:-----:|:-----:|
+| **DeepSeek v4 Flash** | **52/57 (91%)** | ~15min |
+| **MiniMax-M2.7** | **51/57 (89%)** | ~20min |
+
+> *注: 旧版使用 `--max-attempts 5` 并有不同 prompt 策略，分数略高。新版统一为 max-attempts=3 更接近实际使用场景。*
 
 ### 架构
 
@@ -55,17 +129,20 @@ serve client (CaaS)
 ### 运行
 
 ```bash
-# 全量
-LLM_API_KEY="***" python3 tests/edsl_benchmark.py --max-attempts 5
+# 全量 (单模型)
+LLM_API_KEY="***" python3 tests/edsl_benchmark.py --json
 
 # 指定模型
-LLM_MODEL=minimax-m2.7 LLM_API_KEY="***" python3 tests/edsl_benchmark.py --max-attempts 5
+LLM_MODEL=minimax-m2.7 LLM_API_KEY="***" python3 tests/edsl_benchmark.py --json
 
 # 指定任务
 LLM_API_KEY="***" python3 tests/edsl_benchmark.py --tasks is-anagram,hash-stats
 
-# 多模型对比
-LLM_MODEL=deepseek-v4-flash,minimax-m2.7 LLM_API_KEY="***" python3 tests/edsl_benchmark.py --max-attempts 5
+# 多模型自动对比 (run_bench_all.py)
+python3 tests/run_bench_all.py
+
+# 手动多模型
+LLM_MODEL=deepseek-v4-flash,minimax-m2.7 LLM_API_KEY="***" python3 tests/edsl_benchmark.py --json
 ```
 
 ### 修复详情
@@ -141,11 +218,6 @@ LLM_MODEL=deepseek-v4-flash,minimax-m2.7 LLM_API_KEY="..." python3 tests/edsl_be
 # 多模型 + 多轮聚合
 LLM_MODEL=deepseek-v4-flash,gpt-4o LLM_API_KEY="..." python3 tests/edsl_benchmark.py --rounds 3
 ```
-
-## 全部通过 🎯
-
-双模型（DeepSeek v4 Flash, MiniMax-M2.7）在 `--fix --max-attempts 5` 下均达成 57/57 (100%)。
-无剩余不稳定任务。
 
 ### 修复详情
 

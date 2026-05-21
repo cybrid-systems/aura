@@ -1,0 +1,354 @@
+{
+  "name": "MiniMax-M2.7",
+  "summary": {
+    "passed": 45,
+    "failed": 12,
+    "total": 57,
+    "pass_rate": 78.9,
+    "elapsed_s": 910.3
+  },
+  "tasks": {
+    "arith-basic": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "arith-chain": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "binary-search": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "climbing-stairs": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "combinations": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "compose-n": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "contains-duplicate": {
+      "passes": 0,
+      "total": 1,
+      "pass_rate": 0.0,
+      "verdict": "\u274c"
+    },
+    "deep-equal": {
+      "passes": 0,
+      "total": 1,
+      "pass_rate": 0.0,
+      "verdict": "\u274c"
+    },
+    "edsl-mutate": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "edsl-query": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "edsl-set-code": {
+      "passes": 0,
+      "total": 1,
+      "pass_rate": 0.0,
+      "verdict": "\u274c"
+    },
+    "ffi-sqrt": {
+      "passes": 0,
+      "total": 1,
+      "pass_rate": 0.0,
+      "verdict": "\u274c"
+    },
+    "ffi-strlen": {
+      "passes": 0,
+      "total": 1,
+      "pass_rate": 0.0,
+      "verdict": "\u274c"
+    },
+    "fibonacci": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "first-unique": {
+      "passes": 0,
+      "total": 1,
+      "pass_rate": 0.0,
+      "verdict": "\u274c"
+    },
+    "gcd-euclid": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "hash-basic": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "hash-invert": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "hash-stats": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "is-anagram": {
+      "passes": 0,
+      "total": 1,
+      "pass_rate": 0.0,
+      "verdict": "\u274c"
+    },
+    "json-roundtrip": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "lambda-simple": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "letrec-fact": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "list-filter": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "list-flatten": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "list-foldl": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "list-map": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "list-partition": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "list-range": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "list-reverse": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "list-zip": {
+      "passes": 0,
+      "total": 1,
+      "pass_rate": 0.0,
+      "verdict": "\u274c"
+    },
+    "macro-definer": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "majority-element": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "max-subarray": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "memoize": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "merge-sort": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "merge-sorted": {
+      "passes": 0,
+      "total": 1,
+      "pass_rate": 0.0,
+      "verdict": "\u274c"
+    },
+    "named-let": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "occurrence": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "palindrome": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "prime-test": {
+      "passes": 0,
+      "total": 1,
+      "pass_rate": 0.0,
+      "verdict": "\u274c"
+    },
+    "primes-list": {
+      "passes": 0,
+      "total": 1,
+      "pass_rate": 0.0,
+      "verdict": "\u274c"
+    },
+    "quicksort": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "reverse-list": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "sieve": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "string-reverse": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "string-split-join": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "table-lookup": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "tcp-connect": {
+      "passes": 0,
+      "total": 1,
+      "pass_rate": 0.0,
+      "verdict": "\u274c"
+    },
+    "tree-dfs": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "two-sum": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "type-check": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "type-of": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "unique-hash": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "valid-parens": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "vector-ops": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    },
+    "word-freq": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "verdict": "\u2705"
+    }
+  }
+}
