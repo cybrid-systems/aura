@@ -1,0 +1,52 @@
+; lib/std/ant.aura -- ant colony pheromone system
+;
+(export pheromone:init pheromone:update pheromone:rank pheromone:score pheromone:export)
+
+(define *pheromone-table* (hash))
+
+(define *default-pheromones*
+  (lambda ()
+    (hash "edsl-disp-ref" 2.0
+          "full-hash-wrap" 1.8
+          "full-disp-bool" 1.5
+          "edsl-body-wrap" 1.0
+          "full-disp-ref" 1.0
+          "edsl-lit-tweak" 0.8
+          "edsl-op-swap" 0.6)))
+
+(define (pheromone:init)
+  (set! *pheromone-table* (*default-pheromones*)))
+
+(define (pheromone:score type-name)
+  (or (hash-ref *pheromone-table* type-name) 0.1))
+
+(define (pheromone:update type-name delta)
+  (let ((current (pheromone:score type-name)))
+    (hash-set! *pheromone-table* type-name
+               (+ (* current 0.95)
+                  (if (> delta 0.0) delta -0.05)))))
+
+; Manual insertion sort (small list, <10 items)
+(define (sort-descending lst)
+  (if (null? lst) (list)
+    (let ((pivot (car lst))
+          (rest (cdr lst)))
+      (append
+        (sort-descending (filter (lambda (x) (> (pheromone:score x) (pheromone:score pivot))) rest))
+        (list pivot)
+        (sort-descending (filter (lambda (x) (<= (pheromone:score x) (pheromone:score pivot))) rest))))))
+
+(define (pheromone:rank mutation-type-list)
+  (sort-descending mutation-type-list))
+
+(define (pheromone:export)
+  (let ((keys (hash-keys *pheromone-table*))
+        (values (hash-values *pheromone-table*)))
+    (string-append "{"
+      (let build ((ks keys) (vs values) (first #t))
+        (if (null? ks) ""
+          (string-append
+            (if first "" ",")
+            "\"" (car ks) "\":" (number->string (car vs))
+            (build (cdr ks) (cdr vs) #f))))
+      "}")))
