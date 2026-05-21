@@ -25,12 +25,14 @@ typedef struct CacheHeader {
 }
 #endif
 
-// C++ only: verify struct size
 #ifdef __cplusplus
 static_assert(sizeof(CacheHeader) == 64, "CacheHeader must be 64 bytes");
-#endif
 
-void cache_serialize_header(const CacheHeader* h, unsigned char* buf, size_t* out_size);
-int  cache_deserialize_header(const unsigned char* buf, size_t size, CacheHeader* h);
+// C-linkage serialization API (implemented in cache_reflect.cpp)
+extern "C" {
+    void cache_serialize_header(const void* h, unsigned char* buf, size_t* out_size);
+    int  cache_deserialize_header(const unsigned char* buf, size_t size, void* h);
+}
+#endif
 
 #endif

@@ -126,7 +126,7 @@ bool write_cache(const std::string& path,
         }
     }
 
-    // ── Write header (will update IR fields after IR data is written) ─
+    // ── Write header via std::meta reflection (auto_serialize<CacheHeader>) ─
     CacheHeader header = {};
     std::memcpy(header.magic, "AURACACHE", 8);
     header.version = 3;
@@ -136,7 +136,12 @@ bool write_cache(const std::string& path,
     header.node_offset = sizeof(CacheHeader);
     header.string_offset = str_off;
     header.source_mtime = source_mtime;
-    // ir_offset and num_functions will be set after computing IR section
+    // Serialize via compile-time reflection
+    unsigned char hdr_buf[128];
+    size_t hdr_size = 0;
+    cache_serialize_header(&header, hdr_buf, &hdr_size);
+    f.seekp(0);
+    f.write(reinterpret_cast<const char*>(hdr_buf), hdr_size);
 
     // ── Write columns ────────────────────────────────────────
     f.seekp(tags_off); f.write((const char*)tags.data(), n);

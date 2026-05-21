@@ -150,7 +150,7 @@ target_compile_options(test_ir PRIVATE -Wall -Wextra -Wpedantic
     -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter
 )
-target_link_libraries(test_ir PRIVATE stdc++ stdc++exp)
+target_link_libraries(test_ir PRIVATE stdc++ stdc++exp aura-reflect)
 
 # Link JIT for test_ir when LLVM is available (service.ixx references JIT types)
 if(LLVM_FOUND)
