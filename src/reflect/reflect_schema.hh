@@ -76,11 +76,7 @@ consteval std::string_view type_name_for_schema(std::meta::info type) {
 
 template <typename T>
 consteval std::size_t schema_buffer_size() {
-    constexpr auto N = []() {
-        return std::meta::nonstatic_data_members_of(
-            ^^T, std::meta::access_context::unchecked()).size();
-    }();
-    return N * 256 + 512;  // generous
+    return 32 * 256 + 512;  // generous upper bound
 }
 
 // ── Schema generator: uses template for (P1306) ──────────────

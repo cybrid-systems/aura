@@ -28,8 +28,7 @@ namespace aura::reflect {
 
 template <typename E>
 consteval std::size_t enum_count() {
-    auto enums = std::meta::enumerators_of(^^E);
-    return enums.size();
+    return std::meta::enumerators_of(^^E).size();
 }
 
 // ==============================================================
@@ -52,7 +51,8 @@ consteval auto build_name_table() {
 
 template <typename E>
 constexpr std::string_view opcode_name(int value) {
-    constexpr auto N = enum_count<E>();
+    // Use fixed upper bound (enumerators_of has GCC constexpr issues)
+    constexpr auto N = std::size_t{256};
     constexpr auto table = build_name_table<E, 32>();  // generous upper bound
     if (value >= 0 && value < static_cast<int>(N))
         return table[value];
@@ -82,7 +82,7 @@ consteval bool validate_enum() {
 
 template <typename E>
 consteval auto list_opcodes() {
-    constexpr auto N = enum_count<E>();
+    constexpr auto N = std::size_t{256};
     auto enums = std::meta::enumerators_of(^^E);
     std::array<std::string_view, 32> names{};
     for (std::size_t i = 0; i < N; ++i)
