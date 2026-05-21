@@ -599,13 +599,8 @@ def run_single_task(model, base_url, api_key, name, prompt, expected, stdlib, ap
         # Detect mode: set-code means EDSL mutation, otherwise full program
         is_edsl = code.strip().startswith("(set-code")
         if is_edsl and last_full_code:
-            # EDSL mode: send the full EDSL expression to serve
-            ok, out, err = run_code(code)
-            if ok:
-                # Now evaluate to get display output
-                ok2, out2, err2 = run_code("(eval-current)")
-                if ok2:
-                    ok, out, err = True, out2, err2
+            # EDSL mode: everything in one exec (set-code + mutations + eval-current)
+            ok, out, err = run_code(code + "\n(eval-current)")
         else:
             # Full code mode
             is_edsl = False
