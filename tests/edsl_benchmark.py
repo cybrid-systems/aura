@@ -402,38 +402,23 @@ def get_api_ref():
 # ── Prompt 模板 ── 解耦为字典，方便增删改 ────────────
 PROMPT_SECTIONS = {
     "identity": (
-        "You are Aura Lisp — NOT Common Lisp/Racket/Scheme.\n"
-        "Return ONLY valid Aura code ending with (display ...).\n"
-        "Full spec: docs/design/aura_language_spec.md\n"
-        "\n"
-        "=== CRITICAL (models get these wrong) ===\n"
-        "  (display h) with hash shows <hash[N]>, NOT keys. Use (hash-keys h).\n"
-        "  hash-set! MUTATES in-place, returns void — NOT the hash\n"
-        "  string->list returns INTEGER char codes: 40=( 41=)  91=[ 93=]  123={ 125=}\n"
-        "  Compare (= c 40) NOT (char=? c #\\().\n"
-        "  Use (c-func -1 \"name\" \"sig\") — NOT (c-func 'int ...). lib-id -1 = RTLD_DEFAULT.\n"
-        "  Use (modulo n i) NOT (mod n i).\n"
+        "You are Aura Lisp. Write valid Aura code ending with (display ...).\n"
+        "Aura is like Scheme, but: (display h) shows <hash[N]>, not keys — use (hash-keys h).\n"
+        "hash-set! mutates in-place and returns void. Use (c-func -1 \"name\" \"sig\") for C FFI.\n"
         "\n"
     ),
     "stdlib": (
-        "\n=== STD LIB (require std/name all:) ===\n"
-        "  list: filter, map, foldl, range, sort, take, drop, length, reverse, zip\n"
-        "  string: string-split, string-trim, string-join\n"
-        "  hash: hash-keys, hash-values, hash-has-key?, hash-ref, hash-set!\n"
-        "  iter: for-each, for\n"
-        "  math: square, sqrt, factorial\n"
-        "  tcp: tcp-connect, tcp-send, tcp-recv, tcp-close\n"
-        "  ffi: (c-func -1 \"name\" \"(Args) -> Ret\")\n"
-        "  edsl: (set-code)(query:find)(mutate:rebind)(eval-current)\n"
+        "Stdlib (require std/name all:): list(filter map foldl range sort take drop length reverse zip)\n"
+        "  string(split trim join) hash(keys values has-key? ref set!) iter(for-each for)\n"
+        "  math(square sqrt factorial) ffi(c-func -1 \"name\" \"sig\") edsl(set-code query mutate eval)\n"
+        "\n"
     ),
     "examples": (
-        "\n=== QUICK REFERENCE ===\n"
-        "  (define (f x) (* x 2)) (display (f 5))        ; function\n"
-        "  (let loop ((i 0) (s 0)) (if (= i 5) s (loop (+ i 1) (+ s i))))\n"
-        "  (require std/list all:)(filter odd? (list 1 2 3))\n"
-        "  (require std/hash all:)(hash-keys (hash \"a\" 1))\n"
-        "  (for-each (lambda (x) (display x)) (list 1 2)) ; require std/iter\n"
-        "  (define str-fn (c-func -1 \"strlen\" \"(String) -> Int\"))\n"
+        "(define (f x) (* x 2)) (display (f 5))\n"
+        "(let loop ((i 0) (s 0)) (if (= i 5) s (loop (+ i 1) (+ s i))))\n"
+        "(require std/list all:)(filter odd? (list 1 2 3))\n"
+        "(require std/hash all:)(hash-keys (hash \"a\" 1))\n"
+        "(for-each (lambda (x) (display x)) (list 1 2))  ; require std/iter\n"
     ),
 }
 
