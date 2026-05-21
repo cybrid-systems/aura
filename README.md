@@ -131,6 +131,7 @@ LLM_API_KEY="***" python3 tests/edsl_benchmark.py --max-attempts 5
 ## 文档
 
 - [docs/tutorial.md](docs/tutorial.md) — 10 分钟入门
+- [docs/design/aura_language_spec.md](docs/design/aura_language_spec.md) — Aura 语言规格（LLM 代码生成参考）
 - [docs/roadmap.md](docs/roadmap.md)
 - [docs/known_issues.md](docs/known_issues.md)
 - [design repo](https://github.com/cybrid-systems/ai-programming-language-design) — architecture / type system / reflection
