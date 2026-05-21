@@ -120,8 +120,6 @@ class ServeClient:
                     chunk = os.read(fd, 4096)
                     if chunk:
                         buf += chunk.decode("utf-8", errors="replace")
-                        if "\n" in buf:
-                            break
                 except (BlockingIOError, OSError):
                     pass
                 time.sleep(1)
@@ -136,16 +134,16 @@ class ServeClient:
             except:
                 pass
 
-        lines_list = buf.split("\n")
-        first_line = lines_list[0] if lines_list else ""
-        stripped = first_line.strip()
+        # Find the JSON suffix - always the last {...} block
+        stripped = buf.strip()
         if not stripped:
             return False, "", "empty response"
         if stripped.startswith("{"):
             json_line = stripped
             display_text = ""
         else:
-            brace = stripped.find("{")
+            # Find LAST { (HTTP response body may contain {})
+            brace = stripped.rfind("{")
             if brace >= 0:
                 display_text = stripped[:brace]
                 json_line = stripped[brace:]
@@ -194,7 +192,8 @@ class ServeClient:
             json_line = stripped
             display_text = ""
         else:
-            brace = stripped.find("{")
+            # Find LAST { (HTTP response body may contain {})
+            brace = stripped.rfind("{")
             if brace >= 0:
                 display_text = stripped[:brace]
                 json_line = stripped[brace:]
@@ -471,11 +470,17 @@ def build_adaptive_feedback(name, actual_output, expected, stdlib,
         "- Keep the existing function structure. Only modify display/output code.")
 
     fb = [
-        "=== OUTPUT MISMATCH ===",
+        "=== " + ("COMPILE ERROR" if actual_output.startswith("unbound") or actual_output.startswith("parse") or actual_output.startswith("type error") else "OUTPUT MISMATCH") + " ===",
         "Phase: " + p + " (ratio: " + str(ratio) + ")",
         "Expected to contain: " + str(expected),
         "Actual output: " + actual_output[:300],
     ]
+    if actual_output.startswith("unbound variable"):
+        fb.append("The variable you used doesn't exist in Aura.")
+        fb.append("Check the system prompt for available primitives and stdlib functions.")
+        fb.append("Common mistakes: hash-ref, hash-set, hash->list -> use hash-ref, hash-set!, hash-keys")
+    if actual_output.startswith("parse error"):
+        fb.append("Syntax error: check parentheses and string escaping.")
     if missing_kws:
         fb.append("Missing keywords: " + ", ".join(missing_kws[:5]))
 
