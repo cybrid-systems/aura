@@ -130,11 +130,9 @@ LLM 做方向指引（蚁后），Aura EDSL 做局部搜索（工蚁），距离
 
 | 模型 | 通过率 | 失败 | 控制器版本 |
 |------|:-----:|:----:|:---------:|
-| **DeepSeek v4 Flash** | **56/57 (98%)** | table-lookup (LLM 方差) | 基础 PID |
-| **DeepSeek v4 Flash** | **56/57 (98%)** | valid-parens (serve 挂起) | 蚁群 v1 |
-| **DeepSeek v4 Flash** | **53/57 (93%)** | contains-duplicate, deep-equal, list-partition, primes-list | 蚁群 v1+sleepfix |
-| **MiniMax-M2.7** | **56/57 (98%)** | table-lookup (unbound) | 蚁群 v1 |
-| **MiniMax-M2.7** | **48/57 (84%)** | 9 failures | 蚁群 v1+sleepfix |
+| **DeepSeek v4 Flash** | **56/57 (98%)** | table-lookup | 基础 PID |
+| **DeepSeek v4 Flash** | **52/57 (91%)** | deep-equal, ffi-strlen, merge-sorted, primes-list, valid-parens | 蚁群 A/B/C/D |
+| **MiniMax-M2.7** | **51/57 (89%)** | binary-search, deep-equal, edsl-set-code, is-anagram, majority-element, primes-list | 蚁群 A/B/C/D |
 
 注：方差在不同 run 之间漂移 1-4 个任务。Phase 4 目标：通过 EDSL 级变异将方差消除到 <2%。
 

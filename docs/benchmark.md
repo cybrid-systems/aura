@@ -7,10 +7,10 @@
 
 | 模型 | `--max-attempts` | 通过率 | 总耗时 | 1次通过 | 多轮修复 | 失败 |
 |------|:--------------:|:-----:|:-----:|:------:|:-------:|:----:|
-| **DeepSeek v4 Flash** | 5 | **56/57 (98%)** | 11min | 45 | 11 | table-lookup |
-| **MiniMax-M2.7** | 5 | **54/57 (94%)** | 14min | 44 | 10 | contains-duplicate, memoize, primes-list |
+| **DeepSeek v4 Flash** | 5 | **52/57 (91%)** | ~15min | 40 | 7 | deep-equal, ffi-strlen, merge-sorted, primes-list, valid-parens |
+| **MiniMax-M2.7** | 5 | **51/57 (89%)** | ~20min | 41 | 10 | binary-search, deep-equal, edsl-set-code, is-anagram, majority-element, primes-list |
 
-**所有失败均为 LLM 语法/语义偏差，非基础设施问题。**
+**所有失败均为 LLM 方差（不同 run 漂移 2-5 个任务）。零 serve 崩溃，零死锁，零 "no JSON"。**
 零 serve 崩溃，零死锁，零 "no JSON"。
 
 ### 架构
