@@ -42,6 +42,7 @@ target_sources(aura PRIVATE
     src/compiler/aura_jit_bridge.cpp
     src/main.cpp)
 
+
 # GCC 16 has an ICE in ealias pass at -O3 on x86_64 for cache_impl.cpp (memcpy-heavy)
 # see https://gcc.gnu.org/bugzilla/show_bug.cgi?id=nonnull_arg_p_ice
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "16")

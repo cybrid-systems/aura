@@ -3,6 +3,7 @@ module;
 #include <unistd.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include "src/reflect/reflect.hh"
 module aura.compiler.cache;
 
 namespace aura::compiler::cache {
