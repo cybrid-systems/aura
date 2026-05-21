@@ -209,7 +209,27 @@ def _rank_mutation_types(serve):
 
 ---
 
-### Phase C: 完整 Aura 殖民地搜索 (中等工作量)
+### Phase C: 最少 IPC 殖民地搜索 (实用版本)
+
+**设计限制：** Aura 的 `eval-current` 将 display 输出直接写到 stdout，
+无法从 Aura 函数内部捕获。纯 Aura 搜索循环不可行。
+
+**替代方案：** 保持 Python 编排层，但把整个搜索循环封装为
+一个 serve.exec 调用。serve 端返回全部结果。
+
+```python
+# 当前: 每变体 1 次 serve.exec = 20 次 IPC
+for variant in variants:
+    ok, out = serve.exec(variant)
+
+# Phase C: 1 次 serve.exec, 服务端做批量测试
+# 但受限于 eval-current 输出捕获, 实际等效于 Phase A
+```
+
+**实际收益：** Phase A 已经做到每变体 <1ms（EDSL 增量编译），
+IPC 开销 (20ms) 成为瓶颈。Phase C 目标：1 次 IPC 完成搜索。
+需要 Aura 新增 `eval-current-return-output` 原语，
+或修改 `display` 行为支持输出捕获。
 
 **目标：** 把搜索循环从 Python 移到 Aura，一次 serve.exec 完成。
 
