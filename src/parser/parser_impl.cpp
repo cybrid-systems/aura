@@ -771,22 +771,41 @@ NodeId FlatParser::parse_cast() {
 NodeId FlatParser::parse_check() {
     // Syntax: (check expr : TypeName)
     // Creates TypeAnnotation node: child[0]=expr, sym_id=TypeName
+    // If not followed by ': TypeName', treat as regular function call
     auto tok = lexer_->consume(); // 'check'
     auto expr = parse_expr();
     if (expr == NULL_NODE) { skip_rparen(); return NULL_NODE; }
 
-    // Parse optional : then type name
+    // Verify this is truly (check ... : Type), not (check x) as function call
     if (lexer_->peek().kind == TokenKind::Identifier && lexer_->peek().text == ":") {
-        lexer_->consume(); // :
+        lexer_->consume(); // ':'
+        auto type_tok = lexer_->peek();
+        if (type_tok.kind == TokenKind::Identifier) {
+            // Consume the type name
+            auto type_sym = pool_.intern(type_tok.text);
+            lexer_->consume(); // TypeName
+            if (lexer_->peek().kind == TokenKind::RParen) lexer_->consume();
+            auto id = flat_.add_type_annotation(type_sym, expr);
+            flat_.set_loc(id, tok.line, tok.column);
+            return id;
+        }
+        // Token after : is not an identifier — treat check as function call
     }
-
-    auto type_tok = lexer_->peek();
-    auto type_sym = pool_.intern(type_tok.text);
-    lexer_->consume(); // TypeName
-
+    
+    // Not a valid type annotation — treat (check ...) as regular function call
+    // Build a Call node with 'check' as the operator
+    auto check_sym = pool_.intern("check");
+    auto func = flat_.add_variable(check_sym);
+    std::vector<NodeId> args;
+    args.push_back(expr);
+    // Collect any remaining args until )
+    while (lexer_->peek().kind != TokenKind::RParen && !lexer_->eof()) {
+        auto arg = parse_expr();
+        if (arg == NULL_NODE) break;
+        args.push_back(arg);
+    }
     if (lexer_->peek().kind == TokenKind::RParen) lexer_->consume();
-
-    auto id = flat_.add_type_annotation(type_sym, expr);
+    auto id = flat_.add_call(func, args);
     flat_.set_loc(id, tok.line, tok.column);
     return id;
 }

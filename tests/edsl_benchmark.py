@@ -359,7 +359,16 @@ def extract_code(text):
                                      "set-code", "query:", "mutate:", "typecheck", "eval-current",
                                      "c-load", "c-func", "tcp-connect", "http-post")):
                 return c
-    # Validate: must start with Aura syntax ( or digit or quote, not plain text
+    # Strip leading garbage words (MiniMax sometimes puts "clojure" before code)
+    lines = text.strip().split('\n')
+    while lines and not lines[0].startswith(('(', '#', ';', '(require', '(define', '(display')):
+        if any(kw in lines[0] for kw in ('define', 'require', '(+', 'lambda', 'import', 'set-code')):
+            break  # keyword found in the word, keep it
+        if len(lines[0]) < 30 and not lines[0].startswith(('"', "'")):
+            lines.pop(0)  # short non-Aura word → garbage
+        else:
+            break
+    text = '\n'.join(lines)
     stripped = text.strip()
     if stripped and not stripped.startswith(('(', '#', '"', "'", '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9')):
         return ''
