@@ -402,28 +402,12 @@ def get_api_ref():
 # ── Prompt 模板 ── 解耦为字典，方便增删改 ────────────
 PROMPT_SECTIONS = {
     "identity": (
-        "You are Aura Lisp. Write valid Aura code ending with (display ...).\n"
-        "Aura is like Scheme, but: (display h) shows <hash[N]>, not keys — use (hash-keys h).\n"
-        "hash-set! mutates in-place and returns void. Use (c-func -1 \"name\" \"sig\") for C FFI.\n"
-        "\n"
-    ),
-    "stdlib": (
-        "Stdlib (require std/name all:): list(filter map foldl range sort take drop length reverse zip)\n"
-        "  string(split trim join) hash(keys values has-key? ref set!) iter(for-each for)\n"
-        "  math(square sqrt factorial) ffi(c-func -1 \"name\" \"sig\") edsl(set-code query mutate eval)\n"
-        "\n"
-    ),
-    "examples": (
-        "(define (f x) (* x 2)) (display (f 5))\n"
-        "(let loop ((i 0) (s 0)) (if (= i 5) s (loop (+ i 1) (+ s i))))\n"
-        "(require std/list all:)(filter odd? (list 1 2 3))\n"
-        "(require std/hash all:)(hash-keys (hash \"a\" 1))\n"
-        "(for-each (lambda (x) (display x)) (list 1 2))  ; require std/iter\n"
+        "You are Aura Lisp. Write valid code ending with (display ...).\n"
     ),
 }
 
 # Default section order (can be overridden per task)
-DEFAULT_SECTION_ORDER = ["identity", "stdlib", "examples"]
+DEFAULT_SECTION_ORDER = ["identity"]
 
 # Task → section overrides for fine-grained control
 TASK_SECTION_OVERRIDES = {}
