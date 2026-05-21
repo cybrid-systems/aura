@@ -14,7 +14,7 @@
   LLM_API_KEY="***" python3 tests/edsl_benchmark.py --rounds 3 --max-attempts 5 --json
   LLM_MODEL=minimax-m2.7 LLM_API_KEY="***" python3 tests/edsl_benchmark.py --max-attempts 5
 """
-import subprocess, json, sys, os, time, re, http.client, urllib.parse
+import subprocess, json, sys, os, time, re, http.client, urllib.parse, fcntl
 from pathlib import Path
 from collections import defaultdict
 
@@ -94,20 +94,81 @@ class ServeClient:
         time.sleep(0.3)
 
     def exec(self, code, read_timeout=15):
-        """Execute Aura code via serve. Returns (ok, output, error).
-        Timeout kills serve if no response within read_timeout seconds."""
+        """Execute code via serve with non-blocking read timeout.
+        Kills and restarts serve on timeout. No threads."""
         if not code:
             return False, "", "no code"
-        import threading
-        self._gen += 1
-        my_gen = self._gen
         if self.proc.poll() is not None:
             self._restart()
             return False, "", "serve restarted (was dead)"
+
         self.proc.stdin.write(json.dumps({"cmd": "exec", "code": code}) + "\n")
         self.proc.stdin.flush()
-        result = []
-        done = threading.Event()
+
+        # Non-blocking read loop with timeout
+        fd = self.proc.stdout.fileno()
+        old_flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, old_flags | os.O_NONBLOCK)
+
+        buf = ""
+        try:
+            for _ in range(read_timeout):
+                if self.proc.poll() is not None:
+                    self._restart()
+                    return False, "", "serve died, restarted"
+                try:
+                    chunk = os.read(fd, 4096)
+                    if chunk:
+                        buf += chunk.decode("utf-8", errors="replace")
+                        if "\n" in buf:
+                            break
+                except (BlockingIOError, OSError):
+                    pass
+                time.sleep(1)
+            else:
+                self.proc.kill()
+                self.proc.wait()
+                self._restart()
+                return False, "", "serve hang (" + str(read_timeout) + "s), restarted"
+        finally:
+            try:
+                fcntl.fcntl(fd, fcntl.F_SETFL, old_flags)
+            except:
+                pass
+
+        lines_list = buf.split("\n")
+        first_line = lines_list[0] if lines_list else ""
+        stripped = first_line.strip()
+        if not stripped:
+            return False, "", "empty response"
+        if stripped.startswith("{"):
+            json_line = stripped
+            display_text = ""
+        else:
+            brace = stripped.find("{")
+            if brace >= 0:
+                display_text = stripped[:brace]
+                json_line = stripped[brace:]
+            else:
+                return False, stripped, "no JSON in response"
+        try:
+            resp = json.loads(json_line)
+        except json.JSONDecodeError:
+            return False, stripped, "invalid JSON"
+        if resp.get("status") == "ok":
+            val = resp.get("value", "")
+            if display_text and val in ("()", ""):
+                out = display_text
+            elif not display_text and val in ("()", ""):
+                out = ""
+                return False, out, "empty output (only void return)"
+            elif display_text:
+                out = display_text + " " + val
+            else:
+                out = val
+            return True, out.strip(), ""
+        return False, display_text, resp.get("msg", str(resp))
+
         def reader():
             try:
                 line = self.proc.stdout.readline()
@@ -142,7 +203,7 @@ class ServeClient:
                 if stripped and not stripped.startswith("{"):
                     try:
                         if self.proc.stderr:
-                            import time
+                            pass  # time is already imported globally
                             time.sleep(0.2)
                             err_all = self.proc.stderr.read()
                             if err_all and err_all.strip():
