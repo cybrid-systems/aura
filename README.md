@@ -85,14 +85,52 @@ lib/std/       19 个库                             ~1k
 tests/         bash(117)+unit+integ+bench+agent    ~6k
 ```
 
-## 基准
+## 控制器基准 — LLM 多轮修复
 
-### EDSL 模型能力基准 (57 任务)
-- **DeepSeek v4 Flash**: 57/57 (100%) ✅
-- **MiniMax-M2.7**: 57/57 (100%) ✅
-- 运行：`LLM_API_KEY="..." python3 tests/edsl_benchmark.py --fix --max-attempts 5`
-- 多模型：`LLM_MODEL=deepseek-v4-flash,minimax-m2.7 python3 tests/edsl_benchmark.py --fix --max-attempts 5`
-- [详情](docs/benchmark.md) — 覆盖算术/函数/列表/哈希/递归/FFI/EDSL/TCP/LeetCode 等 9 个能力域
+Aura 使用 PID 控制理论指导 LLM 逐步修正代码。
+控制器测量输出与目标的距离，决定粗粒度（完整重写）或细粒度（EDSL 定点修改）策略。
+
+```bash
+        Goal          LLM          Aura         Output
+          │            │             │             │
+          ├── 给目标 ─→│             │             │
+          │            ├── 生成 ────→│             │
+          │            │             ├── 编译运行 ─→│
+          │            │             │             ├── 检查
+          │            │             │             │   ↓
+          │            │             │    measure-distance()
+          │            │             │    → coarse / fine / putt
+          │            │             │             │
+          │←── 自适应反馈 ────────────┘             │
+          │  temperature / tokens / API ref / trace │
+          └─────────────────────────────────────────┘
+```
+
+### Demo: is-anagram 多轮修复
+
+`is-anagram` 判断两个字符串是否为变位词，需要 `(require std/hash all:)` 和 `hash-set!`。
+LLM 用了 5 轮才完全正确：
+
+| 轮次 | 输出 | 控制器行为 |
+|:---:|------|-----------|
+| 1 | ❌ `hash-ref` 拼写错 | coarse：编译错误反馈 |
+| 2 | ❌ 输出不匹配 | fine：missing keywords 诊断 |
+| 3-4 | ❌ 接近但不对 | fine：结构化诊断 + API ref 注入 |
+| **5** | **✅ #t** | fine→putt |
+
+```bash
+# 运行完整基准测试
+LLM_API_KEY="..." python3 tests/edsl_benchmark.py --max-attempts 5
+```
+
+### 多模型对比
+
+| 模型 | 通过率 | 训练前 |
+|------|:-----:|:------:|
+| **DeepSeek v4 Flash** | **57/57 (100%)** | 96% |
+| **MiniMax-M2.7** | **57/57 (100%)** | 81% |
+
+[详情 → docs/benchmark.md](docs/benchmark.md)
 
 ### LLM 驱动 Fuzz 测试
 - [tests/test_fuzz.py](tests/test_fuzz.py) — 用 LLM 生成代码检测编译器崩溃/信号/timeout
