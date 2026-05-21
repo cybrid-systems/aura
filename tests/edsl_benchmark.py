@@ -369,7 +369,7 @@ def build_sys_prompt(stdlib, api_ref, task_name=""):
         "To show hash contents, use (hash-keys h) or (hash-values h).\n"
         "  (display (hash-keys (hash \"a\" 1 \"b\" 2)))  ; shows (\"a\" \"b\")\n"
         "\n"
-        "=== LOOPING ===\n"
+        "=== LOOPING (IMPORTANT) ===\n"        "! cond with multiple expressions in one clause has scope issues with named-let.\n"        "! Prefer: (if cond (begin (side-effect...) (recur ...)))\n"        "! Over:    (cond (#t (side-effect...) (recur ...)))\n"        "! Explicit begin in cond also works: (cond (#t (begin ...)))\n"        "  (let loop ((i 0) (acc 0))       ; named let\n"
         "  (let loop ((i 0) (acc 0))       ; named let\n"
         "    (if (= i 10) acc\n"
         "      (loop (+ i 1) (+ acc i))))\n"
