@@ -116,8 +116,14 @@ class ServeClient:
                 return False, stripped, "invalid JSON"
             if resp.get("status") == "ok":
                 val = resp.get("value", "")
-                out = (display_text + " " + val).strip() if display_text else val
-                return True, out, ""
+                # Skip void () return value appended to display output
+                if display_text and val in ("()", ""):
+                    out = display_text
+                elif display_text:
+                    out = display_text + " " + val
+                else:
+                    out = val
+                return True, out.strip(), ""
             return False, display_text, resp.get("msg", str(resp))
         except Exception as e:
             return False, "", str(e)
@@ -440,16 +446,34 @@ def get_execution_trace(code_str, timeout=10):
 
 
 def run_single_task(model, base_url, api_key, name, prompt, expected, stdlib, api_ref, serve=None):
-    """Run one task: Python LLM calls + serve (CaaS) compilation.
+    """Two-phase retry: coarse=full code, fine/putt=EDSL mutations.
     serve: ServeClient instance from main().
     Falls back to direct subprocess if serve is None."""
     max_att = MAX_ATTEMPTS
     total_llm_time = 0.0
     sys_prompt = build_sys_prompt(stdlib, api_ref, task_name=name)
+    # Fresh serve session per task
+    if serve:
+        serve.proc.stdin.write('{"cmd":"session","name":"' + name + '"}\n')
+        serve.proc.stdin.flush()
+        serve.proc.stdout.readline()
     messages = [
         {"role": "system", "content": sys_prompt},
         {"role": "user", "content": prompt}
     ]
+    last_full_code = ""
+    phase = "coarse"
+
+    def run_code(code):
+        if serve:
+            return serve.exec(code)
+        try:
+            r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=10)
+            return r.returncode == 0, r.stdout.strip(), r.stderr.strip()
+        except subprocess.TimeoutExpired:
+            return False, "", "timeout"
+        except FileNotFoundError:
+            return False, "", "binary not found"
 
     for attempt in range(max_att):
         t0 = time.time()
@@ -457,31 +481,33 @@ def run_single_task(model, base_url, api_key, name, prompt, expected, stdlib, ap
             resp = llm_complete(model, base_url, api_key, messages)
         except Exception as e:
             return False, "", str(e), total_llm_time, attempt + 1
-        llm_t = time.time() - t0
-        total_llm_time += llm_t
+        total_llm_time += time.time() - t0
 
         code = extract_code(resp)
         if not code:
             if attempt >= max_att - 1:
                 return False, "", "no code extracted", total_llm_time, attempt + 1
             messages.append({"role": "assistant", "content": resp or ""})
-            messages.append({"role": "user", "content":
-                "No valid Aura code found. Output ONLY Aura code, no markdown."})
+            messages += [{"role": "user", "content":
+                "No valid Aura code found. Output ONLY Aura code, no markdown."}]
             continue
 
-        # Compile via serve (or fallback direct subprocess)
-        if serve:
-            ok, out, err = serve.exec(code)
+        # Detect mode: set-code means EDSL mutation, otherwise full program
+        is_edsl = code.strip().startswith("(set-code")
+        if is_edsl and last_full_code:
+            # EDSL mode: send the full EDSL expression to serve
+            ok, out, err = run_code(code)
+            if ok:
+                # Now evaluate to get display output
+                ok2, out2, err2 = run_code("(eval-current)")
+                if ok2:
+                    ok, out, err = True, out2, err2
         else:
-            try:
-                r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=10)
-                ok, out, err = r.returncode == 0, r.stdout.strip(), r.stderr.strip()
-            except subprocess.TimeoutExpired:
-                if attempt >= max_att - 1:
-                    return False, "", "timeout", total_llm_time, attempt + 1
-                continue
-            except FileNotFoundError:
-                return False, "", "aura binary not found", total_llm_time, attempt + 1
+            # Full code mode
+            is_edsl = False
+            ok, out, err = run_code(code)
+            if ok:
+                last_full_code = code
 
         success = ok and check_success(out, expected)
         if success:
@@ -491,15 +517,40 @@ def run_single_task(model, base_url, api_key, name, prompt, expected, stdlib, ap
             return False, out if ok else "", err or out, total_llm_time, attempt + 1
 
         actual_output = out if ok else (err or "exit code, no output")
-        ada_fb, p, temp_v, tokens_v = build_adaptive_feedback(
+
+        # Build adaptive feedback (includes phase detection)
+        ada_fb, phase, temp_v, tokens_v = build_adaptive_feedback(
             name, out if ok else "", expected, stdlib,
             sys_prompt, prompt, current_src=code)
-        correction = (
-            "Your previous code FAILED. " + ("(compile error)" if not ok else "(output mismatch)") + "\n"
-            f"Aura produced: {actual_output[:300]}\n\n"
-            + ada_fb + "\n\n"
-            "Output ONLY corrected Aura code, nothing else."
-        )
+
+        # Build correction prompt based on phase
+        if phase in ("fine", "putt") and last_full_code:
+            # EDSL mode: tell LLM to output mutations
+            edsl_hint = (
+                "\n=== EDSL MODE ===\n"
+                "You are in fine-tuning phase. Output ONLY Aura EDSL code that:\n"
+                "1. Uses (set-code \"...\") to set the current source\n"
+                "2. Uses (query:find \"...\") to locate target nodes\n"
+                "3. Uses (mutate:rebind node-id \"new-code\") to change them\n"
+                "4. Uses (eval-current) to verify\n"
+                "Do NOT rewrite the entire program. Only modify the relevant parts.\n"
+                "Current code:\n" + last_full_code[:800] + "\n"
+            )
+            correction = (
+                "Your previous code FAILED (output mismatch).\n"
+                + ada_fb + "\n\n"
+                + edsl_hint + "\n\n"
+                "Output ONLY the EDSL mutation code, nothing else."
+            )
+        else:
+            # Coarse mode: full code rewrite (current behavior)
+            correction = (
+                "Your previous code FAILED. " + ("(compile error)" if not ok else "(output mismatch)") + "\n"
+                f"Aura produced: {actual_output[:300]}\n\n"
+                + ada_fb + "\n\n"
+                "Output ONLY corrected Aura code, nothing else."
+            )
+
         messages.append({"role": "assistant", "content": resp})
         messages.append({"role": "user", "content": correction})
 
