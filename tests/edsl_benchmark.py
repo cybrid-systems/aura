@@ -123,14 +123,14 @@ class ServeClient:
                 except (BlockingIOError, OSError):
                     pass
                 if buf and "\n" in buf:
-                    time.sleep(0.1)  # tiny extra wait for more data
+                    time.sleep(0.02)  # tiny extra wait for more data
                     try:
                         more = os.read(fd, 4096)
                         if more:
                             buf += more.decode("utf-8", errors="replace")
                     except: pass
                     break
-                time.sleep(1)
+                time.sleep(0.05)
             else:
                 self.proc.kill()
                 self.proc.wait()
