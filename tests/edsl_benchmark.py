@@ -625,12 +625,6 @@ def main():
         sys.exit(1)
 
     api_ref = get_api_ref()
-    serve = None
-    try:
-        serve = ServeClient()
-        print(f"   serve: {AURA} --serve (PID {serve.proc.pid})")
-    except Exception as e:
-        print(f"   serve startup failed: {e}, using subprocess fallback")
 
     mode_tag = f"  (intend mode: up to {MAX_ATTEMPTS} attempts)" if not EVOLVE_MODE else "  (evolve mode)"
 
@@ -658,12 +652,18 @@ def main():
         for name, prompt, expected, stdlib in TASKS:
             if filter_list and name not in filter_list:
                 continue
+            # Per-task serve process (57 tasks = 57 processes)
+            task_serve = None
+            try:
+                task_serve = ServeClient()
+            except Exception:
+                pass  # fallback to subprocess
             task_passes = 0
             print(f"\n  ── {name} ──")
             for round_i in range(1, ROUNDS + 1):
                 success, out, err, llm_t, attempts = run_single_task(
                     model, base_url, api_key, name, prompt, expected, stdlib, api_ref,
-                    serve=serve
+                    serve=task_serve
                 )
                 task_stats[name]["llm_times"].append(llm_t)
                 task_stats[name]["attempts"].append(attempts)
@@ -679,6 +679,8 @@ def main():
                     task_stats.setdefault("__errors__", []).append((name, etype, attempts, llm_t))
                 print(line)
                 sys.stdout.flush()
+            if task_serve:
+                task_serve.close()
 
             task_stats[name]["passes"] = task_passes
             task_stats[name]["total"] = task_stats[name]["passes"] + len(task_stats[name]["errors"])
@@ -772,8 +774,7 @@ def main():
         print(f"\n{'='*70}")
         print(json.dumps(output, indent=2))
 
-    if serve:
-        serve.close()
+
 
     print(f"\n{'='*70}")
     print("Done")
