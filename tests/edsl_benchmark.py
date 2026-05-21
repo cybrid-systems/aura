@@ -785,11 +785,45 @@ MAX_COLONY_VARIANTS = 25
 COLONY_VARIANT_TIMEOUT = 3
 COLONY_MAX_TIME = 6.0
 
-def internal_colony_search(serve, last_code, expected, phase):
-    """EDSL-based ant colony search with pheromone-guided prioritization.
-    Uses set-code + mutate:rebind + eval-current for function body mutations
-    (<1ms per variant), falls back to full code replacement for display changes.
-    Pheromone system tracks which mutation types are most effective."""
+# ── Phase D: PID-guided variant limits ──
+# putt: only try top-3 pheromone variants (nearby, fine-tuning only)
+# fine: try top-10 pheromone variants (some distance, broader search)
+# coarse: skip completely (too far, local mutations can't help)
+_PHASE_VARIANT_LIMITS = {"putt": 5, "fine": 12}
+
+# Global pheromone state for cross-task learning
+_COLONY_PHEROMONE = {"initialized": False}
+
+def _colony_load_pheromone(serve, task_name):
+    """Load pheromone table from cross-task state."""
+    global _COLONY_PHEROMONE
+    if _COLONY_PHEROMONE.get("initialized"):
+        # Already have state — import into this task's serve
+        export_json = _COLONY_PHEROMONE.get("export", "")
+        if export_json:
+            serve.exec('(require "std/ant" all:)(pheromone:import "' + export_json + '")')
+
+def _colony_save_pheromone(serve):
+    """Save pheromone table for next task."""
+    global _COLONY_PHEROMONE
+    _, phero_out, _ = serve.exec('(require "std/ant" all:)(display (pheromone:export))')
+    if phero_out:
+        # Extract just the JSON part (before the serve's JSON response)
+        brace = phero_out.rfind('{')
+        if brace >= 0:
+            phero_json = phero_out[brace:]
+            try:
+                json.loads(phero_json)
+                _COLONY_PHEROMONE["export"] = phero_json
+                _COLONY_PHEROMONE["initialized"] = True
+            except:
+                pass
+
+
+def internal_colony_search(serve, last_code, expected, phase, task_name=""):
+    """EDSL-based ant colony search with PID-guided pruning and cross-task learning.
+    Uses set-code + mutate:rebind + eval-current for function body mutations.
+    Pheromone system + PID phase limits determine search breadth."""
     if not serve or not last_code:
         return False, "", ""
     if phase == "coarse":
@@ -824,8 +858,10 @@ def internal_colony_search(serve, last_code, expected, phase):
         return len(rank)
     all_variants.sort(key=_variant_key)
     
-    # Cap variant count
-    candidates = all_variants[:MAX_COLONY_VARIANTS]
+    # PID-guided variant limit (Phase D)
+    pid_limit = _PHASE_VARIANT_LIMITS.get(phase, MAX_COLONY_VARIANTS)
+    max_var = min(pid_limit, MAX_COLONY_VARIANTS)
+    candidates = all_variants[:max_var]
     if not candidates:
         return False, "", "no variants"
     
@@ -847,6 +883,7 @@ def internal_colony_search(serve, last_code, expected, phase):
         mut_type = desc.split('[')[0] if '[' in desc else desc.split(' ')[0]
         if check_success(out, expected):
             serve.exec('(require "std/ant" all:)(pheromone:update "' + mut_type + '" 3.0)')
+            _colony_save_pheromone(serve)
             elapsed = time.time() - colony_start
             return True, out, f"colony[{desc}] in {elapsed:.1f}s ({tested}t, {edsl_tested}edsl/{full_tested}full)"
         if not best_out:
@@ -854,6 +891,8 @@ def internal_colony_search(serve, last_code, expected, phase):
     
     # Update pheromone for all failed variants
     serve.exec('(require "std/ant" all:)(pheromone:update "batch" -1.0)')
+    # Save pheromone state for cross-task learning
+    _colony_save_pheromone(serve)
     elapsed = time.time() - colony_start
     return False, best_out, f"colony:{tested}var/{elapsed:.1f}s/{edsl_tested}edsl+{full_tested}full"
 
@@ -971,8 +1010,10 @@ def run_single_task(model, base_url, api_key, name, prompt, expected, stdlib, ap
 
         # ── Ant colony: try local mutations (fine/putt) before LLM retry ──
         if phase in ("fine", "putt") and attempt == 0:
+            # Load cross-task pheromone knowledge before search
+            _colony_load_pheromone(serve, name)
             found, col_out, _ = internal_colony_search(
-                serve, last_full_code if last_full_code else code, expected, phase)
+                serve, last_full_code if last_full_code else code, expected, phase, task_name=name)
             if found:
                 return True, col_out, "", total_llm_time, attempt + 1
 
