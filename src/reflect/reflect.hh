@@ -375,8 +375,12 @@ void auto_serialize(std::vector<char>& buf, const T& obj) {
             break;
         }
         case MemberKind::Vector: {
-            // Vector: write count + elements (each needs type-specific serialization)
-            // At runtime, we don't know the element type — requires template approach
+            // Write vector: size (as u32) + raw elements
+            auto& vec = *reinterpret_cast<const std::vector<char>*>(field);
+            uint32_t sz = static_cast<uint32_t>(vec.size());
+            buf.insert(buf.end(), reinterpret_cast<char*>(&sz), reinterpret_cast<char*>(&sz) + 4);
+            if (!vec.empty())
+                buf.insert(buf.end(), vec.data(), vec.data() + vec.size());
             break;
         }
         case MemberKind::Other:
@@ -392,6 +396,65 @@ std::vector<char> auto_serialize(const T& obj) {
     buf.reserve(1024);
     auto_serialize(buf, obj);
     return buf;
+}
+
+
+// ── auto_deserialize<T> — binary deserialization (stub) ──
+
+template <typename T>
+T auto_deserialize(const std::vector<char>& buf, std::size_t& pos) {
+    T obj{};
+    constexpr auto members = reflect_members<T>();
+    auto* base = reinterpret_cast<char*>(&obj);
+    for (auto& m : members) {
+        auto* field = base + m.offset;
+        switch (m.kind) {
+        case MemberKind::Int8:
+        case MemberKind::UInt8:
+            std::memcpy(field, &buf[pos], 1); pos += 1; break;
+        case MemberKind::Int16:
+        case MemberKind::UInt16:
+            std::memcpy(field, &buf[pos], 2); pos += 2; break;
+        case MemberKind::Int32:
+        case MemberKind::UInt32:
+        case MemberKind::Float:
+            std::memcpy(field, &buf[pos], 4); pos += 4; break;
+        case MemberKind::Int64:
+        case MemberKind::UInt64:
+        case MemberKind::Double:
+            std::memcpy(field, &buf[pos], 8); pos += 8; break;
+        case MemberKind::Bool:
+            *reinterpret_cast<bool*>(field) = buf[pos++] != 0;
+            break;
+        case MemberKind::String: {
+            uint32_t len; std::memcpy(&len, &buf[pos], 4); pos += 4;
+            auto& s = *reinterpret_cast<std::string*>(field);
+            s.assign(&buf[pos], &buf[pos + len]); pos += len;
+            break;
+        }
+        case MemberKind::Array: {
+            std::memcpy(field, &buf[pos], m.elem_size * m.array_len);
+            pos += m.elem_size * m.array_len;
+            break;
+        }
+        case MemberKind::Vector: {
+            uint32_t sz; std::memcpy(&sz, &buf[pos], 4); pos += 4;
+            auto& vec = *reinterpret_cast<std::vector<char>*>(field);
+            vec.assign(&buf[pos], &buf[pos + sz]); pos += sz;
+            break;
+        }
+        case MemberKind::Other:
+        case MemberKind::Unknown:
+            break;
+        }
+    }
+    return obj;
+}
+
+template <typename T>
+T auto_deserialize(const std::vector<char>& buf) {
+    std::size_t pos = 0;
+    return auto_deserialize<T>(buf, pos);
 }
 
 } // namespace aura::reflect
