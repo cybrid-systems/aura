@@ -93,11 +93,10 @@ Aura 编译器用 Aura 写。等前面稳定后再启。
 - 闭环 ✅: evolved hints 注入下一轮 system prompt
 - Phase 4: 多意图协作与意图树（远期）
 
-### 自适应 Intend (PID 控制 ✅)
+### 自适应 Intend + 蚁群控制器 (PID 控制 ✅)
 
-[自适应 Intend 设计文档](design/adaptive_intend_pid.md)
-
-**核心思想**：高尔夫隐喻 + 控制理论。误差大→高增益（完整重写），误差小→低增益（EDSL 定点修改）。
+**核心思想**：高尔夫隐喻 + 控制理论 + 蚁群算法。
+LLM 做方向指引（蚁后），Aura EDSL 做局部搜索（工蚁），距离反馈做信息素。
 
 #### Phase 1: 距离度量 + 结构化诊断 ✅
 - [x] `measure-distance()` — rc + 输出匹配率 → phase (coarse/fine/putt)
@@ -105,31 +104,47 @@ Aura 编译器用 Aura 写。等前面稳定后再启。
 - [x] `current-source` 捕获 → LLM 能看到自己写的代码
 - [x] 回路闭环：3 次 retry 带结构化反馈 + `<hash[N]>` 告警
 
-#### Phase 2: 两阶段 prompt 切换（~3h）
-- [ ] 定义 coarse / fine 两套 `__fix__` template
-- [ ] Python 层策略切换逻辑（按 `measure_distance` 结果）
-- [ ] 滞后保护防止震荡
-- 预期：53-55/57
-
-#### Phase 3: API Reference 注入 ✅
-- [x] lib/std/adaptive.aura 的 get-api-ref 覆盖 6 个模块
-- [x] retry 时按 stdlib 注入 (hash/list/iter/json/llm/socket)
+#### Phase 2: 两阶段 prompt 切换 ✅
+- [x] coarse / fine 自适应 temperature/tokens 控制
+- [x] API Reference 注入 (get-api-ref 覆盖 6 个模块)
 - [x] Common Pitfalls (display hash, modulo vs mod, > vs >=)
+- [x] Execution trace 注入 (primes-list/quicksort/prime-test/tcp-connect)
 
-#### Phase 4: EDSL 定点修改 / putt 阶段（~4h）
-- [ ] `query:find` + `mutate:rebind` 表达式级修改
-- [ ] putt fixer template (temperature=0.1, max_tokens=1024)
-- [ ] AST diff 生成
-- 预期：56-57/57
+#### Phase 3: 蚁群控制器 (Python 级) ✅
+- [x] `internal_colony_search()` — Python 端局部变异搜索
+- [x] `_find_mutables()` — 扫描代码表面的数值/操作符/display/函数
+- [x] `_gen_variants()` — 生成 20+ 种局部变体
+- [x] PID 集成：fine/putt 时先殖民地搜索，失败再 LLM
+- [x] 安全限制：每变体 3s 超时，总共 8s 限时，20 变体上限
+- [x] Scheme 兼容层：first/rest/cadr/odd?/even? 等 serve 预定义
+
+#### Phase 4: 蚁群控制器 (Aura 级) — 设计完成，待实现
+- [ ] EDSL 化变异：`set-code + mutate:* + eval-current` 代替字符串替换
+- [ ] `lib/std/ant.aura`：信息素系统 + 节点扫描 + 变异生成
+- [ ] `colony:search()`：纯 Aura 搜索循环，1 次 IPC 代替 20 次
+- [ ] PID 裁剪：按信息素排序 + 动态限制搜索深度
+- [ ] 跨任务信息素持久化：`pheromone:export/import`
+- [ ] 预期：每变体成本从 20ms → <1ms，搜索容量从 20 → 1000+
+
+### 当前 Benchmark 结果
+
+| 模型 | 通过率 | 失败 | 控制器版本 |
+|------|:-----:|:----:|:---------:|
+| **DeepSeek v4 Flash** | **56/57 (98%)** | table-lookup (LLM 方差) | 基础 PID |
+| **DeepSeek v4 Flash** | **56/57 (98%)** | valid-parens (serve 挂起) | 蚁群 v1 |
+| **DeepSeek v4 Flash** | **53/57 (93%)** | contains-duplicate, deep-equal, list-partition, primes-list | 蚁群 v1+sleepfix |
+| **MiniMax-M2.7** | **56/57 (98%)** | table-lookup (unbound) | 蚁群 v1 |
+| **MiniMax-M2.7** | **48/57 (84%)** | 9 failures | 蚁群 v1+sleepfix |
+
+注：方差在不同 run 之间漂移 1-4 个任务。Phase 4 目标：通过 EDSL 级变异将方差消除到 <2%。
 
 ---
 
 ## 短期改善 (1-3h/each)
 
-- JIT EvalValue 兼容: Bool/Pair/String 正确编码 → auto-JIT 覆盖全量
-- stdlib 补全: json/validate/struct 生产级
-- FFI: JIT 符号表集成 → 零开销 C 调用
-- `--intend` 多轮聚合：`--rounds N` 在 intend 模式输出稳定度报告
+- EDSL 化殖民地搜索：`set-code + mutate:* + eval-current` 管道
+- `lib/std/ant.aura`：信息素表 + 节点扫描 + colony:search
+- 跨任务信息素持久化
 - 扩 benchmark: 加入 LeetCode 风格任务，覆盖更多能力域
 
 ---
@@ -146,25 +161,12 @@ Aura 编译器用 Aura 写。等前面稳定后再启。
 | 05-19 | C FFI | dlopen/dlsym, marshalling, JIT symbol |
 | 05-20 | EDSL Agent Benchmark | 17→24 stable, 多轮聚合+迭代修正 |
 | 05-20 | Intent Orchestration Design | intend 原语设计文档 |
-| 05-20 | E1: intend 原语 ✅ | (intend goal [max-attempts]) + 7 tests |
-| 05-20 | E2: strategy system ✅ | define-strategy + timeline + intend-history |
-| 05-20 | E3: benchmark integration ✅ | --intend flag in edsl_benchmark.py |
-| 05-20 | E3b: --intend 26/26 ✅ | JSON预转义修复递归栈溢出 |
-| 05-20 | json-encode 原语 | Aura → JSON 序列化，支持 Int/Float/String/Bool/Void/List/Hash |
-| 05-20 | json-get-string 原语 | JSON 字符串字段提取（轻量版，不解析完整树） |
-| 05-20 | json-parse 原语 | JSON → Aura 解析，null/true/false/number/string/array/object 全支持 |
-| 05-20 | 动态 generator/fixer | --intend 模式用 json-encode + json-get-string 代替静态预转义 body |
-| 05-20 | frequencies stdlib | 一行统计列表频次，hash-stats/word-freq 任务直接调用 |
-| 05-20 | 扩 benchmark 到 47 任务 | +13 中难度 +8 高难度（quicksort/sieve/memoize/compose-n/...） |
-| 05-20 | llm-fuzz 设计 | docs/design/llm_fuzz_testing.md |
-| 05-20 | let/closure 悬空指针修复 | memoize 任务 0/1 → 47/47 全过 |
-| 05-20 | fuzz Phase 1-2 | tests/test_fuzz.py + regression CI (4 个已知 bug) |
-| 05-20 | fuzz Phase 3 | coverage-report 原语 + 9 路径编译器埋点 |
-| 05-20 | E4 Phase 3: evolve-strategy | lib/std/evolve.aura + benchmark --evolve |
-| 05-20 | E4 Phase 2: strategy-field/set-field!/inspect | 策略字段读写原语 |
-| 05-20 | E4 Phase 1: intend-analytics | 结构化历史 + 错误分类 |
-| 05-20 | E4 设计文档 | docs/design/e4_evolvable_strategies.md — Phase 1-4 方案 |
-| 05-20 | 自适应 Intend 完成 | 55/57, PID control + trace feedback + append/mod/tcp-recv fixes |
-| 05-21 | MiniMax-M2.7 评测 | 46/57 (81%) → 53/57 (93%)，max-attempts=3→5 多救回8个任务 |
-| 05-21 | DeepSeek max-attempts=5 | 54/57 (95%)，无提升，旧版 extract_code bug 导致 |
-| 05-21 | **extract_code 修复** | **57/57 (100%)** 🔧 `<[^>]+>` 吞噬比较操作符 → 双模型全过 |
+| 05-20 | E1: intend 原语 | (intend goal [max-attempts]) + 7 tests |
+| 05-20 | E2: strategy system | define-strategy + timeline + intend-history |
+| 05-20 | E3: benchmark integration | --intend flag in edsl_benchmark.py |
+| 05-20 | E4: evolve-strategy | lib/std/evolve.aura + benchmark --evolve |
+| 05-20 | 自适应 PID Intend | 55/57, trace feedback + API ref injection |
+| 05-21 | **extract_code 修复** | **57/57 (100%)** — 双模型全通过 |
+| 05-21 | **蚁群控制器 (Phase 1)** | local mutation search + PID integration |
+| 05-21 | **Scheme 兼容层** | first/rest/cadr/odd?/even? serve 预定义 |
+| 05-21 | **serve 性能优化** | sleep(1)→sleep(0.05), exec 12x 加速 |
