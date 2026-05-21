@@ -66,6 +66,71 @@ EVOLVE_MODE = False
 TRACE_MODE = False
 MAX_ATTEMPTS = 3
 
+# ── Serve Client ────────────────────────────────────────────
+class ServeClient:
+    """Persistent connection to ./aura --serve (CaaS).
+    Single process handles all 57 tasks. Incremental compilation
+    state preserved between requests."""
+    def __init__(self, binary=None):
+        self.binary = binary or AURA
+        self.proc = None
+        self._restart()
+
+    def _restart(self):
+        if self.proc and self.proc.poll() is None:
+            self.proc.terminate()
+            self.proc.wait()
+        self.proc = subprocess.Popen(
+            [self.binary, "--serve"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            text=True, bufsize=1, close_fds=True)
+
+    def exec(self, code):
+        """Execute Aura code via serve. Returns (ok, output, error).
+        Handles display output that precedes the JSON response on the same line."""
+        if not code:
+            return False, "", "no code"
+        try:
+            self.proc.stdin.write(json.dumps({"cmd": "exec", "code": code}) + "\n")
+            self.proc.stdin.flush()
+            line = self.proc.stdout.readline()
+            if not line:
+                return False, "", "no response from serve"
+            stripped = line.strip()
+            # JSON always starts with '{'. If we don't see it, display output
+            # is mixed in (e.g., "42{...}"). Extract JSON from the end.
+            if stripped.startswith("{"):
+                json_line = stripped
+                display_text = ""
+            else:
+                # display text + JSON on same line: find the JSON suffix
+                brace = stripped.find("{")
+                if brace >= 0:
+                    display_text = stripped[:brace]
+                    json_line = stripped[brace:]
+                else:
+                    return False, stripped, "no JSON in response"
+            try:
+                resp = json.loads(json_line)
+            except json.JSONDecodeError:
+                return False, stripped, "invalid JSON"
+            if resp.get("status") == "ok":
+                val = resp.get("value", "")
+                out = (display_text + " " + val).strip() if display_text else val
+                return True, out, ""
+            return False, display_text, resp.get("msg", str(resp))
+        except Exception as e:
+            return False, "", str(e)
+
+    def close(self):
+        if self.proc and self.proc.poll() is None:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+                self.proc.wait()
+
 # ── LLM 调用 ──────────────────────────────────────────────
 def llm_complete(model, base_url, key, messages, retries=3):
     parsed = urllib.parse.urlparse(base_url)
@@ -374,118 +439,73 @@ def get_execution_trace(code_str, timeout=10):
         return "", ""
 
 
-def run_single_task(model, base_url, api_key, name, prompt, expected, stdlib, api_ref):
+def run_single_task(model, base_url, api_key, name, prompt, expected, stdlib, api_ref, serve=None):
+    """Run one task: Python LLM calls + serve (CaaS) compilation.
+    serve: ServeClient instance from main().
+    Falls back to direct subprocess if serve is None."""
     max_att = MAX_ATTEMPTS
+    total_llm_time = 0.0
     sys_prompt = build_sys_prompt(stdlib, api_ref, task_name=name)
+    messages = [
+        {"role": "system", "content": sys_prompt},
+        {"role": "user", "content": prompt}
+    ]
 
-    def js(s):
-        return s.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
-
-    sp_esc = js(sys_prompt)
-    goal_esc = js(prompt)
-
-    def build_aura_code(sp, temp_val=0.3, tokens_val=4096):
-        sp_e = js(sp)
-        t_str = str(temp_val)
-        tk_str = str(tokens_val)
-        lines = ['(require "std/llm" all:)']
-        lines.append('(define __sp__ "' + sp_e + '")')
-        lines.append('(define __gen__ (lambda (g)')
-        lines.append('  (json-get-string (aura-llm-call (json-encode (hash')
-        lines.append('    "model" "' + model + '"')
-        lines.append('    "messages" (list')
-        lines.append('      (hash "role" "system" "content" __sp__)')
-        lines.append('      (hash "role" "user" "content" g))')
-        lines.append('    "temperature" ' + t_str)
-        lines.append('    "max_tokens" ' + tk_str + '))) "content")))')
-        lines.append('(define __fix__ (lambda (code err goal)')
-        lines.append('  (json-get-string (aura-llm-call (json-encode (hash')
-        lines.append('    "model" "' + model + '"')
-        lines.append('    "messages" (list')
-        lines.append('      (hash "role" "system" "content" __sp__)')
-        lines.append('      (hash "role" "user" "content"')
-        lines.append('        (begin')
-        lines.append('          (set-code code)')
-        lines.append('          (let ((src (current-source)))')
-        lines.append('            (string-append')
-        lines.append('              "=== Source ===\n" src')
-        lines.append('              "\n=== Error ===\n" err')
-        lines.append('              "\n=== Goal ===\n" goal)))))')
-        lines.append('    "temperature" ' + t_str)
-        lines.append('    "max_tokens" ' + tk_str + '))) "content")))')
-        lines.append('(display (intend "' + goal_esc + '" __gen__ aura-verify __fix__ ' + str(max_att) + '))')
-        # Capture current-source for diagnostics
-        lines.append('(display "||CURRENT_SRC_START||")')
-        lines.append('(display (current-source))')
-        lines.append('(display "||CURRENT_SRC_END||")')
-        return '\n'.join(lines)
-    def run_intend(code):
+    for attempt in range(max_att):
         t0 = time.time()
         try:
-            r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=60)
-            rc, out, err = r.returncode, r.stdout.strip(), r.stderr.strip()
-            elapsed = time.time() - t0
-        except subprocess.TimeoutExpired:
-            return False, '', 'timeout', time.time() - t0, 0
-        except FileNotFoundError:
-            return False, '', 'aura binary not found', time.time() - t0, 0
-        # Parse out current-source from output
-        src_start = out.find('||CURRENT_SRC_START||')
-        src_end = out.find('||CURRENT_SRC_END||')
-        current_src = ''
-        if src_start >= 0 and src_end > src_start:
-            src_body_start = src_start + len('||CURRENT_SRC_START||')
-            current_src = out[src_body_start:src_end].strip()
-            out = out[:src_start].strip()
-        return rc, out, err, elapsed, current_src
+            resp = llm_complete(model, base_url, api_key, messages)
+        except Exception as e:
+            return False, "", str(e), total_llm_time, attempt + 1
+        llm_t = time.time() - t0
+        total_llm_time += llm_t
 
-    aura_code = build_aura_code(sys_prompt)
-    rc, out, err, elapsed, current_src = run_intend(aura_code)
-    if rc != 0 or not out:
-        return False, '', err or 'intend failed', elapsed, 0
-    m_iter = re.search(r'iterations:(\d+)', out)
-    iterations = int(m_iter.group(1)) if m_iter else 0
+        code = extract_code(resp)
+        if not code:
+            if attempt >= max_att - 1:
+                return False, "", "no code extracted", total_llm_time, attempt + 1
+            messages.append({"role": "assistant", "content": resp or ""})
+            messages.append({"role": "user", "content":
+                "No valid Aura code found. Output ONLY Aura code, no markdown."})
+            continue
 
-    # Adaptive retry loop (shared with --fix mode via build_adaptive_feedback)
-    for retry_attempt in range(max_att):
-        expected_match = check_success(out, expected)
-        if '"ok"' in out and not expected_match:
-            actual = out.strip()
-            status_pos = actual.rfind('#')
-            actual_output = actual[:status_pos].strip() if status_pos > 0 else actual[:200]
-
-            # Build adaptive feedback (shared)
-            structured_feedback, p, temp_v, tokens_v = build_adaptive_feedback(
-                name, actual_output, expected, stdlib,
-                sys_prompt, prompt, current_src=current_src)
-
-            updated_sp = sys_prompt + "\n\n" + structured_feedback
-            retry_code = build_aura_code(updated_sp, temp_v, tokens_v)
-            rc2, out2, err2, elapsed2, current_src2 = run_intend(retry_code)
-            elapsed += elapsed2
-            if current_src2:
-                current_src = current_src2
-            if rc2 != 0 or not out2:
-                iterations += 1
-                break
-            m_iter2 = re.search(r'iterations:(\d+)', out2)
-            iterations += int(m_iter2.group(1)) if m_iter2 else 0
-            out = out2.strip()
-            err = err2 or err
-        elif '"ok"' in out and expected_match:
-            return True, out, '', elapsed, iterations
+        # Compile via serve (or fallback direct subprocess)
+        if serve:
+            ok, out, err = serve.exec(code)
         else:
-            break
+            try:
+                r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=10)
+                ok, out, err = r.returncode == 0, r.stdout.strip(), r.stderr.strip()
+            except subprocess.TimeoutExpired:
+                if attempt >= max_att - 1:
+                    return False, "", "timeout", total_llm_time, attempt + 1
+                continue
+            except FileNotFoundError:
+                return False, "", "aura binary not found", total_llm_time, attempt + 1
 
-    success = '"ok"' in out and check_success(out, expected)
-    if not success and TRACE_MODE:
-        err_type = "output-mismatch" if '"ok"' in out else "compile-fail"
-        ph = p if 'p' in dir() else "?"
-        print(f"    TRACE {name}: {err_type}, {iterations} attempts, {elapsed:.1f}s, phase:{ph} last-error: {(err or 'unknown')[:60]}")
-    return success, out, err, elapsed, iterations
+        success = ok and check_success(out, expected)
+        if success:
+            return True, out, "", total_llm_time, attempt + 1
+
+        if attempt >= max_att - 1:
+            return False, out if ok else "", err or out, total_llm_time, attempt + 1
+
+        actual_output = out if ok else (err or "exit code, no output")
+        ada_fb, p, temp_v, tokens_v = build_adaptive_feedback(
+            name, out if ok else "", expected, stdlib,
+            sys_prompt, prompt, current_src=code)
+        correction = (
+            "Your previous code FAILED. " + ("(compile error)" if not ok else "(output mismatch)") + "\n"
+            f"Aura produced: {actual_output[:300]}\n\n"
+            + ada_fb + "\n\n"
+            "Output ONLY corrected Aura code, nothing else."
+        )
+        messages.append({"role": "assistant", "content": resp})
+        messages.append({"role": "user", "content": correction})
+
+    return False, "", "max attempts", total_llm_time, max_att
 
 
-# ── 打印结果表 ────────────────────────────────────────────
 def print_task_table(task_results):
     print(f"  {'Task':22s} {'Pass/Total':>10s} {'Rate':>6s}  {'Verdict':>12s}")
     print(f"  {'─'*22} {'─'*10} {'─'*6}  {'─'*12}")
@@ -554,6 +574,12 @@ def main():
         sys.exit(1)
 
     api_ref = get_api_ref()
+    serve = None
+    try:
+        serve = ServeClient()
+        print(f"   serve: {AURA} --serve (PID {serve.proc.pid})")
+    except Exception as e:
+        print(f"   serve startup failed: {e}, using subprocess fallback")
 
     mode_tag = f"  (intend mode: up to {MAX_ATTEMPTS} attempts)" if not EVOLVE_MODE else "  (evolve mode)"
 
@@ -585,7 +611,8 @@ def main():
             print(f"\n  ── {name} ──")
             for round_i in range(1, ROUNDS + 1):
                 success, out, err, llm_t, attempts = run_single_task(
-                    model, base_url, api_key, name, prompt, expected, stdlib, api_ref
+                    model, base_url, api_key, name, prompt, expected, stdlib, api_ref,
+                    serve=serve
                 )
                 task_stats[name]["llm_times"].append(llm_t)
                 task_stats[name]["attempts"].append(attempts)
@@ -693,6 +720,9 @@ def main():
             output[model] = mout
         print(f"\n{'='*70}")
         print(json.dumps(output, indent=2))
+
+    if serve:
+        serve.close()
 
     print(f"\n{'='*70}")
     print("Done")
