@@ -747,13 +747,17 @@ COLONY_VARIANT_TIMEOUT = 3
 COLONY_MAX_TIME = 6.0
 
 def internal_colony_search(serve, last_code, expected, phase):
-    """EDSL-based ant colony search. Uses set-code + mutate:rebind + eval-current
-    for function body mutations (<1ms per variant), falls back to full code
-    replacement for display changes (>10ms per variant)."""
+    """EDSL-based ant colony search with pheromone-guided prioritization.
+    Uses set-code + mutate:rebind + eval-current for function body mutations
+    (<1ms per variant), falls back to full code replacement for display changes.
+    Pheromone system tracks which mutation types are most effective."""
     if not serve or not last_code:
         return False, "", ""
     if phase == "coarse":
         return False, "", "coarse: skip"
+
+    # Initialize pheromone table for this task
+    serve.exec('(require "std/ant" all:)(pheromone:init)')
 
     colony_start = time.time()
     colony_deadline = colony_start + COLONY_MAX_TIME
@@ -762,7 +766,28 @@ def internal_colony_search(serve, last_code, expected, phase):
     edsl_tested = 0
     full_tested = 0
 
-    for variant, desc in _gen_edsl_variants(last_code, expected):
+    # Get pheromone ranking to prioritize mutation types
+    _, pheromone_out, _ = serve.exec('(require "std/ant" all:)(display (pheromone:rank (list "edsl-disp-ref" "edsl-body-wrap" "edsl-lit-tweak" "edsl-op-swap" "full-hash-wrap" "full-disp-bool" "full-disp-ref")))')
+    if pheromone_out:
+        rank = [t.strip() for t in pheromone_out.strip('()').split() if t.strip()]
+    else:
+        rank = []
+    
+    # Collect all variants from generator
+    all_variants = list(_gen_edsl_variants(last_code, expected))
+    
+    # Sort by pheromone rank: higher-ranked types first
+    def _variant_key(item):
+        desc = item[1]
+        # Extract mutation type from description
+        mtype = desc.split('[')[0] if '[' in desc else desc.split(' ')[0]
+        if mtype in rank:
+            return rank.index(mtype)
+        return len(rank)  # unknown types go last
+    
+    all_variants.sort(key=_variant_key)
+    
+    for variant, desc in all_variants:
         tested += 1
         if tested > MAX_COLONY_VARIANTS or time.time() > colony_deadline:
             break
@@ -775,11 +800,17 @@ def internal_colony_search(serve, last_code, expected, phase):
             full_tested += 1
         
         ok, out, err = serve.exec(variant, read_timeout=COLONY_VARIANT_TIMEOUT)
+        # Extract mutation type from description for pheromone tracking
+        mut_type = desc.split('[')[0] if '[' in desc else desc.split(' ')[0]
         if check_success(out, expected):
+            # Found! Update pheromone with strong positive signal
+            serve.exec('(require "std/ant" all:)(pheromone:update "' + mut_type + '" 3.0)')
             elapsed = time.time() - colony_start
             return True, out, f"colony[{desc}] in {elapsed:.1f}s ({tested}t, {edsl_tested}edsl/{full_tested}full)"
         if not best_out:
             best_out = out
+        # Update pheromone: small negative for failed variant
+        serve.exec('(require "std/ant" all:)(pheromone:update "' + mut_type + '" -1.0)')
 
     elapsed = time.time() - colony_start
     return False, best_out, f"colony:{tested}var/{elapsed:.1f}s/{edsl_tested}edsl+{full_tested}full"
