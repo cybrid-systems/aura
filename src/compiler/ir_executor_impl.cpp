@@ -717,12 +717,30 @@ std::vector<ClosureSnapshot> IRInterpreter::list_closures() const {
 ClosureSnapshot IRInterpreter::make_snapshot(std::uint64_t id,
                                                const IRClosure& closure) const {
     std::string fname;
-    std::vector<std::string> params, free_vars;
+    std::vector<std::string> params, free_vars, param_types;
+    std::string return_type = "Any";
     if (closure.func_id < module_.functions.size()) {
         auto& f = module_.functions[closure.func_id];
         fname = f.name;
         params = f.params;
         free_vars = f.free_vars;
+        // Populate param_types from IR function params (M3 §8.2)
+        for (auto& p : f.params) {
+            param_types.push_back("Any");
+        }
+        // Try to get return type from the last Return instruction
+        for (auto& block : f.blocks) {
+            for (auto& instr : block.instructions) {
+                if (instr.opcode == aura::ir::IROpcode::Return && instr.type_id != 0) {
+                    if (type_registry_) {
+                        return_type = std::string(type_registry_->name_of(
+                            aura::core::TypeId{instr.type_id, 1}));
+                    } else {
+                        return_type = "type:" + std::to_string(instr.type_id);
+                    }
+                }
+            }
+        }
     } else {
         fname = "<unknown>";
     }
@@ -731,9 +749,26 @@ ClosureSnapshot IRInterpreter::make_snapshot(std::uint64_t id,
         .func_id       = closure.func_id,
         .func_name     = std::move(fname),
         .func_params   = std::move(params),
+        .func_param_types = std::move(param_types),
+        .func_return_type = std::move(return_type),
         .func_free_vars = std::move(free_vars),
         .env           = closure.env
     };
+}
+
+std::string IRInterpreter::type_of_closure(std::uint64_t closure_id) const {
+    auto snap = inspect_closure(closure_id);
+    if (!snap) return "<unknown>";
+    
+    std::string result = "(";
+    for (std::size_t i = 0; i < snap->func_param_types.size(); i++) {
+        if (i > 0) result += " ";
+        result += snap->func_param_types[i];
+    }
+    result += " -> ";
+    result += snap->func_return_type;
+    result += ")";
+    return result;
 }
 
 std::vector<CellSnapshot> IRInterpreter::list_cells() const {
