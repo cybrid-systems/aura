@@ -810,12 +810,26 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
 
         return lower_q(v.child(0));
     }
-    case NodeTag::TypeAnnotation:
-        return lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
+    case NodeTag::TypeAnnotation: {
+        // Lower the inner expression first
+        auto inner_slot = lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
+        // Check if coercion is needed: compare annotation type_id with inner type_id
+        auto ann_type_id = flat.type_id(id);
+        auto inner_type_id = flat.type_id(v.child(0));
+        if (ann_type_id != 0 && inner_type_id != 0 && ann_type_id != inner_type_id) {
+            // Emit CastOp for the type boundary
+            auto slot = state.alloc_local();
+            std::uint32_t type_tag = ann_type_id;  // target type tag
+            std::uint32_t blame_loc = 0;
+            state.emit(IROpcode::CastOp, slot, inner_slot, type_tag, blame_loc);
+            return slot;
+        }
+        return inner_slot;
+    }
     case NodeTag::Coercion: {
         auto inner = lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
         auto slot = state.alloc_local();
-        // Use int_value = type_tag (0=Int, 1=String, 2=Bool, 3=Dynamic)
+        // Use int_value = type_tag (target TypeId index, 0=Any, 1=Int, 2=Bool, 3=String, etc.)
         std::uint32_t type_tag = static_cast<std::uint32_t>(v.int_value);
         // Pack blame location: (line << 16) | col in ops[3]
         std::uint32_t blame_loc = (static_cast<std::uint32_t>(v.line) << 16) | 
