@@ -1,0 +1,5 @@
+;; task: type-boundary-call
+;; goal: Annotate a function type and call it with matching argument
+;; expect: 42
+;; hint: --- function boundary ---
+;; hint: (display ((lambda (x) x) 42))
