@@ -236,6 +236,11 @@ NodeId FlatParser::parse_list() {
         if (kw == "check")  return parse_check();
         if (kw == ":")      return parse_type_annot();
         if (kw == "define-type") return parse_define_type();
+        if (kw == "Linear")      return parse_linear();
+        if (kw == "move")        return parse_move();
+        if (kw == "borrow")      return parse_borrow();
+        if (kw == "mut-borrow")  return parse_mut_borrow();
+        if (kw == "drop")        return parse_drop();
         if (kw == "export") {
             lexer_->consume(); // consume 'export'
             std::vector<aura::ast::NodeId> syms;
@@ -805,6 +810,51 @@ NodeId FlatParser::parse_match() {
     result = flat_.add_let(tmp, subject, result);
     flat_.set_loc(result, tok.line, tok.column);
     return result;
+}
+
+NodeId FlatParser::parse_linear() {
+    auto tok = lexer_->consume(); // 'Linear'
+    auto inner = parse_expr();
+    if (inner == NULL_NODE) { return NULL_NODE; }
+    auto id = flat_.add_linear(inner);
+    flat_.set_loc(id, tok.line, tok.column);
+    return id;
+}
+
+NodeId FlatParser::parse_move() {
+    auto tok = lexer_->consume(); // 'move'
+    auto inner = parse_expr();
+    if (inner == NULL_NODE) { return NULL_NODE; }
+    auto id = flat_.add_move(inner);
+    flat_.set_loc(id, tok.line, tok.column);
+    return id;
+}
+
+NodeId FlatParser::parse_borrow() {
+    auto tok = lexer_->consume(); // 'borrow'
+    auto inner = parse_expr();
+    if (inner == NULL_NODE) { return NULL_NODE; }
+    auto id = flat_.add_borrow(inner);
+    flat_.set_loc(id, tok.line, tok.column);
+    return id;
+}
+
+NodeId FlatParser::parse_mut_borrow() {
+    auto tok = lexer_->consume(); // 'mut-borrow'
+    auto inner = parse_expr();
+    if (inner == NULL_NODE) { return NULL_NODE; }
+    auto id = flat_.add_mut_borrow(inner);
+    flat_.set_loc(id, tok.line, tok.column);
+    return id;
+}
+
+NodeId FlatParser::parse_drop() {
+    auto tok = lexer_->consume(); // 'drop'
+    auto inner = parse_expr();
+    if (inner == NULL_NODE) { return NULL_NODE; }
+    auto id = flat_.add_drop(inner);
+    flat_.set_loc(id, tok.line, tok.column);
+    return id;
 }
 
 NodeId FlatParser::parse_cast() {
