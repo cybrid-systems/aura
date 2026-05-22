@@ -191,6 +191,23 @@ INTEG_TESTS = [
         '(: x Int 42)',
         "eval", expected="42"),
 
+    # ── Gradual Guarantee tests (P2) ──────────────────────────
+    IntegCase("gg_int_annot",    '(: x Int 42)',        "typecheck", expected="Int"),
+    IntegCase("gg_int_exec",     '(: x Int 42)',        "eval",      expected="42"),
+    IntegCase("gg_expr_annot",   '(: x Int (+ 1 2))',   "typecheck", expected="Int"),
+    IntegCase("gg_expr_exec",    '(: x Int (+ 1 2))',   "eval",      expected="3"),
+    IntegCase("gg_let_annot",    '(let ((x 10)) x)',     "typecheck", expected="Int"),
+    IntegCase("gg_let_exec",     '(let ((x 10)) x)',     "eval",      expected="10"),
+    IntegCase("gg_poly_exec",    '(let ((id (lambda (x) x))) (id 42))',
+                                                        "eval",      expected="42"),
+    IntegCase("gg_nested_annot", '(+ (: x Int 10) (: y Int 20))',
+                                                        "typecheck", expected="Int"),
+
+    # ── Boundary tests (P2) ───────────────────────────────────
+    IntegCase("boundary_lambda",
+        '((lambda (x) (+ x 1)) 41)',
+        "eval", expected="42"),
+
     # ── Serve JSON command protocol ─────────────────────────
     IntegCase("serve_define",
               '{"cmd":"define","code":"(define add (lambda (x y) (+ x y)))","name":"add"}\n'
