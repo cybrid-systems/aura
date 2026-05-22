@@ -48,13 +48,18 @@ void ConstraintSystem::add(Constraint c) {
 TypeId ConstraintSystem::fresh_var() {
     auto id = reg_.make_var("__t" + std::to_string(fresh_counter_++));
     // Ensure Union-Find arrays are sized for this variable
-    auto idx = id.index;
+    auto idx = static_cast<std::size_t>(id.index);
     if (idx >= parent_.size()) {
         parent_.resize(idx + 64, -1);
         rank_.resize(idx + 64, 0);
         binding_.resize(idx + 64, TypeId{});
     }
-    if (first_free_var_ == 0) first_free_var_ = idx;
+    // Initialize as root (self-parent). Note: clear() sets parent to -1
+    // to indicate uninitialized; each fresh_var must set its own parent.
+    if (parent_[idx] < 0)
+        parent_[idx] = static_cast<std::int64_t>(idx);
+    if (first_free_var_ == 0 || id.index < first_free_var_)
+        first_free_var_ = id.index;
     return id;
 }
 
@@ -69,25 +74,28 @@ std::int64_t find_rep(const std::vector<std::int64_t>& parent, std::int64_t idx)
 
 TypeId ConstraintSystem::find_var(TypeId id) {
     if (!reg_.is_var(id) || id.index >= parent_.size()) return id;
-    auto idx = static_cast<std::int64_t>(id.index);
-    // Path compression
-    auto p = idx;
+    auto idx = static_cast<std::size_t>(id.index);
+    // Uninitialized variable (parent = -1) — not yet used in any unification
+    if (parent_[idx] < 0) return TypeId{static_cast<std::uint32_t>(idx), id.generation};
+    auto p = static_cast<std::int64_t>(idx);
+    // Path compression: find root
     while (static_cast<std::size_t>(p) < parent_.size() && parent_[static_cast<std::size_t>(p)] >= 0
-           && parent_[static_cast<std::size_t>(p)] != p) {
+           && static_cast<std::size_t>(parent_[static_cast<std::size_t>(p)]) != static_cast<std::size_t>(p)) {
         p = parent_[static_cast<std::size_t>(p)];
     }
-    auto root = p;
-    // Compress path
-    p = idx;
-    while (static_cast<std::size_t>(p) < parent_.size() && parent_[static_cast<std::size_t>(p)] >= 0
-           && parent_[static_cast<std::size_t>(p)] != p) {
-        auto next = parent_[static_cast<std::size_t>(p)];
-        if (static_cast<std::size_t>(p) < parent_.size())
-            parent_[static_cast<std::size_t>(p)] = static_cast<std::int64_t>(root);
-        p = next;
+    auto root = static_cast<std::size_t>(p);
+    // Compress path: make all nodes on the path point directly to root
+    auto q = static_cast<std::int64_t>(idx);
+    while (static_cast<std::size_t>(q) < parent_.size() && parent_[static_cast<std::size_t>(q)] >= 0
+           && static_cast<std::size_t>(parent_[static_cast<std::size_t>(q)]) != static_cast<std::size_t>(q)) {
+        auto next = parent_[static_cast<std::size_t>(q)];
+        parent_[static_cast<std::size_t>(q)] = static_cast<std::int64_t>(root);
+        q = next;
     }
-    if (static_cast<std::size_t>(root) < binding_.size() && binding_[static_cast<std::size_t>(root)].valid())
-        return binding_[static_cast<std::size_t>(root)];
+    // If root has a binding, return the bound type (concrete type or root variable)
+    if (root < binding_.size() && binding_[root].valid())
+        return binding_[root];
+    // Return the root as a type variable
     return TypeId{static_cast<std::uint32_t>(root), id.generation};
 }
 
@@ -142,26 +150,33 @@ bool ConstraintSystem::unify(TypeId t1, TypeId t2) {
     // Assign variable to type
     if (reg_.is_var(t1)) {
         if (occurs_check(t1, t2)) return false;
-        auto idx = t1.index;
+        auto idx = static_cast<std::size_t>(t1.index);
         if (idx >= parent_.size()) {
             parent_.resize(idx + 64, -1);
             rank_.resize(idx + 64, 0);
             binding_.resize(idx + 64, TypeId{});
         }
+        if (parent_[idx] < 0) parent_[idx] = static_cast<std::int64_t>(idx);
         if (!reg_.is_var(t2)) {
             // Bind variable to concrete type
             binding_[idx] = t2;
         } else {
-            // Union two variables
-            auto idx2 = t2.index;
+            auto idx2 = static_cast<std::size_t>(t2.index);
             if (idx2 >= parent_.size()) {
                 parent_.resize(idx2 + 64, -1);
                 rank_.resize(idx2 + 64, 0);
                 binding_.resize(idx2 + 64, TypeId{});
             }
+            if (parent_[idx2] < 0) parent_[idx2] = static_cast<std::int64_t>(idx2);
             auto r1 = idx;
             auto r2 = idx2;
-            if (rank_[r1] < rank_[r2]) std::swap(r1, r2);
+            // Find roots via find_var for proper path compression
+            auto f1 = find_var(t1);
+            auto f2 = find_var(t2);
+            if (reg_.is_var(f1)) r1 = static_cast<std::size_t>(f1.index);
+            if (reg_.is_var(f2)) r2 = static_cast<std::size_t>(f2.index);
+            if (r1 == r2) return true;
+            if (rank_[r1] < rank_[r2]) { std::swap(r1, r2); std::swap(idx, idx2); }
             parent_[r2] = static_cast<std::int64_t>(r1);
             if (rank_[r1] == rank_[r2]) rank_[r1]++;
             // Merge bindings: if r2 had a binding, move to r1
