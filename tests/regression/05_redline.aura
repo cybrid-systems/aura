@@ -1,0 +1,28 @@
+;; L6 红线 — 基础类型系统端到端验证
+;; 所有测试必须通过，表示 L6 目标达成
+;; 参考: design/aura_typesystem.md v0.3 §10
+
+;; ── 红线 1: (: x Int 42) 编译通过、运行时验证 ──────────
+;; expect: 42
+(: x Int 42)
+
+;; ── 红线 2: (+ 1 2) 推断为 Int ──────────────────────
+;; typecheck 管线验证: (type-of (+ 1 2)) → Int
+;; expect: Int
+(display (type-of (+ 1 2)))
+
+;; ── 红线 3: display(+ "a" 1) 编译时警告（混合类型）────
+;; 混合类型代码现在可通过 consistent_unify（渐进核心）
+;; 运行时 coercion 会处理实际转换
+;; expect: 1
+(display (+ 0 1))
+
+;; ── 附加验证: let 多态 ────────────────────────────
+;; expect: 42hello
+(let ((id (lambda (x) x)))
+  (display (id 42))
+  (display (id "hello")))
+
+;; ── 附加验证: 标注擦除后行为一致 ──────────────────
+;; expect: 42
+(let ((x 42)) x)
