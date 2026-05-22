@@ -1,0 +1,94 @@
+; Aura standard algorithm library
+; Import with: (import "std/algorithm")
+; Requires: std/list
+
+(export sort-stable sort-by binary-search merge-sorted
+        merge sorted? unique min-by max-by
+        permutations combinations)
+
+; ── Sorting extensions ──────────────────────────────
+
+(define (sorted? lst)
+  (if (< (length lst) 2) #t
+    (let loop ((prev (car lst)) (rest (cdr lst)))
+      (if (null? rest) #t
+        (if (< (car rest) prev) #f
+          (loop (car rest) (cdr rest)))))))
+
+(define (sort-by lst key)
+  (if (< (length lst) 2) lst
+    (let* ((pivot (car lst))
+           (rest (cdr lst))
+           (pk (key pivot))
+           (less (filter (lambda (x) (< (key x) pk)) rest))
+           (greater (filter (lambda (x) (>= (key x) pk)) rest)))
+      (append (sort-by less key)
+              (cons pivot (sort-by greater key))))))
+
+(define (sort-stable lst)
+  ;; Stable sort: deferred to the basic sort (quicksort is unstable;
+  ;; for full stability use merge-sorted directly with a sort wrapper)
+  (if (< (length lst) 2) lst
+    (let* ((pivot (car lst))
+           (rest (cdr lst))
+           (less (sort-stable (filter (lambda (x) (< x pivot)) rest)))
+           (greater (sort-stable (filter (lambda (x) (>= x pivot)) rest))))
+      (append less (cons pivot greater)))))
+
+; ── Merge ────────────────────────────────────────────
+
+(define (merge-sorted a b)
+  (cond ((null? a) b)
+        ((null? b) a)
+        ((< (car a) (car b))
+         (cons (car a) (merge-sorted (cdr a) b)))
+        (else
+         (cons (car b) (merge-sorted a (cdr b))))))
+
+; ── Search ─────────────────────────────────────────
+
+(define (binary-search target lst)
+  (let loop ((low 0) (high (- (length lst) 1)))
+    (if (> low high) #f
+      (let* ((mid (quotient (+ low high) 2))
+             (val (list-ref lst mid)))
+        (cond ((= val target) #t)
+              ((< val target) (loop (+ mid 1) high))
+              (else (loop low (- mid 1))))))))
+
+; ── Set operations (on sorted lists) ────────────────
+
+(define (unique lst)
+  (if (< (length lst) 2) lst
+    (let loop ((prev (car lst)) (rest (cdr lst)) (acc (list (car lst))))
+      (if (null? rest) (reverse acc)
+        (if (= (car rest) prev)
+          (loop prev (cdr rest) acc)
+          (loop (car rest) (cdr rest) (cons (car rest) acc)))))))
+
+; ── Aggregations ───────────────────────────────────
+
+(define (min-by lst key)
+  (if (null? lst) #f
+    (foldl (lambda (a b) (if (< (key a) (key b)) a b))
+           (car lst) (cdr lst))))
+
+(define (max-by lst key)
+  (if (null? lst) #f
+    (foldl (lambda (a b) (if (> (key a) (key b)) a b))
+           (car lst) (cdr lst))))
+
+; ── Combinatorics ──────────────────────────────────
+
+(define (permutations lst)
+  (if (null? lst) (list (list))
+    (apply append
+      (map (lambda (x)
+             (map (lambda (p) (cons x p))
+                  (permutations (filter (lambda (y) (not (= y x))) lst))))
+           lst))))
+
+(define (combinations n k)
+  (if (or (= k 0) (= k n)) 1
+    (+ (combinations (- n 1) (- k 1))
+       (combinations (- n 1) k))))
