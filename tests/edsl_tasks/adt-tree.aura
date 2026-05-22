@@ -1,0 +1,4 @@
+;; task: adt-tree
+;; goal: Define (Tree a) with (Leaf a) and (Node Tree Tree), create a Leaf and match it
+;; depend: std/pair
+;; expect: 1

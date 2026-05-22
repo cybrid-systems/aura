@@ -1,0 +1,3 @@
+;; task: type-occurrence
+;; goal: Write (let ((x "hello")) (if (string? x) x "fallback")) using occurrence typing
+;; expect: hello
