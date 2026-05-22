@@ -1,28 +1,201 @@
 ; Aura standard math library
 ; Import with: (import "std/math")
+(require std/list)
 
-(export pi square cube sqrt expt factorial odd? even? signum avg mean)
+(export
+  ; Constants
+  pi e phi tau
 
-(define pi 3.141592653589793)
+  ; Basic
+  square cube abs clamp signum min max
+  avg mean median mode
+
+  ; Rounding
+  floor ceil round trunc
+
+  ; Trigonometry
+  sin cos tan asin acos atan atan2
+  degrees->radians radians->degrees
+
+  ; Number theory
+  odd? even? positive? negative? zero?
+  gcd lcm prime? factors fibonacci
+
+  ; Combinatorics
+  factorial expt nCr nPr
+
+  ; Statistics
+  sum product range variance stddev percentile normalize)
+
+; ═══════════════════════════════════════════════════════════
+; Constants
+; ═══════════════════════════════════════════════════════════
+
+(define (e) 2.718281828459045)
+(define (pi) 3.141592653589793)
+(define (phi) 1.618033988749895)
+(define (tau) (* (pi) 2))
+
+; ═══════════════════════════════════════════════════════════
+; Basic operations
+; ═══════════════════════════════════════════════════════════
 
 (define (square x) (* x x))
 (define (cube x) (* x x x))
 
-(define (expt b n)
-  (if (= n 0) 1
-    (* b (expt b (- n 1)))))
+(define (clamp x lo hi)
+  (min (max x lo) hi))
+
+(define (avg a b) (/ (+ a b) 2))
+
+; ═══════════════════════════════════════════════════════════
+; Rounding (wrappers around C++ primitives)
+; ═══════════════════════════════════════════════════════════
+
+(define floor floor)
+(define ceil ceil)
+(define round round)
+(define trunc trunc)
+
+; ═══════════════════════════════════════════════════════════
+; Trigonometry
+; ═══════════════════════════════════════════════════════════
+
+(define sin sin)
+(define cos cos)
+(define tan tan)
+(define asin asin)
+(define acos acos)
+(define atan atan)
+(define sqrt sqrt)
+(define abs abs)
+(define min min)
+(define max max)
+
+(define (atan2 y x)
+  (if (> x 0) (atan (/ y x))
+    (if (< x 0)
+      (if (>= y 0) (+ (atan (/ y x)) pi) (- (atan (/ y x)) pi))
+      (if (> y 0) (/ pi 2) (if (< y 0) (- (/ pi 2)) 0)))))
+
+(define (degrees->radians d) (* d (/ (pi) 180)))
+(define (radians->degrees r) (* r (/ 180 (pi))))
+
+; ═══════════════════════════════════════════════════════════
+; Number theory
+; ═══════════════════════════════════════════════════════════
+
+(define (positive? n) (> n 0))
+(define (negative? n) (< n 0))
+(define (zero? n) (= n 0))
+
+(define (gcd a b)
+  (if (= b 0) (abs a) (gcd b (modulo a b))))
+
+(define (lcm a b)
+  (if (or (= a 0) (= b 0)) 0
+    (abs (* a (/ b (gcd a b))))))
+
+(define (prime? n)
+  (if (< n 2) #f
+    (let loop ((i 2))
+      (if (> (* i i) n) #t
+        (if (= (modulo n i) 0) #f
+          (loop (+ i 1)))))))
+
+(define (factors n)
+  (let loop ((i 2) (m (abs n)) (acc (list)))
+    (if (> i m) (reverse acc)
+      (if (= (modulo m i) 0)
+        (loop i (/ m i) (cons i acc))
+        (loop (+ i 1) m acc)))))
+
+(define (fibonacci n)
+  (if (< n 0) (error "fibonacci: negative")
+    (let loop ((i 0) (a 0) (b 1))
+      (if (= i n) a
+        (loop (+ i 1) b (+ a b))))))
+
+; ═══════════════════════════════════════════════════════════
+; Combinatorics
+; ═══════════════════════════════════════════════════════════
 
 (define (factorial n)
   (if (< n 2) 1
     (* n (factorial (- n 1)))))
 
-(define (odd? n) (not (= 0 (modulo n 2))))
-(define (even? n) (not (odd? n)))
+(define (expt b n)
+  (if (= n 0) 1
+    (* b (expt b (- n 1)))))
 
-(define (signum n)
-  (if (= n 0) 0
-    (if (< n 0) -1 1)))
+(define (nPr n r)
+  (/ (factorial n) (factorial (- n r))))
 
-(define (avg a b) (/ (+ a b) 2))
+(define (nCr n r)
+  (/ (factorial n)
+     (* (factorial r) (factorial (- n r)))))
 
-(define (mean lst) (/ (sum lst) (length lst)))
+; ═══════════════════════════════════════════════════════════
+; Statistics
+; ═══════════════════════════════════════════════════════════
+
+(define (sum lst) (foldl + 0 lst))
+(define (product lst) (foldl * 1 lst))
+
+(define (mean lst)
+  (/ (sum lst) (length lst)))
+
+(define (median lst)
+  (let* ((s (sort lst))
+         (n (length s))
+         (mid (quotient n 2)))
+    (if (= (modulo n 2) 1)
+      (list-ref s mid)
+      (/ (+ (list-ref s (- mid 1)) (list-ref s mid)) 2))))
+
+(define (mode lst)
+  (if (null? lst) #f
+    (let* ((freq (frequencies lst))
+           (max-count 0)
+           (result (car lst)))
+      (hash-for-each freq
+        (lambda (k v)
+          (if (> v max-count)
+            (begin (set! max-count v) (set! result k))
+            (if (= v max-count)
+              (set! result (min result k))))))
+      result)))
+
+(define (variance lst)
+  (let* ((m (mean lst))
+         (s (sum (map (lambda (x) (square (- x m))) lst))))
+    (/ s (length lst))))
+
+(define (stddev lst)
+  (sqrt (variance lst)))
+
+(define (range lst)
+  (- (max-list lst) (min-list lst)))
+
+(define (percentile lst p)
+  (let* ((s (sort lst))
+         (n (length s))
+         (idx (max 0 (- (ceiling (* (/ p 100) n)) 1))))
+    (list-ref s idx)))
+
+(define (normalize lst)
+  (let* ((mn (min-list lst))
+         (mx (max-list lst))
+         (d (- mx mn)))
+    (if (= d 0) (map (lambda (_) 0) lst)
+      (map (lambda (x) (/ (- x mn) d)) lst))))
+
+; ── Internal helpers ──────────────────────────────────
+
+(define (min-list lst)
+  (if (null? lst) #f
+    (foldl min (car lst) (cdr lst))))
+
+(define (max-list lst)
+  (if (null? lst) #f
+    (foldl max (car lst) (cdr lst))))

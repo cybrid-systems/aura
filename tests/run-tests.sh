@@ -119,7 +119,7 @@ run_test "stdlib:zip"    "$(printf '(import \"std/list\")(zip (list 1 2) (list 3
 run_test "stdlib:square" "$(printf '(import \"std/math\")(square 5)')" "25"
 run_test "stdlib:sqrt"   "$(printf '(import \"std/math\")(>= (sqrt 16) 4.0)')" "#t"
 run_test "stdlib:fact"   "$(printf '(import \"std/math\")(factorial 5)')" "120"
-run_test "stdlib:pi"     "$(printf '(import \"std/math\") pi')" "3.141592653589793"
+run_test "stdlib:pi"     "$(printf '(import \"std/math\") (pi)')" "3.141592653589793"
 
 run_test "stdlib:trim"   "$(printf '(require std/string all:)(string-trim \"  hi  \")')" "\"hi\""
 run_test "stdlib:split"  "$(printf '(require std/string all:)(string-split \"a,b\" \",\")')" "(\"a\" \"b\")"
