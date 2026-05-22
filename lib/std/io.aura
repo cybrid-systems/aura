@@ -1,30 +1,56 @@
-; io.aura — File I/O utilities
-(export
-  read-lines file->string file->lines
-  copy-file move-file delete-file file-size
-  directory-files path-exists?)
+; Aura standard I/O library
+; Import with: (import "std/io")
 
-(define (read-lines path)
-  (string-split (read-file path) "\n"))
+(export file-exists? file-size file-copy file-delete
+        file-read file-write file->string string->file
+        file->lines file->words
+        with-file)
+
+; ── File predicates ────────────────────────────────
+
+(define (file-exists? path)
+  (file-exists? path))
+
+(define (file-size path)
+  (file-size path))
+
+; ── File operations ─────────────────────────────────
+
+(define (file-copy src dst)
+  (file-copy src dst))
+
+(define (file-delete path)
+  (file-delete path))
+
+; ── Read/write ─────────────────────────────────────
+
+(define (file-read path)
+  (read-file path))
+
+(define (file-write path content)
+  (write-file path content))
 
 (define (file->string path)
   (read-file path))
 
+(define (string->file path content)
+  (write-file path content))
+
+; ── Structured read ─────────────────────────────────
+; Requires std/string
+
 (define (file->lines path)
-  (read-lines path))
+  (let ((content (read-file path)))
+    (if (equal? content "")
+      (list)
+      (string-split content "\n"))))
 
-(define (copy-file src dst)
-  (write-file dst (read-file src)))
+(define (file->words path)
+  (let ((content (read-file path)))
+    (string-split-words content)))
 
-(define (move-file src dst)
-  (write-file dst (read-file src))
-  (file-delete src))
+; ── Safe file handling ──────────────────────────────
 
-(define (delete-file path)
-  (file-delete path))
-
-(define (directory-files path)
-  (directory-list path))
-
-(define (path-exists? path)
-  (file-exists? path))
+(define (with-file path proc)
+  (let ((content (read-file path)))
+    (proc content)))
