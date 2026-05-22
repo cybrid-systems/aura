@@ -28,6 +28,14 @@ public:
     bool is_bound(const std::string& name) const;
 };
 
+// ── Ownership Environment (M4 Linear) ──────────────────────
+export enum class OwnershipState : std::uint8_t {
+    Owned,          // 拥有唯一所有权
+    Moved,          // 所有权已转移
+    Borrowed,       // 被不可变借用中
+    MutBorrowed,    // 被可变借用中
+};
+
 // ── Constraint System ────────────────────────────────────
 export struct Constraint {
     enum Kind { EQUAL, CONSISTENT };
