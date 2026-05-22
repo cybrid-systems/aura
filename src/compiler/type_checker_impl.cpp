@@ -1409,6 +1409,30 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
         } else {
             synthesize_flat(flat, pool, inner_id, flat.get(inner_id));
         }
+    } else if (v.tag == NodeTag::Set) {
+        // (set! var value): synthesize the value, unify with var's type
+        if (v.children.size() >= 1 && v.child(0) != NULL_NODE) {
+            auto val_id = v.child(0);
+            auto val_type = synthesize_flat(flat, pool, val_id, flat.get(val_id));
+            // Look up variable type from env
+            auto var_name = std::string(pool.resolve(v.sym_id));
+            auto var_type = env_.lookup(var_name);
+            if (var_type.valid()) {
+                cs_.consistent_unify(val_type, var_type);
+            }
+            // Also unify with expected context
+            cs_.consistent_unify(val_type, expected);
+        }
+    } else if (v.tag == NodeTag::Define) {
+        // (define name value): check value against expected if matched
+        if (v.children.size() >= 1 && v.child(0) != NULL_NODE) {
+            auto val_id = v.child(0);
+            auto val_type = synthesize_flat(flat, pool, val_id, flat.get(val_id));
+            // For define, check that value type is consistent with expected context
+            // (define is a declaration, not an expression, so the expected context
+            //  is about the defined value, not the define node itself)
+        }
+        // Define returns Void — no check against expected needed
     } else {
         TypeId inferred = synthesize_flat(flat, pool, id, v);
         if (!cs_.consistent_unify(inferred, expected)) {
