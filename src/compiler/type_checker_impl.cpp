@@ -664,18 +664,20 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
         
         // Create the variant type itself (parametric if needed)
         // For now, use the registry to create a named type entry
-        TypeId variant_type = reg_.dynamic_type(); // placeholder
+        TypeId variant_type;
         if (type_params.empty()) {
             // Look up or create concrete variant type
-            auto existing = reg_.lookup_type(type_name);
-            if (!existing.valid()) {
-                existing = reg_.register_type(aura::core::TypeTag::VARIANT, type_name);
+            variant_type = reg_.lookup_type(type_name);
+            if (!variant_type.valid()) {
+                variant_type = reg_.register_type(aura::core::TypeTag::VARIANT, type_name);
             }
-            variant_type = existing;
+        } else if (type_params.size() == 1) {
+            // Single-param type: use the type var as return marker
+            // Forall instantiation will propagate the concrete type
+            variant_type = type_params[0];
         } else {
-            // For polymorphic types: use the type vars as placeholders
-            // Full forall wrapping would need the type checker's forall mechanism
-            variant_type = reg_.dynamic_type();
+            // Multi-param: use first param as marker for now
+            variant_type = type_params[0];
         }
         
         // Register each constructor with field types
@@ -738,11 +740,14 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
                 ctor_type = reg_.register_func(field_types, variant_type);
             }
             
-            // Wrap in forall for polymorphic types
+            // Wrap in forall for polymorphic types (e.g. ∀a. (a -> Option a))
             if (!type_params.empty()) {
-                // For now, use dynamic for polymorphic constructors
-                // Proper forall wrapping would need more infrastructure
-                env_.bind(ctor_name, reg_.dynamic_type());
+                TypeId poly_type = ctor_type;
+                // Build nested forall from last to first
+                for (auto it = type_params.rbegin(); it != type_params.rend(); ++it) {
+                    poly_type = reg_.register_forall(*it, poly_type);
+                }
+                env_.bind(ctor_name, poly_type);
             } else {
                 env_.bind(ctor_name, ctor_type);
             }
