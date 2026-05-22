@@ -192,7 +192,7 @@ LLM 做方向指引（蚁后），Aura EDSL 做局部搜索（工蚁），距离
 |------|:-----:|:----:|:----|
 | **Grok 4.3** | **57/57 (100%)** 🎯 | ~9.6min | — |
 | **DeepSeek v4 Flash** | **54/57 (94.7%)** | ~10.4min | ffi-sqrt, ffi-strlen, edsl-set-code |
-| **MiniMax-M2.7** | **~53/57 (~93%)** 🏃 | ~15min | (running) |
+| **MiniMax-M2.7** | **53/57 (93.0%)** | ~15min | ffi-strlen, max-subarray, sieve, word-freq |
 
 **较上轮提升：** DeepSeek 51→54（+3），MiniMax 45→~53（+8）。
 Scheme 兼容层移除 + 编译器错误消息修复后，模型被迫写纯正 Aura 代码而非 Scheme 习气，pass_rate 显著上升。
