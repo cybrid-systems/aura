@@ -38,14 +38,21 @@ export struct Constraint {
 export class ConstraintSystem {
     aura::core::TypeRegistry& reg_;
     std::vector<Constraint> constraints_;
-    std::vector<aura::core::TypeId> subst_;
+    std::vector<std::int64_t> parent_;    // Union-Find parent (self=root, -1=uninitialized)
+    std::vector<std::uint32_t> rank_;      // Union-Find rank (for union-by-rank)
+    std::vector<aura::core::TypeId> binding_; // binding[rep] = concrete type for var rep
     uint64_t fresh_counter_ = 0;
+    uint64_t first_free_var_ = 0;          // first var index that belongs to this CS
 public:
     explicit ConstraintSystem(aura::core::TypeRegistry& reg);
     void add(Constraint c);
     bool solve();
     void clear();
     aura::core::TypeId fresh_var();
+    // Union-Find core
+    aura::core::TypeId find_var(aura::core::TypeId id);
+    bool unify(aura::core::TypeId t1, aura::core::TypeId t2);
+    aura::core::TypeId find(aura::core::TypeId id);  // normalize via Union-Find
     bool consistent_unify(aura::core::TypeId t1, aura::core::TypeId t2);
     bool occurs_check(aura::core::TypeId var, aura::core::TypeId ty);
     aura::core::TypeId normalize(aura::core::TypeId id);
