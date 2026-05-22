@@ -1,6 +1,7 @@
 export module aura.compiler.lowering;
 import std;
 import aura.core;
+import aura.core.type;
 import aura.compiler.ir;
 import aura.compiler.evaluator;
 
@@ -39,6 +40,9 @@ struct LoweringState {
     // Current source AST node being lowered (for type propagation to IR)
     ast::NodeId current_source_id = ast::NULL_NODE;
 
+    // Optional type registry for call-site coercion (P0 call boundary)
+    const aura::core::TypeRegistry* type_reg = nullptr;
+
     explicit LoweringState(ast::ASTArena& a) : arena(a) {}
     std::uint32_t alloc_local() { return local_count++; }
 
@@ -70,7 +74,8 @@ struct LoweringState {
 export aura::ir::IRModule lower_to_ir(ast::FlatAST& flat,
                                        ast::StringPool& pool,
                                        ast::ASTArena& arena,
-                                       const Primitives* primitives = nullptr);
+                                       const Primitives* primitives = nullptr,
+                                       const aura::core::TypeRegistry* type_reg = nullptr);
 
 // Lower with cached define support.
 // When cache is non-null, Call nodes whose callee is a VariableNode
@@ -87,7 +92,8 @@ export aura::ir::IRModule lower_to_ir_with_cache(
     const Primitives* primitives = nullptr,
     const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge = nullptr,
     const std::unordered_map<std::string, std::vector<std::string>>* cache_strings = nullptr,
-    const std::string* self_name = nullptr);
+    const std::string* self_name = nullptr,
+    const aura::core::TypeRegistry* type_reg = nullptr);
 
 // FlatAST → S-expression source code (reverse of parse_to_flat)
 export std::string unparse_node(const ast::FlatAST& flat,
