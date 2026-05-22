@@ -724,8 +724,13 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
         result = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
         break;
     case Tag::Linear:
-        // (Linear e): wrap value, mark result as Owned
-        result = reg_.dynamic_type();
+        // (Linear e): wrap type as (Linear T) for ownership tracking
+        if (!v.children.empty()) {
+            auto inner_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
+            result = reg_.register_linear(inner_type);
+        } else {
+            result = reg_.dynamic_type();
+        }
         break;
     case Tag::Move: {
         // (move e): check ownership, mark Moved, same type
