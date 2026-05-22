@@ -50,6 +50,8 @@ export struct ClosureSnapshot {
     std::uint32_t          func_id;
     std::string            func_name;
     std::vector<std::string> func_params;     // from IRFunction::params
+    std::vector<std::string> func_param_types; // parameter type names (M3 §8.2)
+    std::string            func_return_type;  // return type name (M3 §8.2)
     std::vector<std::string> func_free_vars;  // from IRFunction::free_vars
     std::vector<EvalValue> env;
 };
@@ -83,6 +85,9 @@ public:
 
     // List all active closures
     std::vector<ClosureSnapshot> list_closures() const;
+
+    // Get closure type as string (M3 §8.2 runtime introspection)
+    std::string type_of_closure(std::uint64_t closure_id) const;
 
     // List all active mutable cells
     std::vector<CellSnapshot> list_cells() const;
