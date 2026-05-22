@@ -237,7 +237,7 @@ export inline std::string format_value(const types::EvalValue& v, const std::vec
     }
     if (types::is_vector(v)) return std::format("<vector[{}]>", types::as_vector_idx(v));
     if (types::is_hash(v)) return std::format("<hash[{}]>", types::as_hash_idx(v));
-    if (types::is_closure(v)) return std::format("<closure[{}]>", types::as_closure_id(v));
+    if (types::is_closure(v)) { std::println(std::cerr, "⚠ program returned an uncalled function"); return "#<procedure>"; }
     if (types::is_cell(v)) return std::format("<cell[{}]>", types::as_cell_id(v));
     if (types::is_primitive(v)) {
         if (primitives) {

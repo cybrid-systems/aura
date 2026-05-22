@@ -284,7 +284,7 @@ namespace {
         }
         if (is_vector(v))       return std::format("<vector[{}]>", as_vector_idx(v));
         if (is_hash(v))         return std::format("<hash[{}]>", as_hash_idx(v));
-        if (is_closure(v))      return std::format("<closure[{}]>", as_closure_id(v));
+        if (is_closure(v))      return "#<procedure>";
         return "<unknown>";
     }
 
@@ -341,7 +341,7 @@ namespace {
         }
         if (is_vector(v))       { std::fprintf(stdout, "<vector[%zu]>", (size_t)as_vector_idx(v)); return; }
         if (is_hash(v))         { std::fprintf(stdout, "<hash[%zu]>", (size_t)as_hash_idx(v)); return; }
-        if (is_closure(v))      { std::fprintf(stdout, "<closure[%zu]>", (size_t)as_closure_id(v)); return; }
+        if (is_closure(v))      { std::fprintf(stdout, "#<procedure>"); std::fprintf(stderr, "⚠ program returned an uncalled function\n"); return; }
         if (is_cell(v))         { std::fprintf(stdout, "<cell[%zu]>", (size_t)as_cell_id(v)); return; }
         std::fprintf(stdout, "<unknown>");
     }
@@ -4956,8 +4956,10 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
             auto name = p->resolve(v.sym_id);
             auto val = eval_env.lookup(std::string(name));
             if (val) return *val;
-            // Suggest closest bound variables
-            std::string msg = "unbound variable: " + std::string(name);
+            std::string var_name(name);
+            if (var_name.empty()) {
+                var_name = std::format("<sym:{}>", v.sym_id);
+            }
             std::vector<std::string> candidates;
             {
                 const Env* e = &eval_env;
@@ -4967,10 +4969,10 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                     e = e->parent();
                 }
             }
-            auto best = closest_match(name, candidates);
-            Diagnostic d(ErrorKind::UnboundVariable, std::string(name));
+            auto best = closest_match(var_name, candidates);
+            Diagnostic d(ErrorKind::UnboundVariable, std::move(var_name));
             if (!best.empty())
-                d = std::move(d).with_suggestion("did you mean '" + best + "'?");
+                d.with_suggestion("did you mean '" + best + "'?");
             return std::unexpected(std::move(d));
         }
         case aura::ast::NodeTag::Call: {
@@ -5475,7 +5477,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                 auto best = closest_match(name, candidates);
                 Diagnostic d(ErrorKind::UnboundVariable, "set!: " + std::string(name));
                 if (!best.empty())
-                    d = std::move(d).with_suggestion("did you mean '" + best + "'?");
+                    d.with_suggestion("did you mean '" + best + "'?");
                 return std::unexpected(std::move(d));
             }
             return std::unexpected(Diagnostic{ErrorKind::UnboundVariable,

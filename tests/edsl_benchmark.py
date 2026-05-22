@@ -952,28 +952,9 @@ def run_single_task(model, base_url, api_key, name, prompt, expected, stdlib, ap
     ]
     last_full_code = ""
     phase = "coarse"
-    # ── Scheme 兼容注册 ── MiniMax 常写 Scheme 函数名
-    if serve:
-        serve.exec('(define (first x) (car x))')
-        serve.exec('(define (rest x) (cdr x))')
-        serve.exec('(define (second x) (car (cdr x)))')
-        serve.exec('(define (cadr x) (car (cdr x)))')
-        serve.exec('(define (list? x) (pair? x))')
-        serve.exec('(define (odd? n) (not (= (modulo n 2) 0)))')
-        serve.exec('(define (even? n) (= (modulo n 2) 0))')
-        serve.exec('(define (zero? n) (= n 0))')
-        serve.exec('(define (positive? n) (> n 0))')
-        serve.exec('(define (negative? n) (< n 0))')
-        serve.exec('(define (add1 n) (+ n 1))')
-        serve.exec('(define (sub1 n) (- n 1))')
-
+    # ── Aura 原生 serve 会话 ── 不注入 Scheme 兼容层（着力即差）
 
     def run_code(code):
-        # Light Scheme dialect fix: (def ...) → (define ...), nil→'()
-        code = code.replace('(def ', '(define ')
-        code = code.replace(' nil ', " '() ").replace('(nil ', '(() ')
-        code = code.replace(' null ', " '() ").replace('(null ', '(() ')
-        code = re.sub(r'\bt\b', '#t', code)  # standalone t → #t
         if serve:
             return serve.exec(code)
         try:
