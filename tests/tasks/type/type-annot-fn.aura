@@ -1,0 +1,6 @@
+;; task: type-annot-fn
+;; goal: Define a function with annotated parameter type, call it
+;; depend: std/pair
+;; expect: 42
+;; hint: --- annotated function call ---
+;; hint: (display ((lambda ((: x Int)) (+ x 1)) 41))

@@ -1,0 +1,5 @@
+;; task: type-annot-chain
+;; goal: Chain multiple annotated expressions
+;; expect: 55
+;; hint: --- annotation chain ---
+;; hint: (+ (: x Int 10) (: y Int (+ (: z Int 40) 5)))
