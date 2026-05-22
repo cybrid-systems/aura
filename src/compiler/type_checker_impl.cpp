@@ -651,10 +651,10 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
         break;
     case Tag::DefineType: {
         // (define-type (Name params...) (Ctor fields...) ...)
-        // Register the type and bind constructors in the type environment.
+        // Register the type and bind constructors with proper function types.
         auto type_name = std::string(pool.resolve(v.sym_id));
         
-        // Create a new type for this variant (with type params if any)
+        // Create type variables for type parameters
         std::vector<TypeId> type_params;
         for (auto pid : v.params) {
             auto pname = std::string(pool.resolve(pid));
@@ -662,21 +662,90 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
             type_params.push_back(tv);
         }
         
-        // Register each constructor as a function
+        // Create the variant type itself (parametric if needed)
+        // For now, use the registry to create a named type entry
+        TypeId variant_type = reg_.dynamic_type(); // placeholder
+        if (type_params.empty()) {
+            // Look up or create concrete variant type
+            auto existing = reg_.lookup_type(type_name);
+            if (!existing.valid()) {
+                existing = reg_.register_type(aura::core::TypeTag::VARIANT, type_name);
+            }
+            variant_type = existing;
+        } else {
+            // For polymorphic types: use the type vars as placeholders
+            // Full forall wrapping would need the type checker's forall mechanism
+            variant_type = reg_.dynamic_type();
+        }
+        
+        // Register each constructor with field types
         for (auto cid : v.children) {
             if (cid >= flat.size()) continue;
             auto cv = flat.get(cid);
             if (cv.tag != aura::ast::NodeTag::Quote || cv.children.empty()) continue;
             auto quoted = cv.child(0);
             if (quoted >= flat.size()) continue;
-            auto qv = flat.get(quoted);
-            if (qv.tag != aura::ast::NodeTag::Variable) continue;
-            auto ctor_name = std::string(pool.resolve(qv.sym_id));
             
-            // For now, bind constructor as a function: () -> Dynamic
-            // A proper implementation would know field types from the define-type
-            // and create (field-type-1 ... -> VariantType)
-            env_.bind(ctor_name, reg_.dynamic_type());
+            // Extract constructor name and field types from the quoted list
+            // Format: (cons 'ctor-name (cons 'ft1 (cons 'ft2 ...)))
+            std::string ctor_name;
+            std::vector<TypeId> field_types;
+            
+            auto walk = quoted;
+            while (walk < flat.size()) {
+                auto nv = flat.get(walk);
+                if (nv.tag != aura::ast::NodeTag::Pair) break;
+                auto car_id = nv.child(0);
+                auto cdr_id = nv.child(1);
+                if (car_id >= flat.size()) break;
+                
+                auto car_v = flat.get(car_id);
+                if (car_v.tag == aura::ast::NodeTag::Variable && ctor_name.empty()) {
+                    // First element is constructor name
+                    ctor_name = std::string(pool.resolve(car_v.sym_id));
+                } else if (car_v.tag == aura::ast::NodeTag::Variable) {
+                    // Field type name — look up or create a type variable
+                    auto ft_name = std::string(pool.resolve(car_v.sym_id));
+                    // Check if it's a type parameter
+                    bool is_param = false;
+                    for (std::size_t pi = 0; pi < v.params.size(); ++pi) {
+                        auto pname = std::string(pool.resolve(v.params[pi]));
+                        if (pname == ft_name) {
+                            field_types.push_back(type_params[pi]);
+                            is_param = true;
+                            break;
+                        }
+                    }
+                    if (!is_param) {
+                        // Look up built-in type name
+                        auto ftid = reg_.lookup_type(ft_name);
+                        if (ftid.valid())
+                            field_types.push_back(ftid);
+                        else
+                            field_types.push_back(reg_.dynamic_type());
+                    }
+                }
+                walk = cdr_id;
+            }
+            
+            if (ctor_name.empty()) continue;
+            
+            // Build constructor type: (field-type-1 ... -> variant-type)
+            TypeId ctor_type;
+            if (field_types.empty()) {
+                ctor_type = reg_.register_func({}, variant_type);
+            } else {
+                ctor_type = reg_.register_func(field_types, variant_type);
+            }
+            
+            // Wrap in forall for polymorphic types
+            if (!type_params.empty()) {
+                // For now, use dynamic for polymorphic constructors
+                // Proper forall wrapping would need more infrastructure
+                env_.bind(ctor_name, reg_.dynamic_type());
+            } else {
+                env_.bind(ctor_name, ctor_type);
+            }
         }
         result = reg_.void_type();
         break;

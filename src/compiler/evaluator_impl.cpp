@@ -5673,8 +5673,20 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                 auto quoted = cv.child(0);
                 if (quoted >= f->size()) continue;
                 auto qv = f->get(quoted);
-                if (qv.tag != aura::ast::NodeTag::Variable) continue;
-                auto ctor_name = std::string(p->resolve(qv.sym_id));
+                // Constructor data is now (cons 'ctor-name (cons 'ft1 (cons 'ft2 ...)))
+                // Extract the constructor name from the head of the list
+                std::string ctor_name;
+                aura::ast::NodeId current = quoted;
+                auto cur_v = f->get(current);
+                if (cur_v.tag == aura::ast::NodeTag::Pair) {
+                    auto car_id = cur_v.child(0);
+                    if (car_id < f->size()) {
+                        auto car_v = f->get(car_id);
+                        if (car_v.tag == aura::ast::NodeTag::Variable)
+                            ctor_name = std::string(p->resolve(car_v.sym_id));
+                    }
+                }
+                if (ctor_name.empty()) continue;
                 
                 // Register constructor as a primitive that creates tagged lists:
                 // (Ctor arg1 arg2 ...) → (cons 'Ctor (cons arg1 (cons arg2 ...)))

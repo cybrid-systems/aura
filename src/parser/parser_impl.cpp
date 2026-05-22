@@ -415,20 +415,27 @@ NodeId FlatParser::parse_define_type() {
         auto ctor_sym = pool_.intern(ctor_name_tok.text);
         lexer_->consume(); // ctor name
 
-        // For now, just store the constructor name; field types are parsed as identifiers
-        std::vector<NodeId> field_types;
+        // Parse field type names
+        std::vector<SymId> field_types;
         while (lexer_->peek().kind == TokenKind::Identifier) {
-            auto ft_sym = pool_.intern(lexer_->peek().text);
+            field_types.push_back(pool_.intern(lexer_->peek().text));
             lexer_->consume();
         }
 
         if (lexer_->peek().kind != TokenKind::RParen) { skip_rparen(); break; }
         lexer_->consume(); // ')'
 
-        // Create a Call node (ctor_name) as the constructor descriptor
-        // Stored as: (quote ctor-name) for simplicity
+        // Store constructor as (quote (ctor-name ft1 ft2 ...))
+        // Build a list of field type symbols
+        NodeId field_list = flat_.add_literal(0); // '() sentinel
+        for (auto it = field_types.rbegin(); it != field_types.rend(); ++it) {
+            auto ft_var = flat_.add_variable(*it);
+            field_list = flat_.add_pair(ft_var, field_list);
+        }
+        // Prepend constructor name
         auto ctor_name_var = flat_.add_variable(ctor_sym);
-        auto ctor_node = flat_.add_quote(ctor_name_var);
+        auto ctor_list = flat_.add_pair(ctor_name_var, field_list);
+        auto ctor_node = flat_.add_quote(ctor_list);
         flat_.set_loc(ctor_node, tok.line, tok.column);
         ctors.push_back(ctor_node);
     }
