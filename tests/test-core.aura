@@ -144,3 +144,29 @@
 (test-suite "coercion:compat"
   (check= 3 (+ 1 "2"))
   (check= 3.5 (+ 1 2.5)))
+
+
+; ── Constraint solver / Union-Find tests ──
+(test-suite "constraint:let-poly"
+  (check (number? ((lambda (x) x) 42)))
+  (check (string? ((lambda (x) x) "hello")))
+  (check (boolean? ((lambda (x) x) #t)))
+  (check (float? ((lambda (x) x) 3.5))))
+
+(test-suite "constraint:higher-order"
+  (check (number? ((lambda (f x) (f x)) (lambda (n) (+ n 1)) 5)))
+  (check (number? ((lambda (f g x) (f (g x))) (lambda (n) (+ n 1)) (lambda (n) (* n 2)) 3)))
+  (check (number? ((lambda (f g x) (g (f x))) (lambda (n) (+ n 1)) (lambda (n) (+ n 1)) 4))))
+
+(test-suite "constraint:multi-arg"
+  (check (number? ((lambda (a b) (+ a b)) 4 6)))
+  (check (number? ((lambda (a b c) (* a b c)) 2 3 4)))
+  (check (string? ((lambda (a b c) (string-append a b c)) "hello" " " "world"))))
+
+(test-suite "constraint:nested-let"
+  (check (number? (let ((x 4) (y 6)) (+ x y))))
+  (check= 1500 (let ((x 5)) (let ((y (* x 2))) (let ((z (* y 3))) (* x y z)))))))
+
+(test-suite "constraint:function-compose"
+  (check (number? (* 5 2)))
+  (check= 10 (+ 4 6)))
