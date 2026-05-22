@@ -183,6 +183,14 @@ INTEG_TESTS = [
         '(pair? (cons 1 2))',
         "typecheck", expected="Bool"),
 
+    # ── TypeAnnotation coercion boundary (P0) ─────────────────
+    IntegCase("tc_annot_int",
+        '(: x Int 42)',
+        "typecheck", expected="Int"),
+    IntegCase("coerce_annot_erasure",
+        '(: x Int 42)',
+        "eval", expected="42"),
+
     # ── Serve JSON command protocol ─────────────────────────
     IntegCase("serve_define",
               '{"cmd":"define","code":"(define add (lambda (x y) (+ x y)))","name":"add"}\n'
