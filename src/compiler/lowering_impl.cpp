@@ -859,12 +859,46 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
     case NodeTag::Coercion: {
         auto inner = lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
         auto slot = state.alloc_local();
-        // Use int_value = type_tag (target TypeId index, 0=Any, 1=Int, 2=Bool, 3=String, etc.)
         std::uint32_t type_tag = static_cast<std::uint32_t>(v.int_value);
-        // Pack blame location: (line << 16) | col in ops[3]
         std::uint32_t blame_loc = (static_cast<std::uint32_t>(v.line) << 16) | 
                                    (static_cast<std::uint32_t>(v.col) & 0xFFFFu);
         state.emit(IROpcode::CastOp, slot, inner, type_tag, blame_loc);
+        return slot;
+    }
+    case NodeTag::Linear: {
+        // (Linear e): wrap value in linear container
+        auto inner = lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
+        auto slot = state.alloc_local();
+        state.emit(IROpcode::LinearWrap, slot, inner);
+        return slot;
+    }
+    case NodeTag::Move: {
+        // (move e): move ownership
+        auto inner = lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
+        auto slot = state.alloc_local();
+        state.emit(IROpcode::MoveOp, slot, inner);
+        return slot;
+    }
+    case NodeTag::Borrow: {
+        // (& e): immutable borrow
+        auto inner = lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
+        auto slot = state.alloc_local();
+        state.emit(IROpcode::BorrowOp, slot, inner);
+        return slot;
+    }
+    case NodeTag::MutBorrow: {
+        // (&mut e): mutable borrow
+        auto inner = lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
+        auto slot = state.alloc_local();
+        state.emit(IROpcode::MutBorrowOp, slot, inner);
+        return slot;
+    }
+    case NodeTag::Drop: {
+        // (drop e): explicit destruct
+        auto inner = lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
+        state.emit(IROpcode::DropOp, inner, 0, 0);
+        auto slot = state.alloc_local();
+        state.emit(IROpcode::ConstVoid, slot);
         return slot;
     }
     case NodeTag::MacroDef:
