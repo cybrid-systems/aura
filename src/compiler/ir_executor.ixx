@@ -145,6 +145,11 @@ private:
     std::uint64_t next_cell_id_ = 1;
     std::unordered_map<std::uint64_t, EvalValue> cell_heap_;
 
+    // M4 Linear ownership runtime heap
+    struct LinearEntry { EvalValue value; std::size_t ref_count; };
+    std::uint64_t next_linear_id_ = 1;
+    std::unordered_map<std::uint64_t, LinearEntry> linear_heap_;
+
     // Runtime string heap (for Int\xE2\x86\x92String coercion)
     std::vector<std::string> string_heap_;
 

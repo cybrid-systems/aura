@@ -629,6 +629,97 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 break;
             }
 
+            // ── M4 Linear ownership opcodes ────────────────────────
+            case IROpcode::LinearWrap: {
+                // Wrap value in a linear container with refcount=1
+                auto inner = locals[ops[1]];
+                auto lin_id = next_linear_id_++;
+                linear_heap_[lin_id] = {inner, 1};
+                locals[ops[0]] = types::make_linear(lin_id);
+                break;
+            }
+            case IROpcode::MoveOp: {
+                // Move ownership: decrement source refcount, pass value through
+                auto val = locals[ops[1]];
+                if (types::is_linear(val)) {
+                    auto lin_id = types::as_linear_id(val);
+                    auto it = linear_heap_.find(lin_id);
+                    if (it != linear_heap_.end()) {
+                        auto result = it->second.value;
+                        if (--it->second.ref_count == 0)
+                            linear_heap_.erase(it);
+                        locals[ops[0]] = result;
+                    } else {
+                        locals[ops[0]] = locals[ops[1]];
+                    }
+                } else {
+                    locals[ops[0]] = val;
+                }
+                break;
+            }
+            case IROpcode::BorrowOp: {
+                // Immutable borrow: increment refcount
+                auto val = locals[ops[1]];
+                if (types::is_linear(val)) {
+                    auto lin_id = types::as_linear_id(val);
+                    auto it = linear_heap_.find(lin_id);
+                    if (it != linear_heap_.end()) {
+                        it->second.ref_count++;
+                        locals[ops[0]] = it->second.value;
+                    } else {
+                        locals[ops[0]] = val;
+                    }
+                } else {
+                    locals[ops[0]] = val;
+                }
+                break;
+            }
+            case IROpcode::MutBorrowOp: {
+                // Mutable borrow: treat as move (exclusive access)
+                auto val = locals[ops[1]];
+                if (types::is_linear(val)) {
+                    auto lin_id = types::as_linear_id(val);
+                    auto it = linear_heap_.find(lin_id);
+                    if (it != linear_heap_.end()) {
+                        locals[ops[0]] = it->second.value;
+                    } else {
+                        locals[ops[0]] = val;
+                    }
+                } else {
+                    locals[ops[0]] = val;
+                }
+                break;
+            }
+            case IROpcode::DropOp: {
+                // Explicit destruct: decrement refcount, erase if zero
+                auto val = locals[ops[0]];
+                if (types::is_linear(val)) {
+                    auto lin_id = types::as_linear_id(val);
+                    auto it = linear_heap_.find(lin_id);
+                    if (it != linear_heap_.end()) {
+                        if (--it->second.ref_count == 0)
+                            linear_heap_.erase(it);
+                    }
+                }
+                break;
+            }
+            case IROpcode::RefCountOp: {
+                // Runtime refcount operation: ops[2] = 1 for inc, 0 for dec
+                auto val = locals[ops[1]];
+                if (types::is_linear(val)) {
+                    auto lin_id = types::as_linear_id(val);
+                    auto it = linear_heap_.find(lin_id);
+                    if (it != linear_heap_.end()) {
+                        if (ops[2] == 1)
+                            it->second.ref_count++;
+                        else if (it->second.ref_count > 0)
+                            it->second.ref_count--;
+                    }
+                }
+                locals[ops[0]] = val;
+                break;
+            }
+
             default:
                 break;
             }
