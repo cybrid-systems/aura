@@ -50,6 +50,13 @@ export enum class IROpcode : std::uint8_t {
     // Error handling
     Raise,          // raise error: result_slot, cause_slot
     IsError,        // check if error: result_slot, value_slot
+    // M4 Linear ownership
+    LinearWrap,     // wrap linear value: result_slot, inner_slot
+    MoveOp,         // move ownership: result_slot, inner_slot
+    BorrowOp,       // immutable borrow: result_slot, inner_slot
+    MutBorrowOp,    // mutable borrow: result_slot, inner_slot
+    DropOp,         // explicit destruct: inner_slot
+    RefCountOp,     // runtime refcount: result_slot, inner_slot, inc(1)/dec(0)
 };
 
 export struct IRInstruction {
@@ -123,9 +130,16 @@ export constexpr OpcodeInfo kOpcodeInfo[] = {
     // 37-38  Error handling
     {"raise",         2, true},   // Raise: result, cause
     {"is-error",      2, true},   // IsError: result, value
+    // 39-44  M4 Linear ownership
+    {"linear-wrap",   2, true},   // LinearWrap: result, inner
+    {"move-op",       2, true},   // MoveOp: result, inner
+    {"borrow-op",     2, true},   // BorrowOp: result, inner
+    {"mut-borrow-op", 2, true},   // MutBorrowOp: result, inner
+    {"drop-op",       1, false},  // DropOp: inner (no result)
+    {"ref-count-op",  3, true},   // RefCountOp: result, inner, inc/dec
 };
 
-static_assert(std::size(kOpcodeInfo) == 39,
+static_assert(std::size(kOpcodeInfo) == 45,
     "kOpcodeInfo must have exactly one entry per IROpcode");
 
 // Primitive IDs for PrimCall opcode
