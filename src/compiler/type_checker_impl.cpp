@@ -1238,7 +1238,77 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
         check_flat_call(flat, pool, v, expected);
     else if (v.tag == NodeTag::Lambda)
         check_flat_lambda(flat, pool, v, expected);
-    else {
+    else if (v.tag == NodeTag::IfExpr) {
+        // If in check mode: check condition is Bool, check both branches
+        // against expected, and unify them
+        if (v.children.size() < 2) return;
+        auto cond_id = v.child(0);
+        auto then_id = v.child(1);
+        // Condition must be Bool
+        auto cond_type = synthesize_flat(flat, pool, cond_id, flat.get(cond_id));
+        cs_.consistent_unify(cond_type, reg_.bool_type());
+        // Check both branches against expected
+        check_flat(flat, pool, then_id, expected);
+        if (v.children.size() >= 3 && v.child(2) != NULL_NODE)
+            check_flat(flat, pool, v.child(2), expected);
+    } else if (v.tag == NodeTag::Let || v.tag == NodeTag::LetRec) {
+        // Let in check mode: check value, then check body against expected
+        bool is_rec = (v.tag == NodeTag::LetRec);
+        auto name = pool.resolve(v.sym_id);
+        std::string var_name(name);
+        env_.push_scope();
+        if (!v.children.empty() && v.child(0) != NULL_NODE) {
+            auto val_id = v.child(0);
+            // Check the value expression against expected if annotated
+            // For now: synthesize val, bind it
+            TypeId val_type = is_rec ? cs_.fresh_var()
+                : synthesize_flat(flat, pool, val_id, flat.get(val_id));
+            env_.bind(var_name, val_type);
+        }
+        if (v.children.size() >= 2 && v.child(1) != NULL_NODE)
+            check_flat(flat, pool, v.child(1), expected);
+        env_.pop_scope();
+    } else if (v.tag == NodeTag::Begin) {
+        // Begin in check mode: check last expression against expected,
+        // synthesize all others for side effects
+        for (std::size_t i = 0; i < v.children.size(); ++i) {
+            auto child_id = v.child(i);
+            if (child_id == NULL_NODE) continue;
+            if (i + 1 == v.children.size()) {
+                check_flat(flat, pool, child_id, expected);
+            } else {
+                synthesize_flat(flat, pool, child_id, flat.get(child_id));
+            }
+        }
+    } else if (v.tag == NodeTag::TypeAnnotation) {
+        // Annotation in check mode: check inner against expected,
+        // then check inner against annotation type
+        if (v.children.empty()) return;
+        auto inner_id = v.child(0);
+        auto type_name = pool.resolve(v.sym_id);
+        if (!type_name.empty()) {
+            auto ann_type = reg_.lookup_type(std::string(type_name));
+            if (ann_type.valid()) {
+                // Check inner against both annotation type and expected
+                if (reg_.is_subtype(ann_type, expected) || cs_.consistent_unify(ann_type, expected)) {
+                    // Annotation type is compatible with expected: check inner against ann_type
+                    check_flat(flat, pool, inner_id, ann_type);
+                } else {
+                    // Annotation conflicts with expected context
+                    auto msg = "annotation type "
+                             + std::string(reg_.format_type(ann_type))
+                             + " conflicts with context expecting "
+                             + std::string(reg_.format_type(expected));
+                    diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg), cur_loc_)
+                        .with_blame(BlameInfo{BlameParty::Annotation, "", "compile"}));
+                }
+            } else {
+                synthesize_flat(flat, pool, inner_id, flat.get(inner_id));
+            }
+        } else {
+            synthesize_flat(flat, pool, inner_id, flat.get(inner_id));
+        }
+    } else {
         TypeId inferred = synthesize_flat(flat, pool, id, v);
         if (!cs_.consistent_unify(inferred, expected)) {
             if (is_coercible(inferred, expected)) {
