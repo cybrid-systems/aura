@@ -280,6 +280,52 @@ public:
                         continue;
                     }
 
+                    // ── Insert CastOp for if branches (phi_slot type mismatch) ──
+                    // If expressions emit Branch cond, then_blk, else_blk; the result is written
+                    // to a phi_slot via Local in each branch. If the Branch has a concrete
+                    // type_id (from the if expression's inference result), check that both
+                    // branch values match that type.
+                    if (instr.opcode == aura::ir::IROpcode::Branch) {
+                        auto if_result_type = instr.type_id;
+                        if (if_result_type != 0 && if_result_type != dyn_id.index) {
+                            auto then_blk = ops[1];
+                            auto else_blk = ops[2];
+                            auto check_and_cast = [&](std::uint32_t blk_id) {
+                                if (blk_id >= func.blocks.size()) return;
+                                auto& blk = func.blocks[blk_id];
+                                // Find the Local instruction (phi_slot write) before the Jump
+                                for (std::size_t j = 0; j + 1 < blk.instructions.size(); ++j) {
+                                    auto& loc = blk.instructions[j];
+                                    auto& next = blk.instructions[j + 1];
+                                    if (next.opcode == aura::ir::IROpcode::Jump &&
+                                        loc.opcode == aura::ir::IROpcode::Local) {
+                                        auto val_type = (loc.operands[1] < block.instructions.size())
+                                            ? block.instructions[loc.operands[1]].type_id : 0u;
+                                        if (val_type != 0 && val_type != if_result_type
+                                            && val_type != dyn_id.index) {
+                                            auto cast_slot = func.local_count++;
+                                            aura::ir::IRInstruction cast_instr;
+                                            cast_instr.opcode = aura::ir::IROpcode::CastOp;
+                                            cast_instr.operands = std::array<std::uint32_t, 4>{
+                                                cast_slot, loc.operands[1],
+                                                type_tag_for_coercion(aura::core::TypeId{if_result_type, 1}), 0u};
+                                            cast_instr.type_id = if_result_type;
+                                            blk.instructions.insert(
+                                                blk.instructions.begin() + static_cast<std::ptrdiff_t>(j),
+                                                cast_instr);
+                                            loc.operands[1] = cast_slot;
+                                        }
+                                        break;
+                                    }
+                                }
+                            };
+                            check_and_cast(then_blk);
+                            check_and_cast(else_blk);
+                        }
+                        ++i;
+                        continue;
+                    }
+
                     // ── Remove redundant CastOp ──
                     if (instr.opcode == aura::ir::IROpcode::CastOp && ops[2] == 3) {
                         auto source_type = (ops[1] < block.instructions.size())

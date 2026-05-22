@@ -127,3 +127,20 @@
 (test-suite "core:define"
   (check= 3 (+ 1 2))
   (check (defined? (list 'hello 'world))))
+
+; ── Coercion tests (gradual typing interoperability) ──
+(test-suite "coercion:arithmetic"
+  (check (number? (+ 1 "2")))
+  (check (number? (+ 1 2.5)))
+  (check (number? (+ 2.5 1)))
+  (check= 2 (+ 1 #t)))
+
+(test-suite "coercion:if"
+  (check= 1 (if #t 1 2))
+  (check (if #f #f #t))
+  (check= 1 (if "truthy" 1 2))
+  (check= 42 (if #f 0 42)))
+
+(test-suite "coercion:compat"
+  (check= 3 (+ 1 "2"))
+  (check= 3.5 (+ 1 2.5)))
