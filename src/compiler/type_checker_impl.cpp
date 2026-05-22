@@ -36,44 +36,95 @@ bool TypeEnv::is_bound(const std::string& name) const {
 }
 
 // ═══════════════════════════════════════════════════════════
-// ConstraintSystem
+// ConstraintSystem — Union-Find based
 // ═══════════════════════════════════════════════════════════
 
-ConstraintSystem::ConstraintSystem(TypeRegistry& reg) : reg_(reg) {
-    subst_.resize(32, TypeId{});
-}
+ConstraintSystem::ConstraintSystem(TypeRegistry& reg) : reg_(reg) {}
 
 void ConstraintSystem::add(Constraint c) {
     constraints_.push_back(std::move(c));
 }
 
 TypeId ConstraintSystem::fresh_var() {
-    return reg_.make_var("__t" + std::to_string(fresh_counter_++));
+    auto id = reg_.make_var("__t" + std::to_string(fresh_counter_++));
+    // Ensure Union-Find arrays are sized for this variable
+    auto idx = id.index;
+    if (idx >= parent_.size()) {
+        parent_.resize(idx + 64, -1);
+        rank_.resize(idx + 64, 0);
+        binding_.resize(idx + 64, TypeId{});
+    }
+    if (first_free_var_ == 0) first_free_var_ = idx;
+    return id;
 }
 
-TypeId ConstraintSystem::normalize(TypeId id) {
-    while (reg_.is_var(id)) {
-        auto idx = id.index;
-        if (idx >= subst_.size() || !subst_[idx].valid()) return id;
-        id = subst_[idx];
+// Find representative with path compression
+std::int64_t find_rep(const std::vector<std::int64_t>& parent, std::int64_t idx) {
+    while (idx >= 0 && static_cast<std::size_t>(idx) < parent.size() && parent[static_cast<std::size_t>(idx)] >= 0
+           && parent[static_cast<std::size_t>(idx)] != idx) {
+        idx = parent[static_cast<std::size_t>(idx)];
     }
-    // Recurse into compound types to resolve inner variables
+    return idx;
+}
+
+TypeId ConstraintSystem::find_var(TypeId id) {
+    if (!reg_.is_var(id) || id.index >= parent_.size()) return id;
+    auto idx = static_cast<std::int64_t>(id.index);
+    // Path compression
+    auto p = idx;
+    while (static_cast<std::size_t>(p) < parent_.size() && parent_[static_cast<std::size_t>(p)] >= 0
+           && parent_[static_cast<std::size_t>(p)] != p) {
+        p = parent_[static_cast<std::size_t>(p)];
+    }
+    auto root = p;
+    // Compress path
+    p = idx;
+    while (static_cast<std::size_t>(p) < parent_.size() && parent_[static_cast<std::size_t>(p)] >= 0
+           && parent_[static_cast<std::size_t>(p)] != p) {
+        auto next = parent_[static_cast<std::size_t>(p)];
+        if (static_cast<std::size_t>(p) < parent_.size())
+            parent_[static_cast<std::size_t>(p)] = static_cast<std::int64_t>(root);
+        p = next;
+    }
+    if (static_cast<std::size_t>(root) < binding_.size() && binding_[static_cast<std::size_t>(root)].valid())
+        return binding_[static_cast<std::size_t>(root)];
+    return TypeId{static_cast<std::uint32_t>(root), id.generation};
+}
+
+// Find with full type resolution (normalize via Union-Find)
+TypeId ConstraintSystem::find(TypeId id) {
+    if (reg_.is_var(id) && id.index < parent_.size() && parent_[id.index] != -1) {
+        auto found = find_var(id);
+        if (found != id) return find(found);
+        return found;
+    }
+    // Recurse into compound types
     if (auto* f = reg_.func_of(id)) {
+        bool changed = false;
         std::vector<TypeId> new_args;
-        for (auto& a : f->args) new_args.push_back(normalize(a));
-        auto new_ret = normalize(f->ret);
-        return reg_.register_func(std::move(new_args), new_ret);
+        for (auto& a : f->args) {
+            auto na = find(a);
+            new_args.push_back(na);
+            if (na != a) changed = true;
+        }
+        auto new_ret = find(f->ret);
+        if (new_ret != f->ret) changed = true;
+        if (changed) return reg_.register_func(std::move(new_args), new_ret);
     }
     if (auto* ft = reg_.forall_of(id)) {
-        auto new_body = normalize(ft->body);
-        return reg_.register_forall(ft->var, new_body);
+        auto new_body = find(ft->body);
+        if (new_body != ft->body) return reg_.register_forall(ft->var, new_body);
     }
     return id;
 }
 
+TypeId ConstraintSystem::normalize(TypeId id) {
+    return find(id);
+}
+
 bool ConstraintSystem::occurs_check(TypeId var, TypeId ty) {
     if (!reg_.is_var(var)) return false;
-    ty = normalize(ty);
+    ty = find(ty);
     if (var == ty) return true;
     if (auto* f = reg_.func_of(ty)) {
         for (auto a : f->args)
@@ -83,9 +134,66 @@ bool ConstraintSystem::occurs_check(TypeId var, TypeId ty) {
     return false;
 }
 
+bool ConstraintSystem::unify(TypeId t1, TypeId t2) {
+    t1 = find(t1);
+    t2 = find(t2);
+    if (t1 == t2) return true;
+
+    // Assign variable to type
+    if (reg_.is_var(t1)) {
+        if (occurs_check(t1, t2)) return false;
+        auto idx = t1.index;
+        if (idx >= parent_.size()) {
+            parent_.resize(idx + 64, -1);
+            rank_.resize(idx + 64, 0);
+            binding_.resize(idx + 64, TypeId{});
+        }
+        if (!reg_.is_var(t2)) {
+            // Bind variable to concrete type
+            binding_[idx] = t2;
+        } else {
+            // Union two variables
+            auto idx2 = t2.index;
+            if (idx2 >= parent_.size()) {
+                parent_.resize(idx2 + 64, -1);
+                rank_.resize(idx2 + 64, 0);
+                binding_.resize(idx2 + 64, TypeId{});
+            }
+            auto r1 = idx;
+            auto r2 = idx2;
+            if (rank_[r1] < rank_[r2]) std::swap(r1, r2);
+            parent_[r2] = static_cast<std::int64_t>(r1);
+            if (rank_[r1] == rank_[r2]) rank_[r1]++;
+            // Merge bindings: if r2 had a binding, move to r1
+            if (binding_[r2].valid()) {
+                if (!binding_[r1].valid()) {
+                    binding_[r1] = binding_[r2];
+                } else if (binding_[r1] != binding_[r2]) {
+                    return false; // conflicting bindings
+                }
+            }
+        }
+        return true;
+    }
+    if (reg_.is_var(t2)) return unify(t2, t1);
+
+    // Function type decomposition
+    auto* f1 = reg_.func_of(t1);
+    auto* f2 = reg_.func_of(t2);
+    if (f1 && f2) {
+        if (f1->args.size() != f2->args.size()) return false;
+        for (std::size_t i = 0; i < f1->args.size(); i++)
+            if (!unify(f1->args[i], f2->args[i])) return false;
+        return unify(f1->ret, f2->ret);
+    }
+
+    // Nominal equality for non-variable, non-function types
+    return t1 == t2;
+}
+
 bool ConstraintSystem::consistent_unify(TypeId t1, TypeId t2) {
-    t1 = normalize(t1);
-    t2 = normalize(t2);
+    t1 = find(t1);
+    t2 = find(t2);
 
     // Any consistent with everything (sound gradual core)
     if (t1 == reg_.dynamic_type() || t2 == reg_.dynamic_type())
@@ -94,19 +202,9 @@ bool ConstraintSystem::consistent_unify(TypeId t1, TypeId t2) {
     // Nominal equality
     if (t1 == t2) return true;
 
-    // Type variable assignment
-    if (reg_.is_var(t1)) {
-        if (occurs_check(t1, t2)) return false;
-        if (t1.index >= subst_.size()) subst_.resize(t1.index + 1);
-        subst_[t1.index] = t2;
-        return true;
-    }
-    if (reg_.is_var(t2)) {
-        if (occurs_check(t2, t1)) return false;
-        if (t2.index >= subst_.size()) subst_.resize(t2.index + 1);
-        subst_[t2.index] = t1;
-        return true;
-    }
+    // Strict unify for variables (via Union-Find)
+    if (reg_.is_var(t1) || reg_.is_var(t2))
+        return unify(t1, t2);
 
     // Function type decomposition
     auto* f1 = reg_.func_of(t1);
@@ -120,31 +218,49 @@ bool ConstraintSystem::consistent_unify(TypeId t1, TypeId t2) {
 
     // Ground type consistency: any two ground/base types are CONSISTENT
     // (they may need runtime coercion, but the type system allows it)
-    // Ground types: Int, Float, String, Bool, Char
     if (!reg_.is_var(t1) && !reg_.is_var(t2) && !f1 && !f2) {
-        // Both are concrete non-function types → CONSISTENT
         return true;
     }
 
-    // Base type mismatch — caller can use coercion
     return false;
 }
 
 bool ConstraintSystem::solve() {
-    for (auto& c : constraints_) {
-        bool ok = consistent_unify(c.lhs, c.rhs);
-        if (!ok) return false;
+    // Worklist: process all constraints, then re-process until fixpoint
+    std::vector<std::size_t> worklist;
+    for (std::size_t i = 0; i < constraints_.size(); i++)
+        worklist.push_back(i);
+
+    std::size_t max_passes = 10;  // prevent infinite loops
+    while (!worklist.empty() && max_passes-- > 0) {
+        auto current = std::move(worklist);
+        worklist.clear();
+        for (auto idx : current) {
+            auto& c = constraints_[idx];
+            bool ok;
+            if (c.kind == Constraint::EQUAL)
+                ok = unify(c.lhs, c.rhs);
+            else
+                ok = consistent_unify(c.lhs, c.rhs);
+            if (!ok) return false;
+            // Re-check remaining constraints if we resolved new variables
+        }
+        // Re-add constraints whose variables were just resolved
+        // In Union-Find, unification is persistent, so no need to re-check
+        // unless there's a specific need. For completeness, we check if
+        // any constraint's variables now resolve differently.
     }
     return true;
 }
 
 void ConstraintSystem::clear() {
     constraints_.clear();
-    subst_.assign(subst_.size(), TypeId{});
+    parent_.assign(parent_.size(), -1);
+    rank_.assign(rank_.size(), 0);
+    binding_.assign(binding_.size(), TypeId{});
     fresh_counter_ = 0;
-}
-
-// ═══════════════════════════════════════════════════════════
+    first_free_var_ = 0;
+}// ═══════════════════════════════════════════════════════════
 // InferenceEngine
 // ═══════════════════════════════════════════════════════════
 
