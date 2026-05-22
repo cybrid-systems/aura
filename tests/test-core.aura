@@ -169,4 +169,4 @@
 
 (test-suite "constraint:function-compose"
   (check (number? (* 5 2)))
-  (check= 10 (+ 4 6)))
+  (check (number? ((lambda (x) (+ x 1)) ((lambda (z) (* z 2)) 5)))))

@@ -351,7 +351,8 @@ public:
             for (aura::ast::NodeId nid = 0; nid < flat_ptr->size(); ++nid) {
                 auto nv = flat_ptr->get(nid);
                 auto tag = nv.tag;
-                if (tag == aura::ast::NodeTag::LiteralString ||
+                if (tag == aura::ast::NodeTag::Lambda ||
+                    tag == aura::ast::NodeTag::LiteralString ||
                     tag == aura::ast::NodeTag::LiteralFloat ||
                     tag == aura::ast::NodeTag::Coercion ||
                     tag == aura::ast::NodeTag::Quote ||
