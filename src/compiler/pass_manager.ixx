@@ -472,4 +472,74 @@ private:
     }
 };
 
+// ── DeadCoercionEliminationPass — remove redundant CastOp ─────
+// IR-level pass. Removes CastOp instructions where:
+//   1. Source and target types are identical (no-op cast)
+//   2. Nested casts: (cast (cast x T1) T2) → (cast x T2)
+//   3. Chain of identity casts: (cast (cast x T) T) → x
+//
+// Operates on IRModule after lowering + TypeSpecializationWrap.
+// CastOp semantics in IR: operands = {result_slot, source_slot, type_tag, 0}
+// The type_tag field encodes the target runtime type (1=Int, 2=Bool, 3=String, 4=FLOAT, 0=Any).
+export class DeadCoercionEliminationPass {
+public:
+    explicit DeadCoercionEliminationPass(const aura::core::TypeRegistry* reg = nullptr)
+        : type_reg_(reg) {}
+
+    void run(aura::ir::IRModule& module) {
+        eliminated_ = 0;
+        for (auto& func : module.functions) {
+            for (auto& block : func.blocks) {
+                bool changed;
+                do {
+                    changed = false;
+                    for (std::size_t i = 0; i < block.instructions.size(); ++i) {
+                        auto& instr = block.instructions[i];
+                        if (instr.opcode != aura::ir::IROpcode::CastOp) continue;
+                        auto& ops = instr.operands;
+
+                        // Rule 1: identity cast — source type == target type
+                        // Check via type_id propagation (from FlatAST)
+                        if (instr.type_id != 0) {
+                            auto src_type = (ops[1] < block.instructions.size())
+                                ? block.instructions[ops[1]].type_id : 0u;
+                            if (src_type != 0 && src_type == instr.type_id) {
+                                // target == source type: replace with Local
+                                block.instructions[i] = aura::ir::IRInstruction{
+                                    .opcode = aura::ir::IROpcode::Local,
+                                    .operands = {ops[0], ops[1], 0, 0},
+                                    .type_id = instr.type_id,
+                                };
+                                ++eliminated_;
+                                changed = true;
+                                continue;
+                            }
+                        }
+
+                        // Rule 2: nested cast — (cast (cast x T1) T2)
+                        if (ops[1] < block.instructions.size()) {
+                            auto& src_instr = block.instructions[ops[1]];
+                            if (src_instr.opcode == aura::ir::IROpcode::CastOp) {
+                                // Skip the intermediate cast: ops[0] = ops'[1]
+                                ops[1] = src_instr.operands[1];
+                                ++eliminated_;
+                                changed = true;
+                                continue;
+                            }
+                        }
+                    }
+                } while (changed);
+            }
+        }
+    }
+
+    bool has_error() const { return false; }
+    std::string_view name() const { return "dead-coercion"; }
+    std::size_t eliminated_count() const { return eliminated_; }
+
+private:
+    const aura::core::TypeRegistry* type_reg_ = nullptr;
+    std::size_t eliminated_ = 0;
+};
+
 } // namespace aura::compiler
