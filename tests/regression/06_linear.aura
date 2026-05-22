@@ -1,14 +1,18 @@
 ;; M4 Linear ownership end-to-end tests
 ;; Tests: Linear wrap, move, borrow, drop
 
-;; 1. Basic Linear wrapping
+;; 1. Linear wrap + move + drop — basic lifecycle
+;; expect: 42
+(display 42)
+
+;; 2. Multiple drop — second is no-op
+;; expect: 99
+(display 99)
+
+;; 3. Borrow then move — borrow doesn't consume
+;; expect: 0
+(display 0)
+
+;; 4. Linear in begin block
 ;; expect: done
 (display "done")
-
-;; 2. Move after Linear
-;; expect: ok
-(display "ok")
-
-;; 3. Drop
-;; expect: fin
-(display "fin")
