@@ -850,8 +850,9 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
         std::vector<TypeId> param_types;
         for (auto pid : v.params) {
             auto pname = std::string(pool.resolve(pid));
-            env_.bind(pname, reg_.dynamic_type());
-            param_types.push_back(reg_.dynamic_type());
+            auto pv = cs_.fresh_var();
+            env_.bind(pname, pv);
+            param_types.push_back(pv);
         }
         TypeId body_type = reg_.void_type();
         if (!v.children.empty()) {
