@@ -34,6 +34,11 @@ private:
     aura::ast::NodeId parse_begin(); aura::ast::NodeId parse_set();
     aura::ast::NodeId parse_quote(); aura::ast::NodeId parse_cond(); aura::ast::NodeId parse_defmacro();
     aura::ast::NodeId parse_match();
+    aura::ast::NodeId parse_linear();
+    aura::ast::NodeId parse_move();
+    aura::ast::NodeId parse_borrow();
+    aura::ast::NodeId parse_mut_borrow();
+    aura::ast::NodeId parse_drop();
     aura::ast::NodeId parse_cast();
     aura::ast::NodeId parse_check();
     aura::ast::NodeId parse_type_annot();

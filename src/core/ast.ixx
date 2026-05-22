@@ -34,6 +34,11 @@ export enum class NodeTag : std::uint32_t {
     Pair = 0x12,
     DefineType = 0x13,
     Export = 0x15,
+    Linear = 0x16,
+    Move = 0x17,
+    Borrow = 0x18,
+    MutBorrow = 0x19,
+    Drop = 0x1A,
 };
 
 
@@ -163,7 +168,7 @@ export struct NodeMeta {
 // Tag-to-metadata mapping, indexed by `tag - 1`.
 // Tags must be sequential starting from 1 (LiteralInt = 0x01).
 // Gap at 0x0C is filled with a sentinel.
-export constexpr std::array<NodeMeta, 21> kNodeMeta = {{
+export constexpr std::array<NodeMeta, 26> kNodeMeta = {{
     {NodeTag::LiteralInt, "LiteralInt", 0, false, false, true,  false, false},  // 0x01
     {NodeTag::Variable,   "Variable",   0, false, true,  false, false, false},  // 0x02
     {NodeTag::Call,       "Call",       1, true,  false, false, false, false},  // 0x03
@@ -185,6 +190,11 @@ export constexpr std::array<NodeMeta, 21> kNodeMeta = {{
     {NodeTag::LiteralInt, "<gap>",      0, false, false, false, false, false},  // 0x13 (gap)
     {NodeTag::LiteralInt, "<gap>",      0, false, false, false, false, false},  // 0x14 (gap)
     {NodeTag::Export, "Export", 0, true, false, false, false, false},  // 0x15
+    {NodeTag::Linear,  "Linear",  1, false, false, false, false, false},  // 0x16
+    {NodeTag::Move,    "Move",    1, false, false, false, false, false},  // 0x17
+    {NodeTag::Borrow,  "Borrow",  1, false, false, false, false, false},  // 0x18
+    {NodeTag::MutBorrow, "MutBorrow", 1, false, false, false, false, false}, // 0x19
+    {NodeTag::Drop,    "Drop",    1, false, false, false, false, false},  // 0x1A
 }};
 
 
@@ -523,6 +533,52 @@ public:
         type_id_[id] = type_id;
         return id;
     }
+    // ── M4 Linear ownership builders ───────────────────────────
+    [[nodiscard]] NodeId add_linear(NodeId inner) {
+        auto id = add_node(NodeTag::Linear);
+        auto start = static_cast<std::uint32_t>(child_data_.size());
+        child_data_.push_back(inner);
+        child_begin_[id] = start;
+        child_count_[id] = 1;
+        return id;
+    }
+
+    [[nodiscard]] NodeId add_move(NodeId inner) {
+        auto id = add_node(NodeTag::Move);
+        auto start = static_cast<std::uint32_t>(child_data_.size());
+        child_data_.push_back(inner);
+        child_begin_[id] = start;
+        child_count_[id] = 1;
+        return id;
+    }
+
+    [[nodiscard]] NodeId add_borrow(NodeId inner) {
+        auto id = add_node(NodeTag::Borrow);
+        auto start = static_cast<std::uint32_t>(child_data_.size());
+        child_data_.push_back(inner);
+        child_begin_[id] = start;
+        child_count_[id] = 1;
+        return id;
+    }
+
+    [[nodiscard]] NodeId add_mut_borrow(NodeId inner) {
+        auto id = add_node(NodeTag::MutBorrow);
+        auto start = static_cast<std::uint32_t>(child_data_.size());
+        child_data_.push_back(inner);
+        child_begin_[id] = start;
+        child_count_[id] = 1;
+        return id;
+    }
+
+    [[nodiscard]] NodeId add_drop(NodeId inner) {
+        auto id = add_node(NodeTag::Drop);
+        auto start = static_cast<std::uint32_t>(child_data_.size());
+        child_data_.push_back(inner);
+        child_begin_[id] = start;
+        child_count_[id] = 1;
+        return id;
+    }
+
     // ── Access ─────────────────────────────────────────────────
 
     NodeView get(NodeId id) const {
