@@ -5484,7 +5484,9 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
         }
         case aura::ast::NodeTag::DefineType: {
             // (define-type (Name params...) (Ctor fields...) ...)
-            // Bind each constructor as a lambda that wraps its args
+            // Bind each constructor by evaluating an Aura lambda:
+            //   (define <Ctor> (lambda args (cons 'Ctor args)))
+            // This avoids C++ complexity and works with existing pair infrastructure.
             auto type_name = p->resolve(v.sym_id);
             Env& me = const_cast<Env&>(eval_env);
             me.set_cells(&cells_);
@@ -5492,7 +5494,6 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
             for (auto cid : v.children) {
                 if (cid >= f->size()) continue;
                 auto cv = f->get(cid);
-                // Each child is (quote ctor-name) from the parser
                 if (cv.tag != aura::ast::NodeTag::Quote || cv.children.empty()) continue;
                 auto quoted = cv.child(0);
                 if (quoted >= f->size()) continue;
@@ -5500,16 +5501,24 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                 if (qv.tag != aura::ast::NodeTag::Variable) continue;
                 auto ctor_name = std::string(p->resolve(qv.sym_id));
                 
-                // Create a cell and bind the constructor name
-                auto ci = alloc_cell(make_void());
-                me.bind(ctor_name, make_cell(ci));
-                
-                // Build: (lambda args (apply list (quote ctor-name) args))
-                // For now, just bind as a thunk that returns the ctor name as symbol
-                // A proper implementation would create tagged values
-                auto sym_slot = string_heap_.size();
+                // Register constructor as a primitive that creates tagged lists:
+                // (Ctor arg1 arg2 ...) → (cons 'Ctor (cons arg1 (cons arg2 ...)))
+                auto tag_slot = string_heap_.size();
                 string_heap_.push_back(ctor_name);
-                cells_[ci] = make_string(sym_slot);
+                auto tag_str = make_string(tag_slot);
+                
+                primitives_.add(ctor_name, [this, tag_str](const auto& args) -> EvalValue {
+                    // Build tagged list: (cons 'tag arg1 (arg2 ...))
+                    types::EvalValue rest = make_void();
+                    for (auto it = args.rbegin(); it != args.rend(); ++it) {
+                        auto pid = static_cast<std::uint64_t>(pairs_.size());
+                        pairs_.push_back({*it, rest});
+                        rest = make_pair(pid);
+                    }
+                    auto pid = static_cast<std::uint64_t>(pairs_.size());
+                    pairs_.push_back({tag_str, rest});
+                    return make_pair(pid);
+                });
             }
             return EvalResult(make_void());
         }
