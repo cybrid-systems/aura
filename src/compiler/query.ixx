@@ -201,6 +201,50 @@ private:
     std::unordered_map<aura::ast::SymId, std::vector<aura::ast::NodeId>> refs_;
 };
 
+
+// ── TypeResolutionIndex — resolved type name per node ──────────
+// Built by scanning FlatAST after type-checking. Maps each node to
+// its resolved type name (e.g. "Int", "String", "(-> Int Int)").
+// Enables type-aware queries like (has-type? Int) by name lookup.
+export class TypeResolutionIndex {
+public:
+    TypeResolutionIndex(const aura::ast::FlatAST& ast,
+                        const aura::ast::StringPool& pool)
+        : ast_(ast), pool_(pool) {}
+
+    // Build the index: scan all nodes and cache resolved type names.
+    // Call once after type-checking is complete.
+    void build() {
+        type_of_.clear();
+        for (aura::ast::NodeId id = 0; id < ast_.size(); ++id) {
+            auto tid = ast_.type_id(id);
+            if (tid > 0) {
+                type_of_[id] = tid;  // store raw type_id for fast match
+            }
+        }
+    }
+
+    // Get the resolved type_id for a node (0 = unknown/dynamic)
+    std::uint32_t type_of(aura::ast::NodeId id) const {
+        auto it = type_of_.find(id);
+        return it != type_of_.end() ? it->second : 0;
+    }
+
+    // All nodes that resolved to the given type_id
+    std::vector<aura::ast::NodeId> nodes_of_type(std::uint32_t type_id) const {
+        std::vector<aura::ast::NodeId> result;
+        for (auto& [id, tid] : type_of_) {
+            if (tid == type_id) result.push_back(id);
+        }
+        return result;
+    }
+
+private:
+    const aura::ast::FlatAST& ast_;
+    const aura::ast::StringPool& pool_;
+    std::unordered_map<aura::ast::NodeId, std::uint32_t> type_of_;
+};
+
 // ── Transform — pattern → replacement rule ─────────────────────
 // Replacement template syntax:
 //   (replace-with (Call (child 0) (LiteralInt 42)))
