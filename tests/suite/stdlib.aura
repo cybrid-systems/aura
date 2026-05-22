@@ -20,7 +20,7 @@
   (check= 120 (factorial 5))
   (check (odd? 3))
   (check (even? 4))
-  (check>= 3.14 pi)))
+  (check>= 3.14 (pi))))
 
 (test-suite "stdlib:string"
   (require std/string)
