@@ -1,0 +1,5 @@
+;; task: type-pair-occurrence
+;; goal: Use pair? to refine type and extract car
+;; expect: 1
+;; hint: --- pair occurrence typing ---
+;; hint: (let ((x (cons 1 2))) (if (pair? x) (car x) 0))
