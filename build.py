@@ -220,6 +220,14 @@ INTEG_TESTS = [
     IntegCase("tc_append", '(string-append "a" "b")', "typecheck", expected="String"),
     IntegCase("tc_pair", "(cons 1 2)", "typecheck", expected="Any"),
     IntegCase("tc_let_lambda", "(let ((f (lambda (x) (+ x 1)))) (f 41))", "typecheck", expected="Int"),
+    # ADT eval tests
+    IntegCase("adt_some_pair", "(begin (define-type (Option a) (Some a) (None)) (pair? (Some 42)))", "eval", expected="#t"),
+    IntegCase("adt_some_cadr", "(begin (define-type (Option a) (Some a) (None)) (car (cdr (Some 42))))", "eval", expected="42"),
+    IntegCase("adt_match_some", "(begin (define-type (Option a) (Some a) (None)) (match (Some 42) ((Some x) x) (None 0)))", "eval", expected="42"),
+    IntegCase("adt_match_none", "(begin (define-type (Option a) (Some a) (None)) (match None ((Some x) x) (None 0)))", "eval", expected="0"),
+    IntegCase("adt_either", "(begin (define-type (Either a b) (Left a) (Right b)) (match (Left 'err') ((Left m) m) ((Right v) v)))", "eval", expected="err"),
+    # ADT typecheck tests
+    IntegCase("tc_adt_concrete", "(define-type (BoolOption) (Yes Bool) (No)) (Yes #t)", "typecheck", expected="(String -> (Bool -> Void))"),
 
     # ── Error recovery ─────────────────────────────────────
     IntegCase("err_div_zero", "(/ 1 0)", "eval", expected_err="", expected_status=0),
