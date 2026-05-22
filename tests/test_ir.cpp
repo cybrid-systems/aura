@@ -1203,6 +1203,127 @@ int main() {
             run_annot_test("expr", "(: x Int (+ 1 2))", "3");
         }
 
+        // ── 7. Call-site coercion (lowering + TypeRegistry) ───
+        {
+            // Test: call with known function type — args should get CastOp
+            // when actual type != expected param type
+            aura::ast::ASTArena arena_c;
+            auto alloc_c = arena_c.allocator();
+            aura::ast::StringPool pool_c(alloc_c);
+            aura::ast::FlatAST flat_c(alloc_c);
+            aura::core::TypeRegistry treg_c;
+            aura::diag::DiagnosticCollector diag_c;
+
+            // Build: (let ((f (lambda (x) x))) (f 42))
+            // f : (-> Int Int) via type inference
+            auto x_sym = pool_c.intern("x");
+            auto f_sym = pool_c.intern("f");
+            aura::ast::SymId params[] = {x_sym};
+            auto body = flat_c.add_variable(x_sym);
+            auto lambda = flat_c.add_lambda(params, body);
+            auto arg = flat_c.add_literal(42);
+            aura::ast::NodeId call_args[] = {arg};
+            auto call = flat_c.add_call(lambda, call_args);
+            auto let = flat_c.add_let(f_sym, lambda, call);
+            flat_c.root = let;
+
+            // Type-check
+            aura::compiler::TypeChecker tc_c(treg_c);
+            tc_c.infer_flat(flat_c, pool_c, let, diag_c);
+
+            // Lower WITH TypeRegistry (triggers call-site coercion)
+            auto mod_c = aura::compiler::lower_to_ir(flat_c, pool_c, arena_c,
+                nullptr, &treg_c);
+
+            // Check for CastOp in IR (arg type matches param type, so no cast)
+            // f: (-> t0 t0), arg: Int(42) — t0 unifies with Int, so arg should be Int
+            // This test verifies lowering doesn't crash with TypeRegistry
+            bool found_cast = false;
+            for (auto& func : mod_c.functions) {
+                for (auto& block : func.blocks) {
+                    for (auto& instr : block.instructions) {
+                        if (instr.opcode == aura::ir::IROpcode::CastOp)
+                            found_cast = true;
+                    }
+                }
+            }
+
+            // Execute and check result
+            aura::compiler::Evaluator eval_c;
+            eval_c.set_arena(&arena_c);
+            aura::compiler::IRInterpreter ir_c(mod_c, eval_c.primitives(), &treg_c);
+            auto res_c = ir_c.execute();
+            if (res_c) {
+                auto got_c = aura::compiler::types::format_value(*res_c);
+                if (got_c == "42") {
+                    std::println("TS OK: call-coerce type inference → {}{}", got_c,
+                        found_cast ? " (with cast)" : " (no cast)");
+                    ++ts_passed;
+                } else if (got_c == "0" && found_cast) {
+                    // CastOp may produce wrong result if type_id check incorrect
+                    std::println(std::cerr, "TS FAIL: call-coerce got 0 (bad cast)");
+                    ++ts_failed;
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: call-coerce got {} expected 42", got_c);
+                }
+            } else {
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: call-coerce exec error: {}",
+                             res_c.error().format());
+            }
+        }
+
+        // Test: parse+typecheck+lower+exec with TypeRegistry
+        {
+            auto run_cr = [&](std::string_view name,
+                               std::string_view code,
+                               std::string_view expected) {
+                aura::ast::ASTArena arena;
+                auto alloc = arena.allocator();
+                aura::ast::StringPool pool(alloc);
+                aura::ast::FlatAST flat(alloc);
+                auto pr = aura::parser::parse_to_flat(code, flat, pool);
+                flat.root = pr.root;
+                if (!pr.success) {
+                    std::println(std::cerr, "TS FAIL: cr-parse failed for {}", name);
+                    ++ts_failed; return;
+                }
+                aura::core::TypeRegistry treg;
+                aura::diag::DiagnosticCollector d;
+                aura::compiler::TypeChecker tc(treg);
+                tc.infer_flat(flat, pool, flat.root, d);
+                auto mod = aura::compiler::lower_to_ir(flat, pool, arena, nullptr, &treg);
+                aura::compiler::Evaluator eval;
+                eval.set_arena(&arena);
+                aura::compiler::IRInterpreter ir(mod, eval.primitives(), &treg);
+                auto res = ir.execute();
+                if (res) {
+                    auto got = aura::compiler::types::format_value(*res);
+                    if (got == expected) {
+                        std::println("TS OK: cr({}) → {}", name, got);
+                        ++ts_passed;
+                    } else {
+                        ++ts_failed;
+                        std::println(std::cerr, "TS FAIL: cr({}) got {} expected {}",
+                                     name, got, expected);
+                    }
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: cr({}) exec error: {}",
+                                 name, res.error().format());
+                }
+            };
+
+            run_cr("annot-int", "(: x Int 42)", "42");
+            run_cr("annot-expr", "(: x Int (+ 1 2))", "3");
+            run_cr("lambda-call", "((lambda (x) (* x 2)) 5)", "10");
+            run_cr("let-call",
+                "(let ((f (lambda (x) (+ x 1)))) (f 41))", "42");
+            run_cr("poly-call",
+                "(let ((id (lambda (x) x))) (id 42))", "42");
+        }
+
         std::println("Type system detail tests: {}/{}/{} passed/failed/total",
                      ts_passed, ts_failed, ts_passed + ts_failed);
         if (ts_failed > 0) return 1;
