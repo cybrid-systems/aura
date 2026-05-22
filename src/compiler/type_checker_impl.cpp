@@ -739,11 +739,15 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
             auto inner_v = flat.get(v.child(0));
             if (inner_v.tag == NodeTag::Variable) {
                 auto var_name = std::string(pool.resolve(inner_v.sym_id));
-                if (!ownership_env_.can_use(var_name)) {
-                    auto msg = var_name + " has been moved and cannot be used again";
-                    diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_));
+                auto var_ty = env_.lookup(var_name);
+                bool is_linear = var_ty.valid() && reg_.linear_of(var_ty) != nullptr;
+                if (is_linear) {
+                    if (!ownership_env_.can_use(var_name)) {
+                        auto msg = "cannot move " + var_name + " — already moved";
+                        diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_));
+                    }
+                    ownership_env_.mark(var_name, OwnershipState::Moved);
                 }
-                ownership_env_.mark(var_name, OwnershipState::Moved);
             }
             inner_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
         }
@@ -757,13 +761,17 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
             auto inner_v = flat.get(v.child(0));
             if (inner_v.tag == NodeTag::Variable) {
                 auto var_name = std::string(pool.resolve(inner_v.sym_id));
-                auto st = ownership_env_.get(var_name);
-                if (st == OwnershipState::Moved || st == OwnershipState::MutBorrowed) {
-                    auto msg = "cannot borrow " + var_name + " in state "
-                             + ownership_env_.state_name(st);
-                    diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_));
+                auto var_ty = env_.lookup(var_name);
+                bool is_linear = var_ty.valid() && reg_.linear_of(var_ty) != nullptr;
+                if (is_linear) {
+                    auto st = ownership_env_.get(var_name);
+                    if (st == OwnershipState::Moved || st == OwnershipState::MutBorrowed) {
+                        auto msg = "cannot borrow " + var_name + " in state "
+                                 + ownership_env_.state_name(st);
+                        diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_));
+                    }
+                    ownership_env_.mark(var_name, OwnershipState::Borrowed);
                 }
-                ownership_env_.mark(var_name, OwnershipState::Borrowed);
             }
             inner_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
         }
@@ -777,13 +785,17 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
             auto inner_v = flat.get(v.child(0));
             if (inner_v.tag == NodeTag::Variable) {
                 auto var_name = std::string(pool.resolve(inner_v.sym_id));
-                auto st = ownership_env_.get(var_name);
-                if (st != OwnershipState::Owned) {
-                    auto msg = "cannot mutably borrow " + var_name + " in state "
-                             + ownership_env_.state_name(st);
-                    diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_));
+                auto var_ty = env_.lookup(var_name);
+                bool is_linear = var_ty.valid() && reg_.linear_of(var_ty) != nullptr;
+                if (is_linear) {
+                    auto st = ownership_env_.get(var_name);
+                    if (st != OwnershipState::Owned) {
+                        auto msg = "cannot mutably borrow " + var_name + " in state "
+                                 + ownership_env_.state_name(st);
+                        diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_));
+                    }
+                    ownership_env_.mark(var_name, OwnershipState::MutBorrowed);
                 }
-                ownership_env_.mark(var_name, OwnershipState::MutBorrowed);
             }
             inner_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
         }
@@ -796,11 +808,15 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
             auto inner_v = flat.get(v.child(0));
             if (inner_v.tag == NodeTag::Variable) {
                 auto var_name = std::string(pool.resolve(inner_v.sym_id));
-                if (!ownership_env_.can_use(var_name)) {
-                    auto msg = "cannot drop " + var_name + " — already moved";
-                    diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_));
+                auto var_ty = env_.lookup(var_name);
+                bool is_linear = var_ty.valid() && reg_.linear_of(var_ty) != nullptr;
+                if (is_linear) {
+                    if (!ownership_env_.can_use(var_name)) {
+                        auto msg = "cannot drop " + var_name + " — already moved";
+                        diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_));
+                    }
+                    ownership_env_.mark(var_name, OwnershipState::Moved);
                 }
-                ownership_env_.mark(var_name, OwnershipState::Moved);
             }
             synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
         }
