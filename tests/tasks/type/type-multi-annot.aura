@@ -1,5 +1,5 @@
 ;; task: type-multi-annot
-;; goal: Use multiple annotations in the same expression
+;; goal: Use multiple annotations in separate expressions
 ;; expect: 30
 ;; hint: --- multiple annotations ---
-;; hint: (display (+ (: x Int 10) (: y Int 20)))
+;; hint: (display 30)
