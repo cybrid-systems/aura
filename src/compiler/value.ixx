@@ -122,7 +122,7 @@ export inline std::string format_value(const EvalValue& v) {
     if (is_vector(v)) return std::format("<vector[{}]>", as_vector_idx(v));
     if (is_hash(v)) return std::format("<hash[{}]>", as_hash_idx(v));
     if (is_pair(v)) return std::format("<pair[{}]>", as_pair_idx(v));
-    if (is_closure(v)) return std::format("<closure[{}]>", as_closure_id(v));
+    if (is_closure(v)) return "#<procedure>";
     if (is_cell(v)) return std::format("<cell[{}]>", as_cell_id(v));
     if (is_primitive(v)) return "<primitive>";
     if (is_module(v)) return std::format("<module[{}]>", as_module_idx(v));
@@ -145,7 +145,7 @@ export inline std::string format_value(const EvalValue& v, const std::vector<std
     if (is_vector(v)) return std::format("<vector[{}]>", as_vector_idx(v));
     if (is_hash(v)) return std::format("<hash[{}]>", as_hash_idx(v));
     if (is_pair(v)) return std::format("<pair[{}]>", as_pair_idx(v));
-    if (is_closure(v)) return std::format("<closure[{}]>", as_closure_id(v));
+    if (is_closure(v)) return "#<procedure>";
     if (is_cell(v)) return std::format("<cell[{}]>", as_cell_id(v));
     if (is_module(v)) return std::format("<module[{}]>", as_module_idx(v));
     if (is_error(v)) return std::format("<error[{}]>", as_error_idx(v));
