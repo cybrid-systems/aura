@@ -6,12 +6,20 @@ namespace aura::compiler {
 using namespace aura::ast;
 
 // ── resolve_type_id — map type name to hardcoded TypeId values ──
-// TODO: integrate with TypeRegistry
+// Matches TypeRegistry initialization order (type_impl.cpp):
+//   DYNAMIC=0, INT=1, BOOL=2, STRING=3, VOID=4, TYPE=5,
+//   VECTOR=6, FLOAT=7, PAIR=8, HASH=9
 static std::uint32_t resolve_type_id(const std::string& name) {
-    if (name == "Int")    return 1;
-    if (name == "Bool")   return 2;
-    if (name == "String") return 3;
-    if (name == "Void")   return 4;
+    if (name == "Any" || name == "Dyn" || name == "Dynamic") return 0;
+    if (name == "Int")      return 1;
+    if (name == "Bool")     return 2;
+    if (name == "String")   return 3;
+    if (name == "Void")     return 4;
+    if (name == "Type")     return 5;
+    if (name == "Vector")   return 6;
+    if (name == "Float")    return 7;
+    if (name == "Pair")     return 8;
+    if (name == "Hash")     return 9;
     return 0;  // DYNAMIC / unknown
 }
 
@@ -138,17 +146,27 @@ bool QueryEngine::match(NodeId id, const QueryExpr& q, int depth) {
     case QueryExpr::Kind::And: for (auto& c : q.children) if (!match(id, c, depth+1)) return false; return true;
     case QueryExpr::Kind::Or:  for (auto& c : q.children) if (match(id, c, depth+1)) return true; return false;
     case QueryExpr::Kind::Not: return !q.children.empty() && !match(id, q.children[0], depth+1);
-    case QueryExpr::Kind::HasType:
-return index_.ast.type_id(id) != 0 && index_.ast.type_id(id) == resolve_type_id(q.str_value);
+    case QueryExpr::Kind::HasType: {
+        auto node_tid = index_.ast.type_id(id);
+        auto query_tid = resolve_type_id(q.str_value);
+        if (node_tid == 0 || query_tid == 0) return true;  // Any consistent with everything
+        return node_tid == query_tid;
+    }
     case QueryExpr::Kind::ReturnType: {
         if (v.tag != NodeTag::Call) return false;
-        return index_.ast.type_id(id) != 0 && index_.ast.type_id(id) == resolve_type_id(q.str_value);
+        auto node_tid = index_.ast.type_id(id);
+        auto query_tid = resolve_type_id(q.str_value);
+        if (node_tid == 0 || query_tid == 0) return true;  // Any consistent
+        return node_tid == query_tid;
     }
     case QueryExpr::Kind::ArgType: {
         if (v.tag != NodeTag::Call) return false;
         if (q.child_index >= v.children.size()) return false;
         auto cid = v.child(q.child_index);
-        return index_.ast.type_id(cid) != 0 && index_.ast.type_id(cid) == resolve_type_id(q.str_value);
+        auto node_tid = index_.ast.type_id(cid);
+        auto query_tid = resolve_type_id(q.str_value);
+        if (node_tid == 0 || query_tid == 0) return true;  // Any consistent
+        return node_tid == query_tid;
     }
     case QueryExpr::Kind::RefCount: {
         if (v.sym_id == aura::ast::INVALID_SYM) return false;
