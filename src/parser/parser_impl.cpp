@@ -1032,6 +1032,57 @@ std::vector<std::pair<SymId, NodeId>> FlatParser::compile_pattern(NodeId pattern
 
                 return bindings;
             }
+
+            // Constructor pattern: (CtorName sub-patterns...)
+            // Matches tagged lists: (cons 'tag (cons field1 (cons field2 ...)))
+            // Tests: (pair? tmp) && (equal? (car tmp) 'CtorName)
+            // Then sub-patterns match against (car (cdr tmp)), (car (cdr (cdr tmp))), ...
+            {
+                auto ctor_name = pool_.resolve(callee_v.sym_id);
+                // Ignore list/cons/pair/quote — handled above
+                if (ctor_name != "list" && ctor_name != "cons" && ctor_name != "pair") {
+                    // Test 1: (pair? tmp) — value must be a pair
+                    NodeId accumulated_test = make_call(sym_pair_q, {var_tmp});
+                    
+                    // Test 2: (equal? (car tmp) "CtorName") — tag match as string
+                    // The constructor stores the tag as a string in the pair heap
+                    auto ctor_str = flat_.add_literalstring(pool_.intern(ctor_name));
+                    auto tag_test = make_call(pool_.intern("string=?"), {make_call(sym_car, {var_tmp}), ctor_str});
+                    accumulated_test = flat_.add_if(accumulated_test, tag_test, flat_.add_literal(0));
+                    
+                    // Walk sub-patterns starting from (cdr tmp)
+                    auto current = make_call(sym_cdr, {var_tmp});
+                    for (std::size_t i = 1; i < v.children.size(); ++i) {
+                        auto elem = v.child(i);
+                        auto elem_v = flat_.get(elem);
+                        
+                        // (pair? current) — ensure list structure
+                        auto pair_check = make_call(sym_pair_q, {current});
+                        accumulated_test = flat_.add_if(accumulated_test, pair_check, flat_.add_literal(0));
+                        
+                        auto elem_car = make_call(sym_car, {current});
+                        
+                        if (elem_v.tag == NodeTag::Variable) {
+                            auto elem_name = pool_.resolve(elem_v.sym_id);
+                            if (elem_name != "_" && !(elem_name.size() > 1 && elem_name[0] == '_')) {
+                                bindings.emplace_back(elem_v.sym_id, elem_car);
+                            }
+                        } else if (elem_v.tag == NodeTag::LiteralInt || elem_v.tag == NodeTag::LiteralFloat || elem_v.tag == NodeTag::LiteralString) {
+                            auto eq_test = make_call(sym_equal_q, {elem_car, elem});
+                            accumulated_test = flat_.add_if(accumulated_test, eq_test, flat_.add_literal(0));
+                        }
+                        
+                        current = make_call(sym_cdr, {current});
+                    }
+                    
+                    // Final: (null? current) — proper length
+                    auto null_test = make_call(sym_null_q, {current});
+                    accumulated_test = flat_.add_if(accumulated_test, null_test, flat_.add_literal(0));
+                    
+                    *out_test = accumulated_test;
+                    return bindings;
+                }
+            }
         }
     }
 

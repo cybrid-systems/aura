@@ -1543,7 +1543,7 @@ primitives_.add("string-append", [this](const auto& a) {
         return make_int(val_type == expected ? 1 : 0);
     });
 
-    primitives_.add("equal?", [this](const auto& a) {
+        primitives_.add("equal?", [this](const auto& a) {
         if (a.size() < 2) return make_bool(true);
 
         struct EqCheck {
@@ -5507,8 +5507,8 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                 string_heap_.push_back(ctor_name);
                 auto tag_str = make_string(tag_slot);
                 
+                // Register as primitive
                 primitives_.add(ctor_name, [this, tag_str](const auto& args) -> EvalValue {
-                    // Build tagged list: (cons 'tag arg1 (arg2 ...))
                     types::EvalValue rest = make_void();
                     for (auto it = args.rbegin(); it != args.rend(); ++it) {
                         auto pid = static_cast<std::uint64_t>(pairs_.size());
