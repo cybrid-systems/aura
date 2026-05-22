@@ -45,7 +45,7 @@ AI 做方向，Aura 做局部搜索。
 ```bash
 LLM_API_KEY="..." python3 tests/edsl_benchmark.py
 ```
-57 个生成任务，双模型 89-91% 通过率。  
+57 个生成任务，三模型 93-100% 通过率（Grok 4.3 首次满通过 🎯）。  
 不是 AI 写对了——是系统自己走到了正确的地方。
 
 ---
@@ -73,13 +73,15 @@ Aura 是一个 **AI-native Lisp** 编译器：C++26 实现，LLVM ORC JIT 后端
 fib-20: Tree-walker 48.6ms → IR 23.0ms → JIT (-O2) 6.4ms (7.55×)
 ```
 
-### AI 基准（57 生成任务，PID + 蚁群控制器）
+### AI 基准（57 生成任务，2026-05-22）
 
-| 模型 | 通过率 |
-|:----|:------:|
-| **DeepSeek v4 Flash** | **52/57 (91%)** |
-| **MiniMax-M2.7** | **51/57 (89%)** |
+| 模型 | 通过率 | 耗时 |
+|:----|:------:|:----:|
+| 🥇 **Grok 4.3** | **57/57 (100%)** 🎯 | ~10min |
+| 🥈 **DeepSeek v4 Flash** | **54/57 (94.7%)** | ~10min |
+| 🥉 **MiniMax-M2.7** | **53/57 (93.0%)** | ~15min |
 
+无 Scheme 兼容层（着力即差），`max-attempts=3`。
 [详情 → docs/benchmark.md](docs/benchmark.md) · [规格 → docs/design/aura_language_spec.md](docs/design/aura_language_spec.md)
 
 ### 快速开始
