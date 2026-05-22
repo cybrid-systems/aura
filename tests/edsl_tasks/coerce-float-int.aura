@@ -1,0 +1,3 @@
+;; task: coerce-float-int
+;; goal: Write (+ 1 2.5) that demonstrates Int-to-Float coercion, result should be a float
+;; expect: 3.5
