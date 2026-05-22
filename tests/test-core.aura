@@ -170,3 +170,30 @@
 (test-suite "constraint:function-compose"
   (check (number? (* 5 2)))
   (check (number? ((lambda (x) (+ x 1)) ((lambda (z) (* z 2)) 5)))))
+
+; ── ADT tests (define-type + match) ──
+(test-suite "adt:basic"
+  (check (begin (define-type (Option a) (Some a) (None)) (pair? (Some 42))))
+  (check (begin (define-type (Option a) (Some a) (None)) (string? (car (Some 42)))))
+  (check (begin (define-type (Option a) (Some a) (None)) (pair? None)))
+  (check (begin (define-type (Option a) (Some a) (None)) (not (pair? 42)))))
+
+(test-suite "adt:match"
+  (check= 42 (begin (define-type (Option a) (Some a) (None))
+               (let ((adt (Some 42))) (match adt ((Some x) x) (None 0)))))
+  (check= 0 (begin (define-type (Option a) (Some a) (None))
+               (let ((adt None)) (match adt ((Some x) x) (None 0)))))
+  (check= "got" (begin (define-type (Option a) (Some a) (None))
+                  (let ((adt (Some #t))) (match adt ((Some _) "got") (None "none")))))
+  (check= "none" (begin (define-type (Option a) (Some a) (None))
+                   (let ((adt None)) (match adt ((Some _) "got") (None "none"))))))
+
+(test-suite "adt:multi-ctor"
+  (check= "left" (begin (define-type (Either a b) (Left a) (Right b))
+                   (match (Left "left") ((Left v) v) ((Right v) v))))
+  (check= "right" (begin (define-type (Either a b) (Left a) (Right b))
+                    (match (Right "right") ((Left v) v) ((Right v) v)))))
+
+(test-suite "adt:wildcard"
+  (check (begin (define-type (Option a) (Some a) (None)) (match (Some 42) ((Some _) #t) (None #f))))
+  (check (not (begin (define-type (Option a) (Some a) (None)) (match None ((Some _) #t) (None #f))))))
