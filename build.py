@@ -228,6 +228,17 @@ INTEG_TESTS = [
     IntegCase("adt_either", "(begin (define-type (Either a b) (Left a) (Right b)) (match (Left 'err') ((Left m) m) ((Right v) v)))", "eval", expected="err"),
     # ADT typecheck tests
     IntegCase("tc_adt_concrete", "(define-type (BoolOption) (Yes Bool) (No)) (Yes #t)", "typecheck", expected="(String -> (Bool -> Void))"),
+    IntegCase("tc_adt_poly", "(define-type (Option a) (Some a) (None)) (Some 42)", "typecheck", expected="(String -> (Int -> Void))"),
+    # ADT edge cases
+    IntegCase("adt_none_pair", "(begin (define-type (Option a) (Some a) (None)) (pair? None))", "eval", expected="#f"),
+    IntegCase("adt_none_is_not_pair", "(begin (define-type (Option a) (Some a) (None)) (not (pair? None)))", "eval", expected="#t"),
+    IntegCase("adt_car_tag", "(begin (define-type (Option a) (Some a) (None)) (car (Some 42)))", "eval", expected="Some"),
+    IntegCase("adt_wildcard", "(begin (define-type (Option a) (Some a) (None)) (match (Some 99) ((Some _) #t) (None #f)))", "eval", expected="#t"),
+    IntegCase("adt_multi_field", "(begin (define-type (Pair a b) (pair a b)) (car (cdr (pair 1 2))))", "eval", expected="1"),
+    # Fuzz: rapid type system stress tests
+    IntegCase("fuzz_adt_coercion", "(begin (define-type (Wrap a) (Wrap a)) (car (cdr (Wrap (+ 1 2.5)))))", "eval", expected="3.5"),
+    IntegCase("fuzz_adt_let_poly", "(begin (define-type (Box a) (Box a)) ((lambda (f) (f (Box 42))) (lambda (x) (car (cdr x)))))", "eval", expected="42"),
+    IntegCase("fuzz_adt_nested", "(begin (define-type (Tree a) (Leaf a) (Node Tree Tree)) (match (Leaf 1) ((Leaf v) v) ((Node l r) 0)))", "eval", expected="1"),
 
     # ── Error recovery ─────────────────────────────────────
     IntegCase("err_div_zero", "(/ 1 0)", "eval", expected_err="", expected_status=0),
