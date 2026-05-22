@@ -649,6 +649,38 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
     case Tag::Coercion:
         result = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
         break;
+    case Tag::DefineType: {
+        // (define-type (Name params...) (Ctor fields...) ...)
+        // Register the type and bind constructors in the type environment.
+        auto type_name = std::string(pool.resolve(v.sym_id));
+        
+        // Create a new type for this variant (with type params if any)
+        std::vector<TypeId> type_params;
+        for (auto pid : v.params) {
+            auto pname = std::string(pool.resolve(pid));
+            auto tv = cs_.fresh_var();
+            type_params.push_back(tv);
+        }
+        
+        // Register each constructor as a function
+        for (auto cid : v.children) {
+            if (cid >= flat.size()) continue;
+            auto cv = flat.get(cid);
+            if (cv.tag != aura::ast::NodeTag::Quote || cv.children.empty()) continue;
+            auto quoted = cv.child(0);
+            if (quoted >= flat.size()) continue;
+            auto qv = flat.get(quoted);
+            if (qv.tag != aura::ast::NodeTag::Variable) continue;
+            auto ctor_name = std::string(pool.resolve(qv.sym_id));
+            
+            // For now, bind constructor as a function: () -> Dynamic
+            // A proper implementation would know field types from the define-type
+            // and create (field-type-1 ... -> VariantType)
+            env_.bind(ctor_name, reg_.dynamic_type());
+        }
+        result = reg_.void_type();
+        break;
+    }
     case Tag::Define:
         result = reg_.void_type(); break;
     case Tag::Set:
