@@ -4903,8 +4903,145 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
         }
     }
 
+\
+// ── Runtime type helpers for type annotation checking ────────\
+static aura::core::TypeTag runtime_type_tag(const EvalValue\& v) {\
+    if (types::is_int(v))     return aura::core::TypeTag::INT;\
+    if (types::is_float(v))   return aura::core::TypeTag::FLOAT;\
+    if (types::is_bool(v))    return aura::core::TypeTag::BOOL;\
+    if (types::is_string(v))  return aura::core::TypeTag::STRING;\
+    if (types::is_pair(v))    return aura::core::TypeTag::PAIR;\
+    if (types::is_closure(v)) return aura::core::TypeTag::CLOSURE;\
+    if (types::is_vector(v))  return aura::core::TypeTag::VECTOR;\
+    if (types::is_hash(v))    return aura::core::TypeTag::HASH;\
+    return aura::core::TypeTag::DYNAMIC;\
+}\
+\
+static std::string type_tag_name(aura::core::TypeTag tag) {\
+    switch (tag) {\
+        case aura::core::TypeTag::INT:     return "Int";\
+        case aura::core::TypeTag::FLOAT:   return "Float";\
+        case aura::core::TypeTag::BOOL:    return "Bool";\
+        case aura::core::TypeTag::STRING:  return "String";\
+        case aura::core::TypeTag::PAIR:    return "Pair";\
+        case aura::core::TypeTag::CLOSURE: return "Closure";\
+        case aura::core::TypeTag::VECTOR:  return "Vector";\
+        case aura::core::TypeTag::HASH:    return "Hash";\
+        default: return "Dynamic";\
+    }\
+}\
+\
+static bool coerce_value(EvalValue\& val, aura::core::TypeTag from, aura::core::TypeTag to, std::vector<std::string>\& heap) {\
+    if (from == to) return true;\
+    if (from == aura::core::TypeTag::INT \&\& to == aura::core::TypeTag::FLOAT) {\
+        val = types::make_float(static_cast<double>(types::as_int(val))); return true;\
+    }\
+    if (from == aura::core::TypeTag::FLOAT \&\& to == aura::core::TypeTag::INT) {\
+        val = types::make_int(static_cast<std::int64_t>(types::as_float(val))); return true;\
+    }\
+    if (from == aura::core::TypeTag::INT \&\& to == aura::core::TypeTag::STRING) {\
+        auto s = std::to_string(types::as_int(val));\
+        auto id = heap.size(); heap.push_back(std::move(s));\
+        val = types::make_string(id); return true;\
+    }\
+    if (from == aura::core::TypeTag::STRING \&\& to == aura::core::TypeTag::INT) {\
+        auto idx = types::as_string_idx(val);\
+        if (idx < heap.size()) {\
+            try { val = types::make_int(static_cast<std::int64_t>(std::stoll(heap[idx]))); return true; }\
+            catch (...) {}\
+        }\
+    }\
+    if (from == aura::core::TypeTag::INT \&\& to == aura::core::TypeTag::BOOL) {\
+        val = types::make_bool(types::as_int(val) != 0); return true;\
+    }\
+    if (from == aura::core::TypeTag::BOOL \&\& to == aura::core::TypeTag::INT) {\
+        val = types::make_int(types::as_bool(val) ? 1 : 0); return true;\
+    }\
+    if (from == aura::core::TypeTag::FLOAT \&\& to == aura::core::TypeTag::STRING) {\
+        auto s = std::to_string(types::as_float(val));\
+        auto id = heap.size(); heap.push_back(std::move(s));\
+        val = types::make_string(id); return true;\
+    }\
+    if (from == aura::core::TypeTag::STRING \&\& to == aura::core::TypeTag::FLOAT) {\
+        auto idx = types::as_string_idx(val);\
+        if (idx < heap.size()) {\
+            try { val = types::make_float(std::stod(heap[idx])); return true; }\
+            catch (...) {}\
+        }\
+    }\
+    return false;  // non-coercible\
+}
     return make_void();
 }
+// ── Runtime type helpers for type annotation checking ────────
+static aura::core::TypeTag runtime_type_tag(const types::EvalValue& v) {
+    if (types::is_int(v))     return aura::core::TypeTag::INT;
+    if (types::is_float(v))   return aura::core::TypeTag::FLOAT;
+    if (types::is_bool(v))    return aura::core::TypeTag::BOOL;
+    if (types::is_string(v))  return aura::core::TypeTag::STRING;
+    if (types::is_pair(v))    return aura::core::TypeTag::PAIR;
+    if (types::is_closure(v)) return aura::core::TypeTag::CLOSURE;
+    if (types::is_vector(v))  return aura::core::TypeTag::VECTOR;
+    if (types::is_hash(v))    return aura::core::TypeTag::HASH;
+    return aura::core::TypeTag::DYNAMIC;
+}
+
+static std::string type_tag_name(aura::core::TypeTag tag) {
+    switch (tag) {
+        case aura::core::TypeTag::INT:     return "Int";
+        case aura::core::TypeTag::FLOAT:   return "Float";
+        case aura::core::TypeTag::BOOL:    return "Bool";
+        case aura::core::TypeTag::STRING:  return "String";
+        case aura::core::TypeTag::PAIR:    return "Pair";
+        case aura::core::TypeTag::CLOSURE: return "Closure";
+        case aura::core::TypeTag::VECTOR:  return "Vector";
+        case aura::core::TypeTag::HASH:    return "Hash";
+        default: return "Dynamic";
+    }
+}
+
+static bool coerce_value(types::EvalValue& val, aura::core::TypeTag from, aura::core::TypeTag to, std::vector<std::string>& heap) {
+    if (from == to) return true;
+    if (from == aura::core::TypeTag::INT && to == aura::core::TypeTag::FLOAT) {
+        val = types::make_float(static_cast<double>(types::as_int(val))); return true;
+    }
+    if (from == aura::core::TypeTag::FLOAT && to == aura::core::TypeTag::INT) {
+        val = types::make_int(static_cast<std::int64_t>(types::as_float(val))); return true;
+    }
+    if (from == aura::core::TypeTag::INT && to == aura::core::TypeTag::STRING) {
+        auto s = std::to_string(types::as_int(val));
+        auto id = static_cast<std::uint64_t>(heap.size()); heap.push_back(std::move(s));
+        val = types::make_string(id); return true;
+    }
+    if (from == aura::core::TypeTag::STRING && to == aura::core::TypeTag::INT) {
+        auto idx = types::as_string_idx(val);
+        if (idx < heap.size()) {
+            try { val = types::make_int(static_cast<std::int64_t>(std::stoll(heap[static_cast<std::size_t>(idx)]))); return true; }
+            catch (...) {}
+        }
+    }
+    if (from == aura::core::TypeTag::INT && to == aura::core::TypeTag::BOOL) {
+        val = types::make_bool(types::as_int(val) != 0); return true;
+    }
+    if (from == aura::core::TypeTag::BOOL && to == aura::core::TypeTag::INT) {
+        val = types::make_int(types::as_bool(val) ? 1 : 0); return true;
+    }
+    if (from == aura::core::TypeTag::FLOAT && to == aura::core::TypeTag::STRING) {
+        auto s = std::to_string(types::as_float(val));
+        auto id = static_cast<std::uint64_t>(heap.size()); heap.push_back(std::move(s));
+        val = types::make_string(id); return true;
+    }
+    if (from == aura::core::TypeTag::STRING && to == aura::core::TypeTag::FLOAT) {
+        auto idx = types::as_string_idx(val);
+        if (idx < heap.size()) {
+            try { val = types::make_float(std::stod(heap[static_cast<std::size_t>(idx)])); return true; }
+            catch (...) {}
+        }
+    }
+    return false;  // non-coercible
+}
+
+// ── Phase 4: FlatAST tree-walker evaluator (EvalValue) ───────
 
 // ── Phase 4: FlatAST tree-walker evaluator (EvalValue) ───────
 EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
@@ -5489,8 +5626,29 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
         }
         case aura::ast::NodeTag::TypeAnnotation: {
             if (v.children.empty()) return EvalResult(make_void());
-            current_id = v.child(0);
-            continue; // TCO: annotated expression
+            auto annot_id = current_id;
+            auto child_result = eval_flat(*f, *p, v.child(0), eval_env);
+            if (!child_result) return child_result;
+            // Runtime type check: compare value type against annotation
+            if (type_registry_ && annot_id < f->size()) {
+                auto expected_type_id = f->type_id(annot_id);
+                if (expected_type_id != 0) {
+                    auto& treg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
+                    auto expected_tag = treg.tag_of(aura::core::TypeId{expected_type_id, 1});
+                    auto actual_tag = runtime_type_tag(*child_result);
+                    if (actual_tag != expected_tag && actual_tag != aura::core::TypeTag::DYNAMIC) {
+                        auto& val = *child_result;
+                        // Attempt coercion at runtime
+                        bool coerced = coerce_value(val, actual_tag, expected_tag, string_heap_);
+                        if (!coerced) {
+                            std::string expected_name(treg.format_type(aura::core::TypeId{expected_type_id, 1}));
+                            std::string actual_name = type_tag_name(actual_tag);
+                            std::println(std::cerr, "type warning: expected {}, got {}\n", expected_name, actual_name);
+                        }
+                    }
+                }
+            }
+            return child_result;
         }
         case aura::ast::NodeTag::MacroDef: {
             auto name = p->resolve(v.sym_id);
