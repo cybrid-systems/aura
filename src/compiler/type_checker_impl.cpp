@@ -379,6 +379,21 @@ void InferenceEngine::init_primitive_env() {
     register_primitive("cons", {Dyn, Dyn}, Dyn);
     register_primitive("car",  {Dyn}, Dyn);
     register_primitive("cdr",  {Dyn}, Dyn);
+    // car/cdr with polymorphic pair types for ADT match
+    {
+        auto a = cs_.fresh_var();
+        auto b = cs_.fresh_var();
+        auto pair_type = reg_.register_func({a}, b);
+        auto car_type = reg_.register_func({pair_type}, a);
+        env_.bind("car", reg_.register_forall(a, reg_.register_forall(b, car_type)));
+    }
+    {
+        auto a = cs_.fresh_var();
+        auto b = cs_.fresh_var();
+        auto pair_type = reg_.register_func({a}, b);
+        auto cdr_type = reg_.register_func({pair_type}, b);
+        env_.bind("cdr", reg_.register_forall(a, reg_.register_forall(b, cdr_type)));
+    }
 
     // Cadr/Caddr shorthands
     register_primitive("caar",  {Dyn}, Dyn);
@@ -585,8 +600,8 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(
                     return OccurrenceInfoFlat{std::string(var_name), reg.bool_type()};
                 else if (fn_name == "null?")
                     return OccurrenceInfoFlat{std::string(var_name), reg.void_type()};
-                else if (fn_name == "pair?")
-                    return OccurrenceInfoFlat{std::string(var_name), reg.dynamic_type()};
+                // pair? removed: let-binding already provides the type,
+                // and occurence typing would override it with Dynamic.
                 else if (fn_name == "procedure?")
                     return OccurrenceInfoFlat{std::string(var_name), reg.dynamic_type()};
             }
@@ -733,12 +748,22 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
             if (ctor_name.empty()) continue;
             
             // Build constructor type: (field-type-1 ... -> variant-type)
-            TypeId ctor_type;
+            // Constructor return type: (Pair String (Pair field-type ()))
+            TypeId ctor_result;
             if (field_types.empty()) {
-                ctor_type = reg_.register_func({}, variant_type);
+                ctor_result = reg_.register_func({}, reg_.string_type());
+            } else if (field_types.size() == 1) {
+                auto field_list = reg_.register_func({field_types[0]}, reg_.void_type());
+                ctor_result = reg_.register_func({reg_.string_type()}, field_list);
             } else {
-                ctor_type = reg_.register_func(field_types, variant_type);
+                TypeId rest = reg_.void_type();
+                for (auto it = field_types.rbegin(); it != field_types.rend(); ++it)
+                    rest = reg_.register_func({*it}, rest);
+                ctor_result = reg_.register_func({reg_.string_type()}, rest);
             }
+            TypeId ctor_type = field_types.empty()
+                ? reg_.register_func({}, ctor_result)
+                : reg_.register_func(field_types, ctor_result);
             
             // Wrap in forall for polymorphic types (e.g. ∀a. (a -> Option a))
             if (!type_params.empty()) {
