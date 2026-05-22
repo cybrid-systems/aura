@@ -1,0 +1,5 @@
+;; task: type-value-restriction
+;; goal: Use a non-syntactic let binding to demonstrate value restriction
+;; expect: 10
+;; hint: --- value restriction ---
+;; hint: (let ((x (+ 1 2 3 4))) x)
