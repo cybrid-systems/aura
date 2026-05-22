@@ -166,6 +166,23 @@ INTEG_TESTS = [
     IntegCase("coerce_arith", '(+ 1 "2")', "eval", expected="3"),
     IntegCase("coerce_strlen", "(string-length 12345)", "eval", expected="5"),
 
+    # ── Type system edge cases (T2c/T2d) ─────────────────────
+    IntegCase("tc_occ_pair",
+        '(let ((x (cons 1 2))) (if (pair? x) #t #f))',
+        "typecheck", expected="Bool", expected_status=0),
+    IntegCase("tc_occ_float",
+        '(let ((x 3.14)) (if (float? x) (+ x 1) 0))',
+        "typecheck", expected="Float", expected_status=0),
+    IntegCase("tc_value_restrict",
+        '(let ((x (+ 1 2))) (type-of x))',
+        "typecheck", expected="Type"),
+    IntegCase("tc_query_return",
+        '(+ 1 2)',
+        "typecheck", expected="Int"),
+    IntegCase("tc_cons_pair",
+        '(pair? (cons 1 2))',
+        "typecheck", expected="Bool"),
+
     # ── Serve JSON command protocol ─────────────────────────
     IntegCase("serve_define",
               '{"cmd":"define","code":"(define add (lambda (x y) (+ x y)))","name":"add"}\n'

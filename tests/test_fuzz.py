@@ -30,7 +30,7 @@ def test_fuzz():
     results = {"crashes": [], "timeouts": [], "internal_errors": [],
                "pass": 0, "fail": 0}
 
-    for fpath in sorted(task_dir.glob("*.aura")):
+    for fpath in sorted(task_dir.rglob("*.aura")):
         if fpath.stem == "README":
             continue
         text = fpath.read_text()

@@ -21,17 +21,17 @@ from collections import defaultdict
 AURA = os.environ.get("AURA_BIN", "./build/aura")
 
 # ── 任务定义 ─────────────────────────────────────────────
-# ── 从 edsl_tasks/ 目录加载任务 ────────────────────────
-TASKS_DIR = Path(__file__).resolve().parent / "edsl_tasks"
+# ── 从 tasks/ 子目录加载任务 ────────────────────────────
+TASKS_DIR = Path(__file__).resolve().parent / "tasks"
 _TASK_HINTS = {}
 
 def load_tasks():
-    """从 edsl_tasks/*.aura 加载任务定义"""
+    """从 tasks/<category>/*.aura 加载任务定义"""
     tasks = []
     if not TASKS_DIR.exists():
         print(f"Warning: {TASKS_DIR} not found")
         return tasks
-    for fpath in sorted(TASKS_DIR.glob("*.aura")):
+    for fpath in sorted(TASKS_DIR.rglob("*.aura")):
         name = fpath.stem
         if name == "README":
             continue
