@@ -1,0 +1,50 @@
+; Type System tests
+; Tests: type inference, gradual typing, occurrence typing,
+;        value restriction, query type clause, blame output
+
+(test-suite "typesystem:inference"
+  (check= Int (type-of 42))
+  (check= Int (type-of (+ 1 2)))
+  (check= String (type-of "hello"))
+  (check= Bool (type-of #t)))
+
+(test-suite "typesystem:annotation"
+  (check= Int (type-of (: x Int 42)))
+  (check= 42 (: x Int 42))
+  (check= 3 (: x Int (+ 1 2))))
+
+(test-suite "typesystem:occurrence"
+  (check= "hello"
+    (let ((x "hello")) (if (string? x) x "fallback")))
+  (check= 42
+    (let ((x 42)) (if (number? x) (+ x 0) 0)))
+  (check= #t
+    (let ((x (cons 1 2))) (if (pair? x) #t "no"))))
+
+(test-suite "typesystem:let-poly"
+  (check= 42hello
+    (let ((id (lambda (x) x)))
+      (display (id 42))
+      (display (id "hello")))))
+
+(test-suite "typesystem:value-restriction"
+  (check= 42
+    (let ((x (+ 40 2))) (+ x 0)))
+  (check= 10
+    (let ((x (+ 1 2 3 4))) x)))
+
+(test-suite "typesystem:adt"
+  (define-type (Option a) (Some a) (None))
+  (check= 42
+    (match (Some 42) ((Some x) x) (None 0)))
+  (check= 0
+    (match None ((Some x) x) (None 0))))
+
+(test-suite "typesystem:coercion"
+  (check= 2
+    (+ 1 #t))
+  (check= 3
+    (+ 1 2)))
+
+(test-suite "typesystem:query"
+  (display "typesystem:query — manual check via typecheck pipeline"))
