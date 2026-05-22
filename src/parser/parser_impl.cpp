@@ -149,7 +149,24 @@ NodeId FlatParser::parse_expr() {
     }
     case TokenKind::Identifier: {
         auto tok = lexer_->consume();
-        auto id = flat_.add_variable(pool_.intern(std::string(tok.text)));
+        auto text = std::string(tok.text);
+        // M4 &x reader macro: &x → (borrow x)
+        if (text.size() > 1 && text[0] == '&') {
+            auto var_name = text.substr(1);
+            auto inner = flat_.add_variable(pool_.intern(var_name));
+            auto id = flat_.add_borrow(inner);
+            flat_.set_loc(id, tok.line, tok.column);
+            return id;
+        }
+        // M4 &mut-x reader macro: &mut-x → (mut-borrow x)
+        if (text.size() > 5 && text.substr(0, 5) == "&mut-") {
+            auto var_name = text.substr(5);
+            auto inner = flat_.add_variable(pool_.intern(var_name));
+            auto id = flat_.add_mut_borrow(inner);
+            flat_.set_loc(id, tok.line, tok.column);
+            return id;
+        }
+        auto id = flat_.add_variable(pool_.intern(text));
         flat_.set_loc(id, tok.line, tok.column);
         return id;
     }
