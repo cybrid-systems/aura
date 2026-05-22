@@ -123,7 +123,7 @@ public:
         // Includes: EDSL primitives, special forms, module system operations.
         static const std::unordered_set<std::string> tree_walker_only = {
             // EDSL / AI agent primitives
-            "set-code", "eval-current", "apply",
+            "define-type", "set-code", "eval-current", "apply",
             "typecheck-current", "typed-mutate", "rollback",
             "mutation-log", "query-mutation-log",
             "intend", "define-strategy", "register-strategy!", "intend-history",
@@ -165,6 +165,7 @@ public:
 
             // MacroDef cannot be lowered to IR
             if (nv.tag == aura::ast::NodeTag::MacroDef) return true;
+            if (nv.tag == aura::ast::NodeTag::DefineType) return true;
 
             // Dotted rest lambda cannot be lowered to IR (rest param is
             // lowered as single Arg slot, not as pair list)
