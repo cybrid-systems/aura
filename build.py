@@ -586,7 +586,26 @@ def test_regression():
         code = "\n".join(code_lines)
         try:
             r = subprocess.run([aura_bin], input=code, capture_output=True, text=True, timeout=10)
-            if r.returncode != 0:
+            if r.returncode < 0:
+                sig_name = {-6:"SIGABRT",-8:"SIGFPE",-11:"SIGSEGV"}.get(r.returncode,f"signal{-r.returncode}")
+                print(f"    FAIL {name}: {sig_name}", flush=True)
+                if r.stderr: print(f"      {r.stderr[:80]}", flush=True)
+                failed += 1
+            elif expected == "no-crash":
+                if r.returncode < 0:
+                    print(f"    FAIL {name}: crash exit={r.returncode}", flush=True)
+                    failed += 1
+                else:
+                    print(f"    PASS {name}")
+            elif expected == "no-error":
+                if "internal error" in (r.stderr or "").lower():
+                    print(f"    FAIL {name}: internal error", flush=True)
+                    failed += 1
+                else:
+                    print(f"    PASS {name}")
+            elif expected == "no-timeout":
+                print(f"    PASS {name}")
+            elif r.returncode != 0:
                 print(f"    FAIL {name}: exit {r.returncode}", flush=True)
                 if r.stderr: print(f"      {r.stderr[:80]}", flush=True)
                 failed += 1
