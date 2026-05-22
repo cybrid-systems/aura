@@ -41,6 +41,12 @@ export struct ModuleRef {
     constexpr auto operator<=>(const ModuleRef&) const = default;
 };
 
+// M4 Linear ownership reference
+export struct LinearRef {
+    std::uint64_t id = 0;
+    constexpr auto operator<=>(const LinearRef&) const = default;
+};
+
 // Error value (returned by error/raise, caught by try/catch)
 export struct ErrorRef {
     std::uint64_t index = 0;  // index into error heap (stores cause value)
@@ -61,7 +67,8 @@ export using EvalValue = std::variant<
     double,            // Float (index 9)
     PrimitiveRef,      // Primitive (index 10)
     ModuleRef,         // Module (index 11)
-    ErrorRef           // Error (index 12)
+    ErrorRef,          // Error (index 12)
+    LinearRef          // Linear (index 13)
 >;
 
 export inline EvalValue make_int(std::int64_t v) { return EvalValue(std::in_place_index<1>, v); }
@@ -76,6 +83,11 @@ export inline EvalValue make_float(double v) { return EvalValue(std::in_place_in
 export inline EvalValue make_primitive(std::size_t slot) { return EvalValue(std::in_place_index<10>, PrimitiveRef{slot}); }
 export inline EvalValue make_module(std::uint64_t idx) { return EvalValue(std::in_place_index<11>, ModuleRef{idx}); }
 export inline EvalValue make_error(std::uint64_t idx) { return EvalValue(std::in_place_index<12>, ErrorRef{idx}); }
+export inline EvalValue make_linear(std::uint64_t id) { return EvalValue(std::in_place_index<13>, LinearRef{id}); }
+
+export inline bool is_linear(const EvalValue& v) noexcept { return std::holds_alternative<LinearRef>(v); }
+export inline std::uint64_t as_linear_id(const EvalValue& v) { return std::get<LinearRef>(v).id; }
+
 export inline EvalValue make_void() { return EvalValue(std::in_place_index<0>); }
 
 export inline bool is_int(const EvalValue& v) noexcept { return std::holds_alternative<std::int64_t>(v); }
@@ -125,6 +137,7 @@ export inline std::string format_value(const EvalValue& v) {
     if (is_closure(v)) return "#<procedure>";
     if (is_cell(v)) return std::format("<cell[{}]>", as_cell_id(v));
     if (is_primitive(v)) return "<primitive>";
+    if (is_linear(v)) return std::format("<linear[{}]>", as_linear_id(v));
     if (is_module(v)) return std::format("<module[{}]>", as_module_idx(v));
     if (is_error(v)) return std::format("<error[{}]>", as_error_idx(v));
     return "<unknown>";
@@ -147,6 +160,7 @@ export inline std::string format_value(const EvalValue& v, const std::vector<std
     if (is_pair(v)) return std::format("<pair[{}]>", as_pair_idx(v));
     if (is_closure(v)) return "#<procedure>";
     if (is_cell(v)) return std::format("<cell[{}]>", as_cell_id(v));
+    if (is_linear(v)) return std::format("<linear[{}]>", as_linear_id(v));
     if (is_module(v)) return std::format("<module[{}]>", as_module_idx(v));
     if (is_error(v)) return std::format("<error[{}]>", as_error_idx(v));
     return "<unknown>";
