@@ -365,4 +365,111 @@ private:
     std::size_t removed_count_ = 0;
 };
 
+// ── CoercionMarkerPass — mark nodes needing coercion ──────────
+// Operates on FlatAST after type-checking, before lowering.
+// Uses type_id slots to detect boundary mismatches and marks
+// the source expression for coercion insertion during lowering.
+//
+// Since FlatAST is append-only (immutable after build), this
+// pass writes coercion metadata into a side-table. The lowering
+// pass (lowering_impl.cpp) consults this table to emit CoercionOp
+// instructions at the right IR points.
+//
+// Boundary rules (design §14.3):
+//   static→dynamic: erasure (no coercion)
+//   dynamic→static: insert runtime check CoercionOp
+//   ground type conversion: insert conversion CoercionOp
+//
+// The actual CoercionNode AST nodes are created at parse time;
+// this pass identifies WHERE in the AST they should be added
+// by returning a vector of (source_node, target_type) pairs.
+export struct CoercionMarker {
+    aura::ast::NodeId source_node;   // expression producing the value
+    std::uint32_t target_type_id;    // type it needs to become
+    aura::ast::NodeTag context;      // Call, TypeAnnotation, Lambda, Let
+    aura::ast::NodeId parent;        // parent node for context
+    std::uint32_t child_index;        // which child position
+};
+
+export class CoercionMarkerPass {
+    aura::core::TypeRegistry& reg_;
+    aura::ast::FlatAST& flat_;
+    aura::ast::StringPool& pool_;
+
+public:
+    CoercionMarkerPass(aura::core::TypeRegistry& reg,
+                       aura::ast::FlatAST& flat,
+                       aura::ast::StringPool& pool)
+        : reg_(reg), flat_(flat), pool_(pool) {}
+
+    // Run the pass. Collects all nodes needing coercion.
+    std::vector<CoercionMarker> run(aura::ast::NodeId root) {
+        markers_.clear();
+        if (root == aura::ast::NULL_NODE || root >= flat_.size())
+            return {};
+        visit_node(root);
+        return std::move(markers_);
+    }
+
+    bool has_error() const { return false; }
+    std::string_view name() const { return "coercion-mark"; }
+
+private:
+    std::vector<CoercionMarker> markers_;
+
+    bool needs_coercion(std::uint32_t actual_id, std::uint32_t expected_id) {
+        if (actual_id == expected_id || actual_id == 0 || expected_id == 0)
+            return false;
+        auto actual = aura::core::TypeId{actual_id, 1};
+        auto expected = aura::core::TypeId{expected_id, 1};
+        if (actual == expected) return false;
+        // static→dynamic: erasure
+        if (actual != reg_.dynamic_type() && expected == reg_.dynamic_type())
+            return false;
+        return true;  // dynamic→static or ground→ground
+    }
+
+    void visit_node(aura::ast::NodeId id) {
+        auto v = flat_.get(id);
+        // Post-order: children first
+        for (auto child_id : v.children) {
+            if (child_id != aura::ast::NULL_NODE)
+                visit_node(child_id);
+        }
+
+        switch (v.tag) {
+        case aura::ast::NodeTag::Call:
+            visit_call(id);
+            break;
+        case aura::ast::NodeTag::TypeAnnotation:
+            visit_annotation(id);
+            break;
+        default:
+            break;
+        }
+    }
+
+    void visit_call(aura::ast::NodeId id) {
+        // Currently handled by TypeSpecializationWrap at IR level.
+        // FlatAST-level call arg coercion is future work.
+    }
+
+    void visit_annotation(aura::ast::NodeId id) {
+        auto v = flat_.get(id);
+        if (v.children.empty()) return;
+        auto inner_id = v.child(0);
+        auto inner_type = flat_.type_id(inner_id);
+        auto ann_type = flat_.type_id(id);
+        if (needs_coercion(inner_type, ann_type)) {
+            markers_.push_back(CoercionMarker{
+                .source_node = inner_id,
+                .target_type_id = ann_type,
+                .context = aura::ast::NodeTag::TypeAnnotation,
+                .parent = id,
+                .child_index = 0,
+            });
+        }
+    }
+};
+
 } // namespace aura::compiler

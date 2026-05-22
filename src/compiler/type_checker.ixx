@@ -54,6 +54,7 @@ public:
     bool unify(aura::core::TypeId t1, aura::core::TypeId t2);
     aura::core::TypeId find(aura::core::TypeId id);  // normalize via Union-Find
     bool consistent_unify(aura::core::TypeId t1, aura::core::TypeId t2);
+    bool consistent_subtype(aura::core::TypeId sub, aura::core::TypeId sup);
     bool occurs_check(aura::core::TypeId var, aura::core::TypeId ty);
     aura::core::TypeId normalize(aura::core::TypeId id);
 };

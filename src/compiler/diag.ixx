@@ -25,6 +25,20 @@ export enum class ErrorKind : std::uint8_t {
     Note,
 };
 
+// ── Blame Info (design §6.3) ────────────────────────────────────
+export enum class BlameParty : std::uint8_t {
+    Caller,       // 调用者 — 参数类型不匹配
+    Annotation,   // 类型标注 — 标注与推断冲突
+    Implicit,     // 隐式边界 — 无标注的默认边界
+    System,       // 基元/系统类型错误
+};
+
+export struct BlameInfo {
+    BlameParty party = BlameParty::Implicit;
+    std::string annotation_src;   // 标注来源，如 ": x Int"
+    std::string phase = "compile"; // "compile" | "runtime"
+};
+
 // Convert ErrorKind to human-readable string
 export constexpr std::string_view kind_name(ErrorKind k) {
     switch (k) {
@@ -66,6 +80,7 @@ export struct Diagnostic {
     std::uint32_t node_id = ~0u;  // FlatAST NodeId (~0 = unknown)
     std::string suggestion;       // "did you mean ...?" text
     std::vector<std::string> context_stack;
+    std::optional<BlameInfo> blame;               // 结构化 blame 信息 (design §6.3)
 
     Diagnostic() = default;
 
@@ -80,6 +95,16 @@ export struct Diagnostic {
     }
     Diagnostic&& with_suggestion(std::string s) && {
         suggestion = std::move(s);
+        return std::move(*this);
+    }
+
+    // Set structured blame info
+    Diagnostic& with_blame(BlameInfo b) & {
+        blame = std::move(b);
+        return *this;
+    }
+    Diagnostic&& with_blame(BlameInfo b) && {
+        blame = std::move(b);
         return std::move(*this);
     }
 
@@ -103,6 +128,20 @@ export struct Diagnostic {
 
         out += std::string(kind_name(kind));
         out += ": " + message;
+
+        // Blame info (design §6.3)
+        if (blame) {
+            const char* party_str = "?";
+            switch (blame->party) {
+                case BlameParty::Caller:     party_str = "caller"; break;
+                case BlameParty::Annotation: party_str = "annotation"; break;
+                case BlameParty::Implicit:   party_str = "implicit"; break;
+                case BlameParty::System:     party_str = "system"; break;
+            }
+            out += std::format("\n  blamed: {} ({})", party_str, blame->phase);
+            if (!blame->annotation_src.empty())
+                out += std::format("\n  annotation: {}", blame->annotation_src);
+        }
 
         if (!suggestion.empty())
             out += "\n  " + suggestion;
