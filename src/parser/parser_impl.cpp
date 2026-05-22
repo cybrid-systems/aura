@@ -235,6 +235,7 @@ NodeId FlatParser::parse_list() {
         if (kw == "cast")   return parse_cast();
         if (kw == "check")  return parse_check();
         if (kw == ":")      return parse_type_annot();
+        if (kw == "define-type") return parse_define_type();
         if (kw == "export") {
             lexer_->consume(); // consume 'export'
             std::vector<aura::ast::NodeId> syms;
@@ -377,6 +378,65 @@ NodeId FlatParser::parse_define() {
     if (v == NULL_NODE) return NULL_NODE;
     lexer_->consume(); // ')'
     return flat_.add_define(pool_.intern(std::string(n.text)), v);
+}
+
+NodeId FlatParser::parse_define_type() {
+    auto tok = lexer_->consume(); // 'define-type'
+
+    // Parse type name (possibly with params): Name or (Name params...)
+    std::vector<SymId> params;
+    SymId type_name;
+    if (lexer_->peek().kind == TokenKind::LParen) {
+        lexer_->consume(); // '('
+        auto name_tok = lexer_->peek();
+        if (name_tok.kind != TokenKind::Identifier) { skip_rparen(); skip_rparen(); return NULL_NODE; }
+        type_name = pool_.intern(name_tok.text);
+        lexer_->consume(); // type name
+        // Parse type parameters
+        while (lexer_->peek().kind == TokenKind::Identifier) {
+            params.push_back(pool_.intern(lexer_->peek().text));
+            lexer_->consume();
+        }
+        if (lexer_->peek().kind != TokenKind::RParen) { skip_rparen(); return NULL_NODE; }
+        lexer_->consume(); // ')'
+    } else {
+        auto name_tok = lexer_->peek();
+        if (name_tok.kind != TokenKind::Identifier) { skip_rparen(); return NULL_NODE; }
+        type_name = pool_.intern(name_tok.text);
+        lexer_->consume(); // type name
+    }
+
+    // Parse constructor clauses: each is (CtorName field-types...)
+    std::vector<NodeId> ctors;
+    while (lexer_->peek().kind == TokenKind::LParen) {
+        lexer_->consume(); // '('
+        auto ctor_name_tok = lexer_->peek();
+        if (ctor_name_tok.kind != TokenKind::Identifier) { skip_rparen(); break; }
+        auto ctor_sym = pool_.intern(ctor_name_tok.text);
+        lexer_->consume(); // ctor name
+
+        // For now, just store the constructor name; field types are parsed as identifiers
+        std::vector<NodeId> field_types;
+        while (lexer_->peek().kind == TokenKind::Identifier) {
+            auto ft_sym = pool_.intern(lexer_->peek().text);
+            lexer_->consume();
+        }
+
+        if (lexer_->peek().kind != TokenKind::RParen) { skip_rparen(); break; }
+        lexer_->consume(); // ')'
+
+        // Create a Call node (ctor_name) as the constructor descriptor
+        // Stored as: (quote ctor-name) for simplicity
+        auto ctor_name_var = flat_.add_variable(ctor_sym);
+        auto ctor_node = flat_.add_quote(ctor_name_var);
+        flat_.set_loc(ctor_node, tok.line, tok.column);
+        ctors.push_back(ctor_node);
+    }
+
+    if (lexer_->peek().kind != TokenKind::RParen) { skip_rparen(); return NULL_NODE; }
+    lexer_->consume(); // ')'
+
+    return flat_.add_define_type(type_name, params, ctors);
 }
 
 NodeId FlatParser::parse_let(bool rec) {

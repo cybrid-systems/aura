@@ -30,6 +30,7 @@ private:
     aura::ast::NodeId parse_named_let();
     aura::ast::NodeId parse_let_star();
     aura::ast::NodeId parse_define();
+    aura::ast::NodeId parse_define_type();
     aura::ast::NodeId parse_begin(); aura::ast::NodeId parse_set();
     aura::ast::NodeId parse_quote(); aura::ast::NodeId parse_cond(); aura::ast::NodeId parse_defmacro();
     aura::ast::NodeId parse_match();

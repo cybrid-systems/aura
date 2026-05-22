@@ -5482,6 +5482,38 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat,
                 return make_void();
             }
         }
+        case aura::ast::NodeTag::DefineType: {
+            // (define-type (Name params...) (Ctor fields...) ...)
+            // Bind each constructor as a lambda that wraps its args
+            auto type_name = p->resolve(v.sym_id);
+            Env& me = const_cast<Env&>(eval_env);
+            me.set_cells(&cells_);
+            
+            for (auto cid : v.children) {
+                if (cid >= f->size()) continue;
+                auto cv = f->get(cid);
+                // Each child is (quote ctor-name) from the parser
+                if (cv.tag != aura::ast::NodeTag::Quote || cv.children.empty()) continue;
+                auto quoted = cv.child(0);
+                if (quoted >= f->size()) continue;
+                auto qv = f->get(quoted);
+                if (qv.tag != aura::ast::NodeTag::Variable) continue;
+                auto ctor_name = std::string(p->resolve(qv.sym_id));
+                
+                // Create a cell and bind the constructor name
+                auto ci = alloc_cell(make_void());
+                me.bind(ctor_name, make_cell(ci));
+                
+                // Build: (lambda args (apply list (quote ctor-name) args))
+                // For now, just bind as a thunk that returns the ctor name as symbol
+                // A proper implementation would create tagged values
+                auto sym_slot = string_heap_.size();
+                string_heap_.push_back(ctor_name);
+                cells_[ci] = make_string(sym_slot);
+            }
+            return EvalResult(make_void());
+        }
+
         case aura::ast::NodeTag::Define: {
             auto name = p->resolve(v.sym_id);
             auto val_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);

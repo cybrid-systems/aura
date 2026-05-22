@@ -32,6 +32,7 @@ export enum class NodeTag : std::uint32_t {
     Coercion = 0x10,
     LiteralFloat = 0x11,
     Pair = 0x12,
+    DefineType = 0x13,
     Export = 0x15,
 };
 
@@ -404,6 +405,22 @@ public:
         return id;
     }
 
+    [[nodiscard]] NodeId add_define_type(SymId name, std::span<const SymId> params,
+                                          std::span<const NodeId> ctors) {
+        auto id = add_node(NodeTag::DefineType);
+        sym_id_[id] = name;
+        // Store type params in param_data_
+        auto pstart = static_cast<std::uint32_t>(param_data_.size());
+        param_data_.insert(param_data_.end(), params.begin(), params.end());
+        param_begin_[id] = pstart;
+        param_count_[id] = static_cast<std::uint32_t>(params.size());
+        // Store constructor nodes in child_data_
+        auto cstart = static_cast<std::uint32_t>(child_data_.size());
+        child_data_.insert(child_data_.end(), ctors.begin(), ctors.end());
+        child_begin_[id] = cstart;
+        child_count_[id] = static_cast<std::uint32_t>(ctors.size());
+        return id;
+    }
 
     [[nodiscard]] NodeId add_begin(NodeId* exprs, std::uint32_t count) {
         auto id = add_node(NodeTag::Begin);
