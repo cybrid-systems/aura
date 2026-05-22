@@ -656,6 +656,21 @@ def cmd_list():
 # ── Regression: replay known compiler bug reproducers ─────────
 
 
+def test_fuzz():
+    """Run LLM-driven fuzz tests (requires LLM_API_KEY)."""
+    try:
+        from tests import test_fuzz as fuzzer
+        ok = fuzzer.test_fuzz()
+        if not ok:
+            print("  Fuzz: found crashes or internal errors", flush=True)
+        return 0 if ok else 1
+    except ImportError as e:
+        print(f"  Fuzz: cannot import test_fuzz ({e})", flush=True)
+    except Exception as e:
+        print(f"  Fuzz: error ({e})", flush=True)
+    return 0
+
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
         print(__doc__.strip())
@@ -672,8 +687,8 @@ def main():
         "list":  cmd_list,
         "demo":  test_demo,
         "regression": lambda: cmd_test(["regression"]),
-        "fuzz":  lambda: (print("  fuzz: skipped (no test_fuzz)"), 0)[1],
-        "test_fuzz":  lambda: (print("  fuzz: skipped (no test_fuzz)"), 0)[1],
+        "fuzz":  lambda: test_fuzz(),
+        "test_fuzz":  lambda: test_fuzz(),
     }
 
     if cmd in commands:
