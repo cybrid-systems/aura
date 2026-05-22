@@ -24,7 +24,7 @@ def test_fuzz():
     base = Path(__file__).resolve().parent.parent
     aura_bin = os.environ.get("AURA_BIN", str(base / "build" / "aura"))
     task_dir = base / "tests" / "edsl_tasks"
-    repro_dir = base / "tests" / "reproducers"
+    repro_dir = base / "tests" / "regression"
     repro_dir.mkdir(exist_ok=True)
 
     results = {"crashes": [], "timeouts": [], "internal_errors": [],
@@ -72,7 +72,7 @@ def test_fuzz():
                 if sig in (6, 8, 11):
                     sig_name = {6: "SIGABRT", 8: "SIGFPE", 11: "SIGSEGV"}.get(sig, f"signal-{sig}")
                     results["crashes"].append((name, sig_name))
-                    repro = ";; compiler bug: " + sig_name + " in task '" + name + "'\n"
+                    repro = ";; regression: compiler should not crash on this code\n;; bug: " + sig_name + " in task '" + name + "'\n;; expect: no-crash\n"
                     repro += ";; discovered: " + datetime.datetime.now().isoformat() + "\n" + aura_code
                     (repro_dir / (datetime.date.today().isoformat() + "_" + name + "_" + sig_name + ".aura")).write_text(repro)
                     print("    CRASH " + name + ": " + sig_name, flush=True)
@@ -81,7 +81,7 @@ def test_fuzz():
             stderr = r.stderr or ""
             if "internal error" in stderr:
                 results["internal_errors"].append(name)
-                repro = ";; compiler bug: internal error in '" + name + "'\n"
+                repro = ";; regression: compiler should not error on this code\n;; bug: internal error in '" + name + "'\n;; expect: no-error\n"
                 repro += ";; stderr: " + stderr[:200] + "\n" + aura_code
                 (repro_dir / (datetime.date.today().isoformat() + "_" + name + "_internal.aura")).write_text(repro)
                 print("    INTERNAL " + name, flush=True)
@@ -100,7 +100,7 @@ def test_fuzz():
 
         except subprocess.TimeoutExpired:
             results["timeouts"].append(name)
-            repro = ";; timeout in task '" + name + "'\n" + aura_code
+            repro = ";; regression: compiler should not timeout on this code\n;; bug: timeout in task '" + name + "'\n;; expect: no-timeout\n" + aura_code
             (repro_dir / (datetime.date.today().isoformat() + "_" + name + "_timeout.aura")).write_text(repro)
             print("    TIMEOUT " + name, flush=True)
 
