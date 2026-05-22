@@ -4,7 +4,7 @@
 
 Aura 的路线图不是特性列表——是把「代码可以自己进化」这个想法一步步变成工程现实的记录。
 
-**更新：2026-05-21**
+**更新：2026-05-22**
 
 ---
 
@@ -13,12 +13,12 @@ Aura 的路线图不是特性列表——是把「代码可以自己进化」这
 | 维度 | 分数 | 说明 |
 |------|------|------|
 | 语言核心求值 | 🟢 10/10 | TW + IR 双路径 + 显式调用栈 |
-| **类型系统** | 🟢 10/10 | Sound Gradual + coercion + occurrence + let-poly + type query + blame |
+| **类型系统** | 🟡 7/10 | inference + occurrence 扎实；coercion 全路径未闭环，ADT 缺失 |
 | LLVM JIT | 🟢 10/10 | ORC JIT, 38 opcode native, -O2, 增量 cache, 闭包/Pair/PrimCall |
 | 编译器基础设施 | 🟢 9/10 | ArenaGroup / 增量 / 磁盘缓存 / 热替换 / IR import |
 | 测试覆盖 | 🟢 10/10 | integ 87 + unit 74 + smoke 5 + bash 117 + bench 57 + fuzz + regression 4 |
 | 标准库 | 🟢 8/10 | 19 文件 ~1k 行 |
-| 错误处理 | 🟢 9/10 | try/catch IR + diag + AST validate |
+| 错误处理 | 🟢 9/10 | try/catch IR + diag + AST validate；**新：** 错误消息自我赋值 bug 已修 |
 | EDSL / AI Agent | 🟢 10/10 | set-code/query/mutate/typecheck + LLM pipeline + iter correction |
 | 文档 | 🟢 10/10 | README + tutorial + design repo + intent orchestration design |
 
@@ -51,12 +51,66 @@ fib-20: TW 48.6ms → IR 23.0ms → JIT 6.4ms (7.55x)
 - P3 Type Language: `(: name Type)`, type-of, blame labels, type query ✅
 - P4 Occurrence: predicate narrowing (string? → String, number? → Int) ✅
 
+**Phase D2a 已完成（骨架，可进一步强化）：**
+
+| 组件 | 进度 | 说明 |
+|------|:----:|------|
+| TypeRegistry + TypeId | 90% | TypeTag、instantiate、format_type、is_subtype |
+| Inference (synthesize/check) | 85% | 双向推断、let-poly、arithmetic specialization |
+| Occurrence typing | 80% | predicate narrowing + if branch refinement |
+| Constraint solving | 60% | 单遍 solve，无 union-find，variadic → Dynamic |
+| Coercion insertion | 40% | CastOp 仅覆盖 IR/JIT，tree-walk 缺失；coercible 白名单小 |
+| Runtime blame | 50% | JIT 有 blame，解释器/IR 弱 |
+| Module type checking | 0% | import/require 全部 Dynamic |
+| ADT (Variant/Record) | 0% | 无 sum type、无模式匹配 |
+| Parametric container | 0% | 无 `(List Int)` 语法 |
+
 ---
 
-## 待启动
+## 待启动 (按优先级排序)
+
+### Phase T: 类型系统完善 — Soundness + 表达力
+
+**当前是主攻方向。** 类型系统的 inference + occurrence 已经扎实，但 coercion 未全路径闭环，ADT 缺失限制了 Agent 数据建模能力。
+
+**估算：3 周**
+
+#### T1: Soundness 闭环（本周）
+
+| 任务 | 涉及文件 | 估算 |
+|------|---------|:----:|
+| CoercionInsertionPass 全路径覆盖（Call 返回/if 分支/Pair 等） | `pass_manager.ixx` | 1d |
+| 树遍历 eval 器 CastOp 执行器 | `evaluator_impl.cpp` | 0.5d |
+| 扩展静态 coercible 类型对（Float↔Int, Bool↔Int） | `type_impl.cpp` | 0.5d |
+| 运行时 blame 信息增强 | `ir_executor_impl.cpp`, `aura_jit_runtime.cpp` | 0.5d |
+| 混合类型测试：`(+ 1 "2")` 不静默返回 `"12"` | `tests/typecheck/` | 0.5d |
+
+**验收：** 所有执行路径对类型错误行为一致
+
+#### T2: ADT + 结构类型（下周）
+
+| 任务 | 涉及文件 | 估算 |
+|------|---------|:----:|
+| Variant 类型标签 + 构造语法 | `ast.ixx`, `parser_impl.cpp`, `type.ixx` | 2d |
+| `(match x (case (Some v) ...) (case (None) ...))` | `parser_impl.cpp`, `type_checker_impl.cpp` | 2d |
+| 参数化容器 `(List Int)` | `type.ixx`, `parser_impl.cpp` | 1d |
+| ADT 测试：Option、Tree、穷尽性检查 | `tests/typecheck/` | 1d |
+
+**验收：** `(define-type (Tree a) (Leaf a) (Node Tree Tree))` 能定义和使用
+
+#### T3: 健壮性 + 开发者体验（第 3 周）
+
+| 任务 | 涉及文件 | 估算 |
+|------|---------|:----:|
+| 约束求解优化（Union-Find + 多遍 fixpoint） | `type_checker_impl.cpp` | 2d |
+| 模块 import 类型签名 | `service.ixx`, `type_checker.ixx` | 1d |
+| query-and-fix 自动 cast 插入 + 类型注解建议 | `query_impl.cpp` | 1d |
+| 类型错误信息人类可读增强 | `type_checker_impl.cpp`, `diag.ixx` | 1d |
+
+**验收：** 模块导入类型不再是 Dynamic；query-and-fix 能补缺失注解
 
 ### D3: 自举 (40h)
-Aura 编译器用 Aura 写。等前面稳定后再启。
+Aura 编译器用 Aura 写。等类型系统稳定后再启。
 
 ### 已完成 (最新)
 - **C FFI**: `c-load`/`c-func` — dlopen/dlsym, Int/Float/String/Opaque marshalling, JIT symbol API
@@ -130,15 +184,23 @@ LLM 做方向指引（蚁后），Aura EDSL 做局部搜索（工蚁），距离
 - [ ] 跨任务信息素持久化：`pheromone:export/import`
 - [ ] 预期：每变体成本从 20ms → <1ms，搜索容量从 20 → 1000+
 
-### 当前 Benchmark 结果
+### 当前 Benchmark 结果 (2026-05-22)
 
-| 模型 | 通过率 | 失败 | 控制器版本 |
-|------|:-----:|:----:|:---------:|
-| **DeepSeek v4 Flash** | **56/57 (98%)** | table-lookup | 基础 PID |
-| **DeepSeek v4 Flash** | **52/57 (91%)** | deep-equal, ffi-strlen, merge-sorted, primes-list, valid-parens | 蚁群 A/B/C/D |
-| **MiniMax-M2.7** | **51/57 (89%)** | binary-search, deep-equal, edsl-set-code, is-anagram, majority-element, primes-list | 蚁群 A/B/C/D |
+**条件：** `max-attempts=3`，无 Scheme 兼容层（着力即差），`--json`
 
-注：方差在不同 run 之间漂移 1-4 个任务。Phase 4 目标：通过 EDSL 级变异将方差消除到 <2%。
+| 模型 | 通过率 | 耗时 | 失败 |
+|------|:-----:|:----:|:----|
+| **Grok 4.3** | **57/57 (100%)** 🎯 | ~9.6min | — |
+| **DeepSeek v4 Flash** | **54/57 (94.7%)** | ~10.4min | ffi-sqrt, ffi-strlen, edsl-set-code |
+| **MiniMax-M2.7** | **~53/57 (~93%)** 🏃 | ~15min | (running) |
+
+**较上轮提升：** DeepSeek 51→54（+3），MiniMax 45→~53（+8）。
+Scheme 兼容层移除 + 编译器错误消息修复后，模型被迫写纯正 Aura 代码而非 Scheme 习气，pass_rate 显著上升。
+
+**已修复的编译器报错：**
+- `<closure[281474976710656]>` → `#<procedure>`（闭包显示人类可读）
+- `unbound variable: `（空名字）→ 显示正确变量名 + 建议
+- 根因：`d = std::move(d).with_suggestion(...)` 自我赋值导致消息被清空
 
 ---
 
@@ -172,3 +234,7 @@ LLM 做方向指引（蚁后），Aura EDSL 做局部搜索（工蚁），距离
 | 05-21 | **蚁群控制器 (Phase 1)** | local mutation search + PID integration |
 | 05-21 | **Scheme 兼容层** | first/rest/cadr/odd?/even? serve 预定义 |
 | 05-21 | **serve 性能优化** | sleep(1)→sleep(0.05), exec 12x 加速 |
+| 05-22 | **移除 Scheme 兼容层** | 着力即差 — 删 12 条 serve 注册 + 4 条字符串替换 |
+| 05-22 | **编译器报错修复** | `<closure[N]>` → `#<procedure>`；`with_suggestion` 自我赋值 bug；短变量名显示 |
+| 05-22 | **Grok 57/57 (100%)** | 全量 benchmark 首次满通过 |
+| 05-22 | **类型系统路线图** | 3 周开发计划：Coercion 闭环 → ADT → 求解器优化 |
