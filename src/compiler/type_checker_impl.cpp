@@ -724,28 +724,81 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
         result = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
         break;
     case Tag::Linear:
-        // (Linear e): wrap type as Dynamic for now (M4 Phase 1.2)
+        // (Linear e): wrap value, mark result as Owned
         result = reg_.dynamic_type();
         break;
-    case Tag::Move:
-        // (move e): synthesize inner, same type (ownership tracked separately)
-        if (!v.children.empty())
-            result = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
-        else
-            result = reg_.void_type();
+    case Tag::Move: {
+        // (move e): check ownership, mark Moved, same type
+        TypeId inner_type = reg_.void_type();
+        if (!v.children.empty()) {
+            auto inner_v = flat.get(v.child(0));
+            if (inner_v.tag == NodeTag::Variable) {
+                auto var_name = std::string(pool.resolve(inner_v.sym_id));
+                if (!ownership_env_.can_use(var_name)) {
+                    auto msg = var_name + " has been moved and cannot be used again";
+                    diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_));
+                }
+                ownership_env_.mark(var_name, OwnershipState::Moved);
+            }
+            inner_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
+        }
+        result = inner_type;
         break;
-    case Tag::Borrow:
-    case Tag::MutBorrow:
-        // (& e) / (&mut e): synthesize inner, return inner type
-        if (!v.children.empty())
-            result = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
-        else
-            result = reg_.void_type();
+    }
+    case Tag::Borrow: {
+        // (& e): immutable borrow, mark Borrowed
+        TypeId inner_type = reg_.void_type();
+        if (!v.children.empty()) {
+            auto inner_v = flat.get(v.child(0));
+            if (inner_v.tag == NodeTag::Variable) {
+                auto var_name = std::string(pool.resolve(inner_v.sym_id));
+                auto st = ownership_env_.get(var_name);
+                if (st == OwnershipState::Moved || st == OwnershipState::MutBorrowed) {
+                    auto msg = "cannot borrow " + var_name + " in state "
+                             + ownership_env_.state_name(st);
+                    diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_));
+                }
+                ownership_env_.mark(var_name, OwnershipState::Borrowed);
+            }
+            inner_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
+        }
+        result = inner_type;
         break;
+    }
+    case Tag::MutBorrow: {
+        // (&mut e): mutable borrow, exclusive access
+        TypeId inner_type = reg_.void_type();
+        if (!v.children.empty()) {
+            auto inner_v = flat.get(v.child(0));
+            if (inner_v.tag == NodeTag::Variable) {
+                auto var_name = std::string(pool.resolve(inner_v.sym_id));
+                auto st = ownership_env_.get(var_name);
+                if (st != OwnershipState::Owned) {
+                    auto msg = "cannot mutably borrow " + var_name + " in state "
+                             + ownership_env_.state_name(st);
+                    diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_));
+                }
+                ownership_env_.mark(var_name, OwnershipState::MutBorrowed);
+            }
+            inner_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
+        }
+        result = inner_type;
+        break;
+    }
     case Tag::Drop:
-        // (drop e): synthesize inner for side effects, return Void
-        if (!v.children.empty())
+        // (drop e): consume inner, return Void
+        if (!v.children.empty()) {
+            auto inner_v = flat.get(v.child(0));
+            if (inner_v.tag == NodeTag::Variable) {
+                auto var_name = std::string(pool.resolve(inner_v.sym_id));
+                if (!ownership_env_.can_use(var_name)) {
+                    auto msg = "cannot drop " + var_name + " — already moved";
+                    diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_));
+                }
+                ownership_env_.mark(var_name, OwnershipState::Moved);
+            }
             synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
+        }
         result = reg_.void_type();
         break;
     case Tag::DefineType: {
@@ -910,6 +963,7 @@ TypeId InferenceEngine::synthesize_flat_var(StringPool& pool, NodeView v) {
             "unbound variable: " + var_name, cur_loc_));
         return reg_.dynamic_type();
     }
+    // M4 ownership: checked explicitly in Move/Borrow/Drop handlers
     // Fully instantiate forall types (peel all ∀ layers) with fresh variables
     auto instantiate_all = [&](this const auto& self, TypeId tid) -> TypeId {
         auto* ft = reg_.forall_of(tid);

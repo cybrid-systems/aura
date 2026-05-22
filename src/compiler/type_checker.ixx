@@ -36,6 +36,45 @@ export enum class OwnershipState : std::uint8_t {
     MutBorrowed,    // 被可变借用中
 };
 
+export class OwnershipEnv {
+    std::vector<std::unordered_map<std::string, OwnershipState>> scopes_;
+public:
+    explicit OwnershipEnv() { scopes_.emplace_back(); }
+
+    void push_scope() { scopes_.emplace_back(); }
+    void pop_scope()  { if (scopes_.size() > 1) scopes_.pop_back(); }
+
+    void mark(const std::string& name, OwnershipState st) {
+        for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
+            if (it->count(name)) { (*it)[name] = st; return; }
+        }
+        scopes_.back()[name] = st;
+    }
+
+    OwnershipState get(const std::string& name) const {
+        for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
+            auto f = it->find(name);
+            if (f != it->end()) return f->second;
+        }
+        return OwnershipState::Owned;  // unknown vars assumed Owned
+    }
+
+    bool can_use(const std::string& name) const {
+        auto st = get(name);
+        return st != OwnershipState::Moved;
+    }
+
+    std::string state_name(OwnershipState st) const {
+        switch (st) {
+            case OwnershipState::Owned:      return "owned";
+            case OwnershipState::Moved:      return "moved";
+            case OwnershipState::Borrowed:   return "borrowed";
+            case OwnershipState::MutBorrowed: return "mut-borrowed";
+        }
+        return "unknown";
+    }
+};
+
 // ── Constraint System ────────────────────────────────────
 export struct Constraint {
     enum Kind { EQUAL, CONSISTENT };
@@ -73,6 +112,7 @@ export class InferenceEngine {
     aura::diag::DiagnosticCollector& diag_;
     ConstraintSystem cs_;
     TypeEnv env_;
+    OwnershipEnv ownership_env_;
     aura::diag::SourceLocation cur_loc_;  // location of expression being checked
 public:
     InferenceEngine(aura::core::TypeRegistry& reg, aura::diag::DiagnosticCollector& diag);
