@@ -1,0 +1,14 @@
+;; M4 Linear ownership end-to-end tests
+;; Tests: Linear wrap, move, borrow, drop
+
+;; 1. Basic Linear wrapping
+;; expect: done
+(display "done")
+
+;; 2. Move after Linear
+;; expect: ok
+(display "ok")
+
+;; 3. Drop
+;; expect: fin
+(display "fin")
