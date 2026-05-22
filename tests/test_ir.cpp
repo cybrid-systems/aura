@@ -1112,7 +1112,173 @@ int main() {
         if (cs_failed > 0) return 1;
     }
 
+    int dce_passed = 0, dce_failed = 0, gg_passed = 0, gg_failed = 0;
+
+    // ── Iter 7: Dead Coercion Elimination tests ────────────────
+    {
+
+        // Test 1: identity cast (same source and target type → remove)
+        {
+            aura::ir::IRModule mod;
+            mod.functions.push_back(aura::ir::IRFunction{
+                .name = "test", .local_count = 10
+            });
+            auto& func = mod.functions.back();
+            func.blocks.push_back({0});
+            auto& block = func.blocks.back();
+            // IRInstruction fields: opcode, operands, source_ast_node_id, type_id
+            block.instructions = {
+                {aura::ir::IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},   // slot0 = 42, type_id=1 (Int)
+                {aura::ir::IROpcode::CastOp,   {1, 0, 1, 0}, 0, 1},    // cast to Int → identity (type_id=1)
+                {aura::ir::IROpcode::Return,   {1, 0, 0, 0}, 0, 0},
+            };
+            aura::compiler::DeadCoercionEliminationPass dce;
+            dce.run(mod);
+            bool found_cast = false;
+            for (auto& instr : block.instructions)
+                if (instr.opcode == aura::ir::IROpcode::CastOp) found_cast = true;
+            if (!found_cast) { ++dce_passed; std::println("DCE OK: identity cast eliminated"); }
+            else { ++dce_failed; std::println(std::cerr, "DCE FAIL: identity cast not removed"); }
+        }
+
+        // Test 2: nested cast — (cast (cast x T1) T2) → (cast x T2)
+        {
+            aura::ir::IRModule mod;
+            mod.functions.push_back(aura::ir::IRFunction{
+                .name = "test", .local_count = 10
+            });
+            auto& func = mod.functions.back();
+            func.blocks.push_back({0});
+            auto& block = func.blocks.back();
+            // IRInstruction fields: opcode, operands, source_ast_node_id, type_id
+            block.instructions = {
+                {aura::ir::IROpcode::ConstI64, {0, 300, 0, 0}, 0, 1},   // slot0 = 300, type_id=1 (Int)
+                {aura::ir::IROpcode::CastOp,   {1, 0, 3, 0}, 0, 3},    // cast String, type_id=3
+                {aura::ir::IROpcode::CastOp,   {2, 1, 1, 0}, 0, 1},    // cast back Int, type_id=1
+                {aura::ir::IROpcode::Return,   {2, 0, 0, 0}, 0, 0},
+            };
+            aura::compiler::DeadCoercionEliminationPass dce;
+            dce.run(mod);
+            // After elimination: only one CastOp (directly from slot0→slot2)
+            int cast_count = 0;
+            for (auto& instr : block.instructions)
+                if (instr.opcode == aura::ir::IROpcode::CastOp) ++cast_count;
+            if (cast_count == 1) { ++dce_passed; std::println("DCE OK: nested cast collapsed"); }
+            else { ++dce_failed; std::println(std::cerr, "DCE FAIL: {} casts remain (expected 1)", cast_count); }
+        }
+
+        // Test 3: DCE doesn't break real code (smoke test)
+        {
+            aura::ast::ASTArena arena2;
+            aura::ast::StringPool pool2(arena2.allocator());
+            aura::ast::FlatAST flat2(arena2.allocator());
+            auto pr = aura::parser::parse_to_flat("(+ 1 2)", flat2, pool2);
+            flat2.root = pr.root;
+            if (pr.success) {
+                aura::core::TypeRegistry reg2;
+                auto ir_mod2 = aura::compiler::lower_to_ir(flat2, pool2, arena2);
+
+                aura::compiler::DeadCoercionEliminationPass dce(&reg2);
+                dce.run(ir_mod2);  // should not crash or corrupt
+
+                aura::compiler::IRInterpreter ir2(ir_mod2, evaluator.primitives());
+                auto res2 = ir2.execute();
+                if (res2) {
+                    auto got = aura::compiler::types::format_value(*res2);
+                    if (got == "3") {
+                        ++dce_passed;
+                        std::println("DCE OK: pipeline code works after DCE");
+                    } else {
+                        ++dce_failed;
+                        std::println(std::cerr, "DCE FAIL: got {} expected 3", got);
+                    }
+                } else {
+                    ++dce_failed;
+                    std::println(std::cerr, "DCE FAIL: execution error: {}", res2.error().format());
+                }
+            } else {
+                std::println(std::cerr, "DCE FAIL: parse failed");
+                ++dce_failed;
+            }
+        }
+
+        std::println("Dead coercion elimination: {}/{}/{} passed/failed/total",
+                     dce_passed, dce_failed, dce_passed + dce_failed);
+        if (dce_failed > 0) return 1;
+    }
+
+    // ── Iter 8: Gradual Guarantee tests ────────────────────────
+    {
+
+        // Test: annotation erasure — code works with or without annotations
+        struct GGTest { std::string annotated; std::string erased; std::string expected; };
+        GGTest gg_tests[] = {
+            {"(: x Int 42)",            "42",                "42"},
+            {"(: x Int (+ 1 2))",       "(+ 1 2)",          "3"},
+            {"42",                      "42",                "42"},
+        };
+
+        for (auto& t : gg_tests) {
+            // Test annotated version
+            {
+                aura::ast::ASTArena arena_a;
+                aura::ast::StringPool pool_a(arena_a.allocator());
+                aura::ast::FlatAST flat_a(arena_a.allocator());
+                auto pr_a = aura::parser::parse_to_flat(t.annotated, flat_a, pool_a);
+                flat_a.root = pr_a.root;
+                if (!pr_a.success) {
+                    std::println(std::cerr, "GG FAIL: parse(annotated) failed: {}", t.annotated);
+                    ++gg_failed; continue;
+                }
+                auto ir_a = aura::compiler::lower_to_ir(flat_a, pool_a, arena_a);
+                aura::compiler::IRInterpreter ir_a_run(ir_a, evaluator.primitives());
+                auto res_a = ir_a_run.execute();
+                if (!res_a) {
+                    std::println(std::cerr, "GG FAIL: exec(annotated) failed: {}", res_a.error().format());
+                    ++gg_failed; continue;
+                }
+                auto got_a = aura::compiler::types::format_value(*res_a);
+                if (got_a != t.expected) {
+                    std::println(std::cerr, "GG FAIL: annotated '{}' got '{}' expected '{}'",
+                                  t.annotated, got_a, t.expected);
+                    ++gg_failed; continue;
+                }
+            }
+            // Test erased version (all annotations removed)
+            {
+                aura::ast::ASTArena arena_e;
+                aura::ast::StringPool pool_e(arena_e.allocator());
+                aura::ast::FlatAST flat_e(arena_e.allocator());
+                auto pr_e = aura::parser::parse_to_flat(t.erased, flat_e, pool_e);
+                flat_e.root = pr_e.root;
+                if (!pr_e.success) {
+                    std::println(std::cerr, "GG FAIL: parse(erased) failed: {}", t.erased);
+                    ++gg_failed; continue;
+                }
+                auto ir_e = aura::compiler::lower_to_ir(flat_e, pool_e, arena_e);
+                aura::compiler::IRInterpreter ir_e_run(ir_e, evaluator.primitives());
+                auto res_e = ir_e_run.execute();
+                if (!res_e) {
+                    std::println(std::cerr, "GG FAIL: exec(erased) failed: {}", res_e.error().format());
+                    ++gg_failed; continue;
+                }
+                auto got_e = aura::compiler::types::format_value(*res_e);
+                if (got_e != t.expected) {
+                    std::println(std::cerr, "GG FAIL: erased '{}' got '{}' expected '{}'",
+                                  t.erased, got_e, t.expected);
+                    ++gg_failed; continue;
+                }
+                ++gg_passed;
+                std::println("GG OK: annotated=erased for '{}' (both got {})", t.annotated, t.expected);
+            }
+        }
+
+        std::println("Gradual guarantee: {}/{}/{} passed/failed/total",
+                     gg_passed, gg_failed, gg_passed + gg_failed);
+        if (gg_failed > 0) return 1;
+    }
+
     std::println("Memory pool test: {}/{}/{} passed/failed/total",
                  mp_passed, mp_failed, mp_passed + mp_failed);
-    return (failed + ck_failed + arity_failed + mp_failed + pm_failed + cf_failed) > 0 ? 1 : 0;
+    return (failed + ck_failed + arity_failed + mp_failed + pm_failed + cf_failed + dce_failed + gg_failed) > 0 ? 1 : 0;
 }
