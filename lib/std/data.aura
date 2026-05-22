@@ -1,0 +1,47 @@
+; Aura standard data structures library
+; Import with: (import "std/data")
+(require std/list)
+(require std/hash)
+
+(export make-trie trie-insert trie-search trie-prefix? trie-keys)
+
+; ═══════════════════════════════════════════════════════════
+; Trie (prefix tree)
+; ═══════════════════════════════════════════════════════════
+
+(define (make-trie) (hash))
+
+(define (trie-insert trie word)
+  (let loop ((node trie) (i 0))
+    (if (>= i (string-length word))
+      (hash-set! node '* #t)
+      (let* ((c (string-ref word i))
+             (next (if (hash-has-key? node c) (hash-ref node c) (hash))))
+        (hash-set! node c next)
+        (loop next (+ i 1))))))
+
+(define (trie-search trie word)
+  (let loop ((node trie) (i 0))
+    (if (>= i (string-length word))
+      (hash-has-key? node '*)
+      (if (hash-has-key? node (string-ref word i))
+        (loop (hash-ref node (string-ref word i)) (+ i 1))
+        #f))))
+
+(define (trie-prefix? trie prefix)
+  (let loop ((node trie) (i 0))
+    (if (>= i (string-length prefix)) #t
+      (if (hash-has-key? node (string-ref prefix i))
+        (loop (hash-ref node (string-ref prefix i)) (+ i 1))
+        #f))))
+
+(define (trie-keys trie)
+  (let collect ((node trie) (prefix "") (results (list)))
+    (hash-for-each node
+      (lambda (k v)
+        (if (equal? k '*)
+          (set! results (cons prefix results))
+          (collect v (string-append prefix (list->string (list k))) results))))
+    results))
+
+; ═══════════════════════════════════════════════════════════
