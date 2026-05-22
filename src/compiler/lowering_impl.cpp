@@ -406,10 +406,40 @@ static std::uint32_t lower_flat_expr(LoweringState& state,
         // General function call: lower callee and args, then emit Call
         auto callee_slot = lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
         auto arg_count = static_cast<std::uint32_t>(v.children.size() - 1);
+
+        // Try to get callee's expected parameter types for coercion (P0)
+        aura::core::FuncType callee_func_type;
+        bool have_callee_type = false;
+        if (state.type_reg) {
+            auto callee_type_id = flat.type_id(v.child(0));
+            if (callee_type_id != 0) {
+                auto ctid = aura::core::TypeId{callee_type_id, 1};
+                if (auto* ft = state.type_reg->func_of(ctid)) {
+                    callee_func_type = *ft;
+                    have_callee_type = true;
+                }
+            }
+        }
+
         // Reserve contiguous argument block
         auto arg_base = state.local_count;
         for (std::size_t i = 1; i < v.children.size(); ++i) {
-            auto val_slot = lower_flat_expr(state, flat, pool, v.child(i), cache, cache_hits);
+            auto arg_node = v.child(i);
+            auto val_slot = lower_flat_expr(state, flat, pool, arg_node, cache, cache_hits);
+            // Insert CastOp if arg type differs from expected param type
+            if (have_callee_type && (i - 1) < callee_func_type.args.size()) {
+                auto arg_type = flat.type_id(arg_node);
+                if (arg_type != 0) {
+                    auto expected_type = callee_func_type.args[i - 1];
+                    if (arg_type != expected_type.index) {
+                        auto cast_slot = state.alloc_local();
+                        state.emit(IROpcode::CastOp, cast_slot, val_slot, expected_type.index, 0);
+                        state.emit(IROpcode::Local, arg_base + static_cast<std::uint32_t>(i - 1), cast_slot);
+                        state.alloc_local();
+                        continue;  // skip the normal Local emit below
+                    }
+                }
+            }
             state.emit(IROpcode::Local, arg_base + static_cast<std::uint32_t>(i - 1), val_slot);
             state.alloc_local();
         }
@@ -852,11 +882,13 @@ static IRModule lower_to_ir_impl(FlatAST& flat, StringPool& pool, ASTArena& aren
                                   const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache,
                                   std::vector<std::string>* cache_hits = nullptr,
                                   const Primitives* primitives = nullptr,
+                                  const aura::core::TypeRegistry* type_reg = nullptr,
                                   const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge = nullptr,
                                   const std::unordered_map<std::string, std::vector<std::string>>* cache_strings = nullptr,
                                   const std::string* self_name = nullptr) {
     LoweringState state(arena);
     state.primitives = primitives;
+    state.type_reg = type_reg;
     state.cache_bridge = cache_bridge;
     state.cache_strings = cache_strings;
     if (self_name && !self_name->empty()) {
@@ -885,8 +917,8 @@ static IRModule lower_to_ir_impl(FlatAST& flat, StringPool& pool, ASTArena& aren
 
 // ── lower_to_ir (FlatAST path) — native, no full-tree reconstruct ──
 IRModule lower_to_ir(FlatAST& flat, StringPool& pool, ASTArena& arena,
-                      const Primitives* primitives) {
-    return lower_to_ir_impl(flat, pool, arena, nullptr, nullptr, primitives);
+                      const Primitives* primitives, const aura::core::TypeRegistry* type_reg) {
+    return lower_to_ir_impl(flat, pool, arena, nullptr, nullptr, primitives, type_reg);
 }
 
 // ── lower_to_ir_with_cache ─────────────────────────────────────
@@ -897,8 +929,9 @@ IRModule lower_to_ir_with_cache(
     const Primitives* primitives,
     const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge,
     const std::unordered_map<std::string, std::vector<std::string>>* cache_strings,
-    const std::string* self_name) {
-    return lower_to_ir_impl(flat, pool, arena, cache, cache_hits, primitives, cache_bridge, cache_strings, self_name);
+    const std::string* self_name,
+    const aura::core::TypeRegistry* type_reg) {
+    return lower_to_ir_impl(flat, pool, arena, cache, cache_hits, primitives, type_reg, cache_bridge, cache_strings, self_name);
 }
 
 // ── unparse_node — FlatAST → S-expression source ───────────────
