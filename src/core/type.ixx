@@ -23,6 +23,7 @@ export enum class TypeTag : uint8_t {
     VARIANT,        // 和类型
     TYPE_VAR,       // 类型变量
     FORALL,         // 多态 ∀
+    LINEAR,         // 线性所有权 M4
     VOID,           // 无返回值
     TYPE,           // 类型自身的类型
     HASH,           // hash table
@@ -60,6 +61,10 @@ export struct ForallType {
     TypeId body;     // body type (usually a FuncType)
 };
 
+export struct LinearType {
+    TypeId inner;    // the wrapped type (e.g. Int in (Linear Int))
+};
+
 // ── TypeRegistry ──────────────────────────────────────────────
 export class TypeRegistry {
 public:
@@ -69,6 +74,7 @@ public:
     TypeId register_type(TypeTag tag, std::string name);
     TypeId register_func(std::vector<TypeId> args, TypeId ret);
     TypeId register_forall(TypeId var, TypeId body);
+    TypeId register_linear(TypeId inner);
     TypeId make_var(std::string name = "");
 
     // ── 查询 ──
@@ -76,6 +82,7 @@ public:
     std::string_view name_of(TypeId id) const;
     const FuncType* func_of(TypeId id) const;
     const ForallType* forall_of(TypeId id) const;
+    const LinearType* linear_of(TypeId id) const;
     bool is_var(TypeId id) const;
     bool is_subtype(TypeId sub, TypeId sup) const;
 
@@ -105,7 +112,8 @@ private:
         TypeTag tag;
         std::string name;
         std::optional<FuncType> func;
-    std::optional<ForallType> forall;
+        std::optional<ForallType> forall;
+        std::optional<LinearType> linear;
     };
     std::vector<Entry> entries_;
     std::unordered_map<std::string, TypeId> name_to_id_;
