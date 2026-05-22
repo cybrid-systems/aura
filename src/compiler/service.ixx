@@ -574,7 +574,7 @@ public:
 
         // Lower to IR
         auto ir_mod = aura::compiler::lower_to_ir(*flat_ptr, *pool_ptr, arena_,
-            &evaluator_.primitives(), nullptr);
+            &evaluator_.primitives(), &type_registry_);
 
         // Run passes
         {
@@ -1154,7 +1154,7 @@ public:
         }
         flat.root = pr.root;
 
-        auto new_mod = aura::compiler::lower_to_ir(flat, pool, arena_, &evaluator_.primitives(), nullptr);
+        auto new_mod = aura::compiler::lower_to_ir(flat, pool, arena_, &evaluator_.primitives(), &type_registry_);
 
         // Hot-swap each function from new_mod into the cached module
         for (auto& new_func : new_mod.functions) {
