@@ -577,6 +577,23 @@ def test_ai_agent_demo():
 # Runners
 # ═══════════════════════════════════════════════════════════════
 
+def test_gradual():
+    """Gradual Guarantee verification — annotation erasure semantics"""
+    from pathlib import Path
+    base = Path(__file__).resolve().parent
+    gradual_script = base / "tests" / "check_gradual.py"
+    if not gradual_script.exists():
+        print(f"  {gradual_script} not found")
+        return 1
+    r = subprocess.run([sys.executable, str(gradual_script)], capture_output=True, text=True, timeout=30)
+    print(r.stdout)
+    if r.returncode != 0:
+        print(f"  Gradual guarantee: FAILED")
+        return 1
+    print(f"  Gradual guarantee: PASSED")
+    return 0
+
+
 def test_bash():
     """Bash 回归测试 — run-tests.sh (76+ cases)"""
     print(f"{B}═══ Bash regression tests ═══{N}")
@@ -668,6 +685,7 @@ SUITES = {
     "bench":     test_bench,
     "smoke":     test_smoke,
     "mutation":  test_mutation,
+    "gradual":   test_gradual,
     "demo":      test_demo,
     "regression": test_regression,
     "ai":        test_ai_agent_demo,
