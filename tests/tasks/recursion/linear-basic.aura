@@ -1,0 +1,5 @@
+;; task: linear-basic
+;; goal: Use (Linear ...) wrapper and (move ...) to demonstrate linear value flow
+;; expect: 42
+;; hint: --- linear basic ---
+;; hint: (display 42)
