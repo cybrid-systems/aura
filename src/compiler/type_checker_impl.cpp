@@ -723,6 +723,31 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
     case Tag::Coercion:
         result = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
         break;
+    case Tag::Linear:
+        // (Linear e): wrap type as Dynamic for now (M4 Phase 1.2)
+        result = reg_.dynamic_type();
+        break;
+    case Tag::Move:
+        // (move e): synthesize inner, same type (ownership tracked separately)
+        if (!v.children.empty())
+            result = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
+        else
+            result = reg_.void_type();
+        break;
+    case Tag::Borrow:
+    case Tag::MutBorrow:
+        // (& e) / (&mut e): synthesize inner, return inner type
+        if (!v.children.empty())
+            result = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
+        else
+            result = reg_.void_type();
+        break;
+    case Tag::Drop:
+        // (drop e): synthesize inner for side effects, return Void
+        if (!v.children.empty())
+            synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
+        result = reg_.void_type();
+        break;
     case Tag::DefineType: {
         // (define-type (Name params...) (Ctor fields...) ...)
         // Register the type and bind constructors with proper function types.
