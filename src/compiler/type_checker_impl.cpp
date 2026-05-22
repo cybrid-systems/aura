@@ -591,16 +591,27 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(
             return std::nullopt;
         }
 
-        // Check for (and p1 p2) — return first found
+        // Check for (and p1 p2) — combine predicates for the same variable
         if (fn_name == "and") {
+            std::optional<OccurrenceInfoFlat> result;
             for (std::size_t i = 1; i < cond.children.size(); i++) {
                 auto inner = analyze_predicate_flat(flat, pool, cond.child(i), reg);
-                if (inner) return inner;
+                if (inner) {
+                    if (!result) {
+                        result = inner;
+                    } else if (inner->var_name == result->var_name) {
+                        // Same variable: combine types via lub
+                        auto combined = reg.register_func(
+                            {result->refined_type, inner->refined_type},
+                            reg.void_type());
+                        result->refined_type = combined;
+                    }
+                }
             }
-            return std::nullopt;
+            return result;
         }
 
-        // Check for (or p1 p2) — return first found
+        // Check for (or p1 p2) — return first found (conservative: then-branch unknowns)
         if (fn_name == "or") {
             for (std::size_t i = 1; i < cond.children.size(); i++) {
                 auto inner = analyze_predicate_flat(flat, pool, cond.child(i), reg);
@@ -641,8 +652,14 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(
                     return OccurrenceInfoFlat{std::string(var_name), reg.bool_type()};
                 else if (fn_name == "null?")
                     return OccurrenceInfoFlat{std::string(var_name), reg.void_type()};
-                // pair? removed: let-binding already provides the type,
-                // and occurence typing would override it with Dynamic.
+                else if (fn_name == "pair?")
+                    return OccurrenceInfoFlat{std::string(var_name),
+                        reg.register_func({reg.dynamic_type()}, reg.dynamic_type())};
+                else if (fn_name == "symbol?")
+                    return OccurrenceInfoFlat{std::string(var_name), reg.dynamic_type()};
+                else if (fn_name == "float?")
+                    return OccurrenceInfoFlat{std::string(var_name),
+                        reg.lookup_type("Float")};
                 else if (fn_name == "procedure?")
                     return OccurrenceInfoFlat{std::string(var_name), reg.dynamic_type()};
             }
@@ -1093,6 +1110,35 @@ TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, Node
     return lub(then_type, else_type);
 }
 
+// Value restriction (design §13.4 T-Let-Poly-Gradual):
+// In gradual context, only syntactic values are generalized.
+// Non-value lets (calls, if, etc.) stay monomorphic to avoid
+// type pollution from cast/Any interactions.
+static bool is_syntactic_value(NodeId id, const FlatAST& flat) {
+    auto v = flat.get(id);
+    switch (v.tag) {
+    case NodeTag::LiteralInt:
+    case NodeTag::LiteralFloat:
+    case NodeTag::LiteralString:
+    case NodeTag::Variable:
+    case NodeTag::Lambda:
+    case NodeTag::Quote:
+        return true;
+    case NodeTag::TypeAnnotation:
+        // (: x T) — check inner
+        if (!v.children.empty())
+            return is_syntactic_value(v.child(0), flat);
+        return false;
+    case NodeTag::Coercion:
+        // (cast e T) — check inner
+        if (!v.children.empty())
+            return is_syntactic_value(v.child(0), flat);
+        return false;
+    default:
+        return false;
+    }
+}
+
 TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool, NodeView v, bool is_rec) {
     // children: 0=value, 1=body, name from v.sym_id
     // If is_rec, the binding is visible in the value expression too
@@ -1126,21 +1172,24 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool, Nod
     if (!v.children.empty() && v.child(0) != NULL_NODE)
         val_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
 
-    // Let-Polymorphism: generalize over free type variables
-    // Normalize to substitute constrained variables before checking for free vars
-    // Let-Polymorphism: generalize over free type variables
-    // Normalize to substitute constrained variables before checking for free vars
+    // Value Restriction (design §13.4):
+    // Only generalize syntactic values. Non-value lets (calls, if, etc.)
+    // stay monomorphic to prevent type pollution from cast/Any.
     auto val_norm = cs_.normalize(val_type);
-    auto fvs = reg_.free_vars(val_norm);
-    if (!fvs.empty()) {
-        // Wrap in Forall layers: ∀fv1. ∀fv2. ... type
-        // fvs contains exact TypeIds with correct generations from registry
-        TypeId poly = val_norm;
-        for (auto& fv_id : fvs) {
-            poly = reg_.register_forall(fv_id, poly);
+    if (is_syntactic_value(v.child(0), flat)) {
+        auto fvs = reg_.free_vars(val_norm);
+        if (!fvs.empty()) {
+            // Let-Polymorphism: generalize over free type variables
+            TypeId poly = val_norm;
+            for (auto& fv_id : fvs) {
+                poly = reg_.register_forall(fv_id, poly);
+            }
+            env_.bind(var_name, poly);
+        } else {
+            env_.bind(var_name, val_norm);
         }
-        env_.bind(var_name, poly);
     } else {
+        // Non-syntactic value: bind monomorphically (no generalization)
         env_.bind(var_name, val_norm);
     }
 
