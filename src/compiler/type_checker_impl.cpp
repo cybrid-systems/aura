@@ -1121,7 +1121,7 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
 
 TypeId InferenceEngine::synthesize_flat_lambda(FlatAST& flat, StringPool& pool, NodeView v) {
     // body = v.child(0), params = v.params (span of SymId)
-    env_.push_scope();
+    env_.push_scope(); ownership_env_.push_scope();
     std::vector<TypeId> param_types;
     for (auto sym : v.params) {
         auto tv = cs_.fresh_var();
@@ -1178,7 +1178,7 @@ TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, Node
             env_.bind(occ->var_name, occ->refined_type);
         if (v.children.size() >= 3 && v.child(2) != NULL_NODE)
             else_type = synthesize_flat(flat, pool, v.child(2), flat.get(v.child(2)));
-        env_.pop_scope();
+        ownership_env_.pop_scope(); env_.pop_scope();
         return lub(then_type, else_type);
     }
 
@@ -1243,11 +1243,11 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool, Nod
         TypeId body_type = reg_.void_type();
         if (v.children.size() >= 2 && v.child(1) != NULL_NODE)
             body_type = synthesize_flat(flat, pool, v.child(1), flat.get(v.child(1)));
-        env_.pop_scope();
+        ownership_env_.pop_scope(); env_.pop_scope();
         return body_type;
     }
 
-    env_.push_scope();
+    env_.push_scope(); ownership_env_.push_scope();
     TypeId val_type = reg_.void_type();
     if (!v.children.empty() && v.child(0) != NULL_NODE)
         val_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
@@ -1347,7 +1347,7 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
         }
         if (v.children.size() >= 2 && v.child(1) != NULL_NODE)
             check_flat(flat, pool, v.child(1), expected);
-        env_.pop_scope();
+        ownership_env_.pop_scope(); env_.pop_scope();
     } else if (v.tag == NodeTag::Begin) {
         // Begin in check mode: check last expression against expected,
         // synthesize all others for side effects
