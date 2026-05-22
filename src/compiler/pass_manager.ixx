@@ -243,13 +243,38 @@ public:
                             auto cast_slot = func.local_count++;
                             aura::ir::IRInstruction cast_instr;
                             cast_instr.opcode = aura::ir::IROpcode::CastOp;
-                            cast_instr.operands = {cast_slot, ops[2], 0, 0};
+                            cast_instr.operands = std::array<std::uint32_t, 4>{cast_slot, ops[2], type_tag_for_coercion(aura::core::TypeId{t1, 1}), 0u};
                             cast_instr.type_id = t1;
                             block.instructions.insert(
                                 block.instructions.begin() + static_cast<std::ptrdiff_t>(i),
                                 cast_instr);
                             ++i;
                             ops[2] = cast_slot;
+                        }
+                        ++i;
+                        continue;
+                    }
+
+                    // ── Insert CastOp for Return with non-matching types ──
+                    // When the Return instruction has a type annotation that differs
+                    // from the value being returned, insert CastOp.
+                    if (instr.opcode == aura::ir::IROpcode::Return) {
+                        auto val_type = (ops[0] < block.instructions.size())
+                            ? block.instructions[ops[0]].type_id : 0u;
+                        auto ret_type = instr.type_id;
+                        if (val_type != 0 && ret_type != 0 && val_type != ret_type
+                            && val_type != dyn_id.index && ret_type != dyn_id.index) {
+                            auto cast_slot = func.local_count++;
+                            aura::ir::IRInstruction cast_instr;
+                            cast_instr.opcode = aura::ir::IROpcode::CastOp;
+                            auto cast_tag = type_tag_for_coercion(aura::core::TypeId{ret_type, 1});
+                            cast_instr.operands = std::array<std::uint32_t, 4>{cast_slot, ops[0], cast_tag, 0u};
+                            cast_instr.type_id = ret_type;
+                            block.instructions.insert(
+                                block.instructions.begin() + static_cast<std::ptrdiff_t>(i),
+                                cast_instr);
+                            ++i;
+                            ops[0] = cast_slot;
                         }
                         ++i;
                         continue;
@@ -268,6 +293,20 @@ public:
                     ++i;
                 }
             }
+        }
+    }
+
+    // Map TypeId to CastOp type_tag (used by IR interpreter)
+    // INT→0, STRING→1, BOOL→2, FLOAT→4, DYNAMIC→3
+    std::uint32_t type_tag_for_coercion(aura::core::TypeId tid) const {
+        if (!type_reg_) return 3;
+        auto tag = type_reg_->tag_of(tid);
+        switch (tag) {
+            case aura::core::TypeTag::INT:    return 0;
+            case aura::core::TypeTag::STRING: return 1;
+            case aura::core::TypeTag::BOOL:   return 2;
+            case aura::core::TypeTag::FLOAT:  return 4;
+            default:                          return 3; // Dynamic / pass-through
         }
     }
 

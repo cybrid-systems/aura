@@ -170,6 +170,18 @@ bool InferenceEngine::is_coercible(TypeId from, TypeId to) {
     if ((from_tag == TypeTag::INT && to_tag == TypeTag::BOOL) ||
         (from_tag == TypeTag::BOOL && to_tag == TypeTag::INT))
         return true;
+    // Float ↔ Int (numeric coercion)
+    if ((from_tag == TypeTag::FLOAT && to_tag == TypeTag::INT) ||
+        (from_tag == TypeTag::INT && to_tag == TypeTag::FLOAT))
+        return true;
+    // Float ↔ String
+    if ((from_tag == TypeTag::FLOAT && to_tag == TypeTag::STRING) ||
+        (from_tag == TypeTag::STRING && to_tag == TypeTag::FLOAT))
+        return true;
+    // Float ↔ Bool
+    if ((from_tag == TypeTag::FLOAT && to_tag == TypeTag::BOOL) ||
+        (from_tag == TypeTag::BOOL && to_tag == TypeTag::FLOAT))
+        return true;
     return false;
 }
 

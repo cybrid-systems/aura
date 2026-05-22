@@ -319,6 +319,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             }
                         } else if (is_bool(val)) {
                             locals[ops[0]] = make_int(as_bool(val) ? 1 : 0);
+                        } else if (is_float(val)) {
+                            locals[ops[0]] = make_int(static_cast<std::int64_t>(as_float(val)));
                         } else {
                             report_blame("Int", "unknown", blame_loc);
                             locals[ops[0]] = make_int(0);
@@ -338,6 +340,11 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             auto id = string_heap_.size();
                             string_heap_.push_back(std::move(s));
                             locals[ops[0]] = make_string(id);
+                        } else if (is_float(val)) {
+                            auto s = std::to_string(as_float(val));
+                            auto id = string_heap_.size();
+                            string_heap_.push_back(std::move(s));
+                            locals[ops[0]] = make_string(id);
                         } else {
                             locals[ops[0]] = val;
                         }
@@ -345,6 +352,30 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     }
                     case 2: { // Coerce to Bool
                         locals[ops[0]] = make_bool(is_truthy(val));
+                        break;
+                    }
+                    case 4: { // Coerce to Float
+                        if (is_float(val)) {
+                            locals[ops[0]] = val;
+                        } else if (is_int(val)) {
+                            locals[ops[0]] = make_float(static_cast<double>(as_int(val)));
+                        } else if (is_string(val)) {
+                            auto idx = as_string_idx(val);
+                            if (idx < string_heap_.size()) {
+                                try {
+                                    locals[ops[0]] = make_float(std::stod(string_heap_[idx]));
+                                } catch (...) {
+                                    locals[ops[0]] = make_float(0.0);
+                                }
+                            } else {
+                                locals[ops[0]] = make_float(0.0);
+                            }
+                        } else if (is_bool(val)) {
+                            locals[ops[0]] = make_float(as_bool(val) ? 1.0 : 0.0);
+                        } else {
+                            report_blame("Float", "unknown", 0);
+                            locals[ops[0]] = make_float(0.0);
+                        }
                         break;
                     }
                     default: // Dynamic / unknown: pass through
