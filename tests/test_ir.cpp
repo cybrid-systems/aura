@@ -1155,6 +1155,54 @@ int main() {
             }
         }
 
+        // ── 6. TypeAnnotation end-to-end pipeline tests ──────────
+        {
+            auto run_annot_test = [&](std::string_view name,
+                                       std::string_view code,
+                                       std::string_view expected) {
+                aura::diag::DiagnosticCollector d;
+                aura::ast::ASTArena arena;
+                auto alloc = arena.allocator();
+                aura::ast::StringPool pool(alloc);
+                aura::ast::FlatAST flat(alloc);
+                auto pr = aura::parser::parse_to_flat(code, flat, pool);
+                flat.root = pr.root;
+                if (!pr.success) {
+                    std::println(std::cerr, "TS FAIL: parse failed for {}", name);
+                    ++ts_failed;
+                    return;
+                }
+                aura::core::TypeRegistry treg;
+                aura::compiler::TypeChecker tc(treg);
+                tc.infer_flat(flat, pool, flat.root, d);
+                auto mod = aura::compiler::lower_to_ir(flat, pool, arena);
+                aura::compiler::TypeSpecializationWrap ts(&treg);
+                ts.run(mod);
+                aura::compiler::Evaluator eval;
+                eval.set_arena(&arena);
+                aura::compiler::IRInterpreter ir(mod, eval.primitives());
+                auto res = ir.execute();
+                if (res) {
+                    auto got = aura::compiler::types::format_value(*res);
+                    if (got == expected) {
+                        std::println("TS OK: annot({}) → {}", name, got);
+                        ++ts_passed;
+                    } else {
+                        ++ts_failed;
+                        std::println(std::cerr, "TS FAIL: annot({}) got {} expected {}",
+                                     name, got, expected);
+                    }
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: annot({}) exec error: {}",
+                                 name, res.error().format());
+                }
+            };
+
+            run_annot_test("int", "(: x Int 42)", "42");
+            run_annot_test("expr", "(: x Int (+ 1 2))", "3");
+        }
+
         std::println("Type system detail tests: {}/{}/{} passed/failed/total",
                      ts_passed, ts_failed, ts_passed + ts_failed);
         if (ts_failed > 0) return 1;
