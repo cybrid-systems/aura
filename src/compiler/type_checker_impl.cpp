@@ -221,14 +221,19 @@ bool ConstraintSystem::consistent_unify(TypeId t1, TypeId t2) {
     if (reg_.is_var(t1) || reg_.is_var(t2))
         return unify(t1, t2);
 
-    // Function type decomposition
+    // Function type decomposition (consistent)
+    // Uses consistent_subtype with proper variance:
+    //   (-> T1 T2) ~ (-> T1' T2')   when   T1' <:sub T1  AND  T2 <:sub T2'
+    // i.e. parameter contravariance, return covariance
     auto* f1 = reg_.func_of(t1);
     auto* f2 = reg_.func_of(t2);
     if (f1 && f2) {
         if (f1->args.size() != f2->args.size()) return false;
+        // Parameter contravariance: T2_i <:sub T1_i
         for (std::size_t i = 0; i < f1->args.size(); i++)
-            if (!consistent_unify(f1->args[i], f2->args[i])) return false;
-        return consistent_unify(f1->ret, f2->ret);
+            if (!consistent_subtype(f2->args[i], f1->args[i])) return false;
+        // Return covariance: T1_ret <:sub T2_ret
+        return consistent_subtype(f1->ret, f2->ret);
     }
 
     // Ground type consistency: any two ground/base types are CONSISTENT
@@ -238,6 +243,42 @@ bool ConstraintSystem::consistent_unify(TypeId t1, TypeId t2) {
     }
 
     return false;
+}
+
+bool ConstraintSystem::consistent_subtype(TypeId sub, TypeId sup) {
+    sub = find(sub);
+    sup = find(sup);
+
+    // Any is the top type: everything is a subtype of Any
+    // (including Any itself — reflexivity)
+    if (sup == reg_.dynamic_type()) return true;
+    // Nothing is a subtype of a non-Any ground type if sub is Any
+    // (Any <: Int fails — insert runtime check instead)
+    if (sub == reg_.dynamic_type() && sup != reg_.dynamic_type())
+        return true;  // consistent_subtype allows it (runtime coercion)
+
+    // Reflexivity
+    if (sub == sup) return true;
+
+    // Type variables: unify them (consistent assignment)
+    if (reg_.is_var(sub) || reg_.is_var(sup))
+        return unify(sub, sup);
+
+    // Function subtype with variance
+    auto* f_sub = reg_.func_of(sub);
+    auto* f_sup = reg_.func_of(sup);
+    if (f_sub && f_sup) {
+        if (f_sub->args.size() != f_sup->args.size()) return false;
+        // Parameter contravariance: sup.args[k] <:sub sub.args[k]
+        for (std::size_t i = 0; i < f_sub->args.size(); i++)
+            if (!consistent_subtype(f_sup->args[i], f_sub->args[i])) return false;
+        // Return covariance: sub.ret <:sub sup.ret
+        return consistent_subtype(f_sub->ret, f_sup->ret);
+    }
+
+    // Non-function, non-variable ground types are consistent
+    // (runtime coercion applies)
+    return true;
 }
 
 bool ConstraintSystem::solve() {
@@ -616,7 +657,8 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id) {
     cs_.clear();
     auto result = synthesize_flat(flat, pool, id, flat.get(id));
     if (!cs_.solve()) {
-        diag_.report(Diagnostic(ErrorKind::TypeError, "type constraint solving failed", cur_loc_));
+        diag_.report(Diagnostic(ErrorKind::TypeError, "type constraint solving failed", cur_loc_)
+            .with_blame(BlameInfo{BlameParty::Implicit, "", "compile"}));
     }
     return cs_.normalize(result);
 }
@@ -942,7 +984,8 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
                              + std::to_string(i)
                              + ": expected " + std::string(reg_.format_type(ft.args[i]))
                              + ", got " + std::string(reg_.format_type(arg_type));
-                    diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg), saved_loc));
+                    diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg), saved_loc)
+                        .with_blame(BlameInfo{BlameParty::Caller, "", "compile"}));
                 }
             }
         }
@@ -1127,7 +1170,9 @@ TypeId InferenceEngine::synthesize_flat_annotation(FlatAST& flat, StringPool& po
         auto expected = reg_.lookup_type(std::string(type_name));
         if (!expected.valid()) {
             diag_.report(Diagnostic(ErrorKind::TypeError,
-                "unknown type: " + std::string(type_name), cur_loc_));
+                "unknown type: " + std::string(type_name), cur_loc_)
+                .with_blame(BlameInfo{BlameParty::Annotation,
+                    "(: ... " + std::string(type_name) + ")", "compile"}));
         } else {
             check_flat(flat, pool, inner_id, expected);
         }
@@ -1156,7 +1201,8 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
                 auto msg = "type mismatch: expected "
                          + std::string(reg_.format_type(expected))
                          + ", got " + std::string(reg_.format_type(inferred));
-                diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg), cur_loc_));
+                diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg), cur_loc_)
+                    .with_blame(BlameInfo{BlameParty::Annotation, "", "compile"}));
             }
         }
     }
@@ -1175,7 +1221,8 @@ void InferenceEngine::check_flat_call(FlatAST& flat, StringPool& pool, NodeView 
             auto msg = "call return type mismatch: expected "
                      + std::string(reg_.format_type(expected))
                      + ", got " + std::string(reg_.format_type(inferred));
-            diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg), cur_loc_));
+            diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg), cur_loc_)
+                .with_blame(BlameInfo{BlameParty::Caller, "", "compile"}));
         }
     }
 }
@@ -1185,7 +1232,8 @@ void InferenceEngine::check_flat_lambda(FlatAST& flat, StringPool& pool, NodeVie
     if (!f_ty) {
         diag_.report(Diagnostic(ErrorKind::TypeError,
             "expected a function type but got "
-            + std::string(reg_.format_type(expected)), cur_loc_));
+            + std::string(reg_.format_type(expected)), cur_loc_)
+            .with_blame(BlameInfo{BlameParty::Annotation, "", "compile"}));
         return;
     }
     if (f_ty->args.size() != v.params.size()) {

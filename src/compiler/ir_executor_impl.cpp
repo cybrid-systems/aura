@@ -87,13 +87,17 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
 
     // ── Coercion helpers shared across arithmetic opcodes ────────
     // Report CastOp blame with source location
-    auto report_blame = [&](const char* expected, const char* got, std::uint32_t blame_loc) {
+    auto report_blame = [&](const char* expected_kind, const char* got_kind, std::uint32_t blame_loc) {
+        std::string msg = std::string("runtime type mismatch: expected ")
+                        + expected_kind + ", got " + got_kind;
+        auto diag = Diagnostic(ErrorKind::TypeError, std::move(msg))
+            .with_blame(BlameInfo{BlameParty::Implicit, "", "runtime"});
         if (blame_loc != 0) {
             auto line = (blame_loc >> 16) & 0xFFFFu;
             auto col = blame_loc & 0xFFFFu;
-            std::cerr << "TypeError at " << line << ":" << col
-                      << ": expected " << expected << ", got " << got << std::endl;
+            diag.location = SourceLocation{line, col, 0};
         }
+        std::cerr << diag.format() << std::endl;
     };
 
     auto coerce_i = [&](const types::EvalValue& v) -> std::int64_t {
