@@ -1,28 +1,27 @@
 ; Aura standard I/O library
 ; Import with: (import "std/io")
+;
+; Wraps raw C++ I/O primitives into a consistent API.
+; Primitive names (file-exists?, read-file, write-file, etc.)
+; are available globally without import; this module provides
+; convenience aliases and structured readers.
+
+(require std/string)
 
 (export file-exists? file-size file-copy file-delete
         file-read file-write file->string string->file
-        file->lines file->words
-        with-file)
+        file->lines file->words)
 
-; ── File predicates ────────────────────────────────
+; ── Raw primitives (re-exported) ────────────────────
+; These are already available at global scope as C++ primitives.
+; The module makes them accessible via (import "std/io").
 
-(define (file-exists? path)
-  (file-exists? path))
+(define file-exists? file-exists?)
+(define file-size  file-size)
+(define file-copy  file-copy)
+(define file-delete file-delete)
 
-(define (file-size path)
-  (file-size path))
-
-; ── File operations ─────────────────────────────────
-
-(define (file-copy src dst)
-  (file-copy src dst))
-
-(define (file-delete path)
-  (file-delete path))
-
-; ── Read/write ─────────────────────────────────────
+; ── Read/write aliases ─────────────────────────────
 
 (define (file-read path)
   (read-file path))
@@ -37,20 +36,12 @@
   (write-file path content))
 
 ; ── Structured read ─────────────────────────────────
-; Requires std/string
 
 (define (file->lines path)
-  (let ((content (read-file path)))
-    (if (equal? content "")
-      (list)
+  (let ((content (file-read path)))
+    (if (equal? content "") (list)
       (string-split content "\n"))))
 
 (define (file->words path)
-  (let ((content (read-file path)))
+  (let ((content (file-read path)))
     (string-split-words content)))
-
-; ── Safe file handling ──────────────────────────────
-
-(define (with-file path proc)
-  (let ((content (read-file path)))
-    (proc content)))
