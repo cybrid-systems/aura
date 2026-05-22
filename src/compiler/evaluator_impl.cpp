@@ -4277,6 +4277,13 @@ std::optional<EvalValue> Evaluator::apply_closure(
 EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool, aura::ast::NodeId nid) {
     if (nid == ast::NULL_NODE) return make_void();
     auto v = flat.get(nid);
+    // Local helper: build (cons "fn-name" args)
+    auto cd = [&](const std::string& fn, const EvalValue& args) -> EvalValue {
+        auto fi = string_heap_.size(); string_heap_.push_back(fn);
+        auto pi = pairs_.size(); pairs_.push_back({types::make_string(fi), args});
+        return types::make_pair(pi);
+    };
+
     switch (v.tag) {
     case ast::NodeTag::LiteralInt:
         return make_int(v.int_value);
@@ -4295,7 +4302,6 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
         return make_string(idx);
     }
     case ast::NodeTag::Call: {
-        // Build a proper list from children (right-to-left cons chain)
         EvalValue tail = make_void();
         for (auto it = v.children.rbegin(); it != v.children.rend(); ++it) {
             auto item = ast_to_data(flat, pool, *it);
@@ -4305,19 +4311,115 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
         }
         return tail;
     }
+    case ast::NodeTag::Begin: {
+        EvalValue tail = make_void();
+        for (auto it = v.children.rbegin(); it != v.children.rend(); ++it) {
+            auto item = ast_to_data(flat, pool, *it);
+            auto pair_idx = pairs_.size();
+            pairs_.push_back(Pair{std::move(item), tail});
+            tail = make_pair(pair_idx);
+        }
+        return cd("begin", tail);
+    }
+    case ast::NodeTag::IfExpr: {
+        auto cond = v.children.size() > 0 ? ast_to_data(flat, pool, v.child(0)) : make_void();
+        auto then_b = v.children.size() > 1 ? ast_to_data(flat, pool, v.child(1)) : make_void();
+        auto else_b = v.children.size() > 2 ? ast_to_data(flat, pool, v.child(2)) : make_void();
+        auto tail = make_pair(pairs_.size()); pairs_.push_back({then_b, else_b});
+        tail = make_pair(pairs_.size()); pairs_.push_back({cond, tail});
+        return cd("if", tail);
+    }
+    case ast::NodeTag::Lambda: {
+        EvalValue params_tail = make_void();
+        for (auto it = v.params.rbegin(); it != v.params.rend(); ++it) {
+            auto pname = std::string(pool.resolve(*it));
+            auto pidx = string_heap_.size(); string_heap_.push_back(pname);
+            auto pair_idx = pairs_.size(); pairs_.push_back({make_string(pidx), params_tail});
+            params_tail = make_pair(pair_idx);
+        }
+        auto body = v.children.empty() ? make_void() : ast_to_data(flat, pool, v.child(0));
+        auto tail = make_pair(pairs_.size()); pairs_.push_back({params_tail, body});
+        return cd("lambda", tail);
+    }
+    case ast::NodeTag::Define: {
+        auto name_str = std::string(pool.resolve(v.sym_id));
+        auto nidx = string_heap_.size(); string_heap_.push_back(name_str);
+        auto val = v.children.empty() ? make_void() : ast_to_data(flat, pool, v.child(0));
+        auto tail = make_pair(pairs_.size()); pairs_.push_back({make_string(nidx), val});
+        return cd("define", tail);
+    }
+    case ast::NodeTag::DefineType: {
+        auto type_name = pool.resolve(v.sym_id);
+        auto tnidx = string_heap_.size(); string_heap_.push_back(std::string(type_name));
+        EvalValue params_tail = make_void();
+        for (auto it = v.params.rbegin(); it != v.params.rend(); ++it) {
+            auto pname = std::string(pool.resolve(*it));
+            auto pidx = string_heap_.size(); string_heap_.push_back(pname);
+            auto pp = pairs_.size(); pairs_.push_back({make_string(pidx), params_tail});
+            params_tail = make_pair(pp);
+        }
+        auto type_spec = make_pair(pairs_.size()); pairs_.push_back({make_string(tnidx), params_tail});
+        EvalValue ctors_tail = make_void();
+        for (auto it = v.children.rbegin(); it != v.children.rend(); ++it) {
+            auto ctor_data = ast_to_data(flat, pool, *it);
+            auto pp = pairs_.size(); pairs_.push_back({ctor_data, ctors_tail});
+            ctors_tail = make_pair(pp);
+        }
+        auto tail = make_pair(pairs_.size()); pairs_.push_back({type_spec, ctors_tail});
+        return cd("define-type", tail);
+    }
+    case ast::NodeTag::Set: {
+        auto name_str = std::string(pool.resolve(v.sym_id));
+        auto nidx = string_heap_.size(); string_heap_.push_back(name_str);
+        auto val = v.children.empty() ? make_void() : ast_to_data(flat, pool, v.child(0));
+        auto tail = make_pair(pairs_.size()); pairs_.push_back({make_string(nidx), val});
+        return cd("set!", tail);
+    }
+    case ast::NodeTag::Let:
+    case ast::NodeTag::LetRec: {
+        auto body_start = v.child(0);
+        EvalValue bindings_tail = make_void();
+        for (auto it = v.children.rbegin(); it != v.children.rend(); ++it) {
+            if (*it == body_start) continue;
+            auto cv = flat.get(*it);
+            auto bname = std::string(pool.resolve(cv.sym_id));
+            auto bni = string_heap_.size(); string_heap_.push_back(bname);
+            auto bv = ast_to_data(flat, pool, *it);
+            auto bp = pairs_.size(); pairs_.push_back({make_string(bni), bv});
+            bindings_tail = make_pair(bp);
+        }
+        auto body = ast_to_data(flat, pool, body_start);
+        auto full_bindings = make_pair(pairs_.size()); pairs_.push_back({bindings_tail, body});
+        auto kind = v.tag == ast::NodeTag::LetRec ? "letrec" : "let";
+        return cd(kind, full_bindings);
+    }
+    case ast::NodeTag::Quote: {
+        if (!v.children.empty()) {
+            auto quoted = ast_to_data(flat, pool, v.child(0));
+            auto tail = make_pair(pairs_.size()); pairs_.push_back({quoted, make_void()});
+            return cd("quote", tail);
+        }
+        return make_void();
+    }
+    case ast::NodeTag::Coercion: {
+        if (!v.children.empty()) {
+            auto expr = ast_to_data(flat, pool, v.child(0));
+            auto tail = make_pair(pairs_.size()); pairs_.push_back({expr, make_void()});
+            return cd("cast", tail);
+        }
+        return make_void();
+    }
     case ast::NodeTag::Pair: {
         auto car = ast_to_data(flat, pool, v.child(0));
-        auto cdr = ast_to_data(flat, pool, v.child(1));
-        auto pair_idx = pairs_.size();
-        pairs_.push_back(Pair{std::move(car), std::move(cdr)});
-        return make_pair(pair_idx);
+        auto cdr_val = ast_to_data(flat, pool, v.child(1));
+        auto tail = make_pair(pairs_.size()); pairs_.push_back({cdr_val, make_void()});
+        tail = make_pair(pairs_.size()); pairs_.push_back({car, tail});
+        return cd("cons", tail);
     }
     default:
         return make_void();
     }
 }
-
-// ── data_to_flat: convert EvalValue data back to FlatAST nodes ──
 // Inverse of ast_to_data. Needed so lambda bodies from macro data
 // can be converted to AST for closure creation.
 ast::NodeId Evaluator::data_to_flat(const types::EvalValue& data, aura::ast::FlatAST& flat, aura::ast::StringPool& pool, int depth) {
@@ -4380,6 +4482,79 @@ ast::NodeId Evaluator::data_to_flat(const types::EvalValue& data, aura::ast::Fla
                 auto qp = as_pair_idx(cdr_data);
                 auto inner = pairs_[qp].car;
                 return data_to_flat(inner, flat, pool, depth + 1);
+            }
+
+            // Define-type: (define-type (type-name params...) (ctor1 ctor2 ...))
+            if (fn_name == "define-type") {
+                if (is_pair(cdr_data)) {
+                    auto np = as_pair_idx(cdr_data);
+                    auto type_name_data = pairs_[np].car;
+                    auto ctor_rest = pairs_[np].cdr;
+
+                    aura::ast::SymId type_name_val = 0;
+                    std::vector<aura::ast::SymId> params;
+                    std::vector<ast::NodeId> ctors;
+
+                    if (is_pair(type_name_data)) {
+                        auto tnp = as_pair_idx(type_name_data);
+                        if (is_string(pairs_[tnp].car)) {
+                            auto ti = as_string_idx(pairs_[tnp].car);
+                            auto ts = ti < string_heap_.size() ? string_heap_[ti] : "";
+                            type_name_val = pool.intern(ts);
+                            auto rest = pairs_[tnp].cdr;
+                            while (is_pair(rest)) {
+                                auto rp = as_pair_idx(rest);
+                                if (is_string(pairs_[rp].car)) {
+                                    auto pi = as_string_idx(pairs_[rp].car);
+                                    auto ps = pi < string_heap_.size() ? string_heap_[pi] : "";
+                                    params.push_back(pool.intern(ps));
+                                }
+                                rest = pairs_[rp].cdr;
+                            }
+                        }
+                    } else if (is_string(type_name_data)) {
+                        auto ti = as_string_idx(type_name_data);
+                        auto ts = ti < string_heap_.size() ? string_heap_[ti] : "";
+                        type_name_val = pool.intern(ts);
+                    }
+
+                    if (type_name_val != 0) {
+                        auto cur = ctor_rest;
+                        while (is_pair(cur)) {
+                            auto cp = as_pair_idx(cur);
+                            auto ctor_form = pairs_[cp].car;
+                            cur = pairs_[cp].cdr;
+
+                            if (is_pair(ctor_form)) {
+                                auto ctor_pair = as_pair_idx(ctor_form);
+                                auto ctor_car = pairs_[ctor_pair].car;
+                                // Handle (quote Name) format
+                                if (is_string(ctor_car)) {
+                                    auto ci = as_string_idx(ctor_car);
+                                    auto cs = ci < string_heap_.size() ? string_heap_[ci] : "";
+                                    if (cs == "quote" && is_pair(pairs_[ctor_pair].cdr)) {
+                                        // (quote Some) — extract "Some" from cdr
+                                        auto qcdr = as_pair_idx(pairs_[ctor_pair].cdr);
+                                        auto name_val = pairs_[qcdr].car;
+                                        if (is_string(name_val)) {
+                                            auto ni = as_string_idx(name_val);
+                                            auto ns = ni < string_heap_.size() ? string_heap_[ni] : "";
+                                            auto ctor_var = flat.add_variable(pool.intern(ns));
+                                            ctors.push_back(flat.add_quote(ctor_var));
+                                        }
+                                    }
+                                } else {
+                                    // Direct ctor descriptor — store as-is
+                                    auto ctor_node = data_to_flat(ctor_form, flat, pool, depth + 1);
+                                    if (ctor_node != ast::NULL_NODE)
+                                        ctors.push_back(ctor_node);
+                                }
+                            }
+                        }
+                        return flat.add_define_type(type_name_val, params, ctors);
+                    }
+                }
+                return ast::NULL_NODE;
             }
 
             // Begin: (begin ...)
