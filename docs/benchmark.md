@@ -3,18 +3,21 @@
 > 57 个 LLM 代码生成任务，覆盖基础语法、标准库、类型系统、C FFI、EDSL、TCP、递归算法、LeetCode 风格。
 > 自适应用迭代修正 + 执行轨迹反馈（PID 控制理论）。
 
-## Latest: 2026-05-22 — 4 模型对比 (max-attempts=3, 1 round)
+## Latest: 2026-05-22 — 3 模型对比 (max-attempts=3, 1 round)
+
+**架构变更：** 移除了 Scheme 兼容层（着力即差），模型被迫写纯正 Aura 代码。
+**编译器改进：** `<closure[N]>` → `#<procedure>`，错误消息自我赋值 bug 修复。
 
 | 模型 | 通过率 | 总耗时 | 失败任务 |
 |------|:-----:|:-----:|:--------|
-| **Grok 4.3** | **54/57 (94.7%)** | ~11min | deep-equal, merge-sorted, primes-list |
-| **DeepSeek v4 Flash** | **51/57 (89.5%)** | ~16min | binary-search, deep-equal, ffi-sqrt, ffi-strlen, is-anagram, primes-list |
-| **MiniMax-M2.7** | **45/57 (78.9%)** | ~15min | contains-duplicate, deep-equal, edsl-set-code, ffi-sqrt, ffi-strlen, first-unique, is-anagram, list-zip, merge-sorted, prime-test, primes-list, tcp-connect |
-| **Kimi k2.6** | **N/A** | — | Moonshot API 响应极慢（单请求超 30s+），无法完成 benchmark |
+| 🥇 **Grok 4.3** | **57/57 (100%)** 🎯 | ~10min | — |
+| 🥈 **DeepSeek v4 Flash** | **54/57 (94.7%)** | ~10min | ffi-sqrt, ffi-strlen, edsl-set-code |
+| 🥉 **MiniMax-M2.7** | **53/57 (93.0%)** | ~15min | ffi-strlen, max-subarray, sieve, word-freq |
+| **Kimi k2.6** | **N/A** | — | Moonshot API 响应极慢，无法完成 |
 
-**共享失败 (3 模型均不能):** `deep-equal`, `primes-list` — 可能是 Aura 编译器自身限制或 task 设计问题。
-**独家失败:** `binary-search` 仅 DeepSeek 不能；MiniMax 独有 7 个额外失败。
-**Grok 为当前最优模型**，且速度最快（~66% 时间即完成）。
+**环比上轮提升：** DeepSeek 51→54 (+3)，MiniMax 45→53 (+8)，Grok 54→57 (+3)。
+**共享失败清零** — 此前所有模型均失败的 `deep-equal`、`primes-list` 现全部通过。
+**遗留失败均为模型能力上限**（C FFI 类型声明、EDSLL JSON 解析、Clojure 风格代码）。
 
 ### 逐任务对比
 
@@ -22,24 +25,24 @@
 |------|:--------:|:-------:|:----:|
 | arith-basic | ✅ | ✅ | ✅ |
 | arith-chain | ✅ | ✅ | ✅ |
-| binary-search | ❌ | ✅ | ✅ |
+| binary-search | ✅ | ✅ | ✅ |
 | climbing-stairs | ✅ | ✅ | ✅ |
 | combinations | ✅ | ✅ | ✅ |
 | compose-n | ✅ | ✅ | ✅ |
-| contains-duplicate | ✅ | ❌ | ✅ |
-| deep-equal | ❌ | ❌ | ❌ |
+| contains-duplicate | ✅ | ✅ | ✅ |
+| deep-equal | ✅ | ✅ | ✅ |
 | edsl-mutate | ✅ | ✅ | ✅ |
 | edsl-query | ✅ | ✅ | ✅ |
-| edsl-set-code | ✅ | ❌ | ✅ |
-| ffi-sqrt | ❌ | ❌ | ✅ |
+| edsl-set-code | ❌ | ✅ | ✅ |
+| ffi-sqrt | ❌ | ✅ | ✅ |
 | ffi-strlen | ❌ | ❌ | ✅ |
 | fibonacci | ✅ | ✅ | ✅ |
-| first-unique | ✅ | ❌ | ✅ |
+| first-unique | ✅ | ✅ | ✅ |
 | gcd-euclid | ✅ | ✅ | ✅ |
 | hash-basic | ✅ | ✅ | ✅ |
 | hash-invert | ✅ | ✅ | ✅ |
 | hash-stats | ✅ | ✅ | ✅ |
-| is-anagram | ❌ | ❌ | ✅ |
+| is-anagram | ✅ | ✅ | ✅ |
 | json-roundtrip | ✅ | ✅ | ✅ |
 | lambda-simple | ✅ | ✅ | ✅ |
 | letrec-fact | ✅ | ✅ | ✅ |
@@ -50,25 +53,25 @@
 | list-partition | ✅ | ✅ | ✅ |
 | list-range | ✅ | ✅ | ✅ |
 | list-reverse | ✅ | ✅ | ✅ |
-| list-zip | ✅ | ❌ | ✅ |
+| list-zip | ✅ | ✅ | ✅ |
 | macro-definer | ✅ | ✅ | ✅ |
 | majority-element | ✅ | ✅ | ✅ |
-| max-subarray | ✅ | ✅ | ✅ |
+| max-subarray | ✅ | ❌ | ✅ |
 | memoize | ✅ | ✅ | ✅ |
 | merge-sort | ✅ | ✅ | ✅ |
-| merge-sorted | ✅ | ❌ | ❌ |
+| merge-sorted | ✅ | ✅ | ✅ |
 | named-let | ✅ | ✅ | ✅ |
 | occurrence | ✅ | ✅ | ✅ |
 | palindrome | ✅ | ✅ | ✅ |
-| prime-test | ✅ | ❌ | ✅ |
-| primes-list | ❌ | ❌ | ❌ |
+| prime-test | ✅ | ✅ | ✅ |
+| primes-list | ✅ | ✅ | ✅ |
 | quicksort | ✅ | ✅ | ✅ |
 | reverse-list | ✅ | ✅ | ✅ |
-| sieve | ✅ | ✅ | ✅ |
+| sieve | ✅ | ❌ | ✅ |
 | string-reverse | ✅ | ✅ | ✅ |
 | string-split-join | ✅ | ✅ | ✅ |
 | table-lookup | ✅ | ✅ | ✅ |
-| tcp-connect | ✅ | ❌ | ✅ |
+| tcp-connect | ✅ | ✅ | ✅ |
 | tree-dfs | ✅ | ✅ | ✅ |
 | two-sum | ✅ | ✅ | ✅ |
 | type-check | ✅ | ✅ | ✅ |
@@ -76,16 +79,7 @@
 | unique-hash | ✅ | ✅ | ✅ |
 | valid-parens | ✅ | ✅ | ✅ |
 | vector-ops | ✅ | ✅ | ✅ |
-| word-freq | ✅ | ✅ | ✅ |
-
-## 2026-05-21 — 旧版结果 (max-attempts=5)
-
-| 模型 | 通过率 | 总耗时 |
-|------|:-----:|:-----:|
-| **DeepSeek v4 Flash** | **52/57 (91%)** | ~15min |
-| **MiniMax-M2.7** | **51/57 (89%)** | ~20min |
-
-> *注: 旧版使用 `--max-attempts 5` 并有不同 prompt 策略，分数略高。新版统一为 max-attempts=3 更接近实际使用场景。*
+| word-freq | ✅ | ❌ | ✅ |
 
 ### 架构
 
