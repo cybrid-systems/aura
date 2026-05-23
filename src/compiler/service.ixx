@@ -164,6 +164,17 @@ public:
                 return true;
         }
 
+        // Type annotations wrapping a variable: tree-walker gives proper
+        // unbound-variable diagnostics; IR lowering silently returns 0.
+        if (flat.get(root).tag == aura::ast::NodeTag::TypeAnnotation) {
+            auto root_v = flat.get(root);
+            if (!root_v.children.empty()) {
+                auto inner_tag = flat.get(root_v.child(0)).tag;
+                if (inner_tag == aura::ast::NodeTag::Variable)
+                    return true;
+            }
+        }
+
         // Names that lowering explicitly handles (special forms lowered to IR)
         // These should NOT trigger tree-walker fallback even though they're
         // not primitives or cached defines.
