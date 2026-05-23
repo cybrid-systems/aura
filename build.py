@@ -1108,7 +1108,7 @@ def fuzz_asan():
     env = os.environ.copy()
     env["ASAN_OPTIONS"] = "detect_leaks=0"
     env["AURA_BIN"] = str(asan_bin)
-    for fuzz_script in ["tests/fuzz_structured.py", "tests/fuzz.py"]:
+    for fuzz_script in ["tests/fuzz_structured.py", "tests/fuzz.py", "tests/fuzz_diff.py"]:
         print(f"  Running {fuzz_script} with ASan...", flush=True)
         r = subprocess.run([sys.executable, fuzz_script, "--seed", "42", "--quick"],
                           cwd=REPO, env=env, capture_output=True, text=True)
@@ -1129,7 +1129,7 @@ def fuzz_ubsan():
         return True
     env = os.environ.copy()
     env["AURA_BIN"] = str(ubsan_bin)
-    for fuzz_script in ["tests/fuzz_structured.py", "tests/fuzz.py"]:
+    for fuzz_script in ["tests/fuzz_structured.py", "tests/fuzz.py", "tests/fuzz_diff.py"]:
         print(f"  Running {fuzz_script} with UBSan...", flush=True)
         r = subprocess.run([sys.executable, fuzz_script, "--seed", "42", "--quick"],
                           cwd=REPO, env=env, capture_output=True, text=True)
