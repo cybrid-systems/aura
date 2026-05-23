@@ -1097,6 +1097,48 @@ def cmd_list():
 # ── Regression: replay known compiler bug reproducers ─────────
 
 
+
+def fuzz_asan():
+    """Run fuzz suites with AddressSanitizer."""
+    asan_bin = REPO / "build_asan" / "aura"
+    if not asan_bin.exists():
+        print("  ASan build not found at", asan_bin)
+        print("  Run: cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS='-fsanitize=address -fno-omit-frame-pointer' -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address' -B build_asan -G Ninja && cmake --build build_asan --target aura -j$(nproc)")
+        return True
+    env = os.environ.copy()
+    env["ASAN_OPTIONS"] = "detect_leaks=0"
+    env["AURA_BIN"] = str(asan_bin)
+    for fuzz_script in ["tests/fuzz_structured.py", "tests/fuzz.py"]:
+        print(f"  Running {fuzz_script} with ASan...", flush=True)
+        r = subprocess.run([sys.executable, fuzz_script, "--seed", "42", "--quick"],
+                          cwd=REPO, env=env, capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"    FAILED (exit {r.returncode})")
+            print(r.stderr[-200:] if r.stderr else r.stdout[-200:])
+            return False
+        print(f"    OK")
+    return True
+
+
+def fuzz_ubsan():
+    """Run fuzz suites with UndefinedBehaviorSanitizer."""
+    ubsan_bin = REPO / "build_ubsan" / "aura"
+    if not ubsan_bin.exists():
+        print("  UBSan build not found at", ubsan_bin)
+        print("  Run: cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS='-fsanitize=undefined -fno-omit-frame-pointer' -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=undefined' -B build_ubsan -G Ninja && cmake --build build_ubsan --target aura -j$(nproc)")
+        return True
+    env = os.environ.copy()
+    env["AURA_BIN"] = str(ubsan_bin)
+    for fuzz_script in ["tests/fuzz_structured.py", "tests/fuzz.py"]:
+        print(f"  Running {fuzz_script} with UBSan...", flush=True)
+        r = subprocess.run([sys.executable, fuzz_script, "--seed", "42", "--quick"],
+                          cwd=REPO, env=env, capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"    FAILED (exit {r.returncode})")
+            print(r.stderr[-200:] if r.stderr else r.stdout[-200:])
+            return False
+        print(f"    OK")
+    return True
 def test_fuzz():
     """Run LLM-driven fuzz tests (requires LLM_API_KEY)."""
     try:
