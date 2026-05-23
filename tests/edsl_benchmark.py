@@ -1321,97 +1321,32 @@ def main():
             if task_filter
             else []
         )
-        for name, prompt, expected, stdlib in TASKS:
-            if filter_list and name not in filter_list:
-                continue
-            # Per-task serve process (57 tasks = 57 processes)
-            task_serve = None
-            try:
-                task_serve = ServeClient()
-            except Exception:
-                pass  # fallback to subprocess
-            task_passes = 0
-            print(f"\n  ── {name} ──")
-            for round_i in range(1, ROUNDS + 1):
-                success, out, err, llm_t, attempts = run_single_task(
-                    model,
-                    base_url,
-                    api_key,
-                    name,
-                    prompt,
-                    expected,
-                    stdlib,
-                    api_ref,
-                    serve=task_serve,
-                )
-                task_stats[name]["llm_times"].append(llm_t)
-                task_stats[name]["attempts"].append(attempts)
-                if success:
-                    task_passes += 1
-                    att = f" (attempts={attempts})"
-                    line = f"    Round {round_i:2d}/{ROUNDS}: ✅ ({llm_t:.1f}s{att})"
-                else:
-                    task_stats[name]["errors"].append(err[:80])
-                    att = f" in {attempts}"
-                    line = f"    Round {round_i:2d}/{ROUNDS}: ❌ {err[:50]} ({llm_t:.1f}s{att})"
-                    etype = (
-                        "output-mismatch"
-                        if ('"ok"' in (out or "")[:50] and not success)
-                        else (err[:25] or "unknown")
-                    )
-                    task_stats.setdefault("__errors__", []).append(
-                        (name, etype, attempts, llm_t)
-                    )
-                print(line)
-                sys.stdout.flush()
-            if task_serve:
-                task_serve.close()
-
-            task_stats[name]["passes"] = task_passes
-            task_stats[name]["total"] = task_stats[name]["passes"] + len(
-                task_stats[name]["errors"]
-            )
-
-        if EVOLVE_MODE:
-            # Evolve strategy based on this round's analytics
-            # Ensure base strategy exists, then evolve
-            evolve_code = (
-                '(require "std/evolve" all:)'
-                '(register-strategy! "default" "")'
-                '(display (evolve-strategy "default"))\n'
-            )
-            try:
-                r = subprocess.run(
-                    [AURA],
-                    input=evolve_code,
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                )
-                evolved = r.stdout.strip()
-                print(f"\n  ⚡ Evolved: {evolved}")
-            except Exception as e:
-                print(f"\n  ⚡ Evolve failed: {e}")
-            # Read evolved body and inject hints into system prompt for next round
-            if evolved:
+        tasks_to_run = [(name, prompt, expected, stdlib) for name, prompt, expected, stdlib in TASKS
+                           if not filter_list or name in filter_list]
+        
+        pool_args = [(model, base_url, api_key, name, prompt, expected, stdlib, api_ref)
+                     for name, prompt, expected, stdlib in tasks_to_run]
+        
+        max_workers = int(os.environ.get("BENCH_WORKERS", "20"))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(run_single_task_parallel, args): args for args in pool_args}
+            for future in concurrent.futures.as_completed(futures):
                 try:
-                    r2 = subprocess.run(
-                        [AURA],
-                        input=f'(display (strategy-field "{evolved}" "body"))\n',
-                        capture_output=True,
-                        text=True,
-                        timeout=5,
-                    )
-                    evolved_body = r2.stdout.strip()
-                    if evolved_body and evolved_body != "()":
-                        # Store for build_sys_prompt to inject
-                        evolved_hints = evolved_body.replace('"', '\\"')
-                        os.environ["EVOLVED_HINTS"] = evolved_hints
-                        print(f"  ⚡ Injected {len(evolved_body)} chars of hints")
-                except Exception:
-                    pass
-            # Reset history for next round
-            print("  History cleared for next round.\n")
+                    name, success, out, err, llm_t, attempts = future.result()
+                    task_stats[name]["llm_times"].append(llm_t)
+                    task_stats[name]["attempts"].append(attempts)
+                    task_passes = 1 if success else 0
+                    model_task_totals[name] = model_task_totals.get(name, [0, 0])
+                    model_task_totals[name][0] += task_passes
+                    model_task_totals[name][1] += 1
+                    task_results.append((name, task_passes, ROUNDS))
+                    if success:
+                        safe_print(f"  ✅ {name} ({llm_t:.1f}s, {attempts} att)")
+                    else:
+                        err_short = (err[:50] if err else "")
+                        safe_print(f"  ❌ {name}: {err_short} ({llm_t:.1f}s, {attempts} att)")
+                except Exception as e:
+                    safe_print(f"  ❌ task error: {e}")
 
         elapsed = time.time() - start_time
         task_stats["__meta__"] = {"elapsed": round(elapsed, 1)}
