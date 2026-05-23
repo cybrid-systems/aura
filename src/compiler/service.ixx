@@ -1648,6 +1648,24 @@ public:
     const aura::ast::FlatAST& last_flat() const { return *current_ast_; }
     const aura::ast::StringPool& last_pool() const { return *current_pool_; }
 
+    // Expose evaluator env for --inspect evaluator
+    std::string inspect_env() const {
+        // Format: var_name → type_name per binding
+        std::string out;
+        auto& env = evaluator_.top_env();
+        std::size_t count = 0;
+        const aura::compiler::Env* e = &env;
+        while (e) {
+            for (auto& b : const_cast<aura::compiler::Env&>(*e).bindings()) {
+                out += "  " + b.first + " → " +
+                       aura::compiler::types::format_value(b.second) + "\n";
+                ++count;
+            }
+            e = e->parent();
+        }
+        return "env: " + std::to_string(count) + " bindings\n" + out;
+    }
+
     // Check if a cached function exists
     bool has_cached_function(const std::string& name) const {
         return ir_cache_.find(name) != ir_cache_.end();
