@@ -410,10 +410,26 @@ NodeId FlatParser::parse_lambda() {
             dotted = true;
             break;
         }
-        auto t = lexer_->consume();
-        if (t.kind != TokenKind::Identifier)
-            return NULL_NODE;
-        params.push_back(pool_.intern(std::string(t.text)));
+        // Check for type-annotated parameter: (lambda ((: x Type)) body)
+        if (lexer_->peek().kind == TokenKind::LParen) {
+            // Type-annotated parameter: ((: x Int)) or ((: x Int val))
+            // The outer '(' before ':' is consumed here, parse_type_annot handles the rest
+            lexer_->consume();
+            auto annot_node = parse_type_annot();
+            if (annot_node == NULL_NODE)
+                return NULL_NODE;
+            // TypeAnnotation node: child[0] = Variable with the parameter name
+            auto annot_tag = flat_.get(annot_node);
+            if (annot_tag.children.empty())
+                return NULL_NODE;
+            auto var_node = flat_.get(annot_tag.child(0));
+            params.push_back(var_node.sym_id);
+        } else {
+            auto t = lexer_->consume();
+            if (t.kind != TokenKind::Identifier)
+                return NULL_NODE;
+            params.push_back(pool_.intern(std::string(t.text)));
+        }
     }
     lexer_->consume(); // ')'
 
