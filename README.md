@@ -71,12 +71,6 @@ Aura 是一个 **AI-native Lisp** 编译器：C++26 实现，LLVM ORC JIT 后端
 | **TCP 网络** | `tcp-connect`/`tcp-send`/`tcp-recv`/`tcp-close` + `http-get`/`http-post` |
 | **自省** | `--inspect ir/closures/cache` P2996 编译期反射 |
 
-### 基准
-
-```
-fib-20: Tree-walker 48.6ms → IR 23.0ms → JIT (-O2) 6.4ms (7.55×)
-```
-
 ### AI 基准（85 生成任务，2026-05-23）
 
 | 模型 | 通过率 | 耗时 |
@@ -85,8 +79,7 @@ fib-20: Tree-walker 48.6ms → IR 23.0ms → JIT (-O2) 6.4ms (7.55×)
 | 🥈 **MiniMax M2.7** | **74/85 (87.1%)** | ~29min |
 | 🥉 **DeepSeek v4 Flash** | **72/85 (84.7%)** | ~54min |
 
-无 Scheme 兼容层（着力即差），`max-attempts=3`。
-[详情 → docs/benchmark.md](docs/benchmark.md) · [规格 → docs/design/aura_language_spec.md](docs/design/aura_language_spec.md)
+[详情 → docs/benchmark.md](docs/benchmark.md)
 
 ### 快速开始
 
