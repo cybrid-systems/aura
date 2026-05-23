@@ -45,7 +45,8 @@ Aura 把 AST 变成 AI 可以直接读、写、验证的记忆：
 ```
 (set-code "(define (bad-fac n) (* n (bad-fac (- n 1))))")
 (query:find "bad-fac")        ; AI 找到自己的函数定义 → (node-id)
-(mutate:rebind 16 "(lambda (n) ...)")  ; AI 修正自己
+(mutate:rebind "bad-fac"
+  "(lambda (n) (if (= n 0) 1 (* n (bad-fac (- n 1)))))")
 (eval-current)                ; AI 验证修改
 ```
 

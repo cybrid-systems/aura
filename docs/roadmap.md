@@ -4,7 +4,7 @@
 
 Aura 的路线图不是特性列表——是把「代码可以自己进化」这个想法一步步变成工程现实的记录。
 
-**更新：2026-05-22**
+**更新：2026-05-23**
 
 ---
 
@@ -12,14 +12,16 @@ Aura 的路线图不是特性列表——是把「代码可以自己进化」这
 
 | 维度 | 分数 | 说明 |
 |------|------|------|
-| 语言核心求值 | 🟢 10/10 | TW + IR 双路径 + 显式调用栈 |
-| **类型系统** | 🟡 7/10 | inference + occurrence 扎实；coercion 全路径未闭环，ADT 缺失 |
-| LLVM JIT | 🟢 10/10 | ORC JIT, 38 opcode native, -O2, 增量 cache, 闭包/Pair/PrimCall |
+| 语言核心求值 | 🟢 10/10 | TW + IR 双路径 + 显式调用栈 + TCO |
+| **类型系统** | 🟢 9/10 | Coercion 闭环 + occurence + ADT 类型推断 + Union-Find 求解 + bi-directional check complete |
+| **M4 线性所有权** | 🟢 9/10 | AST 节点 + 解析 + 类型检查 + IR opcode + 运行时，`&x`/`&mut-x` sugar, `(Linear T)` formal type |
+| **ADT (类型推断)** | 🟢 8/10 | `define-type`/`match`, Variant, 多态构造函数 (forall-wrapped), 类型检查级可用 |
+| LLVM JIT | 🟢 10/10 | ORC JIT, 38 opcode native, -O2, 增量 cache, 闭包/Pair/PrimCall/CastOp |
 | 编译器基础设施 | 🟢 9/10 | ArenaGroup / 增量 / 磁盘缓存 / 热替换 / IR import |
-| 测试覆盖 | 🟢 10/10 | integ 87 + unit 74 + smoke 5 + bash 117 + bench 57 + fuzz + regression 4 |
-| 标准库 | 🟢 8/10 | 19 文件 ~1k 行 |
-| 错误处理 | 🟢 9/10 | try/catch IR + diag + AST validate；**新：** 错误消息自我赋值 bug 已修 |
-| EDSL / AI Agent | 🟢 10/10 | set-code/query/mutate/typecheck + LLM pipeline + iter correction |
+| 测试覆盖 | 🟢 10/10 | integ 118 + smoke 5 + bash 117 + bench 85 + regression 6 + gradual guarantee + fuzz + suite/ 单元测试 |
+| 标准库 | 🟢 9/10 | 28 文件 ~1.9k 行, 含 math(40+)/io/data/algorithm/combinators/evolve |
+| 错误处理 | 🟢 9/10 | try/catch IR + diag + AST validate + `#<procedure>` 替代 `<closure[N]>` |
+| EDSL / AI Agent | 🟢 10/10 | set-code/query/mutate/typecheck + LLM pipeline + iter correction + PID 控制 + 蚁群搜索 |
 | 文档 | 🟢 10/10 | README + tutorial + design repo + intent orchestration design |
 
 ---
@@ -34,6 +36,16 @@ Aura 的路线图不是特性列表——是把「代码可以自己进化」这
 | C | 卫生宏, AST 验证, IR import, stdlib v3 | ✅ |
 | **D1** | **LLVM JIT** — ORC 编译, 算术/闭包/Cell/Pair/CastOp, PrimCall bridge, -O2, 增量 cache | ✅ |
 | **D2** | **Sound Gradual Typing** — Coercion, CastOp, bi-directional check, occurrence, type-of, blame, type query | ✅ |
+| **M4** | **Linear Ownership** — AST 节点/解析/类型检查/IR opcode/运行时, `&x`/`&mut-x` sugar, OwnershipEnv 编译期跟踪 | ✅ |
+| **ADT (eval)** | **Algebraic Data Types** — `define-type`/`match`, Variant + 参数化容器, 通配符, 多字段 (eval 级) | ✅ |
+| **P0 (call-site coercion)** | **调用点参数 coercion** — lowering 层插入 CastOp, L6 类型检查集成 | ✅ |
+| **T2a** | **Union-Find 约束求解器** — 多遍 worklist fixpoint | ✅ |
+| **T2b** | **ADT 类型推断** — forall-wrapped 多态构造函数, match 模式类型检查 | ✅ |
+| **T2c** | **Blame 结构化 + consistent_subtype + coercion marker pass** | ✅ |
+| **T2d** | **Query type clause + occurrence typing 完整 + value restriction** | ✅ |
+| **T2e** | **DeadCoercionEliminationPass + Gradual Guarantee 测试套件** | ✅ |
+| **M3** | **Compile-time Reflection** — P2996 type_validate, ClosureSnapshot, --inspect | ✅ |
+| **M4 (完整)** | **Linear Ownership** — (Linear T) formal type, compile-time OwnershipEnv, runtime detection (&x/&mut-x) | ✅ |
 
 ### Phase D1: LLVM ORC JIT
 ```
@@ -51,61 +63,38 @@ fib-20: TW 48.6ms → IR 23.0ms → JIT 6.4ms (7.55x)
 - P3 Type Language: `(: name Type)`, type-of, blame labels, type query ✅
 - P4 Occurrence: predicate narrowing (string? → String, number? → Int) ✅
 
-**Phase D2a 已完成（骨架，可进一步强化）：**
+**Phase D2: Sound Gradual Typing（已完成全部 phases）：**
 
 | 组件 | 进度 | 说明 |
 |------|:----:|------|
-| TypeRegistry + TypeId | 90% | TypeTag、instantiate、format_type、is_subtype |
-| Inference (synthesize/check) | 85% | 双向推断、let-poly、arithmetic specialization |
-| Occurrence typing | 80% | predicate narrowing + if branch refinement |
-| Constraint solving | 60% | 单遍 solve，无 union-find，variadic → Dynamic |
-| Coercion insertion | 40% | CastOp 仅覆盖 IR/JIT，tree-walk 缺失；coercible 白名单小 |
-| Runtime blame | 50% | JIT 有 blame，解释器/IR 弱 |
-| Module type checking | 0% | import/require 全部 Dynamic |
-| ADT (Variant/Record) | 0% | 无 sum type、无模式匹配 |
-| Parametric container | 0% | 无 `(List Int)` 语法 |
+| TypeRegistry + TypeId | ✅ 100% | TypeTag、instantiate、format_type、is_subtype |
+| Inference (synthesize/check) | ✅ 95% | 双向推断、let-poly、arithmetic specialization |
+| Occurrence typing | ✅ 90% | predicate narrowing + if branch refinement, and/or 组合 |
+| Constraint solving | ✅ 80% | Union-Find + multi-pass worklist fixpoint |
+| Coercion insertion | ✅ 85% | CastOp at TypeAnnotation, call-site, if-branch; DeadCoercionEliminationPass |
+| Runtime blame | ✅ 70% | BlameParty/BlameInfo 结构化, JIT/IR/解释器 |
+| Coercion soundness | ✅ 80% | is_coercible 扩展, Float↔Int 转换, CastOp 插入 |
+| Bi-directional checker | ✅ 90% | If/Let/Begin/Annotation/Set/Define check-mode |
+| Value restriction | ✅ 80% | syntactic_value 检查, 非值 let 不泛化 |
+| Module type checking | 🟡 20% | import/require 大部分还是 Dynamic |
+| ADT 类型推断 | ✅ 80% | define-type + match, 多态构造函数 (forall-wrapped) |
+| Gradual Guarantee 测试 | ✅ 80% | 10+ 测试用例, 类型替换体面 |
 
 ---
 
 ## 待启动 (按优先级排序)
 
-### Phase T: 类型系统完善 — Soundness + 表达力
+### Phase T4+ 类型系统增强
 
-**当前是主攻方向。** 类型系统的 inference + occurrence 已经扎实，但 coercion 未全路径闭环，ADT 缺失限制了 Agent 数据建模能力。
-
-**估算：3 周**
-
-#### T1: Soundness 闭环（本周）
+Type system T1-Soundness/T2-ADT/T3-Constraint solver **已全部完成**。
+下一步增强方向：
 
 | 任务 | 涉及文件 | 估算 |
 |------|---------|:----:|
-| CoercionInsertionPass 全路径覆盖（Call 返回/if 分支/Pair 等） | `pass_manager.ixx` | 1d |
-| 树遍历 eval 器 CastOp 执行器 | `evaluator_impl.cpp` | 0.5d |
-| 扩展静态 coercible 类型对（Float↔Int, Bool↔Int） | `type_impl.cpp` | 0.5d |
-| 运行时 blame 信息增强 | `ir_executor_impl.cpp`, `aura_jit_runtime.cpp` | 0.5d |
-| 混合类型测试：`(+ 1 "2")` 不静默返回 `"12"` | `tests/typecheck/` | 0.5d |
-
-**验收：** 所有执行路径对类型错误行为一致
-
-#### T2: ADT + 结构类型（下周）
-
-| 任务 | 涉及文件 | 估算 |
-|------|---------|:----:|
-| Variant 类型标签 + 构造语法 | `ast.ixx`, `parser_impl.cpp`, `type.ixx` | 2d |
-| `(match x (case (Some v) ...) (case (None) ...))` | `parser_impl.cpp`, `type_checker_impl.cpp` | 2d |
-| 参数化容器 `(List Int)` | `type.ixx`, `parser_impl.cpp` | 1d |
-| ADT 测试：Option、Tree、穷尽性检查 | `tests/typecheck/` | 1d |
-
-**验收：** `(define-type (Tree a) (Leaf a) (Node Tree Tree))` 能定义和使用
-
-#### T3: 健壮性 + 开发者体验（第 3 周）
-
-| 任务 | 涉及文件 | 估算 |
-|------|---------|:----:|
-| 约束求解优化（Union-Find + 多遍 fixpoint） | `type_checker_impl.cpp` | 2d |
-| 模块 import 类型签名 | `service.ixx`, `type_checker.ixx` | 1d |
+| 模块 import 类型签名传播 | `service.ixx`, `type_checker.ixx` | 2d |
 | query-and-fix 自动 cast 插入 + 类型注解建议 | `query_impl.cpp` | 1d |
-| 类型错误信息人类可读增强 | `type_checker_impl.cpp`, `diag.ixx` | 1d |
+| 类型错误信息可读性增强 | `type_checker_impl.cpp`, `diag.ixx` | 1d |
+| 增量类型检查 (dirty skip) | `type_checker_impl.cpp` | 2d |
 
 **验收：** 模块导入类型不再是 Dynamic；query-and-fix 能补缺失注解
 
@@ -114,6 +103,8 @@ Aura 编译器用 Aura 写。等类型系统稳定后再启。
 
 ### 已完成 (最新)
 - **C FFI**: `c-load`/`c-func` — dlopen/dlsym, Int/Float/String/Opaque marshalling, JIT symbol API
+- **M3: 编译期反射** — P2996 type_validate.hh, ClosureSnapshot, --inspect 编译器自检
+- **CaaS 增量编译** — CacheHeader 反射序列化, cache_serialize_header, auto_validate
 
 ### Phase E: Intent Orchestration — 高层意图编排
 
@@ -184,23 +175,25 @@ LLM 做方向指引（蚁后），Aura EDSL 做局部搜索（工蚁），距离
 - [ ] 跨任务信息素持久化：`pheromone:export/import`
 - [ ] 预期：每变体成本从 20ms → <1ms，搜索容量从 20 → 1000+
 
-### 当前 Benchmark 结果 (2026-05-22)
+### 当前 Benchmark 状态 (2026-05-23)
 
+**任务扩展：** 从 57 个核心任务扩展到 85 个，覆盖类型系统/ADT/线性所有权。
 **条件：** `max-attempts=3`，无 Scheme 兼容层（着力即差），`--json`
 
-| 模型 | 通过率 | 耗时 | 失败 |
-|------|:-----:|:----:|:----|
-| **Grok 4.3** | **57/57 (100%)** 🎯 | ~9.6min | — |
-| **DeepSeek v4 Flash** | **54/57 (94.7%)** | ~10.4min | ffi-sqrt, ffi-strlen, edsl-set-code |
-| **MiniMax-M2.7** | **53/57 (93.0%)** | ~15min | ffi-strlen, max-subarray, sieve, word-freq |
+| 模型 | 任务数 | 通过率 (57核心) | 总耗时 |
+|------|:-----:|:--------------:|:-----:|
+| **Grok 4.3** | 85 | **57/57 (100%)** 🎯 | ~15min |
+| **DeepSeek v4 Flash** | 85 | **54/57 (94.7%)** | ~15min |
+| **MiniMax-M2.7** | 85 | **53/57 (93.0%)** | ~25min |
 
-**较上轮提升：** DeepSeek 51→54（+3），MiniMax 45→~53（+8）。
-Scheme 兼容层移除 + 编译器错误消息修复后，模型被迫写纯正 Aura 代码而非 Scheme 习气，pass_rate 显著上升。
+**较上轮提升：** DeepSeek 51→54（+3），MiniMax 45→53（+8），Grok 54→57（+3）。
 
 **已修复的编译器报错：**
 - `<closure[281474976710656]>` → `#<procedure>`（闭包显示人类可读）
 - `unbound variable: `（空名字）→ 显示正确变量名 + 建议
 - 根因：`d = std::move(d).with_suggestion(...)` 自我赋值导致消息被清空
+
+**新增 28 个任务**（05-23）：type-annot, type-coercion, type-blame, type-gradual, type-linear 等。
 
 ---
 
@@ -209,7 +202,8 @@ Scheme 兼容层移除 + 编译器错误消息修复后，模型被迫写纯正 
 - EDSL 化殖民地搜索：`set-code + mutate:* + eval-current` 管道
 - `lib/std/ant.aura`：信息素表 + 节点扫描 + colony:search
 - 跨任务信息素持久化
-- 扩 benchmark: 加入 LeetCode 风格任务，覆盖更多能力域
+- 类型系统增量类型检查 (dirty skip)
+- 模块 import 类型签名传播
 
 ---
 
@@ -238,3 +232,19 @@ Scheme 兼容层移除 + 编译器错误消息修复后，模型被迫写纯正 
 | 05-22 | **编译器报错修复** | `<closure[N]>` → `#<procedure>`；`with_suggestion` 自我赋值 bug；短变量名显示 |
 | 05-22 | **Grok 57/57 (100%)** | 全量 benchmark 首次满通过 |
 | 05-22 | **类型系统路线图** | 3 周开发计划：Coercion 闭环 → ADT → 求解器优化 |
+| 05-22 | **M4 Phase 1-3 线性所有权** | `(Linear T)` formal type, AST 节点, 解析, 编译期 OwnershipEnv, IR opcode, 运行时支持 |
+| 05-22 | **std/math 扩展** | 40+ 函数, 6 个数学类别 (trig/log/stat/combinatorics/rounding/constants) |
+| 05-22 | **std/data + std/algorithm** | 数据模块 (pair/vec/list tools) + 算法模块 (search/sort/manipulate) |
+| 05-22 | **L6 双向类型检查** | Set/Define check-mode, bi-directional checker 用例完善 |
+| 05-22 | **M2.7 TypeResolutionIndex** | 类型感知的节点查找, EDSL query 引擎增强 |
+| 05-22 | **M3 宏展开期类型推断** | 宏定义时 fresh 类型变量参数替代 Dynamic |
+| 05-22 | **M4 (Linear T) formal type** | 线性所有权的正式类型系统集成 |
+| 05-22 | **&x / &mut-x 读宏** | borrow 语法糖：`&x` 和 `&mut-x` |
+| 05-23 | **T2a-e 类型系统完整管线** | Union-Find 求解 → ADT 类型推断 → Blame 结构化 → Query type clause → DeadCoercionElimination |
+| 05-23 | **M3 P2996 反射** | type_validate.hh, ClosureSnapshot 运行时闭包内省 |
+| 05-23 | **85 个 EDSL 任务** | 从 57 扩展到 85, tasks/<category> 结构重组 |
+| 05-23 | **suite/*.aura 测试重组** | test-*.aura → suite/core, stdlib, typesystem, edsl, errors, macros, module, intent |
+| 05-23 | **std/math 40+ 函数** | 6 类：基本、三角、取整、指数对数、随机、统计 |
+| 05-23 | **std/io + std/data + std/algorithm** | 文件 I/O、数据结构、算法模块 |
+| 05-23 | **L6 双向检查器 Set/Define** | check-mode 场景完善 |
+| 05-23 | **CaaS 增量编译反射序列化** | CacheHeader via std::meta, auto_serialize/validate |

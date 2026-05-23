@@ -218,7 +218,7 @@ redefine("foldl"):
 ← {"status":"ok","result":"6"}
 ```
 
-## 实现状态（2026-05-18）
+## 实现状态（2026-05-23）
 
 | 组件 | 状态 | 位置 | 备注 |
 |------|------|------|------|
@@ -227,23 +227,28 @@ redefine("foldl"):
 | eval() IR-first + fallback | ✅ | `service.ixx` | 统一入口，自动降级 |
 | eval_ir() 含 Pass Manager | ✅ | `service.ixx` | 纯 IR 管线 + debug 输出 |
 | --serve JSON 协议 | ✅ v2 | `main.cpp` | exec/define/mutate/rollback/session |
-| 多会话 (multi-session) | ✅ | `main.cpp` | `{"cmd":"session","name":"new:proj"}` |
+| 多会话 (multi-session) | ✅ | `main.cpp` | session创建/切换 |
 | ArenaGroup 基础设施 | ✅ v1 | `arena.ixx` | get-or-create / reset / stats |
-| ArenaGroup 集成到 Service | 🟡 → ✅ | `service.ixx` | compile_module + unload_module + reload_module |
+| ArenaGroup 集成到 Service | ✅ v1 | `service.ixx` | compile_module + unload_module + reload_module |
 | 增量编译 (函数级) | ✅ v1 | `service.ixx` | cache_define + dep_graph + invalidate |
-| 增量编译 (模块级) | 🟡 → ✅ | `service.ixx` | ModuleState dirty 追踪 + mark_module_dirty + reload |
-| 磁盘缓存 (mmap) | ✅ | `cache.ixx` + `service.ixx` | write_cache/open_cache 已集成到 compile_module |
+| 增量编译 (模块级) | ✅ v1 | `service.ixx` | ModuleState dirty 追踪 + reload |
+| 磁盘缓存 (mmap) | ✅ | `cache.ixx` + `cache_reflect.cpp` | CacheHeader 反射序列化, auto_validate |
 | Level 2 类型检查 | ✅ | `pass_manager.ixx` | TypeCheckWrap pass (non-fatal warnings) |
 | 函数热替换 + 依赖追踪 | ✅ | `service.ixx` | invalidate_function BFS re-lower |
 | EDSL mutation | ✅ | `evaluator.ixx` | set-code/query/mutate 15+ primitives |
 | IR 覆盖 | ✅ | `ir.ixx` | 算术、比较、if、let、lambda、pair/quote |
 | IR 管线默认启用 | ✅ | `service.ixx` | eval() 统一 IR-first |
+| P2996 反射缓存序列化 | ✅ | `cache_reflect.cpp` | auto_serialize via std::meta |
+| TypeAnnotation CastOp | ✅ | `lowering_impl.cpp` | 类型标注边界 emit CastOp |
+| DeadCoercionElimination | ✅ | `pass_manager.ixx` | 冗余 CastOp 消除 |
 
-## 后续步骤
+## 后续步骤（已完成）
 
 1. ✅ **ArenaGroup 集成到 eval 路径** — `compile_module()` + `unload_module()` + `reload_module()` (fcd95e0)
 2. ✅ **模块级增量编译** — ModuleState dirty 追踪 + `mark_module_dirty()` + `reload_module()` (e5393e0)
 3. ✅ **磁盘缓存启用** — 通过 mmap 缓存 FlatAST + IRModule (1e6fd2b)
+4. ✅ **P2996 编译期反射** — auto_serialize/validate via std::meta
+5. ✅ **Incremental CaaS** — cache_serialize_header + cache_validate_header
 
 ## 文件清单
 
