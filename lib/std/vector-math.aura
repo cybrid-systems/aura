@@ -1,0 +1,200 @@
+; lib/std/vector-math.aura — Numerical vector operations
+;
+; Uses existing (vector ...) type for O(1) random access.
+; All operations are pure (return new vectors) unless marked !.
+;
+; Import: (import "std/vector-math")
+;
+(require std/list std/math all:)
+
+(export vec:map vec:zip vec:fold vec:sum vec:prod vec:mean vec:dot vec:norm vec:normalize
+        vec:scale vec:add vec:sub vec:mul vec:div
+        vec:slice vec:concat vec:range
+        vec:argmin vec:argmax vec:abs vec:sq
+        mat:make mat:identity mat:zeros mat:ones
+        mat:ref mat:shape mat:rows mat:cols
+        mat:transpose mat:mul mat:map
+        vec->list list->vec)
+
+; ── Construction ──────────────────────────────────────────────
+
+(define (vec:range start end)
+  (let* ((n (- end start))
+         (v (make-vector n 0)))
+    (let loop ((i 0))
+      (if (< i n)
+        (begin (vector-set! v i (+ start i))
+               (loop (+ i 1)))
+        v))))
+
+(define (list->vec lst)
+  (apply vector lst))
+
+(define (vec->list v)
+  (let ((n (vector-length v)))
+    (let loop ((i 0) (acc (list)))
+      (if (>= i n) (reverse acc)
+        (loop (+ i 1) (cons (vector-ref v i) acc))))))
+
+; ── Element-wise operations ──────────────────────────────────
+
+(define (vec:map f v)
+  (let* ((n (vector-length v))
+         (r (make-vector n 0)))
+    (let loop ((i 0))
+      (if (< i n)
+        (begin (vector-set! r i (f (vector-ref v i)))
+               (loop (+ i 1)))
+        r))))
+
+(define (vec:zip f a b)
+  (let* ((n (min (vector-length a) (vector-length b)))
+         (r (make-vector n 0)))
+    (let loop ((i 0))
+      (if (< i n)
+        (begin (vector-set! r i (f (vector-ref a i) (vector-ref b i)))
+               (loop (+ i 1)))
+        r))))
+
+(define (vec:add a b) (vec:zip + a b))
+(define (vec:sub a b) (vec:zip - a b))
+(define (vec:mul a b) (vec:zip * a b))
+(define (vec:div a b) (vec:zip / a b))
+
+(define (vec:scale v s)
+  (vec:map (lambda (x) (* x s)) v))
+
+(define (vec:abs v) (vec:map abs v))
+(define (vec:sq v) (vec:map square v))
+
+; ── Reduction operations ─────────────────────────────────────
+
+(define (vec:fold f init v)
+  (let ((n (vector-length v)))
+    (let loop ((i 0) (acc init))
+      (if (>= i n) acc
+        (loop (+ i 1) (f acc (vector-ref v i)))))))
+
+(define (vec:sum v) (vec:fold + 0 v))
+(define (vec:prod v) (vec:fold * 1 v))
+
+(define (vec:mean v)
+  (if (= (vector-length v) 0) 0
+    (/ (vec:sum v) (vector-length v))))
+
+(define (vec:dot a b)
+  (vec:sum (vec:zip * a b)))
+
+(define (vec:norm v)
+  (sqrt (vec:dot v v)))
+
+(define (vec:normalize v)
+  (let ((n (vec:norm v)))
+    (if (= n 0) v
+      (vec:scale v (/ 1 n)))))
+
+(define (vec:argmin v)
+  (let ((n (vector-length v)))
+    (if (= n 0) -1
+      (let loop ((i 1) (best-i 0) (best-val (vector-ref v 0)))
+        (if (>= i n) best-i
+          (let ((vi (vector-ref v i)))
+            (if (< vi best-val)
+              (loop (+ i 1) i vi)
+              (loop (+ i 1) best-i best-val)))))))))
+
+(define (vec:argmax v)
+  (let ((n (vector-length v)))
+    (if (= n 0) -1
+      (let loop ((i 1) (best-i 0) (best-val (vector-ref v 0)))
+        (if (>= i n) best-i
+          (let ((vi (vector-ref v i)))
+            (if (> vi best-val)
+              (loop (+ i 1) i vi)
+              (loop (+ i 1) best-i best-val)))))))))
+
+; ── Slice / Concat ──────────────────────────────────────────
+
+(define (vec:slice v start end)
+  (let* ((n (min end (vector-length v)))
+         (len (max 0 (- n start)))
+         (r (make-vector len 0)))
+    (let loop ((i 0))
+      (if (< i len)
+        (begin (vector-set! r i (vector-ref v (+ start i)))
+               (loop (+ i 1)))
+        r))))
+
+(define (vec:concat a b)
+  (let* ((na (vector-length a))
+         (nb (vector-length b))
+         (r (make-vector (+ na nb) 0)))
+    (let loop ((i 0))
+      (cond
+        ((< i na) (vector-set! r i (vector-ref a i)) (loop (+ i 1)))
+        ((< i (+ na nb)) (vector-set! r i (vector-ref b (- i na))) (loop (+ i 1)))))))
+
+; ── Matrix (vector of vectors) ──────────────────────────────
+
+(define (mat:make rows cols init)
+  (let ((m (make-vector rows #f)))
+    (let loop ((i 0))
+      (if (< i rows)
+        (begin (vector-set! m i (make-vector cols init))
+               (loop (+ i 1)))
+        m))))
+
+(define (mat:zeros rows cols) (mat:make rows cols 0))
+(define (mat:ones rows cols) (mat:make rows cols 1))
+
+(define (mat:identity n)
+  (let ((m (mat:make n n 0)))
+    (let loop ((i 0))
+      (if (< i n)
+        (begin (vector-set! (vector-ref m i) i 1)
+               (loop (+ i 1)))
+        m))))
+
+(define (mat:ref m r c)
+  (vector-ref (vector-ref m r) c))
+
+(define (mat:shape m)
+  (if (zero? m) (vector 0 0)
+    (vector (vector-length m) (vector-length (vector-ref m 0)))))
+
+(define (mat:rows m) (car (mat:shape m)))
+(define (mat:cols m) (car (cdr (mat:shape m))))
+
+(define (mat:map f m)
+  (vec:map (lambda (row) (vec:map f row)) m))
+
+(define (mat:transpose m)
+  (let* ((r (mat:rows m))
+         (c (mat:cols m))
+         (t (mat:make c r 0)))
+    (let loop ((i 0))
+      (if (< i r)
+        (let row-loop ((j 0))
+          (if (< j c)
+            (begin (vector-set! (vector-ref t j) i (mat:ref m i j))
+                   (row-loop (+ j 1)))
+            (loop (+ i 1))))
+        t))))
+
+(define (mat:mul a b)
+  (let* ((ar (mat:rows a))
+         (ac (mat:cols a))
+         (bc (mat:cols b))
+         (r (mat:make ar bc 0)))
+    (let loop-i ((i 0))
+      (if (< i ar)
+        (let loop-j ((j 0))
+          (if (< j bc)
+            (let sum-k ((k 0) (s 0))
+              (if (< k ac)
+                (sum-k (+ k 1) (+ s (* (mat:ref a i k) (mat:ref b k j))))
+                (begin
+                  (vector-set! (vector-ref r i) j s)
+                  (loop-j (+ j 1)))))
+            (loop-i (+ i 1))))
+        r))))
