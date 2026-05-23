@@ -2,7 +2,7 @@
 ;
 ; Returns lists, not hashes (avoids cross-module hash mutation bug).
 ; Uses cond, not if (avoids cross-module if-in-begin bug).
-(export measure-distance structured-diagnosis get-api-ref)
+(export string-index string-contains? measure-distance structured-diagnosis pid:analyze get-api-ref)
 
 ; == Primitives ==
 
@@ -134,3 +134,32 @@
     (let loop ((libs stdlib-list) (result ""))
       (if (null? libs) (string-append aura-pitfalls result)
           (loop (cdr libs) (string-append result (api-for-module (car libs))))))))
+; == pid:analyze — structured diagnostic + output pattern analysis ==
+; Returns (list phase ratio diagnosis feedback-string)
+; Replaces Python's build_adaptive_feedback logic.
+(define pid:analyze
+  (lambda (output expected-list)
+    (let* ((d (measure-distance 0 output expected-list))
+           (phase (list-ref d 0))
+           (ratio (list-ref d 1))
+           (diag (list-ref d 2))
+           (fb (list)))
+      ;; Collect feedback lines
+      (set! fb (cons (string-append "=== " (if (or (string-prefix? output "unbound")
+                                                    (string-prefix? output "parse")
+                                                    (string-prefix? output "type error"))
+                                               "COMPILE ERROR" "OUTPUT MISMATCH")
+                                 " ===") fb))
+      (set! fb (cons (string-append "Phase: " phase " (ratio: " (number->string ratio) ")") fb))
+      (set! fb (cons (string-append "Expected to contain: " expected-list) fb))
+      (set! fb (cons (string-append "Actual output: " output) fb))
+      ;; Check for common issues
+      (if (string=? (string-trim output) "")
+          (set! fb (cons "- Output is empty. Did you forget (display ...)?" fb)))
+      (if (string-contains? output "<hash")
+          (set! fb (cons "- display <hash> shows reference, not content. Use hash-keys/hash-values." fb)))
+      (if (string-prefix? output "unbound")
+          (set! fb (cons "- The variable used doesn't exist. Check available primitives." fb)))
+      (if (string-prefix? output "parse error")
+          (set! fb (cons "- Syntax error: check parentheses and string escaping." fb)))
+      (list phase ratio diag (string-join (reverse fb) "\n")))))

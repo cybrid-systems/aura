@@ -578,17 +578,7 @@ def call_adaptive(rc, output, expected_list):
     out_esc = _ada_esc(output)
     code = (
         '(require "std/adaptive" all:)'
-        "(define _d (measure-distance "
-        + str(rc)
-        + ' "'
-        + out_esc
-        + '" '
-        + exp_list
-        + "))"
-        '(display (car _d))(display "||D||")'
-        '(display (number->string (car (cdr _d))))(display "||D||")'
-        '(display (car (cdr (cdr _d))))(display "||D||")'
-        '(display (structured-diagnosis "' + out_esc + '" ' + exp_list + "))"
+        '(pid:analyze "' + out_esc + '" ' + exp_list + ')'
     )
     try:
         r = subprocess.run(
@@ -596,17 +586,35 @@ def call_adaptive(rc, output, expected_list):
         )
         if r.returncode != 0:
             return "fine", 0.0, "(ada-unavail)", ""
-        parts = r.stdout.strip().split("||D||")
-        phase = parts[0].strip() if len(parts) >= 1 else "fine"
-        try:
-            ratio = (
-                float(parts[1].strip()) if len(parts) >= 2 and parts[1].strip() else 0.0
-            )
-        except ValueError:
-            ratio = 0.0
-        diag = parts[2].strip() if len(parts) >= 3 else ""
-        diag_text = parts[3].strip() if len(parts) >= 4 else ""
-        return phase, ratio, diag, diag_text
+        # Parse pid:analyze output: (phase ratio diagnosis feedback)
+        out = r.stdout.strip()
+        if out.startswith("(") and out.endswith(")"):
+            inner = out[1:-1]
+            # Simple split: find elements by balanced parens
+            parts = []
+            depth = 0
+            current = ""
+            for c in inner:
+                if c == '(': depth += 1
+                elif c == ')': depth -= 1
+                if depth == 0 and c == ' ' and current.strip():
+                    parts.append(current.strip())
+                    current = ""
+                elif depth > 0 or c != ' ':
+                    current += c
+                elif c != ' ' or current:
+                    current += c
+            if current.strip():
+                parts.append(current.strip())
+            phase = parts[0].strip('"') if len(parts) >= 1 else "fine"
+            try:
+                ratio = float(parts[1]) if len(parts) >= 2 else 0.0
+            except:
+                ratio = 0.0
+            diag = parts[2].strip('"') if len(parts) >= 3 else ""
+            fb = parts[3].strip('"') if len(parts) >= 4 else ""
+            return phase, ratio, diag, fb
+        return "fine", 0.0, "", ""
     except Exception:
         return "fine", 0.0, "(ada-err)", ""
 
@@ -631,52 +639,15 @@ def call_api_ref(stdlib_list):
 def build_adaptive_feedback(
     name, actual_output, expected, stdlib, sys_prompt, prompt, current_src=""
 ):
-    """Build structured feedback for adaptive retry.
+    """Build structured feedback for adaptive retry via pure Aura pid:analyze.
     Shared between --fix and --intend modes.
     Returns (structured_feedback, phase, temperature, max_tokens).
     """
     p, ratio, diag, diag_text = call_adaptive(0, actual_output, expected)
 
-    missing_kws = [kw for kw in expected if kw not in actual_output]
-    fix_instructions = []
-    if missing_kws:
-        fix_instructions.append("- Missing in output: " + ", ".join(missing_kws[:5]))
-    if "<hash" in actual_output:
-        fix_instructions.append(
-            "- display <hash> shows reference, not content. Use hash-keys/hash-values."
-        )
-    if actual_output.strip() in ("", "()"):
-        fix_instructions.append("- Output is empty. Did you forget (display ...)?")
-    fix_instructions.append(
-        "- Keep the existing function structure. Only modify display/output code."
-    )
-
-    fb = [
-        "=== "
-        + (
-            "COMPILE ERROR"
-            if actual_output.startswith("unbound")
-            or actual_output.startswith("parse")
-            or actual_output.startswith("type error")
-            else "OUTPUT MISMATCH"
-        )
-        + " ===",
-        "Phase: " + p + " (ratio: " + str(ratio) + ")",
-        "Expected to contain: " + str(expected),
-        "Actual output: " + actual_output[:300],
-    ]
-    if actual_output.startswith("unbound variable"):
-        fb.append("The variable you used doesn't exist in Aura.")
-        fb.append(
-            "Check the system prompt for available primitives and stdlib functions."
-        )
-        fb.append(
-            "Common mistakes: hash-ref, hash-set, hash->list -> use hash-ref, hash-set!, hash-keys"
-        )
-    if actual_output.startswith("parse error"):
-        fb.append("Syntax error: check parentheses and string escaping.")
-    if missing_kws:
-        fb.append("Missing keywords: " + ", ".join(missing_kws[:5]))
+    # Use Aura's pid:analyze feedback as base, add LLM-specific context
+    fb = [diag_text] if diag_text else []
+    fb.append("- Keep the existing function structure. Only modify display/output code.")
 
     # Execution trace for algorithm-debug tasks
     if current_src:
