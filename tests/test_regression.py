@@ -46,6 +46,52 @@ tests = [
     # M4: &x reader macro (needs bound variable)
     ("m4-drop", '(display (drop 42))', "", ""),
 
+    # Phase 2: eval-current-output captures display output
+    ("eval-capture",
+     '(begin (set-code "(display 42)") (eval-current-output))',
+     "42", ""),
+
+    # Phase 2: colony:search finds function and mutates it
+    ("colony-search",
+     '(begin (set-code "(define (f x) (+ x 1))(display (f 41))")(require "std/ant" all:)(colony:search "42" 5))',
+     "colony:ref-42", ""),
+
+    # colony:search with no functions (no-op)
+    ("colony-no-fns",
+     '(begin (set-code "(display 42)")(require "std/ant" all:)(colony:search "42" 5))',
+     "colony:no-fns", ""),
+
+    # #18: mutate:tweak-literal on LiteralInt (verify via eval output)
+    ("tweak-lit-plus",
+     '(begin (set-code "(display (+ 1 42))")(eval-current)(mutate:tweak-literal 3 1 "")(eval-current))',
+     "44", ""),
+
+    # P3: measure-distance (not pid:analyze — Aura-only helper)
+    ("pid-measure",
+     '(require "std/adaptive" all:)(measure-distance 0 "30" \'("42"))',
+     "fine", ""),
+
+    # Type-annot lambda params ((: x Int))
+    ("lambda-annot-param",
+     '((lambda ((: x Int)) (+ x 1)) 41)',
+     "42", ""),
+
+    # closure warning on stdout (was stderr)
+    ("closure-warning-stdout",
+     '(define (f x) (+ x 1)) f',
+     "uncalled function", ""),
+
+    # ffi: c-func error goes to stdout (was stderr)
+    ("ffi-error-stdout",
+     '(c-func 999 "nonexistent" "(String) -> Int")',
+     "invalid library", ""),
+
+
+    # Type-annot lambda params ((: x Int))
+    ("lambda-annot-param",
+     '((lambda ((: x Int)) (+ x 1)) 41)',
+     "42", ""),
+
 ]
 
 passed = 0
