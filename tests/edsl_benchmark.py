@@ -508,32 +508,7 @@ def check_success(out, expected):
 
 # ── 获取 api-reference ────────────────────────────────────
 def get_api_ref():
-    r = subprocess.run(
-        [AURA, "--eval"],
-        input="(api-reference)",
-        capture_output=True,
-        text=True,
-        timeout=5,
-    )
-    return r.stdout.strip() if r.returncode == 0 else ""
-
-
-# ── 构建 system prompt ────────────────────────────────────
-# ── Prompt 模板 ── 解耦为字典，方便增删改 ────────────
-PROMPT_SECTIONS = {
-    "identity": (
-        "You are Aura Lisp. Write valid code ending with (display ...).\n"
-        "CRITICAL: (display (your-function args)) — if you only (define (f x) ...)"
-        " the output will be '#<procedure>' and the TEST WILL FAIL!\n"
-    ),
-}
-
-# Default section order (can be overridden per task)
-DEFAULT_SECTION_ORDER = ["identity"]
-
-# Task → section overrides for fine-grained control
-TASK_SECTION_OVERRIDES = {}
-# Task-specific overrides not needed — prompt is compact enough for all tasks.
+    return ""
 
 
 def build_sys_prompt(stdlib, api_ref, task_name=""):
