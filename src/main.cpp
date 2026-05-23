@@ -487,8 +487,13 @@ int main(int argc, char* argv[]) {
                         } else {
                             auto result = future.get();
                             if (result) {
-                                std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
-                                             json_escape(fmt_val(*result, cs)));
+                                auto& v = *result;
+                                if (is_closure(v)) {
+                                    std::println("{{\"status\":\"closure\",\"value\":\"#<procedure>\"}}");
+                                } else {
+                                    std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
+                                                 json_escape(fmt_val(v, cs)));
+                                }
                             } else {
                                 auto& d = result.error();
                                 std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",

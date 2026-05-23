@@ -182,13 +182,16 @@ class ServeClient:
             resp = json.loads(json_line)
         except json.JSONDecodeError:
             return False, stripped, "invalid JSON"
-        if resp.get("status") == "ok":
+        status = resp.get("status", "error")
+        if status == "ok":
             val = resp.get("value", "")
             if display_text:
                 out = display_text + (" " + val if val not in ("()", "") else "")
             else:
                 out = val if val not in ("()", "") else ""
             return True, out.strip(), ""
+        if status == "closure":
+            return False, "#<procedure>", "program returned an uncalled function (closure)"
         return False, display_text, resp.get("msg", str(resp))
 
         def reader():
@@ -246,13 +249,16 @@ class ServeClient:
             resp = json.loads(json_line)
         except json.JSONDecodeError:
             return False, stripped, "invalid JSON"
-        if resp.get("status") == "ok":
+        status = resp.get("status", "error")
+        if status == "ok":
             val = resp.get("value", "")
             if display_text:
                 out = display_text + (" " + val if val not in ("()", "") else "")
             else:
                 out = val if val not in ("()", "") else ""
             return True, out.strip(), ""
+        if status == "closure":
+            return False, "#<procedure>", "program returned an uncalled function (closure)"
         return False, display_text, resp.get("msg", str(resp))
 
     def exec_batch(self, codes, read_timeout=3):
@@ -329,7 +335,7 @@ class ServeClient:
             except json.JSONDecodeError:
                 results.append((False, stripped, "invalid JSON"))
                 continue
-            if resp.get("status") == "ok":
+            if resp.get("status", "error") == "ok":
                 val = resp.get("value", "")
                 if display_text:
                     out = display_text + (" " + val if val not in ("()", "") else "")
