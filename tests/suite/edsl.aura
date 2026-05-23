@@ -1,3 +1,4 @@
+(require "std/test" all:)
 ; EDSL (query/mutate/workspace) tests
 ; Tests: set-code, query:*, mutate:*, eval-current, typecheck-current
 

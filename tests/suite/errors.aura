@@ -1,3 +1,4 @@
+(require "std/test" all:)
 ; Error handling tests
 ; Tests: error, raise, try/catch, check, check=
 

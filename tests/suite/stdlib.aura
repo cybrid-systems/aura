@@ -1,3 +1,4 @@
+(require "std/test" all:)
 ; Standard library tests
 
 (test-suite "stdlib:list"
