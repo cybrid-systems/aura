@@ -108,6 +108,9 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 try {
                     return static_cast<std::int64_t>(std::stoll(string_heap_[idx]));
                 } catch (...) {
+                    std::println(std::cerr,
+                                 "error: type mismatch — expected Int, got String '{}'",
+                                 string_heap_[idx]);
                     return 0;
                 }
             }

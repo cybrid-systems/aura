@@ -122,6 +122,9 @@ namespace {
                 try {
                     return static_cast<std::int64_t>(std::stoll((*heap)[idx]));
                 } catch (...) {
+                    std::println(std::cerr,
+                                 "error: type mismatch — expected Int, got String '{}'",
+                                 (*heap)[idx]);
                     return 0;
                 }
             }
