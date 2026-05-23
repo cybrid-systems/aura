@@ -693,6 +693,10 @@ int main(int argc, char* argv[]) {
             std::println("cached functions: {}", cs.cached_function_count());
         }
 
+        if (mode == "evaluator" || mode == "all") {
+            std::print("{}", cs.inspect_env());
+        }
+
         if (mode == "typecheck" || mode == "all") {
             aura::core::TypeRegistry treg;
             aura::compiler::TypeChecker tc(treg);
