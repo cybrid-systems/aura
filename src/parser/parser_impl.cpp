@@ -497,7 +497,7 @@ NodeId FlatParser::parse_define() {
         return NULL_NODE;
     }
     lexer_->consume(); // consume name
-    auto v = parse_val();
+    auto v = parse_expr();
     if (v == NULL_NODE)
         return NULL_NODE;
     lexer_->consume(); // ')'
@@ -612,7 +612,7 @@ NodeId FlatParser::parse_let(bool rec) {
         auto n = lexer_->consume();
         if (n.kind != TokenKind::Identifier)
             return NULL_NODE;
-        auto v = parse_val();
+        auto v = parse_expr();
         if (v == NULL_NODE)
             return NULL_NODE;
         bs.push_back({pool_.intern(std::string(n.text)), v});
@@ -683,7 +683,7 @@ NodeId FlatParser::parse_named_let() {
         auto n = lexer_->consume();
         if (n.kind != TokenKind::Identifier)
             return NULL_NODE;
-        auto v = parse_val();
+        auto v = parse_expr();
         if (v == NULL_NODE)
             return NULL_NODE;
         bs.push_back({pool_.intern(std::string(n.text)), v});
@@ -744,7 +744,7 @@ NodeId FlatParser::parse_let_star() {
         auto n = lexer_->consume();
         if (n.kind != TokenKind::Identifier)
             return NULL_NODE;
-        auto v = parse_val();
+        auto v = parse_expr();
         if (v == NULL_NODE)
             return NULL_NODE;
         bs.push_back({pool_.intern(std::string(n.text)), v});
@@ -861,7 +861,7 @@ NodeId FlatParser::parse_set() {
         skip_rparen();
         return NULL_NODE;
     }
-    auto v = parse_val();
+    auto v = parse_expr();
     if (v == NULL_NODE) {
         skip_rparen();
         return NULL_NODE;
@@ -874,7 +874,7 @@ NodeId FlatParser::parse_set() {
 
 NodeId FlatParser::parse_quote() {
     auto tok = lexer_->consume(); // 'quote'
-    auto v = parse_val();
+    auto v = parse_expr();
     if (v == NULL_NODE) {
         skip_rparen();
         return NULL_NODE;
@@ -1067,8 +1067,11 @@ NodeId FlatParser::parse_linear() {
     auto tok = lexer_->consume(); // 'Linear'
     auto inner = parse_expr();
     if (inner == NULL_NODE) {
+        skip_rparen();
         return NULL_NODE;
     }
+    if (lexer_->peek().kind == TokenKind::RParen)
+        lexer_->consume();
     auto id = flat_.add_linear(inner);
     flat_.set_loc(id, tok.line, tok.column);
     return id;
@@ -1078,8 +1081,11 @@ NodeId FlatParser::parse_move() {
     auto tok = lexer_->consume(); // 'move'
     auto inner = parse_expr();
     if (inner == NULL_NODE) {
+        skip_rparen();
         return NULL_NODE;
     }
+    if (lexer_->peek().kind == TokenKind::RParen)
+        lexer_->consume();
     auto id = flat_.add_move(inner);
     flat_.set_loc(id, tok.line, tok.column);
     return id;
@@ -1089,8 +1095,11 @@ NodeId FlatParser::parse_borrow() {
     auto tok = lexer_->consume(); // 'borrow'
     auto inner = parse_expr();
     if (inner == NULL_NODE) {
+        skip_rparen();
         return NULL_NODE;
     }
+    if (lexer_->peek().kind == TokenKind::RParen)
+        lexer_->consume();
     auto id = flat_.add_borrow(inner);
     flat_.set_loc(id, tok.line, tok.column);
     return id;
@@ -1100,8 +1109,11 @@ NodeId FlatParser::parse_mut_borrow() {
     auto tok = lexer_->consume(); // 'mut-borrow'
     auto inner = parse_expr();
     if (inner == NULL_NODE) {
+        skip_rparen();
         return NULL_NODE;
     }
+    if (lexer_->peek().kind == TokenKind::RParen)
+        lexer_->consume();
     auto id = flat_.add_mut_borrow(inner);
     flat_.set_loc(id, tok.line, tok.column);
     return id;
@@ -1111,8 +1123,11 @@ NodeId FlatParser::parse_drop() {
     auto tok = lexer_->consume(); // 'drop'
     auto inner = parse_expr();
     if (inner == NULL_NODE) {
+        skip_rparen();
         return NULL_NODE;
     }
+    if (lexer_->peek().kind == TokenKind::RParen)
+        lexer_->consume();
     auto id = flat_.add_drop(inner);
     flat_.set_loc(id, tok.line, tok.column);
     return id;

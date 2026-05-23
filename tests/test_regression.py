@@ -33,6 +33,19 @@ tests = [
     # Match with wildcard (no error expected)
     ("match-wildcard", '(define-type (C) (A) (B) (C)) (let ((x A)) (match x ((A) 1) ((_) 2)))',
      "2", ""),
+    
+    # M4: move in let works (was: parse bug)
+    ("m4-move-let", '(let ((x (move 42))) (display x))', "42", ""),
+    
+    # M4: linear + move
+    ("m4-linear-move", '(display (move (Linear 42)))', "42", ""),
+    
+    # M4: borrow in expression (value, no variable binding)
+    ("m4-borrow", '(display (borrow 42))', "42", ""),
+    
+    # M4: &x reader macro (needs bound variable)
+    ("m4-drop", '(display (drop 42))', "", ""),
+
 ]
 
 passed = 0
