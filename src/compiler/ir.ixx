@@ -189,6 +189,10 @@ export enum class PrimId : std::uint8_t {
     // Arithmetic
     Quotient,
     Remainder,
+    // List primitives
+    ListLength,
+    ListRef,
+    ListReverse,
     // Error handling
     Raise,
     ErrorP,
@@ -205,10 +209,13 @@ export constexpr std::string_view kPrimNames[] = {
     "import",        "char=?",         "char<?",         "char->integer", "integer->char",
     "quotient",
     "remainder",
+    "length",
+    "list-ref",
+    "reverse",
     "raise",         "error?",
 };
 
-static_assert(std::size(kPrimNames) == 34, "kPrimNames must have exactly one entry per PrimId");
+static_assert(std::size(kPrimNames) == 37, "kPrimNames must have exactly one entry per PrimId");
 
 // Helper: pack two uint32 into one (for Call: args_begin << 16 | arg_count)
 export constexpr std::uint32_t pack_pair(std::uint32_t hi, std::uint32_t lo) {
