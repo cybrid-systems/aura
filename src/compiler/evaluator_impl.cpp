@@ -2502,6 +2502,38 @@ void Evaluator::init_pair_primitives() {
         return make_int(static_cast<std::int64_t>(f.tellg()));
     });
 
+    // ── Shell / Process ────────────────────────────────────────
+    primitives_.add("shell", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_int(-1);
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size())
+            return make_int(-1);
+        return make_int(::system(string_heap_[idx].c_str()));
+    });
+
+    primitives_.add("command-output", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_void();
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size())
+            return make_void();
+        auto& cmd = string_heap_[idx];
+        std::array<char, 4096> buf;
+        std::string result;
+        auto* fp = ::popen(cmd.c_str(), "r");
+        if (!fp)
+            return make_void();
+        while (::fgets(buf.data(), buf.size(), fp) != nullptr)
+            result += buf.data();
+        ::pclose(fp);
+        if (!result.empty() && result.back() == '\n')
+            result.pop_back();
+        auto sid = string_heap_.size();
+        string_heap_.push_back(std::move(result));
+        return make_string(sid);
+    });
+
     primitives_.add("directory-list", [this](const auto& a) {
         if (a.empty() || !is_string(a[0]))
             return make_void();

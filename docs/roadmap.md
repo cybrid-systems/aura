@@ -21,7 +21,7 @@
 | # | 缺口 | 具体任务 | 预估 |
 |---|------|---------|:----:|
 | 28 | **stdlib: 文件系统** | `lib/std/fs.aura`：路径拼接、目录遍历、文件元数据。 | 1d |
-| 29 | **进程原语** | `(shell cmd)`、`(command-output cmd)`。serve 模式已有类似能力但未暴露。 | 1d |
+| 29 | **进程原语** | `(shell cmd)`、`(command-output cmd)` | — | ✅ 已加 |
 | 30 | **错误类型结构化** | 当前所有错误/诊断都是字符串。结构化 `(error type message context)` 便于 LLM 解析和 colony 搜索。 | 1-2d |
 
 ## 🟢 P2 — 中远期

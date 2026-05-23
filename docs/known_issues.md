@@ -15,7 +15,7 @@
 | # | 问题 | 预估 |
 |---|------|:----:|
 | 28 | stdlib 缺文件系统库（lib/std/fs.aura） | 1d |
-| 29 | 无进程原语（shell / command-output） | 1d |
+| 29 | 进程原语（shell / command-output） | — | ✅ 已加 |
 | 30 | 错误类型非结构化（字符串诊断，LLM 难以解析） | 1-2d |
 
 ## P2 — 中远期
