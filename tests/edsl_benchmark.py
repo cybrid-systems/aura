@@ -1180,12 +1180,12 @@ def run_single_task(
         procedure_warn = ""
         if "#<procedure>" in actual_output or "#<procedu" in actual_output:
             procedure_warn = (
-                "\n\n⚠️  CRITICAL: Output shows '#<procedure>' - you only DEFINE'd a function"
-                " but never CALLED it with (display ...).\n"
-                "EVERY program MUST end with (display (your-function args)) so the result"
-                " appears in output, not '#<procedure>'.\n"
-                "Example: instead of just (define (f x) (* x 2)), "
-                "do (define (f x) (* x 2)) THEN (display (f 5)).\n"
+                "\n\n⚠️  #<procedure> ERROR: You DEFINE'd a function but never CALLED it.\n"
+                "EVERY program MUST end with (display (your-function args)).\n"
+                "Take your (define ...) from the PREVIOUS attempt and ADD a (display ...)\n"
+                "call at the end. DO NOT just output another (define ...)!\n"
+                "Example: (define (f x) (* x 2))\n"
+                "         (display (f 5))\n"
             )
 
         correction = (

@@ -2,3 +2,10 @@
 ;; goal: Define (Tree a) with (Leaf a) and (Node Tree Tree), create a Leaf and match it
 ;; depend: std/pair
 ;; expect: 1
+;; hint: --- Aura ADT ---
+;; hint: (datatype (Tree : T)
+;; hint:   (Leaf T)
+;; hint:   (Node Tree Tree))
+;; hint: (match (Leaf 42)
+;; hint:   ((Leaf x) (display 1))
+;; hint:   (else (display 0)))
