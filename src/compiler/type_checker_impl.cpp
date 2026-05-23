@@ -989,22 +989,20 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
                 }
 
                 // Build constructor type: (field-type-1 ... -> variant-type)
-                // Constructor return type: (Pair String (Pair field-type ()))
-                TypeId ctor_result;
+                TypeId ctor_type;
                 if (field_types.empty()) {
-                    ctor_result = reg_.register_func({}, reg_.string_type());
+                    // No fields: (-> variant-type)
+                    ctor_type = reg_.register_func({}, variant_type);
                 } else if (field_types.size() == 1) {
-                    auto field_list = reg_.register_func({field_types[0]}, reg_.void_type());
-                    ctor_result = reg_.register_func({reg_.string_type()}, field_list);
+                    // Single field: (field-type -> variant-type)
+                    ctor_type = reg_.register_func(field_types, variant_type);
                 } else {
-                    TypeId rest = reg_.void_type();
+                    // Multiple fields: nested functions (field1 -> (field2 -> ... (-> variant-type)))
+                    TypeId rest = variant_type;
                     for (auto it = field_types.rbegin(); it != field_types.rend(); ++it)
                         rest = reg_.register_func({*it}, rest);
-                    ctor_result = reg_.register_func({reg_.string_type()}, rest);
+                    ctor_type = rest;
                 }
-                TypeId ctor_type = field_types.empty()
-                                       ? reg_.register_func({}, ctor_result)
-                                       : reg_.register_func(field_types, ctor_result);
 
                 // Wrap in forall for polymorphic types (e.g. ∀a. (a -> Option a))
                 if (!type_params.empty()) {
@@ -1397,49 +1395,43 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool,
     // and the value is a constructor call.
     auto let_name = std::string(pool.resolve(v.sym_id));
     if (let_name == "__match_tmp" && !v.children.empty()) {
-        // Try to find the ADT type being matched
-        // The subject value: follow variable bindings to find constructor
-        auto val_id = v.child(0);
-        std::string ctor_name;
-        if (val_id < flat.size()) {
-            auto val_v = flat.get(val_id);
-            if (val_v.tag == NodeTag::Call && !val_v.children.empty()) {
-                auto cv = flat.get(val_v.child(0));
-                if (cv.tag == NodeTag::Variable)
-                    ctor_name = pool.resolve(cv.sym_id);
-            } else if (val_v.tag == NodeTag::Variable) {
-                // Follow variable binding: look up env_ to get the type
-                auto vn = pool.resolve(val_v.sym_id);
-                auto t = env_.lookup(std::string(vn));
-                if (t.valid() && t.index < reg_.size()) {
-                    auto name = reg_.name_of(t);
-                    auto* ctors = reg_.get_adt_constructors(t);
-                    if (ctors) {
-                        // Subject's TYPE matches an ADT — check clauses
-                        // For now, just note which ADT
-                        diag_.report(Diagnostic(ErrorKind::Note,
-                            "match on ADT '" + std::string(name) +
-                            "' (" + std::to_string(ctors->size()) + " ctors)",
+        // Full exhaustiveness check: compare used constructors against ADT definition
+        // First, find the ADT from the subject's type (if available) or scan all ADTs
+        auto* scan_minfo = flat.get_match_info(node_id);
+        
+        // Scan TypeRegistry for ADTs
+        for (std::size_t i = 0; i < reg_.size(); ++i) {
+            auto tid = TypeId{static_cast<std::uint32_t>(i), 1};
+            auto* ctors = reg_.get_adt_constructors(tid);
+            if (!ctors) continue;
+            
+            auto type_name = std::string(reg_.name_of(tid));
+            
+            // If we have match info from parser, check exhaustiveness
+            if (scan_minfo && !scan_minfo->has_wildcard) {
+                for (auto& expected_ctor : *ctors) {
+                    auto found = std::find_if(
+                        scan_minfo->used_constructors.begin(),
+                        scan_minfo->used_constructors.end(),
+                        [&](SymId sid) {
+                            return pool.resolve(sid) == expected_ctor;
+                        });
+                    if (found == scan_minfo->used_constructors.end()) {
+                        diag_.report(Diagnostic(
+                            ErrorKind::TypeError,
+                            "match: missing constructor '" + expected_ctor +
+                            "' in " + type_name,
                             cur_loc_));
                     }
                 }
             }
-        }
-        if (!ctor_name.empty()) {
-            // Search TypeRegistry for ADT containing this constructor
-            for (std::size_t i = 0; i < reg_.size(); ++i) {
-                auto tid = TypeId{static_cast<std::uint32_t>(i), 1};
-                auto* ctors = reg_.get_adt_constructors(tid);
-                if (!ctors) continue;
-                auto it = std::find(ctors->begin(), ctors->end(), ctor_name);
-                if (it != ctors->end()) {
-                    diag_.report(Diagnostic(ErrorKind::Note,
-                        "match on '" + std::string(reg_.name_of(tid)) +
-                        "' (" + std::to_string(ctors->size()) + " ctors)",
-                        cur_loc_));
-                    break;
-                }
-            }
+            
+            // Always emit a note for the ADT being matched
+            diag_.report(Diagnostic(ErrorKind::Note,
+                "match on '" + type_name +
+                "' (" + std::to_string(ctors->size()) + " constructors)",
+                cur_loc_));
+            break; // Only process the first ADT found
         }
     }
 
