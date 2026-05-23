@@ -12,13 +12,11 @@
 
 ## Aura 能力评估
 
-以下是对 Aura 当前能力的诚实评估，按"能否用来写真正项目"的标准打分。
-
 ### 能做的（生产级可用）
 
 | 能力 | 说明 |
 |------|------|
-| 函数式编程 | 递归/jambda/let/letrec/宏 ✅ 85 任务通过 89-92% |
+| 函数式编程 | 递归/lambda/let/letrec/宏 ✅ 85 任务通过 89-92% |
 | 类型系统 | Sound Gradual: coercion / occurrence / let-poly / blame ✅ |
 | ADT + match | (define-type) + 穷尽性检查 ✅ |
 | M4 线性所有权 | move / borrow / drop 编译期 + 运行时 ✅ |
@@ -31,15 +29,29 @@
 | 模块系统 | require/import 路径解析/缓存/循环检测/export 过滤/热重载 ✅ |
 | 增量编译 | ArenaGroup + 磁盘缓存 + IR import + hot-swap ✅ |
 | 编译期反射 | P2996 auto_to_json / auto_serialize / P1306 递归序列化 ✅ |
+| 数值计算 | lib/std/vector-math.aura (向量/矩阵运算) ✅ |
 
 ### 不能做的（真正缺口）
 
 | 缺口 | 影响 | 修复难度 |
 |------|------|:--------:|
-| **数值计算**：无数组/向量/矩阵，只有 scalar Float | 不能做数据分析/ML | 2-3d |
-| **包管理**：无包 registry/依赖声明 | 不能分发库 | 远用 |
-| **IDE/LSP**：无语法高亮/补全/诊断 | 人类编辑体验差 | 远用 |
-| **自举**：编译器用 C++26 写，不用 Aura | 依赖 C++ toolchain | 远用 |
+| **生成二进制** | 不能编译 standalone 可执行文件，只能 `./build/aura --serve` | 中 (LLVM) |
+| **包管理** | 无包 registry/依赖声明 | 远用 |
+| **IDE/LSP** | 无语法高亮/补全/诊断 | 远用 |
+| **自举** | 编译器用 C++26 写，不用 Aura | 远用 |
+
+### 关于生成二进制的思考
+
+**现状：** Aura 以 `./build/aura --serve` 方式运行，代码通过 stdin JSON 传入。
+没有 `./build/aura -o myapp input.aura` 这样的编译命令。
+
+**需要什么：**
+1. LLVM IR 输出到 `.o` 文件（已有 JIT codegen，38 条 opcode）→ 1-2d
+2. 链接器调用（调用 `ld` / `gcc` 生成 ELF）→ 1d
+3. 运行时环境（GC / stdlib 静态链接）→ 1d
+
+**优先级：低。** 对 AI agent 场景（serve + REPL）没价值。
+agent 不需要 standalone binary，但生产部署需要。
 
 ### 规模评估
 
@@ -71,5 +83,5 @@
 - **P3 下沉 (2)** — pid:analyze / pure Aura colony:search
 - **诊断 (4)** — FFI→stdout / ((: x Int)) lambda 参数 / closure warning→stdout / FFI 签名精确定位
 - **原语 (3)** — command-line / shell / command-output
-- **验证 (3)** — 文件 I/O 已有 / try-catch 已有 / 错误类型已结构化
-- **测试** — 42 条回归全绿 + 12 套测试套件
+- **数值计算** — lib/std/vector-math.aura (217 行)
+- **测试** — 47 条回归全绿 + 12 套测试套件 + 4 个新 suite 文件
