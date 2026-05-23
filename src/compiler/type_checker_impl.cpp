@@ -614,6 +614,8 @@ void InferenceEngine::init_primitive_env() {
     // Generic type parameters for polymorphic stdlib functions
     auto _a = reg_.make_var("a");
     auto _b = reg_.make_var("b");
+    auto _c = reg_.make_var("c");
+    auto _d = reg_.make_var("d");
     auto _num = reg_.make_var("num");
 
     // std/list: (a -> b) -> (list a) -> (list b)
@@ -653,6 +655,141 @@ void InferenceEngine::init_primitive_env() {
     // std/math
     register_poly_primitive("square", {_num}, _num, {_num});
     register_poly_primitive("sqrt", {_num}, _num, {_num});
+    register_primitive("pi", {}, Float);
+    register_poly_primitive("abs", {_num}, _num, {_num});
+    register_poly_primitive("min", {_num, _num}, _num, {_num});
+    register_poly_primitive("max", {_num, _num}, _num, {_num});
+    register_primitive("sin", {_num}, _num);
+    register_primitive("cos", {_num}, _num);
+    register_primitive("tan", {_num}, _num);
+    register_primitive("floor", {_num}, _num);
+    register_primitive("ceil", {_num}, _num);
+    register_primitive("round", {_num}, _num);
+    register_primitive("exp", {_num}, _num);
+    register_primitive("log", {_num}, _num);
+    register_primitive("pow", {_num, _num}, _num);
+    register_primitive("rand", {}, Float);
+    register_primitive("rand-int", {Int}, Int);
+    register_primitive("mean", {Dyn}, _num);
+    register_primitive("median", {Dyn}, _num);
+    register_primitive("stddev", {Dyn}, _num);
+    register_primitive("sum", {Dyn}, Int);
+    register_primitive("product", {Dyn}, Int);
+    register_primitive("factorial", {Int}, Int);
+
+    // std/io
+    register_primitive("file-exists?", {String}, Bool);
+    register_primitive("file-size", {String}, Int);
+    register_primitive("file-copy", {String, String}, Bool);
+    register_primitive("file-delete", {String}, Bool);
+    register_primitive("file-read", {String}, String);
+    register_primitive("file-write", {String, String}, Void);
+    register_primitive("file->string", {String}, String);
+    register_primitive("string->file", {String, String}, Void);
+    register_primitive("file->lines", {String}, Dyn);
+
+    // std/data (trie)
+    register_primitive("make-trie", {}, Dyn);
+    register_primitive("trie-insert", {Dyn, String}, Dyn);
+    register_primitive("trie-search", {Dyn, String}, Bool);
+    register_primitive("trie-prefix?", {Dyn, String}, Bool);
+    register_primitive("trie-keys", {Dyn}, Dyn);
+
+    // std/csv
+    register_primitive("csv-parse", {String}, Dyn);
+    register_primitive("csv->rows", {String}, Dyn);
+    register_primitive("csv->table", {String}, Dyn);
+    register_primitive("csv-select", {Dyn, Dyn}, Dyn);
+    register_primitive("csv-filter", {reg_.register_func({Dyn}, Bool), Dyn}, Dyn);
+    register_primitive("csv-header", {Dyn}, Dyn);
+    register_primitive("column-names", {Dyn}, Dyn);
+
+    // std/json
+    register_primitive("json-parse", {String}, Dyn);
+    register_primitive("json-stringify", {Dyn}, String);
+    register_primitive("json-value", {Dyn}, String);
+    register_primitive("json-arr-items", {Dyn, reg_.register_func({Dyn}, Dyn)}, Dyn);
+    register_primitive("json-obj-items", {Dyn, Dyn, reg_.register_func({Dyn}, Dyn)}, Dyn);
+
+    // std/socket
+    register_primitive("tcp-connect", {String, Int}, Dyn);
+    register_primitive("tcp-send", {Dyn, String}, Void);
+    register_primitive("tcp-recv", {Dyn}, String);
+    register_primitive("tcp-close", {Dyn}, Void);
+
+    // std/algorithm
+    register_poly_primitive("sorted?", {Dyn, reg_.register_func({_a, _a}, Bool)}, Bool, {_a});
+    register_poly_primitive("sort-by", {Dyn, reg_.register_func({_a}, _b)}, Dyn, {_a, _b});
+    register_poly_primitive("sort-stable", {Dyn, reg_.register_func({_a, _a}, Bool)}, Dyn, {_a});
+    register_poly_primitive("unique", {Dyn}, Dyn, {_a});
+    register_poly_primitive("min-by", {Dyn, reg_.register_func({_a}, _b)}, Dyn, {_a, _b});
+    register_poly_primitive("max-by", {Dyn, reg_.register_func({_a}, _b)}, Dyn, {_a, _b});
+    register_poly_primitive("permutations", {Dyn}, Dyn, {_a});
+    register_poly_primitive("merge-sorted", {Dyn, Dyn, reg_.register_func({_a, _a}, Bool)}, Dyn, {_a});
+
+    // std/combinators
+    register_poly_primitive("identity", {_a}, _a, {_a});
+    register_poly_primitive("const", {_a, _b}, _a, {_a, _b});
+    register_poly_primitive("flip", {reg_.register_func({_a, _b}, _c)}, reg_.register_func({_b, _a}, _c), {_a, _b, _c});
+    register_poly_primitive("compose", {reg_.register_func({_b}, _c), reg_.register_func({_a}, _b)}, reg_.register_func({_a}, _c), {_a, _b, _c});
+    register_poly_primitive("complement", {reg_.register_func({_a}, Bool)}, reg_.register_func({_a}, Bool), {_a});
+
+    // std/datetime
+    register_primitive("timestamp", {}, Int);
+    register_primitive("timestamp->year", {Int}, Int);
+    register_primitive("timestamp->month", {Int}, Int);
+    register_primitive("timestamp->day", {Int}, Int);
+    register_primitive("timestamp->hour", {Int}, Int);
+    register_primitive("timestamp->minute", {Int}, Int);
+    register_primitive("leap-year?", {Int}, Bool);
+    register_primitive("days-in-month", {Int, Int}, Int);
+
+    // std/random
+    register_primitive("make-random", {}, Dyn);
+    register_primitive("random-next", {Dyn}, Dyn);
+    register_primitive("random-integer", {Dyn}, Int);
+    register_primitive("random-float", {Dyn}, Float);
+    register_primitive("random-range", {Int, Int, Dyn}, Int);
+    register_primitive("shuffle", {Dyn, Dyn}, Dyn);
+
+    // std/set
+    register_primitive("set", {Dyn}, Dyn);
+    register_primitive("set-add", {Dyn, Dyn}, Dyn);
+    register_primitive("set-remove", {Dyn, Dyn}, Dyn);
+    register_primitive("set-member?", {Dyn, Dyn}, Bool);
+    register_primitive("set-empty?", {Dyn}, Bool);
+    register_primitive("set-union", {Dyn, Dyn}, Dyn);
+    register_primitive("set-intersect", {Dyn, Dyn}, Dyn);
+    register_primitive("set-difference", {Dyn, Dyn}, Dyn);
+    register_primitive("set->list", {Dyn}, Dyn);
+    register_primitive("list->set", {Dyn}, Dyn);
+    register_primitive("set-size", {Dyn}, Int);
+    register_primitive("set-subset?", {Dyn, Dyn}, Bool);
+    register_primitive("set-equal?", {Dyn, Dyn}, Bool);
+
+    // std/queue
+    register_primitive("make-queue", {}, Dyn);
+    register_primitive("enqueue", {Dyn, Dyn}, Dyn);
+    register_primitive("dequeue", {Dyn}, Dyn);
+    register_primitive("queue-front", {Dyn}, Dyn);
+    register_primitive("queue-rest", {Dyn}, Dyn);
+    register_primitive("queue-empty?", {Dyn}, Bool);
+    register_primitive("queue-length", {Dyn}, Int);
+    register_primitive("queue->list", {Dyn}, Dyn);
+    register_primitive("list->queue", {Dyn}, Dyn);
+
+    // std/stack
+    register_primitive("make-stack", {}, Dyn);
+    register_primitive("stack-push", {Dyn, Dyn}, Dyn);
+    register_primitive("stack-pop", {Dyn}, Dyn);
+    register_primitive("stack-top", {Dyn}, Dyn);
+    register_primitive("stack-empty?", {Dyn}, Bool);
+    register_primitive("stack-length", {Dyn}, Int);
+    register_primitive("stack->list", {Dyn}, Dyn);
+    register_primitive("list->stack", {Dyn}, Dyn);
+
+    // std/evolve
+    register_primitive("evolve-strategy", {String}, Void);
 }
 
 TypeId InferenceEngine::lub(TypeId a, TypeId b) {
