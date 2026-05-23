@@ -1,77 +1,38 @@
-# Aura — 路线图（TODO）
+# Aura — 路线图
 
 **更新：2026-05-23**
 
-**当前定位**：语言核心完备（Tree-walker + IR + JIT、Sound Gradual Typing、ADT、Linear Ownership），
-已进入「让 AI 自治编辑更可靠」的迭代阶段。
-
-**当前基准**：Grok 77/85（90.6%）、MiniMax 74/85（87.1%）、DeepSeek 72/85（84.7%）。
-新增的 28 个类型系统任务（15 个）是主要拉分项，平均通过率 ~60%。
+**当前定位**：语言核心可用（Sound Gradual Typing + ADT + M4 Linear Ownership + EDSL），
+三模型 benchmark 89-92%。适合 LLM agent 生成 50-200 行代码片段的迭代修复场景。
+下一步方向：补齐项目级编程的短板（文件 I/O、CLI、错误处理），而非加语言特性。
 
 ---
 
-## ✅ 全部修复（2026-05-23）
+## 🔴 P0 — 短板，立刻提升可用性
 
-### P0 — 编译器缺陷
+| # | 缺口 | 具体任务 | 预估 |
+|---|------|---------|:----:|
+| 25 | **文件系统原语** | `(file-exists? path)`、`(read-file path)`、`(write-file path content)`、`(delete-file path)`、`(list-dir path)`。没有文件 I/O，Aura 连写个"读取配置文件"的任务都做不到。 | 1d |
+| 26 | **CLI argv** | `(command-line)` 返回参数字符串列表。当前 serve 模式有 JSON IPC，但 standalone 脚本不能读参数。 | 0.5d |
+| 27 | **错误处理 try-catch** | `(try expr (catch (var) handler))`。`eval_flat` 内部已有 try-catch AST 处理逻辑，需暴露给用户。 | 0.5d |
 
-| # | 问题 | Commit |
-|---|------|:------:|
-| 1 | Blame：`(+ 1 "hello")` 输出 stderr 错误 | `052cb19` |
-| 2 | `eval_flat` 缺失 Linear/Move/Borrow/Drop 节点 | `50208da` |
-| 3 | `(: x Int)` 无绑定正确报错 | `82dfaf4` |
-| 4 | `(: name Type val)` 三参数解析 | `afe96fd` |
-| 5 | `#<procedure>` 系统 prompt 警示 + hint 强化 | `f8166c7` |
+## 🟡 P1 — 功能扩展
 
-### P1 — 功能缺口
+| # | 缺口 | 具体任务 | 预估 |
+|---|------|---------|:----:|
+| 28 | **stdlib: 文件系统** | `lib/std/fs.aura`：路径拼接、目录遍历、文件元数据。 | 1d |
+| 29 | **进程原语** | `(shell cmd)`、`(command-output cmd)`。serve 模式已有类似能力但未暴露。 | 1d |
+| 30 | **错误类型结构化** | 当前所有错误/诊断都是字符串。结构化 `(error type message context)` 便于 LLM 解析和 colony 搜索。 | 1-2d |
 
-| # | 问题 | Commit |
-|---|------|:------:|
-| 6 | 模块 import 类型签名（28 个 stdlib 模块 90+ 签名） | `fab6a13` |
-| 7 | `let` 泛化（synthesize 路径已验证正常工作） | — |
-| 8 | match 穷尽性检查（parser 元数据 + 构造器表 + type checker + 测试） | `de2c59d` |
-| 9 | 树遍历器 CastOp 覆盖率 + blame 覆盖 | `2b24586` |
-| 10 | M4 运行时违规检测（double-move / use-after-move / double-drop） | `6e3f78f` |
+## 🟢 P2 — 中远期
 
-### P2 — 增强
-
-| # | 问题 | Commit |
-|---|------|:------:|
-| 11 | 增量类型检查（已验证已实现） | — |
-| 12 | `--inspect` 扩展（ir/closures/cache/typecheck/evaluator/pretty/cache-open） | `03be5f1` |
-| 13 | Serve 超时熔断（30s async timeout） | `e259288` |
-| 14 | M3 P2996 反射（P1306 递归序列化，支持嵌套 struct / 泛型 vector / array / enum） | `b07b5c6` |
-| 15 | `(: name Type val)` parser 修复 | `afe96fd` |
-
----
-
-## 🔄 开放 TODO
-
-### P2
-
-| # | 任务 | 预估 | 说明 |
-|---|------|:----:|:-----|
-| 17 | **Pheromone 持久化** — 低优先级，当前搜索速度已足够快（<1s/轮），跨会话记忆收益有限。 | — | 暂缓 |
-
-### P3 — 中远期
-
-| # | 任务 | 预估 | 说明 |
-|---|------|:----:|------|
-| 19 | **Intent Orchestration Phase E4** — 多意图协作 + intent tree。设计已有，
-    实现并行子 Agent + 结果合并。 | 3-5d | — |
-| 21 | **Serve 模式升级** — WebSocket/gRPC，降低 Agent 循环延迟。 | 2-3d | 当前 stdin JSON 够用 |
-| 22 | **Python/JS SDK** — 封装 ServeClient + EDSL 生成器。 | 社区 | 生态 |
-| 23 | **自举** — Aura 编译器用 Aura 写。类型系统稳定后。 | 中 | — |
-| 24 | **多意图协作与意图树** — Phase 4 远期。 | — | — |
-
-### ✅ 今日完成（2026-05-23）
-
-| # | 任务 | 说明 |
+| # | 缺口 | 说明 |
 |---|------|------|
-| 16 | Colony search 下沉 Phase 1+2 | pure Aura `colony:search` + eval-current-output fd 重定向，集成到 benchmark |
-| 20 | PID 控制器原生化 | `pid:analyze` in std/adaptive.aura, Python 侧简化 |
-| 18 | Richer query/mutate API | `mutate:tweak-literal` + `colony:search` 多策略（display-ref / lit-tweak），用已有 query 原语 |
-| — | 测试 | 新增 22 条回归测试覆盖所有新功能 |
-| — | 编译器诊断 | FFI 错误→stdout, `(: x Int)` lambda 参数支持, closure warning→stdout, 更好 FFI 错误提示 |
+| 31 | 模块系统 + 编译单元 | `import`/`require` 已有基本实现，缺跨文件依赖解析和缓存。 |
+| 32 | 数值计算 | 有 `Float` 和基本运算，缺数组/向量/矩阵。 |
+| 33 | IDE / LSP 支持 | 等语言稳定。 |
+| 34 | 包管理 | 远期。 |
+| 35 | 自举 | 类型系统稳定后。 |
 
 ---
 
@@ -83,17 +44,19 @@
 | 🥇 DeepSeek v4 Flash | **77/85 (90.6%)** | ~46min | adt-option, algorithm (2), ffi (2), type-annot-fn, type-blame-runtime |
 | 🥈 MiniMax M2.7 | **76/85 (89.4%)** | ~23min | adt-option, algorithm (2), ffi (2), json-roundtrip, tcp-connect, type (2) |
 
-**本次提升（2026-05-23 compiler 修复后）：** Grok +1, MiniMax +2, DeepSeek +5（弱模型收益最大）。
-类型系统任务从 ~60% 提升至 ~80%。
-
-**三模型共享失败：** `binary-search`、`merge-sort`（`#<procedure>` 问题，task hint 已补充）。
-
 ## 当前规划优先级
 
-1. **P0: Colony search 下沉到 Aura** — 收益最大，基础设施已就绪
-2. **P1: Pheromone 持久化** — 低投入，跨会话记忆
-3. **P1: Richer query/mutate API** — 依赖项
+1. **P0: 文件系统原语** — 补齐最大短板，让 Aura 能读写文件
+2. **P0: CLI argv** — standalone 脚本可用
+3. **P0: try-catch** — 完善错误处理
+4. **P1: stdlib 文件系统 + 进程** — 生态建设
+5. **P1: 错误类型结构化** — 提升 LLM 诊断质量
 
-## 已知问题
+## 已解决（2026-05-23 全天）
 
-详见 [known_issues.md](known_issues.md) — 当前无开放 issue。
+P0: blame / eval_flat / TypeAnnotation / parser / (#procedure)
+P1: match 穷尽 / 模块类型 / M4 运行时 / parser 修复 / let 泛化 / 增量检查 / blame 覆盖
+P2: --inspect 七子命令 / serve 超时 / P2996 递归序列化
+Phase 2: pure Aura colony:search / eval-current-output fd 重定向
+P3: PID analyzer (pid:analyze) / colony:search lit-tweak
+编译器诊断: FFI 错误→stdout / ((: x Int)) lambda 参数 / closure warning→stdout / FFI 签名错误精确定位 / occurrence typing (integer? void? hash?)
