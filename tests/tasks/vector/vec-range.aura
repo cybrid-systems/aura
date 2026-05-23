@@ -1,0 +1,7 @@
+;; task: vec-range
+;; goal: Use vec:range from std/vector-math to create a range and sum it
+;; depend: std/vector-math
+;; expect: 10
+;; hint: --- vector-math ---
+;; hint: (require "std/vector-math" all:)
+;; hint: (display (vec:sum (vec:range 0 5)))

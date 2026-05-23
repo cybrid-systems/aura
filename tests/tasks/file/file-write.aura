@@ -1,0 +1,6 @@
+;; task: file-write
+;; goal: Write "42" to /tmp/aura-write-test.txt using write-file, then read back with read-file
+;; expect: 42
+;; hint: --- file write/read ---
+;; hint: (write-file "/tmp/aura-write-test.txt" "42")
+;; hint: (display (read-file "/tmp/aura-write-test.txt"))

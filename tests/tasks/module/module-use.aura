@@ -1,0 +1,5 @@
+;; task: module-use
+;; goal: Use (use "std/list") to load a module
+;; expect: module
+;; hint: --- module use ---
+;; hint: (display (use "std/list"))

@@ -1,0 +1,7 @@
+;; task: mat-identity
+;; goal: Create identity matrix and verify an element
+;; depend: std/vector-math
+;; expect: 1
+;; hint: --- matrix identity ---
+;; hint: (require "std/vector-math" all:)
+;; hint: (display (mat:ref (mat:identity 3) 1 1))

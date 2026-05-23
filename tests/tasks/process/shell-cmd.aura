@@ -1,0 +1,5 @@
+;; task: shell-cmd
+;; goal: Use (shell "echo 42") to run a shell command and capture exit code
+;; expect: 0
+;; hint: --- shell ---
+;; hint: (display (shell "echo 42"))
