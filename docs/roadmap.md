@@ -50,10 +50,6 @@
 
 | # | 任务 | 预估 | 说明 |
 |---|------|:----:|:-----|
-| 16 | **Colony search 下沉到 Aura** — 当前 `internal_colony_search` 在 Python 侧做字符串替换 + subprocess。
-  管道已就绪：`set-code + mutate:* + eval-current`。
-   需要：翻译搜索循环为纯 Aura EDSL 调用，暴露更多 `mutate` 原语（insert/delete/transform）。
-   收益：50-100× 搜索加速，支持 1000+ variants/轮。 | 1-2d | `lib/std/ant.aura` 设计已有 |
 | 17 | **Pheromone 持久化** — 当前信息素在 Python dict 中，会话结束即丢。
    暴露 `pheromone:export` / `pheromone:import` 到 Aura 层，磁盘存储。
    数据结构简单（hash-of-vectors），跨会话记忆。 | 1d | 收益：跨任务学习 |
@@ -66,11 +62,17 @@
 |---|------|:----:|------|
 | 19 | **Intent Orchestration Phase E4** — 多意图协作 + intent tree。设计已有，
     实现并行子 Agent + 结果合并。 | 3-5d | — |
-| 20 | **PID 控制器原生化** — 把 Python 的自适应搜索深度 + 距离反馈搬到 Aura runtime。 | 1-2d | 设计已清晰 |
 | 21 | **Serve 模式升级** — WebSocket/gRPC，降低 Agent 循环延迟。 | 2-3d | 当前 stdin JSON 够用 |
 | 22 | **Python/JS SDK** — 封装 ServeClient + EDSL 生成器。 | 社区 | 生态 |
 | 23 | **自举** — Aura 编译器用 Aura 写。类型系统稳定后。 | 中 | — |
 | 24 | **多意图协作与意图树** — Phase 4 远期。 | — | — |
+
+### ✅ 今日完成
+
+| # | 任务 | 说明 |
+|---|------|------|
+| 16 | Colony search 下沉 | Phase 2: pure Aura `colony:search` + eval-current-output fd 重定向 |
+| 20 | PID 控制器原生化 | `pid:analyze` in std/adaptive.aura, Python 侧简化 |
 
 ---
 
