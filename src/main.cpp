@@ -682,7 +682,8 @@ int main(int argc, char* argv[]) {
                 std::println(std::cerr, "error: {}", result.error().format());
                 return 1;
             }
-            std::println("{}", fmt_val(*result, cs));
+            if (!is_void(*result))
+                std::println("{}", fmt_val(*result, cs));
         } else {
             std::ostringstream buf;
             buf << std::cin.rdbuf();
@@ -691,7 +692,8 @@ int main(int argc, char* argv[]) {
                 std::println(std::cerr, "error: {}", result.error().format());
                 return 1;
             }
-            std::println("{}", fmt_val(*result, cs));
+            if (!is_void(*result))
+                std::println("{}", fmt_val(*result, cs));
         }
         return 0;
     }
@@ -1073,7 +1075,9 @@ int main(int argc, char* argv[]) {
             std::println(std::cerr, "eval error: {}", result.error().format());
             return 1;
         }
-        std::println("{}", fmt_val(*result, cs));
+        if (!is_void(*result))
+            if (!is_void(*result))
+            std::println("{}", fmt_val(*result, cs));
         return 0;
     }
 
@@ -1209,7 +1213,8 @@ int main(int argc, char* argv[]) {
             std::println(std::cerr, "error: {}", result.error().format());
             return 1;
         }
-        std::println("{}", fmt_val(*result, cs));
+        if (!is_void(*result))
+            std::println("{}", fmt_val(*result, cs));
         return 0;
 #else
         std::println(std::cerr, "JIT not available — rebuild with LLVM");
