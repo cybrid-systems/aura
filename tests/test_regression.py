@@ -178,8 +178,8 @@ def test_emit_binary():
     src = b"(display (+ 1 2))"
     r = subprocess.run([AURA, "--emit-binary", "/tmp/aura-test-out"],
                         input=src, capture_output=True, timeout=10)
-    assert b"emitted" in r.stdout, f"emit failed: {r.stdout} {r.stderr}"
-    assert os.path.exists("/tmp/aura-test-out.o.ir") or os.path.exists("/tmp/aura-test-out.o.ir"), "emit .ir not created"
+    assert b"emitted" in r.stderr or b"emitted" in r.stdout, f"emit failed: {r.stdout} {r.stderr}"
+    assert os.path.exists("/tmp/aura-test-out"), "emit binary not created"
     print("  ✅ test-emit-binary")
 
 # Run subprocess tests

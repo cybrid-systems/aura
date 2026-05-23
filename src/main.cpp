@@ -19,6 +19,7 @@ import aura.compiler.value;
 // (implemented in ir_reflect_serialize.cpp, compiled with -freflection)
 extern "C" char* aura_inspect_ir_json(const void* mod, std::size_t* out_size);
 extern "C" bool aura_emit_object_file(const void* mod, const char* path);
+extern "C" bool aura_emit_native_file(const char* source, const char* out_path, const void* functions, unsigned int num_functions);
 
 
 
@@ -1297,7 +1298,7 @@ int main(int argc, char* argv[]) {
         // Compile: emit object file via LLVM
         auto obj_path = out_path + ".o";
         bool compiled = false;
-compiled = aura_emit_object_file((const void*)&*mod, obj_path.c_str());
+compiled = aura_emit_native_file(input.c_str(), out_path.c_str(), (const void*)&*mod, 0);
         
         
         if (!compiled) {
@@ -1323,11 +1324,16 @@ compiled = aura_emit_object_file((const void*)&*mod, obj_path.c_str());
         
         // If only .ir placeholder was created (no native binary), emit shell wrapper
         std::string ir_dump_path = out_path + ".ir";
-        std::string obj_path_str = out_path + ".o";
-        bool has_obj = std::filesystem::exists(obj_path_str);
+        bool has_obj = std::filesystem::exists(out_path);  // native binary created by aur_aemit_native_file
+        
+        if (has_obj && out_path.find(".o") == std::string::npos) {
+            // Native binary already created by aura_emit_native_file
+            std::println("  (native binary, no linking needed)");
+            return 0;  // fix typo: should be early return
+        }
         
         if (!has_obj) {
-            // No LLVM or LLVM emit failed — emit shell wrapper
+            // Native compile failed — emit shell wrapper as fallback
             std::string self_path = std::string(argv[0]);
             {
                 std::ofstream sf(out_path);
