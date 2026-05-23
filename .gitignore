@@ -17,6 +17,7 @@ compiled/
 *.swo
 *.swp
 tests/__pycache__/
+tests/bench_results/
 Thumbs.db
 .vscode/
 *.zo

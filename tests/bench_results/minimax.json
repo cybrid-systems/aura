@@ -1,6 +1,6 @@
 {
   "raw_log": "/home/dev/code/aura/tests/bench_results/minimax.log",
-  "model": "minimax-2.7",
+  "model": "minimax-m2.7",
   "name": "MiniMax",
-  "elapsed_s": 488.0
+  "elapsed_s": 1728.0
 }
