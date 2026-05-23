@@ -447,7 +447,7 @@ public:
             // Set IR closure bridge: enables tree-walker primitives (map/filter/foldl)
             // to call IR-produced closures.
             evaluator_.set_closure_bridge([this,
-                                           &ir_interp](aura::compiler::ClosureId cid,
+                                           &ir_interp, &ir_mod](aura::compiler::ClosureId cid,
                                                        const std::vector<types::EvalValue>& args)
                                               -> std::optional<types::EvalValue> {
                 auto snap = ir_interp.inspect_closure(cid);
@@ -605,7 +605,50 @@ public:
         ir_interp.set_strategy(strategy_);
         if (strict_mode_)
             ir_interp.set_strict_mode(true);
+
+        // Set IR closure bridge — enables tree-walker primitives (map/filter/foldl)
+        // to call IR-produced closures.
+        evaluator_.set_closure_bridge([this,
+                                       &ir_interp](aura::compiler::ClosureId cid,
+                                                   const std::vector<types::EvalValue>& args)
+                                          -> std::optional<types::EvalValue> {
+            auto snap = ir_interp.inspect_closure(cid);
+            if (!snap)
+                return std::nullopt;
+            aura::compiler::Env ne;
+            ne.set_primitives(&evaluator_.primitives());
+            for (std::size_t i = 0; i < snap->env.size() && i < snap->func_free_vars.size(); ++i)
+                ne.bind(snap->func_free_vars[i], snap->env[i]);
+            for (std::size_t i = 0; i < snap->func_params.size() && i < args.size(); ++i)
+                ne.bind(snap->func_params[i], args[i]);
+            // Try bridge data from IR module
+            if (snap->func_id < last_ir_mod_->closure_bridge.size()) {
+                auto& bd = last_ir_mod_->closure_bridge[snap->func_id];
+                if (bd.flat && bd.pool) {
+                    auto r = evaluator_.eval_flat(*const_cast<ast::FlatAST*>(bd.flat),
+                                                  *const_cast<ast::StringPool*>(bd.pool),
+                                                  bd.body_id, ne);
+                    if (r) return *r;
+                }
+                if (!bd.body_source.empty()) {
+                    auto fallback_alloc = arena_.allocator();
+                    auto* f_pool = arena_.create<aura::ast::StringPool>(fallback_alloc);
+                    auto* f_flat = arena_.create<aura::ast::FlatAST>(fallback_alloc);
+                    auto f_pr = aura::parser::parse_to_flat(bd.body_source, *f_flat, *f_pool);
+                    if (f_pr.success && f_pr.root != aura::ast::NULL_NODE) {
+                        f_flat->root = f_pr.root;
+                        auto r = evaluator_.eval_flat(*f_flat, *f_pool, f_pr.root, ne);
+                        if (r) return *r;
+                    }
+                }
+            }
+            return std::nullopt;
+        });
+
         auto result = ir_interp.execute();
+
+        // Clear bridge after execution
+        evaluator_.set_closure_bridge(aura::compiler::Evaluator::ClosureBridgeFn());
 
         // Capture runtime state for --inspect
         last_closures_ = ir_interp.list_closures();
@@ -684,7 +727,46 @@ public:
             // JIT only handles pure integer arithmetic correctly.
             aura::compiler::IRInterpreter ir_interp(ir_mod, evaluator_.primitives(),
                                                      &type_registry_);
+            // Set closure bridge so tree-walker primitives (map, filter) can call IR closures
+            evaluator_.set_closure_bridge([this,
+                                           &ir_interp, &ir_mod](aura::compiler::ClosureId cid,
+                                                       const std::vector<types::EvalValue>& args)
+                                              -> std::optional<types::EvalValue> {
+                auto snap = ir_interp.inspect_closure(cid);
+                if (!snap) return std::nullopt;
+                aura::compiler::Env ne;
+                ne.set_primitives(&evaluator_.primitives());
+                for (std::size_t i = 0; i < snap->env.size() && i < snap->func_free_vars.size(); ++i)
+                    ne.bind(snap->func_free_vars[i], snap->env[i]);
+                for (std::size_t i = 0; i < snap->func_params.size() && i < args.size(); ++i)
+                    ne.bind(snap->func_params[i], args[i]);
+                if (snap->func_id < ir_mod.closure_bridge.size()) {
+                    auto& bd = ir_mod.closure_bridge[snap->func_id];
+                    if (bd.flat && bd.pool) {
+                        auto r = evaluator_.eval_flat(*const_cast<ast::FlatAST*>(bd.flat),
+                                                      *const_cast<ast::StringPool*>(bd.pool),
+                                                      bd.body_id, ne);
+                        if (r) return *r;
+                    }
+                    if (!bd.body_source.empty()) {
+                        auto fb_alloc = arena_.allocator();
+                        auto* f_pool = arena_.create<aura::ast::StringPool>(fb_alloc);
+                        auto* f_flat = arena_.create<aura::ast::FlatAST>(fb_alloc);
+                        auto f_pr = aura::parser::parse_to_flat(bd.body_source, *f_flat, *f_pool);
+                        if (f_pr.success && f_pr.root != aura::ast::NULL_NODE) {
+                            f_flat->root = f_pr.root;
+                            auto r = evaluator_.eval_flat(*f_flat, *f_pool, f_pr.root, ne);
+                            if (r) return *r;
+                        }
+                    }
+                }
+                return std::nullopt;
+            });
+
             auto ir_result = ir_interp.execute();
+
+            // Clear bridge after execution to avoid dangling references
+            evaluator_.set_closure_bridge(aura::compiler::Evaluator::ClosureBridgeFn());
             if (ir_result) return EvalResult(*ir_result);
             return EvalResult(types::make_void());
         }

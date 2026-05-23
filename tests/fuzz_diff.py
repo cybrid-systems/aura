@@ -121,19 +121,25 @@ def gen_from_tasks():
             if line.startswith(";; goal:"):
                 goal = line[len(";; goal:"):].strip()
                 break
-        # Also extract hints to make the program self-contained
+        # Extract hints to build a valid program
         hints = []
         depend = ""
         for line in text.splitlines():
             if line.startswith(";; depend:"):
                 depend = line[len(";; depend:"):].strip()
-            elif line.startswith(";; hint:") and "CRITICAL" in line:
-                hints.append(line)
-        # Build a prompt-inspired program that would work
+            elif line.startswith(";; hint:") and not line.startswith(";; hint: ---"):
+                hints.append(line[len(";; hint:"):].strip())
         name = fpath.stem
-        if name in ("adt-either", "adt-tree", "adt-option"):
-            continue  # skip ADT tasks, tree-walk doesn't support ADT
-        yield name, goal[:100]
+        # Only use tasks where we can build a valid program from hints
+        if name in ("adt-either", "adt-tree", "adt-option", "adt-wildcard", "adt-multi-ctor"):
+            continue  # skip ADT tasks
+        if name.startswith("edsl-") or name.startswith("type-"):
+            continue  # skip EDSL/type tasks that need specific setup
+        # Use the last hint as the self-contained program
+        if hints:
+            prog = hints[-1]
+            if prog.startswith("("):
+                yield name, prog
 
 
 # ── Runner ───────────────────────────────────────────────
