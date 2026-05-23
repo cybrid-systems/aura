@@ -6998,6 +6998,17 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         MacroDef{std::move(param_names), is_dotted, f, p, body_id};
                     return EvalResult(make_void());
                 }
+                case aura::ast::NodeTag::Linear:
+                case aura::ast::NodeTag::Move:
+                case aura::ast::NodeTag::Borrow:
+                case aura::ast::NodeTag::MutBorrow:
+                case aura::ast::NodeTag::Drop: {
+                    // M4 ownership operations at tree-walker level:
+                    // compile-time concepts — evaluate inner expression directly
+                    if (v.children.empty())
+                        return EvalResult(make_void());
+                    return eval_flat(*f, *p, v.child(0), eval_env);
+                }
                 default:
                     return std::unexpected(
                         Diagnostic{ErrorKind::InternalError, "eval_flat: unsupported node type"});
