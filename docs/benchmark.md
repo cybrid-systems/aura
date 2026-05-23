@@ -15,22 +15,24 @@
 |:----|:-----:|:-----:|:----:|
 | 🥇 **Grok 4.3** | 102 | **93/102 (91.2%)** | ~9min |
 | 🥈 **DeepSeek v4 Flash** | 102 | **87/102 (85.3%)** | ~7min |
-| 🥉 **MiniMax M2.7** | 102 | **47/102 (46.1%)** | ~13min |
+| 🥉 **MiniMax M2.7** | 102 | **56/102 (55.4%)** | ~13min |
+
+> MiniMax-M2.7 是推理模型，API 强制输出 `<think>` 标签包装的中文推理。通过 `reasoning_split=True` 将推理内容分离到 `reasoning_details` 字段后，`no code extracted` 从 50+ 降到 ~20，但仍因模型定位差异（优先推理而非代码生成）分数远低于其他模型。
 
 比上版本（99 任务）:
 - Grok 85→93 (+8)
 - DeepSeek 81→87 (+6)
-- MiniMax 44→47 (+3)
+- MiniMax 44→56 (+12，reasoning_split 修复后)
 - **修复生效：** ffi-strlen ✅, type-occurrence-float ✅, directory-list ✅, module-use ✅, unique-hash ✅（Grok/DeepSeek）
-- **新增 EDSL 任务：** edsl-colony ✅ 三模型全过, edsl-query ✅, edsl-mutate ✅
-- **失败分析：** `#<procedure>` (binary-search, merge-sort) 仍存，EDSL复杂链式操作 (edsl-find-pattern, edsl-mutate-chain) 三模型均挂。
+- **新增 EDSL 任务：** edsl-colony ✅ 三模型全过, edsl-query ✅, edsl-mutate ✅, edsl-set-code ✅（Grok/MiniMax）
+- **失败分析：** `#<procedure>` (binary-search, merge-sort) 仍存，`edsl-find-pattern`、`edsl-mutate-chain` 三模型均挂。
 
-**失败分析:**
+**失败分析（102 任务）：**
 
-- **Shared fails(三模型均过不去):** `adt-tree`, `directory-list`, `edsl-mutate`, `edsl-query`, `edsl-set-code`, `ffi-strlen`, `table-lookup`, `word-freq`, `type-occurrence-float`, `unique-hash`
-- **Grok 独败 (5):** `adt-option`, `binary-search`, `merge-sort`, `module-use`, `type-blame-runtime`
-- **DeepSeek 独败 (4):** `adt-either`, `ffi-sqrt`, `tcp-connect`, `type-multi-annot`
-- **MiniMax 独败 (37):** 大量 `no code extracted`,涉及 list/hash/type/vector 等多个类别
+- **Shared fails（三模型均未通过）：** `adt-tree`, `binary-search`, `edsl-find-pattern`, `edsl-mutate-chain`, `merge-sort`, `table-lookup`, `type-blame-runtime`
+- **Grok 独败 (6):** `adt-either`, `merge-sort`, `table-lookup`, `type-blame-runtime`, `word-freq`
+- **DeepSeek 独败 (14):** `adt-wildcard`, `binary-search`, `edsl-find-pattern`, `edsl-mutate-chain`, `edsl-set-code`, `ffi-sqrt`, `ffi-strlen`, `merge-sort`, `table-lookup`, `tcp-connect`, `type-blame-runtime`, `type-gradual-boundary`, `type-ownership-linear`, `word-freq`
+- **MiniMax 独败 (45):** 推理模型定位差异 — 函数名用错（`clojure` 等不存在函数）、`#<procedure>`、unbound variable。`reasoning_split=True` 修复前大量 `no code extracted`。
 
 ### 逐任务对比(99 任务)
 
