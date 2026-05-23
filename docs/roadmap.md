@@ -10,14 +10,15 @@
 
 ---
 
-## P0 — 立刻修
+## ✅ 已修复（2026-05-23）
 
-| # | 任务 | 影响 | 预估 |
-|---|------|:----:|:----:|
-| 1 | **Blame：`(+ 1 "hello")` 应报错而非返回 1** — 树遍历器 `+` 原语无类型守卫。当前 String 被静默转 0，AI 自以为写对了。 | benchmark + AI 自治闭环可靠性 | 4h |
-| 2 | **`eval_flat` 缺失节点** — 内层 switch 未处理 Linear/Move/Borrow/MutBorrow/Drop，LLM 生成的代码可能崩溃。 | 编译器健壮性 | 3h |
-| 3 | **`(: x Int)` 无绑定返回 0 而非报错** — TypeAnnotation 解释器缺环境检查。 | 类型系统诊断 | 2h |
-| 4 | **`#<procedure>` 丢分** — `binary-search`/`merge-sort` 三模型全挂，原因是 LLM 写了函数定义但忘加 `(display ...)`。一行 hint 能解决。 | benchmark 3-5pp | 10min |
+| # | 问题 | Commit |
+|---|------|:------:|
+| 1 | Blame：`(+ 1 "hello")` 输出 stderr 错误 | `052cb19` |
+| 2 | `eval_flat` 缺失 Linear/Move/Borrow/Drop 节点 | `50208da` |
+| 3 | `(: x Int)` 无绑定正确报错 | `82dfaf4` |
+| 4 | `(: name Type val)` 三参数解析 | `afe96fd` |
+| 5 | `#<procedure>` 系统 prompt 警示 + hint 强化 | `f8166c7` |
 
 ## P1 — 功能缺口
 
