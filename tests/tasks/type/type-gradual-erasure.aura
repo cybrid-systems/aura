@@ -2,4 +2,4 @@
 ;; goal: Show that annotated code and non-annotated code produce same result
 ;; expect: 42
 ;; hint: --- gradual erasure ---
-;; hint: (display (check 42 : Int))
+;; hint: (display (: x Int 42))

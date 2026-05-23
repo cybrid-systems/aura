@@ -1,4 +1,4 @@
 ;; task: type-annot-int
-;; goal: Use (check ... : Type) to annotate an integer literal
+;; goal: Use (: x Type val) to annotate an integer literal
 ;; expect: 42
-;; hint: (display (check 42 : Int))
+;; hint: (display (: x Int 42))
