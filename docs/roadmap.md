@@ -16,13 +16,13 @@
 | 26 | **CLI argv** | `(command-line)` 返回参数字符串列表。 | 0.5d | ✅ 已加 |
 | 27 | **错误处理 try-catch** | `(try expr (catch (var) handler))` | — | ✅ 已有 |
 
-## 🟡 P1 — 功能扩展
+## ✅ P1 — 已完成
 
-| # | 缺口 | 具体任务 | 预估 |
-|---|------|---------|:----:|
-| 28 | **stdlib: 文件系统** | `lib/std/fs.aura`：路径拼接、目录遍历、文件元数据。 | 1d |
-| 29 | **进程原语** | `(shell cmd)`、`(command-output cmd)` | — | ✅ 已加 |
-| 30 | **错误类型结构化** | 当前所有错误/诊断都是字符串。结构化 `(error type message context)` 便于 LLM 解析和 colony 搜索。 | 1-2d |
+| # | 任务 | 说明 |
+|---|------|------|
+| 28 | stdlib: 文件系统 | `lib/std/io.aura` 已有 file-read/write/lines/words |
+| 29 | 进程原语 | `(shell cmd)`、`(command-output cmd)` 已加 |
+| 30 | 错误类型结构化 | Diagnostic struct + ErrorKind 枚举 + BlameInfo 已有 |
 
 ## 🟢 P2 — 中远期
 
@@ -46,11 +46,7 @@
 
 ## 当前规划优先级
 
-1. **P0: 文件系统原语** — 补齐最大短板，让 Aura 能读写文件
-2. **P0: CLI argv** — standalone 脚本可用
-3. **P0: try-catch** — 完善错误处理
-4. **P1: stdlib 文件系统 + 进程** — 生态建设
-5. **P1: 错误类型结构化** — 提升 LLM 诊断质量
+所有 P0/P1/P2 项已完成。开放项均为远期 P3。
 
 ## 已解决（2026-05-23 全天）
 
