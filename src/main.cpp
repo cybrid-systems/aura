@@ -686,12 +686,54 @@ int main(int argc, char* argv[]) {
     }
 
     // ── --inspect: evaluate and dump compiler state as JSON ───────
-    // Usage: echo '(+ 1 2)' | ./aura --inspect
+    // Usage: ./aura --inspect [mode] [cache-file]
+    //   echo '(+ 1 2)' | ./aura --inspect
+    //   ./aura --inspect cache-open out.abc
     if (argc > 1 && std::string_view(argv[1]) == "--inspect") {
         aura::compiler::CompilerService cs;
         std::string mode = (argc > 2) ? argv[2] : "ir";
 
-        // Evaluate the input first
+        if (mode == "cache-open") {
+            // Load from cache file instead of evaluating stdin
+            if (argc < 4) {
+                std::println(std::cerr, "usage: {} --inspect cache-open <file.abc>", argv[0]);
+                return 1;
+            }
+            auto mc = aura::compiler::cache::open_cache(argv[3]);
+            if (!mc.valid()) {
+                std::println(std::cerr, "error: cannot open cache file {}", argv[3]);
+                return 1;
+            }
+            std::println("cache: {} nodes, root={}", mc.size(), mc.root());
+            if (mc.has_ir()) {
+                aura::ir::IRModule cached_mod;
+                for (auto& fn : mc.ir_functions())
+                    cached_mod.add_function(fn);
+                cached_mod.set_entry(mc.ir_entry());
+                cached_mod.string_pool.assign(mc.ir_strings().begin(), mc.ir_strings().end());
+
+                aura::compiler::ComputeKindWrap ck;
+                aura::compiler::ArityWrap ar;
+                aura::compiler::ConstantFoldingWrap cf;
+                std::println(std::cerr, "PM: running {}->{}->{}", ck.name(), ar.name(), cf.name());
+                ck.run(cached_mod);
+                ar.run(cached_mod);
+                cf.run(cached_mod);
+                if (cf.folded_count() > 0)
+                    std::println(std::cerr, "PM: folded {} instructions", cf.folded_count());
+
+                std::size_t json_size = 0;
+                char* json_data = aura_inspect_ir_json(&cached_mod, &json_size);
+                std::string_view json_str(json_data, json_size);
+                std::println("{}", prettify_json(std::string(json_str)));
+                delete[] json_data;
+            } else {
+                std::println("no IR cache in {}", argv[3]);
+            }
+            return 0;
+        }
+
+        // Evaluate the input first (stdin)
         {
             std::ostringstream buf;
             buf << std::cin.rdbuf();
