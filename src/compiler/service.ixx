@@ -757,6 +757,7 @@ public:
                     for (auto& instr : iblock.instructions) {
                         if (instr.operands[0] == ret_slot &&
                             instr.opcode != aura::ir::IROpcode::Return) {
+                            
                             switch (instr.opcode) {
                                 case aura::ir::IROpcode::ConstBool:
                                 case aura::ir::IROpcode::Eq:
@@ -783,6 +784,7 @@ public:
                                         types::make_closure(static_cast<std::uint64_t>(raw_result));
                                     break;
                                 default:
+                                    // PrimCall and other complex ops handled in post-JIT conversion below
                                     break;
                             }
                             goto done;
@@ -792,6 +794,28 @@ public:
             }
         }
     done:
+        // If result is Int(0) from a void-returning prim (Display/Write/Newline), fix to Void
+        if (types::is_int(ev_result) && types::as_int(ev_result) == 0 &&
+            ret_slot != std::numeric_limits<std::uint32_t>::max()) {
+            for (auto& block : ir_mod.functions) {
+                for (auto& iblock : block.blocks) {
+                    for (auto& instr : iblock.instructions) {
+                        if (instr.opcode == aura::ir::IROpcode::PrimCall &&
+                            (instr.operands[0] == ret_slot || instr.operands[2] == ret_slot)) {
+                            auto prim_id = static_cast<aura::ir::PrimId>(instr.operands[0]);
+                            if (prim_id == aura::ir::PrimId::Display ||
+                                prim_id == aura::ir::PrimId::Write ||
+                                prim_id == aura::ir::PrimId::Newline) {
+                                ev_result = types::make_void();
+                                break;
+                            }
+                        }
+                    }
+                    if (types::is_void(ev_result)) break;
+                }
+                if (types::is_void(ev_result)) break;
+            }
+        }
         return EvalResult(ev_result);
 #else
         (void)input;

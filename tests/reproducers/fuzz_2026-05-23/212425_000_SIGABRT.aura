@@ -1,0 +1,5 @@
+;; fuzz reproducer: SIGABRT
+;; seed: 42
+;; time: 2026-05-23T21:24:25.774694
+;; expect: no-crash
+-1 define if 42 ( ' car ] : 1 ( <  + ] ) datatype ( and : + } require 0 = ; " 42

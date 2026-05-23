@@ -26,3 +26,5 @@ build_dbg/
 /build_rel/
 /__pycache__/
 *.log
+build_asan
+build_ubsan
