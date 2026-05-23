@@ -363,6 +363,12 @@ def llm_complete(model, base_url, key, messages, retries=3):
     else:
         temp = 0.3
         request_timeout = 120
+    # MiniMax M2.7 wraps reasoning in <think> tags — use reasoning_split to separate
+    extra_params = {}
+    if "minimax" in model_lower:
+        # Use correct model ID (case-sensitive)
+        model = "MiniMax-M2.7"
+        extra_params["reasoning_split"] = True
     for attempt in range(retries):
         try:
             conn_cls = (
@@ -371,23 +377,26 @@ def llm_complete(model, base_url, key, messages, retries=3):
                 else http.client.HTTPConnection
             )
             h = conn_cls(parsed.netloc, timeout=request_timeout)
+            body = {
+                "model": model,
+                "messages": messages,
+                "temperature": temp,
+                "max_tokens": 4096,
+            }
+            body.update(extra_params)
             h.request(
                 "POST",
                 path,
-                json.dumps(
-                    {
-                        "model": model,
-                        "messages": messages,
-                        "temperature": temp,
-                        "max_tokens": 4096,
-                    }
-                ),
+                json.dumps(body),
                 {"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
             )
             r = h.getresponse()
             d = json.loads(r.read())
             h.close()
             content = d.get("choices", [{}])[0].get("message", {}).get("content", "")
+            # Use reasoning_details if content is empty and reasoning_split is active
+            if not content:
+                content = d.get("choices", [{}])[0].get("message", {}).get("reasoning_details", "")
             if content:
                 return content
         except Exception as e:
