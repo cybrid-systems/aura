@@ -117,6 +117,11 @@ tests = [
      '(try "hello" (catch (e) "error"))',
      "hello", ""),
 
+    # shell/command-output
+    ("command-output",
+     '(command-output "echo 42")',
+     "42", ""),
+
 ]
 
 passed = 0
