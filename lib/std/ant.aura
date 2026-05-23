@@ -195,7 +195,7 @@
                            (search-fns rest-fns (+ inner-tried 1)))))))
                  (search-all rest-strat tried best-out)))
 
-              ;; Strategy 2: lit-tweak — find numeric literals, try +1/-1
+              ;; Strategy 2: lit-tweak — find numeric literals, try +/-1/2
               ((string=? strategy "lit-tweak")
                (let ((literals (find-literal-ints "")))
                  (if (null? literals)
@@ -205,10 +205,18 @@
                          (search-all rest-strat (+ tried inner-tried) best-out)
                        (let ((lit-id (car lit-ids))
                              (rest-lits (cdr lit-ids))
-                             (changes (list (number->string (+ ref 1)) (number->string (- ref 1))
-                                            (number->string (* ref 2)) (number->string (quotient ref 2)))))
-                         ;; For now, stubbed — needs numeric literal value extraction
-                         ;; mutate:replace-value works on LiteralInt nodes
-                         (tweak-lits rest-lits (+ inner-tried 1))))))))
+                             (deltas (list 1 -1 2 -2)))
+                         (let try-deltas ((ds deltas) (d-tried 0))
+                           (if (null? ds)
+                               (tweak-lits rest-lits (+ inner-tried d-tried))
+                             (let ((delta (car ds))
+                                   (rest-ds (cdr ds)))
+                               (set-code src)
+                               (mutate:tweak-literal lit-id delta "colony")
+                               (let ((res (try-mutation src expected-str)))
+                                 (if (car res)
+                                     (list #t (car (cdr res))
+                                           (string-append "colony:tweak-" (number->string delta)))
+                                   (try-deltas rest-ds (+ d-tried 1)))))))))))))
 
               (#t (search-all rest-strat tried best-out))))))))))

@@ -4066,6 +4066,32 @@ void Evaluator::init_pair_primitives() {
         return make_int(static_cast<std::int64_t>(pr.root));
     });
 
+    // (mutate:tweak-literal node-id delta "summary") — Tweak a LiteralInt by delta
+    // Reads current value, adds delta, writes back. Simpler than read+replace-value.
+    primitives_.add("mutate:tweak-literal", [this](const auto& a) {
+        if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1]) || !workspace_flat_)
+            return make_bool(false);
+        auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto delta = as_int(a[1]);
+        auto& flat = *workspace_flat_;
+        if (node >= flat.size())
+            return make_bool(false);
+        auto v = flat.get(node);
+        if (v.tag != aura::ast::NodeTag::LiteralInt)
+            return make_bool(false);
+        auto new_val = std::max<std::int64_t>(0, static_cast<std::int64_t>(v.int_value) + delta);
+        auto old_val = v.int_value;
+        std::string summary = (a.size() > 2 && is_string(a[2]))
+                                  ? string_heap_[as_string_idx(a[2])]
+                                  : "tweak-literal " + std::to_string(old_val) + "->" + std::to_string(new_val);
+        flat.add_mutation_with_rollback(
+            node, "tweak-literal", "Int", "Int", summary,
+            aura::ast::MutationStatus::Committed, 0, static_cast<std::uint64_t>(old_val),
+            static_cast<std::uint64_t>(new_val), true);
+        flat.set_int(node, new_val);
+        return make_int(static_cast<std::int64_t>(new_val));
+    });
+
     // (typecheck-current) — Type check the workspace AST
     // Uses a persistent TypeRegistry across calls so type IDs are stable.
     // Full traversal for now; incremental skip (dirty-aware) requires
