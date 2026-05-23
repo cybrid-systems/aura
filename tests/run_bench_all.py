@@ -3,7 +3,13 @@
 
 Usage: python3 tests/run_bench_all.py [--rounds N] [--max-attempts N]
 """
-import subprocess, json, sys, os, time, re
+
+import json
+import os
+import re
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 KEYS_DIR = Path.home() / "code" / "keys"
@@ -11,16 +17,37 @@ BENCH = Path.home() / "code" / "aura" / "tests" / "edsl_benchmark.py"
 RESULTS_DIR = Path.home() / "code" / "aura" / "tests" / "bench_results"
 
 MODELS = [
-    {"name": "DeepSeek", "model": "deepseek-v4-flash", "key_file": KEYS_DIR / "deepseek", "base_url": "https://api.deepseek.com"},
-    {"name": "MiniMax",  "model": "minimax-m2.7",       "key_file": KEYS_DIR / "minimax",  "base_url": "https://api.minimax.chat"},
-    {"name": "Kimi",     "model": "kimi-k2.6",          "key_file": KEYS_DIR / "kimi",     "base_url": "https://api.moonshot.cn"},
-    {"name": "Grok",     "model": "grok-4.3",           "key_file": KEYS_DIR / "grok",     "base_url": "https://api.x.ai"},
+    {
+        "name": "DeepSeek",
+        "model": "deepseek-v4-flash",
+        "key_file": KEYS_DIR / "deepseek",
+        "base_url": "https://api.deepseek.com",
+    },
+    {
+        "name": "MiniMax",
+        "model": "minimax-m2.7",
+        "key_file": KEYS_DIR / "minimax",
+        "base_url": "https://api.minimax.chat",
+    },
+    {
+        "name": "Kimi",
+        "model": "kimi-k2.6",
+        "key_file": KEYS_DIR / "kimi",
+        "base_url": "https://api.moonshot.cn",
+    },
+    {
+        "name": "Grok",
+        "model": "grok-4.3",
+        "key_file": KEYS_DIR / "grok",
+        "base_url": "https://api.x.ai",
+    },
 ]
 
 # Parse --rounds and --max-attempts from args
 EXTRA_ARGS = []
 for a in sys.argv[1:]:
     EXTRA_ARGS.append(a)
+
 
 def run_model(cfg):
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -46,7 +73,14 @@ def run_model(cfg):
 
     t0 = time.time()
     with open(log_file, "w") as lf:
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, text=True, bufsize=1)
+        p = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env=env,
+            text=True,
+            bufsize=1,
+        )
         all_output = []
         for line in p.stdout:
             print(line, end="", flush=True)
@@ -84,14 +118,24 @@ def run_model(cfg):
     print(f"\n  {name}: {passed}/{total} passed ({elapsed:.0f}s)")
     return results
 
+
 def parse_results(data):
     """Extract per-task results from different JSON formats."""
     if "tasks" in data:
-        return data["tasks"], data.get("total_passed", 0), data.get("total_tasks", len(data["tasks"]))
+        return (
+            data["tasks"],
+            data.get("total_passed", 0),
+            data.get("total_tasks", len(data["tasks"])),
+        )
     if "results" in data and isinstance(data["results"], dict):
-        return data["results"], data.get("passed", 0), data.get("total", len(data["results"]))
+        return (
+            data["results"],
+            data.get("passed", 0),
+            data.get("total", len(data["results"])),
+        )
     # Fallback: try to extract task names from output log
     return {}, data.get("passed", 0), data.get("total", 0)
+
 
 def main():
     all_results = {}
@@ -101,9 +145,17 @@ def main():
             all_results[cfg["name"]] = data
         except Exception as e:
             print(f"  ERROR: {cfg['name']} failed: {e}")
-            import traceback; traceback.print_exc()
-            all_results[cfg["name"]] = {"name": cfg["name"], "model": cfg["model"],
-                                         "passed": 0, "total": 0, "elapsed_s": 0, "error": str(e)}
+            import traceback
+
+            traceback.print_exc()
+            all_results[cfg["name"]] = {
+                "name": cfg["name"],
+                "model": cfg["model"],
+                "passed": 0,
+                "total": 0,
+                "elapsed_s": 0,
+                "error": str(e),
+            }
 
     # Print comparison table
     print("\n\n")
@@ -170,6 +222,7 @@ def main():
     with open(combined, "w") as f:
         json.dump(all_results, f, indent=2)
     print(f"\nResults saved to {RESULTS_DIR}/")
+
 
 if __name__ == "__main__":
     main()

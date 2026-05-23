@@ -8,10 +8,10 @@
 IR 管线只支持数值/闭包/递归。知道各求值路径的限制也是 Agent 需要掌握的。
 """
 
+import json
+import os
 import subprocess
 import sys
-import os
-import json
 
 AURA = os.environ.get("AURA_BIN", "./build/aura")
 
@@ -19,41 +19,61 @@ AURA = os.environ.get("AURA_BIN", "./build/aura")
 # Tool 封装
 # ═══════════════════════════════════════════════════════════════
 
+
 def aura_query(code, query_expr):
-    r = subprocess.run([AURA, "--query", query_expr], input=code,
-                       capture_output=True, text=True, timeout=10)
+    r = subprocess.run(
+        [AURA, "--query", query_expr],
+        input=code,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
     return (r.stdout + r.stderr).strip()
+
 
 def aura_query_and_fix(code, match, replace):
-    r = subprocess.run([AURA, "--query-and-fix", match, replace], input=code,
-                       capture_output=True, text=True, timeout=10)
+    r = subprocess.run(
+        [AURA, "--query-and-fix", match, replace],
+        input=code,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
     return (r.stdout + r.stderr).strip()
 
+
 def aura_typecheck(code):
-    r = subprocess.run([AURA, "--typecheck"], input=code,
-                       capture_output=True, text=True, timeout=10)
+    r = subprocess.run(
+        [AURA, "--typecheck"], input=code, capture_output=True, text=True, timeout=10
+    )
     return (r.stdout + r.stderr).strip()
+
 
 def aura_ir(code):
     """IR 管线 — 数值/闭包/递归（不支持 string）"""
-    r = subprocess.run([AURA, "--ir"], input=code,
-                       capture_output=True, text=True, timeout=10)
+    r = subprocess.run(
+        [AURA, "--ir"], input=code, capture_output=True, text=True, timeout=10
+    )
     return r.stdout.strip()
+
 
 def aura_eval(code):
     """树遍历器 — 完整原语集（含 string 操作）"""
-    r = subprocess.run([AURA], input=code,
-                       capture_output=True, text=True, timeout=10)
+    r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=10)
     return r.stdout.strip()
 
+
 def aura_cache(code, path):
-    r = subprocess.run([AURA, "--cache", path], input=code,
-                       capture_output=True, text=True, timeout=10)
+    r = subprocess.run(
+        [AURA, "--cache", path], input=code, capture_output=True, text=True, timeout=10
+    )
     return (r.stdout + r.stderr).strip()
+
 
 # ═══════════════════════════════════════════════════════════════
 # 演示场景
 # ═══════════════════════════════════════════════════════════════
+
 
 def demo_type_error_fix():
     """场景 1: 类型错误自动修复"""
@@ -79,14 +99,14 @@ def demo_type_error_fix():
 
     # Step 4: VERIFY — 验证修复
     print("\n[VERIFY] aura --typecheck")
-    tc_result = aura_typecheck('(+ 42 1)')
+    tc_result = aura_typecheck("(+ 42 1)")
     print(f"  → {tc_result}")
 
     print("\n[VERIFY] aura --ir")
-    ir_result = aura_ir('(+ 42 1)')
+    ir_result = aura_ir("(+ 42 1)")
     print(f"  → {ir_result}")
 
-    ok = 'Int' in tc_result and ir_result == '43'
+    ok = "Int" in tc_result and ir_result == "43"
     print(f"\n  {'✅' if ok else '❌'} 类型正确: Int, IR 结果: {ir_result}")
     return ok
 
@@ -155,9 +175,14 @@ def demo_incremental_serve():
     print("═" * 60)
 
     # Persistent session: all commands to the same --serve process
-    proc = subprocess.Popen([AURA, "--serve"], stdin=subprocess.PIPE,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, bufsize=1)
+    proc = subprocess.Popen(
+        [AURA, "--serve"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+    )
 
     def serve(cmd_type, code):
         payload = json.dumps({"cmd": cmd_type, "code": code})
@@ -170,25 +195,25 @@ def demo_incremental_serve():
         print("\n[ACT] serve define: (define add (lambda (x y) (+ x y)))")
         result = serve("define", "(define add (lambda (x y) (+ x y)))")
         print(f"  → {result}")
-        ok1 = 'defined' in result
+        ok1 = "defined" in result
 
         # Step 2: Exec
         print("\n[ACT] serve exec: (add 1 2)")
         result = serve("exec", "(add 1 2)")
         print(f"  → {result}")
-        ok2 = 'value' in result and '"3"' in result
+        ok2 = "value" in result and '"3"' in result
 
         # Step 3: Redefine (hot-swap)
         print("\n[ACT] serve redefine: (define add (lambda (x y) (+ (* x 2) y)))")
         result = serve("redefine", "(define add (lambda (x y) (+ (* x 2) y)))")
         print(f"  → {result}")
-        ok3 = 'redefined' in result
+        ok3 = "redefined" in result
 
         # Step 4: Exec again
         print("\n[VERIFY] serve exec: (add 1 2) 热替换后")
         result = serve("exec", "(add 1 2)")
         print(f"  → {result}")
-        ok4 = 'value' in result and '"4"' in result
+        ok4 = "value" in result and '"4"' in result
 
         ok = ok1 and ok2 and ok3 and ok4
         print(f"\n  {'✅' if ok else '❌'} 期望 add(1,2)=3, redef → add(1,2)=4")
@@ -210,8 +235,9 @@ def demo_closure_inspect_and_cache():
     print(f"\n[OBSERVE] 输入代码:")
     print(f"  {code}")
     print("\n[OBSERVE] aura --inspect")
-    r = subprocess.run([AURA, "--inspect"], input=code,
-                       capture_output=True, text=True, timeout=10)
+    r = subprocess.run(
+        [AURA, "--inspect"], input=code, capture_output=True, text=True, timeout=10
+    )
     output = r.stdout + r.stderr
     # Show first few lines
     for line in output.split("\n")[:8]:
@@ -225,8 +251,9 @@ def demo_closure_inspect_and_cache():
 
     # Step 3: 读缓存
     print("\n[OBSERVE] aura --cache-open")
-    r = subprocess.run([AURA, "--cache-open", tmp_cache],
-                       capture_output=True, text=True, timeout=10)
+    r = subprocess.run(
+        [AURA, "--cache-open", tmp_cache], capture_output=True, text=True, timeout=10
+    )
     cache_lines = r.stdout.strip().split("\n")
     for line in cache_lines[:4]:
         print(f"  {line}")
@@ -248,7 +275,9 @@ def demo_fibonacci():
     print("═" * 60)
 
     # 非尾递归阶乘
-    code1 = "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 10))"
+    code1 = (
+        "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 10))"
+    )
     print(f"\n[输入] 阶乘递归:")
     print(f"  {code1}")
 
@@ -303,11 +332,11 @@ if __name__ == "__main__":
         sys.exit(1)
 
     tests = [
-        ("类型错误修复",    demo_type_error_fix),
+        ("类型错误修复", demo_type_error_fix),
         ("Occurrence Typing", demo_occurrence_typing),
-        ("AST 查询 + IR",  demo_query_transform),
-        ("增量编译 serve",  demo_incremental_serve),
-        ("闭包内省+缓存",  demo_closure_inspect_and_cache),
+        ("AST 查询 + IR", demo_query_transform),
+        ("增量编译 serve", demo_incremental_serve),
+        ("闭包内省+缓存", demo_closure_inspect_and_cache),
         ("递归 + 常量折叠", demo_fibonacci),
     ]
 
@@ -322,6 +351,7 @@ if __name__ == "__main__":
                 print(f"\n  ❌ {name}: FAIL")
         except Exception as e:
             import traceback
+
             print(f"\n  ❌ {name}: ERROR — {e}")
             traceback.print_exc()
         print()

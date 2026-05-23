@@ -12,10 +12,10 @@ Usage:
   python3 tests/agent_demo.py --typecheck       # 只演示类型检查
 """
 
-import subprocess
 import json
-import sys
 import os
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -28,8 +28,9 @@ def run(cmd, input_data="", timeout=10):
         print(f"  ERROR: {AURA} not found — run 'python3 build.py build' first")
         return "", "", 1
     try:
-        r = subprocess.run(cmd, input=input_data,
-                           capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(
+            cmd, input=input_data, capture_output=True, text=True, timeout=timeout
+        )
         return r.stdout.strip(), r.stderr.strip(), r.returncode
     except subprocess.TimeoutExpired:
         print(f"  ERROR: command timed out after {timeout}s: {' '.join(cmd)}")
@@ -55,7 +56,9 @@ def run_serve_multi(commands, timeout=15):
         r = subprocess.run(
             [str(AURA), "--serve"],
             input=pipe_input,
-            capture_output=True, text=True, timeout=timeout
+            capture_output=True,
+            text=True,
+            timeout=timeout,
         )
         # Parse each output line
         results = []
@@ -145,8 +148,10 @@ def demo_transform():
 
     # Transform 1: Replace all LiteralInt with 99
     code = "(+ 1 2)"
-    stdout, _, _ = run([str(AURA), "--query-and-fix",
-                        "(node-type LiteralInt)", "(LiteralInt 99)"], code)
+    stdout, _, _ = run(
+        [str(AURA), "--query-and-fix", "(node-type LiteralInt)", "(LiteralInt 99)"],
+        code,
+    )
     print(f"  Before:     {code}")
     print(f"  Query:      (node-type LiteralInt)")
     print(f"  Replace:    (LiteralInt 99)")
@@ -154,8 +159,10 @@ def demo_transform():
 
     # Transform 2: Replace + with *
     code = "(+ 1 2 3)"
-    stdout, _, _ = run([str(AURA), "--query-and-fix",
-                        "(call-callee-name +)", "(call-callee-name *)"], code)
+    stdout, _, _ = run(
+        [str(AURA), "--query-and-fix", "(call-callee-name +)", "(call-callee-name *)"],
+        code,
+    )
     print(f"\n  Before:     {code}")
     print(f"  Query:      (call-callee-name +)")
     print(f"  Replace:    (call-callee-name *)")
@@ -167,9 +174,9 @@ def demo_typecheck():
     section("Type Check with Positions")
 
     cases = [
-        ("(+ 1 \"a\")", "Type coercion with position"),
+        ('(+ 1 "a")', "Type coercion with position"),
         ("x", "Unbound variable"),
-        ("(let ((x 10)) (+ x \"hello\"))", "Type error in let body"),
+        ('(let ((x 10)) (+ x "hello"))', "Type error in let body"),
         ("42", "Literal"),
         ("(+ 1 2)", "Simple addition"),
     ]
@@ -201,14 +208,13 @@ def demo_serve():
     section("Serve JSON Protocol (single session)")
 
     commands = [
-        ('{"cmd":"define","code":"(define double (lambda (x) (* x 2)))","name":"double"}',
-         "Define double"),
-        ('{"cmd":"exec","code":"(double 5)"}',
-         "Exec double(5)"),
-        ('{"cmd":"exec","code":"(double (double 3))"}',
-         "Exec double(double(3))"),
-        ('{"cmd":"query","code":"double"}',
-         "Query double"),
+        (
+            '{"cmd":"define","code":"(define double (lambda (x) (* x 2)))","name":"double"}',
+            "Define double",
+        ),
+        ('{"cmd":"exec","code":"(double 5)"}', "Exec double(5)"),
+        ('{"cmd":"exec","code":"(double (double 3))"}', "Exec double(double(3))"),
+        ('{"cmd":"query","code":"double"}', "Query double"),
     ]
 
     results = run_serve_multi(commands)
@@ -228,14 +234,16 @@ def demo_hot_swap():
     section("Hot Swap (redefine in single session)")
 
     commands = [
-        ('{"cmd":"define","code":"(define mul2 (lambda (x y) (* x y)))","name":"mul2"}',
-         "Define mul2 = *"),
-        ('{"cmd":"exec","code":"(mul2 3 4)"}',
-         "mul2(3,4) = ?"),
-        ('{"cmd":"redefine","code":"(define mul2 (lambda (x y) (+ x y)))","name":"mul2"}',
-         "Redefine mul2 → +"),
-        ('{"cmd":"exec","code":"(mul2 3 4)"}',
-         "mul2(3,4) = ?"),
+        (
+            '{"cmd":"define","code":"(define mul2 (lambda (x y) (* x y)))","name":"mul2"}',
+            "Define mul2 = *",
+        ),
+        ('{"cmd":"exec","code":"(mul2 3 4)"}', "mul2(3,4) = ?"),
+        (
+            '{"cmd":"redefine","code":"(define mul2 (lambda (x y) (+ x y)))","name":"mul2"}',
+            "Redefine mul2 → +",
+        ),
+        ('{"cmd":"exec","code":"(mul2 3 4)"}', "mul2(3,4) = ?"),
     ]
 
     results = run_serve_multi(commands)

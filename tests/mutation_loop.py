@@ -25,20 +25,18 @@ Flags:
 """
 
 import http.client
-
-import subprocess
 import json
-import random
-import sys
 import os
+import random
 import re
-import time
 import shutil
+import subprocess
+import sys
 import textwrap
-from pathlib import Path
+import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
-
 
 # ── Constants ──────────────────────────────────────────────────
 
@@ -53,16 +51,18 @@ Y = "\033[33m"  # yellow
 R = "\033[31m"  # red
 B = "\033[34m"  # blue
 C = "\033[36m"  # cyan
-N = "\033[0m"   # reset
+N = "\033[0m"  # reset
 
 
 # ═══════════════════════════════════════════════════════════════
 # Data types
 # ═══════════════════════════════════════════════════════════════
 
+
 @dataclass
 class Mutation:
     """A single mutation strategy."""
+
     name: str
     description: str
     apply_fn: callable  # (code: str) → str | None (None if not applicable)
@@ -71,6 +71,7 @@ class Mutation:
 @dataclass
 class MutationResult:
     """Result of applying and testing a mutation."""
+
     mutation_name: str
     success: bool
     code_before: str
@@ -84,6 +85,7 @@ class MutationResult:
 @dataclass
 class GenerationReport:
     """Summary of one generation of the mutation loop."""
+
     generation: int
     total_tried: int
     kept: int
@@ -99,8 +101,10 @@ class GenerationReport:
 # Aura execution helpers
 # ═══════════════════════════════════════════════════════════════
 
-def run_aura(code: str, args: Optional[list[str]] = None,
-             timeout: int = 30) -> tuple[int, str, str]:
+
+def run_aura(
+    code: str, args: Optional[list[str]] = None, timeout: int = 30
+) -> tuple[int, str, str]:
     """Run aura with given code and arguments.
     Returns (returncode, stdout, stderr).
     """
@@ -109,8 +113,11 @@ def run_aura(code: str, args: Optional[list[str]] = None,
         cmd.extend(args)
     try:
         proc = subprocess.Popen(
-            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, text=True
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
         )
         stdout, stderr = proc.communicate(code + "\n", timeout=timeout)
         return proc.returncode, stdout.strip(), stderr.strip()
@@ -176,7 +183,9 @@ def run_query_and_fix(code: str, query: str, fix: str) -> tuple[bool, int, int]:
     """Run --query-and-fix. Returns (applied, match_count, patch_count)."""
     rc, stdout, stderr = run_aura(code, ["--query-and-fix", query, fix])
     # Parse "transform: N matches, M patches, applied=X"
-    m = re.search(r"transform:\s*(\d+)\s*matches,\s*(\d+)\s*patches,\s*applied=(\w+)", stdout)
+    m = re.search(
+        r"transform:\s*(\d+)\s*matches,\s*(\d+)\s*patches,\s*applied=(\w+)", stdout
+    )
     if m:
         return m.group(3) == "true", int(m.group(1)), int(m.group(2))
     return False, 0, 0
@@ -186,7 +195,9 @@ def benchmark_check() -> bool:
     """Run benchmark --check, return True if no regression detected."""
     result = subprocess.run(
         [sys.executable, str(BENCH), "--check"],
-        capture_output=True, text=True, timeout=120
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     return result.returncode == 0
 
@@ -195,13 +206,16 @@ def benchmark_update():
     """Update benchmark baseline."""
     subprocess.run(
         [sys.executable, str(BENCH), "--update"],
-        capture_output=True, text=True, timeout=120
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
 
 
 # ═══════════════════════════════════════════════════════════════
 # Mutation strategies
 # ═══════════════════════════════════════════════════════════════
+
 
 def _strip_comments(code: str) -> str:
     """Strip line comments (; ...) from source code."""
@@ -222,39 +236,45 @@ def _strip_comments(code: str) -> str:
 def mut_increment_ints(code: str) -> Optional[str]:
     """Increment all integer literals by 1."""
     clean = _strip_comments(code)
+
     def inc(m):
         try:
             val = int(m.group(0))
             return str(val + 1)
         except ValueError:
             return m.group(0)
-    result = re.sub(r'\b(\d+)\b', inc, clean)
+
+    result = re.sub(r"\b(\d+)\b", inc, clean)
     return result if result != clean else None
 
 
 def mut_decrement_ints(code: str) -> Optional[str]:
     """Decrement all integer literals by 1."""
     clean = _strip_comments(code)
+
     def dec(m):
         try:
             val = int(m.group(0))
             return str(val - 1)
         except ValueError:
             return m.group(0)
-    result = re.sub(r'\b(\d+)\b', dec, clean)
+
+    result = re.sub(r"\b(\d+)\b", dec, clean)
     return result if result != clean else None
 
 
 def mut_double_ints(code: str) -> Optional[str]:
     """Double all integer literals."""
     clean = _strip_comments(code)
+
     def dbl(m):
         try:
             val = int(m.group(0))
             return str(val * 2)
         except ValueError:
             return m.group(0)
-    result = re.sub(r'\b(\d+)\b', dbl, clean)
+
+    result = re.sub(r"\b(\d+)\b", dbl, clean)
     return result if result != clean else None
 
 
@@ -298,13 +318,17 @@ def mut_swap_branches(code: str) -> Optional[str]:
     """Swap then/else branches of the innermost if expression."""
     clean = _strip_comments(code)
     # Match (if COND THEN ELSE) and swap THEN and ELSE
-    m = re.search(r'\(if\s+(.*?)\)\s*$', clean)
+    m = re.search(r"\(if\s+(.*?)\)\s*$", clean)
     if m:
         inner = m.group(1)
         parts = _split_if_arms(inner)
         if parts and len(parts) == 3:
             cond, then_br, else_br = parts
-            result = clean[:m.start()] + f"(if {cond} {else_br} {then_br})" + clean[m.end():]
+            result = (
+                clean[: m.start()]
+                + f"(if {cond} {else_br} {then_br})"
+                + clean[m.end() :]
+            )
             return result if result != clean else None
     return None
 
@@ -316,13 +340,13 @@ def _split_if_arms(s: str) -> Optional[list[str]]:
     depth = 0
     current = ""
     for c in s:
-        if c == '(':
+        if c == "(":
             depth += 1
             current += c
-        elif c == ')':
+        elif c == ")":
             depth -= 1
             current += c
-        elif c == ' ' and depth == 0:
+        elif c == " " and depth == 0:
             if current:
                 parts.append(current.strip())
                 current = ""
@@ -346,13 +370,15 @@ def mut_add_let_wrapper(code: str) -> Optional[str]:
 
 # ── AST-level mutations (via --query-and-fix) ────────────────
 
+
 def mut_ast_int_replacement(code: str) -> Optional[str]:
     """AST mutation: replace all LiteralInt with LiteralInt(0) via --query-and-fix."""
-    applied, matches, patches = run_query_and_fix(code,
-        "(node-type LiteralInt)", "(LiteralInt 0)")
+    applied, matches, patches = run_query_and_fix(
+        code, "(node-type LiteralInt)", "(LiteralInt 0)"
+    )
     if applied and matches > 0:
         # Since we can't get the modified source back, we do text-level:
-        return re.sub(r'\b\d+\b', '0', code)
+        return re.sub(r"\b\d+\b", "0", code)
     return None
 
 
@@ -371,24 +397,41 @@ def mut_add_type_annotation(code: str) -> Optional[str]:
 # ── Registry ──────────────────────────────────────────────────
 
 MUTATIONS: list[Mutation] = [
-    Mutation("inc_ints",       "Increment all integer literals by 1",                    mut_increment_ints),
-    Mutation("dec_ints",       "Decrement all integer literals by 1",                    mut_decrement_ints),
-    Mutation("double_ints",    "Double all integer literals",                            mut_double_ints),
-    Mutation("swap_add_mul",   "Swap + and * operators",                                mut_swap_add_mul),
-    Mutation("swap_add_sub",   "Replace + with -",                                      mut_swap_add_sub),
-    Mutation("add_zero",       "Wrap in (+ <expr> 0) (semantics-preserving)",            mut_add_redundant_zero),
-    Mutation("add_one",        "Wrap in (* <expr> 1) (semantics-preserving)",            mut_add_redundant_one),
-    Mutation("swap_if_branches","Swap then/else branches of innermost if",               mut_swap_branches),
-    Mutation("wrap_let",       "Introduce trivial let binding",                          mut_add_let_wrapper),
-    Mutation("add_comment",    "[DISABLED] Would add type annotation comment",             mut_add_type_annotation),
+    Mutation("inc_ints", "Increment all integer literals by 1", mut_increment_ints),
+    Mutation("dec_ints", "Decrement all integer literals by 1", mut_decrement_ints),
+    Mutation("double_ints", "Double all integer literals", mut_double_ints),
+    Mutation("swap_add_mul", "Swap + and * operators", mut_swap_add_mul),
+    Mutation("swap_add_sub", "Replace + with -", mut_swap_add_sub),
+    Mutation(
+        "add_zero",
+        "Wrap in (+ <expr> 0) (semantics-preserving)",
+        mut_add_redundant_zero,
+    ),
+    Mutation(
+        "add_one", "Wrap in (* <expr> 1) (semantics-preserving)", mut_add_redundant_one
+    ),
+    Mutation(
+        "swap_if_branches", "Swap then/else branches of innermost if", mut_swap_branches
+    ),
+    Mutation("wrap_let", "Introduce trivial let binding", mut_add_let_wrapper),
+    Mutation(
+        "add_comment",
+        "[DISABLED] Would add type annotation comment",
+        mut_add_type_annotation,
+    ),
     # AST-level (via --query-and-fix verification)
-    Mutation("int_to_zero",    "Set all int literals to 0 (AST verified)",               mut_ast_int_replacement),
+    Mutation(
+        "int_to_zero",
+        "Set all int literals to 0 (AST verified)",
+        mut_ast_int_replacement,
+    ),
 ]
 
 
 # ═══════════════════════════════════════════════════════════════
 # Mutation loop core
 # ═══════════════════════════════════════════════════════════════
+
 
 def get_expected_output(code: str) -> tuple[bool, str]:
     """Determine the expected output for a code expression.
@@ -430,7 +473,7 @@ def test_mutation(
     mutation: Mutation,
     mutation_idx: int,
     total_mutations: int,
-    do_bench: bool = True
+    do_bench: bool = True,
 ) -> MutationResult:
     """Apply a mutation, test it, and return the result."""
     start = time.time()
@@ -440,9 +483,14 @@ def test_mutation(
     if not ok or new_code == code:
         elapsed = time.time() - start
         return MutationResult(
-            mutation.name, False, code, code,
-            expected_output, expected_output,
-            reason="no change", elapsed=elapsed
+            mutation.name,
+            False,
+            code,
+            code,
+            expected_output,
+            expected_output,
+            reason="no change",
+            elapsed=elapsed,
         )
 
     # Test execution
@@ -450,19 +498,28 @@ def test_mutation(
     if not ok2:
         elapsed = time.time() - start
         return MutationResult(
-            mutation.name, False, code, new_code,
-            expected_output, output or "exec error",
-            reason=f"execution failed", elapsed=elapsed
+            mutation.name,
+            False,
+            code,
+            new_code,
+            expected_output,
+            output or "exec error",
+            reason=f"execution failed",
+            elapsed=elapsed,
         )
 
     # Verify against expected
     if output != expected_output:
         elapsed = time.time() - start
         return MutationResult(
-            mutation.name, False, code, new_code,
-            expected_output, output,
+            mutation.name,
+            False,
+            code,
+            new_code,
+            expected_output,
+            output,
             reason=f"output mismatch: got '{output}', expected '{expected_output}'",
-            elapsed=elapsed
+            elapsed=elapsed,
         )
 
     # Benchmark regression check
@@ -474,24 +531,31 @@ def test_mutation(
         if not ok3:
             elapsed = time.time() - start
             return MutationResult(
-                mutation.name, False, code, new_code,
-                expected_output, output,
-                reason="benchmark regression", elapsed=elapsed
+                mutation.name,
+                False,
+                code,
+                new_code,
+                expected_output,
+                output,
+                reason="benchmark regression",
+                elapsed=elapsed,
             )
 
     elapsed = time.time() - start
     return MutationResult(
-        mutation.name, True, code, new_code,
-        expected_output, output,
-        reason="accepted", elapsed=elapsed
+        mutation.name,
+        True,
+        code,
+        new_code,
+        expected_output,
+        output,
+        reason="accepted",
+        elapsed=elapsed,
     )
 
 
 def single_pass(
-    code: str,
-    expected: str,
-    do_bench: bool = True,
-    seed: Optional[int] = None
+    code: str, expected: str, do_bench: bool = True, seed: Optional[int] = None
 ) -> GenerationReport:
     """Run one pass: try all mutations, keep the first good one."""
     if seed is not None:
@@ -517,14 +581,18 @@ def single_pass(
             results.append(result)
             current_code = result.code_after
             current_output = expected
-            print(f"  {G}✓{N} [{result.mutation_name:15s}] {result.reason} ({result.elapsed:.2f}s)")
+            print(
+                f"  {G}✓{N} [{result.mutation_name:15s}] {result.reason} ({result.elapsed:.2f}s)"
+            )
             break
         elif result.reason == "no change":
             no_change += 1
             print(f"  {Y}~{N} [{result.mutation_name:15s}] {result.reason}")
         else:
             rejected += 1
-            print(f"  {R}✗{N} [{result.mutation_name:15s}] {result.reason[:60]} ({result.elapsed:.2f}s)")
+            print(
+                f"  {R}✗{N} [{result.mutation_name:15s}] {result.reason[:60]} ({result.elapsed:.2f}s)"
+            )
     else:
         # No mutation was kept
         current_code = code
@@ -540,7 +608,7 @@ def single_pass(
         elapsed=elapsed,
         current_code=current_code,
         current_output=current_output,
-        recent_results=results
+        recent_results=results,
     )
 
 
@@ -550,7 +618,7 @@ def mutation_loop(
     iterations: int = 10,
     do_bench: bool = False,
     verbose: bool = True,
-    random_seed: int = 42
+    random_seed: int = 42,
 ) -> str:
     """Run the mutation loop for N iterations.
 
@@ -595,7 +663,9 @@ def mutation_loop(
         print(f"\n{B}Generation {gen + 1}/{iterations}{N}")
         print(f"  Current: {Y}{current_code[:80]}{N}")
 
-        report = single_pass(current_code, current_expected, do_bench, random_seed + gen)
+        report = single_pass(
+            current_code, current_expected, do_bench, random_seed + gen
+        )
 
         if report.kept > 0:
             current_code = report.current_code
@@ -612,7 +682,9 @@ def mutation_loop(
         n = report.no_change
         total = report.total_tried
         pct = (k / total * 100) if total > 0 else 0
-        print(f"  {B}Summary:{N} {k} kept, {r} rejected, {n} no-change ({pct:.0f}% success, {report.elapsed:.2f}s)")
+        print(
+            f"  {B}Summary:{N} {k} kept, {r} rejected, {n} no-change ({pct:.0f}% success, {report.elapsed:.2f}s)"
+        )
 
     print(f"\n{C}{'═'*60}{N}")
     print(f"{G}Mutation loop complete!{N}")
@@ -627,12 +699,13 @@ def mutation_loop(
 # LLM API (AI-driven mutation)
 # ═══════════════════════════════════════════════════════════════
 
+
 def llm_complete(
     messages: list[dict],
     api_key: Optional[str] = None,
     model: Optional[str] = None,
     base_url: Optional[str] = None,
-    timeout: int = 60
+    timeout: int = 60,
 ) -> str:
     """Call an OpenAI-compatible chat completion API.
 
@@ -681,12 +754,14 @@ def llm_complete(
         host = host_part
         path_prefix = ""
 
-    body = json.dumps({
-        "model": model,
-        "messages": messages,
-        "temperature": 0.7,
-        "max_tokens": 2048,
-    })
+    body = json.dumps(
+        {
+            "model": model,
+            "messages": messages,
+            "temperature": 0.7,
+            "max_tokens": 2048,
+        }
+    )
 
     try:
         conn = http.client.HTTPSConnection(host, timeout=timeout)
@@ -697,7 +772,7 @@ def llm_complete(
             headers={
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {api_key}",
-            }
+            },
         )
         resp = conn.getresponse()
         if resp.status != 200:
@@ -728,7 +803,9 @@ def _extract_code_from_llm_response(raw: str) -> Optional[str]:
     raw = raw.strip()
 
     # Strategy 1: Look for fenced code blocks (``` or `````)
-    block_pattern = re.compile(r'```(?:aura|lisp|scheme|clojure|scm)?\s*\n?(.*?)```', re.DOTALL)
+    block_pattern = re.compile(
+        r"```(?:aura|lisp|scheme|clojure|scm)?\s*\n?(.*?)```", re.DOTALL
+    )
     blocks = block_pattern.findall(raw)
     if blocks:
         candidate = blocks[0].strip()
@@ -736,12 +813,14 @@ def _extract_code_from_llm_response(raw: str) -> Optional[str]:
             return candidate
 
     # Strategy 2: Look for inline code (`...`)
-    inline_pattern = re.compile(r'`([^`]+)`')
+    inline_pattern = re.compile(r"`([^`]+)`")
     inlines = inline_pattern.findall(raw)
     if inlines:
         for candidate in inlines:
             candidate = candidate.strip()
-            if candidate and (candidate.startswith("(") or re.match(r'^[\d"\']', candidate)):
+            if candidate and (
+                candidate.startswith("(") or re.match(r'^[\d"\']', candidate)
+            ):
                 return candidate
 
     # Strategy 3: Try to find an S-expression (balanced parens)
@@ -749,19 +828,19 @@ def _extract_code_from_llm_response(raw: str) -> Optional[str]:
     depth = 0
     start = -1
     for i, c in enumerate(raw):
-        if c == '(':
+        if c == "(":
             if depth == 0:
                 start = i
             depth += 1
-        elif c == ')':
+        elif c == ")":
             depth -= 1
             if depth == 0 and start >= 0:
-                candidate = raw[start:i + 1].strip()
+                candidate = raw[start : i + 1].strip()
                 if candidate:
                     return candidate
 
     # Strategy 4: Return the whole thing if it looks like code
-    if raw.startswith("(") or raw.startswith('"') or re.match(r'^[\d\-]', raw):
+    if raw.startswith("(") or raw.startswith('"') or re.match(r"^[\d\-]", raw):
         return raw
 
     return None
@@ -814,7 +893,7 @@ def mutate_with_ai(
     history: list[dict],
     api_key: Optional[str] = None,
     model: Optional[str] = None,
-    base_url: Optional[str] = None
+    base_url: Optional[str] = None,
 ) -> Optional[str]:
     """Use LLM to suggest a mutation for the given code.
 
@@ -838,7 +917,9 @@ def mutate_with_ai(
 
     mutated = _extract_code_from_llm_response(response)
     if mutated:
-        print(f"  {G}LLM returned:{N} {mutated[:80]}{'...' if len(mutated) > 80 else ''}")
+        print(
+            f"  {G}LLM returned:{N} {mutated[:80]}{'...' if len(mutated) > 80 else ''}"
+        )
         return mutated
     else:
         print(f"  {Y}Could not parse code from LLM response: {response[:100]}{N}")
@@ -852,7 +933,7 @@ def ai_mutation_loop(
     verbose: bool = True,
     api_key: Optional[str] = None,
     model: Optional[str] = None,
-    base_url: Optional[str] = None
+    base_url: Optional[str] = None,
 ) -> str:
     """Run AI-driven mutation loop for N iterations.
 
@@ -878,7 +959,9 @@ def ai_mutation_loop(
     print(f"  Seed:       {Y}{seed_code}{N}")
     print(f"  Expected:   {G}{expected}{N}")
     print(f"  Iterations: {iterations}")
-    print(f"  Model:      {model or os.environ.get('LLM_MODEL', 'deepseek/deepseek-v4-flash')}")
+    print(
+        f"  Model:      {model or os.environ.get('LLM_MODEL', 'deepseek/deepseek-v4-flash')}"
+    )
     print(f"  Base URL:   {base_url or os.environ.get('LLM_BASE_URL', 'auto-detect')}")
     print(f"{C}{'─'*60}{N}")
 
@@ -892,8 +975,12 @@ def ai_mutation_loop(
 
         # Try AI mutation first
         ai_code = mutate_with_ai(
-            current_code, current_result, history,
-            api_key=api_key, model=model, base_url=base_url
+            current_code,
+            current_result,
+            history,
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
         )
 
         if ai_code and ai_code != current_code:
@@ -901,27 +988,31 @@ def ai_mutation_loop(
             ok2, output = get_output(ai_code)
             if ok2 and output == current_result:
                 # Accepted!
-                history.append({
-                    "iteration": gen + 1,
-                    "code_before": current_code,
-                    "code_after": ai_code,
-                    "result": "accepted",
-                    "output": output,
-                })
+                history.append(
+                    {
+                        "iteration": gen + 1,
+                        "code_before": current_code,
+                        "code_after": ai_code,
+                        "result": "accepted",
+                        "output": output,
+                    }
+                )
                 current_code = ai_code
                 current_result = output
                 print(f"  {G}✓ AI mutation accepted{N}")
                 print(f"  {G}→ Kept:{N} {current_code[:80]}")
             elif ok2:
                 # Output changed but code is valid — still accept as creative mutation
-                history.append({
-                    "iteration": gen + 1,
-                    "code_before": current_code,
-                    "code_after": ai_code,
-                    "result": "output_changed",
-                    "previous_output": current_result,
-                    "new_output": output,
-                })
+                history.append(
+                    {
+                        "iteration": gen + 1,
+                        "code_before": current_code,
+                        "code_after": ai_code,
+                        "result": "output_changed",
+                        "previous_output": current_result,
+                        "new_output": output,
+                    }
+                )
                 print(f"  {Y}~ Output changed: '{current_result}' → '{output}'{N}")
                 current_code = ai_code
                 current_result = output
@@ -929,13 +1020,15 @@ def ai_mutation_loop(
             else:
                 # Execution error — record and fall back to random
                 print(f"  {R}✗ AI mutation failed: {output[:80]}{N}")
-                history.append({
-                    "iteration": gen + 1,
-                    "code_before": current_code,
-                    "code_after": ai_code,
-                    "result": "exec_error",
-                    "error": output,
-                })
+                history.append(
+                    {
+                        "iteration": gen + 1,
+                        "code_before": current_code,
+                        "code_after": ai_code,
+                        "result": "exec_error",
+                        "error": output,
+                    }
+                )
                 # Fall back to random mutation
                 print(f"  {Y}Falling back to random mutation...{N}")
                 report = single_pass(current_code, current_result, do_bench)
@@ -951,7 +1044,9 @@ def ai_mutation_loop(
                 print(f"  {G}→ Random kept:{N} {current_code[:80]}")
         else:
             # LLM returned same code or couldn't parse
-            print(f"  {Y}~ AI returned no effective change, falling back to random...{N}")
+            print(
+                f"  {Y}~ AI returned no effective change, falling back to random...{N}"
+            )
             report = single_pass(current_code, current_result, do_bench)
             if report.kept > 0:
                 current_code = report.current_code
@@ -969,6 +1064,7 @@ def ai_mutation_loop(
 # ═══════════════════════════════════════════════════════════════
 # Demo mode
 # ═══════════════════════════════════════════════════════════════
+
 
 def run_demo():
     """Run a quick demo showing each mutation strategy."""
@@ -1010,6 +1106,7 @@ def list_mutations():
 # ═══════════════════════════════════════════════════════════════
 # CLI
 # ═══════════════════════════════════════════════════════════════
+
 
 def _parse_flag_args(args: list[str]) -> dict:
     """Parse known flags from args list, returning remaining args.
@@ -1062,7 +1159,9 @@ def _parse_flag_args(args: list[str]) -> dict:
                 try:
                     result["iterations"] = int(args[i])
                 except ValueError:
-                    print(f"{Y}Warning: invalid --iterations value '{args[i]}', using default 5{N}")
+                    print(
+                        f"{Y}Warning: invalid --iterations value '{args[i]}', using default 5{N}"
+                    )
                 i += 1
         elif a in ("-h", "--help"):
             print(__doc__.strip())
@@ -1163,8 +1262,14 @@ def main():
     random.shuffle(mutations)
 
     for idx, mut in enumerate(mutations):
-        result = test_mutation(code, expected, mut, idx, len(mutations), do_bench=do_bench)
-        icon = G + "✓" if result.success else (R + "✗" if result.reason != "no change" else Y + "~")
+        result = test_mutation(
+            code, expected, mut, idx, len(mutations), do_bench=do_bench
+        )
+        icon = (
+            G + "✓"
+            if result.success
+            else (R + "✗" if result.reason != "no change" else Y + "~")
+        )
         print(f"  {icon}{N} [{result.mutation_name:15s}] {result.reason[:70]}")
 
     return
