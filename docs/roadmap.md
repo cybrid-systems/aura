@@ -2,9 +2,16 @@
 
 **更新：2026-05-23**
 
-**当前定位**：语言核心可用（Sound Gradual Typing + ADT + M4 Linear Ownership + EDSL），
-三模型 benchmark 89-92%。适合 LLM agent 生成 50-200 行代码片段的迭代修复场景。
-下一步方向：补齐项目级编程的短板（文件 I/O、CLI、错误处理），而非加语言特性。
+**当前定位**：语言核心 + 标准库 + 项目级编程能力基本完备（文件 I/O、CLI、try-catch、
+shell 进程、EDSL colony 自搜索）。三模型 benchmark 89-92%。
+下一步方向：要么深挖 benchmark 最后 ~10% 的失败任务，要么开始 P2 模块系统/数值计算。
+
+## 当前规划优先级
+
+1. **Benchmark 最后一轮 DeepSeek** — 验证今天全部编译器修复 + colony 提升的效果
+2. **模块系统 + 编译单元** (#31) — 最大缺口，让 Aura 能拆多文件项目
+3. **数值计算** (#32) — 数组/向量/矩阵，写数值程序的门槛
+4. IDE / LSP / 包管理 / 自举 — 远期
 
 ---
 
@@ -44,15 +51,15 @@
 | 🥇 DeepSeek v4 Flash | **77/85 (90.6%)** | ~46min | adt-option, algorithm (2), ffi (2), type-annot-fn, type-blame-runtime |
 | 🥈 MiniMax M2.7 | **76/85 (89.4%)** | ~23min | adt-option, algorithm (2), ffi (2), json-roundtrip, tcp-connect, type (2) |
 
-## 当前规划优先级
 
-所有 P0/P1/P2 项已完成。开放项均为远期 P3。
 
 ## 已解决（2026-05-23 全天）
 
-P0: blame / eval_flat / TypeAnnotation / parser / (#procedure)
-P1: match 穷尽 / 模块类型 / M4 运行时 / parser 修复 / let 泛化 / 增量检查 / blame 覆盖
-P2: --inspect 七子命令 / serve 超时 / P2996 递归序列化
-Phase 2: pure Aura colony:search / eval-current-output fd 重定向
-P3: PID analyzer (pid:analyze) / colony:search lit-tweak
-编译器诊断: FFI 错误→stdout / ((: x Int)) lambda 参数 / closure warning→stdout / FFI 签名错误精确定位 / occurrence typing (integer? void? hash?)
+- **P0 缺陷 (5)** — blame / eval_flat / TypeAnnotation / parser / #\<procedure\>
+- **P1 功能 (5)** — match 穷尽 / 模块类型 / M4 / parser / 增量检查
+- **P2 增强 (5)** — --inspect 七子命令 / serve 超时 / P2996 / colony Phase 1-2 / mutate:tweak-literal
+- **P3 下沉 (2)** — pid:analyze / pure Aura colony:search
+- **编译器诊断 (4)** — FFI→stdout / ((: x Int)) lambda 参数 / closure warning→stdout / FFI 签名精确定位
+- **系统原语 (3)** — command-line / shell / command-output
+- **验证已有 (3)** — 文件 I/O / try-catch / 错误类型结构化
+- **测试 (42)** — 全部回归通过
