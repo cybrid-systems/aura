@@ -80,6 +80,7 @@ def run(code, timeout=TIMEOUT):
             text=True,
             timeout=timeout,
         )
+        ok = r.returncode == 0
     except subprocess.TimeoutExpired:
         results["timeout"].append(code[:80])
         return False, "", "timeout"
