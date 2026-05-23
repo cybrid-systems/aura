@@ -24,6 +24,7 @@ import sys
 import time
 from pathlib import Path
 
+# Suppress BrokenPipeError on cleanup (normal when killing serve)
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 AURA = os.environ.get("AURA_BIN", str(REPO / "build" / "aura"))
@@ -65,10 +66,14 @@ def escaped(s):
 def send(proc, cmd):
     """Send one command to --serve, read one response line, parse JSON suffix."""
     try:
+        if proc.poll() is not None:
+            return None  # process already dead
         proc.stdin.write(cmd + "\n")
         proc.stdin.flush()
         time.sleep(0.005)
         line = proc.stdout.readline()
+    except BrokenPipeError:
+        return None  # pipe closed, process shutting down
     except:
         return None
     if not line:
@@ -124,7 +129,10 @@ def run_fuzz_session(n_ops):
     # Initial set-code
     resp = send(proc, f'(set-code "{escaped(code)}")')
     if not resp or resp.get("status") != "ok":
-        proc.kill()
+        try:
+            proc.kill()
+        except:
+            pass
         return stats
 
     stats["ops"] += 1
@@ -169,7 +177,7 @@ def run_fuzz_session(n_ops):
 
         resp = send(proc, cmd)
         if resp is None:
-            stats["crash"] += 1
+            stats["fail"] += 1
             break
 
         status = resp.get("status", "error")
@@ -186,7 +194,12 @@ def run_fuzz_session(n_ops):
             print(f"    {(i+1):5d} ops  [{stats['pass']} pass, {stats['fail']} fail, {stats['crash']} crash]",
                   flush=True)
 
-    proc.kill()
+    try:
+        proc.stdin.close()
+        proc.kill()
+        proc.wait(timeout=3)
+    except:
+        pass
     return stats
 
 
