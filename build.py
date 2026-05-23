@@ -927,6 +927,18 @@ def test_regression():
     return 0 if failed == 0 else 1
 
 
+def test_p0_regression():
+    """Run P0 fix regression tests."""
+    import subprocess
+    base = Path(__file__).resolve().parent
+    r = subprocess.run([sys.executable, str(base / "tests" / "test_regression.py")],
+                       capture_output=True, text=True, timeout=60)
+    print(r.stdout)
+    if r.stderr:
+        print(r.stderr, file=sys.stderr)
+    return r.returncode
+
+
 SUITES = {
     "unit": test_unit,
     "integ": test_integ,
@@ -937,6 +949,7 @@ SUITES = {
     "gradual": test_gradual,
     "demo": test_demo,
     "regression": test_regression,
+    "p0": test_p0_regression,
     "ai": test_ai_agent_demo,
     "bash": test_bash,
 }

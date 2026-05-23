@@ -1710,5 +1710,8 @@ int main() {
 
     std::println("Memory pool test: {}/{}/{} passed/failed/total",
                  mp_passed, mp_failed, mp_passed + mp_failed);
-    return (failed + ck_failed + arity_failed + mp_failed + pm_failed + cf_failed + dce_failed + gg_failed + ts_failed) > 0 ? 1 : 0;
+    
+    
+
+return (failed + ck_failed + arity_failed + mp_failed + pm_failed + cf_failed + dce_failed + gg_failed + ts_failed) > 0 ? 1 : 0;
 }
