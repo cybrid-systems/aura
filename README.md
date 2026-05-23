@@ -18,7 +18,7 @@
 ```
 (set-code "(define (f n) (* n 2))")
 (query:find "f")            → 找到自己的函数定义
-(mutate:rebind "f" "...")   → 自己修正
+(mutate:rebind "f" "(define (f n) (* n 3))")  → 自己修正
 (eval-current)              → 验证修改
 ```
 
@@ -45,7 +45,7 @@ AI 做方向，Aura 做局部搜索。
 ```bash
 LLM_API_KEY="..." python3 tests/edsl_benchmark.py
 ```
-57 个生成任务，三模型 93-100% 通过率（Grok 4.3 首次满通过 🎯）。  
+85 个 EDSL 代码生成任务，三模型 84-90% 通过率（Grok 4.3 领先 🥇）。  
 不是 AI 写对了——是系统自己走到了正确的地方。
 
 ---
@@ -58,14 +58,18 @@ Aura 是一个 **AI-native Lisp** 编译器：C++26 实现，LLVM ORC JIT 后端
 
 | 维度 | 状态 |
 |------|:----:|
-| **核心求值** | Tree-walker + IR 双路径 + TCO |
-| **类型系统** | Sound Gradual: coercion + occurrence + let-poly + blame |
-| **JIT** | ORC JIT, 38 opcode → native, 7.55× vs TW |
-| **增量编译** | ArenaGroup / 磁盘缓存 / 热替换 |
+| **核心求值** | Tree-walker + IR 双路径 + TCO + 显式调用栈 |
+| **类型系统** | Sound Gradual: coercion + occurrence + let-poly + blame + type query |
+| **M4 线性所有权** | `(Linear T)`, `move`/`borrow`/`mut-borrow`/`drop`, `&x`/`&mut-x` sugar, 编译期跟踪 + IR opcode + 运行时 |
+| **ADT** | `define-type`/`match`, Variant + 参数化容器 (eval 级 + type inference) |
+| **JIT** | ORC JIT, 38 opcode → native, 7.55× vs TW, -O2, 增量 cache |
+| **增量编译** | ArenaGroup / 磁盘缓存 / 热替换 / IR import |
 | **EDSL** | set-code → query → mutate → eval-current |
-| **测试覆盖** | 整合 87 + 单元 74 + 冒烟 5 + bash 117 + 基准 57 |
-| **标准库** | 19 文件 ~1k 行 |
-| **C FFI** | dlopen/dlsym, Int/Float/String/Opaque marshalling |
+| **测试覆盖** | 整合 118 + 冒烟 5 + bash 106 + 基准 85 + 回归 6 + 渐变保证 + suite/typesystem |
+| **标准库** | 28 文件 ~2k 行 |
+| **C FFI** | dlopen/dlsym, Int/Float/String/Opaque marshalling, JIT symbol API |
+| **TCP 网络** | `tcp-connect`/`tcp-send`/`tcp-recv`/`tcp-close` + `http-get`/`http-post` |
+| **自省** | `--inspect ir/closures/cache` P2996 编译期反射 |
 
 ### 基准
 
@@ -73,13 +77,13 @@ Aura 是一个 **AI-native Lisp** 编译器：C++26 实现，LLVM ORC JIT 后端
 fib-20: Tree-walker 48.6ms → IR 23.0ms → JIT (-O2) 6.4ms (7.55×)
 ```
 
-### AI 基准（57 生成任务，2026-05-22）
+### AI 基准（85 生成任务，2026-05-23）
 
 | 模型 | 通过率 | 耗时 |
 |:----|:------:|:----:|
-| 🥇 **Grok 4.3** | **57/57 (100%)** 🎯 | ~10min |
-| 🥈 **DeepSeek v4 Flash** | **54/57 (94.7%)** | ~10min |
-| 🥉 **MiniMax-M2.7** | **53/57 (93.0%)** | ~15min |
+| 🥇 **Grok 4.3** | **77/85 (90.6%)** | ~17min |
+| 🥈 **MiniMax M2.7** | **74/85 (87.1%)** | ~29min |
+| 🥉 **DeepSeek v4 Flash** | **72/85 (84.7%)** | ~54min |
 
 无 Scheme 兼容层（着力即差），`max-attempts=3`。
 [详情 → docs/benchmark.md](docs/benchmark.md) · [规格 → docs/design/aura_language_spec.md](docs/design/aura_language_spec.md)

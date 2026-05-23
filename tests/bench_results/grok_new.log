@@ -2,7 +2,7 @@
 ======================================================================
 Aura EDSL Benchmark
 Models: grok-4.3
-Tasks: 57
+Tasks: 85
 Rounds: 1  (intend mode: up to 3 attempts)
 ======================================================================
 
@@ -11,198 +11,290 @@ Rounds: 1  (intend mode: up to 3 attempts)
   Model: grok-4.3
 ──────────────────────────────────────────────────────────────────────
 
-  ── arith-basic ──
-    Round  1/1: ✅ (5.9s (attempts=1))
+  ── adt-either ──
+    Round  1/1: ✅ (10.4s (attempts=1))
 
-  ── arith-chain ──
-    Round  1/1: ✅ (6.4s (attempts=1))
+  ── adt-multi-ctor ──     Round  1/1: ✅ (12.1s (attempts=1))
 
-  ── binary-search ──
-    Round  1/1: ✅ (6.4s (attempts=1))
-
-  ── climbing-stairs ──
-    Round  1/1: ✅ (20.0s (attempts=1))
-
-  ── combinations ──
-    Round  1/1: ✅ (5.4s (attempts=1))
-
-  ── compose-n ──
-    Round  1/1: ✅ (13.3s (attempts=2))
-
-  ── contains-duplicate ──
-    Round  1/1: ✅ (7.1s (attempts=1))
-
-  ── deep-equal ──
-    Round  1/1: ❌ parse error: parse error at line 1:66: expected ex (35.5s in 3)
-
-  ── edsl-mutate ──
-    Round  1/1: ✅ (9.2s (attempts=2))
-
-  ── edsl-query ──
-    Round  1/1: ✅ (10.7s (attempts=2))
-
-  ── edsl-set-code ──
-    Round  1/1: ✅ (15.5s (attempts=3))
-
-  ── ffi-sqrt ──
-    Round  1/1: ✅ (14.0s (attempts=2))
-
-  ── ffi-strlen ──
-    Round  1/1: ✅ (23.1s (attempts=2))
-
-  ── fibonacci ──
-    Round  1/1: ✅ (4.7s (attempts=1))
-
-  ── first-unique ──
-    Round  1/1: ✅ (7.3s (attempts=1))
-
-  ── gcd-euclid ──
-    Round  1/1: ✅ (10.9s (attempts=1))
-
-  ── hash-basic ──
-    Round  1/1: ✅ (5.2s (attempts=1))
-
-  ── hash-invert ──
+  ── adt-option ──
     Round  1/1: ✅ (8.5s (attempts=1))
 
-  ── hash-stats ──
-    Round  1/1: ✅ (11.3s (attempts=1))
+  ── adt-tree ──
+    Round  1/1: ✅ (8.9s (attempts=1))
 
-  ── is-anagram ──
-    Round  1/1: ✅ (14.0s (attempts=1))
+  ── adt-wildcard ──
+    Round  1/1: ✅ (9.7s (attempts=1))
 
-  ── json-roundtrip ──
-    Round  1/1: ✅ (6.9s (attempts=1))
+  ── binary-search ──
+    Round  1/1: ❌ #<procedure> (17.9s in 3)
 
-  ── lambda-simple ──
-    Round  1/1: ✅ (6.0s (attempts=1))
+  ── climbing-stairs ──
+    Round  1/1: ✅ (24.1s (attempts=1))
 
-  ── letrec-fact ──
-    Round  1/1: ✅ (4.7s (attempts=1))
+  ── combinations ──
+    Round  1/1: ✅ (6.6s (attempts=1))
 
-  ── list-filter ──
-    Round  1/1: ✅ (5.6s (attempts=1))
-
-  ── list-flatten ──
-    Round  1/1: ✅ (6.4s (attempts=1))
-
-  ── list-foldl ──
-    Round  1/1: ✅ (4.9s (attempts=1))
-
-  ── list-map ──
-    Round  1/1: ✅ (7.7s (attempts=1))
-
-  ── list-partition ──
-    Round  1/1: ✅ (8.1s (attempts=1))
-
-  ── list-range ──
-    Round  1/1: ✅ (5.0s (attempts=1))
-
-  ── list-reverse ──
-    Round  1/1: ✅ (10.5s (attempts=1))
-
-  ── list-zip ──
-    Round  1/1: ✅ (21.1s (attempts=2))
-
-  ── macro-definer ──
-    Round  1/1: ✅ (7.7s (attempts=1))
-
-  ── majority-element ──
-    Round  1/1: ✅ (9.8s (attempts=1))
-
-  ── max-subarray ──
-    Round  1/1: ✅ (8.8s (attempts=1))
-
-  ── memoize ──
-    Round  1/1: ✅ (9.1s (attempts=1))
+  ── deep-equal ──
+    Round  1/1: ✅ (9.4s (attempts=1))
 
   ── merge-sort ──
-    Round  1/1: ✅ (9.2s (attempts=1))
+    Round  1/1: ❌ #<procedure> (39.6s in 3)
 
   ── merge-sorted ──
-    Round  1/1: ❌ <closure[62]> (34.8s in 3)
-
-  ── named-let ──
-    Round  1/1: ✅ (6.1s (attempts=1))
-
-  ── occurrence ──
-    Round  1/1: ✅ (4.5s (attempts=1))
+    Round  1/1: ✅ (7.2s (attempts=1))
 
   ── palindrome ──
     Round  1/1: ✅ (6.3s (attempts=1))
 
   ── prime-test ──
-    Round  1/1: ✅ (9.2s (attempts=1))
+    Round  1/1: ✅ (9.1s (attempts=1))
 
   ── primes-list ──
-    Round  1/1: ❌ unbound variable:  (23.5s in 3)
+    Round  1/1: ✅ (10.6s (attempts=1))
 
   ── quicksort ──
-    Round  1/1: ✅ (8.7s (attempts=1))
+    Round  1/1: ✅ (8.4s (attempts=1))
 
   ── reverse-list ──
-    Round  1/1: ✅ (7.0s (attempts=1))
-
-  ── sieve ──
-    Round  1/1: ✅ (12.9s (attempts=1))
-
-  ── string-reverse ──
-    Round  1/1: ✅ (4.6s (attempts=1))
-
-  ── string-split-join ──
-    Round  1/1: ✅ (3.8s (attempts=1))
-
-  ── table-lookup ──
-    Round  1/1: ✅ (6.7s (attempts=1))
-
-  ── tcp-connect ──
-    Round  1/1: ✅ (7.1s (attempts=1))
-
-  ── tree-dfs ──
-    Round  1/1: ✅ (6.3s (attempts=1))
-
-  ── two-sum ──
-    Round  1/1: ✅ (6.7s (attempts=1))
-
-  ── type-check ──
-    Round  1/1: ✅ (4.0s (attempts=1))
-
-  ── type-of ──
     Round  1/1: ✅ (6.2s (attempts=1))
 
-  ── unique-hash ──
-    Round  1/1: ✅ (6.0s (attempts=1))
+  ── sieve ──
+    Round  1/1: ✅ (6.6s (attempts=1))
+
+  ── table-lookup ──
+    Round  1/1: ✅ (6.5s (attempts=1))
+
+  ── tree-dfs ──
+    Round  1/1: ✅ (5.8s (attempts=1))
+
+  ── two-sum ──
+    Round  1/1: ✅ (12.9s (attempts=1))
 
   ── valid-parens ──
-    Round  1/1: ✅ (9.8s (attempts=1))
+    Round  1/1: ✅ (12.5s (attempts=1))
+
+  ── arith-basic ──
+    Round  1/1: ✅ (6.0s (attempts=1))
+
+  ── arith-chain ──
+    Round  1/1: ✅ (6.0s (attempts=1))
+
+  ── lambda-simple ──
+    Round  1/1: ✅ (9.9s (attempts=1))
 
   ── vector-ops ──
-    Round  1/1: ✅ (7.8s (attempts=1))
+    Round  1/1: ✅ (9.2s (attempts=1))
+
+  ── coerce-bool-int ──
+    Round  1/1: ✅ (11.3s (attempts=1))
+
+  ── coerce-float-int ──
+    Round  1/1: ✅ (4.7s (attempts=1))
+
+  ── coerce-int-string ──
+    Round  1/1: ✅ (6.9s (attempts=1))
+
+  ── edsl-mutate ──
+    Round  1/1: ✅ (15.1s (attempts=2))
+
+  ── edsl-query ──
+    Round  1/1: ✅ (13.3s (attempts=2))
+
+  ── edsl-set-code ──
+    Round  1/1: ✅ (19.6s (attempts=2))
+
+  ── ffi-sqrt ──
+    Round  1/1: ❌ 0 (30.8s in 3)
+
+  ── ffi-strlen ──
+    Round  1/1: ✅ (15.9s (attempts=2))
+
+  ── tcp-connect ──
+    Round  1/1: ✅ (3.7s (attempts=1))
+
+  ── hash-basic ──
+    Round  1/1: ✅ (6.4s (attempts=1))
+
+  ── hash-invert ──
+    Round  1/1: ✅ (8.3s (attempts=1))
 
   ── word-freq ──
-    Round  1/1: ✅ (24.3s (attempts=3))
+    Round  1/1: ❌ () (18.3s in 3)
 
-  ❌ Failure Analysis (3 tasks):
-    <closure[62]>            : 1 tasks -- merge-sorted
-    parse error: parse error : 1 tasks -- deep-equal
-    unbound variable:        : 1 tasks -- primes-list
+  ── contains-duplicate ──
+    Round  1/1: ✅ (8.2s (attempts=1))
+
+  ── first-unique ──
+    Round  1/1: ✅ (11.2s (attempts=1))
+
+  ── majority-element ──
+    Round  1/1: ✅ (6.6s (attempts=1))
+
+  ── max-subarray ──
+    Round  1/1: ✅ (6.4s (attempts=1))
+
+  ── unique-hash ──
+    Round  1/1: ✅ (13.7s (attempts=1))
+
+  ── hash-stats ──
+    Round  1/1: ✅ (7.4s (attempts=1))
+
+  ── json-roundtrip ──
+    Round  1/1: ✅ (7.6s (attempts=1))
+
+  ── list-filter ──
+    Round  1/1: ✅ (8.0s (attempts=1))
+
+  ── list-flatten ──
+    Round  1/1: ✅ (8.9s (attempts=1))
+
+  ── list-foldl ──
+    Round  1/1: ✅ (4.2s (attempts=1))
+
+  ── list-map ──
+    Round  1/1: ✅ (7.5s (attempts=1))
+
+  ── list-partition ──
+    Round  1/1: ✅ (24.5s (attempts=2))
+
+  ── list-range ──
+    Round  1/1: ✅ (11.2s (attempts=1))
+
+  ── list-reverse ──
+    Round  1/1: ✅ (7.0s (attempts=1))
+
+  ── list-zip ──
+    Round  1/1: ✅ (20.6s (attempts=2))
+
+  ── compose-n ──
+    Round  1/1: ✅ (15.2s (attempts=2))
+
+  ── fibonacci ──
+    Round  1/1: ✅ (5.5s (attempts=1))
+
+  ── gcd-euclid ──
+    Round  1/1: ✅ (16.2s (attempts=1))
+
+  ── letrec-fact ──
+    Round  1/1: ✅ (9.7s (attempts=1))
+
+  ── linear-basic ──
+    Round  1/1: ✅ (8.2s (attempts=1))
+
+  ── macro-definer ──
+    Round  1/1: ✅ (14.7s (attempts=1))
+
+  ── memoize ──
+    Round  1/1: ✅ (18.4s (attempts=1))
+
+  ── named-let ──
+    Round  1/1: ✅ (5.2s (attempts=1))
+
+  ── occurrence ──
+    Round  1/1: ✅ (4.0s (attempts=1))
+
+  ── is-anagram ──
+    Round  1/1: ✅ (7.9s (attempts=1))
+
+  ── string-reverse ──
+    Round  1/1: ✅ (3.7s (attempts=1))
+
+  ── string-split-join ──
+    Round  1/1: ✅ (2.6s (attempts=1))
+
+  ── type-annot-chain ──
+    Round  1/1: ❌ 1 (23.1s in 3)
+
+  ── type-annot-expr ──
+    Round  1/1: ✅ (44.8s (attempts=3))
+
+  ── type-annot-fn ──
+    Round  1/1: ✅ (19.3s (attempts=3))
+
+  ── type-annot-int ──
+    Round  1/1: ✅ (10.5s (attempts=2))
+
+  ── type-blame-runtime ──
+    Round  1/1: ❌ 1 (15.4s in 3)
+
+  ── type-boundary-call ──
+    Round  1/1: ✅ (5.5s (attempts=1))
+
+  ── type-check ──
+    Round  1/1: ✅ (5.4s (attempts=1))
+
+  ── type-coercion-if ──
+    Round  1/1: ✅ (5.2s (attempts=1))
+
+  ── type-consistency ──
+    Round  1/1: ✅ (8.1s (attempts=1))
+
+  ── type-gradual-boundary ──
+    Round  1/1: ✅ (10.2s (attempts=1))
+
+  ── type-gradual-erasure ──
+    Round  1/1: ❌ 0 (22.0s in 3)
+
+  ── type-higher-order ──
+    Round  1/1: ✅ (6.2s (attempts=1))
+
+  ── type-let-poly ──
+    Round  1/1: ✅ (6.7s (attempts=1))
+
+  ── type-linear ──
+    Round  1/1: ❌ 0 (27.4s in 3)
+
+  ── type-multi-annot ──
+    Round  1/1: ✅ (27.7s (attempts=2))
+
+  ── type-occurrence-float ──
+    Round  1/1: ✅ (14.5s (attempts=2))
+
+  ── type-occurrence ──
+    Round  1/1: ✅ (10.4s (attempts=1))
+
+  ── type-of ──
+    Round  1/1: ✅ (13.4s (attempts=1))
+
+  ── type-ownership-linear ──
+    Round  1/1: ✅ (11.3s (attempts=1))
+
+  ── type-pair-occurrence ──
+    Round  1/1: ✅ (7.5s (attempts=1))
+
+  ── type-value-restriction ──
+    Round  1/1: ✅ (23.8s (attempts=1))
+
+  ❌ Failure Analysis (8 tasks):
+    #<procedure>             : 2 tasks -- binary-search, merge-sort
+    ()                       : 1 tasks -- word-freq
+    0                        : 3 tasks -- ffi-sqrt, type-gradual-erasure, type-linear
+    1                        : 2 tasks -- type-annot-chain, type-blame-runtime
 ──────────────────────────────────────────────────────────────────────
   grok-4.3 -- Per-Task Results (1 rounds)
 ──────────────────────────────────────────────────────────────────────
   Task                   Pass/Total   Rate       Verdict
   ────────────────────── ────────── ──────  ────────────
+  adt-either               1/1       100%  ✅  Stable PASS
+  adt-multi-ctor           1/1       100%  ✅  Stable PASS
+  adt-option               1/1       100%  ✅  Stable PASS
+  adt-tree                 1/1       100%  ✅  Stable PASS
+  adt-wildcard             1/1       100%  ✅  Stable PASS
   arith-basic              1/1       100%  ✅  Stable PASS
   arith-chain              1/1       100%  ✅  Stable PASS
-  binary-search            1/1       100%  ✅  Stable PASS
+  binary-search            0/1         0%  ❌  Stable FAIL
   climbing-stairs          1/1       100%  ✅  Stable PASS
+  coerce-bool-int          1/1       100%  ✅  Stable PASS
+  coerce-float-int         1/1       100%  ✅  Stable PASS
+  coerce-int-string        1/1       100%  ✅  Stable PASS
   combinations             1/1       100%  ✅  Stable PASS
   compose-n                1/1       100%  ✅  Stable PASS
   contains-duplicate       1/1       100%  ✅  Stable PASS
-  deep-equal               0/1         0%  ❌  Stable FAIL
+  deep-equal               1/1       100%  ✅  Stable PASS
   edsl-mutate              1/1       100%  ✅  Stable PASS
   edsl-query               1/1       100%  ✅  Stable PASS
   edsl-set-code            1/1       100%  ✅  Stable PASS
-  ffi-sqrt                 1/1       100%  ✅  Stable PASS
+  ffi-sqrt                 0/1         0%  ❌  Stable FAIL
   ffi-strlen               1/1       100%  ✅  Stable PASS
   fibonacci                1/1       100%  ✅  Stable PASS
   first-unique             1/1       100%  ✅  Stable PASS
@@ -214,6 +306,7 @@ Rounds: 1  (intend mode: up to 3 attempts)
   json-roundtrip           1/1       100%  ✅  Stable PASS
   lambda-simple            1/1       100%  ✅  Stable PASS
   letrec-fact              1/1       100%  ✅  Stable PASS
+  linear-basic             1/1       100%  ✅  Stable PASS
   list-filter              1/1       100%  ✅  Stable PASS
   list-flatten             1/1       100%  ✅  Stable PASS
   list-foldl               1/1       100%  ✅  Stable PASS
@@ -226,13 +319,13 @@ Rounds: 1  (intend mode: up to 3 attempts)
   majority-element         1/1       100%  ✅  Stable PASS
   max-subarray             1/1       100%  ✅  Stable PASS
   memoize                  1/1       100%  ✅  Stable PASS
-  merge-sort               1/1       100%  ✅  Stable PASS
-  merge-sorted             0/1         0%  ❌  Stable FAIL
+  merge-sort               0/1         0%  ❌  Stable FAIL
+  merge-sorted             1/1       100%  ✅  Stable PASS
   named-let                1/1       100%  ✅  Stable PASS
   occurrence               1/1       100%  ✅  Stable PASS
   palindrome               1/1       100%  ✅  Stable PASS
   prime-test               1/1       100%  ✅  Stable PASS
-  primes-list              0/1         0%  ❌  Stable FAIL
+  primes-list              1/1       100%  ✅  Stable PASS
   quicksort                1/1       100%  ✅  Stable PASS
   reverse-list             1/1       100%  ✅  Stable PASS
   sieve                    1/1       100%  ✅  Stable PASS
@@ -242,28 +335,55 @@ Rounds: 1  (intend mode: up to 3 attempts)
   tcp-connect              1/1       100%  ✅  Stable PASS
   tree-dfs                 1/1       100%  ✅  Stable PASS
   two-sum                  1/1       100%  ✅  Stable PASS
+  type-annot-chain         0/1         0%  ❌  Stable FAIL
+  type-annot-expr          1/1       100%  ✅  Stable PASS
+  type-annot-fn            1/1       100%  ✅  Stable PASS
+  type-annot-int           1/1       100%  ✅  Stable PASS
+  type-blame-runtime       0/1         0%  ❌  Stable FAIL
+  type-boundary-call       1/1       100%  ✅  Stable PASS
   type-check               1/1       100%  ✅  Stable PASS
+  type-coercion-if         1/1       100%  ✅  Stable PASS
+  type-consistency         1/1       100%  ✅  Stable PASS
+  type-gradual-boundary    1/1       100%  ✅  Stable PASS
+  type-gradual-erasure     0/1         0%  ❌  Stable FAIL
+  type-higher-order        1/1       100%  ✅  Stable PASS
+  type-let-poly            1/1       100%  ✅  Stable PASS
+  type-linear              0/1         0%  ❌  Stable FAIL
+  type-multi-annot         1/1       100%  ✅  Stable PASS
+  type-occurrence          1/1       100%  ✅  Stable PASS
+  type-occurrence-float    1/1       100%  ✅  Stable PASS
   type-of                  1/1       100%  ✅  Stable PASS
+  type-ownership-linear    1/1       100%  ✅  Stable PASS
+  type-pair-occurrence     1/1       100%  ✅  Stable PASS
+  type-value-restriction   1/1       100%  ✅  Stable PASS
   unique-hash              1/1       100%  ✅  Stable PASS
   valid-parens             1/1       100%  ✅  Stable PASS
   vector-ops               1/1       100%  ✅  Stable PASS
-  word-freq                1/1       100%  ✅  Stable PASS
+  word-freq                0/1         0%  ❌  Stable FAIL
 
-  ➤ Stable: 54✅ / 3❌ + Volatile: 0🔄 = 57
+  ➤ Stable: 77✅ / 8❌ + Volatile: 0🔄 = 85
 
   📊 Attempt stats:
+    adt-either             avg 1.0 attempts, 1/1 passed
+    adt-multi-ctor         avg 1.0 attempts, 1/1 passed
+    adt-option             avg 1.0 attempts, 1/1 passed
+    adt-tree               avg 1.0 attempts, 1/1 passed
+    adt-wildcard           avg 1.0 attempts, 1/1 passed
     arith-basic            avg 1.0 attempts, 1/1 passed
     arith-chain            avg 1.0 attempts, 1/1 passed
-    binary-search          avg 1.0 attempts, 1/1 passed
+    binary-search          avg 3.0 attempts, 0/1 passed
     climbing-stairs        avg 1.0 attempts, 1/1 passed
+    coerce-bool-int        avg 1.0 attempts, 1/1 passed
+    coerce-float-int       avg 1.0 attempts, 1/1 passed
+    coerce-int-string      avg 1.0 attempts, 1/1 passed
     combinations           avg 1.0 attempts, 1/1 passed
     compose-n              avg 2.0 attempts, 1/1 passed
     contains-duplicate     avg 1.0 attempts, 1/1 passed
-    deep-equal             avg 3.0 attempts, 0/1 passed
+    deep-equal             avg 1.0 attempts, 1/1 passed
     edsl-mutate            avg 2.0 attempts, 1/1 passed
     edsl-query             avg 2.0 attempts, 1/1 passed
-    edsl-set-code          avg 3.0 attempts, 1/1 passed
-    ffi-sqrt               avg 2.0 attempts, 1/1 passed
+    edsl-set-code          avg 2.0 attempts, 1/1 passed
+    ffi-sqrt               avg 3.0 attempts, 0/1 passed
     ffi-strlen             avg 2.0 attempts, 1/1 passed
     fibonacci              avg 1.0 attempts, 1/1 passed
     first-unique           avg 1.0 attempts, 1/1 passed
@@ -275,11 +395,12 @@ Rounds: 1  (intend mode: up to 3 attempts)
     json-roundtrip         avg 1.0 attempts, 1/1 passed
     lambda-simple          avg 1.0 attempts, 1/1 passed
     letrec-fact            avg 1.0 attempts, 1/1 passed
+    linear-basic           avg 1.0 attempts, 1/1 passed
     list-filter            avg 1.0 attempts, 1/1 passed
     list-flatten           avg 1.0 attempts, 1/1 passed
     list-foldl             avg 1.0 attempts, 1/1 passed
     list-map               avg 1.0 attempts, 1/1 passed
-    list-partition         avg 1.0 attempts, 1/1 passed
+    list-partition         avg 2.0 attempts, 1/1 passed
     list-range             avg 1.0 attempts, 1/1 passed
     list-reverse           avg 1.0 attempts, 1/1 passed
     list-zip               avg 2.0 attempts, 1/1 passed
@@ -287,13 +408,13 @@ Rounds: 1  (intend mode: up to 3 attempts)
     majority-element       avg 1.0 attempts, 1/1 passed
     max-subarray           avg 1.0 attempts, 1/1 passed
     memoize                avg 1.0 attempts, 1/1 passed
-    merge-sort             avg 1.0 attempts, 1/1 passed
-    merge-sorted           avg 3.0 attempts, 0/1 passed
+    merge-sort             avg 3.0 attempts, 0/1 passed
+    merge-sorted           avg 1.0 attempts, 1/1 passed
     named-let              avg 1.0 attempts, 1/1 passed
     occurrence             avg 1.0 attempts, 1/1 passed
     palindrome             avg 1.0 attempts, 1/1 passed
     prime-test             avg 1.0 attempts, 1/1 passed
-    primes-list            avg 3.0 attempts, 0/1 passed
+    primes-list            avg 1.0 attempts, 1/1 passed
     quicksort              avg 1.0 attempts, 1/1 passed
     reverse-list           avg 1.0 attempts, 1/1 passed
     sieve                  avg 1.0 attempts, 1/1 passed
@@ -303,18 +424,632 @@ Rounds: 1  (intend mode: up to 3 attempts)
     tcp-connect            avg 1.0 attempts, 1/1 passed
     tree-dfs               avg 1.0 attempts, 1/1 passed
     two-sum                avg 1.0 attempts, 1/1 passed
+    type-annot-chain       avg 3.0 attempts, 0/1 passed
+    type-annot-expr        avg 3.0 attempts, 1/1 passed
+    type-annot-fn          avg 3.0 attempts, 1/1 passed
+    type-annot-int         avg 2.0 attempts, 1/1 passed
+    type-blame-runtime     avg 3.0 attempts, 0/1 passed
+    type-boundary-call     avg 1.0 attempts, 1/1 passed
     type-check             avg 1.0 attempts, 1/1 passed
+    type-coercion-if       avg 1.0 attempts, 1/1 passed
+    type-consistency       avg 1.0 attempts, 1/1 passed
+    type-gradual-boundary  avg 1.0 attempts, 1/1 passed
+    type-gradual-erasure   avg 3.0 attempts, 0/1 passed
+    type-higher-order      avg 1.0 attempts, 1/1 passed
+    type-let-poly          avg 1.0 attempts, 1/1 passed
+    type-linear            avg 3.0 attempts, 0/1 passed
+    type-multi-annot       avg 2.0 attempts, 1/1 passed
+    type-occurrence        avg 1.0 attempts, 1/1 passed
+    type-occurrence-float  avg 2.0 attempts, 1/1 passed
     type-of                avg 1.0 attempts, 1/1 passed
+    type-ownership-linear  avg 1.0 attempts, 1/1 passed
+    type-pair-occurrence   avg 1.0 attempts, 1/1 passed
+    type-value-restriction avg 1.0 attempts, 1/1 passed
     unique-hash            avg 1.0 attempts, 1/1 passed
     valid-parens           avg 1.0 attempts, 1/1 passed
     vector-ops             avg 1.0 attempts, 1/1 passed
-    word-freq              avg 3.0 attempts, 1/1 passed
+    word-freq              avg 3.0 attempts, 0/1 passed
 
 ======================================================================
 {
   "grok-4.3": {
+    "adt-either": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 10.41,
+      "avg_attempts": 1.0
+    },
+    "adt-multi-ctor": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 12.11,
+      "avg_attempts": 1.0
+    },
+    "adt-option": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 8.52,
+      "avg_attempts": 1.0
+    },
+    "adt-tree": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 8.86,
+      "avg_attempts": 1.0
+    },
+    "adt-wildcard": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 9.69,
+      "avg_attempts": 1.0
+    },
+    "binary-search": {
+      "passes": 0,
+      "total": 1,
+      "pass_rate": 0.0,
+      "avg_llm_time": 17.86,
+      "avg_attempts": 3.0
+    },
+    "climbing-stairs": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 24.07,
+      "avg_attempts": 1.0
+    },
+    "combinations": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 6.61,
+      "avg_attempts": 1.0
+    },
+    "deep-equal": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 9.44,
+      "avg_attempts": 1.0
+    },
+    "merge-sort": {
+      "passes": 0,
+      "total": 1,
+      "pass_rate": 0.0,
+      "avg_llm_time": 39.65,
+      "avg_attempts": 3.0
+    },
+    "merge-sorted": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 7.16,
+      "avg_attempts": 1.0
+    },
+    "palindrome": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 6.27,
+      "avg_attempts": 1.0
+    },
+    "prime-test": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 9.15,
+      "avg_attempts": 1.0
+    },
+    "primes-list": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 10.62,
+      "avg_attempts": 1.0
+    },
+    "quicksort": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 8.39,
+      "avg_attempts": 1.0
+    },
+    "reverse-list": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 6.23,
+      "avg_attempts": 1.0
+    },
+    "sieve": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 6.6,
+      "avg_attempts": 1.0
+    },
+    "table-lookup": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 6.45,
+      "avg_attempts": 1.0
+    },
+    "tree-dfs": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 5.75,
+      "avg_attempts": 1.0
+    },
+    "two-sum": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 12.91,
+      "avg_attempts": 1.0
+    },
+    "valid-parens": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 12.49,
+      "avg_attempts": 1.0
+    },
+    "arith-basic": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 6.01,
+      "avg_attempts": 1.0
+    },
+    "arith-chain": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 5.99,
+      "avg_attempts": 1.0
+    },
+    "lambda-simple": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 9.92,
+      "avg_attempts": 1.0
+    },
+    "vector-ops": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 9.21,
+      "avg_attempts": 1.0
+    },
+    "coerce-bool-int": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 11.32,
+      "avg_attempts": 1.0
+    },
+    "coerce-float-int": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 4.69,
+      "avg_attempts": 1.0
+    },
+    "coerce-int-string": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 6.89,
+      "avg_attempts": 1.0
+    },
+    "edsl-mutate": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 15.09,
+      "avg_attempts": 2.0
+    },
+    "edsl-query": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 13.33,
+      "avg_attempts": 2.0
+    },
+    "edsl-set-code": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 19.55,
+      "avg_attempts": 2.0
+    },
+    "ffi-sqrt": {
+      "passes": 0,
+      "total": 1,
+      "pass_rate": 0.0,
+      "avg_llm_time": 30.84,
+      "avg_attempts": 3.0
+    },
+    "ffi-strlen": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 15.94,
+      "avg_attempts": 2.0
+    },
+    "tcp-connect": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 3.74,
+      "avg_attempts": 1.0
+    },
+    "hash-basic": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 6.4,
+      "avg_attempts": 1.0
+    },
+    "hash-invert": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 8.27,
+      "avg_attempts": 1.0
+    },
+    "word-freq": {
+      "passes": 0,
+      "total": 1,
+      "pass_rate": 0.0,
+      "avg_llm_time": 18.32,
+      "avg_attempts": 3.0
+    },
+    "contains-duplicate": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 8.15,
+      "avg_attempts": 1.0
+    },
+    "first-unique": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 11.22,
+      "avg_attempts": 1.0
+    },
+    "majority-element": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 6.6,
+      "avg_attempts": 1.0
+    },
+    "max-subarray": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 6.45,
+      "avg_attempts": 1.0
+    },
+    "unique-hash": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 13.75,
+      "avg_attempts": 1.0
+    },
+    "hash-stats": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 7.37,
+      "avg_attempts": 1.0
+    },
+    "json-roundtrip": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 7.61,
+      "avg_attempts": 1.0
+    },
+    "list-filter": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 8.0,
+      "avg_attempts": 1.0
+    },
+    "list-flatten": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 8.85,
+      "avg_attempts": 1.0
+    },
+    "list-foldl": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 4.19,
+      "avg_attempts": 1.0
+    },
+    "list-map": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 7.51,
+      "avg_attempts": 1.0
+    },
+    "list-partition": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 24.55,
+      "avg_attempts": 2.0
+    },
+    "list-range": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 11.18,
+      "avg_attempts": 1.0
+    },
+    "list-reverse": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 6.98,
+      "avg_attempts": 1.0
+    },
+    "list-zip": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 20.59,
+      "avg_attempts": 2.0
+    },
+    "compose-n": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 15.18,
+      "avg_attempts": 2.0
+    },
+    "fibonacci": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 5.49,
+      "avg_attempts": 1.0
+    },
+    "gcd-euclid": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 16.2,
+      "avg_attempts": 1.0
+    },
+    "letrec-fact": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 9.66,
+      "avg_attempts": 1.0
+    },
+    "linear-basic": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 8.16,
+      "avg_attempts": 1.0
+    },
+    "macro-definer": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 14.74,
+      "avg_attempts": 1.0
+    },
+    "memoize": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 18.43,
+      "avg_attempts": 1.0
+    },
+    "named-let": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 5.16,
+      "avg_attempts": 1.0
+    },
+    "occurrence": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 4.02,
+      "avg_attempts": 1.0
+    },
+    "is-anagram": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 7.91,
+      "avg_attempts": 1.0
+    },
+    "string-reverse": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 3.69,
+      "avg_attempts": 1.0
+    },
+    "string-split-join": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 2.58,
+      "avg_attempts": 1.0
+    },
+    "type-annot-chain": {
+      "passes": 0,
+      "total": 1,
+      "pass_rate": 0.0,
+      "avg_llm_time": 23.07,
+      "avg_attempts": 3.0
+    },
+    "type-annot-expr": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 44.84,
+      "avg_attempts": 3.0
+    },
+    "type-annot-fn": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 19.33,
+      "avg_attempts": 3.0
+    },
+    "type-annot-int": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 10.51,
+      "avg_attempts": 2.0
+    },
+    "type-blame-runtime": {
+      "passes": 0,
+      "total": 1,
+      "pass_rate": 0.0,
+      "avg_llm_time": 15.37,
+      "avg_attempts": 3.0
+    },
+    "type-boundary-call": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 5.53,
+      "avg_attempts": 1.0
+    },
+    "type-check": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 5.39,
+      "avg_attempts": 1.0
+    },
+    "type-coercion-if": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 5.24,
+      "avg_attempts": 1.0
+    },
+    "type-consistency": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 8.11,
+      "avg_attempts": 1.0
+    },
+    "type-gradual-boundary": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 10.2,
+      "avg_attempts": 1.0
+    },
+    "type-gradual-erasure": {
+      "passes": 0,
+      "total": 1,
+      "pass_rate": 0.0,
+      "avg_llm_time": 21.97,
+      "avg_attempts": 3.0
+    },
+    "type-higher-order": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 6.2,
+      "avg_attempts": 1.0
+    },
+    "type-let-poly": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 6.7,
+      "avg_attempts": 1.0
+    },
+    "type-linear": {
+      "passes": 0,
+      "total": 1,
+      "pass_rate": 0.0,
+      "avg_llm_time": 27.44,
+      "avg_attempts": 3.0
+    },
+    "type-multi-annot": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 27.67,
+      "avg_attempts": 2.0
+    },
+    "type-occurrence-float": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 14.53,
+      "avg_attempts": 2.0
+    },
+    "type-occurrence": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 10.42,
+      "avg_attempts": 1.0
+    },
+    "type-of": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 13.44,
+      "avg_attempts": 1.0
+    },
+    "type-ownership-linear": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 11.26,
+      "avg_attempts": 1.0
+    },
+    "type-pair-occurrence": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 7.45,
+      "avg_attempts": 1.0
+    },
+    "type-value-restriction": {
+      "passes": 1,
+      "total": 1,
+      "pass_rate": 100.0,
+      "avg_llm_time": 23.76,
+      "avg_attempts": 1.0
+    },
     "__meta__": {
-      "elapsed": 657.6
+      "elapsed": 1049.6
     }
   }
 }

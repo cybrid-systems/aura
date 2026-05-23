@@ -1,85 +1,171 @@
 # Aura EDSL Benchmark
 
-> 57 个 LLM 代码生成任务，覆盖基础语法、标准库、类型系统、C FFI、EDSL、TCP、递归算法、LeetCode 风格。
-> 自适应用迭代修正 + 执行轨迹反馈（PID 控制理论）。
+> 85 个 LLM 代码生成任务，覆盖基础语法、标准库、类型系统、C FFI、EDSL、TCP、递归算法、LeetCode 风格、ADT、线性所有权。
+> 自适应用迭代修正 + 执行轨迹反馈（PID 控制理论）+ 蚁群局部搜索。
 
-## Latest: 2026-05-22 — 3 模型对比 (max-attempts=3, 1 round)
+## Latest: 2026-05-23 — 3 模型对比 (max-attempts=3, 1 round)
 
-**架构变更：** 移除了 Scheme 兼容层（着力即差），模型被迫写纯正 Aura 代码。
-**编译器改进：** `<closure[N]>` → `#<procedure>`，错误消息自我赋值 bug 修复。
+**架构变更：** 测试任务从 57 扩展到 85，新增 28 个类型系统/ADT/线性所有权任务。
+**任务重组：** `test-*.aura` → `suite/*.aura`， `edsl_tasks/` → `tasks/<category>/`。
+**新增类型系统任务：** type-annot-chain, type-boundary-call, type-coercion-if, type-gradual-boundary, type-linear 等 15 个类型系统任务。
+**新增 M4 线性所有权任务：** type-linear.aura。
 
-| 模型 | 通过率 | 总耗时 | 失败任务 |
-|------|:-----:|:-----:|:--------|
-| 🥇 **Grok 4.3** | **57/57 (100%)** 🎯 | ~10min | — |
-| 🥈 **DeepSeek v4 Flash** | **54/57 (94.7%)** | ~10min | ffi-sqrt, ffi-strlen, edsl-set-code |
-| 🥉 **MiniMax-M2.7** | **53/57 (93.0%)** | ~15min | ffi-strlen, max-subarray, sieve, word-freq |
-| **Kimi k2.6** | **N/A** | — | Moonshot API 响应极慢，无法完成 |
+| 模型 | 任务数 | 通过率 | 总耗时 | 失败任务 |
+|------|:-----:|:-----:|:-----:|:--------|
+| 🥇 **Grok 4.3** | 85 | **77/85 (90.6%)** | ~17min | binary-search, merge-sort, ffi-sqrt, word-freq, type-annot-chain, type-blame-runtime, type-gradual-erasure, type-linear |
+| 🥈 **MiniMax M2.7** | 85 | **74/85 (87.1%)** | ~29min | adt-tree, adt-wildcard, binary-search, merge-sort, two-sum, ffi-strlen, hash-invert, max-subarray, type-annot-chain, type-annot-fn, type-blame-runtime |
+| 🥉 **DeepSeek v4 Flash** | 85 | **72/85 (84.7%)** | ~54min | adt-either, binary-search, merge-sort, ffi-sqrt, ffi-strlen, word-freq, type-annot-chain, type-annot-fn, type-blame-runtime, type-gradual-boundary, type-linear, type-multi-annot, type-occurrence-float |
 
-**环比上轮提升：** DeepSeek 51→54 (+3)，MiniMax 45→53 (+8)，Grok 54→57 (+3)。
-**共享失败清零** — 此前所有模型均失败的 `deep-equal`、`primes-list` 现全部通过。
-**遗留失败均为模型能力上限**（C FFI 类型声明、EDSLL JSON 解析、Clojure 风格代码）。
+**环比提升：** Grok 57→77 (+20)，DeepSeek 54→72 (+18)，MiniMax 53→74 (+21)。
+**共享失败：** `binary-search`、`merge-sort`、`type-annot-chain`、`type-blame-runtime` 三个模型均未通过。
+**新增类型系统任务** 是最大挑战——类型相关任务共 15 个，平均通过率仅 60%。
 
-### 逐任务对比
+### 逐任务对比（85 任务）
+
+#### basic
 
 | 任务 | DeepSeek | MiniMax | Grok |
 |------|:--------:|:-------:|:----:|
 | arith-basic | ✅ | ✅ | ✅ |
 | arith-chain | ✅ | ✅ | ✅ |
-| binary-search | ✅ | ✅ | ✅ |
+| lambda-simple | ✅ | ✅ | ✅ |
+| vector-ops | ✅ | ✅ | ✅ |
 | climbing-stairs | ✅ | ✅ | ✅ |
 | combinations | ✅ | ✅ | ✅ |
-| compose-n | ✅ | ✅ | ✅ |
-| contains-duplicate | ✅ | ✅ | ✅ |
-| deep-equal | ✅ | ✅ | ✅ |
-| edsl-mutate | ✅ | ✅ | ✅ |
-| edsl-query | ✅ | ✅ | ✅ |
-| edsl-set-code | ❌ | ✅ | ✅ |
-| ffi-sqrt | ❌ | ✅ | ✅ |
-| ffi-strlen | ❌ | ❌ | ✅ |
-| fibonacci | ✅ | ✅ | ✅ |
-| first-unique | ✅ | ✅ | ✅ |
-| gcd-euclid | ✅ | ✅ | ✅ |
-| hash-basic | ✅ | ✅ | ✅ |
-| hash-invert | ✅ | ✅ | ✅ |
-| hash-stats | ✅ | ✅ | ✅ |
-| is-anagram | ✅ | ✅ | ✅ |
-| json-roundtrip | ✅ | ✅ | ✅ |
-| lambda-simple | ✅ | ✅ | ✅ |
+| named-let | ✅ | ✅ | ✅ |
 | letrec-fact | ✅ | ✅ | ✅ |
-| list-filter | ✅ | ✅ | ✅ |
-| list-flatten | ✅ | ✅ | ✅ |
-| list-foldl | ✅ | ✅ | ✅ |
+| fibonacci | ✅ | ✅ | ✅ |
+
+#### list
+
+| 任务 | DeepSeek | MiniMax | Grok |
+|------|:--------:|:-------:|:----:|
 | list-map | ✅ | ✅ | ✅ |
-| list-partition | ✅ | ✅ | ✅ |
+| list-filter | ✅ | ✅ | ✅ |
+| list-foldl | ✅ | ✅ | ✅ |
 | list-range | ✅ | ✅ | ✅ |
 | list-reverse | ✅ | ✅ | ✅ |
 | list-zip | ✅ | ✅ | ✅ |
-| macro-definer | ✅ | ✅ | ✅ |
-| majority-element | ✅ | ✅ | ✅ |
-| max-subarray | ✅ | ❌ | ✅ |
-| memoize | ✅ | ✅ | ✅ |
-| merge-sort | ✅ | ✅ | ✅ |
-| merge-sorted | ✅ | ✅ | ✅ |
-| named-let | ✅ | ✅ | ✅ |
-| occurrence | ✅ | ✅ | ✅ |
-| palindrome | ✅ | ✅ | ✅ |
+| list-partition | ✅ | ✅ | ✅ |
+| list-flatten | ✅ | ✅ | ✅ |
+
+#### recursion
+
+| 任务 | DeepSeek | MiniMax | Grok |
+|------|:--------:|:-------:|:----:|
+| gcd-euclid | ✅ | ✅ | ✅ |
 | prime-test | ✅ | ✅ | ✅ |
 | primes-list | ✅ | ✅ | ✅ |
 | quicksort | ✅ | ✅ | ✅ |
 | reverse-list | ✅ | ✅ | ✅ |
-| sieve | ✅ | ❌ | ✅ |
+| sieve | ✅ | ✅ | ✅ |
+| tree-dfs | ✅ | ✅ | ✅ |
+| two-sum | ✅ | ❌ | ✅ |
+
+#### algorithm
+
+| 任务 | DeepSeek | MiniMax | Grok |
+|------|:--------:|:-------:|:----:|
+| binary-search | ❌ | ❌ | ❌ |
+| merge-sort | ❌ | ❌ | ❌ |
+| merge-sorted | ✅ | ✅ | ✅ |
+| deep-equal | ✅ | ✅ | ✅ |
+| majority-element | ✅ | ✅ | ✅ |
+| max-subarray | ✅ | ❌ | ✅ |
+| palindrome | ✅ | ✅ | ✅ |
+| table-lookup | ✅ | ✅ | ✅ |
+| valid-parens | ✅ | ✅ | ✅ |
+| compose-n | ✅ | ✅ | ✅ |
+
+#### hash
+
+| 任务 | DeepSeek | MiniMax | Grok |
+|------|:--------:|:-------:|:----:|
+| hash-basic | ✅ | ✅ | ✅ |
+| hash-invert | ✅ | ❌ | ✅ |
+| hash-stats | ✅ | ✅ | ✅ |
+| unique-hash | ✅ | ✅ | ✅ |
+| word-freq | ❌ | ✅ | ❌ |
+
+#### string
+
+| 任务 | DeepSeek | MiniMax | Grok |
+|------|:--------:|:-------:|:----:|
 | string-reverse | ✅ | ✅ | ✅ |
 | string-split-join | ✅ | ✅ | ✅ |
-| table-lookup | ✅ | ✅ | ✅ |
-| tcp-connect | ✅ | ✅ | ✅ |
-| tree-dfs | ✅ | ✅ | ✅ |
-| two-sum | ✅ | ✅ | ✅ |
-| type-check | ✅ | ✅ | ✅ |
+| is-anagram | ✅ | ✅ | ✅ |
+| contains-duplicate | ✅ | ✅ | ✅ |
+| first-unique | ✅ | ✅ | ✅ |
+
+#### adt
+
+| 任务 | DeepSeek | MiniMax | Grok |
+|------|:--------:|:-------:|:----:|
+| adt-either | ❌ | ✅ | ✅ |
+| adt-multi-ctor | ✅ | ✅ | ✅ |
+| adt-option | ✅ | ✅ | ✅ |
+| adt-tree | ✅ | ❌ | ✅ |
+| adt-wildcard | ✅ | ❌ | ✅ |
+
+#### type
+
+| 任务 | DeepSeek | MiniMax | Grok |
+|------|:--------:|:-------:|:----:|
 | type-of | ✅ | ✅ | ✅ |
-| unique-hash | ✅ | ✅ | ✅ |
-| valid-parens | ✅ | ✅ | ✅ |
-| vector-ops | ✅ | ✅ | ✅ |
-| word-freq | ✅ | ❌ | ✅ |
+| type-check | ✅ | ✅ | ✅ |
+| type-occurrence | ✅ | ✅ | ✅ |
+| type-occurrence-float | ❌ | ✅ | ✅ |
+| type-pair-occurrence | ✅ | ✅ | ✅ |
+| type-value-restriction | ✅ | ✅ | ✅ |
+| type-annot-chain | ❌ | ❌ | ❌ |
+| type-annot-fn | ❌ | ❌ | ✅ |
+| type-blame-runtime | ❌ | ❌ | ❌ |
+| type-gradual-boundary | ❌ | ✅ | ✅ |
+| type-gradual-erasure | ✅ | ✅ | ❌ |
+| type-linear | ❌ | ✅ | ❌ |
+| type-multi-annot | ❌ | ✅ | ✅ |
+| type-ownership-linear | ✅ | ✅ | ✅ |
+| type-coercion-if | ✅ | ✅ | ✅ |
+
+#### coercion
+
+| 任务 | DeepSeek | MiniMax | Grok |
+|------|:--------:|:-------:|:----:|
+| coerce-bool-int | ✅ | ✅ | ✅ |
+| coerce-float-int | ✅ | ✅ | ✅ |
+| coerce-int-string | ✅ | ✅ | ✅ |
+
+#### edsl
+
+| 任务 | DeepSeek | MiniMax | Grok |
+|------|:--------:|:-------:|:----:|
+| edsl-mutate | ✅ | ✅ | ✅ |
+| edsl-query | ✅ | ✅ | ✅ |
+| edsl-set-code | ✅ | ✅ | ✅ |
+
+#### json + ffi
+
+| 任务 | DeepSeek | MiniMax | Grok |
+|------|:--------:|:-------:|:----:|
+| json-roundtrip | ✅ | ✅ | ✅ |
+| ffi-sqrt | ❌ | ✅ | ❌ |
+| ffi-strlen | ❌ | ❌ | ✅ |
+
+#### other
+
+| 任务 | DeepSeek | MiniMax | Grok |
+|------|:--------:|:-------:|:----:|
+| linear-basic | ✅ | ✅ | ✅ |
+| macro-definer | ✅ | ✅ | ✅ |
+| memoize | ✅ | ✅ | ✅ |
+| occurrence | ✅ | ✅ | ✅ |
+| tcp-connect | ✅ | ✅ | ✅ |
+| type-annot-expr | ✅ | ✅ | ✅ |
+| type-annot-int | ✅ | ✅ | ✅ |
+| type-boundary-call | ✅ | ✅ | ✅ |
+| type-consistency | ✅ | ✅ | ✅ |
+| type-higher-order | ✅ | ✅ | ✅ |
+| type-let-poly | ✅ | ✅ | ✅ |
 
 ### 架构
 
@@ -111,14 +197,35 @@ serve client (CaaS)
 
 ### 任务列表
 
-57 个任务，覆盖 9 个能力域：
+85 个任务，来自 13 个分类子目录 `tests/tasks/<category>/`：
 
-- **基础 (12)**: arith-basic, arith-chain, lambda-simple, letrec-fact, named-let, string-reverse, string-split-join, type-check, type-of, occurrence, ffi-sqrt, ffi-strlen
-- **列表 (11)**: list-range, list-filter, list-map, list-foldl, list-reverse, list-zip, list-partition, list-flatten, unique-hash, merge-sort, binary-search
-- **哈希 (8)**: hash-basic, hash-stats, word-freq, palindrome, hash-invert, table-lookup, json-roundtrip, memoize
-- **递归算法 (8)**: prime-test, primes-list, fibonacci, gcd-euclid, combinations, quicksort, sieve, tree-dfs
-- **高阶/系统 (8)**: compose-n, deep-equal, macro-definer, tcp-connect, vector-ops, edsl-set-code, edsl-query, edsl-mutate
-- **LeetCode (10)**: two-sum, reverse-list, valid-parens, max-subarray, contains-duplicate, merge-sorted, climbing-stairs, majority-element, first-unique, is-anagram
+| 分类 | 子目录 | 说明 |
+|------|--------|------|
+| **类型系统** | `type/` | type-annot, type-blame, type-coercion, type-gradual, type-linear 等 |
+| **ADT** | `adt/` | define-type, match, variant 类型推断 |
+| **基础** | `basic/` | arith, lambda, vector |
+| **列表/集合** | `list/` | filter, map, foldl, range, sort 等 |
+| **哈希** | `hash/` | hash-basic, word-freq, hash-invert 等 |
+| **哈希算法** | `hash-algo/` | 哈希算法任务 |
+| **递归算法** | `recursion/` | fib, gcd, quicksort, sieve 等 |
+| **算法** | `algorithm/` | merge-sort, binary-search, deep-equal 等 |
+| **字符串** | `string/` | string-reverse, string-split-join 等 |
+| **C FFI** | `ffi/` | sqrt, strlen, 外部函数调用 |
+| **EDSL** | `edsl/` | query, mutate, set-code |
+| **JSON** | `json/` | json-roundtrip 等 |
+
+### 运行模式
+
+```
+  --rounds N       每个任务跑 N 轮独立 LLM 调用 (默认 1)
+  --fix            Python 手动 LLM 调用 + 迭代修正
+  --intend         原生 (intend ...) C++ 原语迭代修正
+  --max-attempts N 每任务每轮最多 LLM 调用次数 (默认 3)
+  --json           结构化 JSON 输出
+  --trace          输出失败任务的详细诊断
+  --tasks X,Y,Z    只运行指定的任务 (逗号分隔)
+  --failed         只运行已知失败的任务
+```
 
 ### 运行
 
@@ -137,6 +244,15 @@ python3 tests/run_bench_all.py
 
 # 手动多模型
 LLM_MODEL=deepseek-v4-flash,minimax-m2.7 LLM_API_KEY="***" python3 tests/edsl_benchmark.py --json
+
+# 单轮 + 迭代修正 (推荐)
+LLM_API_KEY="***" python3 tests/edsl_benchmark.py --fix --max-attempts 5
+
+# 多轮聚合
+LLM_API_KEY="***" python3 tests/edsl_benchmark.py --rounds 3
+
+# 多模型 + 多轮
+LLM_MODEL=deepseek-v4-flash,gpt-4o LLM_API_KEY="***" python3 tests/edsl_benchmark.py --rounds 3
 ```
 
 ### 修复详情
@@ -146,84 +262,58 @@ LLM_MODEL=deepseek-v4-flash,minimax-m2.7 LLM_API_KEY="***" python3 tests/edsl_be
 - **tcp-connect 超时**: 非阻塞 connect() + poll() 8s 超时
 - **EDSL 单次 exec**: `(set-code ...) + (mutate:rebind ...) + (eval-current)` 一次调用
 - **parser 报错增强**: 包含 `expected expression, got ')'` 等详细信息
+- **编译器报错修复**: `<closure[N]>` → `#<procedure>`；`with_suggestion` 自我赋值 bug
+- **Scheme 兼容层移除**: 着力即差 — 删除 serve 注册 + 字符串替换，模型被迫写纯正 Aura
 
-## 运行模式
+## 测试套件
+
+| 套件 | 数量 | 说明 |
+|------|:----:|------|
+| Integ (build.py) | 118 | 综合集成测试 |
+| Bash regression | 106 | Shell 回归测试 |
+| Benchmark (LLM) | 85 | EDSL 代码生成任务 |
+| Smoke | 5 | 快速冒烟测试 |
+| Regression | 6 | 已知 bug 回归 |
+| Gradual guarantee | 10+ | 渐进保证测试 |
+| Fuzz | 46/47 | LLM 驱动 fuzz |
+| **suite/typesystem.aura** | **11 test-suite 节** | 类型系统单元测试 |
+| **suite/stdlib.aura** | 多节 | 标准库测试 |
+| **suite/edsl.aura** | 多节 | EDSL 测试 |
+| **suite/macros.aura** | 多节 | 宏系统测试 |
+| **suite/module.aura** | 多节 | 模块系统测试 |
+| **suite/core.aura** | 多节 | 核心功能测试 |
+
+### 测试架构
 
 ```
-  --rounds N       每个任务跑 N 轮独立 LLM 调用 (默认 1)
-  --fix            Python 手动 LLM 调用 + 迭代修正
-  --intend         原生 (intend ...) C++ 原语迭代修正
-  --max-attempts N 每任务每轮最多 LLM 调用次数 (默认 3)
-  --json           结构化 JSON 输出
-  --trace          输出失败任务的详细诊断
-  --tasks X,Y,Z    只运行指定的任务 (逗号分隔)
-  --failed         只运行已知失败的任务
+tests/
+├── tasks/              ← EDSL benchmark 任务定义 (85个)
+│   ├── basic/          基础
+│   ├── adt/            ADT 类型推断
+│   ├── type/           类型系统
+│   ├── coercion/       Coercion 测试
+│   ├── algorithm/      算法
+│   ├── recursion/      递归
+│   ├── hash/           哈希表
+│   ├── hash-algo/      哈希算法
+│   ├── list/           列表
+│   ├── string/         字符串
+│   ├── edsl/           EDSL 操作
+│   ├── json/           JSON
+│   └── ffi/            C FFI
+├── suite/              ← 回归测试套件
+│   ├── core.aura
+│   ├── stdlib.aura
+│   ├── typesystem.aura
+│   ├── edsl.aura
+│   ├── errors.aura
+│   ├── macros.aura
+│   ├── module.aura
+│   ├── intent.aura
+│   └── run-tests.aura
+├── edsl_benchmark.py   ← EDSL benchmark runner
+└── run_bench_all.py    ← 多模型对比
 ```
-
-#### 任务列表
-
-57 个任务，4 个难度等级 + 扩展：
-
-##### 基础 (12)
-`arith-basic`, `arith-chain`, `lambda-simple`, `letrec-fact`, `named-let`,
-`string-reverse`, `string-split-join`, `type-check`, `type-of`,
-`occurrence`, `ffi-sqrt`, `ffi-strlen`
-
-##### 列表/集合 (11)
-`list-range`, `list-filter`, `list-map`, `list-foldl`, `list-reverse`,
-`list-zip`, `list-partition`, `list-flatten`, `unique-hash`,
-`merge-sort`, `binary-search`
-
-##### 哈希/字符串 (8)
-`hash-basic`, `hash-stats`, `word-freq`, `palindrome`,
-`hash-invert`, `table-lookup`, `json-roundtrip`, `memoize`
-
-##### 递归/算法 (8)
-`prime-test`, `primes-list`, `fibonacci`, `gcd-euclid`,
-`combinations`, `quicksort`, `sieve`, `tree-dfs`
-
-##### 高阶/系统 (8)
-`compose-n`, `deep-equal`, `macro-definer`, `tcp-connect`,
-`vector-ops`, `edsl-set-code`, `edsl-query`, `edsl-mutate`
-
-##### LeetCode 风格 (10)
-`two-sum`, `reverse-list`, `valid-parens`, `max-subarray`,
-`contains-duplicate`, `merge-sorted`, `climbing-stairs`,
-`majority-element`, `first-unique`, `is-anagram`
-
-## 运行
-
-```bash
-# 单轮单次
-LLM_API_KEY="..." python3 tests/edsl_benchmark.py
-
-# 单轮 + 迭代修正 (推荐)
-LLM_API_KEY="..." python3 tests/edsl_benchmark.py --fix --max-attempts 5
-
-# 原生 intend 模式
-LLM_API_KEY="..." python3 tests/edsl_benchmark.py --intend
-
-# 只跑失败任务
-LLM_API_KEY="..." python3 tests/edsl_benchmark.py --intend --failed
-
-# 多模型对比
-LLM_MODEL=deepseek-v4-flash,minimax-m2.7 LLM_API_KEY="..." python3 tests/edsl_benchmark.py --fix --max-attempts 5
-
-# 多模型 + 多轮聚合
-LLM_MODEL=deepseek-v4-flash,gpt-4o LLM_API_KEY="..." python3 tests/edsl_benchmark.py --rounds 3
-```
-
-### 修复详情
-
-**根因**: `tests/edsl_benchmark.py` 的 `extract_code()` 函数中
-`re.sub(r'<[^>]+>', ...)` 正则把 Aura 代码里的比较操作符（`<`, `>`）当 XML 标签误删。
-修正循环喂给 LLM 的是残缺代码，LLM 无法据此修复。
-
-**修复**: 改为 `re.sub(r'</?\\w[^>]*>', ...)`，只匹配标签名以字母开头的真正 XML/HTML 标签，
-保留 `<`, `>` 比较操作符。
-
-**副作用**: 同时改善了 parser 报错信息（`parse error at line 1:1: expected expression, got identifier '...'`）
-和修正 prompt 按错误类型分诊。
 
 ## Fuzz 测试
 
