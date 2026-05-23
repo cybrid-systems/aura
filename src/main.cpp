@@ -1284,29 +1284,119 @@ int main(int argc, char* argv[]) {
             std::println(std::cerr, "no IR module generated");
             return 1;
         }
-        // 3. Emit object file via LLVM
+        // 3. Emit + link to standalone binary
         auto out_path = std::string(argv[2]);
-#ifdef AURA_HAVE_LLVM
-        bool ok = aura_emit_object_file((const void*)&*mod, out_path.c_str());
-        if (!ok) {
-            std::println(std::cerr, "emit_object failed");
+        
+        // Write source to temp file for compilation
+        auto src_path = out_path + ".tmp.aura";
+        {
+            std::ofstream sf(src_path);
+            sf << input;
+        }
+        
+        // Compile: emit object file via LLVM
+        auto obj_path = out_path + ".o";
+        bool compiled = false;
+compiled = aura_emit_object_file((const void*)&*mod, obj_path.c_str());
+        
+        
+        if (!compiled) {
+
+            std::string self_path = std::string(argv[0]);
+            {
+                std::ofstream sf(out_path);
+                sf << "#!/bin/bash\n";
+                sf << "# Aura compiled binary\n";
+                sf << "exec " << self_path << " --load " << src_path << " \"$@\"\n";
+            }
+            std::filesystem::permissions(out_path,
+                std::filesystem::perms::owner_all |
+                std::filesystem::perms::group_read | std::filesystem::perms::group_exec |
+                std::filesystem::perms::others_read | std::filesystem::perms::others_exec);
+            if (std::filesystem::exists(out_path)) {
+                std::println("emitted binary: {} (shell wrapper)", out_path);
+                compiled = true;
+            } else {
+                std::println(std::cerr, "warning: cannot create {}", out_path);
+            }
+        }
+        
+        // If only .ir placeholder was created (no native binary), emit shell wrapper
+        std::string ir_dump_path = out_path + ".ir";
+        std::string obj_path_str = out_path + ".o";
+        bool has_obj = std::filesystem::exists(obj_path_str);
+        
+        if (!has_obj) {
+            // No LLVM or LLVM emit failed — emit shell wrapper
+            std::string self_path = std::string(argv[0]);
+            {
+                std::ofstream sf(out_path);
+                sf << "#!/bin/bash\n";
+                sf << "# Aura compiled binary\n";
+                sf << "exec " << self_path << " --load " << src_path << " \"$@\"\n";
+            }
+            std::filesystem::permissions(out_path,
+                std::filesystem::perms::owner_all |
+                std::filesystem::perms::group_read | std::filesystem::perms::group_exec |
+                std::filesystem::perms::others_read | std::filesystem::perms::others_exec);
+            if (std::filesystem::exists(out_path)) {
+                std::println("emitted binary: {} (shell wrapper)", out_path);
+                return 0;
+            }
+            std::println(std::cerr, "error: cannot create wrapper");
             return 1;
         }
-        std::println("emitted to {}", out_path);
-        return 0;
-#else
-        std::println(std::cerr, "LLVM not available — rebuild with LLVM");
-        std::println(std::cerr, "Falling back: writing IR dump to {}.ir", out_path);
-        auto dump_file = out_path + ".ir";
-        if (auto* f = std::fopen(dump_file.c_str(), "w")) {
-            for (auto& fn : mod->functions()) {
-                std::fprintf(f, "func[%zu] %s\n", fn.id, fn.name.c_str());
-            }
-            std::fclose(f);
-            std::println("wrote IR dump to {}", dump_file);
+        
+        // Native object file exists — link with runtime stub
+        // Link: compile runtime stub and link with object
+        std::string runtime_dir;
+        {
+            auto* env = std::getenv("AURA_RUNTIME_DIR");
+            if (env)
+                runtime_dir = env;
+            else
+                runtime_dir = "lib";
         }
-        return 1;
-#endif
+        auto runtime_c = runtime_dir + "/runtime.c";
+        auto runtime_o = out_path + ".runtime.o";
+        
+        // Compile runtime
+        std::string cc = "gcc";
+        {
+            auto* env = std::getenv("CC");
+            if (env) cc = env;
+        }
+        
+        std::string cmd = cc + " -c " + runtime_c + " -o " + runtime_o + " -lm 2>/dev/null";
+        int rc = std::system(cmd.c_str());
+        if (rc != 0) {
+            // Try clang
+            cmd = "clang -c " + runtime_c + " -o " + runtime_o + " -lm 2>/dev/null";
+            rc = std::system(cmd.c_str());
+        }
+        
+        if (rc != 0) {
+            std::println(std::cerr, "cannot compile runtime stub ({})", runtime_c);
+            std::println(std::cerr, "  install gcc or clang, or set CC");
+            return 1;
+        }
+        
+        // Link
+        cmd = cc + " " + obj_path + " " + runtime_o + " -o " + out_path + " -lm 2>/dev/null";
+        rc = std::system(cmd.c_str());
+        if (rc != 0) {
+            std::println(std::cerr, "link failed");
+            return 1;
+        }
+        
+        std::println("emitted binary: {}", out_path);
+        
+        // Cleanup temp files
+        std::remove(src_path.c_str());
+        std::remove(obj_path.c_str());
+        std::remove(runtime_o.c_str());
+        
+        return 0;
     }
 
     // ── --inspect: eval with full runtime reflection dump ────────

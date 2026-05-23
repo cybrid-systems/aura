@@ -644,10 +644,7 @@ bool emit_object_module(void* ir_module, const std::string& out_path) {
     if (!ir_module)
         return false;
     auto& mod = *static_cast<aura::ir::IRModule*>(ir_module);
-#if AURA_HAVE_LLVM
-    // Full LLVM codegen to .o
-    // Future: use LLVM TargetMachine::addPassesToEmitFile
-    // For now: dump IR for debugging
+    // Dump IR as placeholder
     if (auto* f = std::fopen((out_path + ".ir").c_str(), "w")) {
         for (auto& fn : mod.functions()) {
             std::fprintf(f, "func[%zu] %s\n", fn.id, fn.name.c_str());
@@ -656,16 +653,6 @@ bool emit_object_module(void* ir_module, const std::string& out_path) {
         return true;
     }
     return false;
-#else
-    if (auto* f = std::fopen((out_path + ".ir").c_str(), "w")) {
-        for (auto& fn : mod.functions()) {
-            std::fprintf(f, "func[%zu] %s\n", fn.id, fn.name.c_str());
-        }
-        std::fclose(f);
-        return true;
-    }
-    return false;
-#endif
 }
 
 } // namespace aura::jit
