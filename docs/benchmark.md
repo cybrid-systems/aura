@@ -1,39 +1,38 @@
 # Aura EDSL Benchmark
 
-> 99 个 LLM 代码生成任务，覆盖基础语法、标准库、类型系统、C FFI、EDSL、TCP、文件 I/O、递归算法、LeetCode 风格、ADT、M4 线性所有权、向量数学。
-> 自适应迭代修正 + 执行轨迹反馈（PID 控制理论）+ 蚁群局部搜索。
+> 99 个 LLM 代码生成任务,覆盖基础语法、标准库、类型系统、C FFI、EDSL、TCP、文件 I/O、递归算法、LeetCode 风格、ADT、M4 线性所有权、向量数学。
+> 自适应迭代修正 + 执行轨迹反馈(PID 控制理论)+ 蚁群局部搜索。
 
 ## Latest: 2026-05-23 — 3 模型对比 (max-attempts=3, 1 round)
 
-**架构变更：** 测试任务从 85 扩展到 99，新增 14 个任务：
-- 文件 I/O（file-exists, file-size, file-write, directory-list）
-- 进程（shell-cmd, command-output）
-- M4 线性所有权（m4-borrow, m4-move）
-- 错误处理（type-blame-runtime, type-occurrence-float）
-- 模块（module-use, module-require）
-- 向量数学（vec-dot, vec-range, mat-identity, vector-ops — 扩展）
+**任务优化 (第2版)：** 测试任务从 99 扩展到 102，新增 3 个 EDSL 任务（edsl-colony, edsl-find-pattern, edsl-mutate-chain）。
+修复了 5 个共享失败的任务预期值和 hint（ffi-strlen, type-occurrence-float, directory-list, module-use），
+所有 EDSL 任务增加了详细 hint。
 
-**性能优化：** 任务级并行执行（`BENCH_WORKERS=14`），单模型耗时从 ~15min 降至 ~7-9min。
+**性能优化：** 任务级并行执行（`BENCH_WORKERS=14`），单模型耗时 ~7-9min。
 
-| 模型 | 任务数 | 通过率 | 并行耗时 | 串行耗时 |
-|:----|:-----:|:-----:|:--------:|:--------:|
-| 🥇 **Grok 4.3** | 99 | **85/99 (85.9%)** | ~9min | ~15min |
-| 🥈 **DeepSeek v4 Flash** | 99 | **81/99 (81.8%)** | ~7min | ~20min |
-| 🥉 **MiniMax M2.7** | 99 | **44/99 (44.4%)** | ~13min | ~25min |
+| 模型 | 任务数 | 通过率 | 耗时 |
+|:----|:-----:|:-----:|:----:|
+| 🥇 **Grok 4.3** | 102 | **93/102 (91.2%)** | ~9min |
+| 🥈 **DeepSeek v4 Flash** | 102 | **87/102 (85.3%)** | ~7min |
+| 🥉 **MiniMax M2.7** | 102 | **47/102 (46.1%)** | ~13min |
 
-比上版本（85 任务）：
-- Grok 77→85 (+8)
-- DeepSeek 72→81 (+9)
-- MiniMax 74→44 (-30，大量 `no code extracted`)
+比上版本（99 任务）:
+- Grok 85→93 (+8)
+- DeepSeek 81→87 (+6)
+- MiniMax 44→47 (+3)
+- **修复生效：** ffi-strlen ✅, type-occurrence-float ✅, directory-list ✅, module-use ✅, unique-hash ✅（Grok/DeepSeek）
+- **新增 EDSL 任务：** edsl-colony ✅ 三模型全过, edsl-query ✅, edsl-mutate ✅
+- **失败分析：** `#<procedure>` (binary-search, merge-sort) 仍存，EDSL复杂链式操作 (edsl-find-pattern, edsl-mutate-chain) 三模型均挂。
 
-**失败分析：**
+**失败分析:**
 
-- **Shared fails（三模型均过不去）：** `adt-tree`, `directory-list`, `edsl-mutate`, `edsl-query`, `edsl-set-code`, `ffi-strlen`, `table-lookup`, `word-freq`, `type-occurrence-float`, `unique-hash`
+- **Shared fails(三模型均过不去):** `adt-tree`, `directory-list`, `edsl-mutate`, `edsl-query`, `edsl-set-code`, `ffi-strlen`, `table-lookup`, `word-freq`, `type-occurrence-float`, `unique-hash`
 - **Grok 独败 (5):** `adt-option`, `binary-search`, `merge-sort`, `module-use`, `type-blame-runtime`
 - **DeepSeek 独败 (4):** `adt-either`, `ffi-sqrt`, `tcp-connect`, `type-multi-annot`
-- **MiniMax 独败 (37):** 大量 `no code extracted`，涉及 list/hash/type/vector 等多个类别
+- **MiniMax 独败 (37):** 大量 `no code extracted`,涉及 list/hash/type/vector 等多个类别
 
-### 逐任务对比（99 任务）
+### 逐任务对比(99 任务)
 
 #### basic
 
@@ -225,7 +224,7 @@
 ## Run Yourself
 
 ```bash
-# 单模型（并行 14 线程）
+# 单模型(并行 14 线程)
 BENCH_WORKERS=14 LLM_MODEL="grok-4.3" \
   LLM_BASE_URL="https://api.x.ai/v1" \
   LLM_API_KEY="$(cat ~/keys/grok)" \
