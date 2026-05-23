@@ -674,7 +674,7 @@ void Evaluator::init_pair_primitives() {
         return make_pair(id);
     });
     primitives_.add("car", [this](const auto& a) {
-        if (!is_pair(a[0])) {
+        if (a.empty() || !is_pair(a[0])) {
             do {
                 auto __e_sidx = string_heap_.size();
                 string_heap_.push_back("car: not a pair");
@@ -687,7 +687,7 @@ void Evaluator::init_pair_primitives() {
         return id < pairs_.size() ? pairs_[id].car : make_int(0);
     });
     primitives_.add("cdr", [this](const auto& a) {
-        if (!is_pair(a[0])) {
+        if (a.empty() || !is_pair(a[0])) {
             do {
                 auto __e_sidx = string_heap_.size();
                 string_heap_.push_back("cdr: not a pair");
@@ -7174,6 +7174,9 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
         }
     } catch (const std::bad_alloc& e) {
         return std::unexpected(Diagnostic{ErrorKind::InternalError, "out of memory"});
+    } catch (const std::out_of_range& e) {
+        return std::unexpected(Diagnostic{ErrorKind::InternalError,
+            std::format("argument out of range: {}", e.what())});
     } catch (const std::bad_variant_access& e) {
         return std::unexpected(Diagnostic{
             ErrorKind::TypeError,
