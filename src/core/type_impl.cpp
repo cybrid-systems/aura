@@ -217,4 +217,19 @@ std::string TypeRegistry::format_type(TypeId id) const {
     }
 }
 
+void TypeRegistry::register_adt_constructors(TypeId type_id,
+                                              std::vector<std::string> constructors) {
+    if (type_id.valid() && type_id.index < entries_.size()) {
+        entries_[type_id.index].adt_constructors = std::move(constructors);
+    }
+}
+
+const std::vector<std::string>* TypeRegistry::get_adt_constructors(TypeId type_id) const {
+    if (type_id.valid() && type_id.index < entries_.size() &&
+        entries_[type_id.index].adt_constructors.has_value()) {
+        return &(*entries_[type_id.index].adt_constructors);
+    }
+    return nullptr;
+}
+
 } // namespace aura::core

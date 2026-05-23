@@ -6692,6 +6692,39 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         auto vv = eval_flat(*f, *p, val_id, eval_env);
                         if (!vv)
                             return vv;
+
+                        // ── Match exhaustiveness check (tree-walker path) ──
+                        if (!rec && type_registry_ && f->has_match_info(current_id)) {
+                            auto* minfo = f->get_match_info(current_id);
+                            if (minfo && !minfo->has_wildcard && !minfo->used_constructors.empty()) {
+                                auto& treg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
+                                // Get first constructor name to find ADT
+                                auto first_ctor = std::string(p->resolve(minfo->used_constructors[0]));
+                                for (std::size_t ti = 0; ti < treg.size(); ++ti) {
+                                    auto tid = aura::core::TypeId{static_cast<std::uint32_t>(ti), 1};
+                                    auto* ctors = treg.get_adt_constructors(tid);
+                                    if (!ctors) continue;
+                                    auto it = std::find(ctors->begin(), ctors->end(), first_ctor);
+                                    if (it != ctors->end()) {
+                                        for (auto& expected_ctor : *ctors) {
+                                            auto found = std::find_if(
+                                                minfo->used_constructors.begin(),
+                                                minfo->used_constructors.end(),
+                                                [&](aura::ast::SymId sid) {
+                                                    return std::string(p->resolve(sid)) == expected_ctor;
+                                                });
+                                            if (found == minfo->used_constructors.end()) {
+                                                std::println(std::cerr,
+                                                    "match warning: unhandled constructor '{}' in {}",
+                                                    expected_ctor, treg.name_of(tid));
+                                            }
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
                         auto& me = const_cast<Env&>(eval_env);
                         me.set_cells(&cells_);
                         auto ci = cells_.size();

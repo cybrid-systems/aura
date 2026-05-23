@@ -128,12 +128,7 @@ export class InferenceEngine {
     OwnershipEnv ownership_env_;
     aura::diag::SourceLocation cur_loc_; // location of expression being checked
 
-    // ── ADT constructor registry (for match exhaustiveness) ──
-    // Maps type name → list of constructor names
-    struct ADTInfo {
-        std::vector<std::string> constructors;
-    };
-    std::unordered_map<std::string, ADTInfo> adt_registry_;
+    // ADT constructors are looked up via TypeRegistry::get_adt_constructors()
 public:
     InferenceEngine(aura::core::TypeRegistry& reg, aura::diag::DiagnosticCollector& diag);
 

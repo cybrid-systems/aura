@@ -122,6 +122,7 @@ public:
     using ModuleLoadedFn = std::function<void(const std::string& source, const std::string& path)>;
 
     void set_module_loaded_callback(ModuleLoadedFn cb) { module_loaded_cb_ = std::move(cb); }
+    void set_type_registry(void* reg) { type_registry_ = reg; }
 
 private:
     ClosureId next_id() { return next_id_++; }

@@ -92,6 +92,7 @@ public:
     CompilerService()
         : user_bindings_{"#t", "#f", "nil"} {
         evaluator_.set_arena(&arena_);
+        evaluator_.set_type_registry(&type_registry_);
         // Cache module defines in IR after each import (incl. recursive fns)
         evaluator_.set_module_loaded_callback(
             [this](const std::string& content, const std::string& path) {
@@ -277,7 +278,14 @@ public:
         // Compile-time AST validation (structural correctness)
         validate_ast(*flat_ptr, *pool_ptr, expanded_root);
 
-        // Check if we need the tree-walker fallback
+        // Register ADT constructors from define-type forms (for match exhaustiveness)
+        register_adt_from_define_types(*flat_ptr, *pool_ptr, expanded_root);
+
+        // Collect match clause metadata on expanded flat (post-macro-expansion,
+        // where node IDs are stable for the type checker and tree-walker)
+        collect_match_info(*flat_ptr, *pool_ptr, expanded_root);
+
+                // Check if we need the tree-walker fallback
         if (needs_tree_walker_fallback(*flat_ptr, *pool_ptr, expanded_root)) {
             auto result =
                 evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
@@ -305,9 +313,11 @@ public:
                                           diags);
             bool has_type_error = false;
             for (auto& d : diags.diagnostics()) {
-                if (d.kind == aura::diag::ErrorKind::TypeError) {
-                    std::println(std::cerr, "type warning: {}", d.format());
-                    has_type_error = true;
+                if (d.kind == aura::diag::ErrorKind::TypeError ||
+                    d.kind == aura::diag::ErrorKind::Note) {
+                    std::println(std::cerr, "type: {}", d.format());
+                    if (d.kind == aura::diag::ErrorKind::TypeError)
+                        has_type_error = true;
                 }
             }
             if (strict_mode_ && has_type_error) {
@@ -1932,6 +1942,108 @@ private:
                 std::println("syntax: {}:{}: {}", loc.line, loc.col, n.message);
             }
         }
+    }
+
+    // ── Register ADT constructors in TypeRegistry (for match exhaustiveness) ──
+    // ── Re-collect match clause metadata from expanded AST (stable node IDs) ──
+    // The parser stores match_info on pre-expansion IDs. Macro expansion may shift
+    // node IDs, so we re-derive match info from the expanded flat here.
+    void collect_match_info(aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
+                            aura::ast::NodeId root) {
+        auto is_ignore_name = [&](aura::ast::SymId sid) -> bool {
+            if (sid == aura::ast::INVALID_SYM) return true;
+            auto n = pool.resolve(sid);
+            return n == "_" || (n.size() > 1 && n[0] == '_');
+        };
+        auto extract_ctor = [&](aura::ast::NodeId nid, auto& minfo) -> void {
+            if (nid >= flat.size()) return;
+            auto nv = flat.get(nid);
+            if (nv.tag == aura::ast::NodeTag::Call && !nv.children.empty()) {
+                auto callee_v = flat.get(nv.child(0));
+                if (callee_v.tag == aura::ast::NodeTag::Variable &&
+                    !is_ignore_name(callee_v.sym_id) && nv.children.size() >= 2) {
+                    minfo.used_constructors.push_back(callee_v.sym_id);
+                }
+            }
+        };
+        auto walk = [&](this const auto& self, aura::ast::NodeId id) -> void {
+            if (id >= flat.size()) return;
+            auto v = flat.get(id);
+            if (v.tag == aura::ast::NodeTag::IfExpr && v.children.size() >= 3 &&
+                v.child(0) < flat.size()) {
+                auto test_v = flat.get(v.child(0));
+                // Detect if: (if test body else-if-chain) — walk both branches
+                // The then-branch (child 1) is a body, check its let for bindings
+                auto then_id = v.child(1);
+                if (then_id < flat.size()) {
+                    auto then_v = flat.get(then_id);
+                    // If then body is a let and we can resolve the arg to a ctor
+                    if (then_v.tag == aura::ast::NodeTag::Let &&
+                        !then_v.children.empty()) {
+                        // Check if this let has match_info already
+                        if (!flat.has_match_info(id)) {
+                            aura::ast::MatchClauseInfo minfo;
+                            extract_ctor(then_v.child(0), minfo);
+                            flat.set_match_info(id, minfo);
+                        }
+                    }
+                }
+            }
+            for (auto c : v.children) self(c);
+        };
+        if (root < flat.size()) walk(root);
+    }
+
+    void register_adt_from_define_types(const aura::ast::FlatAST& flat,
+                                        const aura::ast::StringPool& pool,
+                                        aura::ast::NodeId root) {
+        auto walk = [&](this const auto& self, aura::ast::NodeId id) -> void {
+            if (id >= flat.size())
+                return;
+            auto v = flat.get(id);
+            if (v.tag == aura::ast::NodeTag::DefineType) {
+                auto type_name = std::string(pool.resolve(v.sym_id));
+                std::vector<std::string> ctors;
+                for (auto cid : v.children) {
+                    if (cid >= flat.size())
+                        continue;
+                    auto cv = flat.get(cid);
+                    if (cv.tag != aura::ast::NodeTag::Quote || cv.children.empty())
+                        continue;
+                    // First element of quoted list is constructor name
+                    auto walk_quoted = cv.child(0);
+                    if (walk_quoted >= flat.size())
+                        continue;
+                    auto wv = flat.get(walk_quoted);
+                    if (wv.tag == aura::ast::NodeTag::Pair && !wv.children.empty()) {
+                        auto car_id = wv.child(0);
+                        if (car_id < flat.size()) {
+                            auto car_v = flat.get(car_id);
+                            if (car_v.tag == aura::ast::NodeTag::Variable) {
+                                auto cname = std::string(pool.resolve(car_v.sym_id));
+                                if (!cname.empty())
+                                    ctors.push_back(cname);
+                            }
+                        }
+                    }
+                }
+                if (!ctors.empty()) {
+                    // Register the ADT type if not already registered, then add constructors
+                    auto tid = type_registry_.lookup_type(type_name);
+                    if (!tid.valid()) {
+                        tid = type_registry_.register_type(aura::core::TypeTag::VARIANT,
+                                                            type_name);
+                    }
+                    if (tid.valid())
+                        type_registry_.register_adt_constructors(tid, ctors);
+
+                }
+            }
+            for (auto c : v.children)
+                self(c);
+        };
+        if (root < flat.size())
+            walk(root);
     }
 
     // IR function cache: name → bundle of IR functions for cached defines.
