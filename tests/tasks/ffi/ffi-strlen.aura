@@ -1,5 +1,8 @@
 ;; task: ffi-strlen
 ;; goal: Use c-func to call strlen from libc
 ;; expect: 5
-;; hint: --- strlen FFI ---
-;; hint: (display (strlen-fn "hello"))
+;; hint: --- Working strlen FFI ---
+;; hint: (c-func -1 "strlen" "(String) -> Int" "hello")  → returns 5
+;; hint: Full: (display (c-func -1 "strlen" "(String) -> Int" "hello"))
+;; hint: Use -1 for RTLD_DEFAULT (load from any loaded library)
+;; hint: Strlen from libc: always available via RTLD_DEFAULT

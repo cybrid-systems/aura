@@ -1,0 +1,7 @@
+;; task: edsl-find-pattern
+;; goal: {"cmd":"eval","code":"(set-code (define (h x) (* x 2)))(display (query:node-type \\\"Define\\\"))"}
+;; expect: Define
+;; depend: edsl
+;; hint: --- EDSL find pattern ---
+;; hint: (set-code (define (double x) (* x 2)))
+;; hint: (display (query:node-type "Define"))

@@ -1,3 +1,10 @@
 ;; task: edsl-mutate
-;; goal: {"cmd":"eval","code":"(define (h x) (+ x 1))"}
-;; expect: ok
+;; goal: Use set-code + mutate:rebind to modify a function definition
+;; expect: 3
+;; hint: --- EDSL set-code + mutate ---
+;; hint: ;; Step 1: Load initial code
+;; hint: (set-code "(define (h x) (+ x 1))")
+;; hint: ;; Step 2: Rebind to change body to (+ x 2)
+;; hint: (mutate:rebind "h" "(lambda (x) (+ x 2))")
+;; hint: ;; Step 3: Evaluate to see the result
+;; hint: (display (h 1))

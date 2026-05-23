@@ -1,5 +1,6 @@
 ;; task: module-use
-;; goal: Use (use "std/list") to load a module
-;; expect: module
-;; hint: --- module use ---
-;; hint: (display (use "std/list"))
+;; goal: Load std/list with (require) and use range to produce a list containing 5
+;; expect: 5
+;; hint: --- module require ---
+;; hint: (require std/list all:)
+;; hint: (display (range 1 8))
