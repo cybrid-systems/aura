@@ -871,7 +871,18 @@ def _gen_edsl_variants(code, expected):
                     cmd = f'(set-code "{esc}")(mutate:rebind "{fn_name}" "(lambda ({args_str}) {mod_esc})")(eval-current)'
                     yield cmd, f"edsl {fn_name} lit {val}->{new_val}"
 
-        # d) Operator swap in body
+        # d) Condition flip in body: swap if then/else branches
+        for m in re.finditer(r"\(if\s+([^)]+)\s+([^)]+)\s+([^)]+)\)", raw_body):
+            cond = m.group(1).strip()
+            then_expr = m.group(2).strip()
+            else_expr = m.group(3).strip()
+            if then_expr != else_expr:
+                mod_body = raw_body[:m.start()] + f"(if {cond} {else_expr} {then_expr})" + raw_body[m.end():]
+                mod_esc = mod_body.replace("\\", "\\\\").replace('"', '\\"')
+                cmd = f'(set-code "{esc}")(mutate:rebind "{fn_name}" "(lambda ({args_str}) {mod_esc})")(eval-current)'
+                yield cmd, f"edsl {fn_name} cond-flip"
+
+        # e) Operator swap in body
         swaps = {
             "<": "<=",
             "<=": "<",
@@ -955,7 +966,7 @@ COLONY_MAX_TIME = 6.0
 # putt: only try top-3 pheromone variants (nearby, fine-tuning only)
 # fine: try top-10 pheromone variants (some distance, broader search)
 # coarse: skip completely (too far, local mutations can't help)
-_PHASE_VARIANT_LIMITS = {"putt": 5, "fine": 12}
+_PHASE_VARIANT_LIMITS = {"putt": 20, "fine": 50}
 
 # Global pheromone state for cross-task learning
 _COLONY_PHEROMONE = {"initialized": False}
@@ -1190,7 +1201,7 @@ def run_single_task(
         )
 
         # ── Ant colony: try local mutations (fine/putt) before LLM retry ──
-        if phase in ("fine", "putt") and attempt == 0:
+        if phase in ("fine", "putt"):
             # Load cross-task pheromone knowledge before search
             _colony_load_pheromone(serve, name)
             found, col_out, _ = internal_colony_search(
