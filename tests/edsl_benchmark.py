@@ -1165,7 +1165,7 @@ def run_single_task(
             if ok:
                 last_full_code = code
 
-        success = ok and check_success(out, expected)
+        success = ok and (check_success(out, expected) or check_success(err, expected))
         if success:
             return True, out, "", total_llm_time, attempt + 1
 
