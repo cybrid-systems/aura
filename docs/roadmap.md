@@ -4,84 +4,60 @@
 
 ---
 
-## 🔴 开放 TODO
+## 当前能力
 
-所有之前标记的 P0/P1/P2 项经逐一审查均已实现。当前无开放 issue。
-
----
-
-## Aura 能力评估
-
-### 能做的（生产级可用）
-
-| 能力 | 说明 |
-|------|------|
-| 函数式编程 | 递归/lambda/let/letrec/宏 ✅ 85 任务通过 89-92% |
-| 类型系统 | Sound Gradual: coercion / occurrence / let-poly / blame ✅ |
-| ADT + match | (define-type) + 穷尽性检查 ✅ |
-| M4 线性所有权 | move / borrow / drop 编译期 + 运行时 ✅ |
-| 标准库 | 28 模块: string/list/hash/math/JSON/CSV/IO/socket/datetime ✅ |
-| EDSL 自修改 | set-code → mutate → eval-current colony:search ✅ |
-| C FFI | c-func dlopen/dlsym, Float/Int/String marshalling ✅ |
-| TCP 网络 | tcp-connect/send/recv/close, http-get/post ✅ |
-| 文件 I/O | read-file/write-file/file-exists?/file-copy/directory-list ✅ |
-| 项目级 | try-catch / command-line / shell / command-output ✅ |
-| 模块系统 | require/import 路径解析/缓存/循环检测/export 过滤/热重载 ✅ |
-| 增量编译 | ArenaGroup + 磁盘缓存 + IR import + hot-swap ✅ |
-| 编译期反射 | P2996 auto_to_json / auto_serialize / P1306 递归序列化 ✅ |
-| 数值计算 | lib/std/vector-math.aura (向量/矩阵运算) ✅ |
-
-### 不能做的（真正缺口）
-
-| 缺口 | 影响 | 修复难度 |
-|------|------|:--------:|
-| **生成二进制** | 不能编译 standalone 可执行文件，只能 `./build/aura --serve` | 中 (LLVM) |
-| **包管理** | 无包 registry/依赖声明 | 远用 |
-| **IDE/LSP** | 无语法高亮/补全/诊断 | 远用 |
-| **自举** | 编译器用 C++26 写，不用 Aura | 远用 |
-
-### 关于生成二进制的思考
-
-**现状：** Aura 以 `./build/aura --serve` 方式运行，代码通过 stdin JSON 传入。
-没有 `./build/aura -o myapp input.aura` 这样的编译命令。
-
-**需要什么：**
-1. LLVM IR 输出到 `.o` 文件（已有 JIT codegen，38 条 opcode）→ 1-2d
-2. 链接器调用（调用 `ld` / `gcc` 生成 ELF）→ 1d
-3. 运行时环境（GC / stdlib 静态链接）→ 1d
-
-**优先级：低。** 对 AI agent 场景（serve + REPL）没价值。
-agent 不需要 standalone binary，但生产部署需要。
-
-### 规模评估
-
-| 场景 | 是否可行 | 说明 |
-|------|:--------:|------|
-| 50 行算法函数 | ✅ 非常稳 | Grok 91.8% 通过率 |
-| 200 行单文件工具 | ✅ 可以 | 文件 I/O + CLI + try-catch 都有了 |
-| 500 行多文件项目 | ⚠️ 勉强 | 模块系统有但缺 IDE 支持 |
-| 1000+ 行编译器/服务器 | ❌ 痛苦 | 没 LSP/包管理/调试器 |
-
-### 和同类对比
-
-| | Aura | Scheme | Python | OCaml |
-|--|:----:|:------:|:------:|:-----:|
-| 类型系统 | Sound Gradual | Typed Racket | Dynamic | HM + module |
-| EDSL 自修改 | ✅ 核心设计 | ❌ | ❌ | ❌ |
-| 增量热更新 | ✅ | ❌ | ❌ | ❌ |
-| stdlib | 够用 28 模块 | 全面 | 庞大 | 全面 |
-| 项目级工具 | ❌ LSP/包管理 | ❌ 类似 | ✅ VS Code/PyPI | ✅ |
-| 成熟度 | 6 个月 | 30 年 | 30 年 | 30 年 |
+| 维度 | 状态 |
+|------|:----:|
+| 编译器 | 0 crash fuzz (4600+ cases), 37 维结构化测试, 3 个执行后端 |
+| 类型系统 | Sound Gradual Typing, ADT + match 穷尽性, let-poly, blame |
+| M4 线性所有权 | move/borrow/drop 编译期 + 运行时检测 |
+| 标准库 | 29 模块 (~2.5k 行): list/string/hash/math/JSON/CSV/socket/vector |
+| EDSL 自修改 | set-code → mutate → query → eval-current + colony:search |
+| C FFI | dlopen/dlsym 调用, Int/Float/String/Void 编组 |
+| 增量编译 | 缓存 + 依赖跟踪 + hot-swap |
+| 编译期反射 | P2996 auto_to_json/serialize/deserialize |
+| AI Benchmark | 102 任务, Grok **92/102 (90.2%)**, DeepSeek 87/102 |
+| Fuzz 体系 | 3 套 fuzz, 4600+ 用例, 48 测试维度, 全 0 crash |
 
 ---
 
-## 已解决（2026-05-23）
+## 方向 & 优先级
 
-- **P0 缺陷 (5)** — blame / eval_flat / TypeAnnotation / parser / #\\<procedure\\>
-- **P1 功能 (5)** — match 穷尽 / 模块类型 / M4 / parser / 增量检查
-- **P2 增强 (5)** — --inspect / serve 超时 / P2996 / colony Phase 1-2 / tweak-literal  
-- **P3 下沉 (2)** — pid:analyze / pure Aura colony:search
-- **诊断 (4)** — FFI→stdout / ((: x Int)) lambda 参数 / closure warning→stdout / FFI 签名精确定位
-- **原语 (3)** — command-line / shell / command-output
-- **数值计算** — lib/std/vector-math.aura (217 行)
-- **测试** — 47 条回归全绿 + 12 套测试套件 + 4 个新 suite 文件
+### P1 — 编译器深度加固
+
+| 项目 | 原因 | 工作量 |
+|:-----|:-----|:------:|
+| ASan/UBSan 编译跑 fuzz | 最高 ROI — 即刻暴露内存 bug | 1h |
+| 差分测试（树遍历 vs IR vs JIT） | 三个后端输出一致性问题 | 2d |
+| 等价变异 fuzz（EDSL 语义保持变换） | 利用已有 EDSL 能力测编译器 | 2d |
+| `( ' car )` vector OOB | 已知 1 个 fuzz 边缘 case | 4h |
+
+### P2 — 语言能力扩展
+
+| 项目 | 原因 | 工作量 |
+|:-----|:-----|:------:|
+| Numerical arrays | `#(1 2 3)` 语法, 连续内存, 数值计算 | 3d |
+| 更好的错误诊断 | 行列号精确定位, suggestion, blame trace 格式化 | 2d |
+| Serve 并发 | 多 session 安全, 无竞态 redefine | 2d |
+| FFI 扩展 | Opaque 指针, Struct marshal, 回调支持 | 3d |
+
+### P3 — 项目级工具（远用）
+
+| 项目 | 说明 |
+|:-----|:------|
+| 二进制输出 | LLVM IR → .o → ld → ELF standalone |
+| LSP/IDE | 语法高亮, 补全, 内联诊断 |
+| 包管理 | registry, 依赖声明, 版本解析 |
+| 自举 | 编译器用 Aura 重写 |
+
+---
+
+## 报告回顾
+
+- **2026-05-23 早**：85 任务, 3 P0 bug, 无 fuzz, 14h 工作后
+- **2026-05-23 晚**：102 任务, P0-P3 全关, 4600+ fuzz 0 crash, serve closure 协议检测, parser 深度守卫, EDSL 变异 fuzz, 37 维结构化测试
+
+## 相关文档
+
+- [基准测试](benchmark.md) — 102 任务 AI 代码生成评估
+- [语言规范](design/aura_language_spec.md) — 语法、类型系统、EDSL
