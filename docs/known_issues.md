@@ -47,8 +47,9 @@
 
 ### 1. `eval_flat: unsupported node type`
 
-`binary-search` 任务中 DeepSeek 生成了代码触发此错误（`evaluator_impl.cpp` default case）。
-`eval_flat` switch 未处理的 NodeTag: **Coercion (0x10), Pair (0x12), Linear (0x16), Move (0x17), Borrow (0x18), MutBorrow (0x19), Drop (0x1A)**。
+`binary-search` 任务中 DeepSeek 生成了代码触发此错误（`evaluator_impl.cpp` line ~7000 default case）。
+`eval_flat` 内层 switch 未处理的 NodeTag: **Linear (0x16), Move (0x17), Borrow (0x18), MutBorrow (0x19), Drop (0x1A)**。
+注意 Coercion (0x10) 和 Pair (0x12) 已被外层 `ast_to_data` 路径处理，不触发此错误。
 LLM 生成的内容触发未预料节点时会崩溃。需要排查 LLM 具体生成了什么并补全缺失分支。
 
 ### 2. TypeAnnotation 解释器路径信号缺失
@@ -119,7 +120,10 @@ Coercion 在 TypeAnnotation 边界、if 分支、call-site 参数处已插入 Ca
 
 ### 9. 深递归边界
 
-显式调用栈 (`9674eb0`) 已支持 `(deep 100000)` 无 segfault，但极端嵌套（>1M）可能触发 `std::bad_alloc`。
+显式调用栈 (`9674eb0`) 已实现 `MAX_C_STACK_DEPTH=400` 防止 C 栈溢出。
+树遍历器深度限制在 400 层；IR/JIT 路径利用 TCO 支持更深递归，
+但 `(deep 100000)` 在 IR 路径上输出包含多余 `()`。
+极端嵌套（>1M）可能触发 `std::bad_alloc`。
 
 ### 10. Serve 模式超时
 
