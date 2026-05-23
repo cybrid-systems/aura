@@ -1328,9 +1328,9 @@ def main():
                     name, success, out, err, llm_t, attempts = future.result()
                     task_stats[name]["llm_times"].append(llm_t)
                     task_stats[name]["attempts"].append(attempts)
+                    task_passes = 1 if success else 0
                     task_stats[name]["passes"] += task_passes
                     task_stats[name]["total"] += ROUNDS
-                    task_passes = 1 if success else 0
                     task_results.append((name, task_passes, ROUNDS))
                     if success:
                         safe_print(f"  ✅ {name} ({llm_t:.1f}s, {attempts} att)")
