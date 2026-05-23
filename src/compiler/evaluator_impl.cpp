@@ -7172,6 +7172,8 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         Diagnostic{ErrorKind::InternalError, "eval_flat: unsupported node type"});
             }
         }
+    } catch (const std::bad_alloc& e) {
+        return std::unexpected(Diagnostic{ErrorKind::InternalError, "out of memory"});
     } catch (const std::bad_variant_access& e) {
         return std::unexpected(Diagnostic{
             ErrorKind::TypeError,

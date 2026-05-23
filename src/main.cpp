@@ -487,12 +487,16 @@ int main(int argc, char* argv[]) {
                         } else {
                             auto result = future.get();
                             if (result) {
-                                auto& v = *result;
-                                if (is_closure(v)) {
-                                    std::println("{{\"status\":\"closure\",\"value\":\"#<procedure>\"}}");
-                                } else {
-                                    std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
-                                                 json_escape(fmt_val(v, cs)));
+                                try {
+                                    auto& v = *result;
+                                    if (is_closure(v)) {
+                                        std::println("{{\"status\":\"closure\",\"value\":\"#<procedure>\"}}");
+                                    } else {
+                                        std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
+                                                     json_escape(fmt_val(v, cs)));
+                                    }
+                                } catch (const std::bad_alloc&) {
+                                    std::println("{{\"status\":\"error\",\"msg\":\"out of memory\"}}");
                                 }
                             } else {
                                 auto& d = result.error();

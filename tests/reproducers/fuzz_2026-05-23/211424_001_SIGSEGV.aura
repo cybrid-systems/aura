@@ -1,0 +1,5 @@
+;; fuzz reproducer: SIGSEGV
+;; seed: 42
+;; time: 2026-05-23T21:14:24.546922
+;; expect: no-crash
+(display (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car (car x)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))

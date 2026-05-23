@@ -95,6 +95,10 @@ def run(code, timeout=TIMEOUT):
         return False, "", sig_name
 
     stderr = r.stderr or ""
+    # Graceful depth errors are not crashes
+    if "recursion depth exceeded" in stderr:
+        results["fail"] += 1
+        return ok, (r.stdout or "").strip(), stderr.strip()
     if "internal error" in stderr or "Assertion" in stderr:
         results["crash"].append(("internal-error", code))
         return False, "", "internal error"
