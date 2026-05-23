@@ -4215,13 +4215,19 @@ Evaluator::Evaluator() {
 
     // Parse type signature string like "(Int Float) -> Float" or "(String) -> Int"
     auto parse_ffi_sig = [](const std::string& sig, int& ret_type,
-                            std::vector<int>& arg_types) -> bool {
+                            std::vector<int>& arg_types, std::string* err_type = nullptr) -> bool {
         auto arrow = sig.find("->");
-        if (arrow == std::string::npos)
+        if (arrow == std::string::npos) {
+            if (err_type) *err_type = "missing '->' in signature";
             return false;
+        }
+        if (sig.empty() || sig[0] != '(') {
+            if (err_type) *err_type = "signature must start with '('";
+            return false;
+        }
         auto arg_part = sig.substr(1, arrow - 1);
         auto ret_part = sig.substr(arrow + 2);
-        auto type_to_int = [](const std::string& tn) -> int {
+        auto type_to_int = [](const std::string& tn, std::string* err = nullptr) -> int {
             auto t = tn;
             while (!t.empty() && t.front() == ' ')
                 t = t.substr(1);
@@ -4237,13 +4243,14 @@ Evaluator::Evaluator() {
                 return 4;
             if (t == "Void")
                 return 0;
+            if (err) *err = t.empty() ? "empty type" : "unknown type: " + t;
             return -1;
         };
         std::string cur;
         for (auto c : arg_part) {
             if (c == ' ' || c == '(' || c == ')') {
                 if (!cur.empty()) {
-                    int at = type_to_int(cur);
+                    int at = type_to_int(cur, err_type);
                     if (at < 0)
                         return false;
                     arg_types.push_back(at);
@@ -4254,12 +4261,12 @@ Evaluator::Evaluator() {
             cur += c;
         }
         if (!cur.empty()) {
-            int at = type_to_int(cur);
+            int at = type_to_int(cur, err_type);
             if (at < 0)
                 return false;
             arg_types.push_back(at);
         }
-        ret_type = type_to_int(ret_part);
+        ret_type = type_to_int(ret_part, err_type);
         if (ret_type < 0)
             return false;
         return true;
@@ -4290,9 +4297,12 @@ Evaluator::Evaluator() {
         std::vector<int> arg_types;
         if (types::is_string(a[2])) {
             auto sig = string_heap_[types::as_string_idx(a[2])];
-            if (!parse_ffi_sig(sig, ret_type, arg_types)) {
+            std::string sig_err;
+            if (!parse_ffi_sig(sig, ret_type, arg_types, &sig_err)) {
                 fprintf(stdout, "c-func: invalid signature '%s'\n", sig.c_str());
-                fprintf(stdout, "  expected: \"(ArgType) -> RetType\" e.g. \"(String) -> Int\"\n");
+                fprintf(stdout, "  reason: %s\n", sig_err.c_str());
+                fprintf(stdout, "  expected: \"(ArgType) -> RetType\"\n");
+                fprintf(stdout, "  valid types: Int, Float, String, Opaque, Void\n");
                 return make_int(0);
             }
         } else if (types::is_int(a[2])) {
