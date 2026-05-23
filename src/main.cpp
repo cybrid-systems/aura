@@ -19,6 +19,45 @@ import aura.compiler.value;
 // (implemented in ir_reflect_serialize.cpp, compiled with -freflection)
 extern "C" char* aura_inspect_ir_json(const void* mod, std::size_t* out_size);
 
+
+
+// JSON pretty-printer (no external dependencies, safe for module TU)
+static std::string prettify_json(const std::string& compact) {
+    std::string out;
+    out.reserve(compact.size() * 2);
+    int indent = 0;
+    bool in_string = false;
+    bool escaped = false;
+
+    for (std::size_t i = 0; i < compact.size(); ++i) {
+        char c = compact[i];
+        if (escaped) { escaped = false; out += c; continue; }
+        if (c == '\\') { out += c; escaped = true; continue; }
+        if (c == '"') { in_string = !in_string; out += c; continue; }
+        if (in_string) { out += c; continue; }
+
+        if (c == '{' || c == '[') {
+            out += c; out += '\n';
+            ++indent;
+            out.append(static_cast<std::size_t>(indent * 2), ' ');
+        } else if (c == '}' || c == ']') {
+            out += '\n';
+            --indent; if (indent < 0) indent = 0;
+            out.append(static_cast<std::size_t>(indent * 2), ' ');
+            out += c;
+        } else if (c == ',') {
+            out += c; out += '\n';
+            out.append(static_cast<std::size_t>(indent * 2), ' ');
+        } else if (c == ':') {
+            out += ": ";
+        } else if (!std::isspace(static_cast<unsigned char>(c))) {
+            out += c;
+        }
+    }
+    out += '\n';
+    return out;
+}
+
 // Format helper: format EvalValue with access to string heap
 static std::string fmt_val(const aura::compiler::types::EvalValue& v,
                            aura::compiler::CompilerService& cs) {
@@ -667,13 +706,17 @@ int main(int argc, char* argv[]) {
         }
 
         // Dump inspection output
-        if (mode == "ir" || mode == "all") {
+        if (mode == "ir" || mode == "pretty" || mode == "all") {
             auto& last_mod = cs.last_ir_module();
             if (last_mod) {
                 std::size_t json_size = 0;
                 char* json_data = aura_inspect_ir_json(&*last_mod, &json_size);
-                std::string_view json(json_data, json_size);
-                std::println("{}", json);
+                std::string_view json_str(json_data, json_size);
+                if (mode == "pretty") {
+                    std::println("{}", prettify_json(std::string(json_str)));
+                } else {
+                    std::println("{}", json_str);
+                }
                 delete[] json_data;
             } else {
                 std::println(std::cerr, "inspect: no IR module available");
