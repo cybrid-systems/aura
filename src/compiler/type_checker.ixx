@@ -171,6 +171,10 @@ private:
     // Register all built-in primitives in the type environment
     void register_primitive(std::string name, std::vector<aura::core::TypeId> param_types,
                             aura::core::TypeId ret_type);
+   void register_poly_primitive(std::string name,
+                                 std::vector<aura::core::TypeId> param_types,
+                                 aura::core::TypeId ret_type,
+                                 std::vector<aura::core::TypeId> type_vars);
 
     // Check if two types are coercible (gradual L6.6)
     bool is_coercible(aura::core::TypeId from, aura::core::TypeId to);

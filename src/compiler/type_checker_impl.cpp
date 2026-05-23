@@ -412,6 +412,16 @@ void InferenceEngine::register_primitive(std::string name, std::vector<TypeId> p
     env_.bind(std::move(name), func_type);
 }
 
+void InferenceEngine::register_poly_primitive(std::string name,
+                                               std::vector<TypeId> param_types,
+                                               TypeId ret_type,
+                                               std::vector<TypeId> type_vars) {
+    auto func_type = reg_.register_func(std::move(param_types), ret_type);
+    for (auto it = type_vars.rbegin(); it != type_vars.rend(); ++it)
+        func_type = reg_.register_forall(*it, func_type);
+    env_.bind(std::move(name), func_type);
+}
+
 void InferenceEngine::init_primitive_env() {
     auto Int = reg_.int_type();
     auto Bool = reg_.bool_type();
@@ -599,6 +609,50 @@ void InferenceEngine::init_primitive_env() {
     // Missing list/vector conversions
     register_primitive("list->vector", {Dyn}, Vector);
     register_primitive("vector->list", {Vector}, Dyn);
+
+    // ── Stdlib type signatures ────────────────────────────
+    // Generic type parameters for polymorphic stdlib functions
+    auto _a = reg_.make_var("a");
+    auto _b = reg_.make_var("b");
+    auto _num = reg_.make_var("num");
+
+    // std/list: (a -> b) -> (list a) -> (list b)
+    register_poly_primitive("map", {reg_.register_func({_a}, _b), reg_.register_func({}, Dyn)}, Dyn, {_a, _b});
+    register_poly_primitive("filter", {reg_.register_func({_a}, Bool), reg_.register_func({}, Dyn)}, Dyn, {_a});
+    register_poly_primitive("foldl", {reg_.register_func({_a, _b}, _b), _b, reg_.register_func({}, Dyn)}, _b, {_a, _b});
+    register_poly_primitive("range", {Int, Int}, Dyn, {});
+    register_poly_primitive("length", {Dyn}, Int, {});
+    register_poly_primitive("reverse", {Dyn}, Dyn, {_a});
+    register_poly_primitive("zip", {Dyn, Dyn}, Dyn, {_a, _b});
+    register_poly_primitive("take", {Int, Dyn}, Dyn, {_a});
+    register_poly_primitive("drop", {Int, Dyn}, Dyn, {_a});
+    register_poly_primitive("flatten", {Dyn}, Dyn, {_a});
+    register_poly_primitive("partition", {reg_.register_func({_a}, Bool), Dyn}, Dyn, {_a});
+    register_poly_primitive("sort", {Dyn, reg_.register_func({_a, _a}, Bool)}, Dyn, {_a});
+    register_poly_primitive("append", {Dyn, Dyn}, Dyn, {_a});
+    register_poly_primitive("member", {Dyn, Dyn}, Bool, {_a});
+
+    // std/string
+    register_primitive("string-split", {String, String}, Dyn);
+    register_primitive("string-trim", {String}, String);
+    register_primitive("string-join", {Dyn, String}, String);
+
+    // std/hash
+    register_primitive("hash-keys", {Dyn}, Dyn);
+    register_primitive("hash-values", {Dyn}, Dyn);
+    register_primitive("hash-ref", {Dyn, Dyn}, Dyn);
+    register_primitive("hash-has-key?", {Dyn, Dyn}, Bool);
+    register_primitive("hash-set!", {Dyn, Dyn, Dyn}, Void);
+    register_primitive("hash-length", {Dyn}, Int);
+    register_primitive("hash-count", {Dyn}, Int);
+
+    // std/iter
+    register_primitive("for-each", {reg_.register_func({_a}, Dyn), Dyn}, Void);
+    register_primitive("for", {Dyn, reg_.register_func({_a}, Dyn)}, Void);
+
+    // std/math
+    register_poly_primitive("square", {_num}, _num, {_num});
+    register_poly_primitive("sqrt", {_num}, _num, {_num});
 }
 
 TypeId InferenceEngine::lub(TypeId a, TypeId b) {
