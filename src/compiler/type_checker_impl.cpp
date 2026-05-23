@@ -890,11 +890,11 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
                 auto var_name = pool.resolve(arg.sym_id);
                 if (fn_name == "string?")
                     return OccurrenceInfoFlat{std::string(var_name), reg.string_type()};
-                else if (fn_name == "number?")
+                else if (fn_name == "number?" || fn_name == "integer?")
                     return OccurrenceInfoFlat{std::string(var_name), reg.int_type()};
                 else if (fn_name == "boolean?")
                     return OccurrenceInfoFlat{std::string(var_name), reg.bool_type()};
-                else if (fn_name == "null?")
+                else if (fn_name == "null?" || fn_name == "void?")
                     return OccurrenceInfoFlat{std::string(var_name), reg.void_type()};
                 else if (fn_name == "pair?")
                     return OccurrenceInfoFlat{
@@ -904,6 +904,8 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
                     return OccurrenceInfoFlat{std::string(var_name), reg.dynamic_type()};
                 else if (fn_name == "float?")
                     return OccurrenceInfoFlat{std::string(var_name), reg.lookup_type("Float")};
+                else if (fn_name == "hash?")
+                    return OccurrenceInfoFlat{std::string(var_name), reg.dynamic_type()};
                 else if (fn_name == "procedure?")
                     return OccurrenceInfoFlat{std::string(var_name), reg.dynamic_type()};
             }
