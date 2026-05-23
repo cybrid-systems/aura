@@ -50,11 +50,7 @@
 
 | # | 任务 | 预估 | 说明 |
 |---|------|:----:|:-----|
-| 17 | **Pheromone 持久化** — 当前信息素在 Python dict 中，会话结束即丢。
-   暴露 `pheromone:export` / `pheromone:import` 到 Aura 层，磁盘存储。
-   数据结构简单（hash-of-vectors），跨会话记忆。 | 1d | 收益：跨任务学习 |
-| 18 | **Richer query/mutate API** — `query:children`、`query:dependents`、`mutate:insert`、`mutate:delete`。
-   P2996 反射已支持类型安全 AST 模式匹配，需暴露更多原语。 | 1-2d | 依赖项：P0 |
+| 17 | **Pheromone 持久化** — 低优先级，当前搜索速度已足够快（<1s/轮），跨会话记忆收益有限。 | — | 暂缓 |
 
 ### P3 — 中远期
 
@@ -67,12 +63,15 @@
 | 23 | **自举** — Aura 编译器用 Aura 写。类型系统稳定后。 | 中 | — |
 | 24 | **多意图协作与意图树** — Phase 4 远期。 | — | — |
 
-### ✅ 今日完成
+### ✅ 今日完成（2026-05-23）
 
 | # | 任务 | 说明 |
 |---|------|------|
-| 16 | Colony search 下沉 | Phase 2: pure Aura `colony:search` + eval-current-output fd 重定向 |
+| 16 | Colony search 下沉 Phase 1+2 | pure Aura `colony:search` + eval-current-output fd 重定向，集成到 benchmark |
 | 20 | PID 控制器原生化 | `pid:analyze` in std/adaptive.aura, Python 侧简化 |
+| 18 | Richer query/mutate API | `mutate:tweak-literal` + `colony:search` 多策略（display-ref / lit-tweak），用已有 query 原语 |
+| — | 测试 | 新增 22 条回归测试覆盖所有新功能 |
+| — | 编译器诊断 | FFI 错误→stdout, `(: x Int)` lambda 参数支持, closure warning→stdout, 更好 FFI 错误提示 |
 
 ---
 
