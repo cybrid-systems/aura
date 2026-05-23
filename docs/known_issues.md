@@ -26,15 +26,11 @@
 
 编译期跟踪 (`OwnershipEnv`) 和 IR opcode 已实现，但运行时违规检测（double move, use-after-move）尚未强化。
 
-### 5. Blame 信息薄弱
-
-JIT 路径有 blame 标签，解释器/IR 路径 blame 信息薄弱。
-BlameParty/BlameInfo 结构化框架已实现但覆盖不全。
-
-### 6. 树遍历器 CastOp 覆盖率
+### 5. 树遍历器 CastOp 覆盖率
 
 Coercion 在 TypeAnnotation 边界、if 分支、call-site 参数处已插入 CastOp，
 但部分 eval 路径（Pair 构建、Set!、宏展开产物）的 CastOp 覆盖率仍需加强。
+Blame 诊断（IR 路径 CastOp + 算术 coercion + TypeAnnotation）已覆盖。
 
 ---
 
