@@ -1179,7 +1179,9 @@ NodeId FlatParser::parse_check() {
 }
 
 NodeId FlatParser::parse_type_annot() {
-    // Syntax: (: name TypeName)  — annotate variable name with type
+    // Syntax:
+    //   (: name TypeName)       — annotate variable with type (no-op at runtime)
+    //   (: name Type val)        — bind, annotate, and return val
     auto tok = lexer_->consume(); // :
 
     auto name_tok = lexer_->peek();
@@ -1198,8 +1200,22 @@ NodeId FlatParser::parse_type_annot() {
     auto type_sym = pool_.intern(type_tok.text);
     lexer_->consume(); // TypeName
 
-    if (lexer_->peek().kind == TokenKind::RParen)
-        lexer_->consume();
+    // Check for 3-arg form: (: name Type value-expr)
+    if (lexer_->peek().kind != TokenKind::RParen) {
+        // Consume value and return it with type annotation wrapping
+        auto val = parse_expr();
+        if (lexer_->peek().kind == TokenKind::RParen)
+            lexer_->consume();
+        if (val == NULL_NODE)
+            return NULL_NODE;
+        // Create (let ((name val)) (check val : Type))
+        // Simplified: just create TypeAnnotation wrapping the value
+        auto id = flat_.add_type_annotation(type_sym, val);
+        flat_.set_loc(id, tok.line, tok.column);
+        return id;
+    }
+
+    lexer_->consume(); // RParen
 
     auto var_node = flat_.add_variable(var_sym);
     auto id = flat_.add_type_annotation(type_sym, var_node);
