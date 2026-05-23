@@ -510,6 +510,21 @@ def check_success(out, expected):
 def get_api_ref():
     return ""
 
+PROMPT_SECTIONS = {
+    "identity": (
+        "You are Aura Lisp. Write valid code ending with (display ...).\n"
+        "CRITICAL: (display (your-function args)) — if you only (define (f x) ...)"
+        " the output will be '#<procedure>' and the TEST WILL FAIL!\n"
+    ),
+}
+
+# Default section order (can be overridden per task)
+DEFAULT_SECTION_ORDER = ["identity"]
+
+# Task → section overrides for fine-grained control
+TASK_SECTION_OVERRIDES = {}
+# Task-specific overrides not needed — prompt is compact enough for all tasks.
+
 
 def build_sys_prompt(stdlib, api_ref, task_name=""):
     # Select sections for this task
@@ -1302,6 +1317,7 @@ def main():
         pool_args = [(model, base_url, api_key, name, prompt, expected, stdlib, api_ref)
                      for name, prompt, expected, stdlib in tasks_to_run]
         
+        # Run tasks in parallel
         max_workers = int(os.environ.get("BENCH_WORKERS", "20"))
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(run_single_task_parallel, args): args for args in pool_args}
@@ -1319,7 +1335,7 @@ def main():
                         safe_print(f"  ❌ {name}: {err_short} ({llm_t:.1f}s, {attempts} att)")
                 except Exception as e:
                     safe_print(f"  ❌ task error: {e}")
-
+        
         elapsed = time.time() - start_time
         task_stats["__meta__"] = {"elapsed": round(elapsed, 1)}
 
