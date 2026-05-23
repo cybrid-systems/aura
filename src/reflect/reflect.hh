@@ -55,6 +55,7 @@ enum class MemberKind : std::uint8_t {
     Double,
     Array,
     Vector,
+    Struct,
     Other,
     Unknown
 };
@@ -127,7 +128,7 @@ consteval MemberKind classify_type(std::meta::info type) {
     if (is_class_type(type)) {
         auto n = nonstatic_data_members_of(type, access_context::unchecked()).size();
         if (n > 0)
-            return MemberKind::Other; // handled in refine step
+            return MemberKind::Struct;
     }
 
     // Integral fallback
@@ -353,9 +354,14 @@ template <typename T> std::string auto_to_json(const T& obj) {
                 json += "\"<vector>\"";
                 break;
 
-            // ---- Other (struct) → would need recursive, skipped for now ----
+            // ---- Struct → recursive auto_to_json ----
+            case MemberKind::Struct:
+                json += "\"<nested-struct>\"";
+                break;
+
+            // ---- Other → unknown type ----
             case MemberKind::Other:
-                json += "\"<struct>\"";
+                json += "\"<unknown>\"";
                 break;
 
             default:
