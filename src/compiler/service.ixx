@@ -1644,6 +1644,10 @@ public:
     // Return current number of cached define functions
     std::size_t cached_function_count() const { return ir_cache_.size(); }
 
+    // Inspect support: expose last parsed AST (for --inspect typecheck etc.)
+    const aura::ast::FlatAST& last_flat() const { return *current_ast_; }
+    const aura::ast::StringPool& last_pool() const { return *current_pool_; }
+
     // Check if a cached function exists
     bool has_cached_function(const std::string& name) const {
         return ir_cache_.find(name) != ir_cache_.end();
