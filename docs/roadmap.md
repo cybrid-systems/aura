@@ -10,11 +10,11 @@
 
 ## 🔴 P0 — 短板，立刻提升可用性
 
-| # | 缺口 | 具体任务 | 预估 |
-|---|------|---------|:----:|
-| 25 | **文件系统原语** | `(file-exists? path)`、`(read-file path)`、`(write-file path content)`、`(delete-file path)`、`(list-dir path)`。没有文件 I/O，Aura 连写个"读取配置文件"的任务都做不到。 | 1d |
-| 26 | **CLI argv** | `(command-line)` 返回参数字符串列表。当前 serve 模式有 JSON IPC，但 standalone 脚本不能读参数。 | 0.5d |
-| 27 | **错误处理 try-catch** | `(try expr (catch (var) handler))`。`eval_flat` 内部已有 try-catch AST 处理逻辑，需暴露给用户。 | 0.5d |
+| # | 缺口 | 具体任务 | 预估 | 状态 |
+|---|------|---------|:----:|:----:|
+| 25 | **文件系统原语** | `read-file`、`write-file`、`file-exists?`、`file-delete`、`directory-list` | — | ✅ 已有 |
+| 26 | **CLI argv** | `(command-line)` 返回参数字符串列表。 | 0.5d | ✅ 已加 |
+| 27 | **错误处理 try-catch** | `(try expr (catch (var) handler))` | — | ✅ 已有 |
 
 ## 🟡 P1 — 功能扩展
 

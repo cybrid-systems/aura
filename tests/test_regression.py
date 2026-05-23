@@ -102,6 +102,21 @@ tests = [
      '(let ((x (hash))) (if (hash? x) 42 0))',
      "42", ""),
 
+    # File I/O: read-file / write-file
+    ("file-read-write",
+     '(begin (write-file "/tmp/aura-regr-test.txt" "42")(read-file "/tmp/aura-regr-test.txt"))',
+     "42", ""),
+
+    # File I/O: file-exists?
+    ("file-exists",
+     '(file-exists? "/tmp/aura-regr-test.txt")',
+     "1", ""),
+
+    # try-catch
+    ("try-catch",
+     '(try "hello" (catch (e) "error"))',
+     "hello", ""),
+
 ]
 
 passed = 0

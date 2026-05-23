@@ -2428,6 +2428,31 @@ void Evaluator::init_pair_primitives() {
         return make_int(1);
     });
 
+    // ── CLI interface ────────────────────────────────────────────
+    primitives_.add("command-line", [this](const auto&) -> EvalValue {
+        // Returns list of command-line argument strings, NOT including argv[0].
+        // Parsed from /proc/self/cmdline on Linux.
+        std::ifstream f("/proc/self/cmdline");
+        if (!f)
+            return make_void();
+        std::string raw;
+        std::getline(f, raw, '\0'); // skip argv[0]
+        std::vector<std::string> items;
+        while (std::getline(f, raw, '\0')) {
+            if (!raw.empty())
+                items.push_back(raw);
+        }
+        EvalValue result = make_void();
+        for (auto it = items.rbegin(); it != items.rend(); ++it) {
+            auto sidx = string_heap_.size();
+            string_heap_.push_back(*it);
+            auto pid = pairs_.size();
+            pairs_.push_back({make_string(sidx), result});
+            result = make_pair(pid);
+        }
+        return result;
+    });
+
     primitives_.add("file-exists?", [this](const auto& a) {
         if (a.empty() || !is_string(a[0]))
             return make_int(0);
