@@ -19,13 +19,13 @@ Test suites:
   all         全部测试 (默认)
 """
 
+import json
+import os
 import subprocess
 import sys
-import os
-import json
 import time
-from pathlib import Path
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 ROOT = Path(__file__).resolve().parent
@@ -39,17 +39,29 @@ G = "\033[32m"  # green
 Y = "\033[33m"  # yellow
 R = "\033[31m"  # red
 B = "\033[34m"  # blue
-N = "\033[0m"   # reset
+N = "\033[0m"  # reset
 
-def ok(msg):   print(f"  {G}✓{N} {msg}")
-def fail(msg): print(f"  {R}✗{N} {msg}")
-def warn(msg): print(f"  {Y}!{N} {msg}")
-def info(msg): print(f"  {B}→{N} {msg}")
+
+def ok(msg):
+    print(f"  {G}✓{N} {msg}")
+
+
+def fail(msg):
+    print(f"  {R}✗{N} {msg}")
+
+
+def warn(msg):
+    print(f"  {Y}!{N} {msg}")
+
+
+def info(msg):
+    print(f"  {B}→{N} {msg}")
 
 
 # ═══════════════════════════════════════════════════════════════
 # Build
 # ═══════════════════════════════════════════════════════════════
+
 
 def cmd_build():
     """CMake 构建 (Ninja)"""
@@ -57,13 +69,22 @@ def cmd_build():
     BUILD.mkdir(parents=True, exist_ok=True)
     nproc = os.cpu_count() or 4
     r = run(["cmake", "-B", str(BUILD), "-G", "Ninja", "-Wno-dev"], cwd=ROOT)
-    if r != 0: return r
-    r = run(["cmake", "--build", str(BUILD), "--target", "aura", "-j", str(nproc)], cwd=ROOT)
-    if r != 0: return r
+    if r != 0:
+        return r
+    r = run(
+        ["cmake", "--build", str(BUILD), "--target", "aura", "-j", str(nproc)], cwd=ROOT
+    )
+    if r != 0:
+        return r
     # Also build test_ir so unit tests can run
-    r = run(["cmake", "--build", str(BUILD), "--target", "test_ir", "-j", str(nproc)], cwd=ROOT)
-    if r == 0: ok("build OK")
-    else:      fail("build failed")
+    r = run(
+        ["cmake", "--build", str(BUILD), "--target", "test_ir", "-j", str(nproc)],
+        cwd=ROOT,
+    )
+    if r == 0:
+        ok("build OK")
+    else:
+        fail("build failed")
     return r
 
 
@@ -74,6 +95,7 @@ def cmd_clean():
         run(["cmake", "--build", str(BUILD), "--target", "clean"], cwd=ROOT)
         # Also remove directory
         import shutil
+
         shutil.rmtree(BUILD)
         ok(f"removed {BUILD}")
     else:
@@ -85,17 +107,18 @@ def cmd_clean():
 # Unit tests (C++)
 # ═══════════════════════════════════════════════════════════════
 
+
 def test_unit():
     """C++ 单元测试 — test_ir (61 cases)"""
     print(f"{B}═══ Unit tests ═══{N}")
     if not TEST_BIN.exists():
         fail(f"{TEST_BIN} not found — run 'build' first")
         return 1
-    
+
     start = time.time()
     r = subprocess.run([str(TEST_BIN)], capture_output=True, text=True)
     elapsed = time.time() - start
-    
+
     # Parse results
     lines = r.stdout.strip().split("\n")
     passed = failed = 0
@@ -107,7 +130,7 @@ def test_unit():
             failed += 1
         elif "passed/failed" in line and "Memory" not in line:
             pass  # These are the subsection summaries
-    
+
     print(f"  Unit tests: {elapsed:.2f}s")
     if r.returncode == 0 and failed == 0:
         ok("all unit tests passed")
@@ -120,13 +143,14 @@ def test_unit():
 # Integration tests (.aura files)
 # ═══════════════════════════════════════════════════════════════
 
+
 @dataclass
 class IntegCase:
     name: str
     code: str
-    pipeline: str          # "eval" | "ir" | "typecheck" | "serve"
-    expected: str = ""     # expected stdout (substring match)
-    expected_err: str = "" # expected stderr (substring match)
+    pipeline: str  # "eval" | "ir" | "typecheck" | "serve"
+    expected: str = ""  # expected stdout (substring match)
+    expected_err: str = ""  # expected stderr (substring match)
     expected_status: int = 0  # expected exit code
 
 
@@ -140,164 +164,338 @@ INTEG_TESTS = [
     IntegCase("div", "(/ 100 5)", "eval", expected="20"),
     IntegCase("let_simple", "(let ((x 10)) x)", "eval", expected="10"),
     IntegCase("lambda", "((lambda (x) (* x 2)) 5)", "eval", expected="10"),
-    IntegCase("closure", "(let ((f (lambda (x) (+ x 1)))) (f 41))", "eval", expected="42"),
+    IntegCase(
+        "closure", "(let ((f (lambda (x) (+ x 1)))) (f 41))", "eval", expected="42"
+    ),
     IntegCase("if_true", "(if 1 42 0)", "eval", expected="42"),
     IntegCase("if_false", "(if 0 42 0)", "eval", expected="0"),
-    IntegCase("fact_5", "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 5))", "eval", expected="120"),
+    IntegCase(
+        "fact_5",
+        "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 5))",
+        "eval",
+        expected="120",
+    ),
     IntegCase("string", '(string-append "a" "b")', "eval", expected="ab"),
     IntegCase("pair", "(car (cons 1 2))", "eval", expected="1"),
-
     # ── IR pipeline ──────────────────────────────────────────
     IntegCase("ir_add", "(+ 1 2)", "ir", expected="3"),
     IntegCase("ir_lambda", "((lambda (x) (* x 2)) 5)", "ir", expected="10"),
-    IntegCase("ir_fact", "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 5))", "ir", expected="120"),
-    IntegCase("ir_fib", "(letrec ((fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))))) (fib 10))", "ir", expected="55"),
-
+    IntegCase(
+        "ir_fact",
+        "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 5))",
+        "ir",
+        expected="120",
+    ),
+    IntegCase(
+        "ir_fib",
+        "(letrec ((fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))))) (fib 10))",
+        "ir",
+        expected="55",
+    ),
     # ── Typecheck pipeline ───────────────────────────────────
     IntegCase("tc_int", "42", "typecheck", expected="Int"),
     IntegCase("tc_add", "(+ 1 2)", "typecheck", expected="Int"),
     IntegCase("tc_str", '"hello"', "typecheck", expected="String"),
     IntegCase("tc_type_of", "(type-of 42)", "typecheck", expected="Type"),
     IntegCase("tc_type_query", '(type? 42 "Int")', "typecheck", expected="Bool"),
-    IntegCase("tc_occurrence", '(let ((x "hello")) (if (string? x) x "fallback"))', "typecheck", expected="String", expected_status=0),
-    IntegCase("tc_coercion", '(+ "42" 1)', "typecheck", expected="Int", expected_status=0),
-
+    IntegCase(
+        "tc_occurrence",
+        '(let ((x "hello")) (if (string? x) x "fallback"))',
+        "typecheck",
+        expected="String",
+        expected_status=0,
+    ),
+    IntegCase(
+        "tc_coercion", '(+ "42" 1)', "typecheck", expected="Int", expected_status=0
+    ),
     # ── Gradual coercion runtime ─────────────────────────────
     IntegCase("coerce_arith", '(+ 1 "2")', "eval", expected="3"),
     IntegCase("coerce_strlen", "(string-length 12345)", "eval", expected="5"),
-
     # ── Type system edge cases (T2c/T2d) ─────────────────────
-    IntegCase("tc_occ_pair",
-        '(let ((x (cons 1 2))) (if (pair? x) #t #f))',
-        "typecheck", expected="Bool", expected_status=0),
-    IntegCase("tc_occ_float",
-        '(let ((x 3.14)) (if (float? x) (+ x 1) 0))',
-        "typecheck", expected="Float", expected_status=0),
-    IntegCase("tc_value_restrict",
-        '(let ((x (+ 1 2))) (type-of x))',
-        "typecheck", expected="Type"),
-    IntegCase("tc_query_return",
-        '(+ 1 2)',
-        "typecheck", expected="Int"),
-    IntegCase("tc_cons_pair",
-        '(pair? (cons 1 2))',
-        "typecheck", expected="Bool"),
-
+    IntegCase(
+        "tc_occ_pair",
+        "(let ((x (cons 1 2))) (if (pair? x) #t #f))",
+        "typecheck",
+        expected="Bool",
+        expected_status=0,
+    ),
+    IntegCase(
+        "tc_occ_float",
+        "(let ((x 3.14)) (if (float? x) (+ x 1) 0))",
+        "typecheck",
+        expected="Float",
+        expected_status=0,
+    ),
+    IntegCase(
+        "tc_value_restrict",
+        "(let ((x (+ 1 2))) (type-of x))",
+        "typecheck",
+        expected="Type",
+    ),
+    IntegCase("tc_query_return", "(+ 1 2)", "typecheck", expected="Int"),
+    IntegCase("tc_cons_pair", "(pair? (cons 1 2))", "typecheck", expected="Bool"),
     # ── TypeAnnotation coercion boundary (P0) ─────────────────
-    IntegCase("tc_annot_int",
-        '(: x Int 42)',
-        "typecheck", expected="Int"),
-    IntegCase("coerce_annot_erasure",
-        '(: x Int 42)',
-        "eval", expected="42"),
-
+    IntegCase("tc_annot_int", "(: x Int 42)", "typecheck", expected="Int"),
+    IntegCase("coerce_annot_erasure", "(: x Int 42)", "eval", expected="42"),
     # ── Gradual Guarantee tests (P2) ──────────────────────────
-    IntegCase("gg_int_annot",    '(: x Int 42)',        "typecheck", expected="Int"),
-    IntegCase("gg_int_exec",     '(: x Int 42)',        "eval",      expected="42"),
-    IntegCase("gg_expr_annot",   '(: x Int (+ 1 2))',   "typecheck", expected="Int"),
-    IntegCase("gg_expr_exec",    '(: x Int (+ 1 2))',   "eval",      expected="3"),
-    IntegCase("gg_let_annot",    '(let ((x 10)) x)',     "typecheck", expected="Int"),
-    IntegCase("gg_let_exec",     '(let ((x 10)) x)',     "eval",      expected="10"),
-    IntegCase("gg_poly_exec",    '(let ((id (lambda (x) x))) (id 42))',
-                                                        "eval",      expected="42"),
-    IntegCase("gg_nested_annot", '(+ (: x Int 10) (: y Int 20))',
-                                                        "typecheck", expected="Int"),
-
+    IntegCase("gg_int_annot", "(: x Int 42)", "typecheck", expected="Int"),
+    IntegCase("gg_int_exec", "(: x Int 42)", "eval", expected="42"),
+    IntegCase("gg_expr_annot", "(: x Int (+ 1 2))", "typecheck", expected="Int"),
+    IntegCase("gg_expr_exec", "(: x Int (+ 1 2))", "eval", expected="3"),
+    IntegCase("gg_let_annot", "(let ((x 10)) x)", "typecheck", expected="Int"),
+    IntegCase("gg_let_exec", "(let ((x 10)) x)", "eval", expected="10"),
+    IntegCase(
+        "gg_poly_exec", "(let ((id (lambda (x) x))) (id 42))", "eval", expected="42"
+    ),
+    IntegCase(
+        "gg_nested_annot", "(+ (: x Int 10) (: y Int 20))", "typecheck", expected="Int"
+    ),
     # ── Boundary tests (P2) ───────────────────────────────────
-    IntegCase("boundary_lambda",
-        '((lambda (x) (+ x 1)) 41)',
-        "eval", expected="42"),
-
+    IntegCase("boundary_lambda", "((lambda (x) (+ x 1)) 41)", "eval", expected="42"),
     # ── Serve JSON command protocol ─────────────────────────
-    IntegCase("serve_define",
-              '{"cmd":"define","code":"(define add (lambda (x y) (+ x y)))","name":"add"}\n'
-              '{"cmd":"exec","code":"(add 1 2)"}',
-              "serve", expected="\"3\""),
-    IntegCase("serve_define_redefine",
-              '{"cmd":"define","code":"(define mul (lambda (x y) (* x y)))","name":"mul"}\n'
-              '{"cmd":"exec","code":"(mul 3 4)"}\n'
-              '{"cmd":"redefine","code":"(define mul (lambda (x y) (+ x y)))","name":"mul"}\n'
-              '{"cmd":"exec","code":"(mul 3 4)"}',
-              "serve", expected="\"7\""),
-    IntegCase("serve_plain_sexpr",
-              '(+ 1 2)',
-              "serve", expected="\"3\""),
-    IntegCase("serve_unknown_cmd",
-              '{"cmd":"noop","code":"(+ 1 2)"}',
-              "serve", expected="unknown command"),
-
+    IntegCase(
+        "serve_define",
+        '{"cmd":"define","code":"(define add (lambda (x y) (+ x y)))","name":"add"}\n'
+        '{"cmd":"exec","code":"(add 1 2)"}',
+        "serve",
+        expected='"3"',
+    ),
+    IntegCase(
+        "serve_define_redefine",
+        '{"cmd":"define","code":"(define mul (lambda (x y) (* x y)))","name":"mul"}\n'
+        '{"cmd":"exec","code":"(mul 3 4)"}\n'
+        '{"cmd":"redefine","code":"(define mul (lambda (x y) (+ x y)))","name":"mul"}\n'
+        '{"cmd":"exec","code":"(mul 3 4)"}',
+        "serve",
+        expected='"7"',
+    ),
+    IntegCase("serve_plain_sexpr", "(+ 1 2)", "serve", expected='"3"'),
+    IntegCase(
+        "serve_unknown_cmd",
+        '{"cmd":"noop","code":"(+ 1 2)"}',
+        "serve",
+        expected="unknown command",
+    ),
     # ── Error cases ──────────────────────────────────────────
-    IntegCase("err_unbound", "x", "eval", expected_err="unbound variable", expected_status=1),
+    IntegCase(
+        "err_unbound", "x", "eval", expected_err="unbound variable", expected_status=1
+    ),
     IntegCase("err_type", '(+ 1 "a")', "typecheck", expected_err="", expected_status=0),
-
     # ── Vector operations ──────────────────────────────────
     IntegCase("vector_basic", "(vector 1 2 3)", "eval", expected="vector"),
     IntegCase("vector_ref", "(vector-ref (vector 10 20 30) 1)", "eval", expected="20"),
     IntegCase("vector_length", "(vector-length (vector 1 2 3))", "eval", expected="3"),
-    IntegCase("vector_set", "(begin (vector-set! (vector 1 2 3) 0 99) 42)", "eval", expected="42"),
-    IntegCase("tc_vector", "(vector-length (vector (list 1)))", "typecheck", expected="Int"),
-    IntegCase("tc_macro_def", "(defmacro (twice x) (+ x x))", "typecheck", expected="(__t0 -> __t0)"),
+    IntegCase(
+        "vector_set",
+        "(begin (vector-set! (vector 1 2 3) 0 99) 42)",
+        "eval",
+        expected="42",
+    ),
+    IntegCase(
+        "tc_vector", "(vector-length (vector (list 1)))", "typecheck", expected="Int"
+    ),
+    IntegCase(
+        "tc_macro_def",
+        "(defmacro (twice x) (+ x x))",
+        "typecheck",
+        expected="(__t0 -> __t0)",
+    ),
     IntegCase("vector_pred", "(vector? (vector 1 2 3))", "eval", expected="#t"),
-    IntegCase("make_vector", "(vector-length (make-vector 5 42))", "eval", expected="5"),
-    IntegCase("list_to_vector", "(vector-length (list->vector (list 1 2 3)))", "eval", expected="3"),
-    IntegCase("vector_to_list", "(length (vector->list (vector 1 2 3)))", "eval", expected="3"),
-
-# ── List operations ─────────────────────────────────────
+    IntegCase(
+        "make_vector", "(vector-length (make-vector 5 42))", "eval", expected="5"
+    ),
+    IntegCase(
+        "list_to_vector",
+        "(vector-length (list->vector (list 1 2 3)))",
+        "eval",
+        expected="3",
+    ),
+    IntegCase(
+        "vector_to_list", "(length (vector->list (vector 1 2 3)))", "eval", expected="3"
+    ),
+    # ── List operations ─────────────────────────────────────
     IntegCase("list_basic", "(list 1 2 3)", "eval", expected="(1 2 3)"),
     IntegCase("list_length", "(length (list 1 2 3))", "eval", expected="3"),
     IntegCase("list_ref", "(list-ref (list 10 20 30) 1)", "eval", expected="20"),
     IntegCase("list_reverse", "(length (reverse (list 1 2 3)))", "eval", expected="3"),
-    IntegCase("list_append", "(length (append (list 1 2) (list 3 4)))", "eval", expected="4"),
+    IntegCase(
+        "list_append", "(length (append (list 1 2) (list 3 4)))", "eval", expected="4"
+    ),
     IntegCase("list_member_found", "(member 2 (list 1 2 3))", "eval", expected="(2 3)"),
-    IntegCase("list_member_not_found", "(member 99 (list 1 2 3))", "eval", expected="0"),
-    IntegCase("map_length", "(length (map (lambda (x) (* x 2)) (list 1 2 3)))", "eval", expected="3"),
-    IntegCase("filter_count", "(length (filter (lambda (x) (> x 2)) (list 1 2 3 4 5)))", "eval", expected="3"),
-    IntegCase("nested_list", "(car (car (list (list 1 2) (list 3 4))))", "eval", expected="1"),
-
+    IntegCase(
+        "list_member_not_found", "(member 99 (list 1 2 3))", "eval", expected="0"
+    ),
+    IntegCase(
+        "map_length",
+        "(length (map (lambda (x) (* x 2)) (list 1 2 3)))",
+        "eval",
+        expected="3",
+    ),
+    IntegCase(
+        "filter_count",
+        "(length (filter (lambda (x) (> x 2)) (list 1 2 3 4 5)))",
+        "eval",
+        expected="3",
+    ),
+    IntegCase(
+        "nested_list", "(car (car (list (list 1 2) (list 3 4))))", "eval", expected="1"
+    ),
     # ── Type checker edge cases ────────────────────────────
-    IntegCase("tc_list", "(list 1 2 3)", "typecheck", expected="Any", expected_status=0),
-    IntegCase("tc_map", "(map (lambda (x) (* x 2)) (list 1 2))", "typecheck", expected="Int", expected_status=0),
-    IntegCase("tc_filter", "(filter (lambda (x) (> x 2)) (list 1 2))", "typecheck", expected="Bool", expected_status=0),
+    IntegCase(
+        "tc_list", "(list 1 2 3)", "typecheck", expected="Any", expected_status=0
+    ),
+    IntegCase(
+        "tc_map",
+        "(map (lambda (x) (* x 2)) (list 1 2))",
+        "typecheck",
+        expected="Int",
+        expected_status=0,
+    ),
+    IntegCase(
+        "tc_filter",
+        "(filter (lambda (x) (> x 2)) (list 1 2))",
+        "typecheck",
+        expected="Bool",
+        expected_status=0,
+    ),
     IntegCase("tc_string_compare", '(string=? "a" "a")', "typecheck", expected="Bool"),
     IntegCase("tc_append", '(string-append "a" "b")', "typecheck", expected="String"),
     IntegCase("tc_pair", "(cons 1 2)", "typecheck", expected="Any"),
-    IntegCase("tc_let_lambda", "(let ((f (lambda (x) (+ x 1)))) (f 41))", "typecheck", expected="Int"),
+    IntegCase(
+        "tc_let_lambda",
+        "(let ((f (lambda (x) (+ x 1)))) (f 41))",
+        "typecheck",
+        expected="Int",
+    ),
     # ADT eval tests
-    IntegCase("adt_some_pair", "(begin (define-type (Option a) (Some a) (None)) (pair? (Some 42)))", "eval", expected="#t"),
-    IntegCase("adt_some_cadr", "(begin (define-type (Option a) (Some a) (None)) (car (cdr (Some 42))))", "eval", expected="42"),
-    IntegCase("adt_match_some", "(begin (define-type (Option a) (Some a) (None)) (match (Some 42) ((Some x) x) (None 0)))", "eval", expected="42"),
-    IntegCase("adt_match_none", "(begin (define-type (Option a) (Some a) (None)) (match None ((Some x) x) (None 0)))", "eval", expected="0"),
-    IntegCase("adt_either", "(begin (define-type (Either a b) (Left a) (Right b)) (match (Left 'err') ((Left m) m) ((Right v) v)))", "eval", expected="err"),
+    IntegCase(
+        "adt_some_pair",
+        "(begin (define-type (Option a) (Some a) (None)) (pair? (Some 42)))",
+        "eval",
+        expected="#t",
+    ),
+    IntegCase(
+        "adt_some_cadr",
+        "(begin (define-type (Option a) (Some a) (None)) (car (cdr (Some 42))))",
+        "eval",
+        expected="42",
+    ),
+    IntegCase(
+        "adt_match_some",
+        "(begin (define-type (Option a) (Some a) (None)) (match (Some 42) ((Some x) x) (None 0)))",
+        "eval",
+        expected="42",
+    ),
+    IntegCase(
+        "adt_match_none",
+        "(begin (define-type (Option a) (Some a) (None)) (match None ((Some x) x) (None 0)))",
+        "eval",
+        expected="0",
+    ),
+    IntegCase(
+        "adt_either",
+        "(begin (define-type (Either a b) (Left a) (Right b)) (match (Left 'err') ((Left m) m) ((Right v) v)))",
+        "eval",
+        expected="err",
+    ),
     # ADT typecheck tests
-    IntegCase("tc_adt_concrete", "(define-type (BoolOption) (Yes Bool) (No)) (Yes #t)", "typecheck", expected="(String -> (Bool -> Void))"),
-    IntegCase("tc_adt_poly", "(define-type (Option a) (Some a) (None)) (Some 42)", "typecheck", expected="(String -> (Int -> Void))"),
+    IntegCase(
+        "tc_adt_concrete",
+        "(define-type (BoolOption) (Yes Bool) (No)) (Yes #t)",
+        "typecheck",
+        expected="(String -> (Bool -> Void))",
+    ),
+    IntegCase(
+        "tc_adt_poly",
+        "(define-type (Option a) (Some a) (None)) (Some 42)",
+        "typecheck",
+        expected="(String -> (Int -> Void))",
+    ),
     # ADT edge cases
-    IntegCase("adt_none_pair", "(begin (define-type (Option a) (Some a) (None)) (pair? None))", "eval", expected="#f"),
-    IntegCase("adt_none_is_not_pair", "(begin (define-type (Option a) (Some a) (None)) (not (pair? None)))", "eval", expected="#t"),
-    IntegCase("adt_car_tag", "(begin (define-type (Option a) (Some a) (None)) (car (Some 42)))", "eval", expected="Some"),
-    IntegCase("adt_wildcard", "(begin (define-type (Option a) (Some a) (None)) (match (Some 99) ((Some _) #t) (None #f)))", "eval", expected="#t"),
-    IntegCase("adt_multi_field", "(begin (define-type (Pair a b) (pair a b)) (car (cdr (pair 1 2))))", "eval", expected="1"),
+    IntegCase(
+        "adt_none_pair",
+        "(begin (define-type (Option a) (Some a) (None)) (pair? None))",
+        "eval",
+        expected="#f",
+    ),
+    IntegCase(
+        "adt_none_is_not_pair",
+        "(begin (define-type (Option a) (Some a) (None)) (not (pair? None)))",
+        "eval",
+        expected="#t",
+    ),
+    IntegCase(
+        "adt_car_tag",
+        "(begin (define-type (Option a) (Some a) (None)) (car (Some 42)))",
+        "eval",
+        expected="Some",
+    ),
+    IntegCase(
+        "adt_wildcard",
+        "(begin (define-type (Option a) (Some a) (None)) (match (Some 99) ((Some _) #t) (None #f)))",
+        "eval",
+        expected="#t",
+    ),
+    IntegCase(
+        "adt_multi_field",
+        "(begin (define-type (Pair a b) (pair a b)) (car (cdr (pair 1 2))))",
+        "eval",
+        expected="1",
+    ),
     # Fuzz: rapid type system stress tests
-    IntegCase("fuzz_adt_coercion", "(begin (define-type (Wrap a) (Wrap a)) (car (cdr (Wrap (+ 1 2.5)))))", "eval", expected="3.5"),
-    IntegCase("fuzz_adt_let_poly", "(begin (define-type (Box a) (Box a)) ((lambda (f) (f (Box 42))) (lambda (x) (car (cdr x)))))", "eval", expected="42"),
-    IntegCase("fuzz_adt_nested", "(begin (define-type (Tree a) (Leaf a) (Node Tree Tree)) (match (Leaf 1) ((Leaf v) v) ((Node l r) 0)))", "eval", expected="1"),
-
+    IntegCase(
+        "fuzz_adt_coercion",
+        "(begin (define-type (Wrap a) (Wrap a)) (car (cdr (Wrap (+ 1 2.5)))))",
+        "eval",
+        expected="3.5",
+    ),
+    IntegCase(
+        "fuzz_adt_let_poly",
+        "(begin (define-type (Box a) (Box a)) ((lambda (f) (f (Box 42))) (lambda (x) (car (cdr x)))))",
+        "eval",
+        expected="42",
+    ),
+    IntegCase(
+        "fuzz_adt_nested",
+        "(begin (define-type (Tree a) (Leaf a) (Node Tree Tree)) (match (Leaf 1) ((Leaf v) v) ((Node l r) 0)))",
+        "eval",
+        expected="1",
+    ),
     # ── Error recovery ─────────────────────────────────────
     IntegCase("err_div_zero", "(/ 1 0)", "eval", expected_err="", expected_status=0),
-    IntegCase("err_unbound_var", "nonexistent", "eval", expected_err="unbound variable", expected_status=1),
-    IntegCase("err_wrong_arg_type", '(/ "a" 1)', "typecheck", expected_err="", expected_status=0),
+    IntegCase(
+        "err_unbound_var",
+        "nonexistent",
+        "eval",
+        expected_err="unbound variable",
+        expected_status=1,
+    ),
+    IntegCase(
+        "err_wrong_arg_type",
+        '(/ "a" 1)',
+        "typecheck",
+        expected_err="",
+        expected_status=0,
+    ),
     IntegCase("err_arity", "(+ 1)", "typecheck", expected="Int", expected_status=0),
-
     # ─── IR pipeline edge cases ────────────────────────────
     IntegCase("ir_fold_arith", "(+ (* 2 3) 4)", "ir", expected="10"),
     IntegCase("ir_let_arith", "(let ((x (+ 1 2))) (* x 3))", "ir", expected="9"),
     IntegCase("ir_nested_arith", "(+ (* 2 3) (/ 10 2))", "ir", expected="11"),
-
     # ── Apply / variadic ──────────────────────────────────────
     IntegCase("apply_add", "(apply + (list 1 2 3))", "eval", expected="6"),
-    IntegCase("apply_str", '(apply string-append (list "hello " "world"))', "eval", expected="hello world"),
-    IntegCase("variadic_lambda", "(apply (lambda (x . rest) (cons x rest)) (list 1 2 3))", "eval", expected="(1 2 3)"),
-
+    IntegCase(
+        "apply_str",
+        '(apply string-append (list "hello " "world"))',
+        "eval",
+        expected="hello world",
+    ),
+    IntegCase(
+        "variadic_lambda",
+        "(apply (lambda (x . rest) (cons x rest)) (list 1 2 3))",
+        "eval",
+        expected="(1 2 3)",
+    ),
     # ── Char operations ──────────────────────────────────────
     IntegCase("char_eq", "(char=? 65 65)", "eval", expected="#t"),
     IntegCase("char_lt", "(char<? 65 66)", "eval", expected="#t"),
@@ -308,16 +506,15 @@ INTEG_TESTS = [
     IntegCase("char_downcase", "(char-downcase 65)", "eval", expected="97"),
     IntegCase("char_to_int", "(char->integer 65)", "eval", expected="65"),
     IntegCase("int_to_char", "(integer->char 65)", "eval", expected="65"),
-
     # ── String operations ────────────────────────────────────
-    IntegCase("str_to_list", "(car (string->list \"ABC\"))", "eval", expected="65"),
-    IntegCase("list_to_str", '(list->string (list 65 66 67))', "eval", expected="ABC"),
-    IntegCase("str_join", '(string-join (list "a" "b" "c") ",")', "eval", expected="a,b,c"),
-
+    IntegCase("str_to_list", '(car (string->list "ABC"))', "eval", expected="65"),
+    IntegCase("list_to_str", "(list->string (list 65 66 67))", "eval", expected="ABC"),
+    IntegCase(
+        "str_join", '(string-join (list "a" "b" "c") ",")', "eval", expected="a,b,c"
+    ),
     # ── Format ────────────────────────────────────────────────
     IntegCase("format_basic", '(format "~a = ~a" "x" 42)', "eval", expected="x = 42"),
     IntegCase("format_write", '(format "~s" "hello")', "eval", expected='"hello"'),
-
     # ── string->number whitespace ─────────────────────────────
     IntegCase("str_num_trim", '(string->number " 42 ")', "eval", expected="42"),
     IntegCase("str_num_tab", '(string->number "\t-7\n")', "eval", expected="-7"),
@@ -332,7 +529,12 @@ def test_integ():
         fail(f"{AURA} not found — run 'build' first")
         return 1
 
-    flags = {"eval": [], "ir": ["--ir"], "typecheck": ["--typecheck"], "serve": ["--serve"]}
+    flags = {
+        "eval": [],
+        "ir": ["--ir"],
+        "typecheck": ["--typecheck"],
+        "serve": ["--serve"],
+    }
     passed = failed = 0
 
     for tc in INTEG_TESTS:
@@ -345,8 +547,7 @@ def test_integ():
             pipe_input = tc.code + "\n"
 
         r = subprocess.run(
-            args, input=pipe_input,
-            capture_output=True, text=True, timeout=30
+            args, input=pipe_input, capture_output=True, text=True, timeout=30
         )
 
         ok_case = True
@@ -357,7 +558,9 @@ def test_integ():
             # Accept SIGFPE (-8) as OK for division-by-zero tests
             if not (tc.name == "err_div_zero" and r.returncode == -8):
                 ok_case = False
-                issues.append(f"exit_code={r.returncode} (expected {tc.expected_status})")
+                issues.append(
+                    f"exit_code={r.returncode} (expected {tc.expected_status})"
+                )
 
         # Check expected stdout
         stdout = r.stdout.strip()
@@ -396,6 +599,7 @@ def test_integ():
 # Typecheck tests (focused type system tests)
 # ═══════════════════════════════════════════════════════════════
 
+
 def test_typecheck():
     """类型检查专项测试"""
     print(f"{B}═══ Typecheck tests ═══{N}")
@@ -405,24 +609,33 @@ def test_typecheck():
 
     cases = [
         # (name, code, expected_type, should_pass)
-        ("int_literal",   "42",                          "Int",    True),
-        ("str_literal",   '"hi"',                        "String", True),
-        ("add",           "(+ 1 2)",                     "Int",    True),
-        ("string_append", '(string-append "a" "b")',     "String", True),
-        ("lambda",        "(lambda (x) x)",              "->",     True),
-        ("type_of",       "(type-of 42)",                "Type",   True),
-        ("type_query",    '(type? 42 "Int")',            "Bool",   True),
-        ("occurrence",    '(let ((x "hi")) (if (string? x) x "fallback"))', "String", True),
-        ("coercion_note", '(+ "42" 1)',                  "Int",    True),
-
+        ("int_literal", "42", "Int", True),
+        ("str_literal", '"hi"', "String", True),
+        ("add", "(+ 1 2)", "Int", True),
+        ("string_append", '(string-append "a" "b")', "String", True),
+        ("lambda", "(lambda (x) x)", "->", True),
+        ("type_of", "(type-of 42)", "Type", True),
+        ("type_query", '(type? 42 "Int")', "Bool", True),
+        (
+            "occurrence",
+            '(let ((x "hi")) (if (string? x) x "fallback"))',
+            "String",
+            True,
+        ),
+        ("coercion_note", '(+ "42" 1)', "Int", True),
         # Error cases: should still typecheck (produce diagnostics but infer a type)
-        ("wrong_arity",   "(+ 1)",                       "Int",    True),
+        ("wrong_arity", "(+ 1)", "Int", True),
     ]
 
     passed = failed = 0
     for name, code, exp_type, should_pass in cases:
-        r = subprocess.run([str(AURA), "--typecheck"], input=code + "\n",
-                           capture_output=True, text=True, timeout=10)
+        r = subprocess.run(
+            [str(AURA), "--typecheck"],
+            input=code + "\n",
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
         stdout = r.stdout.strip()
 
         has_type = f"type: {exp_type}" in stdout or f"type:" in stdout
@@ -449,6 +662,7 @@ def test_typecheck():
 # Benchmark
 # ═══════════════════════════════════════════════════════════════
 
+
 def test_bench():
     """Benchmark 基线 + 回归检测"""
     print(f"{B}═══ Benchmark ═══{N}")
@@ -465,11 +679,11 @@ def test_bench():
 # ═══════════════════════════════════════════════════════════════
 
 SMOKE_TESTS = [
-    ("basic_eval",      "echo 42 | build/aura",                     "42"),
-    ("basic_add",       "echo '(+ 1 2)' | build/aura",            "3"),
-    ("basic_ir",        "echo '(+ 1 2)' | build/aura --ir",        "3"),
-    ("basic_typecheck", "echo 42 | build/aura --typecheck",        "Int"),
-    ("basic_serve",     "printf '(+ 1 2)' | build/aura --serve",   'status'),
+    ("basic_eval", "echo 42 | build/aura", "42"),
+    ("basic_add", "echo '(+ 1 2)' | build/aura", "3"),
+    ("basic_ir", "echo '(+ 1 2)' | build/aura --ir", "3"),
+    ("basic_typecheck", "echo 42 | build/aura --typecheck", "Int"),
+    ("basic_serve", "printf '(+ 1 2)' | build/aura --serve", "status"),
 ]
 
 
@@ -484,7 +698,9 @@ def test_smoke():
     for name, cmd, expected in SMOKE_TESTS:
         r = subprocess.run(
             ["bash", "-c", f"cd {ROOT} && {cmd}"],
-            capture_output=True, text=True, timeout=15
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         combined = r.stdout + r.stderr
         if expected in combined:
@@ -502,6 +718,7 @@ def test_smoke():
 # Mutation tests (变异循环)
 # ═══════════════════════════════════════════════════════════════
 
+
 def test_mutation():
     """Agent 变异循环 — mutation loop 功能验证"""
     print(f"{B}═══ Mutation tests ═══{N}")
@@ -510,9 +727,10 @@ def test_mutation():
         return 1
 
     r = subprocess.run(
-        [sys.executable, str(ROOT / "tests" / "mutation_loop.py"),
-         "--demo"],
-        capture_output=True, text=True, timeout=30
+        [sys.executable, str(ROOT / "tests" / "mutation_loop.py"), "--demo"],
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     print(r.stdout)
     if r.returncode != 0:
@@ -522,9 +740,10 @@ def test_mutation():
     ok("mutation: demo OK")
 
     r2 = subprocess.run(
-        [sys.executable, str(ROOT / "tests" / "mutation_loop.py"),
-         "--list"],
-        capture_output=True, text=True, timeout=15
+        [sys.executable, str(ROOT / "tests" / "mutation_loop.py"), "--list"],
+        capture_output=True,
+        text=True,
+        timeout=15,
     )
     print(r2.stdout)
     if r2.returncode != 0:
@@ -534,9 +753,15 @@ def test_mutation():
     ok("mutation: list OK")
 
     r3 = subprocess.run(
-        [sys.executable, str(ROOT / "tests" / "mutation_loop.py"),
-         str(ROOT / "tests" / "fixtures" / "basic_add.aura"), "--fast"],
-        capture_output=True, text=True, timeout=30
+        [
+            sys.executable,
+            str(ROOT / "tests" / "mutation_loop.py"),
+            str(ROOT / "tests" / "fixtures" / "basic_add.aura"),
+            "--fast",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     print(r3.stdout)
     if r3.returncode != 0:
@@ -550,6 +775,7 @@ def test_mutation():
 # ═══════════════════════════════════════════════════════════════
 # Agent demo
 # ═══════════════════════════════════════════════════════════════
+
 
 def test_demo():
     """Agent demo — full pipeline"""
@@ -565,7 +791,9 @@ def test_demo():
 def test_ai_agent_demo():
     """AI Agent 端到端演示 — 6 场景工具链"""
     print(f"{B}═══ AI Agent Demo ═══{N}")
-    r = subprocess.run([sys.executable, str(ROOT / "tests" / "ai_agent_demo.py")], timeout=120)
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "tests" / "ai_agent_demo.py")], timeout=120
+    )
     if r.returncode == 0:
         ok("ai agent demo passed")
     else:
@@ -577,15 +805,22 @@ def test_ai_agent_demo():
 # Runners
 # ═══════════════════════════════════════════════════════════════
 
+
 def test_gradual():
     """Gradual Guarantee verification — annotation erasure semantics"""
     from pathlib import Path
+
     base = Path(__file__).resolve().parent
     gradual_script = base / "tests" / "check_gradual.py"
     if not gradual_script.exists():
         print(f"  {gradual_script} not found")
         return 1
-    r = subprocess.run([sys.executable, str(gradual_script)], capture_output=True, text=True, timeout=30)
+    r = subprocess.run(
+        [sys.executable, str(gradual_script)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
     print(r.stdout)
     if r.returncode != 0:
         print(f"  Gradual guarantee: FAILED")
@@ -604,7 +839,9 @@ def test_bash():
     r = subprocess.run(
         ["bash", str(runner)],
         env={**os.environ, "AURA": str(AURA)},
-        capture_output=True, text=True, timeout=120
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     print(r.stdout)
     if r.stderr:
@@ -615,9 +852,11 @@ def test_bash():
         fail("bash tests failed")
     return r.returncode
 
+
 def test_regression():
     """Run tests/regression/*.aura as compiler regression checks."""
     from pathlib import Path
+
     base = Path(__file__).resolve().parent
     reg_dir = base / "tests" / "regression"
     aura_bin = os.environ.get("AURA_BIN", str(base / "build" / "aura"))
@@ -632,7 +871,7 @@ def test_regression():
         expected = ""
         for line in text.splitlines():
             if line.startswith(";; expect:"):
-                expected = line[len(";; expect:"):].strip()
+                expected = line[len(";; expect:") :].strip()
                 break
         name = fpath.stem
         code_lines = []
@@ -644,11 +883,16 @@ def test_regression():
                 code_lines.append(line)
         code = "\n".join(code_lines)
         try:
-            r = subprocess.run([aura_bin], input=code, capture_output=True, text=True, timeout=10)
+            r = subprocess.run(
+                [aura_bin], input=code, capture_output=True, text=True, timeout=10
+            )
             if r.returncode < 0:
-                sig_name = {-6:"SIGABRT",-8:"SIGFPE",-11:"SIGSEGV"}.get(r.returncode,f"signal{-r.returncode}")
+                sig_name = {-6: "SIGABRT", -8: "SIGFPE", -11: "SIGSEGV"}.get(
+                    r.returncode, f"signal{-r.returncode}"
+                )
                 print(f"    FAIL {name}: {sig_name}", flush=True)
-                if r.stderr: print(f"      {r.stderr[:80]}", flush=True)
+                if r.stderr:
+                    print(f"      {r.stderr[:80]}", flush=True)
                 failed += 1
             elif expected == "no-crash":
                 if r.returncode < 0:
@@ -666,10 +910,13 @@ def test_regression():
                 print(f"    PASS {name}")
             elif r.returncode != 0:
                 print(f"    FAIL {name}: exit {r.returncode}", flush=True)
-                if r.stderr: print(f"      {r.stderr[:80]}", flush=True)
+                if r.stderr:
+                    print(f"      {r.stderr[:80]}", flush=True)
                 failed += 1
             elif expected and expected not in (r.stdout or ""):
-                print(f"    FAIL {name}: expected '{expected}', got '{r.stdout.strip()}'")
+                print(
+                    f"    FAIL {name}: expected '{expected}', got '{r.stdout.strip()}'"
+                )
                 failed += 1
             else:
                 print(f"    PASS {name}")
@@ -678,18 +925,20 @@ def test_regression():
             failed += 1
     print(f"  Regression: {total - failed}/{total} passed", flush=True)
     return 0 if failed == 0 else 1
+
+
 SUITES = {
-    "unit":      test_unit,
-    "integ":     test_integ,
+    "unit": test_unit,
+    "integ": test_integ,
     "typecheck": test_typecheck,
-    "bench":     test_bench,
-    "smoke":     test_smoke,
-    "mutation":  test_mutation,
-    "gradual":   test_gradual,
-    "demo":      test_demo,
+    "bench": test_bench,
+    "smoke": test_smoke,
+    "mutation": test_mutation,
+    "gradual": test_gradual,
+    "demo": test_demo,
     "regression": test_regression,
-    "ai":        test_ai_agent_demo,
-    "bash":      test_bash,
+    "ai": test_ai_agent_demo,
+    "bash": test_bash,
 }
 
 
@@ -731,7 +980,6 @@ def cmd_list():
     return 0
 
 
-
 # ── Regression: replay known compiler bug reproducers ─────────
 
 
@@ -739,6 +987,7 @@ def test_fuzz():
     """Run LLM-driven fuzz tests (requires LLM_API_KEY)."""
     try:
         from tests import test_fuzz as fuzzer
+
         ok = fuzzer.test_fuzz()
         if not ok:
             print("  Fuzz: found crashes or internal errors", flush=True)
@@ -762,12 +1011,12 @@ def main():
         "build": cmd_build,
         "clean": cmd_clean,
         "check": lambda: cmd_build() or cmd_test([]),
-        "test":  lambda: cmd_test(args or ["all"]),
-        "list":  cmd_list,
-        "demo":  test_demo,
+        "test": lambda: cmd_test(args or ["all"]),
+        "list": cmd_list,
+        "demo": test_demo,
         "regression": lambda: cmd_test(["regression"]),
-        "fuzz":  lambda: test_fuzz(),
-        "test_fuzz":  lambda: test_fuzz(),
+        "fuzz": lambda: test_fuzz(),
+        "test_fuzz": lambda: test_fuzz(),
     }
 
     if cmd in commands:
@@ -780,8 +1029,9 @@ def main():
     sys.exit(rc)
 
 
-
 # ── Main ──────────────────────────────────────────────────
 
-if __name__ == "__main__": main()
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    main()
+if __name__ == "__main__":
+    main()
