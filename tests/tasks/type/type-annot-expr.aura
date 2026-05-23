@@ -1,4 +1,4 @@
 ;; task: type-annot-expr
-;; goal: Use (: x Int (+ 1 2)) to annotate an expression result
+;; goal: Use (check expr : Type) to annotate an expression result
 ;; expect: 3
-;; hint: (display (: x Int (+ 1 2)))
+;; hint: (display (check (+ 1 2) : Int))

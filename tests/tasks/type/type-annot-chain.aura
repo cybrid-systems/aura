@@ -2,4 +2,4 @@
 ;; goal: Chain multiple annotated expressions
 ;; expect: 3
 ;; hint: --- annotation chain ---
-;; hint: (display (+ (: x Int 1) 2))
+;; hint: (display (+ (check 1 : Int) 2))
