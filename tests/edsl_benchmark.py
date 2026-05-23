@@ -1131,11 +1131,24 @@ def run_single_task(
             "putt": "Almost there! Just minor fixes needed.",
         }.get(phase, "Fix the code.")
 
+        # Detect #<procedure> — LLM forgot (display ...)
+        procedure_warn = ""
+        if "#<procedure>" in actual_output or "#<procedu" in actual_output:
+            procedure_warn = (
+                "\n\n⚠️  CRITICAL: Output shows '#<procedure>' - you only DEFINE'd a function"
+                " but never CALLED it with (display ...).\n"
+                "EVERY program MUST end with (display (your-function args)) so the result"
+                " appears in output, not '#<procedure>'.\n"
+                "Example: instead of just (define (f x) (* x 2)), "
+                "do (define (f x) (* x 2)) THEN (display (f 5)).\n"
+            )
+
         correction = (
             ("(compile error) " if not ok else "(output mismatch) ")
             + distance_note
             + "\n\n"
             f"Aura produced: {actual_output[:300]}\n\n" + ada_fb + "\n\n"
+            + procedure_warn +
             "Current code:\n"
             + (last_full_code[:400] if last_full_code else code[:400])
             + "\n\n"

@@ -25,3 +25,4 @@ build_dbg/
 /Testing/
 /build_rel/
 /__pycache__/
+*.log

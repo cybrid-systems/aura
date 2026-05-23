@@ -1,4 +1,8 @@
 ;; task: edsl-set-code
-;; goal: {"cmd":"eval","code":"(define (f x) (+ x 1))"}
-;; expect: ok
-;; expect: value
+;; goal: Use set-code to define a function, then query:find to verify it's loaded
+;; expect: Define
+;; hint: --- EDSL set-code + query ---
+;; hint: ;; Step 1: Load code into AST
+;; hint: (set-code "(define (f x) (+ x 1))")
+;; hint: ;; Step 2: Query the AST to verify
+;; hint: (display (query:node-type "Define"))

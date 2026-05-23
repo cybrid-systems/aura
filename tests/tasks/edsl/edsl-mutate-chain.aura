@@ -1,0 +1,9 @@
+;; task: edsl-mutate-chain
+;; goal: Chain set-code, mutate:rebind, then query:node to verify the mutation
+;; expect: "+"
+;; hint: --- EDSL mutation chain ---
+;; hint: ;; Load a function, mutate it, inspect it
+;; hint: (set-code "(define (add a b) (+ a b))")
+;; hint: (query:find "add")
+;; hint: ;; Display the node info to verify
+;; hint: (display (query:node-type "BinaryOp"))
