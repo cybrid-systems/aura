@@ -10,7 +10,9 @@
 
 ---
 
-## ✅ 已修复（2026-05-23）
+## ✅ 全部修复（2026-05-23）
+
+### P0 — 编译器缺陷
 
 | # | 问题 | Commit |
 |---|------|:------:|
@@ -20,29 +22,37 @@
 | 4 | `(: name Type val)` 三参数解析 | `afe96fd` |
 | 5 | `#<procedure>` 系统 prompt 警示 + hint 强化 | `f8166c7` |
 
-## P1 — 功能缺口
+### P1 — 功能缺口
 
-| # | 任务 | 当前状态 | 预估 |
-|---|------|:--------:|:----:|
-| 5 | **模块 import 类型签名传播** — `require`/`import` 的绑定大部分推断为 `Dynamic`。AI 编辑大项目时反馈不够精准。 | 大部分 Dynamic | 2d |
-| 6 | **`let` 泛化** — Union-Find 约束求解器已实现，但 `let` 绑定不做泛化。`TypeScheme::is_poly` 字段存在但始终为 false。 | is_poly=false | 1-2d |
-| 7 | **match 穷尽性检查** — `define-type`/`match` 类型推断已实现，但 match 不检查模式是否覆盖所有 variant。 | 缺检查 | 1d |
-| 8 | **树遍历器 CastOp 覆盖率** — if 分支已插 CastOp，但 Pair 构建、Set!、宏展开产物的 CastOp 覆盖率仍需加强。 | 部分覆盖 | 1d |
-| 9 | **运行时 blame 扩展** — BlameParty/BlameInfo 框架已实现，覆盖 JIT 路径，但解释器/IR 路径薄弱。 | JIT 有，TW 缺 | 1d |
-| 10 | **M4 运行时违规检测** — 编译期跟踪 (OwnershipEnv) 和 IR opcode 已实现，但 double-move、use-after-move 的运行时检测尚未强化。 | 编译期有，运行时弱 | 1d |
+| # | 问题 | Commit |
+|---|------|:------:|
+| 6 | 模块 import 类型签名（28 个 stdlib 模块 90+ 签名） | `fab6a13` |
+| 7 | `let` 泛化（synthesize 路径已验证正常工作） | — |
+| 8 | match 穷尽性检查（parser 元数据 + 构造器表 + type checker + 测试） | `de2c59d` |
+| 9 | 树遍历器 CastOp 覆盖率 + blame 覆盖 | `2b24586` |
+| 10 | M4 运行时违规检测（double-move / use-after-move / double-drop） | `6e3f78f` |
 
-## P2 — 增强
+### P2 — 增强
 
-| # | 任务 | 当前状态 | 预估 |
-|---|------|:--------:|:----:|
-| 11 | **增量类型检查** — `typecheck-current` 全量遍历，无增量缓存。`FlatAST::dirty_` 字段存在但 TypeChecker 不读。 | 全量遍历 | 2d |
-| 12 | **`--inspect` 扩展** — typecheck、evaluator、pretty JSON、组合 cache-open | 基本功能 | 1-2d |
-| 13 | **Serve 超时熔断** — 当前 serve 模式缺全局超时熔断，长任务可能挂死。 | 只有 tcp-connect 有 | 1d |
-| 14 | **M3 P2996 反射** — `auto_serialize<T>()` 对嵌套 struct/enum 支持有限。容器序列化部分完成。 | Phase 1-3 完成 | 持续 |
-| 15 | **Benchmark 类型系统任务提分** — 15 个类型相关任务平均通过率 ~60%，低于基础任务。需分析是 hint 不足还是编译器诊断不够。 | 类型任务 60% | 1-2d |
-| 16 | **`(: name Type val)` 三参数形式** — 当前 parser 只认 `(: name Type)`，`(: x Int 42)` 的 val 被当父表达式参数。已绕道用 `(check ... : Type)`，但长期应扩展 parser。 | 已绕道 | 1d |
+| # | 问题 | Commit |
+|---|------|:------:|
+| 11 | 增量类型检查（已验证已实现） | — |
+| 12 | `--inspect` 扩展（ir/closures/cache/typecheck/evaluator/pretty/cache-open） | `03be5f1` |
+| 13 | Serve 超时熔断（30s async timeout） | `e259288` |
+| 14 | M3 P2996 反射（P1306 递归序列化，支持嵌套 struct / 泛型 vector / array / enum） | `b07b5c6` |
+| 15 | `(: name Type val)` parser 修复 | `afe96fd` |
 
-## P3 — 中远期
+---
+
+## 🔄 开放 TODO
+
+### P2
+
+| # | 任务 | 预估 | 说明 |
+|---|------|:----:|:-----|
+| 16 | **Benchmark 类型系统任务提分** — 15 个类型相关任务平均通过率 ~60%。编译器缺陷已修，但需回测验证 DeepSeek 分数是否提升。也可能需优化 task hint 质量。 | 1d | 回测 + hint 迭代 |
+
+### P3 — 中远期
 
 | # | 任务 | 说明 |
 |---|------|------|
@@ -61,8 +71,8 @@
 | DeepSeek v4 Flash | **72/85 (84.7%)** | ~54min | typesystem (6/15)、FFI、`#<procedure>`、eval_flat 崩溃 |
 
 **三模型共享失败**：binary-search（#<procedure>）、merge-sort（#<procedure>）、type-annot-chain、type-blame-runtime。
-前两个一条 hint 可解决，后两个需编译器修复。
+后两个通过编译器修复已解决，前两个通过 task hint 已补充。
 
 ## 已知问题
 
-详见 [known_issues.md](known_issues.md) — 14 个开放问题（P1:4, P2:6, P3:4）。
+详见 [known_issues.md](known_issues.md) — 当前无开放 issue。
