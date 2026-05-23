@@ -519,7 +519,11 @@ def get_api_ref():
 # ── 构建 system prompt ────────────────────────────────────
 # ── Prompt 模板 ── 解耦为字典，方便增删改 ────────────
 PROMPT_SECTIONS = {
-    "identity": ("You are Aura Lisp. Write valid code ending with (display ...).\n"),
+    "identity": (
+        "You are Aura Lisp. Write valid code ending with (display ...).\n"
+        "CRITICAL: (display (your-function args)) — if you only (define (f x) ...)"
+        " the output will be '#<procedure>' and the TEST WILL FAIL!\n"
+    ),
 }
 
 # Default section order (can be overridden per task)
