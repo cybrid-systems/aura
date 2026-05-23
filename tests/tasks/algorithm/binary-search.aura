@@ -2,8 +2,12 @@
 ;; goal: Write (binary-search target sorted-lst) that returns #t if target exists using std/list take/drop
 ;; expect: #t
 ;; depend: std/list
+;; hint: --- CRITICAL: END with (display ...) ---
+;; hint: Aura outputs #<procedure> when you JUST define a function.
+;; hint: You MUST call it with (display ...) to see the result!
 ;; hint: --- WORKING Aura binary search ---
 ;; hint: (require std/list all:)
+;; hint: (define (binary-search target lst)
 ;; hint:   (if (null? lst) #f
 ;; hint:     (let* ((mid (quotient (length lst) 2))
 ;; hint:            (val (list-ref lst mid)))
