@@ -976,7 +976,17 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
                     continue;
 
                 // Record constructor for match exhaustiveness checking
-                adt_registry_[type_name].constructors.push_back(ctor_name);
+                auto tid = reg_.lookup_type(type_name);
+                if (tid.valid()) {
+                    // Collect all constructors for this ADT
+                    auto existing = reg_.get_adt_constructors(tid);
+                    if (!existing || std::find(existing->begin(), existing->end(),
+                                                ctor_name) == existing->end()) {
+                        auto ctors = existing ? *existing : std::vector<std::string>{};
+                        ctors.push_back(ctor_name);
+                        reg_.register_adt_constructors(tid, ctors);
+                    }
+                }
 
                 // Build constructor type: (field-type-1 ... -> variant-type)
                 // Constructor return type: (Pair String (Pair field-type ()))
@@ -1327,6 +1337,7 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool,
                                             aura::ast::NodeId node_id,
                                             NodeView v, bool is_rec) {
     // children: 0=value, 1=body, name from v.sym_id
+
     // If is_rec, the binding is visible in the value expression too
     auto name = pool.resolve(v.sym_id);
     std::string var_name(name);
@@ -1382,19 +1393,53 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool,
     }
 
     // ── Match exhaustiveness check ──
-    // If this let came from (match ...), emit a note about constructors used.
-    // Full exhaustiveness checking requires persistent ADT registry across
-    // InferenceEngine instances (define-type and match may be separate expressions).
-    if (auto* minfo = flat.get_match_info(node_id)) {
-        if (!minfo->has_wildcard && !minfo->used_constructors.empty()) {
-            std::string ctor_list;
-            for (auto sid : minfo->used_constructors) {
-                if (!ctor_list.empty()) ctor_list += ", ";
-                ctor_list += pool.resolve(sid);
+    // Detect match on ADT by checking if let name is __match_tmp
+    // and the value is a constructor call.
+    auto let_name = std::string(pool.resolve(v.sym_id));
+    if (let_name == "__match_tmp" && !v.children.empty()) {
+        // Try to find the ADT type being matched
+        // The subject value: follow variable bindings to find constructor
+        auto val_id = v.child(0);
+        std::string ctor_name;
+        if (val_id < flat.size()) {
+            auto val_v = flat.get(val_id);
+            if (val_v.tag == NodeTag::Call && !val_v.children.empty()) {
+                auto cv = flat.get(val_v.child(0));
+                if (cv.tag == NodeTag::Variable)
+                    ctor_name = pool.resolve(cv.sym_id);
+            } else if (val_v.tag == NodeTag::Variable) {
+                // Follow variable binding: look up env_ to get the type
+                auto vn = pool.resolve(val_v.sym_id);
+                auto t = env_.lookup(std::string(vn));
+                if (t.valid() && t.index < reg_.size()) {
+                    auto name = reg_.name_of(t);
+                    auto* ctors = reg_.get_adt_constructors(t);
+                    if (ctors) {
+                        // Subject's TYPE matches an ADT — check clauses
+                        // For now, just note which ADT
+                        diag_.report(Diagnostic(ErrorKind::Note,
+                            "match on ADT '" + std::string(name) +
+                            "' (" + std::to_string(ctors->size()) + " ctors)",
+                            cur_loc_));
+                    }
+                }
             }
-            diag_.report(Diagnostic(ErrorKind::Note,
-                                    "match checks constructors: " + ctor_list,
-                                    cur_loc_));
+        }
+        if (!ctor_name.empty()) {
+            // Search TypeRegistry for ADT containing this constructor
+            for (std::size_t i = 0; i < reg_.size(); ++i) {
+                auto tid = TypeId{static_cast<std::uint32_t>(i), 1};
+                auto* ctors = reg_.get_adt_constructors(tid);
+                if (!ctors) continue;
+                auto it = std::find(ctors->begin(), ctors->end(), ctor_name);
+                if (it != ctors->end()) {
+                    diag_.report(Diagnostic(ErrorKind::Note,
+                        "match on '" + std::string(reg_.name_of(tid)) +
+                        "' (" + std::to_string(ctors->size()) + " ctors)",
+                        cur_loc_));
+                    break;
+                }
+            }
         }
     }
 

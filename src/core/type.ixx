@@ -72,6 +72,9 @@ public:
 
     // ── 注册 ──
     TypeId register_type(TypeTag tag, std::string name);
+    void register_adt_constructors(aura::core::TypeId type_id,
+                                    std::vector<std::string> constructors);
+    const std::vector<std::string>* get_adt_constructors(aura::core::TypeId type_id) const;
     TypeId register_func(std::vector<TypeId> args, TypeId ret);
     TypeId register_forall(TypeId var, TypeId body);
     TypeId register_linear(TypeId inner);
@@ -114,6 +117,7 @@ private:
         std::optional<FuncType> func;
         std::optional<ForallType> forall;
         std::optional<LinearType> linear;
+        std::optional<std::vector<std::string>> adt_constructors;
     };
     std::vector<Entry> entries_;
     std::unordered_map<std::string, TypeId> name_to_id_;
