@@ -1,0 +1,6 @@
+;; task: file-size
+;; goal: Write a file and check its size
+;; expect: 5
+;; hint: --- file-size ---
+;; hint: (write-file "/tmp/aura-size-test.txt" "hello")
+;; hint: (display (file-size "/tmp/aura-size-test.txt"))

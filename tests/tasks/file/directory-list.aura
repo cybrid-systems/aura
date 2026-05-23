@@ -1,0 +1,5 @@
+;; task: directory-list
+;; goal: List files in the current directory and display the count
+;; expect: aura
+;; hint: --- directory-list ---
+;; hint: (display (directory-list "."))
