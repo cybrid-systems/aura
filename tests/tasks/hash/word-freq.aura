@@ -5,6 +5,9 @@
 ;; expect: hash
 ;; depend: std/string
 ;; hint: --- WORKING Aura word frequency ---
+;; hint: CRITICAL: Aura hash API uses DIFFERENT names than Scheme/Racket!
+;; hint:   hash-set! (not hash-set), hash-ref (same), hash-has-key? (not has-key?),
+;; hint:   hash-keys (not hash-map), make-hash (not make-hash)
 ;; hint: (require std/string all:)
 ;; hint:       (if (null? ws) h
 ;; hint:           (if (hash-has-key? h w)

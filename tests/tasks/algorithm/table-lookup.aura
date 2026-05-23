@@ -4,6 +4,9 @@
 ;; depend: std/list
 ;; hint: --- WORKING Aura table lookup ---
 ;; hint: (require std/list all:)
+;; hint: (define table '(("a" . 10) ("b" . 20) ("c" . 30)))
+;; hint: (define (lookup key tbl)
+;; hint:   (let ((matches (filter (lambda (p) (equal? (car p) key)) tbl)))
 ;; hint:     (if (null? matches) ()
-;; hint:       (car (cdr (car matches))))))
+;; hint:       (cdr (car matches)))))
 ;; hint: (display (lookup "c" table))

@@ -1,9 +1,11 @@
 ;; task: edsl-mutate-chain
-;; goal: Chain set-code, mutate:rebind, then query:node to verify the mutation
-;; expect: "+"
-;; hint: --- EDSL mutation chain ---
-;; hint: ;; Load a function, mutate it, inspect it
-;; hint: (set-code "(define (add a b) (+ a b))")
-;; hint: (query:find "add")
-;; hint: ;; Display the node info to verify
-;; hint: (display (query:node-type "BinaryOp"))
+;; goal: Use set-code + mutate:rebind to change a function's behavior, then eval-current
+;; expect: 42
+;; depend: edsl
+;; hint: --- EDSL set-code + mutate:rebind + eval-current ---
+;; hint: ;; Step 1: Load a function
+;; hint: (set-code "(define (f) (* 6 7))")
+;; hint: ;; Step 2: Rebind to a simpler body
+;; hint: (mutate:rebind "f" "(lambda () 42)")
+;; hint: ;; Step 3: Evaluate the current workspace
+;; hint: (display (f))
