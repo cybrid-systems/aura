@@ -326,7 +326,97 @@ def gen_serve_structured():
         ])
 
 
+
 # ═══════════════════════════════════════════════════════════
+# 13. Arrow / Higher-Order Functions — map/filter/compose edge
+# ═══════════════════════════════════════════════════════════
+@register
+def gen_higher_order():
+    """Higher-order function edge cases: currying, partial apply, composition."""
+    # Map with non-function
+    yield "(require std/list all:)(display (map 42 '(1 2 3)))"
+    # Map with wrong arity
+    yield "(require std/list all:)(display (map (lambda (x y) (+ x y)) '(1 2 3)))"
+    # Filter with non-predicate
+    yield "(require std/list all:)(display (filter 42 '(1 2 3)))"
+    # Foldl on empty with different init values
+    yield "(require std/list all:)(display (foldl (lambda (x y) (+ x y)) 0 '()))"
+    yield "(require std/list all:)(display (foldl (lambda (x y) (+ x y)) 'init '()))"
+    # High-order type annotation
+    yield "(display ((: (lambda (f x) (f x)) (-> (-> Int Int) Int Int)) (lambda (x) (+ x 1)) 5))"
+    # Function composition
+    yield ("(define (compose f g) (lambda (x) (f (g x))))"
+           "(display ((compose (lambda (x) (* x 2)) (lambda (x) (+ x 1))) 5))")
+    # Self-application (but bounded)
+    yield ("(define (apply-twice f x) (f (f x)))"
+           "(display (apply-twice (lambda (x) (+ x 1)) 5))")
+
+
+# ═══════════════════════════════════════════════════════════
+# 14. Macro — defmacro edge cases
+# ═══════════════════════════════════════════════════════════
+@register
+def gen_macro_edge():
+    """Macro definition edge cases: hygiene, nesting, expansion."""
+    yield "(defmacro (when cond . body) (list 'if cond (cons 'begin body)))"
+    yield "(display 1)"
+    yield "(defmacro (unless cond . body) (list 'if (list 'not cond) (cons 'begin body)))"
+    yield "(display 1)"
+    # Macro that expands to macro call
+    yield ("(defmacro (defn name args . body) (list 'define (cons name args) (cons 'begin body)))"
+           "(defn (add a b) (+ a b))"
+           "(display (add 1 2))")
+    # Macro with unquote
+    yield ("(defmacro (twice expr) (list '+ expr expr))"
+           "(display (twice 5))")
+    # Nested macros
+    yield ("(defmacro (a x) (list 'display x))"
+           "(defmacro (b y) (list 'a y))"
+           "(b 42)")
+
+
+# ═══════════════════════════════════════════════════════════
+# 15. Conditionals — cond/if edge cases
+# ═══════════════════════════════════════════════════════════
+@register
+def gen_cond_edge():
+    """Conditional edge cases: cond with no clauses, if with void, nested."""
+    yield "(cond)"
+    yield "(cond (else 42))"
+    yield "(cond (#f 1) (#f 2) (else 3))"
+    yield "(if #t (display 1))"
+    yield "(if #f (display 1))"
+    yield "(if #t (display 1) (display 2))"
+    yield "(if #f (display 1) (display 2))"
+    # Cond as expression (return value)
+    yield ("(display (cond ((> 3 2) 42) (else 0)))")
+    # Nested if
+    yield ("(display (if (> 5 3) (if (< 10 20) 'yes 'no) 'no))")
+    # And/or with side effects
+    yield ("(display (and #t #f))"
+           "(display (or #f #t))")
+
+
+# ═══════════════════════════════════════════════════════════
+# 16. Binding — let/let*/letrec edge cases
+# ═══════════════════════════════════════════════════════════
+@register
+def gen_binding_edge():
+    """Binding construct edge cases: let shadowing, letrec cycles, named let."""
+    # let with no bindings
+    yield "(let () (display 42))"
+    # let* with shadowing
+    yield "(let* ((x 1) (x (+ x 1))) (display x))"
+    # letrec with self-reference
+    yield "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (display (fact 5)))"
+    # Named let (loop)
+    yield ("(let loop ((i 5) (acc 1))"
+           "  (if (= i 0) (display acc) (loop (- i 1) (* acc i))))")
+    # Deep let binding
+    yield ("(let ((a 1) (b 2) (c 3) (d 4) (e 5))"
+           "  (display (+ a b c d e)))")
+    # set! mutation
+    yield ("(define x 1)(set! x 2)(display x)")# ═══════════════════════════════════════════════════════════
 # 12. Arena / Memory — repeated define/eval, large AST
 # ═══════════════════════════════════════════════════════════
 @register
@@ -359,6 +449,10 @@ DIMENSIONS = [
     ("coercion", gen_coercion, "Coercion: type boundary, blame"),
     ("serve-structured", gen_serve_structured, "Serve: multi-session, protocol"),
     ("arena-stress", gen_arena_stress, "Arena: repeated compile, large AST"),
+    ("higher-order", gen_higher_order, "HO: map/filter/compose edge cases"),
+    ("macro-edge", gen_macro_edge, "Macro: defmacro edge cases"),
+    ("cond-edge", gen_cond_edge, "Cond: conditional edge cases"),
+    ("binding-edge", gen_binding_edge, "Binding: let/letrec/named-let edge cases"),
 ]
 
 
