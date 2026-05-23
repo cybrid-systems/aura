@@ -7,9 +7,11 @@ import aura.compiler.pass_manager;
 import aura.compiler.ir_executor;
 import aura.compiler.evaluator;
 import aura.compiler.value;
+import aura.compiler.type_checker;
 import aura.core.type;
 import aura.parser.parser;
 import aura.compiler.ir;
+import aura.diag;
 import aura.compiler.cache;
 import aura.compiler.value;
 
@@ -673,6 +675,35 @@ int main(int argc, char* argv[]) {
 
         if (mode == "cache" || mode == "all") {
             std::println("cached functions: {}", cs.cached_function_count());
+        }
+
+        if (mode == "typecheck" || mode == "all") {
+            aura::core::TypeRegistry treg;
+            aura::compiler::TypeChecker tc(treg);
+            aura::diag::DiagnosticCollector diag;
+            auto& flat = const_cast<aura::ast::FlatAST&>(cs.last_flat());
+            auto& pool = const_cast<aura::ast::StringPool&>(cs.last_pool());
+            if (flat.root < flat.size()) {
+                auto result = tc.infer_flat(flat, pool, flat.root, diag);
+                std::println("typecheck result: {}", treg.format_type(result));
+                std::println("nodes: {}", flat.size());
+                // Dump type for each node that has one
+                for (aura::ast::NodeId nid = 0; nid < flat.size(); ++nid) {
+                    auto tid = flat.type_id(nid);
+                    if (tid > 0 && tid < treg.size()) {
+                        auto ttype = aura::core::TypeId{tid, 1};
+                        std::println("  node[{}]: {} (type_id={})", nid,
+                                     treg.format_type(ttype), tid);
+                    }
+                }
+                if (!diag.diagnostics().empty()) {
+                    std::println("diagnostics:");
+                    for (auto& d : diag.diagnostics())
+                        std::println("  {}", d.format());
+                }
+            } else {
+                std::println(std::cerr, "inspect: no AST available");
+            }
         }
 
         return 0;
