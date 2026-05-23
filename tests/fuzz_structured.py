@@ -709,6 +709,146 @@ def gen_module_stress():
     yield "(require std/list all:)(require std/string all:)(require std/pair all:)(require std/hash all:)(display 1)"
     # Require then use again
     yield '(require std/list all:)(use "std/list")(display 1)"'
+
+# ═══════════════════════════════════════════════════════════
+# 32. Interleaved Memory — alternating large/small allocation patterns
+# ═══════════════════════════════════════════════════════════
+@register
+def gen_interleaved():
+    """Memory fragmentation via alternating large then small allocations."""
+    n = 20 if not QUICK else 5
+    for _ in range(n):
+        # Big list, then small list, repeat
+        yield ("(require std/list all:)"
+               "(define big1 (range 0 1000))"
+               "(define small 42)"
+               "(define big2 (range 0 2000))"
+               "(define small2 7)"
+               "(gc)(display (+ (length big1) (length big2)))")
+        # Many small allocs then one big
+        yield ("(begin " +
+               " ".join(f"(define s{i} {i})" for i in range(500)) +
+               " (define big (range 0 1000))"
+               " (gc)(display (length big)))")
+        # Free all, big alloc
+        yield ("(require std/list all:)"
+               "(let ((x (range 0 5000)))"
+               "  (gc)"
+               "  (display (length x)))")
+    # Alternating set! on same hash
+    yield ("(require std/hash all:)"
+           "(define h (hash))"
+           + "(hash-set! h 0 0)" * 20
+           + "(hash-set! h 0 1)" * 20
+           + "(display (hash-ref h 0)))")
+
+
+# ═══════════════════════════════════════════════════════════
+# 33. Cross-Module Dependency Stress
+# ═══════════════════════════════════════════════════════════
+@register
+def gen_cross_module():
+    """Cross-module dependencies: module A calls B calls C, redefine one."""
+    n = 15 if not QUICK else 5
+    for _ in range(n):
+        # Serve protocol: define chain of functions, redefine middle
+        yield '{"cmd":"exec","code":"(define (f1 x) (+ x 1))"}'
+        yield '{"cmd":"exec","code":"(define (f2 x) (f1 (* x 2)))"}'
+        yield '{"cmd":"exec","code":"(define (f3 x) (f2 (+ x 3)))"}'
+        yield '{"cmd":"exec","code":"(display (f3 5))"}'
+        yield '{"cmd":"redefine","code":"(define (f1 x) (* x 10))"}'
+        yield '{"cmd":"exec","code":"(display (f3 5))"}'
+        yield '{"cmd":"redefine","code":"(define (f1 x) (- x 1))"}'
+        yield '{"cmd":"exec","code":"(display (f3 5))"}'
+
+
+# ═══════════════════════════════════════════════════════════
+# 34. Serve Session Stress — multi-session switching
+# ═══════════════════════════════════════════════════════════
+@register
+def gen_serve_session():
+    """Serve multi-session: create, switch, exec in different sessions."""
+    n = 15 if not QUICK else 5
+    for _ in range(n):
+        yield '{"cmd":"session","name":"new:a"}'
+        yield '{"cmd":"exec","code":"(define x 1)(display x)"}'
+        yield '{"cmd":"session","name":"new:b"}'
+        yield '{"cmd":"exec","code":"(define x 2)(display x)"}'
+        yield '{"cmd":"session","name":"a"}'
+        yield '{"cmd":"exec","code":"(display x)"}'  # should be 1
+        yield '{"cmd":"session","name":"b"}'
+        yield '{"cmd":"exec","code":"(display x)"}'  # should be 2
+
+
+# ═══════════════════════════════════════════════════════════
+# 35. Type Checker Incremental Stress
+# ═══════════════════════════════════════════════════════════
+@register
+def gen_typeck_stress():
+    """Type checker incremental mode: repeated type annotations, redefine, typecheck."""
+    n = 20 if not QUICK else 5
+    for _ in range(n):
+        # Type annotate then define then typecheck
+        yield "(: x Int)(define x 42)(typecheck-current)(display x)"
+        yield "(: f (-> Int Int))(define (f x) (+ x 1))(typecheck-current)(display (f 5))"
+        # Wrong type then correct type
+        yield "(: x String)(define x 42)"
+        yield "(: x Int)(define x 42)(display x)"
+    # Complex type annotations
+    yield "(require std/list all:)"
+    yield "(: map-fn (-> (-> Int Int) (List Int) (List Int)))"
+    yield "(define map-fn (lambda (f lst) (map f lst)))"
+    yield "(display (map-fn (lambda (x) (+ x 1)) '(1 2 3)))"
+
+
+# ═══════════════════════════════════════════════════════════
+# 36. Gradual Typing Boundary Stress
+# ═══════════════════════════════════════════════════════════
+@register
+def gen_gradual_stress():
+    """Gradual typing: many Dyn/static boundary crossings in sequence."""
+    n = 20 if not QUICK else 5
+    for _ in range(n):
+        # Dyn at boundary
+        yield "(define (f x) (+ x 1))(display (f 42))"
+        yield "(define (f x) (+ x 1))(display (f 3.5))"
+        yield "(display (+ 1 2))"
+        yield "(display (+ 1 2.5))"
+        yield "(display (+ 1.5 2))"
+    yield '(display (string-ref "hello" 0))'
+    # Repeated define with type annotations
+    yield "(: x Dyn)(define x 42)(display x)"
+    yield '(: x Dyn)(define x "hello")(display x)'
+    yield "(: x Dyn)(define x #t)(display x)"
+    yield "(: x Dyn)(define x (lambda (y) (+ y 1)))(display (x 5))"
+    # Type boundary with collections
+    yield ("(: lst (List Dyn))"
+           '(define lst (list 1 "hello" #t))'
+           "(display (car lst))")
+
+
+# ═══════════════════════════════════════════════════════════
+# 37. Portfolio Stress — many small programs, cumulative GC
+# ═══════════════════════════════════════════════════════════
+@register
+def gen_portfolio_stress():
+    """Run many small programs in sequence — accumulate memory, force GC."""
+    n = 30 if not QUICK else 10
+    for _ in range(n):
+        # Many tiny programs that create and discard data
+        yield "(display (+ 1 2))"
+        yield "(display (* 3 4))"
+        yield '(display (string-append "a" "b"))'
+        yield "(require std/list all:)(display (range 0 100))"
+        yield "(require std/hash all:)(define h (hash 1 10))(display (hash-ref h 1))"
+    # Every 10, force GC
+    yield "(gc)(display 'gc)"
+    for _ in range(n):
+        yield "(display (range 0 50))"
+    yield "(gc)(gc)(display 'gc2)"
+    for _ in range(n):
+        yield "(require std/list all:)(display (length (range 0 200)))"
+    yield "(gc)(display 'done)"
 def gen_thread_edge():
     """Basic concurrency primitives if available."""
     yield "(display (thread? (current-thread)))"
@@ -748,6 +888,13 @@ DIMENSIONS = [
     ("deep-cycle", gen_deep_cycle, "Cycle: repeated set-code, deep AST rebuild"),
     ("linear-stress", gen_linear_stress, "Linear: many borrow/move/drop in sequence"),
     ("module-stress", gen_module_stress, "Module: repeated load/unload cycles"),
+
+    ("interleaved-stress", gen_interleaved, "Memory: interleaved large/small alloc patterns"),
+    ("cross-module-stress", gen_cross_module, "Module: cross-module dependency, redefine chain"),
+    ("serve-session-stress", gen_serve_session, "Serve: multi-session switching, repeated exec"),
+    ("typeck-stress", gen_typeck_stress, "Typeck: incremental mode, repeated type annotations"),
+    ("gradual-stress", gen_gradual_stress, "Gradual: Dyn/static boundary crossing at scale"),
+    ("portfolio-stress", gen_portfolio_stress, "Memory: many small programs in sequence, cumulative GC"),
     ("thread-edge", gen_thread_edge, "Thread: basic threading if available"),
     ("binding-edge", gen_binding_edge, "Binding: let/letrec/named-let edge cases"),
 ]
