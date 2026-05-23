@@ -35,6 +35,7 @@ static constexpr const char* kPrimNameTable[] = {
     "write-file",    "file-exists?",   "gensym",         "apply",         "vector",
     "vector-ref",    "vector-set!",    "vector-length",  "vector?",       "make-vector",
     "import",        "char=?",         "char<?",         "char->integer", "integer->char",
+    "quotient",      "remainder",
     "raise",         "error?",
 };
 

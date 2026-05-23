@@ -389,6 +389,8 @@ static std::uint32_t lower_flat_expr(
                     {"char<?", PrimId::CharLt},
                     {"char->integer", PrimId::CharToInteger},
                     {"integer->char", PrimId::IntegerToChar},
+                    {"quotient", PrimId::Quotient},
+                    {"remainder", PrimId::Remainder},
                 };
                 auto pcit = prim_call_map.find(std::string(callee_name));
                 if (pcit != prim_call_map.end()) {
