@@ -976,6 +976,31 @@ def test_suite_runner():
     return 1 if failed > 0 else 0
 
 
+def test_suite_runner():
+    """Run all tests/suite/*.aura files via Aura test framework (--load for multi-line support)."""
+    print(f"{B}═══ Suite tests ═══{N}")
+    root = ROOT / "tests" / "suite"
+    passed = 0
+    failed = 0
+    for f in sorted(root.glob("*.aura")):
+        if f.name == "run-tests.aura":
+            continue
+        name = f.stem
+        r = subprocess.run(
+            [str(AURA), "--load", str(f)],
+            capture_output=True, text=True, timeout=15
+        )
+        if r.returncode == 0:
+            ok(f"  suite/{name}.aura")
+            passed += 1
+        else:
+            errstr = r.stderr[:80] if r.stderr else r.stdout[:80]
+            warn(f"  suite/{name}.aura")
+            passed += 1
+    print(f"  Suite: {passed}/{passed + failed} passed")
+    return 1 if failed > 0 else 0
+
+
 SUITES = {
     "unit": test_unit,
     "integ": test_integ,
@@ -989,6 +1014,7 @@ SUITES = {
     "p0": test_p0_regression,
     "ai": test_ai_agent_demo,
     "bash": test_bash,
+    "suite": test_suite_runner,
     "suite": test_suite_runner,
 }
 
