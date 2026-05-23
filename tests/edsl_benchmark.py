@@ -402,15 +402,8 @@ def llm_complete(model, base_url, key, messages, retries=3):
 def extract_code(text):
     # Some models (MiniMax m2.7) wrap entire response in <think> tags
     original = text
-    text = re.sub(r"<think>.*?(</think>|$)", "", text, flags=re.DOTALL)
-    # Strip remaining XML/HTML tags (not comparison operators like (< x) or (-> x))
-    text = re.sub(r"</?\w[^>]*>", "", text, flags=re.DOTALL)
-    # If stripping think tags left nothing, try extracting from WITHIN the think tags
-    if not text.strip():
-        m = re.search(r"<think>(.*?)</think>", original, flags=re.DOTALL)
-        if m:
-            text = m.group(1)
-            text = re.sub(r"</?\w[^>]*>", "", text, flags=re.DOTALL)
+    
+    # Step 1: Try to find code in ``` blocks first
     if "```" in text:
         for p in text.split("```"):
             lines = p.strip().split("\n")
@@ -443,26 +436,69 @@ def extract_code(text):
                 )
             ):
                 return c
-    # Strip leading garbage words (MiniMax sometimes puts "clojure" before code)
+    
+    # Step 2: Strip think/XML tags (MiniMax reasons in <think>)
+    text = re.sub(r"<think>.*?(</think>|$)", "\n", text, flags=re.DOTALL)
+    text = re.sub(r"</?\w[^>]*>", "", text, flags=re.DOTALL)
+    
+    # Step 3: If nothing left after stripping, try content INSIDE think tags
+    if not text.strip():
+        m = re.search(r"<think>(.*?)</think>", original, flags=re.DOTALL)
+        if m:
+            text = m.group(1)
+            text = re.sub(r"</?\w[^>]*>", "", text, flags=re.DOTALL)
+    
+    # Step 4: Strip leading garbage lines (MiniMax adds Chinese explanation)
     lines = text.strip().split("\n")
-    while lines and not lines[0].startswith(
-        ("(", "#", ";", "(require", "(define", "(display")
-    ):
-        if any(
-            kw in lines[0]
-            for kw in ("define", "require", "(+", "lambda", "import", "set-code")
-        ):
-            break  # keyword found in the word, keep it
-        if len(lines[0]) < 30 and not lines[0].startswith(('"', "'")):
-            lines.pop(0)  # short non-Aura word → garbage
-        else:
+    # Find the first line that looks like code
+    code_start = -1
+    for i, line in enumerate(lines):
+        stripped_line = line.strip()
+        if not stripped_line:
+            continue
+        # Lines starting with ( are likely code
+        if stripped_line.startswith(("(", "#", ";")):
+            code_start = i
             break
+        # Lines containing key Lisp patterns
+        if any(kw in stripped_line for kw in
+               ("define", "require", "lambda", "import", "set-code",
+                "query:", "mutate:", "eval-current", "c-func", "display")):
+            code_start = i
+            break
+    if code_start >= 0:
+        lines = lines[code_start:]
+    
     text = "\n".join(lines)
     stripped = text.strip()
-    if stripped and not stripped.startswith(
-        ("(", "#", '"', "'", "-", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9")
-    ):
-        return ""
+    
+    # Step 5: If resulting text has natural language before code, extract last s-expr
+    if stripped and not stripped.startswith(("(", "#", '"', "'")):
+        # Try to find a balanced s-expression somewhere in the text
+        for kw in ["(define", "(display", "(set-code", "(require"]:
+            idx = stripped.find(kw)
+            if idx >= 0:
+                stripped = stripped[idx:]
+                # Trim at the end too — stop at first blank line or natural language
+                end_idx = len(stripped)
+                for nl in ["\n\n", "\n\r\n"]:
+                    ni = stripped.find(nl)
+                    if ni >= 0 and ni < end_idx:
+                        end_idx = ni
+                stripped = stripped[:end_idx].strip()
+                break
+        if not stripped.startswith(("(", "#", '"', "'")):
+            return ""
+    
+    # Step 6: Trim trailing Chinese/natural language after code
+    if stripped:
+        last_paren = stripped.rfind(")")
+        for kw in [")。", "<br>", "\n\n"]:
+            idx = stripped.find(kw)
+            if idx >= 0:
+                stripped = stripped[:idx].strip()
+                break
+    
     return stripped
 
 
