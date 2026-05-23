@@ -1,0 +1,5 @@
+;; fuzz reproducer: internal-error
+;; seed: 42
+;; time: 2026-05-23T21:14:13.202060
+;; expect: no-crash
+(define (fact n) (if (= n 0) 1 (* n (fact (- n 1))))) (display (fact 100000))

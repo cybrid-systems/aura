@@ -1,0 +1,5 @@
+;; fuzz reproducer: internal-error
+;; seed: 42
+;; time: 2026-05-23T21:14:24.547178
+;; expect: no-crash
+(display ((lambda (x) (x x)) (lambda (x) (x x))))

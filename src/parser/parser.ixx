@@ -58,6 +58,7 @@ private:
     aura::ast::FlatAST& flat_;
     aura::ast::StringPool& pool_;
     std::optional<Lexer> lexer_;
+    std::size_t parse_depth_ = 0;
 };
 
 // Free function — parse directly into FlatAST.

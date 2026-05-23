@@ -5,8 +5,9 @@ namespace aura::parser {
 using namespace aura::ast;
 
 FlatParseResult FlatParser::parse(std::string_view s) {
-    lexer_.emplace(s);
     FlatParseResult r;
+    try {
+    lexer_.emplace(s);
 
     // Helper: record a parse error and skip to next recoverable point
     // Token kind to readable string for error messages
@@ -123,11 +124,31 @@ FlatParseResult FlatParser::parse(std::string_view s) {
     r.root = flat_.add_begin(exprs);
     r.success = !exprs.empty();
     return r;
+    } catch (const std::bad_alloc&) {
+        r.success = false;
+        r.error = "out of memory during parse";
+        return r;
+    } catch (const std::exception&) {
+        r.success = false;
+        r.error = "parse error";
+        return r;
+    }
 }
 
 NodeId FlatParser::parse_expr() {
     if (!lexer_)
         return NULL_NODE;
+    // Recursion depth guard: prevent stack overflow on deeply nested expressions
+    static constexpr std::size_t MAX_PARSE_DEPTH = 500;
+    if (++parse_depth_ > MAX_PARSE_DEPTH) {
+        --parse_depth_;
+        return NULL_NODE;
+    }
+    // RAII depth decrement on any exit path
+    struct DepthGuard {
+        std::size_t& d;
+        ~DepthGuard() { --d; }
+    } _dg{parse_depth_};
     auto tok = lexer_->peek();
     switch (tok.kind) {
         case TokenKind::Integer:
@@ -1536,6 +1557,9 @@ static bool is_quasiquote(const aura::ast::FlatAST& flat, const aura::ast::Strin
 }
 
 NodeId FlatParser::expand_qq(NodeId expr, int depth) {
+    // Prevent stack overflow from exceessive quasiquote nesting
+    if (depth > 4)
+        return NULL_NODE;
     if (expr == NULL_NODE) {
         // Empty quasiquote: (quote ())
         return flat_.add_quote(flat_.add_literal(0));
