@@ -15,6 +15,7 @@
   LLM_MODEL=minimax-m2.7 LLM_API_KEY="***" python3 tests/edsl_benchmark.py --max-attempts 5
 """
 
+import concurrent.futures
 import fcntl
 import http.client
 import json
@@ -22,6 +23,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 from collections import defaultdict
@@ -673,10 +675,7 @@ def build_adaptive_feedback(
                 fb.append("=== Connection Errors ===")
                 fb.append(trace_err[:200])
 
-    if fix_instructions:
-        fb.append("")
-        fb.append("### Fix Instructions ###")
-        fb.extend(fix_instructions)
+
     if diag and diag != "":
         fb.append("")
         fb.append("Diagnosis: " + diag)
@@ -988,9 +987,15 @@ def internal_colony_search(serve, last_code, expected, phase, task_name=""):
     pid_limit = _PHASE_VARIANT_LIMITS.get(phase, MAX_COLONY_VARIANTS)
     colony_start = time.time()
 
+    # Convert expected list to comma-separated string
+    if isinstance(expected, list):
+        expected_str = ",".join(expected)
+    else:
+        expected_str = str(expected)
+
     # Single exec: pure Aura colony search
     # Escape expected string for Aura
-    esc_expected = expected.replace('\\', '\\\\').replace('"', '\\"')
+    esc_expected = expected_str.replace('\\', '\\\\').replace('"', '\\"')
     ok, out, err = serve.exec(
         f'(require "std/ant" all:)(colony:search "{esc_expected}" {pid_limit})'
     )
@@ -998,7 +1003,6 @@ def internal_colony_search(serve, last_code, expected, phase, task_name=""):
         return False, out or "", err or "colony:serve-error"
 
     # Parse output: (#t output msg) or (#f output msg)
-    # The serve returns the printed result of colony:search
     result_str = (out or "").strip()
     if result_str.startswith("(#t"):
         elapsed = time.time() - colony_start
@@ -1007,11 +1011,7 @@ def internal_colony_search(serve, last_code, expected, phase, task_name=""):
         captured = parts[1] if len(parts) > 1 else ""
         return True, captured, f"colony:aura in {elapsed:.1f}s"
 
-    return False, "", f"colony:aura-no-variant"}]}
-        False,
-        best_out,
-        f"colony:{tested}var/{elapsed:.1f}s/{edsl_tested}edsl+{full_tested}full",
-    )
+    return False, "", "colony:aura-no-variant"
 
 
 def get_execution_trace(code_str, timeout=10):
@@ -1183,7 +1183,59 @@ def print_task_table(task_results):
     return stable_pass, stable_fail, volatile
 
 
+# ── Thread safety ──────────────────────────────
+_print_lock = threading.Lock()
+def safe_print(*args, **kwargs):
+    with _print_lock:
+        print(*args, **kwargs)
+
+def safe_task_runner(args):
+    """Run a single task in a thread pool worker.
+    Args: (model, base_url, api_key, name, prompt, expected, stdlib, api_ref, lock)"""
+    model, base_url, api_key, name, prompt, expected, stdlib, api_ref = args
+    task_serve = None
+    try:
+        task_serve = ServeClient()
+    except Exception:
+        pass
+    task_passes = 0
+    safe_print(f"\n  ── {name} ──")
+    for round_i in range(1, ROUNDS + 1):
+        success, out, err, llm_t, attempts = run_single_task(
+            model, base_url, api_key, name, prompt, expected, stdlib,
+            api_ref, serve=task_serve,
+        )
+        # Accumulate results (safe since task_stats is per-task)
+        # We'll aggregate after thread pool completes
+        return (name, success, out, err, llm_t, attempts)
+    return (name, False, "", "", 0, 0)
+
 # ── 主流程 ────────────────────────────────────────────────
+def run_single_task_parallel(args):
+    """Wrapper for ThreadPoolExecutor: creates its own ServeClient per task."""
+    model, base_url, api_key, name, prompt, expected, stdlib, api_ref = args
+    task_serve = None
+    try:
+        task_serve = ServeClient()
+    except Exception:
+        pass
+    task_passes = 0
+    for round_i in range(1, ROUNDS + 1):
+        success, out, err, llm_t, attempts = run_single_task(
+            model, base_url, api_key, name, prompt, expected, stdlib,
+            api_ref, serve=task_serve,
+        )
+        if success:
+            task_passes += 1
+        # Return result after all rounds
+    if task_serve:
+        try:
+            task_serve.close()
+        except Exception:
+            pass
+    return name, success, out, err if err else "", llm_t, attempts
+
+
 def main():
     global ROUNDS, EVOLVE_MODE, TRACE_MODE, MAX_ATTEMPTS
 
