@@ -651,6 +651,44 @@ public:
             return EvalResult(types::make_void());
         }
 
+        // Check if IR module contains any non-integer operations that JIT can't handle.
+        // JIT only supports integer arithmetic — strings, pairs, closures, etc. need IR interpreter.
+        bool has_complex_ops = false;
+        for (auto& fn : ir_mod.functions) {
+            for (auto& block : fn.blocks) {
+                for (auto& inst : block.instructions) {
+                    switch (inst.opcode) {
+                        case aura::ir::IROpcode::ConstString:
+                        case aura::ir::IROpcode::MakePair:
+                        case aura::ir::IROpcode::Car:
+                        case aura::ir::IROpcode::Cdr:
+                        case aura::ir::IROpcode::MakeClosure:
+                        case aura::ir::IROpcode::NewCell:
+                        case aura::ir::IROpcode::CellGet:
+                        case aura::ir::IROpcode::CellSet:
+                        case aura::ir::IROpcode::ConstF64:
+                        case aura::ir::IROpcode::PrimCall:
+                            has_complex_ops = true;
+                            break;
+                        default:
+                            break;
+                    }
+                    if (has_complex_ops) break;
+                }
+                if (has_complex_ops) break;
+            }
+            if (has_complex_ops) break;
+        }
+        if (has_complex_ops) {
+            // Fall back to IR interpreter for non-integer ops (strings, pairs, closures).
+            // JIT only handles pure integer arithmetic correctly.
+            aura::compiler::IRInterpreter ir_interp(ir_mod, evaluator_.primitives(),
+                                                     &type_registry_);
+            auto ir_result = ir_interp.execute();
+            if (ir_result) return EvalResult(*ir_result);
+            return EvalResult(types::make_void());
+        }
+
         // Register primitives with JIT runtime (first call only)
         if (!jit_initialized_) {
             register_jit_primitives();
