@@ -26,8 +26,7 @@ namespace aura::reflect {
 //  Count enumerators — consteval
 // ==============================================================
 
-template <typename E>
-consteval std::size_t enum_count() {
+template <typename E> consteval std::size_t enum_count() {
     return std::meta::enumerators_of(^^E).size();
 }
 
@@ -38,8 +37,7 @@ consteval std::size_t enum_count() {
 // For IROpcode, values are sequential 0..23.
 // Extract enumerator names into a fixed array by INDEX (not by value).
 // Use data()[i] to avoid vector operator[] constexpr issues.
-template <typename E, std::size_t N>
-consteval auto build_name_table() {
+template <typename E, std::size_t N> consteval auto build_name_table() {
     auto enums = std::meta::enumerators_of(^^E);
     std::array<std::string_view, N> table{};
     for (std::size_t i = 0; i < N; ++i) {
@@ -49,11 +47,10 @@ consteval auto build_name_table() {
     return table;
 }
 
-template <typename E>
-constexpr std::string_view opcode_name(int value) {
+template <typename E> constexpr std::string_view opcode_name(int value) {
     // Use fixed upper bound (enumerators_of has GCC constexpr issues)
     constexpr auto N = std::size_t{256};
-    constexpr auto table = build_name_table<E, 32>();  // generous upper bound
+    constexpr auto table = build_name_table<E, 32>(); // generous upper bound
     if (value >= 0 && value < static_cast<int>(N))
         return table[value];
     return "<unknown>";
@@ -63,8 +60,7 @@ constexpr std::string_view opcode_name(int value) {
 //  Validate: no duplicate names
 // ==============================================================
 
-template <typename E>
-consteval bool validate_enum() {
+template <typename E> consteval bool validate_enum() {
     auto enums = std::meta::enumerators_of(^^E);
     for (std::size_t i = 0; i < enums.size(); ++i) {
         for (std::size_t j = i + 1; j < enums.size(); ++j) {
@@ -80,8 +76,7 @@ consteval bool validate_enum() {
 //  Opcode list (for CLI/--opcodes)
 // ==============================================================
 
-template <typename E>
-consteval auto list_opcodes() {
+template <typename E> consteval auto list_opcodes() {
     constexpr auto N = std::size_t{256};
     auto enums = std::meta::enumerators_of(^^E);
     std::array<std::string_view, 32> names{};

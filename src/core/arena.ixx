@@ -5,16 +5,15 @@ namespace aura::ast {
 
 // ── ArenaStats — per-arena memory accounting ─────────────────────
 export struct ArenaStats {
-    std::size_t capacity = 0;        // total buffer size
-    std::size_t used = 0;            // bytes consumed
-    std::size_t peak_used = 0;       // historical high-water mark
+    std::size_t capacity = 0;         // total buffer size
+    std::size_t used = 0;             // bytes consumed
+    std::size_t peak_used = 0;        // historical high-water mark
     std::size_t allocation_count = 0; // number of allocation calls
-    std::size_t wasted = 0;          // alignment padding
+    std::size_t wasted = 0;           // alignment padding
 
     std::string format() const {
         return std::format("arena: {:.1f}MB / {:.1f}MB (peak {:.1f}MB) | {} allocs | {}B wasted",
-                           used / 1048576.0, capacity / 1048576.0,
-                           peak_used / 1048576.0,
+                           used / 1048576.0, capacity / 1048576.0, peak_used / 1048576.0,
                            allocation_count, wasted);
     }
 
@@ -41,18 +40,18 @@ export struct ArenaStats {
 export class SmallObjectPool {
 public:
     // Size classes (must be sorted ascending)
-    static constexpr std::size_t kTierSizes[]  = {16, 32, 64};
-    static constexpr std::size_t kNumTiers     = 3;
-    static constexpr std::size_t kSmallPoolSize = 3 * 1024 * 1024; // 3MB total
-    static constexpr std::size_t kPerTierSize  = kSmallPoolSize / kNumTiers; // 1MB each
-    static constexpr std::size_t kMaxSmallSize = kTierSizes[kNumTiers - 1];  // 64
+    static constexpr std::size_t kTierSizes[] = {16, 32, 64};
+    static constexpr std::size_t kNumTiers = 3;
+    static constexpr std::size_t kSmallPoolSize = 3 * 1024 * 1024;          // 3MB total
+    static constexpr std::size_t kPerTierSize = kSmallPoolSize / kNumTiers; // 1MB each
+    static constexpr std::size_t kMaxSmallSize = kTierSizes[kNumTiers - 1]; // 64
 
     SmallObjectPool() {
         buffer_.resize(kSmallPoolSize);
         for (std::size_t i = 0; i < kNumTiers; ++i) {
-            classes_[i].start  = buffer_.data() + i * kPerTierSize;
-            classes_[i].bump   = classes_[i].start;
-            classes_[i].end    = classes_[i].start + kPerTierSize;
+            classes_[i].start = buffer_.data() + i * kPerTierSize;
+            classes_[i].bump = classes_[i].start;
+            classes_[i].end = classes_[i].start + kPerTierSize;
             classes_[i].obj_sz = kTierSizes[i];
         }
     }
@@ -93,8 +92,8 @@ public:
 private:
     struct Tier {
         std::byte* start = nullptr;
-        std::byte* bump  = nullptr;
-        std::byte* end   = nullptr;
+        std::byte* bump = nullptr;
+        std::byte* end = nullptr;
         std::size_t obj_sz = 0;
     };
 
@@ -116,24 +115,20 @@ private:
 export class ASTArena {
 public:
     explicit ASTArena(std::size_t initial_size = 8 * 1024 * 1024)
-        : buffer_(initial_size),
-          resource_(buffer_.data(), buffer_.size(),
-                    std::pmr::null_memory_resource())
-    {}
+        : buffer_(initial_size)
+        , resource_(buffer_.data(), buffer_.size(), std::pmr::null_memory_resource()) {}
 
     // Allocate and construct an object of type T
-    template <typename T, typename... Args>
-    [[nodiscard]] T* create(Args&&... args) {
+    template <typename T, typename... Args> [[nodiscard]] T* create(Args&&... args) {
         void* raw = allocate_raw(sizeof(T), alignof(T));
         ++stats_.allocation_count;
-        return std::construct_at(static_cast<T*>(raw),
-                                 std::forward<Args>(args)...);
+        return std::construct_at(static_cast<T*>(raw), std::forward<Args>(args)...);
     }
 
     // Destroy a single object (rarely needed — reset() bulk-frees)
-    template <typename T>
-    void destroy(T* ptr) {
-        if (ptr) std::destroy_at(ptr);
+    template <typename T> void destroy(T* ptr) {
+        if (ptr)
+            std::destroy_at(ptr);
     }
 
     // Release all allocated memory in one shot
@@ -146,8 +141,7 @@ public:
     }
 
     // Get a pmr-compatible allocator for std::pmr containers
-    [[nodiscard]] std::pmr::polymorphic_allocator<std::byte>
-    allocator() noexcept {
+    [[nodiscard]] std::pmr::polymorphic_allocator<std::byte> allocator() noexcept {
         return {&resource_};
     }
 
@@ -175,7 +169,8 @@ private:
         // Try small-object pool first (for objects <= 64 bytes)
         if (size <= SmallObjectPool::kMaxSmallSize) {
             void* ptr = small_pool_.try_allocate(size);
-            if (ptr) return ptr;
+            if (ptr)
+                return ptr;
             // Small-object tier exhausted — fall through to main arena
         }
 
@@ -199,19 +194,19 @@ private:
 export class ArenaGroup {
 public:
     // Get or create an arena for a module
-    ASTArena& module_arena(const std::string& name,
-                           std::size_t initial_size = 8 * 1024 * 1024) {
+    ASTArena& module_arena(const std::string& name, std::size_t initial_size = 8 * 1024 * 1024) {
         auto it = arenas_.find(name);
-        if (it != arenas_.end()) return *it->second;
-        auto [inserted, ok] = arenas_.emplace(
-            name, std::make_unique<ASTArena>(initial_size));
+        if (it != arenas_.end())
+            return *it->second;
+        auto [inserted, ok] = arenas_.emplace(name, std::make_unique<ASTArena>(initial_size));
         return *inserted->second;
     }
 
     // Reset a specific module's arena
     void reset_module(const std::string& name) {
         auto it = arenas_.find(name);
-        if (it != arenas_.end()) it->second->reset();
+        if (it != arenas_.end())
+            it->second->reset();
     }
 
     // Reset all arenas
@@ -230,8 +225,7 @@ public:
     }
 
     // Per-module stats breakdown
-    [[nodiscard]] std::vector<std::pair<std::string, ArenaStats>>
-    module_stats() const {
+    [[nodiscard]] std::vector<std::pair<std::string, ArenaStats>> module_stats() const {
         std::vector<std::pair<std::string, ArenaStats>> result;
         for (auto& [name, arena] : arenas_) {
             result.emplace_back(name, arena->stats());
@@ -243,8 +237,7 @@ public:
     [[nodiscard]] std::size_t count() const { return arenas_.size(); }
 
 private:
-    std::unordered_map<std::string,
-        std::unique_ptr<ASTArena>> arenas_;
+    std::unordered_map<std::string, std::unique_ptr<ASTArena>> arenas_;
 };
 
 } // namespace aura::ast

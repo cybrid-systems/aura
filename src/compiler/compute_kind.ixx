@@ -7,7 +7,7 @@ namespace aura::compiler {
 // ComputeKind: compile-time evaluability analysis
 export enum class ComputeKind : std::uint8_t {
     Unknown = 0,
-    Known   = 1,
+    Known = 1,
 };
 
 // Per-instruction compute kind

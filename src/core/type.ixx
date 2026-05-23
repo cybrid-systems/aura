@@ -10,28 +10,28 @@ namespace aura::core {
 
 // ── TypeTag ──────────────────────────────────────────────────
 export enum class TypeTag : uint8_t {
-    DYNAMIC = 0,    // Any / 无标注
-    INT,            // int64_t
-    BOOL,           // bool
-    STRING,         // std::string
-    FLOAT,          // double
-    PAIR,           // (cons ...)
-    VECTOR,         // vector
-    CLOSURE,        // 闭包函数
-    FUNC,           // 多参数函数
-    RECORD,         // 记录
-    VARIANT,        // 和类型
-    TYPE_VAR,       // 类型变量
-    FORALL,         // 多态 ∀
-    LINEAR,         // 线性所有权 M4
-    VOID,           // 无返回值
-    TYPE,           // 类型自身的类型
-    HASH,           // hash table
+    DYNAMIC = 0, // Any / 无标注
+    INT,         // int64_t
+    BOOL,        // bool
+    STRING,      // std::string
+    FLOAT,       // double
+    PAIR,        // (cons ...)
+    VECTOR,      // vector
+    CLOSURE,     // 闭包函数
+    FUNC,        // 多参数函数
+    RECORD,      // 记录
+    VARIANT,     // 和类型
+    TYPE_VAR,    // 类型变量
+    FORALL,      // 多态 ∀
+    LINEAR,      // 线性所有权 M4
+    VOID,        // 无返回值
+    TYPE,        // 类型自身的类型
+    HASH,        // hash table
 };
 
 // ── TypeId ────────────────────────────────────────────────────
 export struct TypeId {
-    uint32_t index = 0;     // TypeRegistry 中的索引
+    uint32_t index = 0;      // TypeRegistry 中的索引
     uint32_t generation = 0; // 防重用/校验
 
     bool valid() const noexcept { return index != 0 || generation != 0; }
@@ -43,8 +43,8 @@ export struct TypeId {
 
 // ── TypeInfo ──────────────────────────────────────────────────
 export struct TypeInfo {
-    TypeId resolved{};      // 经过推断的类型
-    TypeId expected{};      // 用户标注的类型（可选）
+    TypeId resolved{}; // 经过推断的类型
+    TypeId expected{}; // 用户标注的类型（可选）
     bool has_annotation = false;
 
     bool matches() const { return resolved == expected || !expected.valid(); }
@@ -57,12 +57,12 @@ export struct FuncType {
 };
 
 export struct ForallType {
-    TypeId var;      // bound type variable
-    TypeId body;     // body type (usually a FuncType)
+    TypeId var;  // bound type variable
+    TypeId body; // body type (usually a FuncType)
 };
 
 export struct LinearType {
-    TypeId inner;    // the wrapped type (e.g. Int in (Linear Int))
+    TypeId inner; // the wrapped type (e.g. Int in (Linear Int))
 };
 
 // ── TypeRegistry ──────────────────────────────────────────────
@@ -88,11 +88,11 @@ public:
 
     // ── 预定义常量 ──
     TypeId dynamic_type() const { return TypeId{0, 1}; }
-    TypeId int_type()     const { return TypeId{1, 1}; }
-    TypeId bool_type()    const { return TypeId{2, 1}; }
-    TypeId string_type()  const { return TypeId{3, 1}; }
-    TypeId void_type()    const { return TypeId{4, 1}; }
-    TypeId type_type()    const { return TypeId{5, 1}; }
+    TypeId int_type() const { return TypeId{1, 1}; }
+    TypeId bool_type() const { return TypeId{2, 1}; }
+    TypeId string_type() const { return TypeId{3, 1}; }
+    TypeId void_type() const { return TypeId{4, 1}; }
+    TypeId type_type() const { return TypeId{5, 1}; }
 
     // ── Instantiate a forall type with fresh type variables
     TypeId instantiate(TypeId forall_id, std::function<TypeId()> fresh_var);

@@ -28,58 +28,88 @@ ComputeKindResult compute_kind(const IRFunction& func) {
                 auto kind = ComputeKind::Unknown;
 
                 switch (instr.opcode) {
-                case IROpcode::Nop: case IROpcode::Branch:
-                case IROpcode::Jump: case IROpcode::Capture:
-                case IROpcode::CaptureRef:
-                    kind = ComputeKind::Known; break;
-
-                case IROpcode::ConstI64:
-                case IROpcode::ConstF64:
-                    kind = ComputeKind::Known; break;
-
-                case IROpcode::Local:
-                    if (ops[1] < slots.size() && slots[ops[1]] == ComputeKind::Known)
+                    case IROpcode::Nop:
+                    case IROpcode::Branch:
+                    case IROpcode::Jump:
+                    case IROpcode::Capture:
+                    case IROpcode::CaptureRef:
                         kind = ComputeKind::Known;
-                    break;
+                        break;
 
-                case IROpcode::MakeClosure:
-                    kind = ComputeKind::Known; break;
+                    case IROpcode::ConstI64:
+                    case IROpcode::ConstF64:
+                        kind = ComputeKind::Known;
+                        break;
 
-                case IROpcode::Add: case IROpcode::Sub:
-                case IROpcode::Mul: case IROpcode::Div:
-                case IROpcode::Eq:  case IROpcode::Lt:
-                case IROpcode::Gt:  case IROpcode::Le: case IROpcode::Ge:
-                case IROpcode::And: case IROpcode::Or: {
-                    bool k = ops[1] < slots.size() && slots[ops[1]] == ComputeKind::Known
-                          && ops[2] < slots.size() && slots[ops[2]] == ComputeKind::Known;
-                    kind = k ? ComputeKind::Known : ComputeKind::Unknown;
-                    break;
-                }
-                case IROpcode::Not: {
-                    bool k = ops[1] < slots.size() && slots[ops[1]] == ComputeKind::Known;
-                    kind = k ? ComputeKind::Known : ComputeKind::Unknown;
-                    break;
-                }
-                default: break;
+                    case IROpcode::Local:
+                        if (ops[1] < slots.size() && slots[ops[1]] == ComputeKind::Known)
+                            kind = ComputeKind::Known;
+                        break;
+
+                    case IROpcode::MakeClosure:
+                        kind = ComputeKind::Known;
+                        break;
+
+                    case IROpcode::Add:
+                    case IROpcode::Sub:
+                    case IROpcode::Mul:
+                    case IROpcode::Div:
+                    case IROpcode::Eq:
+                    case IROpcode::Lt:
+                    case IROpcode::Gt:
+                    case IROpcode::Le:
+                    case IROpcode::Ge:
+                    case IROpcode::And:
+                    case IROpcode::Or: {
+                        bool k = ops[1] < slots.size() && slots[ops[1]] == ComputeKind::Known &&
+                                 ops[2] < slots.size() && slots[ops[2]] == ComputeKind::Known;
+                        kind = k ? ComputeKind::Known : ComputeKind::Unknown;
+                        break;
+                    }
+                    case IROpcode::Not: {
+                        bool k = ops[1] < slots.size() && slots[ops[1]] == ComputeKind::Known;
+                        kind = k ? ComputeKind::Known : ComputeKind::Unknown;
+                        break;
+                    }
+                    default:
+                        break;
                 }
 
-                if (kind != kinds[ii]) { kinds[ii] = kind; changed = true; }
+                if (kind != kinds[ii]) {
+                    kinds[ii] = kind;
+                    changed = true;
+                }
 
                 // Update slot state
                 auto dst = ops[0];
                 bool has_dst = false;
                 switch (instr.opcode) {
-                case IROpcode::ConstI64: case IROpcode::ConstF64: case IROpcode::Local: case IROpcode::Arg:
-                case IROpcode::Add: case IROpcode::Sub: case IROpcode::Mul: case IROpcode::Div:
-                case IROpcode::Eq: case IROpcode::Lt: case IROpcode::Gt:
-                case IROpcode::Le: case IROpcode::Ge: case IROpcode::And:
-                case IROpcode::Or: case IROpcode::Not: case IROpcode::Call:
-                case IROpcode::MakeClosure:
-                    has_dst = true; break;
-                default: break;
+                    case IROpcode::ConstI64:
+                    case IROpcode::ConstF64:
+                    case IROpcode::Local:
+                    case IROpcode::Arg:
+                    case IROpcode::Add:
+                    case IROpcode::Sub:
+                    case IROpcode::Mul:
+                    case IROpcode::Div:
+                    case IROpcode::Eq:
+                    case IROpcode::Lt:
+                    case IROpcode::Gt:
+                    case IROpcode::Le:
+                    case IROpcode::Ge:
+                    case IROpcode::And:
+                    case IROpcode::Or:
+                    case IROpcode::Not:
+                    case IROpcode::Call:
+                    case IROpcode::MakeClosure:
+                        has_dst = true;
+                        break;
+                    default:
+                        break;
                 }
                 if (has_dst && dst < slots.size() && slots[dst] != kind) {
-                    slots[dst] = kind; changed = true;
+                    slots[dst] = kind;
+                    changed = true;
                 }
             }
         }

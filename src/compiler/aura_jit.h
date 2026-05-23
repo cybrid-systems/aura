@@ -31,21 +31,21 @@ struct FlatFunction {
     const FlatBlock* blocks;
     uint32_t num_blocks;
     // Closure support: func_id mapping
-    const uint32_t* func_id_map;  // [arg_count] maps local slots to IR func IDs
-    uint32_t num_callees;         // number of entries in func_id_map
+    const uint32_t* func_id_map; // [arg_count] maps local slots to IR func IDs
+    uint32_t num_callees;        // number of entries in func_id_map
 };
 
-using ScalarFn = int64_t(*)(int64_t*, uint32_t);
+using ScalarFn = int64_t (*)(int64_t*, uint32_t);
 // Alias for runtime registration with same signature
-using ScalarFn32 = int64_t(*)(int64_t*, uint32_t);
+using ScalarFn32 = int64_t (*)(int64_t*, uint32_t);
 
 // Runtime function pointer types for JIT symbol registration
-using JitAllocClosureFn   = int64_t(*)(int64_t func_id);
-using JitClosureCaptureFn = void(*)(int64_t closure_id, int64_t idx, int64_t val);
-using JitClosureCallFn    = int64_t(*)(int64_t closure_id, int64_t* args, int64_t argc);
-using JitNewCellFn        = int64_t(*)();
-using JitCellGetFn        = int64_t(*)(int64_t cell_id);
-using JitCellSetFn        = void(*)(int64_t cell_id, int64_t val);
+using JitAllocClosureFn = int64_t (*)(int64_t func_id);
+using JitClosureCaptureFn = void (*)(int64_t closure_id, int64_t idx, int64_t val);
+using JitClosureCallFn = int64_t (*)(int64_t closure_id, int64_t* args, int64_t argc);
+using JitNewCellFn = int64_t (*)();
+using JitCellGetFn = int64_t (*)(int64_t cell_id);
+using JitCellSetFn = void (*)(int64_t cell_id, int64_t val);
 
 // Function metadata for registering compiled functions with runtime
 struct FunctionMeta {
@@ -66,9 +66,8 @@ public:
     void* get_function_ptr(const char* name);
 
     // Register a compiled function with the runtime for closure calls
-    void register_function(int64_t func_id, ScalarFn fn_ptr,
-                           uint32_t local_count, uint32_t arg_count,
-                           uint32_t env_count);
+    void register_function(int64_t func_id, ScalarFn fn_ptr, uint32_t local_count,
+                           uint32_t arg_count, uint32_t env_count);
 
     // Get all compiled functions metadata
     const std::vector<FunctionMeta>& compiled_functions() const;

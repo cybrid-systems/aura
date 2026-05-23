@@ -21,17 +21,21 @@ extern "C" char* aura_inspect_ir_json(const void* mod, std::size_t* out_size);
 static std::string fmt_val(const aura::compiler::types::EvalValue& v,
                            aura::compiler::CompilerService& cs) {
     return aura::compiler::format_value(v, &cs.evaluator().primitives().string_heap(),
-                                         &cs.evaluator().pairs(), 0,
-                                         &cs.evaluator().primitives());
+                                        &cs.evaluator().pairs(), 0, &cs.evaluator().primitives());
 }
 
 // JSON helper: wrap a string value for JSON (escape quotes and backslashes)
 static std::string json_escape(std::string_view s) {
     std::string out;
     for (auto c : s) {
-        if (c == '"' || c == '\\') { out += '\\'; out += c; }
-        else if (c == '\n') { out += "\\n"; }
-        else { out += c; }
+        if (c == '"' || c == '\\') {
+            out += '\\';
+            out += c;
+        } else if (c == '\n') {
+            out += "\\n";
+        } else {
+            out += c;
+        }
     }
     return out;
 }
@@ -41,26 +45,31 @@ static std::string json_escape(std::string_view s) {
 // Returns an empty map on parse failure.
 static std::unordered_map<std::string, std::string> parse_json_command(std::string_view line) {
     std::unordered_map<std::string, std::string> result;
-    if (line.empty()) return result;
+    if (line.empty())
+        return result;
 
     auto p = line.data();
     auto end = p + line.size();
 
     // Skip whitespace and opening brace
     auto skip_ws = [&]() {
-        while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) ++p;
+        while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r'))
+            ++p;
     };
 
     skip_ws();
-    if (p >= end || *p != '{') return result;
+    if (p >= end || *p != '{')
+        return result;
     ++p;
 
     while (p < end) {
         skip_ws();
-        if (p >= end || *p == '}') break;
+        if (p >= end || *p == '}')
+            break;
 
         // Parse key
-        if (*p != '"') return result;
+        if (*p != '"')
+            return result;
         ++p;
         std::string key;
         while (p < end && *p != '"') {
@@ -72,11 +81,13 @@ static std::unordered_map<std::string, std::string> parse_json_command(std::stri
             }
             ++p;
         }
-        if (p >= end) return result;
+        if (p >= end)
+            return result;
         ++p; // skip closing quote
 
         skip_ws();
-        if (p >= end || *p != ':') return result;
+        if (p >= end || *p != ':')
+            return result;
         ++p;
 
         skip_ws();
@@ -88,27 +99,36 @@ static std::unordered_map<std::string, std::string> parse_json_command(std::stri
             while (p < end && *p != '"') {
                 if (*p == '\\' && p + 1 < end) {
                     ++p;
-                    if (*p == 'n') value += '\n';
-                    else if (*p == 't') value += '\t';
-                    else if (*p == 'r') value += '\r';
-                    else if (*p == '"') value += '"';
-                    else if (*p == '\\') value += '\\';
-                    else value += *p;
+                    if (*p == 'n')
+                        value += '\n';
+                    else if (*p == 't')
+                        value += '\t';
+                    else if (*p == 'r')
+                        value += '\r';
+                    else if (*p == '"')
+                        value += '"';
+                    else if (*p == '\\')
+                        value += '\\';
+                    else
+                        value += *p;
                 } else {
                     value += *p;
                 }
                 ++p;
             }
-            if (p >= end) return result;
+            if (p >= end)
+                return result;
             ++p; // skip closing quote
         } else if (*p == 't' || *p == 'f' || *p == 'n') {
             // true / false / null
-            while (p < end && (*p != ',' && *p != '}' && *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r')) {
+            while (p < end && (*p != ',' && *p != '}' && *p != ' ' && *p != '\t' && *p != '\n' &&
+                               *p != '\r')) {
                 value += *p++;
             }
         } else {
             // Number (int or float)
-            while (p < end && *p != ',' && *p != '}' && *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r') {
+            while (p < end && *p != ',' && *p != '}' && *p != ' ' && *p != '\t' && *p != '\n' &&
+                   *p != '\r') {
                 value += *p++;
             }
         }
@@ -116,12 +136,14 @@ static std::unordered_map<std::string, std::string> parse_json_command(std::stri
         result[std::move(key)] = std::move(value);
 
         skip_ws();
-        if (p >= end) break;
+        if (p >= end)
+            break;
         if (*p == ',') {
             ++p;
             continue;
         }
-        if (*p == '}') break;
+        if (*p == '}')
+            break;
         // Unexpected character
         return result;
     }
@@ -142,7 +164,8 @@ int main(int argc, char* argv[]) {
 
         std::string line;
         while (std::getline(std::cin, line)) {
-            if (line.empty()) continue;
+            if (line.empty())
+                continue;
 
             auto trimmed = line;
             auto first_non_space = trimmed.find_first_not_of(" \t");
@@ -193,16 +216,17 @@ int main(int argc, char* argv[]) {
                     if (action == "compile") {
                         auto code_it = cmd.find("code");
                         if (name_it == cmd.end() || code_it == cmd.end()) {
-                            std::println("{{\"status\":\"error\",\"msg\":\"missing name or code field\"}}");
+                            std::println(
+                                "{{\"status\":\"error\",\"msg\":\"missing name or code field\"}}");
                             continue;
                         }
                         auto result = cs.compile_module(name_it->second, code_it->second);
                         if (result) {
                             std::println("{{\"status\":\"ok\",\"module\":\"{}\"}}",
-                                        json_escape(name_it->second));
+                                         json_escape(name_it->second));
                         } else {
                             std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
-                                        json_escape(result.error().message));
+                                         json_escape(result.error().message));
                         }
                     } else if (action == "unload") {
                         if (name_it == cmd.end()) {
@@ -211,7 +235,7 @@ int main(int argc, char* argv[]) {
                         }
                         cs.unload_module(name_it->second);
                         std::println("{{\"status\":\"ok\",\"unloaded\":\"{}\"}}",
-                                    json_escape(name_it->second));
+                                     json_escape(name_it->second));
                     } else if (action == "reload") {
                         if (name_it == cmd.end()) {
                             std::println("{{\"status\":\"error\",\"msg\":\"missing name field\"}}");
@@ -220,17 +244,18 @@ int main(int argc, char* argv[]) {
                         auto result = cs.reload_module(name_it->second);
                         if (result) {
                             std::println("{{\"status\":\"ok\",\"reloaded\":\"{}\"}}",
-                                        json_escape(name_it->second));
+                                         json_escape(name_it->second));
                         } else {
                             std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
-                                        json_escape(result.error().message));
+                                         json_escape(result.error().message));
                         }
                     } else if (action == "list") {
                         auto modules = cs.loaded_modules();
                         std::println("{{\"status\":\"ok\",\"modules\":[");
                         bool first = true;
                         for (auto& m : modules) {
-                            if (!first) std::println(",");
+                            if (!first)
+                                std::println(",");
                             first = false;
                             std::print("  \"{}\"", json_escape(m));
                         }
@@ -240,15 +265,16 @@ int main(int argc, char* argv[]) {
                         std::println("{{\"status\":\"ok\",\"arenas\":[");
                         bool first = true;
                         for (auto& [name, s] : stats) {
-                            if (!first) std::println(",");
+                            if (!first)
+                                std::println(",");
                             first = false;
                             std::print("  {{\"name\":\"{}\",\"used\":{},\"capacity\":{}}}",
-                                      json_escape(name), s.used, s.capacity);
+                                       json_escape(name), s.used, s.capacity);
                         }
                         std::println("]}}");
                     } else {
                         std::println("{{\"status\":\"error\",\"msg\":\"unknown action: {}\"}}",
-                                    json_escape(action));
+                                     json_escape(action));
                     }
                     continue;
                 }
@@ -258,11 +284,12 @@ int main(int argc, char* argv[]) {
 
                 // Commands that don't need a code field
                 if (type == "mutate") {
-                    // {"cmd": "mutate", "op": "record-patch", "node": 0, "op-name": "replace-type", "summary": "change type"}
-                    auto op_it = cmd.find("op");          // mutation op name
-                    auto node_it = cmd.find("node");       // target node ID
-                    auto val_it = cmd.find("value");       // for replace-value
-                    auto on_it = cmd.find("op-name");      // for record-patch: recorded op name
+                    // {"cmd": "mutate", "op": "record-patch", "node": 0, "op-name": "replace-type",
+                    // "summary": "change type"}
+                    auto op_it = cmd.find("op");      // mutation op name
+                    auto node_it = cmd.find("node");  // target node ID
+                    auto val_it = cmd.find("value");  // for replace-value
+                    auto on_it = cmd.find("op-name"); // for record-patch: recorded op name
                     auto sum_it = cmd.find("summary");
                     if (op_it == cmd.end() || node_it == cmd.end()) {
                         std::println("{{\"status\":\"error\",\"msg\":\"missing op or node\"}}");
@@ -274,14 +301,13 @@ int main(int argc, char* argv[]) {
                             // (mutate:record-patch node op-name summary)
                             std::string on = on_it != cmd.end() ? on_it->second : "patch";
                             std::string s = sum_it != cmd.end() ? sum_it->second : "";
-                            sexpr = std::format("(mutate:record-patch {} \"{}\" \"{}\")",
-                                                node, on, s);
+                            sexpr =
+                                std::format("(mutate:record-patch {} \"{}\" \"{}\")", node, on, s);
                         } else if (op_name == "mutate:replace-value") {
                             // (mutate:replace-value node new-value summary)
                             std::string v = val_it != cmd.end() ? val_it->second : "0";
                             std::string s = sum_it != cmd.end() ? sum_it->second : "";
-                            sexpr = std::format("(mutate:replace-value {} {} \"{}\")",
-                                                node, v, s);
+                            sexpr = std::format("(mutate:replace-value {} {} \"{}\")", node, v, s);
                         } else if (op_name == "mutate:replace-type") {
                             // (mutate:replace-type node type-string)
                             std::string t = val_it != cmd.end() ? val_it->second : "Dyn";
@@ -290,17 +316,16 @@ int main(int argc, char* argv[]) {
                             // Generic: pass through with all fields
                             std::string v = val_it != cmd.end() ? val_it->second : "0";
                             std::string s = sum_it != cmd.end() ? sum_it->second : "";
-                            sexpr = std::format("({} {} {} \"{}\")",
-                                                op_name, node, v, s);
+                            sexpr = std::format("({} {} {} \"{}\")", op_name, node, v, s);
                         }
                         auto mut_result = cs.typed_mutate(sexpr);
                         if (mut_result.success) {
                             std::println("{{\"status\":\"ok\",\"mutation_id\":{}}}",
-                                        mut_result.mutation_id);
+                                         mut_result.mutation_id);
                         } else {
                             std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
-                                        json_escape(mut_result.error.empty()
-                                            ? "mutation failed" : mut_result.error));
+                                         json_escape(mut_result.error.empty() ? "mutation failed"
+                                                                              : mut_result.error));
                         }
                     }
                     continue;
@@ -314,7 +339,10 @@ int main(int argc, char* argv[]) {
                         auto sexpr = std::format("(rollback {})", id_it->second);
                         auto result = cs.eval_on_current(sexpr);
                         std::println("{{\"status\":\"ok\",\"rolled_back\":{}}}",
-                                    result ? (is_bool(*result) ? (as_bool(*result) ? "true" : "false") : "false") : "false");
+                                     result
+                                         ? (is_bool(*result) ? (as_bool(*result) ? "true" : "false")
+                                                             : "false")
+                                         : "false");
                     }
                     continue;
                 }
@@ -329,15 +357,16 @@ int main(int argc, char* argv[]) {
                         std::println("{{\"status\":\"ok\",\"log\":[");
                         bool first = true;
                         for (auto& e : entries) {
-                            if (!first) std::println(",");
+                            if (!first)
+                                std::println(",");
                             first = false;
                             std::print("  {{\"id\":{},\"ts\":{},\"node\":{},\"op\":\"{}\","
                                        "\"old_type\":\"{}\",\"new_type\":\"{}\","
                                        "\"summary\":\"{}\",\"status\":\"{}\"}}",
                                        e.mutation_id, e.timestamp_ms, e.target_node,
-                                       json_escape(e.operator_name),
-                                       json_escape(e.old_type), json_escape(e.new_type),
-                                       json_escape(e.summary), json_escape(e.status));
+                                       json_escape(e.operator_name), json_escape(e.old_type),
+                                       json_escape(e.new_type), json_escape(e.summary),
+                                       json_escape(e.status));
                         }
                         std::println("]}}");
                     }
@@ -353,15 +382,16 @@ int main(int argc, char* argv[]) {
                         if (key == "strict") {
                             cs.set_strict_mode(val_it->second == "true" || val_it->second == "1");
                             auto val_str = val_it->second == "true" ? "true" : "false";
-                            std::string out = "{\"status\":\"ok\",\"config\":{\""
-                                + json_escape(key) + "\":" + val_str + "}}";
+                            std::string out = "{\"status\":\"ok\",\"config\":{\"" +
+                                              json_escape(key) + "\":" + val_str + "}}";
                             std::println("{}", out);
                             continue;
                         }
                         std::println("{{\"status\":\"error\",\"msg\":\"unknown config key: {}\"}}",
-                                    json_escape(key));
+                                     json_escape(key));
                     } else {
-                        std::println("{{\"status\":\"error\",\"msg\":\"missing key or value fields\"}}");
+                        std::println(
+                            "{{\"status\":\"error\",\"msg\":\"missing key or value fields\"}}");
                     }
                     continue;
                 }
@@ -374,160 +404,158 @@ int main(int argc, char* argv[]) {
                     }
                     auto& code = code_it->second;
 
-                if (type == "defmacro") {
-                    auto result = cs.define_function(code);
-                    if (result) {
-                        auto name = cmd.count("name") ? cmd["name"] : "<macro>";
-                        std::println("{{\"status\":\"defined\",\"name\":\"{}\"}}",
-                                     json_escape(name));
-                    } else {
-                        auto& d = result.error();
-                        std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
-                                     json_escape(d.format()));
-                    }
-                }
-                else if (type == "define") {
-                    auto result = cs.define_function(code);
-                    if (result) {
+                    if (type == "defmacro") {
+                        auto result = cs.define_function(code);
+                        if (result) {
+                            auto name = cmd.count("name") ? cmd["name"] : "<macro>";
+                            std::println("{{\"status\":\"defined\",\"name\":\"{}\"}}",
+                                         json_escape(name));
+                        } else {
+                            auto& d = result.error();
+                            std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
+                                         json_escape(d.format()));
+                        }
+                    } else if (type == "define") {
+                        auto result = cs.define_function(code);
+                        if (result) {
+                            auto name = cmd.count("name") ? cmd["name"] : "<lambda>";
+                            std::println("{{\"status\":\"defined\",\"name\":\"{}\"}}",
+                                         json_escape(name));
+                        } else {
+                            auto& d = result.error();
+                            std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
+                                         json_escape(d.format()));
+                        }
+                    } else if (type == "exec") {
+                        auto result = cs.exec_with_cache(code);
+                        if (result) {
+                            std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
+                                         json_escape(fmt_val(*result, cs)));
+                        } else {
+                            auto& d = result.error();
+                            std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
+                                         json_escape(d.format()));
+                        }
+                    } else if (type == "redefine") {
                         auto name = cmd.count("name") ? cmd["name"] : "<lambda>";
-                        std::println("{{\"status\":\"defined\",\"name\":\"{}\"}}",
-                                     json_escape(name));
-                    } else {
-                        auto& d = result.error();
-                        std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
-                                     json_escape(d.format()));
-                    }
-                }
-                else if (type == "exec") {
-                    auto result = cs.exec_with_cache(code);
-                    if (result) {
-                        std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
-                                     json_escape(fmt_val(*result, cs)));
-                    } else {
-                        auto& d = result.error();
-                        std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
-                                     json_escape(d.format()));
-                    }
-                }
-                else if (type == "redefine") {
-                    auto name = cmd.count("name") ? cmd["name"] : "<lambda>";
-                    auto result = cs.define_function(code);
-                    if (result) {
-                        std::println("{{\"status\":\"redefined\",\"name\":\"{}\"}}",
-                                     json_escape(name));
-                    } else {
-                        auto& d = result.error();
-                        std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
-                                     json_escape(d.format()));
-                    }
-                }
-                else if (type == "unparse") {
-                    auto alloc = cs.arena().allocator();
-                    aura::ast::StringPool pool(alloc);
-                    aura::ast::FlatAST flat(alloc);
-                    auto ux_pr = aura::parser::parse_to_flat(code, flat, pool);
-                    if (!ux_pr.success) {
-                        std::println("{{\"status\":\"error\",\"msg\":\"parse error\"}}");
-                    } else {
-                        flat.root = ux_pr.root;
-                        auto src = aura::compiler::unparse_node(flat, pool, flat.root);
-                        std::println("{{\"status\":\"ok\",\"source\":\"{}\"}}",
-                                     json_escape(src));
-                    }
-                }
-                else if (type == "write") {
-                    auto write_path = cmd.count("file") ? cmd["file"] : "";
-                    if (write_path.empty()) {
-                        std::println("{{\"status\":\"error\",\"msg\":\"missing file field\"}}");
-                    } else {
-                        auto w_alloc = cs.arena().allocator();
-                        aura::ast::StringPool w_pool(w_alloc);
-                        aura::ast::FlatAST w_flat(w_alloc);
-                        auto w_pr = aura::parser::parse_to_flat(code, w_flat, w_pool);
-                        if (!w_pr.success) {
+                        auto result = cs.define_function(code);
+                        if (result) {
+                            std::println("{{\"status\":\"redefined\",\"name\":\"{}\"}}",
+                                         json_escape(name));
+                        } else {
+                            auto& d = result.error();
+                            std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
+                                         json_escape(d.format()));
+                        }
+                    } else if (type == "unparse") {
+                        auto alloc = cs.arena().allocator();
+                        aura::ast::StringPool pool(alloc);
+                        aura::ast::FlatAST flat(alloc);
+                        auto ux_pr = aura::parser::parse_to_flat(code, flat, pool);
+                        if (!ux_pr.success) {
                             std::println("{{\"status\":\"error\",\"msg\":\"parse error\"}}");
                         } else {
-                            w_flat.root = w_pr.root;
-                            auto w_src = aura::compiler::unparse_node(w_flat, w_pool, w_flat.root);
-                            std::ofstream w_f(write_path);
-                            if (w_f) {
-                                w_f << w_src << "\n";
-                                std::println("{{\"status\":\"ok\",\"file\":\"{}\"}}",
-                                             json_escape(write_path));
+                            flat.root = ux_pr.root;
+                            auto src = aura::compiler::unparse_node(flat, pool, flat.root);
+                            std::println("{{\"status\":\"ok\",\"source\":\"{}\"}}",
+                                         json_escape(src));
+                        }
+                    } else if (type == "write") {
+                        auto write_path = cmd.count("file") ? cmd["file"] : "";
+                        if (write_path.empty()) {
+                            std::println("{{\"status\":\"error\",\"msg\":\"missing file field\"}}");
+                        } else {
+                            auto w_alloc = cs.arena().allocator();
+                            aura::ast::StringPool w_pool(w_alloc);
+                            aura::ast::FlatAST w_flat(w_alloc);
+                            auto w_pr = aura::parser::parse_to_flat(code, w_flat, w_pool);
+                            if (!w_pr.success) {
+                                std::println("{{\"status\":\"error\",\"msg\":\"parse error\"}}");
                             } else {
-                                std::println("{{\"status\":\"error\",\"msg\":\"cannot write: {}\"}}",
-                                             json_escape(write_path));
+                                w_flat.root = w_pr.root;
+                                auto w_src =
+                                    aura::compiler::unparse_node(w_flat, w_pool, w_flat.root);
+                                std::ofstream w_f(write_path);
+                                if (w_f) {
+                                    w_f << w_src << "\n";
+                                    std::println("{{\"status\":\"ok\",\"file\":\"{}\"}}",
+                                                 json_escape(write_path));
+                                } else {
+                                    std::println(
+                                        "{{\"status\":\"error\",\"msg\":\"cannot write: {}\"}}",
+                                        json_escape(write_path));
+                                }
                             }
                         }
-                    }
-                }
-                else if (type == "mutate") {
-                    // {"cmd": "mutate", "op": "replace-value", "node": 0, "value": 42, "summary": "change x"}
-                    auto op_it = cmd.find("op");
-                    auto node_it = cmd.find("node");
-                    auto val_it = cmd.find("value");
-                    auto sum_it = cmd.find("summary");
-                    if (op_it == cmd.end() || node_it == cmd.end()) {
-                        std::println("{{\"status\":\"error\",\"msg\":\"missing op or node\"}}");
-                    } else {
-                        auto node = std::stoll(node_it->second);
-                        auto sexpr = std::format("({} {} {}{}{})",
-                            op_it->second, node,
-                            val_it != cmd.end() ? val_it->second : "0",
-                            sum_it != cmd.end() ? " \"" + sum_it->second + "\"" : " \"\"",
-                            "");
-                        // Evaluate mutation against the persistent AST
-                        auto mut_result = cs.typed_mutate(sexpr);
-                        if (mut_result.success) {
-                            std::println("{{\"status\":\"ok\",\"mutation_id\":{}}}",
-                                        mut_result.mutation_id);
+                    } else if (type == "mutate") {
+                        // {"cmd": "mutate", "op": "replace-value", "node": 0, "value": 42,
+                        // "summary": "change x"}
+                        auto op_it = cmd.find("op");
+                        auto node_it = cmd.find("node");
+                        auto val_it = cmd.find("value");
+                        auto sum_it = cmd.find("summary");
+                        if (op_it == cmd.end() || node_it == cmd.end()) {
+                            std::println("{{\"status\":\"error\",\"msg\":\"missing op or node\"}}");
                         } else {
-                            std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
-                                        json_escape(mut_result.error));
+                            auto node = std::stoll(node_it->second);
+                            auto sexpr = std::format(
+                                "({} {} {}{}{})", op_it->second, node,
+                                val_it != cmd.end() ? val_it->second : "0",
+                                sum_it != cmd.end() ? " \"" + sum_it->second + "\"" : " \"\"", "");
+                            // Evaluate mutation against the persistent AST
+                            auto mut_result = cs.typed_mutate(sexpr);
+                            if (mut_result.success) {
+                                std::println("{{\"status\":\"ok\",\"mutation_id\":{}}}",
+                                             mut_result.mutation_id);
+                            } else {
+                                std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
+                                             json_escape(mut_result.error));
+                            }
                         }
-                    }
-                }
-                else if (type == "rollback") {
-                    // {"cmd": "rollback", "id": 1}
-                    auto id_it = cmd.find("id");
-                    if (id_it == cmd.end()) {
-                        std::println("{{\"status\":\"error\",\"msg\":\"missing id\"}}");
-                    } else {
-                        auto sexpr = std::format("(rollback {})", id_it->second);
-                        auto result = cs.eval_on_current(sexpr);
-                        std::println("{{\"status\":\"ok\",\"rolled_back\":{}}}",
-                                    result ? (is_bool(*result) ? (as_bool(*result) ? "true" : "false") : "false") : "false");
-                    }
-                }
-                else if (type == "mutation-log") {
-                    // {"cmd": "mutation-log", "node": 0}
-                    auto node_it = cmd.find("node");
-                    if (node_it == cmd.end()) {
-                        std::println("{{\"status\":\"error\",\"msg\":\"missing node\"}}");
-                    } else {
-                        auto node = static_cast<aura::ast::NodeId>(std::stoul(node_it->second));
-                        auto entries = cs.query_mutation_log(node);
-                        std::println("{{\"status\":\"ok\",\"log\":[");
-                        bool first = true;
-                        for (auto& e : entries) {
-                            if (!first) std::println(",");
-                            first = false;
-                            std::print("  {{\"id\":{},\"ts\":{},\"node\":{},\"op\":\"{}\","
-                                       "\"old_type\":\"{}\",\"new_type\":\"{}\","
-                                       "\"summary\":\"{}\",\"status\":\"{}\"}}",
-                                       e.mutation_id, e.timestamp_ms, e.target_node,
-                                       json_escape(e.operator_name),
-                                       json_escape(e.old_type), json_escape(e.new_type),
-                                       json_escape(e.summary), json_escape(e.status));
+                    } else if (type == "rollback") {
+                        // {"cmd": "rollback", "id": 1}
+                        auto id_it = cmd.find("id");
+                        if (id_it == cmd.end()) {
+                            std::println("{{\"status\":\"error\",\"msg\":\"missing id\"}}");
+                        } else {
+                            auto sexpr = std::format("(rollback {})", id_it->second);
+                            auto result = cs.eval_on_current(sexpr);
+                            std::println("{{\"status\":\"ok\",\"rolled_back\":{}}}",
+                                         result ? (is_bool(*result)
+                                                       ? (as_bool(*result) ? "true" : "false")
+                                                       : "false")
+                                                : "false");
                         }
-                        std::println("]}}");
+                    } else if (type == "mutation-log") {
+                        // {"cmd": "mutation-log", "node": 0}
+                        auto node_it = cmd.find("node");
+                        if (node_it == cmd.end()) {
+                            std::println("{{\"status\":\"error\",\"msg\":\"missing node\"}}");
+                        } else {
+                            auto node = static_cast<aura::ast::NodeId>(std::stoul(node_it->second));
+                            auto entries = cs.query_mutation_log(node);
+                            std::println("{{\"status\":\"ok\",\"log\":[");
+                            bool first = true;
+                            for (auto& e : entries) {
+                                if (!first)
+                                    std::println(",");
+                                first = false;
+                                std::print("  {{\"id\":{},\"ts\":{},\"node\":{},\"op\":\"{}\","
+                                           "\"old_type\":\"{}\",\"new_type\":\"{}\","
+                                           "\"summary\":\"{}\",\"status\":\"{}\"}}",
+                                           e.mutation_id, e.timestamp_ms, e.target_node,
+                                           json_escape(e.operator_name), json_escape(e.old_type),
+                                           json_escape(e.new_type), json_escape(e.summary),
+                                           json_escape(e.status));
+                            }
+                            std::println("]}}");
+                        }
+                    } else {
+                        std::println("{{\"status\":\"error\",\"msg\":\"unknown command: {}\"}}",
+                                     json_escape(type));
                     }
                 }
-                else {
-                    std::println("{{\"status\":\"error\",\"msg\":\"unknown command: {}\"}}",
-                                 json_escape(type));
-                }
-            } } else {
+            } else {
                 // ── Plain S-expression (backward compatible) ────────
                 auto alloc = cs.arena().allocator();
                 aura::ast::StringPool pool(alloc);
@@ -545,12 +573,13 @@ int main(int argc, char* argv[]) {
 
                 auto r = cs.eval(line);
                 if (r) {
-                    std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}", json_escape(fmt_val(*r, cs)));
+                    std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
+                                 json_escape(fmt_val(*r, cs)));
                 } else {
                     auto& d = r.error();
-                    std::println("{{\"status\":\"error\",\"kind\":{},\"msg\":\"{}\",\"node_id\":{}}}",
-                                 static_cast<int>(d.kind),
-                                 json_escape(d.format()), d.node_id);
+                    std::println(
+                        "{{\"status\":\"error\",\"kind\":{},\"msg\":\"{}\",\"node_id\":{}}}",
+                        static_cast<int>(d.kind), json_escape(d.format()), d.node_id);
 
                     // Auto-fix
                     aura::compiler::AutoFixEngine fixer(flat, pool);
@@ -563,7 +592,8 @@ int main(int argc, char* argv[]) {
                         aura::compiler::IRInterpreter interp(mod, prims);
                         auto fixed = interp.execute();
                         if (fixed) {
-                            std::println("{{\"status\":\"fixed\",\"value\":\"{}\"}}", aura::compiler::types::format_value(*fixed));
+                            std::println("{{\"status\":\"fixed\",\"value\":\"{}\"}}",
+                                         aura::compiler::types::format_value(*fixed));
                         } else {
                             std::println("{{\"status\":\"fix-fail\",\"msg\":\"{}\"}}",
                                          json_escape(fixed.error().message));
@@ -636,8 +666,8 @@ int main(int argc, char* argv[]) {
             auto closures = cs.last_closures();
             std::println("closures: {}", closures.size());
             for (auto& c : closures) {
-                std::println("  [{}] func[{}] '{}': env[{}]",
-                    c.id, c.func_id, c.func_name, c.env.size());
+                std::println("  [{}] func[{}] '{}': env[{}]", c.id, c.func_id, c.func_name,
+                             c.env.size());
             }
         }
 
@@ -655,10 +685,16 @@ int main(int argc, char* argv[]) {
         aura::ast::StringPool pool(alloc);
         aura::ast::FlatAST flat(alloc);
         std::string input;
-        if (argc > 3) { input = argv[3]; }
-        else { std::getline(std::cin, input); }
+        if (argc > 3) {
+            input = argv[3];
+        } else {
+            std::getline(std::cin, input);
+        }
         auto pr = aura::parser::parse_to_flat(input, flat, pool);
-        if (!pr.success || pr.root == aura::ast::NULL_NODE) { std::println(std::cerr, "parse error{}", pr.error.empty() ? "" : ": " + pr.error); return 1; }
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+            std::println(std::cerr, "parse error{}", pr.error.empty() ? "" : ": " + pr.error);
+            return 1;
+        }
         flat.root = pr.root;
         aura::core::TypeRegistry tr;
         flat.resolve_type_ids(tr, pool);
@@ -677,18 +713,24 @@ int main(int argc, char* argv[]) {
         aura::ast::StringPool pool(alloc);
         aura::ast::FlatAST flat(alloc);
         std::string input;
-        if (argc > 4) { input = argv[4]; }
-        else { std::getline(std::cin, input); }
+        if (argc > 4) {
+            input = argv[4];
+        } else {
+            std::getline(std::cin, input);
+        }
         auto pr = aura::parser::parse_to_flat(input, flat, pool);
-        if (!pr.success || pr.root == aura::ast::NULL_NODE) { std::println(std::cerr, "parse error{}", pr.error.empty() ? "" : ": " + pr.error); return 1; }
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+            std::println(std::cerr, "parse error{}", pr.error.empty() ? "" : ": " + pr.error);
+            return 1;
+        }
         flat.root = pr.root;
         aura::core::TypeRegistry tr;
         flat.resolve_type_ids(tr, pool);
         aura::compiler::QueryEngine engine(flat, pool);
         aura::compiler::TransformEngine xform(flat, pool);
         auto result = xform.query_and_fix(engine, argv[2], argv[3]);
-        std::println("transform: {} matches, {} patches, applied={}",
-                     result.match_count, result.patch_count, result.applied);
+        std::println("transform: {} matches, {} patches, applied={}", result.match_count,
+                     result.patch_count, result.applied);
         return result.applied ? 0 : 1;
     }
 
@@ -696,8 +738,11 @@ int main(int argc, char* argv[]) {
     if (argc > 1 && std::string_view(argv[1]) == "--typecheck") {
         aura::compiler::CompilerService cs;
         std::string input;
-        if (argc > 2) { input = argv[2]; }
-        else { std::getline(std::cin, input); }
+        if (argc > 2) {
+            input = argv[2];
+        } else {
+            std::getline(std::cin, input);
+        }
         auto result = cs.typecheck(input);
         std::print("{}", result);
         return result.find("diagnostics:") == std::string::npos ? 0 : 1;
@@ -710,10 +755,15 @@ int main(int argc, char* argv[]) {
         aura::ast::StringPool pool(alloc);
         aura::ast::FlatAST flat(alloc);
         std::string input;
-        if (argc > 2) input = argv[2];
-        else std::getline(std::cin, input);
+        if (argc > 2)
+            input = argv[2];
+        else
+            std::getline(std::cin, input);
         auto pr = aura::parser::parse_to_flat(input, flat, pool);
-        if (!pr.success || pr.root == aura::ast::NULL_NODE) { std::println(std::cerr, "parse error{}", pr.error.empty() ? "" : ": " + pr.error); return 1; }
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+            std::println(std::cerr, "parse error{}", pr.error.empty() ? "" : ": " + pr.error);
+            return 1;
+        }
         flat.root = pr.root;
         aura::core::TypeRegistry tr;
         flat.resolve_type_ids(tr, pool);
@@ -725,7 +775,8 @@ int main(int argc, char* argv[]) {
         aura::compiler::Primitives prims;
         aura::compiler::IRInterpreter interp(mod, prims);
         auto eval = interp.execute();
-        if (eval) std::println("result: {}", aura::compiler::types::format_value(*eval));
+        if (eval)
+            std::println("result: {}", aura::compiler::types::format_value(*eval));
         return 0;
     }
 
@@ -733,28 +784,37 @@ int main(int argc, char* argv[]) {
     // Usage: ./aura --fmt file.aura    → stdout
     //        ./aura --fmt -i file.aura  → in-place rewrite
     //        ./aura --fmt --check file.aura → CI mode (exit 1 if unformatted)
-    if (argc > 1 && (std::string_view(argv[1]) == "--fmt" || std::string_view(argv[1]) == "--unparse")) {
+    if (argc > 1 &&
+        (std::string_view(argv[1]) == "--fmt" || std::string_view(argv[1]) == "--unparse")) {
         bool in_place = false;
         bool check_only = false;
         std::string in_path, input;
 
         for (int i = 2; i < argc; ++i) {
-            if (std::string_view(argv[i]) == "-i") in_place = true;
-            else if (std::string_view(argv[i]) == "--check") check_only = true;
-            else if (argv[i][0] != '-') { in_path = argv[i]; }
+            if (std::string_view(argv[i]) == "-i")
+                in_place = true;
+            else if (std::string_view(argv[i]) == "--check")
+                check_only = true;
+            else if (argv[i][0] != '-') {
+                in_path = argv[i];
+            }
         }
 
         if (!in_path.empty()) {
             // Read from file
             std::ifstream f(in_path);
-            if (!f) { std::println(std::cerr, "error: cannot read {}", in_path); return 1; }
+            if (!f) {
+                std::println(std::cerr, "error: cannot read {}", in_path);
+                return 1;
+            }
             input = std::string((std::istreambuf_iterator<char>(f)), {});
         } else {
             // Read from stdin
             std::getline(std::cin, input);
         }
 
-        if (input.empty()) return 1;
+        if (input.empty())
+            return 1;
 
         aura::compiler::CompilerService cs;
         auto alloc = cs.arena().allocator();
@@ -780,12 +840,18 @@ int main(int argc, char* argv[]) {
 
         if (in_place && !in_path.empty()) {
             std::ofstream f(in_path);
-            if (!f) { std::println(std::cerr, "error: cannot write {}", in_path); return 1; }
+            if (!f) {
+                std::println(std::cerr, "error: cannot write {}", in_path);
+                return 1;
+            }
             f << source;
             std::println(std::cerr, "formatted {}", in_path);
         } else if (!in_path.empty()) {
             std::ofstream f(in_path + ".fmt");
-            if (!f) { std::println(std::cerr, "error: cannot write {}.fmt", in_path); return 1; }
+            if (!f) {
+                std::println(std::cerr, "error: cannot write {}.fmt", in_path);
+                return 1;
+            }
             f << source;
             std::println(std::cerr, "written to {}.fmt", in_path);
         } else {
@@ -814,8 +880,11 @@ int main(int argc, char* argv[]) {
     // Parses stdin to FlatAST, lowers to IR, writes cache (with IR), then evaluates.
     if (argc > 2 && std::string_view(argv[1]) == "--cache") {
         std::string input;
-        if (argc > 3) { input = argv[3]; }
-        else { std::getline(std::cin, input); }
+        if (argc > 3) {
+            input = argv[3];
+        } else {
+            std::getline(std::cin, input);
+        }
 
         if (input.empty()) {
             std::println(std::cerr, "error: empty input");
@@ -847,8 +916,8 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        std::println(std::cerr, "cache written to {} ({} ir functions, {} ir strings)",
-                     argv[2], ir_mod.functions.size(), ir_mod.string_pool.size());
+        std::println(std::cerr, "cache written to {} ({} ir functions, {} ir strings)", argv[2],
+                     ir_mod.functions.size(), ir_mod.string_pool.size());
 
         // Evaluate normally
         aura::compiler::CompilerService cs;
@@ -870,8 +939,7 @@ int main(int argc, char* argv[]) {
             std::println(std::cerr, "error: cannot open cache file {}", argv[2]);
             return 1;
         }
-        std::println("cache: {} nodes, root={}, version=3 (O(1) resolve)",
-                     mc.size(), mc.root());
+        std::println("cache: {} nodes, root={}, version=3 (O(1) resolve)", mc.size(), mc.root());
         // Show first few nodes with sym resolution
         auto show_n = std::min<std::size_t>(mc.size(), 6);
         for (std::uint32_t i = 0; i < show_n; ++i) {
@@ -884,16 +952,17 @@ int main(int argc, char* argv[]) {
                 auto sv = mc.resolve(nv.sym_id);
                 sym = sv.empty() ? "(unresolved)" : std::string(sv);
             }
-            std::println("  [{}] tag={} sym_id={} sym='{}' int={}", i, tag_int, nv.sym_id, sym, nv.int_value);
+            std::println("  [{}] tag={} sym_id={} sym='{}' int={}", i, tag_int, nv.sym_id, sym,
+                         nv.int_value);
         }
         // Show IR cache info
         if (mc.has_ir()) {
-            std::println("IR cache: {} functions, {} strings",
-                         mc.ir_functions().size(), mc.ir_strings().size());
+            std::println("IR cache: {} functions, {} strings", mc.ir_functions().size(),
+                         mc.ir_strings().size());
             for (auto& fn : mc.ir_functions()) {
-                std::println("  func[{}] '{}': {} blocks, {} params, {} locals, {} args",
-                             fn.id, fn.name, fn.blocks.size(),
-                             fn.params.size(), fn.local_count, fn.arg_count);
+                std::println("  func[{}] '{}': {} blocks, {} params, {} locals, {} args", fn.id,
+                             fn.name, fn.blocks.size(), fn.params.size(), fn.local_count,
+                             fn.arg_count);
             }
             // Build IRModule from cached functions
             aura::ir::IRModule cached_mod;
@@ -942,8 +1011,10 @@ int main(int argc, char* argv[]) {
         aura::compiler::CompilerService cs;
         if (argc > 2) {
             aura::compiler::EvalStrategy s;
-            if (std::string_view(argv[2]) == "no-inline") s.enable_inlining = false;
-            if (std::string_view(argv[2]) == "specialize") s.enable_specialization = true;
+            if (std::string_view(argv[2]) == "no-inline")
+                s.enable_inlining = false;
+            if (std::string_view(argv[2]) == "specialize")
+                s.enable_specialization = true;
             cs.set_strategy(s);
         }
         // Forward remaining args would re-dispatch to --ir
@@ -960,8 +1031,11 @@ int main(int argc, char* argv[]) {
     if (argc > 1 && std::string_view(argv[1]) == "--hot-swap") {
         aura::compiler::CompilerService cs;
         std::string input;
-        if (argc > 2) { input = argv[2]; }
-        else { std::getline(std::cin, input); }
+        if (argc > 2) {
+            input = argv[2];
+        } else {
+            std::getline(std::cin, input);
+        }
         auto result = cs.hot_swap(input);
         if (!result) {
             std::println(std::cerr, "error: {}", result.error().format());
@@ -975,11 +1049,14 @@ int main(int argc, char* argv[]) {
     if (argc > 1 && std::string_view(argv[1]) == "--jit") {
         aura::compiler::CompilerService cs;
         std::string input;
-        if (argc > 2) { input = argv[2]; }
-        else { std::getline(std::cin, input); }
+        if (argc > 2) {
+            input = argv[2];
+        } else {
+            std::getline(std::cin, input);
+        }
 
-        // Quick test: compile empty function and call it
-        #ifdef AURA_HAVE_LLVM
+// Quick test: compile empty function and call it
+#ifdef AURA_HAVE_LLVM
         auto result = cs.exec_jit(input);
         if (!result) {
             std::println(std::cerr, "error: {}", result.error().format());
@@ -987,21 +1064,26 @@ int main(int argc, char* argv[]) {
         }
         std::println("{}", fmt_val(*result, cs));
         return 0;
-        #else
+#else
         std::println(std::cerr, "JIT not available — rebuild with LLVM");
         return 1;
-        #endif
+#endif
     }
 
     // ── --inspect: eval with full runtime reflection dump ────────
     if (argc > 1 && std::string_view(argv[1]) == "--inspect") {
         aura::compiler::CompilerService cs;
         std::string input;
-        if (argc > 2) { input = argv[2]; }
-        else { std::getline(std::cin, input); }
+        if (argc > 2) {
+            input = argv[2];
+        } else {
+            std::getline(std::cin, input);
+        }
 
-        cs.set_strategy({.enable_inlining = true, .enable_specialization = false,
-                         .max_unroll = 3, .verbose_inspect = true});
+        cs.set_strategy({.enable_inlining = true,
+                         .enable_specialization = false,
+                         .max_unroll = 3,
+                         .verbose_inspect = true});
 
         auto result = cs.eval_ir(input);
 
@@ -1053,8 +1135,11 @@ int main(int argc, char* argv[]) {
     if (argc > 1 && std::string_view(argv[1]) == "--env") {
         aura::compiler::CompilerService cs;
         std::string input;
-        if (argc > 2) { input = argv[2]; }
-        else { std::getline(std::cin, input); }
+        if (argc > 2) {
+            input = argv[2];
+        } else {
+            std::getline(std::cin, input);
+        }
 
         auto result = cs.eval_ir(input);
         if (result) {
@@ -1067,11 +1152,10 @@ int main(int argc, char* argv[]) {
         auto cells = cs.last_cells();
 
         for (auto& c : closures) {
-            std::println("closure [{}] = func[{}] '{}'",
-                         c.id, c.func_id, c.func_name);
+            std::println("closure [{}] = func[{}] '{}'", c.id, c.func_id, c.func_name);
             for (std::size_t i = 0; i < c.env.size(); ++i) {
-                auto label = i < c.func_free_vars.size()
-                           ? c.func_free_vars[i] : std::format("[{}]", i);
+                auto label =
+                    i < c.func_free_vars.size() ? c.func_free_vars[i] : std::format("[{}]", i);
                 std::println("  {} = {}", label, fmt_val(c.env[i], cs));
             }
         }
@@ -1087,27 +1171,28 @@ int main(int argc, char* argv[]) {
     if (argc > 1 && std::string_view(argv[1]) == "--env-json") {
         aura::compiler::CompilerService cs;
         std::string input;
-        if (argc > 2) { input = argv[2]; }
-        else { std::getline(std::cin, input); }
+        if (argc > 2) {
+            input = argv[2];
+        } else {
+            std::getline(std::cin, input);
+        }
 
         auto result = cs.eval_ir(input);
         auto closures = cs.last_closures();
         auto cells = cs.last_cells();
 
-        std::println("{{\"status\":\"{}\",\"result\":{},\"closures\":[",
-                     result ? "ok" : "error",
+        std::println("{{\"status\":\"{}\",\"result\":{},\"closures\":[", result ? "ok" : "error",
                      result ? fmt_val(*result, cs) : std::string("null"));
 
         for (std::size_t i = 0; i < closures.size(); ++i) {
             auto& c = closures[i];
-            std::println("  {{\"id\":{},\"func_id\":{},\"func\":\"{}\",",
-                         c.id, c.func_id, c.func_name);
+            std::println("  {{\"id\":{},\"func_id\":{},\"func\":\"{}\",", c.id, c.func_id,
+                         c.func_name);
             std::println("   \"env\":[");
             for (std::size_t j = 0; j < c.env.size(); ++j) {
-                auto label = j < c.func_free_vars.size()
-                           ? c.func_free_vars[j] : std::format("[{}]", j);
-                std::println("    {{\"name\":\"{}\",\"value\":{}}}{}",
-                             label, fmt_val(c.env[j], cs),
+                auto label =
+                    j < c.func_free_vars.size() ? c.func_free_vars[j] : std::format("[{}]", j);
+                std::println("    {{\"name\":\"{}\",\"value\":{}}}{}", label, fmt_val(c.env[j], cs),
                              j + 1 < c.env.size() ? "," : "");
             }
             std::println("   ]}}{}", i + 1 < closures.size() ? "," : "");
@@ -1115,8 +1200,7 @@ int main(int argc, char* argv[]) {
 
         std::println("],\"cells\":[");
         for (std::size_t i = 0; i < cells.size(); ++i) {
-            std::println("  {{\"id\":{},\"value\":{}}}{}",
-                         cells[i].id, fmt_val(cells[i].value, cs),
+            std::println("  {{\"id\":{},\"value\":{}}}{}", cells[i].id, fmt_val(cells[i].value, cs),
                          i + 1 < cells.size() ? "," : "");
         }
         std::println("]}}");
@@ -1126,65 +1210,86 @@ int main(int argc, char* argv[]) {
     // ── Normal REPL / pipe mode ─────────────────────
     aura::compiler::CompilerService cs;
     bool interactive = false;
-    try { std::cin.sync(); interactive = (argc == 1 && std::cin.peek() == std::char_traits<char>::eof()); }
-    catch (...) {}
+    try {
+        std::cin.sync();
+        interactive = (argc == 1 && std::cin.peek() == std::char_traits<char>::eof());
+    } catch (...) {
+    }
     if (interactive) {
         std::println("Aura v0.2 — LLVM JIT / Sound Gradual Typing / C FFI");
         std::println("  (quit) to exit");
-        
+
         // Multi-line REPL with paren balance tracking
         std::string input;
         int depth = 0;
         int history_index = 0;
         std::vector<std::string> history;
         constexpr int MAX_HISTORY = 50;
-        
+
         while (true) {
             // Prompt
-            if (depth == 0) std::print("> ");
-            else for (int i = 0; i < depth && i < 8; ++i) std::print(". ");
+            if (depth == 0)
+                std::print("> ");
+            else
+                for (int i = 0; i < depth && i < 8; ++i)
+                    std::print(". ");
             std::cout.flush();
-            
+
             std::string line;
-            if (!std::getline(std::cin, line)) break;
-            
-            if (line == "(quit)" || line == "(exit)") break;
-            if (line.empty() && depth == 0) continue;
-            if (line.empty()) { input += "\n"; continue; }
-            
+            if (!std::getline(std::cin, line))
+                break;
+
+            if (line == "(quit)" || line == "(exit)")
+                break;
+            if (line.empty() && depth == 0)
+                continue;
+            if (line.empty()) {
+                input += "\n";
+                continue;
+            }
+
             input += line;
             input += "\n";
-            
+
             // Track paren balance
             bool in_str = false;
             for (auto c : line) {
-                if (c == '"') in_str = !in_str;
+                if (c == '"')
+                    in_str = !in_str;
                 if (!in_str) {
-                    if (c == '(') ++depth;
-                    if (c == ')') --depth;
+                    if (c == '(')
+                        ++depth;
+                    if (c == ')')
+                        --depth;
                 }
             }
-            
-            if (depth > 0) continue;  // Keep reading
-            
+
+            if (depth > 0)
+                continue; // Keep reading
+
             // Complete expression — evaluate
             // Trim whitespace
             auto start = input.find_first_not_of(" \t\n\r");
-            if (start == std::string::npos) { input.clear(); continue; }
+            if (start == std::string::npos) {
+                input.clear();
+                continue;
+            }
             auto end = input.find_last_not_of(" \t\n\r");
             auto trimmed = input.substr(start, end - start + 1);
-            
+
             // Add to history
             if (!trimmed.empty()) {
                 history.push_back(trimmed);
                 if (history.size() > MAX_HISTORY)
                     history.erase(history.begin());
             }
-            
+
             auto r = cs.eval(trimmed);
-            if (!r) std::println(std::cerr, "{}: error: {}", trimmed, r.error().format());
-            else if (!aura::compiler::types::is_void(*r)) std::println("{}", fmt_val(*r, cs));
-            
+            if (!r)
+                std::println(std::cerr, "{}: error: {}", trimmed, r.error().format());
+            else if (!aura::compiler::types::is_void(*r))
+                std::println("{}", fmt_val(*r, cs));
+
             input.clear();
             depth = 0;
         }
@@ -1200,7 +1305,10 @@ int main(int argc, char* argv[]) {
         buf << std::cin.rdbuf();
         all_input = buf.str();
     }
-    if (all_input.empty()) { std::println(std::cerr, "usage: echo '(+ 1 2)' | ./aura"); return 1; }
+    if (all_input.empty()) {
+        std::println(std::cerr, "usage: echo '(+ 1 2)' | ./aura");
+        return 1;
+    }
 
     // Split into balanced S-expressions by tracking paren balance
     // Also track string literals to avoid counting parens inside strings
@@ -1226,7 +1334,8 @@ int main(int argc, char* argv[]) {
 
         if (c == ';') {
             // Line comment: skip to end of line
-            if (depth > 0) current += ';';
+            if (depth > 0)
+                current += ';';
             while (i + 1 < all_input.size() && all_input[i + 1] != '\n') {
                 ++i;
             }
@@ -1262,7 +1371,8 @@ int main(int argc, char* argv[]) {
                     if (pos != std::string::npos) {
                         trimmed = trimmed.substr(pos);
                         auto end = trimmed.find_last_not_of(" \t\r\n");
-                        if (end != std::string::npos) trimmed = trimmed.substr(0, end + 1);
+                        if (end != std::string::npos)
+                            trimmed = trimmed.substr(0, end + 1);
                         exprs.push_back(trimmed);
                     }
                     current.clear();
@@ -1283,7 +1393,8 @@ int main(int argc, char* argv[]) {
                 if (pos != std::string::npos) {
                     trimmed = trimmed.substr(pos);
                     auto end = trimmed.find_last_not_of(" \t\r\n");
-                    if (end != std::string::npos) trimmed = trimmed.substr(0, end + 1);
+                    if (end != std::string::npos)
+                        trimmed = trimmed.substr(0, end + 1);
                     exprs.push_back(trimmed);
                 }
                 current.clear();
@@ -1301,7 +1412,8 @@ int main(int argc, char* argv[]) {
         if (pos != std::string::npos) {
             trimmed = trimmed.substr(pos);
             auto end = trimmed.find_last_not_of(" \t\r\n");
-            if (end != std::string::npos) trimmed = trimmed.substr(0, end + 1);
+            if (end != std::string::npos)
+                trimmed = trimmed.substr(0, end + 1);
             if (!trimmed.empty() && depth == 0)
                 exprs.push_back(trimmed);
             else if (!trimmed.empty())
@@ -1309,16 +1421,23 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    if (exprs.empty()) { std::println(std::cerr, "usage: echo '(+ 1 2)' | ./aura"); return 1; }
+    if (exprs.empty()) {
+        std::println(std::cerr, "usage: echo '(+ 1 2)' | ./aura");
+        return 1;
+    }
 
     bool err = false;
     for (auto& e : exprs) {
         auto s = e.find_first_not_of(" \t\r\n");
-        if (s == std::string::npos) continue;
+        if (s == std::string::npos)
+            continue;
         e = e.substr(s);
         auto r = cs.eval(e);
-        if (!r) { std::println(std::cerr, "error: {}", r.error().format()); err = true; }
-        else if (&e == &exprs.back() && !is_void(*r)) std::println("{}", fmt_val(*r, cs));
+        if (!r) {
+            std::println(std::cerr, "error: {}", r.error().format());
+            err = true;
+        } else if (&e == &exprs.back() && !is_void(*r))
+            std::println("{}", fmt_val(*r, cs));
     }
     return err ? 1 : 0;
 }

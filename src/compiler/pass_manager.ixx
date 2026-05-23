@@ -18,14 +18,12 @@ concept Pass = requires(P& p, aura::ir::IRModule& m) {
 };
 
 // ── run_pipeline — fold over passes with short-circuit ──────────
-export template <Pass... Passes>
-bool run_pipeline(aura::ir::IRModule& mod, Passes&... passes) {
+export template <Pass... Passes> bool run_pipeline(aura::ir::IRModule& mod, Passes&... passes) {
     return (run_one(mod, passes) && ...);
 }
 
 // ── run_one — execute a single pass, return true if no error ────
-export template <Pass P>
-bool run_one(aura::ir::IRModule& mod, P& pass) {
+export template <Pass P> bool run_one(aura::ir::IRModule& mod, P& pass) {
     pass.run(mod);
     return !pass.has_error();
 }
@@ -55,9 +53,7 @@ private:
 // ── ArityWrap — arity checking pass ────────────────────────────
 export class ArityWrap {
 public:
-    void run(aura::ir::IRModule& module) {
-        result_ = aura::compiler::check_arity(module);
-    }
+    void run(aura::ir::IRModule& module) { result_ = aura::compiler::check_arity(module); }
 
     bool has_error() const { return result_.has_error; }
     std::string_view name() const { return "arity"; }
@@ -101,58 +97,68 @@ private:
         for (auto& instr : block.instructions) {
             auto& ops = instr.operands;
             switch (instr.opcode) {
-            case aura::ir::IROpcode::ConstI64:
-                known_[ops[0]] = (static_cast<std::int64_t>(ops[2]) << 32) | ops[1];
-                break;
-            case aura::ir::IROpcode::ConstF64:
-                break;
-            case aura::ir::IROpcode::Local: {
-                auto it = known_.find(ops[1]);
-                if (it != known_.end()) { replace(instr, ops[0], it->second); ++folded_; }
-                break;
-            }
-#define FOLD_BIN(OP, EXPR)                                                    \
-    case aura::ir::IROpcode::OP: {                                            \
-        auto it_a = known_.find(ops[1]), it_b = known_.find(ops[2]);         \
-        if (it_a != known_.end() && it_b != known_.end()) {                   \
-            replace(instr, ops[0], EXPR); ++folded_;                          \
-        } break;                                                              \
+                case aura::ir::IROpcode::ConstI64:
+                    known_[ops[0]] = (static_cast<std::int64_t>(ops[2]) << 32) | ops[1];
+                    break;
+                case aura::ir::IROpcode::ConstF64:
+                    break;
+                case aura::ir::IROpcode::Local: {
+                    auto it = known_.find(ops[1]);
+                    if (it != known_.end()) {
+                        replace(instr, ops[0], it->second);
+                        ++folded_;
+                    }
+                    break;
+                }
+#define FOLD_BIN(OP, EXPR)                                                                         \
+    case aura::ir::IROpcode::OP: {                                                                 \
+        auto it_a = known_.find(ops[1]), it_b = known_.find(ops[2]);                               \
+        if (it_a != known_.end() && it_b != known_.end()) {                                        \
+            replace(instr, ops[0], EXPR);                                                          \
+            ++folded_;                                                                             \
+        }                                                                                          \
+        break;                                                                                     \
     }
-#define FOLD_BOOL(OP, EXPR)                                                   \
-    case aura::ir::IROpcode::OP: {                                            \
-        auto it_a = known_.find(ops[1]), it_b = known_.find(ops[2]);         \
-        if (it_a != known_.end() && it_b != known_.end()) {                   \
-            replace_bool(instr, ops[0], EXPR); ++folded_;                     \
-        } break;                                                              \
+#define FOLD_BOOL(OP, EXPR)                                                                        \
+    case aura::ir::IROpcode::OP: {                                                                 \
+        auto it_a = known_.find(ops[1]), it_b = known_.find(ops[2]);                               \
+        if (it_a != known_.end() && it_b != known_.end()) {                                        \
+            replace_bool(instr, ops[0], EXPR);                                                     \
+            ++folded_;                                                                             \
+        }                                                                                          \
+        break;                                                                                     \
     }
-            FOLD_BIN(Add, it_a->second + it_b->second)
-            FOLD_BIN(Sub, it_a->second - it_b->second)
-            FOLD_BIN(Mul, it_a->second * it_b->second)
-            FOLD_BIN(Div, it_a->second / it_b->second)
-            FOLD_BOOL(Eq, (it_a->second == it_b->second))
-            FOLD_BOOL(Lt, (it_a->second < it_b->second))
-            FOLD_BOOL(Gt, (it_a->second > it_b->second))
-            FOLD_BOOL(Le, (it_a->second <= it_b->second))
-            FOLD_BOOL(Ge, (it_a->second >= it_b->second))
-            FOLD_BOOL(And, (it_a->second && it_b->second))
-            FOLD_BOOL(Or, (it_a->second || it_b->second))
+                    FOLD_BIN(Add, it_a->second + it_b->second)
+                    FOLD_BIN(Sub, it_a->second - it_b->second)
+                    FOLD_BIN(Mul, it_a->second * it_b->second)
+                    FOLD_BIN(Div, it_a->second / it_b->second)
+                    FOLD_BOOL(Eq, (it_a->second == it_b->second))
+                    FOLD_BOOL(Lt, (it_a->second < it_b->second))
+                    FOLD_BOOL(Gt, (it_a->second > it_b->second))
+                    FOLD_BOOL(Le, (it_a->second <= it_b->second))
+                    FOLD_BOOL(Ge, (it_a->second >= it_b->second))
+                    FOLD_BOOL(And, (it_a->second && it_b->second))
+                    FOLD_BOOL(Or, (it_a->second || it_b->second))
 #undef FOLD_BIN
 #undef FOLD_BOOL
-            case aura::ir::IROpcode::Not: {
-                auto it = known_.find(ops[1]);
-                if (it != known_.end()) { replace_bool(instr, ops[0], !it->second); ++folded_; }
-                break;
-            }
-            default: break;
+                case aura::ir::IROpcode::Not: {
+                    auto it = known_.find(ops[1]);
+                    if (it != known_.end()) {
+                        replace_bool(instr, ops[0], !it->second);
+                        ++folded_;
+                    }
+                    break;
+                }
+                default:
+                    break;
             }
         }
     }
 
     void replace(aura::ir::IRInstruction& instr, std::uint32_t slot, std::int64_t val) {
         instr.opcode = aura::ir::IROpcode::ConstI64;
-        instr.operands = {slot,
-            static_cast<std::uint32_t>(val & 0xFFFFFFFF),
-            static_cast<std::uint32_t>((val >> 32) & 0xFFFFFFFF), 0};
+        instr.operands = {slot, static_cast<std::uint32_t>(val & 0xFFFFFFFF),
+                          static_cast<std::uint32_t>((val >> 32) & 0xFFFFFFFF), 0};
         known_[slot] = val;
     }
 
@@ -179,12 +185,10 @@ public:
     // Run type checking on FlatAST before lowering.
     // Returns the number of type errors found (0 = clean).
     // Diagnostics are collected in diag for optional reporting.
-    std::size_t check_before_lowering(
-        aura::ast::FlatAST& flat,
-        aura::ast::StringPool& pool,
-        aura::ast::NodeId root,
-        aura::core::TypeRegistry& type_registry,
-        aura::diag::DiagnosticCollector& diag) {
+    std::size_t check_before_lowering(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                      aura::ast::NodeId root,
+                                      aura::core::TypeRegistry& type_registry,
+                                      aura::diag::DiagnosticCollector& diag) {
         aura::compiler::TypeChecker tc(type_registry);
         tc.infer_flat(flat, pool, root, diag);
         auto all = diag.diagnostics();
@@ -195,9 +199,7 @@ public:
     std::string_view name() const { return "type-check"; }
 
     // Access stored diagnostics from last check_before_lowering call
-    const std::vector<aura::diag::Diagnostic>& diagnostics() const {
-        return last_diags_;
-    }
+    const std::vector<aura::diag::Diagnostic>& diagnostics() const { return last_diags_; }
 
 private:
     std::vector<aura::diag::Diagnostic> last_diags_;
@@ -217,7 +219,8 @@ public:
         : type_reg_(reg) {}
 
     void run(aura::ir::IRModule& module) {
-        if (!type_reg_) return;
+        if (!type_reg_)
+            return;
         auto dyn_id = type_reg_->lookup_type("Any");
         for (auto& func : module.functions) {
             for (auto& block : func.blocks) {
@@ -234,20 +237,24 @@ public:
                         instr.opcode == aura::ir::IROpcode::Mul ||
                         instr.opcode == aura::ir::IROpcode::Div) {
                         auto t1 = (ops[1] < block.instructions.size())
-                            ? block.instructions[ops[1]].type_id : 0u;
+                                      ? block.instructions[ops[1]].type_id
+                                      : 0u;
                         auto t2 = (ops[2] < block.instructions.size())
-                            ? block.instructions[ops[2]].type_id : 0u;
+                                      ? block.instructions[ops[2]].type_id
+                                      : 0u;
                         // If both are concrete (non-zero) and differ, insert CastOp on ops[2]
-                        if (t1 != 0 && t2 != 0 && t1 != t2
-            && t1 != dyn_id.index && t2 != dyn_id.index) {
+                        if (t1 != 0 && t2 != 0 && t1 != t2 && t1 != dyn_id.index &&
+                            t2 != dyn_id.index) {
                             auto cast_slot = func.local_count++;
                             aura::ir::IRInstruction cast_instr;
                             cast_instr.opcode = aura::ir::IROpcode::CastOp;
-                            cast_instr.operands = std::array<std::uint32_t, 4>{cast_slot, ops[2], type_tag_for_coercion(aura::core::TypeId{t1, 1}), 0u};
+                            cast_instr.operands = std::array<std::uint32_t, 4>{
+                                cast_slot, ops[2], type_tag_for_coercion(aura::core::TypeId{t1, 1}),
+                                0u};
                             cast_instr.type_id = t1;
-                            block.instructions.insert(
-                                block.instructions.begin() + static_cast<std::ptrdiff_t>(i),
-                                cast_instr);
+                            block.instructions.insert(block.instructions.begin() +
+                                                          static_cast<std::ptrdiff_t>(i),
+                                                      cast_instr);
                             ++i;
                             ops[2] = cast_slot;
                         }
@@ -260,19 +267,21 @@ public:
                     // from the value being returned, insert CastOp.
                     if (instr.opcode == aura::ir::IROpcode::Return) {
                         auto val_type = (ops[0] < block.instructions.size())
-                            ? block.instructions[ops[0]].type_id : 0u;
+                                            ? block.instructions[ops[0]].type_id
+                                            : 0u;
                         auto ret_type = instr.type_id;
-                        if (val_type != 0 && ret_type != 0 && val_type != ret_type
-                            && val_type != dyn_id.index && ret_type != dyn_id.index) {
+                        if (val_type != 0 && ret_type != 0 && val_type != ret_type &&
+                            val_type != dyn_id.index && ret_type != dyn_id.index) {
                             auto cast_slot = func.local_count++;
                             aura::ir::IRInstruction cast_instr;
                             cast_instr.opcode = aura::ir::IROpcode::CastOp;
                             auto cast_tag = type_tag_for_coercion(aura::core::TypeId{ret_type, 1});
-                            cast_instr.operands = std::array<std::uint32_t, 4>{cast_slot, ops[0], cast_tag, 0u};
+                            cast_instr.operands =
+                                std::array<std::uint32_t, 4>{cast_slot, ops[0], cast_tag, 0u};
                             cast_instr.type_id = ret_type;
-                            block.instructions.insert(
-                                block.instructions.begin() + static_cast<std::ptrdiff_t>(i),
-                                cast_instr);
+                            block.instructions.insert(block.instructions.begin() +
+                                                          static_cast<std::ptrdiff_t>(i),
+                                                      cast_instr);
                             ++i;
                             ops[0] = cast_slot;
                         }
@@ -291,7 +300,8 @@ public:
                             auto then_blk = ops[1];
                             auto else_blk = ops[2];
                             auto check_and_cast = [&](std::uint32_t blk_id) {
-                                if (blk_id >= func.blocks.size()) return;
+                                if (blk_id >= func.blocks.size())
+                                    return;
                                 auto& blk = func.blocks[blk_id];
                                 // Find the Local instruction (phi_slot write) before the Jump
                                 for (std::size_t j = 0; j + 1 < blk.instructions.size(); ++j) {
@@ -299,19 +309,24 @@ public:
                                     auto& next = blk.instructions[j + 1];
                                     if (next.opcode == aura::ir::IROpcode::Jump &&
                                         loc.opcode == aura::ir::IROpcode::Local) {
-                                        auto val_type = (loc.operands[1] < block.instructions.size())
-                                            ? block.instructions[loc.operands[1]].type_id : 0u;
-                                        if (val_type != 0 && val_type != if_result_type
-                                            && val_type != dyn_id.index) {
+                                        auto val_type =
+                                            (loc.operands[1] < block.instructions.size())
+                                                ? block.instructions[loc.operands[1]].type_id
+                                                : 0u;
+                                        if (val_type != 0 && val_type != if_result_type &&
+                                            val_type != dyn_id.index) {
                                             auto cast_slot = func.local_count++;
                                             aura::ir::IRInstruction cast_instr;
                                             cast_instr.opcode = aura::ir::IROpcode::CastOp;
                                             cast_instr.operands = std::array<std::uint32_t, 4>{
                                                 cast_slot, loc.operands[1],
-                                                type_tag_for_coercion(aura::core::TypeId{if_result_type, 1}), 0u};
+                                                type_tag_for_coercion(
+                                                    aura::core::TypeId{if_result_type, 1}),
+                                                0u};
                                             cast_instr.type_id = if_result_type;
                                             blk.instructions.insert(
-                                                blk.instructions.begin() + static_cast<std::ptrdiff_t>(j),
+                                                blk.instructions.begin() +
+                                                    static_cast<std::ptrdiff_t>(j),
                                                 cast_instr);
                                             loc.operands[1] = cast_slot;
                                         }
@@ -329,7 +344,8 @@ public:
                     // ── Remove redundant CastOp ──
                     if (instr.opcode == aura::ir::IROpcode::CastOp && ops[2] == 3) {
                         auto source_type = (ops[1] < block.instructions.size())
-                            ? block.instructions[ops[1]].type_id : 0u;
+                                               ? block.instructions[ops[1]].type_id
+                                               : 0u;
                         if (source_type != 0 && source_type == instr.type_id) {
                             block.instructions[i].opcode = aura::ir::IROpcode::Local;
                             block.instructions[i].operands = {ops[0], ops[1], 0, 0};
@@ -345,14 +361,20 @@ public:
     // Map TypeId to CastOp type_tag (used by IR interpreter)
     // INT→0, STRING→1, BOOL→2, FLOAT→4, DYNAMIC→3
     std::uint32_t type_tag_for_coercion(aura::core::TypeId tid) const {
-        if (!type_reg_) return 3;
+        if (!type_reg_)
+            return 3;
         auto tag = type_reg_->tag_of(tid);
         switch (tag) {
-            case aura::core::TypeTag::INT:    return 0;
-            case aura::core::TypeTag::STRING: return 1;
-            case aura::core::TypeTag::BOOL:   return 2;
-            case aura::core::TypeTag::FLOAT:  return 4;
-            default:                          return 3; // Dynamic / pass-through
+            case aura::core::TypeTag::INT:
+                return 0;
+            case aura::core::TypeTag::STRING:
+                return 1;
+            case aura::core::TypeTag::BOOL:
+                return 2;
+            case aura::core::TypeTag::FLOAT:
+                return 4;
+            default:
+                return 3; // Dynamic / pass-through
         }
     }
 
@@ -384,11 +406,11 @@ private:
 // this pass identifies WHERE in the AST they should be added
 // by returning a vector of (source_node, target_type) pairs.
 export struct CoercionMarker {
-    aura::ast::NodeId source_node;   // expression producing the value
-    std::uint32_t target_type_id;    // type it needs to become
-    aura::ast::NodeTag context;      // Call, TypeAnnotation, Lambda, Let
-    aura::ast::NodeId parent;        // parent node for context
-    std::uint32_t child_index;        // which child position
+    aura::ast::NodeId source_node; // expression producing the value
+    std::uint32_t target_type_id;  // type it needs to become
+    aura::ast::NodeTag context;    // Call, TypeAnnotation, Lambda, Let
+    aura::ast::NodeId parent;      // parent node for context
+    std::uint32_t child_index;     // which child position
 };
 
 export class CoercionMarkerPass {
@@ -397,10 +419,11 @@ export class CoercionMarkerPass {
     aura::ast::StringPool& pool_;
 
 public:
-    CoercionMarkerPass(aura::core::TypeRegistry& reg,
-                       aura::ast::FlatAST& flat,
+    CoercionMarkerPass(aura::core::TypeRegistry& reg, aura::ast::FlatAST& flat,
                        aura::ast::StringPool& pool)
-        : reg_(reg), flat_(flat), pool_(pool) {}
+        : reg_(reg)
+        , flat_(flat)
+        , pool_(pool) {}
 
     // Run the pass. Collects all nodes needing coercion.
     std::vector<CoercionMarker> run(aura::ast::NodeId root) {
@@ -422,11 +445,12 @@ private:
             return false;
         auto actual = aura::core::TypeId{actual_id, 1};
         auto expected = aura::core::TypeId{expected_id, 1};
-        if (actual == expected) return false;
+        if (actual == expected)
+            return false;
         // static→dynamic: erasure
         if (actual != reg_.dynamic_type() && expected == reg_.dynamic_type())
             return false;
-        return true;  // dynamic→static or ground→ground
+        return true; // dynamic→static or ground→ground
     }
 
     void visit_node(aura::ast::NodeId id) {
@@ -438,14 +462,14 @@ private:
         }
 
         switch (v.tag) {
-        case aura::ast::NodeTag::Call:
-            visit_call(id);
-            break;
-        case aura::ast::NodeTag::TypeAnnotation:
-            visit_annotation(id);
-            break;
-        default:
-            break;
+            case aura::ast::NodeTag::Call:
+                visit_call(id);
+                break;
+            case aura::ast::NodeTag::TypeAnnotation:
+                visit_annotation(id);
+                break;
+            default:
+                break;
         }
     }
 
@@ -456,7 +480,8 @@ private:
 
     void visit_annotation(aura::ast::NodeId id) {
         auto v = flat_.get(id);
-        if (v.children.empty()) return;
+        if (v.children.empty())
+            return;
         auto inner_id = v.child(0);
         auto inner_type = flat_.type_id(inner_id);
         auto ann_type = flat_.type_id(id);
@@ -495,14 +520,16 @@ public:
                     changed = false;
                     for (std::size_t i = 0; i < block.instructions.size(); ++i) {
                         auto& instr = block.instructions[i];
-                        if (instr.opcode != aura::ir::IROpcode::CastOp) continue;
+                        if (instr.opcode != aura::ir::IROpcode::CastOp)
+                            continue;
                         auto& ops = instr.operands;
 
                         // Rule 1: identity cast — source type == target type
                         // Check via type_id propagation (from FlatAST)
                         if (instr.type_id != 0) {
                             auto src_type = (ops[1] < block.instructions.size())
-                                ? block.instructions[ops[1]].type_id : 0u;
+                                                ? block.instructions[ops[1]].type_id
+                                                : 0u;
                             if (src_type != 0 && src_type == instr.type_id) {
                                 // target == source type: replace with Local
                                 block.instructions[i] = aura::ir::IRInstruction{

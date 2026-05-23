@@ -12,7 +12,7 @@ struct CacheHeader {
     std::uint64_t ir_offset;
     std::uint64_t source_mtime;
     std::uint64_t content_hash;
-    char     magic[8];
+    char magic[8];
     std::uint32_t version;
     std::uint32_t num_nodes;
     std::uint32_t num_strings;
@@ -41,17 +41,19 @@ int cache_deserialize_header(const unsigned char* buf, std::size_t size, void* h
 int cache_validate_header(const void* h) {
     const CacheHeader* ch = static_cast<const CacheHeader*>(h);
     // Validate magic
-    if (ch->magic[0] != 'A' || ch->magic[1] != 'U' || ch->magic[2] != 'R' ||
-        ch->magic[3] != 'A' || ch->magic[4] != 'C' || ch->magic[5] != 'A' ||
-        ch->magic[6] != 'C' || ch->magic[7] != 'H') {
-        return -1;  // bad magic
+    if (ch->magic[0] != 'A' || ch->magic[1] != 'U' || ch->magic[2] != 'R' || ch->magic[3] != 'A' ||
+        ch->magic[4] != 'C' || ch->magic[5] != 'A' || ch->magic[6] != 'C' || ch->magic[7] != 'H') {
+        return -1; // bad magic
     }
     // Validate version
-    if (ch->version < 1 || ch->version > 5) return -2;  // bad version
+    if (ch->version < 1 || ch->version > 5)
+        return -2; // bad version
     // Validate node count
-    if (ch->num_nodes == 0 || ch->num_nodes > 10000000) return -3;  // bad node count
+    if (ch->num_nodes == 0 || ch->num_nodes > 10000000)
+        return -3; // bad node count
     // Validate offsets
-    if (ch->node_offset < 64 || ch->node_offset > 100000000ULL) return -4;  // bad offset
-    return 0;  // valid
+    if (ch->node_offset < 64 || ch->node_offset > 100000000ULL)
+        return -4; // bad offset
+    return 0;      // valid
 }
 } // extern "C"
