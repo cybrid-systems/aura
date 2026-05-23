@@ -680,17 +680,27 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 }
                 case IROpcode::MoveOp: {
                     // Move ownership: decrement source refcount, pass value through
+                    // Runtime check: double-move detection
                     auto val = locals[ops[1]];
                     if (types::is_linear(val)) {
                         auto lin_id = types::as_linear_id(val);
                         auto it = linear_heap_.find(lin_id);
                         if (it != linear_heap_.end()) {
-                            auto result = it->second.value;
-                            if (--it->second.ref_count == 0)
-                                linear_heap_.erase(it);
-                            locals[ops[0]] = result;
+                            if (it->second.ref_count <= 0) {
+                                std::println(std::cerr,
+                                    "error: double move — value already moved");
+                                locals[ops[0]] = it->second.value;
+                            } else {
+                                auto result = it->second.value;
+                                if (--it->second.ref_count == 0)
+                                    linear_heap_.erase(it);
+                                locals[ops[0]] = result;
+                            }
                         } else {
-                            locals[ops[0]] = locals[ops[1]];
+                            // Already moved/consumed — error
+                            std::println(std::cerr,
+                                "error: use after move — value already consumed");
+                            locals[ops[0]] = types::make_int(0);
                         }
                     } else {
                         locals[ops[0]] = val;
@@ -699,15 +709,24 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 }
                 case IROpcode::BorrowOp: {
                     // Immutable borrow: increment refcount
+                    // Runtime check: use-after-move detection
                     auto val = locals[ops[1]];
                     if (types::is_linear(val)) {
                         auto lin_id = types::as_linear_id(val);
                         auto it = linear_heap_.find(lin_id);
                         if (it != linear_heap_.end()) {
-                            it->second.ref_count++;
-                            locals[ops[0]] = it->second.value;
+                            if (it->second.ref_count <= 0) {
+                                std::println(std::cerr,
+                                    "error: double move — value already moved");
+                                locals[ops[0]] = it->second.value;
+                            } else {
+                                it->second.ref_count++;
+                                locals[ops[0]] = it->second.value;
+                            }
                         } else {
-                            locals[ops[0]] = val;
+                            std::println(std::cerr,
+                                "error: use after move — borrow of consumed value");
+                            locals[ops[0]] = types::make_int(0);
                         }
                     } else {
                         locals[ops[0]] = val;
@@ -721,9 +740,15 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         auto lin_id = types::as_linear_id(val);
                         auto it = linear_heap_.find(lin_id);
                         if (it != linear_heap_.end()) {
+                            if (it->second.ref_count <= 0) {
+                                std::println(std::cerr,
+                                    "error: mut-borrow of moved value");
+                            }
                             locals[ops[0]] = it->second.value;
                         } else {
-                            locals[ops[0]] = val;
+                            std::println(std::cerr,
+                                "error: mut-borrow of consumed value");
+                            locals[ops[0]] = types::make_int(0);
                         }
                     } else {
                         locals[ops[0]] = val;
@@ -732,13 +757,22 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 }
                 case IROpcode::DropOp: {
                     // Explicit destruct: decrement refcount, erase if zero
+                    // Runtime check: double-drop detection
                     auto val = locals[ops[0]];
                     if (types::is_linear(val)) {
                         auto lin_id = types::as_linear_id(val);
                         auto it = linear_heap_.find(lin_id);
                         if (it != linear_heap_.end()) {
-                            if (--it->second.ref_count == 0)
-                                linear_heap_.erase(it);
+                            if (it->second.ref_count <= 0) {
+                                std::println(std::cerr,
+                                    "error: double drop — value already dropped");
+                            } else {
+                                if (--it->second.ref_count == 0)
+                                    linear_heap_.erase(it);
+                            }
+                        } else {
+                            std::println(std::cerr,
+                                "error: double drop — value not in heap");
                         }
                     }
                     break;
