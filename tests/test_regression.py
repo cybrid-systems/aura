@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Regression tests for recently fixed P0 issues and new features."""
-import subprocess, sys
+import subprocess, sys, os, tempfile
 
 AURA = "./build/aura"
 
@@ -132,22 +132,72 @@ tests = [
      '(require "std/vector-math" all:)(mat:ref (mat:identity 3) 1 1)',
      "1", ""),
 
-    # freeze / load / emit-binary
-    ("freeze-snapshot",
-     '(begin (write-file "/tmp/aura-freeze-test.aura" "(display 42)")(shell "cat /tmp/aura-freeze-test.aura | ./build/aura --freeze /tmp/aura-freeze-out.aura"))',
-     "frozen to", ""),
-    ("load-snapshot",
-     '(shell "./build/aura --load /tmp/aura-freeze-out.aura")',
-     "42", ""),
-    ("emit-binary",
-     '(shell "echo \'(display 99)\' | ./build/aura --emit-binary /tmp/aura-emit-test")',
-     "emitted", ""),
-
 ]
 
 # Cleanup temp files
-import os
 for f in ["/tmp/aura-regr.txt", "/tmp/aura-copy.txt", "/tmp/aura-regr-test.txt"]:
+    if os.path.exists(f):
+        os.remove(f)
+
+
+# ── Subprocess-based tests (freeze/load/emit-binary) ──────────
+def test_freeze_load():
+    """Freeze a program and load it back."""
+    src = b"(display 42)"
+    # Freeze
+    r1 = subprocess.run([AURA, "--freeze", "/tmp/aura-test-freeze.aura"],
+                        input=src, capture_output=True, timeout=10)
+    assert b"frozen to" in r1.stdout, f"freeze failed: {r1.stdout} {r1.stderr}"
+    assert os.path.exists("/tmp/aura-test-freeze.aura"), "freeze file not created"
+    # Load
+    r2 = subprocess.run([AURA, "--load", "/tmp/aura-test-freeze.aura"],
+                        capture_output=True, timeout=10)
+    assert b"42" in r2.stdout, f"load failed: {r2.stdout} {r2.stderr}"
+    print("  ✅ test-freeze-load")
+
+def test_freeze_multi_expr():
+    """Freeze multi-expression program."""
+    src = b"(define (f x) (+ x 1))(display (f 41))"
+    r1 = subprocess.run([AURA, "--freeze", "/tmp/aura-test-freeze2.aura"],
+                        input=src, capture_output=True, timeout=10)
+    assert b"frozen to" in r1.stdout
+    r2 = subprocess.run([AURA, "--load", "/tmp/aura-test-freeze2.aura"],
+                        capture_output=True, timeout=10)
+    assert b"42" in r2.stdout, f"multi-expr load: {r2.stdout}"
+    print("  ✅ test-freeze-multi")
+
+def test_freeze_empty():
+    """Freeze with empty input should fail gracefully."""
+    r = subprocess.run([AURA, "--freeze", "/tmp/aura-test-empty.aura"],
+                        input=b"", capture_output=True, timeout=10)
+    assert r.returncode != 0, "empty freeze should fail"
+    print("  ✅ test-freeze-empty")
+
+def test_emit_binary():
+    """Emit binary (placeholder) creates .ir file."""
+    src = b"(display (+ 1 2))"
+    r = subprocess.run([AURA, "--emit-binary", "/tmp/aura-test-out"],
+                        input=src, capture_output=True, timeout=10)
+    assert b"emitted" in r.stdout, f"emit failed: {r.stdout} {r.stderr}"
+    assert os.path.exists("/tmp/aura-test-out.ir"), "emit .ir not created"
+    print("  ✅ test-emit-binary")
+
+# Run subprocess tests
+passed_s = 0
+failed_s = 0
+for tf in [test_freeze_load, test_freeze_multi_expr, test_freeze_empty, test_emit_binary]:
+    try:
+        tf()
+        passed_s += 1
+    except Exception as e:
+        print(f"  ❌ {tf.__name__}: {e}")
+        failed_s += 1
+
+print(f"  Subprocess tests: {passed_s}/{passed_s + failed_s} passed")
+
+# Cleanup freeze/emit files
+for f in ["/tmp/aura-test-freeze.aura", "/tmp/aura-test-freeze2.aura",
+          "/tmp/aura-test-empty.aura", "/tmp/aura-test-out.ir"]:
     if os.path.exists(f):
         os.remove(f)
 
@@ -176,5 +226,5 @@ for name, code, expect_out, expect_err in tests:
         print(f"  ❌ {name}: expected out~{expect_out!r} err~{expect_err!r}, got out={out!r} err={err!r}")
         failed += 1
 
-print(f"\n{passed}/{passed+failed} passed")
-sys.exit(1 if failed else 0)
+print(f"\n{passed}/{passed+failed} Aura + {passed_s}/{passed_s+failed_s} subprocess = {passed+passed_s}/{passed+failed+passed_s+failed_s} all passed")
+sys.exit(1 if (failed > 0 or failed_s > 0) else 0)
