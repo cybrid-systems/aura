@@ -6,7 +6,7 @@
 #include <string>
 
 // P2996 编译期类型系统验证
-// 
+//
 // 确保关键类型的结构布局符合设计预期。
 // 由于 P2996 不能跨 C++26 module 边界使用，独立在 reflect/ 头文件中。
 
@@ -18,19 +18,25 @@ namespace aura::reflect {
 
 consteval bool validate_type_id_layout() {
     namespace meta = std::meta;
-    
+
     // TypeId 必须刚好 64 位（两个 uint32_t）
     constexpr auto tid_size = []() -> std::size_t {
-        struct TID { std::uint32_t index; std::uint32_t generation; };
+        struct TID {
+            std::uint32_t index;
+            std::uint32_t generation;
+        };
         return sizeof(TID);
     }();
     static_assert(tid_size == 8, "TypeId must be exactly 8 bytes");
-    
+
     // 验证成员偏移
-    struct TID_Test { std::uint32_t index; std::uint32_t generation; };
+    struct TID_Test {
+        std::uint32_t index;
+        std::uint32_t generation;
+    };
     static_assert(offsetof(TID_Test, index) == 0, "TypeId.index must be at offset 0");
     static_assert(offsetof(TID_Test, generation) == 4, "TypeId.generation must be at offset 4");
-    
+
     return true;
 }
 
@@ -40,16 +46,16 @@ consteval bool validate_type_id_layout() {
 
 consteval bool validate_type_info_layout() {
     namespace meta = std::meta;
-    
+
     struct TypeInfoTest {
-        std::uint64_t resolved;      // TypeId packed as uint64_t
-        std::uint64_t expected;      // TypeId packed as uint64_t  
+        std::uint64_t resolved; // TypeId packed as uint64_t
+        std::uint64_t expected; // TypeId packed as uint64_t
         bool has_annotation;
     };
-    
+
     static_assert(sizeof(TypeInfoTest) <= 24, "TypeInfo should be <= 24 bytes");
     static_assert(offsetof(TypeInfoTest, resolved) == 0, "resolved at offset 0");
-    
+
     return true;
 }
 
@@ -57,14 +63,13 @@ consteval bool validate_type_info_layout() {
 // Validates that a type's struct layout matches what serialization expects.
 // AI-generated annotations can be verified at compile time.
 
-template <typename T>
-consteval bool validate_struct_layout() {
+template <typename T> consteval bool validate_struct_layout() {
     namespace meta = std::meta;
-    
+
     // Get member count via reflection
     constexpr auto members = meta::members_of(^T);
     constexpr auto count = members.size();
-    
+
     // All non-static data members must be trivially copyable or known types
     bool all_valid = true;
     meta::for_each(members, [&](auto member) {
@@ -82,7 +87,7 @@ consteval bool validate_struct_layout() {
             }
         }
     });
-    
+
     return all_valid;
 }
 
@@ -90,10 +95,9 @@ consteval bool validate_struct_layout() {
 // Returns a human-readable JSON string describing a type's members
 // at compile time. Uses P2996 reflection to introspect struct fields.
 
-template <typename T>
-consteval std::string type_info_of() {
+template <typename T> consteval std::string type_info_of() {
     namespace meta = std::meta;
-    
+
     std::string result = "{ ";
     result += "\"name\": \"";
     result += meta::name_of(^T);
@@ -102,33 +106,32 @@ consteval std::string type_info_of() {
     result += ", \"alignment\": ";
     result += std::to_string(alignof(T));
     result += ", \"members\": [";
-    
+
     bool first = true;
     meta::for_each(meta::members_of(^T), [&](auto member) {
         if constexpr (requires { member.is_static_data_member(); }) {
             if (!member.is_static_data_member()) {
-                if (!first) result += ", ";
+                if (!first)
+                    result += ", ";
                 first = false;
                 result += "{ \"name\": \"";
                 result += meta::name_of(member);
                 result += "\", \"offset\": ";
                 // Calculate offset via the member pointer
                 result += std::to_string(reinterpret_cast<std::size_t>(
-                    &reinterpret_cast<const volatile char&>(
-                        (*(T*)nullptr).*member.pointer)));
+                    &reinterpret_cast<const volatile char&>((*(T*)nullptr).*member.pointer)));
                 result += " }";
             }
         }
     });
-    
+
     result += " ] }";
     return result;
 }
 
 // ── Compile-time test runner ─────────────────────────────────
 consteval bool run_all_type_validation() {
-    return validate_type_id_layout() 
-        && validate_type_info_layout();
+    return validate_type_id_layout() && validate_type_info_layout();
 }
 
 static_assert(run_all_type_validation(), "Type system layout validation failed");

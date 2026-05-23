@@ -8,21 +8,21 @@ using namespace aura::ast;
 
 namespace aura::compiler::cache {
 
-export struct MappedCache;  // forward decl for friend
+export struct MappedCache; // forward decl for friend
 // setup_pointers defined in cache_impl.cpp (helper, internal linkage)
 
 // ── File header (64 bytes) ────────────────────────────────────
 export struct CacheHeader {
-    std::uint64_t node_offset;       // 8
-    std::uint64_t string_offset;     // 8
-    std::uint64_t ir_offset;         // 8
-    std::uint64_t source_mtime;      // 8
-    std::uint64_t content_hash;      // 8
-    char     magic[8];               // 8
-    std::uint32_t version;           // 4
-    std::uint32_t num_nodes;         // 4
-    std::uint32_t num_strings;       // 4
-    std::uint32_t num_functions;     // 4
+    std::uint64_t node_offset;   // 8
+    std::uint64_t string_offset; // 8
+    std::uint64_t ir_offset;     // 8
+    std::uint64_t source_mtime;  // 8
+    std::uint64_t content_hash;  // 8
+    char magic[8];               // 8
+    std::uint32_t version;       // 4
+    std::uint32_t num_nodes;     // 4
+    std::uint32_t num_strings;   // 4
+    std::uint32_t num_functions; // 4
 };
 static_assert(sizeof(CacheHeader) == 64, "CacheHeader must be 64 bytes");
 
@@ -50,31 +50,31 @@ private:
 
     void copy_pointers(const MappedCache& other);
 
-    void*  data_ = nullptr;       // mmap base
+    void* data_ = nullptr; // mmap base
     std::size_t file_size_ = 0;
 
     // Pointers into mmap region (set by open_cache)
     const CacheHeader* header_ = nullptr;
 
     // Column pointers (from node_offset)
-    const std::uint8_t*   tags_ = nullptr;
-    const std::int64_t*   int_vals_ = nullptr;
+    const std::uint8_t* tags_ = nullptr;
+    const std::int64_t* int_vals_ = nullptr;
     const SymId* sym_ids_ = nullptr;
-    const std::uint32_t*  child_begins_ = nullptr;
-    const std::uint32_t*  child_counts_ = nullptr;
+    const std::uint32_t* child_begins_ = nullptr;
+    const std::uint32_t* child_counts_ = nullptr;
     const NodeId* child_data_ = nullptr;
-    const std::uint32_t*  param_begins_ = nullptr;
-    const std::uint32_t*  param_counts_ = nullptr;
+    const std::uint32_t* param_begins_ = nullptr;
+    const std::uint32_t* param_counts_ = nullptr;
     const SymId* param_data_ = nullptr;
     const NodeId* type_ids_ = nullptr;
-    const std::uint32_t*  lines_ = nullptr;
-    const std::uint32_t*  cols_ = nullptr;
-    const std::uint8_t*   markers_ = nullptr;
+    const std::uint32_t* lines_ = nullptr;
+    const std::uint32_t* cols_ = nullptr;
+    const std::uint8_t* markers_ = nullptr;
 
     // String pool pointers (from string_offset)
     // Layout: [num_strings:u32, offsets[num_strings]:u32, [len:u32,data:char[]]...]
     const std::uint32_t* str_offsets_ = nullptr;
-    const std::uint8_t*  str_data_base_ = nullptr;
+    const std::uint8_t* str_data_base_ = nullptr;
 
     // IR module cache (loaded from ir_offset)
     std::vector<aura::ir::IRFunction> ir_functions_;
@@ -96,11 +96,8 @@ public:
 // ── Public API ────────────────────────────────────────────────
 
 // Write FlatAST + StringPool to a cache file.
-export bool write_cache(const std::string& path,
-                        const FlatAST& flat,
-                        const StringPool& pool,
-                        NodeId root,
-                        std::uint64_t source_mtime = 0,
+export bool write_cache(const std::string& path, const FlatAST& flat, const StringPool& pool,
+                        NodeId root, std::uint64_t source_mtime = 0,
                         const aura::ir::IRModule* ir_mod = nullptr);
 
 // Open a cache file via mmap (zero-copy read).

@@ -15,23 +15,27 @@ export struct ASTIndex {
         std::array<std::vector<aura::ast::NodeId>, TAG_COUNT> tags;
         bool built = false;
         void build(const aura::ast::FlatAST& a) {
-            if (built) return;
-            for (auto& v : tags) v.clear();
+            if (built)
+                return;
+            for (auto& v : tags)
+                v.clear();
             for (aura::ast::NodeId id = 0; id < a.size(); ++id) {
                 auto t = static_cast<std::size_t>(a.get(id).tag);
-                if (t < TAG_COUNT) tags[t].push_back(id);
+                if (t < TAG_COUNT)
+                    tags[t].push_back(id);
             }
             built = true;
         }
         std::span<const aura::ast::NodeId> nodes(aura::ast::NodeTag t) const {
             auto idx = static_cast<std::size_t>(t);
-            if (idx < TAG_COUNT) return tags[idx];
+            if (idx < TAG_COUNT)
+                return tags[idx];
             return {};
         }
     };
     mutable TagIndex tag_index_;
     mutable void* sym_ref_ = nullptr;
-    template<typename T> void set_sym_index(T& r) const { sym_ref_ = &r; }
+    template <typename T> void set_sym_index(T& r) const { sym_ref_ = &r; }
 
     // Filter nodes by tag
     // Filter nodes by tag — O(1) after first call (lazy-builds TagIndex)
@@ -41,19 +45,17 @@ export struct ASTIndex {
     }
 
     // Get children of a node as a range
-    auto children_of(aura::ast::NodeId id) const {
-        return ast.get(id).children;
-    }
+    auto children_of(aura::ast::NodeId id) const { return ast.get(id).children; }
 
     // Find calls to a specific function by name
     // Find calls to a specific function by name — uses TagIndex
     auto calls_to(std::string_view name) const {
         auto sym = pool.intern(name);
         auto call_nodes = by_tag(aura::ast::NodeTag::Call);
-        return call_nodes
-             | std::views::filter([this, sym](aura::ast::NodeId id) {
+        return call_nodes | std::views::filter([this, sym](aura::ast::NodeId id) {
                    auto v = ast.get(id);
-                   if (v.children.empty()) return false;
+                   if (v.children.empty())
+                       return false;
                    auto callee = ast.get(v.child(0));
                    return callee.sym_id == sym;
                });
@@ -65,10 +67,9 @@ export struct ASTIndex {
         // Use TagIndex to only scan nodes with sym_id != INVALID_SYM
         // This is still O(N) but avoids checking nodes with no symbol.
         // Future: integrate with SymRefIndex for O(1) lookups.
-        return by_tag(aura::ast::NodeTag::Variable)
-             | std::views::filter([this, sym](aura::ast::NodeId id) {
-                   return ast.get(id).sym_id == sym;
-               });
+        return by_tag(aura::ast::NodeTag::Variable) |
+               std::views::filter(
+                   [this, sym](aura::ast::NodeId id) { return ast.get(id).sym_id == sym; });
     }
 
     // Invalidate when AST changes (call after applying patches)
@@ -79,20 +80,22 @@ export struct ASTIndex {
 // ── QueryExpr — parsed query AST ───────────────────────────────
 export struct QueryExpr {
     enum class Kind : std::uint8_t {
-        NodeType,        // (node-type Call)
-        Eq,              // (= field value)
-        Gt,              // (> field value)
-        And, Or, Not,    // logical
-        Child,           // (child N P)
-        HasChild,        // (has-child P)
-        Exists,          // (exists P)
-        Callee,          // (callee "name")
-        HasError,        // (has-error?)
-        RefCount,        // (= (ref-count :node) N)
-        AllNodes,        // wildcard — match everything
-        HasType,          // (has-type? Int) — node's type_id matches
-        ReturnType,       // (return-type Int) — call return type matches
-        ArgType,          // (argument-type 0 Int) — call arg type matches
+        NodeType, // (node-type Call)
+        Eq,       // (= field value)
+        Gt,       // (> field value)
+        And,
+        Or,
+        Not,        // logical
+        Child,      // (child N P)
+        HasChild,   // (has-child P)
+        Exists,     // (exists P)
+        Callee,     // (callee "name")
+        HasError,   // (has-error?)
+        RefCount,   // (= (ref-count :node) N)
+        AllNodes,   // wildcard — match everything
+        HasType,    // (has-type? Int) — node's type_id matches
+        ReturnType, // (return-type Int) — call return type matches
+        ArgType,    // (argument-type 0 Int) — call arg type matches
     };
 
     Kind kind = Kind::AllNodes;
@@ -109,8 +112,7 @@ export class SymRefIndex;
 
 export class QueryEngine {
 public:
-    QueryEngine(aura::ast::FlatAST& ast,
-                aura::ast::StringPool& pool)
+    QueryEngine(aura::ast::FlatAST& ast, aura::ast::StringPool& pool)
         : index_{ast, pool} {}
 
     // Parse a query S-expression into a QueryExpr tree
@@ -120,9 +122,7 @@ public:
     std::vector<aura::ast::NodeId> execute(const QueryExpr& q);
 
     // Convenience: parse + execute in one call
-    std::vector<aura::ast::NodeId> query(std::string_view sexpr) {
-        return execute(parse(sexpr));
-    }
+    std::vector<aura::ast::NodeId> query(std::string_view sexpr) { return execute(parse(sexpr)); }
 
 private:
     // Internal recursive matching (depth-limited)
@@ -144,9 +144,9 @@ private:
 // "unused definition" queries.
 export class SymRefIndex {
 public:
-    SymRefIndex(const aura::ast::FlatAST& ast,
-                aura::ast::StringPool& pool)
-        : ast_(ast), pool_(pool) {}
+    SymRefIndex(const aura::ast::FlatAST& ast, aura::ast::StringPool& pool)
+        : ast_(ast)
+        , pool_(pool) {}
 
     // Build the inverted index (O(N) scan). Call once after AST is built.
     void build() {
@@ -161,7 +161,8 @@ public:
     // All references to a given symbol
     std::span<const aura::ast::NodeId> refs_of(aura::ast::SymId sym) const {
         auto it = refs_.find(sym);
-        if (it != refs_.end()) return it->second;
+        if (it != refs_.end())
+            return it->second;
         return {};
     }
 
@@ -182,10 +183,8 @@ public:
         std::vector<aura::ast::NodeId> result;
         for (aura::ast::NodeId id = 0; id < ast_.size(); ++id) {
             auto v = ast_.get(id);
-            if ((v.tag == aura::ast::NodeTag::Define ||
-                 v.tag == aura::ast::NodeTag::Let) &&
-                v.sym_id != aura::ast::INVALID_SYM &&
-                count(v.sym_id) <= 1) {
+            if ((v.tag == aura::ast::NodeTag::Define || v.tag == aura::ast::NodeTag::Let) &&
+                v.sym_id != aura::ast::INVALID_SYM && count(v.sym_id) <= 1) {
                 result.push_back(id);
             }
         }
@@ -208,9 +207,9 @@ private:
 // Enables type-aware queries like (has-type? Int) by name lookup.
 export class TypeResolutionIndex {
 public:
-    TypeResolutionIndex(const aura::ast::FlatAST& ast,
-                        const aura::ast::StringPool& pool)
-        : ast_(ast), pool_(pool) {}
+    TypeResolutionIndex(const aura::ast::FlatAST& ast, const aura::ast::StringPool& pool)
+        : ast_(ast)
+        , pool_(pool) {}
 
     // Build the index: scan all nodes and cache resolved type names.
     // Call once after type-checking is complete.
@@ -219,7 +218,7 @@ public:
         for (aura::ast::NodeId id = 0; id < ast_.size(); ++id) {
             auto tid = ast_.type_id(id);
             if (tid > 0) {
-                type_of_[id] = tid;  // store raw type_id for fast match
+                type_of_[id] = tid; // store raw type_id for fast match
             }
         }
     }
@@ -234,7 +233,8 @@ public:
     std::vector<aura::ast::NodeId> nodes_of_type(std::uint32_t type_id) const {
         std::vector<aura::ast::NodeId> result;
         for (auto& [id, tid] : type_of_) {
-            if (tid == type_id) result.push_back(id);
+            if (tid == type_id)
+                result.push_back(id);
         }
         return result;
     }
@@ -255,10 +255,10 @@ private:
 //
 export struct ReplaceTemplate {
     enum class Kind : std::uint8_t {
-        CopyChild,      // (child N) — copy from match
-        NewLiteral,     // (LiteralInt V)
-        NewVariable,    // Variable[name]
-        NewNode,        // other node type with sub-templates as children
+        CopyChild,   // (child N) — copy from match
+        NewLiteral,  // (LiteralInt V)
+        NewVariable, // Variable[name]
+        NewNode,     // other node type with sub-templates as children
     };
 
     Kind kind = Kind::NewNode;
@@ -280,24 +280,21 @@ export struct TransformResult {
 // ── TransformEngine — apply transforms to FlatAST ──────────────
 export class TransformEngine {
 public:
-    TransformEngine(aura::ast::FlatAST& ast,
-                    aura::ast::StringPool& pool)
-        : ast_(ast), pool_(pool) {}
+    TransformEngine(aura::ast::FlatAST& ast, aura::ast::StringPool& pool)
+        : ast_(ast)
+        , pool_(pool) {}
 
     // Parse a transform rule from S-expression
     // Syntax: (query-and-fix <pattern> (fix <replacement>))
     ReplaceTemplate parse_replace(std::string_view sexpr);
 
     // Generate patches: for each matched node, produce replacement
-    std::vector<aura::ast::Patch>
-    generate_patches(const std::vector<aura::ast::NodeId>& matches,
-                     const ReplaceTemplate& replacement);
+    std::vector<aura::ast::Patch> generate_patches(const std::vector<aura::ast::NodeId>& matches,
+                                                   const ReplaceTemplate& replacement);
 
     // Apply query + replace in one step
-    TransformResult query_and_fix(
-        aura::compiler::QueryEngine& engine,
-        std::string_view query_sexpr,
-        std::string_view replace_sexpr);
+    TransformResult query_and_fix(aura::compiler::QueryEngine& engine, std::string_view query_sexpr,
+                                  std::string_view replace_sexpr);
 
 private:
     std::unordered_map<std::string, ReplaceTemplate> parse_cache_;
@@ -315,13 +312,20 @@ std::vector<std::string> tokenize_rt(std::string_view s) {
     std::string cur;
     for (auto c : s) {
         if (c == '(' || c == ')') {
-            if (!cur.empty()) { tokens.push_back(std::move(cur)); }
+            if (!cur.empty()) {
+                tokens.push_back(std::move(cur));
+            }
             tokens.emplace_back(1, c);
         } else if (c == ' ' || c == '\t' || c == '\n') {
-            if (!cur.empty()) { tokens.push_back(std::move(cur)); }
-        } else { cur += c; }
+            if (!cur.empty()) {
+                tokens.push_back(std::move(cur));
+            }
+        } else {
+            cur += c;
+        }
     }
-    if (!cur.empty()) tokens.push_back(std::move(cur));
+    if (!cur.empty())
+        tokens.push_back(std::move(cur));
     return tokens;
 }
 
@@ -333,7 +337,8 @@ struct TokenStream {
 };
 
 ReplaceTemplate parse_rt(TokenStream& ts) {
-    if (ts.end()) return {};
+    if (ts.end())
+        return {};
     auto tok = ts.next();
     if (tok == "(") {
         auto op = ts.next();
@@ -349,32 +354,48 @@ ReplaceTemplate parse_rt(TokenStream& ts) {
             r.str_value = ts.next();
         } else {
             r.kind = ReplaceTemplate::Kind::NewNode;
-            if (op == "Call")      r.tag = aura::ast::NodeTag::Call;
-            else if (op == "IfExpr" || op == "If") r.tag = aura::ast::NodeTag::IfExpr;
-            else if (op == "Lambda") r.tag = aura::ast::NodeTag::Lambda;
-            else if (op == "Begin" || op == "BeginNode") r.tag = aura::ast::NodeTag::Begin;
-            else if (op == "Set" || op == "SetNode") r.tag = aura::ast::NodeTag::Set;
-            else if (op == "Quote" || op == "QuoteNode") r.tag = aura::ast::NodeTag::Quote;
-            else if (op == "LiteralString" || op == "String") r.tag = aura::ast::NodeTag::LiteralString;
-            else if (op == "Coercion" || op == "CoercionNode") r.tag = aura::ast::NodeTag::Coercion;
+            if (op == "Call")
+                r.tag = aura::ast::NodeTag::Call;
+            else if (op == "IfExpr" || op == "If")
+                r.tag = aura::ast::NodeTag::IfExpr;
+            else if (op == "Lambda")
+                r.tag = aura::ast::NodeTag::Lambda;
+            else if (op == "Begin" || op == "BeginNode")
+                r.tag = aura::ast::NodeTag::Begin;
+            else if (op == "Set" || op == "SetNode")
+                r.tag = aura::ast::NodeTag::Set;
+            else if (op == "Quote" || op == "QuoteNode")
+                r.tag = aura::ast::NodeTag::Quote;
+            else if (op == "LiteralString" || op == "String")
+                r.tag = aura::ast::NodeTag::LiteralString;
+            else if (op == "Coercion" || op == "CoercionNode")
+                r.tag = aura::ast::NodeTag::Coercion;
             while (!ts.end() && ts.t[ts.p] != ")")
                 r.children.push_back(parse_rt(ts));
         }
-        if (!ts.end() && ts.t[ts.p] == ")") ts.next();
+        if (!ts.end() && ts.t[ts.p] == ")")
+            ts.next();
         return r;
     }
     // Single token
-    try { std::size_t pos; auto v = std::stoll(tok, &pos);
+    try {
+        std::size_t pos;
+        auto v = std::stoll(tok, &pos);
         if (pos == tok.size()) {
-            ReplaceTemplate r; r.kind = ReplaceTemplate::Kind::NewLiteral; r.int_value = v; return r;
+            ReplaceTemplate r;
+            r.kind = ReplaceTemplate::Kind::NewLiteral;
+            r.int_value = v;
+            return r;
         }
-    } catch (...) {}
+    } catch (...) {
+    }
     return {};
 }
 
 inline ReplaceTemplate TransformEngine::parse_replace(std::string_view sexpr) {
     auto it = parse_cache_.find(std::string(sexpr));
-    if (it != parse_cache_.end()) return it->second;
+    if (it != parse_cache_.end())
+        return it->second;
     auto tokens = tokenize_rt(sexpr);
     TokenStream ts{std::move(tokens), 0};
     auto result = parse_rt(ts);
@@ -384,82 +405,91 @@ inline ReplaceTemplate TransformEngine::parse_replace(std::string_view sexpr) {
 
 inline aura::ast::NodeId TransformEngine::build_node(const ReplaceTemplate& tmpl) {
     switch (tmpl.kind) {
-    case ReplaceTemplate::Kind::NewLiteral:
-        return ast_.add_literal(tmpl.int_value);
-    case ReplaceTemplate::Kind::NewVariable:
-        return ast_.add_variable(pool_.intern(tmpl.str_value));
-    case ReplaceTemplate::Kind::NewNode: {
-        std::vector<aura::ast::NodeId> kids;
-        for (auto& c : tmpl.children) kids.push_back(build_node(c));
-        if (kids.empty()) return {};
-        switch (tmpl.tag) {
-        case aura::ast::NodeTag::Call:
-            return kids.size() == 1 ? ast_.add_call(kids[0], {})
-                 : ast_.add_call(kids[0], std::span(kids.data() + 1, kids.size() - 1));
-        case aura::ast::NodeTag::IfExpr:
-            return kids.size() >= 3 ? ast_.add_if(kids[0], kids[1], kids[2]) : aura::ast::NULL_NODE;
-        default: return kids[0];
+        case ReplaceTemplate::Kind::NewLiteral:
+            return ast_.add_literal(tmpl.int_value);
+        case ReplaceTemplate::Kind::NewVariable:
+            return ast_.add_variable(pool_.intern(tmpl.str_value));
+        case ReplaceTemplate::Kind::NewNode: {
+            std::vector<aura::ast::NodeId> kids;
+            for (auto& c : tmpl.children)
+                kids.push_back(build_node(c));
+            if (kids.empty())
+                return {};
+            switch (tmpl.tag) {
+                case aura::ast::NodeTag::Call:
+                    return kids.size() == 1 ? ast_.add_call(kids[0], {})
+                                            : ast_.add_call(kids[0], std::span(kids.data() + 1,
+                                                                               kids.size() - 1));
+                case aura::ast::NodeTag::IfExpr:
+                    return kids.size() >= 3 ? ast_.add_if(kids[0], kids[1], kids[2])
+                                            : aura::ast::NULL_NODE;
+                default:
+                    return kids[0];
+            }
         }
-    }
-    default: return aura::ast::NULL_NODE;
+        default:
+            return aura::ast::NULL_NODE;
     }
 }
 
 inline std::vector<aura::ast::Patch>
-TransformEngine::generate_patches(
-    const std::vector<aura::ast::NodeId>& matches,
-    const ReplaceTemplate& replacement)
-{
+TransformEngine::generate_patches(const std::vector<aura::ast::NodeId>& matches,
+                                  const ReplaceTemplate& replacement) {
     std::vector<aura::ast::Patch> patches;
     for (auto mid : matches) {
         auto v = ast_.get(mid);
         switch (replacement.kind) {
-        case ReplaceTemplate::Kind::NewLiteral:
-            patches.push_back({mid, 0, (std::uint64_t)aura::ast::NodeTag::LiteralInt});
-            patches.push_back({mid, 1, (std::uint64_t)replacement.int_value});
-            break;
-        case ReplaceTemplate::Kind::CopyChild:
-            if (replacement.child_index < v.children.size()) {
-                auto cv = ast_.get(v.child(replacement.child_index));
-                patches.push_back({mid, 0, (std::uint64_t)cv.tag});
-                patches.push_back({mid, 1, (std::uint64_t)cv.int_value});
-                patches.push_back({mid, 2, (std::uint64_t)cv.sym_id});
+            case ReplaceTemplate::Kind::NewLiteral:
+                patches.push_back({mid, 0, (std::uint64_t)aura::ast::NodeTag::LiteralInt});
+                patches.push_back({mid, 1, (std::uint64_t)replacement.int_value});
+                break;
+            case ReplaceTemplate::Kind::CopyChild:
+                if (replacement.child_index < v.children.size()) {
+                    auto cv = ast_.get(v.child(replacement.child_index));
+                    patches.push_back({mid, 0, (std::uint64_t)cv.tag});
+                    patches.push_back({mid, 1, (std::uint64_t)cv.int_value});
+                    patches.push_back({mid, 2, (std::uint64_t)cv.sym_id});
+                }
+                break;
+            case ReplaceTemplate::Kind::NewNode: {
+                auto nid = build_node(replacement);
+                if (nid != aura::ast::NULL_NODE) {
+                    auto nv = ast_.get(nid);
+                    patches.push_back({mid, 0, (std::uint64_t)nv.tag});
+                    patches.push_back({mid, 1, (std::uint64_t)nv.int_value});
+                    patches.push_back({mid, 2, (std::uint64_t)nv.sym_id});
+                    auto min_c = std::min(v.children.size(), nv.children.size());
+                    for (std::size_t i = 0; i < min_c; ++i)
+                        ast_.set_child(mid, (std::uint32_t)i, nv.child((std::uint32_t)i));
+                }
+                break;
             }
-            break;
-        case ReplaceTemplate::Kind::NewNode: {
-            auto nid = build_node(replacement);
-            if (nid != aura::ast::NULL_NODE) {
-                auto nv = ast_.get(nid);
-                patches.push_back({mid, 0, (std::uint64_t)nv.tag});
-                patches.push_back({mid, 1, (std::uint64_t)nv.int_value});
-                patches.push_back({mid, 2, (std::uint64_t)nv.sym_id});
-                auto min_c = std::min(v.children.size(), nv.children.size());
-                for (std::size_t i = 0; i < min_c; ++i)
-                    ast_.set_child(mid, (std::uint32_t)i, nv.child((std::uint32_t)i));
-            }
-            break;
-        }
-        default: break;
+            default:
+                break;
         }
     }
     return patches;
 }
 
-inline TransformResult TransformEngine::query_and_fix(
-    QueryEngine& engine,
-    std::string_view qs, std::string_view rs)
-{
+inline TransformResult TransformEngine::query_and_fix(QueryEngine& engine, std::string_view qs,
+                                                      std::string_view rs) {
     TransformResult r;
     auto matches = engine.query(qs);
     r.match_count = matches.size();
-    if (matches.empty()) { r.applied = true; return r; }
+    if (matches.empty()) {
+        r.applied = true;
+        return r;
+    }
     auto repl = parse_replace(rs);
     auto patches = generate_patches(matches, repl);
     r.patch_count = patches.size();
     if (!patches.empty()) {
         r.applied = aura::ast::apply_patches(ast_, patches);
-        if (!r.applied) r.error = "patch failed";
-    } else { r.applied = true; }
+        if (!r.applied)
+            r.error = "patch failed";
+    } else {
+        r.applied = true;
+    }
     return r;
 }
 
@@ -474,9 +504,9 @@ inline TransformResult TransformEngine::query_and_fix(
 //
 export class AutoFixEngine {
 public:
-    AutoFixEngine(aura::ast::FlatAST& ast,
-                  aura::ast::StringPool& pool)
-        : ast_(ast), pool_(pool) {}
+    AutoFixEngine(aura::ast::FlatAST& ast, aura::ast::StringPool& pool)
+        : ast_(ast)
+        , pool_(pool) {}
 
     // Add a fix rule: when <query> matches, apply <replacement>
     void add_rule(std::string_view query, std::string_view replacement) {
@@ -490,7 +520,8 @@ public:
             aura::compiler::QueryEngine engine(ast_, pool_);
             aura::compiler::TransformEngine xform(ast_, pool_);
             auto r = xform.query_and_fix(engine, rule.query, rule.replacement);
-            if (r.applied) total += r.patch_count;
+            if (r.applied)
+                total += r.patch_count;
         }
         return total;
     }
@@ -498,27 +529,28 @@ public:
     // Add default optimization rules
     void add_default_rules() {
         // (if 0 X Y) → Y
-        add_rule(
-            "(and (node-type IfExpr) (child 0 (and (node-type LiteralInt) (= int_value 0))))",
-            "(child 2)"
-        );
+        add_rule("(and (node-type IfExpr) (child 0 (and (node-type LiteralInt) (= int_value 0))))",
+                 "(child 2)");
     }
 
     // Add a rule from an error kind (for --fix CLI)
     void add_error_fix(aura::diag::ErrorKind kind) {
         switch (kind) {
-        case aura::diag::ErrorKind::UnboundVariable:
-            // Generic fallback: any reference to unbound var → LiteralInt 0
-            // (the specific var name is in the message)
-            add_rule("(node-type Variable)", "(LiteralInt 0)");
-            break;
-        default:
-            break;
+            case aura::diag::ErrorKind::UnboundVariable:
+                // Generic fallback: any reference to unbound var → LiteralInt 0
+                // (the specific var name is in the message)
+                add_rule("(node-type Variable)", "(LiteralInt 0)");
+                break;
+            default:
+                break;
         }
     }
 
 private:
-    struct Rule { std::string query; std::string replacement; };
+    struct Rule {
+        std::string query;
+        std::string replacement;
+    };
     std::vector<Rule> rules_;
     aura::ast::FlatAST& ast_;
     aura::ast::StringPool& pool_;

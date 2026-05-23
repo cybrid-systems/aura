@@ -34,21 +34,28 @@ namespace aura::reflect::tag_dispatch {
 
 // ── Tag values (mirrors NodeTag in ast.ixx) ──────────────────
 enum Tag : std::uint8_t {
-    LiteralInt = 0x01, Variable = 0x02, Call = 0x03,
-    IfExpr = 0x04, Lambda = 0x05, Let = 0x06, LetRec = 0x07,
-    Define = 0x08, Begin = 0x09, Set = 0x0A, Quote = 0x0B,
+    LiteralInt = 0x01,
+    Variable = 0x02,
+    Call = 0x03,
+    IfExpr = 0x04,
+    Lambda = 0x05,
+    Let = 0x06,
+    LetRec = 0x07,
+    Define = 0x08,
+    Begin = 0x09,
+    Set = 0x0A,
+    Quote = 0x0B,
     Cond = 0x0C,
     TypeAnnotation = 0x0F,
     Coercion = 0x10,
-    TAG_COUNT = 0x11  // one past max
+    TAG_COUNT = 0x11 // one past max
 };
 
 using ReadFn = void* (*)(void*);
 
 // Build a dispatch table from (tag, reader) pairs
-constexpr std::array<ReadFn, TAG_COUNT> build_table(
-    std::initializer_list<std::pair<Tag, ReadFn>> entries)
-{
+constexpr std::array<ReadFn, TAG_COUNT>
+build_table(std::initializer_list<std::pair<Tag, ReadFn>> entries) {
     std::array<ReadFn, TAG_COUNT> tbl{};
     for (auto& [tag, fn] : entries)
         tbl[static_cast<std::size_t>(tag)] = fn;
@@ -56,9 +63,9 @@ constexpr std::array<ReadFn, TAG_COUNT> build_table(
 }
 
 // Lookup
-inline ReadFn reader_for(std::uint8_t tag,
-                          const std::array<ReadFn, TAG_COUNT>& tbl) {
-    if (tag < TAG_COUNT) return tbl[tag];
+inline ReadFn reader_for(std::uint8_t tag, const std::array<ReadFn, TAG_COUNT>& tbl) {
+    if (tag < TAG_COUNT)
+        return tbl[tag];
     return nullptr;
 }
 
@@ -66,15 +73,10 @@ inline ReadFn reader_for(std::uint8_t tag,
 // Called from standalone tests with P2996 reflection.
 consteval bool validate_tag_values() {
     // Verify all tags have expected values
-    return
-        LiteralInt == 0x01 && Variable == 0x02 &&
-        Call      == 0x03 && IfExpr   == 0x04 &&
-        Lambda    == 0x05 && Let      == 0x06 &&
-        LetRec    == 0x07 && Define   == 0x08 &&
-        Begin     == 0x09 && Set      == 0x0A &&
-        Quote     == 0x0B && Cond     == 0x0C &&
-    TypeAnnotation == 0x0F &&
-    Coercion == 0x10;
+    return LiteralInt == 0x01 && Variable == 0x02 && Call == 0x03 && IfExpr == 0x04 &&
+           Lambda == 0x05 && Let == 0x06 && LetRec == 0x07 && Define == 0x08 && Begin == 0x09 &&
+           Set == 0x0A && Quote == 0x0B && Cond == 0x0C && TypeAnnotation == 0x0F &&
+           Coercion == 0x10;
 }
 
 static_assert(validate_tag_values(), "Tag values don't match ABF spec");

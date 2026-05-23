@@ -48,7 +48,8 @@ TypeId TypeRegistry::register_linear(TypeId inner) {
         .generation = next_generation_,
     };
     std::string linear_name = "(Linear " + std::string(name_of(inner)) + ")";
-    entries_.push_back(Entry{TypeTag::LINEAR, std::move(linear_name), std::nullopt, std::nullopt, LinearType{inner}});
+    entries_.push_back(Entry{TypeTag::LINEAR, std::move(linear_name), std::nullopt, std::nullopt,
+                             LinearType{inner}});
     name_to_id_[entries_.back().name] = id;
     return id;
 }
@@ -60,13 +61,16 @@ TypeId TypeRegistry::register_forall(TypeId var, TypeId body) {
     };
     auto name_var = name_of(var);
     auto name_body = name_of(body);
-    std::string forall_name = std::string("∀") + std::string(name_var) + ". " + std::string(name_body);
-    entries_.push_back(Entry{TypeTag::FORALL, std::move(forall_name), std::nullopt, ForallType{var, body}, std::nullopt});
+    std::string forall_name =
+        std::string("∀") + std::string(name_var) + ". " + std::string(name_body);
+    entries_.push_back(Entry{TypeTag::FORALL, std::move(forall_name), std::nullopt,
+                             ForallType{var, body}, std::nullopt});
     return id;
 }
 
 TypeId TypeRegistry::make_var(std::string name) {
-    if (name.empty()) name = "__t" + std::to_string(entries_.size());
+    if (name.empty())
+        name = "__t" + std::to_string(entries_.size());
     auto id = TypeId{
         .index = static_cast<std::uint32_t>(entries_.size()),
         .generation = next_generation_,
@@ -111,15 +115,18 @@ bool TypeRegistry::is_var(TypeId id) const {
 
 TypeId TypeRegistry::instantiate(TypeId forall_id, std::function<TypeId()> fresh_var) {
     auto* ft = forall_of(forall_id);
-    if (!ft) return forall_id;
+    if (!ft)
+        return forall_id;
     // Build substitution map: bound var → fresh var
     auto fresh = fresh_var();
     // Recursively replace the bound variable in the body
     auto replace_var = [&](this const auto& self, TypeId tid) -> TypeId {
-        if (tid == ft->var) return fresh;
+        if (tid == ft->var)
+            return fresh;
         if (auto* f = func_of(tid)) {
             std::vector<TypeId> new_args;
-            for (auto& a : f->args) new_args.push_back(self(a));
+            for (auto& a : f->args)
+                new_args.push_back(self(a));
             return register_func(std::move(new_args), self(f->ret));
         }
         // Forall body could be nested
@@ -133,33 +140,41 @@ TypeId TypeRegistry::instantiate(TypeId forall_id, std::function<TypeId()> fresh
 }
 
 bool TypeRegistry::is_subtype(TypeId sub, TypeId sup) const {
-    if (sub == sup) return true;
-    if (sup == dynamic_type()) return true;
+    if (sub == sup)
+        return true;
+    if (sup == dynamic_type())
+        return true;
     return false;
 }
 
 TypeId TypeRegistry::lookup_type(const std::string& name) const {
     auto it = name_to_id_.find(name);
-    if (it != name_to_id_.end()) return it->second;
+    if (it != name_to_id_.end())
+        return it->second;
     return TypeId{};
 }
 
 std::vector<TypeId> TypeRegistry::free_vars(TypeId id) const {
     std::vector<TypeId> result;
-    if (!id.valid() || id.index >= entries_.size()) return result;
+    if (!id.valid() || id.index >= entries_.size())
+        return result;
     std::vector<TypeId> stack = {id};
     std::unordered_set<std::uint32_t> seen;
     while (!stack.empty()) {
-        auto cur = stack.back(); stack.pop_back();
-        if (!cur.valid() || cur.index >= entries_.size()) continue;
-        if (!seen.insert(cur.index).second) continue;
+        auto cur = stack.back();
+        stack.pop_back();
+        if (!cur.valid() || cur.index >= entries_.size())
+            continue;
+        if (!seen.insert(cur.index).second)
+            continue;
         if (entries_[cur.index].tag == TypeTag::TYPE_VAR) {
-            result.push_back(cur);  // preserve exact TypeId with generation
+            result.push_back(cur); // preserve exact TypeId with generation
             continue;
         }
         if (auto* f = func_of(cur)) {
             stack.push_back(f->ret);
-            for (auto& a : f->args) stack.push_back(a);
+            for (auto& a : f->args)
+                stack.push_back(a);
         }
         if (auto* ft = forall_of(cur)) {
             stack.push_back(ft->body);
@@ -173,10 +188,12 @@ std::string TypeRegistry::format_type(TypeId id) const {
     switch (tag) {
         case TypeTag::FUNC: {
             auto* f = func_of(id);
-            if (!f) return "<func>";
+            if (!f)
+                return "<func>";
             std::string s = "(";
             for (std::size_t i = 0; i < f->args.size(); i++) {
-                if (i > 0) s += " ";
+                if (i > 0)
+                    s += " ";
                 s += format_type(f->args[i]);
             }
             return s + " -> " + format_type(f->ret) + ")";
@@ -185,12 +202,14 @@ std::string TypeRegistry::format_type(TypeId id) const {
             return std::string(name_of(id));
         case TypeTag::FORALL: {
             auto* ft = forall_of(id);
-            if (!ft) return "<forall>";
+            if (!ft)
+                return "<forall>";
             return "∀" + format_type(ft->var) + ". " + format_type(ft->body);
         }
         case TypeTag::LINEAR: {
             auto* lt = linear_of(id);
-            if (!lt) return "<linear>";
+            if (!lt)
+                return "<linear>";
             return "(Linear " + format_type(lt->inner) + ")";
         }
         default:

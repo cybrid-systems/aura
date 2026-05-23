@@ -3,8 +3,8 @@ module;
 #include "aura_jit.h"
 
 extern "C" std::int64_t aura_jit_test();
-extern "C" void aura_set_prim_dispatcher(
-    std::int64_t (*fn)(std::int64_t, std::int64_t*, std::int32_t));
+extern "C" void aura_set_prim_dispatcher(std::int64_t (*fn)(std::int64_t, std::int64_t*,
+                                                            std::int32_t));
 
 export module aura.compiler.service;
 import std;
@@ -29,53 +29,49 @@ import aura.diag;
 
 // PrimId name table (mirrors ir.ixx kPrimNames — must stay in sync)
 static constexpr const char* kPrimNameTable[] = {
-    "string-append", "string-length", "string-ref",
-    "substring",     "string=?",      "string<?",
-    "number->string", "string->number",
-    "display", "write", "newline",
-    "error", "assert",
-    "read", "read-file", "write-file", "file-exists?",
-    "gensym",
-    "apply",
-    "vector", "vector-ref", "vector-set!",
-    "vector-length", "vector?", "make-vector",
-    "import",
-    "char=?", "char<?", "char->integer", "integer->char",
-    "raise", "error?",
+    "string-append", "string-length",  "string-ref",     "substring",     "string=?",
+    "string<?",      "number->string", "string->number", "display",       "write",
+    "newline",       "error",          "assert",         "read",          "read-file",
+    "write-file",    "file-exists?",   "gensym",         "apply",         "vector",
+    "vector-ref",    "vector-set!",    "vector-length",  "vector?",       "make-vector",
+    "import",        "char=?",         "char<?",         "char->integer", "integer->char",
+    "raise",         "error?",
 };
 
 static const aura::compiler::Primitives* g_jit_prim_ctx = nullptr;
 
-extern "C" std::int64_t aura_jit_prim_dispatch(std::int64_t prim_id,
-                                                 std::int64_t* args,
-                                                 std::int32_t argc) {
+extern "C" std::int64_t aura_jit_prim_dispatch(std::int64_t prim_id, std::int64_t* args,
+                                               std::int32_t argc) {
     auto* prims = g_jit_prim_ctx;
-    if (!prims) return 0;
-    
+    if (!prims)
+        return 0;
+
     // Look up primitive by PrimId → kPrimNameTable → evaluator name
     std::string_view pname;
     if (prim_id >= 0 && static_cast<std::size_t>(prim_id) < std::size(kPrimNameTable))
         pname = kPrimNameTable[static_cast<std::size_t>(prim_id)];
-    if (pname.empty()) return 0;
-    
+    if (pname.empty())
+        return 0;
+
     auto pfn = prims->lookup(std::string(pname));
-    if (!pfn) return 0;
-    
+    if (!pfn)
+        return 0;
+
     // Convert int64_t args to EvalValue vector
     std::vector<aura::compiler::types::EvalValue> eval_args;
     eval_args.reserve(static_cast<std::size_t>(argc));
     for (std::int32_t i = 0; i < argc; ++i)
         eval_args.push_back(aura::compiler::types::make_int(args[i]));
-    
+
     // Call the primitive function
     auto result = (*pfn)(eval_args);
-    
+
     // Convert result back to int64_t
-    if (aura::compiler::types::is_int(result)) 
+    if (aura::compiler::types::is_int(result))
         return aura::compiler::types::as_int(result);
-    if (aura::compiler::types::is_void(result)) 
+    if (aura::compiler::types::is_void(result))
         return 0;
-    if (aura::compiler::types::is_bool(result)) 
+    if (aura::compiler::types::is_bool(result))
         return aura::compiler::types::as_bool(result) ? 1 : 0;
     return 0;
 }
@@ -93,7 +89,8 @@ namespace aura::compiler {
 //
 export class CompilerService {
 public:
-    CompilerService() : user_bindings_{"#t", "#f", "nil"} {
+    CompilerService()
+        : user_bindings_{"#t", "#f", "nil"} {
         evaluator_.set_arena(&arena_);
         // Cache module defines in IR after each import (incl. recursive fns)
         evaluator_.set_module_loaded_callback(
@@ -115,18 +112,28 @@ public:
     // macro definitions, error handling, or non-primitive variable references
     // (which may come from runtime imports).
     bool needs_tree_walker_fallback(const aura::ast::FlatAST& flat,
-                                     const aura::ast::StringPool& pool,
-                                     aura::ast::NodeId root) const {
-        if (root == aura::ast::NULL_NODE || root >= flat.size()) return false;
+                                    const aura::ast::StringPool& pool,
+                                    aura::ast::NodeId root) const {
+        if (root == aura::ast::NULL_NODE || root >= flat.size())
+            return false;
 
         // ── Known names that must go through tree-walker ───────────────
         // Includes: EDSL primitives, special forms, module system operations.
         static const std::unordered_set<std::string> tree_walker_only = {
             // EDSL / AI agent primitives
-            "define-type", "set-code", "eval-current", "apply",
-            "typecheck-current", "typed-mutate", "rollback",
-            "mutation-log", "query-mutation-log",
-            "intend", "define-strategy", "register-strategy!", "intend-history",
+            "define-type",
+            "set-code",
+            "eval-current",
+            "apply",
+            "typecheck-current",
+            "typed-mutate",
+            "rollback",
+            "mutation-log",
+            "query-mutation-log",
+            "intend",
+            "define-strategy",
+            "register-strategy!",
+            "intend-history",
             "intend-analytics",
             "strategy-field",
             "strategy-set-field!",
@@ -136,8 +143,13 @@ public:
             "json-get-string",
             "json-parse",
             // Special forms not in IR
-            "when", "unless", "export",
-            "and", "or", "cond", "case",
+            "when",
+            "unless",
+            "export",
+            "and",
+            "or",
+            "cond",
+            "case",
             // Module system (env side-effects)
             // "import", "use", "require" — now in lowering_known
         };
@@ -146,9 +158,9 @@ public:
         // The lowering doesn't know about them, so fallback to tree-walker.
         if (flat.get(root).tag == aura::ast::NodeTag::Variable) {
             auto root_name = pool.resolve(flat.get(root).sym_id);
-            if (evaluator_.primitives().slot_for_name(std::string(root_name))
-                    >= evaluator_.primitives().slot_count()
-                && ir_cache_.count(std::string(root_name)) == 0)
+            if (evaluator_.primitives().slot_for_name(std::string(root_name)) >=
+                    evaluator_.primitives().slot_count() &&
+                ir_cache_.count(std::string(root_name)) == 0)
                 return true;
         }
 
@@ -156,16 +168,17 @@ public:
         // These should NOT trigger tree-walker fallback even though they're
         // not primitives or cached defines.
         static const std::unordered_set<std::string> lowering_known = {
-            "try", "catch", "raise",
-            "require", "import", "use",
+            "try", "catch", "raise", "require", "import", "use",
         };
 
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             auto nv = flat.get(id);
 
             // MacroDef cannot be lowered to IR
-            if (nv.tag == aura::ast::NodeTag::MacroDef) return true;
-            if (nv.tag == aura::ast::NodeTag::DefineType) return true;
+            if (nv.tag == aura::ast::NodeTag::MacroDef)
+                return true;
+            if (nv.tag == aura::ast::NodeTag::DefineType)
+                return true;
 
             // Dotted rest lambda cannot be lowered to IR (rest param is
             // lowered as single Arg slot, not as pair list)
@@ -205,14 +218,14 @@ public:
                         // These should not trigger fallback — the try lowering
                         // handles them explicitly. Skip fallback check for nodes
                         // whose parent is a catch form.
-                        if (name == "catch") continue;
+                        if (name == "catch")
+                            continue;
 
                         // Call callee that's not a known primitive or cached define
                         // may come from a runtime import — fallback to tree-walker.
-                        if (evaluator_.primitives().slot_for_name(name)
-                                >= evaluator_.primitives().slot_count()
-                            && ir_cache_.count(name) == 0
-                            && !lowering_known.count(name)) {
+                        if (evaluator_.primitives().slot_for_name(name) >=
+                                evaluator_.primitives().slot_count() &&
+                            ir_cache_.count(name) == 0 && !lowering_known.count(name)) {
                             return true;
                         }
                     }
@@ -255,16 +268,19 @@ public:
 
         // Check if we need the tree-walker fallback
         if (needs_tree_walker_fallback(*flat_ptr, *pool_ptr, expanded_root)) {
-            auto result = evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
+            auto result =
+                evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
             // Track all value define names so subsequent eval calls don't fall
             // through to the IR pipeline for them (which can't resolve runtime vars).
             auto extract_defs = [&](aura::ast::NodeId nid, auto& self) -> void {
-                if (nid >= flat_ptr->size()) return;
+                if (nid >= flat_ptr->size())
+                    return;
                 auto nv = flat_ptr->get(nid);
                 if (nv.tag == aura::ast::NodeTag::Define)
                     user_bindings_.insert(std::string(pool_ptr->resolve(nv.sym_id)));
                 if (nv.tag == aura::ast::NodeTag::Begin)
-                    for (auto c : nv.children) self(c, self);
+                    for (auto c : nv.children)
+                        self(c, self);
             };
             extract_defs(expanded_root, extract_defs);
             return result;
@@ -274,7 +290,8 @@ public:
         {
             aura::compiler::TypeCheckWrap tc_pass;
             aura::diag::DiagnosticCollector diags;
-            tc_pass.check_before_lowering(*flat_ptr, *pool_ptr, expanded_root, type_registry_, diags);
+            tc_pass.check_before_lowering(*flat_ptr, *pool_ptr, expanded_root, type_registry_,
+                                          diags);
             bool has_type_error = false;
             for (auto& d : diags.diagnostics()) {
                 if (d.kind == aura::diag::ErrorKind::TypeError) {
@@ -283,8 +300,8 @@ public:
                 }
             }
             if (strict_mode_ && has_type_error) {
-                return std::unexpected(aura::diag::Diagnostic{
-                    aura::diag::ErrorKind::TypeError, "type error (strict mode)"});
+                return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::TypeError,
+                                                              "type error (strict mode)"});
             }
         }
 
@@ -294,16 +311,20 @@ public:
             auto& [name, body_id] = *def;
             // Only cache function defines (Lambda body) are cached as IR
             // Value defines must go through tree-walker for env persistence
-            auto body_node = body_id < flat_ptr->size() ? flat_ptr->get(body_id) : aura::ast::NodeView{};
+            auto body_node =
+                body_id < flat_ptr->size() ? flat_ptr->get(body_id) : aura::ast::NodeView{};
             if (body_node.tag == aura::ast::NodeTag::Lambda) {
                 // Function define: cache IR + eval tree-walker for env persistence
-                auto result = cache_define(input, *flat_ptr, *pool_ptr, expanded_root, std::string(name));
-                if (!result) return result;
+                auto result =
+                    cache_define(input, *flat_ptr, *pool_ptr, expanded_root, std::string(name));
+                if (!result)
+                    return result;
                 return EvalResult(types::make_void());
             }
             // Value define: send through tree-walker for env persistence,
             // then track the name for subsequent IR fallback detection.
-            auto result = evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
+            auto result =
+                evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
             user_bindings_.insert(std::string(name));
             return result;
         }
@@ -312,7 +333,8 @@ public:
         auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
         auto ir_mod = aura::compiler::lower_to_ir_with_cache(
-            *flat_ptr, *pool_ptr, arena_, cache_ptr, nullptr, &evaluator_.primitives(), nullptr, cache_strings_ptr);
+            *flat_ptr, *pool_ptr, arena_, cache_ptr, nullptr, &evaluator_.primitives(), nullptr,
+            cache_strings_ptr);
 
         // Run passes (silent in default path — use eval_ir for debug)
         TypeSpecializationWrap ts(&type_registry_);
@@ -332,8 +354,8 @@ public:
 
         last_ir_mod_ = ir_mod;
 
-        // ── Try JIT execution when LLVM available ──────────────
-        #ifdef AURA_HAVE_LLVM
+// ── Try JIT execution when LLVM available ──────────────
+#ifdef AURA_HAVE_LLVM
         {
             if (!jit_initialized_) {
                 register_jit_primitives();
@@ -343,7 +365,10 @@ public:
             // Only use JIT when expression only involves Int-typed operations
             // JIT returns raw int64_t; Bool/Pair/String need EvalValue encoding.
             static const std::unordered_set<std::string> jit_safe_primitives = {
-                "+", "-", "*", "/",
+                "+",
+                "-",
+                "*",
+                "/",
                 // Comparisons return Bool (0/1) which needs EvalValue encoding.
                 // Excluded until JIT produces proper EvalValue results.
                 // "=", "<", ">", "<=", ">=",
@@ -352,17 +377,17 @@ public:
             for (aura::ast::NodeId nid = 0; nid < flat_ptr->size(); ++nid) {
                 auto nv = flat_ptr->get(nid);
                 auto tag = nv.tag;
-                if (tag == aura::ast::NodeTag::Lambda ||
-                    tag == aura::ast::NodeTag::LiteralString ||
+                if (tag == aura::ast::NodeTag::Lambda || tag == aura::ast::NodeTag::LiteralString ||
                     tag == aura::ast::NodeTag::LiteralFloat ||
-                    tag == aura::ast::NodeTag::Coercion ||
-                    tag == aura::ast::NodeTag::Quote ||
-                    tag == aura::ast::NodeTag::MacroDef ||
-                    tag == aura::ast::NodeTag::LetRec) {
-                    has_non_int_nodes = true; break;
+                    tag == aura::ast::NodeTag::Coercion || tag == aura::ast::NodeTag::Quote ||
+                    tag == aura::ast::NodeTag::MacroDef || tag == aura::ast::NodeTag::LetRec) {
+                    has_non_int_nodes = true;
+                    break;
                 }
-                if (tag == aura::ast::NodeTag::LiteralInt && nv.marker == aura::ast::SyntaxMarker::BoolLiteral) {
-                    has_non_int_nodes = true; break;
+                if (tag == aura::ast::NodeTag::LiteralInt &&
+                    nv.marker == aura::ast::SyntaxMarker::BoolLiteral) {
+                    has_non_int_nodes = true;
+                    break;
                 }
                 // Check Call nodes for non-arithmetic callees (cons, eq?, display, etc.)
                 if (tag == aura::ast::NodeTag::Call && !nv.children.empty()) {
@@ -372,7 +397,8 @@ public:
                         if (callee_v.tag == aura::ast::NodeTag::Variable) {
                             auto callee_name = pool_ptr->resolve(callee_v.sym_id);
                             if (!jit_safe_primitives.count(std::string(callee_name))) {
-                                has_non_int_nodes = true; break;
+                                has_non_int_nodes = true;
+                                break;
                             }
                         }
                     }
@@ -386,91 +412,95 @@ public:
                 }
             }
         }
-        #endif
+#endif
 
-        aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, evaluator_.primitives(), &type_registry_);
+        aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, evaluator_.primitives(),
+                                                &type_registry_);
         ir_interp.set_strategy(strategy_);
-        if (strict_mode_) ir_interp.set_strict_mode(true);
+        if (strict_mode_)
+            ir_interp.set_strict_mode(true);
 
         try {
 
-        // Set IR closure bridge: enables tree-walker primitives (map/filter/foldl)
-        // to call IR-produced closures.
-        evaluator_.set_closure_bridge(
-            [this, &ir_interp](aura::compiler::ClosureId cid,
-                                const std::vector<types::EvalValue>& args)
-                -> std::optional<types::EvalValue> {
-            auto snap = ir_interp.inspect_closure(cid);
-            if (!snap) return std::nullopt;
+            // Set IR closure bridge: enables tree-walker primitives (map/filter/foldl)
+            // to call IR-produced closures.
+            evaluator_.set_closure_bridge([this,
+                                           &ir_interp](aura::compiler::ClosureId cid,
+                                                       const std::vector<types::EvalValue>& args)
+                                              -> std::optional<types::EvalValue> {
+                auto snap = ir_interp.inspect_closure(cid);
+                if (!snap)
+                    return std::nullopt;
 
-            aura::compiler::Env ne;
-            ne.set_primitives(&evaluator_.primitives());
-            for (std::size_t i = 0; i < snap->env.size() && i < snap->func_free_vars.size(); ++i)
-                ne.bind(snap->func_free_vars[i], snap->env[i]);
-            for (std::size_t i = 0; i < snap->func_params.size() && i < args.size(); ++i)
-                ne.bind(snap->func_params[i], args[i]);
+                aura::compiler::Env ne;
+                ne.set_primitives(&evaluator_.primitives());
+                for (std::size_t i = 0; i < snap->env.size() && i < snap->func_free_vars.size();
+                     ++i)
+                    ne.bind(snap->func_free_vars[i], snap->env[i]);
+                for (std::size_t i = 0; i < snap->func_params.size() && i < args.size(); ++i)
+                    ne.bind(snap->func_params[i], args[i]);
 
-            // Try fast path: bridge data from current module
-            if (snap->func_id < last_ir_mod_->closure_bridge.size()) {
-                auto& bd = last_ir_mod_->closure_bridge[snap->func_id];
-                if (bd.flat && bd.pool) {
-                    auto r = evaluator_.eval_flat(
-                        *const_cast<ast::FlatAST*>(bd.flat),
-                        *const_cast<ast::StringPool*>(bd.pool),
-                        bd.body_id, ne);
-                    if (r) {
-                        return *r;
+                // Try fast path: bridge data from current module
+                if (snap->func_id < last_ir_mod_->closure_bridge.size()) {
+                    auto& bd = last_ir_mod_->closure_bridge[snap->func_id];
+                    if (bd.flat && bd.pool) {
+                        auto r = evaluator_.eval_flat(*const_cast<ast::FlatAST*>(bd.flat),
+                                                      *const_cast<ast::StringPool*>(bd.pool),
+                                                      bd.body_id, ne);
+                        if (r) {
+                            return *r;
+                        }
+                    }
+                    // Fallback: re-parse lambda body from body_source
+                    // (needed when cached function's inner lambda has stale FlatAST ptr)
+                    if (!bd.body_source.empty()) {
+                        auto fallback_alloc = arena_.allocator();
+                        auto* f_pool = arena_.create<aura::ast::StringPool>(fallback_alloc);
+                        auto* f_flat = arena_.create<aura::ast::FlatAST>(fallback_alloc);
+                        auto f_pr = aura::parser::parse_to_flat(bd.body_source, *f_flat, *f_pool);
+                        if (f_pr.success && f_pr.root != aura::ast::NULL_NODE) {
+                            f_flat->root = f_pr.root;
+                            auto r = evaluator_.eval_flat(*f_flat, *f_pool, f_pr.root, ne);
+                            if (r)
+                                return *r;
+                        }
                     }
                 }
-                // Fallback: re-parse lambda body from body_source
-                // (needed when cached function's inner lambda has stale FlatAST ptr)
-                if (!bd.body_source.empty()) {
+
+                // Fallback: re-parse from function_sources_ (survives arena resets)
+                auto func_name = snap->func_name;
+                auto src_it = function_sources_.find(func_name);
+                if (src_it != function_sources_.end()) {
                     auto fallback_alloc = arena_.allocator();
                     auto* f_pool = arena_.create<aura::ast::StringPool>(fallback_alloc);
                     auto* f_flat = arena_.create<aura::ast::FlatAST>(fallback_alloc);
-                    auto f_pr = aura::parser::parse_to_flat(bd.body_source, *f_flat, *f_pool);
+                    auto f_pr = aura::parser::parse_to_flat(src_it->second, *f_flat, *f_pool);
                     if (f_pr.success && f_pr.root != aura::ast::NULL_NODE) {
                         f_flat->root = f_pr.root;
-                        auto r = evaluator_.eval_flat(*f_flat, *f_pool, f_pr.root, ne);
-                        if (r) return *r;
+                        // The source is a (define name body) — body is child 0
+                        auto define_v = f_flat->get(f_pr.root);
+                        if (define_v.tag == aura::ast::NodeTag::Define &&
+                            !define_v.children.empty()) {
+                            auto r = evaluator_.eval_flat(*f_flat, *f_pool, define_v.child(0), ne);
+                            if (r)
+                                return *r;
+                        }
                     }
                 }
-            }
+                return std::nullopt;
+            });
 
-            // Fallback: re-parse from function_sources_ (survives arena resets)
-            auto func_name = snap->func_name;
-            auto src_it = function_sources_.find(func_name);
-            if (src_it != function_sources_.end()) {
-                auto fallback_alloc = arena_.allocator();
-                auto* f_pool = arena_.create<aura::ast::StringPool>(fallback_alloc);
-                auto* f_flat = arena_.create<aura::ast::FlatAST>(fallback_alloc);
-                auto f_pr = aura::parser::parse_to_flat(src_it->second, *f_flat, *f_pool);
-                if (f_pr.success && f_pr.root != aura::ast::NULL_NODE) {
-                    f_flat->root = f_pr.root;
-                    // The source is a (define name body) — body is child 0
-                    auto define_v = f_flat->get(f_pr.root);
-                    if (define_v.tag == aura::ast::NodeTag::Define && !define_v.children.empty()) {
-                        auto r = evaluator_.eval_flat(
-                            *f_flat, *f_pool, define_v.child(0), ne);
-                        if (r) return *r;
-                    }
-                }
-            }
-            return std::nullopt;
-        });
+            auto result = ir_interp.execute();
 
-        auto result = ir_interp.execute();
+            // Clear bridge after execution to avoid dangling references
+            evaluator_.set_closure_bridge(aura::compiler::Evaluator::ClosureBridgeFn());
 
-        // Clear bridge after execution to avoid dangling references
-        evaluator_.set_closure_bridge(aura::compiler::Evaluator::ClosureBridgeFn());
-
-        last_closures_ = ir_interp.list_closures();
-        last_cells_ = ir_interp.list_cells();
-        return result;
+            last_closures_ = ir_interp.list_closures();
+            last_cells_ = ir_interp.list_cells();
+            return result;
         } catch (const std::exception& e) {
             return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::TypeError,
-                std::string("runtime type error: ") + e.what()});
+                aura::diag::ErrorKind::TypeError, std::string("runtime type error: ") + e.what()});
         }
     }
 
@@ -484,8 +514,8 @@ public:
         auto* flat_ptr = arena_.create<aura::ast::FlatAST>(alloc);
         auto pr = aura::parser::parse_to_flat(input, *flat_ptr, *pool_ptr);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-            return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::ParseError, pr.error});
+            return std::unexpected(
+                aura::diag::Diagnostic{aura::diag::ErrorKind::ParseError, pr.error});
         }
         flat_ptr->root = pr.root;
         // Store for mutation targeting
@@ -495,7 +525,8 @@ public:
         // IR pipeline doesn't support macros — fall back to tree-walker evaluator
         for (aura::ast::NodeId id = 0; id < flat_ptr->size(); ++id) {
             if (flat_ptr->get(id).tag == aura::ast::NodeTag::MacroDef) {
-                return evaluator_.eval_flat(*flat_ptr, *pool_ptr, flat_ptr->root, evaluator_.top_env());
+                return evaluator_.eval_flat(*flat_ptr, *pool_ptr, flat_ptr->root,
+                                            evaluator_.top_env());
             }
         }
 
@@ -506,23 +537,27 @@ public:
         auto def = try_extract_define(*flat_ptr, *pool_ptr, flat_ptr->root);
         if (def) {
             auto& [name, _body_id] = *def;
-            auto result = cache_define(input, *flat_ptr, *pool_ptr, flat_ptr->root, std::string(name));
-            if (!result) return result;
+            auto result =
+                cache_define(input, *flat_ptr, *pool_ptr, flat_ptr->root, std::string(name));
+            if (!result)
+                return result;
             return EvalResult(types::make_void());
         }
 
         // === Normal IR path (with cache awareness) ===
         auto cache_ptr_local = ir_cache_.empty() ? nullptr : &ir_cache_;
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
-        auto ir_mod = aura::compiler::lower_to_ir_with_cache(*flat_ptr, *pool_ptr, arena_, cache_ptr_local, nullptr, &evaluator_.primitives(), nullptr, cache_strings_ptr);
+        auto ir_mod = aura::compiler::lower_to_ir_with_cache(
+            *flat_ptr, *pool_ptr, arena_, cache_ptr_local, nullptr, &evaluator_.primitives(),
+            nullptr, cache_strings_ptr);
 
         TypeSpecializationWrap ts(&type_registry_);
         ComputeKindWrap ck;
         ArityWrap ar;
         ConstantFoldingWrap cf;
 
-        std::println(std::cerr, "PM: running {}->{}->{}->{}",
-                     ts.name(), ck.name(), ar.name(), cf.name());
+        std::println(std::cerr, "PM: running {}->{}->{}->{}", ts.name(), ck.name(), ar.name(),
+                     cf.name());
 
         ts.run(ir_mod);
         ck.run(ir_mod);
@@ -533,8 +568,8 @@ public:
             for (auto& d : ar.result().diagnostics) {
                 std::println(std::cerr, "arith: {}", d.message);
             }
-            return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::ArityMismatch, "arity check failed"});
+            return std::unexpected(
+                aura::diag::Diagnostic{aura::diag::ErrorKind::ArityMismatch, "arity check failed"});
         }
 
         if (cf.folded_count() > 0) {
@@ -543,9 +578,11 @@ public:
 
         last_ir_mod_ = ir_mod;
 
-        aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, evaluator_.primitives(), &type_registry_);
+        aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, evaluator_.primitives(),
+                                                &type_registry_);
         ir_interp.set_strategy(strategy_);
-        if (strict_mode_) ir_interp.set_strict_mode(true);
+        if (strict_mode_)
+            ir_interp.set_strict_mode(true);
         auto result = ir_interp.execute();
 
         // Capture runtime state for --inspect
@@ -558,15 +595,15 @@ public:
     // ── --jit: compile via LLVM ORC JIT and execute ──────────────
     // --jit: compile via LLVM ORC JIT and execute
     [[nodiscard]] EvalResult exec_jit(std::string_view input) {
-        #ifdef AURA_HAVE_LLVM
+#ifdef AURA_HAVE_LLVM
         // Parse expression
         auto alloc = arena_.allocator();
         auto* pool_ptr = arena_.create<aura::ast::StringPool>(alloc);
         auto* flat_ptr = arena_.create<aura::ast::FlatAST>(alloc);
         auto pr = aura::parser::parse_to_flat(input, *flat_ptr, *pool_ptr);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-            return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::ParseError, pr.error});
+            return std::unexpected(
+                aura::diag::Diagnostic{aura::diag::ErrorKind::ParseError, pr.error});
         }
         flat_ptr->root = pr.root;
         current_ast_ = flat_ptr;
@@ -574,7 +611,7 @@ public:
 
         // Lower to IR
         auto ir_mod = aura::compiler::lower_to_ir(*flat_ptr, *pool_ptr, arena_,
-            &evaluator_.primitives(), &type_registry_);
+                                                  &evaluator_.primitives(), &type_registry_);
 
         // Run passes
         {
@@ -582,7 +619,10 @@ public:
             aura::compiler::ComputeKindWrap ck;
             aura::compiler::ArityWrap ar;
             aura::compiler::ConstantFoldingWrap cf;
-            ts.run(ir_mod); ck.run(ir_mod); ar.run(ir_mod); cf.run(ir_mod);
+            ts.run(ir_mod);
+            ck.run(ir_mod);
+            ar.run(ir_mod);
+            cf.run(ir_mod);
         }
 
         if (ir_mod.functions.empty()) {
@@ -609,17 +649,12 @@ public:
                 for (std::size_t bi = 0; bi < ir_fn.blocks.size(); ++bi) {
                     auto& block = ir_fn.blocks[bi];
                     for (auto& instr : block.instructions) {
-                        flat_instrs[bi].push_back({
-                            static_cast<std::uint32_t>(instr.opcode),
-                            {instr.operands[0], instr.operands[1],
-                             instr.operands[2], instr.operands[3]}
-                        });
+                        flat_instrs[bi].push_back({static_cast<std::uint32_t>(instr.opcode),
+                                                   {instr.operands[0], instr.operands[1],
+                                                    instr.operands[2], instr.operands[3]}});
                     }
-                    flat_blocks[bi] = {
-                        block.id,
-                        flat_instrs[bi].data(),
-                        static_cast<std::uint32_t>(flat_instrs[bi].size())
-                    };
+                    flat_blocks[bi] = {block.id, flat_instrs[bi].data(),
+                                       static_cast<std::uint32_t>(flat_instrs[bi].size())};
                 }
 
                 name_storage = ir_fn.name;
@@ -630,7 +665,8 @@ public:
                     ir_fn.arg_count,
                     flat_blocks.data(),
                     static_cast<std::uint32_t>(flat_blocks.size()),
-                    nullptr, 0  // func_id_map not used for entry
+                    nullptr,
+                    0 // func_id_map not used for entry
                 };
             }
         };
@@ -663,30 +699,29 @@ public:
             }
 
             // Register with runtime for closure calls
-            jit_.register_function(static_cast<int64_t>(ir_fn.id), fn_ptr,
-                                    ir_fn.local_count, ir_fn.arg_count, env_count);
+            jit_.register_function(static_cast<int64_t>(ir_fn.id), fn_ptr, ir_fn.local_count,
+                                   ir_fn.arg_count, env_count);
         }
 
         // Find entry function and execute it
-        auto entry_it = std::find_if(ir_mod.functions.begin(), ir_mod.functions.end(),
-            [&](const aura::ir::IRFunction& f) {
-                return f.id == ir_mod.entry_function_id;
-            });
+        auto entry_it = std::find_if(
+            ir_mod.functions.begin(), ir_mod.functions.end(),
+            [&](const aura::ir::IRFunction& f) { return f.id == ir_mod.entry_function_id; });
         if (entry_it == ir_mod.functions.end()) {
-            return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::InternalError, "Entry function not found"});
+            return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                          "Entry function not found"});
         }
 
         auto& entry = *entry_it;
         std::vector<std::int64_t> locals(entry.local_count, 0);
         auto fn_ptr = jit_.get_function_ptr(entry.name.c_str());
         if (!fn_ptr) {
-            return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::InternalError, "JIT entry function lookup failed"});
+            return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                          "JIT entry function lookup failed"});
         }
 
-        auto raw_result = reinterpret_cast<aura::jit::ScalarFn>(fn_ptr)(
-            locals.data(), entry.arg_count);
+        auto raw_result =
+            reinterpret_cast<aura::jit::ScalarFn>(fn_ptr)(locals.data(), entry.arg_count);
 
         // Convert raw JIT result to proper EvalValue type
         auto ev_result = types::make_int(raw_result);
@@ -699,23 +734,35 @@ public:
             for (auto& block : ir_mod.functions) {
                 for (auto& iblock : block.blocks) {
                     for (auto& instr : iblock.instructions) {
-                        if (instr.operands[0] == ret_slot && instr.opcode != aura::ir::IROpcode::Return) {
+                        if (instr.operands[0] == ret_slot &&
+                            instr.opcode != aura::ir::IROpcode::Return) {
                             switch (instr.opcode) {
-                            case aura::ir::IROpcode::ConstBool:
-                            case aura::ir::IROpcode::Eq: case aura::ir::IROpcode::Lt:
-                            case aura::ir::IROpcode::Gt: case aura::ir::IROpcode::Le:
-                            case aura::ir::IROpcode::Ge: case aura::ir::IROpcode::And:
-                            case aura::ir::IROpcode::Or: case aura::ir::IROpcode::Not:
-                                ev_result = types::make_bool(raw_result != 0); break;
-                            case aura::ir::IROpcode::MakePair:
-                                if (raw_result < 0)
-                                    ev_result = types::make_pair(static_cast<std::uint64_t>(-raw_result - 1));
-                                break;
-                            case aura::ir::IROpcode::NewCell:
-                                ev_result = types::make_cell(static_cast<std::uint64_t>(raw_result)); break;
-                            case aura::ir::IROpcode::MakeClosure:
-                                ev_result = types::make_closure(static_cast<std::uint64_t>(raw_result)); break;
-                            default: break;
+                                case aura::ir::IROpcode::ConstBool:
+                                case aura::ir::IROpcode::Eq:
+                                case aura::ir::IROpcode::Lt:
+                                case aura::ir::IROpcode::Gt:
+                                case aura::ir::IROpcode::Le:
+                                case aura::ir::IROpcode::Ge:
+                                case aura::ir::IROpcode::And:
+                                case aura::ir::IROpcode::Or:
+                                case aura::ir::IROpcode::Not:
+                                    ev_result = types::make_bool(raw_result != 0);
+                                    break;
+                                case aura::ir::IROpcode::MakePair:
+                                    if (raw_result < 0)
+                                        ev_result = types::make_pair(
+                                            static_cast<std::uint64_t>(-raw_result - 1));
+                                    break;
+                                case aura::ir::IROpcode::NewCell:
+                                    ev_result =
+                                        types::make_cell(static_cast<std::uint64_t>(raw_result));
+                                    break;
+                                case aura::ir::IROpcode::MakeClosure:
+                                    ev_result =
+                                        types::make_closure(static_cast<std::uint64_t>(raw_result));
+                                    break;
+                                default:
+                                    break;
                             }
                             goto done;
                         }
@@ -723,13 +770,13 @@ public:
                 }
             }
         }
-        done:
+    done:
         return EvalResult(ev_result);
-        #else
+#else
         (void)input;
-        return std::unexpected(aura::diag::Diagnostic{
-            aura::diag::ErrorKind::InternalError, "JIT not available — rebuild with LLVM"});
-        #endif
+        return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                      "JIT not available — rebuild with LLVM"});
+#endif
     }
 
     // ---- Type checking (L6.x) ----------------------------------------
@@ -773,14 +820,12 @@ public:
 
     // Get or create a per-module arena.
     ast::ASTArena& module_arena(const std::string& name,
-                                 std::size_t initial_size = 8 * 1024 * 1024) {
+                                std::size_t initial_size = 8 * 1024 * 1024) {
         return arena_group_.module_arena(name, initial_size);
     }
 
     // Reset a specific module's arena.
-    void reset_module(const std::string& name) {
-        arena_group_.reset_module(name);
-    }
+    void reset_module(const std::string& name) { arena_group_.reset_module(name); }
 
     // ── Module-level state for incremental compilation ──────────────
 
@@ -789,8 +834,8 @@ public:
     // the module is marked dirty and will be recompiled on next access.
     struct ModuleState {
         std::string source;
-        std::unordered_set<std::string> deps;  // cached functions this module depends on
-        bool dirty = true;                     // initially dirty (needs compile)
+        std::unordered_set<std::string> deps; // cached functions this module depends on
+        bool dirty = true;                    // initially dirty (needs compile)
     };
 
     // ── Cache helpers ────────────────────────────────────────────
@@ -798,18 +843,20 @@ public:
     // Cache directory for compiled modules (~/.cache/aura/modules/)
     static std::string module_cache_dir() {
         auto home = std::getenv("HOME");
-        if (!home) return "/tmp/aura-cache/modules/";
+        if (!home)
+            return "/tmp/aura-cache/modules/";
         return std::string(home) + "/.cache/aura/modules/";
     }
 
     // Cache file path for a module name + source content hash.
     // The hash prevents loading stale cache when source changes.
-    static std::string module_cache_path(const std::string& name,
-                                           const std::string& source = "") {
+    static std::string module_cache_path(const std::string& name, const std::string& source = "") {
         auto sanitized = name;
-        if (sanitized.empty()) sanitized = "__default__";
+        if (sanitized.empty())
+            sanitized = "__default__";
         for (auto& c : sanitized) {
-            if (c == '/' || c == '\\' || c == ':' || c == ' ') c = '_';
+            if (c == '/' || c == '\\' || c == ':' || c == ' ')
+                c = '_';
         }
         // Append a hash of the source to invalidate on source change
         if (!source.empty()) {
@@ -844,9 +891,8 @@ public:
     EvalResult reload_module(const std::string& name) {
         auto it = module_states_.find(name);
         if (it == module_states_.end()) {
-            return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::InternalError,
-                "module not found: " + name});
+            return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                          "module not found: " + name});
         }
         if (!it->second.dirty) {
             // Already up to date
@@ -863,8 +909,7 @@ public:
     // On success marks the module as clean and records its dependencies.
     // Subsequent calls with the same name will detect dirty state
     // and skip recompilation if nothing changed.
-    EvalResult compile_module(const std::string& name,
-                               const std::string& source) {
+    EvalResult compile_module(const std::string& name, const std::string& source) {
         // Save source for future dirty checks / reloads
         module_states_[name].source = source;
 
@@ -877,8 +922,7 @@ public:
         auto pr = aura::parser::parse_to_flat(source, *flat_ptr, *pool_ptr);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
             return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::ParseError,
-                pr.error.empty() ? "parse error" : pr.error});
+                aura::diag::ErrorKind::ParseError, pr.error.empty() ? "parse error" : pr.error});
         }
         flat_ptr->root = pr.root;
 
@@ -894,13 +938,15 @@ public:
             aura::ast::StringPool& p;
             std::vector<std::pair<std::string, aura::ast::NodeId>> defs;
             void walk(aura::ast::NodeId id) {
-                if (id == aura::ast::NULL_NODE || id >= f.size()) return;
+                if (id == aura::ast::NULL_NODE || id >= f.size())
+                    return;
                 auto v = f.get(id);
                 if (v.tag == aura::ast::NodeTag::Define) {
                     defs.emplace_back(std::string(p.resolve(v.sym_id)), id);
                 }
                 if (v.tag == aura::ast::NodeTag::Begin) {
-                    for (auto c : v.children) walk(c);
+                    for (auto c : v.children)
+                        walk(c);
                 }
             }
         };
@@ -909,7 +955,8 @@ public:
         if (expanded != aura::ast::NULL_NODE) {
             auto ev = flat.get(expanded);
             if (ev.tag == aura::ast::NodeTag::Begin)
-                for (auto c : ev.children) finder.walk(c);
+                for (auto c : ev.children)
+                    finder.walk(c);
             else
                 finder.walk(expanded);
         }
@@ -921,10 +968,13 @@ public:
         if (cache_hit) {
             auto& all_funcs = cached.ir_functions();
             for (auto& [fname, node_id] : finder.defs) {
-                if (ir_cache_.count(fname)) continue;
+                if (ir_cache_.count(fname))
+                    continue;
                 auto dv = flat.get(node_id);
-                if (dv.children.empty()) continue;
-                if (flat.get(dv.child(0)).tag != aura::ast::NodeTag::Lambda) continue;
+                if (dv.children.empty())
+                    continue;
+                if (flat.get(dv.child(0)).tag != aura::ast::NodeTag::Lambda)
+                    continue;
                 for (auto& func : all_funcs) {
                     if (func.name == fname && func.id != cached.ir_entry()) {
                         ir_cache_[fname] = std::vector<aura::ir::IRFunction>{func};
@@ -939,80 +989,91 @@ public:
 
         // Cache each define (only if not loaded from disk cache)
         if (!cache_hit) {
-        // Reuse the existing cache_define logic by using main arena for
-        // the define-specific lowering (lowering doesn't depend on module arena).
-        // After caching, the define is available in ir_cache_.
-        for (auto& [fname, node_id] : finder.defs) {
-            // Only cache function defines (Lambda body)
-            auto def_node = flat.get(node_id);
-            if (def_node.children.empty()) continue;
-            auto body = flat.get(def_node.child(0));
-            if (body.tag != aura::ast::NodeTag::Lambda) continue;
+            // Reuse the existing cache_define logic by using main arena for
+            // the define-specific lowering (lowering doesn't depend on module arena).
+            // After caching, the define is available in ir_cache_.
+            for (auto& [fname, node_id] : finder.defs) {
+                // Only cache function defines (Lambda body)
+                auto def_node = flat.get(node_id);
+                if (def_node.children.empty())
+                    continue;
+                auto body = flat.get(def_node.child(0));
+                if (body.tag != aura::ast::NodeTag::Lambda)
+                    continue;
 
-            if (ir_cache_.count(fname)) continue;  // already cached
+                if (ir_cache_.count(fname))
+                    continue; // already cached
 
-            // Evaluate via tree-walker for env side-effects
-            auto result = evaluator_.eval_flat(flat, pool, node_id,
-                                                evaluator_.top_env());
-            if (!result) return result;
+                // Evaluate via tree-walker for env side-effects
+                auto result = evaluator_.eval_flat(flat, pool, node_id, evaluator_.top_env());
+                if (!result)
+                    return result;
 
-            // Cache IR: use the define's source s-expr
-            // Extract just this define expression from the source
-            auto alloc2 = arena_.allocator();
-            auto* p2 = arena_.create<aura::ast::StringPool>(alloc2);
-            auto* f2 = arena_.create<aura::ast::FlatAST>(alloc2);
-            auto pr2 = aura::parser::parse_to_flat(source, *f2, *p2);
-            if (!pr2.success) continue;
+                // Cache IR: use the define's source s-expr
+                // Extract just this define expression from the source
+                auto alloc2 = arena_.allocator();
+                auto* p2 = arena_.create<aura::ast::StringPool>(alloc2);
+                auto* f2 = arena_.create<aura::ast::FlatAST>(alloc2);
+                auto pr2 = aura::parser::parse_to_flat(source, *f2, *p2);
+                if (!pr2.success)
+                    continue;
 
-            // Walk to find the matching define
-            auto walk_for_name = [&](aura::ast::NodeId rid, auto& self_ref) -> std::optional<aura::ast::NodeId> {
-                if (rid >= f2->size()) return std::nullopt;
-                auto vv = f2->get(rid);
-                if (vv.tag == aura::ast::NodeTag::Define) {
-                    if (p2->resolve(vv.sym_id) == fname) return rid;
-                }
-                if (vv.tag == aura::ast::NodeTag::Begin) {
-                    for (auto c : vv.children) {
-                        auto r = self_ref(c, self_ref);
-                        if (r) return r;
+                // Walk to find the matching define
+                auto walk_for_name = [&](aura::ast::NodeId rid,
+                                         auto& self_ref) -> std::optional<aura::ast::NodeId> {
+                    if (rid >= f2->size())
+                        return std::nullopt;
+                    auto vv = f2->get(rid);
+                    if (vv.tag == aura::ast::NodeTag::Define) {
+                        if (p2->resolve(vv.sym_id) == fname)
+                            return rid;
+                    }
+                    if (vv.tag == aura::ast::NodeTag::Begin) {
+                        for (auto c : vv.children) {
+                            auto r = self_ref(c, self_ref);
+                            if (r)
+                                return r;
+                        }
+                    }
+                    return std::nullopt;
+                };
+                auto define_id = walk_for_name(f2->root, walk_for_name);
+                if (!define_id)
+                    continue;
+
+                f2->root = *define_id;
+
+                auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
+                auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
+                std::vector<std::string> hits;
+                auto ir_mod = aura::compiler::lower_to_ir_with_cache(
+                    *f2, *p2, arena_, cache_ptr, &hits, &evaluator_.primitives(), nullptr,
+                    cache_strings_ptr);
+
+                // Run passes on non-entry functions
+                {
+                    aura::compiler::ComputeKindWrap ck;
+                    aura::compiler::ConstantFoldingWrap cf;
+                    for (auto& func : ir_mod.functions) {
+                        if (func.id == ir_mod.entry_function_id)
+                            continue;
+                        ck.compute_function(func);
+                        cf.fold_function(func);
                     }
                 }
-                return std::nullopt;
-            };
-            auto define_id = walk_for_name(f2->root, walk_for_name);
-            if (!define_id) continue;
 
-            f2->root = *define_id;
-
-            auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
-            auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
-            std::vector<std::string> hits;
-            auto ir_mod = aura::compiler::lower_to_ir_with_cache(
-                *f2, *p2, arena_, cache_ptr, &hits, &evaluator_.primitives(), nullptr, cache_strings_ptr);
-
-            // Run passes on non-entry functions
-            {
-                aura::compiler::ComputeKindWrap ck;
-                aura::compiler::ConstantFoldingWrap cf;
+                std::vector<aura::ir::IRFunction> bundle;
                 for (auto& func : ir_mod.functions) {
-                    if (func.id == ir_mod.entry_function_id) continue;
-                    ck.compute_function(func);
-                    cf.fold_function(func);
+                    if (func.id != ir_mod.entry_function_id)
+                        bundle.push_back(std::move(func));
                 }
-            }
+                ir_cache_[fname] = std::move(bundle);
+                function_sources_[fname] = source;
+                module_functions_[name].push_back(fname);
 
-            std::vector<aura::ir::IRFunction> bundle;
-            for (auto& func : ir_mod.functions) {
-                if (func.id != ir_mod.entry_function_id)
-                    bundle.push_back(std::move(func));
+                for (auto& cn : hits)
+                    record_dependency(fname, cn);
             }
-            ir_cache_[fname] = std::move(bundle);
-            function_sources_[fname] = source;
-            module_functions_[name].push_back(fname);
-
-            for (auto& cn : hits)
-                record_dependency(fname, cn);
-        }
         } // if (!cache_hit) — skip lowering when loaded from disk
 
         // Mark module as loaded
@@ -1032,18 +1093,17 @@ public:
 
         // Write disk cache (only when not loaded from cache)
         if (!cache_hit) {
-        ensure_cache_dir();
-        auto cache_path = module_cache_path(name, source);
-        aura::ir::IRModule disk_mod;
-        for (auto& [fname, _] : finder.defs) {
-            auto it = ir_cache_.find(fname);
-            if (it != ir_cache_.end()) {
-                for (auto& func : it->second)
-                    disk_mod.functions.push_back(func);
+            ensure_cache_dir();
+            auto cache_path = module_cache_path(name, source);
+            aura::ir::IRModule disk_mod;
+            for (auto& [fname, _] : finder.defs) {
+                auto it = ir_cache_.find(fname);
+                if (it != ir_cache_.end()) {
+                    for (auto& func : it->second)
+                        disk_mod.functions.push_back(func);
+                }
             }
-        }
-        aura::compiler::cache::write_cache(
-            cache_path, flat, pool, flat.root, 0, &disk_mod);
+            aura::compiler::cache::write_cache(cache_path, flat, pool, flat.root, 0, &disk_mod);
         }
 
         return EvalResult(types::make_void());
@@ -1066,7 +1126,8 @@ public:
 
         // Track module function membership via a reverse map
         if (auto it = module_functions_.find(name); it != module_functions_.end()) {
-            for (auto& fname : it->second) to_remove.push_back(fname);
+            for (auto& fname : it->second)
+                to_remove.push_back(fname);
             module_functions_.erase(it);
         }
 
@@ -1095,9 +1156,11 @@ public:
         // Remove disk cache (find by name prefix, any hash)
         auto sanitized = name;
         for (auto& c : sanitized) {
-            if (c == '/' || c == '\\' || c == ':' || c == ' ') c = '_';
+            if (c == '/' || c == '\\' || c == ':' || c == ' ')
+                c = '_';
         }
-        if (sanitized.empty()) sanitized = "__default__";
+        if (sanitized.empty())
+            sanitized = "__default__";
         auto dir = module_cache_dir();
         try {
             for (auto& entry : std::filesystem::directory_iterator(dir)) {
@@ -1106,20 +1169,20 @@ public:
                     aura::compiler::cache::remove_cache(entry.path().string());
                 }
             }
-        } catch (...) {}
+        } catch (...) {
+        }
         // Also try without hash (legacy format)
         aura::compiler::cache::remove_cache(module_cache_dir() + sanitized + ".abfc");
     }
 
     // Check if a module is loaded
-    bool is_module_loaded(const std::string& name) const {
-        return loaded_modules_.count(name) > 0;
-    }
+    bool is_module_loaded(const std::string& name) const { return loaded_modules_.count(name) > 0; }
 
     // List loaded module names
     std::vector<std::string> loaded_modules() const {
         std::vector<std::string> result;
-        for (auto& n : loaded_modules_) result.push_back(n);
+        for (auto& n : loaded_modules_)
+            result.push_back(n);
         return result;
     }
 
@@ -1131,8 +1194,7 @@ public:
         return s;
     }
 
-    std::vector<std::pair<std::string, ast::ArenaStats>>
-    module_memory_stats() const {
+    std::vector<std::pair<std::string, ast::ArenaStats>> module_memory_stats() const {
         return arena_group_.module_stats();
     }
 
@@ -1149,12 +1211,13 @@ public:
         aura::ast::FlatAST flat(alloc);
         auto pr = aura::parser::parse_to_flat(new_code, flat, pool);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-            return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::ParseError, pr.error});
+            return std::unexpected(
+                aura::diag::Diagnostic{aura::diag::ErrorKind::ParseError, pr.error});
         }
         flat.root = pr.root;
 
-        auto new_mod = aura::compiler::lower_to_ir(flat, pool, arena_, &evaluator_.primitives(), &type_registry_);
+        auto new_mod = aura::compiler::lower_to_ir(flat, pool, arena_, &evaluator_.primitives(),
+                                                   &type_registry_);
 
         // Hot-swap each function from new_mod into the cached module
         for (auto& new_func : new_mod.functions) {
@@ -1179,13 +1242,15 @@ public:
         cf.run(*last_ir_mod_);
 
         if (ar.has_error()) {
-            return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::ArityMismatch, "arity check failed"});
+            return std::unexpected(
+                aura::diag::Diagnostic{aura::diag::ErrorKind::ArityMismatch, "arity check failed"});
         }
 
-        aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, evaluator_.primitives(), &type_registry_);
+        aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, evaluator_.primitives(),
+                                                &type_registry_);
         ir_interp.set_strategy(strategy_);
-        if (strict_mode_) ir_interp.set_strict_mode(true);
+        if (strict_mode_)
+            ir_interp.set_strict_mode(true);
         auto result = ir_interp.execute();
 
         last_closures_ = ir_interp.list_closures();
@@ -1196,12 +1261,8 @@ public:
     // ---- Runtime reflection (M3 Phase 2) ------------------------------
 
     // Closures persisted from last IR execution
-    std::vector<aura::compiler::ClosureSnapshot> last_closures() const {
-        return last_closures_;
-    }
-    std::vector<aura::compiler::CellSnapshot> last_cells() const {
-        return last_cells_;
-    }
+    std::vector<aura::compiler::ClosureSnapshot> last_closures() const { return last_closures_; }
+    std::vector<aura::compiler::CellSnapshot> last_cells() const { return last_cells_; }
     const aura::compiler::EvalStrategy& strategy() const { return strategy_; }
     void set_strategy(const aura::compiler::EvalStrategy& s) { strategy_ = s; }
 
@@ -1211,14 +1272,15 @@ public:
     // Called by Evaluator after each successful module load.
     void cache_module(const std::string& content, const std::string& path) {
         // don't survive re-evaluation via cache_define.
-        
+
 
         // Arena-allocate flat/pool so pointers survive (bridge data references them)
         auto alloc = arena_.allocator();
         auto* pool_ptr = arena_.create<aura::ast::StringPool>(alloc);
         auto* flat_ptr = arena_.create<aura::ast::FlatAST>(alloc);
         auto pr = aura::parser::parse_to_flat(content, *flat_ptr, *pool_ptr);
-        if (!pr.success || pr.root == aura::ast::NULL_NODE) return;
+        if (!pr.success || pr.root == aura::ast::NULL_NODE)
+            return;
         flat_ptr->root = pr.root;
 
         auto& flat = *flat_ptr;
@@ -1234,14 +1296,16 @@ public:
             std::vector<std::pair<std::string, aura::ast::NodeId>> found;
 
             void walk(aura::ast::NodeId id) {
-                if (id == aura::ast::NULL_NODE || id >= flat.size()) return;
+                if (id == aura::ast::NULL_NODE || id >= flat.size())
+                    return;
                 auto v = flat.get(id);
                 if (v.tag == aura::ast::NodeTag::Define) {
                     auto name = pool.resolve(v.sym_id);
                     found.emplace_back(std::string(name), id);
                 }
                 if (v.tag == aura::ast::NodeTag::Begin) {
-                    for (auto c : v.children) walk(c);
+                    for (auto c : v.children)
+                        walk(c);
                 }
             }
         };
@@ -1259,14 +1323,17 @@ public:
 
         // Cache each define (IR only — tree-walker already evaluated the module)
         for (auto& [name, node_id] : finder.found) {
-            if (ir_cache_.count(name)) continue;  // already cached
+            if (ir_cache_.count(name))
+                continue; // already cached
 
             // Skip value defines (e.g., (define pi 3.14)) — only cache function defines
             // A function define's body is a Lambda node
             auto define_node = flat.get(node_id);
-            if (define_node.children.empty()) continue;
+            if (define_node.children.empty())
+                continue;
             auto body_node = flat.get(define_node.child(0));
-            if (body_node.tag != aura::ast::NodeTag::Lambda) continue;
+            if (body_node.tag != aura::ast::NodeTag::Lambda)
+                continue;
 
             // Check: can this function be lowered to IR?
             // We skip functions where any variable reference in the body
@@ -1288,19 +1355,26 @@ public:
                     const aura::ast::StringPool& p;
                     const std::unordered_set<std::string>& params;
                     const Evaluator& eval;
-                    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>& ir_cache;
+                    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>&
+                        ir_cache;
                     bool skip = false;
                     void walk(aura::ast::NodeId id) {
-                        if (skip || id >= f.size()) return;
+                        if (skip || id >= f.size())
+                            return;
                         auto nv = f.get(id);
                         if (nv.tag == aura::ast::NodeTag::Variable) {
                             auto var_name = std::string(p.resolve(nv.sym_id));
-                            if (params.count(var_name)) return;
-                            if (eval.primitives().slot_for_name(var_name) < eval.primitives().slot_count()) return;
-                            if (ir_cache.count(var_name)) return;
+                            if (params.count(var_name))
+                                return;
+                            if (eval.primitives().slot_for_name(var_name) <
+                                eval.primitives().slot_count())
+                                return;
+                            if (ir_cache.count(var_name))
+                                return;
                             skip = true;
                         }
-                        for (auto c : nv.children) walk(c);
+                        for (auto c : nv.children)
+                            walk(c);
                     }
                 };
                 FnCheck fc{flat, pool, param_names, evaluator_, ir_cache_};
@@ -1320,10 +1394,13 @@ public:
                     aura::ast::FlatAST& flat;
                     bool found = false;
                     void walk(aura::ast::NodeId id) {
-                        if (found || id >= flat.size()) return;
+                        if (found || id >= flat.size())
+                            return;
                         auto v = flat.get(id);
-                        if (v.tag == aura::ast::NodeTag::Define) found = true;
-                        for (auto c : v.children) walk(c);
+                        if (v.tag == aura::ast::NodeTag::Define)
+                            found = true;
+                        for (auto c : v.children)
+                            walk(c);
                     }
                 };
                 NestCheck nc{flat, false};
@@ -1331,7 +1408,8 @@ public:
                     nc.walk(body_node.child(0));
                 has_nested_defines = nc.found;
             }
-            if (has_nested_defines) continue;
+            if (has_nested_defines)
+                continue;
 
             // Create a temporary flat with just this define as root
             auto def_alloc = arena_.allocator();
@@ -1350,15 +1428,17 @@ public:
             auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
             std::vector<std::string> cache_hits;
             auto ir_mod = aura::compiler::lower_to_ir_with_cache(
-                flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), nullptr, cache_strings_ptr);
-            flat.root = saved_root;  // restore
+                flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), nullptr,
+                cache_strings_ptr);
+            flat.root = saved_root; // restore
 
             // Run passes
             {
                 aura::compiler::ComputeKindWrap ck_pass;
                 aura::compiler::ConstantFoldingWrap cf_pass;
                 for (auto& func : ir_mod.functions) {
-                    if (func.id == ir_mod.entry_function_id) continue;
+                    if (func.id == ir_mod.entry_function_id)
+                        continue;
                     ck_pass.compute_function(func);
                     cf_pass.fold_function(func);
                 }
@@ -1387,11 +1467,9 @@ public:
 
     // Lower a define expression to IR, cache it, and eval tree-walker for env.
     // Returns tree-walker result (or void for success).
-    EvalResult cache_define(std::string_view source,
-                             aura::ast::FlatAST& flat,
-                             aura::ast::StringPool& pool,
-                             aura::ast::NodeId expanded_root,
-                             const std::string& name_str) {
+    EvalResult cache_define(std::string_view source, aura::ast::FlatAST& flat,
+                            aura::ast::StringPool& pool, aura::ast::NodeId expanded_root,
+                            const std::string& name_str) {
         bool is_redefine = ir_cache_.count(name_str) > 0;
 
         // === Level 2: Type check via TypeCheckWrap pass ===
@@ -1407,8 +1485,8 @@ public:
                 }
             }
             if (strict_mode_ && has_type_error) {
-                return std::unexpected(aura::diag::Diagnostic{
-                    aura::diag::ErrorKind::TypeError, "type error (strict mode)"});
+                return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::TypeError,
+                                                              "type error (strict mode)"});
             }
         }
 
@@ -1425,7 +1503,8 @@ public:
                 if (body_id < flat.size()) {
                     auto body_v = flat.get(body_id);
                     if (body_v.tag == aura::ast::NodeTag::Lambda) {
-                        auto lambda_body = body_v.children.empty() ? aura::ast::NULL_NODE : body_v.child(0);
+                        auto lambda_body =
+                            body_v.children.empty() ? aura::ast::NULL_NODE : body_v.child(0);
                         // Collect parameter names to distinguish them from external references
                         auto params_list = body_v.params;
                         std::unordered_set<std::string> param_names;
@@ -1439,25 +1518,35 @@ public:
                             const std::string& self_name;
                             const std::unordered_set<std::string>& param_names;
                             const Evaluator& eval;
-                            const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>& ir_cache;
+                            const std::unordered_map<std::string,
+                                                     std::vector<aura::ir::IRFunction>>& ir_cache;
                             bool skip = false;
                             void walk(aura::ast::NodeId id) {
-                                if (skip || id == aura::ast::NULL_NODE || id >= f.size()) return;
+                                if (skip || id == aura::ast::NULL_NODE || id >= f.size())
+                                    return;
                                 auto nv = f.get(id);
                                 if (nv.tag == aura::ast::NodeTag::Variable) {
                                     auto var_name = std::string(p.resolve(nv.sym_id));
-                                    // Skip params, the function's own name (self-reference handled by lowering), primitives, cached functions
-                                    if (param_names.count(var_name)) return;
-                                    if (var_name == self_name) return;
-                                    if (eval.primitives().slot_for_name(var_name) < eval.primitives().slot_count()) return;
-                                    if (ir_cache.count(var_name)) return;
+                                    // Skip params, the function's own name (self-reference handled
+                                    // by lowering), primitives, cached functions
+                                    if (param_names.count(var_name))
+                                        return;
+                                    if (var_name == self_name)
+                                        return;
+                                    if (eval.primitives().slot_for_name(var_name) <
+                                        eval.primitives().slot_count())
+                                        return;
+                                    if (ir_cache.count(var_name))
+                                        return;
                                     // Unknown variable — IR will emit ConstI64 0
                                     skip = true;
                                 }
-                                for (auto c : nv.children) walk(c);
+                                for (auto c : nv.children)
+                                    walk(c);
                             }
                         };
-                        LambdaBodyWalker lbw{flat, pool, name_str, param_names, evaluator_, ir_cache_};
+                        LambdaBodyWalker lbw{flat,        pool,       name_str,
+                                             param_names, evaluator_, ir_cache_};
                         lbw.walk(lambda_body);
                         skip_ir_cache = lbw.skip;
                     }
@@ -1479,14 +1568,16 @@ public:
         std::vector<std::string> cache_hits;
         // Pass self_name so lowering can emit correct MakeClosure for self-references
         auto ir_mod = aura::compiler::lower_to_ir_with_cache(
-            flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), cache_bridge_ptr, cache_strings_ptr, &name_str);
+            flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), cache_bridge_ptr,
+            cache_strings_ptr, &name_str);
 
         // Run passes per-function on the new function bundle
         {
             aura::compiler::ComputeKindWrap ck_pass;
             aura::compiler::ConstantFoldingWrap cf_pass;
             for (auto& func : ir_mod.functions) {
-                if (func.id == ir_mod.entry_function_id) continue;
+                if (func.id == ir_mod.entry_function_id)
+                    continue;
                 ck_pass.compute_function(func);
                 cf_pass.fold_function(func);
             }
@@ -1564,8 +1655,9 @@ public:
         // Check if root is a Define node
         if (flat_ptr->get(flat_ptr->root).tag == aura::ast::NodeTag::Define) {
             auto name = pool_ptr->resolve(flat_ptr->get(flat_ptr->root).sym_id);
-            auto result = cache_define(code, *flat_ptr, *pool_ptr, flat_ptr->root, std::string(name));
-            return result;  // tree-walker result (not void — serve protocol needs return value)
+            auto result =
+                cache_define(code, *flat_ptr, *pool_ptr, flat_ptr->root, std::string(name));
+            return result; // tree-walker result (not void — serve protocol needs return value)
         }
 
         // Not a define -- just tree-walker eval
@@ -1601,8 +1693,8 @@ public:
             return std::unexpected(aura::diag::Diagnostic{
                 aura::diag::ErrorKind::InternalError, "no code loaded — call set_code() first"});
         }
-        return evaluator_.eval_flat(*current_ast_, *current_pool_,
-                                     current_ast_->root, evaluator_.top_env());
+        return evaluator_.eval_flat(*current_ast_, *current_pool_, current_ast_->root,
+                                    evaluator_.top_env());
     }
 
     // Result of a mutation operation.
@@ -1621,7 +1713,7 @@ public:
         std::string old_type;
         std::string new_type;
         std::string summary;
-        std::string status;  // "Committed" or "RolledBack"
+        std::string status; // "Committed" or "RolledBack"
     };
 
     // Evaluate an S-expression by parsing it INTO persistent AST (current_ast_).
@@ -1629,17 +1721,15 @@ public:
     // correctly read/write the original program's nodes.
     EvalResult eval_on_current(std::string_view sexpr) {
         if (!current_ast_ || !current_pool_) {
-            return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::InternalError, "no AST loaded"});
+            return std::unexpected(
+                aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError, "no AST loaded"});
         }
         auto pr = aura::parser::parse_to_flat(sexpr, *current_ast_, *current_pool_);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
             return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::ParseError,
-                pr.error.empty() ? "parse error" : pr.error});
+                aura::diag::ErrorKind::ParseError, pr.error.empty() ? "parse error" : pr.error});
         }
-        return evaluator_.eval_flat(*current_ast_, *current_pool_,
-                                     pr.root, evaluator_.top_env());
+        return evaluator_.eval_flat(*current_ast_, *current_pool_, pr.root, evaluator_.top_env());
     }
 
     // Apply a mutation expression by parsing it INTO the persistent AST.
@@ -1652,8 +1742,8 @@ public:
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
             return {0, false, pr.error.empty() ? "parse error" : pr.error};
         }
-        auto result = evaluator_.eval_flat(*current_ast_, *current_pool_,
-                                            pr.root, evaluator_.top_env());
+        auto result =
+            evaluator_.eval_flat(*current_ast_, *current_pool_, pr.root, evaluator_.top_env());
         if (!result) {
             return {0, false, result.error().message};
         }
@@ -1664,24 +1754,18 @@ public:
     }
 
     // Query mutation log for a specific node (or all nodes if NULL_NODE).
-    std::vector<MutationLogEntry> query_mutation_log(
-        aura::ast::NodeId node = aura::ast::NULL_NODE) const {
+    std::vector<MutationLogEntry>
+    query_mutation_log(aura::ast::NodeId node = aura::ast::NULL_NODE) const {
         std::vector<MutationLogEntry> result;
-        if (!current_ast_) return result;
-        auto hist = (node == aura::ast::NULL_NODE)
-            ? current_ast_->all_mutations()
-            : current_ast_->mutation_history(node);
+        if (!current_ast_)
+            return result;
+        auto hist = (node == aura::ast::NULL_NODE) ? current_ast_->all_mutations()
+                                                   : current_ast_->mutation_history(node);
         for (auto& rec : hist) {
-            result.push_back({
-                rec.mutation_id,
-                rec.timestamp_ms,
-                rec.target_node,
-                rec.operator_name,
-                rec.old_type_str,
-                rec.new_type_str,
-                rec.summary,
-                rec.status == aura::ast::MutationStatus::Committed ? "Committed" : "RolledBack"
-            });
+            result.push_back(
+                {rec.mutation_id, rec.timestamp_ms, rec.target_node, rec.operator_name,
+                 rec.old_type_str, rec.new_type_str, rec.summary,
+                 rec.status == aura::ast::MutationStatus::Committed ? "Committed" : "RolledBack"});
         }
         return result;
     }
@@ -1697,43 +1781,45 @@ private:
     // Try to extract a define/let/letrec binding from the FlatAST root.
     // Returns {name, body_node_id} if root is a Define node.
     static std::optional<std::pair<std::string, aura::ast::NodeId>>
-    try_extract_define(aura::ast::FlatAST& flat,
-                       aura::ast::StringPool& pool,
+    try_extract_define(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                        aura::ast::NodeId root) {
-        if (root == aura::ast::NULL_NODE) return std::nullopt;
+        if (root == aura::ast::NULL_NODE)
+            return std::nullopt;
         auto v = flat.get(root);
         if (v.tag == aura::ast::NodeTag::Define) {
             auto name = pool.resolve(v.sym_id);
-            aura::ast::NodeId body = v.children.empty()
-                ? aura::ast::NULL_NODE : v.child(0);
+            aura::ast::NodeId body = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
             return std::make_pair(std::string(name), body);
         }
         return std::nullopt;
     }
 
     // Check if a node is a require/import/use call.
-    static bool is_require_call(const aura::ast::FlatAST& flat,
-                                 const aura::ast::StringPool& pool,
-                                 aura::ast::NodeId id) {
-        if (id >= flat.size()) return false;
+    static bool is_require_call(const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
+                                aura::ast::NodeId id) {
+        if (id >= flat.size())
+            return false;
         auto v = flat.get(id);
-        if (v.tag != aura::ast::NodeTag::Call) return false;
+        if (v.tag != aura::ast::NodeTag::Call)
+            return false;
         auto callee = v.child(0);
-        if (callee >= flat.size()) return false;
+        if (callee >= flat.size())
+            return false;
         auto cv = flat.get(callee);
-        if (cv.tag != aura::ast::NodeTag::Variable) return false;
+        if (cv.tag != aura::ast::NodeTag::Variable)
+            return false;
         auto name = pool.resolve(cv.sym_id);
-        return name == "require" || name == "import";  // use returns a value (module object)
+        return name == "require" || name == "import"; // use returns a value (module object)
     }
 
     // Pre-execute top-level require/import/use calls, removing them from
     // the expression so the remaining body can go through IR without fallback.
     // Returns the new root node (with requires removed), or original root.
     // Side effect: fills ir_cache_ + evaluator env via compile_module.
-    aura::ast::NodeId pre_exec_requires(aura::ast::FlatAST& flat,
-                                         aura::ast::StringPool& pool,
-                                         aura::ast::NodeId root) {
-        if (root >= flat.size()) return root;
+    aura::ast::NodeId pre_exec_requires(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                        aura::ast::NodeId root) {
+        if (root >= flat.size())
+            return root;
         auto v = flat.get(root);
 
         // Top-level standalone require: execute, no body left
@@ -1751,8 +1837,8 @@ private:
                     has_require = true;
                 }
             }
-            if (!has_require) return root;  // no require → unchanged
-
+            if (!has_require)
+                return root; // no require → unchanged
         }
 
         return root;
@@ -1766,56 +1852,63 @@ private:
         std::string message;
     };
 
-    void validate_ast(const aura::ast::FlatAST& flat,
-                      const aura::ast::StringPool& pool,
+    void validate_ast(const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
                       aura::ast::NodeId root) const {
         std::vector<ValidationNote> notes;
 
         // Walk the AST checking structural rules
         auto walk = [&](this const auto& self, aura::ast::NodeId id) -> void {
-            if (id >= flat.size()) return;
+            if (id >= flat.size())
+                return;
             auto v = flat.get(id);
 
             switch (v.tag) {
-            case aura::ast::NodeTag::IfExpr:
-                if (v.children.size() != 3)
-                    notes.push_back({id, "if requires 3 arguments (condition then-branch else-branch), got " + std::to_string(v.children.size())});
-                break;
+                case aura::ast::NodeTag::IfExpr:
+                    if (v.children.size() != 3)
+                        notes.push_back(
+                            {id,
+                             "if requires 3 arguments (condition then-branch else-branch), got " +
+                                 std::to_string(v.children.size())});
+                    break;
 
-            case aura::ast::NodeTag::Lambda:
-                if (v.children.empty())
-                    notes.push_back({id, "lambda requires a body expression"});
-                if (v.params.empty() && !v.children.empty() && flat.get(v.child(0)).tag == aura::ast::NodeTag::Lambda) {
-                    // (lambda () (lambda ...)) — ok
-                }
-                break;
+                case aura::ast::NodeTag::Lambda:
+                    if (v.children.empty())
+                        notes.push_back({id, "lambda requires a body expression"});
+                    if (v.params.empty() && !v.children.empty() &&
+                        flat.get(v.child(0)).tag == aura::ast::NodeTag::Lambda) {
+                        // (lambda () (lambda ...)) — ok
+                    }
+                    break;
 
-            case aura::ast::NodeTag::Let:
-            case aura::ast::NodeTag::LetRec:
-                if (v.children.size() < 2)
-                    notes.push_back({id, std::string(v.tag == aura::ast::NodeTag::Let ? "let" : "letrec") + " requires a value and body"});
-                break;
+                case aura::ast::NodeTag::Let:
+                case aura::ast::NodeTag::LetRec:
+                    if (v.children.size() < 2)
+                        notes.push_back(
+                            {id, std::string(v.tag == aura::ast::NodeTag::Let ? "let" : "letrec") +
+                                     " requires a value and body"});
+                    break;
 
-            case aura::ast::NodeTag::Define:
-                if (v.children.empty())
-                    notes.push_back({id, "define requires a value expression"});
-                break;
+                case aura::ast::NodeTag::Define:
+                    if (v.children.empty())
+                        notes.push_back({id, "define requires a value expression"});
+                    break;
 
-            case aura::ast::NodeTag::Set:
-                if (v.children.empty())
-                    notes.push_back({id, "set! requires a value expression"});
-                break;
+                case aura::ast::NodeTag::Set:
+                    if (v.children.empty())
+                        notes.push_back({id, "set! requires a value expression"});
+                    break;
 
-            case aura::ast::NodeTag::Quote:
-                // Quote with no children is valid (quoting empty list)
-                break;
+                case aura::ast::NodeTag::Quote:
+                    // Quote with no children is valid (quoting empty list)
+                    break;
 
-            default:
-                break;
+                default:
+                    break;
             }
 
             // Recurse into children
-            for (auto c : v.children) self(c);
+            for (auto c : v.children)
+                self(c);
         };
 
         if (root < flat.size())
@@ -1860,10 +1953,10 @@ private:
 
     // Scan FlatAST from the given node for Variable nodes that reference cached functions.
     // Records these as dependencies of `def_name`.
-    void track_define_dependencies(const std::string& def_name,
-                                   aura::ast::FlatAST& flat,
+    void track_define_dependencies(const std::string& def_name, aura::ast::FlatAST& flat,
                                    aura::ast::StringPool& pool) {
-        if (ir_cache_.empty()) return;
+        if (ir_cache_.empty())
+            return;
 
         struct DepWalker {
             const std::string& def_name;
@@ -1872,7 +1965,8 @@ private:
             CompilerService* self;
 
             void walk(aura::ast::NodeId id) {
-                if (id == aura::ast::NULL_NODE || id >= flat.size()) return;
+                if (id == aura::ast::NULL_NODE || id >= flat.size())
+                    return;
                 auto nv = flat.get(id);
                 if (nv.tag == aura::ast::NodeTag::Variable) {
                     auto name = pool.resolve(nv.sym_id);
@@ -1886,7 +1980,8 @@ private:
                         }
                     }
                 }
-                for (auto c : nv.children) walk(c);
+                for (auto c : nv.children)
+                    walk(c);
             }
         };
 
@@ -1910,10 +2005,12 @@ private:
             queue.pop_back();
 
             auto it = dep_graph_.find(current);
-            if (it == dep_graph_.end()) continue;
+            if (it == dep_graph_.end())
+                continue;
 
             for (auto& dependent : it->second.called_by) {
-                if (visited.count(dependent)) continue;
+                if (visited.count(dependent))
+                    continue;
                 visited.insert(dependent);
                 dependents.push_back(dependent);
                 queue.push_back(dependent);
@@ -1952,36 +2049,42 @@ private:
             dep_graph_.erase(name);
         }
 
-            // Re-lower each dependent with current cache (nearest to redefined first = natural BFS order)
+        // Re-lower each dependent with current cache (nearest to redefined first = natural BFS
+        // order)
         for (auto& dep_name : dependents) {
             auto src_it = function_sources_.find(dep_name);
-            if (src_it == function_sources_.end()) continue;
+            if (src_it == function_sources_.end())
+                continue;
 
             // Re-parse the function source
             auto alloc = arena_.allocator();
             aura::ast::StringPool pool(alloc);
             aura::ast::FlatAST flat(alloc);
             auto pr = aura::parser::parse_to_flat(src_it->second, flat, pool);
-            if (!pr.success || pr.root == aura::ast::NULL_NODE) continue;
+            if (!pr.success || pr.root == aura::ast::NULL_NODE)
+                continue;
             flat.root = pr.root;
 
             // Re-lower with current cache to detect new dependencies
             auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
             auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
             std::vector<std::string> cache_hits;
-            auto ir_mod = aura::compiler::lower_to_ir_with_cache(flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), nullptr, cache_strings_ptr);
+            auto ir_mod = aura::compiler::lower_to_ir_with_cache(
+                flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), nullptr,
+                cache_strings_ptr);
 
             // Phase 4: Run passes per-function on the re-lowered function bundle.
             {
                 ComputeKindWrap ck_pass;
                 ConstantFoldingWrap cf_pass;
                 for (auto& func : ir_mod.functions) {
-                    if (func.id == ir_mod.entry_function_id) continue;
+                    if (func.id == ir_mod.entry_function_id)
+                        continue;
                     ck_pass.compute_function(func);
                     auto nf = cf_pass.fold_function(func);
                     if (nf > 0) {
-                        std::println(std::cerr, "PM: folded {} instructions in function '{}'",
-                                     nf, func.name);
+                        std::println(std::cerr, "PM: folded {} instructions in function '{}'", nf,
+                                     func.name);
                     }
                 }
             }
@@ -2011,7 +2114,7 @@ private:
     ast::ArenaGroup arena_group_;
     Evaluator evaluator_;
     aura::compiler::EvalStrategy strategy_;
-    aura::core::TypeRegistry type_registry_;  // persistent type registry (L6)
+    aura::core::TypeRegistry type_registry_; // persistent type registry (L6)
     std::vector<aura::compiler::ClosureSnapshot> last_closures_;
     std::vector<aura::compiler::CellSnapshot> last_cells_;
     std::optional<aura::ir::IRModule> last_ir_mod_;
@@ -2052,7 +2155,8 @@ private:
     // Try to execute an IRModule via LLVM JIT
     // Returns EvalResult on success, nullopt on failure (falls back to IR interpreter)
     std::optional<types::EvalValue> try_jit_execute(const aura::ir::IRModule& ir_mod) {
-        if (ir_mod.functions.empty()) return std::nullopt;
+        if (ir_mod.functions.empty())
+            return std::nullopt;
 
         // Compile ALL functions (with JIT cache) and register with runtime
         for (auto& ir_fn : ir_mod.functions) {
@@ -2065,85 +2169,96 @@ private:
                 fn_ptr = cache_it->second.fn_ptr;
             } else {
                 // Build FlatFunction from IR function
-                std::vector<std::vector<aura::jit::FlatInstruction>> flat_instrs(ir_fn.blocks.size());
+                std::vector<std::vector<aura::jit::FlatInstruction>> flat_instrs(
+                    ir_fn.blocks.size());
                 std::vector<aura::jit::FlatBlock> flat_blocks(ir_fn.blocks.size());
                 for (std::size_t bi = 0; bi < ir_fn.blocks.size(); ++bi) {
                     auto& block = ir_fn.blocks[bi];
                     for (auto& instr : block.instructions) {
-                        flat_instrs[bi].push_back({
-                            static_cast<std::uint32_t>(instr.opcode),
-                            {instr.operands[0], instr.operands[1],
-                             instr.operands[2], instr.operands[3]}
-                        });
+                        flat_instrs[bi].push_back({static_cast<std::uint32_t>(instr.opcode),
+                                                   {instr.operands[0], instr.operands[1],
+                                                    instr.operands[2], instr.operands[3]}});
                     }
                     flat_blocks[bi] = {block.id, flat_instrs[bi].data(),
-                        static_cast<std::uint32_t>(flat_instrs[bi].size())};
+                                       static_cast<std::uint32_t>(flat_instrs[bi].size())};
                 }
-                aura::jit::FlatFunction flat_fn{
-                    ir_fn.name.c_str(), ir_fn.entry_block,
-                    ir_fn.local_count, ir_fn.arg_count,
-                    flat_blocks.data(),
-                    static_cast<std::uint32_t>(flat_blocks.size()),
-                    nullptr, 0
-                };
+                aura::jit::FlatFunction flat_fn{ir_fn.name.c_str(),
+                                                ir_fn.entry_block,
+                                                ir_fn.local_count,
+                                                ir_fn.arg_count,
+                                                flat_blocks.data(),
+                                                static_cast<std::uint32_t>(flat_blocks.size()),
+                                                nullptr,
+                                                0};
 
                 fn_ptr = jit_.compile(flat_fn);
-                if (!fn_ptr) return std::nullopt;
+                if (!fn_ptr)
+                    return std::nullopt;
                 jit_cache_[ir_fn.name] = {fn_ptr, ir_fn.local_count, ir_fn.arg_count, env_count};
             }
 
             // Register with runtime for closure calls
-            jit_.register_function(static_cast<int64_t>(ir_fn.id), fn_ptr,
-                                    ir_fn.local_count, ir_fn.arg_count, env_count);
+            jit_.register_function(static_cast<int64_t>(ir_fn.id), fn_ptr, ir_fn.local_count,
+                                   ir_fn.arg_count, env_count);
         }
 
         // Find and execute entry function
-        auto entry_it = std::find_if(ir_mod.functions.begin(), ir_mod.functions.end(),
-            [&](const aura::ir::IRFunction& f) {
-                return f.id == ir_mod.entry_function_id;
-            });
-        if (entry_it == ir_mod.functions.end()) return std::nullopt;
+        auto entry_it = std::find_if(
+            ir_mod.functions.begin(), ir_mod.functions.end(),
+            [&](const aura::ir::IRFunction& f) { return f.id == ir_mod.entry_function_id; });
+        if (entry_it == ir_mod.functions.end())
+            return std::nullopt;
 
         auto& entry = *entry_it;
         std::vector<std::int64_t> locals(entry.local_count, 0);
         auto fn_ptr = jit_.get_function_ptr(entry.name.c_str());
-        if (!fn_ptr) return std::nullopt;
+        if (!fn_ptr)
+            return std::nullopt;
 
-        auto raw_result = reinterpret_cast<aura::jit::ScalarFn>(fn_ptr)(
-            locals.data(), entry.arg_count);
+        auto raw_result =
+            reinterpret_cast<aura::jit::ScalarFn>(fn_ptr)(locals.data(), entry.arg_count);
 
         // ── Convert raw JIT result to proper EvalValue type ──
         auto result_type = types::make_int(raw_result);
         std::uint32_t ret_slot = std::numeric_limits<std::uint32_t>::max();
-        
+
         for (auto& block : entry.blocks)
             for (auto& instr : block.instructions)
                 if (instr.opcode == aura::ir::IROpcode::Return)
                     ret_slot = instr.operands[0];
-        
+
         if (ret_slot != std::numeric_limits<std::uint32_t>::max()) {
             for (auto& block : entry.blocks)
                 for (auto& instr : block.instructions)
-                    if (instr.operands[0] == ret_slot && instr.opcode != aura::ir::IROpcode::Return) {
+                    if (instr.operands[0] == ret_slot &&
+                        instr.opcode != aura::ir::IROpcode::Return) {
                         switch (instr.opcode) {
-                        case aura::ir::IROpcode::ConstBool:
-                        case aura::ir::IROpcode::Eq: case aura::ir::IROpcode::Lt:
-                        case aura::ir::IROpcode::Gt: case aura::ir::IROpcode::Le:
-                        case aura::ir::IROpcode::Ge: case aura::ir::IROpcode::And:
-                        case aura::ir::IROpcode::Or: case aura::ir::IROpcode::Not:
-                            result_type = types::make_bool(raw_result != 0);
-                            break;
-                        case aura::ir::IROpcode::MakePair:
-                            if (raw_result < 0)
-                                result_type = types::make_pair(static_cast<std::uint64_t>(-raw_result - 1));
-                            break;
-                        case aura::ir::IROpcode::NewCell:
-                            result_type = types::make_cell(static_cast<std::uint64_t>(raw_result));
-                            break;
-                        case aura::ir::IROpcode::MakeClosure:
-                            result_type = types::make_closure(static_cast<std::uint64_t>(raw_result));
-                            break;
-                        default: break;
+                            case aura::ir::IROpcode::ConstBool:
+                            case aura::ir::IROpcode::Eq:
+                            case aura::ir::IROpcode::Lt:
+                            case aura::ir::IROpcode::Gt:
+                            case aura::ir::IROpcode::Le:
+                            case aura::ir::IROpcode::Ge:
+                            case aura::ir::IROpcode::And:
+                            case aura::ir::IROpcode::Or:
+                            case aura::ir::IROpcode::Not:
+                                result_type = types::make_bool(raw_result != 0);
+                                break;
+                            case aura::ir::IROpcode::MakePair:
+                                if (raw_result < 0)
+                                    result_type = types::make_pair(
+                                        static_cast<std::uint64_t>(-raw_result - 1));
+                                break;
+                            case aura::ir::IROpcode::NewCell:
+                                result_type =
+                                    types::make_cell(static_cast<std::uint64_t>(raw_result));
+                                break;
+                            case aura::ir::IROpcode::MakeClosure:
+                                result_type =
+                                    types::make_closure(static_cast<std::uint64_t>(raw_result));
+                                break;
+                            default:
+                                break;
                         }
                         break;
                     }
@@ -2155,13 +2270,13 @@ private:
     void register_jit_primitives() {
         // Set the global primitives pointer for the JIT dispatcher
         g_jit_prim_ctx = &evaluator_.primitives();
-        
-        // Register the dispatcher with JIT runtime
-        #ifdef AURA_HAVE_LLVM
+
+// Register the dispatcher with JIT runtime
+#ifdef AURA_HAVE_LLVM
         // aura_jit_prim_dispatch is defined at file scope (after imports)
         // and aura_set_prim_dispatcher is declared at file scope.
         aura_set_prim_dispatcher(aura_jit_prim_dispatch);
-        #endif
+#endif
     }
 };
 

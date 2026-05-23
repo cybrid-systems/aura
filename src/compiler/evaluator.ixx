@@ -13,7 +13,7 @@ export class Primitives {
 public:
     Primitives();
     std::optional<PrimFn> lookup(const std::string& n) const;
-    void add(const std::string& name, PrimFn fn) { 
+    void add(const std::string& name, PrimFn fn) {
         auto slot = ordered_names_.size();
         table_[name] = std::move(fn);
         ordered_names_.push_back(name);
@@ -25,6 +25,7 @@ public:
     const std::string& name_for_slot(std::size_t slot) const { return ordered_names_[slot]; }
     std::size_t slot_for_name(const std::string& name) const;
     std::size_t slot_count() const { return ordered_names_.size(); }
+
 private:
     std::unordered_map<std::string, PrimFn> table_;
     std::vector<std::string>* string_heap_ = nullptr;
@@ -34,24 +35,33 @@ private:
 export class Env final {
 public:
     Env() = default;
-    explicit Env(const Env* p) : parent_(p) {}
-    Env(const Env&) = default; Env& operator=(const Env&) = default;
-    void set_parent(const Env* p) { parent_=p; }
-    void set_primitives(const Primitives* p) { primitives_=p; }
-    void set_cells(std::vector<types::EvalValue>* c) { cells_=c; }
-    void bind(const std::string& n, types::EvalValue v) { bindings_.emplace_back(n,std::move(v)); }
+    explicit Env(const Env* p)
+        : parent_(p) {}
+    Env(const Env&) = default;
+    Env& operator=(const Env&) = default;
+    void set_parent(const Env* p) { parent_ = p; }
+    void set_primitives(const Primitives* p) { primitives_ = p; }
+    void set_cells(std::vector<types::EvalValue>* c) { cells_ = c; }
+    void bind(const std::string& n, types::EvalValue v) { bindings_.emplace_back(n, std::move(v)); }
     [[nodiscard]] std::optional<types::EvalValue> lookup(const std::string& n) const;
     // Look up the raw binding without dereferencing cells (returns cell sentinel as-is)
     std::optional<types::EvalValue> lookup_binding(const std::string& n) const;
-    std::optional<PrimFn> lookup_primitive(const std::string& n) const { return primitives_?primitives_->lookup(n):std::nullopt; }
-    types::EvalValue* lookup_cell_ptr(const std::string& n, std::vector<types::EvalValue>* cells) const;
+    std::optional<PrimFn> lookup_primitive(const std::string& n) const {
+        return primitives_ ? primitives_->lookup(n) : std::nullopt;
+    }
+    types::EvalValue* lookup_cell_ptr(const std::string& n,
+                                      std::vector<types::EvalValue>* cells) const;
     const Env* parent() const { return parent_; }
-    std::vector<std::pair<std::string,types::EvalValue>>& bindings() { return bindings_; }
-    const std::vector<std::pair<std::string,types::EvalValue>>& bindings() const { return bindings_; }
+    std::vector<std::pair<std::string, types::EvalValue>>& bindings() { return bindings_; }
+    const std::vector<std::pair<std::string, types::EvalValue>>& bindings() const {
+        return bindings_;
+    }
+
 private:
-    const Env* parent_=nullptr; const Primitives* primitives_=nullptr;
-    std::vector<types::EvalValue>* cells_=nullptr;
-    std::vector<std::pair<std::string,types::EvalValue>> bindings_;
+    const Env* parent_ = nullptr;
+    const Primitives* primitives_ = nullptr;
+    std::vector<types::EvalValue>* cells_ = nullptr;
+    std::vector<std::pair<std::string, types::EvalValue>> bindings_;
 };
 
 export using ClosureId = std::uint64_t;
@@ -61,22 +71,36 @@ export struct Pair {
     types::EvalValue cdr;
 };
 
-export struct MacroDef { std::vector<std::string> params; bool dotted=false; ast::FlatAST* flat=nullptr; ast::StringPool* pool=nullptr; ast::NodeId body_id=ast::NULL_NODE; };
+export struct MacroDef {
+    std::vector<std::string> params;
+    bool dotted = false;
+    ast::FlatAST* flat = nullptr;
+    ast::StringPool* pool = nullptr;
+    ast::NodeId body_id = ast::NULL_NODE;
+};
 
-export struct Closure { std::vector<std::string> params; ast::FlatAST* flat=nullptr; ast::StringPool* pool=nullptr; ast::NodeId body_id=ast::NULL_NODE; const Env* env=nullptr; bool dotted=false; };
+export struct Closure {
+    std::vector<std::string> params;
+    ast::FlatAST* flat = nullptr;
+    ast::StringPool* pool = nullptr;
+    ast::NodeId body_id = ast::NULL_NODE;
+    const Env* env = nullptr;
+    bool dotted = false;
+};
 
 export using EvalResult = std::expected<types::EvalValue, aura::diag::Diagnostic>;
 
 export class Evaluator {
 public:
     Evaluator();
-    void set_arena(ast::ASTArena* a) { arena_=a; }
+    void set_arena(ast::ASTArena* a) { arena_ = a; }
     // Set current FlatAST/Pool for mutation primitives
-    void set_flat_pool(ast::FlatAST* f, ast::StringPool* p) { current_flat_ = f; current_pool_ = p; }
-    [[nodiscard]] EvalResult eval_flat(aura::ast::FlatAST& flat,
-                          aura::ast::StringPool& pool,
-                          aura::ast::NodeId id,
-                          const Env& env);
+    void set_flat_pool(ast::FlatAST* f, ast::StringPool* p) {
+        current_flat_ = f;
+        current_pool_ = p;
+    }
+    [[nodiscard]] EvalResult eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                       aura::ast::NodeId id, const Env& env);
     const Primitives& primitives() const { return primitives_; }
     Primitives& primitives() { return primitives_; }
     const Env& top_env() const { return top_; }
@@ -84,39 +108,35 @@ public:
     const std::vector<Pair>& pairs() const { return pairs_; }
 
     // IR closure bridge: called when a closure id is not in closures_.
-    using ClosureBridgeFn = std::function<
-        std::optional<EvalValue>(
-            ClosureId closure_id,
-            const std::vector<EvalValue>& args
-        )>;
+    using ClosureBridgeFn = std::function<std::optional<EvalValue>(
+        ClosureId closure_id, const std::vector<EvalValue>& args)>;
 
     // Set the IR closure bridge for cross-evaluator closure calls
-    void set_closure_bridge(ClosureBridgeFn bridge) {
-        closure_bridge_ = std::move(bridge);
-    }
+    void set_closure_bridge(ClosureBridgeFn bridge) { closure_bridge_ = std::move(bridge); }
 
     // Look up a closure and apply it with given args.
     // Tries closures_ first, then IR bridge.
-    std::optional<EvalValue> apply_closure(
-        ClosureId cid,
-        const std::vector<EvalValue>& args);
+    std::optional<EvalValue> apply_closure(ClosureId cid, const std::vector<EvalValue>& args);
 
     // Module loaded callback: called after a module file is successfully loaded.
     using ModuleLoadedFn = std::function<void(const std::string& source, const std::string& path)>;
 
-    void set_module_loaded_callback(ModuleLoadedFn cb) {
-        module_loaded_cb_ = std::move(cb);
-    }
+    void set_module_loaded_callback(ModuleLoadedFn cb) { module_loaded_cb_ = std::move(cb); }
 
 private:
     ClosureId next_id() { return next_id_++; }
-    [[nodiscard]] std::size_t alloc_cell(const types::EvalValue& v) { cells_.push_back(v); return cells_.size()-1; }
+    [[nodiscard]] std::size_t alloc_cell(const types::EvalValue& v) {
+        cells_.push_back(v);
+        return cells_.size() - 1;
+    }
     // (apply_closure and expand_macro removed — use eval_flat directly)
-    [[nodiscard]] EvalValue ast_to_data(const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool, aura::ast::NodeId nid);
-    [[nodiscard]] ast::NodeId data_to_flat(const types::EvalValue& data, aura::ast::FlatAST& flat, aura::ast::StringPool& pool, int depth = 0);
+    [[nodiscard]] EvalValue ast_to_data(const aura::ast::FlatAST& flat,
+                                        const aura::ast::StringPool& pool, aura::ast::NodeId nid);
+    [[nodiscard]] ast::NodeId data_to_flat(const types::EvalValue& data, aura::ast::FlatAST& flat,
+                                           aura::ast::StringPool& pool, int depth = 0);
     [[nodiscard]] EvalResult eval_data_as_code(const types::EvalValue& data, const Env& env,
-                                                  aura::ast::FlatAST* flat = nullptr,
-                                                  aura::ast::StringPool* pool = nullptr);
+                                               aura::ast::FlatAST* flat = nullptr,
+                                               aura::ast::StringPool* pool = nullptr);
     Env* copy_env(const Env& env);
     void init_pair_primitives();
     void build_primitive_slots();
@@ -124,28 +144,30 @@ private:
     types::EvalValue load_module_file(const std::string& path);
     // Resolve a module path (supports AURA_PATH, .aura extension)
     std::string resolve_module_path(const std::string& path) const;
-    Env top_; Primitives primitives_; ast::ASTArena* arena_=nullptr;
+    Env top_;
+    Primitives primitives_;
+    ast::ASTArena* arena_ = nullptr;
     ast::FlatAST* current_flat_ = nullptr;
     ast::StringPool* current_pool_ = nullptr;
     ast::FlatAST* workspace_flat_ = nullptr;
     ast::StringPool* workspace_pool_ = nullptr;
-    void* type_registry_ = nullptr;  // points to aura::core::TypeRegistry
-    std::unordered_map<ClosureId,Closure> closures_;
+    void* type_registry_ = nullptr; // points to aura::core::TypeRegistry
+    std::unordered_map<ClosureId, Closure> closures_;
     ClosureBridgeFn closure_bridge_;
     ModuleLoadedFn module_loaded_cb_;
     std::unordered_map<std::string, MacroDef> macros_;
-    std::vector<Env*> modules_;  // module objects (arena-allocated, indexed by ModuleRef.index)
-    std::unordered_map<std::string, std::uint64_t> module_cache_;  // path → index
-    std::unordered_set<std::string> loading_stack_;  // circular dep detection
-    std::vector<std::string> module_names_;  // display names for modules
+    std::vector<Env*> modules_; // module objects (arena-allocated, indexed by ModuleRef.index)
+    std::unordered_map<std::string, std::uint64_t> module_cache_; // path → index
+    std::unordered_set<std::string> loading_stack_;               // circular dep detection
+    std::vector<std::string> module_names_;                       // display names for modules
     std::vector<types::EvalValue> cells_;
     std::vector<Pair> pairs_;
-    std::vector<types::EvalValue> error_values_;  // error cause values (indexed by ErrorRef)
+    std::vector<types::EvalValue> error_values_; // error cause values (indexed by ErrorRef)
     std::unique_ptr<std::unordered_set<std::string>> current_export_set_;
     // ── Strategy storage (E2) ──────────────────────────────────
     struct StrategyDef {
         std::string name;
-        std::string body;  // strategy body as S-expression string
+        std::string body; // strategy body as S-expression string
     };
     std::vector<StrategyDef> strategies_;
     // ── Intend history (E4 Phase 1) ────────────────────────────
@@ -172,42 +194,50 @@ private:
     // 6=edsl-query, 7=edsl-mutate, 8=ffi, 9-15=reserved
     std::array<std::uint64_t, 16> coverage_counters_ = {};
     // ── Timeline for intend (E2, backward compat) ───────────────
-    std::vector<std::string> timeline_;  // 
+    std::vector<std::string> timeline_; //
     std::vector<std::string> string_heap_;
-    std::size_t eval_depth_ = 0;  // recursion counter for friendly stack overflow
+    std::size_t eval_depth_ = 0; // recursion counter for friendly stack overflow
     static constexpr std::size_t MAX_EVAL_DEPTH = 50000;
     struct HashTable {
-        std::vector<std::uint8_t> metadata;  // 0xFF=empty, 0x00-0x7F=occupied(7-bit fingerprint)
+        std::vector<std::uint8_t> metadata; // 0xFF=empty, 0x00-0x7F=occupied(7-bit fingerprint)
         std::vector<types::EvalValue> keys;
         std::vector<types::EvalValue> values;
-        std::size_t size = 0;      // live entries
-        std::size_t capacity = 0;  // power of 2
+        std::size_t size = 0;     // live entries
+        std::size_t capacity = 0; // power of 2
     };
     std::vector<HashTable> hash_heap_;
     std::vector<std::vector<types::EvalValue>> vector_heap_;
-    std::uint64_t next_id_=1;
+    std::uint64_t next_id_ = 1;
 };
 
 // Pair-aware value formatting (recursively prints lists)
-export inline std::string format_value(const types::EvalValue& v, const std::vector<std::string>* heap,
-                                        const std::vector<Pair>* pairs, int depth = 0,
-                                        const Primitives* primitives = nullptr) {
+export inline std::string format_value(const types::EvalValue& v,
+                                       const std::vector<std::string>* heap,
+                                       const std::vector<Pair>* pairs, int depth = 0,
+                                       const Primitives* primitives = nullptr) {
     const int max_depth = 64;
-    if (depth > max_depth) return "...";
-    if (types::is_void(v)) return "()";
-    if (types::is_bool(v)) return types::as_bool(v) ? "#t" : "#f";
-    if (types::is_int(v)) return std::to_string(types::as_int(v));
-    if (types::is_float(v)) return std::to_string(types::as_float(v));
+    if (depth > max_depth)
+        return "...";
+    if (types::is_void(v))
+        return "()";
+    if (types::is_bool(v))
+        return types::as_bool(v) ? "#t" : "#f";
+    if (types::is_int(v))
+        return std::to_string(types::as_int(v));
+    if (types::is_float(v))
+        return std::to_string(types::as_float(v));
     if (types::is_string(v)) {
         if (heap) {
             auto idx = types::as_string_idx(v);
-            if (idx < heap->size()) return std::format("\"{}\"", (*heap)[idx]);
+            if (idx < heap->size())
+                return std::format("\"{}\"", (*heap)[idx]);
         }
         return std::format("<string[{}]>", types::as_string_idx(v));
     }
     if (types::is_pair(v) && pairs) {
         auto idx = types::as_pair_idx(v);
-        if (idx >= pairs->size()) return std::format("<pair[{}]>", idx);
+        if (idx >= pairs->size())
+            return std::format("<pair[{}]>", idx);
 
         // Walk the cdr chain to collect all elements
         std::vector<std::string> elements;
@@ -215,30 +245,44 @@ export inline std::string format_value(const types::EvalValue& v, const std::vec
 
         while (types::is_pair(current)) {
             auto cidx = types::as_pair_idx(current);
-            if (cidx >= pairs->size()) { break; }
-            elements.push_back(format_value((*pairs)[cidx].car, heap, pairs, depth + 1, primitives));
+            if (cidx >= pairs->size()) {
+                break;
+            }
+            elements.push_back(
+                format_value((*pairs)[cidx].car, heap, pairs, depth + 1, primitives));
             current = (*pairs)[cidx].cdr;
-            if (elements.size() > 256) { elements.push_back("..."); break; }
+            if (elements.size() > 256) {
+                elements.push_back("...");
+                break;
+            }
         }
 
         std::string result = "(";
         for (std::size_t i = 0; i < elements.size(); ++i) {
-            if (i > 0) result += " ";
+            if (i > 0)
+                result += " ";
             result += elements[i];
         }
         if (!types::is_truthy(current)) {
             // proper list
         } else {
-            if (!elements.empty()) result += " . ";
+            if (!elements.empty())
+                result += " . ";
             result += format_value(current, heap, pairs, depth + 1, primitives);
         }
         result += ")";
         return result;
     }
-    if (types::is_vector(v)) return std::format("<vector[{}]>", types::as_vector_idx(v));
-    if (types::is_hash(v)) return std::format("<hash[{}]>", types::as_hash_idx(v));
-    if (types::is_closure(v)) { std::println(std::cerr, "⚠ program returned an uncalled function"); return "#<procedure>"; }
-    if (types::is_cell(v)) return std::format("<cell[{}]>", types::as_cell_id(v));
+    if (types::is_vector(v))
+        return std::format("<vector[{}]>", types::as_vector_idx(v));
+    if (types::is_hash(v))
+        return std::format("<hash[{}]>", types::as_hash_idx(v));
+    if (types::is_closure(v)) {
+        std::println(std::cerr, "⚠ program returned an uncalled function");
+        return "#<procedure>";
+    }
+    if (types::is_cell(v))
+        return std::format("<cell[{}]>", types::as_cell_id(v));
     if (types::is_primitive(v)) {
         if (primitives) {
             auto slot = types::as_primitive_slot(v);
@@ -247,13 +291,15 @@ export inline std::string format_value(const types::EvalValue& v, const std::vec
         }
         return "<primitive>";
     }
-    if (types::is_module(v)) return "<module>";
-    if (types::is_error(v)) return "<error>";
+    if (types::is_module(v))
+        return "<module>";
+    if (types::is_error(v))
+        return "<error>";
     return "<unknown>";
 }
 
 // Pre-expand all macros in a FlatAST. Returns (possibly new) root.
 export aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
-                                           aura::ast::NodeId root, int max_passes = 10);
+                                          aura::ast::NodeId root, int max_passes = 10);
 
 } // namespace aura::compiler

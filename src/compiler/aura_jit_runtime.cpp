@@ -10,8 +10,8 @@
 extern "C" {
 
 // === Closure runtime ===
-static std::vector<int64_t> g_closure_func_ids;  // func_id for each closure
-static std::vector<std::vector<int64_t>> g_closure_envs;  // env for each closure
+static std::vector<int64_t> g_closure_func_ids;          // func_id for each closure
+static std::vector<std::vector<int64_t>> g_closure_envs; // env for each closure
 
 int64_t aura_alloc_closure(int64_t func_id) {
     int64_t id = static_cast<int64_t>(g_closure_func_ids.size());
@@ -38,8 +38,8 @@ struct JitFnEntry {
 };
 static JitFnEntry g_jit_fns[512] = {{nullptr, 0, 0, 0}};
 
-void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t),
-                       int32_t local_count, int32_t arg_count, int32_t env_count) {
+void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t), int32_t local_count,
+                      int32_t arg_count, int32_t env_count) {
     if (func_id >= 0 && func_id < 512)
         g_jit_fns[func_id] = {fn, local_count, arg_count, env_count};
 }
@@ -106,7 +106,7 @@ int64_t aura_alloc_pair(int64_t car, int64_t cdr) {
     int64_t id = static_cast<int64_t>(g_pair_cars.size());
     g_pair_cars.push_back(car);
     g_pair_cdrs.push_back(cdr);
-    return (-id - 1);  // negative sentinel
+    return (-id - 1); // negative sentinel
 }
 
 int64_t aura_pair_car(int64_t pair_val) {
@@ -132,7 +132,8 @@ void aura_set_prim_dispatcher(int64_t (*fn)(int64_t, int64_t*, int32_t)) {
 }
 
 int64_t aura_prim_call(int64_t slot, int64_t a, int64_t b, int64_t count) {
-    if (!g_prim_dispatcher) return 0;
+    if (!g_prim_dispatcher)
+        return 0;
     int64_t args[3] = {a, b, 0};
     return g_prim_dispatcher(slot, args, static_cast<int32_t>(count));
 }

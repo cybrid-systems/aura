@@ -27,34 +27,47 @@ export enum class ErrorKind : std::uint8_t {
 
 // ── Blame Info (design §6.3) ────────────────────────────────────
 export enum class BlameParty : std::uint8_t {
-    Caller,       // 调用者 — 参数类型不匹配
-    Annotation,   // 类型标注 — 标注与推断冲突
-    Implicit,     // 隐式边界 — 无标注的默认边界
-    System,       // 基元/系统类型错误
+    Caller,     // 调用者 — 参数类型不匹配
+    Annotation, // 类型标注 — 标注与推断冲突
+    Implicit,   // 隐式边界 — 无标注的默认边界
+    System,     // 基元/系统类型错误
 };
 
 export struct BlameInfo {
     BlameParty party = BlameParty::Implicit;
-    std::string annotation_src;   // 标注来源，如 ": x Int"
+    std::string annotation_src;    // 标注来源，如 ": x Int"
     std::string phase = "compile"; // "compile" | "runtime"
 };
 
 // Convert ErrorKind to human-readable string
 export constexpr std::string_view kind_name(ErrorKind k) {
     switch (k) {
-    case ErrorKind::ParseError:        return "parse error";
-    case ErrorKind::UnexpectedToken:   return "unexpected token";
-    case ErrorKind::UnterminatedSExpr: return "unterminated s-expr";
-    case ErrorKind::UnboundVariable:   return "unbound variable";
-    case ErrorKind::DivisionByZero:    return "division by zero";
-    case ErrorKind::InvalidClosure:    return "invalid closure";
-    case ErrorKind::ArityMismatch:     return "arity mismatch";
-    case ErrorKind::TypeError:         return "type error";
-    case ErrorKind::IRCorruption:      return "IR corruption";
-    case ErrorKind::IRNoReturn:        return "no return";
-    case ErrorKind::InternalError:     return "internal error";
-    case ErrorKind::OutOfMemory:       return "out of memory";
-    case ErrorKind::Note:              return "note";
+        case ErrorKind::ParseError:
+            return "parse error";
+        case ErrorKind::UnexpectedToken:
+            return "unexpected token";
+        case ErrorKind::UnterminatedSExpr:
+            return "unterminated s-expr";
+        case ErrorKind::UnboundVariable:
+            return "unbound variable";
+        case ErrorKind::DivisionByZero:
+            return "division by zero";
+        case ErrorKind::InvalidClosure:
+            return "invalid closure";
+        case ErrorKind::ArityMismatch:
+            return "arity mismatch";
+        case ErrorKind::TypeError:
+            return "type error";
+        case ErrorKind::IRCorruption:
+            return "IR corruption";
+        case ErrorKind::IRNoReturn:
+            return "no return";
+        case ErrorKind::InternalError:
+            return "internal error";
+        case ErrorKind::OutOfMemory:
+            return "out of memory";
+        case ErrorKind::Note:
+            return "note";
     }
     return "unknown";
 }
@@ -67,7 +80,8 @@ export struct SourceLocation {
 
     bool valid() const { return line > 0; }
     std::string format() const {
-        if (!valid()) return "?";
+        if (!valid())
+            return "?";
         return std::format("{}:{}", line, column);
     }
 };
@@ -77,16 +91,18 @@ export struct Diagnostic {
     ErrorKind kind = ErrorKind::InternalError;
     std::string message;
     SourceLocation location;
-    std::uint32_t node_id = ~0u;  // FlatAST NodeId (~0 = unknown)
-    std::string suggestion;       // "did you mean ...?" text
+    std::uint32_t node_id = ~0u; // FlatAST NodeId (~0 = unknown)
+    std::string suggestion;      // "did you mean ...?" text
     std::vector<std::string> context_stack;
-    std::optional<BlameInfo> blame;               // 结构化 blame 信息 (design §6.3)
+    std::optional<BlameInfo> blame; // 结构化 blame 信息 (design §6.3)
 
     Diagnostic() = default;
 
-    Diagnostic(ErrorKind k, std::string msg,
-               SourceLocation loc = {}, std::uint32_t nid = ~0u)
-        : kind(k), message(std::move(msg)), location(loc), node_id(nid) {}
+    Diagnostic(ErrorKind k, std::string msg, SourceLocation loc = {}, std::uint32_t nid = ~0u)
+        : kind(k)
+        , message(std::move(msg))
+        , location(loc)
+        , node_id(nid) {}
 
     // Set suggestion text (e.g., "did you mean 'foo'?")
     Diagnostic& with_suggestion(std::string s) & {
@@ -133,10 +149,18 @@ export struct Diagnostic {
         if (blame) {
             const char* party_str = "?";
             switch (blame->party) {
-                case BlameParty::Caller:     party_str = "caller"; break;
-                case BlameParty::Annotation: party_str = "annotation"; break;
-                case BlameParty::Implicit:   party_str = "implicit"; break;
-                case BlameParty::System:     party_str = "system"; break;
+                case BlameParty::Caller:
+                    party_str = "caller";
+                    break;
+                case BlameParty::Annotation:
+                    party_str = "annotation";
+                    break;
+                case BlameParty::Implicit:
+                    party_str = "implicit";
+                    break;
+                case BlameParty::System:
+                    party_str = "system";
+                    break;
             }
             out += std::format("\n  blamed: {} ({})", party_str, blame->phase);
             if (!blame->annotation_src.empty())
@@ -154,14 +178,11 @@ export struct Diagnostic {
     }
 
     // Short one-line summary (no location, no context)
-    std::string summary() const {
-        return std::string(kind_name(kind)) + ": " + message;
-    }
+    std::string summary() const { return std::string(kind_name(kind)) + ": " + message; }
 };
 
 // Result type — used throughout the pipeline
-export template <typename T>
-using Result = std::expected<T, Diagnostic>;
+export template <typename T> using Result = std::expected<T, Diagnostic>;
 
 // Convenience: Result<void> for operations that don't produce a value
 export using VoidResult = Result<void>;
@@ -169,9 +190,7 @@ export using VoidResult = Result<void>;
 // ── DiagnosticCollector — collects diagnostics during compilation ─
 export class DiagnosticCollector {
 public:
-    void report(aura::diag::Diagnostic d) {
-        diagnostics_.push_back(std::move(d));
-    }
+    void report(aura::diag::Diagnostic d) { diagnostics_.push_back(std::move(d)); }
 
     bool has_errors() const {
         for (auto& d : diagnostics_)
@@ -180,13 +199,9 @@ public:
         return false;
     }
 
-    std::span<const aura::diag::Diagnostic> diagnostics() const {
-        return diagnostics_;
-    }
+    std::span<const aura::diag::Diagnostic> diagnostics() const { return diagnostics_; }
 
-    void clear() {
-        diagnostics_.clear();
-    }
+    void clear() { diagnostics_.clear(); }
 
 private:
     std::vector<aura::diag::Diagnostic> diagnostics_;
