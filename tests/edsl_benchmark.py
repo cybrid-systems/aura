@@ -1311,6 +1311,7 @@ def main():
             if task_filter
             else []
         )
+        task_results = []
         tasks_to_run = [(name, prompt, expected, stdlib) for name, prompt, expected, stdlib in TASKS
                            if not filter_list or name in filter_list]
         
