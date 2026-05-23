@@ -375,8 +375,63 @@ template <typename T> std::string auto_to_json(const T& obj) {
 
 // ── Convenience: pretty-print ─────────────────────────────────
 
-template <typename T> std::string auto_to_json_pretty(const T& obj, int indent = 0) {
-    // Compact for now — pretty-print is future work
+// ── JSON pretty-print helper ────────────────────────────────────
+
+// Simple JSON indenter: takes compact JSON, returns indented form
+inline std::string prettify_json(const std::string& compact) {
+    std::string out;
+    out.reserve(compact.size() * 2);
+    int indent = 0;
+    bool in_string = false;
+    bool escaped = false;
+
+    for (char c : compact) {
+        if (escaped) {
+            escaped = false;
+            out += c;
+            continue;
+        }
+        if (c == '\\') {
+            out += c;
+            escaped = true;
+            continue;
+        }
+        if (c == '"') {
+            in_string = !in_string;
+            out += c;
+            continue;
+        }
+        if (in_string) {
+            out += c;
+            continue;
+        }
+
+        if (c == '{' || c == '[') {
+            out += c;
+            out += '\n';
+            ++indent;
+            out.append(static_cast<std::size_t>(indent * 2), ' ');
+        } else if (c == '}' || c == ']') {
+            out += '\n';
+            --indent;
+            if (indent < 0) indent = 0;
+            out.append(static_cast<std::size_t>(indent * 2), ' ');
+            out += c;
+        } else if (c == ',') {
+            out += c;
+            out += '\n';
+            out.append(static_cast<std::size_t>(indent * 2), ' ');
+        } else if (c == ':') {
+            out += ": ";
+        } else if (!std::isspace(static_cast<unsigned char>(c))) {
+            out += c;
+        }
+    }
+    return out;
+}
+
+// Convenience: pretty-print wrapper (compact by default)
+template <typename T> std::string auto_to_json_pretty(const T& obj) {
     return auto_to_json(obj);
 }
 
