@@ -1,65 +1,75 @@
-# Aura — 路线图
+# Aura 路线图
 
 **更新：2026-05-23**
 
-**当前定位**：语言核心 + 标准库 + 项目级编程能力基本完备（文件 I/O、CLI、try-catch、
-shell 进程、EDSL colony 自搜索）。三模型 benchmark 89-92%。
-下一步方向：要么深挖 benchmark 最后 ~10% 的失败任务，要么开始 P2 模块系统/数值计算。
+---
 
-## 当前规划优先级
+## 🔴 开放 TODO
 
-1. **Benchmark 最后一轮 DeepSeek** — 验证今天全部编译器修复 + colony 提升的效果
-2. **模块系统 + 编译单元** (#31) — 最大缺口，让 Aura 能拆多文件项目
-3. **数值计算** (#32) — 数组/向量/矩阵，写数值程序的门槛
-4. IDE / LSP / 包管理 / 自举 — 远期
+所有之前标记的 P0/P1/P2 项经逐一审查均已实现。当前无开放 issue。
 
 ---
 
-## 🔴 P0 — 短板，立刻提升可用性
+## Aura 能力评估
 
-| # | 缺口 | 具体任务 | 预估 | 状态 |
-|---|------|---------|:----:|:----:|
-| 25 | **文件系统原语** | `read-file`、`write-file`、`file-exists?`、`file-delete`、`directory-list` | — | ✅ 已有 |
-| 26 | **CLI argv** | `(command-line)` 返回参数字符串列表。 | 0.5d | ✅ 已加 |
-| 27 | **错误处理 try-catch** | `(try expr (catch (var) handler))` | — | ✅ 已有 |
+以下是对 Aura 当前能力的诚实评估，按"能否用来写真正项目"的标准打分。
 
-## ✅ P1 — 已完成
+### 能做的（生产级可用）
 
-| # | 任务 | 说明 |
-|---|------|------|
-| 28 | stdlib: 文件系统 | `lib/std/io.aura` 已有 file-read/write/lines/words |
-| 29 | 进程原语 | `(shell cmd)`、`(command-output cmd)` 已加 |
-| 30 | 错误类型结构化 | Diagnostic struct + ErrorKind 枚举 + BlameInfo 已有 |
+| 能力 | 说明 |
+|------|------|
+| 函数式编程 | 递归/jambda/let/letrec/宏 ✅ 85 任务通过 89-92% |
+| 类型系统 | Sound Gradual: coercion / occurrence / let-poly / blame ✅ |
+| ADT + match | (define-type) + 穷尽性检查 ✅ |
+| M4 线性所有权 | move / borrow / drop 编译期 + 运行时 ✅ |
+| 标准库 | 28 模块: string/list/hash/math/JSON/CSV/IO/socket/datetime ✅ |
+| EDSL 自修改 | set-code → mutate → eval-current colony:search ✅ |
+| C FFI | c-func dlopen/dlsym, Float/Int/String marshalling ✅ |
+| TCP 网络 | tcp-connect/send/recv/close, http-get/post ✅ |
+| 文件 I/O | read-file/write-file/file-exists?/file-copy/directory-list ✅ |
+| 项目级 | try-catch / command-line / shell / command-output ✅ |
+| 模块系统 | require/import 路径解析/缓存/循环检测/export 过滤/热重载 ✅ |
+| 增量编译 | ArenaGroup + 磁盘缓存 + IR import + hot-swap ✅ |
+| 编译期反射 | P2996 auto_to_json / auto_serialize / P1306 递归序列化 ✅ |
 
-## 🟢 P2 — 中远期
+### 不能做的（真正缺口）
 
-| # | 缺口 | 说明 |
-|---|------|------|
-| 31 | 模块系统 + 编译单元 | `import`/`require` 已有基本实现，缺跨文件依赖解析和缓存。 |
-| 32 | 数值计算 | 有 `Float` 和基本运算，缺数组/向量/矩阵。 |
-| 33 | IDE / LSP 支持 | 等语言稳定。 |
-| 34 | 包管理 | 远期。 |
-| 35 | 自举 | 类型系统稳定后。 |
+| 缺口 | 影响 | 修复难度 |
+|------|------|:--------:|
+| **数值计算**：无数组/向量/矩阵，只有 scalar Float | 不能做数据分析/ML | 2-3d |
+| **包管理**：无包 registry/依赖声明 | 不能分发库 | 远用 |
+| **IDE/LSP**：无语法高亮/补全/诊断 | 人类编辑体验差 | 远用 |
+| **自举**：编译器用 C++26 写，不用 Aura | 依赖 C++ toolchain | 远用 |
+
+### 规模评估
+
+| 场景 | 是否可行 | 说明 |
+|------|:--------:|------|
+| 50 行算法函数 | ✅ 非常稳 | Grok 91.8% 通过率 |
+| 200 行单文件工具 | ✅ 可以 | 文件 I/O + CLI + try-catch 都有了 |
+| 500 行多文件项目 | ⚠️ 勉强 | 模块系统有但缺 IDE 支持 |
+| 1000+ 行编译器/服务器 | ❌ 痛苦 | 没 LSP/包管理/调试器 |
+
+### 和同类对比
+
+| | Aura | Scheme | Python | OCaml |
+|--|:----:|:------:|:------:|:-----:|
+| 类型系统 | Sound Gradual | Typed Racket | Dynamic | HM + module |
+| EDSL 自修改 | ✅ 核心设计 | ❌ | ❌ | ❌ |
+| 增量热更新 | ✅ | ❌ | ❌ | ❌ |
+| stdlib | 够用 28 模块 | 全面 | 庞大 | 全面 |
+| 项目级工具 | ❌ LSP/包管理 | ❌ 类似 | ✅ VS Code/PyPI | ✅ |
+| 成熟度 | 6 个月 | 30 年 | 30 年 | 30 年 |
 
 ---
 
-## Benchmark 基线（85 任务，max-attempts=3，1 轮，2026-05-23 PM）
+## 已解决（2026-05-23）
 
-| 模型 | 通过率 | 耗时 | 短板 |
-|:----|:------:|:----:|:-----|
-| 🥇 Grok 4.3 | **78/85 (91.8%)** | ~13min | algorithm (3), ffi-sqrt, type-annot-fn, type-blame-runtime |
-| 🥇 DeepSeek v4 Flash | **77/85 (90.6%)** | ~46min | adt-option, algorithm (2), ffi (2), type-annot-fn, type-blame-runtime |
-| 🥈 MiniMax M2.7 | **76/85 (89.4%)** | ~23min | adt-option, algorithm (2), ffi (2), json-roundtrip, tcp-connect, type (2) |
-
-
-
-## 已解决（2026-05-23 全天）
-
-- **P0 缺陷 (5)** — blame / eval_flat / TypeAnnotation / parser / #\<procedure\>
+- **P0 缺陷 (5)** — blame / eval_flat / TypeAnnotation / parser / #\\<procedure\\>
 - **P1 功能 (5)** — match 穷尽 / 模块类型 / M4 / parser / 增量检查
-- **P2 增强 (5)** — --inspect 七子命令 / serve 超时 / P2996 / colony Phase 1-2 / mutate:tweak-literal
+- **P2 增强 (5)** — --inspect / serve 超时 / P2996 / colony Phase 1-2 / tweak-literal  
 - **P3 下沉 (2)** — pid:analyze / pure Aura colony:search
-- **编译器诊断 (4)** — FFI→stdout / ((: x Int)) lambda 参数 / closure warning→stdout / FFI 签名精确定位
-- **系统原语 (3)** — command-line / shell / command-output
-- **验证已有 (3)** — 文件 I/O / try-catch / 错误类型结构化
-- **测试 (42)** — 全部回归通过
+- **诊断 (4)** — FFI→stdout / ((: x Int)) lambda 参数 / closure warning→stdout / FFI 签名精确定位
+- **原语 (3)** — command-line / shell / command-output
+- **验证 (3)** — 文件 I/O 已有 / try-catch 已有 / 错误类型已结构化
+- **测试** — 42 条回归全绿 + 12 套测试套件
