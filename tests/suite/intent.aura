@@ -1,3 +1,4 @@
+(require "std/test" all:)
 ; Aura intend E2 — Strategy 系统测试
 (display "╔════════════════════════════════════════╗")
 (display "║  intend E2 Tests                      ║")

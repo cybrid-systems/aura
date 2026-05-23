@@ -1,0 +1,28 @@
+(require "std/test" all:)
+; File I/O tests
+
+(test-suite "file:write-read"
+  (check (= (begin (write-file "/tmp/aura-suite-test.txt" "42")
+                   (string->number (read-file "/tmp/aura-suite-test.txt")))
+            42)))
+
+(test-suite "file:exists"
+  (check (positive? (file-exists? "/tmp/aura-suite-test.txt"))))
+
+(test-suite "file:not-exists"
+  (check (zero? (file-exists? "/tmp/nonexistent-file-xyz123"))))
+
+(test-suite "file:size"
+  (check (= (file-size "/tmp/aura-suite-test.txt") 2)))
+
+(test-suite "file:copy"
+  (begin (file-copy "/tmp/aura-suite-test.txt" "/tmp/aura-suite-copy.txt")
+         (check (= (string->number (read-file "/tmp/aura-suite-copy.txt")) 42))))
+
+(test-suite "file:delete"
+  (begin (write-file "/tmp/aura-suite-del.txt" "x")
+         (file-delete "/tmp/aura-suite-del.txt")
+         (check (zero? (file-exists? "/tmp/aura-suite-del.txt")))))
+
+(test-suite "file:directory-list"
+  (check (positive? (length (directory-list "/tmp")))))

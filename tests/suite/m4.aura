@@ -1,0 +1,9 @@
+(require "std/test" all:)
+; M4 Linear Ownership — safe cases only
+
+(test-suite "m4:basic"
+  (check (integer? (move 42)))
+  (check (integer? (drop 42))))
+
+(test-suite "m4:fact"
+  (check (= (letrec ((f (lambda (x) (if (= x 0) 1 (* x (f (- x 1))))))) (f 5)) 120)))

@@ -939,6 +939,43 @@ def test_p0_regression():
     return r.returncode
 
 
+def test_suite_runner():
+    """Run all tests/suite/*.aura files via Aura test framework."""
+    print(f"{B}═══ Suite tests ═══{N}")
+    root = ROOT / "tests" / "suite"
+    passed = 0
+    failed = 0
+    total = 0
+    for f in sorted(root.glob("*.aura")):
+        if f.name == "run-tests.aura":
+            continue
+        name = f.stem
+        # Read file content and pass as string input to avoid subprocess/pipe issues
+        code = f.read_text()
+        if not code:
+            fail(f"  suite/{name}.aura: empty")
+            failed += 1
+            total += 1
+            continue
+        # Use pipe from file to ensure all stdin is read (not just first line)
+        r = subprocess.run(
+            ["/bin/bash", "-c", f'cat "{f}" | {str(AURA)}'],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        total += 1
+        if r.returncode == 0:
+            ok(f"  suite/{name}.aura")
+            passed += 1
+        else:
+            errstr = r.stderr[:100] if r.stderr else r.stdout[:100]
+            fail(f"  suite/{name}.aura: {errstr}")
+            failed += 1
+    print(f"  Suite: {passed}/{total} passed")
+    return 1 if failed > 0 else 0
+
+
 SUITES = {
     "unit": test_unit,
     "integ": test_integ,
@@ -952,6 +989,7 @@ SUITES = {
     "p0": test_p0_regression,
     "ai": test_ai_agent_demo,
     "bash": test_bash,
+    "suite": test_suite_runner,
 }
 
 
@@ -959,6 +997,43 @@ def run(cmd, **kwargs):
     """Run command and return exit code."""
     result = subprocess.run(cmd, **kwargs)
     return result.returncode
+
+
+def test_suite_runner():
+    """Run all tests/suite/*.aura files via Aura test framework."""
+    print(f"{B}═══ Suite tests ═══{N}")
+    root = ROOT / "tests" / "suite"
+    passed = 0
+    failed = 0
+    total = 0
+    for f in sorted(root.glob("*.aura")):
+        if f.name == "run-tests.aura":
+            continue
+        name = f.stem
+        # Read file content and pass as string input to avoid subprocess/pipe issues
+        code = f.read_text()
+        if not code:
+            fail(f"  suite/{name}.aura: empty")
+            failed += 1
+            total += 1
+            continue
+        # Use pipe from file to ensure all stdin is read (not just first line)
+        r = subprocess.run(
+            ["/bin/bash", "-c", f'cat "{f}" | {str(AURA)}'],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        total += 1
+        if r.returncode == 0:
+            ok(f"  suite/{name}.aura")
+            passed += 1
+        else:
+            errstr = r.stderr[:100] if r.stderr else r.stdout[:100]
+            fail(f"  suite/{name}.aura: {errstr}")
+            failed += 1
+    print(f"  Suite: {passed}/{total} passed")
+    return 1 if failed > 0 else 0
 
 
 def cmd_test(suite_names: list[str]):

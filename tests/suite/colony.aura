@@ -1,0 +1,15 @@
+(require "std/test" all:)
+; Colony search + eval-current-output + tweak-literal tests
+
+(test-suite "colony:eval-capture"
+  (check (string? (begin (set-code "(display 42)") (eval-current-output)))))
+
+(test-suite "colony:search-returns-list"
+  (set-code "(define (f x) (+ x 1))(display (f 41))")
+  (require "std/ant" all:)
+  (check (list? (colony:search "42" 5))))
+
+(test-suite "colony:tweak-literal"
+  (set-code "(display (+ 1 42))")
+  (mutate:tweak-literal 3 1 "")
+  (check (integer? 1)))

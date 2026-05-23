@@ -1,3 +1,4 @@
+(require "std/test" all:)
 ; Macro system tests
 
 (test-suite "macros:defmacro"

@@ -1,3 +1,4 @@
+(require "std/test" all:)
 ; Type System tests
 ; Tests: type inference, gradual typing, occurrence typing,
 ;        value restriction, let-polymorphism, ADT, coercion

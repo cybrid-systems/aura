@@ -1,0 +1,15 @@
+(require "std/test" all:)
+; Shell/Process tests  (command-output, shell, command-line)
+
+(test-suite "process:command-output"
+  (check (string? (command-output "echo ok"))))
+
+(test-suite "process:command-output-value"
+  (check (= (string->number (string-trim (command-output "echo 42"))) 42)))
+
+(test-suite "process:command-output-multi"
+  (check (string-contains? (command-output "echo hello; echo world") "hello")))
+
+(test-suite "process:shell-exit"
+  (check (= (shell "true") 0))
+  (check (= (shell "false") 1)))
