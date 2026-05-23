@@ -1038,12 +1038,12 @@ NodeId FlatParser::parse_match() {
             if (pname == "_" || (pname.size() > 1 && pname[0] == '_')) {
                 minfo.has_wildcard = true;
             }
-        } else if (pv.tag == NodeTag::Pair && !pv.children.empty()) {
-            // Constructor pattern: (Ctor args...) -> car is constructor name
-            auto car_id = pv.child(0);
-            auto car_v = flat_.get(car_id);
-            if (car_v.tag == NodeTag::Variable)
-                minfo.used_constructors.push_back(car_v.sym_id);
+        } else if (pv.tag == NodeTag::Call && !pv.children.empty()) {
+            // Constructor pattern: (Ctor args...) -> callee is constructor name
+            auto callee_id = pv.child(0);
+            auto callee_v = flat_.get(callee_id);
+            if (callee_v.tag == NodeTag::Variable)
+                minfo.used_constructors.push_back(callee_v.sym_id);
         }
     }
 

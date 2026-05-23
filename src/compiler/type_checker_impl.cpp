@@ -1398,6 +1398,7 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool,
         // Full exhaustiveness check: compare used constructors against ADT definition
         // First, find the ADT from the subject's type (if available) or scan all ADTs
         auto* scan_minfo = flat.get_match_info(node_id);
+
         
         // Scan TypeRegistry for ADTs
         for (std::size_t i = 0; i < reg_.size(); ++i) {
