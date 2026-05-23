@@ -1336,9 +1336,6 @@ def main():
                     task_stats[name]["llm_times"].append(llm_t)
                     task_stats[name]["attempts"].append(attempts)
                     task_passes = 1 if success else 0
-                    model_task_totals[name] = model_task_totals.get(name, [0, 0])
-                    model_task_totals[name][0] += task_passes
-                    model_task_totals[name][1] += 1
                     task_results.append((name, task_passes, ROUNDS))
                     if success:
                         safe_print(f"  ✅ {name} ({llm_t:.1f}s, {attempts} att)")
