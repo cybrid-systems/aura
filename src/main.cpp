@@ -429,14 +429,30 @@ int main(int argc, char* argv[]) {
                                          json_escape(d.format()));
                         }
                     } else if (type == "exec") {
-                        auto result = cs.exec_with_cache(code);
-                        if (result) {
-                            std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
-                                         json_escape(fmt_val(*result, cs)));
+                        // Timeout-based eval: run in async future, wait up to 30s
+                        int timeout_sec = 30;
+                        auto timeout_it = cmd.find("timeout");
+                        if (timeout_it != cmd.end()) {
+                            try { timeout_sec = std::stoi(timeout_it->second); }
+                            catch (...) {}
+                        }
+                        auto future = std::async(std::launch::async, [&]() {
+                            return cs.exec_with_cache(code);
+                        });
+                        auto status = future.wait_for(std::chrono::seconds(timeout_sec));
+                        if (status == std::future_status::timeout) {
+                            std::println("{{\"status\":\"timeout\",\"msg\":\"exec timed out ({}s)\"}}",
+                                         timeout_sec);
                         } else {
-                            auto& d = result.error();
-                            std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
-                                         json_escape(d.format()));
+                            auto result = future.get();
+                            if (result) {
+                                std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
+                                             json_escape(fmt_val(*result, cs)));
+                            } else {
+                                auto& d = result.error();
+                                std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
+                                             json_escape(d.format()));
+                            }
                         }
                     } else if (type == "redefine") {
                         auto name = cmd.count("name") ? cmd["name"] : "<lambda>";
