@@ -132,6 +132,17 @@ tests = [
      '(require "std/vector-math" all:)(mat:ref (mat:identity 3) 1 1)',
      "1", ""),
 
+    # freeze / load / emit-binary
+    ("freeze-snapshot",
+     '(begin (write-file "/tmp/aura-freeze-test.aura" "(display 42)")(shell "cat /tmp/aura-freeze-test.aura | ./build/aura --freeze /tmp/aura-freeze-out.aura"))',
+     "frozen to", ""),
+    ("load-snapshot",
+     '(shell "./build/aura --load /tmp/aura-freeze-out.aura")',
+     "42", ""),
+    ("emit-binary",
+     '(shell "echo \'(display 99)\' | ./build/aura --emit-binary /tmp/aura-emit-test")',
+     "emitted", ""),
+
 ]
 
 # Cleanup temp files
