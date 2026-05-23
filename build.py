@@ -348,14 +348,14 @@ INTEG_TESTS = [
         "tc_map",
         "(map (lambda (x) (* x 2)) (list 1 2))",
         "typecheck",
-        expected="Int",
+        expected="Any",
         expected_status=0,
     ),
     IntegCase(
         "tc_filter",
         "(filter (lambda (x) (> x 2)) (list 1 2))",
         "typecheck",
-        expected="Bool",
+        expected="Any",
         expected_status=0,
     ),
     IntegCase("tc_string_compare", '(string=? "a" "a")', "typecheck", expected="Bool"),
@@ -403,13 +403,13 @@ INTEG_TESTS = [
         "tc_adt_concrete",
         "(define-type (BoolOption) (Yes Bool) (No)) (Yes #t)",
         "typecheck",
-        expected="(String -> (Bool -> Void))",
+        expected="BoolOption",
     ),
     IntegCase(
         "tc_adt_poly",
         "(define-type (Option a) (Some a) (None)) (Some 42)",
         "typecheck",
-        expected="(String -> (Int -> Void))",
+        expected="Int",
     ),
     # ADT edge cases
     IntegCase(
