@@ -88,13 +88,15 @@ Aura 是一个 **AI-native Lisp** 编译器：C++26 实现，LLVM ORC JIT 后端
 | **编译期反射** | P2996 auto_to_json / auto_serialize / P1306 递归序列化 |
 | **原生二进制** | --emit-binary → 独立 ELF (arm64/x86_64) |
 
-### AI 基准（85 生成任务，2026-05-23）
+### AI 基准（99 生成任务，2026-05-23）
 
-| 模型 | 通过率 | 耗时 | 短板 |
-|:----|:------:|:----:|:-----|
-| 🥇 Grok 4.3 | **78/85 (91.8%)** | ~13min | algorithm (3), ffi, type (2) |
-| 🥇 DeepSeek v4 Flash | **77/85 (90.6%)** | ~46min | algorithm (2), ffi (2), type (2) |
-| 🥈 MiniMax M2.7 | **76/85 (89.4%)** | ~23min | algorithm (2), ffi (3), network, type (2) |
+| 模型 | 通过率 | 耗时 |
+|:----|:------:|:----:|
+| 🥇 Grok 4.3 | **85/99 (85.9%)** | ~9min |
+| 🥈 DeepSeek v4 Flash | **81/99 (81.8%)** | ~7min |
+| 🥉 MiniMax M2.7 | **44/99 (44.4%)** | ~13min |
+
+> MiniMax 大量 `no code extracted`，可能被限流。Grok / DeepSeek 差距在 4 分以内，均有望进一步提升。
 
 [详情 → docs/benchmark.md](docs/benchmark.md)
 
