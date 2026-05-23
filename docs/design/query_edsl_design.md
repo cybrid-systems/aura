@@ -210,27 +210,28 @@
 ## 7. 实现优先级
 
 ```
-P0 — 立即（核心 EDSL，LLM 可用）
-  1. 注册 query:find / query:children / query:node / query:calls 原语
-  2. 注册 set-code / eval-current 原语
-  3. 注册 mutate:rebind（按函数名替换）
-  4. 修复 mutate:replace-value 使其支持任意节点类型（不限于 LiteralInt）
+P0 — 立即（核心 EDSL，LLM 可用）✅
+  1. ✅ query:find / query:children / query:node / query:calls 原语
+  2. ✅ set-code / eval-current 原语
+  3. ✅ mutate:rebind（按函数名替换）
+  4. ✅ mutate:replace-value（支持任意节点类型）
 
-P1 — 短期（完整 EDSL）
-  5. query:parent / query:siblings
-  6. query:pattern（模式匹配搜索）
-  7. mutate:set-body / mutate:remove-node
-  8. typecheck-current 原语
+P1 — 短期（完整 EDSL）✅
+  5. ✅ query:parent / query:siblings
+  6. ✅ query:pattern（模式匹配搜索）
+  7. ✅ mutate:set-body / mutate:remove-node
+  8. ✅ typecheck-current 原语
+  9. ✅ query:type（M2.7 TypeResolutionIndex）
 
-P2 — 中期（增量编译）
-  9. Dirtiness 标记（被 mutate 修改的节点）
-  10. 增量类型检查（只检查被修改的子树）
-  11. 增量求值（只重新执行被修改的函数）
+P2 — 中期（增量编译）🟡
+  10. Dirtiness 标记（被 mutate 修改的节点）
+  11. 增量类型检查（只检查被修改的子树）
+  12. 增量求值（只重新执行被修改的函数）
 
-P3 — 长期
-  12. query:filter / query:where（组合查询）
-  13. MutationLog 查询和回滚的 Aura 原语
-  14. AutoFixEngine 自动修复规则
+P3 — 长期 🟡
+  13. query:filter / query:where（组合查询）
+  14. MutationLog 查询和回滚的 Aura 原语
+  15. AutoFixEngine 自动修复规则
 ```
 
 ---

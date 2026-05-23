@@ -116,7 +116,7 @@ LLVM IR 中 Aura 值的类型选择：
 - 调用 C++ helper 函数进行类型判断和操作
 - 更简单但会频繁跨越 FFI 边界
 
-**推荐方案 A**，性能更好。
+**最终方案**：方案 A（Tagged Union），但简化了实现 — IRInterpreter 的 EvalValue 通过 `aura_jit_runtime.cpp` 的运行时 bridge 传递到 JIT 编译代码。
 
 ## 运行时 Bridge
 
@@ -150,54 +150,23 @@ AOT 适合生产部署，不需要运行时 JIT 编译。
 - 依赖变化时 `invalidate_function()` 清除 JIT 缓存
 - `hot_swap_function()` 重新编译 → 更新函数指针
 
-## 实现计划（5 个增量阶段）
+## 实现状态（全部完成 ✅）
 
-### Phase 1: 基础架构（8h）
+### Phase 1-5 全部完成
 
-| 步骤 | 描述 |
-|------|------|
-| 1.1 | 添加 LLVM 依赖到 CMake (`find_package(LLVM)`) |
-| 1.2 | 创建 `aura_jit.ixx` + `aura_jit_impl.cpp` |
-| 1.3 | 实现 `AuraJIT` 类 (`LLJIT` 包装) |
-| 1.4 | 编译空函数并调用 (Hello World JIT) |
+| Phase | 内容 | 状态 |
+|-------|------|:----:|
+| 1 | 基础架构: AuraJIT, ORC LLJIT | ✅ |
+| 2 | 算术: 38 opcode, 控制流, 比较 | ✅ |
+| 3 | 闭包+Cell: 捕获修复, 递归闭包, MakePair/Car/Cdr | ✅ |
+| 4 | 运行时: PrimCall bridge, display, eval 集成, --jit flag | ✅ |
+| 5 | 优化: LLVM -O2 PassBuilder, 增量 cache, CastOp JIT | ✅ |
 
-### Phase 2: 简单运算（8h）
+### Benchmark
 
-| 步骤 | 描述 |
-|------|------|
-| 2.1 | 实现 `lower_instruction()` — ConstI64, Add, Sub 等 |
-| 2.2 | 实现 Branch/Jump 控制流 |
-| 2.3 | 实现函数参数传递 + Return |
-| 2.4 | 测试: `(+ 1 2)` → JIT → 3 |
-
-### Phase 3: 闭包 + Cell（8h）
-
-| 步骤 | 描述 |
-|------|------|
-| 3.1 | MakeClosure/Capture — 闭包 struct |
-| 3.2 | Call — 函数指针间接调用 |
-| 3.3 | NewCell/CellGet/CellSet |
-| 3.4 | 测试: `(letrec ((fact ...)) (fact 10))` |
-
-### Phase 4: 运行时集成（8h）
-
-| 步骤 | 描述 |
-|------|------|
-| 4.1 | 注册运行时 bridge 函数到 JIT |
-| 4.2 | PrimCall — 调用 Aura 原语 |
-| 4.3 | `--jit` CLI flag |
-| 4.4 | 集成到 `CompilerService::eval()` |
-| 4.5 | 测试: 全表达式通过 `--jit` |
-
-### Phase 5: 优化（8h）
-
-| 步骤 | 描述 |
-|------|------|
-| 5.1 | LLVM opt passes (-O2) |
-| 5.2 | 尾调用优化 (TCO) |
-| 5.3 | 内联小函数 |
-| 5.4 | 增量 JIT 缓存 + 重编译 |
-| 5.5 | Benchmark: JIT vs IR vs tree-walker |
+```
+fib-20: TW 48.6ms → IR 23.0ms → JIT 6.4ms (7.55x)
+```
 
 ## 风险与缓解
 
@@ -208,14 +177,14 @@ AOT 适合生产部署，不需要运行时 JIT 编译。
 | JIT 编译开销掩盖加速 | 小函数变慢 | 函数热度阈值，只 JIT 热点 |
 | Aura 原语频繁调用 C++ bridge | 频繁 FFI 边界 | inline 简单原语 (+ - * /) |
 
-## 里程碑
+## 里程碑（全部完成 ✅）
 
-| 里程碑 | 交付 | 预计 |
-|--------|------|------|
-| M1 | `--jit` + `(+ 1 2)` → 3 | 16h |
-| M2 | `--jit` + factorial(20) → 2432902008176640000 | 24h |
-| M3 | `--jit` + 全 integ 测试 87/87 | 32h |
-| M4 | JIT vs IR benchmark 基线 | 40h |
+| 里程碑 | 交付 | 状态 |
+|--------|------|:----:|
+| M1 | `--jit` + `(+ 1 2)` → 3 | ✅ |
+| M2 | `--jit` + factorial(20) → 2432902008176640000 | ✅ |
+| M3 | `--jit` + 全 integ 测试通过 | ✅ |
+| M4 | JIT vs IR benchmark: fib-20 7.55x | ✅ |
 
 ## 文件清单
 

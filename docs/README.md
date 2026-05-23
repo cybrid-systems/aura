@@ -42,7 +42,10 @@ Aura 的出发点是三个洞察：
 ```bash
 cmake -B build && cmake --build build --target aura -j
 echo '(+ 1 2 3)' | ./build/aura          # → 6
-echo '(display (primes 10))' | ./build/aura  # → (2 3 5 7)
+echo '(display (list 1 2 3))' | ./build/aura    # → (1 2 3)
+echo '(display (map square (list 1 2 3)))' | ./build/aura
+  # → (1 4 9) (with std/math)
+echo '(type-of 42)' | ./build/aura           # → Int
 ```
 
 ```bash
@@ -59,10 +62,18 @@ docs/           文档入口
 ├── benchmark.md     基准数据
 ├── roadmap.md       发展方向
 ├── known_issues.md  当前局限
+├── inspect.md       P2996 编译期反射自省
 └── design/          深度设计文档
-    ├── ant_colony_controller.md
-    ├── ant_architecture.md
-    ├── adaptive_intend_pid.md
-    ├── aura_language_spec.md
+    ├── ant_colony_controller.md     蚁群控制器
+    ├── ant_architecture.md          解耦架构
+    ├── adaptive_intend_pid.md       PID 控制理论
+    ├── aura_language_spec.md        语法规格
+    ├── aura_typesystem.md          类型系统设计
+    ├── ffi_c.md                     C FFI
+    ├── hygienic_macros.md           卫生宏
+    ├── ir_pipeline_design.md        IR 管线
+    ├── llvm_jit.md                  LLVM JIT
+    ├── query_edsl_design.md         EDSL 查询
+    ├── typed_mutation_design.md     类型化变异
     └── ...
 ```

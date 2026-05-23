@@ -50,7 +50,7 @@ echo '(+ 1 2)' | ./aura --inspect all
 
 ## 闭包模式 (`--inspect closures`)
 
-输出闭包包总数和各闭包的简要信息（函数 ID、名称、env 大小）。
+输出闭包总数和各闭包的简要信息（函数 ID、名称、env 大小）。
 
 ## 缓存模式 (`--inspect cache`)
 
@@ -61,10 +61,23 @@ echo '(+ 1 2)' | ./aura --inspect all
 1. `reflect.hh` 的 `to_json<T>()` 使用 `template for` (P1306) + P2996 反射递归序列化任何类型
 2. `ir_reflect_serialize.cpp` 提供 C-linkage `aura_inspect_ir_json()`，在镜像 IR struct 上调用 `to_json`
 3. `main.cpp` 处理后 eval → 调用 inspect → 输出 JSON
+4. `type_validate.hh` — P2996 类型验证，编译期检查 struct 成员约束
 
-## 未来扩展
+## 状态
 
-- [ ] `--inspect typecheck` 类型推断状态 dump
-- [ ] `--inspect evaluator` 树遍历器环境 dump
-- [ ] `--inspect pretty` 格式化 JSON 输出
-- [ ] 与 `--cache-open` 组合: 从缓存恢复 IRModule 然后 inspect
+| 模式 | 状态 | 说明 |
+|------|------|------|
+| `ir` | ✅ | IRModule JSON |
+| `closures` | ✅ | 闭包快照 |
+| `cache` | ✅ | 缓存函数摘要 |
+| `all` | ✅ | 所有模式 |
+| `typecheck` | 🟡 | 类型推断状态 dump (计划) |
+| `evaluator` | 🟡 | 树遍历器环境 dump (计划) |
+| `pretty` | 🟡 | 格式化 JSON 输出 (计划) |
+
+## 依赖
+
+- GCC 16+ 的 `std::meta` (P2996) 支持
+- `src/reflect/*.hh` — 反射工具库
+- `src/compiler/ir_reflect_serialize.cpp` — IR 序列化
+- `src/compiler/cache_reflect.cpp` — 缓存反射

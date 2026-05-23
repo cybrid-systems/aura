@@ -9,7 +9,6 @@ from pathlib import Path
 KEYS_DIR = Path.home() / "code" / "keys"
 BENCH = Path.home() / "code" / "aura" / "tests" / "edsl_benchmark.py"
 RESULTS_DIR = Path.home() / "code" / "aura" / "tests" / "bench_results"
-RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 MODELS = [
     {"name": "DeepSeek", "model": "deepseek-v4-flash", "key_file": KEYS_DIR / "deepseek", "base_url": "https://api.deepseek.com"},
@@ -24,6 +23,7 @@ for a in sys.argv[1:]:
     EXTRA_ARGS.append(a)
 
 def run_model(cfg):
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     name = cfg["name"]
     model = cfg["model"]
     key = cfg["key_file"].read_text().strip()

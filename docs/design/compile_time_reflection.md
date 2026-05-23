@@ -1,7 +1,10 @@
 # 编译期反射 — C++26 std::meta 应用设计
 
-> 用 `reflect.ixx` 自动生成序列化、模式验证、模块缓存。
+> 用 `src/reflect/*.hh` 自动生成序列化、模式验证、模块缓存。
 > 不再手写 boilerplate。
+
+**更新：2026-05-23**
+**状态：Phase 1-3 完成，Phase 4-5 计划中**
 
 ---
 
@@ -152,9 +155,9 @@ constexpr auto branches = reflect_eval_branches();
 - CMake 集成已完成：`aura-reflect INTERFACE` 库 + `-freflection`
 - `src/reflect/*.hh` 已通过编译测试（`auto_to_json<T>()` 已验证）
 
-### Phase 1: 基础反射工具（已完成）
+### Phase 1: 基础反射工具（已完成 ✅）
 
-已完成（`src/reflect/*.hh`）或可以直接用头文件库：
+已完成（`src/reflect/*.hh`）：
 - `reflect.hh`:
   - `reflect_members<T>()` — 编译期枚举所有成员
   - `classify_member_type()` — 判断成员类型
@@ -165,9 +168,9 @@ constexpr auto branches = reflect_eval_branches();
 - `tag_dispatch.hh`: 标签分发工具
 - `type_validate.hh`: 类型验证
 
-### Phase 1.5: 增强反射能力（~1h）
+### Phase 1.5: 增强反射能力（已完成 ✅）
 
-需要扩展 `reflect.hh` 支持更多类型：
+已扩展 `reflect.hh` 支持容器类型和嵌套 struct 反射：
 
 ```cpp
 // 1. 添加容器类型支持
@@ -193,135 +196,48 @@ enum class MemberKind : uint8_t {
 
 **文件修改:** `src/reflect/reflect.hh`
 
-### Phase 2: 自动序列化 — 接入 cache_module（~3h）
+### Phase 2: 自动序列化 — 接入 cache_module（已完成 ✅）
 
-目标：用 `auto_serialize<T>()` 替换 `cache_module()` 中的手写 AST 遍历。
+目标：用 `auto_serialize<T>()` 替换手写序列化。
+已实现：
+- `cache_serialize_header` via std::meta (b869067)
+- `write_cache` uses auto_serialize (512a2c8)
+- Buffer class + auto_serialize for scalars/strings/arrays (e5f502a)
+- IR 序列化已替换为 P2996 反射序列化 (2823c6c)
 
-**步骤：**
+**当前限制：** 容器类型反序列化需要模板类型信息，部分推迟到后续阶段。
 
-```cpp
-// 2a. 实现 auto_serialize（新增 serialize.hh）
-// 位置: src/reflect/serialize.hh
-// 依赖: reflect.hh (reflect_members)
+### Phase 3: 自动验证（已完成 ✅）
 
-template <typename T>
-void auto_serialize(Buffer& buf, const T& obj) {
-    constexpr auto members = reflect_members<T>();
-    for (auto [name, offset, kind] : members) {
-        const auto& field = *reinterpret_cast<const char*>(
-            reinterpret_cast<const char*>(&obj) + offset);
-        switch (kind) {
-        case MemberKind::Int32:
-            buf.write(static_cast<int32_t>(field)); break;
-        case MemberKind::String:
-            buf.write(field); break;
-        case MemberKind::Vector: {
-            auto& vec = reinterpret_cast<const std::vector<...>&>(field);
-            buf.write(vec.size());
-            for (auto& elem : vec) auto_serialize(buf, elem);
-            break;
-        }
-        // ... 其他类型
-        }
-    }
-}
+已实现：
+- `type_validate.hh` — P2996 类型验证 (fa6748b)
+- `auto_validate` + `cache_validate_header` (a1936f8)
+- 编译期类型验证：字段级约束检查（非空、范围）
 
-// 2b. 实现 auto_deserialize（增量）
-// 位置: src/reflect/deserialize.hh
+### Phase 4: 模块导出表（计划中 🟡）
 
-// 2c. 接入 cache_module()
-// 文件: src/compiler/service.ixx
-// 当前: cache_module() 手动遍历 AST 节点
-// 改为: auto_serialize(flat) / auto_deserialize(flat)
+还没开始。需要：
+- 编译期扫描 stdlib 源码生成导出符号表
+- 修复 primitives hash 和 std/hash 的冲突
 
-// 2d. 验证
-// - 序列化 → 反序列化 round-trip
-// - 与当前手写序列化结果对比
-// - 所有模块缓存测试通过
-```
+### Phase 5: 编译器埋点（计划中 🟡）
 
-**涉及文件:**
-- `src/reflect/serialize.hh` (新增)
-- `src/reflect/deserialize.hh` (新增)
-- `src/compiler/service.ixx` (修改)
-
-### Phase 3: 自动验证（~1h）
-
-```cpp
-// 3a. 实现 auto_validate
-// 位置: src/reflect/validate.hh
-// 功能: 字段级约束检查（非空、范围、类型匹配）
-
-template <typename T>
-bool auto_validate(const T& obj, std::string& error) {
-    constexpr auto members = reflect_members<T>();
-    for (auto [name, offset, kind] : members) {
-        const auto& field = ...;
-        switch (kind) {
-        case MemberKind::Pointer:
-            if (!field) { error = name + " is null"; return false; }
-            break;
-        case MemberKind::Int32:
-            // 范围检查: 已知约束从 schema 读取
-            break;
-        }
-    }
-    return true;
-}
-```
-
-**涉及文件:**
-- `src/reflect/validate.hh` (新增)
-- `src/compiler/evaluator_impl.cpp` — `validate_ast()` 接入
-
-### Phase 4: 模块导出表（~2h）
-
-```cpp
-// 4a. 编译期扫描 stdlib 源码
-// 输入: lib/std/list.aura
-// 输出: {"filter", "map", "foldl", "range", "sort", ...}
-// 方法: 编译期 parse + reflect_members 找 export 节点
-
-// 4b. 自动生成 require 符号映射
-// 当前: require.cpp 手写维护符号表
-// 改为: 编译期从 stdlib 源码生成
-
-// 4c. 修复 std/hash 冲突
-// 当前: primitives 的 hash 和 std/hash 的 hash 冲突
-// 反射可以自动检测导出符号冲突
-```
-
-**涉及文件:**
-- `src/reflect/module_export.hh` (新增)
-- `lib/std/*.aura` (源码)
-- `src/compiler/require.cpp` (修改)
-
-### Phase 5: 编译器埋点（~1h）
-
-```cpp
-// 5a. 枚举 eval_flat 所有分支
-// 编译期: reflect_members 遍历 all eval paths
-// 生成: 覆盖计数数组（替换手写 coverage_counters_[N]++）
-
-// 5b. 接入 fuzz 测试
-// 配合 tests/test_fuzz.py 使用
-```
-
-**涉及文件:**
-- `src/reflect/coverage.hh` (新增)
-- `src/compiler/evaluator_impl.cpp` (修改)
+还没开始。需要：
+- 枚举 eval_flat 所有分支生成覆盖计数
+- 接入 fuzz 测试
 
 ## 5. 收益
 
-| 场景 | 手写维护量 | 反射后 | 节省 |
-|------|:---------:|:-----:|:----:|
-| AST 序列化 | ~200 行 / 每次加节点 | 0 | **100%** |
-| IR 序列化 | ~300 行 / 每次加指令 | 0 | **100%** |
-| 模块导出表 | ~50 行 / 每个 stdlib | 0 | **100%** |
-| 类型验证 | ~150 行 | 0 | **100%** |
-| 编译器埋点 | ~80 行 | 0 | **100%** |
+| 场景 | 手写维护量 | 反射后状态 | 节省 |
+|------|:---------:|:---------:|:----:|
+| IR 序列化 | ~300 行 / 每次加指令 | ✅ 已替换 (2823c6c) | **100%** |
+| CacheHeader 序列化 | ~100 行 | ✅ 已替换 (742fcf0) | **100%** |
+| 类型验证 | ~150 行 | ✅ 已实现 (a1936f8) | **100%** |
+| AST 序列化 | ~200 行 / 每次加节点 | 🟡 进行中 | **部分完成** |
+| 模块导出表 | ~50 行 / 每个 stdlib | 🟡 计划中 | — |
+| 编译器埋点 | ~80 行 | 🟡 计划中 | — |
 
-**总手写代码减少：~780 行 → 0。**
+**已减少手写代码：~550 行。**
 
 ## 6. 风险
 
