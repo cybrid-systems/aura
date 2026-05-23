@@ -6,10 +6,13 @@
 
 ## P1 — 功能缺口
 
-### 1. `let` 泛化未使用
+### 1. `let` 泛化（synthesize 路径已启用，check 路径未启用）
 
-Union-Find 约束求解器 + worklist fixpoint 已实现，但 `let` 绑定不做泛化。
-`TypeScheme::is_poly` 字段存在但始终为 false。
+`synthesize_flat_let` 已正确创建 `forall` 泛化类型，Call handler 的 `instantiate_all_direct`
+正确处理调用时的实例化。**`let` 多态在 synthesize 路径正常工作**（`type-let-poly` 测试通过）。
+
+但 `check_flat` 的 Let 处理器未做泛化，`check` 路径下 `let` 绑定不做多态。
+`TypeEnv::Binding::is_poly` 字段存在但未被使用。
 
 ### 2. match 穷尽性检查
 

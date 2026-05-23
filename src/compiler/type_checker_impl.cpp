@@ -773,10 +773,10 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
             result = synthesize_flat_lambda(flat, pool, v);
             break;
         case Tag::Let:
-            result = synthesize_flat_let(flat, pool, v, false);
+            result = synthesize_flat_let(flat, pool, id, v, false);
             break;
         case Tag::LetRec:
-            result = synthesize_flat_let(flat, pool, v, true);
+            result = synthesize_flat_let(flat, pool, id, v, true);
             break;
         case Tag::Begin:
             result = synthesize_flat_begin(flat, pool, v);
@@ -974,6 +974,9 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
 
                 if (ctor_name.empty())
                     continue;
+
+                // Record constructor for match exhaustiveness checking
+                adt_registry_[type_name].constructors.push_back(ctor_name);
 
                 // Build constructor type: (field-type-1 ... -> variant-type)
                 // Constructor return type: (Pair String (Pair field-type ()))
@@ -1320,8 +1323,9 @@ static bool is_syntactic_value(NodeId id, const FlatAST& flat) {
     }
 }
 
-TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool, NodeView v,
-                                            bool is_rec) {
+TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool,
+                                            aura::ast::NodeId node_id,
+                                            NodeView v, bool is_rec) {
     // children: 0=value, 1=body, name from v.sym_id
     // If is_rec, the binding is visible in the value expression too
     auto name = pool.resolve(v.sym_id);
@@ -1375,6 +1379,23 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool, Nod
     } else {
         // Non-syntactic value: bind monomorphically (no generalization)
         env_.bind(var_name, val_norm);
+    }
+
+    // ── Match exhaustiveness check ──
+    // If this let came from (match ...), emit a note about constructors used.
+    // Full exhaustiveness checking requires persistent ADT registry across
+    // InferenceEngine instances (define-type and match may be separate expressions).
+    if (auto* minfo = flat.get_match_info(node_id)) {
+        if (!minfo->has_wildcard && !minfo->used_constructors.empty()) {
+            std::string ctor_list;
+            for (auto sid : minfo->used_constructors) {
+                if (!ctor_list.empty()) ctor_list += ", ";
+                ctor_list += pool.resolve(sid);
+            }
+            diag_.report(Diagnostic(ErrorKind::Note,
+                                    "match checks constructors: " + ctor_list,
+                                    cur_loc_));
+        }
     }
 
     TypeId body_type = reg_.void_type();

@@ -299,6 +299,14 @@ export struct Patch {
     std::uint64_t new_value = 0;
 };
 
+// ── Match clause metadata (for exhaustiveness checking) ──
+// Maps let-node-id → list of constructor SymIds used in match clauses.
+// If a wildcard pattern (_) is used, stores a single INVALID_SYM entry.
+export struct MatchClauseInfo {
+    std::vector<SymId> used_constructors;
+    bool has_wildcard = false;
+};
+
 // ── FlatAST — SoA flat index-based AST ─────────────────────────
 export class FlatAST {
 private:
@@ -344,7 +352,9 @@ private:
     std::vector<std::uint32_t> node_first_mutation_;
     std::uint64_t next_mutation_id_ = 1;
 
-public:
+    public:
+
+    std::vector<MatchClauseInfo> match_info_;
     explicit FlatAST(std::pmr::polymorphic_allocator<std::byte> alloc = {})
         : tag_(alloc)
         , int_val_(alloc)
@@ -722,6 +732,23 @@ public:
         }
     }
     bool is_dirty(NodeId id) const { return id < dirty_.size() && dirty_[id]; }
+
+    // ── Match clause metadata ────────────────────────────────
+    void set_match_info(NodeId id, MatchClauseInfo info) {
+        if (id >= match_info_.size())
+            match_info_.resize(id + 1);
+        match_info_[id] = std::move(info);
+    }
+    bool has_match_info(NodeId id) const {
+        return id < match_info_.size() &&
+               (!match_info_[id].used_constructors.empty() || match_info_[id].has_wildcard);
+    }
+    const MatchClauseInfo* get_match_info(NodeId id) const {
+        if (id < match_info_.size() &&
+            (!match_info_[id].used_constructors.empty() || match_info_[id].has_wildcard))
+            return &match_info_[id];
+        return nullptr;
+    }
     // Propagate dirty upward: mark this node AND all ancestors dirty
     void mark_dirty_upward(NodeId id) {
         mark_dirty(id);

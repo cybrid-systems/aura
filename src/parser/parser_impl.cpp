@@ -987,6 +987,7 @@ NodeId FlatParser::parse_match() {
 
     // Parse clauses: (pattern body ...)
     struct Clause {
+        NodeId pattern;
         NodeId test;
         NodeId body;
     };
@@ -1019,7 +1020,7 @@ NodeId FlatParser::parse_match() {
         for (auto& [name, val] : bindings)
             body = flat_.add_let(name, val, body);
 
-        clauses.push_back({test, body});
+        clauses.push_back({pattern, test, body});
     }
 
     if (lexer_->peek().kind == TokenKind::RParen)
@@ -1027,6 +1028,24 @@ NodeId FlatParser::parse_match() {
 
     if (clauses.empty())
         return NULL_NODE;
+
+    // ── Collect match clause metadata for exhaustiveness checking ──
+    aura::ast::MatchClauseInfo minfo;
+    for (auto& c : clauses) {
+        auto pv = flat_.get(c.pattern);
+        if (pv.tag == NodeTag::Variable) {
+            auto pname = pool_.resolve(pv.sym_id);
+            if (pname == "_" || (pname.size() > 1 && pname[0] == '_')) {
+                minfo.has_wildcard = true;
+            }
+        } else if (pv.tag == NodeTag::Pair && !pv.children.empty()) {
+            // Constructor pattern: (Ctor args...) -> car is constructor name
+            auto car_id = pv.child(0);
+            auto car_v = flat_.get(car_id);
+            if (car_v.tag == NodeTag::Variable)
+                minfo.used_constructors.push_back(car_v.sym_id);
+        }
+    }
 
     // Build nested if chain from right to left
     NodeId result = clauses.back().body;
@@ -1036,6 +1055,11 @@ NodeId FlatParser::parse_match() {
     // Wrap in (let ((__match_tmp subject)) result)
     result = flat_.add_let(tmp, subject, result);
     flat_.set_loc(result, tok.line, tok.column);
+
+    // Store match metadata on the let node
+    if (!minfo.used_constructors.empty() || minfo.has_wildcard)
+        flat_.set_match_info(result, std::move(minfo));
+
     return result;
 }
 
