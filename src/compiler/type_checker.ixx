@@ -127,6 +127,13 @@ export class InferenceEngine {
     TypeEnv env_;
     OwnershipEnv ownership_env_;
     aura::diag::SourceLocation cur_loc_; // location of expression being checked
+
+    // ── ADT constructor registry (for match exhaustiveness) ──
+    // Maps type name → list of constructor names
+    struct ADTInfo {
+        std::vector<std::string> constructors;
+    };
+    std::unordered_map<std::string, ADTInfo> adt_registry_;
 public:
     InferenceEngine(aura::core::TypeRegistry& reg, aura::diag::DiagnosticCollector& diag);
 
@@ -151,7 +158,8 @@ private:
     aura::core::TypeId synthesize_flat_if(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                           aura::ast::NodeView v);
     aura::core::TypeId synthesize_flat_let(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
-                                           aura::ast::NodeView v, bool is_rec);
+                                           aura::ast::NodeId node_id, aura::ast::NodeView v,
+                                           bool is_rec);
     aura::core::TypeId synthesize_flat_begin(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                              aura::ast::NodeView v);
     aura::core::TypeId synthesize_flat_annotation(aura::ast::FlatAST& flat,
