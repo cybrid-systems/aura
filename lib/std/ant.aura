@@ -151,24 +151,64 @@
               (reverse (cons (substring str i n) result))
               (lp (+ comma 1) (cons (substring str i comma) result)))))))))
 
-; Main search: display-ref for each named function
+; ── Helper: find all literal ints adjacent to a function body ──
+(define find-literal-ints
+  (lambda (fn-name)
+    (query:node-type "LiteralInt")))
+
+; ── Helper: try a mutation, return (success? output) ──
+(define try-mutation
+  (lambda (src expected-str)
+    (let ((result (eval-current-output)))
+      (if (and (string? result) (output-contains-any? result expected-str))
+          (list #t result)
+          (list #f result)))))
+
+; Main search: display-ref + lit-tweak for each named function
 (define (colony:search expected-str max-variants)
   (let* ((src (current-source))
          (fns (fn-name-list src))
          (ref (find-first-ref expected-str)))
     (if (null? fns)
         (list #f "" "colony:no-fns")
-      (let search-fns ((fns-left fns) (tried 0) (best-out ""))
-        (if (or (null? fns-left) (>= tried max-variants))
+      (let search-all ((strategies (list "display-ref" "lit-tweak"))
+                       (tried 0) (best-out ""))
+        (if (or (null? strategies) (>= tried max-variants))
             (list #f best-out (string-append "colony:" (number->string tried) "var"))
-          (let ((fn-name (car fns-left))
-                (rest (cdr fns-left)))
-            (if ref
-              (let* ((new-body (string-append "(lambda (x) (display " (number->string ref) "))")))
-                (set-code src)
-                (mutate:rebind fn-name new-body)
-                (let ((result (eval-current-output)))
-                  (if (and (string? result) (output-contains-any? result expected-str))
-                      (list #t result (string-append "colony:ref-" (number->string ref)))
-                    (search-fns rest (+ tried 1) (if (string? result) result best-out)))))
-              (search-fns rest (+ tried 1) best-out)))))))))
+          (let ((strategy (car strategies))
+                (rest-strat (cdr strategies)))
+            (cond
+              ;; Strategy 1: display-ref — replace body with (display <ref>)
+              ((string=? strategy "display-ref")
+               (if ref
+                 (let search-fns ((fns-left fns) (inner-tried 0))
+                   (if (or (null? fns-left) (>= inner-tried max-variants))
+                       (search-all rest-strat (+ tried inner-tried) best-out)
+                     (let ((fn-name (car fns-left))
+                           (rest-fns (cdr fns-left))
+                           (new-body (string-append "(lambda (x) (display " (number->string ref) "))")))
+                       (set-code src)
+                       (mutate:rebind fn-name new-body)
+                       (let ((res (try-mutation src expected-str)))
+                         (if (car res)
+                             (list #t (car (cdr res)) (string-append "colony:ref-" (number->string ref)))
+                           (search-fns rest-fns (+ inner-tried 1)))))))
+                 (search-all rest-strat tried best-out)))
+
+              ;; Strategy 2: lit-tweak — find numeric literals, try +1/-1
+              ((string=? strategy "lit-tweak")
+               (let ((literals (find-literal-ints "")))
+                 (if (null? literals)
+                     (search-all rest-strat tried best-out)
+                   (let tweak-lits ((lit-ids literals) (inner-tried 0))
+                     (if (or (null? lit-ids) (>= inner-tried max-variants))
+                         (search-all rest-strat (+ tried inner-tried) best-out)
+                       (let ((lit-id (car lit-ids))
+                             (rest-lits (cdr lit-ids))
+                             (changes (list (number->string (+ ref 1)) (number->string (- ref 1))
+                                            (number->string (* ref 2)) (number->string (quotient ref 2)))))
+                         ;; For now, stubbed — needs numeric literal value extraction
+                         ;; mutate:replace-value works on LiteralInt nodes
+                         (tweak-lits rest-lits (+ inner-tried 1))))))))
+
+              (#t (search-all rest-strat tried best-out))))))))))
