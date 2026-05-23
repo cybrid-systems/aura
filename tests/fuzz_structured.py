@@ -102,7 +102,7 @@ def gen_stdlib_edge():
     yield "(car '())"
     yield "(cdr '())"
     yield "(car 42)"
-    yield "(cdr \"hello\")"
+    yield '(cdr \"hello\")'
     # List operations on non-lists
     yield "(require std/list all:)(display (map (lambda (x) x) 42))"
 
@@ -263,7 +263,7 @@ def gen_edsl():
 def gen_hash_edge():
     """Hash table edge cases: missing keys, nested, large."""
     yield "(require std/hash all:)(define h (hash))(display (hash-ref h 42))"
-    yield "(require std/hash all:)(define h (hash 1 \"a\" 2 \"b\"))(display (hash-keys h))"
+    yield '(require std/hash all:)(define h (hash 1 \"a\" 2 \"b\"))(display (hash-keys h))'
     yield "(require std/hash all:)(define h (hash))(hash-set! h 1 'a)(hash-set! h 1 'b)(display (hash-ref h 1))"
     # Hash of hash
     yield ("(require std/hash all:)(define inner (hash 'k 1))"
@@ -303,7 +303,7 @@ def gen_coercion():
     yield '(display (= 42 "hello"))'
     yield "(display (= 1.5 1))"
     # Blame: wrong type at boundary
-    yield "(display ((: (lambda (x) (+ x 1)) (-> Int Int)) \"hello\"))"
+    yield '(display ((: (lambda (x) (+ x 1)) (-> Int Int)) \"hello\"))'
     yield "(display ((: (lambda (x) (string-length x)) (-> String Int)) 42))"
 
 
@@ -430,9 +430,129 @@ def gen_arena_stress():
             if op == "define":
                 lines.append(f"(define (f{i} x) (+ x {rng.randint(0, 100)}))")
             lines.append(f"(display {rng.randint(0, 1000)})")
-        yield "(begin " + " ".join(lines) + ")"
+    yield '(begin " + " ".join(lines) + ")'
 
 
+
+# ═══════════════════════════════════════════════════════════
+# 17. C FFI — c-func edge cases
+# ═══════════════════════════════════════════════════════════
+@register
+def gen_ffi_edge():
+    """FFI edge cases: wrong sig, missing lib, invalid types."""
+    yield '(display (c-func -1 \"sqrt\" \'(Float) -> Float\' 9.0))'
+    yield '(display (c-func -1 "strlen" "(String) -> Int" "hello"))'
+    yield '(c-func -1 \"nonesuch\" \'(Int) -> Int\' 1)"  # symbol not foun'
+    yield '(c-func 999 "sqrt" "(Float) -> Float" 9.0)'  # bad lib handle
+    yield '(display (c-func -1 \"abs\" \'(Int) -> Int\' -5))'
+    yield '(display (c-func -1 \"fabs\" \'(Float) -> Float\' -3.5))'
+    yield '(display (c-func -1 \"toupper\" \'(Int) -> Int\' 97))'
+    yield '(display (c-func -1 \"isdigit\" \'(Int) -> Int\' 48))'
+
+
+# ═══════════════════════════════════════════════════════════
+# 18. Serve Protocol — exec/mutate/redefine session management
+# ═══════════════════════════════════════════════════════════
+@register
+def gen_serve_edge():
+    """Serve protocol: exec with timeout, redefine, multi-line."""
+    n = 20 if not QUICK else 5
+    for _ in range(n):
+        yield ('{"cmd":"session","name":"new:' + str(rng.randint(0,100)) + '"}')
+        yield ('{"cmd":"exec","code":"(display ' + str(rng.randint(0,1000)) + ')"}')
+        yield ('{"cmd":"exec","code":"(define (f x) (+ x ' + str(rng.randint(0,100)) + ')) (display (f 5))"}')
+        yield ('{"cmd":"mutate","op":"record-patch","node":"0","op-name":"test","summary":"fuzz"}')
+        yield ('{"cmd":"rollback","id":"1"}')
+        yield ('{"cmd":"mutation-log","node":"0"}')
+        yield ('{"cmd":"session","name":"session-' + str(rng.randint(0,10)) + '"}')
+
+
+# ═══════════════════════════════════════════════════════════
+# 19. Error Handling — try-catch, raise, error values
+# ═══════════════════════════════════════════════════════════
+@register
+def gen_error_handling():
+    """Try-catch edge cases: nested catch, raise void, catch all."""
+    yield '(display (try (+ 1 2) (catch (e) 0)))'
+    yield '(display (try (error "test") (catch (e) 42)))'
+    yield '(display (try (display (+ 1 "hello")) (catch (e) "caught")))'
+    yield '(display (try (error 42) (catch (e) e)))'
+    yield '(display (try (try (error "inner") (catch (e) (error "outer"))) (catch (e) "caught")))'
+
+def gen_string_edge():
+    """String operations: edge cases with empty, special chars."""
+    yield '(display (string-append "a" "b" "c"))'
+    yield '(display (string-append "" ""))'
+    yield '(display (string-length ""))'
+    yield '(display (string-length "hello"))'
+    yield '(display (string-ref "abc" 0))'
+    yield '(display (string-ref "abc" 2))'
+    yield '(display (substring "hello" 1 4))'
+    yield '(display (string<? "a" "b"))'
+    yield '(display (string=? "abc" "abc"))'
+    yield '(display (number->string 42))'
+    yield '(display (string->number "42"))'
+    yield '(display (string->number "not-a-number"))'
+
+
+# ═══════════════════════════════════════════════════════════
+# 21. Number Edge Cases — overflow, division, sign
+# ═══════════════════════════════════════════════════════════
+@register
+def gen_number_edge():
+    """Number edge cases: division by zero, overflow, mixed sign."""
+    yield "(display (/ 1 0))"
+    yield "(display (/ 0 1))"
+    yield "(display (quotient 10 3))"
+    yield "(display (remainder 10 3))"
+    yield "(display (quotient -10 3))"
+    yield "(display (remainder -10 3))"
+    yield "(display (* 2 3 4 5))"
+    yield "(display (+ 1 2 3 4 5))"
+    yield "(display (- 10))"
+    yield "(display (- 10 20))"
+    yield "(display (< 1 2 3))"
+    yield "(display (< 3 2 1))"
+    yield "(display (= 42 42))"
+    yield "(display (= 42 43))"
+
+
+# ═══════════════════════════════════════════════════════════
+# 22. GC / Memory
+# ═══════════════════════════════════════════════════════════
+@register
+def gen_gc_memory():
+    """GC and memory introspection."""
+    yield "(display (gc))"
+    yield "(display (memory-stats))"
+    yield "(begin (gc) (display 1))"
+    yield "(begin (gc) (gc) (display 1))"
+    yield "(begin (define x (range 0 1000)) (gc) (display (length x)))"
+
+
+# ═══════════════════════════════════════════════════════════
+# 23. Quote / Quasiquote edge cases
+# ═══════════════════════════════════════════════════════════
+@register
+def gen_quote_edge():
+    """Quote edge cases: nested quasiquote, unquote-splicing."""
+    yield "'(1 2 3)"
+    yield "`(1 2 3)"
+    yield "`(1 ,(+ 1 2) 3)"
+    yield "`(1 ,@'(2 3) 4)"
+    yield "`(a `(b ,c) d)"
+    yield "`(a ,(list 1 2 3) b)"
+    yield "`(a ,@(list 1 2 3) b)"
+
+
+# ═══════════════════════════════════════════════════════════
+# 24. Thread / Concurrency (basic)
+# ═══════════════════════════════════════════════════════════
+@register
+def gen_thread_edge():
+    """Basic concurrency primitives if available."""
+    yield "(display (thread? (current-thread)))"
+    yield "(display (thread (lambda () 42)))"
 # ═══════════════════════════════════════════════════════════
 # Runner
 # ═══════════════════════════════════════════════════════════
@@ -452,6 +572,15 @@ DIMENSIONS = [
     ("higher-order", gen_higher_order, "HO: map/filter/compose edge cases"),
     ("macro-edge", gen_macro_edge, "Macro: defmacro edge cases"),
     ("cond-edge", gen_cond_edge, "Cond: conditional edge cases"),
+
+    ("ffi-edge", gen_ffi_edge, "FFI: c-func edge cases, wrong signatures"),
+    ("serve-edge", gen_serve_edge, "Serve: exec/redefine/mutate edge cases"),
+    ("error-handling", gen_error_handling, "Error: try-catch, raise, error types"),
+    ("string-edge", gen_string_edge, "String: indexing, compare, append edge cases"),
+    ("number-edge", gen_number_edge, "Number: division by zero, overflow, sign"),
+    ("gc-memory", gen_gc_memory, "Memory: (gc), (memory-stats), large allocations"),
+    ("quote-edge", gen_quote_edge, "Quote: complex quasiquote, unquote-splicing"),
+    ("thread-edge", gen_thread_edge, "Thread: basic threading if available"),
     ("binding-edge", gen_binding_edge, "Binding: let/letrec/named-let edge cases"),
 ]
 
