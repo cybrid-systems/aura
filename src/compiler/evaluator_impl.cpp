@@ -4221,7 +4221,8 @@ Evaluator::Evaluator() {
         // lib-id -1 uses RTLD_DEFAULT (no c-load needed) — architecture independent.
         // Or legacy: (c-func lib-id "name" ret-int arg-int...)
         if (a.size() < 3 || !types::is_int(a[0]) || !types::is_string(a[1])) {
-            fprintf(stderr, "c-func: expected (c-func lib-id \"name\" signature\n");
+            fprintf(stdout, "c-func: expected (c-func lib-id \"name\" signature\n");
+            fprintf(stdout, "  signature format: \"(ArgType) -> RetType\"  e.g. \"(String) -> Int\"\n");
             return make_int(0);
         }
         auto raw_lib_id = types::as_int(a[0]);
@@ -4229,7 +4230,7 @@ Evaluator::Evaluator() {
         if (raw_lib_id >= 0) {
             auto lib_idx = static_cast<std::size_t>(raw_lib_id);
             if (lib_idx >= g_ffi_libs.size()) {
-                fprintf(stderr, "c-func: invalid library handle %zu\n", lib_idx);
+                fprintf(stdout, "c-func: invalid library handle %zu (use -1 for RTLD_DEFAULT)\n", lib_idx);
                 return make_int(0);
             }
             lib = g_ffi_libs[lib_idx];
@@ -4240,8 +4241,8 @@ Evaluator::Evaluator() {
         if (types::is_string(a[2])) {
             auto sig = string_heap_[types::as_string_idx(a[2])];
             if (!parse_ffi_sig(sig, ret_type, arg_types)) {
-                fprintf(stderr, "c-func: invalid signature '%s' -- expected '(Type) -> Type'\n",
-                        sig.c_str());
+                fprintf(stdout, "c-func: invalid signature '%s'\n", sig.c_str());
+                fprintf(stdout, "  expected: \"(ArgType) -> RetType\" e.g. \"(String) -> Int\"\n");
                 return make_int(0);
             }
         } else if (types::is_int(a[2])) {
@@ -4250,14 +4251,16 @@ Evaluator::Evaluator() {
                 if (types::is_int(a[i]))
                     arg_types.push_back(static_cast<int>(types::as_int(a[i])));
         } else {
-            fprintf(stderr, "c-func: third arg must be signature string or ret-type int\n");
+            fprintf(stdout, "c-func: third arg must be signature string like \"(String) -> Int\"\n");
             return make_int(0);
         }
         auto* fn_ptr = ::dlsym(lib, name.c_str());
         if (!fn_ptr) {
             auto* err = ::dlerror();
-            fprintf(stderr, "c-func: symbol '%s' not found: %s\n", name.c_str(),
-                    err ? err : "unknown");
+            fprintf(stdout, "c-func: symbol '%s' not found in library\n", name.c_str());
+            if (err)
+                fprintf(stdout, "  dlerror: %s\n", err);
+            fprintf(stdout, "  tip: use (c-func -1 \"%s\" \"(String) -> Int\") with RTLD_DEFAULT\n", name.c_str());
             return make_int(0);
         }
         auto fidx = g_ffi_funcs.size();
@@ -6634,9 +6637,13 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         }
                     }
                     auto callee_name = std::string(p->resolve(callee.sym_id));
-                    return std::unexpected(
-                        Diagnostic{ErrorKind::TypeError, "cannot call: " + callee_name}
-                            .with_suggestion("did you forget to define '" + callee_name + "'?"));
+                    auto diag = Diagnostic{ErrorKind::TypeError, "cannot call: " + callee_name}
+                        .with_suggestion("did you forget to define '" + callee_name + "'?");
+                    // If the name looks like a C FFI function, suggest correct c-func syntax
+                    if (callee_name.size() > 3 && callee_name.substr(callee_name.size() - 3) == "-fn")
+                        diag = std::move(diag).with_suggestion(
+                            "if using c-func: (c-func -1 \"" + callee_name.substr(0, callee_name.size() - 3) + "\" \"(String) -> Int\")");
+                    return std::unexpected(std::move(diag));
                 }
                 case aura::ast::NodeTag::IfExpr: {
                     if (v.children.size() < 3)
