@@ -115,6 +115,23 @@ tests = [
     ("cmdline-empty",
      '(command-line)', "", ""),
 
+    # #32: vector-math
+    ("vec-sum",
+     '(require "std/vector-math" all:)(vec:sum (vec:range 0 5))',
+     "10", ""),
+    ("vec-dot",
+     '(require "std/vector-math" all:)(vec:dot (vector 1 2 3) (vector 4 5 6))',
+     "32", ""),
+    ("vec-scale",
+     '(require "std/vector-math" all:)(vec:sum (vec:scale (vector 1 2 3) 2))',
+     "12", ""),
+    ("vec-argmin",
+     '(require "std/vector-math" all:)(vec:argmin (vector 5 1 9 2))',
+     "1", ""),
+    ("mat-identity",
+     '(require "std/vector-math" all:)(mat:ref (mat:identity 3) 1 1)',
+     "1", ""),
+
 ]
 
 # Cleanup temp files
