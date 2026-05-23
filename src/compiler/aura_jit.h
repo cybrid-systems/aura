@@ -80,6 +80,13 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
+/// Emit an object file from an IR module.
+/// Returns true on success.
+bool emit_object(const std::string& ir_dump, const std::string& out_path);
+
+/// Emit object file from an already-compiled IRModule.
+bool emit_object_module(void* ir_module, const std::string& out_path);
+
 } // namespace aura::jit
 
 #endif

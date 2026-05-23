@@ -18,6 +18,7 @@ import aura.compiler.value;
 // C-linkage bridge to reflection-based --inspect
 // (implemented in ir_reflect_serialize.cpp, compiled with -freflection)
 extern "C" char* aura_inspect_ir_json(const void* mod, std::size_t* out_size);
+extern "C" bool aura_emit_object_file(const void* mod, const char* path);
 
 
 
@@ -1202,6 +1203,108 @@ int main(int argc, char* argv[]) {
         return 0;
 #else
         std::println(std::cerr, "JIT not available — rebuild with LLVM");
+        return 1;
+#endif
+    }
+
+    // ── --freeze: freeze workspace state to a snapshot file ──────
+    // Usage: echo '(define (f x) (+ x 1))(display (f 41))' | ./aura --freeze out.abc
+    // Then: echo '(current-source)' | ./aura --cache-open out.abc
+    if (argc > 2 && std::string_view(argv[1]) == "--freeze") {
+        aura::compiler::CompilerService cs;
+        std::ostringstream buf;
+        buf << std::cin.rdbuf();
+        auto input = buf.str();
+        if (input.empty()) {
+            std::println(std::cerr, "error: no input");
+            return 1;
+        }
+        // Evaluate first (populates workspace env)
+        auto result = cs.eval(input);
+        if (!result) {
+            std::println(std::cerr, "error: {}", result.error().format());
+            return 1;
+        }
+        // Freeze: write source to snapshot file
+        if (auto* sf = std::fopen(argv[2], "w")) {
+            std::fprintf(sf, "%s", input.c_str());
+            std::fclose(sf);
+            std::println("frozen to {}", argv[2]);
+        } else {
+            std::println(std::cerr, "error: cannot write to {}", argv[2]);
+            return 1;
+        }
+        return 0;
+    }
+
+    // ── --load: load and run a frozen snapshot ───────────────────
+    // Usage: ./aura --load frozen.aura
+    if (argc > 2 && std::string_view(argv[1]) == "--load") {
+        std::ifstream f(argv[2]);
+        if (!f) {
+            std::println(std::cerr, "error: cannot open {}", argv[2]);
+            return 1;
+        }
+        std::string content((std::istreambuf_iterator<char>(f)), {});
+        aura::compiler::CompilerService cs;
+        auto result = cs.eval(content);
+        if (!result) {
+            std::println(std::cerr, "error: {}", result.error().format());
+            return 1;
+        }
+        if (!is_void(*result))
+            std::println("{}", fmt_val(*result, cs));
+        return 0;
+    }
+
+    // ── --emit-binary: compile to standalone native binary ───────
+    // Usage: echo '(display (+ 1 2))' | ./aura --emit-binary myapp
+    if (argc > 2 && std::string_view(argv[1]) == "--emit-binary") {
+        aura::compiler::CompilerService cs;
+        std::string input;
+        if (argc > 3) {
+            input = argv[2];
+            argc -= 1; argv += 1; // shift so argv[2] is the output name
+        } else {
+            std::getline(std::cin, input);
+        }
+        if (input.empty()) {
+            std::println(std::cerr, "error: no input");
+            return 1;
+        }
+        // 1. Eval via JIT (compiles IR through LLVM)
+        auto result = cs.eval_ir(input);
+        if (!result) {
+            std::println(std::cerr, "error: {}", result.error().format());
+            return 1;
+        }
+        // 2. Get the compiled IR module
+        auto& mod = cs.last_ir_module();
+        if (!mod) {
+            std::println(std::cerr, "no IR module generated");
+            return 1;
+        }
+        // 3. Emit object file via LLVM
+        auto out_path = std::string(argv[2]);
+#ifdef AURA_HAVE_LLVM
+        bool ok = aura_emit_object_file((const void*)&*mod, out_path.c_str());
+        if (!ok) {
+            std::println(std::cerr, "emit_object failed");
+            return 1;
+        }
+        std::println("emitted to {}", out_path);
+        return 0;
+#else
+        std::println(std::cerr, "LLVM not available — rebuild with LLVM");
+        std::println(std::cerr, "Falling back: writing IR dump to {}.ir", out_path);
+        auto dump_file = out_path + ".ir";
+        if (auto* f = std::fopen(dump_file.c_str(), "w")) {
+            for (auto& fn : mod->functions()) {
+                std::fprintf(f, "func[%zu] %s\n", fn.id, fn.name.c_str());
+            }
+            std::fclose(f);
+            std::println("wrote IR dump to {}", dump_file);
+        }
         return 1;
 #endif
     }
