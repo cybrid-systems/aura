@@ -92,6 +92,16 @@ tests = [
      '((lambda ((: x Int)) (+ x 1)) 41)',
      "42", ""),
 
+    # Occurrence: integer? predicate (newly added)
+    ("occ-integer",
+     '(let ((x 42)) (if (integer? x) (+ x 1) 0))',
+     "43", ""),
+
+    # Occurrence: hash? predicate (newly added)
+    ("occ-hash",
+     '(let ((x (hash))) (if (hash? x) 42 0))',
+     "42", ""),
+
 ]
 
 passed = 0
