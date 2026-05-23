@@ -50,28 +50,48 @@
 
 | # | 任务 | 预估 | 说明 |
 |---|------|:----:|:-----|
-| 16 | **Benchmark 类型系统任务提分** — 15 个类型相关任务平均通过率 ~60%。编译器缺陷已修，但需回测验证 DeepSeek 分数是否提升。也可能需优化 task hint 质量。 | 1d | 回测 + hint 迭代 |
+| 16 | **Colony search 下沉到 Aura** — 当前 `internal_colony_search` 在 Python 侧做字符串替换 + subprocess。
+  管道已就绪：`set-code + mutate:* + eval-current`。
+   需要：翻译搜索循环为纯 Aura EDSL 调用，暴露更多 `mutate` 原语（insert/delete/transform）。
+   收益：50-100× 搜索加速，支持 1000+ variants/轮。 | 1-2d | `lib/std/ant.aura` 设计已有 |
+| 17 | **Pheromone 持久化** — 当前信息素在 Python dict 中，会话结束即丢。
+   暴露 `pheromone:export` / `pheromone:import` 到 Aura 层，磁盘存储。
+   数据结构简单（hash-of-vectors），跨会话记忆。 | 1d | 收益：跨任务学习 |
+| 18 | **Richer query/mutate API** — `query:children`、`query:dependents`、`mutate:insert`、`mutate:delete`。
+   P2996 反射已支持类型安全 AST 模式匹配，需暴露更多原语。 | 1-2d | 依赖项：P0 |
 
 ### P3 — 中远期
 
-| # | 任务 | 说明 |
-|---|------|------|
-| 17 | **蚁群控制器 Aura 级** — 当前蚁群搜索是 Python 级（字符串替换 + subprocess），应 EDSL 化：`set-code + mutate:* + eval-current` 管道，`lib/std/ant.aura` 纯 Aura 搜索循环。每变体成本 20ms → <1ms。 | [设计](design/ant_colony_controller.md) |
-| 18 | **自举** — Aura 编译器用 Aura 写。等类型系统稳定后再启。 | 中型项目 |
-| 19 | **多意图协作与意图树** — Phase 4：多意图协作，意图树。远期。 | — |
+| # | 任务 | 预估 | 说明 |
+|---|------|:----:|------|
+| 19 | **Intent Orchestration Phase E4** — 多意图协作 + intent tree。设计已有，
+    实现并行子 Agent + 结果合并。 | 3-5d | — |
+| 20 | **PID 控制器原生化** — 把 Python 的自适应搜索深度 + 距离反馈搬到 Aura runtime。 | 1-2d | 设计已清晰 |
+| 21 | **Serve 模式升级** — WebSocket/gRPC，降低 Agent 循环延迟。 | 2-3d | 当前 stdin JSON 够用 |
+| 22 | **Python/JS SDK** — 封装 ServeClient + EDSL 生成器。 | 社区 | 生态 |
+| 23 | **自举** — Aura 编译器用 Aura 写。类型系统稳定后。 | 中 | — |
+| 24 | **多意图协作与意图树** — Phase 4 远期。 | — | — |
 
 ---
 
-## Benchmark 基线（85 任务，max-attempts=3，1 轮）
+## Benchmark 基线（85 任务，max-attempts=3，1 轮，2026-05-23 PM）
 
 | 模型 | 通过率 | 耗时 | 短板 |
 |:----|:------:|:----:|:-----|
-| Grok 4.3 | **77/85 (90.6%)** | ~17min | typesystem (8/15)、algorithm (2 个 #<procedure>) |
-| MiniMax M2.7 | **74/85 (87.1%)** | ~29min | API 不稳定、有时生成 Clojure、typesystem |
-| DeepSeek v4 Flash | **72/85 (84.7%)** | ~54min | typesystem (6/15)、FFI、`#<procedure>`、eval_flat 崩溃 |
+| 🥇 Grok 4.3 | **78/85 (91.8%)** | ~13min | algorithm (3), ffi-sqrt, type-annot-fn, type-blame-runtime |
+| 🥇 DeepSeek v4 Flash | **77/85 (90.6%)** | ~46min | adt-option, algorithm (2), ffi (2), type-annot-fn, type-blame-runtime |
+| 🥈 MiniMax M2.7 | **76/85 (89.4%)** | ~23min | adt-option, algorithm (2), ffi (2), json-roundtrip, tcp-connect, type (2) |
 
-**三模型共享失败**：binary-search（#<procedure>）、merge-sort（#<procedure>）、type-annot-chain、type-blame-runtime。
-后两个通过编译器修复已解决，前两个通过 task hint 已补充。
+**本次提升（2026-05-23 compiler 修复后）：** Grok +1, MiniMax +2, DeepSeek +5（弱模型收益最大）。
+类型系统任务从 ~60% 提升至 ~80%。
+
+**三模型共享失败：** `binary-search`、`merge-sort`（`#<procedure>` 问题，task hint 已补充）。
+
+## 当前规划优先级
+
+1. **P0: Colony search 下沉到 Aura** — 收益最大，基础设施已就绪
+2. **P1: Pheromone 持久化** — 低投入，跨会话记忆
+3. **P1: Richer query/mutate API** — 依赖项
 
 ## 已知问题
 

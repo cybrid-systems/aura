@@ -45,7 +45,7 @@ AI 做方向，Aura 做局部搜索。
 ```bash
 LLM_API_KEY="..." python3 tests/edsl_benchmark.py
 ```
-85 个 EDSL 代码生成任务，三模型 84-90% 通过率（Grok 4.3 领先 🥇）。  
+85 个 EDSL 代码生成任务，三模型 89-92% 通过率（Grok 4.3 最高 🥇）。  
 不是 AI 写对了——是系统自己走到了正确的地方。
 
 ---
@@ -75,9 +75,9 @@ Aura 是一个 **AI-native Lisp** 编译器：C++26 实现，LLVM ORC JIT 后端
 
 | 模型 | 通过率 | 耗时 |
 |:----|:------:|:----:|
-| 🥇 **Grok 4.3** | **77/85 (90.6%)** | ~17min |
-| 🥈 **MiniMax M2.7** | **74/85 (87.1%)** | ~29min |
-| 🥉 **DeepSeek v4 Flash** | **72/85 (84.7%)** | ~54min |
+| 🥇 **DeepSeek v4 Flash** | **77/85 (90.6%)** | ~46min |
+| 🥇 **Grok 4.3** | **78/85 (91.8%)** | ~13min |
+| 🥈 **MiniMax M2.7** | **76/85 (89.4%)** | ~23min |
 
 [详情 → docs/benchmark.md](docs/benchmark.md)
 

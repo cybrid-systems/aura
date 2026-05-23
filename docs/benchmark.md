@@ -12,13 +12,15 @@
 
 | 模型 | 任务数 | 通过率 | 总耗时 | 失败任务 |
 |------|:-----:|:-----:|:-----:|:--------|
-| 🥇 **Grok 4.3** | 85 | **77/85 (90.6%)** | ~17min | binary-search, merge-sort, ffi-sqrt, word-freq, type-annot-chain, type-blame-runtime, type-gradual-erasure, type-linear |
-| 🥈 **MiniMax M2.7** | 85 | **74/85 (87.1%)** | ~29min | adt-tree, adt-wildcard, binary-search, merge-sort, two-sum, ffi-strlen, hash-invert, max-subarray, type-annot-chain, type-annot-fn, type-blame-runtime |
-| 🥉 **DeepSeek v4 Flash** | 85 | **72/85 (84.7%)** | ~54min | adt-either, binary-search, merge-sort, ffi-sqrt, ffi-strlen, word-freq, type-annot-chain, type-annot-fn, type-blame-runtime, type-gradual-boundary, type-linear, type-multi-annot, type-occurrence-float |
+| 🥇 **Grok 4.3** | 85 | **78/85 (91.8%)** | ~13min | binary-search, merge-sort, memoize, ffi-sqrt, type-annot-fn, type-blame-runtime, valid-parens |
+| 🥇 **DeepSeek v4 Flash** | 85 | **77/85 (90.6%)** | ~46min | adt-option, binary-search, merge-sort, edsl-set-code, ffi-sqrt, ffi-strlen, type-annot-fn, type-blame-runtime |
+| 🥈 **MiniMax M2.7** | 85 | **76/85 (89.4%)** | ~23min | adt-option, binary-search, merge-sort, ffi-sqrt, ffi-strlen, json-roundtrip, tcp-connect, type-boundary-call, type-gradual-boundary |
 
-**环比提升：** Grok 57→77 (+20)，DeepSeek 54→72 (+18)，MiniMax 53→74 (+21)。
-**共享失败：** `binary-search`、`merge-sort`、`type-annot-chain`、`type-blame-runtime` 三个模型均未通过。
-**新增类型系统任务** 是最大挑战——类型相关任务共 15 个，平均通过率仅 60%。
+**环比提升：** Grok 57→78 (+21)，DeepSeek 54→77 (+23)，MiniMax 53→76 (+23)。
+**本次提升（2026-05-23 PM）：** 编译器修复（parser、blame、eval_flat、TypeAnnotation、match 穷尽性）生效。
+Grok +1, MiniMax +2, DeepSeek +5 —— 对弱模型收益最大。
+**共享失败：** `binary-search`、`merge-sort` 仍三模型均未通过（`#<procedure>` 问题，已加入 task hint）。
+**类型系统任务** 从平均 ~60% 提升至 ~80%。
 
 ### 逐任务对比（85 任务）
 
@@ -60,7 +62,7 @@
 | reverse-list | ✅ | ✅ | ✅ |
 | sieve | ✅ | ✅ | ✅ |
 | tree-dfs | ✅ | ✅ | ✅ |
-| two-sum | ✅ | ❌ | ✅ |
+| two-sum | ✅ | ✅ | ✅ |
 
 #### algorithm
 
@@ -71,10 +73,10 @@
 | merge-sorted | ✅ | ✅ | ✅ |
 | deep-equal | ✅ | ✅ | ✅ |
 | majority-element | ✅ | ✅ | ✅ |
-| max-subarray | ✅ | ❌ | ✅ |
+| max-subarray | ✅ | ✅ | ✅ |
 | palindrome | ✅ | ✅ | ✅ |
 | table-lookup | ✅ | ✅ | ✅ |
-| valid-parens | ✅ | ✅ | ✅ |
+| valid-parens | ❌ | ✅ | ❌ |
 | compose-n | ✅ | ✅ | ✅ |
 
 #### hash
@@ -82,10 +84,10 @@
 | 任务 | DeepSeek | MiniMax | Grok |
 |------|:--------:|:-------:|:----:|
 | hash-basic | ✅ | ✅ | ✅ |
-| hash-invert | ✅ | ❌ | ✅ |
+| hash-invert | ✅ | ✅ | ✅ |
 | hash-stats | ✅ | ✅ | ✅ |
 | unique-hash | ✅ | ✅ | ✅ |
-| word-freq | ❌ | ✅ | ❌ |
+| word-freq | ✅ | ✅ | ✅ |
 
 #### string
 
@@ -101,11 +103,11 @@
 
 | 任务 | DeepSeek | MiniMax | Grok |
 |------|:--------:|:-------:|:----:|
-| adt-either | ❌ | ✅ | ✅ |
+| adt-either | ✅ | ✅ | ✅ |
 | adt-multi-ctor | ✅ | ✅ | ✅ |
-| adt-option | ✅ | ✅ | ✅ |
-| adt-tree | ✅ | ❌ | ✅ |
-| adt-wildcard | ✅ | ❌ | ✅ |
+| adt-option | ❌ | ❌ | ✅ |
+| adt-tree | ✅ | ✅ | ✅ |
+| adt-wildcard | ✅ | ✅ | ✅ |
 
 #### type
 
@@ -114,16 +116,16 @@
 | type-of | ✅ | ✅ | ✅ |
 | type-check | ✅ | ✅ | ✅ |
 | type-occurrence | ✅ | ✅ | ✅ |
-| type-occurrence-float | ❌ | ✅ | ✅ |
+| type-occurrence-float | ✅ | ✅ | ✅ |
 | type-pair-occurrence | ✅ | ✅ | ✅ |
 | type-value-restriction | ✅ | ✅ | ✅ |
-| type-annot-chain | ❌ | ❌ | ❌ |
-| type-annot-fn | ❌ | ❌ | ✅ |
-| type-blame-runtime | ❌ | ❌ | ❌ |
-| type-gradual-boundary | ❌ | ✅ | ✅ |
-| type-gradual-erasure | ✅ | ✅ | ❌ |
-| type-linear | ❌ | ✅ | ❌ |
-| type-multi-annot | ❌ | ✅ | ✅ |
+| type-annot-chain | ✅ | ✅ | ✅ |
+| type-annot-fn | ❌ | ✅ | ❌ |
+| type-blame-runtime | ❌ | ✅ | ❌ |
+| type-gradual-boundary | ✅ | ❌ | ✅ |
+| type-gradual-erasure | ✅ | ✅ | ✅ |
+| type-linear | ✅ | ✅ | ✅ |
+| type-multi-annot | ✅ | ✅ | ✅ |
 | type-ownership-linear | ✅ | ✅ | ✅ |
 | type-coercion-if | ✅ | ✅ | ✅ |
 
@@ -141,14 +143,14 @@
 |------|:--------:|:-------:|:----:|
 | edsl-mutate | ✅ | ✅ | ✅ |
 | edsl-query | ✅ | ✅ | ✅ |
-| edsl-set-code | ✅ | ✅ | ✅ |
+| edsl-set-code | ❌ | ✅ | ✅ |
 
 #### json + ffi
 
 | 任务 | DeepSeek | MiniMax | Grok |
 |------|:--------:|:-------:|:----:|
-| json-roundtrip | ✅ | ✅ | ✅ |
-| ffi-sqrt | ❌ | ✅ | ❌ |
+| json-roundtrip | ✅ | ❌ | ✅ |
+| ffi-sqrt | ❌ | ❌ | ❌ |
 | ffi-strlen | ❌ | ❌ | ✅ |
 
 #### other
@@ -157,12 +159,12 @@
 |------|:--------:|:-------:|:----:|
 | linear-basic | ✅ | ✅ | ✅ |
 | macro-definer | ✅ | ✅ | ✅ |
-| memoize | ✅ | ✅ | ✅ |
+| memoize | ✅ | ✅ | ❌ |
 | occurrence | ✅ | ✅ | ✅ |
-| tcp-connect | ✅ | ✅ | ✅ |
+| tcp-connect | ✅ | ❌ | ✅ |
 | type-annot-expr | ✅ | ✅ | ✅ |
 | type-annot-int | ✅ | ✅ | ✅ |
-| type-boundary-call | ✅ | ✅ | ✅ |
+| type-boundary-call | ✅ | ❌ | ✅ |
 | type-consistency | ✅ | ✅ | ✅ |
 | type-higher-order | ✅ | ✅ | ✅ |
 | type-let-poly | ✅ | ✅ | ✅ |
