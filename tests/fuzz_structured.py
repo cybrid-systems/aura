@@ -549,6 +549,166 @@ def gen_quote_edge():
 # 24. Thread / Concurrency (basic)
 # ═══════════════════════════════════════════════════════════
 @register
+
+# ═══════════════════════════════════════════════════════════
+# 25. Memory Stress — large alloc/free cycles, arena pressure
+# ═══════════════════════════════════════════════════════════
+@register
+def gen_memory_stress():
+    """Repeated large allocations and GC to stress arena allocator."""
+    n = 20 if not QUICK else 5
+    # Big list create/free cycles
+    for _ in range(n):
+        size = 1000 * (_ + 1)
+        yield f"(require std/list all:)(define lst (range 0 {size}))(gc)(display (length lst))"
+        yield f"(require std/list all:)(define lst (range 0 {size}))(gc)(gc)(display (length lst))"
+    # Repeated define / GC
+    for _ in range(n):
+        yield ("(begin " +
+               " ".join(f"(define x{i} {i})" for i in range(200)) +
+               " (gc) (display 1))")
+    # Alternating large/small
+    yield ("(begin "
+           "(define big (range 0 10000)) "
+           "(define small 42) "
+           "(gc) "
+           "(define big2 (range 0 5000)) "
+           "(gc) "
+           "(display (+ (length big) (length big2))))")
+
+
+# ═══════════════════════════════════════════════════════════
+# 26. Closure Stress — large captured environments
+# ═══════════════════════════════════════════════════════════
+@register
+def gen_closure_stress():
+    """Closures capturing large environments, repeated calls."""
+    n = 15 if not QUICK else 5
+    for _ in range(n):
+        # Closure capturing many variables
+        bindings = " ".join(f"(x{i} {i})" for i in range(100))
+        yield (f"(let ({bindings}) "
+               f"(define (f) (+ x0 x50 x99)) "
+               f"(display (f)))")
+    # Closure in closure
+    yield ("(define (make-adder n) "
+           "(lambda (x) (+ x n))) "
+           "(define add5 (make-adder 5)) "
+           "(define add10 (make-adder 10)) "
+           "(display (+ (add5 3) (add10 3)))")
+    # Recursive closure
+    yield ("(define Y (lambda (f) "
+           "((lambda (x) (f (lambda (y) ((x x) y)))) "
+           "(lambda (x) (f (lambda (y) ((x x) y))))))) "
+           "(define fact (Y (lambda (f) (lambda (n) "
+           "(if (= n 0) 1 (* n (f (- n 1)))))))) "
+           "(display (fact 10)))")
+
+
+# ═══════════════════════════════════════════════════════════
+# 27. Hash Stress — many entries, repeated cycles
+# ═══════════════════════════════════════════════════════════
+@register
+def gen_hash_stress():
+    """Hash table with many entries and repeated set!/ref cycles."""
+    n = 10 if not QUICK else 3
+    for _ in range(n):
+        entries = " ".join(f"{i} {i*2}" for i in range(500))
+        yield (f"(require std/hash all:)"
+               f"(define h (hash {entries}))"
+               f"(display (hash-keys h))")
+        # Set! many times
+        yield ("(require std/hash all:)"
+               "(define h (hash))" +
+               "".join(f"(hash-set! h {i} {i*2})" for i in range(100)) +
+               "(display (hash-ref h 50))")
+    # Large hash, then GC, then access
+
+# ═══════════════════════════════════════════════════════════
+# 28. String Stress — large concat, substring cycles
+# ═══════════════════════════════════════════════════════════
+@register
+def gen_string_stress():
+    """String stress: repeated concatenation, large strings."""
+    n = 10 if not QUICK else 3
+    for _ in range(n):
+        # Build a big string
+        parts = " ".join(f'"x"' for _ in range(100))
+        yield f"(display (string-append {parts}))"
+    # Repeated substring
+    yield '(display (substring "hello world this is a test string" 0 5))'
+    yield '(display (substring "hello world this is a test string" 6 20))'
+    # String comparison in loop
+    yield ("(define (find strs target) "
+           "(if (null? strs) -1 "
+           "(if (string=? (car strs) target) 0 "
+           "(+ 1 (find (cdr strs) target))))) "
+           '(display (find \'(\"a\" \"b\" \"c\" \"d\" \"e\") "d")))')
+
+
+# ═══════════════════════════════════════════════════════════
+# 29. Deep Cycle — repeated set-code with growing AST
+# ═══════════════════════════════════════════════════════════
+@register
+def gen_deep_cycle():
+    """Repeated set-code with gradually larger programs — AST rebuild stress."""
+    n = 10 if not QUICK else 3
+    for size in [10, 50, 100, 200, 500]:
+        if QUICK and size > 100:
+            continue
+        # set-code with many defines
+        defines = " ".join(f"(define f{i} (lambda (x) (+ x {i})))" for i in range(size))
+        yield f'(set-code "({defines} (display (f0 0)))")'
+        yield f'(display (current-source))'
+    # Rapid set-code cycles (same size, different content)
+    for i in range(8 if not QUICK else 3):
+        yield f'(set-code "(display {i})")'
+        yield f'(eval-current)'
+
+
+# ═══════════════════════════════════════════════════════════
+# 30. Linear Stress — many borrow/move/drop sequences
+# ═══════════════════════════════════════════════════════════
+@register
+def gen_linear_stress():
+    """Linear ownership stress: many operations on linear values."""
+    n = 15 if not QUICK else 5
+    for _ in range(n):
+        yield ("(define x 42) "
+               "(linear:move x) "
+               "(display 1)")  # x is moved, should error if used after
+    for _ in range(n):
+        yield ("(define x 42) "
+               "(define y (linear:move x)) "
+               "(display y)")
+    # Borrow chain
+    yield ("(define x 42) "
+           "(linear:borrow x) "
+           "(display x)")  # borrow is released, so display is ok
+    # Long chain
+    yield ("(define x 10) "
+           "(define y (linear:move x)) "
+           "(linear:borrow y) "
+           "(linear:move y) "
+           "(display 1)")
+
+
+# ═══════════════════════════════════════════════════════════
+# 31. Module Stress — repeated load/unload cycles
+# ═══════════════════════════════════════════════════════════
+@register
+def gen_module_stress():
+    """Module load/unload stress: require many modules repeatedly."""
+    n = 20 if not QUICK else 5
+    modules = ["std/list", "std/string", "std/pair", "std/hash", "std/vector-math"]
+    for _ in range(n):
+        mod = rng.choice(modules)
+        yield f"(require {mod} all:)(display 1)"
+        yield f'(use "{mod}")'
+    # Require all at once
+    yield "(require std/list all:)(require std/string all:)(require std/pair all:)(require std/hash all:)(display 1)"
+    # Require then use again
+    yield '(require std/list all:)(use "std/list")(display 1)"'
 def gen_thread_edge():
     """Basic concurrency primitives if available."""
     yield "(display (thread? (current-thread)))"
@@ -580,6 +740,14 @@ DIMENSIONS = [
     ("number-edge", gen_number_edge, "Number: division by zero, overflow, sign"),
     ("gc-memory", gen_gc_memory, "Memory: (gc), (memory-stats), large allocations"),
     ("quote-edge", gen_quote_edge, "Quote: complex quasiquote, unquote-splicing"),
+
+    ("memory-stress", gen_memory_stress, "Memory: large alloc/free cycles, arena pressure"),
+    ("closure-stress", gen_closure_stress, "Closure: large env capture, repeated call"),
+    ("hash-stress", gen_hash_stress, "Hash: many entries, repeated set! cycles"),
+    ("string-stress", gen_string_stress, "String: large string concat, substring cycles"),
+    ("deep-cycle", gen_deep_cycle, "Cycle: repeated set-code, deep AST rebuild"),
+    ("linear-stress", gen_linear_stress, "Linear: many borrow/move/drop in sequence"),
+    ("module-stress", gen_module_stress, "Module: repeated load/unload cycles"),
     ("thread-edge", gen_thread_edge, "Thread: basic threading if available"),
     ("binding-edge", gen_binding_edge, "Binding: let/letrec/named-let edge cases"),
 ]
