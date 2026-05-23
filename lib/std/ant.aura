@@ -1,6 +1,38 @@
-; lib/std/ant.aura -- ant colony pheromone system
+; lib/std/ant.aura -- ant colony pheromone system + colony:search
 ;
-(export pheromone:init pheromone:update pheromone:rank pheromone:score pheromone:export)
+(export pheromone:init pheromone:update pheromone:rank pheromone:score pheromone:export
+        colony:search)
+
+; ── Local utility functions (no external deps) ───────────────────
+
+(define string-index
+  (lambda (text substr start)
+    (let ((n (string-length text))
+          (m (string-length substr)))
+      (let loop ((i start))
+        (if (> i (- n m)) -1
+            (if (string=? (substring text i (+ i m)) substr) i
+                (loop (+ i 1))))))))
+
+(define string-contains?
+  (lambda (text substr)
+    (not (= (string-index text substr 0) -1))))
+
+(define string-trim
+  (lambda (str)
+    (let ((n (string-length str)))
+      (let loop ((i 0) (j (- n 1)))
+        (cond
+          ((> i j) "")
+          ((or (= (string-ref str i) 32) (= (string-ref str i) 9)
+               (= (string-ref str i) 10) (= (string-ref str i) 13))
+           (loop (+ i 1) j))
+          ((or (= (string-ref str j) 32) (= (string-ref str j) 9)
+               (= (string-ref str j) 10) (= (string-ref str j) 13))
+           (loop i (- j 1)))
+          (#t (substring str i (+ j 1))))))))
+
+; ── Pheromone system ──────────────────────────────────────────────
 
 (define *pheromone-table* (hash))
 
@@ -26,7 +58,6 @@
                (+ (* current 0.95)
                   (if (> delta 0.0) delta -0.05)))))
 
-; Manual insertion sort (small list, <10 items)
 (define (sort-descending lst)
   (if (null? lst) (list)
     (let ((pivot (car lst))
@@ -51,26 +82,55 @@
             (build (cdr ks) (cdr vs) #f))))
       "}")))
 
-; == Phase C: Colony Search (pure Aura) ==
-; One serve.exec() call does all variant search in-process.
-; Returns (found? output debug-msg) as list.
+; ── Colony Search (pure Aura, Phase 2) ───────────────────────────
+;
+; (colony:search expected-str max-variants)
+; Returns (found? output debug-msg) list.
+; Called from Python serve.exec() — one call does all search.
 
-(export colony:search)
-
-; Helper: find (define (fn-name ...) ...) patterns in source text
+; Find function names: supports (define (fn ...) ...) and (define fn (lambda ...))
 (define fn-name-list
   (lambda (src)
     (let ((n (string-length src)))
       (let scan ((i 0) (names (list)))
-        (let ((m (string-index src "(define (" i)))
+        (let ((m (string-index src "(define " i)))
           (if (= m -1) names
-            (let* ((start (+ m 9))  ; skip "(define ("
-                   (end (string-index src " " start)))
-              (if (= end -1) names
-                (let ((name (substring src start end)))
-                  (scan end (cons name names))))))))))))
+            (let ((start (+ m 8)))
+              (if (and (< start n) (= (string-ref src start) 40))
+                  (let* ((fn-start (+ start 1))
+                         (fn-end (string-index src " " fn-start)))
+                    (if (= fn-end -1) names
+                      (let ((name (substring src fn-start fn-end)))
+                        (scan fn-end (cons name names)))))
+                  (let ((name-end (string-index src " " start)))
+                    (if (= name-end -1) names
+                      (let ((name (substring src start name-end)))
+                        (scan name-end (cons name names))))))))))))))
 
-; Helper: does string contain expected keyword?
+
+; Find first numeric value in expected string
+(define find-first-ref
+  (lambda (expected-str)
+    (let ((n (string-length expected-str)))
+      (let search ((i 0))
+        (if (>= i n) #f
+          (let ((c (string-ref expected-str i)))
+            (if (or (and (>= c 48) (<= c 57)) (= c 45))
+                (let num-end ((j i))
+                  (if (or (>= j n)
+                          (not (or (and (>= (string-ref expected-str j) 48)
+                                        (<= (string-ref expected-str j) 57))
+                                   (= (string-ref expected-str j) 46)
+                                   (= (string-ref expected-str j) 45))))
+                      (let ((num-str (substring expected-str i j))
+                            (len (- j i)))
+                        (if (and (> len 0) (not (= len 0)))
+                            (string->number num-str)
+                            #f))
+                      (num-end (+ j 1))))
+                (search (+ i 1)))))))))
+
+; Output match check
 (define output-contains-any?
   (lambda (output expected-str)
     (if (string=? expected-str "") #t
@@ -80,7 +140,7 @@
             (if (string-contains? output (string-trim (car ks)))
               #t (check (cdr ks)))))))))
 
-; Helper: string-split (simplified, comma delimited)
+; String split (comma delimited)
 (define string-split
   (lambda (str)
     (let ((n (string-length str)))
@@ -91,42 +151,24 @@
               (reverse (cons (substring str i n) result))
               (lp (+ comma 1) (cons (substring str i comma) result)))))))))
 
-(define find-first-ref
-  (lambda (expected-str)
-    (let ((kws (string-split expected-str)))
-      (let find ((ks kws))
-        (if (null? ks) #f
-          (let ((trimmed (string-trim (car ks)))
-                (len (string-length (string-trim (car ks)))))
-            (if (and (> len 0) 
-                     (or (and (>= (string-ref trimmed 0) 48)
-                              (<= (string-ref trimmed 0) 57))
-                         (= (string-ref trimmed 0) 45)))
-                (string->number trimmed)
-              (find (cdr ks)))))))))
-
-; Main search: try display-ref variant first
+; Main search: display-ref for each named function
 (define (colony:search expected-str max-variants)
   (let* ((src (current-source))
          (fns (fn-name-list src))
          (ref (find-first-ref expected-str)))
-    
-    (let search-fns ((fns-left fns) (tried 0) (best-out ""))
-      (if (or (null? fns-left) (>= tried max-variants))
-          (list #f best-out (string-append "colony:" (number->string tried) "var"))
-        
-        (let* ((fn-name (car fns-left))
-               (rest (cdr fns-left))
-               ;; Try 1: wrap body in (display ref)
-               (fmt-1 (string-append fn-name)))
-          
-          ;; Try display-ref variant (most effective)
-          (if ref
-            (let* ((test-code (string-append
-                "(set-code \"" (ada-esc src) "\")"
-                "(mutate:rebind \"" fn-name "\" \"(lambda (x) (display 42))\")(eval-current)"))
-                   ;; Well that won't work. Let me try a different approach.
-                   )
-              (list #f best-out "need impl"))
-            
-            (search-fns rest (+ tried 1) best-out)))))))
+    (if (null? fns)
+        (list #f "" "colony:no-fns")
+      (let search-fns ((fns-left fns) (tried 0) (best-out ""))
+        (if (or (null? fns-left) (>= tried max-variants))
+            (list #f best-out (string-append "colony:" (number->string tried) "var"))
+          (let ((fn-name (car fns-left))
+                (rest (cdr fns-left)))
+            (if ref
+              (let* ((new-body (string-append "(lambda (x) (display " (number->string ref) "))")))
+                (set-code src)
+                (mutate:rebind fn-name new-body)
+                (let ((result (eval-current-output)))
+                  (if (and (string? result) (output-contains-any? result expected-str))
+                      (list #t result (string-append "colony:ref-" (number->string ref)))
+                    (search-fns rest (+ tried 1) (if (string? result) result best-out)))))
+              (search-fns rest (+ tried 1) best-out)))))))))

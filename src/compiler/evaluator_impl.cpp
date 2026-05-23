@@ -3574,21 +3574,45 @@ void Evaluator::init_pair_primitives() {
         return *result;
     });
 
-    // (eval-current-output) — Evaluate workspace, return display output + value
-    // Captures all display output during eval to a string.
+    // (eval-current-output) — Evaluate workspace, return display output as string
+    // Captures all display output during eval via fd-level redirection.
     primitives_.add("eval-current-output", [this](const auto&) {
         if (!workspace_flat_ || !workspace_pool_)
             return make_void();
         auto expanded = aura::compiler::macro_expand_all(*workspace_flat_, *workspace_pool_,
                                                          workspace_flat_->root);
-        // Redirect stdout to capture display output
-        // Use a temp file or pipe approach
-        // For now, return the value (display output still goes to stdout)
+        // Redirect stdout to a temp file (fd-level, catches fprintf too)
+        std::fflush(stdout);
+        auto* tmp = std::tmpfile();
+        if (!tmp) {
+            auto result = eval_flat(*workspace_flat_, *workspace_pool_, expanded, top_);
+            workspace_flat_->clear_all_dirty();
+            if (!result)
+                return make_void();
+            return *result;
+        }
+        int new_fd = ::fileno(tmp);
+        int old_fd = ::dup(STDOUT_FILENO);
+        ::dup2(new_fd, STDOUT_FILENO);
+        // Run the eval
         auto result = eval_flat(*workspace_flat_, *workspace_pool_, expanded, top_);
         workspace_flat_->clear_all_dirty();
-        if (!result)
-            return make_void();
-        return *result;
+        // Restore stdout
+        std::fflush(stdout);
+        ::dup2(old_fd, STDOUT_FILENO);
+        ::close(old_fd);
+        // Read captured output from temp file
+        std::rewind(tmp);
+        std::string captured;
+        char buf[4096];
+        std::size_t n;
+        while ((n = std::fread(buf, 1, sizeof(buf), tmp)) > 0)
+            captured.append(buf, n);
+        std::fclose(tmp);
+        // Store captured output in string heap
+        auto sidx = string_heap_.size();
+        string_heap_.push_back(captured);
+        return make_string(sidx);
     });
 
     // (query:find name) — Find all node IDs with matching symbol name
