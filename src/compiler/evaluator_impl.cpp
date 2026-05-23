@@ -5758,7 +5758,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 auto cloned_body =
                     clone_macro_body(*cl_flat, *cl_pool, *flat, *pool, body_node, nullptr);
                 cl_flat->root = cloned_body;
-                closures_[cid] = Closure{/*params*/ {}, cl_flat, cl_pool, cloned_body, copied_env};
+                closures_[cid] = Closure{/*name*/"", /*params*/{}, cl_flat, cl_pool, cloned_body, copied_env};
                 // Store param names as strings for the Closure
                 for (auto& ps : param_syms) {
                     std::string pname(pool->resolve(ps));
@@ -5857,6 +5857,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         for (auto& ps : param_syms) {
                             cl.params.push_back(std::string(pool->resolve(ps)));
                         }
+                        cl.name = fn_str;
                         cl.flat = flat;
                         cl.pool = pool;
                         cl.body_id = body_node;
@@ -6657,7 +6658,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     auto* cap = copy_env(*current_env);
                     auto cid = next_id();
                     auto body_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
-                    closures_[cid] = Closure{std::move(params), f, p, body_id, cap, dotted};
+                    closures_[cid] = Closure{/*name*/"", std::move(params), f, p, body_id, cap, dotted};
                     return make_closure(cid);
                 }
                 case aura::ast::NodeTag::Let:

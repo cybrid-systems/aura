@@ -80,6 +80,7 @@ export struct MacroDef {
 };
 
 export struct Closure {
+    std::string name = "";  // function name (empty for lambdas)
     std::vector<std::string> params;
     ast::FlatAST* flat = nullptr;
     ast::StringPool* pool = nullptr;
@@ -279,7 +280,7 @@ export inline std::string format_value(const types::EvalValue& v,
     if (types::is_hash(v))
         return std::format("<hash[{}]>", types::as_hash_idx(v));
     if (types::is_closure(v)) {
-        std::println(std::cerr, "⚠ program returned an uncalled function");
+        std::println("⚠ program returned an uncalled function");
         return "#<procedure>";
     }
     if (types::is_cell(v))
