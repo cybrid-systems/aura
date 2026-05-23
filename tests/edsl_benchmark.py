@@ -1005,89 +1005,38 @@ def _colony_save_pheromone(serve):
 
 
 def internal_colony_search(serve, last_code, expected, phase, task_name=""):
-    """EDSL-based ant colony search with PID-guided pruning and cross-task learning.
-    Uses set-code + mutate:rebind + eval-current for function body mutations.
-    Pheromone system + PID phase limits determine search breadth."""
+    """Pure Aura ant colony search via colony:search primitive.
+    One serve.exec() call does all variants.
+    Returns (found, output, debug_msg)."""
     if not serve or not last_code:
         return False, "", ""
     if phase == "coarse":
         return False, "", "coarse: skip"
 
-    # Initialize pheromone table for this task
-    serve.exec('(require "std/ant" all:)(pheromone:init)')
-
-    colony_start = time.time()
-    colony_deadline = colony_start + COLONY_MAX_TIME
-    best_out = ""
-    tested = 0
-    edsl_tested = 0
-    full_tested = 0
-
-    # Get pheromone ranking
-    _, pheromone_out, _ = serve.exec(
-        '(require "std/ant" all:)(display (pheromone:rank (list "edsl-disp-ref" "edsl-body-wrap" "edsl-lit-tweak" "edsl-op-swap" "full-hash-wrap" "full-disp-bool" "full-disp-ref")))'
-    )
-    if pheromone_out:
-        rank = [t.strip() for t in pheromone_out.strip("()").split() if t.strip()]
-    else:
-        rank = []
-
-    # Collect all variants from generator
-    all_variants = list(_gen_edsl_variants(last_code, expected))
-
-    # Sort by pheromone rank
-    def _variant_key(item):
-        desc = item[1]
-        mtype = desc.split("[")[0] if "[" in desc else desc.split(" ")[0]
-        if mtype in rank:
-            return rank.index(mtype)
-        return len(rank)
-
-    all_variants.sort(key=_variant_key)
-
-    # PID-guided variant limit (Phase D)
+    # PID-guided variant limit
     pid_limit = _PHASE_VARIANT_LIMITS.get(phase, MAX_COLONY_VARIANTS)
-    max_var = min(pid_limit, MAX_COLONY_VARIANTS)
-    candidates = all_variants[:max_var]
-    if not candidates:
-        return False, "", "no variants"
+    colony_start = time.time()
 
-    # Batch exec: send all variants at once, read all responses
-    codes = [v for v, d in candidates]
-    results = serve.exec_batch(codes, read_timeout=COLONY_VARIANT_TIMEOUT)
+    # Single exec: pure Aura colony search
+    # Escape expected string for Aura
+    esc_expected = expected.replace('\\', '\\\\').replace('"', '\\"')
+    ok, out, err = serve.exec(
+        f'(require "std/ant" all:)(colony:search "{esc_expected}" {pid_limit})'
+    )
+    if not ok:
+        return False, out or "", err or "colony:serve-error"
 
-    tested = 0
-    for i, ((variant, desc), (ok, out, err)) in enumerate(zip(candidates, results)):
-        tested += 1
-        if time.time() > colony_deadline:
-            break
+    # Parse output: (#t output msg) or (#f output msg)
+    # The serve returns the printed result of colony:search
+    result_str = (out or "").strip()
+    if result_str.startswith("(#t"):
+        elapsed = time.time() - colony_start
+        # Extract output (second element)
+        parts = result_str.split("\"")
+        captured = parts[1] if len(parts) > 1 else ""
+        return True, captured, f"colony:aura in {elapsed:.1f}s"
 
-        if desc.startswith("edsl"):
-            edsl_tested += 1
-        else:
-            full_tested += 1
-
-        mut_type = desc.split("[")[0] if "[" in desc else desc.split(" ")[0]
-        if check_success(out, expected):
-            serve.exec(
-                '(require "std/ant" all:)(pheromone:update "' + mut_type + '" 3.0)'
-            )
-            _colony_save_pheromone(serve)
-            elapsed = time.time() - colony_start
-            return (
-                True,
-                out,
-                f"colony[{desc}] in {elapsed:.1f}s ({tested}t, {edsl_tested}edsl/{full_tested}full)",
-            )
-        if not best_out:
-            best_out = out
-
-    # Update pheromone for all failed variants
-    serve.exec('(require "std/ant" all:)(pheromone:update "batch" -1.0)')
-    # Save pheromone state for cross-task learning
-    _colony_save_pheromone(serve)
-    elapsed = time.time() - colony_start
-    return (
+    return False, "", f"colony:aura-no-variant"}]}
         False,
         best_out,
         f"colony:{tested}var/{elapsed:.1f}s/{edsl_tested}edsl+{full_tested}full",
