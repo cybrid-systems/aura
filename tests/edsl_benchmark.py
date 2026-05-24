@@ -1488,7 +1488,7 @@ def main():
                 mout[task_name] = entry
             output[model] = mout
         print(f"\n{'='*70}")
-        print(json.dumps(output, indent=2))
+        print(json.dumps(output))
 
     print(f"\n{'='*70}")
     print("Done")

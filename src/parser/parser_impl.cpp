@@ -227,6 +227,22 @@ NodeId FlatParser::parse_expr() {
             flat_.set_loc(id, tok.line, tok.column);
             return id;
         }
+        case TokenKind::HashLParen: {
+            // #(1 2 3) → (vector 1 2 3)
+            lexer_->consume(); // consume #(
+            auto vec_fun = flat_.add_variable(pool_.intern("vector"));
+            std::vector<aura::ast::NodeId> args;
+            while (lexer_->peek().kind != TokenKind::RParen && !lexer_->eof()) {
+                auto arg = parse_expr();
+                if (arg == NULL_NODE) break;
+                args.push_back(arg);
+            }
+            if (lexer_->peek().kind == TokenKind::RParen)
+                lexer_->consume(); // consume )
+            auto id = flat_.add_call(vec_fun, args);
+            flat_.set_loc(id, tok.line, tok.column);
+            return id;
+        }
         case TokenKind::QuasiQuote: {
             lexer_->consume(); // consume `
             auto quoted = parse_expr();

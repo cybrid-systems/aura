@@ -17,6 +17,7 @@ export enum class TokenKind {
     Dot,
     Ellipsis,
     Bool,
+    HashLParen,
     EndOfFile,
     Error
 };
