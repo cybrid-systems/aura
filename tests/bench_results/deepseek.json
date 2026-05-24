@@ -2,5 +2,5 @@
   "raw_log": "/home/dev/code/aura/tests/bench_results/deepseek.log",
   "model": "deepseek-v4-flash",
   "name": "DeepSeek",
-  "elapsed_s": 3244.1
+  "elapsed_s": 129.1
 }

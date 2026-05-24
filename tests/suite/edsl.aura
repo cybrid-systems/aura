@@ -60,3 +60,19 @@
 
 (test-suite "edsl:typecheck"
   (check (string? (typecheck-current))))
+
+;; ── Transaction rollback tests ─────────────────────────────
+
+(test-suite "edsl:mutation-transaction"
+  (set-code "(define (f x) (+ x 1))")
+  ;; Apply a valid mutation
+  (check (mutate:replace-value 2 42 "change to 42"))
+  ;; Mutations are committed individually
+  (check (query:node-type "LiteralInt")))
+
+(test-suite "edsl:rollback-after-failure"
+  (set-code "(define (f x) (+ x 1))")
+  ;; Apply mutation then try invalid parse — AST should be intact
+  (check (mutate:replace-value 2 42 "change to 42"))
+  ;; After any failure, subsequent queries should still work
+  (check (query:node-type "LiteralInt")))

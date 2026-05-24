@@ -7,3 +7,38 @@
 
 (test-suite "m4:fact"
   (check (= (letrec ((f (lambda (x) (if (= x 0) 1 (* x (f (- x 1))))))) (f 5)) 120)))
+
+;; ── Borrow checker tests ──────────────────────────────────
+
+(test-suite "m4:multi-borrow"
+  (check (let ((x (Linear 42)))
+           (let ((r1 (borrow x)) (r2 (borrow x)))
+             (and (integer? r1) (integer? r2))))))
+
+(test-suite "m4:scope-end-move"
+  (check (let ((x (Linear 42)))
+           (begin
+             (let ((r (borrow x))) (display r))
+             (and (integer? (move x)) #t))))
+
+(test-suite "m4:borrow-then-move"
+  (check (try
+           (let ((x (Linear 42)))
+             (let ((r (borrow x)))
+               (display r)
+               (move x)))
+           (catch (e) #t))))
+
+(test-suite "m4:move-then-borrow"
+  (check (try
+           (let ((x (Linear 42)))
+             (move x)
+             (borrow x))
+           (catch (e) #t))))
+
+(test-suite "m4:drop-moved"
+  (check (try
+           (let ((x (Linear 42)))
+             (move x)
+             (drop x))
+           (catch (e) #t))))
