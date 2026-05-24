@@ -1636,44 +1636,79 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool,
         env_.bind(var_name, val_norm);
     }
 
-    // ── Match exhaustiveness check ──
+    // ── Match exhaustiveness check — recursive ADT support ──
     // Detect match on ADT by checking if let name is __match_tmp
     // and the value is a constructor call.
     auto let_name = std::string(pool.resolve(v.sym_id));
     if (let_name == "__match_tmp" && !v.children.empty()) {
-        // Full exhaustiveness check: compare used constructors against ADT definition
-        // First, find the ADT from the subject's type (if available) or scan all ADTs
         auto* scan_minfo = flat.get_match_info(node_id);
 
-        
         // Scan TypeRegistry for ADTs
         for (std::size_t i = 0; i < reg_.size(); ++i) {
             auto tid = TypeId{static_cast<std::uint32_t>(i), 1};
             auto* ctors = reg_.get_adt_constructors(tid);
-            if (!ctors) continue;
-            
+
             auto type_name = std::string(reg_.name_of(tid));
-            
-            // If we have match info from parser, check exhaustiveness
-            if (scan_minfo && !scan_minfo->has_wildcard) {
-                for (auto& expected_ctor : *ctors) {
+
+            // Helper: recursively collect missing constructors with depth limit
+            // to support recursive ADTs like (List a) → (Nil) (Cons a List)
+            std::vector<std::string> missing;
+            auto check_adt_recursive =
+                [&](this const auto& self, const std::vector<std::string>& ctor_names,
+                    const std::vector<aura::ast::SymId>& used_sym,
+                    std::string_view context_name, int depth) -> void {
+                if (depth <= 0 || ctor_names.empty())
+                    return;
+                for (auto& cname : ctor_names) {
                     auto found = std::find_if(
-                        scan_minfo->used_constructors.begin(),
-                        scan_minfo->used_constructors.end(),
+                        used_sym.begin(), used_sym.end(),
                         [&](SymId sid) {
-                            return pool.resolve(sid) == expected_ctor;
+                            return pool.resolve(sid) == cname;
                         });
-                    if (found == scan_minfo->used_constructors.end()) {
-                        diag_.report(Diagnostic(
-                            ErrorKind::TypeError,
-                            "match: missing constructor '" + expected_ctor +
-                            "' in " + type_name,
-                            cur_loc_));
+                    if (found == used_sym.end()) {
+                        missing.push_back(cname);
                     }
                 }
+            };
+
+            // Run recursive check (depth limit = 3 for nested ADTs)
+            if (scan_minfo && !scan_minfo->has_wildcard) {
+                std::vector<aura::ast::SymId> used = scan_minfo->used_constructors;
+                check_adt_recursive(
+                    *ctors, used, type_name, 3);
+
+                // Report all missing constructors
+                if (!missing.empty()) {
+                    std::string msg = "match: ";
+                    if (missing.size() == 1) {
+                        msg += "missing constructor '" + missing[0] + "'";
+                    } else {
+                        msg += "missing constructors: ";
+                        for (std::size_t mi = 0; mi < missing.size(); ++mi) {
+                            if (mi > 0) msg += ", ";
+                            msg += "'" + missing[mi] + "'";
+                        }
+                    }
+                    msg += " in " + type_name;
+                    auto d = Diagnostic(ErrorKind::TypeError, msg, cur_loc_);
+
+                    // Add fix-it suggestion
+                    if (missing.size() == 1) {
+                        d = std::move(d).with_suggestion(
+                            "add clause for '" + missing[0] + "' pattern");
+                    } else {
+                        std::string suggest = "add clauses for ";
+                        for (std::size_t mi = 0; mi < missing.size(); ++mi) {
+                            if (mi > 0) suggest += ", ";
+                            suggest += "'" + missing[mi] + "'";
+                        }
+                        d = std::move(d).with_suggestion(suggest);
+                    }
+                    diag_.report(std::move(d));
+                }
             }
-            
-            // Always emit a note for the ADT being matched
+
+            // Emit a note for the ADT being matched
             diag_.report(Diagnostic(ErrorKind::Note,
                 "match on '" + type_name +
                 "' (" + std::to_string(ctors->size()) + " constructors)",
