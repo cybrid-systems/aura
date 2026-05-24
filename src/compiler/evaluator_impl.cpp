@@ -1474,16 +1474,31 @@ void Evaluator::init_pair_primitives() {
         return make_int(n);
     });
     primitives_.add("list-ref", [this](const auto& a) {
-        if (a.size() < 2)
-            return make_int(0);
+        if (a.size() < 2) {
+            auto __s = string_heap_.size();
+            string_heap_.push_back("list-ref: too few args");
+            auto __e = error_values_.size();
+            error_values_.push_back(make_string(__s));
+            return make_error(__e);
+        }
         auto v = a[0];
         auto pos = static_cast<std::size_t>(as_int(a[1]));
         for (std::size_t i = 0; i < pos; ++i) {
-            if (!is_pair(v))
-                return make_int(0);
+            if (!is_pair(v)) {
+                auto __s = string_heap_.size();
+                string_heap_.push_back("list-ref: index out of bounds");
+                auto __e = error_values_.size();
+                error_values_.push_back(make_string(__s));
+                return make_error(__e);
+            }
             auto idx = as_pair_idx(v);
-            if (idx >= pairs_.size())
-                return make_int(0);
+            if (idx >= pairs_.size()) {
+                auto __s = string_heap_.size();
+                string_heap_.push_back("list-ref: corrupted pair");
+                auto __e = error_values_.size();
+                error_values_.push_back(make_string(__s));
+                return make_error(__e);
+            }
             v = pairs_[idx].cdr;
         }
         if (is_pair(v)) {
@@ -1698,21 +1713,41 @@ void Evaluator::init_pair_primitives() {
         return make_vector(idx);
     });
     primitives_.add("vector-ref", [this](const auto& a) {
-        if (a.size() < 2 || !is_vector(a[0]))
-            return make_void();
+        if (a.size() < 2 || !is_vector(a[0])) {
+            auto __s = string_heap_.size();
+            string_heap_.push_back("vector-ref: not a vector");
+            auto __e = error_values_.size();
+            error_values_.push_back(make_string(__s));
+            return make_error(__e);
+        }
         auto idx = as_vector_idx(a[0]);
         auto pos = static_cast<std::size_t>(as_int(a[1]));
-        if (idx >= vector_heap_.size() || pos >= vector_heap_[idx].size())
-            return make_void();
+        if (idx >= vector_heap_.size() || pos >= vector_heap_[idx].size()) {
+            auto __s = string_heap_.size();
+            string_heap_.push_back("vector-ref: index out of bounds");
+            auto __e = error_values_.size();
+            error_values_.push_back(make_string(__s));
+            return make_error(__e);
+        }
         return vector_heap_[idx][pos];
     });
     primitives_.add("vector-set!", [this](const auto& a) {
-        if (a.size() < 3 || !is_vector(a[0]))
-            return make_void();
+        if (a.size() < 3 || !is_vector(a[0])) {
+            auto __s = string_heap_.size();
+            string_heap_.push_back("vector-set!: not a vector");
+            auto __e = error_values_.size();
+            error_values_.push_back(make_string(__s));
+            return make_error(__e);
+        }
         auto idx = as_vector_idx(a[0]);
         auto pos = static_cast<std::size_t>(as_int(a[1]));
-        if (idx >= vector_heap_.size() || pos >= vector_heap_[idx].size())
-            return make_void();
+        if (idx >= vector_heap_.size() || pos >= vector_heap_[idx].size()) {
+            auto __s = string_heap_.size();
+            string_heap_.push_back("vector-set!: index out of bounds");
+            auto __e = error_values_.size();
+            error_values_.push_back(make_string(__s));
+            return make_error(__e);
+        }
         vector_heap_[idx][pos] = a[2];
         return make_void();
     });
