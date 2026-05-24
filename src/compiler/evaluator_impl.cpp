@@ -5588,21 +5588,22 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
         }
         case ast::NodeTag::Let:
         case ast::NodeTag::LetRec: {
-            auto body_start = v.child(0);
-            EvalValue bindings_tail = make_void();
-            for (auto it = v.children.rbegin(); it != v.children.rend(); ++it) {
-                if (*it == body_start)
-                    continue;
-                auto cv = flat.get(*it);
-                auto bname = std::string(pool.resolve(cv.sym_id));
-                auto bni = string_heap_.size();
-                string_heap_.push_back(bname);
-                auto bv = ast_to_data(flat, pool, *it);
-                auto bp = pairs_.size();
-                pairs_.push_back({make_string(bni), bv});
-                bindings_tail = make_pair(bp);
-            }
-            auto body = ast_to_data(flat, pool, body_start);
+            // The let node from add_let / parser has:
+            //   sym_id = binding name (e.g. x)
+            //   children = [val_node, body_node]
+            // The body is always the LAST child.
+            auto val_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
+            auto body_id = v.children.size() < 2 ? aura::ast::NULL_NODE : v.child(1);
+            auto bname = std::string(pool.resolve(v.sym_id));
+            auto bni = string_heap_.size();
+            string_heap_.push_back(bname);
+            auto bv = val_id != aura::ast::NULL_NODE ? ast_to_data(flat, pool, val_id) : make_void();
+            auto body = body_id != aura::ast::NULL_NODE ? ast_to_data(flat, pool, body_id) : make_void();
+            // Build: (cons name val) → bindings pair
+            auto bp = pairs_.size();
+            pairs_.push_back({make_string(bni), bv});
+            auto bindings_tail = make_pair(bp);
+            // Build: (cons bindings body) → complete let form
             auto full_bindings = make_pair(pairs_.size());
             pairs_.push_back({bindings_tail, body});
             auto kind = v.tag == ast::NodeTag::LetRec ? "letrec" : "let";

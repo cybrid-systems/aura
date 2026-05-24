@@ -412,7 +412,8 @@ public:
                 if (tag == aura::ast::NodeTag::Lambda || tag == aura::ast::NodeTag::LiteralString ||
                     tag == aura::ast::NodeTag::LiteralFloat ||
                     tag == aura::ast::NodeTag::Coercion || tag == aura::ast::NodeTag::Quote ||
-                    tag == aura::ast::NodeTag::MacroDef || tag == aura::ast::NodeTag::LetRec) {
+                    tag == aura::ast::NodeTag::MacroDef || tag == aura::ast::NodeTag::Let ||
+                    tag == aura::ast::NodeTag::LetRec) {
                     has_non_int_nodes = true;
                     break;
                 }
