@@ -922,7 +922,7 @@ public:
                 for (auto& iblock : block.blocks) {
                     for (auto& instr : iblock.instructions) {
                         if (instr.opcode == aura::ir::IROpcode::PrimCall &&
-                            (instr.operands[0] == ret_slot || instr.operands[2] == ret_slot)) {
+                            (instr.operands[0] == ret_slot || instr.operands[3] == ret_slot)) {
                             auto prim_id = static_cast<aura::ir::PrimId>(instr.operands[0]);
                             if (prim_id == aura::ir::PrimId::Display ||
                                 prim_id == aura::ir::PrimId::Write ||

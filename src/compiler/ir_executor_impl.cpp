@@ -467,9 +467,11 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 }
 
                 case IROpcode::PrimCall: {
+                    // ops[0]=prim_id, ops[1]=arg_base, ops[2]=arg_count, ops[3]=result_slot
                     auto prim_id = static_cast<PrimId>(ops[0]);
-                    auto arg_base = unpack_hi(ops[1]);
-                    auto arg_count = unpack_lo(ops[1]);
+                    auto arg_base = ops[1];
+                    auto arg_count = ops[2];
+                    auto result_slot = ops[3];
                     std::vector<EvalValue> pargs;
                     for (std::uint32_t pi = 0; pi < arg_count; ++pi)
                         pargs.push_back(locals[arg_base + pi]);
@@ -482,7 +484,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             presult = (*pfn)(pargs);
                     }
                     if (presult)
-                        locals[ops[2]] = *presult;
+                        locals[result_slot] = *presult;
                     break;
                 }
 

@@ -347,13 +347,12 @@ struct LLVMBuilder {
 
             // Primitive calls
             case OpPrimCall: {
-                // IR: operands[0]=prim_id, operands[1]=packed(arg_base<<16|arg_count),
-                //     operands[2]=result_slot
+                // IR: operands[0]=prim_id, operands[1]=arg_base, operands[2]=arg_count,
+                //     operands[3]=result_slot
                 auto prim_id = inst.ops[0];
-                auto packed = inst.ops[1];
-                auto arg_count = packed & 0xFFFFu;        // lower 16 bits = arg_count
-                auto arg_base = (packed >> 16) & 0xFFFFu; // upper 16 bits = arg_base
-                auto result_slot = inst.ops[2];
+                auto arg_base = inst.ops[1];
+                auto arg_count = inst.ops[2];
+                auto result_slot = inst.ops[3];
                 auto a1 = (arg_count > 0) ? load(arg_base) : c64(0);
                 auto a2 = (arg_count > 1) ? load(arg_base + 1) : c64(0);
 
