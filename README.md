@@ -92,11 +92,10 @@ Aura 是一个 **AI-native Lisp** 编译器：C++26 实现，LLVM ORC JIT 后端
 
 | 模型 | 通过率 | 耗时 |
 |:----|:------:|:----:|
-| 🥇 Grok 4.3 | **93/102 (91.2%)** | ~9min |
-| 🥈 DeepSeek v4 Flash | **87/102 (85.3%)** | ~7min |
-| 🥉 MiniMax M2.7 | **47/102 (46.1%)** | ~13min |
+| 🥇 Grok 4.3 | **93/111 (83.8%)** | ~50s |
+| 🥈 DeepSeek v4 Flash | **92/111 (82.9%)** | ~173s |
 
-> MiniMax-M2.7 是推理模型，强制输出 `<think>` 标签。通过 `reasoning_split=True` 分离推理层后从 47→56/102。但仍因模型定位差异（推理 > 代码生成），分数远低于 Grok/DeepSeek。
+> P1 编译器加固 (M4 borrow checker / closure cache / inline prim / occurrence typing / 事务 rollback) 后，DeepSeek 从 87/102 升至 92/111 (+5↑)。
 
 [详情 → docs/benchmark.md](docs/benchmark.md)
 
