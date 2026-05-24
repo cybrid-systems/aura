@@ -50,12 +50,9 @@ public:
     }
 
     void mark(const std::string& name, OwnershipState st) {
-        for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
-            if (it->count(name)) {
-                (*it)[name] = st;
-                return;
-            }
-        }
+        // Always write to the current (innermost) scope.
+        // This ensures that when the scope ends (pop_scope), the outer scope's
+        // original state is restored — critical for lexical borrow scoping.
         scopes_.back()[name] = st;
     }
 
@@ -68,9 +65,31 @@ public:
         return OwnershipState::Owned; // unknown vars assumed Owned
     }
 
+    // Can read the variable (owned or imm-borrowed)
     bool can_use(const std::string& name) const {
         auto st = get(name);
-        return st != OwnershipState::Moved;
+        return st == OwnershipState::Owned || st == OwnershipState::Borrowed;
+    }
+
+    // Can move the variable (only if fully owned, no outstanding borrows)
+    bool can_move(const std::string& name) const {
+        return get(name) == OwnershipState::Owned;
+    }
+
+    // Can drop the variable (only if fully owned)
+    bool can_drop(const std::string& name) const {
+        return get(name) == OwnershipState::Owned;
+    }
+
+    // Can imm-borrow (allowed if owned or already imm-borrowed)
+    bool can_borrow(const std::string& name) const {
+        auto st = get(name);
+        return st == OwnershipState::Owned || st == OwnershipState::Borrowed;
+    }
+
+    // Can mut-borrow (only if owned, exclusive access)
+    bool can_mut_borrow(const std::string& name) const {
+        return get(name) == OwnershipState::Owned;
     }
 
     std::string state_name(OwnershipState st) const {

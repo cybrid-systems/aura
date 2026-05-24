@@ -999,8 +999,10 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
                     auto var_ty = env_.lookup(var_name);
                     bool is_linear = var_ty.valid() && reg_.linear_of(var_ty) != nullptr;
                     if (is_linear) {
-                        if (!ownership_env_.can_use(var_name)) {
-                            auto msg = "cannot move " + var_name + " — already moved";
+                        if (!ownership_env_.can_move(var_name)) {
+                            auto st = ownership_env_.get(var_name);
+                            auto msg = "cannot move " + var_name + " — " +
+                                       ownership_env_.state_name(st);
                             diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_));
                         }
                         ownership_env_.mark(var_name, OwnershipState::Moved);
@@ -1021,9 +1023,9 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
                     auto var_ty = env_.lookup(var_name);
                     bool is_linear = var_ty.valid() && reg_.linear_of(var_ty) != nullptr;
                     if (is_linear) {
-                        auto st = ownership_env_.get(var_name);
-                        if (st == OwnershipState::Moved || st == OwnershipState::MutBorrowed) {
-                            auto msg = "cannot borrow " + var_name + " in state " +
+                        if (!ownership_env_.can_borrow(var_name)) {
+                            auto st = ownership_env_.get(var_name);
+                            auto msg = "cannot borrow " + var_name + " — " +
                                        ownership_env_.state_name(st);
                             diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_));
                         }
@@ -1045,9 +1047,9 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
                     auto var_ty = env_.lookup(var_name);
                     bool is_linear = var_ty.valid() && reg_.linear_of(var_ty) != nullptr;
                     if (is_linear) {
-                        auto st = ownership_env_.get(var_name);
-                        if (st != OwnershipState::Owned) {
-                            auto msg = "cannot mutably borrow " + var_name + " in state " +
+                        if (!ownership_env_.can_mut_borrow(var_name)) {
+                            auto st = ownership_env_.get(var_name);
+                            auto msg = "cannot mutably borrow " + var_name + " — " +
                                        ownership_env_.state_name(st);
                             diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_));
                         }
@@ -1068,8 +1070,10 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
                     auto var_ty = env_.lookup(var_name);
                     bool is_linear = var_ty.valid() && reg_.linear_of(var_ty) != nullptr;
                     if (is_linear) {
-                        if (!ownership_env_.can_use(var_name)) {
-                            auto msg = "cannot drop " + var_name + " — already moved";
+                        if (!ownership_env_.can_drop(var_name)) {
+                            auto st = ownership_env_.get(var_name);
+                            auto msg = "cannot drop " + var_name + " — " +
+                                       ownership_env_.state_name(st);
                             diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_));
                         }
                         ownership_env_.mark(var_name, OwnershipState::Moved);
@@ -1535,6 +1539,7 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool,
 
     if (is_rec) {
         env_.push_scope();
+        ownership_env_.push_scope();
         // Bind name to a fresh type variable (forward reference)
         TypeId fwd_var = cs_.fresh_var();
         env_.bind(var_name, fwd_var);
@@ -1632,6 +1637,7 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool,
     TypeId body_type = reg_.void_type();
     if (v.children.size() >= 2 && v.child(1) != NULL_NODE)
         body_type = synthesize_flat(flat, pool, v.child(1), flat.get(v.child(1)));
+    ownership_env_.pop_scope();
     env_.pop_scope();
     return body_type;
 }
@@ -1698,6 +1704,7 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
         auto name = pool.resolve(v.sym_id);
         std::string var_name(name);
         env_.push_scope();
+        ownership_env_.push_scope();
         if (!v.children.empty() && v.child(0) != NULL_NODE) {
             auto val_id = v.child(0);
             // Check the value expression against expected if annotated
