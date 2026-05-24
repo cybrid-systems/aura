@@ -1691,21 +1691,20 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool,
                         }
                     }
                     msg += " in " + type_name;
-                    auto d = Diagnostic(ErrorKind::TypeError, msg, cur_loc_);
-
-                    // Add fix-it suggestion
+                    // Add fix-it suggestion (chained on temporary, no self-move)
                     if (missing.size() == 1) {
-                        d = std::move(d).with_suggestion(
-                            "add clause for '" + missing[0] + "' pattern");
+                        diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_)
+                            .with_suggestion(
+                                "add clause for '" + missing[0] + "' pattern"));
                     } else {
                         std::string suggest = "add clauses for ";
                         for (std::size_t mi = 0; mi < missing.size(); ++mi) {
                             if (mi > 0) suggest += ", ";
                             suggest += "'" + missing[mi] + "'";
                         }
-                        d = std::move(d).with_suggestion(suggest);
+                        diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_)
+                            .with_suggestion(suggest));
                     }
-                    diag_.report(std::move(d));
                 }
             }
 
