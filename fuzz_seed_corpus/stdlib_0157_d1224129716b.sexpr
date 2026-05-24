@@ -1,0 +1,4 @@
+(define (member? elem lst)
+  (if (null? lst) #f
+    (if (equal? (car lst) elem) #t
+      (member? elem (cdr lst)))))

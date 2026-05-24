@@ -1,0 +1,2 @@
+(define (hash-update! h key f default)
+  (hash-set! h key (f (hash-ref h key default))))

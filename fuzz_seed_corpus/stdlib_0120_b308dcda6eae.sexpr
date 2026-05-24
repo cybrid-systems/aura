@@ -1,0 +1,1 @@
+(define (hash-remove h k) (hash-remove! h k) h)

@@ -1,0 +1,2 @@
+(define (list->vec lst)
+  (apply vector lst))

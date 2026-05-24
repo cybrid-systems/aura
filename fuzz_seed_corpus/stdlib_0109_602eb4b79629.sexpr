@@ -1,0 +1,2 @@
+(define (hash->list h)
+  (map (lambda (k) (list k (hash-ref h k))) (hash-keys h)))

@@ -1,0 +1,8 @@
+(define (string-trim s)
+  (define chars (string->list s))
+  (define (drop-leading lst)
+    (if (or (null? lst) (not (= (car lst) 32)))
+      lst
+      (drop-leading (cdr lst))))
+  (define trimmed (reverse (drop-leading (reverse (drop-leading chars)))))
+  (list->string trimmed))

@@ -1,0 +1,4 @@
+(define (set-union a b)
+  (let ((r (hash)))
+    (for-each (lambda (k) (hash-set! r k #t)) (hash-keys a))
+    (for-each (lambda (k) (hash-set! r k #t)) (hash-keys b)) r))

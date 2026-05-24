@@ -1,0 +1,2 @@
+(define (rcurry f a)
+  (lambda (x) (f x a)))

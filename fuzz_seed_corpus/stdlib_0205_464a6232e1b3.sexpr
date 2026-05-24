@@ -1,0 +1,1 @@
+(define (set-member? s x) (not (null? (hash-ref s x))))

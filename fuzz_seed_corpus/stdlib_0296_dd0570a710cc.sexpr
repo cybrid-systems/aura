@@ -1,0 +1,5 @@
+(define aura-pitfalls
+  "=== Aura Common Pitfalls ===\n\1. (display <hash>) shows <hash[N]>, NOT the content.\n\   Use (hash-keys h) or (hash-values h) or (hash->alist h).\n\2. (display 42) prints 42. To show multiple values, call (display) each.\n\3. Strings use double quotes: \"hello\". Single quotes are NOT string delimiters.\n\4. (if cond expr) returns () when cond is false (no else clause).\n\5. Booleans: #t and #f, NOT true/false.\n\6. Lists display inline: (display '(1 2 3)) shows (1 2 3).\n\7. Functions are not hoisted: define BEFORE use.\n\
+   When i*i == n, the number has a divisor and is NOT prime.\n\
+8. modulo: use (modulo n i) to get remainder. (mod n i) does NOT exist.\n\
+   Available: modulo, remainder. NOT: mod.\n")

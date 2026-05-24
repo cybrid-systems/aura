@@ -1,0 +1,2 @@
+(if (null? rest) acc
+;; hint:       (loop (cdr rest) (cons (car rest) acc)))

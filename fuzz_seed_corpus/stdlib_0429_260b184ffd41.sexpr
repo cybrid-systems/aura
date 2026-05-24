@@ -1,0 +1,2 @@
+(if (> i n) b
+;; hint:       (loop (+ i 1) b (+ a b)))

@@ -1,0 +1,1 @@
+(define-type (MyList a) (Cons a (MyList a)) (Nil))

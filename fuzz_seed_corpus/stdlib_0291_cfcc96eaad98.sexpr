@@ -1,0 +1,1 @@
+(define api-key (getenv "LLM_API_KEY"))

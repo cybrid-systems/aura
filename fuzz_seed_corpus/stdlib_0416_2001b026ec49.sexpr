@@ -1,0 +1,6 @@
+(hash
+;; hint:         "count" n
+;; hint:         "sum" s
+;; hint:         "mean" (/ s n)
+;; hint:         "min" (foldl (lambda (acc x) (if (< x acc) x acc)) (car nums) nums)
+;; hint:         "max" (foldl (lambda (acc x) (if (> x acc) x acc)) (car nums) nums))

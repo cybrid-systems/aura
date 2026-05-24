@@ -1,0 +1,2 @@
+(define (stack-empty? s)
+  (null? s))

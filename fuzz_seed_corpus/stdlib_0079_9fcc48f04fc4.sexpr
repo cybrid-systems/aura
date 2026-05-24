@@ -1,0 +1,1 @@
+(define (degrees->radians d) (* d (/ (pi) 180)))

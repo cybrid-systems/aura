@@ -1,0 +1,1 @@
+(define (json-stringify v) (builtin:json-encode v))

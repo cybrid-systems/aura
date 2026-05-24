@@ -1,0 +1,3 @@
+(if (string? x)
+;; hint:     (string-append x " world")
+;; hint:     0)

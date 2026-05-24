@@ -1,0 +1,2 @@
+(define (json-arr-items lst json-fn)
+  (if (null? lst) "" (string-append (json-fn (car lst)) (if (null? (cdr lst)) "" (string-append (c2s 44) (json-arr-items (cdr lst) json-fn))))))

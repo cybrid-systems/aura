@@ -1,0 +1,14 @@
+(export
+  ;; List operations
+  any? every? find find-index count occurrences
+  group-by frequencies split-at
+  ;; Hash operations
+  hash-map hash-filter hash-keys-filter hash-vals hash-update!
+  hash-merge! hash-merge-into hash-keys-sorted
+  ;; Vector operations  
+  vector-map vector-reverse vector->list-rev
+  vector-slice vector-find
+
+  ;; Generic iteration
+  iterate unfold iota
+)

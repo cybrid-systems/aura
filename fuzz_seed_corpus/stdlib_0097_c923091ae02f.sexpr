@@ -1,0 +1,2 @@
+(define (file-write path content)
+  (write-file path content))

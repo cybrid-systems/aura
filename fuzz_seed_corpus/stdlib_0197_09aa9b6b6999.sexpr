@@ -1,0 +1,6 @@
+(define (safe-eval code)
+  (try
+    (let ((result (eval code)))
+      (cons 1 result))       ; (1 . value) = success
+    (catch (e)
+      (cons 0 e))))

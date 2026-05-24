@@ -1,0 +1,5 @@
+(define (flatten lst)
+  (if (null? lst) (list)
+    (if (pair? (car lst))
+      (append (flatten (car lst)) (flatten (cdr lst)))
+      (cons (car lst) (flatten (cdr lst))))))

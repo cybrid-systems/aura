@@ -1,0 +1,4 @@
+(if (null? lst) ()
+;; hint:     (if (pair? (car lst))
+;; hint:       (append (flatten (car lst)) (flatten (cdr lst)))
+;; hint:       (cons (car lst) (flatten (cdr lst)))))

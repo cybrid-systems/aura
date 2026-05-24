@@ -1,0 +1,2 @@
+(define (set-equal? a b)
+  (and (= (hash-length a) (hash-length b)) (null? (hash-keys (set-difference a b)))))

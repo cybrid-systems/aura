@@ -1,0 +1,4 @@
+(define (vec:normalize v)
+  (let ((n (vec:norm v)))
+    (if (= n 0) v
+      (vec:scale v (/ 1 n)))))

@@ -1,0 +1,5 @@
+(define count-matches
+  (lambda (output keys)
+    (if (null? keys) 0
+        (+ (if (string-contains? output (car keys)) 1 0)
+           (count-matches output (cdr keys))))))

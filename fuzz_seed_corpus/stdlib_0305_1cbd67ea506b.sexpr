@@ -1,0 +1,3 @@
+(define find-literal-ints
+  (lambda (fn-name)
+    (query:node-type "LiteralInt")))

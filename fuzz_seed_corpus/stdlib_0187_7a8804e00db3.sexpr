@@ -1,0 +1,2 @@
+(define (queue-rest q)
+  (if (null? q) (list) (cdr q)))

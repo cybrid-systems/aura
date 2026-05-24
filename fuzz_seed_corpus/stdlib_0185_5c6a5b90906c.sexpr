@@ -1,0 +1,2 @@
+(define (queue-front q)
+  (if (null? q) () (car q)))
