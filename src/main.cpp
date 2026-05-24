@@ -555,6 +555,30 @@ int main(int argc, char* argv[]) {
                                 }
                             }
                         }
+                    } else if (type == "query") {
+                        // Eval code and return result (like exec, but simpler)
+                        auto future = std::async(std::launch::async, [&]() {
+                            return cs.exec_with_cache(code);
+                        });
+                        auto status = future.wait_for(std::chrono::seconds(30));
+                        if (status == std::future_status::timeout) {
+                            std::println("{{\"status\":\"timeout\",\"msg\":\"query timed out (30s)\"}}");
+                        } else {
+                            auto result = future.get();
+                            if (result) {
+                                auto& v = *result;
+                                if (is_closure(v)) {
+                                    std::println("{{\"status\":\"ok\",\"value\":\"#<procedure>\"}}");
+                                } else {
+                                    std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
+                                                 json_escape(fmt_val(v, cs)));
+                                }
+                            } else {
+                                auto& d = result.error();
+                                std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
+                                             json_escape(d.format()));
+                            }
+                        }
                     } else if (type == "mutate") {
                         // {"cmd": "mutate", "op": "replace-value", "node": 0, "value": 42,
                         // "summary": "change x"}

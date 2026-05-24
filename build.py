@@ -769,6 +769,7 @@ def test_mutation():
         fail("mutation single-pass failed")
         return 1
     ok("mutation: single-pass OK")
+    return 0
 
 
 # ═══════════════════════════════════════════════════════════════
