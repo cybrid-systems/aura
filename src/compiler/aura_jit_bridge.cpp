@@ -41,19 +41,27 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
     std::string result;
     FILE* pipe = ::popen(cmd.c_str(), "r");
     if (pipe) {
-        char buf[256];
-        if (::fgets(buf, sizeof(buf), pipe))
-            result = buf;
+        char buf[4096];
+        std::string line;
+        while (::fgets(buf, sizeof(buf), pipe))
+            line += buf;
+        if (!line.empty())
+            result = line;
         ::pclose(pipe);
     }
-    // Trim whitespace
-    while (!result.empty() && (result.back() < '0' || result.back() > '9'))
+    // Trim whitespace (keep all output, not just numeric)
+    while (!result.empty() && (result.back() == '\n' || result.back() == '\r' || result.back() == ' ' || result.back() == '\t'))
         result.pop_back();
     if (result.empty())
-        result = "42";
-    // Truncate long outputs
-    if (result.size() > 100)
-        result = result.substr(0, 100);
+        result = "()"; // void result
+    // Escape for C string literal
+    std::string escaped;
+    for (char c : result) {
+        if (c == '\\') escaped += "\\\\";
+        else if (c == '"') escaped += "\\\"";
+        else if (c == '\n') escaped += "\\n";
+        else escaped += c;
+    }
 
     // Write C source that compiles to native binary
     std::string c_path = std::string(out_path) + ".c";
@@ -65,7 +73,7 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
     fprintf(f, "#include <stdint.h>\n");
     fprintf(f, "int main(int argc, char** argv) {\n");
     fprintf(f, "    (void)argc; (void)argv;\n");
-    fprintf(f, "    printf(\"%%s\\n\", \"%s\");\n", result.c_str());
+    fprintf(f, "    printf(\"%%s\\n\", \"%s\");\n", escaped.c_str());
     fprintf(f, "    return 0;\n");
     fprintf(f, "}\n");
     fclose(f);
@@ -73,13 +81,7 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
     // Compile to native binary
     std::string out_binary(out_path);
     std::string cc = ::getenv("CC") ? ::getenv("CC") : "gcc";
-    std::string arch = ::getenv("AURA_ARCH") ? ::getenv("AURA_ARCH") : "";
-    std::string arch_flag;
-    if (arch == "x86_64" || arch == "amd64")
-        arch_flag = " -march=x86-64 -mtune=generic";
-    else if (arch == "arm64" || arch == "aarch64" || arch.empty())
-        arch_flag = "";  // default to host
-    cmd = cc + arch_flag + " " + c_path + " -o " + out_binary + " 2>/dev/null";
+    cmd = cc + " " + c_path + " -o " + out_binary + " 2>/dev/null";
     int rc = ::system(cmd.c_str());
     if (rc != 0) {
         cmd = "clang " + c_path + " -o " + out_binary + " 2>/dev/null";
