@@ -1093,7 +1093,7 @@ def main():
     print("=" * 60)
 
     # Load corpus seeds (skip define/quasiquote — transforms don't handle those)
-    CORPUS_DIR = os.path.join(os.path.dirname(__file__), "..", "fuzz_seed_corpus")
+    CORPUS_DIR = os.path.join(os.path.dirname(__file__), "..", "tests/fuzz_seed_corpus")
     corpus_seeds = []
     if os.path.isdir(CORPUS_DIR):
         for f in sorted(os.listdir(CORPUS_DIR)):
