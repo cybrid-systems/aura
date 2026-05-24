@@ -1,0 +1,5 @@
+;; task: type-grad-multi-boundary
+;; goal: Multiple gradual type boundaries — mixing typed and untyped values
+;; expect: 42
+(display (let ((x "42")) (+ 40 (string->number x))))
+(newline)

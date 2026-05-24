@@ -28,18 +28,6 @@ MODELS = [
         "base_url": "https://api.deepseek.com",
     },
     {
-        "name": "MiniMax",
-        "model": "minimax-m2.7",
-        "key_file": KEYS_DIR / "minimax",
-        "base_url": "https://api.minimax.chat",
-    },
-    {
-        "name": "Kimi",
-        "model": "kimi-k2.6",
-        "key_file": KEYS_DIR / "kimi",
-        "base_url": "https://api.moonshot.cn",
-    },
-    {
         "name": "Grok",
         "model": "grok-4.3",
         "key_file": KEYS_DIR / "grok",

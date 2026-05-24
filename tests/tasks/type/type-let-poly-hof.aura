@@ -1,0 +1,9 @@
+;; task: type-let-poly-hof
+;; goal: Let-polymorphism with higher-order functions — compose and apply
+;; expect: 42
+(let ((compose (lambda (f g) (lambda (x) (f (g x))))))
+  (let ((add1 (lambda (x) (+ x 1)))
+        (mul2 (lambda (x) (* x 2))))
+    (let ((h (compose add1 mul2)))
+      (h 20))))
+(newline)

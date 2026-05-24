@@ -1,0 +1,10 @@
+;; task: type-occ-match
+;; goal: Match on ADT with occurrence typing — narrow per constructor
+;; expect: 30
+(define-type (MyList a) (Cons a (MyList a)) (Nil))
+(define (sum-list lst)
+  (match lst
+    ((Cons h t) (+ h (sum-list t)))
+    ((Nil) 0)))
+(display (sum-list (Cons 10 (Cons 20 (Cons 0 (Nil))))))
+(newline)
