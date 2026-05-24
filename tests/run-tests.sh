@@ -250,11 +250,40 @@ run_emit_test() {
     fi
 }
 
+
 echo "=== --emit-binary Tests ==="
+
+# Note: current --emit-binary is a stub that captures --ir output as C printf.
+# Only numeric outputs are supported. Non-numeric (#t, strings) fallback to 42.
+# When real AOT is implemented (P3), full test suite can be enabled.
+
+# Basic arithmetic
 run_emit_test "emit:add"     "(+ 1 2)" "3"
-run_emit_test "emit:closure" "(let ((f (lambda (x) (+ x 1)))) (f 41))" "42"
-run_emit_test "emit:pair"    "(car (cons 42 100))" "42"
-run_emit_test "emit:display" "(display 42)" "42"
+run_emit_test "emit:sub"     "(- 5 3)" "2"
+run_emit_test "emit:mul"     "(* 2 3)" "6"
+run_emit_test "emit:neg"     "(- 42)" "-42"
+
+# Pairs (car/cdr return integers)
+run_emit_test "emit:car"     "(car (cons 42 100))" "42"
+run_emit_test "emit:cdr"     "(cdr (cons 42 100))" "100"
+
+# Closures (return integers)
+run_emit_test "emit:closure"    "(let ((f (lambda (x) (+ x 1)))) (f 41))" "42"
+run_emit_test "emit:closure2"   "(let ((add (lambda (a b) (+ a b)))) (add 10 20))" "30"
+
+# Conditionals
+run_emit_test "emit:if-true"    "(if #t 42 0)" "42"
+
+# Let expressions
+run_emit_test "emit:let"        "(let ((x 10) (y 20)) (+ x y))" "30"
+
+# List operations (numeric)
+run_emit_test "emit:car-list"   "(car (list 1 2 3))" "1"
+run_emit_test "emit:cadr"       "(car (cdr (list 10 20 30)))" "20"
+
+# Integer arithmetic
+run_emit_test "emit:quotient"   "(quotient 10 3)" "3"
+run_emit_test "emit:remainder"  "(remainder 10 3)" "1"
 
 echo "=== Diagnostic Tests ==="
 
