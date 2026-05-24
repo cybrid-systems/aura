@@ -6927,13 +6927,14 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         }
                     }
                     auto callee_name = std::string(p->resolve(callee.sym_id));
-                    auto diag = Diagnostic{ErrorKind::TypeError, "cannot call: " + callee_name}
-                        .with_suggestion("did you forget to define '" + callee_name + "'?");
-                    // If the name looks like a C FFI function, suggest correct c-func syntax
+                    // Build diagnostic with appropriate suggestion (no self-move)
+                    std::string suggestion;
                     if (callee_name.size() > 3 && callee_name.substr(callee_name.size() - 3) == "-fn")
-                        diag = std::move(diag).with_suggestion(
-                            "if using c-func: (c-func -1 \"" + callee_name.substr(0, callee_name.size() - 3) + "\" \"(String) -> Int\")");
-                    return std::unexpected(std::move(diag));
+                        suggestion = "if using c-func: (c-func -1 \"" + callee_name.substr(0, callee_name.size() - 3) + "\" \"(String) -> Int\")";
+                    else
+                        suggestion = "did you forget to define '" + callee_name + "'?";
+                    return std::unexpected(Diagnostic{ErrorKind::TypeError, "cannot call: " + callee_name}
+                        .with_suggestion(std::move(suggestion)));
                 }
                 case aura::ast::NodeTag::IfExpr: {
                     if (v.children.size() < 3)
