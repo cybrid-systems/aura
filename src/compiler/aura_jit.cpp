@@ -350,6 +350,8 @@ struct LLVMBuilder {
             case OpDrop: {
                 auto val = load(inst.ops[0]);
                 irb->CreateCall(fn_drop_pair, {val});
+                irb->CreateCall(fn_drop_cell, {val});
+                irb->CreateCall(fn_drop_closure, {val});
                 return true;
             }
 
