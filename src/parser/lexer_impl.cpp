@@ -49,6 +49,10 @@ Token Lexer::advance() {
                     pos_ += 2;
                     return make_tok(TokenKind::Bool, (next == 't') ? "1" : "0");
                 }
+                if (next == '(') {
+                    pos_ += 2;
+                    return make_tok(TokenKind::HashLParen, "#(");
+                }
             }
             return make_tok(TokenKind::Error, source_.substr(pos_++, 1));
     }
