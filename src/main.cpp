@@ -229,6 +229,40 @@ int main(int argc, char* argv[]) {
 
                 // Session management
                 if (type == "session") {
+                    auto act_it = cmd.find("action");
+                    auto action = (act_it != cmd.end()) ? act_it->second : std::string{};
+
+                    if (action == "list") {
+                        std::println("{{\"status\":\"ok\",\"sessions\":[");
+                        bool first = true;
+                        for (auto& [sn, _] : sessions) {
+                            if (!first) std::println(",");
+                            first = false;
+                            std::print("  \"{}\"", json_escape(sn));
+                        }
+                        std::println("],\"active\":\"{}\"}}", json_escape(active_session));
+                        continue;
+                    }
+
+                    if (action == "delete") {
+                        auto name_it = cmd.find("name");
+                        if (name_it == cmd.end() || name_it->second == "default") {
+                            std::println("{{\"status\":\"error\",\"msg\":\"cannot delete default session\"}}");
+                            continue;
+                        }
+                        auto& sname = name_it->second;
+                        if (sessions.erase(sname)) {
+                            if (active_session == sname) {
+                                active_session = "default";
+                            }
+                            std::println("{{\"status\":\"deleted\",\"session\":\"{}\"}}", json_escape(sname));
+                        } else {
+                            std::println("{{\"status\":\"error\",\"msg\":\"session not found\"}}");
+                        }
+                        continue;
+                    }
+
+                    // Default: activate / create session
                     auto name_it = cmd.find("name");
                     if (name_it == cmd.end()) {
                         std::println("{{\"status\":\"error\",\"msg\":\"missing name field\"}}");
@@ -236,13 +270,12 @@ int main(int argc, char* argv[]) {
                     }
                     auto& sname = name_it->second;
                     auto real_name = (sname.find("new:") == 0) ? sname.substr(4) : sname;
-                    if (!sessions.count(real_name)) {
-                        sessions.try_emplace(real_name);
-                        std::println("{{\"status\":\"created\",\"session\":\"{}\"}}", real_name);
-                    } else {
-                        std::println("{{\"status\":\"ok\",\"session\":\"{}\"}}", real_name);
-                    }
-                    active_session = (sname.find("new:") == 0) ? sname.substr(4) : sname;
+                    auto [it, created] = sessions.try_emplace(real_name);
+                    if (created)
+                        std::println("{{\"status\":\"created\",\"session\":\"{}\"}}", json_escape(real_name));
+                    else
+                        std::println("{{\"status\":\"ok\",\"session\":\"{}\"}}", json_escape(real_name));
+                    active_session = real_name;
                     continue;
                 }
 

@@ -1,6 +1,7 @@
 module;
 #include <cstdint>
 #include "aura_jit.h"
+#include <atomic>
 
 extern "C" std::int64_t aura_jit_test();
 extern "C" void aura_set_prim_dispatcher(std::int64_t (*fn)(std::int64_t, std::int64_t*,
@@ -39,11 +40,11 @@ static constexpr const char* kPrimNameTable[] = {
     "raise",         "error?",
 };
 
-static const aura::compiler::Primitives* g_jit_prim_ctx = nullptr;
+static std::atomic<const aura::compiler::Primitives*> g_jit_prim_ctx{nullptr};
 
 extern "C" std::int64_t aura_jit_prim_dispatch(std::int64_t prim_id, std::int64_t* args,
                                                std::int32_t argc) {
-    auto* prims = g_jit_prim_ctx;
+    auto* prims = g_jit_prim_ctx.load(std::memory_order_acquire);
     if (!prims)
         return 0;
 
@@ -2609,7 +2610,7 @@ private:
     // Register evaluator primitives with JIT runtime
     void register_jit_primitives() {
         // Set the global primitives pointer for the JIT dispatcher
-        g_jit_prim_ctx = &evaluator_.primitives();
+        g_jit_prim_ctx.store(&evaluator_.primitives(), std::memory_order_release);
 
 // Register the dispatcher with JIT runtime
 #ifdef AURA_HAVE_LLVM
