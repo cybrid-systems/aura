@@ -968,14 +968,16 @@ public:
         }
         flat.root = pr.root;
 
-        aura::core::TypeRegistry treg;
-        aura::compiler::TypeChecker tc(treg);
+        // Use the CompilerService's persistent type_registry_ so that ADT
+        // constructors registered during eval (via define-type) are visible
+        // to the match exhaustiveness check.
+        aura::compiler::TypeChecker tc(type_registry_);
         aura::diag::DiagnosticCollector diag;
 
         auto result = tc.infer_flat(flat, pool, pr.root, diag);
 
         std::string out;
-        out += "type: " + treg.format_type(result) + "\n";
+        out += "type: " + type_registry_.format_type(result) + "\n";
 
         auto all_diags = diag.diagnostics();
         if (all_diags.empty()) {
