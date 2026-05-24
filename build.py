@@ -803,6 +803,29 @@ def test_fuzz_equiv():
     return 0
 
 
+def test_runtime_unit():
+    """runtime.c 单元测试 — Bump/Drop/闭包/字符串"""
+    print(f"{B}═══ runtime.c Unit Tests ═══{N}")
+    r = subprocess.run(
+        ["gcc", "-g", "-DTEST_BUILD=1",
+         str(ROOT / "tests" / "runtime_test_harness.c"),
+         str(ROOT / "lib" / "runtime.c"),
+         "-o", "/tmp/runtime_test", "-lm"],
+        capture_output=True, text=True, timeout=30
+    )
+    if r.returncode != 0:
+        print(r.stderr[:500])
+        fail("runtime.c test compilation failed")
+        return 1
+    r = subprocess.run(["/tmp/runtime_test"], capture_output=True, text=True, timeout=30)
+    print(r.stdout)
+    if r.returncode != 0:
+        fail("runtime.c unit tests failed")
+        return 1
+    ok("runtime-c: 23/23 passed")
+    return 0
+
+
 def test_fuzz_corpus():
     """Parser fuzz corpus — 种子驱动的 fuzz 测试"""
     print(f"{B}═══ Parser Fuzz Corpus ═══{N}")
@@ -1057,7 +1080,7 @@ def test_suite_runner():
 # Test suite groups for CI tiering.
 # - "check" (CI default):  build + core + safety + fuzz-quick
 # - "all":                 build + everything
-CI_CORE = ["unit", "integ", "typecheck", "smoke", "bash", "suite"]
+CI_CORE = ["unit", "integ", "typecheck", "smoke", "bash", "suite", "runtime-c"]
 CI_SAFETY = ["gradual", "regression", "p0"]
 CI_FUZZ = ["fuzz-equiv", "fuzz-corpus"]
 
@@ -1070,6 +1093,7 @@ SUITES = {
     "mutation": test_mutation,
     "fuzz-equiv": test_fuzz_equiv,
     "fuzz-corpus": test_fuzz_corpus,
+    "runtime-c": test_runtime_unit,
     "gradual": test_gradual,
     "demo": test_demo,
     "regression": test_regression,

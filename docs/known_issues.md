@@ -9,7 +9,7 @@
 | # | 问题 | 工作量 | 说明 |
 |---|------|:------:|------|
 | 36 | `--emit-binary` 是 stub 实现 | 4d | `aura_emit_native_file` 跑 `--ir` 抓结果后 hardcode 到 C printf，不是真实 AOT。非数值输出（`#t`/字符串/闭包）不正确 |
-| 37 | runtime.c 无独立单元测试 | 2d | Bump Allocator、Drop、闭包捕获等功能仅在编译器管线中间接测试 |
+| 37 | runtime.c 无独立单元测试 | ✅ 已加 | 23 个 C 级测试用例验证 Bump/Drop/闭包/字符串 |
 | 38 | JIT OpConstString 传空字符串 | 1d | IR 模块的 string pool 未传入 JIT，字符串常量显示为空 |
 | 39 | stdlib 在 `--emit-binary` 中不可用 | 2d | 29 个 stdlib 模块需 AOT 路径支持 |
 | 40 | 所有权模型在 binary 路径中未完全落地 | 3d | IR 层 `OpDrop` 指令已生成，但 LLVM lowering 自动插入 drop 还需完善 |
