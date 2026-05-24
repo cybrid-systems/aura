@@ -198,3 +198,21 @@
 (test-suite "adt:wildcard"
   (check (begin (define-type (Option a) (Some a) (None)) (match (Some 42) ((Some _) #t) (None #f))))
   (check (not (begin (define-type (Option a) (Some a) (None)) (match None ((Some _) #t) (None #f))))))
+
+;; ── Closure tests ─────────────────────────────────────────
+
+(test-suite "core:closure"
+  (check= 10 ((lambda (x) (* x 2)) 5))
+  (check= 42 (let ((f (lambda (x) (+ x 1)))) (f 41)))
+  (check= 12 ((lambda (f x) (f (f x))) (lambda (x) (* x 2)) 3))
+  (check= 6 (let ((f (lambda (x) (+ x 1))) (g (lambda (x) (* x 2)))) (g (f 2)))))
+
+;; ── Quotient / Remainder ──────────────────────────────────
+
+(test-suite "core:quotient-remainder"
+  (check= 3 (quotient 10 3))
+  (check= 1 (remainder 10 3))
+  (check= 0 (quotient 5 0))
+  (check= 0 (remainder 5 0))
+  (check= -3 (quotient -10 3))
+  (check= -1 (remainder -10 3)))
