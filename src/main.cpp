@@ -701,9 +701,10 @@ int main(int argc, char* argv[]) {
     if (argc > 1 && std::string_view(argv[1]) == "--ir") {
         aura::compiler::CompilerService cs;
         if (argc > 2) {
-            auto result = cs.eval_ir(argv[2]);
+            auto source = argv[2];
+            auto result = cs.eval_ir(source);
             if (!result) {
-                std::println(std::cerr, "error: {}", result.error().format());
+                std::println(std::cerr, "error: {}", result.error().format_with_source(source));
                 return 1;
             }
             if (!is_void(*result))
@@ -711,9 +712,10 @@ int main(int argc, char* argv[]) {
         } else {
             std::ostringstream buf;
             buf << std::cin.rdbuf();
-            auto result = cs.eval_ir(buf.str());
+            auto source = buf.str();
+            auto result = cs.eval_ir(source);
             if (!result) {
-                std::println(std::cerr, "error: {}", result.error().format());
+                std::println(std::cerr, "error: {}", result.error().format_with_source(source));
                 return 1;
             }
             if (!is_void(*result))
@@ -1213,7 +1215,7 @@ int main(int argc, char* argv[]) {
         }
         auto result = cs.hot_swap(input);
         if (!result) {
-            std::println(std::cerr, "error: {}", result.error().format());
+            std::println(std::cerr, "error: {}", result.error().format_with_source(input));
             return 1;
         }
         std::println("{}", fmt_val(*result, cs));
@@ -1461,7 +1463,7 @@ compiled = aura_emit_native_file(input.c_str(), out_path.c_str(), (const void*)&
         auto result = cs.eval_ir(input);
 
         if (!result) {
-            std::println(std::cerr, "error: {}", result.error().format());
+            std::println(std::cerr, "error: {}", result.error().format_with_source(input));
         } else {
             std::println("result: {}", fmt_val(*result, cs));
         }
@@ -1518,7 +1520,7 @@ compiled = aura_emit_native_file(input.c_str(), out_path.c_str(), (const void*)&
         if (result) {
             std::println("result: {}", fmt_val(*result, cs));
         } else {
-            std::println(std::cerr, "error: {}", result.error().format());
+            std::println(std::cerr, "error: {}", result.error().format_with_source(input));
         }
 
         auto closures = cs.last_closures();
@@ -1659,7 +1661,7 @@ compiled = aura_emit_native_file(input.c_str(), out_path.c_str(), (const void*)&
 
             auto r = cs.eval(trimmed);
             if (!r)
-                std::println(std::cerr, "{}: error: {}", trimmed, r.error().format());
+                std::println(std::cerr, "{}: error: {}", trimmed, r.error().format_with_source(trimmed));
             else if (!aura::compiler::types::is_void(*r))
                 std::println("{}", fmt_val(*r, cs));
 
@@ -1807,7 +1809,7 @@ compiled = aura_emit_native_file(input.c_str(), out_path.c_str(), (const void*)&
         e = e.substr(s);
         auto r = cs.eval(e);
         if (!r) {
-            std::println(std::cerr, "error: {}", r.error().format());
+            std::println(std::cerr, "error: {}", r.error().format_with_source(e));
             err = true;
         } else if (&e == &exprs.back() && !is_void(*r))
             std::println("{}", fmt_val(*r, cs));

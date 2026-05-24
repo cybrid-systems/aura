@@ -27,6 +27,7 @@ public:
     void bind(std::string name, aura::core::TypeId type);
     aura::core::TypeId lookup(const std::string& name);
     bool is_bound(const std::string& name) const;
+    void collect_names(std::vector<std::string>& out) const;
 };
 
 // ── Ownership Environment (M4 Linear) ──────────────────────

@@ -177,6 +177,66 @@ export struct Diagnostic {
         return out;
     }
 
+    // Format with source line context and caret pointing to error location
+    // Example:
+    //   5:1: parse error: expected expression, got ')'
+    //     |
+    //   5 | (+ 1 2)
+    //     | ^^^^^^^
+    //     |   suggestion: ...
+    std::string format_with_source(std::string_view source) const {
+        auto out = format();
+
+        if (location.valid() && !source.empty()) {
+            // Extract the relevant line from source (1-indexed)
+            std::uint32_t current_line = 1;
+            const char* line_start = source.data();
+            const char* line_end = nullptr;
+            const char* p = source.data();
+            const char* end = source.data() + source.size();
+
+            while (p < end && current_line < location.line) {
+                if (*p == '\n') {
+                    current_line++;
+                    line_start = p + 1;
+                }
+                p++;
+            }
+
+            if (current_line == location.line) {
+                // Find end of this line
+                line_end = line_start;
+                while (line_end < end && *line_end != '\n' && *line_end != '\r')
+                    line_end++;
+
+                auto line_str = std::string_view(line_start, line_end - line_start);
+                out += std::format("\n   |");
+                out += std::format("\n{:>3} | {}", location.line, line_str);
+
+                // Caret line: underline the error span
+                out += "\n   | ";
+                if (location.column > 0) {
+                    for (std::uint32_t i = 1; i < location.column; ++i)
+                        out += ' ';
+                    out += '^';
+                    // Multi-character span: assume token length from message
+                    // Simple heuristic: underline from column to end of word
+                    auto tok_start = line_start + (location.column - 1);
+                    if (tok_start < line_end) {
+                        auto tok_end = tok_start;
+                        while (tok_end < line_end && !std::isspace(static_cast<unsigned char>(*tok_end)) &&
+                               *tok_end != ')' && *tok_end != '(')
+                            tok_end++;
+                        for (auto c = tok_start + 1; c < tok_end; ++c)
+                            out += '^';
+                    }
+                }
+            }
+        }
+
+        return out;
+    }
+
     // Short one-line summary (no location, no context)
     std::string summary() const { return std::string(kind_name(kind)) + ": " + message; }
 };
