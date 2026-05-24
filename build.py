@@ -797,6 +797,27 @@ def test_fuzz_equiv():
         return 1
     ok("fuzz-equiv: 0 diff")
     return 0
+
+
+def test_fuzz_corpus():
+    """Parser fuzz corpus — 种子驱动的 fuzz 测试"""
+    print(f"{B}═══ Parser Fuzz Corpus ═══{N}")
+    if not AURA.exists():
+        fail(f"{AURA} not found")
+        return 1
+
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "tests" / "fuzz_corpus.py"), "--quick"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    print(r.stdout)
+    if r.returncode != 0:
+        print(r.stderr[:200] if r.stderr else "")
+        fail("parser fuzz corpus failed")
+        return 1
+    ok("fuzz-corpus: 518 seeds passed")
     return 0
 
 
@@ -1037,6 +1058,7 @@ SUITES = {
     "smoke": test_smoke,
     "mutation": test_mutation,
     "fuzz-equiv": test_fuzz_equiv,
+    "fuzz-corpus": test_fuzz_corpus,
     "gradual": test_gradual,
     "demo": test_demo,
     "regression": test_regression,
@@ -1137,7 +1159,7 @@ def fuzz_asan():
     env = os.environ.copy()
     env["ASAN_OPTIONS"] = "detect_leaks=0"
     env["AURA_BIN"] = str(asan_bin)
-    for fuzz_script in ["tests/fuzz_structured.py", "tests/fuzz.py", "tests/fuzz_diff.py", "tests/fuzz_equiv_mutate.py"]:
+    for fuzz_script in ["tests/fuzz_structured.py", "tests/fuzz.py", "tests/fuzz_diff.py", "tests/fuzz_equiv_mutate.py", "tests/fuzz_corpus.py"]:
         print(f"  Running {fuzz_script} with ASan...", flush=True)
         r = subprocess.run([sys.executable, fuzz_script, "--seed", "42", "--quick"],
                           cwd=REPO, env=env, capture_output=True, text=True)
@@ -1158,7 +1180,7 @@ def fuzz_ubsan():
         return True
     env = os.environ.copy()
     env["AURA_BIN"] = str(ubsan_bin)
-    for fuzz_script in ["tests/fuzz_structured.py", "tests/fuzz.py", "tests/fuzz_diff.py", "tests/fuzz_equiv_mutate.py"]:
+    for fuzz_script in ["tests/fuzz_structured.py", "tests/fuzz.py", "tests/fuzz_diff.py", "tests/fuzz_equiv_mutate.py", "tests/fuzz_corpus.py"]:
         print(f"  Running {fuzz_script} with UBSan...", flush=True)
         r = subprocess.run([sys.executable, fuzz_script, "--seed", "42", "--quick"],
                           cwd=REPO, env=env, capture_output=True, text=True)
