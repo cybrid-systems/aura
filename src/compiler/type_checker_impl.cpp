@@ -1647,6 +1647,7 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool,
         for (std::size_t i = 0; i < reg_.size(); ++i) {
             auto tid = TypeId{static_cast<std::uint32_t>(i), 1};
             auto* ctors = reg_.get_adt_constructors(tid);
+            if (!ctors) continue;
 
             auto type_name = std::string(reg_.name_of(tid));
 
