@@ -1,6 +1,7 @@
-// Aura standalone runtime stub
+// Aura standalone runtime
 // Linked with LLVM-compiled .o to produce native binary.
-// Provides runtime functions that LLVM JIT code references.
+// Uses Bump Allocator (Arena) for fast bulk allocation + reset.
+// Drop functions + Free List for objects needing individual release.
 //
 // Build: gcc -c runtime.c -o runtime.o
 // Link:  gcc program.o runtime.o -o program -lm
@@ -11,28 +12,333 @@
 #include <string.h>
 #include <math.h>
 
-// ── Pair heap (fixed size for now) ─────────────────────────
+// ═══════════════════════════════════════════════════════════
+// Bump Allocator (Arena) — primary memory manager
+// ═══════════════════════════════════════════════════════════
+// Fast bump-pointer allocation. Entire arena reset at function end.
+// Long-lived objects can optionally use Free List (see Drop section).
+
+#define BUMP_ARENA_SIZE (64 * 1024 * 1024) // 64MB default arena
+
+static uint8_t* bump_arena = NULL;
+static size_t bump_offset = 0;
+static size_t bump_capacity = BUMP_ARENA_SIZE;
+
+// Initialize bump arena (called at function entry by compiler).
+void aura_bump_init(void) {
+    if (!bump_arena) {
+        bump_arena = (uint8_t*)malloc(bump_capacity);
+        if (!bump_arena) {
+            fprintf(stderr, "runtime: bump arena alloc failed\n");
+            exit(1);
+        }
+    }
+    bump_offset = 0; // Reset for fresh execution
+}
+
+// Allocate from bump arena (called by all alloc functions internally).
+static void* aura_bump_alloc_slow(size_t size, size_t align) {
+    size_t aligned = (bump_offset + align - 1) & ~(align - 1);
+    if (aligned + size > bump_capacity) {
+        // Try to double the arena
+        size_t new_cap = bump_capacity * 2;
+        uint8_t* new_arena = (uint8_t*)realloc(bump_arena, new_cap);
+        if (!new_arena) {
+            fprintf(stderr, "runtime: bump arena overflow\n");
+            exit(1);
+        }
+        bump_arena = new_arena;
+        bump_capacity = new_cap;
+    }
+    size_t aligned2 = (bump_offset + align - 1) & ~(align - 1);
+    void* ptr = bump_arena + aligned2;
+    bump_offset = aligned2 + size;
+    return ptr;
+}
+
+// Inline-friendly wrapper (compiler can inline this).
+void* aura_bump_alloc(size_t size, size_t align) {
+    size_t aligned = (bump_offset + align - 1) & ~(align - 1);
+    if (aligned + size > bump_capacity)
+        return aura_bump_alloc_slow(size, align);
+    void* ptr = bump_arena + aligned;
+    bump_offset = aligned + size;
+    return ptr;
+}
+
+// Reset bump arena (called at function exit by compiler).
+// Frees all bump-allocated memory in one shot.
+void aura_bump_reset(void) {
+    bump_offset = 0;
+}
+
+// ═══════════════════════════════════════════════════════════
+// Free List (for objects requiring individual drop)
+// ═══════════════════════════════════════════════════════════
+// Used when a specific object must be released before arena reset
+// (e.g. long-lived objects spanning multiple function calls).
+
+#define FREE_LIST_CAP 4096
+
+// Pair free list
+static int64_t pair_free_list[FREE_LIST_CAP];
+static uint64_t pair_free_count = 0;
+
+// Cell free list
+static int64_t cell_free_list[FREE_LIST_CAP];
+static uint64_t cell_free_count = 0;
+
+// Closure free list
+static int64_t closure_free_list[FREE_LIST_CAP];
+static uint64_t closure_free_count = 0;
+
+// ═══════════════════════════════════════════════════════════
+// Pair heap
+// ═══════════════════════════════════════════════════════════
+
 #define MAX_PAIRS 1048576
-static struct { int64_t car, cdr; } pairs[MAX_PAIRS];
+typedef struct { int64_t car, cdr; bool live; } AuraPair;
+static AuraPair* pairs = NULL;
 static uint64_t pair_count = 0;
+static uint64_t pair_capacity = 0;
 
-// ── String heap ────────────────────────────────────────────
-#define MAX_STRINGS 65536
-static char* strings[MAX_STRINGS];
-static uint64_t string_count = 0;
+static AuraPair* get_pairs(void) {
+    if (!pairs) {
+        pair_capacity = 65536;
+        pairs = (AuraPair*)calloc(pair_capacity, sizeof(AuraPair));
+    }
+    return pairs;
+}
 
-// ── Closure table ──────────────────────────────────────────
-#define MAX_CLOSURES 4096
-typedef int64_t (*ScalarFn)(int64_t*, uint32_t);
-static struct { ScalarFn fn; uint32_t local_count; } closures[MAX_CLOSURES];
-static uint64_t closure_count = 0;
+static uint64_t pair_alloc_slot(void) {
+    // Try free list first
+    if (pair_free_count > 0) {
+        uint64_t id = (uint64_t)pair_free_list[--pair_free_count];
+        pairs[id].live = true;
+        return id;
+    }
+    // Bump allocate
+    if (pair_count >= pair_capacity) {
+        uint64_t new_cap = pair_capacity ? pair_capacity * 2 : 65536;
+        pairs = (AuraPair*)realloc(pairs, new_cap * sizeof(AuraPair));
+        if (!pairs) { fprintf(stderr, "runtime: pair OOM\n"); exit(1); }
+        memset(pairs + pair_capacity, 0, (new_cap - pair_capacity) * sizeof(AuraPair));
+        pair_capacity = new_cap;
+    }
+    uint64_t id = pair_count++;
+    pairs[id].live = true;
+    return id;
+}
 
-// ── Cell heap ──────────────────────────────────────────────
+int64_t aura_alloc_pair(int64_t car, int64_t cdr) {
+    get_pairs();
+    uint64_t id = pair_alloc_slot();
+    pairs[id].car = car;
+    pairs[id].cdr = cdr;
+    return (int64_t)id;
+}
+
+int64_t aura_pair_car(int64_t pair_id) {
+    uint64_t id = (uint64_t)pair_id;
+    if (id >= pair_count || !pairs[id].live) return 0;
+    return pairs[id].car;
+}
+
+int64_t aura_pair_cdr(int64_t pair_id) {
+    uint64_t id = (uint64_t)pair_id;
+    if (id >= pair_count || !pairs[id].live) return 0;
+    return pairs[id].cdr;
+}
+
+void aura_drop_pair(int64_t pair_id) {
+    uint64_t id = (uint64_t)pair_id;
+    if (id >= pair_count || !pairs[id].live) return;
+    pairs[id].live = false;
+    if (pair_free_count < FREE_LIST_CAP)
+        pair_free_list[pair_free_count++] = (int64_t)id;
+}
+
+// ═══════════════════════════════════════════════════════════
+// Cell heap
+// ═══════════════════════════════════════════════════════════
+
 #define MAX_CELLS 262144
-static int64_t cells[MAX_CELLS];
+typedef struct { int64_t value; bool live; } AuraCell;
+static AuraCell* cell_heap = NULL;
 static uint64_t cell_count = 0;
+static uint64_t cell_capacity = 0;
 
-// ── Runtime functions called from LLVM IR ──────────────────
+static AuraCell* get_cells(void) {
+    if (!cell_heap) {
+        cell_capacity = 65536;
+        cell_heap = (AuraCell*)calloc(cell_capacity, sizeof(AuraCell));
+    }
+    return cell_heap;
+}
+
+int64_t aura_new_cell(void) {
+    get_cells();
+    // Try free list first
+    if (cell_free_count > 0) {
+        uint64_t id = (uint64_t)cell_free_list[--cell_free_count];
+        cell_heap[id].value = 0;
+        cell_heap[id].live = true;
+        return (int64_t)id;
+    }
+    if (cell_count >= cell_capacity) {
+        uint64_t new_cap = cell_capacity ? cell_capacity * 2 : 65536;
+        cell_heap = (AuraCell*)realloc(cell_heap, new_cap * sizeof(AuraCell));
+        if (!cell_heap) { fprintf(stderr, "runtime: cell OOM\n"); exit(1); }
+        memset(cell_heap + cell_capacity, 0, (new_cap - cell_capacity) * sizeof(AuraCell));
+        cell_capacity = new_cap;
+    }
+    uint64_t id = cell_count++;
+    cell_heap[id].live = true;
+    return (int64_t)id;
+}
+
+int64_t aura_cell_get(int64_t cell_id) {
+    uint64_t id = (uint64_t)cell_id;
+    if (id >= cell_count || !cell_heap[id].live) return 0;
+    return cell_heap[id].value;
+}
+
+void aura_cell_set(int64_t cell_id, int64_t val) {
+    uint64_t id = (uint64_t)cell_id;
+    if (id >= cell_count || !cell_heap[id].live) return;
+    cell_heap[id].value = val;
+}
+
+void aura_drop_cell(int64_t cell_id) {
+    uint64_t id = (uint64_t)cell_id;
+    if (id >= cell_count || !cell_heap[id].live) return;
+    cell_heap[id].live = false;
+    if (cell_free_count < FREE_LIST_CAP)
+        cell_free_list[cell_free_count++] = (int64_t)id;
+}
+
+// ═══════════════════════════════════════════════════════════
+// Closure table
+// ═══════════════════════════════════════════════════════════
+
+#define MAX_CLOSURES 4096
+#define MAX_CLOSURE_ENV 8
+
+typedef int64_t (*ScalarFn)(int64_t*, uint32_t);
+
+typedef struct {
+    ScalarFn fn;
+    uint32_t local_count;
+    int64_t env[MAX_CLOSURE_ENV];
+    uint32_t env_count;
+    bool live;
+} AuraClosure;
+
+static AuraClosure* closure_heap = NULL;
+static uint64_t closure_count = 0;
+static uint64_t closure_capacity = 0;
+
+static AuraClosure* get_closures(void) {
+    if (!closure_heap) {
+        closure_capacity = 1024;
+        closure_heap = (AuraClosure*)calloc(closure_capacity, sizeof(AuraClosure));
+    }
+    return closure_heap;
+}
+
+int64_t aura_alloc_closure(int64_t func_id) {
+    get_closures();
+    // Try free list first
+    if (closure_free_count > 0) {
+        uint64_t id = (uint64_t)closure_free_list[--closure_free_count];
+        closure_heap[id].fn = NULL;
+        closure_heap[id].local_count = 0;
+        closure_heap[id].env_count = 0;
+        closure_heap[id].live = true;
+        return (int64_t)id;
+    }
+    if (closure_count >= closure_capacity) {
+        uint64_t new_cap = closure_capacity ? closure_capacity * 2 : 1024;
+        closure_heap = (AuraClosure*)realloc(closure_heap, new_cap * sizeof(AuraClosure));
+        if (!closure_heap) { fprintf(stderr, "runtime: closure OOM\n"); exit(1); }
+        memset(closure_heap + closure_capacity, 0, (new_cap - closure_capacity) * sizeof(AuraClosure));
+        closure_capacity = new_cap;
+    }
+    uint64_t id = closure_count++;
+    closure_heap[id].live = true;
+    return (int64_t)id;
+}
+
+void aura_register_closure_fn(int64_t closure_id, int64_t fn_ptr, int32_t local_count) {
+    uint64_t id = (uint64_t)closure_id;
+    if (id >= closure_count || !closure_heap[id].live) return;
+    closure_heap[id].fn = (ScalarFn)(intptr_t)fn_ptr;
+    closure_heap[id].local_count = (uint32_t)local_count;
+}
+
+void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
+    uint64_t id = (uint64_t)closure_id;
+    if (id >= closure_count || !closure_heap[id].live) return;
+    uint32_t eidx = (uint32_t)idx;
+    if (eidx < MAX_CLOSURE_ENV) {
+        closure_heap[id].env[eidx] = val;
+        if (eidx + 1 > closure_heap[id].env_count)
+            closure_heap[id].env_count = eidx + 1;
+    }
+}
+
+int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
+    uint64_t id = (uint64_t)closure_id;
+    if (id >= closure_count || !closure_heap[id].live || !closure_heap[id].fn) {
+        fprintf(stderr, "runtime: invalid closure call\n");
+        return 0;
+    }
+    return closure_heap[id].fn(args, (uint32_t)argc);
+}
+
+void aura_drop_closure(int64_t closure_id) {
+    uint64_t id = (uint64_t)closure_id;
+    if (id >= closure_count || !closure_heap[id].live) return;
+    closure_heap[id].live = false;
+    if (closure_free_count < FREE_LIST_CAP)
+        closure_free_list[closure_free_count++] = (int64_t)id;
+}
+
+// ═══════════════════════════════════════════════════════════
+// String heap
+// ═══════════════════════════════════════════════════════════
+
+#define MAX_STRINGS 65536
+static char** string_heap = NULL;
+static uint64_t string_count = 0;
+static uint64_t string_capacity = 0;
+
+int64_t aura_alloc_string(const char* s) {
+    if (!string_heap) {
+        string_capacity = 1024;
+        string_heap = (char**)calloc(string_capacity, sizeof(char*));
+    }
+    if (string_count >= string_capacity) {
+        uint64_t new_cap = string_capacity ? string_capacity * 2 : 1024;
+        string_heap = (char**)realloc(string_heap, new_cap * sizeof(char*));
+        if (!string_heap) { fprintf(stderr, "runtime: string OOM\n"); exit(1); }
+        memset(string_heap + string_capacity, 0, (new_cap - string_capacity) * sizeof(char*));
+        string_capacity = new_cap;
+    }
+    uint64_t id = string_count++;
+    string_heap[id] = s ? strdup(s) : strdup("");
+    return (int64_t)id;
+}
+
+const char* aura_string_ref(int64_t str_id) {
+    uint64_t id = (uint64_t)str_id;
+    if (id >= string_count) return "";
+    return string_heap[id] ? string_heap[id] : "";
+}
+
+// ═══════════════════════════════════════════════════════════
+// I/O primitives
+// ═══════════════════════════════════════════════════════════
 
 int64_t aura_display_int(int64_t val) {
     printf("%ld", (long)val);
@@ -51,81 +357,23 @@ void aura_newline(void) {
     fflush(stdout);
 }
 
-int64_t aura_alloc_closure(int64_t func_id) {
-    if (closure_count >= MAX_CLOSURES) {
-        fprintf(stderr, "runtime: closure overflow\n");
-        exit(1);
-    }
-    uint64_t id = closure_count++;
-    closures[id].fn = NULL;  // Set by register_closure
-    closures[id].local_count = 0;
-    return (int64_t)id;
-}
-
-void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
-    (void)closure_id; (void)idx; (void)val;
-}
-
-int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
-    if ((uint64_t)closure_id >= closure_count || !closures[closure_id].fn) {
-        fprintf(stderr, "runtime: invalid closure call\n");
-        return 0;
-    }
-    return closures[closure_id].fn(args, (uint32_t)argc);
-}
-
-int64_t aura_new_cell(void) {
-    if (cell_count >= MAX_CELLS) {
-        fprintf(stderr, "runtime: cell overflow\n");
-        exit(1);
-    }
-    return (int64_t)(cell_count++);
-}
-
-int64_t aura_cell_get(int64_t cell_id) {
-    if ((uint64_t)cell_id >= cell_count) return 0;
-    return cells[cell_id];
-}
-
-void aura_cell_set(int64_t cell_id, int64_t val) {
-    if ((uint64_t)cell_id >= cell_count) return;
-    cells[cell_id] = val;
-}
-
-int64_t aura_alloc_pair(int64_t car, int64_t cdr) {
-    if (pair_count >= MAX_PAIRS) {
-        fprintf(stderr, "runtime: pair overflow\n");
-        exit(1);
-    }
-    uint64_t id = pair_count++;
-    pairs[id].car = car;
-    pairs[id].cdr = cdr;
-    return (int64_t)id;
-}
-
-int64_t aura_pair_car(int64_t pair_id) {
-    if ((uint64_t)pair_id >= pair_count) return 0;
-    return pairs[pair_id].car;
-}
-
-int64_t aura_pair_cdr(int64_t pair_id) {
-    if ((uint64_t)pair_id >= pair_count) return 0;
-    return pairs[pair_id].cdr;
-}
-
 int64_t aura_prim_call(int64_t prim_id, int64_t arg) {
     (void)prim_id;
     return arg;
 }
 
-// ── Main entry point ────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════
+// Main entry point
+// ═══════════════════════════════════════════════════════════
 // __top__ is the entry function generated by LLVM compilation.
 int64_t __top__(int64_t* args, uint32_t argc);
 
 int main(int argc, char** argv) {
     (void)argc; (void)argv;
+    aura_bump_init();
     int64_t args[8] = {0};
     int64_t result = __top__(args, 0);
+    aura_bump_reset();
     if (result != 0)
         printf("%ld\n", (long)result);
     return 0;
