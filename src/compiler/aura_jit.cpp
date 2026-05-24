@@ -76,6 +76,7 @@ enum Op : uint32_t {
     OpCdr = 36,
     OpRaise = 37,
     OpIsError = 38,
+    OpDrop = 39,
 };
 
 // LLVM IR Builder
@@ -342,6 +343,13 @@ struct LLVMBuilder {
             }
             case OpCellSet: {
                 irb->CreateCall(fn_cell_set, {load(inst.ops[0]), load(inst.ops[1])});
+                return true;
+            }
+
+            // Drop: call all safe drop functions (runtime's live-flag is idempotent)
+            case OpDrop: {
+                auto val = load(inst.ops[0]);
+                irb->CreateCall(fn_drop_pair, {val});
                 return true;
             }
 
