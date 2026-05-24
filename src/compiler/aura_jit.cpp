@@ -110,12 +110,15 @@ struct LLVMBuilder {
     llvm::Function* fn_drop_cell = nullptr;
     llvm::Function* fn_drop_closure = nullptr;
     llvm::Function* fn_drop_value = nullptr;
+    llvm::Function* fn_alloc_string = nullptr;
+    llvm::Function* fn_string_ref = nullptr;
 
     void declare_runtime() {
         auto i64 = llvm::Type::getInt64Ty(ctx);
         auto ptr_i64 = llvm::PointerType::getUnqual(i64);
         auto void_ty = llvm::Type::getVoidTy(ctx);
         auto i8_ty = llvm::Type::getInt8Ty(ctx);
+        auto ptr_i8 = llvm::PointerType::getUnqual(i8_ty);
 
         fn_alloc_closure =
             llvm::Function::Create(llvm::FunctionType::get(i64, {i64}, false),
@@ -179,6 +182,14 @@ struct LLVMBuilder {
                                                llvm::Function::ExternalLinkage, "aura_drop_cell", mod);
         fn_drop_closure = llvm::Function::Create(llvm::FunctionType::get(void_ty, {i64}, false),
                                                   llvm::Function::ExternalLinkage, "aura_drop_closure", mod);
+
+        // String functions
+        fn_alloc_string =
+            llvm::Function::Create(llvm::FunctionType::get(i64, {ptr_i8}, false),
+                                   llvm::Function::ExternalLinkage, "aura_alloc_string", mod);
+        fn_string_ref =
+            llvm::Function::Create(llvm::FunctionType::get(ptr_i8, {i64}, false),
+                                   llvm::Function::ExternalLinkage, "aura_string_ref", mod);
 
         // Closure registration (JIT linking)
         fn_register_closure =
@@ -292,9 +303,14 @@ struct LLVMBuilder {
             case OpConstF64:
                 store(inst.ops[0], c64(0));
                 return true;
-            case OpConstString:
-                store(inst.ops[0], c64(0));
+            case OpConstString: {
+                // Create empty string allocation in runtime
+                // TODO: embed IR string pool content as LLVM global string
+                auto empty_str = irb->CreateGlobalStringPtr("");
+                auto call = irb->CreateCall(fn_alloc_string, {empty_str});
+                store(inst.ops[0], call);
                 return true;
+            }
 
             // Closures
             case OpMakeClosure: {
