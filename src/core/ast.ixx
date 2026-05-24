@@ -326,6 +326,7 @@ private:
         type_id_.push_back(0);
         dirty_.push_back(0);
         node_first_mutation_.push_back(0);
+        parent_.push_back(NULL_NODE);
         return id;
     }
 
@@ -337,6 +338,7 @@ private:
     std::pmr::vector<std::uint32_t> child_begin_;
     std::pmr::vector<std::uint32_t> child_count_;
     std::pmr::vector<NodeId> child_data_;
+    std::pmr::vector<NodeId> parent_;
     std::pmr::vector<std::uint32_t> param_begin_;
     std::pmr::vector<std::uint32_t> param_count_;
     std::pmr::vector<SymId> param_data_;
@@ -363,6 +365,7 @@ private:
         , child_begin_(alloc)
         , child_count_(alloc)
         , child_data_(alloc)
+        , parent_(alloc)
         , param_begin_(alloc)
         , param_count_(alloc)
         , param_data_(alloc)
@@ -372,9 +375,21 @@ private:
 
     // ── Builders ───────────────────────────────────────────────
 
+    // Set parent for all children of the given node
+    void link_children(NodeId id) {
+        auto begin = child_begin_[id];
+        auto end = begin + child_count_[id];
+        for (auto i = begin; i < end; ++i) {
+            auto cid = child_data_[i];
+            if (cid != NULL_NODE)
+                parent_[cid] = id;
+        }
+    }
+
     [[nodiscard]] NodeId add_literal_float(double val) {
         auto id = add_node(NodeTag::LiteralFloat);
         float_val_[id] = val;
+        link_children(id);
         return id;
     }
 
@@ -382,18 +397,21 @@ private:
         auto id = add_node(NodeTag::LiteralString);
         sym_id_[id] = name;
         child_count_[id] = 0;
+        link_children(id);
         return id;
     }
 
     [[nodiscard]] NodeId add_literal(std::int64_t val) {
         auto id = add_node(NodeTag::LiteralInt);
         int_val_[id] = val;
+        link_children(id);
         return id;
     }
 
     [[nodiscard]] NodeId add_variable(SymId name) {
         auto id = add_node(NodeTag::Variable);
         sym_id_[id] = name;
+        link_children(id);
         return id;
     }
 
@@ -404,6 +422,7 @@ private:
         child_data_.insert(child_data_.end(), args.begin(), args.end());
         child_begin_[id] = start - 1; // includes func
         child_count_[id] = 1 + static_cast<std::uint32_t>(args.size());
+        link_children(id);
         return id;
     }
 
@@ -415,6 +434,7 @@ private:
         child_data_.push_back(else_b);
         child_begin_[id] = start;
         child_count_[id] = 3;
+        link_children(id);
         return id;
     }
 
@@ -440,6 +460,7 @@ private:
         child_data_.push_back(body);
         child_begin_[id] = start;
         child_count_[id] = 2;
+        link_children(id);
         return id;
     }
 
@@ -451,6 +472,7 @@ private:
         child_data_.push_back(body);
         child_begin_[id] = start;
         child_count_[id] = 2;
+        link_children(id);
         return id;
     }
 
@@ -461,6 +483,7 @@ private:
         child_data_.push_back(val);
         child_begin_[id] = start;
         child_count_[id] = 1;
+        link_children(id);
         return id;
     }
 
@@ -488,6 +511,7 @@ private:
             child_data_.push_back(exprs[i]);
         child_begin_[id] = start;
         child_count_[id] = count;
+        link_children(id);
         return id;
     }
     [[nodiscard]] NodeId add_begin(std::span<const NodeId> exprs) {
@@ -496,6 +520,7 @@ private:
         child_data_.insert(child_data_.end(), exprs.begin(), exprs.end());
         child_begin_[id] = start;
         child_count_[id] = static_cast<std::uint32_t>(exprs.size());
+        link_children(id);
         return id;
     }
 
@@ -506,6 +531,7 @@ private:
         child_data_.insert(child_data_.end(), syms.begin(), syms.end());
         child_begin_[id] = start;
         child_count_[id] = static_cast<std::uint32_t>(syms.size());
+        link_children(id);
         return id;
     }
 
@@ -516,6 +542,7 @@ private:
         child_data_.push_back(val);
         child_begin_[id] = start;
         child_count_[id] = 1;
+        link_children(id);
         return id;
     }
 
@@ -542,6 +569,7 @@ private:
         child_data_.push_back(val);
         child_begin_[id] = start;
         child_count_[id] = 1;
+        link_children(id);
         return id;
     }
 
@@ -552,6 +580,7 @@ private:
         child_data_.push_back(cdr);
         child_begin_[id] = start;
         child_count_[id] = 2;
+        link_children(id);
         return id;
     }
 
@@ -562,6 +591,7 @@ private:
         child_data_.push_back(inner);
         child_begin_[id] = start;
         child_count_[id] = 1;
+        link_children(id);
         return id;
     }
 
@@ -572,6 +602,7 @@ private:
         child_begin_[id] = start;
         child_count_[id] = 1;
         type_id_[id] = type_id;
+        link_children(id);
         return id;
     }
     [[nodiscard]] NodeId add_coercion(NodeId inner, std::uint32_t type_tag, std::uint32_t type_id) {
@@ -582,6 +613,7 @@ private:
         child_count_[id] = 1;
         int_val_[id] = static_cast<std::int64_t>(type_tag);
         type_id_[id] = type_id;
+        link_children(id);
         return id;
     }
     // ── M4 Linear ownership builders ───────────────────────────
@@ -591,6 +623,7 @@ private:
         child_data_.push_back(inner);
         child_begin_[id] = start;
         child_count_[id] = 1;
+        link_children(id);
         return id;
     }
 
@@ -600,6 +633,7 @@ private:
         child_data_.push_back(inner);
         child_begin_[id] = start;
         child_count_[id] = 1;
+        link_children(id);
         return id;
     }
 
@@ -609,6 +643,7 @@ private:
         child_data_.push_back(inner);
         child_begin_[id] = start;
         child_count_[id] = 1;
+        link_children(id);
         return id;
     }
 
@@ -618,6 +653,7 @@ private:
         child_data_.push_back(inner);
         child_begin_[id] = start;
         child_count_[id] = 1;
+        link_children(id);
         return id;
     }
 
@@ -627,6 +663,7 @@ private:
         child_data_.push_back(inner);
         child_begin_[id] = start;
         child_count_[id] = 1;
+        link_children(id);
         return id;
     }
 
@@ -750,17 +787,17 @@ private:
         return nullptr;
     }
     // Propagate dirty upward: mark this node AND all ancestors dirty
+    // Uses parent_ SoA column for O(depth) traversal (iterative, no recursion)
     void mark_dirty_upward(NodeId id) {
-        mark_dirty(id);
-        // Scan for parent (linear, but mutate is infrequent)
-        for (NodeId pid = 0; pid < tag_.size(); ++pid) {
-            auto v = get(pid);
-            for (auto c : v.children) {
-                if (c == id) {
-                    mark_dirty_upward(pid);
-                    return;
-                }
-            }
+        std::deque<NodeId> queue;
+        queue.push_back(id);
+        while (!queue.empty()) {
+            auto nid = queue.front();
+            queue.pop_front();
+            mark_dirty(nid);
+            auto p = parent_[nid];
+            if (p != NULL_NODE)
+                queue.push_back(p);
         }
     }
 
