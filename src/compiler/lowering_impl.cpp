@@ -408,8 +408,7 @@ static std::uint32_t lower_flat_expr(
                         state.alloc_local();
                     }
                     auto result_slot = state.alloc_local();
-                    state.emit(IROpcode::PrimCall, prim_id, pack_pair(arg_base, arg_count),
-                               result_slot, 0);
+                    state.emit(IROpcode::PrimCall, prim_id, arg_base, arg_count, result_slot);
                     return result_slot;
                 }
 
