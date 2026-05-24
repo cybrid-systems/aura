@@ -30,6 +30,26 @@
     (let ((x "hi")) (if (string? x) x "no")))
   (check= 0
     (let ((x "str")) (if (number? x) x 0))))
+  (check= 42
+    (let ((x 42))
+      (cond ((number? x) (+ x 0)) (else 0))))
+  (check= "hello"
+    (let ((x "hi"))
+      (cond ((string? x) x) (else "hello"))))
+  (check= 0
+    (let ((x "not-a-number"))
+      (cond ((number? x) (+ x 0)) (else 0))))
+  (check= 0
+    (let ((x (list 1 2 3)))
+      (match x
+        ((a b c) 0)
+        (else 1))))
+  (check= "a"
+    (let ((x (list "a" 2)))
+      (match x
+        ((a b) a)
+        (else "z"))))
+
 
 (test-suite "typesystem:let-poly"
   (check= 42hello
