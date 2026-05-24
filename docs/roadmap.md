@@ -13,65 +13,40 @@
 | M4 线性所有权 | move/borrow/drop 编译期(static borrow check) + 运行时检测 |
 | 标准库 | 29 模块 (~2.5k 行) |
 | EDSL 自修改 | set-code → mutate → query → eval-current + colony:search |
-| C FFI | dlopen/dlsym, Int/Float/String/Void |
+| C FFI | dlopen/dlsym, Opaque/Struct 内存操作, Int/Float/String/Void |
 | 增量编译 | 缓存 + 依赖跟踪 + hot-swap |
 | 编译期反射 | P2996 auto_to_json/serialize/deserialize |
 | AI Benchmark | 102 任务, DeepSeek **90/102**, MiniMax/Grok 待出 |
 | 执行后端 | 3 个: tree-walk / IR / JIT, 差分测试 0 diff |
-| Serve 协议 | closure 检测, 多 session, timeout |
+| Serve 协议 | 多 session + 生命周期管理 + timeout, 原子 JIT |
 | Closure JIT | 内联缓存 (64槽 + stack buffer) |
 | Prim inline | display/newline/quotient/remainder 直出 LLVM IR |
 | 事务变异 | MutationTransaction RAII 自动 rollback |
 | 增量类型检查 | dirty 子树增量 re-check |
+| 错误诊断 | 结构化 ParseError + 源行 caret + edit-distance suggestion |
+| Fuzz 套件 | 518 seed corpus + 等价变异 transforms + structured fuzz |
+| NodeId 安全 | generation 版本号 + is_valid/get_safe/validate 检测悬垂 ID |
+| 数值数组 | `#(1 2 3)` 字面量脱糖 → `(vector 1 2 3)` |
+| All panics → Raise | vector-ref/set!/list-ref OOB 统一 raise |
 
-## P2 — 架构改善 + 语言扩展
+---
 
-### 语言扩展
+## P2.5 — --emit-binary 运行时改造（高优先级）
 
-| 项目 | 工作量 | 说明 |
-|:-----|:------:|:----|
-| Numerical arrays `#(1 2 3)` | 3d | 向量类型 + 数值运算原语 |
-| 错误诊断（行列号/suggestion） | 2d | 给 Diagnostic 加 source location + fix-it suggestion |
-| Serve 并发安全 | 2d | 多 session 间 state 隔离 + 锁保护 |
-| FFI Opaque/Struct/回调 | 3d | 不透明指针传递、struct layout、C 回调 trampoline |
+目标: 让 `--emit-binary` 生成的独立二进制真正支持 M4 linear ownership 的 drop 语义。
+采用 **Bump Allocator + Arena Reset** 方案（替代当前 append-only 固定堆）。
 
-### 架构改善
+| 优先级 | 项目 | 工作量 | 说明 |
+|:------:|:-----|:------:|:-----|
+| P0 | runtime.c Bump Allocator | 1d | `aura_bump_init/alloc/reset` 实现，替换所有 `aura_alloc_*` |
+| P0 | runtime.c 闭包捕获 | 1d | `aura_closure_capture` 真实实现 |
+| P0 | runtime.c drop 函数族 | 1d | `aura_drop_pair/cell/closure` — 幂等 + free list fallback |
+| P1 | LLVM IR 入口插入 init/reset | 2d | `aura_jit.cpp` 中 `__top__` 入口 call init、出口 call reset |
+| P1 | 字符串/向量分配函数 | 1d | `aura_alloc_string`, `aura_alloc_vector` |
+| P2 | 迭代 Drop 替代递归 | 2d | 安全释放复合类型，避免栈溢出 |
+| P2 | Bump overflow → 动态扩容 | 2d | 当前 exit(1) 改为 realloc + 重试 |
 
-#### NodeId generation 版本号
-
-FlatAST rollback 时悬垂 NodeId 可能导致 use-after-free。
-
-- **Goal**: `NodeId` 从 `uint32_t` 改为 `struct { uint32_t id; uint16_t gen; }`，每次回滚后 generation bump
-- **Approach**: FlatAST 内部维护 `generation_` 计数器；所有 `get(NodeId)` 入口校验 gen 匹配
-- **工作量**: 2d
-- **风险**: 改 NodeId 类型会影响所有外部接口（Patch/customization/colony 序列化）
-
-#### ADT 递归穷尽性 + 修复建议
-
-当前 match 穷尽性检查只处理单层构造器。
-
-- **Goal**: 支持递归 ADT 的模式穷尽检测 + non-exhaustive 带修复建议 (类似 Rust help:)
-- **Approach**: 递归构造器展开加 depth limit；fix-it 建议在 Diagnostic 中附加
-- **工作量**: 2d（穷尽）+ 1d（修复建议）
-- **依赖**: type_checker_impl.cpp match 检查（已有 Step 1-4 基础）
-
-#### All panics → Raise + runtime check
-
-car on nil、list-ref OOB、string-ref OOB 等所有可能 panic 的操作加 runtime check + Raise。
-
-- **工作量**: 1d
-
-#### Parser fuzz corpus
-
-从 stdlib + AI 生成复杂 S-exp 构建 fuzz seed corpus。
-
-- **工作量**: 1d
-
-#### 等价变异 fuzz
-
-语义保持变换 → 验证三后端输出一致。
-
-- **工作量**: 2d
+**合计**: ~10d 可让 --emit-binary 达到生产可用水平
 
 ---
 
@@ -108,6 +83,6 @@ car on nil、list-ref OOB、string-ref OOB 等所有可能 panic 的操作加 ru
 
 ## 回看
 
-- **2026-05-24**: P1 全部 7 项完成 🎉 — mark_dirty_upward 迭代化, M4 borrow check, closure cache, inline prim, pack_pair 消除, occurrence typing, 事务 rollback。DeepSeek 90/102 (+3↑)
+- **2026-05-24**: P2 全部 9 项完成 🎉 — `#(1 2 3)` 字面量, 错误诊断(suggestion + caret), Serve 并发安全, FFI Opaque/Struct, All panics → Raise, Parser fuzz corpus(518 seeds), 等价变异 fuzz, NodeId generation, ADT 递归穷尽性 + fix-it. 累计 ~6h 交付。
 - **2026-05-23 晚**: 差分测试 0 diff — 198 用例三后端一致
 - **2026-05-23**: P0-P3 全关, 102 tasks benchmark, 4600+ fuzz 0 crash, ASan/UBSan 通过
