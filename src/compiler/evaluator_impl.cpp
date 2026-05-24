@@ -1,6 +1,7 @@
 module;
 #include <cstdlib>
 #include <cstdio>
+#include <cstring>
 #include <ctime>
 #include <unistd.h>
 #include <dirent.h>
@@ -4438,6 +4439,75 @@ Evaluator::Evaluator() {
         std::free(opaque_heap_[idx]);
         opaque_heap_[idx] = nullptr;
         return make_void();
+    });
+
+    // ── Struct support (opaque-backed struct) ─────────────────
+    primitives_.add("c-struct-size", [this](const auto& a) -> EvalValue {
+        // Return the total size of a struct given field sizes.
+        // (c-struct-size field-size...)
+        std::size_t total = 0;
+        for (auto& arg : a) {
+            if (types::is_int(arg))
+                total += static_cast<std::size_t>(types::as_int(arg));
+        }
+        return make_int(static_cast<std::int64_t>(total));
+    });
+
+    primitives_.add("c-struct-set!", [this](const auto& a) -> EvalValue {
+        // Write a value into a struct at byte offset.
+        // (c-struct-set! <opaque> <offset-bytes> <value>)
+        if (a.size() < 3 || !types::is_opaque(a[0]) || !types::is_int(a[1]))
+            return make_void();
+        auto oi = types::as_opaque_idx(a[0]);
+        if (oi >= opaque_heap_.size() || !opaque_heap_[oi])
+            return make_void();
+        auto offset = static_cast<std::size_t>(types::as_int(a[1]));
+        auto* base = static_cast<char*>(opaque_heap_[oi]);
+        auto& val = a[2];
+        if (types::is_int(val)) {
+            auto v = types::as_int(val);
+            std::memcpy(base + offset, &v, sizeof(v));
+        } else if (types::is_float(val)) {
+            auto v = types::as_float(val);
+            std::memcpy(base + offset, &v, sizeof(v));
+        } else if (types::is_opaque(val)) {
+            // Store pointer value
+            auto vi = types::as_opaque_idx(val);
+            auto* ptr = vi < opaque_heap_.size() ? opaque_heap_[vi] : nullptr;
+            std::memcpy(base + offset, &ptr, sizeof(ptr));
+        }
+        return make_void();
+    });
+
+    primitives_.add("c-struct-ref", [this](const auto& a) -> EvalValue {
+        // Read a value from a struct at byte offset with type.
+        // (c-struct-ref <opaque> <offset-bytes> <type>)
+        // type: 0=Int, 1=Float, 2=void*(Opaque)
+        if (a.size() < 3 || !types::is_opaque(a[0]) || !types::is_int(a[1]) ||
+            !types::is_int(a[2]))
+            return make_int(0);
+        auto oi = types::as_opaque_idx(a[0]);
+        if (oi >= opaque_heap_.size() || !opaque_heap_[oi])
+            return make_int(0);
+        auto offset = static_cast<std::size_t>(types::as_int(a[1]));
+        auto type = static_cast<int>(types::as_int(a[2]));
+        auto* base = static_cast<const char*>(opaque_heap_[oi]);
+        if (type == 0) { // Int
+            std::int64_t v = 0;
+            std::memcpy(&v, base + offset, sizeof(v));
+            return make_int(v);
+        } else if (type == 1) { // Float
+            double v = 0;
+            std::memcpy(&v, base + offset, sizeof(v));
+            return types::make_float(v);
+        } else if (type == 2) { // void* → Opaque
+            void* ptr = nullptr;
+            std::memcpy(&ptr, base + offset, sizeof(ptr));
+            auto ni = opaque_heap_.size();
+            opaque_heap_.push_back(ptr);
+            return types::make_opaque(ni);
+        }
+        return make_int(0);
     });
 
     build_primitive_slots();
