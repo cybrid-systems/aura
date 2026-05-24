@@ -1,6 +1,11 @@
 
 build/
+build_asan
+build_dbg/
 build_debug
+build_gdb
+/build_rel/
+build_ubsan
 # C++26
 compile_commands.json
 compiled/
@@ -8,24 +13,20 @@ compiled/
 *.exe
 # IDE
 .idea/
+*.log
 *.o
 *.obj
 # OS
 *.out
+/__pycache__/
 # Racket
 *.rkt~
 *.swo
 *.swp
-tests/__pycache__/
+/Testing/
 tests/bench_results/
+tests/bench_results/*.log
+tests/__pycache__/
 Thumbs.db
 .vscode/
 *.zo
-build_dbg/
-/Testing/
-/build_rel/
-/__pycache__/
-*.log
-build_asan
-build_ubsan
-tests/bench_results/*.log
