@@ -79,6 +79,16 @@ extern "C" std::int64_t aura_jit_prim_dispatch(std::int64_t prim_id, std::int64_
 
 namespace aura::compiler {
 
+// Convert FlatParseResult to Diagnostic with structured location.
+// Falls back to a generic parse error if no structured errors exist.
+static aura::diag::Diagnostic parse_error_diag(const aura::parser::FlatParseResult& pr) {
+    if (!pr.errors.empty()) {
+        return {aura::diag::ErrorKind::ParseError, pr.errors[0].message, pr.errors[0].location};
+    }
+    return {aura::diag::ErrorKind::ParseError,
+            pr.error.empty() ? "parse error" : pr.error};
+}
+
 // CompilerService — owns a full compilation session's lifecycle.
 //
 // Each request creates a fresh AST in the arena; after eval, arena
@@ -256,13 +266,12 @@ public:
         auto* flat_ptr = arena_.create<aura::ast::FlatAST>(alloc);
         auto pr = aura::parser::parse_to_flat(input, *flat_ptr, *pool_ptr);
         if (pr.root == aura::ast::NULL_NODE) {
-            return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::ParseError, pr.error.empty() ? "parse error" : pr.error});
+            return std::unexpected(parse_error_diag(pr));
         }
         // If there were parse errors but we recovered, log them and continue
         if (!pr.success && !pr.errors.empty()) {
             for (auto& e : pr.errors)
-                std::println(std::cerr, "parse warning: {}", e);
+                std::println(std::cerr, "parse warning: {}", e.format());
         }
         flat_ptr->root = pr.root;
         // Store for mutation targeting
@@ -536,8 +545,7 @@ public:
         auto* flat_ptr = arena_.create<aura::ast::FlatAST>(alloc);
         auto pr = aura::parser::parse_to_flat(input, *flat_ptr, *pool_ptr);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-            return std::unexpected(
-                aura::diag::Diagnostic{aura::diag::ErrorKind::ParseError, pr.error});
+            return std::unexpected(parse_error_diag(pr));
         }
         flat_ptr->root = pr.root;
         // Store for mutation targeting
@@ -667,8 +675,7 @@ public:
         auto* flat_ptr = arena_.create<aura::ast::FlatAST>(alloc);
         auto pr = aura::parser::parse_to_flat(input, *flat_ptr, *pool_ptr);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-            return std::unexpected(
-                aura::diag::Diagnostic{aura::diag::ErrorKind::ParseError, pr.error});
+            return std::unexpected(parse_error_diag(pr));
         }
         flat_ptr->root = pr.root;
         current_ast_ = flat_ptr;
@@ -955,7 +962,8 @@ public:
         aura::ast::FlatAST flat(alloc);
         auto pr = aura::parser::parse_to_flat(input, flat, pool);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-            return std::string("parse error: ") + pr.error;
+            auto diag = parse_error_diag(pr);
+            return std::string("parse error: ") + diag.format();
         }
         flat.root = pr.root;
 
@@ -1087,8 +1095,7 @@ public:
         auto* flat_ptr = mod_arena.create<aura::ast::FlatAST>(alloc);
         auto pr = aura::parser::parse_to_flat(source, *flat_ptr, *pool_ptr);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-            return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::ParseError, pr.error.empty() ? "parse error" : pr.error});
+            return std::unexpected(parse_error_diag(pr));
         }
         flat_ptr->root = pr.root;
 
@@ -1377,8 +1384,7 @@ public:
         aura::ast::FlatAST flat(alloc);
         auto pr = aura::parser::parse_to_flat(new_code, flat, pool);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-            return std::unexpected(
-                aura::diag::Diagnostic{aura::diag::ErrorKind::ParseError, pr.error});
+            return std::unexpected(parse_error_diag(pr));
         }
         flat.root = pr.root;
 
@@ -1832,8 +1838,7 @@ public:
         auto* flat_ptr = arena_.create<aura::ast::FlatAST>(alloc);
         auto pr = aura::parser::parse_to_flat(code, *flat_ptr, *pool_ptr);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-            return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::ParseError, pr.error.empty() ? "parse error" : pr.error});
+            return std::unexpected(parse_error_diag(pr));
         }
         flat_ptr->root = pr.root;
         // Store for mutation targeting
@@ -1947,8 +1952,7 @@ public:
         MutationTransaction tx(*current_ast_);
         auto pr = aura::parser::parse_to_flat(sexpr, *current_ast_, *current_pool_);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-            return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::ParseError, pr.error.empty() ? "parse error" : pr.error});
+            return std::unexpected(parse_error_diag(pr));
         }
         auto result =
             evaluator_.eval_flat(*current_ast_, *current_pool_, pr.root, evaluator_.top_env());
@@ -1968,7 +1972,8 @@ public:
         MutationTransaction tx(*current_ast_);
         auto pr = aura::parser::parse_to_flat(sexpr, *current_ast_, *current_pool_);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-            return {0, false, pr.error.empty() ? "parse error" : pr.error};
+            auto diag = parse_error_diag(pr);
+            return {0, false, diag.format()};
         }
         auto result =
             evaluator_.eval_flat(*current_ast_, *current_pool_, pr.root, evaluator_.top_env());

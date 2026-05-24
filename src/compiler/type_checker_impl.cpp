@@ -6,6 +6,39 @@ using namespace aura::ast;
 using namespace aura::core;
 using namespace aura::diag;
 
+// ── Edit distance for "did you mean" suggestions ────────────────
+static std::size_t edit_distance(std::string_view a, std::string_view b) {
+    auto m = a.size(), n = b.size();
+    if (m == 0) return n;
+    if (n == 0) return m;
+    std::vector<std::size_t> prev(n + 1), cur(n + 1);
+    for (std::size_t j = 0; j <= n; ++j) prev[j] = j;
+    for (std::size_t i = 1; i <= m; ++i) {
+        cur[0] = i;
+        for (std::size_t j = 1; j <= n; ++j) {
+            auto cost = (a[i - 1] == b[j - 1]) ? 0 : 1;
+            cur[j] = std::min({prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost});
+        }
+        std::swap(prev, cur);
+    }
+    return prev[n];
+}
+
+static std::string closest_match(std::string_view name,
+                                  const std::vector<std::string>& candidates,
+                                  std::size_t max_dist = 3) {
+    std::string best;
+    std::size_t best_dist = max_dist + 1;
+    for (auto& c : candidates) {
+        auto d = edit_distance(name, c);
+        if (d < best_dist) {
+            best_dist = d;
+            best = c;
+        }
+    }
+    return best;
+}
+
 // ═══════════════════════════════════════════════════════════
 // TypeEnv
 // ═══════════════════════════════════════════════════════════
@@ -41,6 +74,12 @@ bool TypeEnv::is_bound(const std::string& name) const {
         if (it->count(name))
             return true;
     return false;
+}
+
+void TypeEnv::collect_names(std::vector<std::string>& out) const {
+    for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it)
+        for (auto& [name, _] : *it)
+            out.push_back(name);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1257,14 +1296,22 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
 TypeId InferenceEngine::synthesize_flat_var(StringPool& pool, NodeView v) {
     auto name = pool.resolve(v.sym_id);
     if (name.empty()) {
-        diag_.report(Diagnostic(ErrorKind::UnboundVariable, "unbound variable", cur_loc_));
+        diag_.report(Diagnostic(ErrorKind::UnboundVariable, "(empty name)", cur_loc_));
         return reg_.dynamic_type();
     }
     std::string var_name(name);
     auto ty_raw = env_.lookup(var_name);
     if (!ty_raw.valid()) {
-        diag_.report(
-            Diagnostic(ErrorKind::UnboundVariable, "unbound variable: " + var_name, cur_loc_));
+        // Collect candidate names from environment for "did you mean" suggestion
+        std::vector<std::string> candidates;
+        env_.collect_names(candidates);
+        auto best = closest_match(var_name, candidates);
+        auto d = Diagnostic(
+            ErrorKind::UnboundVariable, var_name, cur_loc_)
+            .with_suggestion(!best.empty()
+                ? "did you mean '" + best + "'?"
+                : "");
+        diag_.report(std::move(d));
         return reg_.dynamic_type();
     }
     // M4 ownership: checked explicitly in Move/Borrow/Drop handlers

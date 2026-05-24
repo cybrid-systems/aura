@@ -1,16 +1,29 @@
 export module aura.parser.parser;
 import std;
 import aura.core;
+import aura.diag;
 import aura.parser.lexer;
 
 namespace aura::parser {
 
 // Result from FlatParser (direct FlatAST, no Expr* intermediate)
+// Structured parse error with source location
+export struct ParseError {
+    std::string message;
+    aura::diag::SourceLocation location;
+
+    std::string format() const {
+        if (location.valid())
+            return std::format("{}: {}", location.format(), message);
+        return message;
+    }
+};
+
 export struct FlatParseResult {
     aura::ast::NodeId root = aura::ast::NULL_NODE;
     bool success = false;
-    std::string error;               // first error (backward compat)
-    std::vector<std::string> errors; // all parse errors
+    std::string error;                 // first error (backward compat, formatted string)
+    std::vector<ParseError> errors;    // all parse errors with location
 };
 
 // ── FlatParser — writes directly to FlatAST (SoA), bypasses Expr* ─

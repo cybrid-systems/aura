@@ -46,10 +46,16 @@ FlatParseResult FlatParser::parse(std::string_view s) {
         }
     };
 
-    auto record_error = [&](const std::string& msg) {
+    // Record structured parse error with token location
+    auto record_error = [&](const std::string& msg, std::optional<Token> err_tok = std::nullopt) {
+        auto loc = err_tok ? aura::diag::SourceLocation{err_tok->line, err_tok->column, 0}
+                           : aura::diag::SourceLocation{};
+        auto formatted = loc.valid()
+            ? std::format("{}: {}", loc.format(), msg)
+            : msg;
         if (r.error.empty())
-            r.error = msg;
-        r.errors.push_back(msg);
+            r.error = formatted;
+        r.errors.push_back({msg, loc});
         // Skip tokens until we can try parsing again
         int depth = 0;
         while (!lexer_->eof()) {
@@ -80,11 +86,9 @@ FlatParseResult FlatParser::parse(std::string_view s) {
     if (r.root == NULL_NODE) {
         auto tok = lexer_->peek();
         if (tok.kind != TokenKind::EndOfFile) {
-            record_error("parse error at line " + std::to_string(tok.line) + ":" +
-                         std::to_string(tok.column) + ": expected expression, got " +
-                         token_desc(tok));
+            record_error("expected expression, got " + token_desc(tok), tok);
         } else {
-            record_error("parse error: expected expression, reached end of input");
+            record_error("expected expression, reached end of input");
         }
         // If we recovered but got nothing, return as failure
         if (r.root == NULL_NODE)
@@ -106,9 +110,7 @@ FlatParseResult FlatParser::parse(std::string_view s) {
         if (e == NULL_NODE) {
             auto tok = lexer_->peek();
             if (tok.kind != TokenKind::EndOfFile) {
-                record_error("parse error at line " + std::to_string(tok.line) + ":" +
-                             std::to_string(tok.column) + ": expected expression, got " +
-                             token_desc(tok));
+                record_error("expected expression, got " + token_desc(tok), tok);
                 e = parse_expr(); // try again after skip
             }
             if (lexer_->eof())
