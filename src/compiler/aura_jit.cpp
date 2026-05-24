@@ -25,6 +25,17 @@
 
 namespace aura::jit {
 
+// PrimId values (must match ir.ixx PrimId enum order)
+// Used for PrimCall fast-path dispatch — skipping aura_prim_call runtime.
+enum : uint32_t {
+    PrimDisplay = 8,
+    PrimWrite = 9,
+    PrimNewline = 10,
+    PrimQuotient = 30,
+    PrimRemainder = 31,
+    PrimRaise = 35,
+};
+
 // Opcode enum values (must match ir.ixx IROpcode)
 enum Op : uint32_t {
     OpConstI64 = 1,
@@ -343,9 +354,41 @@ struct LLVMBuilder {
                 auto arg_count = packed & 0xFFFFu;        // lower 16 bits = arg_count
                 auto arg_base = (packed >> 16) & 0xFFFFu; // upper 16 bits = arg_base
                 auto result_slot = inst.ops[2];
-                // Call prim dispatcher with first 2 args (most common case)
                 auto a1 = (arg_count > 0) ? load(arg_base) : c64(0);
                 auto a2 = (arg_count > 1) ? load(arg_base + 1) : c64(0);
+
+                // Fast-path: inline known primitives to skip aura_prim_call dispatch
+                switch (prim_id) {
+                case PrimNewline:
+                    irb->CreateCall(fn_newline);
+                    store(result_slot, c64(0));
+                    return true;
+                case PrimDisplay:
+                case PrimWrite:
+                    irb->CreateCall(fn_display_int, {a1});
+                    store(result_slot, a1);
+                    return true;
+                case PrimQuotient: {
+                    // Safe quotent: result = (b==0) ? 0 : (a / b)
+                    auto zero = irb->CreateICmpEQ(a2, c64(0));
+                    auto div = irb->CreateSDiv(a1, a2);
+                    auto safe = irb->CreateSelect(zero, c64(0), div);
+                    store(result_slot, safe);
+                    return true;
+                }
+                case PrimRemainder: {
+                    // Safe remainder: result = (b==0) ? 0 : (a % b)
+                    auto zero = irb->CreateICmpEQ(a2, c64(0));
+                    auto rem = irb->CreateSRem(a1, a2);
+                    auto safe = irb->CreateSelect(zero, c64(0), rem);
+                    store(result_slot, safe);
+                    return true;
+                }
+                default:
+                    break;
+                }
+
+                // Slow-path: generic aura_prim_call dispatch
                 auto call = irb->CreateCall(fn_prim_call, {c64(prim_id), a1, a2, c64(arg_count)});
                 store(result_slot, call);
                 return true;
