@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""Run Aura EDSL benchmark across 4 models and produce comparison table.
+"""Run Aura EDSL benchmark across all models in parallel and produce comparison table.
 
-Usage: python3 tests/run_bench_all.py [--rounds N] [--max-attempts N]
+Usage:
+    python3 tests/run_bench_all.py              # Run all models sequentially
+    python3 tests/run_bench_all.py --parallel    # Run all models in parallel
+    python3 tests/run_bench_all.py --model minimax  # Run specific model(s)
 """
 
+import concurrent.futures
 import json
 import os
 import re
@@ -68,6 +72,7 @@ def run_model(cfg):
     env["LLM_MODEL"] = model
     env["LLM_API_KEY"] = key
     env["LLM_BASE_URL"] = base_url + "/v1"
+    env["PYTHONUNBUFFERED"] = "1"
 
     cmd = [sys.executable, str(BENCH), "--json"] + EXTRA_ARGS
 
@@ -139,16 +144,24 @@ def parse_results(data):
 
 def main():
     all_results = {}
-    for cfg in MODELS:
+    parallel = "--parallel" in sys.argv
+    models_filter = []
+    for i, arg in enumerate(sys.argv):
+        if arg == "--model" and i + 1 < len(sys.argv):
+            models_filter.append(sys.argv[i + 1])
+
+    targets = [m for m in MODELS if not models_filter or m["name"].lower() in models_filter]
+    if not targets:
+        targets = MODELS
+
+    def run_one(cfg):
         try:
-            data = run_model(cfg)
-            all_results[cfg["name"]] = data
+            return cfg["name"], run_model(cfg)
         except Exception as e:
             print(f"  ERROR: {cfg['name']} failed: {e}")
             import traceback
-
             traceback.print_exc()
-            all_results[cfg["name"]] = {
+            return cfg["name"], {
                 "name": cfg["name"],
                 "model": cfg["model"],
                 "passed": 0,
@@ -156,6 +169,18 @@ def main():
                 "elapsed_s": 0,
                 "error": str(e),
             }
+
+    if parallel and len(targets) > 1:
+        print(f"Running {len(targets)} models in parallel...")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(targets)) as ex:
+            futures = {ex.submit(run_one, cfg): cfg["name"] for cfg in targets}
+            for f in concurrent.futures.as_completed(futures):
+                name, data = f.result()
+                all_results[name] = data
+    else:
+        for cfg in targets:
+            name, data = run_one(cfg)
+            all_results[name] = data
 
     # Print comparison table
     print("\n\n")

@@ -1184,6 +1184,17 @@ def test_fuzz():
     return 0
 
 
+def run_bench_llm():
+    """Run LLM benchmarks (DeepSeek / MiniMax / Grok) in parallel."""
+    print(f"{B}═══ LLM Benchmark (3 models in parallel) ═══{N}")
+    bench_script = ROOT / "tests" / "run_bench_all.py"
+    if not bench_script.exists():
+        fail(f"Script not found: {bench_script}")
+        return 1
+    env = {**os.environ, "AURA_BIN": str(AURA), "PYTHONUNBUFFERED": "1"}
+    return run([sys.executable, str(bench_script)], env=env)
+
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
         print(__doc__.strip())
@@ -1202,6 +1213,7 @@ def main():
         "regression": lambda: cmd_test(["regression"]),
         "fuzz": lambda: test_fuzz(),
         "test_fuzz": lambda: test_fuzz(),
+        "bench-llm": lambda: run_bench_llm(),
     }
 
     if cmd in commands:
