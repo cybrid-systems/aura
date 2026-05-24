@@ -1,0 +1,5 @@
+;; task: type-coercion-chain
+;; goal: Chain of type coercions — string concatenation with mixed types
+;; expect: 42hello
+(display (+ 42 "hello"))
+(newline)
