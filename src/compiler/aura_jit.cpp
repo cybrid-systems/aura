@@ -102,6 +102,13 @@ struct LLVMBuilder {
     llvm::Function* fn_display_char = nullptr;
     llvm::Function* fn_newline = nullptr;
     llvm::Function* fn_cast_op = nullptr;
+    llvm::Function* fn_bump_init = nullptr;
+    llvm::Function* fn_bump_reset = nullptr;
+    llvm::Function* fn_register_closure = nullptr;
+    llvm::Function* fn_drop_pair = nullptr;
+    llvm::Function* fn_drop_cell = nullptr;
+    llvm::Function* fn_drop_closure = nullptr;
+    llvm::Function* fn_drop_value = nullptr;
 
     void declare_runtime() {
         auto i64 = llvm::Type::getInt64Ty(ctx);
@@ -157,6 +164,25 @@ struct LLVMBuilder {
 
         fn_cast_op = llvm::Function::Create(llvm::FunctionType::get(i64, {i64, i64}, false),
                                             llvm::Function::ExternalLinkage, "aura_cast_op", mod);
+
+        // Bump Allocator lifecycle
+        fn_bump_init = llvm::Function::Create(llvm::FunctionType::get(void_ty, false),
+                                             llvm::Function::ExternalLinkage, "aura_bump_init", mod);
+        fn_bump_reset = llvm::Function::Create(llvm::FunctionType::get(void_ty, false),
+                                               llvm::Function::ExternalLinkage, "aura_bump_reset", mod);
+
+        // Drop functions
+        fn_drop_pair = llvm::Function::Create(llvm::FunctionType::get(void_ty, {i64}, false),
+                                               llvm::Function::ExternalLinkage, "aura_drop_pair", mod);
+        fn_drop_cell = llvm::Function::Create(llvm::FunctionType::get(void_ty, {i64}, false),
+                                               llvm::Function::ExternalLinkage, "aura_drop_cell", mod);
+        fn_drop_closure = llvm::Function::Create(llvm::FunctionType::get(void_ty, {i64}, false),
+                                                  llvm::Function::ExternalLinkage, "aura_drop_closure", mod);
+
+        // Closure registration (JIT linking)
+        fn_register_closure =
+            llvm::Function::Create(llvm::FunctionType::get(void_ty, {i64, i64, i64}, false),
+                                   llvm::Function::ExternalLinkage, "aura_register_fn", mod);
     }
 
     llvm::Value* load(uint32_t slot) {
