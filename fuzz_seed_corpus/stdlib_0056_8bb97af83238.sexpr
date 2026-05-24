@@ -1,0 +1,2 @@
+(define (apply-linear f x)
+  (move (f x)))

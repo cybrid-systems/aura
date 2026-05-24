@@ -1,0 +1,1 @@
+(colony:search "foo" "(lambda () (* 6 7))")

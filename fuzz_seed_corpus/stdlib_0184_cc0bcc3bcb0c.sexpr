@@ -1,0 +1,2 @@
+(define (queue-empty? q)
+  (null? q))

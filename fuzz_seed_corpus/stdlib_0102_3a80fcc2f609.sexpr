@@ -1,0 +1,2 @@
+(define (flip f)
+  (lambda (a b) (f b a)))

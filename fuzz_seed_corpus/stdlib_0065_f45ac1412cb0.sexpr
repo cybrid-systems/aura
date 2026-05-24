@@ -1,0 +1,4 @@
+(define (compose f . rest)
+  (if (null? rest) f
+    (let ((g (compose-internal rest)))
+      (lambda (x) (f (g x))))))

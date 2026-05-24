@@ -1,0 +1,6 @@
+(define string-downcase
+  (lambda (str)
+    (list->string
+      (map (lambda (c)
+             (if (and (>= c 65) (<= c 90)) (+ c 32) c))
+           (string->list str)))))

@@ -1,0 +1,2 @@
+(define (stack-top s)
+  (if (null? s) () (car s)))

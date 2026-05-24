@@ -1,0 +1,2 @@
+(for-each (lambda (k)
+;; hint:       (hash-set r (hash-ref h k) k)) (hash-keys h))

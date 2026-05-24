@@ -1,0 +1,1 @@
+(display (borrow 42))

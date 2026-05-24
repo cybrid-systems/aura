@@ -1,0 +1,1 @@
+(define llm-model (getenv "LLM_MODEL"))

@@ -1,0 +1,1 @@
+(display (hash-ref h2 "a"))

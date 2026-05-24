@@ -1,0 +1,2 @@
+(if (= i (vector-length v)) (display p)
+;; hint:     (loop (+ i 1) (* p (vector-ref v i))))

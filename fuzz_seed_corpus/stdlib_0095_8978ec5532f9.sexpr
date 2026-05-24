@@ -1,0 +1,3 @@
+(define (file->words path)
+  (let ((content (file-read path)))
+    (string-split-words content)))

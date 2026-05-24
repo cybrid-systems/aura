@@ -1,0 +1,4 @@
+(define (hash-merge-into h . sources)
+  (let iter ((rest sources))
+    (if (null? rest) h
+      (begin (hash-merge! h (car rest)) (iter (cdr rest))))))

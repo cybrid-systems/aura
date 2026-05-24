@@ -1,0 +1,5 @@
+(define (pheromone:update type-name delta)
+  (let ((current (pheromone:score type-name)))
+    (hash-set! *pheromone-table* type-name
+               (+ (* current 0.95)
+                  (if (> delta 0.0) delta -0.05)))))

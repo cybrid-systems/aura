@@ -1,0 +1,1 @@
+(define (hash-empty? h) (= (hash-length h) 0))

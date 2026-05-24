@@ -1,0 +1,4 @@
+(if (null? rest) ()
+;; hint:         (let* ((n (car rest)) (c (+ 1 (if (hash-has-key? counts n) (hash-ref counts n) 0))))
+;; hint:           (hash-set! counts n c)
+;; hint:           (if (> c half) n (loop (cdr rest) half))))

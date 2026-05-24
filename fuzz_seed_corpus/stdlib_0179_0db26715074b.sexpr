@@ -1,0 +1,1 @@
+(define (positive? n) (> n 0))

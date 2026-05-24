@@ -1,0 +1,4 @@
+(if (null? ws) h
+;; hint:           (if (hash-has-key? h w)
+;; hint:             (loop (cdr ws) (hash-set! h w (+ (hash-ref h w) 1)))
+;; hint:             (loop (cdr ws) (hash-set! h w 1))))

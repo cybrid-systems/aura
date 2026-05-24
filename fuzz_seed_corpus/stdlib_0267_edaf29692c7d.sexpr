@@ -1,0 +1,2 @@
+(define (vec:dot a b)
+  (vec:sum (vec:zip * a b)))

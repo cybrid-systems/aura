@@ -1,0 +1,2 @@
+(define (pheromone:score type-name)
+  (or (hash-ref *pheromone-table* type-name) 0.1))

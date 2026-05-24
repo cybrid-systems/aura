@@ -1,0 +1,7 @@
+(define (trie-search trie word)
+  (let loop ((node trie) (i 0))
+    (if (>= i (string-length word))
+      (hash-has-key? node '*)
+      (if (hash-has-key? node (string-ref word i))
+        (loop (hash-ref node (string-ref word i)) (+ i 1))
+        #f))))

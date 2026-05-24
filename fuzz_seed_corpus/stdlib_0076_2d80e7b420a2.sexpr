@@ -1,0 +1,2 @@
+(define (curry f a)
+  (lambda (x) (f a x)))

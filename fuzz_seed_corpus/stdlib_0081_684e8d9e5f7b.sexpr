@@ -1,0 +1,4 @@
+(define (describe x)
+  (cond ((string? x) "string")
+        ((number? x) "number")
+        (else "other")))

@@ -1,0 +1,2 @@
+(define (hash-keys-sorted h)
+  (sort (hash-keys h)))

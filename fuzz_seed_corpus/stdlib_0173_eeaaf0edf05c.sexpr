@@ -1,0 +1,2 @@
+(define (pheromone:init)
+  (set! *pheromone-table* (*default-pheromones*)))
