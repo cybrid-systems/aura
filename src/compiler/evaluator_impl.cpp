@@ -4386,6 +4386,60 @@ Evaluator::Evaluator() {
         return types::make_closure(closure_id);
     });
 
+    // ── Opaque pointer primitives ────────────────────────────
+    primitives_.add("c-opaque", [this](const auto& a) -> EvalValue {
+        // Create an opaque pointer from an integer address
+        // (c-opaque <ptr-as-int>)
+        coverage_counters_[8]++;
+        if (a.empty() || !types::is_int(a[0]))
+            return make_int(0);
+        auto addr = types::as_int(a[0]);
+        auto idx = opaque_heap_.size();
+        opaque_heap_.push_back(reinterpret_cast<void*>(addr));
+        return types::make_opaque(idx);
+    });
+
+    primitives_.add("c-opaque?", [this](const auto& a) -> EvalValue {
+        return types::make_bool(!a.empty() && types::is_opaque(a[0]));
+    });
+
+    primitives_.add("c-opaque->int", [this](const auto& a) -> EvalValue {
+        // Extract the raw pointer address from an opaque value as Int
+        if (a.empty() || !types::is_opaque(a[0]))
+            return make_int(0);
+        auto idx = types::as_opaque_idx(a[0]);
+        if (idx >= opaque_heap_.size())
+            return make_int(0);
+        return make_int(reinterpret_cast<std::int64_t>(opaque_heap_[idx]));
+    });
+
+    primitives_.add("c-alloc", [this](const auto& a) -> EvalValue {
+        // Allocate a block of memory and return as opaque
+        // (c-alloc <size-bytes>)
+        if (a.empty() || !types::is_int(a[0]))
+            return make_int(0);
+        auto size = static_cast<std::size_t>(types::as_int(a[0]));
+        if (size == 0)
+            return make_int(0);
+        auto* ptr = std::calloc(1, size);
+        auto idx = opaque_heap_.size();
+        opaque_heap_.push_back(ptr);
+        return types::make_opaque(idx);
+    });
+
+    primitives_.add("c-free", [this](const auto& a) -> EvalValue {
+        // Free memory allocated by c-alloc
+        // (c-free <opaque>)
+        if (a.empty() || !types::is_opaque(a[0]))
+            return make_void();
+        auto idx = types::as_opaque_idx(a[0]);
+        if (idx >= opaque_heap_.size())
+            return make_void();
+        std::free(opaque_heap_[idx]);
+        opaque_heap_[idx] = nullptr;
+        return make_void();
+    });
+
     build_primitive_slots();
 
     // ── Environment + HTTP primitives ────────────────────────
@@ -5204,7 +5258,16 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid,
                         }
                     }
                 } else if (atype == 4) { // Opaque (void*)
-                    i6[i] = types::is_int(args[i]) ? types::as_int(args[i]) : 0;
+                    if (types::is_opaque(args[i])) {
+                        auto oi = types::as_opaque_idx(args[i]);
+                        i6[i] = oi < opaque_heap_.size()
+                                    ? reinterpret_cast<std::int64_t>(opaque_heap_[oi])
+                                    : 0;
+                    } else if (types::is_int(args[i])) {
+                        i6[i] = types::as_int(args[i]);
+                    } else {
+                        i6[i] = 0;
+                    }
                     d6[i] = 0.0;
                 } else { // Int (default)
                     if (types::is_int(args[i]))
@@ -5245,8 +5308,12 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid,
                     string_heap_.emplace_back(s ? s : "");
                     return types::make_string(sidx);
                 }
-                if (ret_type == 4)
-                    return types::make_int(result_i); // Opaque: pass as int
+                if (ret_type == 4) {
+                    // Opaque: store pointer in opaque_heap_, return OpaqueRef
+                    auto oi = opaque_heap_.size();
+                    opaque_heap_.push_back(reinterpret_cast<void*>(result_i));
+                    return types::make_opaque(oi);
+                }
                 return types::make_int(result_i);
             }
         }

@@ -53,6 +53,12 @@ export struct ErrorRef {
     constexpr auto operator<=>(const ErrorRef&) const = default;
 };
 
+// Opaque C pointer (FFI opaque type, stored as heap index)
+export struct OpaqueRef {
+    std::uint64_t index = 0; // index into opaque heap
+    constexpr auto operator<=>(const OpaqueRef&) const = default;
+};
+
 // The universal runtime value
 export using EvalValue = std::variant<std::monostate, // Void (index 0)
                                       std::int64_t,   // Int  (index 1)
@@ -67,8 +73,15 @@ export using EvalValue = std::variant<std::monostate, // Void (index 0)
                                       PrimitiveRef,   // Primitive (index 10)
                                       ModuleRef,      // Module (index 11)
                                       ErrorRef,       // Error (index 12)
-                                      LinearRef       // Linear (index 13)
+                                      LinearRef,      // Linear (index 13)
+                                      OpaqueRef       // Opaque (index 14)
                                       >;
+
+export inline EvalValue make_opaque(std::uint64_t idx) {
+    return EvalValue(std::in_place_index<14>, OpaqueRef{idx});
+}
+export inline bool is_opaque(const EvalValue& v) { return v.index() == 14; }
+export inline std::uint64_t as_opaque_idx(const EvalValue& v) { return std::get<14>(v).index; }
 
 export inline EvalValue make_int(std::int64_t v) {
     return EvalValue(std::in_place_index<1>, v);
