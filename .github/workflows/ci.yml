@@ -17,8 +17,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Build & Test
+    - name: Build & Core Tests
       run: python3 build.py check
 
-    - name: Regression tests (no API key needed)
-      run: python3 build.py regression
+    - name: Full Fuzz (--quick)
+      run: python3 build.py test fuzz
+
+    - name: Regression
+      run: python3 build.py test regression
