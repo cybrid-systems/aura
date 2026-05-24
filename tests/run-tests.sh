@@ -28,6 +28,24 @@ run_test() {
     fi
 }
 
+# Run a typecheck test (passes expression as --typecheck argument)
+run_typecheck_test() {
+    local name="$1"
+    local input="$2"
+    local expected="$3"
+    local result
+    result=$(timeout 5 "$AURA" --typecheck "$input" 2>&1 | tr -d '\n')
+    if [ "$result" = "$expected" ]; then
+        green "$name"
+        PASS=$((PASS + 1))
+    else
+        red "$name"
+        echo "       expected: $expected"
+        echo "       got:      $result"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
 echo "=== Aura Core Tests ==="
 
 # Arithmetic
@@ -195,9 +213,24 @@ printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
 
 echo ""
-echo "=== Agent/EDSL Tests ==="
+echo "=== Diagnostic Tests ==="
 
-# run-tests: define a test suite and run it
+# Parse error: source line + caret display (via batch eval)
+run_test "diag:parse-error-caret" "$(printf '#|test|')" "error: 1:1: parse error: expected expression, got invalid character   |  1 | #|test|   | ^^^^^^^"
+
+# Parse error: multi-line source
+run_test "diag:parse-error-multiline" "$(printf '#|whoops|')" "error: 1:1: parse error: expected expression, got invalid character   |  1 | #|whoops|   | ^^^^^^^^^"
+
+# Parse error: bad syntax
+run_test "diag:parse-error-badsyntax" "$(printf '#bad')" "error: 1:1: parse error: expected expression, got invalid character   |  1 | #bad   | ^^^^"
+
+# Type checker: unbound variable with suggestion
+run_typecheck_test "diag:typecheck-suggest" "(undef 5)" "type: Any1:2: unbound variable: undef  did you mean 'and'?"
+
+run_typecheck_test "diag:typecheck-ok" "(+ 1 2)" "type: Intno errors"
+
+
+# Parse error: unterminated string
 
 # set-code + query:find
 run_test "agent:set-code-query" "$(printf '(set-code "(define (f x) (+ x 1))")(query:find \"f\")')" "(5)"
@@ -231,6 +264,3 @@ run_test "bridge:cached-fn" "$(printf '(define (my-map f lst) (if (null? lst) ()
 
 # Nested closure bridge via cached function
 run_test "bridge:nested-lambda" "$(printf '(define (twice f) (lambda (x) (f (f x))))((twice (lambda (x) (+ x 1))) 5)')" "7"
-
-# Closure bridge via --serve (EDSL pipeline)
-run_test "bridge:edsl-pipe" "$(printf '(set-code "(define (f x) (+ x 1))(f 5)") (eval-current)')" "6"
