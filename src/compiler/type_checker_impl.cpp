@@ -910,6 +910,7 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
                     return OccurrenceInfoFlat{std::string(var_name), reg.dynamic_type()};
             }
         }
+
     }
 
     return std::nullopt;
