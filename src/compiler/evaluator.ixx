@@ -165,6 +165,7 @@ private:
     std::vector<types::EvalValue> cells_;
     std::vector<Pair> pairs_;
     std::vector<types::EvalValue> error_values_; // error cause values (indexed by ErrorRef)
+    std::vector<void*> opaque_heap_;             // opaque pointers (indexed by OpaqueRef)
     std::unique_ptr<std::unordered_set<std::string>> current_export_set_;
     // ── Strategy storage (E2) ──────────────────────────────────
     struct StrategyDef {
