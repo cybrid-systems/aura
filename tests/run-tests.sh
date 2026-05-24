@@ -223,6 +223,39 @@ run_test "ffi:opaque-alloc" "$(printf '(begin (define p (c-alloc 64)) (c-opaque?
 run_test "ffi:opaque-not" "$(printf '(c-opaque? 42)')" "#f"
 run_test "ffi:alloc-free" "$(printf '(begin (define p (c-alloc 1024)) (c-free p) (c-opaque? p))')" "#t"
 
+
+# --emit-binary: standalone native binary
+run_emit_test() {
+    local name="$1"
+    local input="$2"
+    local expected="$3"
+    local bin_path="/tmp/aura_emit_${name}"
+    local result
+    printf '%s' "$input" | timeout 10 "$AURA" --emit-binary "$bin_path" 2>/dev/null >/dev/null
+    if [ -x "$bin_path" ]; then
+        result=$("$bin_path" 2>&1 | tr -d '\n')
+        if [ "$result" = "$expected" ]; then
+            green "$name"
+            PASS=$((PASS + 1))
+        else
+            red "$name"
+            echo "       expected: $expected"
+            echo "       got:      $result"
+            FAIL=$((FAIL + 1))
+        fi
+        rm -f "$bin_path" "${bin_path}.o" "${bin_path}.tmp.aura" "${bin_path}.runtime.o" "${bin_path}.ir" 2>/dev/null
+    else
+        red "$name (no binary)"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
+echo "=== --emit-binary Tests ==="
+run_emit_test "emit:add"     "(+ 1 2)" "3"
+run_emit_test "emit:closure" "(let ((f (lambda (x) (+ x 1)))) (f 41))" "42"
+run_emit_test "emit:pair"    "(car (cons 42 100))" "42"
+run_emit_test "emit:display" "(display 42)" "42"
+
 echo "=== Diagnostic Tests ==="
 
 # Parse error: source line + caret display (via batch eval)
