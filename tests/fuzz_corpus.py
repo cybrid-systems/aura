@@ -20,7 +20,7 @@ import sys
 import time
 
 AURA = os.environ.get("AURA", "./build/aura")
-CORPUS_DIR = os.path.join(os.path.dirname(__file__), "..", "fuzz_seed_corpus")
+CORPUS_DIR = os.path.join(os.path.dirname(__file__), "..", "tests/fuzz_seed_corpus")
 REPRO_DIR = os.path.join(os.path.dirname(__file__), "reproducers")
 PASS = 0
 FAIL = 0
