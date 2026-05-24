@@ -352,11 +352,22 @@ def rename_variable(code, tokens):
 
 
 # --- b. Commutative swap ---
-@register
+def _is_in_quote_context(tokens, pos):
+    """Check if position is inside a quote/quasiquote/unquote context."""
+    depth = 0
+    for j in range(pos):
+        if tokens[j] in ("'", "`", ",", ",@"):
+            depth += 1
+        # Check if we're after a quote that hasn't been closed
+    return depth > 0
+
+
 def swap_commutative(code, tokens):
     """Swap operands of commutative operators: +, *, =, and, or."""
     COMM_OPS = {'+', '*', '=', 'and', 'or'}
     for i, tok in enumerate(tokens):
+        if _is_in_quote_context(tokens, i):
+            continue
         if tok == '(' and i + 1 < len(tokens) and tokens[i + 1] in COMM_OPS:
             op = tokens[i + 1]
             # Parse operands
@@ -492,7 +503,8 @@ def wrap_begin(code, tokens):
             if depth == 0:
                 expr = tokens[i:j]
                 # Only wrap non-begin expressions
-                if len(expr) >= 2 and expr[1] not in ('begin',):
+                # Skip defines and define-types — wrapping changes env semantics
+                if len(expr) >= 2 and expr[1] not in ('begin', 'define', 'define-type', 'defmacro'):
                     wrap = ['(', 'begin'] + expr + [')']
                     new_tokens = tokens[:i] + wrap + tokens[j:]
                     return new_tokens, "wrap-begin"
@@ -665,7 +677,7 @@ def eta_expand(code, tokens):
         if prev_idx >= 0:
             prev = tokens[prev_idx]
             if prev in ('(', 'define', 'lambda', 'let', 'let*', 'letrec', 'quote',
-                        'defmacro', ':', 'all:'):
+                        'defmacro', 'export', 'import', 'require', ':', 'all:'):
                 continue
             if prev in RESERVED:
                 continue
@@ -1080,6 +1092,22 @@ def main():
     print(f"  Mode:  {'QUICK' if QUICK else 'FULL'}")
     print("=" * 60)
 
+    # Load corpus seeds (skip define/quasiquote — transforms don't handle those)
+    CORPUS_DIR = os.path.join(os.path.dirname(__file__), "..", "fuzz_seed_corpus")
+    corpus_seeds = []
+    if os.path.isdir(CORPUS_DIR):
+        for f in sorted(os.listdir(CORPUS_DIR)):
+            if f.endswith(".sexpr"):
+                with open(os.path.join(CORPUS_DIR, f)) as fp:
+                    code = fp.read().strip()
+                    if code and len(code) < 1000:
+                        # Skip seeds with define/quasiquote/macro — transforms don't handle them
+                        if '`' not in code and ',@' not in code \
+                           and 'define' not in code and 'defmacro' not in code \
+                           and 'define-type' not in code:
+                            corpus_seeds.append(code)
+        print(f"  Corpus: {len(corpus_seeds)} simple seeds loaded")
+
     n_programs = 50 if QUICK else 500
     start = time.time()
 
@@ -1090,7 +1118,11 @@ def main():
                   f"{results['fail_equiv']} diff, {results['transforms_applied']} transforms, "
                   f"{elapsed:.0f}s", flush=True)
 
-        code = gen_program_for_mutate()
+        # Use corpus seed for about 1/3 of programs, random generation for rest
+        if corpus_seeds and i % 3 == 0:
+            code = rng.choice(corpus_seeds)
+        else:
+            code = gen_program_for_mutate()
         result = test_one_equivalence(code)
         if result == "fail":
             print(f"  ! [{i+1}] FAIL — see summary")
