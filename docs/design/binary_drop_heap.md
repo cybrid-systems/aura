@@ -196,3 +196,78 @@ builder.CreateCall(drop_fn, {local_slot});
 ### 7.4 递归 Drop 安全化
 
 使用迭代 + 显式栈替代递归，避免深度嵌套结构（如长链表）导致的栈溢出。
+
+---
+
+## 8. Bump Allocator + Arena Reset 详细设计（推荐中期方案）
+
+### 8.1 运行时层设计
+
+```c
+#define BUMP_ARENA_SIZE (64 * 1024 * 1024) // 64MB
+
+static uint8_t* bump_arena = NULL;
+static size_t bump_offset = 0;
+
+void aura_bump_init(void) {
+    if (!bump_arena)
+        bump_arena = (uint8_t*)malloc(BUMP_ARENA_SIZE);
+    bump_offset = 0;
+}
+
+void* aura_bump_alloc(size_t size, size_t align) {
+    size_t aligned = (bump_offset + align - 1) & ~(align - 1);
+    if (aligned + size > BUMP_ARENA_SIZE) { fprintf(stderr, "bump overflow\n"); exit(1); }
+    void* ptr = bump_arena + aligned;
+    bump_offset = aligned + size;
+    return ptr;
+}
+
+void aura_bump_reset(void) { bump_offset = 0; }
+```
+
+### 8.2 类型专用分配函数（返回指针而非 ID）
+
+```c
+int64_t aura_bump_alloc_pair(int64_t car, int64_t cdr) {
+    Pair* p = (Pair*)aura_bump_alloc(sizeof(Pair), 8);
+    p->car = car; p->cdr = cdr;
+    return (int64_t)(uintptr_t)p;
+}
+```
+
+### 8.3 LLVM IR 生成策略
+
+| 情况 | 行为 |
+|------|------|
+| 局部变量分配 | 调用 `aura_bump_alloc_xxx`，不生成 drop |
+| move 操作 | 只转移所有权，不生成 drop |
+| borrow 操作 | 不转移所有权，不生成 drop |
+| 函数返回 | 调用 `aura_bump_reset()` 批量释放 |
+| 必须立即释放的对象 | 生成 `aura_drop_xxx`（极少数情况） |
+
+### 8.4 示例
+
+```llvm
+define i64 @__top__(...)
+entry:
+  call void @aura_bump_init()
+  %p = call i64 @aura_bump_alloc_pair(i64 1, i64 2)
+  %q = %p                                       ; move = rename
+  call void @aura_bump_reset()
+  ret i64 0
+}
+```
+
+### 8.5 实现步骤
+
+| 步骤 | 内容 | 时间 |
+|------|------|------|
+| 1 | runtime.c 实现 aura_bump_* | 1 天 |
+| 2 | 编译器入口自动调用 aura_bump_init() | 1-2 天 |
+| 3 | 替换 aura_alloc_* → aura_bump_alloc_* | 2 天 |
+| 4 | 函数退出插入 aura_bump_reset() | 2 天 |
+| 5 | 处理跨函数返回、闭包捕获等 | 3 天 |
+| 6 | 测试 + 性能对比 | 2 天 |
+
+**合计**: ~11-12 天
