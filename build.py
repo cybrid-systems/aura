@@ -17,6 +17,10 @@ Test suites:
   bench       Benchmark 基线 + 回归检测
   smoke       快速冒烟测试
   all         全部测试 (默认)
+  core        核心管线 (unit + integ + typecheck + smoke + bash + suite)
+  safety      安全回归 (gradual + regression + p0)
+  fuzz        Fuzz 测试 (fuzz-equiv + fuzz-corpus)
+  check       构建 + core + safety + fuzz（CI 默认）
 """
 
 import json
@@ -1050,6 +1054,13 @@ def test_suite_runner():
     return 1 if failed > 0 else 0
 
 
+# Test suite groups for CI tiering.
+# - "check" (CI default):  build + core + safety + fuzz-quick
+# - "all":                 build + everything
+CI_CORE = ["unit", "integ", "typecheck", "smoke", "bash", "suite"]
+CI_SAFETY = ["gradual", "regression", "p0"]
+CI_FUZZ = ["fuzz-equiv", "fuzz-corpus"]
+
 SUITES = {
     "unit": test_unit,
     "integ": test_integ,
@@ -1065,7 +1076,6 @@ SUITES = {
     "p0": test_p0_regression,
     "ai": test_ai_agent_demo,
     "bash": test_bash,
-    "suite": test_suite_runner,
     "suite": test_suite_runner,
 }
 
@@ -1122,6 +1132,15 @@ def cmd_test(suite_names: list[str]):
     for name in suite_names:
         if name in SUITES:
             results[name] = SUITES[name]()
+        elif name == "core":
+            for s in CI_CORE:
+                results[f"core/{s}"] = SUITES[s]()
+        elif name == "safety":
+            for s in CI_SAFETY:
+                results[f"safety/{s}"] = SUITES[s]()
+        elif name == "fuzz":
+            for s in CI_FUZZ:
+                results[f"fuzz/{s}"] = SUITES[s]()
         else:
             warn(f"unknown suite '{name}' (use: {', '.join(SUITES.keys())})")
 
@@ -1140,7 +1159,12 @@ def cmd_test(suite_names: list[str]):
 def cmd_list():
     """列出测试套件"""
     print(f"{B}Available test suites:{N}")
-    for name, func in SUITES.items():
+    print(f"  {'core':12s} CI核心管线 (unit + integ + typecheck + smoke + bash + suite)")
+    print(f"  {'safety':12s} CI安全回归 (gradual + regression + p0)")
+    print(f"  {'fuzz':12s} CI fuzz (fuzz-equiv + fuzz-corpus --quick)")
+    print(f"  {'check':12s} CI默认: build + core + safety + fuzz")
+    print()
+    for name, func in sorted(SUITES.items()):
         print(f"  {name:12s} {func.__doc__}")
     return 0
 
@@ -1228,7 +1252,7 @@ def main():
     commands = {
         "build": cmd_build,
         "clean": cmd_clean,
-        "check": lambda: cmd_build() or cmd_test([]),
+        "check": lambda: cmd_build() or cmd_test(CI_CORE + CI_SAFETY + CI_FUZZ),
         "test": lambda: cmd_test(args or ["all"]),
         "list": cmd_list,
         "demo": test_demo,
