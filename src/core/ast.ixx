@@ -863,6 +863,7 @@ private:
 
     // Total number of mutations recorded
     std::size_t mutation_count() const { return mutation_log_.size(); }
+    std::uint64_t next_mutation_id() const { return next_mutation_id_; }
 
     // Get all mutation records (unfiltered).
     const std::vector<MutationRecord>& all_mutations() const { return mutation_log_; }
