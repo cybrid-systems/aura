@@ -13,6 +13,19 @@ extern "C" {
 static std::vector<int64_t> g_closure_func_ids;          // func_id for each closure
 static std::vector<std::vector<int64_t>> g_closure_envs; // env for each closure
 
+// ── Closure inline cache (monomorphic, direct-mapped) ──
+// Caches the resolved function pointer + metadata for recently-accessed closures.
+// This eliminates vector lookup overhead on repeated calls to the same closure.
+static constexpr int CLOSURE_CACHE_SIZE = 64;
+struct ClosureCacheEntry {
+    int64_t closure_id;
+    int64_t (*fn)(int64_t*, uint32_t);
+    int32_t local_count;
+    int32_t arg_count;
+    int32_t env_count;
+};
+static ClosureCacheEntry g_closure_cache[CLOSURE_CACHE_SIZE] = {{-1, nullptr, 0, 0, 0}};
+
 int64_t aura_alloc_closure(int64_t func_id) {
     int64_t id = static_cast<int64_t>(g_closure_func_ids.size());
     g_closure_func_ids.push_back(func_id);
@@ -28,6 +41,8 @@ void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
         env[static_cast<size_t>(idx)] = val;
     }
 }
+
+
 
 // === Registered compiled function table ===
 struct JitFnEntry {
@@ -45,9 +60,45 @@ void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t), int32_
 }
 
 int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
-    if (closure_id < 0 || static_cast<size_t>(closure_id) >= g_closure_func_ids.size()) {
+    if (closure_id < 0 || static_cast<size_t>(closure_id) >= g_closure_func_ids.size())
         return 0;
+
+    // ── Inline cache check ──
+    int cache_idx = static_cast<int>(closure_id % CLOSURE_CACHE_SIZE);
+    if (g_closure_cache[cache_idx].closure_id == closure_id) {
+        auto& ce = g_closure_cache[cache_idx];
+        if (ce.fn) {
+            // Fast path: use cached function pointer directly
+            int32_t nlocals = ce.local_count > 0 ? ce.local_count : 16;
+            int32_t nargs = argc < ce.arg_count ? static_cast<int32_t>(argc) : ce.arg_count;
+            int32_t env_count = ce.env_count;
+
+            // Stack buffer for small locals, fallback to heap for large
+            int64_t stack_buf[64];
+            std::vector<int64_t> heap_buf;
+            int64_t* locals = stack_buf;
+            if (static_cast<size_t>(nlocals) > sizeof(stack_buf) / sizeof(stack_buf[0])) {
+                heap_buf.resize(static_cast<size_t>(nlocals), 0);
+                locals = heap_buf.data();
+            } else {
+                for (int32_t i = 0; i < nlocals; ++i)
+                    locals[i] = 0;
+            }
+
+            // Place captured env values first
+            auto& env = g_closure_envs[static_cast<size_t>(closure_id)];
+            for (int32_t i = 0; i < env_count && static_cast<size_t>(i) < env.size(); ++i)
+                locals[i] = env[i];
+
+            // Place call arguments after env
+            for (int32_t i = 0; i < nargs; ++i)
+                locals[env_count + i] = args[i];
+
+            return ce.fn(locals, static_cast<uint32_t>(argc));
+        }
     }
+
+    // ── Slow path: full dispatch + cache update ──
     int64_t func_id = g_closure_func_ids[static_cast<size_t>(closure_id)];
     if (func_id < 0 || func_id >= 512 || !g_jit_fns[func_id].fn)
         return 0;
@@ -55,26 +106,43 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
     auto& entry = g_jit_fns[func_id];
     auto& env = g_closure_envs[static_cast<size_t>(closure_id)];
 
-    // Allocate locals array
+    // Stack buffer for small locals, fallback to heap for large
     int32_t nlocals = entry.local_count > 0 ? entry.local_count : 16;
-    std::vector<int64_t> locals(static_cast<size_t>(nlocals), 0);
+    int64_t stack_buf[64];
+    std::vector<int64_t> heap_buf;
+    int64_t* locals = stack_buf;
+    if (static_cast<size_t>(nlocals) > sizeof(stack_buf) / sizeof(stack_buf[0])) {
+        heap_buf.resize(static_cast<size_t>(nlocals), 0);
+        locals = heap_buf.data();
+    } else {
+        for (int32_t i = 0; i < nlocals; ++i)
+            locals[i] = 0;
+    }
 
-    // Place captured env values first (Arg 0..env.size()-1)
+    // Place captured env values first
     for (size_t i = 0; i < env.size(); ++i) {
         if (i < static_cast<size_t>(nlocals))
             locals[i] = env[i];
     }
 
-    // Place call arguments after env (Arg env.size()..env.size()+arg_count-1)
+    // Place call arguments after env
     int32_t nargs = argc < entry.arg_count ? static_cast<int32_t>(argc) : entry.arg_count;
     int32_t env_offset = static_cast<int32_t>(env.size());
     for (int32_t i = 0; i < nargs; ++i) {
-        size_t slot = static_cast<size_t>(env_offset + i);
-        if (slot < locals.size())
+        int32_t slot = env_offset + i;
+        if (slot < nlocals)
             locals[slot] = args[i];
     }
 
-    int64_t result = entry.fn(locals.data(), static_cast<uint32_t>(argc));
+    int64_t result = entry.fn(locals, static_cast<uint32_t>(argc));
+
+    // ── Update cache ──
+    g_closure_cache[cache_idx].closure_id = closure_id;
+    g_closure_cache[cache_idx].fn = entry.fn;
+    g_closure_cache[cache_idx].local_count = entry.local_count;
+    g_closure_cache[cache_idx].arg_count = entry.arg_count;
+    g_closure_cache[cache_idx].env_count = static_cast<int32_t>(env.size());
+
     return result;
 }
 
@@ -158,6 +226,9 @@ void aura_reset_runtime() {
     g_pair_cars.clear();
     g_pair_cdrs.clear();
     std::memset(g_jit_fns, 0, sizeof(g_jit_fns));
+    // Clear closure inline cache
+    for (int i = 0; i < CLOSURE_CACHE_SIZE; ++i)
+        g_closure_cache[i] = {-1, nullptr, 0, 0, 0};
     // Keep prim table (registered once)
     // Clear JIT function entries but NOT prim table
     for (int i = 0; i < 512; ++i)
