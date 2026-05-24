@@ -327,6 +327,7 @@ private:
         dirty_.push_back(0);
         node_first_mutation_.push_back(0);
         parent_.push_back(NULL_NODE);
+        node_gen_.push_back(generation_);
         return id;
     }
 
@@ -353,6 +354,8 @@ private:
     std::vector<MutationRecord> mutation_log_;
     std::vector<std::uint32_t> node_first_mutation_;
     std::uint64_t next_mutation_id_ = 1;
+    std::uint16_t generation_ = 1;
+    std::pmr::vector<std::uint16_t> node_gen_;
 
     public:
 
@@ -371,7 +374,8 @@ private:
         , param_data_(alloc)
         , line_(alloc)
         , col_(alloc)
-        , type_id_(alloc) {}
+        , type_id_(alloc)
+        , node_gen_(alloc) {}
 
     // ── Builders ───────────────────────────────────────────────
 
@@ -870,6 +874,34 @@ private:
     std::vector<MutationRecord>& all_mutations() { return mutation_log_; }
 
     // Rollback a mutation by ID. Returns true if successful.
+    // Current FlatAST generation. Incremented on rollback to invalidate stale NodeIds.
+    std::uint16_t generation() const { return generation_; }
+
+    // Check if a NodeId is valid (in-bounds and from the current generation).
+    bool is_valid(NodeId id) const {
+        return id < tag_.size() && id < node_gen_.size() && node_gen_[id] == generation_;
+    }
+
+    // Validate NodeId — panics on stale/dangling NodeIds.
+    // Use in debug paths to catch post-rollback staleness early.
+    void validate(NodeId id) const {
+        if (id != NULL_NODE) [[likely]] {
+            if (id >= tag_.size())
+                std::abort(); // NodeId out of bounds
+            if (id >= node_gen_.size())
+                std::abort(); // NodeId generation array too small
+            if (node_gen_[id] != generation_)
+                std::abort(); // NodeId stale: generation mismatch (was rollback?)
+        }
+    }
+
+    // Safe get — returns nullopt on stale/invalid NodeId.
+    std::optional<NodeView> get_safe(NodeId id) const {
+        if (!is_valid(id))
+            return std::nullopt;
+        return get(id);
+    }
+
     bool rollback(std::uint64_t mutation_id) {
         for (auto& rec : mutation_log_) {
             if (rec.mutation_id == mutation_id) {
@@ -885,6 +917,8 @@ private:
                                 int_val_[rec.target_node] =
                                     static_cast<std::int64_t>(rec.old_value);
                                 rec.status = MutationStatus::RolledBack;
+                                ++generation_;
+                                if (generation_ == 0) generation_ = 1; // wrap around
                                 return true;
                             }
                             break;
@@ -893,6 +927,8 @@ private:
                                 type_id_[rec.target_node] =
                                     static_cast<std::uint32_t>(rec.old_value);
                                 rec.status = MutationStatus::RolledBack;
+                                ++generation_;
+                                if (generation_ == 0) generation_ = 1; // wrap around
                                 return true;
                             }
                             break;
