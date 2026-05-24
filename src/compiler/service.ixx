@@ -1904,20 +1904,57 @@ public:
         std::string status; // "Committed" or "RolledBack"
     };
 
+    // RAII transaction guard for mutation operations.
+    // Records the current mutation state on construction.
+    // If commit() is not called before destruction, automatically
+    // rolls back all mutations since construction point.
+    struct MutationTransaction {
+        aura::ast::FlatAST* ast;
+        std::uint64_t snapshot_id;
+        bool committed = false;
+
+        MutationTransaction(aura::ast::FlatAST& a)
+            : ast(&a), snapshot_id(a.next_mutation_id()) {}
+
+        void commit() { committed = true; }
+
+        ~MutationTransaction() {
+            if (!committed && ast) {
+                ast->rollback_since(snapshot_id);
+            }
+        }
+
+        // Disallow copy
+        MutationTransaction(const MutationTransaction&) = delete;
+        MutationTransaction& operator=(const MutationTransaction&) = delete;
+        // Allow move
+        MutationTransaction(MutationTransaction&& other) noexcept
+            : ast(other.ast), snapshot_id(other.snapshot_id), committed(other.committed) {
+            other.ast = nullptr;
+        }
+    };
+
     // Evaluate an S-expression by parsing it INTO persistent AST (current_ast_).
     // This makes all nodes co-exist in one FlatAST, so mutation primitives
     // correctly read/write the original program's nodes.
+    // Uses a transaction guard: if eval fails, all side-effect mutations
+    // are automatically rolled back.
     EvalResult eval_on_current(std::string_view sexpr) {
         if (!current_ast_ || !current_pool_) {
             return std::unexpected(
                 aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError, "no AST loaded"});
         }
+        MutationTransaction tx(*current_ast_);
         auto pr = aura::parser::parse_to_flat(sexpr, *current_ast_, *current_pool_);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
             return std::unexpected(aura::diag::Diagnostic{
                 aura::diag::ErrorKind::ParseError, pr.error.empty() ? "parse error" : pr.error});
         }
-        return evaluator_.eval_flat(*current_ast_, *current_pool_, pr.root, evaluator_.top_env());
+        auto result =
+            evaluator_.eval_flat(*current_ast_, *current_pool_, pr.root, evaluator_.top_env());
+        if (result)
+            tx.commit();
+        return result;
     }
 
     // Apply a mutation expression by parsing it INTO the persistent AST.
@@ -1926,6 +1963,9 @@ public:
         if (!current_ast_ || !current_pool_) {
             return {0, false, "no AST loaded"};
         }
+        // Wrap in a transaction: if evaluation fails (parse or runtime),
+        // all mutations performed by the sexpr are automatically rolled back.
+        MutationTransaction tx(*current_ast_);
         auto pr = aura::parser::parse_to_flat(sexpr, *current_ast_, *current_pool_);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
             return {0, false, pr.error.empty() ? "parse error" : pr.error};
@@ -1938,7 +1978,12 @@ public:
         auto& val = *result;
         auto mid = static_cast<std::uint64_t>(
             aura::compiler::types::is_int(val) ? aura::compiler::types::as_int(val) : 0);
-        return {mid, mid > 0, ""};
+        if (mid > 0) {
+            tx.commit();
+            return {mid, true, ""};
+        }
+        // If mutation returned 0, it indicates failure — transaction auto-rollbacks
+        return {0, false, "mutation returned zero (failed)"};
     }
 
     // Query mutation log for a specific node (or all nodes if NULL_NODE).
