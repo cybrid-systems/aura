@@ -28,3 +28,4 @@ build_dbg/
 *.log
 build_asan
 build_ubsan
+tests/bench_results/*.log
