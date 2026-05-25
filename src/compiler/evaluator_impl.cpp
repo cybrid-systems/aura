@@ -390,7 +390,8 @@ namespace {
     }
 
     static void io_print_val(const EvalValue& v, const std::vector<std::string>* heap,
-                             const std::vector<Pair>* pairs, bool quote, int depth = 0) {
+                             const std::vector<Pair>* pairs, bool quote, int depth = 0,
+                             const std::vector<std::string>* keywords = nullptr) {
         if (depth > 64) {
             std::fprintf(stdout, "...");
             return;
@@ -401,6 +402,16 @@ namespace {
         }
         if (is_bool(v)) {
             std::fprintf(stdout, "%s", as_bool(v) ? "#t" : "#f");
+            return;
+        }
+        if (is_keyword(v)) {
+            auto kidx = as_keyword_idx(v);
+            if (keywords && kidx < keywords->size()) {
+                auto kname = (*keywords)[kidx];
+                std::fprintf(stdout, "%s", kname.c_str());
+            } else {
+                std::fprintf(stdout, ":<kwd%zu>", (size_t)kidx);
+            }
             return;
         }
         if (is_float(v)) {
@@ -2042,6 +2053,8 @@ void Evaluator::init_pair_primitives() {
             return "Bool";
         if (is_int(v))
             return "Int";
+        if (is_keyword(v))
+            return "Keyword";
         if (is_void(v))
             return "Void";
         return "Unknown";
@@ -2065,6 +2078,24 @@ void Evaluator::init_pair_primitives() {
             return make_int(0);
         auto& expected = string_heap_[expected_idx];
         return make_int(val_type == expected ? 1 : 0);
+    });
+
+    primitives_.add("keyword?", [this](const auto& a) {
+        return make_bool(a.size() >= 1 && is_keyword(a[0]));
+    });
+
+    primitives_.add("keyword->string", [this](const auto& a) {
+        if (a.size() < 1 || !is_keyword(a[0]))
+            return make_void();
+        auto kidx = as_keyword_idx(a[0]);
+        if (kidx >= keyword_table_.size())
+            return make_void();
+        // Return the keyword name without the colon prefix
+        auto kw = keyword_table_[kidx];
+        auto sname = kw.substr(1); // skip ':'
+        auto sid = string_heap_.size();
+        string_heap_.push_back(sname);
+        return make_string(sid);
     });
 
     primitives_.add("equal?", [this](const auto& a) {
@@ -2179,14 +2210,14 @@ void Evaluator::init_pair_primitives() {
     primitives_.add("display", [this](const auto& a) {
         if (a.empty())
             return make_void();
-        io_print_val(a[0], &string_heap_, &pairs_, false);
+        io_print_val(a[0], &string_heap_, &pairs_, false, 0, &keyword_table_);
         std::fflush(stdout);
         return make_void();
     });
     primitives_.add("write", [this](const auto& a) -> EvalValue {
         if (a.empty())
             return make_void();
-        io_print_val(a[0], &string_heap_, &pairs_, true);
+        io_print_val(a[0], &string_heap_, &pairs_, true, 0, &keyword_table_);
         std::fflush(stdout);
         return make_void();
     });
@@ -9050,6 +9081,24 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                 }
                 case aura::ast::NodeTag::Variable: {
                     auto name = p->resolve(v.sym_id);
+                    // Keyword: :foo → self-evaluating keyword value (interned)
+                    if (!name.empty() && name[0] == ':') {
+                        auto kwstr = std::string(name);
+                        std::uint64_t kidx = 0;
+                        // Check if already interned
+                        bool found = false;
+                        for (; kidx < keyword_table_.size(); ++kidx) {
+                            if (keyword_table_[kidx] == kwstr) {
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) {
+                            kidx = keyword_table_.size();
+                            keyword_table_.push_back(kwstr);
+                        }
+                        return make_keyword(kidx);
+                    }
                     auto val = eval_env.lookup(std::string(name));
                     if (val)
                         return *val;
