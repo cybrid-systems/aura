@@ -12,6 +12,17 @@
 #include <string.h>
 #include <math.h>
 
+// ── Type tags for display (must match AOT codegen) ─────────
+enum ValueTag {
+    TAG_INT = 0,
+    TAG_BOOL = 1,
+    TAG_PAIR = 2,
+    TAG_CLOSURE = 3,
+    TAG_STRING = 4,
+    TAG_VOID = 5,
+    TAG_DYNAMIC = 255,  // unknown / runtime-dependent
+};
+
 // ═══════════════════════════════════════════════════════════
 // Bump Allocator (Arena) — primary memory manager
 // ═══════════════════════════════════════════════════════════
@@ -484,15 +495,49 @@ static void aura_display_pair_chain(int64_t val) {
 }
 
 int64_t aura_display_int(int64_t val) {
-    if (val == 0) {
+    // Bool sentinels (INT64_MIN / INT64_MIN+1)
+    if (val == 0x8000000000000000LL) {
+        printf("#t");
+    } else if (val == 0x8000000000000001LL) {
+        printf("#f");
+    } else if (val == 0) {
         printf("()");
     } else if (val < 0) {
         // Negative = pair sentinel — print as list
-        // Check if it's actually a valid pair (not some other negative value)
         aura_display_pair_chain(val);
     } else {
-        // Positive or zero — print as raw integer
+        // Positive — print as raw integer
         printf("%ld", (long)val);
+    }
+    fflush(stdout);
+    g_display_was_called = 1;
+    return val;
+}
+
+// ── Type-aware display ─────────────────────────────────
+// Called by AOT codegen when type info is available.
+// Falls back to aura_display_int for TAG_DYNAMIC.
+int64_t aura_display_val(int64_t val, int type_tag) {
+    switch (type_tag) {
+        case TAG_BOOL:
+            printf("%s", val ? "#t" : "#f");
+            break;
+        case TAG_VOID:
+            printf("()");
+            break;
+        case TAG_PAIR:
+            aura_display_pair_chain(val);
+            break;
+        case TAG_INT:
+        default:
+            // TAG_INT, TAG_CLOSURE, TAG_STRING, TAG_DYNAMIC — print as-is
+            if (val < 0)
+                aura_display_pair_chain(val);
+            else if (val == 0)
+                printf("()");
+            else
+                printf("%ld", (long)val);
+            break;
     }
     fflush(stdout);
     g_display_was_called = 1;
@@ -705,11 +750,11 @@ int main(int argc, char** argv) {
     int64_t result = __top__(args, 0);
     aura_bump_reset();
     if (!g_display_was_called) {
-        // Raw int64_t output: booleans are 1 (#t) and 0 (not printed).
-        // For native binaries we output raw integers — there's no way to
-        // distinguish boolean #t from integer 1 in an untagged runtime.
+        // Use type-aware display for the top-level result.
+        // This handles bool sentinels (#t → INT64_MIN), pairs, and ints.
         if (result != 0)
-            printf("%ld\n", (long)result);
+            aura_display_int(result);
+        printf("\n");
     } else if (result != 0) {
         printf("\n"); // newline after display output
     }

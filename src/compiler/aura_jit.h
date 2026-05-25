@@ -33,6 +33,8 @@ struct FlatFunction {
     // Closure support: func_id mapping
     const uint32_t* func_id_map; // [arg_count] maps local slots to IR func IDs
     uint32_t num_callees;        // number of entries in func_id_map
+    // Type tags for const values: [local_count], 0=Int, 1=Bool, 5=Void, 255=Dynamic
+    const uint8_t* const_tags;
 };
 
 using ScalarFn = int64_t (*)(int64_t*, uint32_t);
