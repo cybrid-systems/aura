@@ -1932,6 +1932,7 @@ public:
 
     ast::ASTArena& arena() { return arena_; }
     Evaluator& evaluator() { return evaluator_; }
+    void set_workspace_tree(void* wt) { evaluator_.set_workspace_tree(wt); }
 
     // Return current number of cached define functions
     std::size_t cached_function_count() const { return ir_cache_.size(); }
