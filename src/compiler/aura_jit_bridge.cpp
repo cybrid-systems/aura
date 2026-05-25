@@ -78,12 +78,16 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
     fprintf(f, "void aura_register_fn(int64_t func_id, int64_t fn_ptr);\n");
     fprintf(f, "\n");
     
-    // Generate extern declarations for all compiled functions
+    // Generate extern declarations for all compiled functions.
+    // LLVM function names are mangled with a unique counter to avoid
+    // duplicate symbols (e.g. __lambda__ → __lambda___0, __lambda___1).
     for (unsigned int i = 0; i < num_functions; ++i) {
         std::string safe_name(functions[i].name);
         for (auto& c : safe_name)
             if (c == '@' || c == '.' || c == '-' || c == ' ') c = '_';
-        fprintf(f, "extern int64_t %s(int64_t*, uint32_t);\n", safe_name.c_str());
+        bool is_top = (functions[i].name == std::string("__top__"));
+        auto mangled = is_top ? safe_name : (safe_name + "_" + std::to_string(i));
+        fprintf(f, "extern int64_t %s(int64_t*, uint32_t);\n", mangled.c_str());
     }
     
     fprintf(f, "\n// Constructor — runs before main()\n");
@@ -93,8 +97,10 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
         std::string safe_name(functions[i].name);
         for (auto& c : safe_name)
             if (c == '@' || c == '.' || c == '-' || c == ' ') c = '_';
+        bool is_top = (functions[i].name == std::string("__top__"));
+        auto mangled = is_top ? safe_name : (safe_name + "_" + std::to_string(i));
         fprintf(f, "    aura_register_fn(%u, (int64_t)%s);\n",
-                func_ids[i], safe_name.c_str());
+                func_ids[i], mangled.c_str());
     }
     
     fprintf(f, "}\n");
