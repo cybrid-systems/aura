@@ -853,6 +853,16 @@ def test_fuzz_corpus():
 # ═══════════════════════════════════════════════════════════════
 
 
+def test_repl():
+    """Run REPL interactive tests via pexpect."""
+    print(f"{'repl':12s} testing REPL interaction...")
+    for path in ["tests/repl_test.py"]:
+        result = subprocess.run([sys.executable, path], cwd=WORKSPACE)
+        if result.returncode != 0:
+            return False
+    return True
+
+
 def test_demo():
     """Agent demo — full pipeline"""
     print(f"{B}═══ Agent Demo ═══{N}")
@@ -1183,7 +1193,7 @@ def cmd_test(suite_names: list[str]):
 def cmd_list():
     """列出测试套件"""
     print(f"{B}Available test suites:{N}")
-    print(f"  {'core':12s} CI核心管线 (unit + integ + typecheck + smoke + bash + suite)")
+    print(f"  {'core':12s} CI核心管线 (unit + integ + typecheck + smoke + bash + suite + repl)")
     print(f"  {'safety':12s} CI安全回归 (gradual + regression + p0)")
     print(f"  {'fuzz':12s} CI fuzz (fuzz-equiv + fuzz-corpus --quick)")
     print(f"  {'check':12s} CI默认: build + core + safety + fuzz")
