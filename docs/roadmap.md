@@ -35,14 +35,9 @@
 | Serve-Async | ucontext fiber + epoll 调度器 + eventfd mailbox | ✅ |
 | Serve-Async | `--serve-async` 多 session fiber 调度 + stdin edge-triggered | ✅ |
 | Serve-Async | `pop_message` fiber yield + `g_fiber_block` 回调 | ✅ |
+| Serve-Async | send/recv 全链路通信（session create → send → recv yield → resume） | ✅ |
 
 ---
-
-## 🟡 进行中
-
-| 优先级 | 任务 | 工时 | 说明 |
-|:------:|:-----|:----:|:-----|
-| P1 | **(send)/(recv) 原语参数丢失 bug** | 1d | Call node 通过 `eval_flat` 时 children 仅含 callee，参数丢失；blocking `(recv)` 的 callback yield 已好，但 `send`/`recv` 原语本身不走 tree-walker 时参数为空 |
 
 ## 🔴 真实遗留问题
 
@@ -50,7 +45,6 @@
 |:------:|:-----|:----:|:-----|
 | P2 | **AOT 布尔值输出 raw int** | 1d | `1` 而非 `#t`，untagged runtime 无法区分 1 和 true |
 | P2 | **struct 模块 AOT 不工作** | 2d | `define-type` 在 IR 路径不被处理 |
-| P2 | **workspace tree 跨 session 共享** | 2d | 每个 serve session 独立 workspace tree |
 | P2 | **workspace tree 跨 session 共享** | 2d | 每个 serve session 独立 workspace tree |
 | P2 | **`synthesize:optimize` fitness 基于代码长度** | 1d | 需 benchmark 驱动的真实 fitness |
 | P2 | **规则持久化仅支持 JSON 文件** | 2d | 缺少内置 VCS 集成 |
