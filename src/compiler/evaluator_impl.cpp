@@ -3518,6 +3518,27 @@ void Evaluator::init_pair_primitives() {
         return make_void();
     });
 
+    // (eval-expr value) — Evaluate any Aura value (not just strings)
+    // Useful for evaluating stored expressions (e.g., from pipeline steps)
+    primitives_.add("eval-expr", [this](const auto& a) -> EvalValue {
+        if (a.empty())
+            return make_void();
+        // Convert the value to a FlatAST and evaluate
+        if (!arena_)
+            return make_void();
+        auto alloc = arena_->allocator();
+        auto* pool = arena_->create<aura::ast::StringPool>(alloc);
+        auto* flat = arena_->create<aura::ast::FlatAST>(alloc);
+        auto root = data_to_flat(a[0], *flat, *pool, 0);
+        if (root == aura::ast::NULL_NODE)
+            return make_void();
+        flat->root = root;
+        auto result = eval_flat(*flat, *pool, root, top_);
+        if (result)
+            return *result;
+        return make_void();
+    });
+
     primitives_.add("current-source", [this](const auto&) -> EvalValue {
         if (!workspace_flat_ || !workspace_pool_)
             return make_string(0);

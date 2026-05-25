@@ -1,0 +1,187 @@
+; ── Aura EDSL Self-Test Suite ───────────────────────────────
+;
+; Pure Aura test of all EDSL primitives. No Python, no LLM.
+; Run: ./aura < tests/edsl_self_test.aura
+;
+; NOTE: Uses direct check calls, not test-suite macro.
+; This avoids the data_to_flat issue with quoted expressions.
+
+(require std/test all:)
+
+(display "═══ EDSL Self-Test Suite ═══\n")
+(newline)
+
+(define total-pass 0)
+(define total-fail 0)
+
+(define (report name ok)
+  (display "  ")
+  (display name)
+  (display ": ")
+  (if ok
+    (begin (display "✅\n") (set! total-pass (+ total-pass 1)))
+    (begin (display "❌\n") (set! total-fail (+ total-fail 1))))
+  ok)
+
+; ── 1. Workspace ──
+(newline)
+(display "── 1. Workspace ──\n")
+
+(report "set-code" (set-code "(define (f x) (+ x 1))"))
+(report "current-source" (string? (current-source)))
+(report "eval-current" (eval-current))
+(report "typecheck-current" (string? (typecheck-current)))
+
+; ── 2. Query ──
+(newline)
+(display "── 2. Query ──\n")
+
+(set-code "(define x 42)")
+(report "def-use-simple" (= (length (car (query:def-use "x"))) 1))
+
+(set-code "(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))")
+(report "def-use-function"
+  (let* ((r (query:def-use "fib")) (d (car r)) (u (cdr r)))
+    (and (= (length d) 1) (> (length u) 0))))
+
+(set-code "(define (f x) (+ x 1))")
+(report "def-use-param" (= (length (car (query:def-use "x"))) 1))
+
+(set-code "(define x 1)")
+(report "def-use-nonexistent"
+  (let* ((r (query:def-use "nonexistent")) (d (car r)) (u (cdr r)))
+    (and (= (length d) 0) (= (length u) 0))))
+
+(set-code "(define (f x) (+ x 1))")
+(report "query-reaches"
+  (let ((defs (query:node-type "Define")))
+    (if (pair? defs) (pair? (query:reaches (car defs))) #t)))
+(report "query-effects" (pair? (query:effects "f")))
+(report "query-node-type" (pair? (query:node-type "Define")))
+
+; ── 3. Mutation ──
+(newline)
+(display "── 3. Mutation ──\n")
+
+(set-code "(define (f x) (+ x 1))")
+(report "mutate-rebind" (mutate:rebind "f" "(lambda (x) (* x 2))" "test"))
+(report "mutate-set-body" (mutate:set-body "f" "(* x 3)"))
+(set-code "(define (f x) (+ x 1))")
+(report "mutate-replace-value" (mutate:replace-value 2 100 "change"))
+
+(set-code "(begin (display 1) (display 3))")
+(report "mutate-splice" (> (length (mutate:splice 0 1 "(display 2)" "splice")) 0))
+
+(set-code "(define (f x) (+ x 1))")
+(report "mutate-wrap"
+  (let ((calls (query:node-type "Call")))
+    (if (pair? calls) (>= (mutate:wrap (car calls) "(display _)" "wrap") 0) #t)))
+
+(set-code "(define (f x) (+ x 1))")
+(report "mutate-cache-rebuild"
+  (begin (query:def-use "f")
+         (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
+         (pair? (query:def-use "f"))))
+
+; ── 4. Snapshot ──
+(newline)
+(display "── 4. Snapshot ──\n")
+
+(set-code "(define (f x) (+ x 1))")
+(report "snapshot-basic" (>= (ast:snapshot "test") 0))
+
+(report "snapshot-restore"
+  (let ((sid (ast:snapshot "before")))
+    (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
+    (ast:restore sid)
+    (pair? (query:def-use "f"))))
+
+(report "snapshot-diff"
+  (let ((sid (ast:snapshot "v1")))
+    (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
+    (pair? (ast:diff sid))))
+
+(set-code "(define x 1)")
+(ast:snapshot "v1")
+(report "snapshot-list" (pair? (ast:list-snapshots)))
+
+; ── 5. Summary ──
+(newline)
+(display "── 5. Summary ──\n")
+
+(set-code "(define (f x) (+ x 1))")
+(report "summary-basic" (pair? (ast:summary)))
+(report "compile-status" (pair? (compile:status)))
+
+; ── 6. Workspace ──
+(newline)
+(display "── 6. Workspace ──\n")
+
+(set-code "(define x 1)")
+(workspace:create "a")(workspace:create "b")
+(report "ws-create-list" (>= (length (workspace:list)) 2))
+
+(set-code "(define (f x) (+ x 1))")
+(report "ws-isolation"
+  (let ((ws (workspace:create "iso")))
+    (workspace:switch ws)
+    (mutate:rebind "f" "(lambda (x) (* x 2))" "mut")
+    (workspace:switch 0)
+    (pair? (query:def-use "f"))))
+
+(set-code "(define x 1)")
+(report "ws-lock" (let ((ws (workspace:create "lt")))
+  (workspace:lock ws #t) (not (workspace:can-write? ws))))
+(report "ws-unlock" (let ((ws (workspace:create "ut")))
+  (workspace:lock ws #t) (workspace:lock ws #f) (workspace:can-write? ws)))
+
+(set-code "(define (f x) (+ x 1))")
+(report "ws-discard" (let ((ws (workspace:create "dt")))
+  (workspace:switch ws) (mutate:rebind "f" "(lambda (x) (* x 2))" "t")
+  (workspace:switch 0) (workspace:discard ws)))
+(report "ws-current" (= (workspace:current) 0))
+
+; ── 7. Messaging ──
+(newline)
+(display "── 7. Messaging ──\n")
+
+(report "msg-my-id" (string? (my-id)))
+(report "msg-recv-timeout" (not (recv 0)))
+(report "msg-send-no-target" (not (send "nonexistent" "test")))
+(report "msg-mailbox-count" (= (mailbox-count) 0))
+(report "msg-session-active" (not (session-active? "nonexistent")))
+(report "msg-reply-no-sender" (not (reply "test")))
+
+; ── 8. Template ──
+(newline)
+(display "── 8. Template ──\n")
+
+(set-code "(begin)")
+(synthesize:register-template "double" "(define (double-{n} x) (* 2 x))" "n")
+(report "synth-fill" (synthesize:fill "double" "val"))
+(report "synth-list" (pair? (synthesize:list-templates)))
+
+(set-code "(begin)")
+(synthesize:register-template "h" "(define (handle-{r} req) (display req))" "r")
+(report "synth-multi" (synthesize:fill "h" "users"))
+(report "synth-nonexistent" (not (synthesize:fill "no-such" "x")))
+
+; ── 9. Optimize ──
+(newline)
+(display "── 9. Optimize ──\n")
+
+(set-code "(define (f x) (+ x 100))")
+(report "opt-basic" (pair? (synthesize:optimize "f" ":population" 3 ":generations" 1)))
+
+(set-code "(define (f x) (+ x 1))")
+(synthesize:optimize "f" ":population" 3 ":generations" 1)
+(report "opt-preserves" (string? (current-source)))
+
+; ── Results ──
+(newline)
+(display "═══ Results ═══\n")
+(display total-pass)(display " passed, ")(display total-fail)(display " failed\n")
+
+(if (= total-fail 0)
+  (display "✅ All EDSL self-tests passed!\n")
+  (begin (display "❌ ")(display total-fail)(display " test(s) failed\n")))
