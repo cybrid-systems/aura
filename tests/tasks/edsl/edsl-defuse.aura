@@ -1,0 +1,9 @@
+;; task: edsl-defuse
+;; goal: Use set-code + query:def-use to find a function's definition and use points
+;; expect: g
+;; hint: --- EDSL def-use analysis ---
+;; hint: ;; set-code loads code into workspace
+;; hint: (set-code "(define (g x) (+ x 1))")
+;; hint: ;; query:def-use returns ((def-node-id ...) . (use-node-id ...))
+;; hint: (display (car (query:def-use "g")))
+

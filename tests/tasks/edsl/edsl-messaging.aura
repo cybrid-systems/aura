@@ -1,0 +1,8 @@
+;; task: edsl-messaging
+;; goal: Use my-id, session-active?, and mailbox-count
+;; expect: session
+;; hint: --- Inter-agent messaging ---
+;; hint: (display (my-id))
+;; hint: (display (session-active? "default"))
+;; hint: (display (mailbox-count))
+
