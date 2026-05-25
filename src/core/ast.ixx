@@ -715,9 +715,11 @@ private:
     void insert_child(NodeId id, std::uint32_t idx, NodeId child) {
         auto pos = child_begin_[id] + std::min(idx, child_count_[id]);
         child_data_.insert(child_data_.begin() + pos, 1, child);
-        // Shift child_begin for all nodes after this one (insert grew child_data_)
+        // Shift child_begin only for nodes whose children start at or after pos.
+        // Children before the insertion point are unaffected by the shift.
         for (auto i = id + 1; i < tag_.size(); ++i) {
-            child_begin_[i]++;
+            if (child_begin_[i] >= pos)
+                child_begin_[i]++;
         }
         child_count_[id]++;
     }
