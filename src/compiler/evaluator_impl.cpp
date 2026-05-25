@@ -6672,7 +6672,191 @@ Evaluator::Evaluator() {
         return list;
     });
 
-// ── intend — 纯循环管理器 — 纯循环管理器 ────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════
+        // ═══════════════════════════════════════════════════════════════
+        // ═══════════════════════════════════════════════════════════════
+    // P16: Synthesize LLM Strategy — synthesize:define
+    // ═══════════════════════════════════════════════════════════════
+
+    // (synthesize:define name sig [key :val ...])
+    //   Generates a function using LLM.
+    primitives_.add("synthesize:define", [this](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
+            return make_void();
+        auto name_idx = as_string_idx(a[0]);
+        auto sig_idx = as_string_idx(a[1]);
+        if (name_idx >= string_heap_.size() || sig_idx >= string_heap_.size())
+            return make_void();
+
+        std::string name = string_heap_[name_idx];
+        std::string sig = string_heap_[sig_idx];
+        std::string prompt_text;
+        std::string model = "deepseek-chat";
+        std::string examples_text;
+        int max_attempts = 5;
+
+        // Parse keyword arguments
+        for (std::size_t i = 2; i + 1 < a.size(); i += 2) {
+            if (!is_string(a[i])) continue;
+            auto k_idx = as_string_idx(a[i]);
+            if (k_idx >= string_heap_.size()) continue;
+            std::string key = string_heap_[k_idx];
+
+            if (key == ":prompt" && is_string(a[i+1])) {
+                auto pidx = as_string_idx(a[i+1]);
+                if (pidx < string_heap_.size())
+                    prompt_text = string_heap_[pidx];
+            } else if (key == ":model" && is_string(a[i+1])) {
+                auto midx = as_string_idx(a[i+1]);
+                if (midx < string_heap_.size())
+                    model = string_heap_[midx];
+            } else if (key == ":examples" && is_string(a[i+1])) {
+                auto eidx = as_string_idx(a[i+1]);
+                if (eidx < string_heap_.size())
+                    examples_text = string_heap_[eidx];
+            } else if (key == ":max-attempts" && is_int(a[i+1])) {
+                max_attempts = static_cast<int>(as_int(a[i+1]));
+            }
+        }
+
+        // Build prompt: construct a simple instruction string
+        std::string instruction = "Define a function named " + name
+            + " in Aura Lisp with signature: " + sig + ".\n";
+        if (!prompt_text.empty())
+            instruction += "Task: " + prompt_text + ".\n";
+        if (!examples_text.empty())
+            instruction += "Examples: " + examples_text + "\n";
+
+        // Get API key
+        auto getenv_fn = primitives_.lookup("getenv");
+        std::string api_key;
+        if (getenv_fn) {
+            auto kidx = string_heap_.size();
+            string_heap_.push_back("LLM_API_KEY");
+            auto kr = (*getenv_fn)({make_string(kidx)});
+            if (is_string(kr)) {
+                auto ai = as_string_idx(kr);
+                if (ai < string_heap_.size())
+                    api_key = string_heap_[ai];
+            }
+        }
+        if (api_key.empty())
+            return make_string(0);
+
+        // Get http-post primitive
+        auto http_fn = primitives_.lookup("http-post");
+        if (!http_fn) return make_void();
+
+        // Get API URL
+        std::string api_url = "https://api.deepseek.com/v1/chat/completions";
+        if (getenv_fn) {
+            auto uidx = string_heap_.size();
+            string_heap_.push_back("LLM_API_URL");
+            auto ur = (*getenv_fn)({make_string(uidx)});
+            if (is_string(ur)) {
+                auto ui = as_string_idx(ur);
+                if (ui < string_heap_.size() && !string_heap_[ui].empty())
+                    api_url = string_heap_[ui];
+            }
+        }
+
+        // Auto-fix loop
+        std::string last_error;
+        for (int attempt = 0; attempt < max_attempts; ++attempt) {
+            // Build JSON payload manually (avoid escaping issues)
+            std::string body;
+            body += "{\n";
+            body += "  \"model\": \"" + model + "\",\n";
+            body += "  \"messages\": [\n";
+            body += "    {\"role\": \"system\", \"content\": \"You are Aura Lisp. Return ONLY valid Aura code. No markdown.\"},\n";
+            body += "    {\"role\": \"user\", \"content\": \"" + instruction;
+            if (!last_error.empty())
+                body += " Previous attempt error: " + last_error + ". Fix it.";
+            body += "\"}\n";
+            body += "  ]\n";
+            body += "}\n";
+
+            auto bi = string_heap_.size();
+            string_heap_.push_back(body);
+            auto ui2 = string_heap_.size();
+            string_heap_.push_back(api_url);
+            auto ki = string_heap_.size();
+            string_heap_.push_back(api_key);
+
+            auto resp = (*http_fn)({make_string(ui2), make_string(bi), make_string(ki)});
+            if (!is_string(resp)) continue;
+            auto ri = as_string_idx(resp);
+            if (ri >= string_heap_.size()) continue;
+            auto& response = string_heap_[ri];
+
+            // Extract code from JSON response
+            std::string code;
+            auto cp = response.find("content");
+            if (cp == std::string::npos) continue;
+            auto cq = response.find('"', cp + 9);
+            if (cq == std::string::npos) continue;
+            cq++;
+            bool esc = false;
+            for (; cq < response.size(); ++cq) {
+                char c = response[cq];
+                if (esc) {
+                    if (c == 'n') code += '\n';
+                    else if (c == 't') code += '\t';
+                    else if (c == '"') code += '"';
+                    else if (c == '\\') code += '\\';
+                    else code += c;
+                    esc = false;
+                } else if (c == '\\') {
+                    esc = true;
+                } else if (c == '"') {
+                    break;
+                } else {
+                    code += c;
+                }
+            }
+
+            if (code.empty()) continue;
+
+            // Try set-code
+            auto ci = string_heap_.size();
+            string_heap_.push_back(code);
+            auto sc_fn = primitives_.lookup("set-code");
+            if (!sc_fn) continue;
+            auto sc_r = (*sc_fn)({make_string(ci)});
+            if (!is_bool(sc_r) || !as_bool(sc_r)) {
+                last_error = "syntax error";
+                continue;
+            }
+
+            // Try typecheck
+            auto tc_fn = primitives_.lookup("typecheck-current");
+            if (tc_fn) {
+                auto tc_r = (*tc_fn)({});
+                if (is_string(tc_r)) {
+                    auto ti = as_string_idx(tc_r);
+                    if (ti < string_heap_.size()) {
+                        std::string msg = string_heap_[ti];
+                        if (msg.find("error") != std::string::npos ||
+                            msg.find("unbound") != std::string::npos) {
+                            last_error = msg;
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            // Success
+            defuse_version_++;
+            auto src_fn = primitives_.lookup("current-source");
+            if (src_fn) {
+                auto src = (*src_fn)({});
+                return src;
+            }
+            return make_bool(true);
+        }
+
+        return make_bool(false);
+    });// ── intend — 纯循环管理器 — 纯循环管理器 ────────────────────────────────
     // (intend goal generator-fn verifier-fn [fixer-fn] [max-attempts])
     //
     // 不管理 LLM 调用、不构建 prompt、不做 JSON 解析。

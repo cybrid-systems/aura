@@ -751,3 +751,16 @@
 (test-suite "synth:fill-nonexistent"
   ;; Filling a non-existent template should return void
   (check (not (synthesize:fill "no-such-template" "x"))))
+
+
+;; ═══════════════════════════════════════════════════════════════
+;; P16: Synthesize LLM Strategy — synthesize:define
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "synth:define-no-api-key"
+  ;; Without LLM_API_KEY, returns empty string
+  (check (string? (synthesize:define "f" "Int -> Int"))))
+
+(test-suite "synth:define-keywords"
+  (check (string? (synthesize:define "g" "Int -> Int"
+                     :prompt "test" :model "test" :max-attempts 3))))
