@@ -332,7 +332,64 @@ Aura 支持线性类型的所有权跟踪，用于资源管理：
 
 ## 十、EDSL / AI Agent 开发
 
-AST 查询和变更是 Aura 的核心差异化能力，所有操作都是原生原语：
+Aura 的核心差异化能力——代码自修改 AST + 增量编译，让 Agent 精确读写代码。
+
+### 智能查询
+```scheme
+(set-code "(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))")
+
+;; 查询影响范围
+(query:def-use "fib")     → ((21) . (23 6 12))   ; (defs . uses)
+(query:reaches 21)          → ((21) . (23 6 12))   ; 定义→所有使用点
+(query:effects "fib")      → ((21) (23 6 12) (25 17 11))  ; + callers
+```
+
+### AST 编辑
+```scheme
+(mutate:rebind "fib" "(lambda (n) (* n 2))" "linearize")  ; 替换定义
+(mutate:wrap 3 "(display _)" "wrap")                        ; 包裹表达式
+(mutate:splice 0 1 "(display 1)" "(display 2)" "insert")  ; 批量插入
+```
+
+### 快照与回退
+```scheme
+(ast:snapshot "checkpoint")   ; 保存状态
+(mutate:rebind "fib" "...")
+(ast:restore 0)                ; 回退
+(ast:diff 0)                   ; 行级结构化 diff
+(ast:summary)                  ; AST 统计: 节点/类型/mutation
+(compile:status)               ; 增量编译状态
+```
+
+### Workspace 分层
+```scheme
+(ws:create "sandbox")  (ws:switch 1)
+(mutate:rebind "fib" "...")  (eval-current)
+(ws:switch 0)                   ; 主代码完好
+(ws:merge 1)                    ; 合并好的版本
+(ws:lock 1 #t)                  ; 只读锁定
+```
+
+### 跨 Agent 通信
+```scheme
+;; Session A: (send "agent-b" "hello")
+;; Session B: (my-id) → "agent-b", (recv 100) → "hello", (reply "pong")
+```
+
+### 代码合成
+```scheme
+;; 模板: (synthesize:fill "handler" "users")
+;; LLM:  (synthesize:define "fib" "Int -> Int" :prompt "iterative")
+;; 遗传: (synthesize:optimize "fib" :population 20)
+;; 管线: (synthesize:pipeline "build" step1 step2 (rule:apply-all))
+```
+
+### 规范系统
+```scheme
+(require "std/rule" all:)
+(rule:define 'guard-div :pattern "(/ ?x ?y)" :replace "(if (= ?y 0) 0 (/ ?x ?y))")
+(rule:apply-all)   (rule:list-violations)   (rule:save "rules.json")
+```
 
 ```lisp
 ;; 1. 设置代码
