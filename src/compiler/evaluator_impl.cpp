@@ -6939,7 +6939,10 @@ Evaluator::Evaluator() {
 
     // (synthesize:optimize name [key :val ...])
     //   Uses genetic algorithm to optimize a function.
-    //   Keywords: :population, :generations, :mutation-rate
+    //   Keywords: :population, :generations, :mutation-rate,
+    //             :fitness or :benchmark (benchmark expression)
+    //   Default fitness: runs function with synthetic test inputs
+    //   (correctness = 90% weight, code length = 10% tiebreaker).
     //   Creates variants, evaluates fitness, returns best.
     primitives_.add("synthesize:optimize", [this](const auto& a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
@@ -6964,7 +6967,7 @@ Evaluator::Evaluator() {
                 generations = static_cast<int>(as_int(a[i+1]));
             else if (key == ":mutation-rate" && is_float(a[i+1]))
                 mutation_rate = as_float(a[i+1]);
-            else if (key == ":fitness" && is_string(a[i+1])) {
+            else if ((key == ":fitness" || key == ":benchmark") && is_string(a[i+1])) {
                 auto fi = as_string_idx(a[i+1]);
                 if (fi < string_heap_.size())
                     fitness_expr = string_heap_[fi];
@@ -6983,21 +6986,116 @@ Evaluator::Evaluator() {
         if (cs_idx >= string_heap_.size()) return make_void();
         std::string baseline = string_heap_[cs_idx];
 
-        // Fitness: user-provided expression or default (code length)
+        // Fitness: generate synthetic test inputs and eval the function
+        // to measure correctness + performance.
+        //
+        // Strategy:
+        // 1. Parse variant source, count function args by scanning for fn_name
+        // 2. Generate probe inputs (ints, pairs, etc.) based on arg count
+        // 3. Eval each probe: (fn_name arg...), score = fraction of probes that
+        //    return a valid value without error
+        // 4. Code length is a tiebreaker only — correctness dominates
+        //
+        // If :fitness keyword is provided, use that expression instead.
         auto compute_fitness = [&](const std::string& src) -> double {
-            if (fitness_expr.empty()) {
-                return 1000.0 / static_cast<double>(src.size() + 1);
+            if (!fitness_expr.empty()) {
+                // User-provided fitness: eval the expression
+                auto sv = string_heap_.size();
+                string_heap_.push_back(src);
+                auto eval_fn = primitives_.lookup("eval");
+                if (eval_fn) {
+                    auto r = (*eval_fn)({make_string(sv)});
+                    if (is_float(r)) return as_float(r);
+                    if (is_int(r)) return static_cast<double>(as_int(r));
+                }
+                return 0.0;
             }
-            // Try to eval the fitness expression
-            auto sv = string_heap_.size();
-            string_heap_.push_back(src);
+
+            // Default fitness: eval the current workspace (which contains
+            // the variant code) to bind the function in top_, then probe
+            // via the eval primitive.
+            //
+            // The calling code has already set up the workspace via
+            // set-code + typecheck-current before we're called, so
+            // eval-current binds the function using workspace flats
+            // (safe — no dangling closure pointers).
+            //
+            // Detect argument count by scanning for (define (fn_name ...))
+            int arg_count = 0;
+            {
+                auto def_pos = src.find("(define (" + fn_name);
+                if (def_pos != std::string::npos) {
+                    auto after_fn = src.find(' ', def_pos);
+                    if (after_fn != std::string::npos) {
+                        auto param_start = src.find(' ', after_fn + 1);
+                        if (param_start != std::string::npos) {
+                            auto close_pos = src.find(')', param_start);
+                            if (close_pos != std::string::npos) {
+                                auto params = src.substr(param_start + 1, close_pos - param_start - 1);
+                                if (!params.empty()) {
+                                    arg_count = 1;
+                                    for (auto c : params) {
+                                        if (c == ' ') ++arg_count;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Eval-current to bind functions in top_ (uses workspace flats, safe)
+            auto ec_fn = primitives_.lookup("eval-current");
+            if (ec_fn) {
+                (*ec_fn)({});
+            }
+
+            // Probe via eval (function is now bound in top_ from workspace eval)
+            // Temporary flats in eval are OK for call expressions — they don't
+            // create closures, just look up and apply.
+            static const std::int64_t probe_ints[] = {0, 1, -1, 2};
+            int successes = 0;
+            int total_tests = 0;
             auto eval_fn = primitives_.lookup("eval");
-            if (eval_fn) {
-                auto r = (*eval_fn)({make_string(sv)});
-                if (is_float(r)) return as_float(r);
-                if (is_int(r)) return static_cast<double>(as_int(r));
+
+            auto try_probe = [&](const std::string& call_src) {
+                ++total_tests;
+                auto ci = string_heap_.size();
+                string_heap_.push_back(call_src);
+                if (eval_fn) {
+                    auto r = (*eval_fn)({make_string(ci)});
+                    if (!types::is_error(r))
+                        ++successes;
+                }
+            };
+
+            if (arg_count <= 0) {
+                try_probe("(" + fn_name + ")");
+            } else if (arg_count == 1) {
+                for (auto v : probe_ints) {
+                    if (total_tests >= 4) break;
+                    try_probe("(" + fn_name + " " + std::to_string(v) + ")");
+                }
+            } else if (arg_count == 2) {
+                for (int i = 0; i < 4 && i + 1 < 4; ++i) {
+                    try_probe("(" + fn_name + " " +
+                              std::to_string(probe_ints[i]) + " " +
+                              std::to_string(probe_ints[i+1]) + ")");
+                }
+            } else {
+                std::string call_src = "(" + fn_name;
+                for (int i = 0; i < arg_count; ++i)
+                    call_src += " 0";
+                call_src += ")";
+                try_probe(call_src);
             }
-            return 0.0;
+
+            // Score: correctness dominates (up to 1000), then small length bonus
+            double correctness = total_tests > 0
+                ? (1000.0 * static_cast<double>(successes) / static_cast<double>(total_tests))
+                : 0.0;
+            double length_bonus = 1.0 / static_cast<double>(src.size() + 1);
+            return correctness + length_bonus;
         };
 
         std::string best_code = baseline;
