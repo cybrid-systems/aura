@@ -44,7 +44,6 @@
 | 优先级 | 任务 | 工时 | 说明 |
 |:------:|:-----|:----:|:-----|
 | P2 | **`synthesize:optimize` fitness 基于代码长度** | 1d | 需 benchmark 驱动的真实 fitness |
-| P2 | **规则持久化仅支持 JSON 文件** | 2d | 缺少内置 VCS 集成 |
 | P3 | 权限模型（module / symbol whitelist） | 3d | mutation 只允许特定 scope |
 | P3 | eval 资源限制（CPU / memory / recursion depth） | 3-4d | serve 模式安全沙箱 |
 
