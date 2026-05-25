@@ -35,11 +35,17 @@ extern MessagingBridge g_messaging_bridge;
 // Since evaluator can't import the CompilerService module,
 // we provide a function that the CompilerService registers.
 using MailboxReadFn = std::optional<std::string> (*)(void* compiler_service, int timeout_ms);
+using MailboxSenderFn = std::string (*)(void* compiler_service);  // sender of last read
+using MailboxCountFn = std::size_t (*)(void* compiler_service);
 using SessionIdFn = std::string (*)(void* compiler_service);
+using SessionExistsFn = bool (*)(const std::string& id);
 
 // These are set by CompilerService during construction
 extern MailboxReadFn g_mailbox_read;
+extern MailboxSenderFn g_mailbox_last_sender;
+extern MailboxCountFn g_mailbox_count;
 extern SessionIdFn g_session_id;
+extern SessionExistsFn g_session_exists;
 extern void* g_current_compiler_service;  // set before each eval in serve
 
 }  // namespace aura::messaging
