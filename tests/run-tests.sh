@@ -343,6 +343,9 @@ run_emit_test "emit:bin-search" "(import \"std/algorithm\")(binary-search 2 (lis
 # Stdlib list module
 run_emit_test "emit:list-merge" "(import \"std/algorithm\")(car (merge-sorted (list 1 3) (list 2 4)))" "1"
 
+# Stdlib list module (self-recursive functions)
+run_emit_test "emit:range"     "(import \"std/list\")(display (range 0 3))" "(0 1 2)"
+
 # Named let (local recursion via letrec + closure env)
 run_emit_test "emit:named-let" "(let loop ((x 0)) (if (< x 3) (loop (+ x 1)) x))" "3"
 
