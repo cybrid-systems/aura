@@ -453,8 +453,35 @@ int64_t aura_prim_reg_count(void) {
 
 static int g_display_was_called = 0;
 
+// ── Print pair chain as list ──────────────────────────────
+static void aura_display_pair_chain(int64_t val) {
+    putchar('(');
+    int first = 1;
+    while (val != 0 && val < 0) {
+        if (!first) putchar(' ');
+        first = 0;
+        int64_t car_val = aura_pair_car(val);
+        // Check if car is itself a pair
+        if (car_val < 0 && car_val != 0)
+            aura_display_pair_chain(car_val);
+        else
+            printf("%ld", (long)car_val);
+        val = aura_pair_cdr(val);
+    }
+    putchar(')');
+}
+
 int64_t aura_display_int(int64_t val) {
-    printf("%ld", (long)val);
+    if (val == 0) {
+        printf("()");
+    } else if (val < 0) {
+        // Negative = pair sentinel — print as list
+        // Check if it's actually a valid pair (not some other negative value)
+        aura_display_pair_chain(val);
+    } else {
+        // Positive or zero — print as raw integer
+        printf("%ld", (long)val);
+    }
     fflush(stdout);
     g_display_was_called = 1;
     return val;
