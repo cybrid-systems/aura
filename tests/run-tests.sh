@@ -313,6 +313,13 @@ run_emit_test "emit:string-len"  "(string-length \"hello\")" "5"
 run_emit_test "emit:string-eq"   "(string=? \"abc\" \"abc\")" "1"
 run_emit_test "emit:display-car" "(display (car (list 1 2 3)))" "1"
 
+# M4 ownership model
+run_emit_test "emit:drop-int"    "(begin (drop 42) 7)" "7"
+run_emit_test "emit:drop-pair"   "(begin (drop (cons 1 2)) 7)" "7"
+run_emit_test "emit:move-int"    "(begin (move 42) 7)" "7"
+run_emit_test "emit:borrow"      "(begin (& 42) 7)" "7"
+run_emit_test "emit:linear"      "(begin (Linear 42) 7)" "7"
+
 # List ops (via aura_prim_call PrimId dispatch)
 run_emit_test "emit:length"     "(length (list 10 20 30))" "3"
 run_emit_test "emit:list-ref"   "(list-ref (list 10 20 30) 1)" "20"
