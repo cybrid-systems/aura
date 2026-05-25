@@ -256,58 +256,62 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 }
 
                 case IROpcode::Eq: {
+                    // Variant-safe equality: compares EvalValues directly.
                     auto& a = locals[ops[1]];
                     auto& b = locals[ops[2]];
+                    auto to_val = [](const EvalValue& v) -> double {
+                        if (is_float(v)) return as_float(v);
+                        if (is_int(v)) return static_cast<double>(as_int(v));
+                        return 0.0;
+                    };
                     if (is_float(a) || is_float(b)) {
-                        double x = is_float(a) ? as_float(a) : static_cast<double>(as_int(a));
-                        double y = is_float(b) ? as_float(b) : static_cast<double>(as_int(b));
-                        locals[ops[0]] = make_bool(x == y);
+                        locals[ops[0]] = make_bool(to_val(a) == to_val(b));
                     } else
-                        locals[ops[0]] = make_bool(as_int(a) == as_int(b));
+                        locals[ops[0]] = make_bool(a == b);
                     break;
                 }
                 case IROpcode::Lt: {
                     auto& a = locals[ops[1]];
                     auto& b = locals[ops[2]];
-                    if (is_float(a) || is_float(b)) {
-                        double x = is_float(a) ? as_float(a) : static_cast<double>(as_int(a));
-                        double y = is_float(b) ? as_float(b) : static_cast<double>(as_int(b));
-                        locals[ops[0]] = make_bool(x < y);
-                    } else
-                        locals[ops[0]] = make_bool(as_int(a) < as_int(b));
+                    auto to_val = [](const EvalValue& v) -> double {
+                        if (is_float(v)) return as_float(v);
+                        if (is_int(v)) return static_cast<double>(as_int(v));
+                        return 0.0; // non-numeric (pair, string, etc.) → 0
+                    };
+                    locals[ops[0]] = make_bool(to_val(a) < to_val(b));
                     break;
                 }
                 case IROpcode::Gt: {
                     auto& a = locals[ops[1]];
                     auto& b = locals[ops[2]];
-                    if (is_float(a) || is_float(b)) {
-                        double x = is_float(a) ? as_float(a) : static_cast<double>(as_int(a));
-                        double y = is_float(b) ? as_float(b) : static_cast<double>(as_int(b));
-                        locals[ops[0]] = make_bool(x > y);
-                    } else
-                        locals[ops[0]] = make_bool(as_int(a) > as_int(b));
+                    auto to_val = [](const EvalValue& v) -> double {
+                        if (is_float(v)) return as_float(v);
+                        if (is_int(v)) return static_cast<double>(as_int(v));
+                        return 0.0;
+                    };
+                    locals[ops[0]] = make_bool(to_val(a) > to_val(b));
                     break;
                 }
                 case IROpcode::Le: {
                     auto& a = locals[ops[1]];
                     auto& b = locals[ops[2]];
-                    if (is_float(a) || is_float(b)) {
-                        double x = is_float(a) ? as_float(a) : static_cast<double>(as_int(a));
-                        double y = is_float(b) ? as_float(b) : static_cast<double>(as_int(b));
-                        locals[ops[0]] = make_bool(x <= y);
-                    } else
-                        locals[ops[0]] = make_bool(as_int(a) <= as_int(b));
+                    auto to_val = [](const EvalValue& v) -> double {
+                        if (is_float(v)) return as_float(v);
+                        if (is_int(v)) return static_cast<double>(as_int(v));
+                        return 0.0;
+                    };
+                    locals[ops[0]] = make_bool(to_val(a) <= to_val(b));
                     break;
                 }
                 case IROpcode::Ge: {
                     auto& a = locals[ops[1]];
                     auto& b = locals[ops[2]];
-                    if (is_float(a) || is_float(b)) {
-                        double x = is_float(a) ? as_float(a) : static_cast<double>(as_int(a));
-                        double y = is_float(b) ? as_float(b) : static_cast<double>(as_int(b));
-                        locals[ops[0]] = make_bool(x >= y);
-                    } else
-                        locals[ops[0]] = make_bool(as_int(a) >= as_int(b));
+                    auto to_val = [](const EvalValue& v) -> double {
+                        if (is_float(v)) return as_float(v);
+                        if (is_int(v)) return static_cast<double>(as_int(v));
+                        return 0.0;
+                    };
+                    locals[ops[0]] = make_bool(to_val(a) >= to_val(b));
                     break;
                 }
 

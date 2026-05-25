@@ -35,6 +35,9 @@ enum : uint32_t {
     PrimQuotient = 30,
     PrimRemainder = 31,
     PrimRaise = 35,
+    PrimErrorP = 36,
+    PrimPairP = 37,
+    PrimNullP = 38,
 };
 
 // Opcode enum values (must match ir.ixx IROpcode)
@@ -434,6 +437,19 @@ struct LLVMBuilder {
                     auto rem = irb->CreateSRem(a1, a2);
                     auto safe = irb->CreateSelect(zero, c64(0), rem);
                     store(result_slot, safe);
+                    return true;
+                }
+                case PrimPairP: {
+                    // In Aura's AOT runtime, pairs are negative: -(pair_id+1)
+                    // So pair?(x) = x < 0.
+                    auto lt = irb->CreateICmpSLT(a1, c64(0));
+                    store(result_slot, irb->CreateZExt(lt, llvm::Type::getInt64Ty(ctx)));
+                    return true;
+                }
+                case PrimNullP: {
+                    // null?(x) = x == 0 (empty list sentinel)
+                    auto eq = irb->CreateICmpEQ(a1, c64(0));
+                    store(result_slot, irb->CreateZExt(eq, llvm::Type::getInt64Ty(ctx)));
                     return true;
                 }
                 default:
