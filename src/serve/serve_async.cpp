@@ -166,7 +166,7 @@ void run_serve_async() {
     // For now, spawn one fiber for the default session
     // In the future, spawn as needed
     for (auto& [sid, sess] : sessions) {
-        auto* fiber = sched.spawn([sid = sid, &sess = *sess, &stdin_lines, &stdin_eof, &sessions]() {
+        auto* fiber = sched.spawn([sid = sid, &sess = *sess, &stdin_lines, &stdin_eof, &sessions, &sched]() {
             // Attach mailbox to this fiber
             sess.mailbox.attach(g_current_fiber);
 
@@ -182,7 +182,7 @@ void run_serve_async() {
                         // Lines without "session" field go to "default"
                         bool for_me = false;
                         if (sid == "default") {
-                            for_me = (it->find("\"session\"") == std::string::npos);
+                            for_me = (it->find("\"session\":\"") == std::string::npos);
                         } else {
                             for_me = (it->find("\"session\":\"" + sid + "\"") != std::string::npos);
                         }
@@ -220,7 +220,9 @@ void run_serve_async() {
                 }
 
                 if (cmd == "exec") {
+                    std::fprintf(stderr, "[exec_json] line=[%s]\n", line.c_str()); std::fflush(stderr);
                     auto code = json_field(line, "code");
+                    std::fprintf(stderr, "[exec_json] code=[%s]\n", code.c_str()); std::fflush(stderr);
                     if (code.empty()) {
                         std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"missing code\"}}",
                                      json_escape(sid));
@@ -228,6 +230,7 @@ void run_serve_async() {
                     }
                     // Execute synchronously (will yield on recv when Phase 3 is implemented)
                     auto result = sess.service.exec_with_cache(code);
+                        std::fprintf(stderr, "[exec] code=[%s]\n", code.c_str()); std::fflush(stderr);
                     if (result) {
                         try {
                             auto& v = *result;
@@ -248,6 +251,68 @@ void run_serve_async() {
                         std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"{}\"}}",
                                      json_escape(sid), json_escape(d.format()));
                         std::fflush(stdout);
+                    }
+
+                } else if (cmd == "session") {
+                    auto action = json_field(line, "action");
+                    if (action == "create") {
+                        auto name = json_field(line, "name");
+                        if (name.empty()) {
+                            std::println("{{\"session\":\"{}\" ,\"status\":\"error\",\"msg\":\"missing name\"}}",
+                                         json_escape(sid));
+                        } else {
+                            auto [it, created] = sessions.try_emplace(name, std::make_unique<Session>());
+                            if (created) {
+                                it->second->id = name;
+                                it->second->service.set_session_id(name);
+                                aura::compiler::CompilerService::register_session(name, &it->second->service);
+                                // Spawn fiber for new session
+                                auto nsid = name;
+                                auto* nf = sched.spawn([nsid, &sess = *it->second, &stdin_lines, &stdin_eof, &sessions, &sched]() {
+                                    sess.mailbox.attach(aura::serve::g_current_fiber);
+                                    sess.service.set_wake_eventfd(aura::serve::g_current_fiber->eventfd());
+                                    while (sess.active) {
+                                        std::string sl;
+                                        for (auto sit = stdin_lines.begin(); sit != stdin_lines.end(); ++sit) {
+                                            if (sit->find("\"session\":\"" + nsid + "\"") != std::string::npos) {
+                                                sl = std::move(*sit);
+                                                stdin_lines.erase(sit);
+                                                break;
+                                            }
+                                        }
+                                        if (sl.empty()) {
+                                            if (stdin_eof) break;
+                                            aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
+                                            aura::serve::Fiber::yield();
+                                            continue;
+                                        }
+                                        auto c = json_field(sl, "cmd");
+                                        if (c == "exec") {
+                                            auto code = json_field(sl, "code");
+                                            if (!code.empty()) {
+                                                auto r = sess.service.exec_with_cache(code);
+                                                if (r) {
+                                                    std::println("{{\"session\":\"{}\" ,\"status\":\"ok\",\"value\":\"{}\" }}",
+                                                                 json_escape(nsid), json_escape(fmt_val(*r, sess.service)));
+                                                } else {
+                                                    std::println("{{\"session\":\"{}\" ,\"status\":\"error\",\"msg\":\"{}\" }}",
+                                                                 json_escape(nsid), json_escape(r.error().format()));
+                                                }
+                                            }
+                                        }
+                                    }
+                                });
+                                it->second->fiber = nf;
+                                std::println("{{\"session\":\"{}\" ,\"status\":\"created\",\"name\":\"{}\" }}",
+                                             json_escape(sid), json_escape(name));
+                            } else {
+                                std::println("{{\"session\":\"{}\" ,\"status\":\"error\",\"msg\":\"already exists\"}}",
+                                             json_escape(sid));
+                            }
+                        }
+                    } else {
+                        std::println("{{\"session\":\"{}\" ,\"status\":\"error\",\"msg\":\"unknown action: {}\" }}",
+                                     json_escape(sid), json_escape(action));
                     }
 
                 } else if (cmd == "session-send") {
