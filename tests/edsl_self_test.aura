@@ -70,7 +70,9 @@
 (report "mutate-replace-value" (mutate:replace-value 2 100 "change"))
 
 (set-code "(begin (display 1) (display 3))")
-(report "mutate-splice" (> (length (mutate:splice 0 1 "(display 2)" "splice")) 0))
+(report "mutate-splice"
+  (let ((root (query:root)))
+    (> (length (mutate:splice root 1 "(display 2)" "splice")) 0)))
 
 (set-code "(define (f x) (+ x 1))")
 (report "mutate-wrap"

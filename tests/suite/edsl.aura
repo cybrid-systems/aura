@@ -12,10 +12,12 @@
 
 (test-suite "edsl:query-children"
   (set-code "(define (f x) (+ x 1))")
-  (check (> (length (query:children 0)) 0)))
+  (let ((root (query:root)))
+    (check (> (length (query:children root)) 0))))
 
 (test-suite "edsl:query-node"
-  (check (pair? (query:node 0))))
+  (let ((root (query:root)))
+    (check (pair? (query:node root)))))
 
 (test-suite "edsl:query-calls"
   (check (pair? (query:calls "fib"))))
@@ -376,27 +378,27 @@
 
 ;; ═══════════════════════════════════════════════════════════════
 ;; P12: Higher-Order AST Transformations
-;; ═══════════════════════════════════════════════════════════════
-
-(test-suite "mutate:splice-basic"
+  (test-suite "mutate:splice-basic"
   (set-code "(begin (display 1) (display 3))")
-  ;; Splice (display 2) between 1 and 3 at position 1
-  (let ((result (mutate:splice 0 1 "(display 2)" "splice")))
-    (check (> (length result) 0))
-    ;; Should have 1 inserted node
-    (check (= (length result) 1))
-    ;; Children should include the new node
-    (let ((children (query:children 0)))
-      (check (>= (length children) 2)))))
+  (let ((root (query:root)))
+    ;; Splice (display 2) between 1 and 3 at position 1
+    (let ((result (mutate:splice root 1 "(display 2)" "splice")))
+      (check (> (length result) 0))
+      ;; Should have 1 inserted node
+      (check (= (length result) 1))
+      ;; Children should include the new node
+      (let ((children (query:children root)))
+        (check (>= (length children) 2))))))
 
 (test-suite "mutate:splice-multiple"
   (set-code "(begin (display 1) (display 4))")
-  ;; Splice two expressions at position 1
-  (let ((result (mutate:splice 0 1 "(display 2)" "(display 3)" "splice multiple")))
-    (check (= (length result) 2))
-    ;; Children should now have 4 entries
-    (let ((children (query:children 0)))
-      (check (>= (length children) 3)))))
+  (let ((root (query:root)))
+    ;; Splice two expressions at position 1
+    (let ((result (mutate:splice root 1 "(display 2)" "(display 3)" "splice multiple")))
+      (check (= (length result) 2))
+      ;; Children should now have 4 entries
+      (let ((children (query:children root)))
+        (check (>= (length children) 3))))))
 
 (test-suite "mutate:wrap-basic"
   (set-code "(define (f x) (+ x 1))")
@@ -410,17 +412,20 @@
 
 (test-suite "mutate:wrap-after-splice"
   (set-code "(begin (display 1) (display 3))")
-  ;; Splice then wrap — verify both mutate and wrap work together
-  (mutate:splice 0 1 "(display 2)" "splice")
-  ;; Now wrap the last child (display 3) in begin
-  (let ((children (query:children 0)))
-    (if (pair? children)
-      (let ((last-child (car (reverse children))))
-        (check (>= (mutate:wrap last-child "(begin _)" "wrap") 0)))
-      (check #t))))
+  (let ((root (query:root)))
+    ;; Splice then wrap — verify both mutate and wrap work together
+    (mutate:splice root 1 "(display 2)" "splice")
+    ;; Now wrap the last child (display 3) in begin
+    (let ((children (query:children root)))
+      (if (pair? children)
+        (let ((last-child (car (reverse children))))
+          (check (>= (mutate:wrap last-child "(begin _)" "wrap") 0)))
+        (check #t)))))
 
 (test-suite "mutate:splice-empty"
   (set-code "(define x 42)")
+  (let ((root (query:root)))
+    (check (not (mutate:splice root 0 "splice")))))
   ;; splice with no code args should return #f
   (check (not (mutate:splice 0 0 "splice"))))
 

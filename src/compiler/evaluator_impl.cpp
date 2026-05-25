@@ -3780,6 +3780,13 @@ void Evaluator::init_pair_primitives() {
         return result;
     });
 
+    // (query:root) — Return the current workspace root node ID, or #f if no workspace
+    primitives_.add("query:root", [this](const auto&) -> EvalValue {
+        if (!workspace_flat_ || workspace_flat_->root == aura::ast::NULL_NODE)
+            return make_bool(false);
+        return make_int(static_cast<std::int64_t>(workspace_flat_->root));
+    });
+
     // (query:node node-id) — Get node details as list (tag value type sym-id)
     primitives_.add("query:node", [this](const auto& a) {
         if (a.empty() || !is_int(a[0]) || !workspace_flat_ || !workspace_pool_)
