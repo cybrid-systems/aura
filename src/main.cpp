@@ -1349,18 +1349,46 @@ int main(int argc, char* argv[]) {
     if (argc > 2 && std::string_view(argv[1]) == "--emit-binary") {
         aura::compiler::CompilerService cs;
         std::string input;
+        std::string out_path;
+
+        // ── Collect input: file args or stdin ─────────────────────
+        // Usage:
+        //   echo '(+ 1 2)' | ./aura --emit-binary myapp         (stdin)
+        //   ./aura --emit-binary '(+ 1 2)' myapp    (inline: expr,output)
+        //   ./aura --emit-binary file1 file2 out    (file: sources...,output)
+        //
         if (argc > 3) {
-            input = argv[2];
-            argc -= 1; argv += 1; // shift so argv[2] is the output name
+            // Decide mode: if argv[2] starts with '(', it's inline expression.
+            // Otherwise, all args from argv[2..argc-2] are files, argv[argc-1] is output.
+            if (argv[2][0] == '(') {
+                // Inline mode: ./aura --emit-binary '(+ 1 2)' myapp
+                input = argv[2];
+                argc -= 1; argv += 1;  // shift so argv[2] = myapp
+                out_path = argv[2];
+            } else {
+                // File mode: ./aura --emit-binary lib.aura main.aura out
+                for (int i = 2; i < argc - 1; ++i) {
+                    std::ifstream f(argv[i]);
+                    if (!f) {
+                        std::println(std::cerr, "error: cannot open '{}'", argv[i]);
+                        return 1;
+                    }
+                    input += std::string((std::istreambuf_iterator<char>(f)),
+                                          std::istreambuf_iterator<char>());
+                    input += '\n';
+                }
+                out_path = argv[argc - 1];
+            }
         } else {
+            // Stdin mode: echo '(+ 1 2)' | ./aura --emit-binary myapp
             std::getline(std::cin, input);
+            out_path = argv[2];
         }
+
         if (input.empty()) {
             std::println(std::cerr, "error: no input");
             return 1;
         }
-
-        auto out_path = std::string(argv[2]);
 
         // ── Step 1: Parse → Lower → Passes (same as eval_ir) ─────
         // Use eval_ir to populate last_ir_mod_ (ignore execution result)
