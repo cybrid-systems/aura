@@ -15,6 +15,12 @@
 | 5 | `synthesize:optimize` fitness 仅基于代码长度 | 需要 benchmark 驱动的真实 fitness | Opt |
 | 6 | 规则持久化仅支持 JSON 文件 | 缺少内置 VCS 集成 | Rule |
 
+## 已完成（旧问题已修）
+
+| 问题 | 修复 |
+|:-----|:------|
+| messaging 阻塞 recv | `pop_message` fiber yield + `g_fiber_block` 回调，`(recv)` 空时 yield fiber ✅ |
+
 ## 已确认不是 bug（LLM 误报）
 
 以下 items 经手动验证均正常工作，原诊断误判为编译器 bug：
