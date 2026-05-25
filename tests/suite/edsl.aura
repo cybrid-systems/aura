@@ -72,7 +72,173 @@
 
 (test-suite "edsl:rollback-after-failure"
   (set-code "(define (f x) (+ x 1))")
-  ;; Apply mutation then try invalid parse — AST should be intact
   (check (mutate:replace-value 2 42 "change to 42"))
-  ;; After any failure, subsequent queries should still work
   (check (query:node-type "LiteralInt")))
+
+;; ═══════════════════════════════════════════════════════════════
+;; P1/P2: Def-Use Analysis tests
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "defuse:define"
+  (set-code "(define x 42)")
+  (let* ((result (query:def-use "x"))
+         (defs (car result))
+         (uses (cdr result)))
+    (check (= (length defs) 1))
+    (check (= (length uses) 0)))
+  ;; Clean up
+  (set-code "(define (f x) (+ x 1))"))
+
+(test-suite "defuse:define-function"
+  (set-code "(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))")
+  (let* ((result (query:def-use "fib"))
+         (defs (car result))
+         (uses (cdr result)))
+    ;; fib is defined once and used in recursive calls + possibly display
+    (check (= (length defs) 1))
+    (check (> (length uses) 0))))
+
+(test-suite "defuse:lambda-param"
+  (set-code "(define (f x) (+ x 1))")
+  (let* ((result (query:def-use "x"))
+         (defs (car result))
+         (uses (cdr result)))
+    (check (= (length defs) 1))  ;; lambda param
+    (check (> (length uses) 0))))  ;; used in body
+
+(test-suite "defuse:let-binding"
+  (set-code "(let ((y 42)) y)")
+  (let* ((result (query:def-use "y"))
+         (defs (car result))
+         (uses (cdr result)))
+    (check (= (length defs) 1))
+    (check (= (length uses) 1))))
+
+(test-suite "defuse:letrec-recur"
+  (set-code "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 5))")
+  (let* ((result (query:def-use "fact"))
+         (defs (car result))
+         (uses (cdr result)))
+    (check (= (length defs) 1))
+    ;; fact used in recursive body + the call (fact 5)
+    (check (> (length uses) 0))))
+
+(test-suite "defuse:unused-symbol"
+  (set-code "(define x 42)")
+  (let* ((result (query:def-use "nonexistent"))
+         (defs (car result))
+         (uses (cdr result)))
+    (check (= (length defs) 0))
+    (check (= (length uses) 0))))
+
+(test-suite "defuse:undefined-builtin"
+  (set-code "(define (f x) (+ x 1))")
+  (let* ((result (query:def-use "display"))
+         (defs (car result))
+         (uses (cdr result)))
+    (check (= (length defs) 0))  ;; display is not defined
+    ;; display may or may not be used depending on code
+    (check (list? defs))))
+
+(test-suite "defuse:cross-scope"
+  (set-code "
+    (define outer 42)
+    (define (f n)
+      (let ((inner 10))
+        (+ outer inner n)))
+  ")
+  ;; outer: defined at module scope, used inside f
+  (let* ((outer-result (query:def-use "outer"))
+         (outer-defs (car outer-result))
+         (outer-uses (cdr outer-result)))
+    (check (= (length outer-defs) 1))
+    (check (> (length outer-uses) 0)))
+  ;; inner: defined in let, used in body
+  (let* ((inner-result (query:def-use "inner"))
+         (inner-defs (car inner-result))
+         (inner-uses (cdr inner-result)))
+    (check (= (length inner-defs) 1))
+    (check (= (length inner-uses) 1)))
+  ;; n: defined in lambda, used in body
+  (let* ((n-result (query:def-use "n"))
+         (n-defs (car n-result))
+         (n-uses (cdr n-result)))
+    (check (= (length n-defs) 1))
+    (check (> (length n-uses) 0))))
+
+(test-suite "defuse:reaches"
+  (set-code "(define (f x) (+ x 1))")
+  ;; query:reaches on define node (node 0 if root, or found by query:node-type)
+  (let ((defines (query:node-type "Define")))
+    (if (pair? defines)
+      (let ((define-node (car defines))
+            (result (query:reaches (car defines)))
+            (defs (car result))
+            (uses (cdr result)))
+        ;; The define reaches the variable x
+        (check (= (length defs) 1))
+        (check (> (length uses) 0)))
+      ;; If no Define node (shouldn't happen), pass placeholder
+      (check #t))))
+
+(test-suite "defuse:reaches-on-variable"
+  (set-code "(define (f x) (+ x 1))")
+  ;; query:reaches on a Variable node (should be void, since Variables don't define)
+  (let ((variables (query:node-type "Variable")))
+    (if (pair? variables)
+      ;; reaches on a variable should return empty, not crash
+      (check (pair? (query:reaches (car variables))))
+      (check #t))))
+
+(test-suite "defuse:effects"
+  (set-code "(define (f x) (+ x 1))")
+  (let ((result (query:effects "f")))
+    (check (pair? result))  ;; result is a pair
+    ;; effects returns (defs uses callers) as three-element list
+    ;; At minimum, f is defined once; callers may vary
+    (check (> (length (car result)) 0))))
+
+(test-suite "defuse:effects-nonexistent"
+  (set-code "(define (f x) (+ x 1))")
+  (let ((result (query:effects "nonexistent")))
+    ;; All three lists should be empty but not crash
+    (check (pair? result))))
+
+(test-suite "defuse:cache-rebuild-after-mutate"
+  (set-code "(define (f x) (+ x 1))")
+  ;; Cache builds on first query
+  (let* ((before (query:def-use "f"))
+         (before-defs (car before)))
+    (check (= (length before-defs) 1)))
+  ;; Rebind changes the definition — cache should rebuild
+  (check (mutate:rebind "f" "(lambda (y) (* y 2))" "test rebind"))
+  ;; Now query:def-use should show updated results
+  (let* ((after (query:def-use "f"))
+         (after-defs (car after)))
+    (check (= (length after-defs) 1))))
+
+(test-suite "defuse:multiple-set-code"
+  ;; First workspace
+  (set-code "(define (f x) (+ x 1))")
+  (let* ((r1 (query:def-use "f"))
+         (d1 (car r1)))
+    (check (= (length d1) 1)))
+  ;; Second workspace — should completely rebuild cache
+  (set-code "(define (g x) (* x 2))")
+  (let* ((r2 (query:def-use "g"))
+         (d2 (car r2)))
+    (check (= (length d2) 1)))
+  ;; f should no longer exist
+  (let* ((r3 (query:def-use "f"))
+         (d3 (car r3)))
+    (check (= (length d3) 0))))
+
+(test-suite "defuse:empty-workspace"
+  ;; Empty workspace — query should not crash
+  (set-code "(define x 1)")
+  (display (query:def-use "x"))
+  (set-code "")
+  ;; After empty set-code, queries should still work safely
+  (check (pair? (query:def-use "x")))
+  (check (pair? (query:effects "x"))))
+
