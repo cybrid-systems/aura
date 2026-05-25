@@ -1,3 +1,5 @@
+#include "compiler/aura_jit.h"
+
 import std;
 import aura.core;
 import aura.compiler.service;
@@ -1332,7 +1334,15 @@ int main(int argc, char* argv[]) {
     }
 
     // ── --emit-binary: compile to standalone native binary ───────
-    // Usage: echo '(display (+ 1 2))' | ./aura --emit-binary myapp
+    // Usage: echo '(+ 1 2)' | ./aura --emit-binary myapp
+    //
+    // Pipeline:
+    //   1. Parse source → Lower to IR → Run pass manager
+    //   2. Convert IRModule functions to FlatFunction array
+    //   3. LLVM IR → .ll → llc -filetype=obj → .o for each function
+    //   4. Link .o files with runtime.c → standalone binary
+    //
+    // Falls back to shell wrapper when LLVM is unavailable.
     if (argc > 2 && std::string_view(argv[1]) == "--emit-binary") {
         aura::compiler::CompilerService cs;
         std::string input;
@@ -1346,135 +1356,108 @@ int main(int argc, char* argv[]) {
             std::println(std::cerr, "error: no input");
             return 1;
         }
-        // 1. Eval via JIT (compiles IR through LLVM)
-        auto result = cs.eval_ir(input);
-        if (!result) {
-            std::println(std::cerr, "error: {}", result.error().format());
+
+        auto out_path = std::string(argv[2]);
+
+        // ── Step 1: Parse → Lower → Passes (same as eval_ir) ─────
+        // Use eval_ir to populate last_ir_mod_ (ignore execution result)
+        auto eval_result = cs.eval_ir(input);
+        if (!eval_result) {
+            std::println(std::cerr, "error: {}", eval_result.error().format());
             return 1;
         }
-        // 2. Get the compiled IR module
         auto& mod = cs.last_ir_module();
-        if (!mod) {
+        if (!mod || mod->functions.empty()) {
             std::println(std::cerr, "no IR module generated");
             return 1;
         }
-        // 3. Emit + link to standalone binary
-        auto out_path = std::string(argv[2]);
-        
-        // Write source to temp file for compilation
-        auto src_path = out_path + ".tmp.aura";
-        {
-            std::ofstream sf(src_path);
-            sf << input;
-        }
-        
-        // Compile: emit object file via LLVM
-        auto obj_path = out_path + ".o";
-        bool compiled = false;
-compiled = aura_emit_native_file(input.c_str(), out_path.c_str(), (const void*)&*mod, 0);
-        
-        
-        if (!compiled) {
 
+        // ── Step 2: Convert IRModule functions to FlatFunction ────
+        // We need to keep all backing storage alive for the FlatFunction array.
+        // Each FlatFunction has pointers into our owned vectors.
+        //
+        // Storage layout:
+        //   instr_pool[batch_i][fn_i][block_i]  = vector of FlatInstruction
+        //   block_pool[batch_i][fn_i]           = vector of FlatBlock (points into instr_pool)
+        //   name_pool[batch_i]                  = string (flat_fn.name points here)
+        //   flat_fn_array                       = vector of FlatFunction (final array)
+
+        std::size_t num_fns = mod->functions.size();
+        std::vector<std::vector<std::vector<aura::jit::FlatInstruction>>> instr_pool;
+        std::vector<std::vector<aura::jit::FlatBlock>> block_pool;
+        std::deque<std::string> name_pool;  // deque: stable pointers on push_back
+        std::vector<aura::jit::FlatFunction> flat_fn_array;
+        flat_fn_array.reserve(num_fns);
+        instr_pool.reserve(num_fns);
+        block_pool.reserve(num_fns);
+
+        for (auto& ir_fn : mod->functions) {
+            instr_pool.emplace_back();
+            block_pool.emplace_back();
+            name_pool.push_back(ir_fn.name);
+
+            auto& instrs = instr_pool.back();
+            auto& blocks = block_pool.back();
+
+            instrs.resize(ir_fn.blocks.size());
+            blocks.resize(ir_fn.blocks.size());
+
+            for (std::size_t bi = 0; bi < ir_fn.blocks.size(); ++bi) {
+                auto& block = ir_fn.blocks[bi];
+                for (auto& inst : block.instructions) {
+                    instrs[bi].push_back({static_cast<std::uint32_t>(inst.opcode),
+                                          {inst.operands[0], inst.operands[1],
+                                           inst.operands[2], inst.operands[3]}});
+                }
+                blocks[bi] = {block.id, instrs[bi].data(),
+                              static_cast<std::uint32_t>(instrs[bi].size())};
+            }
+
+            flat_fn_array.push_back({
+                name_pool.back().c_str(),
+                ir_fn.entry_block,
+                ir_fn.local_count,
+                ir_fn.arg_count,
+                blocks.data(),
+                static_cast<std::uint32_t>(blocks.size()),
+                nullptr,  // func_id_map not used for AOT
+                0
+            });
+        }
+
+        // ── Step 3: Compile via LLVM AOT pipeline ────────────────
+        bool compiled = aura_emit_native_file(
+            input.c_str(), out_path.c_str(),
+            (const void*)flat_fn_array.data(),
+            static_cast<unsigned int>(flat_fn_array.size()));
+
+        // ── Step 4: Fallback → shell wrapper ────────────────────
+        if (!compiled) {
             std::string self_path = std::string(argv[0]);
             {
                 std::ofstream sf(out_path);
                 sf << "#!/bin/bash\n";
-                sf << "# Aura compiled binary\n";
-                sf << "exec " << self_path << " --load " << src_path << " \"$@\"\n";
+                sf << "# Aura compiled binary (shell wrapper fallback)\n";
+                sf << "exec " << self_path << " --load " << out_path << ".tmp.aura \"$@\"\n";
             }
             std::filesystem::permissions(out_path,
                 std::filesystem::perms::owner_all |
                 std::filesystem::perms::group_read | std::filesystem::perms::group_exec |
                 std::filesystem::perms::others_read | std::filesystem::perms::others_exec);
-            if (std::filesystem::exists(out_path)) {
-                std::println("emitted binary: {} (shell wrapper)", out_path);
-                compiled = true;
-            } else {
-                std::println(std::cerr, "warning: cannot create {}", out_path);
-            }
-        }
-        
-        // If only .ir placeholder was created (no native binary), emit shell wrapper
-        std::string ir_dump_path = out_path + ".ir";
-        bool has_obj = std::filesystem::exists(out_path);  // native binary created by aur_aemit_native_file
-        
-        if (has_obj && out_path.find(".o") == std::string::npos) {
-            // Native binary already created by aura_emit_native_file
-            std::println("  (native binary, no linking needed)");
-            return 0;  // fix typo: should be early return
-        }
-        
-        if (!has_obj) {
-            // Native compile failed — emit shell wrapper as fallback
-            std::string self_path = std::string(argv[0]);
+            // Save source for --load
             {
-                std::ofstream sf(out_path);
-                sf << "#!/bin/bash\n";
-                sf << "# Aura compiled binary\n";
-                sf << "exec " << self_path << " --load " << src_path << " \"$@\"\n";
+                std::ofstream sf(out_path + ".tmp.aura");
+                sf << input;
             }
-            std::filesystem::permissions(out_path,
-                std::filesystem::perms::owner_all |
-                std::filesystem::perms::group_read | std::filesystem::perms::group_exec |
-                std::filesystem::perms::others_read | std::filesystem::perms::others_exec);
             if (std::filesystem::exists(out_path)) {
                 std::println("emitted binary: {} (shell wrapper)", out_path);
                 return 0;
             }
-            std::println(std::cerr, "error: cannot create wrapper");
+            std::println(std::cerr, "error: cannot create binary");
             return 1;
         }
-        
-        // Native object file exists — link with runtime stub
-        // Link: compile runtime stub and link with object
-        std::string runtime_dir;
-        {
-            auto* env = std::getenv("AURA_RUNTIME_DIR");
-            if (env)
-                runtime_dir = env;
-            else
-                runtime_dir = "lib";
-        }
-        auto runtime_c = runtime_dir + "/runtime.c";
-        auto runtime_o = out_path + ".runtime.o";
-        
-        // Compile runtime
-        std::string cc = "gcc";
-        {
-            auto* env = std::getenv("CC");
-            if (env) cc = env;
-        }
-        
-        std::string cmd = cc + " -c " + runtime_c + " -o " + runtime_o + " -lm 2>/dev/null";
-        int rc = std::system(cmd.c_str());
-        if (rc != 0) {
-            // Try clang
-            cmd = "clang -c " + runtime_c + " -o " + runtime_o + " -lm 2>/dev/null";
-            rc = std::system(cmd.c_str());
-        }
-        
-        if (rc != 0) {
-            std::println(std::cerr, "cannot compile runtime stub ({})", runtime_c);
-            std::println(std::cerr, "  install gcc or clang, or set CC");
-            return 1;
-        }
-        
-        // Link
-        cmd = cc + " " + obj_path + " " + runtime_o + " -o " + out_path + " -lm 2>/dev/null";
-        rc = std::system(cmd.c_str());
-        if (rc != 0) {
-            std::println(std::cerr, "link failed");
-            return 1;
-        }
-        
+
         std::println("emitted binary: {}", out_path);
-        
-        // Cleanup temp files
-        std::remove(src_path.c_str());
-        std::remove(obj_path.c_str());
-        std::remove(runtime_o.c_str());
-        
         return 0;
     }
 

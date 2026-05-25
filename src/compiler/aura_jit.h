@@ -80,6 +80,11 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
+/// Compile a FlatFunction to a native object file via LLVM IR + llc.
+/// Returns true on success.
+/// On success: out_obj_path contains the .o file.
+bool emit_native_object(const FlatFunction& fn, const std::string& out_obj_path);
+
 /// Emit an object file from an IR module.
 /// Returns true on success.
 bool emit_object(const std::string& ir_dump, const std::string& out_path);

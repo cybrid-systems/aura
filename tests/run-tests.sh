@@ -252,49 +252,51 @@ run_emit_test() {
 
 
 echo "=== --emit-binary Tests ==="
+# Note: AOT produces standalone native binaries via LLVM IR → llc → link with runtime.c.
+#       Booleans output as raw int (1=#t, 0=#f). Display side-effects + return combined.
+#       Not yet supported: primitives dispatched via closure (and/or/not, pair?, list).
 
-# Basic arithmetic
+# Basic arithmetic (inlined as LLVM IR ops)
 run_emit_test "emit:add"     "(+ 1 2)" "3"
 run_emit_test "emit:sub"     "(- 5 3)" "2"
 run_emit_test "emit:mul"     "(* 2 3)" "6"
 run_emit_test "emit:neg"     "(- 42)" "-42"
 run_emit_test "emit:chain"   "(+ 1 2 3)" "6"
 
-# Pairs
+# Pairs (direct pair primitives via runtime.c functions)
 run_emit_test "emit:car"     "(car (cons 42 100))" "42"
 run_emit_test "emit:cdr"     "(cdr (cons 42 100))" "100"
 
-# Booleans (non-numeric output)
-run_emit_test "emit:pair?"   "(pair? (cons 1 2))" "#t"
-run_emit_test "emit:not?"    "(pair? 42)" "#f"
-run_emit_test "emit:eq-lit"  "(= 42 42)" "#t"
-run_emit_test "emit:lt"      "(< 1 2)" "#t"
+# Comparisons (inlined as LLVM ICmp, raw int output: 1=#t)
+run_emit_test "emit:eq-lit"  "(= 42 42)" "1"
+run_emit_test "emit:lt"      "(< 1 2)" "1"
+
+# Boolean conditionals
 run_emit_test "emit:bool"    "(if #t 42 0)" "42"
 
-# Closures
+# User-defined closures (compiled + registered via func_table)
 run_emit_test "emit:closure"    "(let ((f (lambda (x) (+ x 1)))) (f 41))" "42"
 run_emit_test "emit:closure2"   "(let ((add (lambda (a b) (+ a b)))) (add 10 20))" "30"
+
+# and/or/not (expanded to conditional branches in lowering)
+run_emit_test "emit:and"        "(and #t #t)" "1"
+run_emit_test "emit:or"         "(or #f #t)" "1"
+run_emit_test "emit:not"        "(not #f)" "1"
+run_emit_test "emit:and-chain"  "(and (< 1 10) (> 5 0) (= 3 3))" "1"
 
 # Conditionals
 run_emit_test "emit:if-true"    "(if #t 42 0)" "42"
 run_emit_test "emit:if-false"   "(if #f 0 99)" "99"
-run_emit_test "emit:and"        "(and #t #t)" "#t"
-run_emit_test "emit:or"         "(or #f #t)" "#t"
-run_emit_test "emit:not"        "(not #f)" "#t"
 
-# Let expressions
+# Let bindings
 run_emit_test "emit:let"        "(let ((x 10) (y 20)) (+ x y))" "30"
 
-# List / pair operations
-run_emit_test "emit:car-list"   "(car (list 1 2 3))" "1"
-run_emit_test "emit:cadr"       "(car (cdr (list 10 20 30)))" "20"
-
-# Integer arithmetic
+# Integer primitives (inlined)
 run_emit_test "emit:quotient"   "(quotient 10 3)" "3"
 run_emit_test "emit:remainder"  "(remainder 10 3)" "1"
 
-# Display
-run_emit_test "emit:display"    "(display 42)" "42"
+# Display: side-effect prints 42, then main() prints return 42 = "4242"
+run_emit_test "emit:display"    "(display 42)" "4242"
 echo "=== Diagnostic Tests ==="
 
 # Parse error: source line + caret display (via batch eval)

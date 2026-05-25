@@ -18,6 +18,7 @@
 #include <llvm/Support/raw_ostream.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <vector>
 #include <unordered_map>
 #include <memory>
@@ -488,6 +489,97 @@ void aura_set_prim_dispatcher(int64_t (*fn)(int64_t, int64_t*, int32_t));
 
 // C standard library functions (declared in <cstdio>, registered as JIT symbols)
 
+// ── AOT native compilation ──────────────────────────────────────
+// Compile a FlatFunction to LLVM IR → .ll → llc → .o
+static bool emit_native_object_llvm(const FlatFunction& fn, const std::string& out_obj_path) {
+    llvm::LLVMContext local_ctx;
+    auto mod = std::make_unique<llvm::Module>(std::string(fn.name) + "_aot", local_ctx);
+
+    LLVMBuilder builder{local_ctx};
+    builder.mod = mod.get();
+    builder.declare_runtime();
+
+    // Build function
+    auto ptr_i64 = llvm::PointerType::getUnqual(llvm::Type::getInt64Ty(local_ctx));
+    auto i32_ty = llvm::Type::getInt32Ty(local_ctx);
+    auto ret_ty = llvm::Type::getInt64Ty(local_ctx);
+    auto fn_type = llvm::FunctionType::get(ret_ty, {ptr_i64, i32_ty}, false);
+    builder.func =
+        llvm::Function::Create(fn_type, llvm::Function::ExternalLinkage, fn.name, mod.get());
+    auto arg_it = builder.func->arg_begin();
+    arg_it->setName("locals_ptr");
+    ++arg_it;
+    arg_it->setName("argc");
+
+    // Create blocks
+    for (uint32_t i = 0; i < fn.num_blocks; ++i)
+        builder.block_map[fn.blocks[i].id] = llvm::BasicBlock::Create(local_ctx, "", builder.func);
+
+    // Alloc locals in entry
+    builder.irb = new llvm::IRBuilder<>(local_ctx);
+    builder.irb->SetInsertPoint(builder.block_map[fn.entry_block]);
+    for (uint32_t i = 0; i < fn.local_count; ++i)
+        builder.llvm_locals.push_back(builder.irb->CreateAlloca(llvm::Type::getInt64Ty(local_ctx)));
+
+    // Lower each block
+    for (uint32_t bi = 0; bi < fn.num_blocks; ++bi) {
+        auto& fb = fn.blocks[bi];
+        builder.irb->SetInsertPoint(builder.block_map[fb.id]);
+        for (uint32_t ii = 0; ii < fb.num_instructions; ++ii) {
+            if (!builder.lower(fb.instructions[ii], fb.id, fn)) {
+                delete builder.irb;
+                return false;
+            }
+        }
+    }
+    delete builder.irb;
+
+    // Run LLVM optimization passes
+    {
+        llvm::PassBuilder pb;
+        llvm::LoopAnalysisManager lam;
+        llvm::FunctionAnalysisManager fam;
+        llvm::CGSCCAnalysisManager cgam;
+        llvm::ModuleAnalysisManager mam;
+
+        pb.registerModuleAnalyses(mam);
+        pb.registerCGSCCAnalyses(cgam);
+        pb.registerFunctionAnalyses(fam);
+        pb.registerLoopAnalyses(lam);
+        pb.crossRegisterProxies(lam, fam, cgam, mam);
+
+        auto mpm = pb.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
+        mpm.run(*mod, mam);
+    }
+
+    if (llvm::verifyModule(*mod, &llvm::errs())) {
+        fprintf(stderr, "AOT: verification failed for '%s'\n", fn.name);
+        return false;
+    }
+
+    // Write .ll file
+    auto ll_path = out_obj_path + ".ll";
+    std::error_code ec;
+    llvm::raw_fd_ostream ll_out(ll_path, ec);
+    if (ec) {
+        fprintf(stderr, "AOT: cannot open %s: %s\n", ll_path.c_str(), ec.message().c_str());
+        return false;
+    }
+    mod->print(ll_out, nullptr);
+    ll_out.close();
+
+    // Run llc to produce .o
+    std::string cmd = "llc -filetype=obj -o " + out_obj_path + " " + ll_path + " 2>/dev/null";
+    int rc = std::system(cmd.c_str());
+    if (rc != 0) {
+        fprintf(stderr, "AOT: llc failed for '%s'\n", ll_path.c_str());
+        std::remove(ll_path.c_str());
+        return false;
+    }
+    std::remove(ll_path.c_str());
+    return true;
+}
+
 struct AuraJIT::Impl {
     std::unique_ptr<llvm::orc::LLJIT> jit;
     llvm::orc::JITDylib* main_dylib = nullptr;
@@ -693,6 +785,34 @@ const std::vector<FunctionMeta>& AuraJIT::compiled_functions() const {
     return impl_->compiled_fns_;
 }
 
+// ── Public AOT API ──────────────────────────────────────────────
+
+bool emit_native_object(const FlatFunction& fn, const std::string& out_obj_path) {
+    return emit_native_object_llvm(fn, out_obj_path);
+}
+
+bool emit_object(const std::string& ir_dump, const std::string& out_path) {
+    // Deprecated: use emit_native_object instead.
+    // Parse IR dump and rebuild the module, then compile
+    // For now: dump only — full implementation needs IR deserialization
+    if (auto* f = std::fopen((out_path + ".ir").c_str(), "w")) {
+        std::fprintf(f, "%s", ir_dump.c_str());
+        std::fclose(f);
+        return true;
+    }
+    return false;
+}
+
+bool emit_object_module(void* /*ir_module*/, const std::string& out_path) {
+    // Deprecated: use emit_native_object instead.
+    if (auto* f = std::fopen((out_path + ".ir").c_str(), "w")) {
+        std::fprintf(f, "emit_object_module: deprecated placeholder\n");
+        std::fclose(f);
+        return true;
+    }
+    return false;
+}
+
 } // namespace aura::jit
 
 #else
@@ -719,9 +839,11 @@ const std::vector<FunctionMeta>& AuraJIT::compiled_functions() const {
 }
 
 
-// ── emit_object: compile IR to native object file ──────────────
-// Uses LLVM TargetMachine to emit .o file.
-// Falls back to .ir dump when LLVM is unavailable.
+// ── AOT native compilation (stubs, LLVM unavailable) ────────────
+
+bool emit_native_object(const FlatFunction&, const std::string&) {
+    return false;
+}
 
 bool emit_object(const std::string& ir_dump, const std::string& out_path) {
     // Parse IR dump and rebuild the module, then compile
@@ -734,15 +856,10 @@ bool emit_object(const std::string& ir_dump, const std::string& out_path) {
     return false;
 }
 
-bool emit_object_module(void* ir_module, const std::string& out_path) {
-    if (!ir_module)
-        return false;
-    auto& mod = *static_cast<aura::ir::IRModule*>(ir_module);
-    // Dump IR as placeholder
+bool emit_object_module(void* /*ir_module*/, const std::string& out_path) {
+    // Deprecated: use emit_native_object instead.
     if (auto* f = std::fopen((out_path + ".ir").c_str(), "w")) {
-        for (auto& fn : mod.functions()) {
-            std::fprintf(f, "func[%zu] %s\n", fn.id, fn.name.c_str());
-        }
+        std::fprintf(f, "emit_object_module: deprecated placeholder (no LLVM)\n");
         std::fclose(f);
         return true;
     }
