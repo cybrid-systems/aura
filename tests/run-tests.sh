@@ -333,6 +333,9 @@ run_emit_test "emit:append"    "(car (append (list 1 2) (list 3 4)))" "1"
 run_emit_test "emit:member"    "(car (member 2 (list 1 2 3)))" "2"
 run_emit_test "emit:map"       "(car (map (lambda (x) (+ x 10)) (list 1 2 3)))" "11"
 run_emit_test "emit:foldl"     "(foldl + 0 (list 1 2 3))" "6"
+
+# Named let (local recursion via letrec + closure env)
+run_emit_test "emit:named-let" "(let loop ((x 0)) (if (< x 3) (loop (+ x 1)) x))" "3"
 echo "=== Diagnostic Tests ==="
 
 # Parse error: source line + caret display (via batch eval)
