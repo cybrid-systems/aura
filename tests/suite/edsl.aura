@@ -819,3 +819,25 @@
     (mutate:rebind "x" "(lambda () (+ 1 2))" "step2"))  ;; rebind on define variable should fail
   ;; Verify we're back to snapshot
   (check (pair? (ast:diff sid))))  ;; diff should exist (might show changes)
+
+
+;; ═══════════════════════════════════════════════════════════════
+;; P17: Synthesize Genetic Strategy — synthesize:optimize
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "synth:optimize-basic"
+  (set-code "(define (f x) (+ x 100))")
+  (let ((result (synthesize:optimize "f" :population 3 :generations 1)))
+    (check (pair? result))))  ;; returns (gen . fitness)
+
+(test-suite "synth:optimize-code-valid"
+  (set-code "(define (f x) (+ x 1))")
+  (synthesize:optimize "f" :population 3 :generations 1)
+  ;; After optimize, workspace should still have valid code
+  (let ((src (current-source)))
+    (check (string? src))))
+
+(test-suite "synth:optimize-keywords"
+  (set-code "(define (f x) 42)")
+  (check (pair? (synthesize:optimize "f"
+    :population 5 :generations 2 :mutation-rate 0.5))))

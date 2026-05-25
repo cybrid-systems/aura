@@ -6856,7 +6856,139 @@ Evaluator::Evaluator() {
         }
 
         return make_bool(false);
-    });// ── intend — 纯循环管理器 — 纯循环管理器 ────────────────────────────────
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // P17: Synthesize Genetic Strategy — synthesize:optimize
+    // ═══════════════════════════════════════════════════════════════
+
+    // (synthesize:optimize name [key :val ...])
+    //   Uses genetic algorithm to optimize a function.
+    //   Keywords: :population, :generations, :mutation-rate
+    //   Creates variants, evaluates fitness, returns best.
+    primitives_.add("synthesize:optimize", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_void();
+        auto name_idx = as_string_idx(a[0]);
+        if (name_idx >= string_heap_.size())
+            return make_void();
+        std::string fn_name = string_heap_[name_idx];
+        int pop_size = 8;
+        int generations = 3;
+        double mutation_rate = 0.3;
+
+        for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
+            if (!is_string(a[i])) continue;
+            auto k_idx = as_string_idx(a[i]);
+            if (k_idx >= string_heap_.size()) continue;
+            std::string key = string_heap_[k_idx];
+            if (key == ":population" && is_int(a[i+1]))
+                pop_size = static_cast<int>(as_int(a[i+1]));
+            else if (key == ":generations" && is_int(a[i+1]))
+                generations = static_cast<int>(as_int(a[i+1]));
+            else if (key == ":mutation-rate" && is_float(a[i+1]))
+                mutation_rate = as_float(a[i+1]);
+        }
+        if (pop_size < 2) pop_size = 2;
+        if (pop_size > 50) pop_size = 50;
+        if (generations < 1) generations = 1;
+
+        // Get baseline source
+        auto src_fn = primitives_.lookup("current-source");
+        if (!src_fn) return make_void();
+        auto cs_result = (*src_fn)({});
+        if (!is_string(cs_result)) return make_void();
+        auto cs_idx = as_string_idx(cs_result);
+        if (cs_idx >= string_heap_.size()) return make_void();
+        std::string baseline = string_heap_[cs_idx];
+
+        // Simple fitness: shorter compiled code = better (P0 placeholder)
+        auto fitness = [&](const std::string& src) -> double {
+            return 1000.0 / static_cast<double>(src.size() + 1);
+        };
+
+        std::string best_code = baseline;
+        double best_fitness = fitness(baseline);
+        int best_gen = 0;
+
+        for (int gen = 0; gen < generations; ++gen) {
+            for (int p = 0; p < pop_size; ++p) {
+                std::string variant = best_code;
+                // Apply random numeric mutations
+                for (int m = 0; m < 5; ++m) {
+                    if (static_cast<double>(std::rand()) / RAND_MAX >= mutation_rate)
+                        continue;
+                    auto npos = variant.find_first_of("0123456789");
+                    if (npos == std::string::npos) break;
+                    auto nend = variant.find_first_not_of("0123456789", npos);
+                    if (nend == std::string::npos) nend = variant.size();
+                    std::string old_n = variant.substr(npos, nend - npos);
+                    if (old_n.empty()) continue;
+                    int val = std::stoi(old_n);
+                    val += (std::rand() % 21) - 10;
+                    if (val < 0) val = 0;
+                    variant.replace(npos, nend - npos, std::to_string(val));
+                }
+
+                if (variant == best_code) continue;
+
+                // Try set-code
+                auto vi = string_heap_.size();
+                string_heap_.push_back(variant);
+                auto sc_fn = primitives_.lookup("set-code");
+                if (!sc_fn) continue;
+                auto sc_r = (*sc_fn)({make_string(vi)});
+                if (!is_bool(sc_r) || !as_bool(sc_r)) continue;
+
+                // Typecheck
+                bool valid = true;
+                auto tc_fn = primitives_.lookup("typecheck-current");
+                if (tc_fn) {
+                    auto tc_r = (*tc_fn)({});
+                    if (is_string(tc_r)) {
+                        auto ti = as_string_idx(tc_r);
+                        if (ti < string_heap_.size() &&
+                            string_heap_[ti].find("error") != std::string::npos)
+                            valid = false;
+                    }
+                }
+                if (!valid) continue;
+
+                double f = fitness(variant);
+                if (f > best_fitness) {
+                    best_fitness = f;
+                    best_code = variant;
+                    best_gen = gen + 1;
+                }
+
+                // Restore baseline for next variant
+                auto bi = string_heap_.size();
+                string_heap_.push_back(baseline);
+                (*sc_fn)({make_string(bi)});
+            }
+        }
+
+        // Apply best to workspace
+        auto bi = string_heap_.size();
+        string_heap_.push_back(best_code);
+        auto sc_fn = primitives_.lookup("set-code");
+        if (sc_fn) (*sc_fn)({make_string(bi)});
+        defuse_version_++;
+        defuse_index_ = nullptr;
+
+        auto gs = std::to_string(best_gen);
+        auto gi = string_heap_.size();
+        string_heap_.push_back(gs);
+        auto fs = std::to_string(best_fitness);
+        auto fi = string_heap_.size();
+        string_heap_.push_back(fs);
+
+        auto p1 = pairs_.size();
+        pairs_.push_back({make_string(gi), make_string(fi)});
+        return make_pair(p1);
+    });
+
+// ── intend — 纯循环管理器 — 纯循环管理器 ────────────────────────────────
     // (intend goal generator-fn verifier-fn [fixer-fn] [max-attempts])
     //
     // 不管理 LLM 调用、不构建 prompt、不做 JSON 解析。
