@@ -6961,26 +6961,104 @@ Evaluator::Evaluator() {
                     variant.replace(npos, nend - npos, std::to_string(val));
                 }
 
-                // Crossover: combine with a random elite member
+                // Crossover: text-level or AST-level
                 if (!elite.empty() && std::rand() % 3 == 0) {
                     auto& other = elite[std::rand() % elite.size()].first;
-                    auto b1 = variant.find("(lambda");
-                    auto b2 = other.find("(lambda");
-                    if (b1 != std::string::npos && b2 != std::string::npos) {
-                        auto e1 = variant.find(')', b1);
-                        auto e2 = other.find(')', b2);
-                        if (e1 != std::string::npos && e2 != std::string::npos
-                            && e1 > b1 && e2 > b2) {
-                            // Swap bodies after lambda params
-                            auto body1_end = variant.find_last_of(')');
-                            auto body2_end = other.find_last_of(')');
-                            if (body1_end > b1 && body2_end > b2) {
-                                std::string body1 = variant.substr(b1, body1_end - b1 + 1);
-                                std::string body2 = other.substr(b2, body2_end - b2 + 1);
-                                if (body1 != body2) {
-                                    // Try to use body2 in variant
-                                    variant = variant.substr(0, b1) + body2
-                                        + variant.substr(body1_end + 1);
+                    // Try AST expression-level crossover via node swapping
+                    // Use a child workspace and mutate:replace-value
+                    if (workspace_tree_ && std::rand() % 2 == 0) {
+                        auto* tree = static_cast<WorkspaceTree*>(workspace_tree_);
+                        // Create a temporary workspace, set-code the variant,
+                        // find a LiteralInt node, replace it with one from other
+                        auto ws_id = tree->create_child("xover",
+                            workspace_flat_, workspace_pool_);
+                        if (ws_id > 0) {
+                            tree->ensure_local_flat(ws_id);
+                            auto& ws = tree->nodes_[ws_id];
+                            auto saved_f = workspace_flat_;
+                            auto saved_p = workspace_pool_;
+                            workspace_flat_ = ws.flat;
+                            workspace_pool_ = ws.pool;
+
+                            // Set variant as current code
+                            auto vi = string_heap_.size();
+                            string_heap_.push_back(variant);
+                            auto sc_fn = primitives_.lookup("set-code");
+                            if (sc_fn) {
+                                auto sr = (*sc_fn)({make_string(vi)});
+                                if (is_bool(sr) && as_bool(sr)) {
+                                    // Find LiteralInt nodes and swap value with other variant
+                                    auto tc_fn = primitives_.lookup("typecheck-current");
+                                    for (aura::ast::NodeId nid = 0;
+                                         nid < (workspace_flat_ ? workspace_flat_->size() : 0);
+                                         ++nid) {
+                                        if (std::rand() % 5 != 0) continue;  // 20% chance per node
+                                        auto v = workspace_flat_->get(nid);
+                                        if (v.tag == aura::ast::NodeTag::LiteralInt) {
+                                            // Extract a random int from "other"
+                                            auto nums = other;
+                                            auto npos = nums.find_first_of("0123456789");
+                                            if (npos != std::string::npos) {
+                                                auto nend = nums.find_first_not_of("0123456789", npos);
+                                                if (nend == std::string::npos) nend = nums.size();
+                                                int new_val = std::stoi(nums.substr(npos, nend - npos));
+                                                if (new_val >= 0) {
+                                                    auto rv_fn = primitives_.lookup("mutate:replace-value");
+                                                    if (rv_fn) {
+                                                        (*rv_fn)({make_int(nid), make_int(new_val),
+                                                                 make_string(vi)});
+                                                    }
+                                                }
+                                            }
+                                            break;  // Mutate one node
+                                        }
+                                    }
+
+                                    // Typecheck after crossover
+                                    if (tc_fn) {
+                                        auto tc_r = (*tc_fn)({});
+                                        if (is_string(tc_r)) {
+                                            auto ti = as_string_idx(tc_r);
+                                            if (ti < string_heap_.size() &&
+                                                string_heap_[ti].find("error") == std::string::npos) {
+                                                // Successful crossover: get the new source
+                                                auto src_fn = primitives_.lookup("current-source");
+                                                if (src_fn) {
+                                                    auto src = (*src_fn)({});
+                                                    if (is_string(src)) {
+                                                        auto si = as_string_idx(src);
+                                                        if (si < string_heap_.size())
+                                                            variant = string_heap_[si];
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            workspace_flat_ = saved_f;
+                            workspace_pool_ = saved_p;
+                            tree->delete_child(ws_id);
+                        }
+                    } else {
+                        // Text-level crossover (fallback)
+                        auto b1 = variant.find("(lambda");
+                        auto b2 = other.find("(lambda");
+                        if (b1 != std::string::npos && b2 != std::string::npos) {
+                            auto e1 = variant.find(')', b1);
+                            auto e2 = other.find(')', b2);
+                            if (e1 != std::string::npos && e2 != std::string::npos
+                                && e1 > b1 && e2 > b2) {
+                                auto body1_end = variant.find_last_of(')');
+                                auto body2_end = other.find_last_of(')');
+                                if (body1_end > b1 && body2_end > b2) {
+                                    std::string body1 = variant.substr(b1, body1_end - b1 + 1);
+                                    std::string body2 = other.substr(b2, body2_end - b2 + 1);
+                                    if (body1 != body2) {
+                                        variant = variant.substr(0, b1) + body2
+                                            + variant.substr(body1_end + 1);
+                                    }
                                 }
                             }
                         }
