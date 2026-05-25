@@ -564,6 +564,16 @@ public:
             }
         }
 
+        // Pre-expand all macros in this expression
+        auto expanded_root = aura::compiler::macro_expand_all(*flat_ptr, *pool_ptr, flat_ptr->root);
+
+        // Pre-execute top-level require/import/use calls to fill ir_cache_
+        // so cached define functions are available during lowering.
+        pre_exec_requires(*flat_ptr, *pool_ptr, expanded_root);
+
+        // Update root to expanded version
+        flat_ptr->root = expanded_root;
+
         // Compile-time AST validation
         validate_ast(*flat_ptr, *pool_ptr, flat_ptr->root);
 

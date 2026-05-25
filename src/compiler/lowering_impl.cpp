@@ -376,7 +376,11 @@ static std::uint32_t lower_flat_expr(
                 }
 
                 // Pre-executed require/import/use: skip (already handled by pre_exec_requires)
-                if (std::string(callee_name) == "require") {
+                if (std::string(callee_name) == "require" ||
+                    std::string(callee_name) == "import") {
+                    // import/require are handled by pre_exec_requires.
+                    // The import call in the AST is still present; skip
+                    // it here to avoid going through PrimCall dispatch.
                     auto slot = state.alloc_local();
                     state.emit(IROpcode::ConstVoid, slot);
                     return slot;
@@ -438,6 +442,59 @@ static std::uint32_t lower_flat_expr(
                     }
                     auto result_slot = state.alloc_local();
                     state.emit(IROpcode::PrimCall, prim_id, arg_base, arg_count, result_slot);
+                    return result_slot;
+                }
+
+                // ── Expand cond to nested if/Branch IR ─────────────────
+                // (cond (p1 b1) (p2 b2) ... (else bn))
+                // → if p1: b1; elif p2: b2; ... else: bn
+                if (std::string(callee_name) == "cond" && v.children.size() >= 2) {
+                    auto result_slot = state.alloc_local();
+                    auto done_blk = decltype(state.alloc_block()){};
+                    auto num_clauses = v.children.size() - 1;
+
+                    for (std::size_t ci = 1; ci <= num_clauses; ++ci) {
+                        auto clause = v.child(ci);
+                        if (clause >= flat.size()) continue;
+                        auto clause_node = flat.get(clause);
+                        if (clause_node.children.empty()) continue;
+
+                        // Clause: child[0] = predicate, child[1] = body (single expression)
+                        auto pred_node = clause_node.child(0);
+                        auto body_node = (clause_node.children.size() > 1)
+                            ? clause_node.child(1) : clause_node.child(0);
+
+                        bool is_last = (ci == num_clauses);
+
+                        // Lower predicate (or check if it's else/#t)
+                        // For the last clause with #t predicate (else), skip the branch
+                        auto pred_slot = lower_flat_expr(state, flat, pool, pred_node, cache, cache_hits);
+
+                        if (!is_last) {
+                            // Branch on predicate: if true → body, else → next clause
+                            auto body_blk = state.alloc_block();
+                            auto next_blk = state.alloc_block();
+                            state.emit(IROpcode::Branch, pred_slot, body_blk, next_blk);
+
+                            // Body block
+                            state.cur_block = body_blk;
+                            auto body_val = lower_flat_expr(state, flat, pool, body_node, cache, cache_hits);
+                            state.emit(IROpcode::Local, result_slot, body_val);
+                            if (!done_blk) done_blk = state.alloc_block();
+                            state.emit(IROpcode::Jump, done_blk);
+
+                            // Next clause
+                            state.cur_block = next_blk;
+                        } else {
+                            // Last clause: fallthrough body
+                            auto body_val = lower_flat_expr(state, flat, pool, body_node, cache, cache_hits);
+                            state.emit(IROpcode::Local, result_slot, body_val);
+                            if (!done_blk) done_blk = state.alloc_block();
+                            state.emit(IROpcode::Jump, done_blk);
+                        }
+                    }
+
+                    state.cur_block = done_blk;
                     return result_slot;
                 }
 
