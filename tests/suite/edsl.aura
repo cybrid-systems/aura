@@ -336,3 +336,39 @@
   (let ((lst (ast:list-snapshots)))
     (check (>= (length lst) 2)))))
 
+
+
+;; ═══════════════════════════════════════════════════════════════
+;; P11: AST Summary & Compile Status
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "summary:basic"
+  (set-code "(define (f x) (+ x 1))")
+  (let ((s (ast:summary)))
+    (check (pair? s))
+    (check (>= (length s) 1))))
+
+(test-suite "summary:node-counts"
+  (set-code "(define (f x) (+ x 1))")
+  (query:def-use "f")
+  (let ((s (ast:summary)))
+    (check (> (length s) 0))))
+
+(test-suite "summary:after-mutation"
+  (set-code "(define (f x) (+ x 1))")
+  (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
+  (let ((s (ast:summary)))
+    (check (pair? s))
+    (check (> (length s) 0))))
+
+(test-suite "compile:status-basic"
+  (set-code "(define (f x) (+ x 1))")
+  (let ((st (compile:status)))
+    (check (pair? st))
+    (check (>= (length st) 3))))
+
+(test-suite "compile:status-after-mutation"
+  (set-code "(define (f x) (+ x 1))")
+  (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
+  (let ((st (compile:status)))
+    (check (pair? st))))
