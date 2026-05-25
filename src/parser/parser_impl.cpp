@@ -607,25 +607,20 @@ NodeId FlatParser::parse_define_type() {
         auto ctor_sym = pool_.intern(ctor_name_tok.text);
         lexer_->consume(); // ctor name
 
-        // Parse field type names
-        std::vector<SymId> field_types;
-        while (lexer_->peek().kind == TokenKind::Identifier) {
-            field_types.push_back(pool_.intern(lexer_->peek().text));
-            lexer_->consume();
-        }
-
-        if (lexer_->peek().kind != TokenKind::RParen) {
-            skip_rparen();
-            break;
+        // Parse field type expressions (identifiers or parenthesized types)
+        std::vector<NodeId> field_nodes;
+        while (lexer_->peek().kind != TokenKind::RParen && !lexer_->eof()) {
+            auto ft = parse_expr();
+            if (ft == NULL_NODE) break;
+            field_nodes.push_back(ft);
         }
         lexer_->consume(); // ')'
 
         // Store constructor as (quote (ctor-name ft1 ft2 ...))
-        // Build a list of field type symbols
+        // Build a list of field type expressions
         NodeId field_list = flat_.add_literal(0); // '() sentinel
-        for (auto it = field_types.rbegin(); it != field_types.rend(); ++it) {
-            auto ft_var = flat_.add_variable(*it);
-            field_list = flat_.add_pair(ft_var, field_list);
+        for (auto it = field_nodes.rbegin(); it != field_nodes.rend(); ++it) {
+            field_list = flat_.add_pair(*it, field_list);
         }
         // Prepend constructor name
         auto ctor_name_var = flat_.add_variable(ctor_sym);
