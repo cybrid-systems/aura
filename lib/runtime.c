@@ -602,6 +602,22 @@ int64_t aura_prim_call(int64_t prim_id, int64_t a1, int64_t a2, int64_t argc) {
         snprintf(buf, sizeof(buf), "g%ld", (long)(++gensym_counter));
         return aura_alloc_string(buf);
     }
+    case 18: { // Apply: (apply f args) — call f with args from list
+        int64_t f = a1;           // the function/closure/primitive
+        int64_t lst = a2;         // the argument list
+        int64_t buf[256];        // argument buffer
+        int count = 0;
+        while (lst != 0 && lst < 0 && count < 256) {
+            buf[count++] = aura_pair_car(lst);
+            lst = aura_pair_cdr(lst);
+        }
+        // Call the function with the collected arguments
+        int64_t args_array[8] = {0};
+        int i;
+        for (i = 0; i < count && i < 8; i++)
+            args_array[i] = buf[i];
+        return aura_closure_call(f, args_array, count);
+    }
     case 30: // Quotient
         if (a2 == 0) return 0;
         return a1 / a2;
