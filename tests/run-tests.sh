@@ -334,6 +334,14 @@ run_emit_test "emit:member"    "(car (member 2 (list 1 2 3)))" "2"
 run_emit_test "emit:map"       "(car (map (lambda (x) (+ x 10)) (list 1 2 3)))" "11"
 run_emit_test "emit:foldl"     "(foldl + 0 (list 1 2 3))" "6"
 
+# Stdlib algorithm module
+run_emit_test "emit:merge"     "(import \"std/algorithm\")(car (merge-sorted (list 1 3) (list 2 4)))" "1"
+run_emit_test "emit:uniq"      "(import \"std/algorithm\")(car (unique (list 1 1 2 3)))" "1"
+run_emit_test "emit:bin-search" "(import \"std/algorithm\")(binary-search 2 (list 1 2 3))" "1"
+
+# Stdlib list module
+run_emit_test "emit:list-merge" "(import \"std/algorithm\")(car (merge-sorted (list 1 3) (list 2 4)))" "1"
+
 # Named let (local recursion via letrec + closure env)
 run_emit_test "emit:named-let" "(let loop ((x 0)) (if (< x 3) (loop (+ x 1)) x))" "3"
 
