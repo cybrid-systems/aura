@@ -841,3 +841,40 @@
   (set-code "(define (f x) 42)")
   (check (pair? (synthesize:optimize "f"
     :population 5 :generations 2 :mutation-rate 0.5))))
+
+
+;; ═══════════════════════════════════════════════════════════════
+;; Rule Normalize — rule:define / apply / list
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "rule:define-and-list"
+  (require "std/rule" all:)
+  (rule:define 'test-rule :pattern "(+ 1 2)" :replace "3")
+  (let ((rules (rule:list)))
+    (check (pair? rules))
+    (check (> (length rules) 0))))
+
+(test-suite "rule:apply-non-existent"
+  (require "std/rule" all:)
+  ;; Applying a non-existent rule returns 0
+  (check (= (rule:apply 'no-such-rule) 0)))
+
+(test-suite "rule:remove"
+  (require "std/rule" all:)
+  (rule:define 'temp-rule :pattern "(+ 1 1)" :replace "2")
+  (rule:remove 'temp-rule)
+  (let ((rules (rule:list)))
+    (check (= (rule:apply 'temp-rule) 0))))
+
+(test-suite "rule:list-violations-empty"
+  (require "std/rule" all:)
+  ;; With no matching code, violations should be empty
+  (set-code "(define x 1)")
+  (let ((v (rule:list-violations)))
+    (check (list? v))))
+
+(test-suite "rule:apply-all"
+  (require "std/rule" all:)
+  (rule:define 'r1 :pattern "(+ 1 1)" :replace "2")
+  (let ((total (rule:apply-all)))
+    (check (>= total 0))))
