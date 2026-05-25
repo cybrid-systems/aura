@@ -1,0 +1,6 @@
+;; task: edsl-optimize-multiarg
+;; goal: synthesize:optimize on multi-arg function
+;; expect: pair
+;; hint: --- Multi-arg optimize ---
+;; hint: (set-code "(define (add x y) (+ x y))")
+;; hint: (synthesize:optimize "add" :population 3 :generations 1)
