@@ -60,6 +60,10 @@ OPS = [
     "(display (ast:restore 0))",
     "(display (mutate:splice 1 0 \"(display 42)\" \"fuzz splice\"))",
     "(display (mutate:wrap 0 \"(begin _)\" \"fuzz wrap\"))",
+    "(display (workspace:create \"ws-{i}\"))",
+    "(display (workspace:list))",
+    "(display (workspace:current))",
+    "(display (workspace:switch 0))",
 
 ]
 
