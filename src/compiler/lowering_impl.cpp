@@ -188,6 +188,33 @@ static std::uint32_t lower_flat_expr(
             // and inline as direct IR opcode to avoid Call overhead.
             if (callee_v.tag == NodeTag::Variable) {
                 auto callee_name = pool.resolve(callee_v.sym_id);
+
+                // ── (list ...) → nested cons chain ────────────────────
+                // Expand (list a b c) to (cons a (cons b (cons c ()))).
+                // This avoids evaluator primitive dispatch and works in AOT.
+                if (std::string(callee_name) == "list") {
+                    auto result_slot = state.alloc_local();
+                    auto arg_count = v.children.size() - 1;
+                    if (arg_count == 0) {
+                        state.emit(IROpcode::ConstI64, result_slot, 0, 0);
+                    } else {
+                        // Build from the last arg backwards: cons(cdr, ())
+                        auto tail_slot = state.alloc_local();
+                        state.emit(IROpcode::ConstI64, tail_slot, 0, 0);
+                        for (std::size_t i = arg_count; i >= 1; --i) {
+                            auto val = lower_flat_expr(
+                                state, flat, pool, v.child(i), cache, cache_hits);
+                            auto cell = state.alloc_local();
+                            state.emit(IROpcode::MakePair, cell, val, tail_slot);
+                            if (i == 1) {
+                                state.emit(IROpcode::Local, result_slot, cell);
+                            }
+                            tail_slot = cell;
+                        }
+                    }
+                    return result_slot;
+                }
+
                 static const std::unordered_map<std::string, IROpcode> prim_map = {
                     {"+", IROpcode::Add},         {"-", IROpcode::Sub},   {"*", IROpcode::Mul},
                     {"/", IROpcode::Div},         {"=", IROpcode::Eq},    {"<", IROpcode::Lt},

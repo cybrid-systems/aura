@@ -13,7 +13,7 @@
 | 40 | 所有权模型在 binary 路径中未完全落地 | 3d | IR 层 `OpDrop` 指令已生成，但 LLVM lowering 自动插入 drop 还需完善 |
 | 41 | `cons` 在 AOT 路径中不可用 | 1d | 当前通过 evaluator 原语派发（OpPrimitive+OpCall），AOT 缺 runtime 对应的 `aura_alloc_pair` 绑定 |
 | 42 | evaluator 原语作为闭包值传递在 AOT 中不可用 | 2d | `(map + '(1 2 3))` 中 `+` 作为值通过 OpPrimitive 派发，AOT 缺原语表 |
-| 43 | `list` 展开为 cons 链在 AOT 中不可用 | 2d | `(list 1 2 3)` 依赖 evaluator 的 `list` 原语 |
+| 43 | `list` 展开为 cons 链在 AOT 中不可用 | ✅ 已解决 | lowering 展开为嵌套 OpMakePair |
 | 44 | `display` AOT 输出 side-effect + 返回值合并 | 0.5d | `(display 42)` 输出 `4242` 而非 `42` |
 | 45 | AOT 布尔值输出 raw int（`1` 而非 `#t`） | 0.5d | 原生二进制约定了格式，与 eval 输出不一致 |
 | 46 | 多文件 AOT 编译 | 3d | 当前只支持单表达式管道输入 |
