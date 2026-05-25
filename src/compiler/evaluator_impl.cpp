@@ -5509,6 +5509,211 @@ Evaluator::Evaluator() {
         return line_diff(old_source, new_source);
     });
 
+    // ═══════════════════════════════════════════════════════════════
+    // P11: AST Summary & Compile Status
+    // ═══════════════════════════════════════════════════════════════
+
+    // Helper: build Aura list from vector of strings
+    auto str_list_to_pairs = [this](const std::vector<std::string>& items) -> EvalValue {
+        EvalValue list = make_void();
+        for (auto it = items.rbegin(); it != items.rend(); ++it) {
+            auto idx = string_heap_.size();
+            string_heap_.push_back(*it);
+            auto pid = pairs_.size();
+            pairs_.push_back({make_string(idx), list});
+            list = make_pair(pid);
+        }
+        return list;
+    };
+
+    // (ast:summary)
+    //   → ((:key value) ...)  association list
+    //   Returns structural summary of the current workspace:
+    //     :total-nodes    — total AST node count
+    //     :by-tag         — list of (tag-name . count)
+    //     :mutation-count — number of applied mutations
+    //     :scopes         — number of lexical scopes (from def-use cache)
+    //     :defs           — total tracked definitions
+    //     :uses           — total tracked variable uses
+    //     :source-length  — source code character count
+    primitives_.add("ast:summary", [this, str_list_to_pairs](const auto&) -> EvalValue {
+        if (!workspace_flat_ || !workspace_pool_)
+            return make_void();
+
+        auto& flat = *workspace_flat_;
+        auto total_nodes = flat.size();
+
+        // Count nodes by type
+        std::unordered_map<std::string, std::uint64_t> type_counts;
+        for (aura::ast::NodeId id = 0; id < total_nodes; ++id) {
+            auto v = flat.get(id);
+            auto& m = aura::ast::meta(v.tag);
+            if (m.name != "<gap>" && m.name != "LiteralInt") {
+                type_counts[std::string(m.name)]++;
+            } else if (m.name == "LiteralInt") {
+                type_counts["LiteralInt"]++;
+            }
+        }
+
+        // Ensure tag names that might map to wrong tag due to gap sentinels
+        // The gap entries use LiteralInt tag so they miscount; fix here.
+        // Actually, the meta function handles this correctly — it returns
+        // the meta for a specific tag, not for LiteralInt in general.
+        // Re-scan using tag value directly:
+        type_counts.clear();
+        for (aura::ast::NodeId id = 0; id < total_nodes; ++id) {
+            auto v = flat.get(id);
+            switch (v.tag) {
+                case aura::ast::NodeTag::LiteralInt:    type_counts["LiteralInt"]++; break;
+                case aura::ast::NodeTag::LiteralFloat:  type_counts["LiteralFloat"]++; break;
+                case aura::ast::NodeTag::LiteralString: type_counts["LiteralString"]++; break;
+                case aura::ast::NodeTag::Variable:      type_counts["Variable"]++; break;
+                case aura::ast::NodeTag::Call:          type_counts["Call"]++; break;
+                case aura::ast::NodeTag::IfExpr:        type_counts["IfExpr"]++; break;
+                case aura::ast::NodeTag::Lambda:        type_counts["Lambda"]++; break;
+                case aura::ast::NodeTag::Let:           type_counts["Let"]++; break;
+                case aura::ast::NodeTag::LetRec:        type_counts["LetRec"]++; break;
+                case aura::ast::NodeTag::Define:        type_counts["Define"]++; break;
+                case aura::ast::NodeTag::Begin:         type_counts["Begin"]++; break;
+                case aura::ast::NodeTag::Set:           type_counts["Set"]++; break;
+                case aura::ast::NodeTag::Quote:         type_counts["Quote"]++; break;
+                case aura::ast::NodeTag::Pair:          type_counts["Pair"]++; break;
+                case aura::ast::NodeTag::Export:        type_counts["Export"]++; break;
+                case aura::ast::NodeTag::TypeAnnotation: type_counts["TypeAnnotation"]++; break;
+                case aura::ast::NodeTag::Coercion:      type_counts["Coercion"]++; break;
+                case aura::ast::NodeTag::Linear:        type_counts["Linear"]++; break;
+                case aura::ast::NodeTag::Move:          type_counts["Move"]++; break;
+                case aura::ast::NodeTag::Borrow:        type_counts["Borrow"]++; break;
+                case aura::ast::NodeTag::MutBorrow:     type_counts["MutBorrow"]++; break;
+                case aura::ast::NodeTag::Drop:          type_counts["Drop"]++; break;
+                default:                                type_counts["Other"]++; break;
+            }
+        }
+
+        // Get def-use index info if available
+        std::uint64_t n_scopes = 0, n_defs = 0, n_uses = 0;
+        auto df_idx = static_cast<DefUseIndex*>(defuse_index_);
+        if (df_idx && df_idx->built_) {
+            n_scopes = df_idx->scopes_.size();
+            n_defs = df_idx->def_syms_.size();
+            n_uses = df_idx->uses_.size();
+        }
+
+        // Get mutation count
+        auto n_mutations = flat.mutation_count();
+
+        // Get source length (via current-source)
+        std::uint64_t source_len = 0;
+        auto src_fn = primitives_.lookup("current-source");
+        if (src_fn) {
+            auto src = (*src_fn)({});
+            if (is_string(src)) {
+                auto sidx = as_string_idx(src);
+                if (sidx < string_heap_.size())
+                    source_len = string_heap_[sidx].size();
+            }
+        }
+
+        // Build by-tag list: ((tag-name . count) ...)
+        EvalValue by_tag_list = make_void();
+        // Sort tags alphabetically for deterministic output
+        std::vector<std::pair<std::string, std::uint64_t>> sorted_tags;
+        for (auto& [name, count] : type_counts)
+            sorted_tags.push_back({name, count});
+        std::sort(sorted_tags.begin(), sorted_tags.end());
+        for (auto it = sorted_tags.rbegin(); it != sorted_tags.rend(); ++it) {
+            auto name_idx = string_heap_.size();
+            string_heap_.push_back(it->first);
+            auto entry_pair = pairs_.size();
+            pairs_.push_back({make_string(name_idx), make_int(static_cast<std::int64_t>(it->second))});
+            auto cons_pair = pairs_.size();
+            pairs_.push_back({make_pair(entry_pair), by_tag_list});
+            by_tag_list = make_pair(cons_pair);
+        }
+
+        // Build full result as alist: ((:key value) ...)
+        auto add_entry = [&](const std::string& key, EvalValue val) -> std::uint64_t {
+            auto key_idx = string_heap_.size();
+            string_heap_.push_back(key);
+            auto entry_pair = pairs_.size();
+            pairs_.push_back({make_string(key_idx), val});
+            return entry_pair;
+        };
+
+        auto cvt = [&](std::uint64_t n) -> EvalValue {
+            auto idx = string_heap_.size();
+            string_heap_.push_back(std::to_string(n));
+            return make_string(idx);
+        };
+        std::uint64_t entry_ids[7];
+        entry_ids[0] = add_entry(":total-nodes", cvt(total_nodes));
+        entry_ids[1] = add_entry(":mutation-count", cvt(n_mutations));
+        entry_ids[2] = add_entry(":source-length", cvt(source_len));
+        entry_ids[3] = add_entry(":by-tag", by_tag_list);
+        entry_ids[4] = add_entry(":scopes", cvt(n_scopes));
+        entry_ids[5] = add_entry(":defs", cvt(n_defs));
+        entry_ids[6] = add_entry(":uses", cvt(n_uses));
+
+        EvalValue result = make_void();
+        for (int ei = 6; ei >= 0; --ei) {
+            auto cons_pair = pairs_.size();
+            pairs_.push_back({make_pair(entry_ids[ei]), result});
+            result = make_pair(cons_pair);
+        }
+        return result;
+    });
+
+    // (compile:status)
+    //   → ((:key value) ...)  association list
+    //   Returns incremental compilation status:
+    //     :dirty-nodes   — nodes marked as dirty (need recompilation)
+    //     :clean-nodes   — nodes that are up-to-date
+    //     :generation    — FlatAST generation counter
+    //     :mutation-count— total mutations applied
+    primitives_.add("compile:status", [this](const auto&) -> EvalValue {
+        if (!workspace_flat_)
+            return make_void();
+
+        auto& flat = *workspace_flat_;
+        auto total = flat.size();
+        std::uint64_t dirty = 0;
+        std::uint64_t clean = 0;
+
+        for (aura::ast::NodeId id = 0; id < total; ++id) {
+            if (flat.is_dirty(id))
+                dirty++;
+            else
+                clean++;
+        }
+
+        // Build alist
+        auto add_entry = [&](const std::string& key, EvalValue val) -> std::uint64_t {
+            auto key_idx = string_heap_.size();
+            string_heap_.push_back(key);
+            auto entry_pair = pairs_.size();
+            pairs_.push_back({make_string(key_idx), val});
+            return entry_pair;
+        };
+
+        EvalValue result = make_void();
+        auto cvt = [&](std::uint64_t n) -> EvalValue {
+            auto idx = string_heap_.size();
+            string_heap_.push_back(std::to_string(n));
+            return make_string(idx);
+        };
+        std::uint64_t entry_ids[4];
+        entry_ids[0] = add_entry(":generation", cvt(flat.generation()));
+        entry_ids[1] = add_entry(":mutation-count", cvt(flat.mutation_count()));
+        entry_ids[2] = add_entry(":dirty-nodes", cvt(dirty));
+        entry_ids[3] = add_entry(":clean-nodes", cvt(clean));
+        for (int ei = 0; ei < 4; ++ei) {
+            auto cons_pair = pairs_.size();
+            pairs_.push_back({make_pair(entry_ids[ei]), result});
+            result = make_pair(cons_pair);
+        }
+        return result;
+    });
+
     // ── intend — 纯循环管理器 ────────────────────────────────
     // (intend goal generator-fn verifier-fn [fixer-fn] [max-attempts])
     //
