@@ -486,6 +486,27 @@ int64_t aura_prim_call(int64_t prim_id, int64_t a1, int64_t a2, int64_t argc) {
     }
     case 1: // StringLength
         return (int64_t)strlen(aura_string_ref(a1));
+    case 32: { // ListLength — count elements in a pair chain (list)
+        int64_t count = 0;
+        int64_t val = a1;
+        while (val != 0 && val < 0) {  // non-zero negative = pair sentinel
+            count++;
+            val = aura_pair_cdr(val);
+        }
+        return count;
+    }
+    case 33: { // ListRef — nth element of a list
+        int64_t val = a1;
+        int64_t idx = a2;
+        int64_t i = 0;
+        while (val != 0 && val < 0 && i < idx) {
+            val = aura_pair_cdr(val);
+            i++;
+        }
+        if (val != 0 && val < 0 && i == idx)
+            return aura_pair_car(val);
+        return 0;
+    }
     case 2: { // StringRef
         const char* s = aura_string_ref(a1);
         int64_t idx = a2;
