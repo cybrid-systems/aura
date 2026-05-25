@@ -723,3 +723,31 @@
   (set-code "(define x 1)")
   ;; discard on root (id 0) should return #f
   (check (not (workspace:discard 0))))
+
+
+;; ═══════════════════════════════════════════════════════════════
+;; P15: Synthesize Template Strategy (P0)
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "synth:register-template"
+  (check (synthesize:register-template "test-fn"
+    "(define ({name} x) (* 2 x))" "name")))
+
+(test-suite "synth:fill-template"
+  (set-code "(begin)")
+  (synthesize:register-template "double"
+    "(define (double-{name} x) (* 2 x))" "name")
+  (check (synthesize:fill "double" "val")))
+
+(test-suite "synth:fill-multi-param"
+  (set-code "(begin)")
+  (synthesize:register-template "handler"
+    "(define (handle-{r} req) (query "{q}"))" "r" "q")
+  (check (synthesize:fill "handler" "users" "select *")))
+
+(test-suite "synth:list-templates"
+  (check (pair? (synthesize:list-templates))))
+
+(test-suite "synth:fill-nonexistent"
+  ;; Filling a non-existent template should return void
+  (check (not (synthesize:fill "no-such-template" "x"))))

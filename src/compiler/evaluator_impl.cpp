@@ -6541,6 +6541,137 @@ Evaluator::Evaluator() {
             aura::messaging::g_mailbox_count(svc)));
     });
 
+    // ═══════════════════════════════════════════════════════════════
+    // P15: Synthesize Template Strategy (P0)
+    // ═══════════════════════════════════════════════════════════════
+
+    // Template storage
+    static std::vector<std::pair<std::string, std::string>> g_template_patterns;  // (name, pattern)
+    static std::vector<std::vector<std::string>> g_template_params;  // params per template
+
+    // (synthesize:register-template name pattern param-names...)
+    primitives_.add("synthesize:register-template", [this](const auto& a) -> EvalValue {
+        if (a.size() < 3 || !is_string(a[0]) || !is_string(a[1]))
+            return make_bool(false);
+        auto name_idx = as_string_idx(a[0]);
+        auto pat_idx = as_string_idx(a[1]);
+        if (name_idx >= string_heap_.size() || pat_idx >= string_heap_.size())
+            return make_bool(false);
+
+        std::string name = string_heap_[name_idx];
+        std::string pattern = string_heap_[pat_idx];
+        std::vector<std::string> params;
+        for (std::size_t i = 2; i < a.size(); ++i) {
+            if (is_string(a[i])) {
+                auto pidx = as_string_idx(a[i]);
+                if (pidx < string_heap_.size())
+                    params.push_back(string_heap_[pidx]);
+            }
+        }
+
+        // Replace or append
+        bool found = false;
+        for (auto& t : g_template_patterns) {
+            if (t.first == name) {
+                t.second = pattern;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            g_template_patterns.push_back({name, pattern});
+            g_template_params.push_back(params);
+        } else {
+            // Find the params index
+            for (std::size_t i = 0; i < g_template_patterns.size(); ++i) {
+                if (g_template_patterns[i].first == name) {
+                    g_template_params[i] = params;
+                    break;
+                }
+            }
+        }
+        return make_bool(true);
+    });
+
+    // (synthesize:fill template-name arg-values...)
+    primitives_.add("synthesize:fill", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_void();
+        auto name_idx = as_string_idx(a[0]);
+        if (name_idx >= string_heap_.size())
+            return make_void();
+        std::string name = string_heap_[name_idx];
+
+        // Find template
+        int ti = -1;
+        for (std::size_t i = 0; i < g_template_patterns.size(); ++i) {
+            if (g_template_patterns[i].first == name) { ti = static_cast<int>(i); break; }
+        }
+        if (ti < 0) return make_void();
+
+        // Build substitution map
+        std::unordered_map<std::string, std::string> subst;
+        if (static_cast<std::size_t>(ti) < g_template_params.size()) {
+            auto& pnames = g_template_params[ti];
+            for (std::size_t i = 0; i < pnames.size() && i + 1 < a.size(); ++i) {
+                if (is_string(a[i + 1])) {
+                    auto vidx = as_string_idx(a[i + 1]);
+                    if (vidx < string_heap_.size())
+                        subst[pnames[i]] = string_heap_[vidx];
+                }
+            }
+        }
+
+        // Apply {param} substitutions
+        std::string pattern = g_template_patterns[ti].second;
+        std::string filled;
+        std::size_t pos = 0;
+        while (pos < pattern.size()) {
+            auto open = pattern.find('{', pos);
+            if (open == std::string::npos) {
+                filled.append(pattern, pos, std::string::npos);
+                break;
+            }
+            filled.append(pattern, pos, open - pos);
+            auto close = pattern.find('}', open);
+            if (close == std::string::npos) {
+                filled.append(pattern, open);
+                break;
+            }
+            auto pname = pattern.substr(open + 1, close - open - 1);
+            auto it = subst.find(pname);
+            if (it != subst.end())
+                filled.append(it->second);
+            else
+                filled += "{" + pname + "}";
+            pos = close + 1;
+        }
+
+        // Apply filled code to workspace via set-code
+        auto code_idx = string_heap_.size();
+        string_heap_.push_back(filled);
+        auto sc_fn = primitives_.lookup("set-code");
+        if (!sc_fn) return make_void();
+        auto result = (*sc_fn)({make_string(code_idx)});
+        // Return the source or true
+        if (is_bool(result))
+            return result;
+        return make_bool(true);
+    });
+
+    // (synthesize:list-templates) → list of names
+    primitives_.add("synthesize:list-templates", [this](const auto&) -> EvalValue {
+        EvalValue list = make_void();
+        for (auto it = g_template_patterns.rbegin(); it != g_template_patterns.rend(); ++it) {
+            auto idx = string_heap_.size();
+            string_heap_.push_back(it->first);
+            auto pid = pairs_.size();
+            pairs_.push_back({make_string(idx), list});
+            list = make_pair(pid);
+        }
+        return list;
+    });
+
 // ── intend — 纯循环管理器 — 纯循环管理器 ────────────────────────────────
     // (intend goal generator-fn verifier-fn [fixer-fn] [max-attempts])
     //
