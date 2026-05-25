@@ -3267,6 +3267,7 @@ void Evaluator::init_pair_primitives() {
             aura::ast::MutationStatus::Committed, 1, old_val, new_tid, true);
         // Actually apply the type change
         flat.set_type(node, new_tid);
+        defuse_version_++;
         return make_int(static_cast<std::int64_t>(mid));
     });
 
@@ -3485,6 +3486,8 @@ void Evaluator::init_pair_primitives() {
         flat_ptr->root = pr.root;
         workspace_flat_ = flat_ptr;
         workspace_pool_ = pool_ptr;
+        // Invalidate def-use index (new workspace)
+        defuse_index_ = nullptr;
         return make_bool(true);
     });
 
@@ -3819,6 +3822,7 @@ void Evaluator::init_pair_primitives() {
     // Define's value reference to the newly parsed nodes. All pre-existing mutations
     // on other nodes are preserved.
     primitives_.add("mutate:rebind", [this](const auto& a) {
+        defuse_version_++;
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
             !workspace_pool_)
             return make_bool(false);
@@ -4058,6 +4062,7 @@ void Evaluator::init_pair_primitives() {
     // Finds (define (name params) ...) and replaces the Lambda body.
     // Parses new body INTO the workspace FlatAST so all node IDs are valid.
     primitives_.add("mutate:set-body", [this](const auto& a) {
+        defuse_version_++;
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
             !workspace_pool_)
             return make_bool(false);
@@ -4102,6 +4107,7 @@ void Evaluator::init_pair_primitives() {
     // The node entry remains in the FlatAST but is disconnected from the tree.
     // The tree walker in eval_flat skips NULL_NODE children.
     primitives_.add("mutate:remove-node", [this](const auto& a) {
+        defuse_version_++;
         if (a.empty() || !is_int(a[0]) || !workspace_flat_)
             return make_bool(false);
         auto target = static_cast<aura::ast::NodeId>(as_int(a[0]));
@@ -4132,6 +4138,7 @@ void Evaluator::init_pair_primitives() {
     // Position 0 = first child, child_count = append at end.
     // Parses code-string INTO workspace, preserving all existing nodes/IDs.
     primitives_.add("mutate:insert-child", [this](const auto& a) {
+        defuse_version_++;
         if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_string(a[2]) ||
             !workspace_flat_ || !workspace_pool_)
             return make_bool(false);
@@ -4162,6 +4169,7 @@ void Evaluator::init_pair_primitives() {
     // (mutate:tweak-literal node-id delta "summary") — Tweak a LiteralInt by delta
     // Reads current value, adds delta, writes back. Simpler than read+replace-value.
     primitives_.add("mutate:tweak-literal", [this](const auto& a) {
+        defuse_version_++;
         if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1]) || !workspace_flat_)
             return make_bool(false);
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
@@ -4282,6 +4290,457 @@ std::optional<PrimFn> Primitives::lookup(const std::string& n) const {
     auto i = table_.find(n);
     return i != table_.end() ? std::optional(i->second) : std::nullopt;
 }
+
+// ═══════════════════════════════════════════════════════════════
+// DefUseIndex — Scope-level cached def-use chain
+// ═══════════════════════════════════════════════════════════════
+// P1 implementation: build scope tree + indexes once, incremental rebuild on mutate.
+
+struct DefUseIndex {
+    using NodeId = aura::ast::NodeId;
+    using SymId = aura::ast::SymId;
+    using FlatAST = aura::ast::FlatAST;
+    using StringPool = aura::ast::StringPool;
+    using NodeTag = aura::ast::NodeTag;
+    static constexpr auto INVALID_SYM = aura::ast::INVALID_SYM;
+
+    struct ScopeNode {
+        NodeId node = 0;
+        std::uint32_t parent = std::uint32_t(-1);
+        std::uint32_t first_child = 0;
+        std::uint16_t child_count = 0;
+        std::uint32_t def_first = 0;
+        std::uint16_t def_count = 0;
+        std::uint32_t ref_first = 0;
+        std::uint16_t ref_count = 0;
+        std::uint32_t use_first = 0;
+        std::uint32_t use_count = 0;
+        bool dirty = false;
+        bool tombstoned = false;
+    };
+
+    struct SymRef {
+        SymId sym = INVALID_SYM;
+        std::uint32_t use_start = 0;
+        std::uint16_t use_count = 0;
+    };
+
+    // Arena data — all flat vectors, no pointers
+    std::vector<ScopeNode> scopes_;
+    std::vector<SymId> def_syms_;
+    std::vector<NodeId> def_nodes_;
+    std::vector<SymRef> refs_;
+    std::vector<NodeId> uses_;
+
+    // Cross-scope: sym → all scopes that define/reference it
+    std::vector<SymId> sym_scopes_keys_;
+    std::vector<std::uint32_t> sym_scopes_vals_;
+    std::vector<std::uint32_t> sym_to_range_;
+
+    FlatAST* flat_ = nullptr;
+    StringPool* pool_ = nullptr;
+    bool built_ = false;
+    std::size_t flat_size_at_build_ = 0;
+
+    void destroy() {
+        scopes_.clear(); def_syms_.clear(); def_nodes_.clear();
+        refs_.clear(); uses_.clear(); sym_scopes_keys_.clear();
+        sym_scopes_vals_.clear(); sym_to_range_.clear();
+        flat_ = nullptr; pool_ = nullptr; built_ = false;
+    }
+
+    // ── Build from scratch ──────────────────────────────────────
+    // Single-pass: walk AST nodes 0..N-1, detect scope boundaries,
+    // collect defs, build scope tree, then collect uses per scope.
+    void build(FlatAST& flat, StringPool& pool) {
+        destroy();
+        flat_ = &flat;
+        pool_ = &pool;
+        flat_size_at_build_ = flat.size();
+
+        // Pre-allocate
+        def_syms_.reserve(flat.size() / 4);
+        def_nodes_.reserve(flat.size() / 4);
+        uses_.reserve(flat.size() / 2);
+        refs_.reserve(flat.size() / 4);
+
+        // Root scope (module-level: node 0)
+        scopes_.push_back({});
+        scopes_.back().node = 0;
+        scopes_.back().dirty = false;
+
+        // Pass 1: walk all nodes, build scope tree + collect defs
+        // Use explicit depth-first traversal, NOT scan-by-NodeId
+        // because children may not be contiguous.
+        struct Frame {
+            NodeId node_id;
+            std::uint32_t scope_idx;
+            std::size_t child_idx;  // which child we're processing
+        };
+        std::vector<Frame> stack;
+        stack.push_back({flat.root, 0, 0});
+
+        while (!stack.empty()) {
+            auto& f = stack.back();
+            auto v = flat.get(f.node_id);
+
+            // First visit: check if this node creates a scope
+            if (f.child_idx == 0) {
+                bool is_scope_creator = false;
+                switch (v.tag) {
+                    case NodeTag::Define:
+                    case NodeTag::Lambda:
+                    case NodeTag::Let:
+                    case NodeTag::LetRec:
+                    case NodeTag::Begin:
+                        is_scope_creator = true;
+                        break;
+                    default:
+                        break;
+                }
+
+                if (is_scope_creator && f.node_id != flat.root) {
+                    // Create new scope (except for root which already has scope 0)
+                    auto scope_idx = scopes_.size();
+                    ScopeNode sn;
+                    sn.node = f.node_id;
+                    sn.parent = f.scope_idx;
+                    sn.dirty = false;
+                    scopes_.push_back(sn);
+
+                    // Link into parent
+                    auto& parent = scopes_[f.scope_idx];
+                    if (parent.child_count == 0)
+                        parent.first_child = scope_idx;
+                    parent.child_count++;
+
+                    // Collect defs for this scope
+                    auto& sn2 = scopes_.back();
+                    sn2.def_first = def_syms_.size();
+                    switch (v.tag) {
+                        case NodeTag::Define:
+                            def_syms_.push_back(v.sym_id);
+                            def_nodes_.push_back(f.node_id);
+                            break;
+                        case NodeTag::Lambda:
+                            for (auto pid : v.params) {
+                                def_syms_.push_back(pid);
+                                def_nodes_.push_back(f.node_id);
+                            }
+                            break;
+                        case NodeTag::Let:
+                        case NodeTag::LetRec:
+                            def_syms_.push_back(v.sym_id);
+                            def_nodes_.push_back(f.node_id);
+                            break;
+                        default:
+                            break;
+                    }
+                    sn2.def_count = def_syms_.size() - sn2.def_first;
+
+                    // Update frame scope
+                    f.scope_idx = scope_idx;
+                }
+            }
+
+            // Process children
+            if (f.child_idx < v.children.size()) {
+                auto child = v.child(f.child_idx);
+                auto child_scope = f.scope_idx;
+
+                // Skip scope-creating children (they create their own scope)
+                // But still process them as sub-frames
+                auto cv = flat.get(child);
+                f.child_idx++;
+                stack.push_back({child, child_scope, 0});
+            } else {
+                stack.pop_back();
+                // When returning from a scope-creating child, the parent scope stays
+            }
+        }
+
+        // Pass 2: collect uses per scope
+        // Walk all Variable nodes, associate each with the innermost scope
+        // that could define it (or skip if unbound)
+        // For simplicity: associate each Variable with the scope it belongs to
+        collect_uses(flat);
+
+        // Pass 3: add any unfound defs from full scan (covers edge cases)
+        // This ensures top-level defines and lets are always indexed
+        for (NodeId sid = 0; sid < flat.size(); ++sid) {
+            auto sv = flat.get(sid);
+            aura::ast::SymId def_sym = aura::ast::INVALID_SYM;
+            
+            // Check for define/let/letrec that might not be in any scope
+            if (sv.tag == NodeTag::Define || sv.tag == NodeTag::Let ||
+                sv.tag == NodeTag::LetRec) {
+                def_sym = sv.sym_id;
+            } else if (sv.tag == NodeTag::Lambda && sv.params.size() > 0) {
+                // For lambdas at top level, add all params
+            }
+            
+            if (def_sym != aura::ast::INVALID_SYM) {
+                // Find which scope this node belongs to
+                std::uint32_t found_scope = 0;  // default: root scope
+                for (std::uint32_t si = 0; si < scopes_.size(); ++si) {
+                    auto& sn = scopes_[si];
+                    if (sn.node == sid) {
+                        found_scope = si;
+                        break;
+                    }
+                }
+                
+                // Check if this sym is already def'd in this scope
+                auto& sn = scopes_[found_scope];
+                bool exists = false;
+                for (std::uint16_t d = 0; d < sn.def_count; ++d) {
+                    if (def_syms_[sn.def_first + d] == def_sym) {
+                        exists = true;
+                        break;
+                    }
+                }
+                
+                if (!exists) {
+                    // Insert def at the end of this scope's defs
+                    // Need to shift: append new def, update scope's def_range
+                    // For root scope, just append
+                    auto old_def_first = sn.def_first;
+                    auto old_def_count = sn.def_count;
+                    def_syms_.push_back(def_sym);
+                    def_nodes_.push_back(sid);
+                    sn.def_first = def_syms_.size() - 1;
+                    sn.def_count = 1 + old_def_count;
+                }
+            }
+        }
+
+        // Pass 4: build cross-scope sym index
+        build_sym_index();
+
+        built_ = true;
+    }
+
+    // ── Collect uses: walk all Variable nodes, group by scope ────
+    void collect_uses(FlatAST& flat) {
+        // Map: node_id → scope_idx
+        std::unordered_map<NodeId, std::uint32_t> node_to_scope;
+        node_to_scope.reserve(flat.size());
+
+        // Build node-to-scope mapping via DFS
+        struct Frame { NodeId nid; std::uint32_t scope_idx; std::size_t child_idx; };
+        std::vector<Frame> stack;
+        stack.push_back({flat.root, 0, 0});
+
+        while (!stack.empty()) {
+            auto& f = stack.back();
+            auto v = flat.get(f.nid);
+
+            if (f.child_idx == 0) {
+                // First visit: determine scope
+                // Check parent scope
+                auto this_scope = f.scope_idx;
+
+                // If this node creates a scope, find its scope index
+                bool found = false;
+                for (std::size_t si = scopes_.size(); si > 0; --si) {
+                    auto& sn = scopes_[si - 1];
+                    if (sn.node == f.nid && !sn.tombstoned) {
+                        this_scope = si - 1;
+                        found = true;
+                        break;
+                    }
+                }
+                node_to_scope[f.nid] = this_scope;
+
+                if (f.child_idx == 0) {
+                    f.scope_idx = this_scope;
+                }
+            }
+
+            if (f.child_idx < v.children.size()) {
+                auto child = v.child(f.child_idx);
+                f.child_idx++;
+                stack.push_back({child, f.scope_idx, 0});
+            } else {
+                stack.pop_back();
+            }
+        }
+
+        // Now collect Variables grouped by scope
+        // Group by scope: scope_idx → {sym → [node_ids]}
+        struct ScopeVarGroup {
+            std::unordered_map<SymId, std::vector<NodeId>> vars;
+        };
+        std::unordered_map<std::uint32_t, ScopeVarGroup> scope_vars;
+
+        for (NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+            if (v.tag == NodeTag::Variable) {
+                auto scope_it = node_to_scope.find(id);
+                if (scope_it != node_to_scope.end()) {
+                    scope_vars[scope_it->second].vars[v.sym_id].push_back(id);
+                }
+            }
+        }
+
+        // Build refs_ and uses_ from scope_vars
+        for (std::uint32_t si = 0; si < scopes_.size(); ++si) {
+            auto& sn = scopes_[si];
+            sn.ref_first = refs_.size();
+            sn.use_first = uses_.size();
+
+            auto sv_it = scope_vars.find(si);
+            if (sv_it != scope_vars.end()) {
+                for (auto& [sym, nodes] : sv_it->second.vars) {
+                    SymRef sr;
+                    sr.sym = sym;
+                    sr.use_start = uses_.size();
+                    sr.use_count = static_cast<std::uint16_t>(nodes.size());
+                    for (auto nid : nodes)
+                        uses_.push_back(nid);
+                    refs_.push_back(sr);
+                }
+            }
+
+            sn.ref_count = static_cast<std::uint16_t>(refs_.size() - sn.ref_first);
+            sn.use_count = uses_.size() - sn.use_first;
+        }
+    }
+
+    // ── Build sym → scopes index ────────────────────────────────
+    void build_sym_index() {
+        SymId max_sym = 0;
+        for (auto s : def_syms_)
+            if (s != INVALID_SYM && s > max_sym) max_sym = s;
+        for (auto& r : refs_)
+            if (r.sym != INVALID_SYM && r.sym > max_sym) max_sym = r.sym;
+
+        sym_to_range_.resize(max_sym + 1, 0);
+
+        struct Entry { SymId sym; std::uint32_t scope_idx; bool is_def; std::uint32_t local_idx; };
+        std::unordered_map<uint32_t, std::vector<Entry>> entries_by_sym;
+
+        for (std::uint32_t si = 0; si < scopes_.size(); ++si) {
+            auto& sn = scopes_[si];
+            for (std::uint16_t d = 0; d < sn.def_count; ++d) {
+                auto sym = def_syms_[sn.def_first + d];
+                entries_by_sym[sym].push_back({sym, si, true, sn.def_first + d});
+            }
+            for (std::uint16_t r = 0; r < sn.ref_count; ++r) {
+                auto& ref = refs_[sn.ref_first + r];
+                entries_by_sym[ref.sym].push_back({ref.sym, si, false, sn.ref_first + r});
+            }
+        }
+
+        sym_scopes_keys_.clear();
+        sym_scopes_vals_.clear();
+
+        for (auto& [sym, entries] : entries_by_sym) {
+            if (sym > max_sym) continue;
+            sym_to_range_[sym] = (sym_scopes_vals_.size() << 16) | (uint32_t)entries.size();
+            for (auto& e : entries) {
+                sym_scopes_keys_.push_back(sym);
+                sym_scopes_vals_.push_back((e.scope_idx << 1) | (e.is_def ? 1u : 0u));
+            }
+        }
+    }
+
+    // ── Query: def-use for a symbol ─────────────────────────────
+    struct DefUseResult {
+        std::vector<NodeId> defs;
+        std::vector<NodeId> uses;
+    };
+
+    DefUseResult query_def_use(SymId sym) {
+        DefUseResult r;
+        if (sym >= sym_to_range_.size())
+            return r;
+
+        auto packed = sym_to_range_[sym];
+        if (packed == 0)
+            return r;
+
+        auto start = packed >> 16;
+        auto count = packed & 0xFFFF;
+
+        for (std::uint32_t i = start; i < start + count; ++i) {
+            auto val = sym_scopes_vals_[i];
+            auto scope_idx = val >> 1;
+            if (val & 1) {
+                // is_def
+                auto& sn = scopes_[scope_idx];
+                for (std::uint16_t d = 0; d < sn.def_count; ++d) {
+                    if (def_syms_[sn.def_first + d] == sym)
+                        r.defs.push_back(def_nodes_[sn.def_first + d]);
+                }
+            } else {
+                // is_ref — collect use nodes
+                auto& sn = scopes_[scope_idx];
+                for (std::uint16_t ri = 0; ri < sn.ref_count; ++ri) {
+                    auto& ref = refs_[sn.ref_first + ri];
+                    if (ref.sym == sym) {
+                        for (std::uint16_t u = 0; u < ref.use_count; ++u)
+                            r.uses.push_back(uses_[ref.use_start + u]);
+                    }
+                }
+            }
+        }
+        return r;
+    }
+
+    // ── Query: caller nodes for a symbol ────────────────────────
+    std::vector<NodeId> query_callers(SymId sym, FlatAST& flat) {
+        std::vector<NodeId> callers;
+        for (NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+            if (v.tag == NodeTag::Call && !v.children.empty()) {
+                auto callee = flat.get(v.child(0));
+                if (callee.tag == NodeTag::Variable && callee.sym_id == sym)
+                    callers.push_back(id);
+            }
+        }
+        return callers;
+    }
+
+    // ── Mark scope containing a node as dirty ───────────────────
+    void mark_dirty(NodeId node) {
+        if (!built_ || scopes_.empty()) return;
+        for (auto& sn : scopes_) {
+            if (sn.tombstoned) continue;
+            if (sn.node == node) {
+                mark_dirty_up(sn);
+                return;
+            }
+        }
+        for (auto& sn : scopes_) sn.dirty = true;
+    }
+
+    void mark_dirty_up(ScopeNode& sn) {
+        sn.dirty = true;
+        if (sn.parent < scopes_.size() && !scopes_[sn.parent].tombstoned)
+            mark_dirty_up(scopes_[sn.parent]);
+    }
+
+    // ── Incremental rebuild ─────────────────────────────────────
+    bool rebuild_dirty(FlatAST& flat, StringPool& pool) {
+        if (!built_) {
+            build(flat, pool);
+            return true;
+        }
+        if (flat_ != &flat || flat.size() != flat_size_at_build_) {
+            build(flat, pool);
+            return true;
+        }
+        bool any_dirty = false;
+        for (auto& sn : scopes_) {
+            if (sn.dirty) { any_dirty = true; break; }
+        }
+        if (!any_dirty)
+            return false;
+        build(flat, pool);
+        return true;
+    }
+};// ═══════════════════════════════════════════════════════════════
 
 Evaluator::Evaluator() {
     top_.set_primitives(&primitives_);
@@ -4709,15 +5168,46 @@ Evaluator::Evaluator() {
     });
 
     // ═══════════════════════════════════════════════════════════════
-    // P9: Def-Use Analysis (P0 — simple full-ast scan)
+    // P9: Def-Use Analysis (P1 — scope-level cached)
     // ═══════════════════════════════════════════════════════════════
+
+    // Helper: get or rebuild the def-use index
+    // Tracks defuse_version_ to detect mutations since last build
+    auto ensure_defuse = [this]() -> DefUseIndex* {
+        if (!workspace_flat_ || !workspace_pool_)
+            return nullptr;
+        auto idx = static_cast<DefUseIndex*>(defuse_index_);
+        if (!idx) {
+            idx = new DefUseIndex();
+            defuse_index_ = idx;
+            idx->build(*workspace_flat_, *workspace_pool_);
+            defuse_version_ = 1;
+        } else {
+            // If mutations happened, rebuild (full rebuild for now)
+            if (defuse_version_ > 1)
+                idx->build(*workspace_flat_, *workspace_pool_);
+            else
+                idx->rebuild_dirty(*workspace_flat_, *workspace_pool_);
+        }
+        return idx;
+    };
+
+    // Helper: build Aura result list from NodeIds
+    auto nodes_to_list = [this](const std::vector<DefUseIndex::NodeId>& nodes) -> EvalValue {
+        EvalValue list = make_void();
+        for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
+            auto pid = pairs_.size();
+            pairs_.push_back({make_int(static_cast<std::int64_t>(*it)), list});
+            list = make_pair(pid);
+        }
+        return list;
+    };
 
     // (query:def-use "sym-name")
     //   → ((def-node-id ...) . (use-node-id ...))
-    //   Linear scan of workspace FlatAST. Returns every definition and
-    //   every use (Variable) of the named symbol, as a pair of two lists.
-    //   Definitions detected: define, lambda params, let, letrec bindings.
-    primitives_.add("query:def-use", [this](const auto& a) -> EvalValue {
+    //   Scope-level cached def-use chain. Builds index on first call,
+    //   incrementally rebuilds dirty scopes on subsequent calls.
+    primitives_.add("query:def-use", [this, ensure_defuse, nodes_to_list](const auto& a) -> EvalValue {
         if (a.empty() || !is_string(a[0]) || !workspace_flat_ || !workspace_pool_)
             return make_void();
         auto sym_idx = as_string_idx(a[0]);
@@ -4725,55 +5215,15 @@ Evaluator::Evaluator() {
             return make_void();
         auto target_name = string_heap_[sym_idx];
         auto target_sym = workspace_pool_->intern(target_name);
-        auto& flat = *workspace_flat_;
 
-        EvalValue def_list = make_void();
-        EvalValue use_list = make_void();
+        auto idx = ensure_defuse();
+        if (!idx)
+            return make_void();
 
-        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            auto v = flat.get(id);
+        auto result = idx->query_def_use(target_sym);
+        auto def_list = nodes_to_list(result.defs);
+        auto use_list = nodes_to_list(result.uses);
 
-            // Check if this is a definition of the target symbol
-            bool is_def = false;
-            switch (v.tag) {
-                case aura::ast::NodeTag::Define:
-                case aura::ast::NodeTag::Let:
-                case aura::ast::NodeTag::LetRec:
-                    if (v.sym_id == target_sym)
-                        is_def = true;
-                    break;
-                case aura::ast::NodeTag::Lambda:
-                    for (auto pid : v.params)
-                        if (pid == target_sym) {
-                            is_def = true;
-                            break;
-                        }
-                    break;
-                default:
-                    break;
-            }
-            if (is_def) {
-                auto pid = pairs_.size();
-                pairs_.push_back({make_int(static_cast<std::int64_t>(id)), def_list});
-                def_list = make_pair(pid);
-            }
-
-            // Check if this is a use of the target symbol
-            if (v.tag == aura::ast::NodeTag::Variable && v.sym_id == target_sym) {
-                // Skip binding positions: lambda params and define/let names
-                // are handled as defs above, not uses.
-                bool is_binding_position = false;
-                // Check if this Variable is a direct child of a Define/Let/LetRec
-                // as the bound name (child index 2 for define, 0 for let binding)
-                // For now, trust that Define/Lambda/Let nodes use sym_id not Variable
-                // children for binding names.
-                auto pid = pairs_.size();
-                pairs_.push_back({make_int(static_cast<std::int64_t>(id)), use_list});
-                use_list = make_pair(pid);
-            }
-        }
-
-        // Return (def-list . use-list) as a pair
         auto result_pid = pairs_.size();
         pairs_.push_back({def_list, use_list});
         return make_pair(result_pid);
@@ -4781,18 +5231,17 @@ Evaluator::Evaluator() {
 
     // (query:reaches node-id)
     //   → ((def-node-id ...) . (use-node-id ...))
-    //   For a given definition node (define/let), find all uses of the
-    //   symbol it defines. Calls query:def-use internally.
-    primitives_.add("query:reaches", [this](const auto& a) -> EvalValue {
+    //   Cached implementation using def-use index.
+    primitives_.add("query:reaches", [this, ensure_defuse, nodes_to_list](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]) || !workspace_flat_ || !workspace_pool_)
             return make_void();
-        auto target = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto target = static_cast<DefUseIndex::NodeId>(as_int(a[0]));
         auto& flat = *workspace_flat_;
         if (target >= flat.size())
             return make_void();
 
         auto v = flat.get(target);
-        aura::ast::SymId defined_sym = aura::ast::INVALID_SYM;
+        DefUseIndex::SymId defined_sym = aura::ast::INVALID_SYM;
         switch (v.tag) {
             case aura::ast::NodeTag::Define:
             case aura::ast::NodeTag::Let:
@@ -4805,21 +5254,23 @@ Evaluator::Evaluator() {
         if (defined_sym == aura::ast::INVALID_SYM)
             return make_void();
 
-        // Call query:def-use for the defined symbol
-        auto name = workspace_pool_->resolve(defined_sym);
-        auto name_idx = string_heap_.size();
-        string_heap_.push_back(std::string(name));
-        auto duo_fn = primitives_.lookup("query:def-use");
-        if (!duo_fn)
+        auto idx = ensure_defuse();
+        if (!idx)
             return make_void();
-        return (*duo_fn)({make_string(name_idx)});
+
+        auto result = idx->query_def_use(defined_sym);
+        auto def_list = nodes_to_list(result.defs);
+        auto use_list = nodes_to_list(result.uses);
+
+        auto result_pid = pairs_.size();
+        pairs_.push_back({def_list, use_list});
+        return make_pair(result_pid);
     });
 
     // (query:effects "sym-name")
     //   → ((def-node-id ...) . (use-node-id ...) . (caller-node-id ...))
-    //   Returns defs, uses, and callers (Call nodes where target is the callee).
-    //   Useful for "if I mutate this, what breaks?"
-    primitives_.add("query:effects", [this](const auto& a) -> EvalValue {
+    //   Cached defs + uses, linear scan for callers.
+    primitives_.add("query:effects", [this, ensure_defuse, nodes_to_list](const auto& a) -> EvalValue {
         if (a.empty() || !is_string(a[0]) || !workspace_flat_ || !workspace_pool_)
             return make_void();
         auto sym_idx = as_string_idx(a[0]);
@@ -4829,53 +5280,17 @@ Evaluator::Evaluator() {
         auto target_sym = workspace_pool_->intern(target_name);
         auto& flat = *workspace_flat_;
 
-        EvalValue def_list = make_void();
-        EvalValue use_list = make_void();
-        EvalValue caller_list = make_void();
+        auto idx = ensure_defuse();
+        if (!idx)
+            return make_void();
 
-        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            auto v = flat.get(id);
+        auto duo = idx->query_def_use(target_sym);
+        auto callers = idx->query_callers(target_sym, flat);
 
-            // Definitions
-            bool is_def = false;
-            switch (v.tag) {
-                case aura::ast::NodeTag::Define:
-                case aura::ast::NodeTag::Let:
-                case aura::ast::NodeTag::LetRec:
-                    if (v.sym_id == target_sym) is_def = true;
-                    break;
-                case aura::ast::NodeTag::Lambda:
-                    for (auto pid : v.params)
-                        if (pid == target_sym) { is_def = true; break; }
-                    break;
-                default: break;
-            }
-            if (is_def) {
-                auto pid = pairs_.size();
-                pairs_.push_back({make_int(static_cast<std::int64_t>(id)), def_list});
-                def_list = make_pair(pid);
-            }
+        auto def_list = nodes_to_list(duo.defs);
+        auto use_list = nodes_to_list(duo.uses);
+        auto caller_list = nodes_to_list(callers);
 
-            // Uses (Variable nodes)
-            if (v.tag == aura::ast::NodeTag::Variable && v.sym_id == target_sym) {
-                auto pid = pairs_.size();
-                pairs_.push_back({make_int(static_cast<std::int64_t>(id)), use_list});
-                use_list = make_pair(pid);
-            }
-
-            // Callers (Call nodes whose callee matches target)
-            if (v.tag == aura::ast::NodeTag::Call && !v.children.empty()) {
-                auto callee = flat.get(v.child(0));
-                if (callee.tag == aura::ast::NodeTag::Variable &&
-                    callee.sym_id == target_sym) {
-                    auto pid = pairs_.size();
-                    pairs_.push_back({make_int(static_cast<std::int64_t>(id)), caller_list});
-                    caller_list = make_pair(pid);
-                }
-            }
-        }
-
-        // Return (defs uses callers) as a three-element list
         auto c1 = pairs_.size(); pairs_.push_back({caller_list, make_void()});
         auto c2 = pairs_.size(); pairs_.push_back({use_list, make_pair(c1)});
         auto c3 = pairs_.size(); pairs_.push_back({def_list, make_pair(c2)});
