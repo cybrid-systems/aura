@@ -26,6 +26,9 @@
 #define IS_SPECIAL(v) (((v) & 3) == 3)
 #define IS_FIXNUM(v) (((v) & 1) == 0)
 #define PAIR_INDEX(v) ((v) >> 2)
+#define IS_STRING(v) ((v) <= -9000000000000000000LL)
+#define STRING_IDX(v) ((int)(-(int64_t)(v) - 9000000000000000000LL))
+#define MAKE_STRING_SENTINEL(i) (-9000000000000000000LL - (int64_t)(i))
 #define SPECIAL_TAG(v) (((v) >> 2) & 3)
 
 // ── Enum-compatible tag values (use static const instead of macros to avoid enum conflict)
@@ -501,28 +504,29 @@ static void aura_display_pair_chain(int64_t val) {
         int64_t car_val = aura_pair_car(val);
         if (IS_PAIR(car_val))
             aura_display_pair_chain(car_val);
-        else if (IS_SPECIAL(car_val) && SPECIAL_TAG(car_val) == TAG_VOID)
-            printf("()");
         else if (IS_SPECIAL(car_val))
             printf("%s", SPECIAL_TAG(car_val) == KWD_TRUE ? "#t" : "#f");
+        else if (IS_STRING(car_val))
+            printf("%s", aura_string_ref((uint64_t)STRING_IDX(car_val)));
         else
             printf("%ld", (long)(car_val >> 1));
         val = aura_pair_cdr(val);
     }
-    if (val != 0 && !IS_SPECIAL(val))
+    if (IS_STRING(val))
+        printf(" . %s", aura_string_ref((uint64_t)STRING_IDX(val)));
+    else if (val != 0 && !IS_PAIR(val) && !IS_SPECIAL(val))
         printf(" . %ld", (long)(val >> 1));
-    else if (IS_SPECIAL(val) && SPECIAL_TAG(val) != TAG_VOID)
+    else if (IS_SPECIAL(val) && SPECIAL_TAG(val) != KWD_VOID)
         printf(" . %s", SPECIAL_TAG(val) == KWD_TRUE ? "#t" : "#f");
-    else if (val != 0 && !IS_SPECIAL(val))
-        printf("()");
     putchar(')');
 }
-
 int64_t aura_display_int(int64_t val) {
     // Legacy sentinel encoding (from LLVM codegen, shared with JIT)
     if (val == 0x8000000000000000LL) { printf("#t"); }
     else if (val == 0x8000000000000001LL) { printf("#f"); }
-    else if (IS_PAIR(val)) {
+    else if (IS_STRING(val)) {
+        printf("%s", aura_string_ref((uint64_t)STRING_IDX(val)));
+    } else if (IS_PAIR(val)) {
         aura_display_pair_chain(val);
     } else if (IS_SPECIAL(val)) {
         int st = SPECIAL_TAG(val);
@@ -537,7 +541,6 @@ int64_t aura_display_int(int64_t val) {
     fflush(stdout);
     g_display_was_called = 1;
     return val;
-}    return val;
 }
 
 // ── Type-aware display ─────────────────────────────────
