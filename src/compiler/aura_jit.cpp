@@ -380,32 +380,23 @@ struct LLVMBuilder {
             }
 
             // Drop: call all safe drop functions (runtime's live-flag is idempotent)
-            // ── M4 Linear ownership ops ───────────────────────────
-            // These use IROpcode values from ir.ixx (lowering pass emits
-            // them directly). For untagged AOT runtime:
-            //   LinearWrap/MoveOp/BorrowOp/MutBorrowOp = no-ops
-            //   DropOp (41) = actually calls drop functions
-            //
-            // Legacy jit::OpDrop (39) is retained but the lowering never
-            // emits it — it emits IROpcode::DropOp (41).
+            // ── M4 Linear ownership ops (IROpcode values from ir.ixx) ─
+            // LinearWrap=39, MoveOp=40, BorrowOp=41, MutBorrowOp=42,
+            // DropOp=43, RefCountOp=44
+            // For untagged AOT runtime:
+            //   LinearWrap/MoveOp/BorrowOp/MutBorrowOp/RefCountOp =
+            //     no-ops (compile-time concepts, pass through)
+            //   DropOp (43) = actually calls drop functions
 
-            case 37: /* IROpcode::LinearWrap */ {
+            case 39: /* IROpcode::LinearWrap */
+            case 40: /* IROpcode::MoveOp */
+            case 41: /* IROpcode::BorrowOp */
+            case 42: /* IROpcode::MutBorrowOp */
+            case 44: /* IROpcode::RefCountOp */ {
                 store(inst.ops[0], load(inst.ops[1]));
                 return true;
             }
-            case 38: /* IROpcode::MoveOp */ {
-                store(inst.ops[0], load(inst.ops[1]));
-                return true;
-            }
-            case 39: /* IROpcode::BorrowOp (was jit::OpDrop — never emitted) */ {
-                store(inst.ops[0], load(inst.ops[1]));
-                return true;
-            }
-            case 40: /* IROpcode::MutBorrowOp */ {
-                store(inst.ops[0], load(inst.ops[1]));
-                return true;
-            }
-            case 41: /* IROpcode::DropOp */ {
+            case 43: /* IROpcode::DropOp */ {
                 auto val = load(inst.ops[0]);
                 irb->CreateCall(fn_drop_pair, {val});
                 irb->CreateCall(fn_drop_cell, {val});
