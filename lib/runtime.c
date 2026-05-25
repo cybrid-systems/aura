@@ -453,7 +453,7 @@ int64_t aura_prim_reg_count(void) {
 
 static int g_display_was_called = 0;
 
-// ── Print pair chain as list ──────────────────────────────
+// ── Display a pair chain as proper/dotted list ────────────
 static void aura_display_pair_chain(int64_t val) {
     putchar('(');
     int first = 1;
@@ -461,13 +461,16 @@ static void aura_display_pair_chain(int64_t val) {
         if (!first) putchar(' ');
         first = 0;
         int64_t car_val = aura_pair_car(val);
-        // Check if car is itself a pair
-        if (car_val < 0 && car_val != 0)
+        // Check if car is itself a pair (nested)
+        if (car_val < 0)
             aura_display_pair_chain(car_val);
         else
             printf("%ld", (long)car_val);
         val = aura_pair_cdr(val);
     }
+    // Improper list: dotted tail
+    if (val != 0)
+        printf(" . %ld", (long)val);
     putchar(')');
 }
 
