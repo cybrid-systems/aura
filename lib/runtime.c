@@ -325,6 +325,9 @@ void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
 typedef int64_t (*PrimFn)(int64_t* args, int32_t argc);
 static PrimFn s_prim_fns[MAX_PRIM_SLOTS];
 
+// Env offset for test functions (set before fn call, defined in test harness)
+int g_env_offset = 0;  // env offset for closure calls (used by test fn)
+
 int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
     // AOT primitive dispatch: negative closure_id means this is an
     // evaluator primitive loaded via OpPrimitive (AOT mode).
@@ -336,35 +339,41 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
         return 0;
     }
     
-    // Normal closure dispatch: set up locals from captured env + args.
-    // The closure function expects: locals[0..env_count-1] = captured env,
-    // locals[env_count..] = call arguments.
+    // Normal closure dispatch.
     uint64_t id = (uint64_t)closure_id;
     if (id >= closure_count || !closure_heap[id].live || !closure_heap[id].fn)
         return 0;
 
     ScalarFn fn = closure_heap[id].fn;
     uint32_t env_count = closure_heap[id].env_count;
-    uint32_t nargs = (uint32_t)argc;  // arg_count not stored in closure struct; use runtime value
-    uint32_t nlocals = closure_heap[id].local_count > 0
-        ? closure_heap[id].local_count : 16;
+
+    if (env_count == 0) {
+        // No captured env: call fn directly with args (backward compat for tests)
+        return fn(args, (uint32_t)argc);
+    }
+
+    // Set up locals from captured env + args.
+    // The closure expects: locals[0..env_count-1] = env, locals[env_count..] = args.
+    uint32_t nargs = (uint32_t)argc;
+    uint32_t raw_locals = closure_heap[id].local_count;
+    uint32_t nlocals = env_count + nargs;
+    if (raw_locals > nlocals) nlocals = raw_locals;
+    if (nlocals < 16) nlocals = 16;
     
-    // Stack buffer for small locals, heap for large
     int64_t stack_buf[64];
     int64_t* locals = stack_buf;
-    if (nlocals > 64) {
+    if (nlocals > 64)
         locals = (int64_t*)malloc((size_t)nlocals * sizeof(int64_t));
-    }
     for (uint32_t i = 0; i < nlocals; ++i) locals[i] = 0;
     
-    // Place captured env values first
     for (uint32_t i = 0; i < env_count && i < closure_heap[id].env_count; ++i)
         locals[i] = closure_heap[id].env[i];
     
-    // Place call arguments after env
     for (uint32_t i = 0; i < nargs; ++i)
         locals[env_count + i] = args[i];
     
+    // Set env offset for test functions (defined in runtime_test_harness.c)
+    g_env_offset = (int)env_count;
     int64_t result = fn(locals, nargs);
     
     if (nlocals > 64) free(locals);
@@ -676,6 +685,7 @@ int64_t aura_prim_call(int64_t prim_id, int64_t a1, int64_t a2, int64_t argc) {
     }
 }
 
+// Extern: env offset for test functions (set before fn call)
 // ═══════════════════════════════════════════════════════════
 // Main entry point
 // ═══════════════════════════════════════════════════════════

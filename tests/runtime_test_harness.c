@@ -192,14 +192,22 @@ TEST(test_cell_oob) {
 // Closure tests
 // ═══════════════════════════════════════════════════════════
 
-static int64_t test_add_fn(int64_t* args, uint32_t argc) {
+static int64_t test_add_fn(int64_t* locals, uint32_t argc);
+static int64_t test_mul_fn(int64_t* locals, uint32_t argc);
+
+// Static offset for env (set by aura_closure_call before calling fn)
+extern int g_env_offset;
+
+int64_t test_add_fn(int64_t* locals, uint32_t argc) {
     (void)argc;
-    return args[0] + args[1];
+    int off = g_env_offset;
+    return locals[off] + locals[off + 1];
 }
 
-static int64_t test_mul_fn(int64_t* args, uint32_t argc) {
+int64_t test_mul_fn(int64_t* locals, uint32_t argc) {
     (void)argc;
-    return args[0] * args[1];
+    int off = g_env_offset;
+    return locals[off] * locals[off + 1];
 }
 
 TEST(test_closure_basic) {
