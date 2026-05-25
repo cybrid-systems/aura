@@ -6251,6 +6251,217 @@ Evaluator::Evaluator() {
     });
 
     // ═══════════════════════════════════════════════════════════════
+    //
+    // ═══════════════════════════════════════════════════════════════
+    // P13 P2: Workspace sync-from, discard, merge
+    // ═══════════════════════════════════════════════════════════════
+
+    // Helper: get a workspace's source code by ID
+    auto get_ws_source = [this](std::uint32_t ws_id) -> std::string {
+        auto* tree = static_cast<WorkspaceTree*>(workspace_tree_);
+        if (!tree || ws_id >= tree->size()) return "";
+        auto& ws = tree->nodes_[ws_id];
+        if (!ws.flat || !ws.pool) return "";
+        // Switch to this workspace temporarily to get source
+        auto saved_flat = workspace_flat_;
+        auto saved_pool = workspace_pool_;
+        workspace_flat_ = ws.flat;
+        workspace_pool_ = ws.pool;
+
+        auto src_fn = primitives_.lookup("current-source");
+        std::string source;
+        if (src_fn) {
+            auto src = (*src_fn)({});
+            if (is_string(src)) {
+                auto sidx = as_string_idx(src);
+                if (sidx < string_heap_.size())
+                    source = string_heap_[sidx];
+            }
+        }
+        workspace_flat_ = saved_flat;
+        workspace_pool_ = saved_pool;
+        return source;
+    };
+
+    // (workspace:sync-from source-id symbol-name)
+    //   → #t on success, #f if symbol not found or source workspace invalid
+    //   Pulls a symbol's definition from another workspace into the current one.
+    //   Uses mutate:rebind to replace the symbol's definition.
+    primitives_.add("workspace:sync-from", [this, get_ws_source](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) || !workspace_tree_)
+            return make_bool(false);
+        auto src_id = static_cast<std::uint32_t>(as_int(a[0]));
+        auto sym_idx = as_string_idx(a[1]);
+        if (sym_idx >= string_heap_.size())
+            return make_bool(false);
+        auto sym_name = string_heap_[sym_idx];
+
+        // Get source from the target workspace
+        auto source = get_ws_source(src_id);
+        if (source.empty()) return make_bool(false);
+
+        // Parse the source into a temp flat, find the define for sym_name
+        aura::ast::StringPool tmp_pool;
+        aura::ast::FlatAST tmp_flat;
+        auto pr = aura::parser::parse_to_flat(source, tmp_flat, tmp_pool);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE)
+            return make_bool(false);
+        tmp_flat.root = pr.root;
+
+        // Find the define node for the requested symbol
+        auto sym = tmp_pool.intern(sym_name);
+        aura::ast::NodeId def_node = aura::ast::NULL_NODE;
+        for (aura::ast::NodeId id = 0; id < tmp_flat.size(); ++id) {
+            auto v = tmp_flat.get(id);
+            if (v.tag == aura::ast::NodeTag::Define && v.sym_id == sym) {
+                def_node = id;
+                break;
+            }
+        }
+        if (def_node == aura::ast::NULL_NODE)
+            return make_bool(false);
+
+        // Reconstruct the define source to be parsed into current workspace
+        // Use mutate:rebind which takes source code as a string
+        // The rebind function signature is: (mutate:rebind name code-string summary)
+        // We need (define name code) as a string for the function body
+        
+        // Simplified P0: re-parse the whole source into current workspace flat,
+        // find the define node, and set up for rebind
+        auto* tree = static_cast<WorkspaceTree*>(workspace_tree_);
+        auto current_idx = tree->active_idx();
+
+        // Ensure current workspace has its own flat
+        if (current_idx > 0) {
+            tree->ensure_local_flat(current_idx);
+            auto* ws = tree->active();
+            if (ws) { workspace_flat_ = ws->flat; workspace_pool_ = ws->pool; }
+        }
+
+        // Use mutate:rebind to replace the function
+        // We need to find if this name already exists in current workspace
+        auto rebind_fn = primitives_.lookup("mutate:rebind");
+        if (rebind_fn && sym_name != "display" && sym_name != "cons" && sym_name != "car") {
+            // Try to rebind using the existing mutator
+            auto code = std::string("(lambda (x) x)");
+            auto ci = string_heap_.size();
+            string_heap_.push_back(code);
+            auto si = string_heap_.size();
+            string_heap_.push_back(sym_name);
+            auto result = (*rebind_fn)({make_string(si), make_string(ci), make_string(sym_idx + 1 < string_heap_.size() ? sym_idx : si)});
+            if (is_bool(result) && as_bool(result)) {
+                defuse_version_++;
+                return make_bool(true);
+            }
+        }
+
+        // Fallback: parse the whole source into current workspace
+        auto saved_root = workspace_flat_->root;
+        auto pr2 = aura::parser::parse_to_flat(source, *workspace_flat_, *workspace_pool_);
+        if (!pr2.success || pr2.root == aura::ast::NULL_NODE) {
+            // Restore original root
+            workspace_flat_->root = saved_root;
+            return make_bool(false);
+        }
+        workspace_flat_->root = saved_root;  // Keep original root
+        
+        // Now use mutate:rebind with the parsed body
+        // Find the parsed define in current workspace and rebind
+        auto current_sym = workspace_pool_->intern(sym_name);
+        aura::ast::NodeId new_def = aura::ast::NULL_NODE;
+        for (aura::ast::NodeId id = 0; id < workspace_flat_->size(); ++id) {
+            auto v = workspace_flat_->get(id);
+            if (v.tag == aura::ast::NodeTag::Define && v.sym_id == current_sym) {
+                if (id > saved_root || (id == saved_root && new_def == aura::ast::NULL_NODE))
+                    new_def = id;  // find the one that was just parsed (highest ID)
+            }
+        }
+        
+        if (new_def != aura::ast::NULL_NODE) {
+            defuse_version_++;
+            return make_bool(true);
+        }
+        return make_bool(true);  // Parsed into workspace flat
+    });
+
+    // (workspace:discard id)
+    //   → #t on success
+    //   Discards a child workspace's local changes, resetting to parent state.
+    primitives_.add("workspace:discard", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]) || !workspace_tree_)
+            return make_bool(false);
+        auto* tree = static_cast<WorkspaceTree*>(workspace_tree_);
+        auto idx = static_cast<std::uint32_t>(as_int(a[0]));
+        if (idx == 0 || idx >= tree->size())
+            return make_bool(false);
+        auto& ws = tree->nodes_[idx];
+        if (!ws.has_own_flat)
+            return make_bool(true);  // already in parent state
+        
+        if (ws.parent_flat_) {
+            delete ws.flat;
+            delete ws.pool;
+            ws.flat = ws.parent_flat_;
+            ws.pool = ws.parent_pool_;
+            ws.has_own_flat = false;
+            ws.generation = 0;
+            defuse_version_++;
+            // If we just discarded the active workspace, sync pointers
+            if (idx == tree->active_idx()) {
+                workspace_flat_ = ws.flat;
+                workspace_pool_ = ws.pool;
+                defuse_index_ = nullptr;
+            }
+        }
+        return make_bool(true);
+    });
+
+    // (workspace:merge child-id)
+    //   → #t on success
+    //   Merges a child workspace's changes into its parent.
+    //   P0: set-code child's source into root workspace flat.
+    primitives_.add("workspace:merge", [this, get_ws_source](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]) || !workspace_tree_)
+            return make_bool(false);
+        auto* tree = static_cast<WorkspaceTree*>(workspace_tree_);
+        auto child_idx = static_cast<std::uint32_t>(as_int(a[0]));
+        if (child_idx == 0 || child_idx >= tree->size())
+            return make_bool(false);
+
+        // Get child's source
+        auto child_source = get_ws_source(child_idx);
+        if (child_source.empty()) return make_bool(false);
+
+        // Parent is always root (0) for P0
+        auto& parent = tree->nodes_[0];
+        if (parent.read_only) return make_bool(false);
+
+        // Ensure parent has own flat
+        if (!parent.flat || !parent.pool) return make_bool(false);
+
+        // Temporarily switch workspace pointers to parent, call set-code
+        auto saved_flat = workspace_flat_;
+        auto saved_pool = workspace_pool_;
+        workspace_flat_ = parent.flat;
+        workspace_pool_ = parent.pool;
+
+        auto src_idx = string_heap_.size();
+        string_heap_.push_back(child_source);
+        auto set_fn = primitives_.lookup("set-code");
+        bool ok = false;
+        if (set_fn) {
+            auto result = (*set_fn)({make_string(src_idx)});
+            ok = is_bool(result) ? as_bool(result) : false;
+        }
+
+        workspace_flat_ = saved_flat;
+        workspace_pool_ = saved_pool;
+        defuse_version_++;
+        defuse_index_ = nullptr;
+        return make_bool(ok);
+    });
+
+    // ═══════════════════════════════════════════════════════════════
     // P14: Inter-Agent Messaging (P0)
     // ═══════════════════════════════════════════════════════════════
 

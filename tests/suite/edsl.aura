@@ -699,3 +699,27 @@
 (test-suite "msg:reply-no-last-sender"
   ;; reply with no prior recv should return #f
   (check (not (reply "hello"))))
+
+
+;; ═══════════════════════════════════════════════════════════════
+;; P13 P2: Workspace sync-from, discard, merge
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "ws:discard-child"
+  (set-code "(define (f x) (+ x 1))")
+  (define cid (workspace:create "child"))
+  (workspace:switch cid)
+  (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
+  ;; Discard should reset to parent
+  (check (workspace:discard cid))))
+
+(test-suite "ws:discard-no-own-flat"
+  (set-code "(define (f x) (+ x 1))")
+  (define cid (workspace:create "child"))
+  ;; Child has no own flat (COW) — discard should be a no-op
+  (check (workspace:discard cid))))
+
+(test-suite "ws:discard-invalid-id"
+  (set-code "(define x 1)")
+  ;; discard on root (id 0) should return #f
+  (check (not (workspace:discard 0))))
