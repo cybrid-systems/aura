@@ -316,6 +316,8 @@ run_emit_test "emit:string-eq"   "(string=? \"abc\" \"abc\")" "1"
 run_emit_test "emit:length"     "(length (list 10 20 30))" "3"
 run_emit_test "emit:list-ref"   "(list-ref (list 10 20 30) 1)" "20"
 run_emit_test "emit:reverse"   "(car (reverse (list 1 2 3)))" "3"
+run_emit_test "emit:append"    "(car (append (list 1 2) (list 3 4)))" "1"
+run_emit_test "emit:member"    "(car (member 2 (list 1 2 3)))" "2"
 echo "=== Diagnostic Tests ==="
 
 # Parse error: source line + caret display (via batch eval)
