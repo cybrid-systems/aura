@@ -178,10 +178,10 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
         if (f) {
             std::fputs(g_prim_reg_c_code.c_str(), f);
             std::fclose(f);
-            std::string cmd = cc + " -c " + prim_reg_path + " -o " + prim_reg_o + " 2>/dev/null";
+            std::string cmd = cc + " -c " + prim_reg_path + " -o " + prim_reg_o + " 2>&1";
             int rc = ::system(cmd.c_str());
             if (rc != 0) {
-                cmd = "clang -c " + prim_reg_path + " -o " + prim_reg_o + " 2>/dev/null";
+                cmd = "clang -c " + prim_reg_path + " -o " + prim_reg_o + " 2>&1";
                 rc = ::system(cmd.c_str());
             }
             if (rc == 0)
