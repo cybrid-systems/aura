@@ -198,6 +198,7 @@ private:
     std::array<std::uint64_t, 16> coverage_counters_ = {};
     // ── Workspace Tree (P13) ───────────────────────────────────
     void* workspace_tree_ = nullptr;  // WorkspaceTree*
+    bool workspace_read_only_ = false;  // quick lock flag for P6 mutations
     // ── Snapshot storage (ast:snapshot / ast:restore) ───────────
     std::vector<std::string> snapshot_sources_;  // source code per snapshot
     std::vector<std::string> snapshot_names_;    // optional names
