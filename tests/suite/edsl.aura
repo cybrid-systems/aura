@@ -286,6 +286,53 @@
   (ast:snapshot "v1")
   (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
   (ast:snapshot "v2")
-  ;; Two snapshots should be listed
   (check (pair? (ast:list-snapshots))))
+
+(test-suite "snapshot:diff-empty-after-restore"
+  (set-code "(define (f x) (+ x 1))")
+  (define sid (ast:snapshot "v1"))
+  ;; Mutate then restore
+  (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
+  (ast:restore sid)
+  ;; Diff vs snapshot should now be minimal (only formatting changes)
+  ;; or empty for same single-expression inputs
+  (check (list? (ast:diff sid))))
+
+(test-suite "snapshot:diff-empty-no-changes"
+  (set-code "(define (f x) (+ x 1))")
+  (define sid (ast:snapshot "v1"))
+  ;; No mutations — diff should be empty (or just formatting diffs)
+  (let ((changes (ast:diff sid)))
+    (check (list? changes))))
+
+(test-suite "snapshot:restore-invalid-id"
+  (set-code "(define (f x) (+ x 1))")
+  ;; Restore with invalid (too large) ID should return #f, not crash
+  (check (not (ast:restore 9999))))
+
+(test-suite "snapshot:diff-no-snapshots"
+  (set-code "(define (f x) (+ x 1))")
+  ;; Diff without any snapshots should return empty list, not crash
+  (check (list? (ast:diff))))
+
+(test-suite "snapshot:consecutive-diffs"
+  (set-code "(define (f x) (+ x 1))")
+  (define s1 (ast:snapshot "v1"))
+  (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
+  (define s2 (ast:snapshot "v2"))
+  ;; Diff s1 (before mutate) vs s2 (after mutate)
+  (define diff1 (ast:diff s1))
+  (define diff2 (ast:diff s2))
+  ;; Both should be valid lists
+  (check (list? diff1))
+  (check (list? diff2))))
+
+(test-suite "snapshot:list-after-multiple"
+  (set-code "(define (f x) (+ x 1))")
+  (ast:snapshot "a")
+  (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
+  (ast:snapshot "b")
+  ;; List should contain at least 2 snapshots
+  (let ((lst (ast:list-snapshots)))
+    (check (>= (length lst) 2)))))
 

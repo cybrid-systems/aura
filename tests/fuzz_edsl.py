@@ -54,6 +54,10 @@ OPS = [
     "(display (query:def-use \"{sym}\"))",
     "(display (query:effects \"{fn}\"))",
     "(display (query:reaches {val}))",
+    "(display (ast:snapshot \"snap-{i}\"))",
+    "(display (ast:diff 0))",
+    "(display (ast:list-snapshots))",
+    "(display (ast:restore 0))",
 
 ]
 
