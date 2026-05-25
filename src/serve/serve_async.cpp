@@ -240,6 +240,7 @@ void run_serve_async() {
                         auto& d = result.error();
                         std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"{}\"}}",
                                      json_escape(sid), json_escape(d.format()));
+                        std::fflush(stdout);
                     }
 
                 } else if (cmd == "session-send") {
@@ -271,6 +272,7 @@ void run_serve_async() {
                     std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"unknown cmd: {}\"}}",
                                  json_escape(sid), json_escape(cmd));
                 }
+                std::fflush(stdout);
             }
         });
 
