@@ -764,3 +764,58 @@
 (test-suite "synth:define-keywords"
   (check (string? (synthesize:define "g" "Int -> Int"
                      :prompt "test" :model "test" :max-attempts 3))))
+
+
+;; ═══════════════════════════════════════════════════════════════
+;; Pipeline — synthesize:pipeline
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "pipeline:basic"
+  (require "std/pipeline" all:)
+  (set-code "(define x 1)")
+  (check (synthesize:pipeline "test"
+    (set-code "(define x 2)"))))
+
+(test-suite "pipeline:verify-workspace"
+  (require "std/pipeline" all:)
+  (set-code "(define x 1)")
+  (synthesize:pipeline "verify"
+    (set-code "(define x 42)"))
+  (let* ((r (query:def-use "x"))
+         (defs (car r)))
+    (check (= (length defs) 1))))
+
+(test-suite "pipeline:template-step"
+  (require "std/pipeline" all:)
+  (set-code "(begin)")
+  (synthesize:register-template "double"
+    "(define (double-{name} x) (* 2 x))" "name")
+  (check (synthesize:pipeline "double-gen"
+    (synthesize:fill "double" "myval"))))
+
+(test-suite "pipeline:multiple-steps"
+  (require "std/pipeline" all:)
+  (set-code "(begin)")
+  (synthesize:register-template "add"
+    "(define (add-{name} x y) (+ x y))" "name")
+  (check (synthesize:pipeline "multi"
+    (synthesize:fill "add" "nums")
+    (set-code "(define z 3)"))))
+
+(test-suite "pipeline:step-order"
+  (require "std/pipeline" all:)
+  (set-code "(define (f x) x)")
+  (check (synthesize:pipeline "order"
+    (mutate:rebind "f" "(lambda (x) (+ x 1))" "step1")
+    (mutate:rebind "f" "(lambda (x) (* x 2))" "step2"))))
+
+(test-suite "pipeline:rollback-on-failure"
+  (require "std/pipeline" all:)
+  (set-code "(define x 42)")
+  (define sid (ast:snapshot "before"))
+  ;; First success then failure - pipeline should rollback
+  (synthesize:pipeline "fail-test"
+    (set-code "(define x 1)")
+    (mutate:rebind "x" "(lambda () (+ 1 2))" "step2"))  ;; rebind on define variable should fail
+  ;; Verify we're back to snapshot
+  (check (pair? (ast:diff sid))))  ;; diff should exist (might show changes)

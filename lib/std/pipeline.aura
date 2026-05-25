@@ -1,0 +1,62 @@
+; Aura std/pipeline — 代码生成管线
+;
+; Pipeline 把多个生成步骤编排成一个顺序管线：
+;   (synthesize:pipeline "name"
+;     step1 step2 ...)
+;
+; 每步可以是：
+;   - (synthesize:fill "template-name" args...)
+;   - (synthesize:define "name" "sig" :prompt "...")
+;   - 任意返回 #t 或源码的表达式
+;
+; 失败时自动 ast:restore 回退到管线开始前的状态。
+
+(export synthesize:pipeline)
+
+; ── Pipeline — 顺序执行多步骤 ──────────────────────────
+(define (synthesize:pipeline name . steps)
+  (display "=== Pipeline: ")
+  (display name)
+  (display " ===\n")
+  (newline)
+  
+  ; Snapshot current state for rollback
+  (define sid (ast:snapshot (string-append "pipeline-" name)))
+  
+  (let loop ((remaining steps) (n 1))
+    (if (null? remaining)
+      (begin
+        (display "✅ Pipeline '")
+        (display name)
+        (display "' complete!\n")
+        #t)
+      (let* ((step (car remaining))
+             (result (try
+                      (let ((r (eval step)))
+                        (if r
+                          (begin
+                            (display "  Step ")
+                            (display n)
+                            (display " ✅\n")
+                            #t)
+                          (begin
+                            (display "  Step ")
+                            (display n)
+                            (display " returned false\n")
+                            #f)))
+                      (catch (e)
+                        (display "  Step ")
+                        (display n)
+                        (display " ❌: ")
+                        (display e)
+                        (newline)
+                        #f)))))
+        (if result
+          (loop (cdr remaining) (+ n 1))
+          (begin
+            (display "  Pipeline failed at step ")
+            (display n)
+            (newline)
+            (display "  Rolling back...\n")
+            (ast:restore sid)
+            #f))))))
