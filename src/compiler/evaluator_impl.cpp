@@ -1856,6 +1856,16 @@ void Evaluator::init_pair_primitives() {
         hash_heap_.push_back(std::move(ht));
         return make_hash(hidx);
     });
+
+    // make-hash is an alias for hash (LLM-friendly naming)
+    primitives_.add("make-hash", [this](const auto& a) -> EvalValue {
+        // Forward to hash primitive
+        auto fn = primitives_.lookup("hash");
+        if (fn)
+            return (*fn)(a);
+        return make_void();
+    });
+
     primitives_.add("hash-ref", [this](const auto& a) {
         if (a.size() < 2 || !is_hash(a[0]))
             return make_void();
