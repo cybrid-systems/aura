@@ -223,6 +223,7 @@ void aura_drop_cell(int64_t cell_id) {
 
 #define MAX_CLOSURES 4096
 #define MAX_CLOSURE_ENV 8
+#define MAX_FUNCTIONS 4096
 
 typedef int64_t (*ScalarFn)(int64_t*, uint32_t);
 
@@ -233,6 +234,19 @@ typedef struct {
     uint32_t env_count;
     bool live;
 } AuraClosure;
+
+// Function pointer table: maps func_id → compiled function pointer
+// Set up by AOT registration code before main() runs.
+static ScalarFn s_func_table[MAX_FUNCTIONS] = {NULL};
+
+// Register a function pointer for a given func_id.
+// Called by AOT registration code (generated .c file) before main().
+void aura_register_fn(int64_t func_id, int64_t fn_ptr) {
+    uint64_t id = (uint64_t)func_id;
+    if (id < MAX_FUNCTIONS) {
+        s_func_table[id] = (ScalarFn)(intptr_t)fn_ptr;
+    }
+}
 
 static AuraClosure* closure_heap = NULL;
 static uint64_t closure_count = 0;
@@ -255,6 +269,11 @@ int64_t aura_alloc_closure(int64_t func_id) {
         closure_heap[id].local_count = 0;
         closure_heap[id].env_count = 0;
         closure_heap[id].live = true;
+        // Set function pointer from func_table
+        uint64_t fid = (uint64_t)func_id;
+        if (fid < MAX_FUNCTIONS && s_func_table[fid]) {
+            closure_heap[id].fn = s_func_table[fid];
+        }
         return (int64_t)id;
     }
     if (closure_count >= closure_capacity) {
@@ -266,6 +285,11 @@ int64_t aura_alloc_closure(int64_t func_id) {
     }
     uint64_t id = closure_count++;
     closure_heap[id].live = true;
+    // Set function pointer from func_table
+    uint64_t fid = (uint64_t)func_id;
+    if (fid < MAX_FUNCTIONS && s_func_table[fid]) {
+        closure_heap[id].fn = s_func_table[fid];
+    }
     return (int64_t)id;
 }
 
@@ -357,9 +381,54 @@ void aura_newline(void) {
     fflush(stdout);
 }
 
-int64_t aura_prim_call(int64_t prim_id, int64_t arg) {
-    (void)prim_id;
-    return arg;
+// ── Primitive call dispatcher for AOT binaries ──────────────
+// Called from LLVM-compiled code for non-inlined primitives.
+// Signature must match LLVM IR: (prim_id, a1, a2, arg_count)
+//
+// Primitive IDs match the PrimId enum in the IR module:
+//   8=display, 9=write, 10=newline, 30=quotient, 31=remainder
+//   (other primitives use the evaluator's dispatch table)
+//
+// For AOT, we implement commonly-used primitives directly.
+// Full primitive support is handled by the evaluator (JIT path).
+
+// Internal: check if an int64_t value is a pair (a.k.a. cons cell)
+// In Aura's tag scheme: positive values are pairs (pair_id + 1, negated)
+// Actually pairs use negative encoding: -(pair_id+1)
+static int is_pair_val(int64_t v) {
+    return v < 0 && v > -65536;
+}
+
+int64_t aura_prim_call(int64_t prim_id, int64_t a1, int64_t a2, int64_t argc) {
+    // Primitive IDs from PrimId enum in ir.ixx
+    // Display=8, Write=9, Newline=10, Quotient=30, Remainder=31
+    // Other IDs: 0=StringAppend, 1=StringLength, ...
+    // These may shift — the key primitives for AOT are handled inline
+    // in the LLVM IR (display, quotient, remainder are fast-pathed).
+    // This function is a fallback for unknown primitives.
+    (void)argc;
+    
+    switch (prim_id) {
+    case 8:  // Display
+        aura_display_int(a1);
+        return a1;
+    case 9:  // Write  
+        printf("%ld", (long)a1);
+        return a1;
+    case 10: // Newline
+        aura_newline();
+        return 0;
+    case 30: // Quotient
+        if (a2 == 0) return 0;
+        return a1 / a2;
+    case 31: // Remainder
+        if (a2 == 0) return 0;
+        return a1 % a2;
+    default:
+        // Unknown primitive (pair?, null?, list, etc.) — fallback
+        // These are not yet handled in the AOT runtime; return a1 as passthrough.
+        return (argc > 0) ? a1 : 0;
+    }
 }
 
 // ═══════════════════════════════════════════════════════════

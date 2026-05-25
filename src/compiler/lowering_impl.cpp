@@ -412,6 +412,124 @@ static std::uint32_t lower_flat_expr(
                     return result_slot;
                 }
 
+                // ── Expand and/or/not to IR opcodes ───────────────────────
+                // These must NOT go through OpPrimitive + OpCall (which requires
+                // the evaluator runtime for primitive dispatch). AOT binaries
+                // can only handle direct IR instructions.
+                //
+                // not: IROpcode::Not (inlined in LLVM builder)
+                // and: short-circuit via Branch + ConstVoid + Jump pattern
+                // or:  short-circuit via Branch + Local + Jump pattern
+                //
+                if (std::string(callee_name) == "not" && v.children.size() == 2) {
+                    auto arg_slot = lower_flat_expr(state, flat, pool, v.child(1), cache, cache_hits);
+                    auto result_slot = state.alloc_local();
+                    state.emit(IROpcode::Not, result_slot, arg_slot);
+                    return result_slot;
+                }
+
+                if (std::string(callee_name) == "and" && v.children.size() >= 2) {
+                    // Expand (and e1 e2 ... en) to:
+                    //   block0:
+                    //     val = lower(e1)
+                    //     branch val → block_ok1, block_nope1
+                    //   block_nope1: result = 0; jump block_done
+                    //   block_ok1:
+                    //     val = lower(e2)
+                    //     branch val → block_ok2, block_nope2
+                    //   ...
+                    //   block_okN: (last expr)
+                    //     result = lower(en)
+                    //     jump block_done
+                    //   block_done: return result
+                    auto arg_count = static_cast<std::uint32_t>(v.children.size() - 1);
+                    auto result_slot = state.alloc_local();
+                    auto done_blk = decltype(state.alloc_block()){};
+
+                    for (std::size_t i = 1; i < arg_count; ++i) {
+                        auto val = lower_flat_expr(state, flat, pool, v.child(i), cache, cache_hits);
+                        auto nope_blk = state.alloc_block();
+                        auto ok_blk = state.alloc_block();
+                        state.emit(IROpcode::Branch, val, ok_blk, nope_blk);
+
+                        // nope block: result = 0, jump done
+                        state.cur_block = nope_blk;
+                        state.emit(IROpcode::ConstVoid, result_slot);
+                        if (!done_blk)
+                            done_blk = state.alloc_block();
+                        state.emit(IROpcode::Jump, done_blk);
+
+                        // ok block: continue to next expression
+                        state.cur_block = ok_blk;
+                    }
+
+                    // Last expression: result = expression value, jump done
+                    {
+                        auto last_slot = lower_flat_expr(
+                            state, flat, pool, v.child(arg_count), cache, cache_hits);
+                        state.emit(IROpcode::Local, result_slot, last_slot);
+                        if (!done_blk)
+                            done_blk = state.alloc_block();
+                        state.emit(IROpcode::Jump, done_blk);
+                    }
+
+                    // Done block
+                    state.cur_block = done_blk;
+                    return result_slot;
+                }
+
+                if (std::string(callee_name) == "or" && v.children.size() >= 2) {
+                    // Expand (or e1 e2 ... en) to:
+                    //   block0:
+                    //     val = lower(e1)
+                    //     branch val → block_done_with_val, block_next
+                    //   block_next:
+                    //     val = lower(e2)
+                    //     branch val → block_done_with_val, block_next2
+                    //   ...
+                    //   block_last:
+                    //     result = lower(en)
+                    //     jump block_done
+                    //   block_done_with_val_i:
+                    //     result = val_i
+                    //     jump block_done
+                    //   block_done: return result
+                    auto arg_count = static_cast<std::uint32_t>(v.children.size() - 1);
+                    auto result_slot = state.alloc_local();
+                    auto done_blk = decltype(state.alloc_block()){};
+
+                    for (std::size_t i = 1; i < arg_count; ++i) {
+                        auto val = lower_flat_expr(state, flat, pool, v.child(i), cache, cache_hits);
+                        auto done_val_blk = state.alloc_block();
+                        auto next_blk = state.alloc_block();
+                        state.emit(IROpcode::Branch, val, done_val_blk, next_blk);
+
+                        // done_val block: result = val, jump done
+                        state.cur_block = done_val_blk;
+                        state.emit(IROpcode::Local, result_slot, val);
+                        if (!done_blk)
+                            done_blk = state.alloc_block();
+                        state.emit(IROpcode::Jump, done_blk);
+
+                        // next block: evaluate next expression
+                        state.cur_block = next_blk;
+                    }
+
+                    // Last expression: result = expression value, jump done
+                    {
+                        auto last_slot = lower_flat_expr(
+                            state, flat, pool, v.child(arg_count), cache, cache_hits);
+                        state.emit(IROpcode::Local, result_slot, last_slot);
+                        if (!done_blk)
+                            done_blk = state.alloc_block();
+                        state.emit(IROpcode::Jump, done_blk);
+                    }
+
+                    // Done block
+                    state.cur_block = done_blk;
+                    return result_slot;
+                }
+
                 // Check if callee is a cached define function (now handled by Variable handler)
                 // Fall through to general function call path
             }
