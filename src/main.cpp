@@ -1851,6 +1851,8 @@ int main(int argc, char* argv[]) {
 
     // ── Normal REPL / pipe mode ─────────────────────
     aura::compiler::CompilerService cs;
+    cs.set_session_id("default");
+    aura::compiler::CompilerService::register_session("default", &cs);
     bool interactive = false;
     try {
         std::cin.sync();

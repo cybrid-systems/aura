@@ -105,11 +105,12 @@ static aura::diag::Diagnostic parse_error_diag(const aura::parser::FlatParseResu
 export class CompilerService {
 public:
     CompilerService()
-        : user_bindings_{"#t", "#f", "nil"}, session_id_("unset") {
+        : user_bindings_{"#t", "#f", "nil"}, session_id_("default") {
         evaluator_.set_arena(&arena_);
         evaluator_.set_type_registry(&type_registry_);
         evaluator_.set_compiler_service(this);
         evaluator_.set_session_id(session_id_);
+        aura::messaging::g_current_compiler_service = this;
         // Setup messaging bridge (avoids circular module dependency)
         aura::messaging::g_messaging_bridge.send =
             [](const std::string& target, const std::string& msg) -> bool {
