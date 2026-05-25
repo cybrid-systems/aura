@@ -185,8 +185,8 @@ stdlib 已验证:
 Week  1–2 │ query:semantic + snapshot/diff + summary     │ 🔴 P0
 Week  3–4 │ visualize + mutate:insert/splice/refactor    │ 🔴 P0 / 🟡 P1
 ─── ⛳ Agent 自我闭环 ───
-Week  5–6 │ workspace 分层 + 权限                         │ 🟡 P1
-Week  7–8 │ inter-agent messaging                          │ 🟡 P1
+Week  5–6 │ workspace 分层 + 权限 (P0 完成)                       │ 🟡 P1
+Week  7–8 │ inter-agent messaging (pending)                        │ 🟡 P1
 Week  9–10│ synthesize:define + rule:normalize             │ 🟡 P1 / 🟢 P2
 ─── ⛳ 多 Agent 协作 ───
 Week 11–12│ 沙箱 + 资源限制                                │ 🟢 P2
