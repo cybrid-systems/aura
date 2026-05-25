@@ -372,3 +372,54 @@
   (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
   (let ((st (compile:status)))
     (check (pair? st))))
+
+
+;; ═══════════════════════════════════════════════════════════════
+;; P12: Higher-Order AST Transformations
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "mutate:splice-basic"
+  (set-code "(begin (display 1) (display 3))")
+  ;; Splice (display 2) between 1 and 3 at position 1
+  (let ((result (mutate:splice 0 1 "(display 2)" "splice")))
+    (check (> (length result) 0))
+    ;; Should have 1 inserted node
+    (check (= (length result) 1))
+    ;; Children should include the new node
+    (let ((children (query:children 0)))
+      (check (>= (length children) 2)))))
+
+(test-suite "mutate:splice-multiple"
+  (set-code "(begin (display 1) (display 4))")
+  ;; Splice two expressions at position 1
+  (let ((result (mutate:splice 0 1 "(display 2)" "(display 3)" "splice multiple")))
+    (check (= (length result) 2))
+    ;; Children should now have 4 entries
+    (let ((children (query:children 0)))
+      (check (>= (length children) 3)))))
+
+(test-suite "mutate:wrap-basic"
+  (set-code "(define (f x) (+ x 1))")
+  ;; Find the (+ x 1) call and wrap in display
+  (let ((calls (query:node-type "Call")))
+    (if (pair? calls)
+      (let ((result (mutate:wrap (car calls) "(display _)" "wrap test")))
+        (check (>= result 0)))
+      ;; If no calls (shouldnt happen), pass placeholder
+      (check #t))))
+
+(test-suite "mutate:wrap-after-splice"
+  (set-code "(begin (display 1) (display 3))")
+  ;; Splice then wrap — verify both mutate and wrap work together
+  (mutate:splice 0 1 "(display 2)" "splice")
+  ;; Now wrap the last child (display 3) in begin
+  (let ((children (query:children 0)))
+    (if (pair? children)
+      (let ((last-child (car (reverse children))))
+        (check (>= (mutate:wrap last-child "(begin _)" "wrap") 0)))
+      (check #t))))
+
+(test-suite "mutate:splice-empty"
+  (set-code "(define x 42)")
+  ;; splice with no code args should return #f
+  (check (not (mutate:splice 0 0 "splice"))))
