@@ -1445,6 +1445,7 @@ int main(int argc, char* argv[]) {
             code += "int64_t aura_alloc_pair(int64_t, int64_t);\n";
             code += "int64_t aura_pair_car(int64_t);\n";
             code += "int64_t aura_pair_cdr(int64_t);\n";
+            code += "int64_t aura_closure_call(int64_t, int64_t*, int64_t);\n";
             code += "\n";
 
             // Generate one wrapper function for each known primitive
@@ -1491,6 +1492,31 @@ int main(int argc, char* argv[]) {
                     code += "    int64_t key=c>0?a[0]:0; int64_t lst=c>1?a[1]:0;\n";
                     code += "    while(lst!=0&&lst<0){if(aura_pair_car(lst)==key)return lst; lst=aura_pair_cdr(lst);}\n";
                     code += "    return 0;\n";
+                }
+                else if (n == "map") {
+                    // (map fn list) — apply fn to each element, collect results
+                    code += "    int64_t fn=c>0?a[0]:0; int64_t lst=c>1?a[1]:0;\n";
+                    code += "    int64_t rev[1024]; int revc=0;\n";
+                    code += "    int64_t args[8];\n";
+                    code += "    while(lst!=0&&lst<0&&revc<1024){args[0]=aura_pair_car(lst); rev[revc++]=aura_closure_call(fn,args,1); lst=aura_pair_cdr(lst);}\n";
+                    code += "    int64_t r=0; for(int i=revc-1;i>=0;i--) r=aura_alloc_pair(rev[i],r);\n";
+                    code += "    return r;\n";
+                }
+                else if (n == "filter") {
+                    // (filter pred list) — keep elements where pred returns truthy
+                    code += "    int64_t pred=c>0?a[0]:0; int64_t lst=c>1?a[1]:0;\n";
+                    code += "    int64_t rev[1024]; int revc=0;\n";
+                    code += "    int64_t args[8];\n";
+                    code += "    while(lst!=0&&lst<0&&revc<1024){int64_t v=aura_pair_car(lst); args[0]=v; if(aura_closure_call(pred,args,1)!=0)rev[revc++]=v; lst=aura_pair_cdr(lst);}\n";
+                    code += "    int64_t r=0; for(int i=revc-1;i>=0;i--) r=aura_alloc_pair(rev[i],r);\n";
+                    code += "    return r;\n";
+                }
+                else if (n == "foldl") {
+                    // (foldl fn init list) — left fold
+                    code += "    int64_t fn=c>0?a[0]:0; int64_t acc=c>1?a[1]:0; int64_t lst=c>2?a[2]:0;\n";
+                    code += "    int64_t args[8];\n";
+                    code += "    while(lst!=0&&lst<0){args[0]=acc; args[1]=aura_pair_car(lst); acc=aura_closure_call(fn,args,2); lst=aura_pair_cdr(lst);}\n";
+                    code += "    return acc;\n";
                 }
                 else
                     code += "    return (c>0)?a[0]:0;\n";
