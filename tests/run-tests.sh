@@ -340,6 +340,8 @@ run_emit_test "emit:named-let" "(let loop ((x 0)) (if (< x 3) (loop (+ x 1)) x))
 # Stdlib functions via import (source inlining)
 run_emit_test "emit:sorted?"   "(import \"std/algorithm\")(sorted? (list 1 2 3))" "1"
 run_emit_test "emit:combine"   "(import \"std/algorithm\")(combinations 4 2)" "6"
+run_emit_test "emit:apply"     "(apply + (list 1 2 3))" "6"
+run_emit_test "emit:permute"   "(import \"std/algorithm\")(car (car (permutations (list 1 2))))" "1"
 echo "=== Diagnostic Tests ==="
 
 # Parse error: source line + caret display (via batch eval)
