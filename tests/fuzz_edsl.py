@@ -50,6 +50,11 @@ OPS = [
     "(mutate:remove-node 0 \"fuzz remove\")",
     "(display (query:children 0))",
     "(display (query:node 0))",
+    "(display (query:def-use \"{fn}\"))",
+    "(display (query:def-use \"{sym}\"))",
+    "(display (query:effects \"{fn}\"))",
+    "(display (query:reaches {val}))",
+
 ]
 
 FN_NAMES = ["f", "g", "h", "add", "fact", "map", "filter", "foldl", "compose"]
