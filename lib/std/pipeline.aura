@@ -19,38 +19,35 @@
   (display name)
   (display " ===\n")
   (newline)
-  
-  ; Snapshot current state for rollback
   (define sid (ast:snapshot (string-append "pipeline-" name)))
-  
   (let loop ((remaining steps) (n 1))
     (if (null? remaining)
       (begin
-        (display "✅ Pipeline '")
+        (display "Pipeline '")
         (display name)
         (display "' complete!\n")
         #t)
       (let* ((step (car remaining))
              (result (try
-                      (let ((r (eval-expr step)))
-                        (if r
-                          (begin
-                            (display "  Step ")
-                            (display n)
-                            (display " ✅\n")
-                            #t)
-                          (begin
-                            (display "  Step ")
-                            (display n)
-                            (display " returned false\n")
-                            #f)))
-                      (catch (e)
-                        (display "  Step ")
-                        (display n)
-                        (display " ❌: ")
-                        (display e)
-                        (newline)
-                        #f)))))
+                       (let ((r (eval-expr step)))
+                         (if r
+                           (begin
+                             (display "  Step ")
+                             (display n)
+                             (display " done\n")
+                             #t)
+                           (begin
+                             (display "  Step ")
+                             (display n)
+                             (display " returned false\n")
+                             #f)))
+                       (catch (e)
+                         (display "  Step ")
+                         (display n)
+                         (display " err: ")
+                         (display e)
+                         (newline)
+                         #f))))
         (if result
           (loop (cdr remaining) (+ n 1))
           (begin
