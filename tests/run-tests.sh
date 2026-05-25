@@ -320,6 +320,11 @@ run_emit_test "emit:move-int"    "(begin (move 42) 7)" "7"
 run_emit_test "emit:borrow"      "(begin (& 42) 7)" "7"
 run_emit_test "emit:linear"      "(begin (Linear 42) 7)" "7"
 
+# Complex ownership lifecycles
+run_emit_test "emit:drop-chain"  "(begin (drop 1) (drop 2) (drop 3) 42)" "42"
+run_emit_test "emit:lin-drop"    "(begin (drop (Linear 42)) 7)" "7"
+run_emit_test "emit:drop-loop"   "(begin (drop (cons 1 2)) (drop (cons 3 4)) (drop (cons 5 6)) 99)" "99"
+
 # List ops (via aura_prim_call PrimId dispatch)
 run_emit_test "emit:length"     "(length (list 10 20 30))" "3"
 run_emit_test "emit:list-ref"   "(list-ref (list 10 20 30) 1)" "20"
