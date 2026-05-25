@@ -1713,5 +1713,69 @@ int main() {
     
     
 
-return (failed + ck_failed + arity_failed + mp_failed + pm_failed + cf_failed + dce_failed + gg_failed + ts_failed) > 0 ? 1 : 0;
+// ── FlatAST child_count preservation test ────────────────────
+// This test reproduces the splice bug: parse_to_flat with an existing
+// non-empty FlatAST corrupts child_count_ of existing nodes.
+    // ── FlatAST child_count preservation test (arena ver) ────────
+    bool flat_failed = false;
+    auto flat_test = [&](const std::string& name, bool ok) {
+        if (ok) std::println("  [32mOK[0m: {}", name);
+        else { std::println("  [31mFAIL[0m: {}", name); flat_failed = true; }
+    };
+
+    {
+        // Use arena allocator (same as set-code does)
+        aura::ast::ASTArena arena(4096);
+        auto alloc = arena.allocator();
+        auto* pool = arena.create<aura::ast::StringPool>(alloc);
+        auto* flat = arena.create<aura::ast::FlatAST>(alloc);
+
+        auto pr1 = aura::parser::parse_to_flat("(begin (write 11) (write 33))", *flat, *pool);
+        if (!pr1.success || pr1.root == aura::ast::NULL_NODE) {
+            std::println("  [31mFAIL[0m: arena parse failed");
+            flat_failed = true;
+        } else {
+            auto v = flat->get(pr1.root);
+            flat_test("arena: initial root has children", v.children.size() > 0);
+            auto count_before = v.children.size();
+
+            auto pr2 = aura::parser::parse_to_flat("(write 22)", *flat, *pool);
+            if (!pr2.success || pr2.root == aura::ast::NULL_NODE) {
+                std::println("  [31mFAIL[0m: arena second parse failed");
+                flat_failed = true;
+            } else {
+                auto v2 = flat->get(pr1.root);
+                flat_test("arena: root children preserved after second parse_to_flat",
+                    v2.children.size() == count_before);
+            }
+        }
+
+        // Also test with a fresh non-arena flat
+        {
+            aura::ast::StringPool p2;
+            aura::ast::FlatAST f2;
+            auto pr3 = aura::parser::parse_to_flat("(begin (write 11) (write 33))", f2, p2);
+            if (pr3.success && pr3.root != aura::ast::NULL_NODE) {
+                auto v3 = f2.get(pr3.root);
+                flat_test("non-arena: initial root has children", v3.children.size() > 0);
+                auto count3 = v3.children.size();
+
+                auto pr4 = aura::parser::parse_to_flat("(write 22)", f2, p2);
+                if (pr4.success && pr4.root != aura::ast::NULL_NODE) {
+                    auto v4 = f2.get(pr3.root);
+                    flat_test("non-arena: root children preserved after second parse",
+                        v4.children.size() == count3);
+                }
+            }
+        }
+    }
+
+    if (flat_failed) {
+        std::println("  [31mFLAT TEST FAILED[0m");
+        failed++;
+    } else {
+        std::println("  [32mFLAT OK[0m: parse_to_flat preserves children (arena & non-arena)");
+    }
+
+    return (failed + ck_failed + arity_failed + mp_failed + pm_failed + cf_failed + dce_failed + gg_failed + ts_failed + flat_failed) > 0 ? 1 : 0;
 }
