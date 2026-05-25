@@ -124,6 +124,17 @@ public:
 
     void set_module_loaded_callback(ModuleLoadedFn cb) { module_loaded_cb_ = std::move(cb); }
     void set_type_registry(void* reg) { type_registry_ = reg; }
+    void set_compiler_service(void* svc) { compiler_service_ = svc; }
+    void set_session_id(const std::string& id) { session_id_ = id; }
+    const std::string& session_id() const { return session_id_; }
+    void set_messaging_callbacks(
+        std::function<bool(const std::string&, const std::string&)>* send_fn,
+        std::function<std::optional<std::string>(int)>* recv_fn,
+        std::function<std::string()>* id_fn) {
+        msg_send_fn_ = send_fn;
+        msg_recv_fn_ = recv_fn;
+        msg_id_fn_ = id_fn;
+    }
 
 private:
     ClosureId next_id() { return next_id_++; }
@@ -199,6 +210,13 @@ private:
     // ── Workspace Tree (P13) ───────────────────────────────────
     void* workspace_tree_ = nullptr;  // WorkspaceTree*
     bool workspace_read_only_ = false;  // quick lock flag for P6 mutations
+    // ── CompilerService pointer (for messaging) ─────────────────
+    void* compiler_service_ = nullptr;  // CompilerService*
+    // Function pointer callbacks (set by CompilerService to avoid circular deps)
+    std::function<bool(const std::string&, const std::string&)>* msg_send_fn_ = nullptr;
+    std::function<std::optional<std::string>(int)>* msg_recv_fn_ = nullptr;
+    std::function<std::string()>* msg_id_fn_ = nullptr;
+    std::string session_id_;  // from CompilerService (for my-id)
     // ── Snapshot storage (ast:snapshot / ast:restore) ───────────
     std::vector<std::string> snapshot_sources_;  // source code per snapshot
     std::vector<std::string> snapshot_names_;    // optional names
