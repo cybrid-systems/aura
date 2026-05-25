@@ -3525,6 +3525,7 @@ void Evaluator::init_pair_primitives() {
         flat_ptr->root = pr.root;
         workspace_flat_ = flat_ptr;
         workspace_pool_ = pool_ptr;
+        update_shared_tree_root();
         // Invalidate def-use index (new workspace)
         defuse_index_ = nullptr;
         return make_bool(true);
@@ -4927,6 +4928,16 @@ struct WorkspaceTree {
 
 // ═══════════════════════════════════════════════════════════════
 
+void Evaluator::update_shared_tree_root() {
+    if (!workspace_tree_) return;
+    auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
+    if (wt->size() > 0) {
+        auto& root = wt->nodes_[0];
+        root.flat = workspace_flat_;
+        root.pool = workspace_pool_;
+    }
+}
+
 Evaluator::Evaluator() {
     top_.set_primitives(&primitives_);
     top_.set_cells(&cells_);
@@ -6207,6 +6218,11 @@ Evaluator::Evaluator() {
             workspace_tree_ = wtt;
         }
         auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
+        // If this is a shared tree (e.g., from serve mode), update the root
+        // node's flat/pool to reflect this session's current workspace state.
+        // This ensures each session's root is its own code while child
+        // workspaces are shared across sessions.
+        update_shared_tree_root();
         std::string name;
         if (a.size() >= 1 && is_string(a[0]))
             name = string_heap_[as_string_idx(a[0])];
@@ -10216,6 +10232,31 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
         root = new_root;
     }
     return root;
+}
+
+void* Evaluator::create_workspace_tree() {
+    auto* tree = new WorkspaceTree();
+    WorkspaceNode root;
+    root.name = "root";
+    root.is_root = true;
+    root.has_own_flat = true;
+    root.flat = nullptr;
+    root.pool = nullptr;
+    tree->nodes_.push_back(std::move(root));
+    return tree;
+}
+
+void Evaluator::destroy_workspace_tree(void* wt) {
+    if (!wt) return;
+    auto* tree = static_cast<WorkspaceTree*>(wt);
+    // Delete owned flats (child workspaces that had COW triggered)
+    for (auto& node : tree->nodes_) {
+        if (!node.is_root && node.has_own_flat) {
+            delete node.flat;
+            delete node.pool;
+        }
+    }
+    delete tree;
 }
 
 } // namespace aura::compiler

@@ -152,6 +152,10 @@ void run_serve_async() {
         bool active = true;
     };
 
+    // Shared workspace tree: all sessions see the same workspace hierarchy.
+    // Created before any sessions so we can inject it into each one.
+    void* shared_workspace_tree = aura::compiler::Evaluator::create_workspace_tree();
+
     std::unordered_map<std::string, std::unique_ptr<Session>> sessions;
     std::string active_session = "default";
     {
@@ -159,6 +163,7 @@ void run_serve_async() {
         sess = std::make_unique<Session>();
         sess->id = "default";
         sess->service.set_session_id("default");
+        sess->service.set_workspace_tree(shared_workspace_tree);
         aura::compiler::CompilerService::register_session("default", &sess->service);
     }
 
@@ -166,7 +171,7 @@ void run_serve_async() {
     // For now, spawn one fiber for the default session
     // In the future, spawn as needed
     for (auto& [sid, sess] : sessions) {
-        auto* fiber = sched.spawn([sid = sid, &sess = *sess, &stdin_lines, &stdin_eof, &sessions, &sched]() {
+        auto* fiber = sched.spawn([sid = sid, &sess = *sess, &stdin_lines, &stdin_eof, &sessions, &sched, &shared_workspace_tree]() {
             // Attach mailbox to this fiber
             sess.mailbox.attach(g_current_fiber);
 
@@ -265,6 +270,7 @@ void run_serve_async() {
                             if (created) {
                                 it->second->id = name;
                                 it->second->service.set_session_id(name);
+                                it->second->service.set_workspace_tree(shared_workspace_tree);
                                 aura::compiler::CompilerService::register_session(name, &it->second->service);
                                 // Spawn fiber for new session
                                 auto nsid = name;

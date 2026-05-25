@@ -127,6 +127,19 @@ public:
     void set_type_registry(void* reg) { type_registry_ = reg; }
     void set_compiler_service(void* svc) { compiler_service_ = svc; }
     void set_session_id(const std::string& id) { session_id_ = id; }
+
+    // Set/get a shared workspace tree (for cross-session workspace sharing in serve mode).
+    void set_workspace_tree(void* wt) { workspace_tree_ = wt; }
+    void* workspace_tree() const { return workspace_tree_; }
+    // Update the shared tree's root node to point to this evaluator's workspace.
+    void update_shared_tree_root();
+
+    // Create a new workspace tree with a root node (for serve mode sharing).
+    // The caller owns the returned pointer.
+    static void* create_workspace_tree();
+
+    // Free a workspace tree created by create_workspace_tree().
+    static void destroy_workspace_tree(void* wt);
     const std::string& session_id() const { return session_id_; }
     void set_messaging_callbacks(
         std::function<bool(const std::string&, const std::string&)>* send_fn,

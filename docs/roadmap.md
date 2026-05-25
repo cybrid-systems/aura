@@ -43,9 +43,6 @@
 
 | 优先级 | 任务 | 工时 | 说明 |
 |:------:|:-----|:----:|:-----|
-| P2 | **AOT 布尔值输出 raw int** | 1d | `1` 而非 `#t`，untagged runtime 无法区分 1 和 true |
-| P2 | **struct 模块 AOT 不工作** | 2d | `define-type` 在 IR 路径不被处理 |
-| P2 | **workspace tree 跨 session 共享** | 2d | 每个 serve session 独立 workspace tree |
 | P2 | **`synthesize:optimize` fitness 基于代码长度** | 1d | 需 benchmark 驱动的真实 fitness |
 | P2 | **规则持久化仅支持 JSON 文件** | 2d | 缺少内置 VCS 集成 |
 | P3 | 权限模型（module / symbol whitelist） | 3d | mutation 只允许特定 scope |
