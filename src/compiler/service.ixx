@@ -3,6 +3,8 @@ module;
 #include "aura_jit.h"
 #include <atomic>
 #include "messaging_bridge.h"
+#include <unistd.h>
+#include "serve/fiber.h"
 
 extern "C" std::int64_t aura_jit_test();
 extern "C" void aura_set_prim_dispatcher(std::int64_t (*fn)(std::int64_t, std::int64_t*,
@@ -116,7 +118,6 @@ public:
             [](const std::string& target, const std::string& msg) -> bool {
                 auto* svc = CompilerService::lookup(target);
                 if (!svc) return false;
-                // Send with our caller's identity
                 auto* self = static_cast<CompilerService*>(
                     aura::messaging::g_current_compiler_service);
                 auto sender = self ? self->session_id() : std::string("(unknown)");
@@ -170,14 +171,31 @@ public:
     // ── Inter-agent messaging (P0) ──────────────────────────
     void set_session_id(const std::string& id) { session_id_ = id; evaluator_.set_session_id(id); }
     std::string session_id() const { return session_id_; }
+    void set_wake_eventfd(int fd) { wake_eventfd_ = fd; }
 
     void push_message(const std::string& sender, const std::string& msg) {
         mailbox_.push_back({sender, msg});
+        if (wake_eventfd_ >= 0) {
+            uint64_t _val = 1;
+            ::write(wake_eventfd_, &_val, sizeof(_val));
+        }
     }
 
     std::optional<std::string> pop_message(int timeout_ms = -1) {
         if (mailbox_.empty() && timeout_ms == 0) return std::nullopt;
+#ifdef AURA_SERVE_ASYNC
+        // Blocking wait: yield fiber until message arrives
+        while (mailbox_.empty()) {
+            if (aura::serve::g_current_fiber) {
+                aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
+                aura::serve::Fiber::yield();
+            } else {
+                return std::nullopt;
+            }
+        }
+#else
         if (mailbox_.empty()) return std::nullopt;
+#endif
         last_sender_ = mailbox_.front().first;
         auto msg = std::move(mailbox_.front().second);
         mailbox_.erase(mailbox_.begin());
@@ -243,6 +261,10 @@ public:
             "strategy-set-field!",
             "strategy-inspect",
             "coverage-report",
+            // Messaging primitives (tree-walker for argument passing)
+            "send",
+            "recv",
+            "my-id",
             "json-encode",
             "json-get-string",
             "json-parse",
@@ -2739,6 +2761,7 @@ private:
     }
 
     // ── Messaging (P14) ───────────────────────────────────────
+    int wake_eventfd_ = -1;
     std::vector<std::pair<std::string, std::string>> mailbox_;  // (sender, msg)
     std::string last_sender_;
     std::string session_id_;
