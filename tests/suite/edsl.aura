@@ -659,3 +659,24 @@
   (workspace:switch w1)
   ;; set-code should also be rejected
   (check (not (set-code "(define y 2)")))))
+
+
+;; ═══════════════════════════════════════════════════════════════
+;; P14: Inter-Agent Messaging
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "msg:my-id-returns-string"
+  (check (string? (my-id))))
+
+(test-suite "msg:recv-timeout-returns-void"
+  ;; recv with 0ms timeout should return void (no messages)
+  (check (not (recv 0))))
+
+(test-suite "msg:send-no-target"
+  ;; send to nonexistent target returns #f
+  (check (not (send "nonexistent" "test"))))
+
+(test-suite "msg:send-self-no-mailbox"
+  ;; send to self (same session) should work in --serve mode only
+  ;; outside serve: no mailbox available, returns #f
+  (check (not (send "self" "test"))))
