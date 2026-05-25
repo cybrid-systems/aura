@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 4.3)
 set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD
     "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
-project(aura LANGUAGES CXX)
+project(aura LANGUAGES CXX C)
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -25,7 +25,8 @@ target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
     src/compiler/query.ixx
-    src/compiler/type_checker.ixx)
+    src/compiler/type_checker.ixx
+    src/repl/repl.cppm)
 
 target_sources(aura PRIVATE
     src/core/ast_impl.cpp
@@ -225,3 +226,9 @@ add_test(NAME tc_let
     COMMAND sh -c "printf '(let ((x 10)) x)' | timeout 5 ./aura --typecheck | grep -q 'type: Int'"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
+
+# linenoise — single-file line editing library
+add_library(linenoise STATIC
+    src/linenoise/linenoise.c)
+target_include_directories(linenoise PUBLIC src/linenoise)
+target_link_libraries(aura PRIVATE linenoise)

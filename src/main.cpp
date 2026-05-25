@@ -1,5 +1,6 @@
 #include "compiler/aura_jit.h"
 #include "messaging_bridge.h"
+#include <unistd.h>
 #include "serve/serve_async.h"
 
 import std;
@@ -18,6 +19,7 @@ import aura.compiler.ir;
 import aura.diag;
 import aura.compiler.cache;
 import aura.compiler.value;
+import aura.repl;
 
 // C-linkage bridge to reflection-based --inspect
 // (implemented in ir_reflect_serialize.cpp, compiled with -freflection)
@@ -1858,91 +1860,11 @@ int main(int argc, char* argv[]) {
     aura::compiler::CompilerService cs;
     cs.set_session_id("default");
     aura::compiler::CompilerService::register_session("default", &cs);
-    bool interactive = false;
-    try {
-        std::cin.sync();
-        interactive = (argc == 1 && std::cin.peek() == std::char_traits<char>::eof());
-    } catch (...) {
-    }
+    // Interactive REPL if no args and stdin is a terminal (not piped)
+    bool interactive = (argc == 1 && ::isatty(STDIN_FILENO));
     if (interactive) {
-        std::println("Aura v0.2 — LLVM JIT / Sound Gradual Typing / C FFI");
-        std::println("  (quit) to exit");
-
-        // Multi-line REPL with paren balance tracking
-        std::string input;
-        int depth = 0;
-        int history_index = 0;
-        std::vector<std::string> history;
-        constexpr int MAX_HISTORY = 50;
-
-        while (true) {
-            // Prompt
-            if (depth == 0)
-                std::print("> ");
-            else
-                for (int i = 0; i < depth && i < 8; ++i)
-                    std::print(". ");
-            std::cout.flush();
-
-            std::string line;
-            if (!std::getline(std::cin, line))
-                break;
-
-            if (line == "(quit)" || line == "(exit)")
-                break;
-            if (line.empty() && depth == 0)
-                continue;
-            if (line.empty()) {
-                input += "\n";
-                continue;
-            }
-
-            input += line;
-            input += "\n";
-
-            // Track paren balance
-            bool in_str = false;
-            for (auto c : line) {
-                if (c == '"')
-                    in_str = !in_str;
-                if (!in_str) {
-                    if (c == '(')
-                        ++depth;
-                    if (c == ')')
-                        --depth;
-                }
-            }
-
-            if (depth > 0)
-                continue; // Keep reading
-
-            // Complete expression — evaluate
-            // Trim whitespace
-            auto start = input.find_first_not_of(" \t\n\r");
-            if (start == std::string::npos) {
-                input.clear();
-                continue;
-            }
-            auto end = input.find_last_not_of(" \t\n\r");
-            auto trimmed = input.substr(start, end - start + 1);
-
-            // Add to history
-            if (!trimmed.empty()) {
-                history.push_back(trimmed);
-                if (history.size() > MAX_HISTORY)
-                    history.erase(history.begin());
-            }
-
-            auto r = cs.eval(trimmed);
-            if (!r)
-                std::println(std::cerr, "{}: error: {}", trimmed, r.error().format_with_source(trimmed));
-            else if (!aura::compiler::types::is_void(*r))
-                std::println("{}", fmt_val(*r, cs));
-
-            input.clear();
-            depth = 0;
-        }
-        std::println();
+        aura::Repl repl(cs);
+        repl.run();
         return 0;
     }
 
