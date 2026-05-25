@@ -12,6 +12,13 @@
 | 2 | workspace tree 非全局 | ~~每个 serve session 有独立 workspace tree~~ ✅ 已修复（共享 tree） | Ws |
 | 3 | `synthesize:optimize` fitness 仅基于代码长度 | 需要 benchmark 驱动的真实 fitness | Opt |
 
+## 已关闭（不做）
+
+| # | 问题 | 原因 |
+|:---|:------|:------|
+| — | 权限模型（module / symbol whitelist） | `workspace:lock` + COW 隔离够用 |
+| — | eval 资源限制（CPU / memory / recursion depth） | 当前无多租户场景 |
+
 ## 已完成（旧问题已修）
 
 | 问题 | 修复 |
