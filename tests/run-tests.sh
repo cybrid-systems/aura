@@ -312,6 +312,7 @@ run_emit_test "emit:display"    "(display 42)" "42"
 run_emit_test "emit:string-len"  "(string-length \"hello\")" "5"
 run_emit_test "emit:string-eq"   "(string=? \"abc\" \"abc\")" "1"
 run_emit_test "emit:display-car" "(display (car (list 1 2 3)))" "1"
+run_emit_test "emit:display-list" "(display (list 1 2 3))" "(1 2 3)"
 
 # M4 ownership model
 run_emit_test "emit:drop-int"    "(begin (drop 42) 7)" "7"
