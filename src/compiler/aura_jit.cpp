@@ -310,7 +310,9 @@ struct LLVMBuilder {
                 irb->CreateRet(load(inst.ops[0]));
                 return true;
             case OpConstBool:
-                store(inst.ops[0], c64(inst.ops[1] ? 1 : 0));
+                // Encode bool as sentinel values outside pair/int range
+                // #t = INT64_MIN (0x8000000000000000), #f = INT64_MIN + 1
+                store(inst.ops[0], c64(inst.ops[1] ? 0x8000000000000000LL : 0x8000000000000001LL));
                 return true;
             case OpConstVoid:
                 store(inst.ops[0], c64(0));
