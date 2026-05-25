@@ -479,3 +479,96 @@
     (workspace:switch 0)
     ;; Root def-use should show the ORIGINAL code being in effect
     (check #t)))
+
+
+(test-suite "ws:multiple-workspaces"
+  (set-code "(define (f x) (+ x 1))")
+  (define w1 (workspace:create "a"))
+  (define w2 (workspace:create "b"))
+  (define w3 (workspace:create "c"))
+  ;; All should have different IDs
+  (check (not (= w1 w2)))
+  (check (not (= w1 w3)))
+  (check (not (= w2 w3)))
+  ;; List should show all
+  (let ((lst (workspace:list)))
+    (check (= (length lst) 4)))  ;; root + 3 children)
+
+(test-suite "ws:deep-isolation"
+  (set-code "(define x 1)")
+  (define w1 (workspace:create "mutator"))
+  (workspace:switch w1)
+  ;; Mutate heavily
+  (set-code "(define x 999)")
+  (set-code "(define y 42)")
+  (mutate:rebind "y" "(lambda () 100)" "test")
+  ;; Switch back to root
+  (workspace:switch 0)
+  ;; Root should have ONLY the original
+  (let* ((r (query:def-use "x"))
+         (defs (car r)))
+    (check (= (length defs) 1)))
+  ;; y should not exist in root
+  (let* ((r (query:def-use "y"))
+         (defs (car r)))
+    (check (= (length defs) 0))))
+
+(test-suite "ws:switch-defuse-rebuild"
+  (set-code "(define (f x) (+ x 1))")
+  ;; Build def-use cache in root
+  (query:def-use "f")
+  (define w1 (workspace:create "child"))
+  (workspace:switch w1)
+  ;; Child should have its own def-use (rebuilt on switch)
+  (let* ((r (query:def-use "f"))
+         (defs (car r))
+         (uses (cdr r)))
+    (check (= (length defs) 1))
+    (check (> (length uses) 0)))
+  ;; Switch back — cache rebuilds again
+  (workspace:switch 0)
+  (let* ((r (query:def-use "f"))
+         (defs (car r)))
+    (check (= (length defs) 1))))
+
+(test-suite "ws:create-from-child"
+  (set-code "(define (f x) (+ x 1))")
+  (define w1 (workspace:create "inner"))
+  (workspace:switch w1)
+  ;; Mutate inner
+  (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
+  ;; Create grandchild FROM inner (clones inner's state)
+  (define w2 (workspace:create "grandchild"))
+  (workspace:switch w2)
+  ;; Grandchild should have inner's version of f
+  (let* ((r (query:def-use "f"))
+         (defs (car r)))
+    (check (= (length defs) 1))))
+
+(test-suite "ws:delete-nonroot"
+  (set-code "(define (f x) (+ x 1))")
+  (workspace:create "a")
+  (workspace:create "b")
+  (workspace:create "c")
+  ;; Delete non-root and non-active
+  (check (workspace:delete 1))
+  ;; List should have fewer entries
+  (let ((lst (workspace:list)))
+    (check (>= (length lst) 2))))
+
+(test-suite "ws:delete-active-switches-to-root"
+  (set-code "(define (f x) (+ x 1))")
+  (define wid (workspace:create "temp"))
+  (workspace:switch wid)
+  ;; Delete the active workspace
+  (workspace:delete wid)
+  ;; Should auto-switch to root
+  (check (= (workspace:current) 0))))
+
+(test-suite "ws:list-after-delete"
+  (set-code "(define (f x) (+ x 1))")
+  (workspace:create "delete-me")
+  (workspace:delete 1)
+  ;; List should only have root
+  (let ((lst (workspace:list)))
+    (check (= (length lst) 1))))
