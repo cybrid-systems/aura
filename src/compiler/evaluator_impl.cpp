@@ -4708,6 +4708,180 @@ Evaluator::Evaluator() {
         return make_void();
     });
 
+    // ═══════════════════════════════════════════════════════════════
+    // P9: Def-Use Analysis (P0 — simple full-ast scan)
+    // ═══════════════════════════════════════════════════════════════
+
+    // (query:def-use "sym-name")
+    //   → ((def-node-id ...) . (use-node-id ...))
+    //   Linear scan of workspace FlatAST. Returns every definition and
+    //   every use (Variable) of the named symbol, as a pair of two lists.
+    //   Definitions detected: define, lambda params, let, letrec bindings.
+    primitives_.add("query:def-use", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]) || !workspace_flat_ || !workspace_pool_)
+            return make_void();
+        auto sym_idx = as_string_idx(a[0]);
+        if (sym_idx >= string_heap_.size())
+            return make_void();
+        auto target_name = string_heap_[sym_idx];
+        auto target_sym = workspace_pool_->intern(target_name);
+        auto& flat = *workspace_flat_;
+
+        EvalValue def_list = make_void();
+        EvalValue use_list = make_void();
+
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+
+            // Check if this is a definition of the target symbol
+            bool is_def = false;
+            switch (v.tag) {
+                case aura::ast::NodeTag::Define:
+                case aura::ast::NodeTag::Let:
+                case aura::ast::NodeTag::LetRec:
+                    if (v.sym_id == target_sym)
+                        is_def = true;
+                    break;
+                case aura::ast::NodeTag::Lambda:
+                    for (auto pid : v.params)
+                        if (pid == target_sym) {
+                            is_def = true;
+                            break;
+                        }
+                    break;
+                default:
+                    break;
+            }
+            if (is_def) {
+                auto pid = pairs_.size();
+                pairs_.push_back({make_int(static_cast<std::int64_t>(id)), def_list});
+                def_list = make_pair(pid);
+            }
+
+            // Check if this is a use of the target symbol
+            if (v.tag == aura::ast::NodeTag::Variable && v.sym_id == target_sym) {
+                // Skip binding positions: lambda params and define/let names
+                // are handled as defs above, not uses.
+                bool is_binding_position = false;
+                // Check if this Variable is a direct child of a Define/Let/LetRec
+                // as the bound name (child index 2 for define, 0 for let binding)
+                // For now, trust that Define/Lambda/Let nodes use sym_id not Variable
+                // children for binding names.
+                auto pid = pairs_.size();
+                pairs_.push_back({make_int(static_cast<std::int64_t>(id)), use_list});
+                use_list = make_pair(pid);
+            }
+        }
+
+        // Return (def-list . use-list) as a pair
+        auto result_pid = pairs_.size();
+        pairs_.push_back({def_list, use_list});
+        return make_pair(result_pid);
+    });
+
+    // (query:reaches node-id)
+    //   → ((def-node-id ...) . (use-node-id ...))
+    //   For a given definition node (define/let), find all uses of the
+    //   symbol it defines. Calls query:def-use internally.
+    primitives_.add("query:reaches", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]) || !workspace_flat_ || !workspace_pool_)
+            return make_void();
+        auto target = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto& flat = *workspace_flat_;
+        if (target >= flat.size())
+            return make_void();
+
+        auto v = flat.get(target);
+        aura::ast::SymId defined_sym = aura::ast::INVALID_SYM;
+        switch (v.tag) {
+            case aura::ast::NodeTag::Define:
+            case aura::ast::NodeTag::Let:
+            case aura::ast::NodeTag::LetRec:
+                defined_sym = v.sym_id;
+                break;
+            default:
+                return make_void();
+        }
+        if (defined_sym == aura::ast::INVALID_SYM)
+            return make_void();
+
+        // Call query:def-use for the defined symbol
+        auto name = workspace_pool_->resolve(defined_sym);
+        auto name_idx = string_heap_.size();
+        string_heap_.push_back(std::string(name));
+        auto duo_fn = primitives_.lookup("query:def-use");
+        if (!duo_fn)
+            return make_void();
+        return (*duo_fn)({make_string(name_idx)});
+    });
+
+    // (query:effects "sym-name")
+    //   → ((def-node-id ...) . (use-node-id ...) . (caller-node-id ...))
+    //   Returns defs, uses, and callers (Call nodes where target is the callee).
+    //   Useful for "if I mutate this, what breaks?"
+    primitives_.add("query:effects", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]) || !workspace_flat_ || !workspace_pool_)
+            return make_void();
+        auto sym_idx = as_string_idx(a[0]);
+        if (sym_idx >= string_heap_.size())
+            return make_void();
+        auto target_name = string_heap_[sym_idx];
+        auto target_sym = workspace_pool_->intern(target_name);
+        auto& flat = *workspace_flat_;
+
+        EvalValue def_list = make_void();
+        EvalValue use_list = make_void();
+        EvalValue caller_list = make_void();
+
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+
+            // Definitions
+            bool is_def = false;
+            switch (v.tag) {
+                case aura::ast::NodeTag::Define:
+                case aura::ast::NodeTag::Let:
+                case aura::ast::NodeTag::LetRec:
+                    if (v.sym_id == target_sym) is_def = true;
+                    break;
+                case aura::ast::NodeTag::Lambda:
+                    for (auto pid : v.params)
+                        if (pid == target_sym) { is_def = true; break; }
+                    break;
+                default: break;
+            }
+            if (is_def) {
+                auto pid = pairs_.size();
+                pairs_.push_back({make_int(static_cast<std::int64_t>(id)), def_list});
+                def_list = make_pair(pid);
+            }
+
+            // Uses (Variable nodes)
+            if (v.tag == aura::ast::NodeTag::Variable && v.sym_id == target_sym) {
+                auto pid = pairs_.size();
+                pairs_.push_back({make_int(static_cast<std::int64_t>(id)), use_list});
+                use_list = make_pair(pid);
+            }
+
+            // Callers (Call nodes whose callee matches target)
+            if (v.tag == aura::ast::NodeTag::Call && !v.children.empty()) {
+                auto callee = flat.get(v.child(0));
+                if (callee.tag == aura::ast::NodeTag::Variable &&
+                    callee.sym_id == target_sym) {
+                    auto pid = pairs_.size();
+                    pairs_.push_back({make_int(static_cast<std::int64_t>(id)), caller_list});
+                    caller_list = make_pair(pid);
+                }
+            }
+        }
+
+        // Return (defs uses callers) as a three-element list
+        auto c1 = pairs_.size(); pairs_.push_back({caller_list, make_void()});
+        auto c2 = pairs_.size(); pairs_.push_back({use_list, make_pair(c1)});
+        auto c3 = pairs_.size(); pairs_.push_back({def_list, make_pair(c2)});
+        return make_pair(c3);
+    });
+
     // ── intend — 纯循环管理器 ────────────────────────────────
     // (intend goal generator-fn verifier-fn [fixer-fn] [max-attempts])
     //
