@@ -6929,20 +6929,22 @@ Evaluator::Evaluator() {
         double best_fitness = compute_fitness(baseline);
         int best_gen = 0;
 
+        // Store multiple candidates for crossover (elitism)
+        std::vector<std::pair<std::string, double>> elite;
+
         for (int gen = 0; gen < generations; ++gen) {
             for (int p = 0; p < pop_size; ++p) {
                 std::string variant = best_code;
-                // Apply random numeric mutations
+
+                // Apply mutations
                 for (int m = 0; m < 5; ++m) {
                     if (static_cast<double>(std::rand()) / RAND_MAX >= mutation_rate)
                         continue;
-                    // Operator swap: + ↔ - ↔ * ↔ /
-                    static const char* ops = "+-*/";
-                    for (const char* op = ops; *op; ++op) {
+                    // Operator swap
+                    for (const char* op = "+-*/"; *op; ++op) {
                         auto opos = variant.find(*op);
                         if (opos != std::string::npos && opos > 0) {
-                            const char* replace_with = "+-*/";
-                            variant[opos] = replace_with[std::rand() % 4];
+                            variant[opos] = "+-*/"[std::rand() % 4];
                             break;
                         }
                     }
@@ -6959,42 +6961,119 @@ Evaluator::Evaluator() {
                     variant.replace(npos, nend - npos, std::to_string(val));
                 }
 
-                if (variant == best_code) continue;
-
-                // Try set-code
-                auto vi = string_heap_.size();
-                string_heap_.push_back(variant);
-                auto sc_fn = primitives_.lookup("set-code");
-                if (!sc_fn) continue;
-                auto sc_r = (*sc_fn)({make_string(vi)});
-                if (!is_bool(sc_r) || !as_bool(sc_r)) continue;
-
-                // Typecheck
-                bool valid = true;
-                auto tc_fn = primitives_.lookup("typecheck-current");
-                if (tc_fn) {
-                    auto tc_r = (*tc_fn)({});
-                    if (is_string(tc_r)) {
-                        auto ti = as_string_idx(tc_r);
-                        if (ti < string_heap_.size() &&
-                            string_heap_[ti].find("error") != std::string::npos)
-                            valid = false;
+                // Crossover: combine with a random elite member
+                if (!elite.empty() && std::rand() % 3 == 0) {
+                    auto& other = elite[std::rand() % elite.size()].first;
+                    auto b1 = variant.find("(lambda");
+                    auto b2 = other.find("(lambda");
+                    if (b1 != std::string::npos && b2 != std::string::npos) {
+                        auto e1 = variant.find(')', b1);
+                        auto e2 = other.find(')', b2);
+                        if (e1 != std::string::npos && e2 != std::string::npos
+                            && e1 > b1 && e2 > b2) {
+                            // Swap bodies after lambda params
+                            auto body1_end = variant.find_last_of(')');
+                            auto body2_end = other.find_last_of(')');
+                            if (body1_end > b1 && body2_end > b2) {
+                                std::string body1 = variant.substr(b1, body1_end - b1 + 1);
+                                std::string body2 = other.substr(b2, body2_end - b2 + 1);
+                                if (body1 != body2) {
+                                    // Try to use body2 in variant
+                                    variant = variant.substr(0, b1) + body2
+                                        + variant.substr(body1_end + 1);
+                                }
+                            }
+                        }
                     }
                 }
-                if (!valid) continue;
 
-                double f = compute_fitness(variant);
+                if (variant == best_code) continue;
+
+                // Evaluate in a child workspace (isolation)
+                // Use workspace tree if available, otherwise fall back to set-code
+                bool evaluated = false;
+                double f = 0.0;
+                auto sc_fn = primitives_.lookup("set-code");
+                if (!sc_fn) continue;
+
+                if (workspace_tree_) {
+                    // Use child workspace for isolation
+                    auto* tree = static_cast<WorkspaceTree*>(workspace_tree_);
+                    auto ws_id = tree->create_child("evolve-variant",
+                                                     workspace_flat_, workspace_pool_);
+                    // Switch to child and try the variant
+                    if (ws_id > 0) {
+                        tree->ensure_local_flat(ws_id);
+                        auto& ws = tree->nodes_[ws_id];
+                        auto saved_flat = workspace_flat_;
+                        auto saved_pool = workspace_pool_;
+                        workspace_flat_ = ws.flat;
+                        workspace_pool_ = ws.pool;
+
+                        auto vi = string_heap_.size();
+                        string_heap_.push_back(variant);
+                        auto sc_r = (*sc_fn)({make_string(vi)});
+
+                        if (is_bool(sc_r) && as_bool(sc_r)) {
+                            bool valid = true;
+                            auto tc_fn = primitives_.lookup("typecheck-current");
+                            if (tc_fn) {
+                                auto tc_r = (*tc_fn)({});
+                                if (is_string(tc_r)) {
+                                    auto ti = as_string_idx(tc_r);
+                                    if (ti < string_heap_.size() &&
+                                        string_heap_[ti].find("error") != std::string::npos)
+                                        valid = false;
+                                }
+                            }
+                            if (valid) {
+                                f = compute_fitness(variant);
+                                evaluated = true;
+                            }
+                        }
+
+                        workspace_flat_ = saved_flat;
+                        workspace_pool_ = saved_pool;
+                        tree->delete_child(ws_id);
+                    }
+                }
+
+                if (!evaluated) {
+                    // Fallback: direct set-code
+                    auto vi = string_heap_.size();
+                    string_heap_.push_back(variant);
+                    auto sc_r = (*sc_fn)({make_string(vi)});
+                    if (!is_bool(sc_r) || !as_bool(sc_r)) continue;
+
+                    auto tc_fn = primitives_.lookup("typecheck-current");
+                    bool valid = true;
+                    if (tc_fn) {
+                        auto tc_r = (*tc_fn)({});
+                        if (is_string(tc_r)) {
+                            auto ti = as_string_idx(tc_r);
+                            if (ti < string_heap_.size() &&
+                                string_heap_[ti].find("error") != std::string::npos)
+                                valid = false;
+                        }
+                    }
+                    if (!valid) continue;
+                    f = compute_fitness(variant);
+                    // Restore
+                    auto bi = string_heap_.size();
+                    string_heap_.push_back(baseline);
+                    (*sc_fn)({make_string(bi)});
+                }
+
                 if (f > best_fitness) {
                     best_fitness = f;
                     best_code = variant;
                     best_gen = gen + 1;
                 }
-
-                // Restore baseline for next variant
-                auto bi = string_heap_.size();
-                string_heap_.push_back(baseline);
-                (*sc_fn)({make_string(bi)});
             }
+
+            // Update elite from this generation
+            elite.clear();
+            elite.push_back({best_code, best_fitness});
         }
 
         // Apply best to workspace
