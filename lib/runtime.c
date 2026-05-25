@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 // Aura standalone runtime
 // Linked with LLVM-compiled .o to produce native binary.
 // Uses Bump Allocator (Arena) for fast bulk allocation + reset.
@@ -11,8 +12,28 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <stdbool.h>
 
-// ── Type tags for display (must match AOT codegen) ─────────
+// ── Pointer tagging: value representation ──────────────────
+// bit 0 = 0: Fixnum (signed int, value >> 1)
+// bits 1-0 = 01: Pair (index = val >> 2)
+// bits 1-0 = 11: Special (tag = (val >> 2) & 3)
+//   tag 0 = #f (= 0b11 = 3)
+//   tag 1 = #t (= 0b111 = 7)
+//   tag 2 = void () (= 0b1011 = 11)
+
+#define IS_PAIR(v)  (((v) & 3) == 1)
+#define IS_SPECIAL(v) (((v) & 3) == 3)
+#define IS_FIXNUM(v) (((v) & 1) == 0)
+#define PAIR_INDEX(v) ((v) >> 2)
+#define SPECIAL_TAG(v) (((v) >> 2) & 3)
+
+// ── Enum-compatible tag values (use static const instead of macros to avoid enum conflict)
+static const int KWD_FALSE = 0;
+static const int KWD_TRUE = 1;
+static const int KWD_VOID = 2;
+
+// ── Type tags for aura_display_val (kept for backward compat) ─
 enum ValueTag {
     TAG_INT = 0,
     TAG_BOOL = 1,
@@ -20,7 +41,7 @@ enum ValueTag {
     TAG_CLOSURE = 3,
     TAG_STRING = 4,
     TAG_VOID = 5,
-    TAG_DYNAMIC = 255,  // unknown / runtime-dependent
+    TAG_DYNAMIC = 255,
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -141,39 +162,36 @@ static uint64_t pair_alloc_slot(void) {
     return id;
 }
 
-// Negative encoding: aura_alloc_pair returns -(id+1) instead of raw id.
-// This matches the JIT runtime convention (aura_jit_runtime.cpp) and allows
-// pair? type checks via simple val < 0 comparison in the LLVM IR.
+// Pointer Tagging encoding: aura_alloc_pair returns (id << 2) | 1
+// bit 0 = 1 marks non-fixnum; bit 1 = 0 marks pair (low 2 bits = 01).
+// Decode: internal_id = pair_val >> 2
 //
-// Decode: internal_id = -pair_val - 1
-//
-// The negative encoding also distinguishes pairs from closures and cells
-// (which use non-negative IDs), enabling lightweight type dispatch.
+// This replaces the old negative-sentinel encoding (-(id+1)).
 
 int64_t aura_alloc_pair(int64_t car, int64_t cdr) {
     get_pairs();
     uint64_t id = pair_alloc_slot();
     pairs[id].car = car;
     pairs[id].cdr = cdr;
-    return -(int64_t)id - 1;
+    return ((int64_t)id << 2) | 1;
 }
 
 int64_t aura_pair_car(int64_t pair_val) {
-    int64_t id = -pair_val - 1; // decode from negative sentinel
-    if (id < 0 || (uint64_t)id >= pair_count || !pairs[(uint64_t)id].live) return 0;
-    return pairs[(uint64_t)id].car;
+    uint64_t id = (uint64_t)(pair_val >> 2);
+    if (id >= pair_count || !pairs[id].live) return 0;
+    return pairs[id].car;
 }
 
 int64_t aura_pair_cdr(int64_t pair_val) {
-    int64_t id = -pair_val - 1;
-    if (id < 0 || (uint64_t)id >= pair_count || !pairs[(uint64_t)id].live) return 0;
-    return pairs[(uint64_t)id].cdr;
+    uint64_t id = (uint64_t)(pair_val >> 2);
+    if (id >= pair_count || !pairs[id].live) return 0;
+    return pairs[id].cdr;
 }
 
 void aura_drop_pair(int64_t pair_val) {
-    int64_t id = -pair_val - 1;
-    if (id < 0 || (uint64_t)id >= pair_count || !pairs[(uint64_t)id].live) return;
-    pairs[(uint64_t)id].live = false;
+    uint64_t id = (uint64_t)(pair_val >> 2);
+    if (id >= pair_count || !pairs[id].live) return;
+    pairs[id].live = false;
     if (pair_free_count < FREE_LIST_CAP)
         pair_free_list[pair_free_count++] = (int64_t)id;
 }
@@ -477,41 +495,49 @@ static int g_display_was_called = 0;
 static void aura_display_pair_chain(int64_t val) {
     putchar('(');
     int first = 1;
-    while (val != 0 && val < 0) {
+    while (IS_PAIR(val)) {
         if (!first) putchar(' ');
         first = 0;
         int64_t car_val = aura_pair_car(val);
-        // Check if car is itself a pair (nested)
-        if (car_val < 0)
+        if (IS_PAIR(car_val))
             aura_display_pair_chain(car_val);
+        else if (IS_SPECIAL(car_val) && SPECIAL_TAG(car_val) == TAG_VOID)
+            printf("()");
+        else if (IS_SPECIAL(car_val))
+            printf("%s", SPECIAL_TAG(car_val) == KWD_TRUE ? "#t" : "#f");
         else
-            printf("%ld", (long)car_val);
+            printf("%ld", (long)(car_val >> 1));
         val = aura_pair_cdr(val);
     }
-    // Improper list: dotted tail
-    if (val != 0)
-        printf(" . %ld", (long)val);
+    if (val != 0 && !IS_SPECIAL(val))
+        printf(" . %ld", (long)(val >> 1));
+    else if (IS_SPECIAL(val) && SPECIAL_TAG(val) != TAG_VOID)
+        printf(" . %s", SPECIAL_TAG(val) == KWD_TRUE ? "#t" : "#f");
+    else if (val != 0 && !IS_SPECIAL(val))
+        printf("()");
     putchar(')');
 }
 
 int64_t aura_display_int(int64_t val) {
-    // Bool sentinels (INT64_MIN / INT64_MIN+1)
-    if (val == 0x8000000000000000LL) {
-        printf("#t");
-    } else if (val == 0x8000000000000001LL) {
-        printf("#f");
+    // Legacy sentinel encoding (from LLVM codegen, shared with JIT)
+    if (val == 0x8000000000000000LL) { printf("#t"); }
+    else if (val == 0x8000000000000001LL) { printf("#f"); }
+    else if (IS_PAIR(val)) {
+        aura_display_pair_chain(val);
+    } else if (IS_SPECIAL(val)) {
+        int st = SPECIAL_TAG(val);
+        if (st == KWD_TRUE) printf("#t");
+        else if (st == KWD_FALSE) printf("#f");
+        else printf("()");
     } else if (val == 0) {
         printf("()");
-    } else if (val < 0) {
-        // Negative = pair sentinel — print as list
-        aura_display_pair_chain(val);
     } else {
-        // Positive — print as raw integer
         printf("%ld", (long)val);
     }
     fflush(stdout);
     g_display_was_called = 1;
     return val;
+}    return val;
 }
 
 // ── Type-aware display ─────────────────────────────────
@@ -530,13 +556,16 @@ int64_t aura_display_val(int64_t val, int type_tag) {
             break;
         case TAG_INT:
         default:
-            // TAG_INT, TAG_CLOSURE, TAG_STRING, TAG_DYNAMIC — print as-is
-            if (val < 0)
+            if (IS_PAIR(val))
                 aura_display_pair_chain(val);
+            else if (IS_SPECIAL(val) && SPECIAL_TAG(val) == KWD_VOID)
+                printf("()");
+            else if (IS_SPECIAL(val))
+                printf("%s", SPECIAL_TAG(val) == KWD_TRUE ? "#t" : "#f");
             else if (val == 0)
                 printf("()");
             else
-                printf("%ld", (long)val);
+                printf("%ld", (long)(val >> 1));
             break;
     }
     fflush(stdout);

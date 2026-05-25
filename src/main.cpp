@@ -1572,40 +1572,32 @@ int main(int argc, char* argv[]) {
                 else if (n == ">=")
                     code += "    for(int i=0;i<c-1;i++) if(!(a[i]>=a[i+1])) return 0; return 1;\n";
                 else if (n == "not")
-                    code += "    return (c<1||a[0]==0)?1:0;\n";
+                    code += "    return (c<1||a[0]==3||a[0]==11)?7:3;\n";
                 else if (n == "append") {
-                    // (append lst1 lst2) — build reversed copy of lst1, then
-                    // attach lst2: result = lst1's elements followed by lst2
-                    // Strategy: collect car values from lst1 in reverse,
-                    // then cons them all with lst2 as tail.
                     code += "    if(c<1)return 0; int64_t lst1=c>0?a[0]:0; int64_t lst2=c>1?a[1]:0;\n";
-                    code += "    // Collect car values in reverse order\n";
                     code += "    int64_t rev[1024]; int revc=0;\n";
-                    code += "    while(lst1!=0&&lst1<0&&revc<1024){rev[revc++]=aura_pair_car(lst1); lst1=aura_pair_cdr(lst1);}\n";
-                    code += "    // Build result: cons each reversed car onto lst2\n";
+                    code += "    while((lst1<0||(lst1&3)==1)&&revc<1024){rev[revc++]=aura_pair_car(lst1); lst1=aura_pair_cdr(lst1);}\n";
                     code += "    int64_t r=lst2;\n";
                     code += "    for(int i=revc-1;i>=0;i--) r=aura_alloc_pair(rev[i],r);\n";
                     code += "    return r;\n";
                 }
                 else if (n == "member") {
-                    // (member key list) — find key in list, return tail
                     code += "    int64_t key=c>0?a[0]:0; int64_t lst=c>1?a[1]:0;\n";
-                    code += "    while(lst!=0&&lst<0){if(aura_pair_car(lst)==key)return lst; lst=aura_pair_cdr(lst);}\n";
+                    code += "    while(lst<0||(lst&3)==1){if(aura_pair_car(lst)==key)return lst; lst=aura_pair_cdr(lst);}\n";
                     code += "    return 0;\n";
                 }
                 else if (n == "map") {
-                    // (map fn list) — apply fn to each element, collect results
                     code += "    int64_t fn=c>0?a[0]:0; int64_t lst=c>1?a[1]:0;\n";
                     code += "    int64_t rev[1024]; int revc=0;\n";
                     code += "    int64_t args[8];\n";
-                    code += "    while(lst!=0&&lst<0&&revc<1024){args[0]=aura_pair_car(lst); rev[revc++]=aura_closure_call(fn,args,1); lst=aura_pair_cdr(lst);}\n";
+                    code += "    while((lst<0||(lst&3)==1)&&revc<1024){args[0]=aura_pair_car(lst); rev[revc++]=aura_closure_call(fn,args,1); lst=aura_pair_cdr(lst);}\n";
                     code += "    int64_t r=0; for(int i=revc-1;i>=0;i--) r=aura_alloc_pair(rev[i],r);\n";
                     code += "    return r;\n";
                 }
                 else if (n == "null?")
-                    code += "    return (c<1||a[0]==0)?1:0;\n";
+                    code += "    return (c>=1&&(a[0]==11||a[0]==0))?1:0;\n";
                 else if (n == "pair?")
-                    code += "    return (c>0&&a[0]<0)?1:0;\n";
+                    code += "    return (c>0&&(((a[0]&3)==1)||a[0]<0))?1:0;\n";
                 else if (n == "cons")
                     code += "    return aura_alloc_pair(c>0?a[0]:0,c>1?a[1]:0);\n";
                 else if (n == "car")
@@ -1614,21 +1606,20 @@ int main(int argc, char* argv[]) {
                     code += "    return (c>0)?aura_pair_cdr(a[0]):0;\n";
                 else if (n == "length") {
                     code += "    int64_t v=c>0?a[0]:0; int64_t n=0;\n";
-                    code += "    while(v!=0&&v<0&&n<9999){n++;v=aura_pair_cdr(v);}\n";
+                    code += "    while((v<0||(v&3)==1)&&n<9999){n++;v=aura_pair_cdr(v);}\n";
                     code += "    return n;\n";
                 }
                 else if (n == "list-ref") {
                     code += "    int64_t v=c>0?a[0]:0; int64_t i=c>1?a[1]:0;\n";
-                    code += "    while(i>0&&v!=0&&v<0){v=aura_pair_cdr(v);i--;}\n";
-                    code += "    if(i==0&&v!=0&&v<0)return aura_pair_car(v); return 0;\n";
+                    code += "    while(i>0&&(v<0||(v&3)==1)){v=aura_pair_cdr(v);i--;}\n";
+                    code += "    if(i==0&&(v<0||(v&3)==1))return aura_pair_car(v); return 0;\n";
                 }
                 else if (n == "reverse") {
                     code += "    int64_t v=c>0?a[0]:0; int64_t r=0;\n";
-                    code += "    while(v!=0&&v<0){r=aura_alloc_pair(aura_pair_car(v),r);v=aura_pair_cdr(v);}\n";
+                    code += "    while(v<0||(v&3)==1){r=aura_alloc_pair(aura_pair_car(v),r);v=aura_pair_cdr(v);}\n";
                     code += "    return r;\n";
                 }
                 else if (n == "list") {
-                    // Build list from multiple args using aura_alloc_pair
                     code += "    int64_t r=0;\n";
                     code += "    for(int i=c-1;i>=0;i--) r=aura_alloc_pair(a[i],r);\n";
                     code += "    return r;\n";
@@ -1638,19 +1629,17 @@ int main(int argc, char* argv[]) {
                     code += "    return (c>0)?a[0]:0;\n";
                 }
                 else if (n == "filter") {
-                    // (filter pred list) — keep elements where pred returns truthy
                     code += "    int64_t pred=c>0?a[0]:0; int64_t lst=c>1?a[1]:0;\n";
                     code += "    int64_t rev[1024]; int revc=0;\n";
                     code += "    int64_t args[8];\n";
-                    code += "    while(lst!=0&&lst<0&&revc<1024){int64_t v=aura_pair_car(lst); args[0]=v; if(aura_closure_call(pred,args,1)!=0)rev[revc++]=v; lst=aura_pair_cdr(lst);}\n";
+                    code += "    while((lst<0||(lst&3)==1)&&revc<1024){int64_t v=aura_pair_car(lst); args[0]=v; if(aura_closure_call(pred,args,1)!=0)rev[revc++]=v; lst=aura_pair_cdr(lst);}\n";
                     code += "    int64_t r=0; for(int i=revc-1;i>=0;i--) r=aura_alloc_pair(rev[i],r);\n";
                     code += "    return r;\n";
                 }
                 else if (n == "foldl") {
-                    // (foldl fn init list) — left fold
                     code += "    int64_t fn=c>0?a[0]:0; int64_t acc=c>1?a[1]:0; int64_t lst=c>2?a[2]:0;\n";
                     code += "    int64_t args[8];\n";
-                    code += "    while(lst!=0&&lst<0){args[0]=acc; args[1]=aura_pair_car(lst); acc=aura_closure_call(fn,args,2); lst=aura_pair_cdr(lst);}\n";
+                    code += "    while(lst<0||(lst&3)==1){args[0]=acc; args[1]=aura_pair_car(lst); acc=aura_closure_call(fn,args,2); lst=aura_pair_cdr(lst);}\n";
                     code += "    return acc;\n";
                 }
                 else {
