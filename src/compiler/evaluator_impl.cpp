@@ -6876,6 +6876,7 @@ Evaluator::Evaluator() {
         int pop_size = 8;
         int generations = 3;
         double mutation_rate = 0.3;
+        std::string fitness_expr;  // optional user-provided fitness expr
 
         for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
             if (!is_string(a[i])) continue;
@@ -6888,6 +6889,11 @@ Evaluator::Evaluator() {
                 generations = static_cast<int>(as_int(a[i+1]));
             else if (key == ":mutation-rate" && is_float(a[i+1]))
                 mutation_rate = as_float(a[i+1]);
+            else if (key == ":fitness" && is_string(a[i+1])) {
+                auto fi = as_string_idx(a[i+1]);
+                if (fi < string_heap_.size())
+                    fitness_expr = string_heap_[fi];
+            }
         }
         if (pop_size < 2) pop_size = 2;
         if (pop_size > 50) pop_size = 50;
@@ -6902,13 +6908,25 @@ Evaluator::Evaluator() {
         if (cs_idx >= string_heap_.size()) return make_void();
         std::string baseline = string_heap_[cs_idx];
 
-        // Simple fitness: shorter compiled code = better (P0 placeholder)
-        auto fitness = [&](const std::string& src) -> double {
-            return 1000.0 / static_cast<double>(src.size() + 1);
+        // Fitness: user-provided expression or default (code length)
+        auto compute_fitness = [&](const std::string& src) -> double {
+            if (fitness_expr.empty()) {
+                return 1000.0 / static_cast<double>(src.size() + 1);
+            }
+            // Try to eval the fitness expression
+            auto sv = string_heap_.size();
+            string_heap_.push_back(src);
+            auto eval_fn = primitives_.lookup("eval");
+            if (eval_fn) {
+                auto r = (*eval_fn)({make_string(sv)});
+                if (is_float(r)) return as_float(r);
+                if (is_int(r)) return static_cast<double>(as_int(r));
+            }
+            return 0.0;
         };
 
         std::string best_code = baseline;
-        double best_fitness = fitness(baseline);
+        double best_fitness = compute_fitness(baseline);
         int best_gen = 0;
 
         for (int gen = 0; gen < generations; ++gen) {
@@ -6918,6 +6936,17 @@ Evaluator::Evaluator() {
                 for (int m = 0; m < 5; ++m) {
                     if (static_cast<double>(std::rand()) / RAND_MAX >= mutation_rate)
                         continue;
+                    // Operator swap: + ↔ - ↔ * ↔ /
+                    static const char* ops = "+-*/";
+                    for (const char* op = ops; *op; ++op) {
+                        auto opos = variant.find(*op);
+                        if (opos != std::string::npos && opos > 0) {
+                            const char* replace_with = "+-*/";
+                            variant[opos] = replace_with[std::rand() % 4];
+                            break;
+                        }
+                    }
+                    // Numeric mutation
                     auto npos = variant.find_first_of("0123456789");
                     if (npos == std::string::npos) break;
                     auto nend = variant.find_first_not_of("0123456789", npos);
@@ -6954,7 +6983,7 @@ Evaluator::Evaluator() {
                 }
                 if (!valid) continue;
 
-                double f = fitness(variant);
+                double f = compute_fitness(variant);
                 if (f > best_fitness) {
                     best_fitness = f;
                     best_code = variant;
