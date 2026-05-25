@@ -40,26 +40,52 @@ AI 不再猜测代码——它直接修改源码的 AST。
 
 LLM 做方向，Aura 做局部搜索。信息素指引变异优先级。
 
-### 3. 冻成原生二进制
+### 3. 冻成原生二进制（真实 AOT）
 
-```scheme
-;; 进化完成后，一行命令出独立 ELF
-(write-file "/tmp/prog.aura" (current-source))
-(shell (string-append "./build/aura --emit-binary /tmp/myapp ..."))
-```
-
-或直接：
+`--emit-binary` 现在走完整的 AOT 编译管线：
 
 ```bash
-# 从源码生成原生二进制
-echo '(display (+ 1 2))' | ./build/aura --emit-binary myapp
+# 一行命令出独立原生 ELF
+echo '(+ 1 2)' | ./build/aura --emit-binary myapp
 ./myapp  # → 3，不需要 aura 本体
 
 file myapp
-# ELF 64-bit LSB executable, ARM aarch64
+# ELF 64-bit LSB executable, ARM aarch64, dynamically linked, not stripped
 ```
 
-支持 arm64 和 x86_64（通过 `AURA_ARCH` 环境变量）。
+**编译管线：**
+
+```
+源码 → FlatAST → IRModule → FlatFunction
+  → LLVM IR (O2) → .ll → llc -filetype=obj → .o
+  → 链接 runtime.c → 独立 ELF
+```
+
+**支持的表达式类型：**
+```
+算术: (+ 1 2 3) (- 5 3) (* 2 3) (quotient 10 3)
+比较: (= 42 42) (< 1 2)
+条件: (if #t 42 0) (and #t #t) (or #f #t) (not #f)
+对:   (car (cons 42 100)) (cdr (cons 42 100))
+类型: (pair? -1) (null? 0)
+闭包: (let ((f (lambda (x) (+ x 1)))) (f 41))
+绑定: (let ((x 10) (y 20)) (+ x y))
+IO:   (display 42)
+```
+
+**输出规范：** 原生二进制的输出格式与 eval 不一致：
+- 数值直接输出（如 `"3"`）
+- 布尔值输出 raw int（`1` = `#t`，`0` 不输出）
+- `display` 副作用 + 返回值合并（如 `(display 42)` → `4242`）
+
+**架构：** arm64 / x86_64（通过 `AURA_ARCH` 环境变量）。
+
+**当前 AOT 限制：**
+- `cons` 尚不可用（走 Evaluator 原语派发，AOT 缺 runtime 绑定）
+- stdlib（`map`/`filter`/`foldl`）不可用
+- 多文件输入
+
+→ 详见 [docs/roadmap.md](docs/roadmap.md) P2.7
 
 ---
 
@@ -86,7 +112,7 @@ Aura 是一个 **AI-native Lisp** 编译器：C++26 实现，LLVM ORC JIT 后端
 | **进程** | shell/command-output/command-line |
 | **错误处理** | try-catch + 结构化诊断 (ErrorKind + BlameInfo) |
 | **编译期反射** | P2996 auto_to_json / auto_serialize / P1306 递归序列化 |
-| **原生二进制** | --emit-binary → 独立 ELF (arm64/x86_64) |
+| **原生二进制** | 真实 AOT 编译器：LLVM IR → llc → 链接 → ELF (arm64/x86_64) |
 
 ### AI 基准（99 生成任务，2026-05-23）
 
