@@ -18,10 +18,12 @@ Scheduler::Scheduler() {
     if (epoll_fd_ == -1)
         throw std::system_error(errno, std::generic_category(), "scheduler epoll_create");
 
-    // Register stdin (fd 0)
+    // Register stdin (fd 0) with edge-triggered mode.
+    // Edge-triggered: only fires ONCE when new data arrives.
+    // After consuming all data (read returns EAGAIN), no re-fire until new data.
     stdin_fd_ = STDIN_FILENO;
     struct epoll_event ee;
-    ee.events = EPOLLIN;
+    ee.events = EPOLLIN | EPOLLET;
     ee.data.ptr = nullptr;  // nullptr = stdin event
     if (::epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, stdin_fd_, &ee) == -1)
         throw std::system_error(errno, std::generic_category(), "scheduler epoll_ctl stdin");
@@ -95,17 +97,17 @@ void Scheduler::run() {
             }
 
             // Resume the fiber — it may yield back or complete
+
             fiber->resume();
 
             if (fiber->is_done()) {
                 ::epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, fiber->eventfd(), nullptr);
                 wait_map_.erase(fiber->eventfd());
             } else if (fiber->state() == FiberState::Ready) {
-                // Fiber yielded but is still ready — re-enqueue
-                // This handles the case where yield was called without Waiting
+                // Yielded without waiting — re-enqueue
                 ready_queue_.push_back(fiber);
             }
-            // If fiber->state() == Waiting, it's in epoll wait map
+            // Waiting: in epoll wait map, scheduler resumes on event
         }
 
         // Phase 2: Check if any fibers remain alive
@@ -120,21 +122,26 @@ void Scheduler::run() {
 
         // Phase 3: All fibers Waiting or Done — block on epoll
         if (ready_queue_.empty()) {
-            int n = ::epoll_wait(epoll_fd_, events, 64, -1);  // block indefinitely
+            int n = ::epoll_wait(epoll_fd_, events, 64, -1);
 
             for (int i = 0; i < n; ++i) {
                 if (events[i].data.ptr == nullptr) {
-                    // stdin event — handled by session fibers
-                    // The data is buffered and made available to waiting fibers
-                    // For now: wake all stdin-waiting fibers
-                    for (auto& f : fibers_) {
-                        if (f->state() == FiberState::Waiting) {
-                            enqueue(f.get());
+                    // stdin event — wake the stdin fiber if set
+        
+                    if (stdin_fiber_) {
+            
+                        enqueue(stdin_fiber_);
+                    } else {
+                        // Fallback: wake all waiting fibers
+                        for (auto& f : fibers_) {
+                            if (f->state() == FiberState::Waiting)
+                                enqueue(f.get());
                         }
                     }
                 } else {
                     // eventfd event — drain and enqueue the target fiber
                     auto* fiber = static_cast<Fiber*>(events[i].data.ptr);
+        
                     uint64_t val;
                     ::read(fiber->eventfd(), &val, sizeof(val));
                     if (fiber->state() == FiberState::Waiting || fiber->state() == FiberState::Ready) {

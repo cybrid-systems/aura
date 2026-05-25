@@ -33,6 +33,10 @@ public:
 
     // Accessors
     ucontext_t& main_ctx() { return main_ctx_; }
+    int epoll_fd() const { return epoll_fd_; }
+
+    // Set the fiber that handles stdin input (for stdin event routing)
+    void set_stdin_fiber(Fiber* f) { stdin_fiber_ = f; }
 
 private:
     // Ready queue: fibers that can be resumed
@@ -49,6 +53,9 @@ private:
 
     // Stdin fd
     int stdin_fd_ = -1;
+
+    // Fiber that handles stdin input (nullptr = wake all on stdin event)
+    Fiber* stdin_fiber_ = nullptr;
 
     // Scheduler's own context (fibers yield back to this)
     ucontext_t main_ctx_;

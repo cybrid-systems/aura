@@ -1,5 +1,6 @@
 #include "compiler/aura_jit.h"
 #include "messaging_bridge.h"
+#include "serve/serve_async.h"
 
 import std;
 import aura.core;
@@ -202,6 +203,14 @@ static std::unordered_map<std::string, std::string> parse_json_command(std::stri
 }
 
 int main(int argc, char* argv[]) {
+    // ── --serve-async: fiber-based async JSON-line protocol ─
+    // Uses ucontext fibers + epoll for non-blocking multi-session support.
+    // Same JSON-line protocol as --serve, but with non-blocking I/O.
+    if (argc > 1 && std::string_view(argv[1]) == "--serve-async") {
+        aura::serve::run_serve_async();
+        return 0;
+    }
+
     // ── --serve: persistent JSON-line compile-fix loop ─────────
     // Each line of output is JSON. Agent reads with JSON.parse(line).
     // Messages: ok, error, fix, fixed, fix-fail

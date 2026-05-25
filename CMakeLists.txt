@@ -43,6 +43,7 @@ target_sources(aura PRIVATE
     src/messaging_bridge_impl.cpp
     src/serve/fiber.cpp
     src/serve/scheduler.cpp
+    src/serve/serve_async.cpp
     src/main.cpp)
  
 

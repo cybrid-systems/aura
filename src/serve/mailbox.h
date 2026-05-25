@@ -16,7 +16,8 @@ namespace aura::serve {
 // woken via eventfd.
 class Mailbox {
 public:
-    Mailbox() = default;
+    // Attach to an owning fiber. Must be called before pop(wait=true).
+    void attach(Fiber* owner) { owner_ = owner; }
 
     // Push a message and wake the waiting fiber (if any)
     void push(const std::string& msg) {
@@ -33,12 +34,8 @@ public:
             return msg;
         }
         if (wait && g_current_fiber) {
-            // Register as waiting and yield
             g_current_fiber->set_state(FiberState::Waiting);
-            // The fiber's eventfd is already registered with epoll.
-            // When push() writes to eventfd, the scheduler will wake us.
             Fiber::yield();
-            // Resumed: try again
             if (!queue_.empty()) {
                 auto msg = std::move(queue_.front());
                 queue_.pop_front();
@@ -53,15 +50,12 @@ public:
 
 private:
     std::deque<std::string> queue_;
+    Fiber* owner_ = nullptr;
 
-    // Wake the fiber waiting on this mailbox (if any)
     void notify_owner() {
-        // The caller (session fiber) should have set itself as current
-        // The eventfd mechanism handles wakeup through the scheduler
-        if (g_current_fiber) {
-            // Write to eventfd to wake through epoll
+        if (owner_) {
             uint64_t val = 1;
-            ::write(g_current_fiber->eventfd(), &val, sizeof(val));
+            ::write(owner_->eventfd(), &val, sizeof(val));
         }
     }
 };
