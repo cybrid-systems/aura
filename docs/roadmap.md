@@ -1,10 +1,10 @@
 # Aura 路线图
 
-**更新：2026-05-25 — EDSL Benchmark 根因分析后迭代计划重排**
+**更新：2026-05-25 — 对齐当前实现，移除已完成项**
 
 ---
 
-## ✅ 已完成 — 核心 EDSL & Agent 交互能力
+## ✅ 已完成
 
 | Phase | 内容 | 状态 |
 |:------|:-----|:----:|
@@ -12,18 +12,19 @@
 | W1-2 | `ast:snapshot` / `ast:restore` / `ast:diff` | ✅ |
 | W1-2 | `ast:summary` / `compile:status` | ✅ |
 | W3-4 | `mutate:splice` / `mutate:wrap` / `mutate:refactor/extract` | ✅ |
+| W3-4 | `query:root` / workspace root stable node ID | ✅ |
 | W5-6 | `workspace:create` / `switch` / `list` / `delete` / `lock` / COW | ✅ |
+| W5-6 | `workspace:sync-from` / `workspace:merge` / `workspace:discard` | ✅ |
 | W7-8 | `send` / `recv` / `my-id` / `reply` / `session-active?` / `mailbox-count` | ✅ |
 | W9-10 | `synthesize:register-template` / `synthesize:fill` / `synthesize:define` (LLM) | ✅ |
 | W9-10 | `synthesize:pipeline` / `synthesize:optimize` (genetic) | ✅ |
 | W9-10 | `rule:define` / `rule:apply` / `rule:save` / `rule:load` / scope/condition | ✅ |
-| W5-6 | `workspace:sync-from` / `workspace:merge` / `workspace:discard` | ✅ |
 
 ---
 
 ## 🔴 迭代 P1 — Type System 修复（预计 5-7d）
 
-目标：消除 12 个类型系统相关的稳定失败，双模型提分至 ~105/132 (80%)
+目标：消除类型系统相关的稳定失败，双模型提分
 
 | # | 任务 | 工时 | 影响任务 | 根因 |
 |:-:|:-----|:----:|:---------|:-----|
@@ -40,34 +41,31 @@
 
 ## 🟡 迭代 P2 — Stdlib Gaps & EDSL API 补全（预计 4-5d）
 
-目标：消除 ~12 个 EDSL 和标准库相关失败，提分至 ~117/132 (89%)
+### P2a: 标准库运行时适配（2d）
 
-### P2a: 标准库补全 (2d)
+std/rule 和 std/pipeline 模块代码已存在，但运行时缺少关键字参数和部分原语支持，导致模块不可用。
 
-| # | 任务 | 工时 | 影响任务 |
-|:-:|:-----|:----:|:---------|
-| 1 | **实现 `std/rule` 模块** | 1d | edsl-rule-basic, edsl-rule (2个 stable fail) |
-| 2 | **实现 `std/pipeline` 模块** | 0.5d | edsl-pipeline-basic, edsl-synthesize-pipeline |
-| 3 | **Hash API 统一命名 — 补 `make-hash` 别名** | 0.5d | two-sum, word-freq, unique-hash |
+| # | 任务 | 工时 | 问题 |
+|:-:|:-----|:----:|:-----|
+| 1 | **运行时关键字参数支持** | 1-2d | `:description`, `:workspace` 等关键字无法作为原语使用；rule:define/pipeline 依赖的 try/catch 可能也不完整 |
+| 2 | **`make-hash` 别名** | 0.5d | LLM 习惯用 `make-hash`，当前需要 `hash` 或显式创建 |
+| 3 | **`string-append` + 字符串拼接一致性** | 0.5d | 模块代码大量使用 `string-append`，需验证多参数形式在所有路径下工作 |
 
-### P2b: EDSL API 修复 (2-3d)
+### P2b: EDSL API 修复（2-3d）
 
 | # | 任务 | 影响任务 | 根因 |
 |:-:|:-----|:---------|:-----|
-| 4 | **`query:def-use` 返回格式修复** | edsl-defuse, edsl-defuse-cross, edsl-defuse-multi | 返回 closure 而非 `((def-node-id...) . (use-node-id...))` |
-| 5 | **`mutate:splice` / `wrap` 索引计算错误** | edsl-splice-wrap | splice 参数解析或 AST 索引计算不对 |
-| 6 | **`mutate:replace-value` + `eval-current` 不一致** | edsl-mutation-rollback | 修改后 eval 不反映 mutation |
-| 7 | **`ast:snapshot` / `ast:list-snapshots` 持久化** | edsl-snapshot-multi | snapshot 只在内存，`list-snapshots` 返回空 |
-| 8 | **`workspace:switch` + COW 隔离** | edsl-workspace-cow | 子 workspace 隔离没有生效，写操作泄露 |
-| 9 | **`my-id` / `session-active?` / `mailbox-count` 输出格式** | edsl-messaging | 返回 `edsl-messaging #t 0` 格式不符合预期 |
-| 10 | **`edsl-require-stdlib` syntax** | edsl-require-stdlib | `(require 'std/... all:)` 语法解析不完整 |
-| 11 | **`synthesize:pipeline` — invalid node id** | edsl-synthesize-pipeline | 模板填充后 AST node id 不连续 |
+| 1 | **`mutate:replace-value` + `eval-current` 不一致** | edsl-mutation-rollback | 修改后 eval 不反映 mutation |
+| 2 | **`ast:snapshot` / `ast:list-snapshots` 持久化** | edsl-snapshot-multi | snapshot 只在内存，`list-snapshots` 返回空 |
+| 3 | **`workspace:switch` + COW 隔离** | edsl-workspace-cow | 子 workspace 隔离没有生效，写操作泄露 |
+| 4 | **`edsl-require-stdlib` 语法** | edsl-require-stdlib | `(require 'std/... all:)` 语法解析不完整 |
+| 5 | **`synthesize:pipeline` — invalid node id** | edsl-synthesize-pipeline | 模板填充后 AST node id 不连续，pipeline 执行时触发 |
 
 ---
 
 ## 🟢 迭代 P3 — FFI + 算法任务 Hints（预计 2d）
 
-目标：跨过最后 ~6 个 LLM 能力上限 + 2 个 FFI 失败，提分至 ~123/132 (93%)
+目标：跨过最后 ~6 个 LLM 能力上限 + 2 个 FFI 失败
 
 | # | 任务 | 影响任务 | 方案 |
 |:-:|:-----|:---------|:-----|
@@ -86,19 +84,19 @@
 |:------:|:-----|:----:|:-----|
 | P3 | 权限模型（module / symbol whitelist） | 3d | mutation 只允许特定 scope |
 | P3 | eval 资源限制（CPU / memory / recursion depth） | 3-4d | serve 模式安全沙箱 |
-| P3 | `ast:explain-diff` — 自然语言解释变更 | 2d | 结构化 diff → 文本 |
-| P3 | `compile:timeline` — 编译事件日志 | 2d | 增量编译审计轨迹 |
-| P3 | 交互式 AST browser (REPL mode) | 2-3d | 树形浏览 |
-| P3 | 并行查询 / 增量 typecheck | 3-5d | 不阻塞 eval |
-
----
+| P3 | AOT 布尔值输出 raw int（`1` 而非 `#t`） | 1d | untagged runtime 无法区分 #t 和 1 |
+| P3 | struct 模块 AOT 不工作 | 2d | define-type 在 IR 路径不被处理 |
+| P3 | `display` 嵌套对/improper list 格式化 | 1d | 和 eval 一致但可改进 |
+| P3 | messaging 阻塞 recv | 2d | 单线程 serve 无法真正阻塞 |
+| P3 | workspace tree 跨 session 共享 | 2d | 每个 serve session 独立 workspace tree |
+| P3 | `synthesize:optimize` fitness 基于 benchmark | 1d | 当前仅基于代码长度 |
+| P3 | 规则 VCS 集成 | 2d | 当前仅 JSON 文件持久化 |
 
 ## 🔭 前瞻 (Q3-Q4 2026)
 
 | 任务 | 说明 |
 |:-----|:------|
 | VS Code / Cursor 插件 | 原生 EDSL 支持 |
-| struct 模块 AOT | `define-type`(EDSL)，IR 路径 |
 | LSP / 包管理 / 自举 | 独立长期项目 |
 | 分布式 EDSL | 多机共享 AST workspace |
 | 形式化证明接口 | 关键 mutate 走 proof 而非 test |
