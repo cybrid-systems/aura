@@ -311,6 +311,7 @@ run_emit_test "emit:display"    "(display 42)" "42"
 # String ops (via aura_prim_call PrimId dispatch)
 run_emit_test "emit:string-len"  "(string-length \"hello\")" "5"
 run_emit_test "emit:string-eq"   "(string=? \"abc\" \"abc\")" "1"
+run_emit_test "emit:display-car" "(display (car (list 1 2 3)))" "1"
 
 # List ops (via aura_prim_call PrimId dispatch)
 run_emit_test "emit:length"     "(length (list 10 20 30))" "3"

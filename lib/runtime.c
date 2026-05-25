@@ -618,10 +618,15 @@ int main(int argc, char** argv) {
     int64_t args[8] = {0};
     int64_t result = __top__(args, 0);
     aura_bump_reset();
-    if (result != 0 && !g_display_was_called)
-        printf("%ld\n", (long)result);
-    else if (result != 0 && g_display_was_called)
+    if (!g_display_was_called) {
+        // Raw int64_t output: booleans are 1 (#t) and 0 (not printed).
+        // For native binaries we output raw integers — there's no way to
+        // distinguish boolean #t from integer 1 in an untagged runtime.
+        if (result != 0)
+            printf("%ld\n", (long)result);
+    } else if (result != 0) {
         printf("\n"); // newline after display output
+    }
     return 0;
 }
 #endif
