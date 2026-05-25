@@ -11,7 +11,6 @@
 | 1 | messaging 缺少阻塞 recv | 单线程 serve 无法实现真正阻塞，当前使用超时轮询 | Serve |
 | 2 | workspace tree 非全局 | ~~每个 serve session 有独立 workspace tree~~ ✅ 已修复（共享 tree） | Ws |
 | 3 | `synthesize:optimize` fitness 仅基于代码长度 | 需要 benchmark 驱动的真实 fitness | Opt |
-| 4 | 规则持久化仅支持 JSON 文件 | 缺少内置 VCS 集成 | Rule |
 
 ## 已完成（旧问题已修）
 
