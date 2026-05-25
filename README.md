@@ -5,25 +5,7 @@
 Aura 让 AI Agent 拥有在运行时**精确读写和修改自身代码**的能力。  
 不是"让 LLM 输出文本然后粘贴"——而是把代码变成一块可查询、可变异、可版本化的活体 AST。
 
-## 快速开始
 
-```bash
-# 构建
-git clone git@github.com:cybrid-systems/aura.git
-cd aura
-python3 build.py build          # CMake + Ninja 构建
-
-# 直接运行（管道模式）
-echo '"(+ 1 2)"' | ./build/aura
-
-# 交互式 REPL
-./build/aura
-
-# 运行测试套件
-python3 build.py test core       # 核心管线：单元 + 集成 + 类型 + 套件
-python3 build.py test suite      # Aura 端到端测试
-python3 build.py check           # 全量 CI（核心 + 安全回归 + fuzz）
-```
 
 ---
 
