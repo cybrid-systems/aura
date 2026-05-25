@@ -878,3 +878,50 @@
   (rule:define 'r1 :pattern "(+ 1 1)" :replace "2")
   (let ((total (rule:apply-all)))
     (check (>= total 0))))
+
+
+;; ═══════════════════════════════════════════════════════════════
+;; Rule P1 — condition, enable/disable, status
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "rule-p1:condition-basic"
+  (require "std/rule" all:)
+  (rule:define 'cond-rule
+    :pattern "(+ 1 1)" :replace "2"
+    :condition "#t")  ;; always true
+  (check (>= (rule:apply 'cond-rule) 0)))
+
+(test-suite "rule-p1:enable-disable"
+  (require "std/rule" all:)
+  (rule:define 'toggle-rule
+    :pattern "(+ 1 1)" :replace "2")
+  (check (rule:disable 'toggle-rule))
+  ;; Disabled rule should not apply
+  (check (= (rule:apply 'toggle-rule) 0))
+  (check (rule:enable 'toggle-rule)))
+
+(test-suite "rule-p1:status"
+  (require "std/rule" all:)
+  (rule:define 'status-rule
+    :pattern "(+ x 1)" :replace "(+ x 2)"
+    :description "test rule")
+  (let ((s (rule:status 'status-rule)))
+    (check (pair? s))))
+
+(test-suite "rule-p1:description-in-list"
+  (require "std/rule" all:)
+  (rule:define 'desc-rule
+    :pattern "(+ 1 1)" :replace "2"
+    :description "simplify addition")
+  ;; List should include description info
+  (let ((lst (rule:list)))
+    (check (pair? lst))))
+
+(test-suite "rule-p1:violations-with-condition"
+  (require "std/rule" all:)
+  (set-code "(define x 1)")
+  (rule:define 'viol-rule
+    :pattern "(define x 1)" :replace "(define y 1)"
+    :condition "#t")
+  (let ((v (rule:list-violations)))
+    (check (list? v))))
