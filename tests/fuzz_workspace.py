@@ -100,7 +100,7 @@ def run_session(n_cycles):
     workspace_ids = [0]  # root is always 0
 
     for cycle in range(n_cycles):
-        phase = cycle % 6
+        phase = cycle % 7
 
         if phase < 2:
             # Create a new workspace
@@ -171,6 +171,33 @@ def run_session(n_cycles):
             # Query a def that should exist in all workspaces
             sym = rng.choice(["f", "add", "fact", "map", "double"])
             resp = send(proc, f'(display (query:def-use "{sym}"))')
+            if resp is None:
+                stats["crash"] += 1
+                break
+            stats["ok"] += 1
+
+        elif phase == 5:
+            # Lock/unlock test
+            if len(workspace_ids) > 1:
+                wid = rng.choice(workspace_ids[1:])
+                resp = send(proc, f'(display (workspace:lock {wid} #t))')
+                if resp is None:
+                    stats["crash"] += 1
+                    break
+                # Verify can-write returns false
+                resp = send(proc, f'(display (workspace:can-write? {wid}))')
+                if resp is None:
+                    stats["crash"] += 1
+                    break
+                # Unlock
+                resp = send(proc, f'(display (workspace:lock {wid} #f))')
+                if resp is None:
+                    stats["crash"] += 1
+                    break
+                stats["ok"] += 3
+
+            # Verify root is still writable
+            resp = send(proc, f'(display (workspace:can-write? 0))')
             if resp is None:
                 stats["crash"] += 1
                 break

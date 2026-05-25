@@ -572,3 +572,90 @@
   ;; List should only have root
   (let ((lst (workspace:list)))
     (check (= (length lst) 1))))
+
+
+;; ═══════════════════════════════════════════════════════════════
+;; P13 P1: COW + Read-only Lock
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "ws:cow-isolation"
+  (set-code "(define (f x) (+ x 1))")
+  (define w1 (workspace:create "cow-test"))
+  ;; Switch triggers COW — child gets own flat
+  (workspace:switch w1)
+  (mutate:rebind "f" "(lambda (x) (* x 2))" "mutate after cow")
+  (display (current-source))
+  ;; Root should be unchanged
+  (workspace:switch 0)
+  (let* ((r (query:def-use "f"))
+         (uses (cdr r)))
+    ;; f still used as before
+    (check (pair? uses))))
+
+(test-suite "ws:lock-prevents-mutate"
+  (set-code "(define (f x) (+ x 1))")
+  (define w1 (workspace:create "lock-test"))
+  (workspace:lock w1 #t)
+  (workspace:switch w1)
+  ;; Mutate should be rejected
+  (check (not (mutate:rebind "f" "(lambda (x) (* x 2))" "test")))
+  ;; Source should be unchanged
+  (let* ((r (query:def-use "f"))
+         (defs (car r)))
+    (check (= (length defs) 1))))
+
+(test-suite "ws:lock-unlock-allows-mutate"
+  (set-code "(define (f x) (+ x 1))")
+  (define w1 (workspace:create "unlock-test"))
+  (workspace:lock w1 #t)
+  (workspace:switch w1)
+  ;; Should be rejected while locked
+  (check (not (mutate:rebind "f" "(lambda (x) (* x 2))" "test")))
+  ;; Unlock
+  (workspace:lock w1 #f)
+  ;; Now should succeed
+  (check (mutate:rebind "f" "(lambda (x) (* x 2))" "test")))
+
+(test-suite "ws:lock-on-main-workspace"
+  (set-code "(define (f x) (+ x 1))")
+  ;; Lock root workspace — all mutations should fail
+  (workspace:lock 0 #t)
+  (check (not (mutate:rebind "f" "(lambda (x) (* x 2))" "test")))
+  (workspace:lock 0 #f)
+  (check (mutate:rebind "f" "(lambda (x) (* x 2))" "test")))
+
+(test-suite "ws:can-write-query"
+  (set-code "(define (f x) (+ x 1))")
+  (define w1 (workspace:create "perm-test"))
+  ;; Initially writable
+  (check (workspace:can-write? w1))
+  ;; Lock → not writable
+  (workspace:lock w1 #t)
+  (check (not (workspace:can-write? w1)))
+  ;; Unlock → writable again
+  (workspace:lock w1 #f)
+  (check (workspace:can-write? w1)))
+
+(test-suite "ws:cow-multiple-workspaces"
+  (set-code "(define x 42)")
+  (define wa (workspace:create "a"))
+  (define wb (workspace:create "b"))
+  ;; Mutate a
+  (workspace:switch wa)
+  (set-code "(define x 1)")
+  ;; Mutate b
+  (workspace:switch wb)
+  (set-code "(define x 99)")
+  ;; Root should still be 42
+  (workspace:switch 0)
+  (let* ((r (query:def-use "x"))
+         (defs (car r)))
+    (check (= (length defs) 1))))
+
+(test-suite "ws:lock-set-code"
+  (set-code "(define x 1)")
+  (define w1 (workspace:create "lock-sc"))
+  (workspace:lock w1 #t)
+  (workspace:switch w1)
+  ;; set-code should also be rejected
+  (check (not (set-code "(define y 2)")))))
