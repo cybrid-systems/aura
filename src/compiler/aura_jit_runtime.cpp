@@ -174,20 +174,20 @@ int64_t aura_alloc_pair(int64_t car, int64_t cdr) {
     int64_t id = static_cast<int64_t>(g_pair_cars.size());
     g_pair_cars.push_back(car);
     g_pair_cdrs.push_back(cdr);
-    return (-id - 1); // negative sentinel
+    return (id << 2) | 1; // pointer tagging: low 2 bits = 01
 }
 
 int64_t aura_pair_car(int64_t pair_val) {
-    int64_t id = -pair_val - 1;
-    if (id >= 0 && static_cast<size_t>(id) < g_pair_cars.size())
-        return g_pair_cars[static_cast<size_t>(id)];
+    uint64_t id = static_cast<uint64_t>(pair_val >> 2);
+    if (id < g_pair_cars.size())
+        return g_pair_cars[id];
     return 0;
 }
 
 int64_t aura_pair_cdr(int64_t pair_val) {
-    int64_t id = -pair_val - 1;
-    if (id >= 0 && static_cast<size_t>(id) < g_pair_cdrs.size())
-        return g_pair_cdrs[static_cast<size_t>(id)];
+    uint64_t id = static_cast<uint64_t>(pair_val >> 2);
+    if (id < g_pair_cdrs.size())
+        return g_pair_cdrs[id];
     return 0;
 }
 
