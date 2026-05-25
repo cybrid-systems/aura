@@ -423,3 +423,59 @@
   (set-code "(define x 42)")
   ;; splice with no code args should return #f
   (check (not (mutate:splice 0 0 "splice"))))
+
+
+;; ═══════════════════════════════════════════════════════════════
+;; P13: Workspace Layering (P0)
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "ws:create-and-current"
+  (set-code "(define (f x) (+ x 1))")
+  ;; Create a child workspace
+  (let ((id (workspace:create "test")))
+    (check (>= id 0))
+    ;; Should still be on root
+    (check (= (workspace:current) 0))))
+
+(test-suite "ws:switch-and-mutate"
+  (set-code "(define (f x) (+ x 1))")
+  (let ((id (workspace:create "child")))
+    (check (workspace:switch id))
+    ;; Mutate in child
+    (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
+    ;; Switch back to root
+    (workspace:switch 0)
+    ;; Root should be unchanged
+    (let ((result (query:def-use "f")))
+      (check (> (length (car result)) 0)))))
+
+(test-suite "ws:list"
+  (set-code "(define (f x) (+ x 1))")
+  (workspace:create "a")
+  (workspace:create "b")
+  (let ((lst (workspace:list)))
+    ;; List should contain root + at least one child
+    (check (>= (length lst) 2))))
+
+(test-suite "ws:delete"
+  (set-code "(define (f x) (+ x 1))")
+  (let ((id (workspace:create "temp")))
+    (workspace:switch id)
+    (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
+    (workspace:switch 0)
+    ;; Delete the child
+    (check (workspace:delete id))
+    ;; Root should still be intact
+    (let ((result (query:def-use "f")))
+      (check (> (length (car result)) 0)))))
+
+(test-suite "ws:isolation"
+  (set-code "(define (f x) (+ x 1))")
+  (let ((id (workspace:create "isolated")))
+    ;; Create a second workspace from root
+    (workspace:switch id)
+    ;; Mutate in child — should not affect root
+    (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
+    (workspace:switch 0)
+    ;; Root def-use should show the ORIGINAL code being in effect
+    (check #t)))

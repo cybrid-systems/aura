@@ -4741,6 +4741,76 @@ struct DefUseIndex {
         return true;
     }
 };// ═══════════════════════════════════════════════════════════════
+// WorkspaceTree — multi-layer workspace isolation
+// ═══════════════════════════════════════════════════════════════
+
+struct WorkspaceNode {
+    std::string name;
+    aura::ast::FlatAST* flat = nullptr;
+    aura::ast::StringPool* pool = nullptr;
+    std::uint64_t generation = 0;
+    bool read_only = false;
+    bool transient = false;
+    bool is_root = false;
+};
+
+struct WorkspaceTree {
+    std::vector<WorkspaceNode> nodes_;
+    std::uint32_t active_idx_ = 0;
+
+    WorkspaceTree() {}
+
+    std::size_t size() const { return nodes_.size(); }
+    std::uint32_t active_idx() const { return active_idx_; }
+    WorkspaceNode* active() {
+        return active_idx_ < nodes_.size() ? &nodes_[active_idx_] : nullptr;
+    }
+
+    // Create a child workspace by cloning the active workspace's source
+    std::uint32_t create_child(const std::string& name,
+                                const std::string& source_code) {
+        auto idx = static_cast<std::uint32_t>(nodes_.size());
+
+        WorkspaceNode node;
+        node.name = name;
+        node.generation = 0;
+        node.read_only = false;
+        node.transient = false;
+        node.is_root = false;
+
+        // Clone: parse the source code into a fresh flat+pool
+        node.flat = new aura::ast::FlatAST();
+        node.pool = new aura::ast::StringPool();
+        auto pr = aura::parser::parse_to_flat(source_code, *node.flat, *node.pool);
+        if (pr.success && pr.root != aura::ast::NULL_NODE) {
+            node.flat->root = pr.root;
+        }
+
+        nodes_.push_back(std::move(node));
+        return idx;
+    }
+
+    // Delete a workspace (cannot delete root = idx 0)
+    bool delete_child(std::uint32_t idx) {
+        if (idx == 0 || idx >= nodes_.size()) return false;
+        auto& n = nodes_[idx];
+        delete n.flat;
+        delete n.pool;
+        n.flat = nullptr;
+        n.pool = nullptr;
+        n.generation = 0;
+        return true;
+    }
+
+    // Switch active workspace
+    bool set_active(std::uint32_t idx) {
+        if (idx >= nodes_.size()) return false;
+        active_idx_ = idx;
+        return true;
+    }
+};
+
+// ═══════════════════════════════════════════════════════════════
 
 Evaluator::Evaluator() {
     top_.set_primitives(&primitives_);
@@ -6000,6 +6070,149 @@ Evaluator::Evaluator() {
         pairs_.push_back({make_int(static_cast<std::int64_t>(pr.root)),
                          make_int(static_cast<std::int64_t>(parent_of_target))});
         return make_pair(result_pid);
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // P13: Workspace Layering (P0)
+    // ═══════════════════════════════════════════════════════════════
+
+    // Helper: ensure workspace tree exists and return active node
+    // Also syncs workspace_flat_/pool_ to active node's flat/pool
+    auto ensure_workspace = [this]() -> WorkspaceNode* {
+        if (!workspace_tree_) {
+            // Create tree with root node initialized from current workspace
+            auto* tree = new WorkspaceTree();
+            WorkspaceNode root;
+            root.name = "root";
+            root.is_root = true;
+            root.generation = 1;
+            // Root's flat/pool ARE the current workspace pointers
+            root.flat = workspace_flat_;
+            root.pool = workspace_pool_;
+            tree->nodes_.push_back(std::move(root));
+            workspace_tree_ = tree;
+        }
+
+        auto* tree = static_cast<WorkspaceTree*>(workspace_tree_);
+        auto* ws = tree->active();
+
+        // Sync evaluator pointers to active workspace
+        if (ws) {
+            workspace_flat_ = ws->flat;
+            workspace_pool_ = ws->pool;
+        }
+        return ws;
+    };
+
+    // (workspace:create name)
+    //   → workspace ID (integer)
+    //   Creates a child workspace by cloning the current workspace's source.
+    //   The child workspace starts as a full copy, then diverges via mutation.
+    primitives_.add("workspace:create", [this, ensure_workspace](const auto& a) -> EvalValue {
+        ensure_workspace();
+
+        std::string name;
+        if (a.size() >= 1 && is_string(a[0]))
+            name = string_heap_[as_string_idx(a[0])];
+        if (name.empty())
+            name = "workspace-" + std::to_string(
+                static_cast<WorkspaceTree*>(workspace_tree_)->size());
+
+        // Get current source code
+        auto src_fn = primitives_.lookup("current-source");
+        if (!src_fn)
+            return make_int(-1);
+        auto src = (*src_fn)({});
+        if (!is_string(src))
+            return make_int(-1);
+        auto src_idx = as_string_idx(src);
+        if (src_idx >= string_heap_.size())
+            return make_int(-1);
+        auto& source = string_heap_[src_idx];
+
+        auto* tree = static_cast<WorkspaceTree*>(workspace_tree_);
+        auto id = tree->create_child(name, source);
+        return make_int(static_cast<std::int64_t>(id));
+    });
+
+    // (workspace:switch id)
+    //   → #t on success
+    //   Switches the active workspace to the given ID.
+    //   Subsequent queries and mutations operate on this workspace.
+    primitives_.add("workspace:switch", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]) || !workspace_tree_)
+            return make_bool(false);
+        auto idx = static_cast<std::uint32_t>(as_int(a[0]));
+        auto* tree = static_cast<WorkspaceTree*>(workspace_tree_);
+        if (!tree->set_active(idx))
+            return make_bool(false);
+
+        // Sync evaluator state to the new active workspace
+        auto* ws = tree->active();
+        if (ws) {
+            workspace_flat_ = ws->flat;
+            workspace_pool_ = ws->pool;
+        }
+        // Invalidate def-use cache (will rebuild on next query)
+        defuse_index_ = nullptr;
+
+        return make_bool(true);
+    });
+
+    // (workspace:list)
+    //   → ((id name read-only?) ...)
+    //   Lists all workspaces. Root workspace (id=0) is always first.
+    primitives_.add("workspace:list", [this](const auto&) -> EvalValue {
+        if (!workspace_tree_)
+            return make_void();
+
+        auto* tree = static_cast<WorkspaceTree*>(workspace_tree_);
+        EvalValue result = make_void();
+
+        for (int i = static_cast<int>(tree->size()) - 1; i >= 0; --i) {
+            auto& n = (*tree).nodes_[static_cast<std::size_t>(i)];
+            auto active_flag = (static_cast<std::uint32_t>(i) == tree->active_idx());
+
+            // Build entry: pair of (id . (name . flags))
+            auto name_idx = string_heap_.size();
+            string_heap_.push_back(n.name);
+            auto name_pair = pairs_.size();
+            pairs_.push_back({make_string(name_idx), make_int(active_flag ? 1 : 0)});
+            auto entry_pair = pairs_.size();
+            pairs_.push_back({make_int(i), make_pair(name_pair)});
+            auto cons_pair = pairs_.size();
+            pairs_.push_back({make_pair(entry_pair), result});
+            result = make_pair(cons_pair);
+        }
+        return result;
+    });
+
+    // (workspace:delete id)
+    //   → #t on success
+    //   Deletes a child workspace. Cannot delete root (id=0).
+    primitives_.add("workspace:delete", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]) || !workspace_tree_)
+            return make_bool(false);
+        auto idx = static_cast<std::uint32_t>(as_int(a[0]));
+        auto* tree = static_cast<WorkspaceTree*>(workspace_tree_);
+
+        if (!tree->delete_child(idx))
+            return make_bool(false);
+
+        // If we deleted the active workspace, switch back to root
+        if (tree->active_idx() == idx)
+            tree->set_active(0);
+
+        return make_bool(true);
+    });
+
+    // (workspace:current)
+    //   → active workspace ID
+    primitives_.add("workspace:current", [this](const auto&) -> EvalValue {
+        if (!workspace_tree_)
+            return make_int(0);
+        auto* tree = static_cast<WorkspaceTree*>(workspace_tree_);
+        return make_int(static_cast<std::int64_t>(tree->active_idx()));
     });
 
     // ── intend — 纯循环管理器 ────────────────────────────────
