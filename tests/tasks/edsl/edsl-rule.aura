@@ -1,0 +1,8 @@
+;; task: edsl-rule
+;; goal: Use rule:define and rule:apply-all
+;; expect: rule
+;; hint: --- Rule normalize ---
+;; hint: (require "std/rule" all:)
+;; hint: (rule:define 'test-rule :pattern "(+ 1 1)" :replace "2")
+;; hint: (display (rule:apply-all))
+

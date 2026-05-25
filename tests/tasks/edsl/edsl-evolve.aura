@@ -1,0 +1,7 @@
+;; task: edsl-evolve
+;; goal: Use synthesize:optimize for genetic optimization
+;; expect: pair
+;; hint: --- Genetic optimize ---
+;; hint: (set-code "(define (g x) (+ x 100))")
+;; hint: (display (synthesize:optimize "g" :population 3 :generations 1))
+
