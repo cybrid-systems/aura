@@ -521,10 +521,7 @@ static void aura_display_pair_chain(int64_t val) {
     putchar(')');
 }
 int64_t aura_display_int(int64_t val) {
-    // Legacy sentinel encoding (from LLVM codegen, shared with JIT)
-    if (val == 0x8000000000000000LL) { printf("#t"); }
-    else if (val == 0x8000000000000001LL) { printf("#f"); }
-    else if (IS_STRING(val)) {
+    if (IS_STRING(val)) {
         printf("%s", aura_string_ref((uint64_t)STRING_IDX(val)));
     } else if (IS_PAIR(val)) {
         aura_display_pair_chain(val);
@@ -535,6 +532,8 @@ int64_t aura_display_int(int64_t val) {
         else printf("()");
     } else if (val == 0) {
         printf("()");
+    } else if (IS_FIXNUM(val)) {
+        printf("%ld", (long)(val >> 1));
     } else {
         printf("%ld", (long)val);
     }
@@ -565,10 +564,16 @@ int64_t aura_display_val(int64_t val, int type_tag) {
                 printf("()");
             else if (IS_SPECIAL(val))
                 printf("%s", SPECIAL_TAG(val) == KWD_TRUE ? "#t" : "#f");
-            else if (val == 0)
+            else if (IS_STRING(val)) {
+                int sid = STRING_IDX(val);
+                const char* sp = aura_string_ref((uint64_t)sid);
+                printf("%s", sp ? sp : "<?>");
+            } else if (val == 0)
                 printf("()");
-            else
+            else if (IS_FIXNUM(val))
                 printf("%ld", (long)(val >> 1));
+            else
+                printf("%ld", (long)val);
             break;
     }
     fflush(stdout);

@@ -223,8 +223,15 @@ struct LLVMBuilder {
         (void)fn;
         switch (inst.opcode) {
             case OpConstI64:
-                store(inst.ops[0], c64(static_cast<int64_t>(inst.ops[1]) |
-                                       (static_cast<int64_t>(inst.ops[2]) << 32)));
+                if (aot_mode) {
+                    // Fixnum-encode: value << 1
+                    auto raw = c64(static_cast<int64_t>(inst.ops[1]) |
+                                   (static_cast<int64_t>(inst.ops[2]) << 32));
+                    store(inst.ops[0], irb->CreateShl(raw, c64(1)));
+                } else {
+                    store(inst.ops[0], c64(static_cast<int64_t>(inst.ops[1]) |
+                                           (static_cast<int64_t>(inst.ops[2]) << 32)));
+                }
                 return true;
             case OpLocal:
                 store(inst.ops[0], load(inst.ops[1]));
@@ -310,12 +317,21 @@ struct LLVMBuilder {
                 irb->CreateRet(load(inst.ops[0]));
                 return true;
             case OpConstBool:
-                // Encode bool as sentinel values outside pair/int range
-                // #t = INT64_MIN (0x8000000000000000), #f = INT64_MIN + 1
-                store(inst.ops[0], c64(inst.ops[1] ? 0x8000000000000000LL : 0x8000000000000001LL));
+                if (aot_mode) {
+                    // Pointer tagging: #t = (1<<2)|3 = 7, #f = (0<<2)|3 = 3
+                    store(inst.ops[0], c64(inst.ops[1] ? 7 : 3));
+                } else {
+                    // Legacy: INT64_MIN sentinel (compatible with JIT)
+                    store(inst.ops[0], c64(inst.ops[1] ? 0x8000000000000000LL : 0x8000000000000001LL));
+                }
                 return true;
             case OpConstVoid:
-                store(inst.ops[0], c64(0));
+                if (aot_mode) {
+                    // Pointer tagging: void = (2<<2)|3 = 11
+                    store(inst.ops[0], c64(11));
+                } else {
+                    store(inst.ops[0], c64(0));
+                }
                 return true;
             case OpConstF64:
                 store(inst.ops[0], c64(0));
@@ -471,16 +487,27 @@ struct LLVMBuilder {
                     return true;
                 }
                 case PrimPairP: {
-                    // In Aura's AOT runtime, pairs are negative: -(pair_id+1)
-                    // So pair?(x) = x < 0.
-                    auto lt = irb->CreateICmpSLT(a1, c64(0));
-                    store(result_slot, irb->CreateZExt(lt, llvm::Type::getInt64Ty(ctx)));
+                    if (aot_mode) {
+                        auto masked = irb->CreateAnd(a1, c64(3));
+                        auto is_pair = irb->CreateICmpEQ(masked, c64(1));
+                        store(result_slot, irb->CreateSelect(is_pair, c64(7), c64(3)));
+                    } else {
+                        auto lt = irb->CreateICmpSLT(a1, c64(0));
+                        store(result_slot, irb->CreateZExt(lt, llvm::Type::getInt64Ty(ctx)));
+                    }
                     return true;
                 }
                 case PrimNullP: {
-                    // null?(x) = x == 0 (empty list sentinel)
-                    auto eq = irb->CreateICmpEQ(a1, c64(0));
-                    store(result_slot, irb->CreateZExt(eq, llvm::Type::getInt64Ty(ctx)));
+                    if (aot_mode) {
+                        // Both void sentinel (11) and fixnum 0 (from () → LiteralInt 0) are null
+                        auto is_void = irb->CreateICmpEQ(a1, c64(11));
+                        auto is_zero = irb->CreateICmpEQ(a1, c64(0));
+                        auto is_null = irb->CreateOr(is_void, is_zero);
+                        store(result_slot, irb->CreateSelect(is_null, c64(7), c64(3)));
+                    } else {
+                        auto eq = irb->CreateICmpEQ(a1, c64(0));
+                        store(result_slot, irb->CreateZExt(eq, llvm::Type::getInt64Ty(ctx)));
+                    }
                     return true;
                 }
                 default:
