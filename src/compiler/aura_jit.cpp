@@ -92,6 +92,9 @@ struct LLVMBuilder {
     std::vector<llvm::Value*> llvm_locals{};
     std::unordered_map<uint32_t, llvm::BasicBlock*> block_map{};
 
+    // AOT mode: OpPrimitive stores negative sentinel for primitive dispatch
+    bool aot_mode = false;
+
     // Runtime function declarations
     llvm::Function* fn_alloc_closure = nullptr;
     llvm::Function* fn_closure_capture = nullptr;
@@ -465,8 +468,17 @@ struct LLVMBuilder {
                 // IR: operands[0]=result_slot, operands[1]=prim_slot_index
                 auto result_slot = inst.ops[0];
                 auto prim_slot = inst.ops[1];
-                auto call = irb->CreateCall(fn_prim_call, {c64(prim_slot), c64(0), c64(0), c64(0)});
-                store(result_slot, call);
+                if (aot_mode) {
+                    // AOT: store negative sentinel for primitive dispatch.
+                    // aura_closure_call will recognize negative values as primitive
+                    // references and dispatch to the runtime's primitive table.
+                    // Encoding: -(prim_slot + 1)
+                    store(result_slot, c64(-((int64_t)prim_slot + 1)));
+                } else {
+                    // JIT: call through evaluator's primitive dispatcher
+                    auto call = irb->CreateCall(fn_prim_call, {c64(prim_slot), c64(0), c64(0), c64(0)});
+                    store(result_slot, call);
+                }
                 return true;
             }
 
@@ -512,6 +524,7 @@ static bool emit_native_object_llvm(const FlatFunction& fn, const std::string& o
     auto mod = std::make_unique<llvm::Module>(std::string(fn.name) + "_aot", local_ctx);
 
     LLVMBuilder builder{local_ctx};
+    builder.aot_mode = true;
     builder.mod = mod.get();
     builder.declare_runtime();
 

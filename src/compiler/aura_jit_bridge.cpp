@@ -26,6 +26,12 @@ struct FlatFunctionHolder {
 // the AOT bridge receives an already-converted FlatFunction array.
 // For the C-linkage bridge, we accept a FlatFunction array directly.
 
+// ── Global: primitive registration C code ───────────────────────
+// Set by aura_set_prim_registration() before aura_emit_native_file().
+// This C code is compiled and linked into the AOT binary to enable
+// primitive dispatch for OpPrimitive + OpCall closures.
+static std::string g_prim_reg_c_code;
+
 // ── Old JIT test stub (kept for backward compat) ───────────────
 extern "C" int64_t aura_jit_test() {
 #if AURA_HAVE_LLVM
@@ -154,7 +160,29 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
         std::remove(reg_c_path.c_str());
     }
 
-    // Step 4: Link all .o files into binary
+    // Step 4: Compile primitive registration .c (set by aura_set_prim_registration)
+    // This registers evaluator primitives at their correct slot numbers so that
+    // OpPrimitive + OpCall can dispatch primitives as closures.
+    if (!g_prim_reg_c_code.empty()) {
+        std::string prim_reg_path = out_path + "._prim.c";
+        std::string prim_reg_o = out_path + "._prim.o";
+        FILE* f = std::fopen(prim_reg_path.c_str(), "w");
+        if (f) {
+            std::fputs(g_prim_reg_c_code.c_str(), f);
+            std::fclose(f);
+            std::string cmd = cc + " -c " + prim_reg_path + " -o " + prim_reg_o + " 2>/dev/null";
+            int rc = ::system(cmd.c_str());
+            if (rc != 0) {
+                cmd = "clang -c " + prim_reg_path + " -o " + prim_reg_o + " 2>/dev/null";
+                rc = ::system(cmd.c_str());
+            }
+            if (rc == 0)
+                obj_files.push_back(prim_reg_o);
+            std::remove(prim_reg_path.c_str());
+        }
+    }
+
+    // Step 5: Link all .o files into binary
     std::string link_cmd = cc;
     for (auto& p : obj_files)
         link_cmd += " " + p;
@@ -187,6 +215,13 @@ extern "C" bool aura_emit_object_file(const void* mod, const char* path) {
         return true;
     }
     return false;
+}
+
+extern "C" void aura_set_prim_registration(const char* c_code) {
+    if (c_code)
+        g_prim_reg_c_code = c_code;
+    else
+        g_prim_reg_c_code.clear();
 }
 
 // ── aura_emit_native_file: C-linkage entry point for AOT compilation ──
