@@ -457,33 +457,111 @@ static int is_pair_val(int64_t v) {
 }
 
 int64_t aura_prim_call(int64_t prim_id, int64_t a1, int64_t a2, int64_t argc) {
-    // Primitive IDs from PrimId enum in ir.ixx
-    // Display=8, Write=9, Newline=10, Quotient=30, Remainder=31
-    // Other IDs: 0=StringAppend, 1=StringLength, ...
-    // These may shift — the key primitives for AOT are handled inline
-    // in the LLVM IR (display, quotient, remainder are fast-pathed).
-    // This function is a fallback for unknown primitives.
+    // Primitive IDs from PrimId enum in ir.ixx (must match):
+    //   0 = StringAppend, 1 = StringLength, 2 = StringRef, 3 = Substring
+    //   4 = StringEq, 5 = StringLt
+    //   6 = NumberToString, 7 = StringToNumber
+    //   8 = Display, 9 = Write, 10 = Newline
+    //  11 = Error, 12 = Assert, 17 = Gensym
+    //  30 = Quotient, 31 = Remainder
+    //  35 = Raise, 36 = ErrorP, 37 = PairP, 38 = NullP
+    //
+    // Note: Display/Write/Newline/Quotient/Remainder are fast-pathed
+    // in the LLVM builder (inlined), so they rarely reach here.
+    // This function is reached by OpPrimCall slow-path only.
     (void)argc;
     
     switch (prim_id) {
-    case 8:  // Display
+    case 0: { // StringAppend
+        const char* s1 = aura_string_ref(a1);
+        const char* s2 = aura_string_ref(a2);
+        size_t len1 = s1 ? strlen(s1) : 0;
+        size_t len2 = s2 ? strlen(s2) : 0;
+        char* buf = (char*)malloc(len1 + len2 + 1);
+        if (s1) memcpy(buf, s1, len1);
+        if (s2) memcpy(buf + len1, s2, len2 + 1);
+        int64_t result = aura_alloc_string(buf);
+        free(buf);
+        return result;
+    }
+    case 1: // StringLength
+        return (int64_t)strlen(aura_string_ref(a1));
+    case 2: { // StringRef
+        const char* s = aura_string_ref(a1);
+        int64_t idx = a2;
+        if (idx >= 0 && idx < (int64_t)strlen(s))
+            return (int64_t)(unsigned char)s[idx];
+        return 0;
+    }
+    case 3: { // Substring
+        const char* s = aura_string_ref(a1);
+        int64_t start = a2;
+        int64_t end = argc >= 2 ? (int64_t)1 : (int64_t)0; // end default
+        size_t len = strlen(s);
+        if (start < 0) start = 0;
+        if (end <= 0 || end > (int64_t)len) end = (int64_t)len;
+        if (start >= end) return aura_alloc_string("");
+        size_t sub_len = (size_t)(end - start);
+        char* buf = (char*)malloc(sub_len + 1);
+        memcpy(buf, s + start, sub_len);
+        buf[sub_len] = 0;
+        int64_t result = aura_alloc_string(buf);
+        free(buf);
+        return result;
+    }
+    case 4: // StringEq
+        return (int64_t)(strcmp(aura_string_ref(a1), aura_string_ref(a2)) == 0);
+    case 5: // StringLt
+        return (int64_t)(strcmp(aura_string_ref(a1), aura_string_ref(a2)) < 0);
+    case 6: { // NumberToString
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%ld", (long)a1);
+        return aura_alloc_string(buf);
+    }
+    case 7: { // StringToNumber
+        const char* s = aura_string_ref(a1);
+        if (!s || !*s) return 0;
+        char* end = NULL;
+        long val = strtol(s, &end, 10);
+        return (int64_t)val;
+    }
+    case 8:  // Display (fast-pathed, but keep as fallback)
         aura_display_int(a1);
         return a1;
-    case 9:  // Write  
+    case 9:  // Write
         printf("%ld", (long)a1);
         return a1;
     case 10: // Newline
         aura_newline();
         return 0;
+    case 11: // Error
+        fprintf(stderr, "error: %ld\n", (long)a1);
+        fflush(stderr);
+        return 0;
+    case 12: // Assert
+        if (a1 == 0)
+            fprintf(stderr, "assertion failed\n");
+        return a1;
+    case 17: { // Gensym
+        static int64_t gensym_counter = 0;
+        char buf[64];
+        snprintf(buf, sizeof(buf), "g%ld", (long)(++gensym_counter));
+        return aura_alloc_string(buf);
+    }
     case 30: // Quotient
         if (a2 == 0) return 0;
         return a1 / a2;
     case 31: // Remainder
         if (a2 == 0) return 0;
         return a1 % a2;
+    case 35: // Raise
+        fprintf(stderr, "raise: %ld\n", (long)a1);
+        return 0;
+    case 37: // PairP (reached via OpPrimCall, not OpPrimitive+OpCall)
+        return (int64_t)(a1 < 0);
+    case 38: // NullP
+        return (int64_t)(a1 == 0);
     default:
-        // Unknown primitive (pair?, null?, list, etc.) — fallback
-        // These are not yet handled in the AOT runtime; return a1 as passthrough.
         return (argc > 0) ? a1 : 0;
     }
 }

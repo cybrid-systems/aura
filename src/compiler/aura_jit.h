@@ -81,9 +81,10 @@ private:
 };
 
 /// Compile a FlatFunction to a native object file via LLVM IR + llc.
-/// Returns true on success.
-/// On success: out_obj_path contains the .o file.
-bool emit_native_object(const FlatFunction& fn, const std::string& out_obj_path);
+/// string_pool provides content for OpConstString instructions.
+/// Returns true on success. On success: out_obj_path contains the .o file.
+bool emit_native_object(const FlatFunction& fn, const std::string& out_obj_path,
+                        const std::vector<std::string>* string_pool = nullptr);
 
 /// Emit an object file from an IR module.
 /// Returns true on success.

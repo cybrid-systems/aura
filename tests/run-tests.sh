@@ -307,6 +307,10 @@ run_emit_test "emit:remainder"  "(remainder 10 3)" "1"
 
 # Display: side-effect prints 42, then main() prints return 42 = "4242"
 run_emit_test "emit:display"    "(display 42)" "4242"
+
+# String ops (via aura_prim_call PrimId dispatch)
+run_emit_test "emit:string-len"  "(string-length \"hello\")" "5"
+run_emit_test "emit:string-eq"   "(string=? \"abc\" \"abc\")" "1"
 echo "=== Diagnostic Tests ==="
 
 # Parse error: source line + caret display (via batch eval)

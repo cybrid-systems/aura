@@ -94,6 +94,8 @@ struct LLVMBuilder {
 
     // AOT mode: OpPrimitive stores negative sentinel for primitive dispatch
     bool aot_mode = false;
+    // String pool for OpConstString (IR module's string pool content)
+    const std::vector<std::string>* string_pool = nullptr;
 
     // Runtime function declarations
     llvm::Function* fn_alloc_closure = nullptr;
@@ -311,10 +313,12 @@ struct LLVMBuilder {
                 store(inst.ops[0], c64(0));
                 return true;
             case OpConstString: {
-                // Create empty string allocation in runtime
-                // TODO: embed IR string pool content as LLVM global string
-                auto empty_str = irb->CreateGlobalStringPtr("");
-                auto call = irb->CreateCall(fn_alloc_string, {empty_str});
+                // Load string content from IR module's string pool
+                std::string_view str_content;
+                if (string_pool && inst.ops[1] < string_pool->size())
+                    str_content = (*string_pool)[inst.ops[1]];
+                auto str_ptr = irb->CreateGlobalStringPtr(str_content);
+                auto call = irb->CreateCall(fn_alloc_string, {str_ptr});
                 store(inst.ops[0], call);
                 return true;
             }
@@ -519,11 +523,14 @@ void aura_set_prim_dispatcher(int64_t (*fn)(int64_t, int64_t*, int32_t));
 
 // ── AOT native compilation ──────────────────────────────────────
 // Compile a FlatFunction to LLVM IR → .ll → llc → .o
-static bool emit_native_object_llvm(const FlatFunction& fn, const std::string& out_obj_path) {
+static bool emit_native_object_llvm(const FlatFunction& fn, const std::string& out_obj_path,
+                                     const std::vector<std::string>* string_pool) {
     llvm::LLVMContext local_ctx;
     auto mod = std::make_unique<llvm::Module>(std::string(fn.name) + "_aot", local_ctx);
 
     LLVMBuilder builder{local_ctx};
+    if (string_pool)
+        builder.string_pool = string_pool;
     builder.aot_mode = true;
     builder.mod = mod.get();
     builder.declare_runtime();
@@ -816,8 +823,9 @@ const std::vector<FunctionMeta>& AuraJIT::compiled_functions() const {
 
 // ── Public AOT API ──────────────────────────────────────────────
 
-bool emit_native_object(const FlatFunction& fn, const std::string& out_obj_path) {
-    return emit_native_object_llvm(fn, out_obj_path);
+bool emit_native_object(const FlatFunction& fn, const std::string& out_obj_path,
+                         const std::vector<std::string>* string_pool) {
+    return emit_native_object_llvm(fn, out_obj_path, string_pool);
 }
 
 bool emit_object(const std::string& ir_dump, const std::string& out_path) {
@@ -870,7 +878,8 @@ const std::vector<FunctionMeta>& AuraJIT::compiled_functions() const {
 
 // ── AOT native compilation (stubs, LLVM unavailable) ────────────
 
-bool emit_native_object(const FlatFunction&, const std::string&) {
+bool emit_native_object(const FlatFunction&, const std::string&,
+                         const std::vector<std::string>*) {
     return false;
 }
 

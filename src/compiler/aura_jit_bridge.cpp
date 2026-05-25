@@ -32,6 +32,13 @@ struct FlatFunctionHolder {
 // primitive dispatch for OpPrimitive + OpCall closures.
 static std::string g_prim_reg_c_code;
 
+// ── Global: string pool for OpConstString ───────────────────────
+// Set by aura_set_string_pool() before aura_emit_native_file().
+static std::vector<std::string> g_string_pool;
+
+// ── Global: string pool conversion for C linkage ────────────────
+// Writes the string pool to a temp file for compiled code to include.
+
 // ── Old JIT test stub (kept for backward compat) ───────────────
 extern "C" int64_t aura_jit_test() {
 #if AURA_HAVE_LLVM
@@ -107,7 +114,8 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
     // Step 1: Compile each FlatFunction to .o via LLVM IR + llc
     for (unsigned int i = 0; i < num_functions; ++i) {
         std::string obj_path = out_path + ".func" + std::to_string(i) + ".o";
-        bool ok = aura::jit::emit_native_object(functions[i], obj_path);
+        bool ok = aura::jit::emit_native_object(functions[i], obj_path,
+                                                   g_string_pool.empty() ? nullptr : &g_string_pool);
         if (!ok) {
             fprintf(stderr, "AOT: failed to compile function '%s'\n", functions[i].name);
             for (auto& p : obj_files)
@@ -222,6 +230,17 @@ extern "C" void aura_set_prim_registration(const char* c_code) {
         g_prim_reg_c_code = c_code;
     else
         g_prim_reg_c_code.clear();
+}
+
+extern "C" void aura_set_string_pool(const char** strings, unsigned int count) {
+    g_string_pool.clear();
+    g_string_pool.reserve(count);
+    for (unsigned int i = 0; i < count; ++i) {
+        if (strings && strings[i])
+            g_string_pool.push_back(strings[i]);
+        else
+            g_string_pool.emplace_back();
+    }
 }
 
 // ── aura_emit_native_file: C-linkage entry point for AOT compilation ──
