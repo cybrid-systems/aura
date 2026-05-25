@@ -41,7 +41,6 @@
 |:------:|:-----|:----:|:-----|
 | P2 | **AOT 布尔值输出 raw int** | 1d | `1` 而非 `#t`，untagged runtime 无法区分 1 和 true |
 | P2 | **struct 模块 AOT 不工作** | 2d | `define-type` 在 IR 路径不被处理 |
-| P2 | **`display` 嵌套对/improper list 格式化** | 1d | 可改进 |
 | P2 | **messaging 阻塞 recv** | 2d | 单线程 serve 无法真正阻塞，当前超时轮询 |
 | P2 | **workspace tree 跨 session 共享** | 2d | 每个 serve session 独立 workspace tree |
 | P2 | **`synthesize:optimize` fitness 基于代码长度** | 1d | 需 benchmark 驱动的真实 fitness |
