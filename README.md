@@ -52,15 +52,24 @@ echo '(+ 1 2)' | ./build/aura --emit-binary app       # 管道
 ./app  # → 3，不依赖 aura 本体
 ```
 
-**支持的表达式：** `+ - * / = < > <= >= and or not if pair? null? cons car cdr list length reverse append member map filter foldl string-length string=? string-append string-ref number->string quot/rem display let lambda error gensym`
+**支持的表达式：** 算术/比较/逻辑/类型/对/列表/字符串/高阶函数/闭包(含递归)/display/所有权
 
-**闭包 + 高阶函数：** 用户 lambda 编译为 ELF 函数，`map`/`filter`/`foldl` 通过原语派发表调用用户函数。原语 `+ - * / = < > <= >= not` 可作为闭包值传递（`(let ((f +)) (f 1 2 3))`）。
+```
+(+ 1 2 3) | (= 42 42) | (and #t #t) | (pair? (cons 1 2))
+(car (list 1 2 3)) | (length (list 1 2 3))
+(string-length "hello") | (string-append "a" "b")
+(map (lambda (x) (+ x 10)) (list 1 2 3))
+(foldl + 0 (list 1 2 3))
+(apply + (list 1 2 3))
+(let loop ((x 0)) (if (< x 3) (loop (+ x 1)) x))
+(display (list 1 2 3))   → (1 2 3)
+```
 
-**输出：** raw int64_t（`1` = #t, `0` 不输出）。display 自动换行，不重复打印返回值。
+**输出：** raw int64_t（`1` = #t, `0` 不输出）。列表自动格式化为 `(a b c)`。display 不重复打印返回值。
 
-**架构：** arm64 / x86_64。
+**架构：** arm64 / x86_64。**54 emit 测试全通过。**
 
-→ 48 emit 测试，详见 [docs/roadmap.md](docs/roadmap.md)
+→ [docs/roadmap.md](docs/roadmap.md) | [docs/known_issues.md](docs/known_issues.md)
 
 ---
 
@@ -87,7 +96,7 @@ Aura 是一个 **AI-native Lisp** 编译器：C++26 实现，LLVM ORC JIT 后端
 | **进程** | shell/command-output/command-line |
 | **错误处理** | try-catch + 结构化诊断 (ErrorKind + BlameInfo) |
 | **编译期反射** | P2996 auto_to_json / auto_serialize / P1306 递归序列化 |
-| **原生二进制 (AOT)** | LLVM IR → llc → 链接 → ELF. 算术/比较/逻辑/列表/字符串/闭包/高阶函数/所有权/多文件 (48 tests) |
+| **原生二进制 (AOT)** | LLVM IR → llc → 链接 → ELF. 算术/比较/逻辑/类型/列表/字符串/高阶/闭包递归/apply/所有权/多文件/stdlib 集成 (54 emit ✅) |
 
 ### AI 基准（99 生成任务，2026-05-23）
 

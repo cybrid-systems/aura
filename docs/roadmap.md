@@ -1,50 +1,42 @@
 # Aura 路线图
 
-**更新：2026-05-25**
+**更新：2026-05-25 (2.5h AOT 攻坚完成)**
 
 ---
 
-## 当前状态：P2 完成
+## AOT 测试覆盖：54 emit 全部通过
 
-**106 核心测试 + 48 `--emit-binary` 测试全部通过。**
+```
+算术:  + - * / 链式
+比较:  = < > <= >=
+逻辑:  and or not
+类型:  pair? null?
+对:    cons car cdr
+列表:  list length list-ref reverse append member
+       map filter foldl apply named-let
+字符串: string-length string=? string-append string-ref
+       string<? number->string string->number
+条件:  if let
+闭包:  lambda, closure, 原语传递 (+ - * / = < > <= >= not)
+所有权: drop move borrow linear
+高阶:  map filter foldl append member apply permutations
+IO:    display (含列表格式化)
+stdlib: sorted? merge-sorted binary-search unique combinations
+       min-by max-by sort-stable
+多文件: ./aura --emit-binary a.aura b.aura out
+```
 
-### 已完成的 AOT 能力
-
-| 分类 | 表达式 | 方式 |
-|:-----|:-------|:-----|
-| 算术 | `+ - * /` 链式 | LLVM IR inlined |
-| 比较 | `= < > <= >=` | LLVM ICmp |
-| 逻辑 | `and or not` | lowering 展开为分支 |
-| 类型 | `pair? null?` | PrimId → LLVM ICmp |
-| 对 | `cons car cdr` | runtime.c 函数 (负数 sentinel) |
-| 列表 | `list length list-ref reverse append member` | lowering 展开 + PrimId dispatch |
-| 高阶 | `map filter foldl` | 原语派发表 + `aura_closure_call` |
-| 字符串 | `string-append/length/ref/<?/=?` `number->string` `string->number` | PrimId dispatch |
-| 条件 | `if let` | LLVM branch/inlined |
-| 闭包 | lambda、闭包捕获、闭包作为值传递 | func_table + constructor 注册 |
-| 原语传递 | `+ - * / = < > <= >= not` 作为闭包值 | AOT 模式 OpPrimitive 负数 sentinel |
-| IO | `display` | 运行时函数 + 无重复打印 |
-| 所有权 | `drop move borrow Linear` | IR opcodes → passthrough/drop |
-| 多文件 | `--emit-binary a.aura b.aura out` | 文件拼接 → 统一编译 |
-
-### 技术细节
+### 技术要点
 
 **编译管线：** `源码 → FlatAST → IRModule → FlatFunction → LLVM IR (O2) → .ll → llc -filetype=obj → .o → 链接 runtime.c → 独立 ELF`
 
-**运行时：** 单个 `lib/runtime.c` 提供 bump allocator、pair/cell/closure heap、string pool、drop 函数族、PrimId 派发表、func_table。
+**运行时：** 单个 `lib/runtime.c` 提供 bump allocator、pair/cell/closure heap、string pool、drop 函数族、PrimId/原语派发表、func_table、作用域 env 设置。
 
-**原语派发表：** 编译器在 `--emit-binary` 时枚举 evaluator 的原语表，生成每 slot 对应的 C 包装函数 → 编译链接进二进制。`aura_closure_call` 检测负数 closure_id 并派发到该表。
+**关键修复链：**
+- 原语派发表扩展 → `null?/pair?/cons/car/cdr/length/list-ref/reverse/append/member/map/filter/foldl/display/list`
+- `aura_closure_call` env 设置 → named let + 递归闭包
+- 函数名唯一化 → 多 lambda 不冲突
+- import 源码内联 → 绕过 cache_module 的保守 FnCheck
+- `apply` runtime 实现 → permutations + 高阶
 
-## 剩余 TODO
-
-| 优先级 | 任务 | 说明 |
-|:------:|:-----|------|
-| 🟢 | stdlib 模块化 AOT | lib/*.aura 预编译为 .o |
-| 🟢 | LSP / 包管理 / 自举 | 长期项 |
-| 🟢 | AOT 性能 (O3/LTO/内联) | 功能完整后优化 |
-
-## 历史
-
-- P0 (2026-05-23): 核心求值 + 类型系统 + ADT + EDSL
-- P1 (2026-05-23): IR + Pass Manager + 增量编译
-- P2 (2026-05-23~25): JIT 编译器 → 真实 AOT 编译器
+**54 emit，106 core，全部通过。**
