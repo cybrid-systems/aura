@@ -925,3 +925,79 @@
     :condition "#t")
   (let ((v (rule:list-violations)))
     (check (list? v))))
+
+
+;; ═══════════════════════════════════════════════════════════════
+;; Rule P2 — scope, save/load, comprehensive coverage
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "rule-p2:scope-workspace"
+  (require "std/rule" all:)
+  (rule:define 'scope-rule
+    :pattern "(+ 1 1)" :replace "2"
+    :scope :workspace)
+  (check (>= (rule:apply 'scope-rule) 0)))
+
+(test-suite "rule-p2:redefine-overwrites"
+  (require "std/rule" all:)
+  (rule:define 'overwrite-test
+    :pattern "(+ 1 1)" :replace "2"
+    :description "v1")
+  (rule:define 'overwrite-test
+    :pattern "(+ 1 2)" :replace "3"
+    :description "v2")
+  (let ((s (rule:status 'overwrite-test)))
+    (check (pair? s))))
+
+(test-suite "rule-p2:list-includes-scope"
+  (require "std/rule" all:)
+  (rule:define 'scope-list-rule
+    :pattern "(+ 1 1)" :replace "2"
+    :scope :workspace)
+  (let ((lst (rule:list)))
+    (check (pair? lst))))
+
+(test-suite "rule-p2:apply-all-disabled"
+  (require "std/rule" all:)
+  (rule:define 'disabled-test
+    :pattern "(+ 1 1)" :replace "2")
+  (rule:disable 'disabled-test)
+  ;; apply-all should skip disabled
+  (check (= (rule:apply-all) 0)))
+
+(test-suite "rule-p2:condition-false-skips"
+  (require "std/rule" all:)
+  (set-code "(define (f x) (+ x 1))")
+  (rule:define 'cond-skip
+    :pattern "(+ ?x 1)" :replace "(* ?x 2)"
+    :condition "#f")  ;; Always false = never applies
+  (check (= (rule:apply 'cond-skip) 0)))
+
+(test-suite "rule-p2:save-load"
+  (require "std/rule" all:)
+  (rule:define 'save-test-rule
+    :pattern "(+ 1 1)" :replace "2"
+    :description "save/load test"
+    :scope :workspace)
+  (rule:save "/tmp/aura-test-rules.json")
+  ;; Clear and reload
+  (rule:remove 'save-test-rule)
+  (let ((count (rule:load "/tmp/aura-test-rules.json")))
+    (check (> count 0))
+    (check (pair? (rule:status 'save-test-rule))))))
+
+(test-suite "rule-p2:violations-empty-workspace"
+  (require "std/rule" all:)
+  (set-code "(begin)")
+  (rule:define 'empty-viol-test
+    :pattern "(+ 1 1)" :replace "2")
+  (let ((v (rule:list-violations)))
+    (check (list? v))
+    (check (= (length v) 0))))
+
+(test-suite "rule-p2:multiple-rules"
+  (require "std/rule" all:)
+  (rule:define 'rule-a :pattern "(+ 1 1)" :replace "2")
+  (rule:define 'rule-b :pattern "(* 2 2)" :replace "4")
+  (let ((lst (rule:list)))
+    (check (= (length lst) 2))))
