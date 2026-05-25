@@ -266,10 +266,11 @@ run_emit_test "emit:chain"   "(+ 1 2 3)" "6"
 # Pairs (direct pair primitives via runtime.c functions)
 run_emit_test "emit:car"     "(car (cons 42 100))" "42"
 run_emit_test "emit:cdr"     "(cdr (cons 42 100))" "100"
+run_emit_test "emit:cadr"    "(car (cdr (cons 10 (cons 20 30))))" "20"
 
 # pair?/null? (inlined as LLVM ICmp via OpPrimCall)
 # main() skips printing 0 values, so falsy expectations must be empty.
-run_emit_test "emit:pair?"   "(pair? -1)" "1"
+run_emit_test "emit:pair?"   "(pair? (cons 1 2))" "1"
 run_emit_test "emit:not-pair?"   "(pair? 42)" ""
 run_emit_test "emit:null?"   "(null? 0)" "1"
 run_emit_test "emit:not-null?"   "(null? -1)" ""

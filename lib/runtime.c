@@ -130,30 +130,39 @@ static uint64_t pair_alloc_slot(void) {
     return id;
 }
 
+// Negative encoding: aura_alloc_pair returns -(id+1) instead of raw id.
+// This matches the JIT runtime convention (aura_jit_runtime.cpp) and allows
+// pair? type checks via simple val < 0 comparison in the LLVM IR.
+//
+// Decode: internal_id = -pair_val - 1
+//
+// The negative encoding also distinguishes pairs from closures and cells
+// (which use non-negative IDs), enabling lightweight type dispatch.
+
 int64_t aura_alloc_pair(int64_t car, int64_t cdr) {
     get_pairs();
     uint64_t id = pair_alloc_slot();
     pairs[id].car = car;
     pairs[id].cdr = cdr;
-    return (int64_t)id;
+    return -(int64_t)id - 1;
 }
 
-int64_t aura_pair_car(int64_t pair_id) {
-    uint64_t id = (uint64_t)pair_id;
-    if (id >= pair_count || !pairs[id].live) return 0;
-    return pairs[id].car;
+int64_t aura_pair_car(int64_t pair_val) {
+    int64_t id = -pair_val - 1; // decode from negative sentinel
+    if (id < 0 || (uint64_t)id >= pair_count || !pairs[(uint64_t)id].live) return 0;
+    return pairs[(uint64_t)id].car;
 }
 
-int64_t aura_pair_cdr(int64_t pair_id) {
-    uint64_t id = (uint64_t)pair_id;
-    if (id >= pair_count || !pairs[id].live) return 0;
-    return pairs[id].cdr;
+int64_t aura_pair_cdr(int64_t pair_val) {
+    int64_t id = -pair_val - 1;
+    if (id < 0 || (uint64_t)id >= pair_count || !pairs[(uint64_t)id].live) return 0;
+    return pairs[(uint64_t)id].cdr;
 }
 
-void aura_drop_pair(int64_t pair_id) {
-    uint64_t id = (uint64_t)pair_id;
-    if (id >= pair_count || !pairs[id].live) return;
-    pairs[id].live = false;
+void aura_drop_pair(int64_t pair_val) {
+    int64_t id = -pair_val - 1;
+    if (id < 0 || (uint64_t)id >= pair_count || !pairs[(uint64_t)id].live) return;
+    pairs[(uint64_t)id].live = false;
     if (pair_free_count < FREE_LIST_CAP)
         pair_free_list[pair_free_count++] = (int64_t)id;
 }
