@@ -1,0 +1,123 @@
+; Aura std/rule — 代码规范系统
+;
+; (require "std/rule" all:)
+;
+; 规则 = query:pattern + 相应 mutate 的组合。
+; P0 实现：纯 Aura，组合已有 query/mutate 原语。
+
+(export rule:define rule:apply rule:apply-all
+        rule:list rule:list-violations
+        rule:remove)
+
+; ── 规则存储 ──────────────────────────────────────────────
+(define *rules* '())
+
+; ── 内部：查找规则 ─────────────────────────────────────────
+(define (find-rule name)
+  (let loop ((remaining *rules*))
+    (if (null? remaining) #f
+      (if (= (caar remaining) name)
+        (car remaining)
+        (loop (cdr remaining))))))
+
+; ── 内部：规则结构 ─────────────────────────────────────────
+; 规则 = (name pattern replacement condition)
+
+(define (rule-name r) (list-ref r 0))
+(define (rule-pattern r) (list-ref r 1))
+(define (rule-replace r) (list-ref r 2))
+(define (rule-condition r) (list-ref r 3))
+
+; ── rule:define — 注册规则 ─────────────────────────────────
+(define (rule:define name . args)
+  (let ((pattern "")
+        (replacement "")
+        (condition #t))
+
+    ; Parse keyword arguments
+    (let parse ((remaining args))
+      (if (pair? remaining)
+        (let ((key (car remaining))
+              (val (cadr remaining)))
+          (cond
+            ((= key :pattern) (set! pattern val))
+            ((= key :replace) (set! replacement val))
+            ((= key :condition) (set! condition val)))
+          (parse (cddr remaining)))
+        #f))
+
+    ; Remove existing rule with same name
+    (set! *rules* (filter (lambda (r) (not (= (car r) name))) *rules*))
+
+    ; Add new rule
+    (set! *rules* (cons (list name pattern replacement condition) *rules*))
+    name))
+
+; ── rule:remove — 移除规则 ────────────────────────────────
+(define (rule:remove name)
+  (set! *rules* (filter (lambda (r) (not (= (car r) name))) *rules*))
+  name)
+
+; ── rule:list — 列出规则 ───────────────────────────────────
+(define (rule:list)
+  (map (lambda (r) (car r)) *rules*))
+
+; ── 内部：应用单条规则到 workspace ─────────────────────────
+(define (apply-rule r)
+  (let ((pattern (rule-pattern r))
+        (replacement (rule-replace r))
+        (cond-fn (rule-condition r)))
+    ; Query matching nodes
+    (define matches (query:pattern pattern))
+
+    (if (not (pair? matches)) 0
+      (let ((count (length matches))
+            (fixed 0))
+        ; For each match, try to apply fix
+        ; P0: simple numeric replacement via mutate:replace-value
+        ; For each matching node, try replacement
+        (for-each
+          (lambda (node)
+            (let ((result
+                  (try
+                    (if (string? replacement)
+                      ; Try to set-code with replacement
+                      (begin
+                        (mutate:rebind (string-append "_fix_"
+                          (number->string node))
+                          replacement "auto-fix")
+                        #t)
+                      #f)
+                    (catch (e) #f))))
+              (if result (set! fixed (+ fixed 1)))))
+          matches)
+        fixed))))
+
+; ── rule:apply — 应用单条规则 ──────────────────────────────
+(define (rule:apply name)
+  (let ((r (find-rule name)))
+    (if (not r) 0
+      (apply-rule r))))
+
+; ── rule:apply-all — 应用所有规则 ──────────────────────────
+(define (rule:apply-all)
+  (let ((total 0))
+    (for-each
+      (lambda (r)
+        (set! total (+ total (apply-rule r))))
+      *rules*)
+    total))
+
+; ── rule:list-violations — 审计模式（只查询不改）──────────
+(define (rule:list-violations)
+  (let ((violations '()))
+    (for-each
+      (lambda (r)
+        (let ((matches (query:pattern (rule-pattern r))))
+          (if (pair? matches)
+            (set! violations (cons
+              (list :rule (car r) :count (length matches) :nodes matches)
+              violations))
+            #f)))
+      *rules*)
+    violations))
