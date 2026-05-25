@@ -24,6 +24,7 @@ extern "C" bool aura_emit_object_file(const void* mod, const char* path);
 extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
                                        const void* functions, unsigned int num_functions);
 extern "C" void aura_set_prim_registration(const char* c_code);
+extern "C" void aura_set_string_pool(const char** strings, unsigned int count);
 
 
 
@@ -1482,6 +1483,15 @@ int main(int argc, char* argv[]) {
             }
             code += "}\n";
             aura_set_prim_registration(code.c_str());
+        }
+
+        // Set string pool for OpConstString
+        {
+            auto& pool = mod->string_pool;
+            std::vector<const char*> raw_pool(pool.size());
+            for (std::size_t i = 0; i < pool.size(); ++i)
+                raw_pool[i] = pool[i].c_str();
+            aura_set_string_pool(raw_pool.data(), static_cast<unsigned>(raw_pool.size()));
         }
 
         // ── Step 4: Compile via LLVM AOT pipeline ────────────────
