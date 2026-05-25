@@ -1,0 +1,6 @@
+;; task: edsl-optimize-benchmark-kw
+;; goal: synthesize:optimize with :benchmark keyword
+;; expect: pair
+;; hint: --- :benchmark keyword ---
+;; hint: (set-code "(define (f x) (+ x 1))")
+;; hint: (synthesize:optimize "f" :population 3 :generations 1 :benchmark "10.0")

@@ -847,6 +847,42 @@
   (check (pair? (synthesize:optimize "f"
     :population 5 :generations 2 :mutation-rate 0.5))))
 
+(test-suite "synth:optimize-fitness-high"
+  ;; A correct function should score ~1000 (4/4 probes pass) + length bonus
+  (set-code "(define (inc x) (+ x 1))")
+  (let ((result (synthesize:optimize "inc" :population 3 :generations 1)))
+    (check (pair? result))
+    (let ((fitness (cdr result)))
+      (check (> fitness 900.0)))))
+
+(test-suite "synth:optimize-benchmark-kw"
+  ;; :benchmark is an alias for :fitness — user-provided expression
+  (set-code "(define (f x) (+ x 1))")
+  (check (pair? (synthesize:optimize "f"
+    :population 3 :generations 1 :benchmark "10.0"))))
+
+(test-suite "synth:optimize-multiarg"
+  ;; Multi-arg functions should optimize and return valid code
+  (set-code "(define (add x y) (+ x y))")
+  (let ((result (synthesize:optimize "add" :population 3 :generations 1)))
+    (check (pair? result))
+    ;; After optimize, workspace should have valid code for multi-arg function
+    (let ((src (current-source)))
+      (check (string? src))
+      (check (> (length src) 0)))))
+
+(test-suite "synth:optimize-workspace-preserved"
+  ;; After optimize, the workspace should still work
+  (set-code "(define (sq x) (* x x))")
+  (synthesize:optimize "sq" :population 3 :generations 1)
+  (let ((src (current-source)))
+    (check (string? src))
+    (check (> (length src) 0)))
+  ;; The function should still be callable after optimization
+  ;; (the workspace is restored with best variant)
+  (let ((call-result (eval "(sq 5)")))
+    (check (number? call-result))))
+
 
 ;; ═══════════════════════════════════════════════════════════════
 ;; Rule Normalize — rule:define / apply / list

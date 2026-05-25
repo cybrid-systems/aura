@@ -1,0 +1,6 @@
+;; task: edsl-optimize-fitness
+;; goal: synthesize:optimize with benchmark-driven fitness scores
+;; expect: pair
+;; hint: --- Benchmark-driven fitness ---
+;; hint: (set-code "(define (inc x) (+ x 1))")
+;; hint: (synthesize:optimize "inc" :population 3 :generations 1)
