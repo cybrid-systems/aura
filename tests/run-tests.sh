@@ -315,6 +315,7 @@ run_emit_test "emit:string-eq"   "(string=? \"abc\" \"abc\")" "1"
 # List ops (via aura_prim_call PrimId dispatch)
 run_emit_test "emit:length"     "(length (list 10 20 30))" "3"
 run_emit_test "emit:list-ref"   "(list-ref (list 10 20 30) 1)" "20"
+run_emit_test "emit:reverse"   "(car (reverse (list 1 2 3)))" "3"
 echo "=== Diagnostic Tests ==="
 
 # Parse error: source line + caret display (via batch eval)
