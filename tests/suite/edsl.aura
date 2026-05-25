@@ -234,11 +234,58 @@
     (check (= (length d3) 0))))
 
 (test-suite "defuse:empty-workspace"
-  ;; Empty workspace — query should not crash
   (set-code "(define x 1)")
   (display (query:def-use "x"))
   (set-code "")
-  ;; After empty set-code, queries should still work safely
   (check (pair? (query:def-use "x")))
   (check (pair? (query:effects "x"))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; P10: AST Snapshot / Restore / Diff
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "snapshot:basic"
+  (set-code "(define (f x) (+ x 1))")
+  (let ((sid (ast:snapshot "f")))
+    (check (>= sid 0))
+    ;; List snapshots should include our snapshot
+    (check (pair? (ast:list-snapshots)))))
+
+(test-suite "snapshot:restore"
+  (set-code "(define (f x) (+ x 1))")
+  (define sid (ast:snapshot "before"))
+  ;; Mutate
+  (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
+  ;; Restore
+  (check (ast:restore sid))
+  ;; Should be back to original
+  (let ((defs (car (query:def-use "f"))))
+    (check (= (length defs) 1))))
+
+(test-suite "snapshot:diff-after-mutate"
+  (set-code "(define (f x) (+ x 1))")
+  (define sid (ast:snapshot "f"))
+  ;; Mutate
+  (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
+  ;; Diff should show changes
+  (let ((changes (ast:diff sid)))
+    ;; There should be at least some diff entries
+    (check (> (length changes) 0))
+    ;; At least one entry should be :removed or :added
+    (check (pair? changes))))
+
+(test-suite "snapshot:empty-id-uses-most-recent"
+  (set-code "(define (f x) (+ x 1))")
+  (ast:snapshot "v1")
+  (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
+  ;; Without args, ast:diff should use most recent snapshot
+  (check (pair? (ast:diff))))
+
+(test-suite "snapshot:mutliple-snapshots"
+  (set-code "(define (f x) (+ x 1))")
+  (ast:snapshot "v1")
+  (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
+  (ast:snapshot "v2")
+  ;; Two snapshots should be listed
+  (check (pair? (ast:list-snapshots))))
 

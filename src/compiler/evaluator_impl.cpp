@@ -5297,6 +5297,218 @@ Evaluator::Evaluator() {
         return make_pair(c3);
     });
 
+    // ═══════════════════════════════════════════════════════════════
+    // P10: AST Snapshot / Restore / Diff
+    // ═══════════════════════════════════════════════════════════════
+
+    // Helper: line-based LCS diff (Myers-like, simplified)
+    // Returns list of (tag . line) entries
+    auto line_diff = [this](const std::string& old_text,
+                            const std::string& new_text) -> EvalValue {
+        // Split into lines
+        auto split_lines = [](const std::string& s) -> std::vector<std::string> {
+            std::vector<std::string> lines;
+            std::string cur;
+            for (auto c : s) {
+                if (c == '\n') {
+                    lines.push_back(std::move(cur));
+                    cur.clear();
+                } else {
+                    cur += c;
+                }
+            }
+            if (!cur.empty())
+                lines.push_back(std::move(cur));
+            if (lines.empty())
+                lines.push_back("");
+            return lines;
+        };
+
+        auto a = split_lines(old_text);
+        auto b = split_lines(new_text);
+        int m = (int)a.size(), n = (int)b.size();
+
+        // Build LCS table (2 rows for memory efficiency)
+        // Use short int to keep table small; m,n rarely exceed 500
+        std::vector<int> prev(n + 1, 0), cur(n + 1, 0);
+        for (int i = 1; i <= m; ++i) {
+            cur[0] = i;
+            for (int j = 1; j <= n; ++j) {
+                if (a[i - 1] == b[j - 1])
+                    cur[j] = prev[j - 1];
+                else
+                    cur[j] = 1 + std::min({prev[j], cur[j - 1], prev[j - 1]});
+            }
+            std::swap(prev, cur);
+        }
+
+        // Backtrack to produce diff
+        std::vector<std::tuple<char, std::string>> diff_entries;  // '=', '-', '+'
+        int i = m, j = n;
+        auto saved_prev = prev; (void)saved_prev;
+        // We need the full table for backtracking. Build it.
+        std::vector<std::vector<int>> table(m + 1, std::vector<int>(n + 1, 0));
+        for (int i2 = 1; i2 <= m; ++i2) {
+            for (int j2 = 1; j2 <= n; ++j2) {
+                if (a[i2 - 1] == b[j2 - 1])
+                    table[i2][j2] = table[i2 - 1][j2 - 1] + 1;
+                else
+                    table[i2][j2] = std::max(table[i2 - 1][j2], table[i2][j2 - 1]);
+            }
+        }
+
+        while (i > 0 || j > 0) {
+            if (i > 0 && j > 0 && a[i - 1] == b[j - 1]) {
+                diff_entries.push_back({'=', a[i - 1]});
+                --i; --j;
+            } else if (j > 0 && (i == 0 || table[i][j - 1] >= table[i - 1][j])) {
+                diff_entries.push_back({'+', b[j - 1]});
+                --j;
+            } else {
+                diff_entries.push_back({'-', a[i - 1]});
+                --i;
+            }
+        }
+        std::reverse(diff_entries.begin(), diff_entries.end());
+
+        // Convert to Aura list
+        EvalValue result = make_void();
+        for (auto it = diff_entries.rbegin(); it != diff_entries.rend(); ++it) {
+            auto [tag, line] = *it;
+            std::string entry_str;
+            if (tag == '=') entry_str = ":same";
+            else if (tag == '-') entry_str = ":removed";
+            else entry_str = ":added";
+
+            // Store as nested list: (tag . line)
+            auto tag_idx = string_heap_.size();
+            string_heap_.push_back(entry_str);
+            auto line_idx = string_heap_.size();
+            string_heap_.push_back(line);
+            // Build pair: (pair . list)
+            auto line_pair = pairs_.size();
+            pairs_.push_back({make_string(tag_idx), make_string(line_idx)});
+            auto cons_pair = pairs_.size();
+            pairs_.push_back({make_pair(line_pair), result});
+            result = make_pair(cons_pair);
+        }
+        return result;
+    };
+
+    // (ast:snapshot ["name"])
+    //   → integer snapshot ID (or -1 on failure)
+    //   Stores current workspace source code as a named checkpoint.
+    //   Names are optional; unnamed snapshots get auto-generated names.
+    primitives_.add("ast:snapshot", [this](const auto& a) -> EvalValue {
+        if (!workspace_flat_ || !workspace_pool_)
+            return make_int(-1);
+
+        // Get current source
+        auto src_fn = primitives_.lookup("current-source");
+        if (!src_fn)
+            return make_int(-1);
+        auto src = (*src_fn)({});
+        if (!is_string(src))
+            return make_int(-1);
+        auto src_idx = as_string_idx(src);
+        if (src_idx >= string_heap_.size())
+            return make_int(-1);
+        auto source = string_heap_[src_idx];
+
+        // Optional name
+        std::string name;
+        if (a.size() >= 1 && is_string(a[0])) {
+            auto name_idx = as_string_idx(a[0]);
+            if (name_idx < string_heap_.size())
+                name = string_heap_[name_idx];
+        }
+
+        auto id = snapshot_sources_.size();
+        snapshot_sources_.push_back(source);
+        snapshot_names_.push_back(name);
+        return make_int(static_cast<std::int64_t>(id));
+    });
+
+    // (ast:list-snapshots)
+    //   → ((id "name") ...)  list of (snapshot-id . name) pairs
+    primitives_.add("ast:list-snapshots", [this](const auto&) -> EvalValue {
+        EvalValue result = make_void();
+        for (int i = (int)snapshot_sources_.size() - 1; i >= 0; --i) {
+            auto name_idx = string_heap_.size();
+            string_heap_.push_back(snapshot_names_[i].empty()
+                                       ? std::format("snapshot-{}", i)
+                                       : snapshot_names_[i]);
+            // Pair: (id . name)
+            auto entry_pair = pairs_.size();
+            pairs_.push_back({make_int(i), make_string(name_idx)});
+            // Cons with result list
+            auto cons_pair = pairs_.size();
+            pairs_.push_back({make_pair(entry_pair), result});
+            result = make_pair(cons_pair);
+        }
+        return result;
+    });
+
+    // (ast:restore id)
+    //   → true on success
+    //   Replaces current workspace with a previously snapshotted state.
+    //   Caches (def-use, incremental compile state) are invalidated.
+    primitives_.add("ast:restore", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_bool(false);
+        auto id = static_cast<std::size_t>(as_int(a[0]));
+        if (id >= snapshot_sources_.size())
+            return make_bool(false);
+
+        auto& source = snapshot_sources_[id];
+        // Re-parse the source into workspace
+        auto source_idx = string_heap_.size();
+        string_heap_.push_back(source);
+
+        auto set_fn = primitives_.lookup("set-code");
+        if (!set_fn)
+            return make_bool(false);
+        auto result = (*set_fn)({make_string(source_idx)});
+        return make_bool(is_bool(result) ? as_bool(result) : false);
+    });
+
+    // (ast:diff [id])
+    //   → ((tag . line) ...)
+    //   Compares current source vs a snapshot. If no id given, compares
+    //   versus the most recent snapshot. Tags: :same / :removed / :added
+    primitives_.add("ast:diff", [this, line_diff](const auto& a) -> EvalValue {
+        if (!workspace_flat_ || !workspace_pool_)
+            return make_void();
+
+        std::size_t id;
+        if (a.empty() || !is_int(a[0])) {
+            // Default to most recent snapshot
+            if (snapshot_sources_.empty())
+                return make_void();
+            id = snapshot_sources_.size() - 1;
+        } else {
+            id = static_cast<std::size_t>(as_int(a[0]));
+            if (id >= snapshot_sources_.size())
+                return make_void();
+        }
+
+        auto& old_source = snapshot_sources_[id];
+
+        // Get current source
+        auto src_fn = primitives_.lookup("current-source");
+        if (!src_fn)
+            return make_void();
+        auto src = (*src_fn)({});
+        if (!is_string(src))
+            return make_void();
+        auto src_idx = as_string_idx(src);
+        if (src_idx >= string_heap_.size())
+            return make_void();
+        auto& new_source = string_heap_[src_idx];
+
+        return line_diff(old_source, new_source);
+    });
+
     // ── intend — 纯循环管理器 ────────────────────────────────
     // (intend goal generator-fn verifier-fn [fixer-fn] [max-attempts])
     //

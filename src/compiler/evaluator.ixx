@@ -196,6 +196,10 @@ private:
     // 0=parser, 1=typecheck, 2=eval, 3=jit, 4=macro, 5=edsl-set-code,
     // 6=edsl-query, 7=edsl-mutate, 8=ffi, 9-15=reserved
     std::array<std::uint64_t, 16> coverage_counters_ = {};
+    // ── Snapshot storage (ast:snapshot / ast:restore) ───────────
+    std::vector<std::string> snapshot_sources_;  // source code per snapshot
+    std::vector<std::string> snapshot_names_;    // optional names
+
     // ── Def-Use Analysis (P1) ───────────────────────────────────
     void* defuse_index_ = nullptr;
     std::uint64_t defuse_version_ = 0;  // incremented on each mutation
