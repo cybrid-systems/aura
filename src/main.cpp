@@ -1653,8 +1653,10 @@ int main(int argc, char* argv[]) {
                     code += "    while(lst!=0&&lst<0){args[0]=acc; args[1]=aura_pair_car(lst); acc=aura_closure_call(fn,args,2); lst=aura_pair_cdr(lst);}\n";
                     code += "    return acc;\n";
                 }
-                else
-                    code += "    return (c>0)?a[0]:0;\n";
+                else {
+                    // Unknown primitives (e.g. ADT constructors): build a pair chain
+                    code += "    int64_t r=0; for(int i=c-1;i>=0;i--) r=aura_alloc_pair(a[i],r); return r;\n";
+                }
                 code += "}\n\n";
             }
 

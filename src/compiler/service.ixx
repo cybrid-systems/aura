@@ -669,6 +669,17 @@ public:
         // Compile-time AST validation
         validate_ast(*flat_ptr, *pool_ptr, flat_ptr->root);
 
+        // Pre-evaluate define-type forms to register constructor primitives
+        // before IR lowering, so constructor calls in the code are resolvable.
+        for (aura::ast::NodeId nid = 0; nid < flat_ptr->size(); ++nid) {
+            if (flat_ptr->get(nid).tag == aura::ast::NodeTag::DefineType) {
+                evaluator_.eval_flat(*flat_ptr, *pool_ptr, nid, evaluator_.top_env());
+            }
+        }
+
+        // Re-register ADT constructors from define-types for match exhaustiveness
+        register_adt_from_define_types(*flat_ptr, *pool_ptr, flat_ptr->root);
+
         // === Phase 1: Define separation (IR caching) ===
         auto def = try_extract_define(*flat_ptr, *pool_ptr, flat_ptr->root);
         if (def) {
