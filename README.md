@@ -135,14 +135,7 @@ Aura：C++26，LLVM ORC JIT 后端，Sound Gradual Typing。
 | **编译期反射** | P2996 auto_to_json / auto_serialize |
 | **--serve 协议** | 多 session + mailbox + 超时 |
 
-### 快速开始
 
-```bash
-cmake -B build && cmake --build build --target aura -j
-echo '(+ 1 2)' | ./build/aura                        # → 3
-echo '(+ 1 2)' | ./build/aura --emit-binary myapp && ./myapp
-./build/aura --serve                                  # 交互式 agent 会话
-```
 
 ## 文档
 
