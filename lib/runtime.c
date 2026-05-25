@@ -421,9 +421,12 @@ void aura_register_primitive_fn(int64_t slot, int64_t fn_ptr) {
 // I/O primitives
 // ═══════════════════════════════════════════════════════════
 
+static int g_display_was_called = 0;
+
 int64_t aura_display_int(int64_t val) {
     printf("%ld", (long)val);
     fflush(stdout);
+    g_display_was_called = 1;
     return val;
 }
 
@@ -615,8 +618,10 @@ int main(int argc, char** argv) {
     int64_t args[8] = {0};
     int64_t result = __top__(args, 0);
     aura_bump_reset();
-    if (result != 0)
+    if (result != 0 && !g_display_was_called)
         printf("%ld\n", (long)result);
+    else if (result != 0 && g_display_was_called)
+        printf("\n"); // newline after display output
     return 0;
 }
 #endif
