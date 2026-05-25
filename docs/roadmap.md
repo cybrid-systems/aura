@@ -48,8 +48,7 @@ std/rule 和 std/pipeline 模块代码已存在，但运行时缺少关键字参
 | # | 任务 | 工时 | 问题 |
 |:-:|:-----|:----:|:-----|
 | 1 | **运行时关键字参数支持** | 1-2d | `:description`, `:workspace` 等关键字无法作为原语使用；rule:define/pipeline 依赖的 try/catch 可能也不完整 |
-| 2 | **`make-hash` 别名** | 0.5d | LLM 习惯用 `make-hash`，当前需要 `hash` 或显式创建 |
-| 3 | **`string-append` + 字符串拼接一致性** | 0.5d | 模块代码大量使用 `string-append`，需验证多参数形式在所有路径下工作 |
+| 2 | **`string-append` + 字符串拼接一致性** | 0.5d | 模块代码大量使用 `string-append`，需验证多参数形式在所有路径下工作 |
 
 ### P2b: EDSL API 修复（2-3d）
 
