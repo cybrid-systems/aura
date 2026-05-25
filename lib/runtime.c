@@ -575,6 +575,16 @@ int64_t aura_prim_call(int64_t prim_id, int64_t a1, int64_t a2, int64_t argc) {
     case 31: // Remainder
         if (a2 == 0) return 0;
         return a1 % a2;
+    case 34: { // ListReverse — reverse a pair chain
+        int64_t input = a1;
+        int64_t result = 0;  // empty list sentinel
+        while (input != 0 && input < 0) {
+            int64_t car_val = aura_pair_car(input);
+            result = aura_alloc_pair(car_val, result);
+            input = aura_pair_cdr(input);
+        }
+        return result;
+    }
     case 35: // Raise
         fprintf(stderr, "raise: %ld\n", (long)a1);
         return 0;
