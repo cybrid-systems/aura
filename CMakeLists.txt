@@ -41,6 +41,8 @@ target_sources(aura PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/aura_jit_bridge.cpp
     src/messaging_bridge_impl.cpp
+    src/serve/fiber.cpp
+    src/serve/scheduler.cpp
     src/main.cpp)
  
 
