@@ -40,52 +40,27 @@ AI 不再猜测代码——它直接修改源码的 AST。
 
 LLM 做方向，Aura 做局部搜索。信息素指引变异优先级。
 
-### 3. 冻成原生二进制（真实 AOT）
+### 3. 冻成原生二进制（AOT）
 
-`--emit-binary` 现在走完整的 AOT 编译管线：
+`--emit-binary` 走完整 AOT 管线：LLVM IR → llc → 链接 → ELF。
 
 ```bash
-# 一行命令出独立原生 ELF
-echo '(+ 1 2)' | ./build/aura --emit-binary myapp
-./myapp  # → 3，不需要 aura 本体
-
-file myapp
-# ELF 64-bit LSB executable, ARM aarch64, dynamically linked, not stripped
+# 多文件 / 内联 / 管道，一行出独立 ELF
+./build/aura --emit-binary lib.aura main.aura app    # 多文件
+./build/aura --emit-binary '(+ 1 2)' app               # 内联
+echo '(+ 1 2)' | ./build/aura --emit-binary app       # 管道
+./app  # → 3，不依赖 aura 本体
 ```
 
-**编译管线：**
+**支持的表达式：** `+ - * / = < > <= >= and or not if pair? null? cons car cdr list length reverse append member map filter foldl string-length string=? string-append string-ref number->string quot/rem display let lambda error gensym`
 
-```
-源码 → FlatAST → IRModule → FlatFunction
-  → LLVM IR (O2) → .ll → llc -filetype=obj → .o
-  → 链接 runtime.c → 独立 ELF
-```
+**闭包 + 高阶函数：** 用户 lambda 编译为 ELF 函数，`map`/`filter`/`foldl` 通过原语派发表调用用户函数。原语 `+ - * / = < > <= >= not` 可作为闭包值传递（`(let ((f +)) (f 1 2 3))`）。
 
-**支持的表达式类型：**
-```
-算术: (+ 1 2 3) (- 5 3) (* 2 3) (quotient 10 3)
-比较: (= 42 42) (< 1 2)
-条件: (if #t 42 0) (and #t #t) (or #f #t) (not #f)
-对:   (car (cons 42 100)) (cdr (cons 42 100))
-类型: (pair? -1) (null? 0)
-闭包: (let ((f (lambda (x) (+ x 1)))) (f 41))
-绑定: (let ((x 10) (y 20)) (+ x y))
-IO:   (display 42)
-```
+**输出：** raw int64_t（`1` = #t, `0` 不输出）。display 自动换行，不重复打印返回值。
 
-**输出规范：** 原生二进制的输出格式与 eval 不一致：
-- 数值直接输出（如 `"3"`）
-- 布尔值输出 raw int（`1` = `#t`，`0` 不输出）
-- `display` 副作用 + 返回值合并（如 `(display 42)` → `4242`）
+**架构：** arm64 / x86_64。
 
-**架构：** arm64 / x86_64（通过 `AURA_ARCH` 环境变量）。
-
-**当前 AOT 限制：**
-- `cons` 尚不可用（走 Evaluator 原语派发，AOT 缺 runtime 绑定）
-- stdlib（`map`/`filter`/`foldl`）不可用
-- 多文件输入
-
-→ 详见 [docs/roadmap.md](docs/roadmap.md) P2.7
+→ 48 emit 测试，详见 [docs/roadmap.md](docs/roadmap.md)
 
 ---
 
@@ -112,7 +87,7 @@ Aura 是一个 **AI-native Lisp** 编译器：C++26 实现，LLVM ORC JIT 后端
 | **进程** | shell/command-output/command-line |
 | **错误处理** | try-catch + 结构化诊断 (ErrorKind + BlameInfo) |
 | **编译期反射** | P2996 auto_to_json / auto_serialize / P1306 递归序列化 |
-| **原生二进制** | 真实 AOT 编译器：LLVM IR → llc → 链接 → ELF (arm64/x86_64) |
+| **原生二进制 (AOT)** | LLVM IR → llc → 链接 → ELF. 算术/比较/逻辑/列表/字符串/闭包/高阶函数/所有权/多文件 (48 tests) |
 
 ### AI 基准（99 生成任务，2026-05-23）
 
