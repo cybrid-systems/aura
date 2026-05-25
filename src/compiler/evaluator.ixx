@@ -196,6 +196,10 @@ private:
     // 0=parser, 1=typecheck, 2=eval, 3=jit, 4=macro, 5=edsl-set-code,
     // 6=edsl-query, 7=edsl-mutate, 8=ffi, 9-15=reserved
     std::array<std::uint64_t, 16> coverage_counters_ = {};
+    // ── Def-Use Analysis (P1) ───────────────────────────────────
+    void* defuse_index_ = nullptr;
+    std::uint64_t defuse_version_ = 0;  // incremented on each mutation
+
     // ── Timeline for intend (E2, backward compat) ───────────────
     std::vector<std::string> timeline_; //
     std::vector<std::string> string_heap_;
