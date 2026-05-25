@@ -1,5 +1,6 @@
 // serve/serve_async.cpp — Async serve mode implementation
 #include "serve_async.h"
+#include "messaging_bridge.h"
 #include "scheduler.h"
 #include "fiber.h"
 #include "mailbox.h"
@@ -76,6 +77,12 @@ void run_serve_async() {
     // 1. Set stdin to non-blocking
     int flags = ::fcntl(STDIN_FILENO, F_GETFL);
     ::fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+
+    // Register fiber blocking callback for CompilerService::pop_message
+    aura::messaging::g_fiber_block = []() {
+        aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
+        aura::serve::Fiber::yield();
+    };
 
     // 2. Create scheduler
     Scheduler sched;
