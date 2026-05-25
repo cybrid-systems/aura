@@ -394,6 +394,8 @@ static std::uint32_t lower_flat_expr(
                     {"length", PrimId::ListLength},
                     {"list-ref", PrimId::ListRef},
                     {"reverse", PrimId::ListReverse},
+                    {"pair?", PrimId::PairP},
+                    {"null?", PrimId::NullP},
                 };
                 auto pcit = prim_call_map.find(std::string(callee_name));
                 if (pcit != prim_call_map.end()) {
@@ -421,6 +423,7 @@ static std::uint32_t lower_flat_expr(
                 // and: short-circuit via Branch + ConstVoid + Jump pattern
                 // or:  short-circuit via Branch + Local + Jump pattern
                 //
+                // not: inlined as IROpcode::Not (expanded to LLVM ICmp + Xor)
                 if (std::string(callee_name) == "not" && v.children.size() == 2) {
                     auto arg_slot = lower_flat_expr(state, flat, pool, v.child(1), cache, cache_hits);
                     auto result_slot = state.alloc_local();

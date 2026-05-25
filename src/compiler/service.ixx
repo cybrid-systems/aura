@@ -37,7 +37,9 @@ static constexpr const char* kPrimNameTable[] = {
     "vector-ref",    "vector-set!",    "vector-length",  "vector?",       "make-vector",
     "import",        "char=?",         "char<?",         "char->integer", "integer->char",
     "quotient",      "remainder",
+    "length",        "list-ref",       "reverse",
     "raise",         "error?",
+    "pair?",         "null?",
 };
 
 static std::atomic<const aura::compiler::Primitives*> g_jit_prim_ctx{nullptr};
