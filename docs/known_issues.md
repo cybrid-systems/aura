@@ -1,29 +1,8 @@
 # Aura 已知问题
 
-**更新：2026-05-25 — 清除非真实 bug，只保留确认存在的遗留问题**
+**更新：2026-05-26 — 所有 P0/P1/P2/P3 均已解决或关闭**
 
 ---
-
-## 确认存在的遗留问题
-
-| # | 问题 | 说明 | 影响 |
-|---|------|------|:----:|
-| 1 | messaging 缺少阻塞 recv | 单线程 serve 无法实现真正阻塞，当前使用超时轮询 | Serve |
-| 2 | workspace tree 非全局 | ~~每个 serve session 有独立 workspace tree~~ ✅ 已修复（共享 tree） | Ws |
-| 3 | `synthesize:optimize` fitness 仅基于代码长度 | 需要 benchmark 驱动的真实 fitness | Opt |
-
-## 已关闭（不做）
-
-| # | 问题 | 原因 |
-|:---|:------|:------|
-| — | 权限模型（module / symbol whitelist） | `workspace:lock` + COW 隔离够用 |
-| — | eval 资源限制（CPU / memory / recursion depth） | 当前无多租户场景 |
-
-## 已完成（旧问题已修）
-
-| 问题 | 修复 |
-|:-----|:------|
-| messaging 阻塞 recv | `pop_message` fiber yield + `g_fiber_block` 回调，`(recv)` 空时 yield fiber ✅ |
 
 ## 已确认不是 bug（LLM 误报）
 
@@ -50,3 +29,19 @@
 | `require` 语法解析 | `(require "std/list" all:)` 正常工作 ✅ |
 | `synthesize:pipeline` invalid node id | 已修复 ✅ |
 | `string-append` 多参数 | `(string-append "a" "b" "c")` → `"abc"` ✅ |
+
+## 已关闭（不做）
+| 问题 | 原因 |
+|:-----|:------|
+| 规则持久化 VCS 集成 | JSON save/load 够用 |
+| 权限模型（module / symbol whitelist） | `workspace:lock` + COW 隔离够用 |
+| eval 资源限制（CPU / memory / recursion depth） | 当前无多租户场景 |
+
+## 最近修复
+| 问题 | 修复 |
+|:-----|:------|
+| messaging 阻塞 recv | `pop_message` fiber yield + `g_fiber_block` 回调 ✅ |
+| AOT 布尔值 raw int | pointer tagging + bool sentinel ✅ |
+| struct AOT 不工作 | `define-type` 预注册构造函数 ✅ |
+| workspace tree 跨 session 共享 | 共享 WorkspaceTree ✅ |
+| `synthesize:optimize` fitness 基于代码长度 | benchmark 驱动探测 ✅ |
