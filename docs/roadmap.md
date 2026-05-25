@@ -4,122 +4,47 @@
 
 ---
 
-## 最新里程碑：P2.6 — 真实 AOT 编译器
+## 当前状态：P2 完成
 
-**目标：** `--emit-binary` 从 shell wrapper 升级为真正的 LLVM AOT 编译管道。
-生成原生 ELF 二进制，不依赖 aura 本体。
+**106 核心测试 + 48 `--emit-binary` 测试全部通过。**
 
-| 项目 | 状态 | 说明 |
-|:-----|:----:|:-----|
-| AOT LLVM IR 管道 | ✅ | `FlatFunction → LLVM IR → O2 → .ll → llc → .o` |
-| 原生链接 | ✅ | 每函数 .o + runtime.c + function registration = 独立 ELF |
-| 闭包 AOT | ✅ | func_table + `__attribute__((constructor))` 动态函数指针注册 |
-| 算术/比较/if/let | ✅ | 直接内联为 LLVM IR 指令 |
-| cons/car/cdr/display | ✅ | runtime.c 原生函数调用 |
-| `and`/`or`/`not` | ✅ | Lowering pass 展开为条件分支（不进原语派发） |
-| `pair?`/`null?` | ✅ | 通过 PrimId 走 OpPrimCall → LLVM ICmp |
-| `quotient`/`remainder` | ✅ | 安全零除检查内联 |
+### 已完成的 AOT 能力
 
-### AOT 测试覆盖率
+| 分类 | 表达式 | 方式 |
+|:-----|:-------|:-----|
+| 算术 | `+ - * /` 链式 | LLVM IR inlined |
+| 比较 | `= < > <= >=` | LLVM ICmp |
+| 逻辑 | `and or not` | lowering 展开为分支 |
+| 类型 | `pair? null?` | PrimId → LLVM ICmp |
+| 对 | `cons car cdr` | runtime.c 函数 (负数 sentinel) |
+| 列表 | `list length list-ref reverse append member` | lowering 展开 + PrimId dispatch |
+| 高阶 | `map filter foldl` | 原语派发表 + `aura_closure_call` |
+| 字符串 | `string-append/length/ref/<?/=?` `number->string` `string->number` | PrimId dispatch |
+| 条件 | `if let` | LLVM branch/inlined |
+| 闭包 | lambda、闭包捕获、闭包作为值传递 | func_table + constructor 注册 |
+| 原语传递 | `+ - * / = < > <= >= not` 作为闭包值 | AOT 模式 OpPrimitive 负数 sentinel |
+| IO | `display` | 运行时函数 + 无重复打印 |
+| 所有权 | `drop move borrow Linear` | IR opcodes → passthrough/drop |
+| 多文件 | `--emit-binary a.aura b.aura out` | 文件拼接 → 统一编译 |
 
-**26 个 `--emit-binary` 测试全部通过：**
+### 技术细节
 
-```
-add sub mul neg chain car cdr
-pair? not-pair? null? not-null?
-eq-lit lt bool
-closure closure2
-and or not and-chain
-if-true if-false let
-quotient remainder display
-```
+**编译管线：** `源码 → FlatAST → IRModule → FlatFunction → LLVM IR (O2) → .ll → llc -filetype=obj → .o → 链接 runtime.c → 独立 ELF`
 
-### 原生二进制格式
+**运行时：** 单个 `lib/runtime.c` 提供 bump allocator、pair/cell/closure heap、string pool、drop 函数族、PrimId 派发表、func_table。
 
-```bash
-$ echo '(+ 1 2)' | ./build/aura --emit-binary /tmp/myapp
-$ /tmp/myapp
-3
-$ file /tmp/myapp
-ELF 64-bit LSB executable, ARM aarch64, dynamically linked, not stripped
-$ readelf -h /tmp/myapp | grep Machine
-Machine: ARM AARCH64
-```
+**原语派发表：** 编译器在 `--emit-binary` 时枚举 evaluator 的原语表，生成每 slot 对应的 C 包装函数 → 编译链接进二进制。`aura_closure_call` 检测负数 closure_id 并派发到该表。
 
-**输出规范：** 原生二进制输出原始 int64_t 值。
-布尔值：`1` = `#t`, `0`（不输出，同 Scheme 空列表惯例）。
-`display` 副作用 + 返回值合并输出（如 `(display 42)` → `4242`）。
+## 剩余 TODO
 
----
+| 优先级 | 任务 | 说明 |
+|:------:|:-----|------|
+| 🟢 | stdlib 模块化 AOT | lib/*.aura 预编译为 .o |
+| 🟢 | LSP / 包管理 / 自举 | 长期项 |
+| 🟢 | AOT 性能 (O3/LTO/内联) | 功能完整后优化 |
 
-## 近期计划
+## 历史
 
-### P2.7 — AOT 原语补全
-
-| 项目 | 工作量 | 说明 |
-|:-----|:------:|:-----|
-| `cons` 在 AOT 路径支持 | 1d | 当前通过 OpPrimitive + OpCall 派发，需改为 runtime.c 直接调用 |
-| `list` 展开为 cons 链 | 2d | 降低对 eval 原语表的依赖 |
-| `+ - * / = < >` 等传值调用 | 1d | 当前作为函数值传递时走闭包派发，不工作 |
-| `display` 输出格式统一 | 0.5d | 分离 side-effect 与 return value 输出 |
-| `string-append`/`string-length` 等 | 2d | 常用 stdlib 原语的 AOT 支持 |
-
-### P3 — 工具链
-
-| 项目 | 说明 |
-|:-----|:-----|
-| LSP 服务器 | 增量诊断、补全、类型预览 |
-| 包管理 | 依赖解析、远程缓存 |
-| 自举编译器 | Aura 写的 Aura 编译器 |
-
-### P4 — 性能
-
-| 项目 | 预期提升 | 说明 |
-|:-----|:--------:|:-----|
-| AOT -O3（当前 -O2） | ~5% | LLVM 默认 -O2，可升级 |
-| LTO | ~10% | 链接时优化跨编译单元 |
-| 内联运行时函数 | ~15% | 将 runtime.c 中的短函数标记 `__attribute__((always_inline))` |
-| 多文件 AOT | — | 一次编译多个 .aura 文件 + 全局链接 |
-| 模块化 AOT | — | stdlib 模块预编译为 .o，链接进应用 |
-
----
-
-## 已完成里程碑
-
-### P2.5 — Bump Allocator + Drop (2026-05-23 ~ 24)
-
-| 项目 | 状态 |
-|:-----|:----:|
-| runtime.c Bump Allocator | ✅ |
-| runtime.c 闭包捕获 | ✅ |
-| runtime.c drop 函数族 | ✅ |
-| JIT OpDrop 指令 | ✅ |
-| JIT 字符串支持 | ✅ |
-| `--emit-binary` 测试 | ✅ (24 → 26 tests) |
-| runtime.c 单元测试 | ✅ (23 C 级测试) |
-| AOT 编译器 | ✅ **P2.6 已接替** |
-
-### P2 — JIT 编译器 (已完成)
-
-- ORC JIT v2 后端
-- 38 opcode → native code
-- 7.55× 性能提升 vs tree-walker
-- 字符串、闭包、drop 完整支持
-
-### P1 — IR + Pass Manager (已完成)
-
-- TypeSpecializationWrap
-- ComputeKindWrap
-- ArityWrap
-- ConstantFoldingWrap
-
-### P0 — 核心求值 (已完成)
-
-- Tree-walker + IR 双路径
-- Sound Gradual Typing
-- ADT + match 穷尽性检查
-- EDSL 自修改
-- 模块系统
-- 标准库 (29 模块)
-- C FFI
-- 错误处理
+- P0 (2026-05-23): 核心求值 + 类型系统 + ADT + EDSL
+- P1 (2026-05-23): IR + Pass Manager + 增量编译
+- P2 (2026-05-23~25): JIT 编译器 → 真实 AOT 编译器
