@@ -680,3 +680,22 @@
   ;; send to self (same session) should work in --serve mode only
   ;; outside serve: no mailbox available, returns #f
   (check (not (send "self" "test"))))
+
+
+;; ═══════════════════════════════════════════════════════════════
+;; P14P1: Messaging — reply, session-active?, mailbox-count
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "msg:mailbox-count-zero"
+  ;; In standalone mode (no serve), mailbox count should be 0
+  (check (= (mailbox-count) 0)))
+
+(test-suite "msg:session-active-nonexistent"
+  (check (not (session-active? "nonexistent-agent"))))
+
+(test-suite "msg:session-active-string"
+  (check (string? (my-id))))
+
+(test-suite "msg:reply-no-last-sender"
+  ;; reply with no prior recv should return #f
+  (check (not (reply "hello"))))

@@ -115,7 +115,11 @@ public:
             [](const std::string& target, const std::string& msg) -> bool {
                 auto* svc = CompilerService::lookup(target);
                 if (!svc) return false;
-                svc->push_message(msg);
+                // Send with our caller's identity
+                auto* self = static_cast<CompilerService*>(
+                    aura::messaging::g_current_compiler_service);
+                auto sender = self ? self->session_id() : std::string("(unknown)");
+                svc->push_message(sender, msg);
                 return true;
             };
         aura::messaging::g_messaging_bridge.recv =
@@ -134,13 +138,26 @@ public:
         aura::messaging::g_mailbox_read =
             [](void* svc, int timeout_ms) -> std::optional<std::string> {
                 if (!svc) return std::nullopt;
-                auto* cs = static_cast<CompilerService*>(svc);
-                return cs->pop_message(timeout_ms);
+                return static_cast<CompilerService*>(svc)->pop_message(timeout_ms);
+            };
+        aura::messaging::g_mailbox_last_sender =
+            [](void* svc) -> std::string {
+                if (!svc) return "";
+                return static_cast<CompilerService*>(svc)->last_sender();
+            };
+        aura::messaging::g_mailbox_count =
+            [](void* svc) -> std::size_t {
+                if (!svc) return 0;
+                return static_cast<CompilerService*>(svc)->mailbox_size();
             };
         aura::messaging::g_session_id =
             [](void* svc) -> std::string {
                 if (!svc) return "";
                 return static_cast<CompilerService*>(svc)->session_id();
+            };
+        aura::messaging::g_session_exists =
+            [](const std::string& id) -> bool {
+                return CompilerService::lookup(id) != nullptr;
             };
         // Cache module defines in IR after each import (incl. recursive fns)
         evaluator_.set_module_loaded_callback(
@@ -153,23 +170,21 @@ public:
     void set_session_id(const std::string& id) { session_id_ = id; evaluator_.set_session_id(id); }
     std::string session_id() const { return session_id_; }
 
-    void push_message(const std::string& msg) {
-        mailbox_.push_back(msg);
+    void push_message(const std::string& sender, const std::string& msg) {
+        mailbox_.push_back({sender, msg});
     }
 
     std::optional<std::string> pop_message(int timeout_ms = -1) {
         if (mailbox_.empty() && timeout_ms == 0) return std::nullopt;
-        // Busy-wait if timeout > 0 (single-threaded, no blocking)
-        if (timeout_ms > 0 && mailbox_.empty()) {
-            // In single-threaded serve, return empty immediately
-            // (the sending code won't run until we're done)
-            return std::nullopt;
-        }
         if (mailbox_.empty()) return std::nullopt;
-        auto msg = std::move(mailbox_.front());
+        last_sender_ = mailbox_.front().first;
+        auto msg = std::move(mailbox_.front().second);
         mailbox_.erase(mailbox_.begin());
         return msg;
     }
+
+    std::string last_sender() const { return last_sender_; }
+    std::size_t mailbox_size() const { return mailbox_.size(); }
 
     static void register_session(const std::string& id, CompilerService* svc) {
         std::lock_guard lk(registry_mtx());
@@ -2709,7 +2724,8 @@ private:
     }
 
     // ── Messaging (P14) ───────────────────────────────────────
-    std::vector<std::string> mailbox_;
+    std::vector<std::pair<std::string, std::string>> mailbox_;  // (sender, msg)
+    std::string last_sender_;
     std::string session_id_;
     std::unique_ptr<std::function<bool(const std::string&, const std::string&)>> msg_send_fn_;
     std::unique_ptr<std::function<std::optional<std::string>(int)>> msg_recv_fn_;

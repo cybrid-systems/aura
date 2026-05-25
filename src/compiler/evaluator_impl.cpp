@@ -6298,6 +6298,38 @@ Evaluator::Evaluator() {
         return make_string(idx);
     });
 
+    // (reply msg) → #t on success (sends to last message's sender)
+    primitives_.add("reply", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_bool(false);
+        auto svc = aura::messaging::g_current_compiler_service;
+        if (!svc || !aura::messaging::g_mailbox_last_sender)
+            return make_bool(false);
+        auto target = aura::messaging::g_mailbox_last_sender(svc);
+        if (target.empty()) return make_bool(false);
+        auto msg = string_heap_[as_string_idx(a[0])];
+        auto& bridge = aura::messaging::g_messaging_bridge;
+        if (!bridge.send) return make_bool(false);
+        return make_bool(bridge.send(target, msg));
+    });
+
+    // (session-active? id) → #t if session exists
+    primitives_.add("session-active?", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]) || !aura::messaging::g_session_exists)
+            return make_bool(false);
+        auto id = string_heap_[as_string_idx(a[0])];
+        return make_bool(aura::messaging::g_session_exists(id));
+    });
+
+    // (mailbox-count) → number of pending messages in our mailbox
+    primitives_.add("mailbox-count", [this](const auto&) -> EvalValue {
+        auto svc = aura::messaging::g_current_compiler_service;
+        if (!svc || !aura::messaging::g_mailbox_count)
+            return make_int(0);
+        return make_int(static_cast<std::int64_t>(
+            aura::messaging::g_mailbox_count(svc)));
+    });
+
 // ── intend — 纯循环管理器 — 纯循环管理器 ────────────────────────────────
     // (intend goal generator-fn verifier-fn [fixer-fn] [max-attempts])
     //
