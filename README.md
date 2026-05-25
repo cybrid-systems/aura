@@ -1,54 +1,111 @@
 # Aura
 
-**AI-native Lisp——让代码自己进化。**
+**AI-native Lisp — 代码自己进化。**
+
+Aura 让 AI Agent 拥有在运行时**精确读写和修改自身代码**的能力。  
+不是"让 LLM 输出文本然后粘贴"——而是把代码变成一块可查询、可变异、可版本化的活体 AST。
 
 ---
 
-我们不再让 AI 写代码。  
-我们让 AI 拥有改写代码的权力——  
-它可以读、可以改、可以让代码编译成独立的二进制。
+## 核心能力
 
----
-
-## 核心工作流
-
-### 1. 增量 EDSL — 代码第一次有了记忆
+### 🔹 自修改 EDSL — 代码有记忆
 
 ```scheme
-(set-code "(define (f n) (* n 2))")
-(query:find "f")                     → 找到自己的函数定义
-(mutate:rebind "f" "(lambda (n) (* n 3))")  → AST 级替换
-(eval-current)                       → 增量编译 + 求值
+(set-code "(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))")
+
+;; 查询影响范围
+(query:def-use "fib")           → ((21) . (23 6 12))   ; defs . uses
+(query:reaches 21)              → ((21) . (23 6 12))   ; 这个定义影响到谁
+(query:effects "fib")           → ((21) (23 6 12) (25 17 11)) ; + callers
+
+;; 手术级 AST 编辑
+(mutate:rebind "fib" "(lambda (n) (* n 2))" "linearize")
+(mutate:wrap 3 "(display _)" "wrap")                     ; 用模板包裹表达式
+(mutate:splice 0 1 "(display 1)" "(display 2)" "insert") ; 批量插入
+
+;; 快照 + 回退
+(ast:snapshot "checkpoint")
+(mutate:rebind "fib" "(lambda (n) 0)" "oops")
+(ast:restore 0)                                          ; 一秒回退
+
+;; 结构化 diff
+(ast:diff 0)
+→ ((:removed . "(define fib (lambda (n) ...))")
+   (:added . "(define fib (lambda (n) 0))"))
 ```
 
-### 2. 冻成原生二进制（AOT）
+### 🔹 Workspace 分层 — 独立实验环境
+
+```scheme
+;; 在隔离的子 workspace 中实验，不影响主代码
+(define sandbox (workspace:create "sandbox"))
+(workspace:switch sandbox)
+(mutate:rebind "fib" "(lambda (n) (fib-iter n 0 1))" "optimize")
+(eval-current)                               ; 验证
+(workspace:switch 0)                         ; 主代码不受影响
+(workspace:merge sandbox)                    ; 合并好的版本
+```
+
+### 🔹 Inter-Agent 通信
+
+```scheme
+;; Session A
+(send "agent-b" "{\"type\":\"request\",\"fn\":\"sort\"}")
+
+;; Session B（另一个 serve 连接）
+(display (recv 100))  → "{\"type\":\"request\",\"fn\":\"sort\"}"
+(reply "{\"status\":\"ok\",\"code\":\"...\"}")
+(session-active? "agent-a")  → #t
+```
+
+### 🔹 代码合成管线
+
+```scheme
+;; 模板生成
+(synthesize:register-template "handler"
+  "(define (handle-{r} req) (query \"{q}\"))" "r" "q")
+(synthesize:fill "handler" "users" "SELECT *")
+
+;; LLM 生成
+(synthesize:define "fib" "Int -> Int"
+  :prompt "iterative fibonacci" :max-attempts 5)
+
+;; 遗传优化
+(synthesize:optimize "fib"
+  :population 20 :generations 10
+  :fitness "(benchmark fib 10000)")
+
+;; 管线编排
+(synthesize:pipeline "build-api"
+  (synthesize:fill "handler" "users" "SELECT *")
+  (synthesize:define "sort" "List -> List" :prompt "quicksort")
+  (rule:apply-all))
+```
+
+### 🔹 代码规范系统
+
+```scheme
+(rule:define 'guard-division
+  :pattern "(/ ?x ?y)" :replace "(if (= ?y 0) 0 (/ ?x ?y))"
+  :condition "(> ?y 0)" :description "Protect division by zero")
+
+(rule:apply-all)           ; 自动修复所有违规
+(rule:list-violations)     ; 审计模式，只查不改
+(rule:save "rules.json")   ; 持久化
+```
+
+### 🔹 冻成原生二进制 (AOT)
 
 ```bash
-# 多文件 / 内联 / 管道，一行出独立 ELF
 ./build/aura --emit-binary lib.aura main.aura app   # 多文件
-./build/aura --emit-binary '(+ 1 2)' app             # 内联
 echo '(+ 1 2)' | ./build/aura --emit-binary app     # 管道
 ./app  # → 3，不依赖 aura 本体
 ```
 
-**编译管线：** `源码 → FlatAST → IRModule → LLVM IR (O2) → .ll → llc → .o → 链接 runtime.c → ELF`
+**编译管线：** `源码 → FlatAST → IRModule → LLVM IR (O2) → llc → .o → 链接 → ELF`
 
-**支持：** 算术/比较/逻辑/类型/对/列表/字符串/高阶函数/闭包+递归/apply/display(列表格式化)/所有权/多文件/stdlib 集成。
-
-```scheme
-;; 全部可在原生 ELF 中运行
-(+ 1 2 3) | (= 42 42) | (and #t #t)
-(car (list 1 2 3)) | (length (list 1 2 3))
-(string-length "hello") | (string-append "a" "b")
-(map (lambda (x) (+ x 10)) (list 1 2 3))
-(foldl + 0 (list 1 2 3)) | (apply + (list 1 2 3))
-(let loop ((x 0)) (if (< x 3) (loop (+ x 1)) x))
-(display (list 1 2 3))   → (1 2 3)
-(import "std/math")(factorial 5) → 120
-(import "std/algorithm")(permutations (list 1 2 3))
-```
-
-**56 emit 测试全通过。** 架构：arm64 / x86_64。
+**支持：** 算术/比较/闭包递归/高阶/apply/列表/字符串/所有权/多文件/stdlib (56 emit ✅)
 
 ---
 
@@ -58,32 +115,38 @@ Aura：C++26，LLVM ORC JIT 后端，Sound Gradual Typing。
 
 | 维度 | 状态 |
 |------|:----:|
-| **核心求值** | Tree-walker + IR 双路径 + TCO + 显式调用栈 |
+| **核心求值** | Tree-walker + IR 双路径 + TCO |
 | **类型系统** | Sound Gradual: coercion + occurrence + let-poly |
-| **M4 线性所有权** | move/borrow/drop, 编译期跟踪 + IR opcode |
+| **所有权** | M4 linear: move/borrow/drop, 编译期跟踪 |
 | **ADT + match** | define-type / 穷尽性检查 |
 | **JIT** | ORC JIT, 38 opcode → native, 7.55× vs TW, -O2 |
-| **增量编译** | ArenaGroup + 磁盘缓存 + 热替换 + IR import |
-| **EDSL 自修改** | set-code → query → mutate → eval-current |
+| **增量编译** | ArenaGroup + 缓存 + 热替换 + IR import |
+| **EDSL 自修改** | query:def-use/reaches/effects + mutate:rebind/splice/wrap |
+| **Workspace 分层** | create/switch/merge/lock/discard + COW |
+| **Messaging** | send/recv/reply/my-id/mailbox-count/session-active? |
+| **合成管线** | template/LLM/genetic/pipeline 多策略 |
+| **规范系统** | rule:define/apply/save/load + scope/condition |
+| **快照/diff** | ast:snapshot/restore/diff (line-level LCS) |
+| **原生二进制** | LLVM IR → llc → ELF, 56 emit ✅ |
 | **模块系统** | require/import + 路径解析 + 缓存 + 热重载 |
-| **原生二进制 (AOT)** | LLVM IR → llc → 链接 → ELF. 算术/比较/闭包递归/高阶/apply/列表/字符串/所有权/多文件/stdlib (56 emit ✅) |
 | **C FFI** | dlopen/dlsym + 类型签名 |
 | **编译期反射** | P2996 auto_to_json / auto_serialize |
+| **--serve 协议** | 多 session + mailbox + 超时 |
 
 ### 快速开始
 
 ```bash
 cmake -B build && cmake --build build --target aura -j
-echo '(+ 1 2)' | ./build/aura                 # → 3
-echo '(display (list 1 2 3))' | ./build/aura  # → (1 2 3)
-echo '(+ 1 2)' | ./build/aura --emit-binary myapp && ./myapp  # → 3
+echo '(+ 1 2)' | ./build/aura                        # → 3
+echo '(+ 1 2)' | ./build/aura --emit-binary myapp && ./myapp
+./build/aura --serve                                  # 交互式 agent 会话
 ```
 
 ## 文档
 
-- [docs/roadmap.md](docs/roadmap.md)
-- [docs/known_issues.md](docs/known_issues.md)
-- [docs/design/aura_language_spec.md](docs/design/aura_language_spec.md)
+- [docs/roadmap.md](docs/roadmap.md) — 路线图
+- [docs/tutorial.md](docs/tutorial.md) — 教程
+- [docs/design/](docs/design/) — 设计文档
 
 ## License
 
