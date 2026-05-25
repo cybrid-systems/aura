@@ -2,6 +2,7 @@ module;
 #include <cstdint>
 #include "aura_jit.h"
 #include <atomic>
+#include "messaging_bridge.h"
 
 extern "C" std::int64_t aura_jit_test();
 extern "C" void aura_set_prim_dispatcher(std::int64_t (*fn)(std::int64_t, std::int64_t*,
@@ -104,14 +105,86 @@ static aura::diag::Diagnostic parse_error_diag(const aura::parser::FlatParseResu
 export class CompilerService {
 public:
     CompilerService()
-        : user_bindings_{"#t", "#f", "nil"} {
+        : user_bindings_{"#t", "#f", "nil"}, session_id_("unset") {
         evaluator_.set_arena(&arena_);
         evaluator_.set_type_registry(&type_registry_);
+        evaluator_.set_compiler_service(this);
+        evaluator_.set_session_id(session_id_);
+        // Setup messaging bridge (avoids circular module dependency)
+        aura::messaging::g_messaging_bridge.send =
+            [](const std::string& target, const std::string& msg) -> bool {
+                auto* svc = CompilerService::lookup(target);
+                if (!svc) return false;
+                svc->push_message(msg);
+                return true;
+            };
+        aura::messaging::g_messaging_bridge.recv =
+            [](int timeout_ms) -> std::optional<std::string> {
+                // This relies on the compiler_service_ being set correctly,
+                // which doesn't work across sessions. Instead, use the
+                // current CompilerService from context.
+                // For now, return empty — recv is session-specific.
+                return std::nullopt;
+            };
+        aura::messaging::g_messaging_bridge.my_id =
+            []() -> std::string {
+                return "(unknown)";
+            };
+        // Set per-service access functions
+        aura::messaging::g_mailbox_read =
+            [](void* svc, int timeout_ms) -> std::optional<std::string> {
+                if (!svc) return std::nullopt;
+                auto* cs = static_cast<CompilerService*>(svc);
+                return cs->pop_message(timeout_ms);
+            };
+        aura::messaging::g_session_id =
+            [](void* svc) -> std::string {
+                if (!svc) return "";
+                return static_cast<CompilerService*>(svc)->session_id();
+            };
         // Cache module defines in IR after each import (incl. recursive fns)
         evaluator_.set_module_loaded_callback(
             [this](const std::string& content, const std::string& path) {
                 cache_module(content, path);
             });
+    }
+
+    // ── Inter-agent messaging (P0) ──────────────────────────
+    void set_session_id(const std::string& id) { session_id_ = id; evaluator_.set_session_id(id); }
+    std::string session_id() const { return session_id_; }
+
+    void push_message(const std::string& msg) {
+        mailbox_.push_back(msg);
+    }
+
+    std::optional<std::string> pop_message(int timeout_ms = -1) {
+        if (mailbox_.empty() && timeout_ms == 0) return std::nullopt;
+        // Busy-wait if timeout > 0 (single-threaded, no blocking)
+        if (timeout_ms > 0 && mailbox_.empty()) {
+            // In single-threaded serve, return empty immediately
+            // (the sending code won't run until we're done)
+            return std::nullopt;
+        }
+        if (mailbox_.empty()) return std::nullopt;
+        auto msg = std::move(mailbox_.front());
+        mailbox_.erase(mailbox_.begin());
+        return msg;
+    }
+
+    static void register_session(const std::string& id, CompilerService* svc) {
+        std::lock_guard lk(registry_mtx());
+        registry()[id] = svc;
+    }
+
+    static void unregister_session(const std::string& id) {
+        std::lock_guard lk(registry_mtx());
+        registry().erase(id);
+    }
+
+    static CompilerService* lookup(const std::string& id) {
+        std::lock_guard lk(registry_mtx());
+        auto it = registry().find(id);
+        return it != registry().end() ? it->second : nullptr;
     }
 
     void reset() { arena_.reset(); }
@@ -2633,6 +2706,24 @@ private:
         // and aura_set_prim_dispatcher is declared at file scope.
         aura_set_prim_dispatcher(aura_jit_prim_dispatch);
 #endif
+    }
+
+    // ── Messaging (P14) ───────────────────────────────────────
+    std::vector<std::string> mailbox_;
+    std::string session_id_;
+    std::unique_ptr<std::function<bool(const std::string&, const std::string&)>> msg_send_fn_;
+    std::unique_ptr<std::function<std::optional<std::string>(int)>> msg_recv_fn_;
+    std::unique_ptr<std::function<std::string()>> msg_id_fn_;
+
+    // ── Static registry ──────────────────────────────────────
+    // Using Scott Meyer's singletons to avoid ODR issues with module static members
+    static std::unordered_map<std::string, CompilerService*>& registry() {
+        static std::unordered_map<std::string, CompilerService*> reg;
+        return reg;
+    }
+    static std::mutex& registry_mtx() {
+        static std::mutex mtx;
+        return mtx;
     }
 };
 

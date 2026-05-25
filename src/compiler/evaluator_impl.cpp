@@ -14,6 +14,7 @@ module;
 #include <fcntl.h>
 #include <regex>
 #include <cmath>
+#include "messaging_bridge.h"
 module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
@@ -6248,7 +6249,56 @@ Evaluator::Evaluator() {
             idx = static_cast<std::uint32_t>(as_int(a[0]));
         return make_bool(__tw2->can_write(idx));
     });
-// ── intend — 纯循环管理器 ────────────────────────────────
+
+    // ═══════════════════════════════════════════════════════════════
+    // P14: Inter-Agent Messaging (P0)
+    // ═══════════════════════════════════════════════════════════════
+
+    // ── Messaging primitives ───────────────────────────────────
+    //
+    // send: global bridge (pushing to a target is session-independent)
+    // recv: uses compiler_service_ + g_mailbox_read (per-service mailbox access)
+    // my-id: uses compiler_service_ + g_session_id (per-service identity)
+
+    // (send target-id message) → #t on success
+    primitives_.add("send", [this](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
+            return make_bool(false);
+        auto& bridge = aura::messaging::g_messaging_bridge;
+        if (!bridge.send) return make_bool(false);
+        auto target = string_heap_[as_string_idx(a[0])];
+        auto msg = string_heap_[as_string_idx(a[1])];
+        return make_bool(bridge.send(target, msg));
+    });
+
+    // (recv [timeout-ms]) → message, or void on timeout
+    primitives_.add("recv", [this](const auto& a) -> EvalValue {
+        auto svc = aura::messaging::g_current_compiler_service;
+        if (!svc || !aura::messaging::g_mailbox_read)
+            return make_void();
+        int timeout_ms = -1;
+        if (a.size() >= 1 && is_int(a[0]))
+            timeout_ms = static_cast<int>(as_int(a[0]));
+        auto result = aura::messaging::g_mailbox_read(svc, timeout_ms);
+        if (!result) return make_void();
+        auto idx = string_heap_.size();
+        string_heap_.push_back(std::move(*result));
+        return make_string(idx);
+    });
+
+    // (my-id) → current session ID string
+    primitives_.add("my-id", [this](const auto&) -> EvalValue {
+        auto svc = aura::messaging::g_current_compiler_service;
+        if (!svc || !aura::messaging::g_session_id)
+            return make_string(0);
+        auto id = aura::messaging::g_session_id(svc);
+        if (id.empty()) id = "(unknown)";
+        auto idx = string_heap_.size();
+        string_heap_.push_back(id);
+        return make_string(idx);
+    });
+
+// ── intend — 纯循环管理器 — 纯循环管理器 ────────────────────────────────
     // (intend goal generator-fn verifier-fn [fixer-fn] [max-attempts])
     //
     // 不管理 LLM 调用、不构建 prompt、不做 JSON 解析。

@@ -40,7 +40,9 @@ target_sources(aura PRIVATE
     src/compiler/type_checker_impl.cpp
     src/compiler/arity_impl.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/messaging_bridge_impl.cpp
     src/main.cpp)
+ 
 
 
 # GCC 16 has an ICE in ealias pass at -O3 on x86_64 for cache_impl.cpp (memcpy-heavy)
@@ -146,7 +148,8 @@ target_sources(test_ir PRIVATE
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/type_checker_impl.cpp
-    src/compiler/arity_impl.cpp)
+    src/compiler/arity_impl.cpp
+    src/messaging_bridge_impl.cpp)
 target_compile_options(test_ir PRIVATE -Wall -Wextra -Wpedantic
     -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter

@@ -1,4 +1,5 @@
 #include "compiler/aura_jit.h"
+#include "messaging_bridge.h"
 
 import std;
 import aura.core;
@@ -209,6 +210,8 @@ int main(int argc, char* argv[]) {
         std::string active_session = "default";
         sessions.try_emplace(active_session);
         auto& cs = sessions[active_session];
+        cs.set_session_id(active_session);
+        aura::compiler::CompilerService::register_session(active_session, &cs);
 
         std::string line;
         while (std::getline(std::cin, line)) {
@@ -276,6 +279,10 @@ int main(int argc, char* argv[]) {
                     auto& sname = name_it->second;
                     auto real_name = (sname.find("new:") == 0) ? sname.substr(4) : sname;
                     auto [it, created] = sessions.try_emplace(real_name);
+                    if (created) {
+                        it->second.set_session_id(real_name);
+                        aura::compiler::CompilerService::register_session(real_name, &it->second);
+                    }
                     if (created)
                         std::println("{{\"status\":\"created\",\"session\":\"{}\"}}", json_escape(real_name));
                     else
@@ -362,6 +369,7 @@ int main(int argc, char* argv[]) {
 
                 // Look up the current session
                 auto& cs = sessions[active_session];
+                aura::messaging::g_current_compiler_service = &cs;
 
                 // Commands that don't need a code field
                 if (type == "mutate") {
@@ -687,6 +695,8 @@ int main(int argc, char* argv[]) {
                 }
             } else {
                 // ── Plain S-expression (backward compatible) ────────
+                auto& cs = sessions[active_session];
+                aura::messaging::g_current_compiler_service = &cs;
                 auto alloc = cs.arena().allocator();
                 aura::ast::StringPool pool(alloc);
                 aura::ast::FlatAST flat(alloc);
