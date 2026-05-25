@@ -55,7 +55,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_G
 endif()
 
 target_include_directories(aura PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/src)
-target_compile_options(aura PRIVATE -Wall -Wextra -Wpedantic -DAURA_SERVE_ASYNC
+target_compile_options(aura PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers
     -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter

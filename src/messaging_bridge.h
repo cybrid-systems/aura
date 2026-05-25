@@ -15,6 +15,10 @@
 
 namespace aura::messaging {
 
+// Fiber blocking callback — set by serve_async.cpp, used by pop_message
+// for async recv yield. Null means non-blocking fallback.
+extern void (*g_fiber_block)();
+
 // Function pointer types
 using SendFn = bool (*)(const std::string& target, const std::string& msg);
 using RecvFn = std::optional<std::string> (*)(int timeout_ms);
