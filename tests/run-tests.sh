@@ -336,6 +336,10 @@ run_emit_test "emit:foldl"     "(foldl + 0 (list 1 2 3))" "6"
 
 # Named let (local recursion via letrec + closure env)
 run_emit_test "emit:named-let" "(let loop ((x 0)) (if (< x 3) (loop (+ x 1)) x))" "3"
+
+# Stdlib functions via import (source inlining)
+run_emit_test "emit:sorted?"   "(import \"std/algorithm\")(sorted? (list 1 2 3))" "1"
+run_emit_test "emit:combine"   "(import \"std/algorithm\")(combinations 4 2)" "6"
 echo "=== Diagnostic Tests ==="
 
 # Parse error: source line + caret display (via batch eval)
