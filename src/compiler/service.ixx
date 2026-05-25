@@ -305,8 +305,11 @@ public:
             // because IR lowering can't resolve them (they live in evaluator's env).
             // Lambda params and let-bound vars are NOT in user_bindings_, so they
             // won't trigger fallback.
+            // Keyword variables (:foo) are self-evaluating — need tree-walker
             if (nv.tag == aura::ast::NodeTag::Variable) {
                 auto var_name = pool.resolve(nv.sym_id);
+                if (!var_name.empty() && var_name[0] == ':')
+                    return true;
                 if (user_bindings_.count(std::string(var_name))) {
 
                     return true;

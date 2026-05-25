@@ -59,6 +59,12 @@ export struct OpaqueRef {
     constexpr auto operator<=>(const OpaqueRef&) const = default;
 };
 
+// Keyword reference (self-evaluating keyword like :description)
+export struct KeywordRef {
+    std::uint64_t index = 0; // index into keyword table (name string)
+    constexpr auto operator<=>(const KeywordRef&) const = default;
+};
+
 // The universal runtime value
 export using EvalValue = std::variant<std::monostate, // Void (index 0)
                                       std::int64_t,   // Int  (index 1)
@@ -74,7 +80,8 @@ export using EvalValue = std::variant<std::monostate, // Void (index 0)
                                       ModuleRef,      // Module (index 11)
                                       ErrorRef,       // Error (index 12)
                                       LinearRef,      // Linear (index 13)
-                                      OpaqueRef       // Opaque (index 14)
+                                      OpaqueRef,      // Opaque (index 14)
+                                      KeywordRef      // Keyword (index 15)
                                       >;
 
 export inline EvalValue make_opaque(std::uint64_t idx) {
@@ -82,6 +89,12 @@ export inline EvalValue make_opaque(std::uint64_t idx) {
 }
 export inline bool is_opaque(const EvalValue& v) { return v.index() == 14; }
 export inline std::uint64_t as_opaque_idx(const EvalValue& v) { return std::get<14>(v).index; }
+
+export inline EvalValue make_keyword(std::uint64_t idx) {
+    return EvalValue(std::in_place_index<15>, KeywordRef{idx});
+}
+export inline bool is_keyword(const EvalValue& v) { return v.index() == 15; }
+export inline std::uint64_t as_keyword_idx(const EvalValue& v) { return std::get<15>(v).index; }
 
 export inline EvalValue make_int(std::int64_t v) {
     return EvalValue(std::in_place_index<1>, v);

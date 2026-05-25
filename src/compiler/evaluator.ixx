@@ -107,6 +107,7 @@ public:
     const Env& top_env() const { return top_; }
     Env& top_env() { return top_; }
     const std::vector<Pair>& pairs() const { return pairs_; }
+    const std::vector<std::string>& keyword_table() const { return keyword_table_; }
 
     // IR closure bridge: called when a closure id is not in closures_.
     using ClosureBridgeFn = std::function<std::optional<EvalValue>(
@@ -228,6 +229,7 @@ private:
     // ── Timeline for intend (E2, backward compat) ───────────────
     std::vector<std::string> timeline_; //
     std::vector<std::string> string_heap_;
+    std::vector<std::string> keyword_table_; // keyword name strings (indexed by KeywordRef)
     std::size_t eval_depth_ = 0; // recursion counter for friendly stack overflow
     static constexpr std::size_t MAX_EVAL_DEPTH = 50000;
     struct HashTable {
@@ -246,7 +248,8 @@ private:
 export inline std::string format_value(const types::EvalValue& v,
                                        const std::vector<std::string>* heap,
                                        const std::vector<Pair>* pairs, int depth = 0,
-                                       const Primitives* primitives = nullptr) {
+                                       const Primitives* primitives = nullptr,
+                                       const std::vector<std::string>* keywords = nullptr) {
     const int max_depth = 64;
     if (depth > max_depth)
         return "...";
@@ -258,6 +261,12 @@ export inline std::string format_value(const types::EvalValue& v,
         return std::to_string(types::as_int(v));
     if (types::is_float(v))
         return std::to_string(types::as_float(v));
+    if (types::is_keyword(v)) {
+        auto kidx = types::as_keyword_idx(v);
+        if (keywords && kidx < keywords->size())
+            return (*keywords)[kidx];
+        return ":" + std::to_string(kidx);
+    }
     if (types::is_string(v)) {
         if (heap) {
             auto idx = types::as_string_idx(v);
@@ -281,7 +290,7 @@ export inline std::string format_value(const types::EvalValue& v,
                 break;
             }
             elements.push_back(
-                format_value((*pairs)[cidx].car, heap, pairs, depth + 1, primitives));
+                format_value((*pairs)[cidx].car, heap, pairs, depth + 1, primitives, keywords));
             current = (*pairs)[cidx].cdr;
             if (elements.size() > 256) {
                 elements.push_back("...");
@@ -300,7 +309,7 @@ export inline std::string format_value(const types::EvalValue& v,
         } else {
             if (!elements.empty())
                 result += " . ";
-            result += format_value(current, heap, pairs, depth + 1, primitives);
+            result += format_value(current, heap, pairs, depth + 1, primitives, keywords);
         }
         result += ")";
         return result;
