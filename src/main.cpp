@@ -1390,6 +1390,65 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
+        // ── Resolve import/require: prepend module source ───────────
+        // Replace (import "std/name") / (require "std/name") with the
+        // module's source code so defines are processed inline by eval_ir.
+        // This bypasses cache_module's conservative FnCheck which rejects
+        // named-let and local lambda bindings.
+        {
+            static const std::string std_root = "lib/std/";
+            std::string resolved;
+            std::size_t pos = 0;
+            while (pos < input.size()) {
+                // Look for (import "...") or (require "...")
+                auto imp = input.find("(import \"", pos);
+                auto req = input.find("(require \"", pos);
+                auto found = (imp < req) ? imp : req;
+                if (found == std::string::npos ||
+                    (imp == std::string::npos && req == std::string::npos)) {
+                    resolved += input.substr(pos);
+                    break;
+                }
+                resolved += input.substr(pos, found - pos);
+                // Find the closing quote and paren
+                auto quote_start = input.find('"', found);
+                auto quote_end = input.find('"', quote_start + 1);
+                if (quote_start == std::string::npos || quote_end == std::string::npos) {
+                    resolved += input.substr(found);
+                    break;
+                }
+                auto module_name = input.substr(quote_start + 1, quote_end - quote_start - 1);
+                // Map: "std/algorithm" → "lib/std/algorithm.aura"
+                std::string module_path;
+                if (module_name.starts_with("std/"))
+                    module_path = std_root + module_name.substr(4) + ".aura";
+                else
+                    module_path = module_name + ".aura";
+                // Read and prepend module source
+                std::ifstream mf(module_path);
+                if (mf) {
+                    std::string mod_src((std::istreambuf_iterator<char>(mf)),
+                                         std::istreambuf_iterator<char>());
+                    // Remove (export ...) line — not needed for inline compilation
+                    auto exp = mod_src.find("(export");
+                    if (exp != std::string::npos) {
+                        auto exp_end = mod_src.find(')', exp);
+                        if (exp_end != std::string::npos)
+                            mod_src = mod_src.substr(0, exp) + mod_src.substr(exp_end + 1);
+                    }
+                    resolved += mod_src;
+                    resolved += '\n';
+                } else {
+                    std::println(std::cerr, "warning: cannot open module '{}'", module_path);
+                }
+                pos = quote_end + 1;
+                auto close_paren = input.find(')', pos);
+                if (close_paren != std::string::npos)
+                    pos = close_paren + 1;
+            }
+            input = resolved;
+        }
+
         // ── Step 1: Parse → Lower → Passes ──
         // eval_ir now includes pre_exec_requires for module support.
         auto eval_result = cs.eval_ir(input);

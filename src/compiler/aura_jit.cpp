@@ -545,10 +545,12 @@ void aura_set_prim_dispatcher(int64_t (*fn)(int64_t, int64_t*, int32_t));
 
 // ── AOT native compilation ──────────────────────────────────────
 // Compile a FlatFunction to LLVM IR → .ll → llc → .o
+static int aot_func_counter = 0;
 static bool emit_native_object_llvm(const FlatFunction& fn, const std::string& out_obj_path,
                                      const std::vector<std::string>* string_pool) {
     llvm::LLVMContext local_ctx;
-    auto mod = std::make_unique<llvm::Module>(std::string(fn.name) + "_aot", local_ctx);
+    int my_id = __sync_fetch_and_add(&aot_func_counter, 1);
+    auto mod = std::make_unique<llvm::Module>(std::string(fn.name) + "_" + std::to_string(my_id) + "_aot", local_ctx);
 
     LLVMBuilder builder{local_ctx};
     if (string_pool)
@@ -557,13 +559,18 @@ static bool emit_native_object_llvm(const FlatFunction& fn, const std::string& o
     builder.mod = mod.get();
     builder.declare_runtime();
 
-    // Build function
+    // Build function with unique name (counter disambiguates __lambda__ duplicates).
+    // __top__ is the entry point called by runtime.c's main() — keep exact name.
+    std::string fn_name = fn.name;
+    auto unique_name = (fn_name == "__top__")
+        ? fn_name
+        : fn_name + "_" + std::to_string(my_id);
     auto ptr_i64 = llvm::PointerType::getUnqual(llvm::Type::getInt64Ty(local_ctx));
     auto i32_ty = llvm::Type::getInt32Ty(local_ctx);
     auto ret_ty = llvm::Type::getInt64Ty(local_ctx);
     auto fn_type = llvm::FunctionType::get(ret_ty, {ptr_i64, i32_ty}, false);
     builder.func =
-        llvm::Function::Create(fn_type, llvm::Function::ExternalLinkage, fn.name, mod.get());
+        llvm::Function::Create(fn_type, llvm::Function::ExternalLinkage, unique_name, mod.get());
     auto arg_it = builder.func->arg_begin();
     arg_it->setName("locals_ptr");
     ++arg_it;

@@ -328,26 +328,47 @@ static PrimFn s_prim_fns[MAX_PRIM_SLOTS];
 int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
     // AOT primitive dispatch: negative closure_id means this is an
     // evaluator primitive loaded via OpPrimitive (AOT mode).
-    // Encoding: closure_id = -(prim_slot + 1)
-    // So prim_slot = -closure_id - 1
     if (closure_id < 0) {
         int64_t prim_slot = -closure_id - 1;
         if (prim_slot >= 0 && prim_slot < MAX_PRIM_SLOTS && s_prim_fns[(uint64_t)prim_slot]) {
             return s_prim_fns[(uint64_t)prim_slot](args, (int32_t)argc);
         }
-        // No fallback — if no primitive was registered for this slot,
-        // return 0 (passthrough). The registered function was generated
-        // by the compiler at --emit-binary time.
         return 0;
     }
     
-    // Normal closure dispatch
+    // Normal closure dispatch: set up locals from captured env + args.
+    // The closure function expects: locals[0..env_count-1] = captured env,
+    // locals[env_count..] = call arguments.
     uint64_t id = (uint64_t)closure_id;
-    if (id >= closure_count || !closure_heap[id].live || !closure_heap[id].fn) {
-        // Don't print error for AOT primitive fallback
+    if (id >= closure_count || !closure_heap[id].live || !closure_heap[id].fn)
         return 0;
+
+    ScalarFn fn = closure_heap[id].fn;
+    uint32_t env_count = closure_heap[id].env_count;
+    uint32_t nargs = (uint32_t)argc;  // arg_count not stored in closure struct; use runtime value
+    uint32_t nlocals = closure_heap[id].local_count > 0
+        ? closure_heap[id].local_count : 16;
+    
+    // Stack buffer for small locals, heap for large
+    int64_t stack_buf[64];
+    int64_t* locals = stack_buf;
+    if (nlocals > 64) {
+        locals = (int64_t*)malloc((size_t)nlocals * sizeof(int64_t));
     }
-    return closure_heap[id].fn(args, (uint32_t)argc);
+    for (uint32_t i = 0; i < nlocals; ++i) locals[i] = 0;
+    
+    // Place captured env values first
+    for (uint32_t i = 0; i < env_count && i < closure_heap[id].env_count; ++i)
+        locals[i] = closure_heap[id].env[i];
+    
+    // Place call arguments after env
+    for (uint32_t i = 0; i < nargs; ++i)
+        locals[env_count + i] = args[i];
+    
+    int64_t result = fn(locals, nargs);
+    
+    if (nlocals > 64) free(locals);
+    return result;
 }
 
 void aura_drop_closure(int64_t closure_id) {
