@@ -345,6 +345,7 @@ run_emit_test "emit:list-merge" "(import \"std/algorithm\")(car (merge-sorted (l
 
 # Stdlib list module (self-recursive functions)
 run_emit_test "emit:range"     "(import \"std/list\")(display (range 0 3))" "(0 1 2)"
+run_emit_test "emit:factorial" "(import \"std/math\")(display (factorial 5))" "120"
 
 # Named let (local recursion via letrec + closure env)
 run_emit_test "emit:named-let" "(let loop ((x 0)) (if (< x 3) (loop (+ x 1)) x))" "3"
