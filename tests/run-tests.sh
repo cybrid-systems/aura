@@ -318,6 +318,8 @@ run_emit_test "emit:list-ref"   "(list-ref (list 10 20 30) 1)" "20"
 run_emit_test "emit:reverse"   "(car (reverse (list 1 2 3)))" "3"
 run_emit_test "emit:append"    "(car (append (list 1 2) (list 3 4)))" "1"
 run_emit_test "emit:member"    "(car (member 2 (list 1 2 3)))" "2"
+run_emit_test "emit:map"       "(car (map (lambda (x) (+ x 10)) (list 1 2 3)))" "11"
+run_emit_test "emit:foldl"     "(foldl + 0 (list 1 2 3))" "6"
 echo "=== Diagnostic Tests ==="
 
 # Parse error: source line + caret display (via batch eval)
