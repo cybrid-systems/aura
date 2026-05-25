@@ -3,6 +3,6 @@
 ;; expect: 42
 (let ((x (Linear 42)))
   (let ((r (borrow x)))
-    (display (unwrap-linear r)))
-  (display (unwrap-linear (move x))))
+    (display r))
+  (display (move x)))
 (newline)
