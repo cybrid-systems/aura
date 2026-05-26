@@ -1042,3 +1042,19 @@
   (rule:define 'rule-b :pattern "(* 2 2)" :replace "4")
   (let ((lst (rule:list)))
     (check (= (length lst) 2))))
+
+
+(test-suite "type:annot-bind"
+  ;; (: name Type val) should bind the variable
+  (: x Int 42)
+  (check (= x 42))
+  (check (string? (current-source)))
+  ;; Multiple annotations
+  (: a Int 10)
+  (: b Int 5)
+  (check (= (+ a b) 15))
+  ;; Annotation with coercion
+  (: s String "hello")
+  (check (string? s))
+  ;; Annotation should return the value
+  (check (= (: x Int 42) 42)))
