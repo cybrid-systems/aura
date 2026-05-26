@@ -236,7 +236,9 @@ private:
     std::vector<std::string> snapshot_names_;    // optional names
 
     // ── EDSL set-code error propagation ──────────────────────────
-    std::string last_set_code_error_;  // diagnostic from failed set-code, cleared on success
+    // Stores (kind, message) for structured diagnostic return
+    std::string last_set_code_error_kind_;
+    std::string last_set_code_error_msg_;
 
     // ── Def-Use Analysis (P1) ───────────────────────────────────
     void* defuse_index_ = nullptr;

@@ -554,10 +554,12 @@ def check_success(out, expected):
     Uses substring matching but guards against false positives
     from error messages that happen to contain the keyword."""
     norm_out = out.strip().strip('"').strip("'")
+    # Detect structured errors: (kind message) pairs from eval-current
+    is_structured_error = norm_out.startswith('("') and '" "' in norm_out[:80]
     # If output looks like an error message, be more strict
     # to prevent false positives from diagnostic strings that
     # happen to contain expected keywords.
-    is_error_like = any(m in norm_out.lower() for m in
+    is_error_like = is_structured_error or any(m in norm_out.lower() for m in
         ["error:", "parse error", "unbound variable",
          "type error", "syntax error", "invalid syntax", "expected expression"])
 
@@ -1314,35 +1316,45 @@ def run_single_task(
                 "         (display (f 5))\n"
             )
 
-        # Detect set-code parse errors (now propagated by eval-current)
+        # Parse structured error: ("kind" "message") from eval-current
+        structured_kind = None
+        structured_msg = None
+        if actual_output.startswith('("') and '" "' in actual_output[:120]:
+            import re as _re2
+            sm = _re2.match(r'\("([^"]+)"\s+"([^"]+)"\)', actual_output)
+            if sm:
+                structured_kind = sm.group(1)
+                structured_msg = sm.group(2)
+
+        # Detect set-code parse errors (now propagated as structured error)
         set_code_error = ""
-        if is_edsl and ("parse error" in actual_output.lower()
-                        or "expected" in actual_output.lower()[:60]
-                        or "syntax error" in actual_output.lower()):
+        if structured_kind == "parse" or (
+            is_edsl and ("parse error" in actual_output.lower()
+                        or "expected expression" in actual_output.lower()[:60])):
             set_code_error = (
                 "\n\n⚠️  SET-CODE PARSE ERROR: The code inside your (set-code ...) "
                 "is malformed Aura code.\n"
                 "The (set-code ...) primitive parses its argument as a program; "
                 "make sure the content is valid Aura syntax.\n"
                 "Check for: unbalanced parens, missing quotes, wrong function names.\n"
-                f"Error: {actual_output[:200]}\n"
+                f"Error: {structured_msg or actual_output[:200]}\n"
             )
-            # Force coarse phase for parse errors — LLM needs to rewrite
             phase = "coarse"
 
-        # Detect type errors — function not defined
+        # Detect type errors / unbound variables from structured error
         type_error_hint = ""
-        if "type error: cannot call" in actual_output.lower() or "unbound variable" in actual_output.lower():
-            # Extract the undefined name from the error
-            import re as _re2
-            if "type error: cannot call" in actual_output.lower():
-                undefined = "a needed function"
+        if structured_kind == "type error" or structured_kind == "unbound variable":
+            undefined = structured_msg or "a needed function"
+            # Extract the specific name from the message
+            import re as _re3
+            nm = _re3.search(r":\s*([^\s]+)", undefined)
+            if nm:
+                undefined = nm.group(1)
             else:
-                m = _re2.search(r"unbound variable: ([^\s]+)", actual_output.lower())
-                undefined = m.group(1) if m else "a needed variable"
+                undefined = "a needed function"
             type_error_hint = (
-                "\n\n⚠️  MISSING DEFINITION: You're using '" + undefined +
-                "' without defining it first.\n"
+                "\n\n⚠️  MISSING DEFINITION: " + undefined.capitalize() +
+                " is not defined.\n"
                 "Add (define (" + undefined + " ...) ...) before calling it.\n"
                 "Check the task's goal to see what signature " + undefined + " needs.\n"
             )
@@ -1351,7 +1363,8 @@ def run_single_task(
             ("(compile error) " if not ok else "(output mismatch) ")
             + distance_note
             + "\n\n"
-            f"Aura produced: {actual_output[:300]}\n\n" + ada_fb + "\n\n"
+            f"Aura produced: {structured_msg or actual_output[:300]}\n\n"
+            + ada_fb + "\n\n"
             + procedure_warn
             + set_code_error
             + type_error_hint +
