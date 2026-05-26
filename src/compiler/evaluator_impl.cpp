@@ -7966,9 +7966,9 @@ Env* Evaluator::copy_env(const Env& e) {
 // apply_closure — looks up closures_, foreign functions, or IR bridge
 std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid,
                                                   const std::vector<EvalValue>& args) {
-    // Check for foreign function closure (high bit set)
-    if (cid & (1ULL << 63)) {
-        auto fidx = cid & ~(1ULL << 63);
+    // Check for foreign function closure (cid < g_ffi_funcs.size())
+    if (cid < g_ffi_funcs.size()) {
+        auto fidx = cid;
         if (fidx < g_ffi_funcs.size()) {
             auto& ff = g_ffi_funcs[static_cast<std::size_t>(fidx)];
             void* fn_ptr = ff.fn_ptr;
@@ -9506,7 +9506,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     if (is_closure(*fn)) {
                         auto cid = as_closure_id(*fn);
                         // Check for foreign function (high bit set)
-                        if (cid & (1ULL << 63)) {
+                        if (cid < g_ffi_funcs.size()) {
                             // Dispatch FFI through apply_closure
                             std::size_t named_count = 0;
                             std::vector<EvalValue> cargs;
