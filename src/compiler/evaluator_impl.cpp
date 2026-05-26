@@ -9177,7 +9177,9 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
             current_pool_ = p;
             // Save the eval environment before any tail_env.emplace could corrupt current_env
             const Env& eval_env = *current_env;
-            if (current_id >= f->size() || current_id == aura::ast::NULL_NODE)
+            if (current_id == aura::ast::NULL_NODE)
+                return EvalResult(make_void());
+            if (current_id >= f->size())
                 return std::unexpected(Diagnostic{ErrorKind::InternalError, "invalid node id"});
             auto v = f->get(current_id);
             switch (v.tag) {
@@ -9600,12 +9602,17 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     if (!c)
                         return c;
                     if (v.children.size() == 2) {
-                        // No else clause — conditionally execute then-branch via TCO
+                        // (if cond then) — conditionally execute then-branch
                         if (is_truthy(*c)) {
                             current_id = v.child(1);
                             continue;
                         }
-                        return EvalResult(make_void());
+                        // Condition false, no else — use TCO to NULL_NODE so the
+                        // while-loop guard returns void on next iteration (avoids
+                        // a return path that can cause NULL_NODE in outer TCO loop
+                        // when used inside rest-arg lambda bodies).
+                        current_id = aura::ast::NULL_NODE;
+                        continue;
                     }
                     current_id = is_truthy(*c) ? v.child(1) : v.child(2);
                     continue; // TCO: branch
