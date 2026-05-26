@@ -1,48 +1,74 @@
-; ── tests/bench.aura — EDSL Benchmark ───
+; ── tests/bench.aura — Aura Native EDSL Benchmark ───
+; Usage: LLM_API_KEY="***" ./build/aura < tests/bench.aura
+;
+; Options (via env vars):
+;   LLM_MODEL         Model name (default: deepseek-v4-flash)
+;   BENCH_ROUNDS      Number of rounds (default: 1)
+;   BENCH_ATTEMPTS    Max LLM attempts per task (default: 3)
+;   BENCH_LIMIT       Max tasks to run (default: all 135)
+
 (require "std/bench" all:)
 
-; Define print-report locally instead of from module
-(define (print-report tasks results)
-  (define agg (aggregate tasks results))
-  (define total (list-ref agg 0))
-  (define pass (list-ref agg 1))
-  (define fail (list-ref agg 2))
-  (define stats (list-ref agg 3))
-  (define rounds (length results))
-  (newline)
-  (display "=== Benchmark Results ===")(newline)
-  (display "Tasks: ")(display total)(display "  Rounds: ")(display rounds)(newline)
-  (display "Passed: ")(display pass)(display "  Failed: ")(display fail)(newline)
-  (if (> (+ pass fail) 0)
-    (begin
-      (display "Rate: ")
-      (display (number->string (quotient (* pass 100) (+ pass fail))))
-      (display "%")(newline)))
-  (newline)
-  (display "Task                  Pass/Fail  Rate")(newline)
-  (display "----------------------------------------")(newline)
-  (let iter ((si 0))
-    (if (< si (length stats))
-      (let* ((s (list-ref stats si))
-             (name (list-ref s 0))
-             (p (list-ref s 1))
-             (f (list-ref s 2))
-             (r (list-ref s 3))
-             (rate-str (if (> r 0) (number->string (quotient (* p 100) r)) "0")))
-        (display name)(display "  ")
-        (display p)(display "/")(display f)(display "  ")
-        (display rate-str)(display "%")(newline)
-        (iter (+ si 1)))
-      '()))
-  agg)
-
+; ── Config from env ──
 (define model (try (getenv "LLM_MODEL") (catch "deepseek-v4-flash")))
-(define rounds 1)
-(define max-attempts 2)
+(define rounds (try (string->number (getenv "BENCH_ROUNDS")) (catch 1)))
+(define max-a (try (string->number (getenv "BENCH_ATTEMPTS")) (catch 3)))
+(define limit (try (string->number (getenv "BENCH_LIMIT")) (catch 0)))
 
+; ── Select tasks ──
+(define tasks (if (> limit 0) (take limit all-tasks) all-tasks))
+(define task-count (length tasks))
+
+; ── Run ──
 (display "=== Aura EDSL Benchmark ===")(newline)
 (display "Model: ")(display model)(newline)
-(display "Tasks: ")(display (task-count))(newline)(newline)
+(display "Tasks: ")(display task-count)(newline)
+(display "Rounds: ")(display rounds)(newline)
+(display "Max attempts: ")(display max-a)(newline)
+(newline)
 
-(define results (run-rounds all-tasks model max-attempts rounds))
-(print-report all-tasks results)
+(define results (run-rounds tasks model max-a rounds))
+
+; ── Report (local, works around module export limitation) ──
+(define agg (aggregate tasks results))
+(define total (list-ref agg 0))
+(define pass (list-ref agg 1))
+(define fail (list-ref agg 2))
+(define stats (list-ref agg 3))
+
+(newline)
+(display "=== Benchmark Results ===")(newline)
+(display "Tasks: ")(display total)
+(display "  Rounds: ")(display (length results))(newline)
+(display "Passed: ")(display pass)
+(display "  Failed: ")(display fail)(newline)
+(if (> (+ pass fail) 0)
+  (begin
+    (display "Rate: ")
+    (display (number->string (quotient (* pass 100) (+ pass fail))))
+    (display "%")(newline)))
+(newline)
+
+; Per-task table
+(display "Task                          Pass/Fail  Rate")(newline)
+(display "------------------------------------------------")(newline)
+(let iter ((si 0))
+  (if (< si (length stats))
+    (let* ((s (list-ref stats si))
+           (name (list-ref s 0))
+           (p (list-ref s 1))
+           (f (list-ref s 2))
+           (r (list-ref s 3))
+           (rate-str (if (> r 0) (number->string (quotient (* p 100) r)) "0")))
+      (display name)
+      (display "  ")
+      (display p)(display "/")(display f)
+      (display "  ")(display rate-str)(display "%")(newline)
+      (iter (+ si 1)))
+    '()))
+
+(newline)
+(if (= fail 0)
+  (display "All passed!")
+  (begin (display fail)(display " tasks failed")))
+(newline)
