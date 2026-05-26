@@ -89,6 +89,8 @@
     (let* ((full-code (string-append
                (if (string=? depend "") "" (string-append "(require \"" depend "\" all:)"))
                code))
+           ;; set-code + eval-current-output — the C++ fix makes eval-current-output
+           ;; propagate set-code parse errors even through (begin ...).
            (actual (begin (set-code full-code) (eval-current-output)))
            (actual-str actual))
       (if (check-success actual-str expects)

@@ -3542,6 +3542,8 @@ void Evaluator::init_pair_primitives() {
     // Multi-expression code is automatically wrapped in (begin ...) by the parser.
     primitives_.add("set-code", [this](const auto& a) {
         if (workspace_read_only_) return make_bool(false);
+        // Clear any previous set-code error
+        last_set_code_error_.clear();
         coverage_counters_[0]++;
         coverage_counters_[5]++;
         if (a.empty() || !is_string(a[0]))
@@ -3568,6 +3570,8 @@ void Evaluator::init_pair_primitives() {
             } else {
                 err = "parse error";
             }
+            // Store error for eval-current/eval-current-output to propagate
+            last_set_code_error_ = err;
             auto sidx = string_heap_.size();
             string_heap_.push_back(err);
             coverage_counters_[5]--;
@@ -3772,6 +3776,13 @@ void Evaluator::init_pair_primitives() {
     // (eval-current) — Evaluate the current workspace AST
     primitives_.add("eval-current", [this](const auto&) {
         coverage_counters_[2]++;
+        // If set-code failed on the last call, propagate the diagnostic immediately
+        if (!last_set_code_error_.empty()) {
+            auto msg = std::move(last_set_code_error_);
+            auto sidx = string_heap_.size();
+            string_heap_.push_back(msg);
+            return make_string(sidx);
+        }
         if (!workspace_flat_ || !workspace_pool_)
             return make_void();
         auto expanded = aura::compiler::macro_expand_all(*workspace_flat_, *workspace_pool_,
@@ -3793,6 +3804,13 @@ void Evaluator::init_pair_primitives() {
     // (eval-current-output) — Evaluate workspace, return display output as string
     // Captures all display output during eval via fd-level redirection.
     primitives_.add("eval-current-output", [this](const auto&) {
+        // If set-code failed on the last call, propagate the diagnostic immediately
+        if (!last_set_code_error_.empty()) {
+            auto msg = std::move(last_set_code_error_);
+            auto sidx = string_heap_.size();
+            string_heap_.push_back(msg);
+            return make_string(sidx);
+        }
         if (!workspace_flat_ || !workspace_pool_)
             return make_void();
         auto expanded = aura::compiler::macro_expand_all(*workspace_flat_, *workspace_pool_,
