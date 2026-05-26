@@ -246,6 +246,9 @@ INTEG_TESTS = [
     IntegCase("annot_bind_multi", "(: a Int 10)(: b Int 5)(+ a b)", "eval", expected="15"),
     IntegCase("annot_bind_coerce", "(: x Int \"42\") x", "eval", expected="42"),
     IntegCase("annot_bind_expr", "(: a Int (+ 1 2)) a", "eval", expected="3"),
+    # ── C FFI (P2 fix) ───────────────────────────────────────
+    IntegCase("ffi_strlen", '((c-func -1 "strlen" "(String) -> Int") "hello")', "eval", expected="5"),
+    IntegCase("ffi_strlen_empty", '((c-func -1 "strlen" "(String) -> Int") "")', "eval", expected="0"),
     # ── Gradual Guarantee tests (P2) ──────────────────────────
     IntegCase("gg_int_annot", "(: x Int 42)", "typecheck", expected="Int"),
     IntegCase("gg_int_exec", "(: x Int 42)", "eval", expected="42"),
