@@ -1213,3 +1213,53 @@
   ;; Without API key, call-llm should return empty string
   (let* ((content (call-llm "test" "" "" "deepseek-chat")))
     (check (string? content))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; Synthesize v2 — project (cross-file workspace management)
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "synth-v2:project-empty-files"
+  (require "std/synthesize-v2" all:)
+  (let* ((r (synthesize:project "test" :files (list)))
+         (success (car r)))
+    (check (not success))))
+
+(test-suite "synth-v2:project-no-tests"
+  (require "std/synthesize-v2" all:)
+  (let* ((files (list (list "core.aura" :goal "add two numbers")))
+         (r (synthesize:project "test" :files files :max-attempts 1))
+         (details (cadr r))
+         (file-results (car details)))
+    ;; file-results is list of (filename ok code)
+    (check (pair? file-results))
+    (check (pair? (car file-results)))))
+
+(test-suite "synth-v2:project-multi-file"
+  (require "std/synthesize-v2" all:)
+  (let* ((files (list (list "util.aura" :goal "multiply two numbers")
+                     (list "main.aura" :goal "use util")))
+         (r (synthesize:project "test" :files files :max-attempts 1))
+         (details (cadr r))
+         (file-results (car details)))
+    (check (pair? file-results))
+    ;; Should have results for both files
+    (check (>= (length file-results) 2))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; Synthesize v2 — debug (auto-fix existing code)
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "synth-v2:debug-empty-code"
+  (require "std/synthesize-v2" all:)
+  (let* ((r (synthesize:debug :code "" :tests (list (list "(display 1)" "1"))))
+         (success (car r)))
+    (check (not success))))
+
+(test-suite "synth-v2:debug-correct-code"
+  (require "std/synthesize-v2" all:)
+  ;; Code that's already correct should pass in 1 attempt
+  (let* ((code "(define (add x y) (+ x y))")
+         (tests (list (list "(display (add 2 3))" "5")))
+         (r (synthesize:debug :code code :tests tests :max-attempts 1))
+         (success (car r)))
+    (check success)))

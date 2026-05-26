@@ -1,17 +1,5 @@
 ; lib/std/synthesize-v2.aura -- Synthesize Pipeline v2
 ;
-; Code synthesis with test-driven iteration.
-; Dependencies: std/llm, std/adaptive, std/json, std/list
-;
-; (require "std/synthesize-v2" all:)
-;
-; API:
-;   (synthesize:test-driven name :goal "..." :tests '(...) :max-attempts 5)
-;   (synthesize:debug :code "..." :tests '(...) :max-attempts 3)
-;
-; NOTE: This module avoids (define ...) + (if (pair? args) ...) pattern
-; due to an Aura runtime bug with define + if on rest args.
-
 (require std/list all:)
 (require std/json all:)
 (require std/llm all:)
@@ -20,7 +8,7 @@
 (export synthesize:test-driven synthesize:debug synthesize:project
         synthesize:run-tests synthesize:eval-test)
 
-; ── Internal helpers ──────────────────────────────────────
+; ── string-trim ──
 (define (string-trim str)
   (let ((n (string-length str)))
     (let lp ((i 0))
@@ -31,9 +19,7 @@
             (rp (- j 1))))
         (lp (+ i 1))))))
 
-; ── synthesize:eval-test — Run a single test ──
-; test = (code-string expected-output-string)
-; Returns (#t | #f actual-output error-msg)
+; ── eval-test ──
 (define (synthesize:eval-test code test-code expected)
   (set-code code)
   (eval-current)
@@ -44,25 +30,19 @@
         (list #t actual "")
         (list #f actual (string-append "expected: '" expected "', got: '" trimmed "'"))))))
 
-; ── synthesize:run-tests — Run all tests, return summary ──
-; tests = list of (code-string expected-output-string)
-; Returns (passed total failures)
+; ── run-tests ──
 (define (synthesize:run-tests code tests)
-  (let ((passed 0)
-        (total (length tests))
-        (failures '()))
+  (let ((passed 0) (total (length tests)) (failures '()))
     (for-each
       (lambda (test)
-        (let* ((test-code (list-ref test 0))
-               (expected (list-ref test 1))
-               (result (synthesize:eval-test code test-code expected)))
-          (if (car result)
-            (set! passed (+ passed 1))
-            (set! failures (cons (list test-code (list-ref result 1) (list-ref result 2)) failures)))))
+        (let* ((tc (list-ref test 0)) (ex (list-ref test 1))
+               (r (synthesize:eval-test code tc ex)))
+          (if (car r) (set! passed (+ passed 1))
+            (set! failures (cons (list tc (list-ref r 1) (list-ref r 2)) failures)))))
       tests)
     (list passed total (reverse failures))))
 
-; ── Build diagnostic prompt from failures ──
+; ── build-diagnostic ──
 (define (build-diagnostic goal-name code passed total failures)
   (let ((diag ""))
     (set! diag (string-append diag "=== Code: ===\n" code "\n"))
@@ -72,275 +52,145 @@
       (set! diag (string-append diag "All tests passed!\n"))
       (begin
         (set! diag (string-append diag "\nFailures:\n"))
-        (for-each
-          (lambda (f)
-            (let ((test-code (list-ref f 0))
-                  (actual (list-ref f 1))
-                  (error-msg (list-ref f 2)))
-              (set! diag (string-append diag "  Test: (" goal-name " " test-code ")\n"))
-              (set! diag (string-append diag "    " error-msg "\n"))))
-          failures)
+        (for-each (lambda (f)
+          (set! diag (string-append diag "  Test: (" goal-name " " (list-ref f 0) ")\n"))
+          (set! diag (string-append diag "    " (list-ref f 2) "\n"))) failures)
         (if (pair? failures)
-          (let* ((first-fail (car failures))
-                 (actual-out (list-ref first-fail 1))
-                 (error-msg (list-ref first-fail 2)))
+          (let* ((ff (car failures)))
             (set! diag (string-append diag "\nFirst failure analysis:\n"))
-            (set! diag (string-append diag "  Actual output: " actual-out "\n"))
-            (set! diag (string-append diag "  " error-msg "\n"))))))
+            (set! diag (string-append diag "  Actual: " (list-ref ff 1) "\n"))
+            (set! diag (string-append diag "  " (list-ref ff 2) "\n"))))))
     diag))
 
-; ── Build LLM prompt ──
+; ── build-llm-prompt ──
 (define (build-llm-prompt goal-name code feedback model)
-  (let* ((system-prompt
-          "You are an expert Aura Lisp programmer. Write ONLY valid Aura Lisp code.\n\
+  (let* ((sys "You are an expert Aura Lisp programmer. Write ONLY valid Aura Lisp code.\n\
 Rules:\n\
 - Use (define (name args...) body) for function definitions\n\
 - Use (if cond then else) for conditionals\n\
 - CRITICAL: Wrap the code in ```lisp ... ``` markers.\n")
-         (user-prompt (string-append
-           "Goal: " goal-name "\n\n"
-           (if (string=? code "") ""
-             (string-append "Current code:\n" code "\n\n"))
-           (if (string=? feedback "") ""
-             (string-append "Feedback:\n" feedback "\n\n"))
+         (usr (string-append "Goal: " goal-name "\n\n"
+           (if (string=? code "") "" (string-append "Current code:\n" code "\n\n"))
+           (if (string=? feedback "") "" (string-append "Feedback:\n" feedback "\n\n"))
            "Generate a correct Aura Lisp implementation:\n"
-           "(define (" goal-name " args...) body)\n"
-           "Wrap in ```lisp code ```."))
-         (messages (list (hash "role" "system" "content" system-prompt)
-                        (hash "role" "user" "content" user-prompt)))
-         (body (json-encode (hash "model" model "messages" messages "temperature" 0.3))))
+           "(define (" goal-name " args...) body)\nWrap in ```lisp code ```."))
+         (msgs (list (hash "role" "system" "content" sys)
+                    (hash "role" "user" "content" usr)))
+         (body (json-encode (hash "model" model "messages" msgs "temperature" 0.3))))
     body))
 
-; ── call-llm — Call LLM and extract text content from JSON response ──
+; ── call-llm ──
 (define (call-llm goal-name code feedback model)
-  (let* ((prompt-body (build-llm-prompt goal-name code feedback model))
-         (raw-response (aura-llm-call prompt-body))
-         (response-parsed (json-parse raw-response))
-         (choices (hash-ref response-parsed "choices"))
-         (first-choice (if (pair? choices) (car choices) (hash)))
-         (msg (hash-ref first-choice "message"))
+  (let* ((p (build-llm-prompt goal-name code feedback model))
+         (raw (aura-llm-call p))
+         (parsed (json-parse raw))
+         (choices (hash-ref parsed "choices"))
+         (first (if (pair? choices) (car choices) (hash)))
+         (msg (hash-ref first "message"))
          (content (if (hash? msg) (hash-ref msg "content") "")))
     content))
 
-; ── Extract code from LLM response content string ──
+; ── extract-code ──
 (define (extract-code response)
-  (let ((lisp-start (string-index response "```lisp" 0)))
-    (if (> lisp-start -1)
-      (let* ((code-start (+ lisp-start 8))
-             (code-end (string-index response "```" code-start)))
-        (if (> code-end -1)
-          (string-trim (substring response code-start code-end))
-          (let ((def-start (string-index response "(define " 0)))
-            (if (> def-start -1)
-              (substring response def-start (string-length response))
-              response))))
-      (let ((mstart (string-index response "```" 0)))
-        (if (> mstart -1)
-          (let* ((code-start (+ mstart 3))
-                 (code-end (string-index response "```" code-start)))
-            (if (> code-end -1)
-              (string-trim (substring response code-start code-end))
-              response))
-          (let ((def-start (string-index response "(define " 0)))
-            (if (> def-start -1)
-              (substring response def-start (string-length response))
-              response)))))))
+  (let ((l (string-index response "```lisp" 0)))
+    (if (> l -1)
+      (let* ((s (+ l 8)) (e (string-index response "```" s)))
+        (if (> e -1) (string-trim (substring response s e))
+          (let ((d (string-index response "(define " 0)))
+            (if (> d -1) (substring response d (string-length response)) response))))
+      (let ((m (string-index response "```" 0)))
+        (if (> m -1)
+          (let* ((s (+ m 3)) (e (string-index response "```" s)))
+            (if (> e -1) (string-trim (substring response s e)) response))
+          (let ((d (string-index response "(define " 0)))
+            (if (> d -1) (substring response d (string-length response)) response)))))))
 
-;; ── Iteration loop (no rest args — avoids Aura evaluator bug) ──
-;; Parameters: goal, code (initial), tests, max-attempts, model,
-;; attempt-num (starts 1), best-code, best-score
+; ── try-attempt ──
 (define (try-attempt goal-name code tests max-a model
                      attempt-num best-code best-score)
   (let* ((sn (ast:snapshot "synth-v2"))
-         (test-r (synthesize:run-tests code tests))
-         (passed (list-ref test-r 0))
-         (total (list-ref test-r 1))
-         (fails (list-ref test-r 2))
-         (score (* 100 (/ passed (max total 1))))
-         (is-better (or (= best-score -1) (> score best-score)))
-         (new-best-code (if is-better code best-code))
-         (new-best-score (if is-better score best-score)))
+         (tr (synthesize:run-tests code tests))
+         (p (list-ref tr 0)) (t (list-ref tr 1)) (fl (list-ref tr 2))
+         (score (* 100 (/ p (max t 1))))
+         (is-b (or (= best-score -1) (> score best-score)))
+         (nb (if is-b code best-code))
+         (ns (if is-b score best-score)))
     (ast:restore sn)
-    (if (= passed total)
-      (list #t code (list passed total fails))
-      (if (>= attempt-num max-a)
-        (list #f code new-best-score)
-        (let* ((feedback (build-diagnostic goal-name code passed total fails))
-               (llm-content (call-llm goal-name code feedback model))
-               (new-code (extract-code llm-content))
-               (use-code (if (string=? (string-trim new-code) "") code new-code)))
-          (try-attempt goal-name use-code tests max-a model
-                      (+ attempt-num 1) new-best-code new-best-score))))))
+    (if (= p t) (list #t code (list p t fl))
+      (if (>= attempt-num max-a) (list #f code ns)
+        (let* ((fb (build-diagnostic goal-name code p t fl))
+               (llm (if (string=? model "") "" (call-llm goal-name code fb model)))
+               (nc (if (string=? model "") "" (extract-code llm)))
+               (uc (if (string=? (string-trim nc) "") code nc)))
+          (try-attempt goal-name uc tests max-a model
+                      (+ attempt-num 1) nb ns))))))
 
-;; ── synthesize:test-driven — Main entry point ──
+; ── synthesize:test-driven ──
 (define (synthesize:test-driven name . args)
-  (let* ((goal (if (and (pair? args) (eq? (car args) :goal) (pair? (cdr args)))
-                 (cadr args) ""))
-         (tests (if (and (pair? args) (eq? (car args) :tests) (pair? (cdr args)))
-                  (cadr args) '()))
-         (code  (if (and (pair? args) (eq? (car args) :code) (pair? (cdr args)))
-                  (cadr args) ""))
-         (max-a (if (and (pair? args) (eq? (car args) :max-attempts) (pair? (cdr args)))
-                  (cadr args) 5))
-         (model (if (and (pair? args) (eq? (car args) :model) (pair? (cdr args)))
-                  (cadr args) "deepseek-chat"))
+  (let* ((goal (if (pair? args) (if (eq? (car args) :goal) (if (pair? (cdr args)) (cadr args) "") "") ""))
+         (tests (if (pair? args) (if (eq? (car args) :tests) (if (pair? (cdr args)) (cadr args) '()) '()) '()))
+         (code  (if (pair? args) (if (eq? (car args) :code) (if (pair? (cdr args)) (cadr args) "") "") ""))
+         (max-a (if (pair? args) (if (eq? (car args) :max-attempts) (if (pair? (cdr args)) (cadr args) 5) 5) 5))
+         (model (if (pair? args) (if (eq? (car args) :model) (if (pair? (cdr args)) (cadr args) "deepseek-chat") "deepseek-chat") "deepseek-chat"))
          (args2 (if (pair? (cddr args)) (cddr args) '()))
-         (goal (if (and (pair? args2) (eq? (car args2) :goal) (pair? (cdr args2)))
-                 (cadr args2) goal))
-         (tests (if (and (pair? args2) (eq? (car args2) :tests) (pair? (cdr args2)))
-                  (cadr args2) tests))
-         (code (if (and (pair? args2) (eq? (car args2) :code) (pair? (cdr args2)))
-                  (cadr args2) code))
-         (max-a (if (and (pair? args2) (eq? (car args2) :max-attempts) (pair? (cdr args2)))
-                  (cadr args2) max-a))
-         (model (if (and (pair? args2) (eq? (car args2) :model) (pair? (cdr args2)))
-                  (cadr args2) model))
+         (goal (if (pair? args2) (if (eq? (car args2) :goal) (if (pair? (cdr args2)) (cadr args2) goal) goal) goal))
+         (tests (if (pair? args2) (if (eq? (car args2) :tests) (if (pair? (cdr args2)) (cadr args2) tests) tests) tests))
+         (code (if (pair? args2) (if (eq? (car args2) :code) (if (pair? (cdr args2)) (cadr args2) code) code) code))
+         (max-a (if (pair? args2) (if (eq? (car args2) :max-attempts) (if (pair? (cdr args2)) (cadr args2) max-a) max-a) max-a))
+         (model (if (pair? args2) (if (eq? (car args2) :model) (if (pair? (cdr args2)) (cadr args2) model) model) model))
          (args3 (if (pair? (cddr args2)) (cddr args2) '()))
-         (goal (if (and (pair? args3) (eq? (car args3) :goal) (pair? (cdr args3)))
-                 (cadr args3) goal))
-         (tests (if (and (pair? args3) (eq? (car args3) :tests) (pair? (cdr args3)))
-                  (cadr args3) tests))
-         (code (if (and (pair? args3) (eq? (car args3) :code) (pair? (cdr args3)))
-                  (cadr args3) code))
-         (max-a (if (and (pair? args3) (eq? (car args3) :max-attempts) (pair? (cdr args3)))
-                  (cadr args3) max-a))
-         (model (if (and (pair? args3) (eq? (car args3) :model) (pair? (cdr args3)))
-                  (cadr args3) model))
-         (bad-tests (or (null? tests) (not (pair? tests)))))
-    (if bad-tests
-      (list #f code (list 0 0 '()))
-      (try-attempt goal code tests max-a model 1 code -1)))))
+         (goal (if (pair? args3) (if (eq? (car args3) :goal) (if (pair? (cdr args3)) (cadr args3) goal) goal) goal))
+         (tests (if (pair? args3) (if (eq? (car args3) :tests) (if (pair? (cdr args3)) (cadr args3) tests) tests) tests))
+         (code (if (pair? args3) (if (eq? (car args3) :code) (if (pair? (cdr args3)) (cadr args3) code) code) code))
+         (max-a (if (pair? args3) (if (eq? (car args3) :max-attempts) (if (pair? (cdr args3)) (cadr args3) max-a) max-a) max-a))
+         (model (if (pair? args3) (if (eq? (car args3) :model) (if (pair? (cdr args3)) (cadr args3) model) model) model))
+         (bad (or (null? tests) (not (pair? tests)))))
+    (if bad (list #f code (list 0 0 '()))
+      (try-attempt goal code tests max-a model 1 code -1))))
 
-; ── synthesize:debug — Auto-fix existing code ──
+; ── synthesize:debug ──
 (define (synthesize:debug . args)
-  (let* ((code (if (and (pair? args) (eq? (car args) :code) (pair? (cdr args)))
-                 (cadr args) ""))
-         (tests (if (and (pair? args) (eq? (car args) :tests) (pair? (cdr args)))
-                  (cadr args) '()))
-         (max-a 3)
-         (model "deepseek-chat")
-         ;; Second pair
+  (let* ((code (if (pair? args) (if (eq? (car args) :code) (if (pair? (cdr args)) (cadr args) "") "") ""))
+         (tests (if (pair? args) (if (eq? (car args) :tests) (if (pair? (cdr args)) (cadr args) '()) '()) '()))
+         (max-a 3) (model "deepseek-chat")
          (args2 (if (pair? (cddr args)) (cddr args) '()))
-         (tests (if (and (pair? args2) (eq? (car args2) :tests) (pair? (cdr args2)))
-                  (cadr args2) tests))
-         (max-a (if (and (pair? args2) (eq? (car args2) :max-attempts) (pair? (cdr args2)))
-                  (cadr args2) max-a))
-         (model (if (and (pair? args2) (eq? (car args2) :model) (pair? (cdr args2)))
-                  (cadr args2) model)))
-    (if (string=? code "")
-      (list #f "" '())
-      (synthesize:test-driven "debug-fn"
-        :goal "Fix the code to pass all tests"
-        :tests tests
-        :code code
-        :max-attempts max-a
-        :model model))))
+         (tests (if (pair? args2) (if (eq? (car args2) :tests) (if (pair? (cdr args2)) (cadr args2) tests) tests) tests))
+         (max-a (if (pair? args2) (if (eq? (car args2) :max-attempts) (if (pair? (cdr args2)) (cadr args2) max-a) max-a) max-a))
+         (model (if (pair? args2) (if (eq? (car args2) :model) (if (pair? (cdr args2)) (cadr args2) model) model) model)))
+    (if (string=? code "") (list #f "" '())
+      (synthesize:test-driven "debug-fn" :goal "Fix the code" :tests tests :code code
+        :max-attempts max-a :model model))))
 
-;; ────────────────────────────────────────────────────────────
-;; synthesize:project — Cross-file project synthesis
-;; ────────────────────────────────────────────────────────────
-;;
-;; (synthesize:project "name"
-;;   :files '(("core.aura" :goal "...") ("main.aura" :goal "..." :main #t))
-;;   :tests '(("(display ...)" "expected"))
-;;   :max-attempts 3
-;;   :model "deepseek-chat")
-;;
-;; Returns: (success? details)
-;;   success? — #t if all tests pass
-;;   details — (file-results integration-test-result)
-;;
+; ── synthesize:project ──
 (define (synthesize:project name . args)
-  ;; NOTE: Use nested if instead of 'and' for guards — Aura's 'and' does NOT
-  ;; short-circuit, so (and (pair? args) (car args)) would crash when args is ().
-  (let* ((files (if (pair? args)
-                  (if (eq? (car args) :files)
-                    (if (pair? (cdr args)) (cadr args) '())
-                    '())
-                  '()))
-         (tests (if (pair? args)
-                  (if (eq? (car args) :tests)
-                    (if (pair? (cdr args)) (cadr args) '())
-                    '())
-                  '()))
-         (max-a (if (pair? args)
-                  (if (eq? (car args) :max-attempts)
-                    (if (pair? (cdr args)) (cadr args) 3)
-                    3)
-                  3))
-         (model (if (pair? args)
-                  (if (eq? (car args) :model)
-                    (if (pair? (cdr args)) (cadr args) "deepseek-chat")
-                    "deepseek-chat")
-                  "deepseek-chat"))
-         ;; Second kw pair
+  (let* ((files (if (pair? args) (if (eq? (car args) :files) (if (pair? (cdr args)) (cadr args) '()) '()) '()))
+         (tests (if (pair? args) (if (eq? (car args) :tests) (if (pair? (cdr args)) (cadr args) '()) '()) '()))
+         (max-a (if (pair? args) (if (eq? (car args) :max-attempts) (if (pair? (cdr args)) (cadr args) 3) 3) 3))
+         (model (if (pair? args) (if (eq? (car args) :model) (if (pair? (cdr args)) (cadr args) "deepseek-chat") "deepseek-chat") "deepseek-chat"))
          (args2 (if (pair? (cddr args)) (cddr args) '()))
-         (files (if (pair? args2)
-                  (if (eq? (car args2) :files)
-                    (if (pair? (cdr args2)) (cadr args2) files)
-                    files)
-                  files))
-         (tests (if (pair? args2)
-                  (if (eq? (car args2) :tests)
-                    (if (pair? (cdr args2)) (cadr args2) tests)
-                    tests)
-                  tests))
-         (max-a (if (pair? args2)
-                  (if (eq? (car args2) :max-attempts)
-                    (if (pair? (cdr args2)) (cadr args2) max-a)
-                    max-a)
-                  max-a))
-         (model (if (pair? args2)
-                  (if (eq? (car args2) :model)
-                    (if (pair? (cdr args2)) (cadr args2) model)
-                    model)
-                  model)))
-    ;; Validate inputs
-    (if (or (null? files) (not (pair? files)))
-      (list #f "no files specified")
-      (let* ((root-ws (workspace:current))
-             (ws-ids '())
-             (file-results '())
-             (all-ok #t))
-        ;; Process each file
-        (for-each
-          (lambda (file-spec)
-            (let* ((fname (list-ref file-spec 0))
-                   (fg (if (> (length file-spec) 2)
-                          (list-ref file-spec 2) ""))
-                   (ws-id (workspace:create fname))
-                   (file-code ""))
-              (set! ws-ids (cons ws-id ws-ids))
-              (workspace:switch ws-id)
-              ;; Run test-driven with empty initial code + tests
-              (let* ((file-goal (string-append "Implement " fname ": " fg))
-                     (result (synthesize:test-driven fname
-                               :goal file-goal
-                               :code ""
-                               :tests (list)
-                               :max-attempts max-a
-                               :model model))
-                     (ok (car result))
-                     (final-code (cadr result)))
-                (if (not ok) (set! all-ok #f))
-                (set! file-results (cons (list fname ok final-code) file-results))
-                ;; Switch back to root before processing next file
-                (workspace:switch root-ws))))
-          files)
-        (set! ws-ids (reverse ws-ids))
-        (set! file-results (reverse file-results))
-        ;; Run integration tests if any (files already generated)
+         (files (if (pair? args2) (if (eq? (car args2) :files) (if (pair? (cdr args2)) (cadr args2) files) files) files))
+         (tests (if (pair? args2) (if (eq? (car args2) :tests) (if (pair? (cdr args2)) (cadr args2) tests) tests) tests))
+         (max-a (if (pair? args2) (if (eq? (car args2) :max-attempts) (if (pair? (cdr args2)) (cadr args2) max-a) max-a) max-a))
+         (model (if (pair? args2) (if (eq? (car args2) :model) (if (pair? (cdr args2)) (cadr args2) model) model) model)))
+    (if (or (null? files) (not (pair? files))) (list #f "no files")
+      (let* ((root (workspace:current)) (ws-ids '()) (file-rs '()) (all-ok #t))
+        (for-each (lambda (fs)
+          (let* ((fn (list-ref fs 0)) (fg (if (> (length fs) 2) (list-ref fs 2) ""))
+                 (wid (workspace:create fn)))
+            (set! ws-ids (cons wid ws-ids))
+            (workspace:switch wid)
+            (let* ((r (synthesize:test-driven fn :goal (string-append "Implement " fn ": " fg)
+                       :code "" :tests (list) :max-attempts max-a :model model))
+                   (ok (car r)) (fc (cadr r)))
+              (when (not ok) (set! all-ok #f))
+              (set! file-rs (cons (list fn ok fc) file-rs))
+              (workspace:switch root)))) files)
+        (set! file-rs (reverse file-rs))
         (if (and all-ok (pair? tests))
-          (let* ((all-code (string-join
-                         (map (lambda (r) (list-ref r 2)) file-results) "\n"))
-                 (test-r (synthesize:run-tests all-code tests))
-                 (passed (list-ref test-r 0))
-                 (total (list-ref test-r 1))
-                 (fails (list-ref test-r 2)))
-            (if (= passed total)
-              (list #t (list file-results (list passed total fails)))
-              (list #f (list file-results (list passed total fails)))))
-          ;; No integration tests or files failed
-          (if all-ok
-            (list #t (list file-results "no-integration-tests"))
-            (list #f (list file-results "some-files-failed"))))))))
+          (let* ((ac (string-join (map (lambda (r) (list-ref r 2)) file-rs) "\n"))
+                 (tr (synthesize:run-tests ac tests))
+                 (p (list-ref tr 0)) (t (list-ref tr 1)) (fl (list-ref tr 2)))
+            (if (= p t) (list #t (list file-rs (list p t fl)))
+              (list #f (list file-rs (list p t fl)))))
+          (if all-ok (list #t (list file-rs "no-integ-tests"))
+            (list #f (list file-rs "some-files-failed"))))))))
