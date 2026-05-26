@@ -555,26 +555,26 @@ def check_success(out, expected):
     from error messages that happen to contain the keyword."""
     norm_out = out.strip().strip('"').strip("'")
     # If output looks like an error message, be more strict
+    # to prevent false positives from diagnostic strings that
+    # happen to contain expected keywords.
     is_error_like = any(m in norm_out.lower() for m in
         ["error:", "parse error", "unbound variable",
-         "type error", "syntax error", "invalid syntax"])
+         "type error", "syntax error", "invalid syntax", "expected expression"])
 
     for kw in expected:
-        if not kw or len(kw) < 2:
+        if not kw:
             continue
         if kw in norm_out:
-            # Guard: if output is error-like and keyword is short/generic,
-            # require the keyword to be a standalone word (not substring of error)
+            # Guard: if output is error-like and keyword is very short/generic,
+            # require word-boundary matching to avoid false positives
             if is_error_like and len(kw) <= 5:
-                # Only count as match if it's NOT in common error words
                 try:
                     import re
-                    # Use word boundary matching for short keywords
                     if re.search(r'\\b' + re.escape(kw) + r'\\b', norm_out):
                         return True
                 except Exception:
-                    pass
-                continue
+                    return True  # fall back to substring match
+                continue  # word-boundary didn't match, skip this kw
             return True
     return False
 
@@ -1116,8 +1116,20 @@ def get_execution_trace(code_str, timeout=10):
 
 def _auto_fix_procedure(code, expected, run_code, is_edsl):
     """Auto-inject (display ...) when LLM outputs #<procedure>.
-    Tries multiple display patterns without an LLM call."""
+    Tries multiple display patterns without an LLM call.
+    Uses a FRESH subprocess to avoid polluting the serve workspace."""
     import re as _re
+    import subprocess as _sp
+
+    def _fresh_run(test_code):
+        """Run code in a fresh subprocess (no workspace pollution)."""
+        try:
+            r = _sp.run(
+                [AURA], input=test_code, capture_output=True, text=True, timeout=10
+            )
+            return r.returncode == 0, r.stdout.strip(), r.stderr.strip()
+        except Exception:
+            return False, "", "subprocess error"
 
     def _extract_content(src):
         """Extract the code string from (set-code "...") form."""
@@ -1136,8 +1148,6 @@ def _auto_fix_procedure(code, expected, run_code, is_edsl):
     def _inject_display(original, body, pat):
         """Inject display pattern into either EDSL content or full code."""
         if is_edsl:
-            # EDSL: inject the display INSIDE the set-code content,
-            # so eval-current will execute it on the workspace.
             return f'(set-code "{body} {pat}")'
         else:
             return original + '\n' + pat
@@ -1164,7 +1174,8 @@ def _auto_fix_procedure(code, expected, run_code, is_edsl):
 
     for pat in patterns:
         mod = _inject_display(code, body, pat)
-        ok, out, err = run_code(mod + ("\n(eval-current)" if is_edsl else ""))
+        full = mod + ("\n(eval-current)" if is_edsl else "")
+        ok, out, err = _fresh_run(full)
         if ok and (check_success(out, expected) or check_success(err, expected)):
             return (ok, out, err)
     return None
