@@ -371,3 +371,88 @@
     (check (string? c))
     ;; Compact UUID has no dashes
     (check (= (string-length c) 32))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; std/uuid — additional edge cases
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "uuid:unique"
+  (require "std/uuid" all:)
+  ;; Generate 5 UUIDs, they should all be different
+  (let* ((u1 (uuid)) (u2 (uuid)) (u3 (uuid)) (u4 (uuid)) (u5 (uuid)))
+    (check (not (string=? u1 u2)))
+    (check (not (string=? u1 u3)))
+    (check (not (string=? u2 u3)))
+    (check (not (string=? u4 u5)))))
+
+(test-suite "uuid:version-nibble"
+  (require "std/uuid" all:)
+  ;; The version nibble (pos 14) must always be '4'
+  (let loop ((i 0) (ok #t))
+    (if (or (>= i 10) (not ok)) (check ok)
+      (let ((c (string-ref (uuid) 14)))
+        (if (= c 52) (loop (+ i 1) #t) (loop 10 #f))))))
+
+(test-suite "uuid:variant-nibble"
+  (require "std/uuid" all:)
+  ;; The variant nibble (pos 19) must be one of 8/9/a/b
+  (let loop ((i 0) (ok #t))
+    (if (or (>= i 10) (not ok)) (check ok)
+      (let* ((u (uuid))
+             (c (string-ref u 19)))
+        (if (or (= c 56) (= c 97) (= c 98) (= c 99))
+          (loop (+ i 1) #t)
+          (display "bad variant: ")(display c)(newline)
+          (loop 10 #f))))))
+
+(test-suite "uuid:nil-format"
+  (require "std/uuid" all:)
+  (let ((n (uuid-nil)))
+    (check (= (string-length n) 36))
+    ;; All chars are '0' or '-'
+    (let loop ((i 0) (all-zero #t))
+      (if (>= i 36) (check all-zero)
+        (let ((c (string-ref n i)))
+          (if (or (= c 48) (= c 45))  ;; '0' or '-'
+            (loop (+ i 1) all-zero)
+            (loop 36 #f)))))))
+
+(test-suite "uuid:compact-length"
+  (require "std/uuid" all:)
+  (let loop ((i 0))
+    (if (>= i 5) (check #t)
+      (let ((c (uuid-compact)))
+        (if (= (string-length c) 32)
+          (loop (+ i 1))
+          (begin (display "bad compact len: ")(display c)(newline) (check #f)))))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; std/process — process management
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "process:sh"
+  (require "std/process" all:)
+  (check (= (sh "true") 0))
+  (check (not (= (sh "false") 0))))
+
+(test-suite "process:sh-ok"
+  (require "std/process" all:)
+  (check (sh-ok? "true"))
+  (check (not (sh-ok? "false"))))
+
+(test-suite "process:which-found"
+  (require "std/process" all:)
+  (let ((p (which "ls")))
+    (check (string? p))
+    (check (> (string-length p) 0))))
+
+(test-suite "process:which-not-found"
+  (require "std/process" all:)
+  (let ((p (which "nonexistent_cmd_xyz")))
+    (check (string=? p ""))))
+
+(test-suite "process:which-path"
+  (require "std/process" all:)
+  ;; Several well-known programs should exist
+  (check (> (string-length (which "echo")) 0))
+  (check (> (string-length (which "sh")) 0)))
