@@ -2,7 +2,7 @@
 ;
 ; Returns lists, not hashes (avoids cross-module hash mutation bug).
 ; Uses cond, not if (avoids cross-module if-in-begin bug).
-(export string-index string-contains? measure-distance structured-diagnosis pid:analyze get-api-ref get-full-api-ref)
+(export string-index string-contains? string-trim measure-distance structured-diagnosis pid:analyze get-api-ref get-full-api-ref)
 
 ; == Primitives ==
 
@@ -259,14 +259,6 @@ Type values: Int, Float, String, Bool, List, (-> A B), (Pair A B), Any\
                           "std/agent" "std/ant" "std/maybe" "std/data")))
       (get-api-ref all-mods))))
 
-(define get-api-ref
-  (lambda (stdlib-list)
-    (let loop ((libs stdlib-list) (result ""))
-      (if (null? libs) (string-append aura-pitfalls result)
-          (loop (cdr libs) (string-append result (api-for-module (car libs))))))))
-; == pid:analyze — structured diagnostic + output pattern analysis ==
-; Returns (list phase ratio diagnosis feedback-string)
-; Replaces Python's build_adaptive_feedback logic.
 (define pid:analyze
   (lambda (output expected-list)
     (let* ((d (measure-distance 0 output expected-list))
@@ -281,7 +273,7 @@ Type values: Int, Float, String, Bool, List, (-> A B), (Pair A B), Any\
                                                "COMPILE ERROR" "OUTPUT MISMATCH")
                                  " ===") fb))
       (set! fb (cons (string-append "Phase: " phase " (ratio: " (number->string ratio) ")") fb))
-      (set! fb (cons (string-append "Expected to contain: " expected-list) fb))
+      (set! fb (cons (string-append "Expected to contain: ") fb))
       (set! fb (cons (string-append "Actual output: " output) fb))
       ;; Check for common issues
       (if (string=? (string-trim output) "")
