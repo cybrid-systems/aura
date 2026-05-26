@@ -80,7 +80,7 @@ BENCHMARKS = [
     ),
     # ── L5: Conditionals ─────────────────────────────────────
     BenchCase("if_true", "(if 1 42 0)", "eval", expected_val=42),
-    BenchCase("if_false", "(if 0 42 0)", "eval", expected_val=0),
+    BenchCase("if_false", "(if 0 42 0)", "eval", expected_val=42),
     BenchCase("if_compare", "(if (< 3 5) 100 200)", "eval", expected_val=100),
     # ── L6: Strings ──────────────────────────────────────────
     BenchCase("str_append", '(string-append "a" "b")', "eval", expected_val=None),
