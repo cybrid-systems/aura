@@ -2,6 +2,8 @@
 ;
 ; 使用 json-encode 构建 API 请求体，避免手工字符串转义。
 
+(export aura-llm-call aura-verify)
+
 (define aura-llm-call
   (lambda (body)
     (let ((key (getenv "LLM_API_KEY")))
