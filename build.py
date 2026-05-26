@@ -1106,7 +1106,7 @@ def test_suite_runner():
 # Test suite groups for CI tiering.
 # - "check" (CI default):  build + core + safety + fuzz-quick
 # - "all":                 build + everything
-CI_CORE = ["unit", "integ", "typecheck", "smoke", "bash", "suite", "runtime-c"]
+CI_CORE = ["unit", "integ", "typecheck", "smoke", "bash", "suite", "repl", "runtime-c"]
 CI_SAFETY = ["gradual", "regression", "p0"]
 CI_FUZZ = ["fuzz-equiv", "fuzz-corpus"]
 
@@ -1127,6 +1127,7 @@ SUITES = {
     "ai": test_ai_agent_demo,
     "bash": test_bash,
     "suite": test_suite_runner,
+    "repl": test_repl,
 }
 
 
