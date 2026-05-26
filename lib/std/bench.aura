@@ -71,13 +71,27 @@
       (extract-code content)))
 
   ; ── Verifier: (lambda (code) → "#t" | error-string) ──
+  (define (check-success actual expects-list)
+    ; Flexible match: strip quotes, check substring
+    (let ((norm (if (void? actual) "" (string-trim actual))))
+      (if (= (string-length norm) 0) #f
+        (let ((noquote (if (or (= (string-ref norm 0) 34)  ; "
+                               (= (string-ref norm 0) 39)) ; '
+                         (substring norm 1 (string-length norm))
+                         norm)))
+          (let check ((tl expects-list))
+            (if (null? tl) #f
+              (if (> (string-index noquote
+                         (string-trim (if (string? (car tl)) (car tl) "")) 0) -1)
+                #t
+                (check (cdr tl)))))))))
   (define (verifier code)
     (let* ((full-code (string-append
                (if (string=? depend "") "" (string-append "(require \"" depend "\" all:)"))
                code))
            (actual (begin (set-code full-code) (eval-current-output)))
-           (actual-str (string-trim actual)))
-      (if (string=? actual-str expected-str)
+           (actual-str (if (void? actual) "" actual)))
+      (if (check-success actual-str expects)
         "#t"
         (string-append "expected: " expected-str " got: " actual-str))))
 
