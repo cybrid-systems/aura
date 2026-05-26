@@ -468,7 +468,7 @@ namespace {
             if (is_end_of_list(cdr) && !quote) {
                 // Single-element list: (x)
                 std::fprintf(stdout, "(");
-                io_print_val((*pairs)[idx].car, heap, pairs, quote, depth + 1);
+                io_print_val((*pairs)[idx].car, heap, pairs, quote, depth + 1, keywords);
                 std::fprintf(stdout, ")");
                 return;
             }
@@ -494,11 +494,11 @@ namespace {
             for (std::size_t i = 0; i < elements.size(); ++i) {
                 if (i > 0)
                     std::fprintf(stdout, " ");
-                io_print_val(elements[i], heap, pairs, quote, depth + 1);
+                io_print_val(elements[i], heap, pairs, quote, depth + 1, keywords);
             }
             if (!is_end_of_list(next)) {
                 std::fprintf(stdout, " . ");
-                io_print_val(next, heap, pairs, quote, depth + 1);
+                io_print_val(next, heap, pairs, quote, depth + 1, keywords);
             }
             std::fprintf(stdout, ")");
             return;
@@ -5695,19 +5695,22 @@ Evaluator::Evaluator() {
         EvalValue result = make_void();
         for (auto it = diff_entries.rbegin(); it != diff_entries.rend(); ++it) {
             auto [tag, line] = *it;
-            std::string entry_str;
-            if (tag == '=') entry_str = ":same";
-            else if (tag == '-') entry_str = ":removed";
-            else entry_str = ":added";
+            std::string kw_str = ":same";
+            if (tag == '-') kw_str = ":removed";
+            else if (tag == '+') kw_str = ":added";
 
-            // Store as nested list: (tag . line)
-            auto tag_idx = string_heap_.size();
-            string_heap_.push_back(entry_str);
+            // Lookup or create keyword
+            auto kw_idx = keyword_table_.size();
+            for (std::size_t ki = 0; ki < keyword_table_.size(); ++ki) {
+                if (keyword_table_[ki] == kw_str) { kw_idx = ki; break; }
+            }
+            if (kw_idx == keyword_table_.size())
+                keyword_table_.push_back(kw_str);
+
             auto line_idx = string_heap_.size();
             string_heap_.push_back(line);
-            // Build pair: (pair . list)
             auto line_pair = pairs_.size();
-            pairs_.push_back({make_string(tag_idx), make_string(line_idx)});
+            pairs_.push_back({make_keyword(kw_idx), make_string(line_idx)});
             auto cons_pair = pairs_.size();
             pairs_.push_back({make_pair(line_pair), result});
             result = make_pair(cons_pair);
