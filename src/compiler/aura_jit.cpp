@@ -518,7 +518,8 @@ struct LLVMBuilder {
                     auto zero = irb->CreateICmpEQ(a2, c64(0));
                     auto rem = irb->CreateSRem(a1, a2);
                     auto safe = irb->CreateSelect(zero, c64(0), rem);
-                    store(result_slot, irb->CreateShl(safe, c64(1)));
+                    // a1/a2 fixnum-encoded, SRem preserves fixnum encoding
+                    store(result_slot, safe);
                     return true;
                 }
                 case PrimPairP: {

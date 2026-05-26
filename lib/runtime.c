@@ -734,7 +734,7 @@ int64_t aura_prim_call(int64_t prim_id, int64_t a1, int64_t a2, int64_t argc) {
         int64_t lst = a2;         // the argument list
         int64_t buf[256];        // argument buffer
         int count = 0;
-        while (lst != 0 && lst < 0 && count < 256) {
+        while (lst != 0 && IS_PAIR(lst) && count < 256) {
             buf[count++] = aura_pair_car(lst);
             lst = aura_pair_cdr(lst);
         }
@@ -754,7 +754,7 @@ int64_t aura_prim_call(int64_t prim_id, int64_t a1, int64_t a2, int64_t argc) {
     case 34: { // ListReverse — reverse a pair chain
         int64_t input = a1;
         int64_t result = 0;  // empty list sentinel
-        while (input != 0 && input < 0) {
+        while (IS_PAIR(input)) {
             int64_t car_val = aura_pair_car(input);
             result = aura_alloc_pair(car_val, result);
             input = aura_pair_cdr(input);
@@ -765,9 +765,9 @@ int64_t aura_prim_call(int64_t prim_id, int64_t a1, int64_t a2, int64_t argc) {
         fprintf(stderr, "raise: %ld\n", (long)a1);
         return 0;
     case 37: // PairP (reached via OpPrimCall, not OpPrimitive+OpCall)
-        return (int64_t)(a1 < 0);
+        return IS_PAIR(a1) ? 7 : 3;
     case 38: // NullP
-        return (int64_t)(a1 == 0);
+        return (a1 == 0 || a1 == 11) ? 7 : 3;
     default:
         return (argc > 0) ? a1 : 0;
     }
