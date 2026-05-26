@@ -3,6 +3,7 @@
 
 #include <string>
 #include <optional>
+#include <functional>
 
 // ── Messaging Bridge ───────────────────────────────────────────
 //
@@ -38,6 +39,11 @@ extern MessagingBridge g_messaging_bridge;
 // Returns 0 on failure, non-zero fiber ID on success
 using FiberSpawnFn = int64_t (*)(void (*fn)(void*), void* arg);
 extern FiberSpawnFn g_fiber_spawn;
+
+// Session create — set by serve_async.cpp, used by evaluator
+// Returns true on success
+using SessionCreateFn = bool(const std::string& name);
+extern std::function<SessionCreateFn>* g_session_create;
 
 
 // Access a CompilerService's mailbox through a void*.
