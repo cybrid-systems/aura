@@ -252,35 +252,147 @@ synthesize-v2
   └── json-encode (std/json) — 构建 LLM 请求体
 ```
 
-## 6. 实现步骤
+## 6. 进度
 
-### Phase 1 — test-driven 最小可行（预计 2h）
+| Phase | 状态 | 内容 |
+|:------|:----:|:------|
+| 1 | ✅ | `synthesize:test-driven` 基础 + `eval-test` / `run-tests` |
+| 2 | ✅ | LLM 循环 + JSON 解析 + `call-llm` / `extract-code` |
+| 3 | 🔧 | 跨文件合成 + workspace 管理 + 策略组合 |
+| 4 | ⬜ | 替换外部 benchmark |
 
-1. 创建 `lib/std/synthesize-v2.aura` 包含 `synthesize:test-driven`
-2. 实现核心循环：生成 → 测试 → 诊断 → 重试
-3. 实现基本测试验证器（eval + display 输出匹配）
-4. 用现有 benchmark 任务验证（先手动测试 2-3 个）
+---
 
-### Phase 2 — LLM 生成（预计 2h）
+## 7. Phase 3 详细设计 — 跨文件合成
 
-1. 实现 LLM 生成器（复用 std/llm 的 aura-llm-call）
-2. 实现 prompt 构建逻辑
-3. 实现代码提取逻辑（从 LLM 的 markdown 回复中提取代码块）
-4. 端到端验证：`edsl-snapshot-multi` 等 EDSL 任务
+### 7.1 场景分析
 
-### Phase 3 — 跨文件 + debug（预计 3h）
+**场景 A：多文件项目**
 
-1. `synthesize:project` — 多 workspace 管理
-2. `synthesize:debug` — 自动修复功能
-3. `synthesize:compose` — 策略组合
+```
+workspace/
+  core.aura     →  (define (parse-csv s) (string-split s ","))
+  test.aura     →  (require "core" all:) (display (parse-csv "a,b,c"))
+```
 
-### Phase 4 — 替换外部 benchmark（预计 1d）
+LLM 需要看到 workspace 中已有定义才能跨文件引用。
 
-1. 用 synthesize-v2 重写 `tests/edsl_benchmark.py` 的核心逻辑
-2. 删除 Python 的 intend 循环（全部移到 Aura 层）
-3. benchmark 只需：任务定义 → `synthesize:test-driven` → 结果收集
+**场景 B：用户提供既有代码修复**
 
-## 7. 风险与权衡
+```scheme
+(synthesize:debug :code "(define (fact n) (if (= n 0) 1 (* n (factiorial (- n 1)))))"
+  :tests '("(display (fact 5))" "120"))
+```
+
+优先走规则修复（typo 检测），不行再调 LLM。
+
+**场景 C：多策略组合**
+
+LLM 生成骨架 → 遗传优化常数 → 模板填空 → 测试验证
+
+---
+
+### 7.2 Workspace 管理层
+
+`synthesize:project` 的核心是 workspace 切换：
+
+```scheme
+;; 内部流程：
+1. workspace:create 为每个文件创建子 workspace
+2. workspace:switch 切换到目标文件 → synthesize:test-driven → 切换回根
+3. 跨文件测试：require 加载所有文件 → eval-current-output
+4. 失败时 workspace:discard 回退
+```
+
+**已存在的 workspace 原语：**
+
+| 原语 | 说明 |
+|:-----|:------|
+| `workspace:create name` | 创建子 workspace（COW，改造时克隆）|
+| `workspace:switch id` | 切换到指定 workspace |
+| `workspace:current` | 返回当前 workspace ID |
+| `workspace:list` | 列出所有 workspace |
+| `workspace:delete id` | 删除 workspace |
+| `workspace:lock id` | 锁（只读/读写）|
+| `workspace:discard id` | 丢弃子 workspace 更改 |
+| `workspace:merge child-id` | 合并子 workspace 到父 |
+| `workspace:sync-from src sym` | 从源 workspace 同步定义 |
+
+---
+
+### 7.3 `synthesize:project` — 跨文件项目合成
+
+```scheme
+(synthesize:project "csv-parser"
+  :files '(("core.aura" :goal "parse CSV using std/string")
+           ("test.aura" :goal "test parser" :main #t))
+  :tests '(("(display (parse-csv \"a,b,c\"))" "(a b c)")))
+```
+
+**参数：**
+
+| 参数 | 类型 | 说明 |
+|:-----|:-----|:------|
+| `name` | string | 项目名称 |
+| `:files` | list | `(filename :goal "..." [:main #t])` 文件列表 |
+| `:tests` | list | 集成测试用例，跑在所有文件上 |
+| `:max-attempts` | int | 每文件最大重试数 |
+| `:model` | string | LLM 模型 |
+
+**实现步骤：**
+
+```
+1. workspace:create 为每个文件创建子 ws
+2. 对每个文件：
+   a. workspace:switch 到子 ws
+   b. workspace:sync-from 导入已有文件定义
+   c. synthesize:test-driven
+   d. 失败 → workspace:discard 回退
+3. 集成测试：切回根 ws，require 所有文件，跑跨文件测试
+4. 成功 → workspace:merge 所有子 ws 到根
+```
+
+---
+
+### 7.4 `synthesize:debug` — 自动修复（升级）
+
+**诊断→修复规则：**
+
+| 错误模式 | 检测 | 修复 |
+|:---------|:------|:------|
+| unbound variable (typo) | Levenshtein 距离 < 3 | 替换为最近似已定义名 |
+| unbound variable (missing require) | 变量名在 stdlib 模块中 | 添加 require |
+| parse error | 括号不匹配 | 重新解析 |
+| type error | 函数签名 | 类型转换 |
+
+先走规则，无匹配再调 LLM。
+
+---
+
+### 7.5 `synthesize:compose` — 策略组合
+
+```scheme
+(synthesize:compose "fib"
+  :phases '(
+    (:llm :prompt "generate fibonacci")
+    (:mutate :strategy "numeric")
+    (:test-driven :tests '("(display (fib 10))" "55"))))
+```
+
+每个 phase 的输出（代码）→ 下一个 phase 的输入。最终跑测试。
+
+---
+
+### 7.6 实现顺序
+
+| 步骤 | 内容 | 依赖 |
+|:----:|:------|:-----|
+| 7.6.1 | workspace 管理层 — workspace 切换 + 同步 | 已有 workspace 原语 |
+| 7.6.2 | `synthesize:project` 外壳 — 多文件编排 | 7.6.1 |
+| 7.6.3 | `synthesize:debug` 规则修复 | test-driven 基本循环 |
+| 7.6.4 | `synthesize:compose` — 策略组合 | 7.6.2 + 7.6.3 |
+
+## 8. 风险与权衡
 
 | 风险 | 缓解 |
 |:-----|:------|
@@ -289,3 +401,4 @@ synthesize-v2
 | Pipeline rollback 靠 `ast:snapshot` | 已实现且稳定 |
 | LLM JSON body 在 std/llm 已封装 | 直接使用 json-encode |
 | prompt 注入/代码提取稳定性 | 逐步从简单模板开始，验证后再复杂化 |
+| 多个 workspace 之间代码同步 | `workspace:sync-from` 已实现 |
