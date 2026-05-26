@@ -116,7 +116,7 @@ export class ASTArena {
 public:
     explicit ASTArena(std::size_t initial_size = 8 * 1024 * 1024)
         : buffer_(initial_size)
-        , resource_(buffer_.data(), buffer_.size(), std::pmr::null_memory_resource()) {}
+        , resource_(buffer_.data(), buffer_.size(), std::pmr::new_delete_resource()) {}
 
     // Allocate and construct an object of type T
     template <typename T, typename... Args> [[nodiscard]] T* create(Args&&... args) {

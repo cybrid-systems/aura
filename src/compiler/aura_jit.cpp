@@ -684,6 +684,11 @@ void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t), int32_
                       int32_t arg_count, int32_t env_count);
 void aura_reset_runtime();
 void aura_set_prim_dispatcher(int64_t (*fn)(int64_t, int64_t*, int32_t));
+// Drop stubs: Aura uses bump allocator, no per-value GC needed.
+// JIT-compiled DropOp calls these; they exist for completeness.
+void aura_drop_pair(int64_t) {}
+void aura_drop_cell(int64_t) {}
+void aura_drop_closure(int64_t) {}
 }
 
 // C standard library functions (declared in <cstdio>, registered as JIT symbols)
@@ -843,6 +848,9 @@ struct AuraJIT::Impl {
         reg("aura_register_fn", (void*)aura_register_fn);
         reg("aura_cast_op", (void*)aura_cast_op);
         reg("aura_reset_runtime", (void*)aura_reset_runtime);
+        reg("aura_drop_pair", (void*)aura_drop_pair);
+        reg("aura_drop_cell", (void*)aura_drop_cell);
+        reg("aura_drop_closure", (void*)aura_drop_closure);
 
         // C standard library functions
         reg("printf", (void*)printf);
