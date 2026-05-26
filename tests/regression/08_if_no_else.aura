@@ -1,0 +1,5 @@
+;; bug: 2-child (if cond then) without else returned void without evaluating condition
+;; fixed: f358029 (conditionally evaluate then-branch)
+;; expect: 42
+(if #t (display 42))
+(newline)

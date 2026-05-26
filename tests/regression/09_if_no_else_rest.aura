@@ -1,0 +1,8 @@
+;; bug: 2-child (if #f then) crashed in rest-arg lambda when returning void
+;; fixed: 16f9cee (return void via TCO to NULL_NODE instead of raw return)
+;; expect: ok
+(define (f name . args)
+  (if (pair? args) (display "yes"))
+  (display "ok")
+  (newline))
+(f "test")
