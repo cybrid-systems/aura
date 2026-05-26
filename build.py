@@ -241,6 +241,11 @@ INTEG_TESTS = [
     # ── TypeAnnotation coercion boundary (P0) ─────────────────
     IntegCase("tc_annot_int", "(: x Int 42)", "typecheck", expected="Int"),
     IntegCase("coerce_annot_erasure", "(: x Int 42)", "eval", expected="42"),
+    # ── 3-arg binding (P1 fix) ────────────────────────────────
+    IntegCase("annot_bind", "(: x Int 5) x", "eval", expected="5"),
+    IntegCase("annot_bind_multi", "(: a Int 10)(: b Int 5)(+ a b)", "eval", expected="15"),
+    IntegCase("annot_bind_coerce", "(: x Int \"42\") x", "eval", expected="42"),
+    IntegCase("annot_bind_expr", "(: a Int (+ 1 2)) a", "eval", expected="3"),
     # ── Gradual Guarantee tests (P2) ──────────────────────────
     IntegCase("gg_int_annot", "(: x Int 42)", "typecheck", expected="Int"),
     IntegCase("gg_int_exec", "(: x Int 42)", "eval", expected="42"),
