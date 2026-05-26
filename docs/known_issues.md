@@ -9,7 +9,7 @@
 | # | 问题 | 影响 | 优先级 |
 |:-:|:-----|:----:|:------:|
 | 1 | **`(: name Type val)` 不绑定变量名** — parse 把 `var_sym` 丢弃，只创建 TypeAnnotation 节点不 bind。`(: x Int 5)` 返回 5 但 `x` 没被定义 | 类型标注脚本、EDSLLM codegen | ✅ 已修 |
-| 2 | **`c-func` FFI 调用返回 closure** — `((c-func -1 "strlen" ...) "hello")` 返回 `#<procedure>` 而非 `5` | C FFI 测试 | P2 |
+| 2 | **`c-func` FFI 调用返回 closure** — `((c-func -1 "strlen" ...) "hello")` 返回 `#<procedure>` 而非 `5` | C FFI 测试 | ✅ 已修 |
 | 3 | **Pipe mode 下未绑定变量返回 0 而非 error** — `(display x)` 在 `x` 不存在时返回 0 而不是报 unbound variable | 调试体验 | P2 |
 | 4 | **`edsl-snapshot-multi` 内联代码输出为空** — `ast:snapshot`/`ast:list-snapshots` 在 pipe mode 可能异常 | 快照测试 | P3 |
 

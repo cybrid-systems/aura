@@ -261,6 +261,9 @@ public:
             "strategy-set-field!",
             "strategy-inspect",
             "coverage-report",
+            // C FFI — tree-walker needed to dispatch closure calls
+            "c-func",
+            "c-load",
             // Messaging primitives (tree-walker for argument passing)
             "send",
             "recv",
