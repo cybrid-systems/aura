@@ -91,6 +91,177 @@
 
 0 个编译器 bug。
 
+---
+
+## 全链路数据分析（2026-05-26）
+
+### 控制器数据流（完整 trace）
+
+```
+┌─ Task 定义 ─────────────────────────────────────────────┐
+│ tests/tasks/<category>/<name>.aura                      │
+│   ;; goal: Use set-code + query:find...                 │
+│   ;; expect: Define                                     │
+│   ;; hint: 示例代码                                      │
+│   ;; depend: std/stdlib.aura                            │
+└──────────────────────────┬───────────────────────────────┘
+                           ▼
+┌─ Prompt Builder ────────────────────────────────────────┐
+│ build_sys_prompt(stdlib, api_ref, task_name)             │
+│   = PROMPT_SECTIONS["identity"]                         │
+│   + "Available stdlib: ..."                              │
+│   + TASK_HINTS[task_name]                                │
+│   + api_ref (fine/putt phase 才加)                       │
+│                                                          │
+│ 目前只有一个 section "identity":                         │
+│   "You are Aura Lisp. Write valid code ending with       │
+│    (display ...). CRITICAL: (display ...) or TEST FAIL!" │
+└──────────────────────────┬───────────────────────────────┘
+                           ▼
+┌─ LLM Generation ────────────────────────────────────────┐
+│ POST /v1/chat/completions (stream=false)                │
+│   messages = [                                          │
+│     {role: "system", content: sys_prompt},              │
+│     {role: "user",   content: task_prompt},             │
+│     ... (retry corrections 追加)                         │
+│   ]                                                     │
+│   → resp                                                 │
+└──────────────────────────┬───────────────────────────────┘
+                           ▼
+┌─ Code Extraction ───────────────────────────────────────┐
+│ extract_code(resp)  (6 步 fallback)                     │
+│   1. \`\`\`lisp ... \`\`\` → 2. scheme → 3. racket        │
+│   4. clojure → 5. 无标注代码块 → 6. 全文兜底              │
+│   → code string 或 None                                  │
+└──────────────────────────┬───────────────────────────────┘
+                           ▼
+┌─ Execution ─────────────────────────────────────────────┐
+│  if code starts with "(set-code":                        │
+│    # EDSL 模式                                           │
+│    ok,out,err = run_code(code + "\n(eval-current)")     │
+│  else:                                                   │
+│    # Full code 模式                                      │
+│    ok,out,err = run_code(code)                           │
+│    if ok: last_full_code = code                          │
+│                                                          │
+│  run_code: serve.exec() or subprocess([AURA], code)      │
+│  → (ok: bool, out: stdout, err: stderr)                  │
+└──────────────────────────┬───────────────────────────────┘
+                           ▼
+┌─ Check ─────────────────────────────────────────────────┐
+│ success = ok AND (check_success(out,expected)            │
+│                 OR  check_success(err,expected))          │
+│                                                          │
+│ check_success(out, expected):                            │
+│   for kw in expected:           # substring 匹配         │
+│     if kw in norm_out: return True                       │
+│   return False                                           │
+│                                                          │
+│  ✓ pass → return                                          │
+│  ✗ fail → retry ↺                                        │
+└──────────────────────────┬───────────────────────────────┘
+                           ▼ retry
+┌─ Adaptive Feedback ─────────────────────────────────────┐
+│ call_adaptive(0, actual_output, expected)                │
+│   → Aura pid:analyze 原语                                │
+│   → 返回 (phase ratio diagnosis feedback_text)            │
+│                                                          │
+│   phase = coarse/fine/putt (距目标距离)                   │
+│                                                          │
+│ 算法类 task 额外跑 get_execution_trace                   │
+│ 注入完整执行 trace 到 feedback                            │
+└──────────────────────────┬───────────────────────────────┘
+                           ▼
+┌─ Ant Colony (fine/putt ⤵) ──────────────────────────────┐
+│ internal_colony_search(serve, code, expected, phase)     │
+│   → serve 模式 + fine/putt phase 生效                    │
+│   → Aura colony:search 原语，局部变异                     │
+│   → 零 LLM 调用                                          │
+│   ✓ → 返回成功，避免 LLM round-trip                       │
+└──────────────────────────┬───────────────────────────────┘
+                           ▼
+┌─ Correction Prompt ─────────────────────────────────────┐
+│ correction = (                                           │
+│   "(compile error) " or "(output mismatch) "             │
+│   + distance_note (phase 映射)                           │
+│   + "Aura produced: {actual_output[:300]}"               │
+│   + ada_fb (pid:analyze 的诊断)                           │
+│   + procedure_warn (if #<procedure> in output)           │
+│   + "Current code:\n{code[:400]}"                        │
+│ )                                                         │
+│ messages.append(assistant, resp)                          │
+│ messages.append(user, correction)                         │
+│ → LLM retry ↺ (max 3)                                    │
+└──────────────────────────────────────────────────────────┘
+```
+
+### 关键路径对比：修复前后
+
+以 `edsl-set-code` 为例，LLM 生成：
+```scheme
+(set-code "(define (f x) (+ x 1))")
+(display (query:node-type "Define"))
+```
+
+**✅ 正常通过：**
+```
+→ Full code 模式（不以 set-code 开头）
+→ Aura 直接执行
+→ stdout: "(0 1 2 3...)" 含 "Define"
+→ check_success → True ✅
+```
+
+**❌ 修复前失败：**
+```
+LLM → (set-code "broken syntax...")
+      (eval-current)  ← 自动追加
+     → set-code 失败 → #f (被 begin 吞)
+     → eval-current 在旧 workspace 跑 → "()"
+     → actual_output = "()"
+     → pid:analyze → "empty output"
+     → LLM: "Aura produced: ()"
+     → 不知道哪里错，3 轮全部浪费
+```
+
+**✅ 修复后：**
+```
+LLM → (set-code OK) → (query:find ...) → type error
+     → eval-current 返回 "error: type mismatch..."
+     → actual_output = "error: type mismatch..."
+     → LLM: 看到精确错误 → 修正 → 通过
+```
+
+关键：`edsl-set-code` DS 从 **0% → 100%** 就是因为 eval-current 现在返回类型错误诊断。
+
+### Retry 各轮变化
+
+```
+Attempt 1 (coarse, temp=0.3, tok=4096, full rewite)
+  → Aura produced: ()       ← 旧 workspace 空
+  → phase: coarse, LLM: "Still far from goal"
+
+Attempt 2 (fine, temp=0.2, tok=2048, partial fix)
+  → 仍然 () → phase: fine
+  → ant colony 在 last_full_code 上局部变异
+  → 变异找到匹配 → pass (0 LLM cost)
+
+Attempt 3 (putt, temp=0.1, tok=1024, minor fix)
+  → phase: putt, LLM: "Almost there!"
+  → 最终尝试
+```
+
+### 现存瓶颈
+
+| 环节 | 问题 | 影响 |
+|:-----|:----|:-----|
+| EDSL chain | `(set-code ...)(eval-current)` 中 set-code 错误被 begin 吞 | 语法错误无法诊断 |
+| pid:analyze | 空输出只能报 "empty"，分不清"旧 workspace" vs "无输出" | phase 判断偏差 |
+| check_success | 仅 substring 匹配 | 可能误判 |
+| procedure 检测 | 只在 correction 做，不在 check_success | 浪费一次 LLM 调用 |
+| TASK_HINTS | 手工维护 135 条，可能不同步 | 过时 hint 误导 |
+
+---
+
 ## Run Yourself
 
 ```bash
