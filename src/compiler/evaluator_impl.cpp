@@ -3555,8 +3555,24 @@ void Evaluator::init_pair_primitives() {
         auto* pool_ptr = arena_->create<aura::ast::StringPool>(alloc);
         auto* flat_ptr = arena_->create<aura::ast::FlatAST>(alloc);
         auto pr = aura::parser::parse_to_flat(string_heap_[idx], *flat_ptr, *pool_ptr);
-        if (!pr.success || pr.root == aura::ast::NULL_NODE)
-            return make_bool(false);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+            // Return parse error as string for diagnostic propagation
+            std::string err;
+            if (!pr.errors.empty()) {
+                for (auto& e : pr.errors) {
+                    if (!err.empty()) err += "; ";
+                    err += e.format();
+                }
+            } else if (!pr.error.empty()) {
+                err = pr.error;
+            } else {
+                err = "parse error";
+            }
+            auto sidx = string_heap_.size();
+            string_heap_.push_back(err);
+            coverage_counters_[5]--;
+            return make_string(sidx);
+        }
         flat_ptr->root = pr.root;
         workspace_flat_ = flat_ptr;
         workspace_pool_ = pool_ptr;
@@ -3764,8 +3780,13 @@ void Evaluator::init_pair_primitives() {
         auto result = eval_flat(*workspace_flat_, *workspace_pool_, expanded, top_);
         // Clear dirty flags after successful eval
         workspace_flat_->clear_all_dirty();
-        if (!result)
-            return make_void();
+        if (!result) {
+            // Return diagnostic as string for error propagation
+            auto msg = result.error().format();
+            auto sidx = string_heap_.size();
+            string_heap_.push_back(msg);
+            return make_string(sidx);
+        }
         return *result;
     });
 
@@ -3782,8 +3803,12 @@ void Evaluator::init_pair_primitives() {
         if (!tmp) {
             auto result = eval_flat(*workspace_flat_, *workspace_pool_, expanded, top_);
             workspace_flat_->clear_all_dirty();
-            if (!result)
-                return make_void();
+            if (!result) {
+                auto msg = result.error().format();
+                auto sidx = string_heap_.size();
+                string_heap_.push_back(msg);
+                return make_string(sidx);
+            }
             return *result;
         }
         int new_fd = ::fileno(tmp);
@@ -3804,6 +3829,14 @@ void Evaluator::init_pair_primitives() {
         while ((n = std::fread(buf, 1, sizeof(buf), tmp)) > 0)
             captured.append(buf, n);
         std::fclose(tmp);
+        // If eval failed, prepend diagnostic to captured output
+        if (!result) {
+            auto diag = result.error().format();
+            if (!captured.empty())
+                captured = diag + "\n" + captured;
+            else
+                captured = diag;
+        }
         // Store captured output in string heap
         auto sidx = string_heap_.size();
         string_heap_.push_back(captured);

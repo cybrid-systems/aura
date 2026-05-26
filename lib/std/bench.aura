@@ -90,7 +90,7 @@
                (if (string=? depend "") "" (string-append "(require \"" depend "\" all:)"))
                code))
            (actual (begin (set-code full-code) (eval-current-output)))
-           (actual-str (if (void? actual) "" actual)))
+           (actual-str actual))
       (if (check-success actual-str expects)
         "#t"
         (string-append "expected: " expected-str " got: " actual-str))))
