@@ -232,3 +232,5 @@ add_library(linenoise STATIC
     src/linenoise/linenoise.c)
 target_include_directories(linenoise PUBLIC src/linenoise)
 target_link_libraries(aura PRIVATE linenoise)
+
+
