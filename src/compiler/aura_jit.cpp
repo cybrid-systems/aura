@@ -471,19 +471,19 @@ struct LLVMBuilder {
                     store(result_slot, a1);
                     return true;
                 case PrimQuotient: {
-                    // Safe quotent: result = (b==0) ? 0 : (a / b)
+                    // Both args are fixnum-encoded (value << 1). SDiv cancels the shift,
+                    // so we get the correct integer result. Shift back for fixnum encoding.
                     auto zero = irb->CreateICmpEQ(a2, c64(0));
                     auto div = irb->CreateSDiv(a1, a2);
                     auto safe = irb->CreateSelect(zero, c64(0), div);
-                    store(result_slot, safe);
+                    store(result_slot, irb->CreateShl(safe, c64(1)));
                     return true;
                 }
                 case PrimRemainder: {
-                    // Safe remainder: result = (b==0) ? 0 : (a % b)
                     auto zero = irb->CreateICmpEQ(a2, c64(0));
                     auto rem = irb->CreateSRem(a1, a2);
                     auto safe = irb->CreateSelect(zero, c64(0), rem);
-                    store(result_slot, safe);
+                    store(result_slot, irb->CreateShl(safe, c64(1)));
                     return true;
                 }
                 case PrimPairP: {
