@@ -3540,10 +3540,28 @@ void Evaluator::init_pair_primitives() {
     // (set-code code-string) — Parse code and set as current workspace AST
     // Nodes in workspace AST have stable IDs across query/mutate operations
     // Multi-expression code is automatically wrapped in (begin ...) by the parser.
-    primitives_.add("set-code", [this](const auto& a) {
+    // Helper: build structured error value as a pair ("kind" "message")
+    // Inline lambda to avoid capture issues — used by set-code, eval-current, etc.
+    auto make_error_val = [this](const std::string& kind, const std::string& msg) -> EvalValue {
+        auto msg_idx = string_heap_.size();
+        string_heap_.push_back(msg);
+        auto kind_idx = string_heap_.size();
+        string_heap_.push_back(kind);
+        auto nil = EvalValue(0);
+        // (cons "kind" (cons "message" nil)) → ("kind" "message") as a proper list
+        auto msg_pair = make_pair(pairs_.size());
+        pairs_.push_back({make_string(msg_idx), nil});
+        auto kind_pair = make_pair(pairs_.size());
+        pairs_.push_back({make_string(kind_idx), msg_pair});
+        return kind_pair;
+    };
+    std::function<EvalValue(const std::string&, const std::string&)> mev = make_error_val;
+
+    primitives_.add("set-code", [this, mev](const auto& a) {
         if (workspace_read_only_) return make_bool(false);
         // Clear any previous set-code error
-        last_set_code_error_.clear();
+        last_set_code_error_kind_.clear();
+        last_set_code_error_msg_.clear();
         coverage_counters_[0]++;
         coverage_counters_[5]++;
         if (a.empty() || !is_string(a[0]))
@@ -3558,7 +3576,7 @@ void Evaluator::init_pair_primitives() {
         auto* flat_ptr = arena_->create<aura::ast::FlatAST>(alloc);
         auto pr = aura::parser::parse_to_flat(string_heap_[idx], *flat_ptr, *pool_ptr);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-            // Return parse error as string for diagnostic propagation
+            // Return structured parse error: ("parse" "message")
             std::string err;
             if (!pr.errors.empty()) {
                 for (auto& e : pr.errors) {
@@ -3571,11 +3589,10 @@ void Evaluator::init_pair_primitives() {
                 err = "parse error";
             }
             // Store error for eval-current/eval-current-output to propagate
-            last_set_code_error_ = err;
-            auto sidx = string_heap_.size();
-            string_heap_.push_back(err);
+            last_set_code_error_kind_ = "parse";
+            last_set_code_error_msg_ = err;
             coverage_counters_[5]--;
-            return make_string(sidx);
+            return mev("parse", err);
         }
         flat_ptr->root = pr.root;
         workspace_flat_ = flat_ptr;
@@ -3774,14 +3791,13 @@ void Evaluator::init_pair_primitives() {
     });
 
     // (eval-current) — Evaluate the current workspace AST
-    primitives_.add("eval-current", [this](const auto&) {
+    primitives_.add("eval-current", [this, mev](const auto&) {
         coverage_counters_[2]++;
         // If set-code failed on the last call, propagate the diagnostic immediately
-        if (!last_set_code_error_.empty()) {
-            auto msg = std::move(last_set_code_error_);
-            auto sidx = string_heap_.size();
-            string_heap_.push_back(msg);
-            return make_string(sidx);
+        if (!last_set_code_error_kind_.empty()) {
+            auto kind = std::move(last_set_code_error_kind_);
+            auto msg = std::move(last_set_code_error_msg_);
+            return mev(kind, msg);
         }
         if (!workspace_flat_ || !workspace_pool_)
             return make_void();
@@ -3792,24 +3808,23 @@ void Evaluator::init_pair_primitives() {
         // Clear dirty flags after successful eval
         workspace_flat_->clear_all_dirty();
         if (!result) {
-            // Return diagnostic as string for error propagation
-            auto msg = result.error().format();
-            auto sidx = string_heap_.size();
-            string_heap_.push_back(msg);
-            return make_string(sidx);
+            // Return structured diagnostic: (kind-string message-string)
+            auto& diag = result.error();
+            auto kind = std::string(kind_name(diag.kind));
+            auto msg = diag.format();
+            return mev(kind, msg);
         }
         return *result;
     });
 
     // (eval-current-output) — Evaluate workspace, return display output as string
     // Captures all display output during eval via fd-level redirection.
-    primitives_.add("eval-current-output", [this](const auto&) {
+    primitives_.add("eval-current-output", [this, mev](const auto&) {
         // If set-code failed on the last call, propagate the diagnostic immediately
-        if (!last_set_code_error_.empty()) {
-            auto msg = std::move(last_set_code_error_);
-            auto sidx = string_heap_.size();
-            string_heap_.push_back(msg);
-            return make_string(sidx);
+        if (!last_set_code_error_kind_.empty()) {
+            auto kind = std::move(last_set_code_error_kind_);
+            auto msg = std::move(last_set_code_error_msg_);
+            return mev(kind, msg);
         }
         if (!workspace_flat_ || !workspace_pool_)
             return make_void();
@@ -3847,13 +3862,15 @@ void Evaluator::init_pair_primitives() {
         while ((n = std::fread(buf, 1, sizeof(buf), tmp)) > 0)
             captured.append(buf, n);
         std::fclose(tmp);
-        // If eval failed, prepend diagnostic to captured output
+        // If eval failed, prepend structured diagnostic to captured output
         if (!result) {
-            auto diag = result.error().format();
+            auto& diag = result.error();
+            auto kind = std::string(kind_name(diag.kind));
+            auto diag_str = diag.format();
+            auto combined = "[" + std::string(kind) + "] " + diag_str;
             if (!captured.empty())
-                captured = diag + "\n" + captured;
-            else
-                captured = diag;
+                combined = combined + "\n" + captured;
+            captured = combined;
         }
         // Store captured output in string heap
         auto sidx = string_heap_.size();
