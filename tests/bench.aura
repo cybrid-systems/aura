@@ -23,7 +23,7 @@
 (define tasks
   (if (> limit 0)
     (take limit (if (> offset 0)
-      ; Manual drop (stdlib drop is buggy)
+      ; Skip via manual loop (stdlib 'skip' not used to keep deps light)
       (let loop ((i 0) (tl all-tasks))
         (if (or (>= i offset) (null? tl)) tl
           (loop (+ i 1) (cdr tl))))
