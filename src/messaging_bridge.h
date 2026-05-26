@@ -34,6 +34,11 @@ struct MessagingBridge {
 // The global bridge instance
 extern MessagingBridge g_messaging_bridge;
 
+// Fiber spawn — set by serve_async.cpp, used by evaluator
+// Returns 0 on failure, non-zero fiber ID on success
+using FiberSpawnFn = int64_t (*)(void (*fn)(void*), void* arg);
+extern FiberSpawnFn g_fiber_spawn;
+
 
 // Access a CompilerService's mailbox through a void*.
 // Since evaluator can't import the CompilerService module,

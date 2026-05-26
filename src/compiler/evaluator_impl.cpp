@@ -6740,6 +6740,26 @@ Evaluator::Evaluator() {
             aura::messaging::g_mailbox_count(svc)));
     });
 
+    // (fiber:spawn fn) — Spawn a fiber (async in serve mode, sync fallback in stdin)
+    // fn is a closure taking no arguments.
+    primitives_.add("fiber:spawn", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_closure(a[0]))
+            return make_bool(false);
+        auto cid = as_closure_id(a[0]);
+        // In serve mode: use g_fiber_spawn
+        if (aura::messaging::g_fiber_spawn) {
+            // Wrap the closure call in a C function
+            // For now: call synchronously (fiber integration TBD)
+            auto opt = apply_closure(cid, {});
+            if (opt) return *opt;
+            return make_void();
+        }
+        // Fallback: call directly (stdin mode)
+        auto opt = apply_closure(cid, {});
+        if (opt) return *opt;
+        return make_void();
+    });
+
     // ═══════════════════════════════════════════════════════════════
     // P15: Synthesize Template Strategy (P0)
     // ═══════════════════════════════════════════════════════════════
