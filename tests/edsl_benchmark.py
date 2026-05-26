@@ -1116,6 +1116,63 @@ def get_execution_trace(code_str, timeout=10):
         return "", ""
 
 
+# ── Error-to-API doc mapping (P2) ──────────────────────────
+# Maps error keywords to relevant stdlib API documentation snippets
+_ERROR_API_DOCS = {
+    "rule:define": (
+        "=== std/rule ===\n"
+        "(rule:define name :pattern \"p\" :replace \"r\" ...)\n"
+        "Keywords: :pattern (required), :replace (required), :condition, :description\n"
+    ),
+    "synthesize:pipeline": (
+        "=== std/pipeline ===\n"
+        '(synthesize:pipeline "name" step1 step2 ...)\n'
+        "Each step: (synthesize:fill \"tmpl\" args...) or (synthesize:define ...)\n"
+    ),
+    "synthesize:register-template": (
+        "=== synthesize templates ===\n"
+        '(synthesize:register-template "name" "template" "arg")  ; Register template\n'
+        '(synthesize:fill "name" arg1 arg2 ...)  ; Fill template with args\n'
+    ),
+    "send": (
+        "=== send/recv ===\n"
+        "(send message target)  ; Send message to channel\n"
+        "(recv)  ; Receive message (blocking)\n"
+    ),
+    "make-hash": (
+        "=== std/hash ===\n"
+        "(hash key val ...) -> <hash[N]>  Create hash\n"
+        "(hash-ref hash key) -> value | ()  Lookup key\n"
+        "(hash->alist hash) -> alist  Convert to association list\n"
+    ),
+    "define-type": (
+        "=== std/data ===\n"
+        "(define-type Name (ctor field1 field2 ...) ...)\n"
+        "Example: (define-type Tree (leaf val) (node left right))\n"
+    ),
+    "for-each": (
+        "=== std/list ===\n"
+        "(for-each fn lst) -> void  Apply fn to each element (side effect only)\n"
+        "(map fn lst) -> list  Transform each element\n"
+        "(filter pred lst) -> list  Keep matching elements\n"
+    ),
+    "c-func": (
+        "=== C FFI ===\n"
+        "(c-func lib-name \"c_fn_name\" arg-types ret-type)\n"
+        "arg-types: list of \"int\", \"float\", \"string\"\n"
+        "Example: (define sqrt-fn (c-func \"m\" \"sqrt\" (list \"double\") \"double\"))\n"
+    ),
+}
+
+
+def _get_api_snippet(error_msg):
+    """Extract relevant API doc snippet from error message."""
+    for kw, doc in _ERROR_API_DOCS.items():
+        if kw.lower() in error_msg.lower():
+            return doc
+    return ""
+
+
 def _auto_fix_procedure(code, expected, run_code, is_edsl):
     """Auto-inject (display ...) when LLM outputs #<procedure>.
     Extracts function name + arity from source, then tries smart patterns.
@@ -1396,6 +1453,15 @@ def run_single_task(
                 "Check the task's goal to see what signature " + undefined + " needs.\n"
             )
 
+        # Inject relevant API doc snippet for common EDSL errors
+        api_hint = ""
+        if structured_msg:
+            api_hint = _get_api_snippet(structured_msg)
+        elif actual_output and not ok:
+            api_hint = _get_api_snippet(actual_output)
+        if api_hint:
+            api_hint = "\n\n" + "=" * 35 + "\nRELEVANT API:\n" + api_hint + "\n" + "=" * 35 + "\n"
+
         correction = (
             ("(compile error) " if not ok else "(output mismatch) ")
             + distance_note
@@ -1404,7 +1470,8 @@ def run_single_task(
             + ada_fb + "\n\n"
             + procedure_warn
             + set_code_error
-            + type_error_hint +
+            + type_error_hint
+            + api_hint +
             "Current code:\n"
             + (last_full_code[:400] if last_full_code else code[:400])
             + "\n\n"
