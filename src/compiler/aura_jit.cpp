@@ -252,41 +252,71 @@ struct LLVMBuilder {
                 store(inst.ops[0], irb->CreateSub(load(inst.ops[1]), load(inst.ops[2])));
                 return true;
             case OpMul:
-                store(inst.ops[0], irb->CreateMul(load(inst.ops[1]), load(inst.ops[2])));
+                if (aot_mode) {
+                    // Fixnum-encoded: (a*2) * (b*2) = (a*b)*4, need >>1 for fixnum encoding
+                    store(inst.ops[0], irb->CreateAShr(irb->CreateMul(load(inst.ops[1]), load(inst.ops[2])), c64(1)));
+                } else {
+                    store(inst.ops[0], irb->CreateMul(load(inst.ops[1]), load(inst.ops[2])));
+                }
                 return true;
             case OpDiv: {
                 auto dividend = load(inst.ops[1]);
                 auto divisor = load(inst.ops[2]);
                 auto is_zero = irb->CreateICmpEQ(divisor, c64(0));
-                // Avoid CPU #DE (SIGFPE) on zero divisor: substitute 1, then select 0 as result
                 auto safe_div = irb->CreateSelect(is_zero, c64(1), divisor);
                 auto div_result = irb->CreateSDiv(dividend, safe_div);
-                store(inst.ops[0], irb->CreateSelect(is_zero, c64(0), div_result));
+                auto safe = irb->CreateSelect(is_zero, c64(0), div_result);
+                if (aot_mode) {
+                    // Fixnum encoding: (a*2)/(b*2) = a/b (raw), need <<1
+                    store(inst.ops[0], irb->CreateShl(safe, c64(1)));
+                } else {
+                    store(inst.ops[0], safe);
+                }
                 return true;
             }
             case OpEq: {
                 auto c = irb->CreateICmpEQ(load(inst.ops[1]), load(inst.ops[2]));
-                store(inst.ops[0], irb->CreateZExt(c, llvm::Type::getInt64Ty(ctx)));
+                if (aot_mode) {
+                    store(inst.ops[0], irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
+                } else {
+                    store(inst.ops[0], irb->CreateZExt(c, llvm::Type::getInt64Ty(ctx)));
+                }
                 return true;
             }
             case OpLt: {
                 auto c = irb->CreateICmpSLT(load(inst.ops[1]), load(inst.ops[2]));
-                store(inst.ops[0], irb->CreateZExt(c, llvm::Type::getInt64Ty(ctx)));
+                if (aot_mode) {
+                    store(inst.ops[0], irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
+                } else {
+                    store(inst.ops[0], irb->CreateZExt(c, llvm::Type::getInt64Ty(ctx)));
+                }
                 return true;
             }
             case OpGt: {
                 auto c = irb->CreateICmpSGT(load(inst.ops[1]), load(inst.ops[2]));
-                store(inst.ops[0], irb->CreateZExt(c, llvm::Type::getInt64Ty(ctx)));
+                if (aot_mode) {
+                    store(inst.ops[0], irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
+                } else {
+                    store(inst.ops[0], irb->CreateZExt(c, llvm::Type::getInt64Ty(ctx)));
+                }
                 return true;
             }
             case OpLe: {
                 auto c = irb->CreateICmpSLE(load(inst.ops[1]), load(inst.ops[2]));
-                store(inst.ops[0], irb->CreateZExt(c, llvm::Type::getInt64Ty(ctx)));
+                if (aot_mode) {
+                    store(inst.ops[0], irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
+                } else {
+                    store(inst.ops[0], irb->CreateZExt(c, llvm::Type::getInt64Ty(ctx)));
+                }
                 return true;
             }
             case OpGe: {
                 auto c = irb->CreateICmpSGE(load(inst.ops[1]), load(inst.ops[2]));
-                store(inst.ops[0], irb->CreateZExt(c, llvm::Type::getInt64Ty(ctx)));
+                if (aot_mode) {
+                    store(inst.ops[0], irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
+                } else {
+                    store(inst.ops[0], irb->CreateZExt(c, llvm::Type::getInt64Ty(ctx)));
+                }
                 return true;
             }
             case OpAnd: {
