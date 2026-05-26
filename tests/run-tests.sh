@@ -272,14 +272,14 @@ run_emit_test "emit:cadr-list"  "(car (cdr (list 10 20 30)))" "20"
 
 # pair?/null? (inlined as LLVM ICmp via OpPrimCall)
 # main() skips printing 0 values, so falsy expectations must be empty.
-run_emit_test "emit:pair?"   "(pair? (cons 1 2))" "1"
-run_emit_test "emit:not-pair?"   "(pair? 42)" ""
-run_emit_test "emit:null?"   "(null? 0)" "1"
-run_emit_test "emit:not-null?"   "(null? -1)" ""
+run_emit_test "emit:pair?"   "(pair? (cons 1 2))" "#t"
+run_emit_test "emit:not-pair?"   "(pair? 42)" "#f"
+run_emit_test "emit:null?"   "(null? 0)" "#t"
+run_emit_test "emit:not-null?"   "(null? -1)" "#f"
 
 # Comparisons (inlined as LLVM ICmp, raw int output: 1=#t)
-run_emit_test "emit:eq-lit"  "(= 42 42)" "1"
-run_emit_test "emit:lt"      "(< 1 2)" "1"
+run_emit_test "emit:eq-lit"  "(= 42 42)" "#t"
+run_emit_test "emit:lt"      "(< 1 2)" "#t"
 
 # Boolean conditionals
 run_emit_test "emit:bool"    "(if #t 42 0)" "42"
@@ -289,10 +289,10 @@ run_emit_test "emit:closure"    "(let ((f (lambda (x) (+ x 1)))) (f 41))" "42"
 run_emit_test "emit:closure2"   "(let ((add (lambda (a b) (+ a b)))) (add 10 20))" "30"
 
 # and/or/not (expanded to conditional branches in lowering)
-run_emit_test "emit:and"        "(and #t #t)" "1"
-run_emit_test "emit:or"         "(or #f #t)" "1"
-run_emit_test "emit:not"        "(not #f)" "1"
-run_emit_test "emit:and-chain"  "(and (< 1 10) (> 5 0) (= 3 3))" "1"
+run_emit_test "emit:and"        "(and #t #t)" "#t"
+run_emit_test "emit:or"         "(or #f #t)" "#t"
+run_emit_test "emit:not"        "(not #f)" "#t"
+run_emit_test "emit:and-chain"  "(and (< 1 10) (> 5 0) (= 3 3))" "#t"
 
 # Conditionals
 run_emit_test "emit:if-true"    "(if #t 42 0)" "42"
@@ -310,7 +310,7 @@ run_emit_test "emit:display"    "(display 42)" "42"
 
 # String ops (via aura_prim_call PrimId dispatch)
 run_emit_test "emit:string-len"  "(string-length \"hello\")" "5"
-run_emit_test "emit:string-eq"   "(string=? \"abc\" \"abc\")" "1"
+run_emit_test "emit:string-eq"   "(string=? \"abc\" \"abc\")" "#t"
 run_emit_test "emit:display-car" "(display (car (list 1 2 3)))" "1"
 run_emit_test "emit:display-list" "(display (list 1 2 3))" "(1 2 3)"
 
@@ -338,7 +338,7 @@ run_emit_test "emit:foldl"     "(foldl + 0 (list 1 2 3))" "6"
 # Stdlib algorithm module
 run_emit_test "emit:merge"     "(import \"std/algorithm\")(car (merge-sorted (list 1 3) (list 2 4)))" "1"
 run_emit_test "emit:uniq"      "(import \"std/algorithm\")(car (unique (list 1 1 2 3)))" "1"
-run_emit_test "emit:bin-search" "(import \"std/algorithm\")(binary-search 2 (list 1 2 3))" "1"
+run_emit_test "emit:bin-search" "(import \"std/algorithm\")(binary-search 2 (list 1 2 3))" "#t"
 
 # Stdlib list module
 run_emit_test "emit:list-merge" "(import \"std/algorithm\")(car (merge-sorted (list 1 3) (list 2 4)))" "1"
@@ -351,7 +351,7 @@ run_emit_test "emit:factorial" "(import \"std/math\")(display (factorial 5))" "1
 run_emit_test "emit:named-let" "(let loop ((x 0)) (if (< x 3) (loop (+ x 1)) x))" "3"
 
 # Stdlib functions via import (source inlining)
-run_emit_test "emit:sorted?"   "(import \"std/algorithm\")(sorted? (list 1 2 3))" "1"
+run_emit_test "emit:sorted?"   "(import \"std/algorithm\")(sorted? (list 1 2 3))" "#t"
 run_emit_test "emit:combine"   "(import \"std/algorithm\")(combinations 4 2)" "6"
 run_emit_test "emit:apply"     "(apply + (list 1 2 3))" "6"
 run_emit_test "emit:permute"   "(import \"std/algorithm\")(car (car (permutations (list 1 2))))" "1"
