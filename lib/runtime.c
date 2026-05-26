@@ -429,6 +429,8 @@ static char** string_heap = NULL;
 static uint64_t string_count = 0;
 static uint64_t string_capacity = 0;
 
+#define STRING_BIAS 0x10000000
+
 int64_t aura_alloc_string(const char* s) {
     if (!string_heap) {
         string_capacity = 1024;
@@ -443,11 +445,13 @@ int64_t aura_alloc_string(const char* s) {
     }
     uint64_t id = string_count++;
     string_heap[id] = s ? strdup(s) : strdup("");
-    return (int64_t)id;
+    // Return (id << 2) | 3 in the high range so IS_FIXNUM/IS_PAIR/IS_SPECIAL checks
+    // all fail, and the display function can detect strings via the high bit range.
+    return (int64_t)(id + STRING_BIAS);
 }
 
 const char* aura_string_ref(int64_t str_id) {
-    uint64_t id = (uint64_t)str_id;
+    uint64_t id = (uint64_t)(str_id - STRING_BIAS);
     if (id >= string_count) return "";
     return string_heap[id] ? string_heap[id] : "";
 }
@@ -521,8 +525,9 @@ static void aura_display_pair_chain(int64_t val) {
     putchar(')');
 }
 int64_t aura_display_int(int64_t val) {
-    if (IS_STRING(val)) {
-        printf("%s", aura_string_ref((uint64_t)STRING_IDX(val)));
+    // Strings encoded as (index + STRING_BIAS) in the high value range
+    if (val >= STRING_BIAS) {
+        printf("%s", aura_string_ref(val));
     } else if (IS_PAIR(val)) {
         aura_display_pair_chain(val);
     } else if (IS_SPECIAL(val)) {
