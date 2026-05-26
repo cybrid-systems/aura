@@ -287,3 +287,36 @@
         (dirs (dir-dirs "lib/std")))
     (check (pair? files))  ;; at least some files
     (check (list? dirs))))  ;; dirs is a list (maybe empty or some)
+
+;; ═══════════════════════════════════════════════════════════════
+;; std/fs — edge cases
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "fs:path-edge"
+  (require "std/fs" all:)
+  (check (string=? (path-extname ".gitignore") ".gitignore"))
+  (check (string=? (path-extname "a") ""))
+  (check (string=? (path-extname "") ""))
+  (check (string=? (path-basename "a") "a"))
+  (check (string=? (path-basename "/") ""))
+  (check (string=? (path-dirname "a") "."))
+  (check (string=? (path-join "/" "a") "/a"))
+  (check (string=? (path-join "/a" "/b") "/a/b")))
+
+(test-suite "fs:file-operations"
+  (require "std/fs" all:)
+  ;; Write then read should roundtrip
+  (let* ((test-path "/tmp/_aura_fs_test.txt")
+         (content "hello aura fs!"))
+    (file-write test-path content)
+    (let ((read-back (file-read test-path)))
+      (check (string=? content read-back)))))
+
+(test-suite "fs:dir-files"
+  (require "std/fs" all:)
+  ;; lib/std/ should have some files
+  (let ((files (dir-files "lib/std")))
+    (check (pair? files)))
+  ;; root dir not found → empty
+  (let ((files (dir-files "/nonexistent_xyz")))
+    (check (null? files))))
