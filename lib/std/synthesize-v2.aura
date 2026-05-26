@@ -63,13 +63,18 @@
     diag))
 
 ; ── build-llm-prompt ──
-(define (build-llm-prompt goal-name code feedback model)
-  (let* ((sys "You are an expert Aura Lisp programmer. Write ONLY valid Aura Lisp code.\n\
+(define (build-llm-prompt goal-name code feedback model . extra)
+  (let* ((hints (if (pair? extra) (car extra) ""))
+         (sys "You are an expert Aura Lisp programmer.\n\
+CRITICAL: Your code MUST end with (display ...). Just defining a function gives #<procedure> and FAILS.\n\
 Rules:\n\
-- Use (define (name args...) body) for function definitions\n\
-- Use (if cond then else) for conditionals\n\
-- CRITICAL: Wrap the code in ```lisp ... ``` markers.\n")
-         (usr (string-append "Goal: " goal-name "\n\n"
+- (define (name args...) body) for functions\n\
+- (if cond then else) for conditionals\n\
+- Use (lambda (args) body) for lambdas\n\
+- (require std/name all:) for stdlib\n\
+- CRITICAL: Wrap code in ```lisp ... ``` markers.\n")
+         (hint-str (if (string=? hints "") "" (string-append "\n=== HINTS ===\n" hints "\n")))
+         (usr (string-append "Goal: " goal-name hint-str "\n\n"
            (if (string=? code "") "" (string-append "Current code:\n" code "\n\n"))
            (if (string=? feedback "") "" (string-append "Feedback:\n" feedback "\n\n"))
            "Generate a correct Aura Lisp implementation:\n"
@@ -80,8 +85,9 @@ Rules:\n\
     body))
 
 ; ── call-llm ──
-(define (call-llm goal-name code feedback model)
-  (let* ((p (build-llm-prompt goal-name code feedback model))
+(define (call-llm goal-name code feedback model . extra)
+  (let* ((hints (if (pair? extra) (car extra) ""))
+         (p (apply build-llm-prompt goal-name code feedback model (if (string=? hints "") '() (list hints))))
          (raw (aura-llm-call p))
          (parsed (json-parse raw))
          (choices (hash-ref parsed "choices"))
@@ -107,7 +113,7 @@ Rules:\n\
 
 ; ── try-attempt ──
 (define (try-attempt goal-name code tests max-a model
-                     attempt-num best-code best-score)
+                     attempt-num best-code best-score . extra)
   (let* ((sn (ast:snapshot "synth-v2"))
          (tr (synthesize:run-tests code tests))
          (p (list-ref tr 0)) (t (list-ref tr 1)) (fl (list-ref tr 2))
@@ -119,34 +125,33 @@ Rules:\n\
     (if (= p t) (list #t code (list p t fl))
       (if (>= attempt-num max-a) (list #f code ns)
         (let* ((fb (build-diagnostic goal-name code p t fl))
-               (llm (if (string=? model "") "" (call-llm goal-name code fb model)))
+               (hints (if (pair? extra) (car extra) ""))
+               (llm (if (string=? model "") "" (call-llm goal-name code fb model hints)))
                (nc (if (string=? model "") "" (extract-code llm)))
                (uc (if (string=? (string-trim nc) "") code nc)))
           (try-attempt goal-name uc tests max-a model
-                      (+ attempt-num 1) nb ns))))))
+                      (+ attempt-num 1) nb ns hints))))))
 
 ; ── synthesize:test-driven ──
 (define (synthesize:test-driven name . args)
-  (let* ((goal (if (pair? args) (if (eq? (car args) :goal) (if (pair? (cdr args)) (cadr args) "") "") ""))
-         (tests (if (pair? args) (if (eq? (car args) :tests) (if (pair? (cdr args)) (cadr args) '()) '()) '()))
-         (code  (if (pair? args) (if (eq? (car args) :code) (if (pair? (cdr args)) (cadr args) "") "") ""))
-         (max-a (if (pair? args) (if (eq? (car args) :max-attempts) (if (pair? (cdr args)) (cadr args) 5) 5) 5))
-         (model (if (pair? args) (if (eq? (car args) :model) (if (pair? (cdr args)) (cadr args) "deepseek-chat") "deepseek-chat") "deepseek-chat"))
-         (args2 (if (pair? (cddr args)) (cddr args) '()))
-         (goal (if (pair? args2) (if (eq? (car args2) :goal) (if (pair? (cdr args2)) (cadr args2) goal) goal) goal))
-         (tests (if (pair? args2) (if (eq? (car args2) :tests) (if (pair? (cdr args2)) (cadr args2) tests) tests) tests))
-         (code (if (pair? args2) (if (eq? (car args2) :code) (if (pair? (cdr args2)) (cadr args2) code) code) code))
-         (max-a (if (pair? args2) (if (eq? (car args2) :max-attempts) (if (pair? (cdr args2)) (cadr args2) max-a) max-a) max-a))
-         (model (if (pair? args2) (if (eq? (car args2) :model) (if (pair? (cdr args2)) (cadr args2) model) model) model))
-         (args3 (if (pair? (cddr args2)) (cddr args2) '()))
-         (goal (if (pair? args3) (if (eq? (car args3) :goal) (if (pair? (cdr args3)) (cadr args3) goal) goal) goal))
-         (tests (if (pair? args3) (if (eq? (car args3) :tests) (if (pair? (cdr args3)) (cadr args3) tests) tests) tests))
-         (code (if (pair? args3) (if (eq? (car args3) :code) (if (pair? (cdr args3)) (cadr args3) code) code) code))
-         (max-a (if (pair? args3) (if (eq? (car args3) :max-attempts) (if (pair? (cdr args3)) (cadr args3) max-a) max-a) max-a))
-         (model (if (pair? args3) (if (eq? (car args3) :model) (if (pair? (cdr args3)) (cadr args3) model) model) model))
-         (bad (or (null? tests) (not (pair? tests)))))
-    (if bad (list #f code (list 0 0 '()))
-      (try-attempt goal code tests max-a model 1 code -1))))
+  (let* ((goal "") (tests '()) (code "") (max-a 5) (model "deepseek-chat") (hints "")
+         (args-remain args))
+    (define (parse-key key val)
+      (cond ((eq? key :goal) (set! goal val))
+            ((eq? key :tests) (set! tests val))
+            ((eq? key :code) (set! code val))
+            ((eq? key :max-attempts) (set! max-a val))
+            ((eq? key :model) (set! model val))
+            ((eq? key :hints) (set! hints val))))
+    (let parse ((a args-remain))
+      (if (pair? a)
+        (if (pair? (cdr a))
+          (begin (parse-key (car a) (cadr a)) (parse (cddr a)))
+          (begin (parse-key (car a) "") (parse (cdr a))))
+        '()))
+    (let ((bad (or (null? tests) (not (pair? tests)))))
+      (if bad (list #f code (list 0 0 '()))
+        (try-attempt goal code tests max-a model 1 code -1 hints)))))
 
 ; ── synthesize:debug ──
 (define (synthesize:debug . args)
@@ -217,7 +222,7 @@ Rules:\n\
             (if (eq? type :llm)
               (let* ((goal (if (pair? pargs) (if (eq? (car pargs) :prompt) (if (pair? (cdr pargs)) (cadr pargs) "") "") ""))
                      (feedback "")
-                     (llm-content (call-llm name curr-code feedback model))
+                     (llm-content (call-llm name curr-code feedback model ""))
                      (new-code (extract-code llm-content))
                      (use-code (if (string=? (string-trim new-code) "") curr-code new-code)))
                 (set! curr-code use-code)

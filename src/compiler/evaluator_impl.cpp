@@ -9162,7 +9162,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
 
         // Recursion depth guard: friendly error vs segfault
         // MAX_C_STACK_DEPTH must be low enough to fit in the C++ call stack (~550 frames)
-        static constexpr std::size_t MAX_C_STACK_DEPTH = 400;
+        static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
         struct DepthGuard {
             std::size_t& d;
             ~DepthGuard() { --d; }

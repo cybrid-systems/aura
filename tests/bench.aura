@@ -11,9 +11,12 @@
 
 ; ── Config from env ──
 (define model (try (getenv "LLM_MODEL") (catch "deepseek-v4-flash")))
-(define rounds (try (string->number (getenv "BENCH_ROUNDS")) (catch 1)))
-(define max-a (try (string->number (getenv "BENCH_ATTEMPTS")) (catch 3)))
-(define limit (try (string->number (getenv "BENCH_LIMIT")) (catch 0)))
+(define (get-env-num name default)
+  (let ((v (getenv name)))
+    (if (string? v) (string->number v) default)))
+(define rounds (get-env-num "BENCH_ROUNDS" 1))
+(define max-a (get-env-num "BENCH_ATTEMPTS" 3))
+(define limit (get-env-num "BENCH_LIMIT" 0))
 
 ; ── Select tasks ──
 (define tasks (if (> limit 0) (take limit all-tasks) all-tasks))

@@ -15,10 +15,21 @@
   (let* ((name (list-ref task 0))
          (goal (list-ref task 1))
          (expects (list-ref task 2))
-         (test-code (string-append "(display (begin " goal "))"))
+         (depend (list-ref task 3))
+         (hints-list (list-ref task 4))
+         ; Build test: add require + display
+         (require-str (if (string=? depend "") ""
+                        (string-append "(require \"" depend "\" all:)")))
+         (test-code (string-append require-str "(display (begin " goal "))"))
          (test-list (list (list test-code (list-ref expects 0))))
+         ; Build hints string from hints list
+         (hints-str (if (null? hints-list) ""
+                      (let loop ((h hints-list) (acc ""))
+                        (if (null? h) acc
+                          (loop (cdr h) (string-append acc (car h) "\n"))))))
          (result (synthesize:test-driven name
                    :goal goal :tests test-list
+                   :hints hints-str
                    :max-attempts max-a :model model))
          (ok (car result)))
     (list ok name)))
