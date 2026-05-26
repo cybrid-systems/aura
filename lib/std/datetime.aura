@@ -12,7 +12,8 @@
   timestamp->weekday timestamp->yday
   ; Formatting
   timestamp->iso-date timestamp->iso-datetime
-  timestamp->date-string
+  timestamp->date-string timestamp->rfc822 timestamp->iso-week
+  now format-time
   ; Calendar
   leap-year? days-in-month day-of-week
   ; Timing
@@ -118,3 +119,57 @@
 
 ; ── Stopwatch / timing ────────────────────────────────────────
 (define (time-diff t1 t2) (- t2 t1))
+
+
+;; ── Extended formatting ─────────────────────────────────────
+;; Added 2026-05-26
+
+(define (month-name m)
+  (list-ref (list "Jan" "Feb" "Mar" "Apr" "May" "Jun"
+                  "Jul" "Aug" "Sep" "Oct" "Nov" "Dec") (- m 1)))
+
+(define (weekday-name wd)
+  (list-ref (list "Sun" "Mon" "Tue" "Wed" "Thu" "Fri" "Sat") wd))
+
+(define (timestamp->rfc822 t)
+  (string-append
+    (weekday-name (timestamp->weekday t)) ", "
+    (pad2 (timestamp->day t)) " "
+    (month-name (timestamp->month t)) " "
+    (number->string (timestamp->year t)) " "
+    (pad2 (timestamp->hour t)) ":"
+    (pad2 (timestamp->minute t)) ":"
+    (pad2 (timestamp->second t)) " GMT"))
+
+(define (timestamp->iso-week t)
+  (let* ((y (timestamp->year t))
+         (yd (timestamp->yday t))
+         (wd (timestamp->weekday t))
+         (week (quotient (+ yd (- wd 0) 3) 7)))
+    (if (<= week 0) 1
+      (if (>= week 53) 52 week))))
+
+(define (now) (timestamp->iso-datetime (current-time)))
+
+(define (format-time fmt t)
+  (let ((n (string-length fmt)))
+    (let loop ((i 0) (result ""))
+      (if (>= i n) result
+        (let ((c (string-ref fmt i)))
+          (if (not (= c 37))  ;; not '%'
+            (loop (+ i 1) (string-append result (list->string (list c))))
+            (if (< (+ i 1) n)
+              (let ((spec (string-ref fmt (+ i 1))))
+                (loop (+ i 2)
+                      (string-append result
+                        (if (= spec 89) (number->string (timestamp->year t))
+                          (if (= spec 109) (pad2 (timestamp->month t))
+                            (if (= spec 100) (pad2 (timestamp->day t))
+                              (if (= spec 72) (pad2 (timestamp->hour t))
+                                (if (= spec 77) (pad2 (timestamp->minute t))
+                                  (if (= spec 83) (pad2 (timestamp->second t))
+                                    (if (= spec 98) (month-name (timestamp->month t))
+                                      (if (= spec 97) (weekday-name (timestamp->weekday t))
+                                        (if (= spec 87) (number->string (timestamp->iso-week t))
+                                          (string-append "%" (list->string (list spec))))))))))))))
+              (loop (+ i 1) (string-append result "%")))))))))
