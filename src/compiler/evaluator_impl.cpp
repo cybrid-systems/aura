@@ -12,6 +12,7 @@ module;
 #include <netdb.h>
 #include <poll.h>
 #include <fcntl.h>
+#include <sys/wait.h>
 #include <regex>
 #include <cmath>
 #include "messaging_bridge.h"
@@ -5239,35 +5240,56 @@ Evaluator::Evaluator() {
     primitives_.add("http-post", [this](const auto& a) -> EvalValue {
         if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
             return make_void();
-        auto url = string_heap_[types::as_string_idx(a[0])];
-        auto body = string_heap_[types::as_string_idx(a[1])];
-        // Write body to temp file to avoid shell escaping issues
-        std::string tmpfile = "/tmp/_aura_body_" + std::to_string(::time(nullptr))
-          + "_" + std::to_string(++body_temp_counter_);
-        {
-            std::ofstream ofs(tmpfile);
-            ofs << body;
-        }
-        std::string cmd = "curl -s -X POST --data-binary @" + tmpfile;
-        cmd += " -H \"Content-Type: application/json\"";
-        // Add auth if provided (3rd arg = auth token)
-        if (a.size() >= 3 && types::is_string(a[2])) {
-            auto auth = string_heap_[types::as_string_idx(a[2])];
-            cmd += " -H \"Authorization: Bearer " + auth + "\"";
-        }
-        cmd += " --max-time 30 --connect-timeout 10";
-        cmd += " \"" + url + "\" 2>/dev/null";
-        std::array<char, 4096> buf;
-        std::string result;
-        auto fp = ::popen(cmd.c_str(), "r");
-        if (!fp) {
-            std::remove(tmpfile.c_str());
+        auto& url = string_heap_[types::as_string_idx(a[0])];
+        auto& body = string_heap_[types::as_string_idx(a[1])];
+        // Pipe body to curl's stdin, read stdout — no temp files, no shell escaping.
+        int in[2], out[2];
+        if (::pipe(in) < 0 || ::pipe(out) < 0)
+            return make_void();
+        pid_t pid = ::fork();
+        if (pid < 0) {
+            ::close(in[0]); ::close(in[1]); ::close(out[0]); ::close(out[1]);
             return make_void();
         }
-        while (::fgets(buf.data(), static_cast<int>(buf.size()), fp))
-            result += buf.data();
-        ::pclose(fp);
-        std::remove(tmpfile.c_str());
+        if (pid == 0) {
+            // ── child: exec curl, reading body from stdin ──
+            ::close(in[1]); ::close(out[0]);
+            ::dup2(in[0], STDIN_FILENO); ::dup2(out[1], STDOUT_FILENO);
+            ::close(in[0]); ::close(out[1]);
+            // Build auth header string first (outlives if scope, used in execvp)
+            std::string auth_hdr;
+            if (a.size() >= 3 && types::is_string(a[2]))
+                auth_hdr = std::string("Authorization: Bearer ")
+                    + string_heap_[types::as_string_idx(a[2])];
+            const char* argv[16]{};
+            int i = 0;
+            argv[i++] = "curl";
+            argv[i++] = "-s"; argv[i++] = "-X"; argv[i++] = "POST";
+            argv[i++] = "--data-binary"; argv[i++] = "@-";
+            argv[i++] = "-H"; argv[i++] = "Content-Type: application/json";
+            if (!auth_hdr.empty()) {
+                argv[i++] = "-H";
+                argv[i++] = auth_hdr.c_str();
+            }
+            argv[i++] = "--max-time"; argv[i++] = "30";
+            argv[i++] = "--connect-timeout"; argv[i++] = "10";
+            argv[i++] = url.c_str();
+            argv[i] = nullptr;
+            ::execvp("curl", const_cast<char* const*>(argv));
+            ::_exit(1);
+        }
+        // ── parent: write body, then read response ──
+        ::close(in[0]); ::close(out[1]);
+        ::write(in[1], body.data(), body.size());
+        ::close(in[1]);
+        std::array<char, 4096> buf;
+        std::string result;
+        ssize_t n;
+        while ((n = ::read(out[0], buf.data(), buf.size())) > 0)
+            result.append(buf.data(), static_cast<std::size_t>(n));
+        ::close(out[0]);
+        int status;
+        ::waitpid(pid, &status, 0);
         if (result.empty())
             return make_void();
         auto sidx = string_heap_.size();

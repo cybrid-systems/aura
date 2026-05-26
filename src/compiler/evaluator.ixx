@@ -241,7 +241,6 @@ private:
 
     // ── Timeline for intend (E2, backward compat) ───────────────
     std::vector<std::string> timeline_; //
-    std::uint64_t body_temp_counter_ = 0;  // unique counter for http-post temp files
     std::vector<std::string> string_heap_;
     std::vector<std::string> keyword_table_; // keyword name strings (indexed by KeywordRef)
     std::size_t eval_depth_ = 0; // recursion counter for friendly stack overflow
