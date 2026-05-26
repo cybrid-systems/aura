@@ -3611,7 +3611,10 @@ void Evaluator::init_pair_primitives() {
             return make_string(0);
 
         // Inline unparse for the workspace root
-        auto unparse = [&](this const auto& self, aura::ast::NodeId id, int indent) -> std::string {
+        constexpr int kMaxUnparseDepth = 256;
+        auto unparse = [&](this const auto& self, aura::ast::NodeId id, int indent, int depth = 0) -> std::string {
+            if (depth > kMaxUnparseDepth)
+                return "...";
             if (id == aura::ast::NULL_NODE || id >= workspace_flat_->size())
                 return "()";
             auto v = workspace_flat_->get(id);
@@ -3645,7 +3648,7 @@ void Evaluator::init_pair_primitives() {
                     for (std::size_t i = 0; i < v.children.size(); ++i) {
                         if (i > 0)
                             s += " ";
-                        s += self(v.child(i), indent + 1);
+                        s += self(v.child(i), indent + 1, depth + 1);
                     }
                     return s + ")";
                 }
@@ -3658,7 +3661,7 @@ void Evaluator::init_pair_primitives() {
                     }
                     s += ")";
                     if (!v.children.empty())
-                        s += " " + self(v.child(0), indent + 1);
+                        s += " " + self(v.child(0), indent + 1, depth + 1);
                     return s + ")";
                 }
                 case aura::ast::NodeTag::Let:
@@ -3668,41 +3671,41 @@ void Evaluator::init_pair_primitives() {
                     std::string s =
                         "(" + kw + " ((" + std::string(workspace_pool_->resolve(v.sym_id)) + " ";
                     if (!v.children.empty())
-                        s += self(v.child(0), indent + 1);
+                        s += self(v.child(0), indent + 1, depth + 1);
                     s += "))";
                     if (v.children.size() > 1)
-                        s += " " + self(v.child(1), indent + 1);
+                        s += " " + self(v.child(1), indent + 1, depth + 1);
                     return s + ")";
                 }
                 case aura::ast::NodeTag::Define: {
                     return "(define " + std::string(workspace_pool_->resolve(v.sym_id)) + " " +
-                           (v.children.empty() ? "()" : self(v.child(0), indent + 1)) + ")";
+                           (v.children.empty() ? "()" : self(v.child(0), indent + 1, depth + 1)) + ")";
                 }
                 case aura::ast::NodeTag::IfExpr: {
                     std::string s = "(if";
                     for (std::size_t i = 0; i < v.children.size(); ++i)
-                        s += " " + self(v.child(i), indent + 1);
+                        s += " " + self(v.child(i), indent + 1, depth + 1);
                     return s + ")";
                 }
                 case aura::ast::NodeTag::Begin: {
                     std::string s = "(begin";
                     for (std::size_t i = 0; i < v.children.size(); ++i)
-                        s += " " + self(v.child(i), indent + 1);
+                        s += " " + self(v.child(i), indent + 1, depth + 1);
                     return s + ")";
                 }
                 case aura::ast::NodeTag::Set: {
                     return "(set! " + std::string(workspace_pool_->resolve(v.sym_id)) + " " +
-                           (v.children.empty() ? "()" : self(v.child(0), indent + 1)) + ")";
+                           (v.children.empty() ? "()" : self(v.child(0), indent + 1, depth + 1)) + ")";
                 }
                 case aura::ast::NodeTag::Quote: {
-                    return "(quote " + (v.children.empty() ? "()" : self(v.child(0), indent + 1)) +
+                    return "(quote " + (v.children.empty() ? "()" : self(v.child(0), indent + 1, depth + 1)) +
                            ")";
                 }
                 case aura::ast::NodeTag::Pair: {
                     return "(" +
                            (v.children.empty() ? "()"
-                                               : self(v.child(0), indent + 1) + " . " +
-                                                     self(v.child(1), indent + 1)) +
+                                               : self(v.child(0), indent + 1, depth + 1) + " . " +
+                                                     self(v.child(1), indent + 1, depth + 1)) +
                            ")";
                 }
                 case aura::ast::NodeTag::Export: {
@@ -3717,7 +3720,7 @@ void Evaluator::init_pair_primitives() {
                         s += " " + std::string(workspace_pool_->resolve(pid));
                     s += ")";
                     if (!v.children.empty())
-                        s += " " + self(v.child(0), indent + 1);
+                        s += " " + self(v.child(0), indent + 1, depth + 1);
                     return s + ")";
                 }
                 default: {
