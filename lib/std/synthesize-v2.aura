@@ -6,7 +6,7 @@
 (require std/adaptive all:)
 
 (export synthesize:test-driven synthesize:debug synthesize:project
-        synthesize:run-tests synthesize:eval-test)
+        synthesize:compose synthesize:run-tests synthesize:eval-test)
 
 ; ── string-trim ──
 (define (string-trim str)
@@ -194,3 +194,47 @@ Rules:\n\
               (list #f (list file-rs (list p t fl)))))
           (if all-ok (list #t (list file-rs "no-integ-tests"))
             (list #f (list file-rs "some-files-failed"))))))))
+
+; ── synthesize:compose ──
+(define (synthesize:compose name . args)
+  (let* ((phases (if (pair? args) (if (eq? (car args) :phases) (if (pair? (cdr args)) (cadr args) '()) '()) '()))
+         (curr-code (if (pair? args) (if (eq? (car args) :code) (if (pair? (cdr args)) (cadr args) "") "") ""))
+         (model (if (pair? args) (if (eq? (car args) :model) (if (pair? (cdr args)) (cadr args) "deepseek-chat") "deepseek-chat") "deepseek-chat"))
+         (args2 (if (pair? (cddr args)) (cddr args) '()))
+         (phases (if (pair? args2) (if (eq? (car args2) :phases) (if (pair? (cdr args2)) (cadr args2) phases) phases) phases))
+         (curr-code (if (pair? args2) (if (eq? (car args2) :code) (if (pair? (cdr args2)) (cadr args2) curr-code) curr-code) curr-code))
+         (model (if (pair? args2) (if (eq? (car args2) :model) (if (pair? (cdr args2)) (cadr args2) model) model) model)))
+    (if (or (null? phases) (not (pair? phases))) (list #f curr-code "no-phases")
+      ;; Use a simple dispatch: iterate through phases using a loop
+      (let run-phase ((remaining phases) (current-ok #t))
+        (if (null? remaining)
+          (if current-ok (list #t curr-code "all-phases-complete") (list #f curr-code "phase-failed"))
+          (let* ((phase (car remaining))
+                 (type (car phase))
+                 (pargs (cdr phase))
+                 (next (cdr remaining)))
+            ;; Dispatch by type — use 3-arg if for safety
+            (if (eq? type :llm)
+              (let* ((goal (if (pair? pargs) (if (eq? (car pargs) :prompt) (if (pair? (cdr pargs)) (cadr pargs) "") "") ""))
+                     (feedback "")
+                     (llm-content (call-llm name curr-code feedback model))
+                     (new-code (extract-code llm-content))
+                     (use-code (if (string=? (string-trim new-code) "") curr-code new-code)))
+                (set! curr-code use-code)
+                (run-phase next (and current-ok (not (string=? new-code "")))))
+              (if (eq? type :mutate)
+                (let* ((strategy (if (pair? pargs) (if (eq? (car pargs) :strategy) (if (pair? (cdr pargs)) (cadr pargs) "numeric") "numeric") "numeric")))
+                  (if (string=? strategy "swap-operators")
+                    (let ((opos (string-index curr-code "*" 0)))
+                      (when (> opos -1)
+                        (set! curr-code (string-append (substring curr-code 0 opos) "+" (substring curr-code (+ opos 1) (string-length curr-code)))))))
+                  (run-phase next current-ok))
+                (if (eq? type :test-driven)
+                  (let* ((tests (if (pair? pargs) (if (eq? (car pargs) :tests) (if (pair? (cdr pargs)) (cadr pargs) '()) '()) '()))
+                         (goal (if (pair? pargs) (if (eq? (car pargs) :goal) (if (pair? (cdr pargs)) (cadr pargs) "") "") ""))
+                         (r (synthesize:test-driven name :goal goal :code curr-code :tests tests :max-attempts 1 :model model))
+                         (ok (car r)) (fc (cadr r)))
+                    (set! curr-code fc)
+                    (run-phase next (and current-ok ok)))
+                  ;; Unknown
+                  (run-phase next current-ok))))))))))
