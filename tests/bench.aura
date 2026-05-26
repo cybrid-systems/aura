@@ -1,0 +1,13 @@
+; ── tests/bench.aura — Aura Native EDSL Benchmark ───
+(require "std/bench" all:)
+
+(define model (try (getenv "LLM_MODEL") (catch "deepseek-chat")))
+(define rounds 3)
+(define max-attempts 5)
+
+(display "=== Aura EDSL Benchmark ===\n")
+(display "Model: ")(display model)(newline)
+(display "Tasks: ")(display (task-count))(newline)(newline)
+
+(define results (run-rounds all-tasks model max-attempts rounds))
+(print-report all-tasks results)
