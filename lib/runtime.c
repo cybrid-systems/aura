@@ -604,10 +604,10 @@ void aura_newline(void) {
 // Full primitive support is handled by the evaluator (JIT path).
 
 // Internal: check if an int64_t value is a pair (a.k.a. cons cell)
-// In Aura's tag scheme: positive values are pairs (pair_id + 1, negated)
-// Actually pairs use negative encoding: -(pair_id+1)
+// In Aura's tag scheme: heap objects (pairs/strings/closures) have low bit = 1
+// Pairs and strings have the same tag format: (id << 2) | 1
 static int is_pair_val(int64_t v) {
-    return v < 0 && v > -65536;
+    return IS_PAIR(v);
 }
 
 int64_t aura_prim_call(int64_t prim_id, int64_t a1, int64_t a2, int64_t argc) {
@@ -638,26 +638,26 @@ int64_t aura_prim_call(int64_t prim_id, int64_t a1, int64_t a2, int64_t argc) {
         free(buf);
         return result;
     }
-    case 1: // StringLength
-        return (int64_t)strlen(aura_string_ref(a1));
+    case 1: // StringLength — return fixnum-encoded
+        return ((int64_t)strlen(aura_string_ref(a1))) << 1;
     case 32: { // ListLength — count elements in a pair chain (list)
         int64_t count = 0;
         int64_t val = a1;
-        while (val != 0 && val < 0) {  // non-zero negative = pair sentinel
+        while (val != 0 && IS_PAIR(val)) {  // heap pointer with tag=01
             count++;
             val = aura_pair_cdr(val);
         }
-        return count;
+        return count << 1;  // fixnum-encode
     }
     case 33: { // ListRef — nth element of a list
         int64_t val = a1;
-        int64_t idx = a2;
+        int64_t idx = a2 >> 1;  // fixnum-decode
         int64_t i = 0;
-        while (val != 0 && val < 0 && i < idx) {
+        while (val != 0 && IS_PAIR(val) && i < idx) {
             val = aura_pair_cdr(val);
             i++;
         }
-        if (val != 0 && val < 0 && i == idx)
+        if (val != 0 && IS_PAIR(val) && i == idx)
             return aura_pair_car(val);
         return 0;
     }
@@ -684,13 +684,14 @@ int64_t aura_prim_call(int64_t prim_id, int64_t a1, int64_t a2, int64_t argc) {
         free(buf);
         return result;
     }
-    case 4: // StringEq
-        return (int64_t)(strcmp(aura_string_ref(a1), aura_string_ref(a2)) == 0);
-    case 5: // StringLt
-        return (int64_t)(strcmp(aura_string_ref(a1), aura_string_ref(a2)) < 0);
-    case 6: { // NumberToString
+    case 4: // StringEq — return pointer-tagged bool
+        return strcmp(aura_string_ref(a1), aura_string_ref(a2)) == 0 ? 7 : 3;
+    case 5: // StringLt — return pointer-tagged bool
+        return strcmp(aura_string_ref(a1), aura_string_ref(a2)) < 0 ? 7 : 3;
+    case 6: { // NumberToString — decode fixnum, then format
         char buf[64];
-        snprintf(buf, sizeof(buf), "%ld", (long)a1);
+        long val = IS_FIXNUM(a1) ? (a1 >> 1) : (long)a1;
+        snprintf(buf, sizeof(buf), "%ld", val);
         return aura_alloc_string(buf);
     }
     case 7: { // StringToNumber
