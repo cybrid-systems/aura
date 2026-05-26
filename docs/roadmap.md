@@ -1,6 +1,6 @@
 # Aura 路线图
 
-**更新：2026-05-26 — 统一值表示完成，P3/P4 修复**
+**更新：2026-05-26 — 全部 P0-P5 完成**
 
 ---
 
@@ -8,23 +8,30 @@
 
 | 维度 | 数值 |
 |:-----|:-----|
-| 核心测试 | ✅ 7 suites / 57 emit / 全部通过 |
+| 核心测试 | ✅ 7 suites 通过 |
 | 编译器 Bug | ✅ 0 个 open |
 | EDSL Benchmark (Grok) | 113/135 (83.7%) |
-| Benchmark 剩余失败 | 纯 LLM 生成质量，0 个编译器 bug |
+| AOT emit 测试 | ✅ 57/57 全绿 |
+| Benchmark 自托管 | ✅ `tests/bench.aura` |
 
-## 已完成（今日）
+## 已完成
 
-| 任务 | 说明 |
-|:-----|:------|
-| AOT fixnum/bool 修复 | OpMul/OpDiv fixnum 编码, bool tagged (#t=7,#f=3), comparisons |
-| AOT runtime pair 检查 | `IS_PAIR` 替换 `val < 0` — fix apply/reverse/range/unique |
-| Float 显示 + 算术 | float pool + aura_alloc_float + AOT OpAdd/Sub/Mul/Div float 处理 |
-| 统一值表示 | EvalValue 从 std::variant 改为 int64_t tagged, 与 AOT 完全兼容 |
-| emit 测试修复 | 13 个 bool 测试 `1`→`#t` + remainder fix + nested-car 替换 permute |
+### 编译器 Bug 修复
+- 类型标注 binding, FFI closure dispatch, pipe mode 报错, if-no-else 条件求值, rest-arg 空参
+- 常量文件夹 tagged bool (AOT 兼容), if_false 测试预期
 
-## 🔴 待办
+### AOT 深入修复
+- Fixnum/布尔 tagged 值 (OpMul/Div/Eq/And/Or/Not/Branch)
+- string 显示 STRING_BIAS, NumberToString fixnum 解码
+- runtime.c IS_PAIR 替换 val<0 (修复 apply/reverse/range/unique)
+- Float 显示 + float pool + 算术 (OpAdd/Sub/Mul/Div)
+- 常量文件夹 tagged bool 传播修复 (IS_TRUTHY)
 
-| 优先级 | 任务 | 说明 | 预估 |
-|:------:|:------|:------|:----:|
-| P5 | **Benchmark 完全内建** | 用 synthesize-v2 替换 Python benchmark | 1-2d |
+### 统一值表示
+- EvalValue 从 std::variant<16> 改为 int64_t pointer tagging
+- AOT ↔ evaluator 零转换 — filter/map/= 正确工作
+- 修复 permutations segfault (P4)
+
+### 内建 benchmark
+- 135 tasks 从 JSON 加载, synthesize:test-driven 管线
+- 多轮 + 结果聚合 + 表格输出 (P5)
