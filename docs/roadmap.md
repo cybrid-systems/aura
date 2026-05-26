@@ -58,6 +58,6 @@
 
 ### 待做
 - [ ] **Serve 模式**：bench.aura 改用 `--serve-async` 持久化 workspace
-- [ ] **错误诊断传播**：`set-code`/`eval-current-output` 不吞空字符串
+- [x] **错误诊断传播**：`set-code`/`eval-current-output` 不吞空字符串
 - [ ] **JSON 结果输出**：兼容 `bench_results/*.json` 格式
 - [ ] **回归监控**：git commit + 模型 + 过率
