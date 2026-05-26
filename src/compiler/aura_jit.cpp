@@ -103,6 +103,8 @@ struct LLVMBuilder {
     // Pointer tagging constants (must match lib/runtime.c)
     static constexpr int64_t KWD_TRUE_VAL = 7;
     static constexpr int64_t KWD_FALSE_VAL = 3;
+    static constexpr int64_t FLOAT_BIAS_VAL = -10000000000000000LL;
+    llvm::Type* double_ty = llvm::Type::getDoubleTy(ctx);
     // String pool for OpConstString (IR module's string pool content)
     const std::vector<std::string>* string_pool = nullptr;
 
@@ -129,6 +131,7 @@ struct LLVMBuilder {
     llvm::Function* fn_drop_closure = nullptr;
     llvm::Function* fn_drop_value = nullptr;
     llvm::Function* fn_alloc_float = nullptr;
+    llvm::Function* fn_float_ref = nullptr;
     llvm::Function* fn_alloc_string = nullptr;
     llvm::Function* fn_string_ref = nullptr;
 
@@ -209,6 +212,9 @@ struct LLVMBuilder {
         fn_alloc_float = llvm::Function::Create(
                                    llvm::FunctionType::get(i64, {llvm::Type::getDoubleTy(ctx)}, false),
                                    llvm::Function::ExternalLinkage, "aura_alloc_float", mod);
+        fn_float_ref = llvm::Function::Create(
+                                   llvm::FunctionType::get(llvm::Type::getDoubleTy(ctx), {i64}, false),
+                                   llvm::Function::ExternalLinkage, "aura_float_ref", mod);
         fn_string_ref =
             llvm::Function::Create(llvm::FunctionType::get(ptr_i8, {i64}, false),
                                    llvm::Function::ExternalLinkage, "aura_string_ref", mod);
@@ -249,33 +255,94 @@ struct LLVMBuilder {
                 store(inst.ops[0], irb->CreateLoad(llvm::Type::getInt64Ty(ctx), gep));
                 return true;
             }
-            case OpAdd:
-                store(inst.ops[0], irb->CreateAdd(load(inst.ops[1]), load(inst.ops[2])));
+            case OpAdd: {
+                auto a = load(inst.ops[1]), b = load(inst.ops[2]);
+                auto a_is_float = irb->CreateICmpSLE(a, c64(FLOAT_BIAS_VAL));
+                auto b_is_float = irb->CreateICmpSLE(b, c64(FLOAT_BIAS_VAL));
+                auto any_float = irb->CreateOr(a_is_float, b_is_float);
+                // Float path: extract both values as double
+                auto a_dbl = irb->CreateSelect(a_is_float,
+                    irb->CreateCall(fn_float_ref, {a}),
+                    irb->CreateSIToFP(irb->CreateAShr(a, c64(1)), double_ty));
+                auto b_dbl = irb->CreateSelect(b_is_float,
+                    irb->CreateCall(fn_float_ref, {b}),
+                    irb->CreateSIToFP(irb->CreateAShr(b, c64(1)), double_ty));
+                auto fsum = irb->CreateFAdd(a_dbl, b_dbl);
+                auto float_res = irb->CreateCall(fn_alloc_float, {fsum});
+                // Fixnum path (current)
+                auto fixnum_res = irb->CreateAdd(a, b);
+                store(inst.ops[0], irb->CreateSelect(any_float, float_res, fixnum_res));
                 return true;
-            case OpSub:
-                store(inst.ops[0], irb->CreateSub(load(inst.ops[1]), load(inst.ops[2])));
+            }
+            case OpSub: {
+                auto a = load(inst.ops[1]), b = load(inst.ops[2]);
+                auto a_is_float = irb->CreateICmpSLE(a, c64(FLOAT_BIAS_VAL));
+                auto b_is_float = irb->CreateICmpSLE(b, c64(FLOAT_BIAS_VAL));
+                auto any_float = irb->CreateOr(a_is_float, b_is_float);
+                auto a_dbl = irb->CreateSelect(a_is_float,
+                    irb->CreateCall(fn_float_ref, {a}),
+                    irb->CreateSIToFP(irb->CreateAShr(a, c64(1)), double_ty));
+                auto b_dbl = irb->CreateSelect(b_is_float,
+                    irb->CreateCall(fn_float_ref, {b}),
+                    irb->CreateSIToFP(irb->CreateAShr(b, c64(1)), double_ty));
+                auto fsub = irb->CreateFSub(a_dbl, b_dbl);
+                auto float_res = irb->CreateCall(fn_alloc_float, {fsub});
+                auto fixnum_res = irb->CreateSub(a, b);
+                store(inst.ops[0], irb->CreateSelect(any_float, float_res, fixnum_res));
                 return true;
-            case OpMul:
+            }
+            case OpMul: {
+                auto a = load(inst.ops[1]), b = load(inst.ops[2]);
+                auto a_is_float = irb->CreateICmpSLE(a, c64(FLOAT_BIAS_VAL));
+                auto b_is_float = irb->CreateICmpSLE(b, c64(FLOAT_BIAS_VAL));
+                auto any_float = irb->CreateOr(a_is_float, b_is_float);
+                auto a_dbl = irb->CreateSelect(a_is_float,
+                    irb->CreateCall(fn_float_ref, {a}),
+                    irb->CreateSIToFP(irb->CreateAShr(a, c64(1)), double_ty));
+                auto b_dbl = irb->CreateSelect(b_is_float,
+                    irb->CreateCall(fn_float_ref, {b}),
+                    irb->CreateSIToFP(irb->CreateAShr(b, c64(1)), double_ty));
+                auto fmul = irb->CreateFMul(a_dbl, b_dbl);
+                auto float_res = irb->CreateCall(fn_alloc_float, {fmul});
+                // Fixnum path
+                llvm::Value* fixnum_res;
                 if (aot_mode) {
-                    // Fixnum-encoded: (a*2) * (b*2) = (a*b)*4, need >>1 for fixnum encoding
-                    store(inst.ops[0], irb->CreateAShr(irb->CreateMul(load(inst.ops[1]), load(inst.ops[2])), c64(1)));
+                    fixnum_res = irb->CreateAShr(irb->CreateMul(a, b), c64(1));
                 } else {
-                    store(inst.ops[0], irb->CreateMul(load(inst.ops[1]), load(inst.ops[2])));
+                    fixnum_res = irb->CreateMul(a, b);
                 }
+                store(inst.ops[0], irb->CreateSelect(any_float, float_res, fixnum_res));
                 return true;
+            }
             case OpDiv: {
                 auto dividend = load(inst.ops[1]);
                 auto divisor = load(inst.ops[2]);
+                auto a_is_float = irb->CreateICmpSLE(dividend, c64(FLOAT_BIAS_VAL));
+                auto b_is_float = irb->CreateICmpSLE(divisor, c64(FLOAT_BIAS_VAL));
+                auto any_float = irb->CreateOr(a_is_float, b_is_float);
+                // Float path
+                auto a_dbl = irb->CreateSelect(a_is_float,
+                    irb->CreateCall(fn_float_ref, {dividend}),
+                    irb->CreateSIToFP(irb->CreateAShr(dividend, c64(1)), double_ty));
+                auto b_dbl = irb->CreateSelect(b_is_float,
+                    irb->CreateCall(fn_float_ref, {divisor}),
+                    irb->CreateSIToFP(irb->CreateAShr(divisor, c64(1)), double_ty));
+                auto is_zero_f = irb->CreateFCmpOEQ(b_dbl, llvm::ConstantFP::get(double_ty, 0.0));
+                auto safe_b = irb->CreateSelect(is_zero_f, llvm::ConstantFP::get(double_ty, 1.0), b_dbl);
+                auto fdiv = irb->CreateFDiv(a_dbl, safe_b);
+                auto float_res = irb->CreateCall(fn_alloc_float, {fdiv});
+                // Fixnum path
                 auto is_zero = irb->CreateICmpEQ(divisor, c64(0));
                 auto safe_div = irb->CreateSelect(is_zero, c64(1), divisor);
                 auto div_result = irb->CreateSDiv(dividend, safe_div);
                 auto safe = irb->CreateSelect(is_zero, c64(0), div_result);
+                llvm::Value* fixnum_res;
                 if (aot_mode) {
-                    // Fixnum encoding: (a*2)/(b*2) = a/b (raw), need <<1
-                    store(inst.ops[0], irb->CreateShl(safe, c64(1)));
+                    fixnum_res = irb->CreateShl(safe, c64(1));
                 } else {
-                    store(inst.ops[0], safe);
+                    fixnum_res = safe;
                 }
+                store(inst.ops[0], irb->CreateSelect(any_float, float_res, fixnum_res));
                 return true;
             }
             case OpEq: {
