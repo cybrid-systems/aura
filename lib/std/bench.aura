@@ -34,6 +34,7 @@
         (display rounds)
         (display " ===")
         (newline)
+        ; Collect results using cons (O(n) per round)
         (define rd '())
         (let iter ((tl tasks))
           (if (pair? tl)
@@ -45,13 +46,13 @@
               (display name)
               (display " ")
               (if ok (display "OK") (display "FAIL"))
-              (set! rd (append rd (list result)))
+              (set! rd (cons result rd))
               (iter (cdr tl)))
             '()))
-        (loop (+ r 1) (append results (list rd))))))
+        ; Reverse rd to maintain task order, append to results
+        (loop (+ r 1) (append results (list (reverse rd)))))))
   (loop 0 '()))
 
-; ── Reporter ──
 (define (aggregate tasks round-results)
   (define total (length tasks))
   (define rounds (if (pair? round-results) (length round-results) 0))
