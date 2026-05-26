@@ -1118,13 +1118,12 @@ def get_execution_trace(code_str, timeout=10):
 
 def _auto_fix_procedure(code, expected, run_code, is_edsl):
     """Auto-inject (display ...) when LLM outputs #<procedure>.
-    Tries multiple display patterns without an LLM call.
+    Extracts function name + arity from source, then tries smart patterns.
     Uses a FRESH subprocess to avoid polluting the serve workspace."""
     import re as _re
     import subprocess as _sp
 
     def _fresh_run(test_code):
-        """Run code in a fresh subprocess (no workspace pollution)."""
         try:
             r = _sp.run(
                 [AURA], input=test_code, capture_output=True, text=True, timeout=10
@@ -1134,21 +1133,67 @@ def _auto_fix_procedure(code, expected, run_code, is_edsl):
             return False, "", "subprocess error"
 
     def _extract_content(src):
-        """Extract the code string from (set-code "...") form."""
         m = _re.match(r'\(set-code\s+"(.*)"\)', src.strip())
         if m:
             return m.group(1), True
         return src, False
 
-    def _find_last_fn(src):
-        """Find the last (define (fn-name ...) ...) in source code."""
-        matches = []
-        for m in _re.finditer(r'\(define\s+\(([^\s)]+)', src):
-            matches.append(m.group(1))
-        return matches[-1] if matches else None
+    def _find_fn_with_arity(src):
+        """Find last (define (fn a1 a2 ...) ...) or (define fn (lambda ...)).
+        Returns (fn_name, arity) or None."""
+        # (define (fn args...) body...)
+        m = _re.findall(r'\(define\s+\(([^\s)]+)([^)]*)\)', src)
+        if m:
+            name, all_args = m[-1]
+            args = [a for a in all_args.split() if a and not a.startswith(':')]
+            return name, len(args)
+        # (define fn (lambda (args...) ...))
+        m = _re.findall(r'\(define\s+([^\s)]+)\s+\(lambda\s+\(([^)]*)\)', src)
+        if m:
+            return m[-1][0], len([a for a in m[-1][1].split() if a])
+        return None
+
+    def _gen_patterns(fn, arity):
+        """Generate display patterns based on arity.
+        Tries from most specific (list-based) to most generic."""
+        pats = []
+        if arity == 0:
+            pats = [
+                f'(display ({fn}))',
+                f'(display "{fn} done")',
+            ]
+        elif arity == 1:
+            pats = [
+                # For sort-like: (display (fn (list 3 1 4 1 5)))
+                f'(display ({fn} (list 3 1 4 1 5)))',
+                # For simple: (display (fn 42))
+                f'(display ({fn} 42))',
+                f'(display ({fn} 0))',
+                f'(display ({fn} \"test\"))',
+            ]
+        elif arity == 2:
+            pats = [
+                # For search-like: (display (fn (list 1 3 5 7 9) 5))
+                f'(display ({fn} (list 1 3 5 7 9) 5))',
+                # For other 2-arg: (display (fn (list 3 1 4 1 5) 1))
+                f'(display ({fn} (list 3 1 4 1 5) 1))',
+                f'(display ({fn} 42 7))',
+                f'(display ({fn} 0 0))',
+            ]
+        else:  # 3+ args
+            pats = [
+                f'(display ({fn} 1 2 3))',
+                f'(display ({fn} 42 7 0))',
+                f'(display ({fn} 0 0 0))',
+            ]
+        # Always try the "done" pattern and raw display
+        pats += [
+            f'(display "{fn} completed")',
+            f'(display {fn})',
+        ]
+        return pats
 
     def _inject_display(original, body, pat):
-        """Inject display pattern into either EDSL content or full code."""
         if is_edsl:
             return f'(set-code "{body} {pat}")'
         else:
@@ -1160,20 +1205,12 @@ def _auto_fix_procedure(code, expected, run_code, is_edsl):
     else:
         body = code
 
-    fn = _find_last_fn(body)
-    if not fn:
+    result = _find_fn_with_arity(body)
+    if not result:
         return None
+    fn, arity = result
 
-    # Try patterns: (display fn), (display (fn arg)), (display (fn)), (display "done")
-    patterns = [
-        f'(display ({fn} 42))',                 # (display (fn 42)) — call with default
-        f'(display ({fn} 1 2))',                # (display (fn 1 2)) — for 2-arg
-        f'(display ({fn} 0))',                  # (display (fn 0)) — try 0
-        f'(display ({fn} \"test\"))',          # (display (fn "test")) — try string
-        f'(display "{fn} completed")',        # (display "done")
-        f'(display {fn})',                     # (display fn) — last resort, proc ref
-    ]
-
+    patterns = _gen_patterns(fn, arity)
     for pat in patterns:
         mod = _inject_display(code, body, pat)
         full = mod + ("\n(eval-current)" if is_edsl else "")
