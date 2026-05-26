@@ -1,10 +1,10 @@
 ;; task: edsl-workspace-cow
 ;; goal: Create child workspace, switch, and verify COW isolation
 ;; expect: iso
-;; hint: (set-code '(define x 1))
+;; hint: (set-code "(define x 1)")
 ;; hint: (define ws (workspace:create 'test))
 ;; hint: (workspace:switch ws)
-;; hint: (set-code '(define y 2))
+;; hint: (set-code "(define y 2)")
 ;; hint: (workspace:switch 0)
 ;; hint: (display (car (car (query:def-use 'x))))
 

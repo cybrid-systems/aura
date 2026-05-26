@@ -1,6 +1,6 @@
 ;; task: edsl-defuse-multi
 ;; goal: Use query:def-use with multiple functions in workspace
 ;; expect: 2
-;; hint: (set-code '(define (f x) (+ x 1))(define (g y) (* y 2)))
+;; hint: (set-code "(define (f x) (+ x 1))(define (g y) (* y 2))")
 ;; hint: (display (+ (length (car (query:def-use 'f)))(length (car (query:def-use 'g)))))
 
