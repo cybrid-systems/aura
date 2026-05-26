@@ -1,0 +1,3 @@
+(export a fn)
+(define a 42)
+(define (fn x) (+ x 1))

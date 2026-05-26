@@ -119,7 +119,7 @@ export inline EvalValue make_void() noexcept {
     return EvalValue(11);  // void sentinel = 11
 }
 export inline bool is_void(const EvalValue& v) noexcept {
-    return v.val == 0 || v.val == 11;  // 0 is fixnum(0), 11 is void
+    return v.val == 11;  // void sentinel = 11
 }
 
 export inline EvalValue make_float(double d) {
