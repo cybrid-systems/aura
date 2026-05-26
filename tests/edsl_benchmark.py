@@ -559,7 +559,23 @@ def check_success(out, expected):
 
 # ── 获取 api-reference ────────────────────────────────────
 def get_api_ref():
+    """Get full Aura API reference from std/adaptive module.
+    Includes core primitives + all stdlib modules."""
+    try:
+        code = '(require "std/adaptive" all:)(display (get-full-api-ref))'
+        r = subprocess.run(
+            [AURA], input=code, capture_output=True, text=True, timeout=10
+        )
+        if r.returncode == 0:
+            ref = r.stdout.strip()
+            if ref:
+                return ref
+    except Exception:
+        pass
+    # Fallback: basic core signature
     return ""
+
+
 
 PROMPT_SECTIONS = {
     "identity": (
@@ -598,7 +614,10 @@ def build_sys_prompt(stdlib, api_ref, task_name=""):
     if evolved:
         sp += "\n" + "=" * 40 + "\n"
         sp += f"EVOLVED HINTS (from past runs):\n{evolved}\n"
-    sp += f"\nCurrent Aura primitives:\n{api_ref[:2000]}"
+    if api_ref:
+        sp += "\n" + "=" * 40 + "\n"
+        sp += "Aura API Reference:\n"
+        sp += api_ref
     return sp
 
 
