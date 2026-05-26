@@ -26,7 +26,7 @@ tests = [
 
     # ── match 穷尽性 ──────────────────────────────────────
     ("match-missing", '(define-type (C) (A) (B) (C)) (let ((x A)) (match x ((A) 1) ((B) 2)))',
-     "2", "missing constructor"),
+     "2", "unhandled constructor"),
     ("match-wildcard", '(define-type (C) (A) (B) (C)) (let ((x A)) (match x ((A) 1) ((_) 2)))',
      "2", ""),
 
