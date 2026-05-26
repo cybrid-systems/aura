@@ -1,0 +1,49 @@
+(require "std/test" "std/bench" all:)
+; Tests for bench.aura: extract-code function
+
+; Helper: build string with backtick chars via list->string (avoid parser bug)
+(define bt 96)  ; backtick char
+(define nl 10)  ; newline
+
+(define (mkstr . chars)
+  (list->string chars))
+
+(test-suite "bench:extract-lisp"
+  ; ```lisp ... ``` → content
+  (define input (mkstr bt bt bt 108 105 115 112 nl 40 100 105 115 112 108 97 121 32 52 50 41 nl bt bt bt))
+  (check= "(display 42)" (extract-code input)))
+
+(test-suite "bench:extract-generic"
+  ; ``` ... ``` → content
+  (define input (mkstr bt bt bt nl 40 43 32 49 32 50 41 nl bt bt bt))
+  (check= "(+ 1 2)" (extract-code input)))
+
+(test-suite "bench:extract-define"
+  ; no backticks, just (define ...)
+  (check= "(define (f x) x) (display (f 1))"
+    (extract-code "(define (f x) x) (display (f 1))")))
+
+(test-suite "bench:extract-display"
+  ; no backticks, just (display ...)
+  (check= "(display 42)" (extract-code "(display 42)")))
+
+(test-suite "bench:extract-lisp-multiline"
+  ; ```lisp with multi-line code
+  (define input (mkstr bt bt bt 108 105 115 112 nl
+    40 100 101 102 105 110 101 32 40 97 100 100 32 97 32 98 41 32 40 43 32 97 32 98 41 nl
+    40 100 105 115 112 108 97 121 32 40 97 100 100 32 51 32 52 41 41 nl bt bt bt))
+  (check= "(define (add a b) (+ a b))\n(display (add 3 4))"
+    (extract-code input)))
+
+(test-suite "bench:extract-whitespace-trim"
+  ; leading/trailing whitespace around ```lisp
+  (define input (mkstr nl bt bt bt 108 105 115 112 nl 40 100 105 115 112 108 97 121 32 55 41 nl bt bt bt nl))
+  (check= "(display 7)" (extract-code input)))
+
+(test-suite "bench:extract-empty"
+  ; empty input → empty
+  (check= "" (extract-code "")))
+
+(test-suite "bench:extract-no-code"
+  ; text without any code markers → trimmed
+  (check= "hello world" (extract-code "  hello world  ")))
