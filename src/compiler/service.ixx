@@ -290,13 +290,13 @@ public:
                 return true;
         }
 
-        // Type annotations wrapping a variable: tree-walker gives proper
-        // unbound-variable diagnostics; IR lowering silently returns 0.
+        // Type annotations: if storing a variable name (3-arg form),
+        // tree-walker handles variable binding; IR/JIT cannot.
         if (flat.get(root).tag == aura::ast::NodeTag::TypeAnnotation) {
             auto root_v = flat.get(root);
             if (!root_v.children.empty()) {
-                auto inner_tag = flat.get(root_v.child(0)).tag;
-                if (inner_tag == aura::ast::NodeTag::Variable)
+                if (root_v.int_value != 0 ||
+                    flat.get(root_v.child(0)).tag == aura::ast::NodeTag::Variable)
                     return true;
             }
         }
@@ -320,6 +320,11 @@ public:
             // Dotted rest lambda cannot be lowered to IR (rest param is
             // lowered as single Arg slot, not as pair list)
             if (nv.tag == aura::ast::NodeTag::Lambda && nv.int_value != 0)
+                return true;
+
+            // TypeAnnotation with var_annot (3-arg form (: name Type val)):
+            // tree-walker handles variable binding; IR/JIT cannot.
+            if (nv.tag == aura::ast::NodeTag::TypeAnnotation && nv.int_value != 0)
                 return true;
 
             // General variable references to user-defined top-level values
@@ -416,19 +421,22 @@ public:
         if (needs_tree_walker_fallback(*flat_ptr, *pool_ptr, expanded_root)) {
             auto result =
                 evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
-            // Track all value define names so subsequent eval calls don't fall
-            // through to the IR pipeline for them (which can't resolve runtime vars).
-            auto extract_defs = [&](aura::ast::NodeId nid, auto& self) -> void {
-                if (nid >= flat_ptr->size())
-                    return;
+            // Track all bound names so subsequent eval calls don't fall
+            // through to the IR pipeline (which silently returns 0 for unknown vars).
+            auto track_names = [&](aura::ast::NodeId nid, auto& self) -> void {
+                if (nid >= flat_ptr->size()) return;
                 auto nv = flat_ptr->get(nid);
                 if (nv.tag == aura::ast::NodeTag::Define)
                     user_bindings_.insert(std::string(pool_ptr->resolve(nv.sym_id)));
+                if (nv.tag == aura::ast::NodeTag::TypeAnnotation && nv.int_value != 0) {
+                    user_bindings_.insert(
+                        std::string(pool_ptr->resolve(static_cast<aura::ast::SymId>(nv.int_value))));
+                }
                 if (nv.tag == aura::ast::NodeTag::Begin)
                     for (auto c : nv.children)
                         self(c, self);
             };
-            extract_defs(expanded_root, extract_defs);
+            track_names(expanded_root, track_names);
             return result;
         }
 

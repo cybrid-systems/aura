@@ -9909,6 +9909,17 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     auto child_result = eval_flat(*f, *p, v.child(0), eval_env);
                     if (!child_result)
                         return child_result;
+                    // 3-arg form (: name Type val): bind the result in eval_env
+                    if (v.int_value != 0) {
+                        auto var_name = p->resolve(static_cast<aura::ast::SymId>(v.int_value));
+                        if (!var_name.empty()) {
+                            auto& me = const_cast<Env&>(eval_env);
+                            me.set_cells(&cells_);
+                            auto ci = cells_.size();
+                            cells_.push_back(*child_result);
+                            me.bind(std::string(var_name), make_cell(ci));
+                        }
+                    }
                     // Runtime type check: compare value type against annotation
                     if (type_registry_ && annot_id < f->size()) {
                         auto expected_type_id = f->type_id(annot_id);
