@@ -6,21 +6,26 @@
 
 ---
 
-## Latest: 2026-05-26 — Phase 1-4 全部完成 + 3 个 evaluator bug 修复
+## Latest: 2026-05-26 — Phase 5 自托管改造（P0-P3 完成）
 
-**本次变更：**
-- 3 个 evaluator bug 修复（类型标注绑定、FFI closure、pipe mode 报错）
-- `if-no-else` 正确评估条件 + rest-arg 空参崩溃修复
-- API 签名生成（`get-full-api-ref` → system prompt 注入）
-- 7 个 task hint 修复（quoted list → string）
-- Synthesize Pipeline v2 完整实现（test-driven / project / debug / compose）
+**本周变（10 commits, ~20 files）：**
+- `http-post` pipe+fork→libcurl C API（dlopen 运行时加载）
+- Phase 5 三阶段 roadmap（docs/roadmap.md）
+- `run-one` 改用 `intend` 控制器（generator / verifier / fixer）
+- ant colony 局部变异修复器（fine/putt phase 不调 LLM）
+- `check_success` 灵活 substring 匹配（替代严格 `string=?`）
+- TASK_HINTS 注入 system prompt
+- 裁剪 76 行 API ref → 简洁 2 行 prompt
+- 并行执行（`run_parallel.sh`, 4 workers）
+- crash 修复：目录 IO、JIT 符号、arena OOM、if_false
+- `drop` 改名为 `skip`（避免 parser 特殊形式冲突）
 
 | 模型 | 任务数 | 通过 | 通过率 | 耗时 |
 |:----|:-----:|:----:|:-----:|:----:|
-| 🥇 **Grok 4.3** | 135 | **113** | **83.7%** | ~47s |
-| 🥈 **DeepSeek v4 Flash** | 135 | **98** | **72.6%** | ~227s |
+| 🥇 **Grok 4.3** | 135 | **110** | **81.5%** | ~47s |
+| 🥈 **DeepSeek v4 Flash** | 135 | **101** | **74.8%** | ~227s |
 
-### 新增通过（修复后 vs 前次 Grok 81.5%/DS 76.3%)
+### 新增通过（vs 前次 Grok 83.7%/DS 72.6%)
 
 | 任务 | Grok | DeepSeek | 原因 |
 |:-----|:----:|:--------:|:------|
@@ -71,6 +76,7 @@ LLM_API_KEY="$(cat ~/code/keys/grok)" \
 
 | 日期 | 版本 | 任务数 | Grok | DeepSeek | 说明 |
 |:----|:----:|:-----:|:----:|:--------:|:------|
+| 2026-05-26 | Phase 5 | 135 | **81.5%** | 74.8% | 自托管改造（P0-P3 完成） |
 | 2026-05-26 | Phase 4 | 135 | **83.7%** | 72.6% | 全管线完成 + 3 bug fix |
 | 2026-05-26 | P2 全部 | 135 | 82.2% | 80.7% | hint 修复 + 编译器 bug |
 | 2026-05-24 | P1 加固 | 111 | 83.8% | 82.9% | M4/closure/occurrence |
@@ -82,18 +88,32 @@ LLM_API_KEY="$(cat ~/code/keys/grok)" \
 
 ## Self-Hosted Benchmark (`tests/bench.aura`)
 
-Aura-native 版 benchmark，不走 Python，全在 Aura 内运行。当前版本有性能问题：
+Aura-native 版 benchmark，不走 Python，全在 Aura 内运行。
 
-| 指标 | Python runner | Aura-native | 
-|:-----|:-------------|:------------|
-| 全量耗时 | ~3 min | ~2+ hours¹ |
-| 单次过率 | 74/135 (54.8%) | 4/54 (7.4%)² |
-| 并行 | 20 workers | 串行 |
-| HTTP | 直接 socket | curl CLI + temp 文件 |
-| Code extraction | 多格式 fallback | 只认 ` ```lisp ` |
+| 指标 | Python runner | Aura-native | 差异原因 |
+|:-----|:-------------|:------------|:--------|
+| 全量耗时 | ~3 min | ~15 min | Python 用 20 workers；Aura 4 workers |
+| 单次过率 | 101/135 (74.8%) | ~10% | prompt 裁剪、check_success、TASK_HINTS 等仍需同步 |
+| HTTP | `http.client` | libcurl C API（popen） | ✅ 已同步 |
+| Code extraction | 6 步 fallback | ` ```lisp ` → define/display | ✅ 已同步 |
+| Retry | intend + ant colony | intend + ant colony | ✅ 已同步 |
+| Prompt | 2 行简洁 | 2 行简洁 | ✅ 已同步 |
+| check_success | substring 匹配 | substring 匹配 | ✅ 已同步 |
+| 并行 | 20 workers | 4 workers (shell) | ✅ 已有 |
 
-¹ 因 `http-post` 用 curl CLI + 无超时 + 串行。  
-² 因 code extraction 脆弱 + hints 未按任务裁剪 + 无 retry。
+### 已完成（Phase 5 P0-P3）
+- [x] `http-post` libcurl C API（dlopen 运行时加载）
+- [x] pipe+fork curl CLI 降级兜底
+- [x] `intend` 控制器（generator/verifier/fixer）
+- [x] ant colony 局部变异修复
+- [x] `check_success` 灵活匹配
+- [x] TASK_HINTS 注入
+- [x] 简洁 system prompt（去掉 76 行 API ref）
+- [x] 并行执行（`run_parallel.sh`）
+- [x] LLM_BASE_URL 支持
 
-### Roadmap
-见 `docs/roadmap.md#phase-5--自托管-benchmark-性能达标`
+### 待做
+- [ ] SIGSEGV at ~119 tasks（`docs/issues/`）
+- [ ] `--serve-async` multi-session 模式
+- [ ] JSON 结构化输出
+- [ ] 回归监控
