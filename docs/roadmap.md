@@ -53,10 +53,10 @@
 | 迭代修正 | 单次 shot | intend + PID adaptive | 过率 7% vs 73% |
 
 ### P0 — 基础设施（当前）
-- [ ] `http-post` 加 curl 超时（`--max-time 30`）
-- [ ] `extract-code` 加 ` ```scheme` / ` ```racket` fallback
+- [x] `http-post` 加 curl 超时（`--max-time 30`）
+- [x] `extract-code` 加 `(define ...)` / `(display ...)` fallback
 - [ ] bench.aura 改用 `--serve` 模式（持久化 workspace）
-- [ ] `http-post` 换原生 socket（不走 curl CLI）
+- [x] `http-post` 改为 pipe+fork execvp（不走 temp 文件 + shell）
 
 ### P1 — 智能调度
 - [ ] `run-one` 加 retry 循环（失败喂回 LLM）
