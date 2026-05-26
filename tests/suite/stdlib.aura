@@ -154,3 +154,75 @@
          (enc (base64-encode orig))
          (dec (base64-decode enc)))
     (check (string=? orig dec))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; std/net — edge cases
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "net:url-encode-edge"
+  (require "std/net" all:)
+  (check (string=? (url-encode "") ""))
+  (check (string=? (url-encode "~") "~"))          ;; unreserved
+  (check (string=? (url-encode ".") "."))           ;; unreserved
+  (check (string=? (url-encode "_") "_"))           ;; unreserved
+  (check (string=? (url-encode "-") "-"))           ;; unreserved
+  (check (> (string-index (url-encode "#") "%23" 0) -1))
+  (check (> (string-index (url-encode "&") "%26" 0) -1)))
+
+(test-suite "net:url-decode-edge"
+  (require "std/net" all:)
+  (check (string=? (url-decode "") ""))
+  ;; Invalid percent sequences should leave % as-is
+  (check (string? (url-decode "%")))
+  (check (string? (url-decode "%2"))))
+
+(test-suite "net:url-join-edge"
+  (require "std/net" all:)
+  (check (string=? (url-join "http://a" "") "http://a/"))
+  (check (string=? (url-join "http://a/" "") "http://a/"))
+  (check (string=? (url-join "" "") "")))
+
+;; ═══════════════════════════════════════════════════════════════
+;; std/encoding — edge cases + corner cases
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "encoding:hex-edge"
+  (require "std/encoding" all:)
+  (check (string=? (hex-encode (hex-decode "41")) "41"))
+  (check (string=? (hex-encode (hex-decode "")) ""))
+  (check (string=? (hex-decode "gg") (list->string (list 0))))  ;; invalid hex->0
+  (check (string? (hex-encode "longer string with 123")))
+  (check (string? (hex-decode "deadbeef0102"))))
+
+(test-suite "encoding:base64-all-padding"
+  (require "std/encoding" all:)
+  ;; 1 byte → 2 pad, 2 bytes → 1 pad, 3 bytes → 0 pad
+  (check (string=? (base64-encode "a") "YQ=="))
+  (check (string=? (base64-encode "ab") "YWI="))
+  (check (string=? (base64-encode "abc") "YWJj"))
+  ;; Roundtrip for each
+  (check (string=? "a" (base64-decode (base64-encode "a"))))
+  (check (string=? "ab" (base64-decode (base64-encode "ab"))))
+  (check (string=? "abc" (base64-decode (base64-encode "abc")))))
+
+(test-suite "encoding:base64-all-chars"
+  (require "std/encoding" all:)
+  ;; All ASCII printable chars roundtrip
+  (let* ((all-chars (list->string
+                     (let loop ((i 32) (r (list)))
+                       (if (> i 126) r (loop (+ i 1) (cons i r))))))
+         (enc (base64-encode all-chars))
+         (dec (base64-decode enc)))
+    (check (string=? all-chars dec))))
+
+(test-suite "encoding:hex-fuzz"
+  (require "std/encoding" all:)
+  ;; Random-ish strings roundtrip
+  (check (string=? "A" (hex-decode (hex-encode "A"))))
+  (check (string=? "XYZ" (hex-decode (hex-encode "XYZ"))))
+  (check (string=? "123" (hex-decode (hex-encode "123")))))
+
+(test-suite "encoding:empty-roundtrip"
+  (require "std/encoding" all:)
+  (check (string=? "" (hex-decode (hex-encode ""))))
+  (check (string=? "" (base64-decode (base64-encode "")))))
