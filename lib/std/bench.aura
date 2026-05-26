@@ -124,9 +124,10 @@ Type values: Int, Float, String, Bool, List, (-> A B), (Pair A B), Any
                         (if (null? h) acc
                           (loop (cdr h) (string-append acc (car h) "\n"))))))
          ; Build system prompt — must avoid any quote issues
-         (sys (string-append "You are an expert Aura Lisp programmer. Write a complete program ending with (display ...). The output must match exactly.\nRules:\n- (define ...) for functions, then (display (my-func args...))\n- (require std/name all:) for stdlib\n- Wrap code in ```lisp ... ``` markers.\n\n" api-ref-str))
-         (usr (string-append "Goal: " goal
-           (if (string=? hints-str "") "" (string-append "\n\nHINTS:\n" hints-str))))
+         (sys (string-append "You are an expert Aura Lisp programmer. Write a complete program ending with (display ...). The output must match exactly.\nRules:\n- (define ...) for functions, then (display (my-func args...))\n- (require std/name all:) for stdlib\n- Wrap code in ```lisp ... ``` markers.\n\n"
+           (if (string=? hints-str "") "" (string-append "--- TASK HINTS (FOLLOW THESE EXACTLY) ---\n" hints-str "\n"))
+           "\n" api-ref-str))
+         (usr (string-append "Goal: " goal))
          (msgs (list (hash "role" "system" "content" sys)
                     (hash "role" "user" "content" usr)))
          (body (json-encode (hash "model" model "messages" msgs "temperature" 0.3)))
