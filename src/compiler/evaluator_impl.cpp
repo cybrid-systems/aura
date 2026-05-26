@@ -5242,7 +5242,8 @@ Evaluator::Evaluator() {
         auto url = string_heap_[types::as_string_idx(a[0])];
         auto body = string_heap_[types::as_string_idx(a[1])];
         // Write body to temp file to avoid shell escaping issues
-        std::string tmpfile = "/tmp/_aura_body_" + std::to_string(::time(nullptr));
+        std::string tmpfile = "/tmp/_aura_body_" + std::to_string(::time(nullptr))
+          + "_" + std::to_string(++body_temp_counter_);
         {
             std::ofstream ofs(tmpfile);
             ofs << body;
@@ -5254,6 +5255,7 @@ Evaluator::Evaluator() {
             auto auth = string_heap_[types::as_string_idx(a[2])];
             cmd += " -H \"Authorization: Bearer " + auth + "\"";
         }
+        cmd += " --max-time 30 --connect-timeout 10";
         cmd += " \"" + url + "\" 2>/dev/null";
         std::array<char, 4096> buf;
         std::string result;

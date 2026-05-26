@@ -78,21 +78,32 @@ Type values: Int, Float, String, Bool, List, (-> A B), (Pair A B), Any
 
 ; ── extract-code from LLM response ──
 (define (extract-code response)
+  ; ```lisp ... ``` → content
+  ; ``` ... ``` → content
+  ; (define ...) or (display ...) → inline
+  ; else → raw trimmed
   (let ((l (string-index response "```lisp" 0)))
     (if (> l -1)
       (let* ((s (+ l 8)) (e (string-index response "```" s)))
         (if (> e -1) (string-trim (substring response s e))
           (let ((d (string-index response "(define " 0)))
-            (if (> d -1) (substring response d (string-length response)) response))))
+            (if (> d -1) (substring response d (string-length response))
+              response))))
       (let ((m (string-index response "```" 0)))
         (if (> m -1)
           (let* ((s (+ m 3)) (e (string-index response "```" s)))
-            (if (> e -1) (string-trim (substring response s e)) response))
+            (if (> e -1) (string-trim (substring response s e))
+              (let ((d (string-index response "(define " 0)))
+                (if (> d -1) (substring response d (string-length response))
+                  response))))
           (let ((d (string-index response "(define " 0)))
-            (if (> d -1) (substring response d (string-length response)) response)))))))
+            (if (> d -1) (substring response d (string-length response))
+              (let ((dp (string-index response "(display " 0)))
+                (if (> dp -1) (substring response dp (string-length response))
+                  (string-trim response)))))))))))
 
 (export all-tasks task-count run-rounds aggregate)
-(export print-report)
+(export print-report extract-code)
 
 ; ── Load tasks from JSON ──
 (define all-tasks

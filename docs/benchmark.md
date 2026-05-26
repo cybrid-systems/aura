@@ -77,3 +77,23 @@ LLM_API_KEY="$(cat ~/code/keys/grok)" \
 | 2026-05-23 | 早期 | 102 | 91.2% | 85.3% | 任务少、通过率虚高 |
 
 > DeepSeek 的通过率波动较大（±7%），受 LLM 方差影响。建议多轮跑分后取均值。
+
+---
+
+## Self-Hosted Benchmark (`tests/bench.aura`)
+
+Aura-native 版 benchmark，不走 Python，全在 Aura 内运行。当前版本有性能问题：
+
+| 指标 | Python runner | Aura-native | 
+|:-----|:-------------|:------------|
+| 全量耗时 | ~3 min | ~2+ hours¹ |
+| 单次过率 | 74/135 (54.8%) | 4/54 (7.4%)² |
+| 并行 | 20 workers | 串行 |
+| HTTP | 直接 socket | curl CLI + temp 文件 |
+| Code extraction | 多格式 fallback | 只认 ` ```lisp ` |
+
+¹ 因 `http-post` 用 curl CLI + 无超时 + 串行。  
+² 因 code extraction 脆弱 + hints 未按任务裁剪 + 无 retry。
+
+### Roadmap
+见 `docs/roadmap.md#phase-5--自托管-benchmark-性能达标`
