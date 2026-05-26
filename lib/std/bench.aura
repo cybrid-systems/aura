@@ -123,30 +123,45 @@ Type values: Int, Float, String, Bool, List, (-> A B), (Pair A B), Any
                       (let loop ((h hints-list) (acc ""))
                         (if (null? h) acc
                           (loop (cdr h) (string-append acc (car h) "\n"))))))
-         ; Build system prompt — must avoid any quote issues
          (sys (string-append "You are an expert Aura Lisp programmer. Write a complete program ending with (display ...). The output must match exactly.\nRules:\n- (define ...) for functions, then (display (my-func args...))\n- (require std/name all:) for stdlib\n- Wrap code in ```lisp ... ``` markers.\n\n"
            (if (string=? hints-str "") "" (string-append "--- TASK HINTS (FOLLOW THESE EXACTLY) ---\n" hints-str "\n"))
            "\n" api-ref-str))
          (usr (string-append "Goal: " goal))
-         (msgs (list (hash "role" "system" "content" sys)
-                    (hash "role" "user" "content" usr)))
-         (body (json-encode (hash "model" model "messages" msgs "temperature" 0.3)))
-         (raw (aura-llm-call body))
-         (parsed (json-parse raw))
-         (choices (hash-ref parsed "choices"))
-         (first (if (pair? choices) (car choices) (hash)))
-         (msg (hash-ref first "message"))
-         (content (if (hash? msg) (hash-ref msg "content") ""))
-         (llm-code (extract-code content))
-         (full-code (string-append
-           (if (string=? depend "") "" (string-append "(require \"" depend "\" all:)"))
-           (if (string=? llm-code "") ";" llm-code)))
-         (actual (if (string=? llm-code "") ""
-                   (begin (set-code full-code) (eval-current-output))))
-         (expected-str (string-trim (list-ref expects 0)))
-         (actual-str (string-trim actual))
-         (ok (string=? actual-str expected-str)))
-    (list ok name)))
+         (expected-str (string-trim (list-ref expects 0))))
+    ; Try up to max-a attempts with correction feedback
+    (let try-attempt ((attempt 0) (msgs (list (hash "role" "system" "content" sys)
+                                              (hash "role" "user" "content" usr))))
+      (if (>= attempt max-a) (list #f name)
+        (let* ((body (json-encode (hash "model" model "messages" msgs "temperature" 0.3)))
+               (raw (aura-llm-call body))
+               (parsed (json-parse raw))
+               (choices (hash-ref parsed "choices"))
+               (first (if (pair? choices) (car choices) (hash)))
+               (msg (hash-ref first "message"))
+               (content (if (hash? msg) (hash-ref msg "content") ""))
+               (llm-code (extract-code content))
+               (full-code (string-append
+                 (if (string=? depend "") "" (string-append "(require \"" depend "\" all:)"))
+                 (if (string=? llm-code "") ";" llm-code)))
+               (actual (if (string=? llm-code "") ""
+                         (begin (set-code full-code) (eval-current-output))))
+               (actual-str (string-trim actual))
+               (ok (string=? actual-str expected-str))
+               (new-msgs (append msgs (list
+                 (hash "role" "assistant" "content" content)
+                 (hash "role" "user" "content"
+                   (string-append "Your output was: \"" actual-str "\"\n"
+                     "Expected: \"" expected-str "\"\n"
+                     "Fix the code so the output matches exactly.\n"
+                     (if (> (string-length actual-str) 0) ""
+                       "HINT: Make sure you end with (display ...)")
+                     "\n"))))))
+          (if ok
+            (list ok name)
+            ; Feed correction back and retry (but skip building new msgs on last attempt)
+            (if (>= (+ attempt 1) max-a)
+              (list #f name)
+              (try-attempt (+ attempt 1) new-msgs))))))))
 
 (define (run-rounds tasks model max-a rounds)
   (define (loop r results)

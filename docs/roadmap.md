@@ -59,8 +59,8 @@
 - [x] `http-post` 改为 pipe+fork execvp（不走 temp 文件 + shell）
 
 ### P1 — 智能调度
-- [ ] `run-one` 加 retry 循环（失败喂回 LLM）
-- [ ] TASK_HINTS 从 bench-tasks.json 注入 system prompt
+- [x] `run-one` 加 retry 循环（失败喂回 LLM）
+- [x] TASK_HINTS 从 bench-tasks.json 注入 system prompt
 - [ ] 错误诊断传播（不吞空字符串）
 - [ ] 并行执行（serve 多 session）
 
