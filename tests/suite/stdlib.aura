@@ -456,3 +456,81 @@
   ;; Several well-known programs should exist
   (check (> (string-length (which "echo")) 0))
   (check (> (string-length (which "sh")) 0)))
+
+;; ═══════════════════════════════════════════════════════════════
+;; std/regex — regular expressions
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "regex:match"
+  (require "std/regex" all:)
+  (check (re-match? "hello" "hello world"))
+  (check (not (re-match? "xyz" "hello"))))
+
+(test-suite "regex:find"
+  (require "std/regex" all:)
+  (check (string=? (re-find "\\d+" "abc123def") "123"))
+  (check (string=? (re-find "xyz" "hello") "")))
+
+(test-suite "regex:replace"
+  (require "std/regex" all:)
+  (check (string=? (re-replace "or" "color" "our") "colour"))
+  (check (string=? (re-replace "\\d" "a1b2c3" "X") "aXbXcX")))
+
+(test-suite "regex:split"
+  (require "std/regex" all:)
+  (let ((r (re-split "," "a,b,c")))
+    (check (pair? r))
+    (check (= (length r) 3)))
+  (check (string=? (re-split "," "a") (list "a"))))
+
+(test-suite "regex:quote"
+  (require "std/regex" all:)
+  (check (> (string-length (re-quote "a.b*c")) 5))
+  (check (string=? (re-quote "hello") "hello")))
+
+;; ═══════════════════════════════════════════════════════════════
+;; std/datetime — enhanced
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "datetime:timestamp-basic"
+  (require std/datetime all:)
+  (let ((t (current-time)))
+    (check (number? t))
+    (check (> t 1.7e9))))
+
+(test-suite "datetime:iso-date"
+  (require std/datetime all:)
+  (let* ((t (current-time))
+         (d (timestamp->iso-date t)))
+    (check (string? d))
+    (check (= (string-length d) 10))))
+
+(test-suite "datetime:rfc822"
+  (require std/datetime all:)
+  (let* ((t (current-time))
+         (r (timestamp->rfc822 t)))
+    (check (string? r))
+    (check (> (string-length r) 20))
+    (check (string-suffix? r " GMT"))))
+
+(test-suite "datetime:now"
+  (require std/datetime all:)
+  (let ((n (now)))
+    (check (string? n))
+    (check (= (string-length n) 20))))  ;; "2026-05-26T11:59:00Z"
+
+(test-suite "datetime:format-time"
+  (require std/datetime all:)
+  (let* ((t (current-time))
+         (f (format-time "%Y-%m-%d" t)))
+    (check (string? f))
+    (check (= (string-length f) 10))))
+
+(test-suite "datetime:components"
+  (require std/datetime all:)
+  (let ((t (current-time)))
+    (check (number? (timestamp->year t)))
+    (check (>= (timestamp->year t) 2026))
+    (check (and (>= (timestamp->month t) 1) (<= (timestamp->month t) 12)))
+    (check (and (>= (timestamp->day t) 1) (<= (timestamp->day t) 31)))
+    (check (and (>= (timestamp->hour t) 0) (<= (timestamp->hour t) 23)))))

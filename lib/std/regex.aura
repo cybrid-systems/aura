@@ -1,0 +1,48 @@
+; lib/std/regex.aura — Regular expression utilities
+;
+; (require "std/regex" all:)
+;
+
+(export re-match? re-find re-replace re-split re-quote)
+
+(define (re-match? pattern str)
+  (not (= (regex-match? pattern str) 0)))
+
+(define (re-find pattern str)
+  (let ((r (regex-find pattern str))) (if (string? r) r "")))
+
+(define (re-replace pattern str replacement)
+  (let ((r (regex-replace pattern str replacement))) (if (string? r) r str)))
+
+;; string-index (local copy — avoids deps)
+(define (string-index haystack needle start)
+  (let ((hl (string-length haystack)) (nl (string-length needle)))
+    (let loop ((i start))
+      (if (> i (- hl nl)) -1
+        (if (string=? (substring haystack i (+ i nl)) needle) i
+          (loop (+ i 1)))))))
+
+;; Split string by regex matches
+(define (re-split pattern str)
+  (if (string=? str "") ()
+    (let ((match (re-find pattern str)))
+      (if (string=? match "") (list str)
+        (let* ((pos (string-index str match 0))
+               (before (substring str 0 pos))
+               (after (substring str (+ pos (string-length match))
+                                 (string-length str))))
+          (if (string=? before after)
+            (list before)
+            (cons before (re-split pattern after))))))))
+
+;; Escape special regex chars
+(define (re-quote str)
+  (let ((n (string-length str)))
+    (let loop ((i 0) (result ""))
+      (if (>= i n) result
+        (let ((c (string-ref str i)))
+          (if (or (= c 46) (= c 94) (= c 36) (= c 42) (= c 43) (= c 63)
+                  (= c 40) (= c 41) (= c 91) (= c 93) (= c 123) (= c 125)
+                  (= c 92) (= c 124))
+            (loop (+ i 1) (string-append result "\\" (list->string (list c))))
+            (loop (+ i 1) (string-append result (list->string (list c))))))))))
