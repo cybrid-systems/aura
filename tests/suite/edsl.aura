@@ -1058,3 +1058,158 @@
   (check (string? s))
   ;; Annotation should return the value
   (check (= (: x Int 42) 42)))
+
+;; ═══════════════════════════════════════════════════════════════
+;; Synthesize v2 — test-driven code synthesis
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "synth-v2:eval-test-pass"
+  (require "std/synthesize-v2" all:)
+  (let* ((code "(define (add x y) (+ x y))")
+         (test-code "(display (add 2 3))")
+         (expected "5")
+         (result (synthesize:eval-test code test-code expected)))
+    (check (car result))))  ;; #t means pass
+
+(test-suite "synth-v2:eval-test-fail"
+  (require "std/synthesize-v2" all:)
+  (let* ((code "(define (add x y) (* x y))")  ;; WRONG: product not sum
+         (test-code "(display (add 2 3))")
+         (expected "5")
+         (result (synthesize:eval-test code test-code expected)))
+    (check (not (car result)))))  ;; #f means fail
+
+(test-suite "synth-v2:run-tests-all-pass"
+  (require "std/synthesize-v2" all:)
+  (let* ((code "(define (add x y) (+ x y))")
+         (tests (list (list "(display (add 2 3))" "5")
+                     (list "(display (add 0 0))" "0")))
+         (result (synthesize:run-tests code tests))
+         (passed (list-ref result 0))
+         (total (list-ref result 1)))
+    (check (= passed total))))
+
+(test-suite "synth-v2:run-tests-some-fail"
+  (require "std/synthesize-v2" all:)
+  (let* ((code "(define (add x y) (+ x y))")
+         (tests (list (list "(display (add 2 3))" "5")
+                     (list "(display (add 2 3))" "WRONG")))  ;; second fails
+         (result (synthesize:run-tests code tests))
+         (passed (list-ref result 0))
+         (total (list-ref result 1))
+         (failures (list-ref result 2)))
+    (check (< passed total))
+    (check (> (length failures) 0))))
+
+(test-suite "synth-v2:test-driven-correct"
+  (require "std/synthesize-v2" all:)
+  (let* ((code "(define (add x y) (+ x y))")
+         (tests (list (list "(display (add 2 3))" "5")))
+         (result (synthesize:test-driven "add"
+                  :goal "add two numbers"
+                  :code code :tests tests :max-attempts 1))
+         (success (car result))
+         (details (caddr result)))
+    (check success)
+    (check (= (list-ref details 0) 1))  ;; passed
+    (check (= (list-ref details 1) 1))))  ;; total
+
+(test-suite "synth-v2:test-driven-bad-tests"
+  (require "std/synthesize-v2" all:)
+  (let* ((result (synthesize:test-driven "f"
+                  :goal "test" :tests 42))  ;; invalid tests
+         (success (car result)))
+    (check (not success))))
+
+(test-suite "synth-v2:test-driven-empty-tests"
+  (require "std/synthesize-v2" all:)
+  (let* ((result (synthesize:test-driven "f"
+                  :goal "test" :tests (list)))
+         (success (car result)))
+    (check (not success))))
+
+(test-suite "synth-v2:test-driven-wrong-code"
+  (require "std/synthesize-v2" all:)
+  (let* ((code "(define (add x y) (* x y))")  ;; wrong: product
+         (tests (list (list "(display (add 2 3))" "5")))
+         (result (synthesize:test-driven "add"
+                  :goal "sum" :code code :tests tests :max-attempts 1))
+         (success (car result)))
+    ;; With max-attempts=1, should not pass
+    (check (not success))))
+
+(test-suite "synth-v2:run-tests-empty"
+  (require "std/synthesize-v2" all:)
+  ;; run-tests with empty test list should return 0/0
+  (let* ((result (synthesize:run-tests "code" (list)))
+         (passed (list-ref result 0))
+         (total (list-ref result 1)))
+    (check (= passed 0))
+    (check (= total 0))))
+
+(test-suite "synth-v2:eval-test-empty-code"
+  (require "std/synthesize-v2" all:)
+  ; eval-test with empty code should not crash
+  (let* ((result (synthesize:eval-test "" "(display 42)" "42"))
+         (success (car result)))
+    ;; empty code might not produce output, but shouldn't crash
+    (check (boolean? success))))
+
+(test-suite "synth-v2:build-diagnostic"
+  (require "std/synthesize-v2" all:)
+  (let* ((failures (list (list "(display (add 2 3))" "5" "expected 5, got 6")))
+         (diag (build-diagnostic "add" "(define (add x y) (* x y))"
+                                0 1 failures)))
+    (check (string? diag))
+    (check (> (string-length diag) 0))))
+
+(test-suite "synth-v2:extract-code-lisp-block"
+  (require "std/synthesize-v2" all:)
+  ;; Typical LLM response with ```lisp block
+  (let* ((response "Here is the code:\n```lisp\n(define (add x y) (+ x y))\n```")
+         (code (extract-code response)))
+    (check (string? code))
+    (check (> (string-length code) 0))
+    (check (string-contains? code "define"))))
+
+(test-suite "synth-v2:extract-code-plain-block"
+  (require "std/synthesize-v2" all:)
+  ;; LLM response with plain ``` block
+  (let* ((response "```\n(define (f x) (* x 2))\n```")
+         (code (extract-code response)))
+    (check (string? code))
+    (check (> (string-length code) 0))))
+
+(test-suite "synth-v2:extract-code-define-only"
+  (require "std/synthesize-v2" all:)
+  ;; LLM response with raw (define ...) without code fences
+  (let* ((response "Here is the function: (define (f x) (* x 2))")
+         (code (extract-code response)))
+    (check (string? code))))
+
+(test-suite "synth-v2:extract-code-empty"
+  (require "std/synthesize-v2" all:)
+  ;; Empty response should not crash
+  (let* ((code (extract-code "")))
+    (check (string? code))))
+
+(test-suite "synth-v2:debug-empty-code"
+  (require "std/synthesize-v2" all:)
+  ;; synthesize:debug with empty code should return failure
+  (let* ((result (synthesize:debug :code "" :tests (list (list "(display 1)" "1"))))
+         (success (car result)))
+    (check (not success))))
+
+(test-suite "synth-v2:string-trim"
+  (require "std/synthesize-v2" all:)
+  (check (string? (string-trim "  hello  ")))
+  (check (string=? (string-trim "  hello  ") "hello"))
+  (check (string=? (string-trim "") ""))
+  (check (string=? (string-trim "a") "a"))
+  (check (string=? (string-trim "  a  ") "a")))
+
+(test-suite "synth-v2:call-llm-no-key"
+  (require "std/synthesize-v2" all:)
+  ;; Without API key, call-llm should return empty string
+  (let* ((content (call-llm "test" "" "" "deepseek-chat")))
+    (check (string? content))))
