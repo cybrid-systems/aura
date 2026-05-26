@@ -18,8 +18,21 @@
 (define max-a (get-env-num "BENCH_ATTEMPTS" 3))
 (define limit (get-env-num "BENCH_LIMIT" 0))
 
-; ── Select tasks ──
-(define tasks (if (> limit 0) (take limit all-tasks) all-tasks))
+; ── Select tasks (with offset for parallel slicing) ──
+(define offset (get-env-num "BENCH_OFFSET" 0))
+(define tasks
+  (if (> limit 0)
+    (take limit (if (> offset 0)
+      ; Manual drop (stdlib drop is buggy)
+      (let loop ((i 0) (tl all-tasks))
+        (if (or (>= i offset) (null? tl)) tl
+          (loop (+ i 1) (cdr tl))))
+      all-tasks))
+    (if (> offset 0)
+      (let loop ((i 0) (tl all-tasks))
+        (if (or (>= i offset) (null? tl)) tl
+          (loop (+ i 1) (cdr tl))))
+      all-tasks)))
 (define task-count (length tasks))
 
 ; ── Run ──
