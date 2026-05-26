@@ -9594,11 +9594,19 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         .with_suggestion(std::move(suggestion)));
                 }
                 case aura::ast::NodeTag::IfExpr: {
-                    if (v.children.size() < 3)
+                    if (v.children.size() < 2)
                         return EvalResult(make_void());
                     auto c = eval_flat(*f, *p, v.child(0), eval_env);
                     if (!c)
                         return c;
+                    if (v.children.size() == 2) {
+                        // No else clause — conditionally execute then-branch via TCO
+                        if (is_truthy(*c)) {
+                            current_id = v.child(1);
+                            continue;
+                        }
+                        return EvalResult(make_void());
+                    }
                     current_id = is_truthy(*c) ? v.child(1) : v.child(2);
                     continue; // TCO: branch
                 }
