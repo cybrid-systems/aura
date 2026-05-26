@@ -105,8 +105,12 @@ private:
                 case aura::ir::IROpcode::Local: {
                     auto it = known_.find(ops[1]);
                     if (it != known_.end()) {
-                        replace(instr, ops[0], it->second);
-                        ++folded_;
+                        // Don't propagate tagged bool values (7=#t, 3=#f) as ConstI64
+                        // since the AOT/JIT emitter treats ConstI64 as fixnum-encoded.
+                        if (it->second != 3 && it->second != 7) {
+                            replace(instr, ops[0], it->second);
+                            ++folded_;
+                        }
                     }
                     break;
                 }
@@ -119,7 +123,20 @@ private:
         }                                                                                          \
         break;                                                                                     \
     }
-#define FOLD_BOOL(OP, EXPR)                                                                        \
+// Tagged truthiness helper: value 3 = #f (only falsy tagged).
+// Fixnums (bit0=0) are always truthy in Aura, even 0.
+#define IS_TRUTHY(v) ((v) != 3)
+
+#define FOLD_BOOL(OP, TRUTHY_EXPR)                                                                 \
+    case aura::ir::IROpcode::OP: {                                                                 \
+        auto it_a = known_.find(ops[1]), it_b = known_.find(ops[2]);                               \
+        if (it_a != known_.end() && it_b != known_.end()) {                                        \
+            replace_bool(instr, ops[0], TRUTHY_EXPR);                                              \
+            ++folded_;                                                                             \
+        }                                                                                          \
+        break;                                                                                     \
+    }
+#define FOLD_BOOL_CMP(OP, EXPR)                                                                    \
     case aura::ir::IROpcode::OP: {                                                                 \
         auto it_a = known_.find(ops[1]), it_b = known_.find(ops[2]);                               \
         if (it_a != known_.end() && it_b != known_.end()) {                                        \
@@ -132,19 +149,20 @@ private:
                     FOLD_BIN(Sub, it_a->second - it_b->second)
                     FOLD_BIN(Mul, it_a->second * it_b->second)
                     FOLD_BIN(Div, it_a->second / it_b->second)
-                    FOLD_BOOL(Eq, (it_a->second == it_b->second))
-                    FOLD_BOOL(Lt, (it_a->second < it_b->second))
-                    FOLD_BOOL(Gt, (it_a->second > it_b->second))
-                    FOLD_BOOL(Le, (it_a->second <= it_b->second))
-                    FOLD_BOOL(Ge, (it_a->second >= it_b->second))
-                    FOLD_BOOL(And, (it_a->second && it_b->second))
-                    FOLD_BOOL(Or, (it_a->second || it_b->second))
+                    FOLD_BOOL_CMP(Eq, (it_a->second == it_b->second))
+                    FOLD_BOOL_CMP(Lt, (it_a->second < it_b->second))
+                    FOLD_BOOL_CMP(Gt, (it_a->second > it_b->second))
+                    FOLD_BOOL_CMP(Le, (it_a->second <= it_b->second))
+                    FOLD_BOOL_CMP(Ge, (it_a->second >= it_b->second))
+                    FOLD_BOOL(And, (IS_TRUTHY(it_a->second) && IS_TRUTHY(it_b->second)))
+                    FOLD_BOOL(Or, (IS_TRUTHY(it_a->second) || IS_TRUTHY(it_b->second)))
 #undef FOLD_BIN
 #undef FOLD_BOOL
                 case aura::ir::IROpcode::Not: {
                     auto it = known_.find(ops[1]);
                     if (it != known_.end()) {
-                        replace_bool(instr, ops[0], !it->second);
+                        // Tagged: 3=#f (only falsy value)
+                        replace_bool(instr, ops[0], it->second == 3);
                         ++folded_;
                     }
                     break;
@@ -165,7 +183,7 @@ private:
     void replace_bool(aura::ir::IRInstruction& instr, std::uint32_t slot, bool val) {
         instr.opcode = aura::ir::IROpcode::ConstBool;
         instr.operands = {slot, val ? 1u : 0u, 0, 0};
-        known_[slot] = val ? 1 : 0;
+        known_[slot] = val ? 7 : 3;
     }
 
     std::unordered_map<std::uint32_t, std::int64_t> known_;
