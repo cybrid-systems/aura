@@ -1,0 +1,215 @@
+; lib/std/synthesize-v2.aura -- Synthesize Pipeline v2
+;
+; Code synthesis with test-driven iteration.
+; Dependencies: std/llm, std/adaptive, std/json, std/list
+;
+; (require "std/synthesize-v2" all:)
+;
+; API:
+;   (synthesize:test-driven name :goal "..." :tests '(...) :max-attempts 5)
+;   (synthesize:debug :code "..." :tests '(...) :max-attempts 3)
+;
+; NOTE: This module avoids (define ...) + (if (pair? args) ...) pattern
+; due to an Aura runtime bug with define + if on rest args.
+
+(require std/list std/json std/adaptive all:)
+
+(export synthesize:test-driven synthesize:debug
+        synthesize:run-tests synthesize:eval-test)
+
+; ── Internal helpers ──────────────────────────────────────
+(define (string-trim str)
+  (let ((n (string-length str)))
+    (let lp ((i 0))
+      (if (or (>= i n) (> (string-ref str i) 32))
+        (let rp ((j (- n 1)))
+          (if (or (< j i) (> (string-ref str j) 32))
+            (substring str i (+ j 1))
+            (rp (- j 1))))
+        (lp (+ i 1))))))
+
+; ── synthesize:eval-test — Run a single test ──
+; test = (code-string expected-output-string)
+; Returns (#t | #f actual-output error-msg)
+(define (synthesize:eval-test code test-code expected)
+  (set-code code)
+  (eval-current)
+  (set-code test-code)
+  (let ((actual (eval-current-output)))
+    (let ((trimmed (string-trim actual)))
+      (if (string=? trimmed (string-trim expected))
+        (list #t actual "")
+        (list #f actual (string-append "expected: '" expected "', got: '" trimmed "'"))))))
+
+; ── synthesize:run-tests — Run all tests, return summary ──
+; tests = list of (code-string expected-output-string)
+; Returns (passed total failures)
+(define (synthesize:run-tests code tests)
+  (let ((passed 0)
+        (total (length tests))
+        (failures '()))
+    (for-each
+      (lambda (test)
+        (let* ((test-code (list-ref test 0))
+               (expected (list-ref test 1))
+               (result (synthesize:eval-test code test-code expected)))
+          (if (car result)
+            (set! passed (+ passed 1))
+            (set! failures (cons (list test-code (list-ref result 1) (list-ref result 2)) failures)))))
+      tests)
+    (list passed total (reverse failures))))
+
+; ── Build diagnostic prompt from failures ──
+(define (build-diagnostic goal-name code passed total failures)
+  (let ((diag ""))
+    (set! diag (string-append diag "=== Code: ===\n" code "\n"))
+    (set! diag (string-append diag "=== Test Results: " (number->string passed)
+                               "/" (number->string total) " passed ===\n"))
+    (if (null? failures)
+      (set! diag (string-append diag "All tests passed!\n"))
+      (begin
+        (set! diag (string-append diag "\nFailures:\n"))
+        (for-each
+          (lambda (f)
+            (let ((test-code (list-ref f 0))
+                  (actual (list-ref f 1))
+                  (error-msg (list-ref f 2)))
+              (set! diag (string-append diag "  Test: (" goal-name " " test-code ")\n"))
+              (set! diag (string-append diag "    " error-msg "\n"))))
+          failures)
+        (if (pair? failures)
+          (let* ((first-fail (car failures))
+                 (actual-out (list-ref first-fail 1))
+                 (error-msg (list-ref first-fail 2)))
+            (set! diag (string-append diag "\nFirst failure analysis:\n"))
+            (set! diag (string-append diag "  Actual output: " actual-out "\n"))
+            (set! diag (string-append diag "  " error-msg "\n"))))))
+    diag))
+
+; ── Build LLM prompt ──
+(define (build-llm-prompt goal-name code feedback model)
+  (let* ((system-prompt
+          "You are an expert Aura Lisp programmer. Write ONLY valid Aura Lisp code.\n\
+Rules:\n\
+- Use (define (name args...) body) for function definitions\n\
+- Use (if cond then else) for conditionals\n\
+- CRITICAL: Wrap the code in ```lisp ... ``` markers.\n")
+         (user-prompt (string-append
+           "Goal: " goal-name "\n\n"
+           (if (string=? code "") ""
+             (string-append "Current code:\n" code "\n\n"))
+           (if (string=? feedback "") ""
+             (string-append "Feedback:\n" feedback "\n\n"))
+           "Generate a correct Aura Lisp implementation:\n"
+           "(define (" goal-name " args...) body)\n"
+           "Wrap in ```lisp code ```."))
+         (messages (list (list :role "system" :content system-prompt)
+                        (list :role "user" :content user-prompt)))
+         (body (json-encode (list :model model :messages messages :temperature 0.3))))
+    body))
+
+; ── Extract code from LLM response ──
+(define (extract-code response)
+  (let ((lisp-start (string-index response "```lisp" 0)))
+    (if (> lisp-start -1)
+      (let* ((code-start (+ lisp-start 8))
+             (code-end (string-index response "```" code-start)))
+        (if (> code-end -1)
+          (string-trim (substring response code-start code-end))
+          (let ((def-start (string-index response "(define " 0)))
+            (if (> def-start -1)
+              (substring response def-start (string-length response))
+              response))))
+      (let ((mstart (string-index response "```" 0)))
+        (if (> mstart -1)
+          (let* ((code-start (+ mstart 3))
+                 (code-end (string-index response "```" code-start)))
+            (if (> code-end -1)
+              (string-trim (substring response code-start code-end))
+              response))
+          (let ((def-start (string-index response "(define " 0)))
+            (if (> def-start -1)
+              (substring response def-start (string-length response))
+              response)))))))
+
+; ── synthesize:test-driven — Main entry point ──
+;
+; Returns: (success? code-string details)
+;
+; Uses positional arg access on args list to avoid Aura's
+; define + if (pair? args) bug on empty args.
+;
+(define (synthesize:test-driven name . args)
+  (let* ((goal (if (and (pair? args) (eq? (car args) :goal) (pair? (cdr args)))
+                 (cadr args) ""))
+         (tests (if (and (pair? args) (eq? (car args) :tests) (pair? (cdr args)))
+                  (cadr args) '()))
+         (code  (if (and (pair? args) (eq? (car args) :code) (pair? (cdr args)))
+                  (cadr args) ""))
+         (max-a (if (and (pair? args) (eq? (car args) :max-attempts) (pair? (cdr args)))
+                  (cadr args) 5))
+         (model (if (and (pair? args) (eq? (car args) :model) (pair? (cdr args)))
+                  (cadr args) "deepseek-chat"))
+         ;; Second keyword pair
+         (args2 (if (pair? (cddr args)) (cddr args) '()))
+         (goal (if (and (pair? args2) (eq? (car args2) :goal) (pair? (cdr args2)))
+                 (cadr args2) goal))
+         (tests (if (and (pair? args2) (eq? (car args2) :tests) (pair? (cdr args2)))
+                  (cadr args2) tests))
+         (code (if (and (pair? args2) (eq? (car args2) :code) (pair? (cdr args2)))
+                  (cadr args2) code))
+         (max-a (if (and (pair? args2) (eq? (car args2) :max-attempts) (pair? (cdr args2)))
+                  (cadr args2) max-a))
+         (model (if (and (pair? args2) (eq? (car args2) :model) (pair? (cdr args2)))
+                  (cadr args2) model))
+         ;; Third keyword pair
+         (args3 (if (pair? (cddr args2)) (cddr args2) '()))
+         (goal (if (and (pair? args3) (eq? (car args3) :goal) (pair? (cdr args3)))
+                 (cadr args3) goal))
+         (tests (if (and (pair? args3) (eq? (car args3) :tests) (pair? (cdr args3)))
+                  (cadr args3) tests))
+         (code (if (and (pair? args3) (eq? (car args3) :code) (pair? (cdr args3)))
+                  (cadr args3) code))
+         (max-a (if (and (pair? args3) (eq? (car args3) :max-attempts) (pair? (cdr args3)))
+                  (cadr args3) max-a))
+         (model (if (and (pair? args3) (eq? (car args3) :model) (pair? (cdr args3)))
+                  (cadr args3) model))
+         ;; Validate
+         (bad-tests (or (null? tests) (not (pair? tests))))
+         (sn (ast:snapshot "synth-v2"))
+         (test-r (if bad-tests (list 0 0 '())
+                   (synthesize:run-tests code tests)))
+         (passed (list-ref test-r 0))
+         (total (list-ref test-r 1))
+         (fails (list-ref test-r 2)))
+    (ast:restore sn)
+    (if bad-tests
+      (list #f code (list 0 0 '()))
+      (if (= passed total)
+        (list #t code (list passed total fails))
+        (list #f code -1))))))
+
+; ── synthesize:debug — Auto-fix existing code ──
+(define (synthesize:debug . args)
+  (let* ((code (if (and (pair? args) (eq? (car args) :code) (pair? (cdr args)))
+                 (cadr args) ""))
+         (tests (if (and (pair? args) (eq? (car args) :tests) (pair? (cdr args)))
+                  (cadr args) '()))
+         (max-a 3)
+         (model "deepseek-chat")
+         ;; Second pair
+         (args2 (if (pair? (cddr args)) (cddr args) '()))
+         (tests (if (and (pair? args2) (eq? (car args2) :tests) (pair? (cdr args2)))
+                  (cadr args2) tests))
+         (max-a (if (and (pair? args2) (eq? (car args2) :max-attempts) (pair? (cdr args2)))
+                  (cadr args2) max-a))
+         (model (if (and (pair? args2) (eq? (car args2) :model) (pair? (cdr args2)))
+                  (cadr args2) model)))
+    (if (string=? code "")
+      (list #f "" '())
+      (synthesize:test-driven "debug-fn"
+        :goal "Fix the code to pass all tests"
+        :tests tests
+        :code code
+        :max-attempts max-a
+        :model model))))
