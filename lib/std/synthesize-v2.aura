@@ -17,7 +17,7 @@
 (require std/llm all:)
 (require std/adaptive all:)
 
-(export synthesize:test-driven synthesize:debug
+(export synthesize:test-driven synthesize:debug synthesize:project
         synthesize:run-tests synthesize:eval-test)
 
 ; ── Internal helpers ──────────────────────────────────────
@@ -235,3 +235,112 @@ Rules:\n\
         :code code
         :max-attempts max-a
         :model model))))
+
+;; ────────────────────────────────────────────────────────────
+;; synthesize:project — Cross-file project synthesis
+;; ────────────────────────────────────────────────────────────
+;;
+;; (synthesize:project "name"
+;;   :files '(("core.aura" :goal "...") ("main.aura" :goal "..." :main #t))
+;;   :tests '(("(display ...)" "expected"))
+;;   :max-attempts 3
+;;   :model "deepseek-chat")
+;;
+;; Returns: (success? details)
+;;   success? — #t if all tests pass
+;;   details — (file-results integration-test-result)
+;;
+(define (synthesize:project name . args)
+  ;; NOTE: Use nested if instead of 'and' for guards — Aura's 'and' does NOT
+  ;; short-circuit, so (and (pair? args) (car args)) would crash when args is ().
+  (let* ((files (if (pair? args)
+                  (if (eq? (car args) :files)
+                    (if (pair? (cdr args)) (cadr args) '())
+                    '())
+                  '()))
+         (tests (if (pair? args)
+                  (if (eq? (car args) :tests)
+                    (if (pair? (cdr args)) (cadr args) '())
+                    '())
+                  '()))
+         (max-a (if (pair? args)
+                  (if (eq? (car args) :max-attempts)
+                    (if (pair? (cdr args)) (cadr args) 3)
+                    3)
+                  3))
+         (model (if (pair? args)
+                  (if (eq? (car args) :model)
+                    (if (pair? (cdr args)) (cadr args) "deepseek-chat")
+                    "deepseek-chat")
+                  "deepseek-chat"))
+         ;; Second kw pair
+         (args2 (if (pair? (cddr args)) (cddr args) '()))
+         (files (if (pair? args2)
+                  (if (eq? (car args2) :files)
+                    (if (pair? (cdr args2)) (cadr args2) files)
+                    files)
+                  files))
+         (tests (if (pair? args2)
+                  (if (eq? (car args2) :tests)
+                    (if (pair? (cdr args2)) (cadr args2) tests)
+                    tests)
+                  tests))
+         (max-a (if (pair? args2)
+                  (if (eq? (car args2) :max-attempts)
+                    (if (pair? (cdr args2)) (cadr args2) max-a)
+                    max-a)
+                  max-a))
+         (model (if (pair? args2)
+                  (if (eq? (car args2) :model)
+                    (if (pair? (cdr args2)) (cadr args2) model)
+                    model)
+                  model)))
+    ;; Validate inputs
+    (if (or (null? files) (not (pair? files)))
+      (list #f "no files specified")
+      (let* ((root-ws (workspace:current))
+             (ws-ids '())
+             (file-results '())
+             (all-ok #t))
+        ;; Process each file
+        (for-each
+          (lambda (file-spec)
+            (let* ((fname (list-ref file-spec 0))
+                   (fg (if (> (length file-spec) 2)
+                          (list-ref file-spec 2) ""))
+                   (ws-id (workspace:create fname))
+                   (file-code ""))
+              (set! ws-ids (cons ws-id ws-ids))
+              (workspace:switch ws-id)
+              ;; Run test-driven with empty initial code + tests
+              (let* ((file-goal (string-append "Implement " fname ": " fg))
+                     (result (synthesize:test-driven fname
+                               :goal file-goal
+                               :code ""
+                               :tests (list)
+                               :max-attempts max-a
+                               :model model))
+                     (ok (car result))
+                     (final-code (cadr result)))
+                (if (not ok) (set! all-ok #f))
+                (set! file-results (cons (list fname ok final-code) file-results))
+                ;; Switch back to root before processing next file
+                (workspace:switch root-ws))))
+          files)
+        (set! ws-ids (reverse ws-ids))
+        (set! file-results (reverse file-results))
+        ;; Run integration tests if any (files already generated)
+        (if (and all-ok (pair? tests))
+          (let* ((all-code (string-join
+                         (map (lambda (r) (list-ref r 2)) file-results) "\n"))
+                 (test-r (synthesize:run-tests all-code tests))
+                 (passed (list-ref test-r 0))
+                 (total (list-ref test-r 1))
+                 (fails (list-ref test-r 2)))
+            (if (= passed total)
+              (list #t (list file-results (list passed total fails)))
+              (list #f (list file-results (list passed total fails)))))
+          ;; No integration tests or files failed
+          (if all-ok
+            (list #t (list file-results "no-integration-tests"))
+            (list #f (list file-results "some-files-failed"))))))))
