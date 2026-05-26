@@ -6,7 +6,39 @@
 
 ---
 
-## Latest: 2026-05-26 — Phase 5 自托管改造（P0-P3 完成）
+## Latest: 2026-05-26 — 错误诊断传播（v2）
+
+**本次变更（1 commit, 3 files）：**
+- `set-code` 解析失败 → 返回错误字符串（之前 `#f` 吞掉）
+- `eval-current` / `eval-current-output` 求值失败 → 返回诊断字符串（之前 `#<void>` / `""` 吞掉）
+
+| 模型 | 任务数 | 通过 | 通过率 | 耗时 | 变化 |
+|:----|:-----:|:----:|:-----:|:----:|:----:|
+| 🥇 **Grok 4.3** | 135 | **108** | **80.0%** | 152s | −1.5% (方差) |
+| 🥈 **DeepSeek v4 Flash** | 135 | **103** | **76.3%** | 219s | **+1.5%** |
+
+### 受影响 task 分析
+
+| Task | 变化 | 原因 |
+|:-----|:----|:------|
+| `edsl-set-code` (DS) | ❌→✅ | 之前 LLM 定义函数没调用，`eval-current` 返回 `#<void>` → 无法诊断；现在返回 `"type error: cannot call"` → 收到明确错误 |
+| `edsl-synthesize-pipeline` | DS:❌ Grok:❌ | 不受影响（语法问题属于 set-code 在 chain 中被吞） |
+| `type-annot-fn` (Grok) | ✅→❌ | `parse error: expected expression` — set-code 解析错误，chain 中被吞 |
+
+### 共同失败（20 个 — 纯 LLM 生成质量）
+
+| 类别 | Tasks | 根因 |
+|:-----|:------|:------|
+| ADT 语法不熟 | `adt-tree`, `adt-multi-ctor` (Grok), `adt-wildcard` (DS), `adt-either` (DS) | LLM |
+| 复杂类型系统 | `type-occ-*`(3), `type-linear-hof`, `type-grad-multi-boundary`, `type-let-poly-hof`, `type-gradual-boundary` | LLM |
+| C FFI | `ffi-sqrt`, `ffi-strlen` | `c-func` 签名语法 |
+| EDSL 复杂 API | `edsl-rule`, `edsl-rule-basic`, `edsl-pipeline-basic`, `edsl-synthesize-pipeline`, `edsl-messaging`, `edsl-mutation-rollback`, `edsl-optimize-multiarg` | API 复杂度 |
+| Closure 不调用 | `binary-search`, `merge-sort` | #<procedure> 检测 |
+| 算法 | `table-lookup`, `unique-hash` | LLM |
+
+---
+
+## Previous: 2026-05-26 — Phase 5 自托管改造（P0-P3 完成）
 
 **本周变（10 commits, ~20 files）：**
 - `http-post` pipe+fork→libcurl C API（dlopen 运行时加载）
