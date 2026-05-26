@@ -1,58 +1,55 @@
 # Aura 路线图
 
-**更新：2026-05-25 — 实测后清除非真实 bug，仅保留确认为 TODO 的项**
+**更新：2026-05-26 — P2 全清理 + 编译器 Bug 修复 + API 签名生成**
 
 ---
+
+## 项目状态
+
+| 维度 | 状态 |
+|:-----|:------|
+| 核心编译器 | ✅ 稳定（7 suites / 124 integ / 82% EDSL benchmark） |
+| 编译器 Bug | ✅ 0 个 open issue（GitHub #1 #2 均已关） |
+| GitHub Issues | ✅ 0 个 open |
+| 剩余 benchmark 失败 | 21 个（纯 LLM 生成质量，非编译 bug） |
 
 ## ✅ 已完成
 
-| Phase | 内容 | 状态 |
-|:------|:-----|:----:|
-| Core | 核心求值器（tree-walker + IR 双路径 + TCO） | ✅ |
-| Core | IR 管线（lower → passes → IR interpreter → JIT → AOT） | ✅ |
-| Core | LLVM ORC JIT（38 opcode → native, 7.55× vs TW） | ✅ |
-| Core | 增量编译（ArenaGroup + 缓存 + 热替换 + IR import） | ✅ |
-| Core | AOT 56 emit 全部通过 | ✅ |
-| EDSL | `query:def-use/reaches/effects/children/node/node-type/root` | ✅ |
-| EDSL | `query:pattern` / `query:find` | ✅ |
-| EDSL | `mutate:splice/wrap/rebind/replace-value/remove-node/insert-child/tweak-literal` | ✅ |
-| EDSL | `ast:snapshot/restore/diff/list-snapshots` | ✅ |
-| EDSL | `eval` / `eval-expr` / `eval-current` / `current-source` | ✅ |
-| EDSL | `compile:status` / `typecheck-current` | ✅ |
-| Workspace | `workspace:create/switch/list/delete/lock/merge/discard/sync-from` + COW | ✅ |
-| Messaging | `send/recv/my-id/reply/session-active?/mailbox-count` | ✅ |
-| Synthesize | `synthesize:register-template/fill/define/pipeline/optimize` | ✅ |
-| Rule | `rule:define/apply/apply-all/list/list-violations/status/enable/disable/remove/save/load` | ✅ |
-| Type system | Sound Gradual Typing（coercion + occurrence + let-poly） | ✅ |
-| Type system | `:Int` / `:Bool` / `:String` / `:Float` 标注语法 | ✅ |
-| Type system | `define-type` ADT + `match` 穷尽性检查 | ✅ |
-| Type system | M4 Linear 所有权（move/borrow/mut-borrow/drop） | ✅ |
-| Keywords | `:foo` 自求值关键字支持 | ✅ |
-| Stdlib | `std/rule` / `std/pipeline` / `std/list` / `std/json` / `std/csv` 等 32 个模块 | ✅ |
-| C FFI | `c-func` / `dlopen/dlsym` + 类型签名 | ✅ |
-| Compile-time reflection | P2996 `auto_to_json` / `auto_serialize` | ✅ |
-| Serve | `--serve` JSON-line 多 session 协议 | ✅ |
-| Serve-Async | ucontext fiber + epoll 调度器 + eventfd mailbox | ✅ |
-| Serve-Async | `--serve-async` 多 session fiber 调度 + stdin edge-triggered | ✅ |
-| Serve-Async | `pop_message` fiber yield + `g_fiber_block` 回调 | ✅ |
-| Serve-Async | send/recv 全链路通信（session create → send → recv yield → resume） | ✅ |
+| 内容 | 状态 |
+|:-----|:----:|
+| 核心求值器（tree-walker + IR 双路径 + TCO） | ✅ |
+| IR 管线（lower → passes → IR interpreter → JIT → AOT） | ✅ |
+| LLVM ORC JIT（38 opcode → native, 7.55× vs TW） | ✅ |
+| 增量编译（ArenaGroup + 缓存 + 热替换 + IR import） | ✅ |
+| AOT 56 emit 全部通过 | ✅ |
+| EDSL 反射原语（query / mutate / ast 全套） | ✅ |
+| EDSL synthesize（register-template / fill / define / pipeline / optimize） | ✅ |
+| workspace 系统（create / switch / list / delete / lock / merge / COW） | ✅ |
+| Rule 系统（define / apply / apply-all / save / load / 全功能） | ✅ |
+| 类型系统（Gradual Typing / ADT / M4 Linear / occurrence / let-poly） | ✅ |
+| 关键字 `:foo` 自求值 | ✅ |
+| 标准库（32 个模块） | ✅ |
+| C FFI（c-func / c-load / dlopen / 类型签名） | ✅ |
+| Serve 协议（`--serve` JSON-line + `--serve-async` fiber/eventfd） | ✅ |
+| `synthesize:optimize` benchmark-driven fitness | ✅ |
+| Multi-session workspace 共享 | ✅ |
+| 编译器 bug 修复（类型标注绑定 / FFI closure dispatch / pipe mode 报错） | ✅ |
+| **API 签名生成** — 从 std/adaptive 自动提取全量 API 签名注入 LLM prompt | ✅ **新** |
+| EDSL benchmark hint 修复（6 个 task 文件） | ✅ |
 
----
+## 🔴 待办（按优先级）
 
-## 🔴 真实遗留问题
+| 优先级 | 任务 | 说明 | 预估 |
+|:------:|:-----|:------|:----:|
+| P2 | **合成管线升级** — 跨文件合成、测试驱动合成、synthesize:debug | 从单 expr 修 bug 升级到"写需求→LLM 生成→测试验证"全流程 | 3-5d |
+| P3 | **Stdlib 扩张** — HTTP client, Regex, 日期, 排序算法 | 当前 benchmark 测试需手写，加模块会改善生成质量 | 2-3d |
+| P3 | **AOT 落地** — 数字/字符串/closure 的 AOT 编译 | 当前只有布尔 AOT，扩展到更多类型 | 3-5d |
 
-| 优先级 | 任务 | 工时 | 说明 |
-|:------:|:-----|:----:|:-----|
-| P2 | **`synthesize:optimize` fitness 基于代码长度** | 1d | 需 benchmark 驱动的真实 fitness |
-
-> 沙箱（权限模型 / eval 资源限制）：`workspace:lock` + COW 隔离已经够用，暂不投入。
-
-## 🔭 前瞻
+## 🔭 前瞻（已列入但不启动）
 
 | 任务 | 说明 |
 |:-----|:------|
-| VS Code / Cursor 插件 | 原生 EDSL 支持 |
-| LSP / 包管理 / 自举 | 独立长期项目 |
-| 分布式 EDSL | 多机共享 AST workspace |
-| 形式化证明接口 | 关键 mutate 走 proof 而非 test |
-| LangGraph / CrewAI 集成 | 适配主流 Agent 框架 |
+| VS Code / Cursor 插件 | **暂时不做**（用户明确跳过） |
+| LSP / 包管理 | **暂时不做** |
+| 分布式 EDSL / 形式化证明 / Agent 框架集成 | 待定 |
+| Hint 注入工程化 | **暂时不做**（已有 API 签名 + 已有 hints） |
