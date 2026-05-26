@@ -1150,12 +1150,14 @@ def run_single_task(
 
         # Detect mode: set-code means EDSL mutation, otherwise full program
         is_edsl = code.strip().startswith("(set-code")
-        if is_edsl and last_full_code:
-            # EDSL mode: everything in one exec (set-code + mutations + eval-current)
+        if is_edsl:
+            # EDSL mode: the C++ fix makes eval-current propagate set-code errors,
+            # so even through (begin (set-code ...) (eval-current)), the error survives.
             ok, out, err = run_code(code + "\n(eval-current)")
+            if ok:
+                last_full_code = code
         else:
             # Full code mode
-            is_edsl = False
             ok, out, err = run_code(code)
             if ok:
                 last_full_code = code
@@ -1213,12 +1215,29 @@ def run_single_task(
                 "         (display (f 5))\n"
             )
 
+        # Detect set-code parse errors (now propagated by eval-current)
+        set_code_error = ""
+        if is_edsl and ("parse error" in actual_output.lower()
+                        or "expected" in actual_output.lower()[:60]
+                        or "syntax error" in actual_output.lower()):
+            set_code_error = (
+                "\n\n⚠️  SET-CODE PARSE ERROR: The code inside your (set-code ...) "
+                "is malformed Aura code.\n"
+                "The (set-code ...) primitive parses its argument as a program; "
+                "make sure the content is valid Aura syntax.\n"
+                "Check for: unbalanced parens, missing quotes, wrong function names.\n"
+                f"Error: {actual_output[:200]}\n"
+            )
+            # Force coarse phase for parse errors — LLM needs to rewrite
+            phase = "coarse"
+
         correction = (
             ("(compile error) " if not ok else "(output mismatch) ")
             + distance_note
             + "\n\n"
             f"Aura produced: {actual_output[:300]}\n\n" + ada_fb + "\n\n"
-            + procedure_warn +
+            + procedure_warn
+            + set_code_error +
             "Current code:\n"
             + (last_full_code[:400] if last_full_code else code[:400])
             + "\n\n"

@@ -235,6 +235,9 @@ private:
     std::vector<std::string> snapshot_sources_;  // source code per snapshot
     std::vector<std::string> snapshot_names_;    // optional names
 
+    // ── EDSL set-code error propagation ──────────────────────────
+    std::string last_set_code_error_;  // diagnostic from failed set-code, cleared on success
+
     // ── Def-Use Analysis (P1) ───────────────────────────────────
     void* defuse_index_ = nullptr;
     std::uint64_t defuse_version_ = 0;  // incremented on each mutation
