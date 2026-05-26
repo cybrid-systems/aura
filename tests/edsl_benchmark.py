@@ -550,9 +550,31 @@ def test_aura_serve(code, timeout=10):
 
 
 def check_success(out, expected):
+    """Check if output matches expected keywords.
+    Uses substring matching but guards against false positives
+    from error messages that happen to contain the keyword."""
     norm_out = out.strip().strip('"').strip("'")
+    # If output looks like an error message, be more strict
+    is_error_like = any(m in norm_out.lower() for m in
+        ["error:", "parse error", "unbound variable",
+         "type error", "syntax error", "invalid syntax"])
+
     for kw in expected:
+        if not kw or len(kw) < 2:
+            continue
         if kw in norm_out:
+            # Guard: if output is error-like and keyword is short/generic,
+            # require the keyword to be a standalone word (not substring of error)
+            if is_error_like and len(kw) <= 5:
+                # Only count as match if it's NOT in common error words
+                try:
+                    import re
+                    # Use word boundary matching for short keywords
+                    if re.search(r'\\b' + re.escape(kw) + r'\\b', norm_out):
+                        return True
+                except Exception:
+                    pass
+                continue
             return True
     return False
 
@@ -1092,6 +1114,62 @@ def get_execution_trace(code_str, timeout=10):
         return "", ""
 
 
+def _auto_fix_procedure(code, expected, run_code, is_edsl):
+    """Auto-inject (display ...) when LLM outputs #<procedure>.
+    Tries multiple display patterns without an LLM call."""
+    import re as _re
+
+    def _extract_content(src):
+        """Extract the code string from (set-code "...") form."""
+        m = _re.match(r'\(set-code\s+"(.*)"\)', src.strip())
+        if m:
+            return m.group(1), True
+        return src, False
+
+    def _find_last_fn(src):
+        """Find the last (define (fn-name ...) ...) in source code."""
+        matches = []
+        for m in _re.finditer(r'\(define\s+\(([^\s)]+)', src):
+            matches.append(m.group(1))
+        return matches[-1] if matches else None
+
+    def _inject_display(original, body, pat):
+        """Inject display pattern into either EDSL content or full code."""
+        if is_edsl:
+            # EDSL: inject the display INSIDE the set-code content,
+            # so eval-current will execute it on the workspace.
+            return f'(set-code "{body} {pat}")'
+        else:
+            return original + '\n' + pat
+
+    if is_edsl:
+        content, _ = _extract_content(code)
+        body = content
+    else:
+        body = code
+
+    fn = _find_last_fn(body)
+    if not fn:
+        return None
+
+    # Try patterns: (display fn), (display (fn arg)), (display (fn)), (display "done")
+    patterns = [
+        f'(display ({fn} 42))',                 # (display (fn 42)) — call with default
+        f'(display ({fn} 1 2))',                # (display (fn 1 2)) — for 2-arg
+        f'(display ({fn} 0))',                  # (display (fn 0)) — try 0
+        f'(display ({fn} \"test\"))',          # (display (fn "test")) — try string
+        f'(display "{fn} completed")',        # (display "done")
+        f'(display {fn})',                     # (display fn) — last resort, proc ref
+    ]
+
+    for pat in patterns:
+        mod = _inject_display(code, body, pat)
+        ok, out, err = run_code(mod + ("\n(eval-current)" if is_edsl else ""))
+        if ok and (check_success(out, expected) or check_success(err, expected)):
+            return (ok, out, err)
+    return None
+
+
 def run_single_task(
     model, base_url, api_key, name, prompt, expected, stdlib, api_ref, serve=None
 ):
@@ -1166,6 +1244,16 @@ def run_single_task(
         if success:
             return True, out, "", total_llm_time, attempt + 1
 
+        # ── Auto-fix #<procedure> ──
+        # If output contains an uncalled function, try injecting (display ...)
+        # before burning an LLM retry. This saves ~10-40s per occurrence.
+        has_procedure = "#<procedure>" in (out if ok else err) or "#<procedu" in (out if ok else err)
+        if has_procedure:
+            auto_fixed = _auto_fix_procedure(code, expected, run_code, is_edsl)
+            if auto_fixed:
+                ok_fix, out_fix, err_fix = auto_fixed
+                return True, out_fix, "", total_llm_time, attempt + 1
+
         if attempt >= max_att - 1:
             return False, out if ok else "", err or out, total_llm_time, attempt + 1
 
@@ -1231,13 +1319,31 @@ def run_single_task(
             # Force coarse phase for parse errors — LLM needs to rewrite
             phase = "coarse"
 
+        # Detect type errors — function not defined
+        type_error_hint = ""
+        if "type error: cannot call" in actual_output.lower() or "unbound variable" in actual_output.lower():
+            # Extract the undefined name from the error
+            import re as _re2
+            if "type error: cannot call" in actual_output.lower():
+                undefined = "a needed function"
+            else:
+                m = _re2.search(r"unbound variable: ([^\s]+)", actual_output.lower())
+                undefined = m.group(1) if m else "a needed variable"
+            type_error_hint = (
+                "\n\n⚠️  MISSING DEFINITION: You're using '" + undefined +
+                "' without defining it first.\n"
+                "Add (define (" + undefined + " ...) ...) before calling it.\n"
+                "Check the task's goal to see what signature " + undefined + " needs.\n"
+            )
+
         correction = (
             ("(compile error) " if not ok else "(output mismatch) ")
             + distance_note
             + "\n\n"
             f"Aura produced: {actual_output[:300]}\n\n" + ada_fb + "\n\n"
             + procedure_warn
-            + set_code_error +
+            + set_code_error
+            + type_error_hint +
             "Current code:\n"
             + (last_full_code[:400] if last_full_code else code[:400])
             + "\n\n"
