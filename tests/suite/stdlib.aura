@@ -108,3 +108,49 @@
   ;; Should return () on failure (not crash)
   (let ((result (http-post-json "https://nonexistent.example.com/post" "{}")))
     (check (or (hash? result) (null? result)))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; std/encoding — hex + base64 encoding
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "encoding:hex-encode"
+  (require "std/encoding" all:)
+  (check (string=? (hex-encode "ABC") "414243"))
+  (check (string=? (hex-encode "") ""))
+  (check (string=? (hex-encode "a") "61")))
+
+(test-suite "encoding:hex-decode"
+  (require "std/encoding" all:)
+  (check (string=? (hex-decode "414243") "ABC"))
+  (check (string=? (hex-decode "") ""))
+  (check (string=? (hex-decode "61") "a")))
+
+(test-suite "encoding:hex-roundtrip"
+  (require "std/encoding" all:)
+  (let* ((orig "hello world 123!")
+         (enc (hex-encode orig))
+         (dec (hex-decode enc)))
+    (check (string=? orig dec))))
+
+(test-suite "encoding:base64-encode"
+  (require "std/encoding" all:)
+  (check (string=? (base64-encode "hello") "aGVsbG8="))
+  (check (string=? (base64-encode "") ""))
+  (check (string=? (base64-encode "f") "Zg=="))
+  (check (string=? (base64-encode "fo") "Zm8="))
+  (check (string=? (base64-encode "foo") "Zm9v")))
+
+(test-suite "encoding:base64-decode"
+  (require "std/encoding" all:)
+  (check (string=? (base64-decode "aGVsbG8=") "hello"))
+  (check (string=? (base64-decode "") ""))
+  (check (string=? (base64-decode "Zg==") "f"))
+  (check (string=? (base64-decode "Zm8=") "fo"))
+  (check (string=? (base64-decode "Zm9v") "foo")))
+
+(test-suite "encoding:base64-roundtrip"
+  (require "std/encoding" all:)
+  (let* ((orig "test message with spaces and 123 numbers!")
+         (enc (base64-encode orig))
+         (dec (base64-decode enc)))
+    (check (string=? orig dec))))
