@@ -167,6 +167,20 @@ void run_serve_async() {
         aura::compiler::CompilerService::register_session("default", &sess->service);
     }
 
+    // Register session:create for Aura code (primitive in evaluator)
+    static std::function<aura::messaging::SessionCreateFn> sc_fn =
+        [&sessions, &sched, shared_workspace_tree](const std::string& name) -> bool {
+        if (sessions.count(name) > 0) return false;
+        auto [it, created] = sessions.try_emplace(name, std::make_unique<Session>());
+        if (!created) return false;
+        it->second->id = name;
+        it->second->service.set_session_id(name);
+        it->second->service.set_workspace_tree(shared_workspace_tree);
+        aura::compiler::CompilerService::register_session(name, &it->second->service);
+        return true;
+    };
+    aura::messaging::g_session_create = &sc_fn;
+
     // 6. Spawn session fibers (one per session)
     // For now, spawn one fiber for the default session
     // In the future, spawn as needed

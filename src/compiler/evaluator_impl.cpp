@@ -6760,6 +6760,17 @@ Evaluator::Evaluator() {
         return make_void();
     });
 
+    // (session:create name) — Create a new isolated session (serve mode only)
+    // Returns #t on success, #f in stdin mode or if name already exists
+    primitives_.add("session:create", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_bool(false);
+        auto& name = string_heap_[as_string_idx(a[0])];
+        if (!aura::messaging::g_session_create || !(*aura::messaging::g_session_create))
+            return make_bool(false);
+        return make_bool((*aura::messaging::g_session_create)(name));
+    });
+
     // ═══════════════════════════════════════════════════════════════
     // P15: Synthesize Template Strategy (P0)
     // ═══════════════════════════════════════════════════════════════
