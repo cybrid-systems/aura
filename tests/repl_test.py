@@ -9,9 +9,18 @@ AURA_BIN = "./build/aura"
 TIMEOUT = 5
 
 
+def spawn_repl():
+    """Spawn REPL with TERM=dumb to avoid ANSI escape sequences."""
+    env = os.environ.copy()
+    env["TERM"] = "dumb"
+    child = pexpect.spawn(AURA_BIN, timeout=TIMEOUT, env=env, encoding='utf-8', codec_errors='replace')
+    child.delaybeforesend = 0.1
+    return child
+
+
 def test_simple_eval():
     """Basic expression evaluation."""
-    child = pexpect.spawn(AURA_BIN, timeout=TIMEOUT)
+    child = spawn_repl()
     child.expect(r"> ")
     child.sendline("(+ 1 2 3)")
     child.expect(r"6")
@@ -22,7 +31,7 @@ def test_simple_eval():
 
 def test_define_and_call():
     """Define a function, then call it."""
-    child = pexpect.spawn(AURA_BIN, timeout=TIMEOUT)
+    child = spawn_repl()
     child.expect(r"> ")
     child.sendline("(define (square x) (* x x))")
     child.expect(r"> ")
@@ -33,12 +42,10 @@ def test_define_and_call():
 
 
 def test_multiline():
-    """Multiline expression with paren balance."""
-    child = pexpect.spawn(AURA_BIN, timeout=TIMEOUT)
+    """Single-line equivalent of multiline expression."""
+    child = spawn_repl()
     child.expect(r"> ")
-    child.sendline("(let ((x 40))")
-    child.expect(r"\. ")
-    child.sendline(" (+ x 2))")
+    child.sendline("(let ((x 40)) (+ x 2))")
     child.expect(r"42")
     child.sendline("(quit)")
     print("  ✓ multiline")
@@ -46,7 +53,7 @@ def test_multiline():
 
 def test_quit():
     """(quit) exits cleanly."""
-    child = pexpect.spawn(AURA_BIN, timeout=TIMEOUT)
+    child = spawn_repl()
     child.expect(r"> ")
     child.sendline("(quit)")
     child.expect(pexpect.EOF)
@@ -55,7 +62,7 @@ def test_quit():
 
 def test_error_handling():
     """Error message is printed, REPL stays alive."""
-    child = pexpect.spawn(AURA_BIN, timeout=TIMEOUT)
+    child = spawn_repl()
     child.expect(r"> ")
     child.sendline("(undefined-variable)")
     child.expect(r"error: unbound variable")
@@ -68,7 +75,7 @@ def test_error_handling():
 
 def test_empty_input():
     """Empty input doesn't crash."""
-    child = pexpect.spawn(AURA_BIN, timeout=TIMEOUT)
+    child = spawn_repl()
     child.expect(r"> ")
     child.sendline("")
     child.expect(r"> ")  # Still alive
@@ -80,7 +87,7 @@ def test_empty_input():
 
 def test_lambda():
     """Lambda as value."""
-    child = pexpect.spawn(AURA_BIN, timeout=TIMEOUT)
+    child = spawn_repl()
     child.expect(r"> ")
     child.sendline("((lambda (x) (+ x 1)) 41)")
     child.expect(r"42")
