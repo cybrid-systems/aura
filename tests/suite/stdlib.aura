@@ -320,3 +320,54 @@
   ;; root dir not found → empty
   (let ((files (dir-files "/nonexistent_xyz")))
     (check (null? files))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; std/uuid — UUID v4 generation
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "uuid:generate"
+  (require "std/uuid" all:)
+  (let ((u (uuid)))
+    (check (string? u))
+    (check (= (string-length u) 36))))
+
+(test-suite "uuid:format"
+  (require "std/uuid" all:)
+  (let ((u (uuid)))
+    ;; UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    (check (= (string-ref u 8) 45))   ;; dash at pos 8
+    (check (= (string-ref u 13) 45))  ;; dash at pos 13
+    (check (= (string-ref u 18) 45))  ;; dash at pos 18
+    (check (= (string-ref u 23) 45))  ;; dash at pos 23
+    ;; Version nibble is 4
+    (check (= (string-ref u 14) 52))))  ;; '4' at pos 14
+
+(test-suite "uuid:variant"
+  (require "std/uuid" all:)
+  ;; Variant nibble should be 8/a/b/c at pos 19
+  (let* ((u (uuid))
+         (c (string-ref u 19)))  ;; pos 19 = variant
+    (check (or (= c 56) (= c 97) (= c 98) (= c 99)))))  ;; '8' '9' 'a' 'b'
+
+(test-suite "uuid:hex-only"
+  (require "std/uuid" all:)
+  ;; All non-dash chars should be hex digits
+  (let* ((u (uuid))
+         (check-char (lambda (i)
+           (let ((c (string-ref u i)))
+             (or (and (>= c 48) (<= c 57))   ;; 0-9
+                 (and (>= c 97) (<= c 102))   ;; a-f
+                 (and (>= c 65) (<= c 70)))))))  ;; A-F
+    (check (check-char 0))
+    (check (check-char 1))))
+
+(test-suite "uuid:nil"
+  (require "std/uuid" all:)
+  (check (string=? (uuid-nil) "00000000-0000-0000-0000-000000000000")))
+
+(test-suite "uuid:compact"
+  (require "std/uuid" all:)
+  (let ((c (uuid-compact)))
+    (check (string? c))
+    ;; Compact UUID has no dashes
+    (check (= (string-length c) 32))))

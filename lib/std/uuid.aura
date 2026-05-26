@@ -1,0 +1,28 @@
+; lib/std/uuid.aura — UUID v4 generation
+;
+; (require "std/uuid" all:)
+;
+
+(export uuid uuid-compact uuid-nil)
+
+(define rng 123456789)
+
+(define (rnd n)
+  (set! rng (modulo (* 1103515245 rng) 2147483647))
+  (modulo rng n))
+
+(define (h) (string-ref "0123456789abcdef" (rnd 16)))
+
+(define (hs n)
+  (let lp ((i 0) (r ""))
+    (if (>= i n) r (lp (+ i 1) (string-append r (list->string (list (h))))))))
+
+(define (uuid)
+  (string-append (hs 8) "-" (hs 4) "-" "4" (hs 3) "-"
+    (list->string (list (string-ref "89ab" (rnd 4)))) (hs 3) "-" (hs 12)))
+
+(define (uuid-compact)
+  (string-append (hs 8) (hs 4) "4" (hs 3)
+    (list->string (list (string-ref "89ab" (rnd 4)))) (hs 3) (hs 12)))
+
+(define (uuid-nil) "00000000-0000-0000-0000-000000000000")
