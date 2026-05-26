@@ -588,15 +588,24 @@ private:
         return id;
     }
 
-    [[nodiscard]] NodeId add_type_annotation(SymId type_name, NodeId inner) {
+    [[nodiscard]] NodeId add_type_annotation(SymId type_name, NodeId inner, SymId var_sym = INVALID_SYM) {
         auto id = add_node(NodeTag::TypeAnnotation);
         sym_id_[id] = type_name;
         auto start = static_cast<std::uint32_t>(child_data_.size());
         child_data_.push_back(inner);
         child_begin_[id] = start;
         child_count_[id] = 1;
+        if (var_sym != INVALID_SYM) {
+            int_val_[id] = static_cast<std::int64_t>(var_sym);
+        }
         link_children(id);
         return id;
+    }
+    bool has_var_annot(NodeId id) const {
+        return id < size() && int_val_[id] != 0;
+    }
+    SymId var_annot_sym(NodeId id) const {
+        return static_cast<SymId>(int_val_[id]);
     }
 
     [[nodiscard]] NodeId add_coercion(NodeId inner, std::uint32_t type_id) {

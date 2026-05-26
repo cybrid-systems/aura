@@ -1297,9 +1297,10 @@ NodeId FlatParser::parse_type_annot() {
             lexer_->consume();
         if (val == NULL_NODE)
             return NULL_NODE;
-        // Create (let ((name val)) (check val : Type))
-        // Simplified: just create TypeAnnotation wrapping the value
-        auto id = flat_.add_type_annotation(type_sym, val);
+        // Store var_sym in int_val_ so eval_flat can bind the variable.
+        // The type checker will see the TypeAnnotation as the root and report the
+        // correct type (Int, String, etc.).
+        auto id = flat_.add_type_annotation(type_sym, val, var_sym);
         flat_.set_loc(id, tok.line, tok.column);
         return id;
     }
