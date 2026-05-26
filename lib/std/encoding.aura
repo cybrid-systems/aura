@@ -1,0 +1,106 @@
+; lib/std/encoding.aura — Encoding utilities
+;
+; (require "std/encoding" all:)
+;
+; API:
+;   (hex-encode data)       → hex string  (lowercase)
+;   (hex-decode hex-str)    → string of decoded bytes | ""
+;   (base64-encode data)    → base64 string
+;   (base64-decode b64-str) → decoded string | ""
+
+(export hex-encode hex-decode base64-encode base64-decode)
+
+;; ── HEX encoding ────────────────────────────────────────────
+(define hex-chars "0123456789abcdef")
+
+(define (hex-encode data)
+  (let ((n (string-length data)))
+    (let loop ((i 0) (result ""))
+      (if (>= i n) result
+        (let ((c (string-ref data i)))
+          (loop (+ i 1)
+                (string-append result
+                  (list->string (list (string-ref hex-chars (quotient c 16))))
+                  (list->string (list (string-ref hex-chars (modulo c 16)))))))))))
+
+;; ── HEX decoding ────────────────────────────────────────────
+(define (hex-decode hex)
+  (let ((n (string-length hex)))
+    (let loop ((i 0) (result ""))
+      (if (>= i n) result
+        (if (< (+ i 1) n)
+          (let* ((hi (string-ref hex i))
+                 (lo (string-ref hex (+ i 1)))
+                 (hv (if (and (>= hi 48) (<= hi 57)) (- hi 48)
+                      (if (and (>= hi 97) (<= hi 102)) (- hi 87)
+                        (if (and (>= hi 65) (<= hi 70)) (- hi 55) 0))))
+                 (lv (if (and (>= lo 48) (<= lo 57)) (- lo 48)
+                      (if (and (>= lo 97) (<= lo 102)) (- lo 87)
+                        (if (and (>= lo 65) (<= lo 70)) (- lo 55) 0))))
+                 (val (+ (* 16 hv) lv)))
+            (loop (+ i 2) (string-append result (list->string (list val)))))
+          (loop (+ i 1) result))))))
+
+;; ── Base64 encoding ──────────────────────────────────────────
+(define b64-c "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+
+(define (base64-encode data)
+  (let ((n (string-length data)))
+    (let loop ((i 0) (result ""))
+      (if (>= i n) result
+        (let* ((b0 (string-ref data i))
+               (b1 (if (< (+ i 1) n) (string-ref data (+ i 1)) 0))
+               (b2 (if (< (+ i 2) n) (string-ref data (+ i 2)) 0))
+               (c0 (quotient b0 4))
+               (c1 (+ (* (modulo b0 4) 16) (quotient b1 16)))
+               (c2 (+ (* (modulo b1 16) 4) (quotient b2 64)))
+               (c3 (modulo b2 64))
+               (pad (- 3 (min (- n i) 3)))
+               (out (string-append
+                      (list->string (list (string-ref b64-c c0)))
+                      (list->string (list (string-ref b64-c c1)))
+                      (if (>= pad 2) "=" (list->string (list (string-ref b64-c c2))))
+                      (if (>= pad 1) "=" (list->string (list (string-ref b64-c c3)))))))
+          (loop (+ i 3) (string-append result out)))))))
+
+;; ── Base64 decoding ──────────────────────────────────────────
+(define (base64-decode b64)
+  (let* ((n (string-length b64))
+         ;; Find actual content length (strip padding '=')
+         (len (let ((last (- n 1)))
+                (if (< last 0) 0
+                  (if (= (string-ref b64 last) 61)    ;; '='
+                    (if (and (> last 0) (= (string-ref b64 (- last 1)) 61))
+                      (- last 1) last)
+                    n)))))
+    (let loop ((i 0) (result ""))
+      (if (>= i len) result
+        (let* ((c0 (string-ref b64 i))
+               (c1 (string-ref b64 (+ i 1)))
+               (c2 (if (< (+ i 2) len) (string-ref b64 (+ i 2)) 65))
+               (c3 (if (< (+ i 3) len) (string-ref b64 (+ i 3)) 65))
+               ;; Map char → value (inline to avoid module scope issues)
+               (v0 (if (and (>= c0 65) (<= c0 90)) (- c0 65)
+                     (if (and (>= c0 97) (<= c0 122)) (- c0 71)
+                       (if (and (>= c0 48) (<= c0 57)) (+ c0 4)
+                         (if (= c0 43) 62 (if (= c0 47) 63 0))))))
+               (v1 (if (and (>= c1 65) (<= c1 90)) (- c1 65)
+                     (if (and (>= c1 97) (<= c1 122)) (- c1 71)
+                       (if (and (>= c1 48) (<= c1 57)) (+ c1 4)
+                         (if (= c1 43) 62 (if (= c1 47) 63 0))))))
+               (v2 (if (and (>= c2 65) (<= c2 90)) (- c2 65)
+                     (if (and (>= c2 97) (<= c2 122)) (- c2 71)
+                       (if (and (>= c2 48) (<= c2 57)) (+ c2 4)
+                         (if (= c2 43) 62 (if (= c2 47) 63 0))))))
+               (v3 (if (and (>= c3 65) (<= c3 90)) (- c3 65)
+                     (if (and (>= c3 97) (<= c3 122)) (- c3 71)
+                       (if (and (>= c3 48) (<= c3 57)) (+ c3 4)
+                         (if (= c3 43) 62 (if (= c3 47) 63 0))))))
+               (b0 (+ (* v0 4) (quotient v1 16)))
+               (b1 (+ (* (modulo v1 16) 16) (quotient v2 4)))
+               (b2 (+ (* (modulo v2 4) 64) v3)))
+          (loop (+ i 4)
+                (string-append result
+                  (list->string (list b0))
+                  (if (< (+ i 2) len) (list->string (list b1)) "")
+                  (if (< (+ i 3) len) (list->string (list b2)) ""))))))))
