@@ -100,6 +100,9 @@ struct LLVMBuilder {
 
     // AOT mode: OpPrimitive stores negative sentinel for primitive dispatch
     bool aot_mode = false;
+    // Pointer tagging constants (must match lib/runtime.c)
+    static constexpr int64_t KWD_TRUE_VAL = 7;
+    static constexpr int64_t KWD_FALSE_VAL = 3;
     // String pool for OpConstString (IR module's string pool content)
     const std::vector<std::string>* string_pool = nullptr;
 
@@ -287,26 +290,28 @@ struct LLVMBuilder {
                 return true;
             }
             case OpAnd: {
-                auto a = irb->CreateICmpNE(load(inst.ops[1]), c64(0)),
-                     b = irb->CreateICmpNE(load(inst.ops[2]), c64(0));
+                // Pointer tagging: #f = 3, everything else is truthy (including 0)
+                auto a = irb->CreateICmpNE(load(inst.ops[1]), c64(KWD_FALSE_VAL)),
+                     b = irb->CreateICmpNE(load(inst.ops[2]), c64(KWD_FALSE_VAL));
                 store(inst.ops[0],
-                      irb->CreateZExt(irb->CreateAnd(a, b), llvm::Type::getInt64Ty(ctx)));
+                      irb->CreateSelect(irb->CreateAnd(a, b), c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
                 return true;
             }
             case OpOr: {
-                auto a = irb->CreateICmpNE(load(inst.ops[1]), c64(0)),
-                     b = irb->CreateICmpNE(load(inst.ops[2]), c64(0));
+                auto a = irb->CreateICmpNE(load(inst.ops[1]), c64(KWD_FALSE_VAL)),
+                     b = irb->CreateICmpNE(load(inst.ops[2]), c64(KWD_FALSE_VAL));
                 store(inst.ops[0],
-                      irb->CreateZExt(irb->CreateOr(a, b), llvm::Type::getInt64Ty(ctx)));
+                      irb->CreateSelect(irb->CreateOr(a, b), c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
                 return true;
             }
             case OpNot: {
-                auto a = irb->CreateICmpEQ(load(inst.ops[1]), c64(0));
-                store(inst.ops[0], irb->CreateZExt(a, llvm::Type::getInt64Ty(ctx)));
+                auto a = irb->CreateICmpEQ(load(inst.ops[1]), c64(KWD_FALSE_VAL));
+                store(inst.ops[0],
+                      irb->CreateSelect(a, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
                 return true;
             }
             case OpBranch: {
-                auto cond = irb->CreateICmpNE(load(inst.ops[0]), c64(0));
+                auto cond = irb->CreateICmpNE(load(inst.ops[0]), c64(KWD_FALSE_VAL));
                 irb->CreateCondBr(cond, block_map[inst.ops[1]], block_map[inst.ops[2]]);
                 return true;
             }
