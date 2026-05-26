@@ -1472,6 +1472,18 @@ std::vector<std::pair<SymId, NodeId>> FlatParser::compile_pattern(NodeId pattern
                 auto ctor_name = pool_.resolve(callee_v.sym_id);
                 // Ignore list/cons/pair/quote — handled above
                 if (ctor_name != "list" && ctor_name != "cons" && ctor_name != "pair") {
+                    // Zero-arg constructor: (CtorName) with no sub-patterns
+                    // The value IS the constructor function (a closure), not a pair.
+                    // Compare directly using equal?.
+                    if (v.children.size() == 1) {
+                        // Zero-arg constructor: compare subject against a built pair.
+                        // Build (cons "CtorName" ()) which is how zero-arg constructors are stored.
+                        auto ctor_str_node = flat_.add_literalstring(pool_.intern(ctor_name));
+                        auto null_lit = flat_.add_literal(0);
+                        auto ctor_val = make_call(pool_.intern("cons"), {ctor_str_node, null_lit});
+                        *out_test = make_call(sym_equal_q, {var_tmp, ctor_val});
+                        return bindings;
+                    }
                     // Test 1: (pair? tmp) — value must be a pair
                     NodeId accumulated_test = make_call(sym_pair_q, {var_tmp});
 
@@ -1494,7 +1506,11 @@ std::vector<std::pair<SymId, NodeId>> FlatParser::compile_pattern(NodeId pattern
                         accumulated_test =
                             flat_.add_if(accumulated_test, pair_check, flat_.add_literal(0));
 
-                        auto elem_car = make_call(sym_car, {current});
+                        // Null-guarded field extraction for type checker safety
+                        auto null_check = make_call(sym_null_q, {current});
+                        auto zero_lit = flat_.add_literal(0);
+                        auto car_expr = make_call(sym_car, {current});
+                        auto elem_car = flat_.add_if(null_check, zero_lit, car_expr);
 
                         if (elem_v.tag == NodeTag::Variable) {
                             auto elem_name = pool_.resolve(elem_v.sym_id);

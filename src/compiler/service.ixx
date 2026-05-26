@@ -2337,7 +2337,7 @@ private:
             if (nv.tag == aura::ast::NodeTag::Call && !nv.children.empty()) {
                 auto callee_v = flat.get(nv.child(0));
                 if (callee_v.tag == aura::ast::NodeTag::Variable &&
-                    !is_ignore_name(callee_v.sym_id) && nv.children.size() >= 2) {
+                    !is_ignore_name(callee_v.sym_id) && nv.children.size() >= 1) {
                     minfo.used_constructors.push_back(callee_v.sym_id);
                 }
             }
