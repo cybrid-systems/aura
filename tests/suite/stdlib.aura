@@ -226,3 +226,64 @@
   (require "std/encoding" all:)
   (check (string=? "" (hex-decode (hex-encode ""))))
   (check (string=? "" (base64-decode (base64-encode "")))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; std/fs — file system utilities
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "fs:path-join"
+  (require "std/fs" all:)
+  (check (string=? (path-join "a" "b") "a/b"))
+  (check (string=? (path-join "a/" "b") "a/b"))
+  (check (string=? (path-join "a" "b" "c" "d") "a/b/c/d"))
+  (check (string=? (path-join "" "a") "a"))
+  (check (string=? (path-join "a" "") "a/"))
+  (check (string=? (path-join) "")))
+
+(test-suite "fs:path-dirname"
+  (require "std/fs" all:)
+  (check (string=? (path-dirname "/a/b/c.txt") "/a/b"))
+  (check (string=? (path-dirname "c.txt") "."))
+  (check (string=? (path-dirname "/a/") "/a"))
+  (check (string=? (path-dirname "/") "/"))
+  (check (string=? (path-dirname "") ".")))
+
+(test-suite "fs:path-basename"
+  (require "std/fs" all:)
+  (check (string=? (path-basename "/a/b/c.txt") "c.txt"))
+  (check (string=? (path-basename "c.txt") "c.txt"))
+  (check (string=? (path-basename "/") ""))
+  (check (string=? (path-basename "") ""))
+  (check (string=? (path-basename "a/b/c") "c")))
+
+(test-suite "fs:path-extname"
+  (require "std/fs" all:)
+  (check (string=? (path-extname "file.txt") ".txt"))
+  (check (string=? (path-extname "file") ""))
+  (check (string=? (path-extname "/a/b/file.html") ".html"))
+  (check (string=? (path-extname ".hidden") ".hidden"))
+  (check (string=? (path-extname "a.b.c") ".c")))
+
+(test-suite "fs:file-exists"
+  (require "std/fs" all:)
+  (check (file-exists? "lib/std/fs.aura"))
+  (check (not (file-exists? "nonexistent_file_xyz")))
+  (check (not (file-exists? ""))))
+
+(test-suite "fs:file-size"
+  (require "std/fs" all:)
+  (check (> (file-size "lib/std/fs.aura") 0))
+  (check (= (file-size "nonexistent_xyz") 0)))
+
+(test-suite "fs:dir-list"
+  (require "std/fs" all:)
+  (check (pair? (dir-list "lib/std")))
+  (check (null? (dir-list "nonexistent_dir_xyz"))))
+
+(test-suite "fs:dir-files-dirs"
+  (require "std/fs" all:)
+  ;; At minimum, there should be files in lib/std
+  (let ((files (dir-files "lib/std"))
+        (dirs (dir-dirs "lib/std")))
+    (check (pair? files))  ;; at least some files
+    (check (list? dirs))))  ;; dirs is a list (maybe empty or some)

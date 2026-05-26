@@ -1,0 +1,91 @@
+; lib/std/fs.aura — File system utilities
+;
+; (require "std/fs" all:)
+;
+; API:
+;   (path-join parts...)       → combined path string
+;   (path-dirname path)        → directory part
+;   (path-basename path)       → filename part
+;   (path-extname path)        → extension (incl dot) | ""
+;   (file-read path)           → contents string | ""
+;   (file-write path content)  → #t on success
+;   (file-exists? path)        → #t | #f
+;   (file-size path)           → integer | 0
+;   (dir-list path)            → list of entries | ()
+;   (dir-files path)           → list of files only
+;   (dir-dirs path)            → list of directories only
+
+(export path-join path-dirname path-basename path-extname
+        file-read file-write file-exists? file-size
+        dir-list dir-files dir-dirs)
+
+;; ── Path manipulation ──
+
+(define (path-join . parts)
+  (if (null? parts) ""
+    (let rec ((remaining (cdr parts)) (result (car parts)))
+      (if (null? remaining) result
+        (let ((next (car remaining)))
+          (if (string=? result "")
+            (rec (cdr remaining) next)
+            (let ((c (string-ref result (- (string-length result) 1))))
+              (if (= c 47) (rec (cdr remaining) (string-append result next))
+                (rec (cdr remaining) (string-append result "/" next))))))))))
+
+(define (path-dirname path)
+  (if (string=? path "") "."
+    (let ((n (string-length path)))
+      (let s ((i (- n 1)))
+        (if (< i 0) "."
+          (if (= (string-ref path i) 47)
+            (if (= i 0) "/" (substring path 0 i))
+            (s (- i 1))))))))
+
+(define (path-basename path)
+  (if (string=? path "") ""
+    (let ((n (string-length path)))
+      (let s ((i (- n 1)))
+        (if (< i 0) path
+          (if (= (string-ref path i) 47)
+            (substring path (+ i 1) n)
+            (s (- i 1))))))))
+
+(define (path-extname path)
+  (let ((name (path-basename path)))
+    (let ((n (string-length name)))
+      (let d ((i (- n 1)))
+        (if (< i 0) ""
+          (let ((c (string-ref name i)))
+            (if (= c 46) (substring name i n)
+              (if (= c 47) "" (d (- i 1))))))))))
+
+;; ── File operations ──
+
+(define (file-read path)
+  (let ((v (read-file path)))
+    (if (string? v) v "")))
+
+(define (file-write path content)
+  (write-file path content)
+  #t)
+
+(define (file-exists? path)
+  (not (null? (read-file path))))
+
+(define (file-size path)
+  (let ((v (read-file path)))
+    (if (string? v) (string-length v) 0)))
+
+(define (dir-list path)
+  (let ((v (directory-list path)))
+    (if (pair? v) v ())))
+
+(define (dir-files path)
+  (let ((entries (dir-list path)))
+    (filter (lambda (e)
+      (string? (read-file (string-append path "/" e)))) entries)))
+
+(define (dir-dirs path)
+  (let ((entries (dir-list path)))
+    (filter (lambda (e)
+      (not (string? (read-file (string-append path "/" e))))) entries)))
