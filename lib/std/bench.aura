@@ -1,5 +1,21 @@
 ; ── bench.aura — Aura Native EDSL Benchmark ───
 (require "std/synthesize-v2" "std/list" "std/json" "std/fs" all:)
+
+; ── extract-code from LLM response ──
+(define (extract-code response)
+  (let ((l (string-index response "```lisp" 0)))
+    (if (> l -1)
+      (let* ((s (+ l 8)) (e (string-index response "```" s)))
+        (if (> e -1) (string-trim (substring response s e))
+          (let ((d (string-index response "(define " 0)))
+            (if (> d -1) (substring response d (string-length response)) response))))
+      (let ((m (string-index response "```" 0)))
+        (if (> m -1)
+          (let* ((s (+ m 3)) (e (string-index response "```" s)))
+            (if (> e -1) (string-trim (substring response s e)) response))
+          (let ((d (string-index response "(define " 0)))
+            (if (> d -1) (substring response d (string-length response)) response)))))))
+
 (export all-tasks task-count run-rounds aggregate)
 (export print-report)
 
@@ -17,21 +33,32 @@
          (expects (list-ref task 2))
          (depend (list-ref task 3))
          (hints-list (list-ref task 4))
-         ; Build test: add require + display
-         (require-str (if (string=? depend "") ""
-                        (string-append "(require \"" depend "\" all:)")))
-         (test-code (string-append require-str "(display (begin " goal "))"))
-         (test-list (list (list test-code (list-ref expects 0))))
-         ; Build hints string from hints list
          (hints-str (if (null? hints-list) ""
                       (let loop ((h hints-list) (acc ""))
                         (if (null? h) acc
                           (loop (cdr h) (string-append acc (car h) "\n"))))))
-         (result (synthesize:test-driven name
-                   :goal goal :tests test-list
-                   :hints hints-str
-                   :max-attempts max-a :model model))
-         (ok (car result)))
+         ; Build system prompt — must avoid any quote issues
+         (sys "You are an expert Aura Lisp programmer. Write a complete program ending with (display ...). The output must match exactly.\nRules:\n- (define ...) for functions, then (display (my-func args...))\n- (require std/name all:) for stdlib\n- Wrap code in ```lisp ... ``` markers.\n")
+         (usr (string-append "Goal: " goal
+           (if (string=? hints-str "") "" (string-append "\n\nHINTS:\n" hints-str))))
+         (msgs (list (hash "role" "system" "content" sys)
+                    (hash "role" "user" "content" usr)))
+         (body (json-encode (hash "model" model "messages" msgs "temperature" 0.3)))
+         (raw (aura-llm-call body))
+         (parsed (json-parse raw))
+         (choices (hash-ref parsed "choices"))
+         (first (if (pair? choices) (car choices) (hash)))
+         (msg (hash-ref first "message"))
+         (content (if (hash? msg) (hash-ref msg "content") ""))
+         (llm-code (extract-code content))
+         (full-code (string-append
+           (if (string=? depend "") "" (string-append "(require \"" depend "\" all:)"))
+           (if (string=? llm-code "") ";" llm-code)))
+         (actual (if (string=? llm-code "") ""
+                   (begin (set-code full-code) (eval-current-output))))
+         (expected-str (string-trim (list-ref expects 0)))
+         (actual-str (string-trim actual))
+         (ok (string=? actual-str expected-str)))
     (list ok name)))
 
 (define (run-rounds tasks model max-a rounds)
