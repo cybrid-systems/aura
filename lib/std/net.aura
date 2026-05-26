@@ -1,0 +1,86 @@
+; lib/std/net.aura — Network client library
+;
+; (require "std/net" all:)
+;
+; API:
+;   (http-get-json url)  → parsed JSON | ()
+;   (http-post-json url body) → parsed JSON | ()
+;   (url-encode s) → percent-encoded string
+;   (url-decode s) → percent-decoded string
+;   (url-join base path) → combined URL string
+;   (fetch-try url n) → body string | ""  (retry n times)
+
+(require std/json all:)
+
+(export http-get-json http-post-json url-encode url-decode url-join fetch-try)
+
+;; GET JSON
+(define (http-get-json url)
+  (let ((body (http-get url)))
+    (if (string=? body "") ()
+      (try (json-parse body) (catch ())))))
+
+;; POST JSON
+(define (http-post-json url body)
+  (let ((resp (http-post url body)))
+    (if (string=? resp "") ()
+      (try (json-parse resp) (catch ())))))
+
+;; URL-encode
+(define (url-encode s)
+  (let ((n (string-length s)))
+    (let loop ((i 0) (result ""))
+      (if (>= i n) result
+        (let ((c (string-ref s i)))
+          (if (or (and (>= c 97) (<= c 122))
+                  (and (>= c 65) (<= c 90))
+                  (and (>= c 48) (<= c 57))
+                  (= c 45) (= c 46) (= c 95) (= c 126))
+            (loop (+ i 1) (string-append result (list->string (list c))))
+            (if (= c 32)
+              (loop (+ i 1) (string-append result "+"))
+              ;; Percent-encode
+              (let ((hex "0123456789ABCDEF"))
+                (loop (+ i 1)
+                      (string-append result "%"
+                        (list->string (list (string-ref hex (quotient c 16))))
+                        (list->string (list (string-ref hex (modulo c 16))))))))))))))
+
+;; URL-decode
+(define (url-decode s)
+  (let ((n (string-length s)))
+    (let loop ((i 0) (result ""))
+      (if (>= i n) result
+        (let ((c (string-ref s i)))
+          (if (= c 37)
+            (if (< (+ i 2) n)
+              (let* ((hi (string-ref s (+ i 1)))
+                     (lo (string-ref s (+ i 2)))
+                     (hv (if (and (>= hi 48) (<= hi 57)) (- hi 48)
+                          (if (and (>= hi 65) (<= hi 70)) (- hi 55) (- hi 87))))
+                     (lv (if (and (>= lo 48) (<= lo 57)) (- lo 48)
+                          (if (and (>= lo 65) (<= lo 70)) (- lo 55) (- lo 87))))
+                     (val (+ (* 16 hv) lv)))
+                (loop (+ i 3) (string-append result (list->string (list val)))))
+              (loop (+ i 1) (string-append result "%")))
+            (if (= c 43)
+              (loop (+ i 1) (string-append result " "))
+              (loop (+ i 1) (string-append result (list->string (list c)))))))))))
+
+;; URL-join
+(define (url-join base path)
+  (let ((n (string-length base)))
+    (if (= n 0) path
+      (let ((c (string-ref base (- n 1))))
+        (if (= c 47)
+          (string-append base path)
+          (string-append base "/" path))))))
+
+;; Fetch with retry
+(define (fetch-try url max-a)
+  (let loop ((attempt 1))
+    (if (> attempt max-a) ""
+      (let ((body (http-get url)))
+        (if (string=? body "")
+          (loop (+ attempt 1))
+          body)))))
