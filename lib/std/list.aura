@@ -1,7 +1,7 @@
 ; Aura standard list library
 ; Import with: (import "std/list")
 
-(export foldr map for-each member? zip zip3 take drop take-while drop-while partition sort range sum product last flatten intersperse)
+(export foldr map for-each member? zip zip3 take skip take-while drop-while partition sort range sum product last flatten intersperse)
 
 (define (foldr f init lst)
   (if (null? lst)
@@ -61,9 +61,9 @@
       (cons (car lst) (take (- n 1) (cdr lst)))))
 
 ;; drop: skip first n elements
-(define (drop n lst)
+(define (skip n lst)
   (if (or (= n 0) (null? lst)) lst
-      (drop (- n 1) (cdr lst))))
+      (skip (- n 1) (cdr lst))))
 
 (define (sum lst)
   (if (null? lst) 0
