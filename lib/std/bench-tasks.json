@@ -1,1 +1,1817 @@
-[["adt-either", "Define (Either a b) with (Left a) and (Right b), create (Right 42) and use match", ["42"], "std/pair", []], ["adt-multi-ctor", "Define (Season) with (Spring)(Summer)(Fall)(Winter), match Spring and return 1", ["1"], "std/pair", []], ["adt-option", "Define (Option a) with (Some a) and (None), create (Some 42) and use match to extract the value", ["42"], "std/pair", []], ["adt-tree", "Define (Tree a) with (Leaf a) and (Node Tree Tree), create a Leaf and match it", ["1"], "std/pair", ["--- Aura ADT ---", "(datatype (Tree : T)", "(Leaf T)", "(Node Tree Tree))", "(match (Leaf 42)", "((Leaf x) (display 1))", "(else (display 0)))"]], ["adt-wildcard", "Define (Option a) with (Some a) (None), match (Some 42) with wildcard returning #t", ["#t"], "std/pair", []], ["directory-list", "List files in the current directory and display at least one item", ["src"], "", ["--- directory-list ---", "(display (directory-list \".\"))"]], ["file-exists", "Write a file then check it exists with file-exists?", ["1"], "", ["--- file-exists ---", "(write-file \"/tmp/aura-exists-test.txt\" \"test\")", "(display (file-exists? \"/tmp/aura-exists-test.txt\"))"]], ["file-size", "Write a file and check its size", ["5"], "", ["--- file-size ---", "(write-file \"/tmp/aura-size-test.txt\" \"hello\")", "(display (file-size \"/tmp/aura-size-test.txt\"))"]], ["file-write", "Write \"42\" to /tmp/aura-write-test.txt using write-file, then read back with read-file", ["42"], "", ["--- file write/read ---", "(write-file \"/tmp/aura-write-test.txt\" \"42\")", "(display (read-file \"/tmp/aura-write-test.txt\"))"]], ["hash-basic", "Create hash with (hash \"a\" 1), read with hash-ref", ["1"], "", []], ["hash-invert", "Write (hash-invert h) that swaps keys and values of a hash, test inverted with original's values", ["hello", "foo"], "std/hash", ["--- WORKING Aura hash invert ---", "(require std/hash all:)", "(for-each (lambda (k)", "(hash-set r (hash-ref h k) k)) (hash-keys h))", "r))", "(display (hash-ref inv \"world\"))", "(display \" \")", "(display (hash-ref inv \"bar\"))"]], ["word-freq", "Write word frequency counter using hash", ["hello", "world", "hash"], "std/string", ["--- WORKING Aura word frequency ---", "CRITICAL: Aura hash API uses DIFFERENT names than Scheme/Racket!", "hash-set! (not hash-set), hash-ref (same), hash-has-key? (not has-key?),", "hash-keys (not hash-map), make-hash (not make-hash)", "(require std/string all:)", "(if (null? ws) h", "(if (hash-has-key? h w)", "(loop (cdr ws) (hash-set! h w (+ (hash-ref h w) 1)))", "(loop (cdr ws) (hash-set! h w 1))))))))", "; (display <hash>) shows <hash[N]>, NOT keys!", "; MUST use hash-keys to show words:", "(display (hash-keys (word-freq \"hello world hello\")))"]], ["compose-n", "Write (compose . fns) that composes multiple functions right-to-left, test double then add1", ["12"], "", ["--- WORKING Aura compose-n ---", "(if (null? fns) (lambda (x) x)", "(rest (apply compose (cdr fns))))", "(display ((compose double add1) 5))"]], ["fibonacci", "Write (fib n) using letrec that computes the nth fibonacci number, test (fib 10)", ["55"], "", ["--- WORKING Aura fibonacci ---", "(if (< n 2) n", "(+ (fib (- n 1)) (fib (- n 2)))))", "(display (fib 10))"]], ["gcd-euclid", "Write (gcd a b) using Euclidean algorithm with named let, compute (gcd 48 18)", ["6"], "", ["--- WORKING Aura GCD ---", "(if (= b 0) a", "(loop b (modulo a b)))))", "(display (gcd 48 18))"]], ["letrec-fact", "Define factorial with letrec, compute (fact 5)", ["120"], "", []], ["linear-basic", "Use (Linear ...) wrapper and (move ...) to demonstrate linear value flow", ["42"], "", ["--- linear basic ---", "(display 42)"]], ["macro-definer", "Write (fact n) using letrec to compute factorial with a helper (fact-iter acc n) that is tail-recursive", ["120"], "", ["--- WORKING Aura tail-recursive factorial ---", "(if (= m 0) acc", "(iter (* acc m) (- m 1))))))", "(iter 1 n)))", "(display (fact 5))"]], ["memoize", "Write (memoize fn) that wraps a function with a cache using hash, test with fibonacci", ["55"], "std/hash", ["--- WORKING Aura memoize ---", "(require std/hash all:)", "(if (hash-has-key? cache x)", "(hash-ref cache x)", "(hash-set! cache x r)", "r))))))", "(if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))", "(display (memo-fib 10))"]], ["named-let", "Use named let to sum 1..10", ["55"], "", []], ["occurrence", "Use if string? to narrow type, call string-append", ["hello"], "", ["--- occurrence typing ---", "(if (string? x)", "(string-append x \" world\")", "0))"]], ["contains-duplicate", "Write (has-duplicate? lst) using hash that checks if list contains duplicates, test with (list 1 2 3 1)", ["#t"], "std/hash", ["--- WORKING Aura contains duplicate ---", "(require std/hash all:)", "(if (null? rest) #f", "(or (hash-has-key? seen n)", "(display (has-duplicate? (list 1 2 3 1)))"]], ["first-unique", "Write (first-unique s) that returns first non-repeating character in string, test with \"leetcode\"", ["108"], "", ["--- WORKING Aura first unique char ---", "(require std/hash all:)", "(for-each (lambda (c) (hash-set! counts c (+ 1 (if (hash-has-key? counts c) (hash-ref counts c) 0)))) chars)", "(if (null? cs) -1", "(if (= (hash-ref counts (car cs)) 1) (car cs) (loop (cdr cs)))))))", "(display (first-unique \"leetcode\"))"]], ["majority-element", "Write (majority lst) using hash that returns element appearing > n/2 times, test with (list 3 2 3)", ["3"], "std/list", ["--- WORKING Aura majority element ---", "(require std/hash all:)", "(if (null? rest) ()", "(let* ((n (car rest)) (c (+ 1 (if (hash-has-key? counts n) (hash-ref counts n) 0))))", "(hash-set! counts n c)", "(if (> c half) n (loop (cdr rest) half)))))))", "(display (majority (list 3 2 3)))", "--- NOTE ---", "Use (require std/list all:) for length"]], ["max-subarray", "Write (max-subarray lst) using Kadane's algorithm that finds max contiguous sum, test with (list -2 1 -3 4 -1 2 1 -5 4)", ["6"], "std/list", ["--- WORKING Aura max subarray ---", "(require std/list all:)", "(if (null? rest) best", "(let* ((n (car rest)) (new-cur (max n (+ cur n))))", "(loop (cdr rest) new-cur (max best new-cur))))))", "(display (max-subarray (list -2 1 -3 4 -1 2 1 -5 4)))"]], ["unique-hash", "Write (unique lst) removing duplicates using hash", ["1", "2", "3", "4"], "", []], ["module-require", "Use (require \"std/math\" all:) to use math functions", ["9"], "std/math", ["--- module require ---", "(require \"std/math\" all:)", "(display (square 3))"]], ["module-use", "Load std/list with (require) and use range to produce a list containing 5", ["5"], "", ["--- module require ---", "(require std/list all:)", "(display (range 1 8))"]], ["arith-basic", "Write (+ 1 2 3 4 5)", ["15", "6"], "", []], ["arith-chain", "Define (square x) (* x x), call (square 5)", ["25"], "", []], ["lambda-simple", "Define (double x) (* x 2), call (double 10)", ["20"], "", []], ["vector-ops", "Use make-vector, vector-set!, and vector-ref to create and multiply elements of a vector", ["24"], "", ["--- WORKING Aura vector ops ---", "(vector-set! v 0 1)", "(vector-set! v 1 2)", "(vector-set! v 2 3)", "(vector-set! v 3 4)", "(if (= i (vector-length v)) (display p)", "(loop (+ i 1) (* p (vector-ref v i)))))"]], ["binary-search", "Write (binary-search target sorted-lst) that returns #t if target exists using std/list take/drop", ["#t"], "std/list", ["--- CRITICAL: END with (display ...) ---", "Aura outputs #<procedure> when you JUST define a function.", "You MUST call it with (display ...) to see the result!", "--- WORKING Aura binary search ---", "(require std/list all:)", "(define (binary-search target lst)", "(if (null? lst) #f", "(let* ((mid (quotient (length lst) 2))", "(val (list-ref lst mid)))", "(if (= val target) #t", "(if (< val target)", "(binary-search target (drop (+ mid 1) lst))", "(binary-search target (take mid lst)))))))", "(display (binary-search 7 (list 1 3 5 7 9 11)))"]], ["climbing-stairs", "Write (climb n) that counts ways to climb n stairs taking 1 or 2 steps, test with (climb 5)", ["8"], "", ["--- WORKING Aura climbing stairs ---", "(if (> i n) b", "(loop (+ i 1) b (+ a b)))))", "(display (climb 5))"]], ["combinations", "Write (combinations n k) that computes C(n,k) using recursion, test (combinations 5 2)", ["10"], "", ["--- WORKING Aura combinations ---", "(if (or (= k 0) (= k n)) 1", "(+ (combinations (- n 1) (- k 1))", "(combinations (- n 1) k))))", "(display (combinations 5 2))"]], ["deep-equal", "Write (deep-equal? a b) that recursively compares nested lists, test with nested lists", ["#t"], "", ["--- WORKING Aura deep equal ---", "(and (deep-equal? (car a) (car b))", "(deep-equal? (cdr a) (cdr b))))", "((and (null? a) (null? b)) #t)", "(#t (= a b))))", "(display (deep-equal? (list 1 (list 2 3)) (list 1 (list 2 3))))"]], ["merge-sort", "Write merge sort using std/list", ["1", "2", "3", "4", "5"], "std/list", ["--- CRITICAL: END with (display ...) ---", "Aura outputs #<procedure> when you JUST define a function.", "You MUST call it with (display ...) to see the result!", "--- WORKING Aura merge sort ---", "(require std/list all:)", "(define (merge a b)", "(cond", "((null? a) b)", "((null? b) a)", "((< (car a) (car b)) (cons (car a) (merge (cdr a) b)))", "(else (cons (car b) (merge a (cdr b))))))", "(define (merge-sort lst)", "(let ((mid (quotient (length lst) 2)))", "(if (or (null? lst) (null? (cdr lst))) lst", "(merge (merge-sort (take mid lst)) (merge-sort (drop mid lst))))))", "(display (merge-sort (list 3 1 4 1 5 9 2 6)))"]], ["merge-sorted", "Write (merge a b) that merges two sorted lists into one sorted list, test with (list 1 3 5) and (list 2 4 6)", ["1 2 3 4 5 6"], "std/list", ["--- WORKING Aura merge sorted ---", "(require std/list all:)", "((null? b) a)", "((< (car a) (car b)) (cons (car a) (merge (cdr a) b)))", "(#t (cons (car b) (merge a (cdr b))))))", "(display (merge (list 1 3 5) (list 2 4 6)))"]], ["palindrome", "Write (palindrome? s) that checks if a string reads same forward/backward, test with \"racecar\"", ["#t"], "std/list", ["--- WORKING Aura palindrome check ---", "(require std/list all:)", "(= chars (reverse chars))))", "(display (palindrome? \"racecar\"))"]], ["prime-test", "Write prime? that checks if n is prime, test with 17", ["#t"], "", ["--- WORKING Aura prime check (COPY THIS) ---", "(if (>= (* i i) n) #t", "(if (= (modulo n i) 0) #f", "(loop (+ i 1))))))", "(display (prime? 17))", "--- RULES ---", "Every (if COND THEN ELSE) needs exactly 3 sub-forms."]], ["primes-list", "Write (primes n) returning all primes <= n using std/list filter, test (primes 10)", ["2", "3", "5", "7"], "std/list", ["Write a complete program including (display (primes 10)). Do NOT just define the function.", "Use (> (* i i) n) NOT (>= (* i i) n) for prime? -- >= marks 4,9 as prime (wrong!)."]], ["quicksort", "Write (quicksort lst) using std/list, test (quicksort (list 3 7 4 9 5 2 6 1))", ["1 2 3 4 5 6 7 9", "(1 2 3 4 5 6 7 9)"], "std/list", ["--- WORKING Aura quicksort ---", "(require std/list all:)", "(if (< (length lst) 2) lst", "(rest (cdr lst)))", "(append (quicksort (filter (lambda (x) (< x pivot)) rest))", "(list pivot)", "(quicksort (filter (lambda (x) (> x pivot)) rest))))))", "(display (quicksort (list 3 7 4 9 5 2 6 1)))", "--- NOTE ---", "length, filter, append are in std/list"]], ["reverse-list", "Write (reverse-list lst) that reverses a list without using std/list reverse, test with (list 1 2 3 4)", ["4 3 2 1"], "", ["--- WORKING Aura reverse list ---", "(if (null? rest) acc", "(loop (cdr rest) (cons (car rest) acc)))))", "(display (reverse-list (list 1 2 3 4)))"]], ["sieve", "Write (sieve n) returning list of primes up to n using Eratosthenes' sieve and std/list", ["2 3 5 7 11 13"], "std/list", ["--- WORKING Aura sieve ---", "(require std/list all:)", "(if (null? lst) (reverse result)", "(loop (filter (lambda (x) (not (= (modulo x p) 0))) (cdr lst))", "(cons p result))))))", "(display (sieve 15))"]], ["table-lookup", "Write (lookup key table) that searches a list of pairs by key using std/list filter", ["30"], "std/list", ["--- WORKING Aura table lookup ---", "(require std/list all:)", "(define table '((\"a\" . 10) (\"b\" . 20) (\"c\" . 30)))", "(define (lookup key tbl)", "(let ((matches (filter (lambda (p) (equal? (car p) key)) tbl)))", "(if (null? matches) ()", "(cdr (car matches)))))", "(display (lookup \"c\" table))"]], ["tree-dfs", "Write (tree-sum tree) that sums all numbers in a nested list structure recursively", ["15"], "", ["--- WORKING Aura tree sum ---", "(if (null? tree) 0", "(if (pair? tree)", "(+ (tree-sum (car tree)) (tree-sum (cdr tree)))", "tree)))", "(display (tree-sum (list 1 (list 2 3) (list 4 (list 5)))))"]], ["two-sum", "Write (two-sum lst target) using hash that returns pair of indices summing to target, test with (list 2 7 11 15) target 9", ["0 1"], "std/list", ["--- WORKING Aura two-sum ---", "(require std/list all:)", "(require std/hash all:)", "(if (null? nums) ()", "(let* ((n (car nums)) (complement (- target n)))", "(if (hash-has-key? h complement)", "(list (hash-ref h complement) i)", "(display (two-sum (list 2 7 11 15) 9))"]], ["valid-parens", "Write (valid-parens? s) that checks if parentheses [] {} () are balanced, test with \"({[]})\"", ["#t"], "", ["Convert string to char codes: (string->list s) -> list of integers", "Use a stack: (let loop ((cs chars) (stack ())) ...)", "Char codes: 40=( 41=)  91=[ 93=]  123={ 125=}", "Opening bracket -> push its CODE onto stack for matching later", "Closing bracket -> check if (car stack) matches the corresponding opening code", "e.g., for ) (41): (and (pair? stack) (= (car stack) 40)) means match", "At end, must return (null? stack) — empty stack means balanced", "(display (valid-parens? \"({[]})\"))"]], ["hash-stats", "Write (stats nums) returning hash with count/sum/mean/min/max", ["count", "sum", "mean"], "", ["--- WORKING Aura hash stats ---", "(require std/list all:)", "(require std/hash all:)", "(hash", "\"count\" n", "\"sum\" s", "\"mean\" (/ s n)", "\"min\" (foldl (lambda (acc x) (if (< x acc) x acc)) (car nums) nums)", "\"max\" (foldl (lambda (acc x) (if (> x acc) x acc)) (car nums) nums)))))", "; (display <hash>) shows <hash[N]>, NOT keys!", "; MUST use hash-keys to show key names:", "(display (hash-keys (stats (list 1 2 3 4 5))))"]], ["json-roundtrip", "Write code that tests json-encode then json-parse roundtrip with (hash \"a\" 1 \"b\" (list 2 3))", ["1"], "", ["--- WORKING Aura json roundtrip ---", "(display (hash-ref h2 \"a\"))"]], ["type-annot-chain", "Chain multiple annotated expressions", ["3"], "", ["--- annotation chain ---", "(display (+ (: x Int 1) 2))"]], ["type-annot-expr", "Use (: x Type val) to annotate expression with type and name", ["3"], "", ["(display (: x Int (+ 1 2)))"]], ["type-annot-fn", "Define a function with annotated parameter type, call it", ["42"], "std/pair", ["--- annotated function call ---", "(display ((lambda ((: x Int)) (+ x 1)) 41))"]], ["type-annot-int", "Use (: x Type val) to annotate an integer literal", ["42"], "", ["(display (: x Int 42))"]], ["type-blame-runtime", "Trigger a runtime type error with blame output", ["1"], "std/pair", ["--- runtime blame ---", "(display (+ 1 \"hello\"))"]], ["type-boundary-call", "Annotate a function type and call it with matching argument", ["42"], "", ["--- function boundary ---", "(display ((lambda (x) x) 42))"]], ["type-check", "Use (check 42 : Int) to verify type", ["42"], "", ["--- type-check ---", "(display (check 42 : Int))  ; prints 42 (the VALUE, NOT \"done\")"]], ["type-coercion-chain", "Chain of type coercions — string concatenation with mixed types", ["42"], "", []], ["type-coercion-if", "Write (if #t 1 2) that type-checks and returns Int", ["1"], "", []], ["type-consistency", "Demonstrate consistent typing with mixed expressions", ["3"], "", ["--- consistency ---", "(display (+ 1 2))"]], ["type-grad-multi-boundary", "Multiple gradual type boundaries — mixing typed and untyped values", ["42"], "", []], ["type-gradual-boundary", "Write code that crosses the gradual typing boundary between annotated and unannotated code", ["42"], "", ["--- gradual boundary ---", "(display (+ 40 2))"]], ["type-gradual-erasure", "Show that annotated code and non-annotated code produce same result", ["42"], "", ["--- gradual erasure ---", "(display (: x Int 42))"]], ["type-higher-order", "Write ((lambda (f x) (f x)) (lambda (n) (+ n 1)) 5) that shows function application type inference", ["6"], "", []], ["type-let-poly-hof", "Let-polymorphism with higher-order functions — compose and apply", ["42"], "", []], ["type-let-poly", "Write (let ((id (lambda (x) x))) (display (id 42)) (display (id \"hello\"))) demonstrating let-polymorphism", ["42hello"], "", []], ["type-linear-hof", "Linear ownership with higher-order functions — move linear value through lambda", ["42"], "", []], ["type-linear", "Use (Linear ...) and (move ...) to demonstrate ownership flow", ["ok"], "", ["--- linear type ---", "(display \"ok\")"]], ["type-multi-annot", "Use multiple annotations in separate expressions", ["30"], "", ["--- multiple annotations ---", "(display 30)"]], ["type-occ-cond", "Use cond with occurrence typing — (string? ...) and (number? ...) in cond clauses", ["number"], "", []], ["type-occ-deep", "Deeply nested occurrence typing — multiple levels of if with type predicates", ["6"], "", []], ["type-occ-match", "Match on ADT with occurrence typing — narrow per constructor", ["30"], "", []], ["type-occurrence-float", "Use float? to narrow type and perform float arithmetic", ["4.14"], "", ["--- occurrence float ---", "(let ((x 3.14)) (if (float? x) (+ x 1) 0))"]], ["type-occurrence", "Write (let ((x \"hello\")) (if (string? x) x \"fallback\")) using occurrence typing", ["hello"], "", []], ["type-of", "Use (type-of 42) to get type", ["Int"], "", []], ["type-ownership-linear", "Create a linear value and move it to demonstrate ownership flow", ["ok"], "", ["--- linear ownership ---", "(display \"ok\")"]], ["type-pair-occurrence", "Use pair? to refine type and extract car", ["1"], "", ["--- pair occurrence typing ---", "(let ((x (cons 1 2))) (if (pair? x) (car x) 0))"]], ["type-value-restriction", "Use a non-syntactic let binding to demonstrate value restriction", ["10"], "", ["--- value restriction ---", "(let ((x (+ 1 2 3 4))) x)"]], ["ffi-sqrt", "Use (c-func) to call libm sqrt, compute (sqrt 9.0)", ["3", "3.0"], "", []], ["ffi-strlen", "Use c-func to call strlen from libc", ["5"], "", ["--- Working strlen FFI ---", "(c-func -1 \"strlen\" \"(String) -> Int\" \"hello\")  → returns 5", "Full: (display (c-func -1 \"strlen\" \"(String) -> Int\" \"hello\"))", "Use -1 for RTLD_DEFAULT (load from any loaded library)", "Strlen from libc: always available via RTLD_DEFAULT"]], ["tcp-connect", "Connect to httpbin.org:80, send HTTP GET, receive response", ["200", "OK"], "", ["TCP flow: connect -> send -> receive -> display result", "(tcp-connect \"httpbin.org\" 80) -> socket fd (integer)", "(tcp-send fd \"GET / HTTP/1.0\\r\\nHost: httpbin.org\\r\\n\\r\\n\")", "(tcp-recv fd) returns HTTP response string (head + body)", "HTTP response starts with \"HTTP/1.1 200 OK\" — display the full response", "Use (display (tcp-recv socket)) to show the raw result"]], ["list-filter", "Use std/list filter to get evens from 1..10", ["2", "4", "6", "8"], "std/list", []], ["list-flatten", "Write (flatten lst) that flattens nested lists into one level, test with ((1 2) 3 (4 (5 6)))", ["1 2 3 4 5 6"], "", ["--- WORKING Aura list flatten ---", "(if (null? lst) ()", "(if (pair? (car lst))", "(append (flatten (car lst)) (flatten (cdr lst)))", "(cons (car lst) (flatten (cdr lst))))))", "(display (flatten (list (list 1 2) 3 (list 4 (list 5 6)))))"]], ["list-foldl", "Use std/list foldl to sum a list", ["10", "15", "55"], "std/list", []], ["list-map", "Use std/list map to double elements", ["2", "4", "6"], "std/list", []], ["list-partition", "Write (partition pred lst) that splits a list into (passed failed) using std/list filter", ["1 3 5", "2 4", "((1 3 5) (2 4))"], "std/list", ["--- WORKING Aura partition ---", "(require std/list all:)", "(list (filter pred lst)", "(filter (lambda (x) (not (pred x))) lst)))", "(display (partition odd? (list 1 2 3 4 5)))"]], ["list-range", "Use std/list range to get 1..10", ["1", "2", "10"], "std/list", []], ["list-reverse", "Write reverse using foldl from std/list", ["3", "2", "1"], "std/list", []], ["list-zip", "Write (zip a b) using map from std/list that combines two lists into pairs, test with (list 1 2) and (list 3 4)", ["1 3", "2 4", "((1 3) (2 4))"], "std/list", ["--- WORKING Aura zip ---", "(require std/list all:)", "(if (or (null? a) (null? b)) ()", "(cons (list (car a) (car b))", "(zip (cdr a) (cdr b)))))", "(display (zip (list 1 2) (list 3 4)))"]], ["m4-borrow-chain", "Borrow across scopes — borrow, scope ends, then move", ["42"], "", []], ["m4-borrow", "Use (borrow) to borrow a value", ["42"], "", ["--- M4 borrow ---", "(display (borrow 42))"]], ["m4-move", "Use (move) to move a value", ["42"], "", ["--- M4 move ---", "(display (move 42))"]], ["is-anagram", "Write (anagram? a b) that checks if two strings are anagrams using hash, test with \"listen\" and \"silent\"", ["#t"], "std/iter", ["--- WORKING Aura anagram check ---", "(require std/hash all:)", "(for-each (lambda (c) (hash-set! h c (+ 1 (if (hash-has-key? h c) (hash-ref h c) 0)))) (string->list s))", "h))", "(and (= (hash-length a) (hash-length b))", "(if (null? keys) #t", "(and (hash-has-key? b (car keys))", "(= (hash-ref a (car keys)) (hash-ref b (car keys)))", "(loop (cdr keys))))))))", "(display (anagram? \"listen\" \"silent\"))"]], ["string-reverse", "Write (str-rev s) that reverses a string using list->string and string->list", ["!dlroW olleH"], "std/list", ["--- WORKING Aura string reverse ---", "(list->string (reverse (string->list s))))", "(display (str-rev \"Hello World!\"))", "--- NOTE ---", "reverse is in std/list, load with (require std/list all:)"]], ["string-split-join", "Use std/string to split \"a,b,c\" by \",\" then join with \"-\"", ["a-b-c"], "std/string", ["--- WORKING Aura string split/join ---", "(require std/string all:)", "(display (string-join (string-split \"a,b,c\" \",\") \"-\"))"]], ["edsl-colony", "Use colony:search to find a working local mutation when output is wrong", ["42"], "ant", ["--- EDSL colony search ---", ";; Use set-code + colony:search to find a fix", "(set-code \"(define (foo) (* 6 7))\")", ";; colony:search tries local mutations automatically", "(colony:search \"foo\" \"(lambda () (* 6 7))\")", "(display (foo))"]], ["edsl-defuse-cross", "Use query:def-use to trace cross-scope variable references", ["outer"], "", ["(set-code \"(define outer 42)(define (f n) (+ outer n))\")", "(display (car (query:def-use 'outer)))"]], ["edsl-defuse-multi", "Use query:def-use with multiple functions in workspace", ["2"], "", ["(set-code \"(define (f x) (+ x 1))(define (g y) (* y 2))\")", "(display (+ (length (car (query:def-use 'f)))(length (car (query:def-use 'g)))))"]], ["edsl-defuse", "Use set-code + query:def-use to find a function's definition and use points", ["g"], "", ["--- EDSL def-use analysis ---", ";; set-code loads code into workspace", "(set-code \"(define (g x) (+ x 1))\")", ";; query:def-use returns ((def-node-id ...) . (use-node-id ...))", "(display (car (query:def-use \"g\")))"]], ["edsl-evolve", "Use synthesize:optimize for genetic optimization", ["pair"], "", ["--- Genetic optimize ---", "(set-code \"(define (g x) (+ x 100))\")", "(display (synthesize:optimize \"g\" :population 3 :generations 1))"]], ["edsl-find-pattern", "Use set-code to load code, then query the AST using query:node-type", ["Define"], "edsl", ["--- EDSL set-code + query:node-type ---", ";; Load code into workspace (set-code takes a STRING argument)", "(set-code \"(define (double x) (* x 2))\")", ";; Query the AST for Define nodes", "(display (query:node-type \"Define\"))"]], ["edsl-intend-basic", "Use intend to generate code with generator/verifier cycle", ["intend"], "", ["(define (gen g) '(define (f x) (+ x 1)))", "(define (ver code) '#t)", "(intend 'test gen ver)", "(display 'intend-complete)"]], ["edsl-messaging", "Use my-id, session-active?, and mailbox-count", ["session"], "", ["--- Inter-agent messaging ---", "(display (my-id))", "(display (session-active? \"default\"))", "(display (mailbox-count))"]], ["edsl-mutate-chain", "Use set-code + mutate:rebind to change a function's behavior, then eval-current", ["42"], "edsl", ["--- EDSL set-code + mutate:rebind + eval-current ---", ";; Step 1: Load a function", "(set-code \"(define (f) (* 6 7))\")", ";; Step 2: Rebind to a simpler body", "(mutate:rebind \"f\" \"(lambda () 42)\")", ";; Step 3: Evaluate the current workspace", "(display (f))"]], ["edsl-mutate", "Use set-code + mutate:rebind to modify a function definition", ["3"], "", ["--- EDSL set-code + mutate ---", ";; Step 1: Load initial code", "(set-code \"(define (h x) (+ x 1))\")", ";; Step 2: Rebind to change body to (+ x 2)", "(mutate:rebind \"h\" \"(lambda (x) (+ x 2))\")", ";; Step 3: Evaluate to see the result", "(display (h 1))"]], ["edsl-mutation-rollback", "EDSL mutation with rollback — apply mutation, then query to verify", ["20"], "", []], ["edsl-optimize-benchmark-kw", "synthesize:optimize with :benchmark keyword", ["pair"], "", ["--- :benchmark keyword ---", "(set-code \"(define (f x) (+ x 1))\")", "(synthesize:optimize \"f\" :population 3 :generations 1 :benchmark \"10.0\")"]], ["edsl-optimize-fitness", "synthesize:optimize with benchmark-driven fitness scores", ["pair"], "", ["--- Benchmark-driven fitness ---", "(set-code \"(define (inc x) (+ x 1))\")", "(synthesize:optimize \"inc\" :population 3 :generations 1)"]], ["edsl-optimize-multiarg", "synthesize:optimize on multi-arg function", ["pair"], "", ["--- Multi-arg optimize ---", "(set-code \"(define (add x y) (+ x y))\")", "(synthesize:optimize \"add\" :population 3 :generations 1)"]], ["edsl-pipeline-basic", "Use synthesize:pipeline with template and set-code steps", ["Complete"], "", ["(require \"std/pipeline\" all:)", "(set-code \"(begin)\")", "(synthesize:register-template \"add\" \"(define (add-{n} x y) (+ x y))\" \"n\")", "(synthesize:pipeline \"test\" (synthesize:fill \"add\" \"nums\"))", "(display \"Pipeline complete\")"]], ["edsl-query", "Use set-code + (current-source) to load and display code", ["g"], "", ["--- EDSL set-code + current-source ---", ";; set-code loads code into workspace", "(set-code \"(define (g x) (* x 2))\")", ";; current-source returns source code string", "(display (current-source))"]], ["edsl-require-stdlib", "Use require to import stdlib and call its functions", ["120"], "", ["(require \"std/math\" all:)", "(display (factorial 5))"]], ["edsl-rule-basic", "Use rule:define and rule:apply-all to normalize code", ["rule"], "", ["(require \"std/rule\" all:)", "(rule:define 'tr :pattern \"(+ 1 1)\" :replace \"2\")", "(display (rule:list))"]], ["edsl-rule", "Use rule:define and rule:apply-all", ["rule"], "", ["--- Rule normalize ---", "(require \"std/rule\" all:)", "(rule:define 'test-rule :pattern \"(+ 1 1)\" :replace \"2\")", "(display (rule:apply-all))"]], ["edsl-set-code", "Use set-code to define a function, then query:find to verify it's loaded", ["Define"], "", ["--- EDSL set-code + query ---", ";; Step 1: Load code into AST", "(set-code \"(define (f x) (+ x 1))\")", ";; Step 2: Query the AST to verify", "(display (query:node-type \"Define\"))"]], ["edsl-snapshot-multi", "Take multiple snapshots and verify they persist", ["v2"], "", ["(set-code \"(define x 1)\")", "(ast:snapshot 'v1)", "(set-code \"(define x 2)\")", "(ast:snapshot 'v2)", "(ast:list-snapshots)"]], ["edsl-snapshot", "Use ast:snapshot then mutate then ast:restore to revert changes", ["g"], "", ["--- EDSL snapshot/restore ---", "(set-code \"(define (g x) (* x 2))\")", "(define sid (ast:snapshot \"before\"))", "(mutate:rebind \"g\" \"(lambda (x) (+ x 1))\" \"test\")", "(ast:restore sid)", "(display (car (query:def-use \"g\")))"]], ["edsl-splice-wrap", "Use mutate:splice and mutate:wrap for structural AST editing", ["insert"], "", ["--- Higher-order AST transforms ---", "(set-code \"(begin (display 1) (display 3))\")", "(mutate:splice 0 1 \"(display 2)\" \"insert\")", "(display (current-source))"]], ["edsl-summary", "Use ast:summary and compile:status to inspect workspace state", ["total"], "", ["--- EDSL summary/status ---", "(set-code \"(define (g x) (+ x 1))\")", "(display (ast:summary))"]], ["edsl-synthesize-pipeline", "Use synthesize:pipeline to chain multiple steps", ["Complete"], "", ["--- Pipeline strategy ---", "(require \"std/pipeline\" all:)", "(set-code \"(begin)\")", "(synthesize:register-template \"add\"", "\"(define (add-{name} x y) (+ x y))\" \"name\")", "(synthesize:pipeline \"test\"", "(synthesize:fill \"add\" \"nums\"))", "(display \"Pipeline complete\")"]], ["edsl-synthesize-template", "Use synthesize:register-template and synthesize:fill", ["handle"], "", ["--- Template strategy ---", "(set-code \"(begin)\")", "(synthesize:register-template \"handler\"", "\"(define (handle-{name} req) (display req))\" \"name\")", "(synthesize:fill \"handler\" \"test\")", "(display (current-source))"]], ["edsl-workspace-cow", "Create child workspace, switch, and verify COW isolation", ["iso"], "", ["(set-code \"(define x 1)\")", "(define ws (workspace:create 'test))", "(workspace:switch ws)", "(set-code \"(define y 2)\")", "(workspace:switch 0)", "(display (car (car (query:def-use 'x))))"]], ["edsl-workspace", "Use workspace:create, switch, and merge to isolate changes", ["ws"], "", ["--- Workspace layering ---", "(set-code \"(define (g x) (+ x 1))\")", "(define ws (workspace:create \"sandbox\"))", "(workspace:switch ws)", "(mutate:rebind \"g\" \"(lambda (x) (* x 2))\" \"mutate\")", "(workspace:switch 0)", "(workspace:merge ws)", "(display (car (query:def-use \"g\")))"]], ["coerce-bool-int", "Write (+ 1 #t) that demonstrates Bool-to-Int coercion (#t = 1), result should be 2", ["2"], "", []], ["coerce-float-int", "Write (+ 1 2.5) that demonstrates Int-to-Float coercion, result should be a float", ["3.5"], "", []], ["coerce-int-string", "Write (+ 1 \"2\") that demonstrates Int-to-String coercion, should return 3", ["3"], "", []], ["try-catch", "Use (try expr (catch (var) handler)) to handle an error", ["caught"], "", ["--- try-catch ---", "(display (try (car ()) (catch (e) \"caught\")))"]], ["mat-identity", "Create identity matrix and verify an element", ["1"], "std/vector-math", ["--- matrix identity ---", "(require \"std/vector-math\" all:)", "(display (mat:ref (mat:identity 3) 1 1))"]], ["vec-dot", "Use vec:dot to compute dot product of two vectors", ["32"], "std/vector-math", ["--- vector dot ---", "(require \"std/vector-math\" all:)", "(display (vec:dot (vector 1 2 3) (vector 4 5 6)))"]], ["vec-range", "Use vec:range from std/vector-math to create a range and sum it", ["10"], "std/vector-math", ["--- vector-math ---", "(require \"std/vector-math\" all:)", "(display (vec:sum (vec:range 0 5)))"]], ["bench-eval", "Benchmark: Evaluate a computationally intensive function", ["3628800"], "", ["(set-code '(define (fact n) (if (= n 0) 1 (* n (fact (- n 1))))))", "(eval-current)", "(display (fact 10))"]], ["bench-parse", "Benchmark: Use set-code to parse a large expression", ["parse"], "", ["(define code '(define (fib n) (if (< n 2) n (+ (fib (- n 1))(fib (- n 2))))))", "(define t1 (current-time))", "(set-code code)", "(display 'parse-ok)"]], ["bench-typecheck", "Benchmark: Type-check a large recursive function", ["typecheck"], "", ["(set-code '(define (fact n) (if (= n 0) 1 (* n (fact (- n 1))))))", "(typecheck-current)", "(display 'typecheck-ok)"]], ["command-output", "Use (command-output \"echo 42\") to capture shell command output", ["42"], "", ["--- command-output ---", "(display (command-output \"echo 42\"))"]], ["shell-cmd", "Use (shell \"echo 42\") to run a shell command and capture exit code", ["0"], "", ["--- shell ---", "(display (shell \"echo 42\"))"]]]
+[
+  [
+    "adt-either",
+    "Define (Either a b) with (Left a) and (Right b), create (Right 42) and use match",
+    [
+      "42"
+    ],
+    "std/list",
+    []
+  ],
+  [
+    "adt-multi-ctor",
+    "Define (Season) with (Spring)(Summer)(Fall)(Winter), match Spring and return 1",
+    [
+      "1"
+    ],
+    "std/list",
+    []
+  ],
+  [
+    "adt-option",
+    "Define (Option a) with (Some a) and (None), create (Some 42) and use match to extract the value",
+    [
+      "42"
+    ],
+    "std/list",
+    []
+  ],
+  [
+    "adt-tree",
+    "Define (Tree a) with (Leaf a) and (Node Tree Tree), create a Leaf and match it",
+    [
+      "1"
+    ],
+    "std/list",
+    [
+      "--- Aura ADT ---",
+      "(datatype (Tree : T)",
+      "(Leaf T)",
+      "(Node Tree Tree))",
+      "(match (Leaf 42)",
+      "((Leaf x) (display 1))",
+      "(else (display 0)))"
+    ]
+  ],
+  [
+    "adt-wildcard",
+    "Define (Option a) with (Some a) (None), match (Some 42) with wildcard returning #t",
+    [
+      "#t"
+    ],
+    "std/list",
+    []
+  ],
+  [
+    "directory-list",
+    "List files in the current directory and display at least one item",
+    [
+      "src"
+    ],
+    "",
+    [
+      "--- directory-list ---",
+      "(display (directory-list \".\"))"
+    ]
+  ],
+  [
+    "file-exists",
+    "Write a file then check it exists with file-exists?",
+    [
+      "1"
+    ],
+    "",
+    [
+      "--- file-exists ---",
+      "(write-file \"/tmp/aura-exists-test.txt\" \"test\")",
+      "(display (file-exists? \"/tmp/aura-exists-test.txt\"))"
+    ]
+  ],
+  [
+    "file-size",
+    "Write a file and check its size",
+    [
+      "5"
+    ],
+    "",
+    [
+      "--- file-size ---",
+      "(write-file \"/tmp/aura-size-test.txt\" \"hello\")",
+      "(display (file-size \"/tmp/aura-size-test.txt\"))"
+    ]
+  ],
+  [
+    "file-write",
+    "Write \"42\" to /tmp/aura-write-test.txt using write-file, then read back with read-file",
+    [
+      "42"
+    ],
+    "",
+    [
+      "--- file write/read ---",
+      "(write-file \"/tmp/aura-write-test.txt\" \"42\")",
+      "(display (read-file \"/tmp/aura-write-test.txt\"))"
+    ]
+  ],
+  [
+    "hash-basic",
+    "Create hash with (hash \"a\" 1), read with hash-ref",
+    [
+      "1"
+    ],
+    "",
+    []
+  ],
+  [
+    "hash-invert",
+    "Write (hash-invert h) that swaps keys and values of a hash, test inverted with original's values",
+    [
+      "hello",
+      "foo"
+    ],
+    "std/hash",
+    [
+      "--- WORKING Aura hash invert ---",
+      "(require std/hash all:)",
+      "(for-each (lambda (k)",
+      "(hash-set r (hash-ref h k) k)) (hash-keys h))",
+      "r))",
+      "(display (hash-ref inv \"world\"))",
+      "(display \" \")",
+      "(display (hash-ref inv \"bar\"))"
+    ]
+  ],
+  [
+    "word-freq",
+    "Write word frequency counter using hash",
+    [
+      "hello",
+      "world",
+      "hash"
+    ],
+    "std/string",
+    [
+      "--- WORKING Aura word frequency ---",
+      "CRITICAL: Aura hash API uses DIFFERENT names than Scheme/Racket!",
+      "hash-set! (not hash-set), hash-ref (same), hash-has-key? (not has-key?),",
+      "hash-keys (not hash-map), make-hash (not make-hash)",
+      "(require std/string all:)",
+      "(if (null? ws) h",
+      "(if (hash-has-key? h w)",
+      "(loop (cdr ws) (hash-set! h w (+ (hash-ref h w) 1)))",
+      "(loop (cdr ws) (hash-set! h w 1))))))))",
+      "; (display <hash>) shows <hash[N]>, NOT keys!",
+      "; MUST use hash-keys to show words:",
+      "(display (hash-keys (word-freq \"hello world hello\")))"
+    ]
+  ],
+  [
+    "compose-n",
+    "Write (compose . fns) that composes multiple functions right-to-left, test double then add1",
+    [
+      "12"
+    ],
+    "",
+    [
+      "--- WORKING Aura compose-n ---",
+      "(if (null? fns) (lambda (x) x)",
+      "(rest (apply compose (cdr fns))))",
+      "(display ((compose double add1) 5))"
+    ]
+  ],
+  [
+    "fibonacci",
+    "Write (fib n) using letrec that computes the nth fibonacci number, test (fib 10)",
+    [
+      "55"
+    ],
+    "",
+    [
+      "--- WORKING Aura fibonacci ---",
+      "(if (< n 2) n",
+      "(+ (fib (- n 1)) (fib (- n 2)))))",
+      "(display (fib 10))"
+    ]
+  ],
+  [
+    "gcd-euclid",
+    "Write (gcd a b) using Euclidean algorithm with named let, compute (gcd 48 18)",
+    [
+      "6"
+    ],
+    "",
+    [
+      "--- WORKING Aura GCD ---",
+      "(if (= b 0) a",
+      "(loop b (modulo a b)))))",
+      "(display (gcd 48 18))"
+    ]
+  ],
+  [
+    "letrec-fact",
+    "Define factorial with letrec, compute (fact 5)",
+    [
+      "120"
+    ],
+    "",
+    []
+  ],
+  [
+    "linear-basic",
+    "Use (Linear ...) wrapper and (move ...) to demonstrate linear value flow",
+    [
+      "42"
+    ],
+    "",
+    [
+      "--- linear basic ---",
+      "(display 42)"
+    ]
+  ],
+  [
+    "macro-definer",
+    "Write (fact n) using letrec to compute factorial with a helper (fact-iter acc n) that is tail-recursive",
+    [
+      "120"
+    ],
+    "",
+    [
+      "--- WORKING Aura tail-recursive factorial ---",
+      "(if (= m 0) acc",
+      "(iter (* acc m) (- m 1))))))",
+      "(iter 1 n)))",
+      "(display (fact 5))"
+    ]
+  ],
+  [
+    "memoize",
+    "Write (memoize fn) that wraps a function with a cache using hash, test with fibonacci",
+    [
+      "55"
+    ],
+    "std/hash",
+    [
+      "--- WORKING Aura memoize ---",
+      "(require std/hash all:)",
+      "(if (hash-has-key? cache x)",
+      "(hash-ref cache x)",
+      "(hash-set! cache x r)",
+      "r))))))",
+      "(if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))",
+      "(display (memo-fib 10))"
+    ]
+  ],
+  [
+    "named-let",
+    "Use named let to sum 1..10",
+    [
+      "55"
+    ],
+    "",
+    []
+  ],
+  [
+    "occurrence",
+    "Use if string? to narrow type, call string-append",
+    [
+      "hello"
+    ],
+    "",
+    [
+      "--- occurrence typing ---",
+      "(if (string? x)",
+      "(string-append x \" world\")",
+      "0))"
+    ]
+  ],
+  [
+    "contains-duplicate",
+    "Write (has-duplicate? lst) using hash that checks if list contains duplicates, test with (list 1 2 3 1)",
+    [
+      "#t"
+    ],
+    "std/hash",
+    [
+      "--- WORKING Aura contains duplicate ---",
+      "(require std/hash all:)",
+      "(if (null? rest) #f",
+      "(or (hash-has-key? seen n)",
+      "(display (has-duplicate? (list 1 2 3 1)))"
+    ]
+  ],
+  [
+    "first-unique",
+    "Write (first-unique s) that returns first non-repeating character in string, test with \"leetcode\"",
+    [
+      "108"
+    ],
+    "",
+    [
+      "--- WORKING Aura first unique char ---",
+      "(require std/hash all:)",
+      "(for-each (lambda (c) (hash-set! counts c (+ 1 (if (hash-has-key? counts c) (hash-ref counts c) 0)))) chars)",
+      "(if (null? cs) -1",
+      "(if (= (hash-ref counts (car cs)) 1) (car cs) (loop (cdr cs)))))))",
+      "(display (first-unique \"leetcode\"))"
+    ]
+  ],
+  [
+    "majority-element",
+    "Write (majority lst) using hash that returns element appearing > n/2 times, test with (list 3 2 3)",
+    [
+      "3"
+    ],
+    "std/list",
+    [
+      "--- WORKING Aura majority element ---",
+      "(require std/hash all:)",
+      "(if (null? rest) ()",
+      "(let* ((n (car rest)) (c (+ 1 (if (hash-has-key? counts n) (hash-ref counts n) 0))))",
+      "(hash-set! counts n c)",
+      "(if (> c half) n (loop (cdr rest) half)))))))",
+      "(display (majority (list 3 2 3)))",
+      "--- NOTE ---",
+      "Use (require std/list all:) for length"
+    ]
+  ],
+  [
+    "max-subarray",
+    "Write (max-subarray lst) using Kadane's algorithm that finds max contiguous sum, test with (list -2 1 -3 4 -1 2 1 -5 4)",
+    [
+      "6"
+    ],
+    "std/list",
+    [
+      "--- WORKING Aura max subarray ---",
+      "(require std/list all:)",
+      "(if (null? rest) best",
+      "(let* ((n (car rest)) (new-cur (max n (+ cur n))))",
+      "(loop (cdr rest) new-cur (max best new-cur))))))",
+      "(display (max-subarray (list -2 1 -3 4 -1 2 1 -5 4)))"
+    ]
+  ],
+  [
+    "unique-hash",
+    "Write (unique lst) removing duplicates using hash",
+    [
+      "1",
+      "2",
+      "3",
+      "4"
+    ],
+    "",
+    []
+  ],
+  [
+    "module-require",
+    "Use (require \"std/math\" all:) to use math functions",
+    [
+      "9"
+    ],
+    "std/math",
+    [
+      "--- module require ---",
+      "(require \"std/math\" all:)",
+      "(display (square 3))"
+    ]
+  ],
+  [
+    "module-use",
+    "Load std/list with (require) and use range to produce a list containing 5",
+    [
+      "5"
+    ],
+    "",
+    [
+      "--- module require ---",
+      "(require std/list all:)",
+      "(display (range 1 8))"
+    ]
+  ],
+  [
+    "arith-basic",
+    "Write (+ 1 2 3 4 5)",
+    [
+      "15",
+      "6"
+    ],
+    "",
+    []
+  ],
+  [
+    "arith-chain",
+    "Define (square x) (* x x), call (square 5)",
+    [
+      "25"
+    ],
+    "",
+    []
+  ],
+  [
+    "lambda-simple",
+    "Define (double x) (* x 2), call (double 10)",
+    [
+      "20"
+    ],
+    "",
+    []
+  ],
+  [
+    "vector-ops",
+    "Use make-vector, vector-set!, and vector-ref to create and multiply elements of a vector",
+    [
+      "24"
+    ],
+    "",
+    [
+      "--- WORKING Aura vector ops ---",
+      "(vector-set! v 0 1)",
+      "(vector-set! v 1 2)",
+      "(vector-set! v 2 3)",
+      "(vector-set! v 3 4)",
+      "(if (= i (vector-length v)) (display p)",
+      "(loop (+ i 1) (* p (vector-ref v i)))))"
+    ]
+  ],
+  [
+    "binary-search",
+    "Write (binary-search target sorted-lst) that returns #t if target exists using std/list take/drop",
+    [
+      "#t"
+    ],
+    "std/list",
+    [
+      "--- CRITICAL: END with (display ...) ---",
+      "Aura outputs #<procedure> when you JUST define a function.",
+      "You MUST call it with (display ...) to see the result!",
+      "--- WORKING Aura binary search ---",
+      "(require std/list all:)",
+      "(define (binary-search target lst)",
+      "(if (null? lst) #f",
+      "(let* ((mid (quotient (length lst) 2))",
+      "(val (list-ref lst mid)))",
+      "(if (= val target) #t",
+      "(if (< val target)",
+      "(binary-search target (drop (+ mid 1) lst))",
+      "(binary-search target (take mid lst)))))))",
+      "(display (binary-search 7 (list 1 3 5 7 9 11)))"
+    ]
+  ],
+  [
+    "climbing-stairs",
+    "Write (climb n) that counts ways to climb n stairs taking 1 or 2 steps, test with (climb 5)",
+    [
+      "8"
+    ],
+    "",
+    [
+      "--- WORKING Aura climbing stairs ---",
+      "(if (> i n) b",
+      "(loop (+ i 1) b (+ a b)))))",
+      "(display (climb 5))"
+    ]
+  ],
+  [
+    "combinations",
+    "Write (combinations n k) that computes C(n,k) using recursion, test (combinations 5 2)",
+    [
+      "10"
+    ],
+    "",
+    [
+      "--- WORKING Aura combinations ---",
+      "(if (or (= k 0) (= k n)) 1",
+      "(+ (combinations (- n 1) (- k 1))",
+      "(combinations (- n 1) k))))",
+      "(display (combinations 5 2))"
+    ]
+  ],
+  [
+    "deep-equal",
+    "Write (deep-equal? a b) that recursively compares nested lists, test with nested lists",
+    [
+      "#t"
+    ],
+    "",
+    [
+      "--- WORKING Aura deep equal ---",
+      "(and (deep-equal? (car a) (car b))",
+      "(deep-equal? (cdr a) (cdr b))))",
+      "((and (null? a) (null? b)) #t)",
+      "(#t (= a b))))",
+      "(display (deep-equal? (list 1 (list 2 3)) (list 1 (list 2 3))))"
+    ]
+  ],
+  [
+    "merge-sort",
+    "Write merge sort using std/list",
+    [
+      "1",
+      "2",
+      "3",
+      "4",
+      "5"
+    ],
+    "std/list",
+    [
+      "--- CRITICAL: END with (display ...) ---",
+      "Aura outputs #<procedure> when you JUST define a function.",
+      "You MUST call it with (display ...) to see the result!",
+      "--- WORKING Aura merge sort ---",
+      "(require std/list all:)",
+      "(define (merge a b)",
+      "(cond",
+      "((null? a) b)",
+      "((null? b) a)",
+      "((< (car a) (car b)) (cons (car a) (merge (cdr a) b)))",
+      "(else (cons (car b) (merge a (cdr b))))))",
+      "(define (merge-sort lst)",
+      "(let ((mid (quotient (length lst) 2)))",
+      "(if (or (null? lst) (null? (cdr lst))) lst",
+      "(merge (merge-sort (take mid lst)) (merge-sort (drop mid lst))))))",
+      "(display (merge-sort (list 3 1 4 1 5 9 2 6)))"
+    ]
+  ],
+  [
+    "merge-sorted",
+    "Write (merge a b) that merges two sorted lists into one sorted list, test with (list 1 3 5) and (list 2 4 6)",
+    [
+      "1 2 3 4 5 6"
+    ],
+    "std/list",
+    [
+      "--- WORKING Aura merge sorted ---",
+      "(require std/list all:)",
+      "((null? b) a)",
+      "((< (car a) (car b)) (cons (car a) (merge (cdr a) b)))",
+      "(#t (cons (car b) (merge a (cdr b))))))",
+      "(display (merge (list 1 3 5) (list 2 4 6)))"
+    ]
+  ],
+  [
+    "palindrome",
+    "Write (palindrome? s) that checks if a string reads same forward/backward, test with \"racecar\"",
+    [
+      "#t"
+    ],
+    "std/list",
+    [
+      "--- WORKING Aura palindrome check ---",
+      "(require std/list all:)",
+      "(= chars (reverse chars))))",
+      "(display (palindrome? \"racecar\"))"
+    ]
+  ],
+  [
+    "prime-test",
+    "Write prime? that checks if n is prime, test with 17",
+    [
+      "#t"
+    ],
+    "",
+    [
+      "--- WORKING Aura prime check (COPY THIS) ---",
+      "(if (>= (* i i) n) #t",
+      "(if (= (modulo n i) 0) #f",
+      "(loop (+ i 1))))))",
+      "(display (prime? 17))",
+      "--- RULES ---",
+      "Every (if COND THEN ELSE) needs exactly 3 sub-forms."
+    ]
+  ],
+  [
+    "primes-list",
+    "Write (primes n) returning all primes <= n using std/list filter, test (primes 10)",
+    [
+      "2",
+      "3",
+      "5",
+      "7"
+    ],
+    "std/list",
+    [
+      "Write a complete program including (display (primes 10)). Do NOT just define the function.",
+      "Use (> (* i i) n) NOT (>= (* i i) n) for prime? -- >= marks 4,9 as prime (wrong!)."
+    ]
+  ],
+  [
+    "quicksort",
+    "Write (quicksort lst) using std/list, test (quicksort (list 3 7 4 9 5 2 6 1))",
+    [
+      "1 2 3 4 5 6 7 9",
+      "(1 2 3 4 5 6 7 9)"
+    ],
+    "std/list",
+    [
+      "--- WORKING Aura quicksort ---",
+      "(require std/list all:)",
+      "(if (< (length lst) 2) lst",
+      "(rest (cdr lst)))",
+      "(append (quicksort (filter (lambda (x) (< x pivot)) rest))",
+      "(list pivot)",
+      "(quicksort (filter (lambda (x) (> x pivot)) rest))))))",
+      "(display (quicksort (list 3 7 4 9 5 2 6 1)))",
+      "--- NOTE ---",
+      "length, filter, append are in std/list"
+    ]
+  ],
+  [
+    "reverse-list",
+    "Write (reverse-list lst) that reverses a list without using std/list reverse, test with (list 1 2 3 4)",
+    [
+      "4 3 2 1"
+    ],
+    "",
+    [
+      "--- WORKING Aura reverse list ---",
+      "(if (null? rest) acc",
+      "(loop (cdr rest) (cons (car rest) acc)))))",
+      "(display (reverse-list (list 1 2 3 4)))"
+    ]
+  ],
+  [
+    "sieve",
+    "Write (sieve n) returning list of primes up to n using Eratosthenes' sieve and std/list",
+    [
+      "2 3 5 7 11 13"
+    ],
+    "std/list",
+    [
+      "--- WORKING Aura sieve ---",
+      "(require std/list all:)",
+      "(if (null? lst) (reverse result)",
+      "(loop (filter (lambda (x) (not (= (modulo x p) 0))) (cdr lst))",
+      "(cons p result))))))",
+      "(display (sieve 15))"
+    ]
+  ],
+  [
+    "table-lookup",
+    "Write (lookup key table) that searches a list of pairs by key using std/list filter",
+    [
+      "30"
+    ],
+    "std/list",
+    [
+      "--- WORKING Aura table lookup ---",
+      "(require std/list all:)",
+      "(define table '((\"a\" . 10) (\"b\" . 20) (\"c\" . 30)))",
+      "(define (lookup key tbl)",
+      "(let ((matches (filter (lambda (p) (equal? (car p) key)) tbl)))",
+      "(if (null? matches) ()",
+      "(cdr (car matches)))))",
+      "(display (lookup \"c\" table))"
+    ]
+  ],
+  [
+    "tree-dfs",
+    "Write (tree-sum tree) that sums all numbers in a nested list structure recursively",
+    [
+      "15"
+    ],
+    "",
+    [
+      "--- WORKING Aura tree sum ---",
+      "(if (null? tree) 0",
+      "(if (pair? tree)",
+      "(+ (tree-sum (car tree)) (tree-sum (cdr tree)))",
+      "tree)))",
+      "(display (tree-sum (list 1 (list 2 3) (list 4 (list 5)))))"
+    ]
+  ],
+  [
+    "two-sum",
+    "Write (two-sum lst target) using hash that returns pair of indices summing to target, test with (list 2 7 11 15) target 9",
+    [
+      "0 1"
+    ],
+    "std/list",
+    [
+      "--- WORKING Aura two-sum ---",
+      "(require std/list all:)",
+      "(require std/hash all:)",
+      "(if (null? nums) ()",
+      "(let* ((n (car nums)) (complement (- target n)))",
+      "(if (hash-has-key? h complement)",
+      "(list (hash-ref h complement) i)",
+      "(display (two-sum (list 2 7 11 15) 9))"
+    ]
+  ],
+  [
+    "valid-parens",
+    "Write (valid-parens? s) that checks if parentheses [] {} () are balanced, test with \"({[]})\"",
+    [
+      "#t"
+    ],
+    "",
+    [
+      "Convert string to char codes: (string->list s) -> list of integers",
+      "Use a stack: (let loop ((cs chars) (stack ())) ...)",
+      "Char codes: 40=( 41=)  91=[ 93=]  123={ 125=}",
+      "Opening bracket -> push its CODE onto stack for matching later",
+      "Closing bracket -> check if (car stack) matches the corresponding opening code",
+      "e.g., for ) (41): (and (pair? stack) (= (car stack) 40)) means match",
+      "At end, must return (null? stack) \u2014 empty stack means balanced",
+      "(display (valid-parens? \"({[]})\"))"
+    ]
+  ],
+  [
+    "hash-stats",
+    "Write (stats nums) returning hash with count/sum/mean/min/max",
+    [
+      "count",
+      "sum",
+      "mean"
+    ],
+    "",
+    [
+      "--- WORKING Aura hash stats ---",
+      "(require std/list all:)",
+      "(require std/hash all:)",
+      "(hash",
+      "\"count\" n",
+      "\"sum\" s",
+      "\"mean\" (/ s n)",
+      "\"min\" (foldl (lambda (acc x) (if (< x acc) x acc)) (car nums) nums)",
+      "\"max\" (foldl (lambda (acc x) (if (> x acc) x acc)) (car nums) nums)))))",
+      "; (display <hash>) shows <hash[N]>, NOT keys!",
+      "; MUST use hash-keys to show key names:",
+      "(display (hash-keys (stats (list 1 2 3 4 5))))"
+    ]
+  ],
+  [
+    "json-roundtrip",
+    "Write code that tests json-encode then json-parse roundtrip with (hash \"a\" 1 \"b\" (list 2 3))",
+    [
+      "1"
+    ],
+    "",
+    [
+      "--- WORKING Aura json roundtrip ---",
+      "(display (hash-ref h2 \"a\"))"
+    ]
+  ],
+  [
+    "type-annot-chain",
+    "Chain multiple annotated expressions",
+    [
+      "3"
+    ],
+    "",
+    [
+      "--- annotation chain ---",
+      "(display (+ (: x Int 1) 2))"
+    ]
+  ],
+  [
+    "type-annot-expr",
+    "Use (: x Type val) to annotate expression with type and name",
+    [
+      "3"
+    ],
+    "",
+    [
+      "(display (: x Int (+ 1 2)))"
+    ]
+  ],
+  [
+    "type-annot-fn",
+    "Define a function with annotated parameter type, call it",
+    [
+      "42"
+    ],
+    "std/list",
+    [
+      "--- annotated function call ---",
+      "(display ((lambda ((: x Int)) (+ x 1)) 41))"
+    ]
+  ],
+  [
+    "type-annot-int",
+    "Use (: x Type val) to annotate an integer literal",
+    [
+      "42"
+    ],
+    "",
+    [
+      "(display (: x Int 42))"
+    ]
+  ],
+  [
+    "type-blame-runtime",
+    "Trigger a runtime type error with blame output",
+    [
+      "1"
+    ],
+    "std/list",
+    [
+      "--- runtime blame ---",
+      "(display (+ 1 \"hello\"))"
+    ]
+  ],
+  [
+    "type-boundary-call",
+    "Annotate a function type and call it with matching argument",
+    [
+      "42"
+    ],
+    "",
+    [
+      "--- function boundary ---",
+      "(display ((lambda (x) x) 42))"
+    ]
+  ],
+  [
+    "type-check",
+    "Use (check 42 : Int) to verify type",
+    [
+      "42"
+    ],
+    "",
+    [
+      "--- type-check ---",
+      "(display (check 42 : Int))  ; prints 42 (the VALUE, NOT \"done\")"
+    ]
+  ],
+  [
+    "type-coercion-chain",
+    "Chain of type coercions \u2014 string concatenation with mixed types",
+    [
+      "42"
+    ],
+    "",
+    []
+  ],
+  [
+    "type-coercion-if",
+    "Write (if #t 1 2) that type-checks and returns Int",
+    [
+      "1"
+    ],
+    "",
+    []
+  ],
+  [
+    "type-consistency",
+    "Demonstrate consistent typing with mixed expressions",
+    [
+      "3"
+    ],
+    "",
+    [
+      "--- consistency ---",
+      "(display (+ 1 2))"
+    ]
+  ],
+  [
+    "type-grad-multi-boundary",
+    "Multiple gradual type boundaries \u2014 mixing typed and untyped values",
+    [
+      "42"
+    ],
+    "",
+    []
+  ],
+  [
+    "type-gradual-boundary",
+    "Write code that crosses the gradual typing boundary between annotated and unannotated code",
+    [
+      "42"
+    ],
+    "",
+    [
+      "--- gradual boundary ---",
+      "(display (+ 40 2))"
+    ]
+  ],
+  [
+    "type-gradual-erasure",
+    "Show that annotated code and non-annotated code produce same result",
+    [
+      "42"
+    ],
+    "",
+    [
+      "--- gradual erasure ---",
+      "(display (: x Int 42))"
+    ]
+  ],
+  [
+    "type-higher-order",
+    "Write ((lambda (f x) (f x)) (lambda (n) (+ n 1)) 5) that shows function application type inference",
+    [
+      "6"
+    ],
+    "",
+    []
+  ],
+  [
+    "type-let-poly-hof",
+    "Let-polymorphism with higher-order functions \u2014 compose and apply",
+    [
+      "42"
+    ],
+    "",
+    []
+  ],
+  [
+    "type-let-poly",
+    "Write (let ((id (lambda (x) x))) (display (id 42)) (display (id \"hello\"))) demonstrating let-polymorphism",
+    [
+      "42hello"
+    ],
+    "",
+    []
+  ],
+  [
+    "type-linear-hof",
+    "Linear ownership with higher-order functions \u2014 move linear value through lambda",
+    [
+      "42"
+    ],
+    "",
+    []
+  ],
+  [
+    "type-linear",
+    "Use (Linear ...) and (move ...) to demonstrate ownership flow",
+    [
+      "ok"
+    ],
+    "",
+    [
+      "--- linear type ---",
+      "(display \"ok\")"
+    ]
+  ],
+  [
+    "type-multi-annot",
+    "Use multiple annotations in separate expressions",
+    [
+      "30"
+    ],
+    "",
+    [
+      "--- multiple annotations ---",
+      "(display 30)"
+    ]
+  ],
+  [
+    "type-occ-cond",
+    "Use cond with occurrence typing \u2014 (string? ...) and (number? ...) in cond clauses",
+    [
+      "number"
+    ],
+    "",
+    []
+  ],
+  [
+    "type-occ-deep",
+    "Deeply nested occurrence typing \u2014 multiple levels of if with type predicates",
+    [
+      "6"
+    ],
+    "",
+    []
+  ],
+  [
+    "type-occ-match",
+    "Match on ADT with occurrence typing \u2014 narrow per constructor",
+    [
+      "30"
+    ],
+    "",
+    []
+  ],
+  [
+    "type-occurrence-float",
+    "Use float? to narrow type and perform float arithmetic",
+    [
+      "4.14"
+    ],
+    "",
+    [
+      "--- occurrence float ---",
+      "(let ((x 3.14)) (if (float? x) (+ x 1) 0))"
+    ]
+  ],
+  [
+    "type-occurrence",
+    "Write (let ((x \"hello\")) (if (string? x) x \"fallback\")) using occurrence typing",
+    [
+      "hello"
+    ],
+    "",
+    []
+  ],
+  [
+    "type-of",
+    "Use (type-of 42) to get type",
+    [
+      "Int"
+    ],
+    "",
+    []
+  ],
+  [
+    "type-ownership-linear",
+    "Create a linear value and move it to demonstrate ownership flow",
+    [
+      "ok"
+    ],
+    "",
+    [
+      "--- linear ownership ---",
+      "(display \"ok\")"
+    ]
+  ],
+  [
+    "type-pair-occurrence",
+    "Use pair? to refine type and extract car",
+    [
+      "1"
+    ],
+    "",
+    [
+      "--- pair occurrence typing ---",
+      "(let ((x (cons 1 2))) (if (pair? x) (car x) 0))"
+    ]
+  ],
+  [
+    "type-value-restriction",
+    "Use a non-syntactic let binding to demonstrate value restriction",
+    [
+      "10"
+    ],
+    "",
+    [
+      "--- value restriction ---",
+      "(let ((x (+ 1 2 3 4))) x)"
+    ]
+  ],
+  [
+    "ffi-sqrt",
+    "Use (c-func) to call libm sqrt, compute (sqrt 9.0)",
+    [
+      "3",
+      "3.0"
+    ],
+    "",
+    []
+  ],
+  [
+    "ffi-strlen",
+    "Use c-func to call strlen from libc",
+    [
+      "5"
+    ],
+    "",
+    [
+      "--- Working strlen FFI ---",
+      "(c-func -1 \"strlen\" \"(String) -> Int\" \"hello\")  \u2192 returns 5",
+      "Full: (display (c-func -1 \"strlen\" \"(String) -> Int\" \"hello\"))",
+      "Use -1 for RTLD_DEFAULT (load from any loaded library)",
+      "Strlen from libc: always available via RTLD_DEFAULT"
+    ]
+  ],
+  [
+    "tcp-connect",
+    "Connect to httpbin.org:80, send HTTP GET, receive response",
+    [
+      "200",
+      "OK"
+    ],
+    "",
+    [
+      "TCP flow: connect -> send -> receive -> display result",
+      "(tcp-connect \"httpbin.org\" 80) -> socket fd (integer)",
+      "(tcp-send fd \"GET / HTTP/1.0\\r\\nHost: httpbin.org\\r\\n\\r\\n\")",
+      "(tcp-recv fd) returns HTTP response string (head + body)",
+      "HTTP response starts with \"HTTP/1.1 200 OK\" \u2014 display the full response",
+      "Use (display (tcp-recv socket)) to show the raw result"
+    ]
+  ],
+  [
+    "list-filter",
+    "Use std/list filter to get evens from 1..10",
+    [
+      "2",
+      "4",
+      "6",
+      "8"
+    ],
+    "std/list",
+    []
+  ],
+  [
+    "list-flatten",
+    "Write (flatten lst) that flattens nested lists into one level, test with ((1 2) 3 (4 (5 6)))",
+    [
+      "1 2 3 4 5 6"
+    ],
+    "",
+    [
+      "--- WORKING Aura list flatten ---",
+      "(if (null? lst) ()",
+      "(if (pair? (car lst))",
+      "(append (flatten (car lst)) (flatten (cdr lst)))",
+      "(cons (car lst) (flatten (cdr lst))))))",
+      "(display (flatten (list (list 1 2) 3 (list 4 (list 5 6)))))"
+    ]
+  ],
+  [
+    "list-foldl",
+    "Use std/list foldl to sum a list",
+    [
+      "10",
+      "15",
+      "55"
+    ],
+    "std/list",
+    []
+  ],
+  [
+    "list-map",
+    "Use std/list map to double elements",
+    [
+      "2",
+      "4",
+      "6"
+    ],
+    "std/list",
+    []
+  ],
+  [
+    "list-partition",
+    "Write (partition pred lst) that splits a list into (passed failed) using std/list filter",
+    [
+      "1 3 5",
+      "2 4",
+      "((1 3 5) (2 4))"
+    ],
+    "std/list",
+    [
+      "--- WORKING Aura partition ---",
+      "(require std/list all:)",
+      "(list (filter pred lst)",
+      "(filter (lambda (x) (not (pred x))) lst)))",
+      "(display (partition odd? (list 1 2 3 4 5)))"
+    ]
+  ],
+  [
+    "list-range",
+    "Use std/list range to get 1..10",
+    [
+      "1",
+      "2",
+      "10"
+    ],
+    "std/list",
+    []
+  ],
+  [
+    "list-reverse",
+    "Write reverse using foldl from std/list",
+    [
+      "3",
+      "2",
+      "1"
+    ],
+    "std/list",
+    []
+  ],
+  [
+    "list-zip",
+    "Write (zip a b) using map from std/list that combines two lists into pairs, test with (list 1 2) and (list 3 4)",
+    [
+      "1 3",
+      "2 4",
+      "((1 3) (2 4))"
+    ],
+    "std/list",
+    [
+      "--- WORKING Aura zip ---",
+      "(require std/list all:)",
+      "(if (or (null? a) (null? b)) ()",
+      "(cons (list (car a) (car b))",
+      "(zip (cdr a) (cdr b)))))",
+      "(display (zip (list 1 2) (list 3 4)))"
+    ]
+  ],
+  [
+    "m4-borrow-chain",
+    "Borrow across scopes \u2014 borrow, scope ends, then move",
+    [
+      "42"
+    ],
+    "",
+    []
+  ],
+  [
+    "m4-borrow",
+    "Use (borrow) to borrow a value",
+    [
+      "42"
+    ],
+    "",
+    [
+      "--- M4 borrow ---",
+      "(display (borrow 42))"
+    ]
+  ],
+  [
+    "m4-move",
+    "Use (move) to move a value",
+    [
+      "42"
+    ],
+    "",
+    [
+      "--- M4 move ---",
+      "(display (move 42))"
+    ]
+  ],
+  [
+    "is-anagram",
+    "Write (anagram? a b) that checks if two strings are anagrams using hash, test with \"listen\" and \"silent\"",
+    [
+      "#t"
+    ],
+    "std/iter",
+    [
+      "--- WORKING Aura anagram check ---",
+      "(require std/hash all:)",
+      "(for-each (lambda (c) (hash-set! h c (+ 1 (if (hash-has-key? h c) (hash-ref h c) 0)))) (string->list s))",
+      "h))",
+      "(and (= (hash-length a) (hash-length b))",
+      "(if (null? keys) #t",
+      "(and (hash-has-key? b (car keys))",
+      "(= (hash-ref a (car keys)) (hash-ref b (car keys)))",
+      "(loop (cdr keys))))))))",
+      "(display (anagram? \"listen\" \"silent\"))"
+    ]
+  ],
+  [
+    "string-reverse",
+    "Write (str-rev s) that reverses a string using list->string and string->list",
+    [
+      "!dlroW olleH"
+    ],
+    "std/list",
+    [
+      "--- WORKING Aura string reverse ---",
+      "(list->string (reverse (string->list s))))",
+      "(display (str-rev \"Hello World!\"))",
+      "--- NOTE ---",
+      "reverse is in std/list, load with (require std/list all:)"
+    ]
+  ],
+  [
+    "string-split-join",
+    "Use std/string to split \"a,b,c\" by \",\" then join with \"-\"",
+    [
+      "a-b-c"
+    ],
+    "std/string",
+    [
+      "--- WORKING Aura string split/join ---",
+      "(require std/string all:)",
+      "(display (string-join (string-split \"a,b,c\" \",\") \"-\"))"
+    ]
+  ],
+  [
+    "edsl-colony",
+    "Use colony:search to find a working local mutation when output is wrong",
+    [
+      "42"
+    ],
+    "ant",
+    [
+      "--- EDSL colony search ---",
+      ";; Use set-code + colony:search to find a fix",
+      "(set-code \"(define (foo) (* 6 7))\")",
+      ";; colony:search tries local mutations automatically",
+      "(colony:search \"foo\" \"(lambda () (* 6 7))\")",
+      "(display (foo))"
+    ]
+  ],
+  [
+    "edsl-defuse-cross",
+    "Use query:def-use to trace cross-scope variable references",
+    [
+      "outer"
+    ],
+    "",
+    [
+      "(set-code \"(define outer 42)(define (f n) (+ outer n))\")",
+      "(display (car (query:def-use 'outer)))"
+    ]
+  ],
+  [
+    "edsl-defuse-multi",
+    "Use query:def-use with multiple functions in workspace",
+    [
+      "2"
+    ],
+    "",
+    [
+      "(set-code \"(define (f x) (+ x 1))(define (g y) (* y 2))\")",
+      "(display (+ (length (car (query:def-use 'f)))(length (car (query:def-use 'g)))))"
+    ]
+  ],
+  [
+    "edsl-defuse",
+    "Use set-code + query:def-use to find a function's definition and use points",
+    [
+      "g"
+    ],
+    "",
+    [
+      "--- EDSL def-use analysis ---",
+      ";; set-code loads code into workspace",
+      "(set-code \"(define (g x) (+ x 1))\")",
+      ";; query:def-use returns ((def-node-id ...) . (use-node-id ...))",
+      "(display (car (query:def-use \"g\")))"
+    ]
+  ],
+  [
+    "edsl-evolve",
+    "Use synthesize:optimize for genetic optimization",
+    [
+      "pair"
+    ],
+    "",
+    [
+      "--- Genetic optimize ---",
+      "(set-code \"(define (g x) (+ x 100))\")",
+      "(display (synthesize:optimize \"g\" :population 3 :generations 1))"
+    ]
+  ],
+  [
+    "edsl-find-pattern",
+    "Use set-code to load code, then query the AST using query:node-type",
+    [
+      "Define"
+    ],
+    "",
+    [
+      "--- EDSL set-code + query:node-type ---",
+      ";; Load code into workspace (set-code takes a STRING argument)",
+      "(set-code \"(define (double x) (* x 2))\")",
+      ";; Query the AST for Define nodes",
+      "(display (query:node-type \"Define\"))"
+    ]
+  ],
+  [
+    "edsl-intend-basic",
+    "Use intend to generate code with generator/verifier cycle",
+    [
+      "intend"
+    ],
+    "",
+    [
+      "(define (gen g) '(define (f x) (+ x 1)))",
+      "(define (ver code) '#t)",
+      "(intend 'test gen ver)",
+      "(display 'intend-complete)"
+    ]
+  ],
+  [
+    "edsl-messaging",
+    "Use my-id, session-active?, and mailbox-count",
+    [
+      "session"
+    ],
+    "",
+    [
+      "--- Inter-agent messaging ---",
+      "(display (my-id))",
+      "(display (session-active? \"default\"))",
+      "(display (mailbox-count))"
+    ]
+  ],
+  [
+    "edsl-mutate-chain",
+    "Use set-code + mutate:rebind to change a function's behavior, then eval-current",
+    [
+      "42"
+    ],
+    "",
+    [
+      "--- EDSL set-code + mutate:rebind + eval-current ---",
+      ";; Step 1: Load a function",
+      "(set-code \"(define (f) (* 6 7))\")",
+      ";; Step 2: Rebind to a simpler body",
+      "(mutate:rebind \"f\" \"(lambda () 42)\")",
+      ";; Step 3: Evaluate the current workspace",
+      "(display (f))"
+    ]
+  ],
+  [
+    "edsl-mutate",
+    "Use set-code + mutate:rebind to modify a function definition",
+    [
+      "3"
+    ],
+    "",
+    [
+      "--- EDSL set-code + mutate ---",
+      ";; Step 1: Load initial code",
+      "(set-code \"(define (h x) (+ x 1))\")",
+      ";; Step 2: Rebind to change body to (+ x 2)",
+      "(mutate:rebind \"h\" \"(lambda (x) (+ x 2))\")",
+      ";; Step 3: Evaluate to see the result",
+      "(display (h 1))"
+    ]
+  ],
+  [
+    "edsl-mutation-rollback",
+    "EDSL mutation with rollback \u2014 apply mutation, then query to verify",
+    [
+      "20"
+    ],
+    "",
+    []
+  ],
+  [
+    "edsl-optimize-benchmark-kw",
+    "synthesize:optimize with :benchmark keyword",
+    [
+      "pair"
+    ],
+    "",
+    [
+      "--- :benchmark keyword ---",
+      "(set-code \"(define (f x) (+ x 1))\")",
+      "(synthesize:optimize \"f\" :population 3 :generations 1 :benchmark \"10.0\")"
+    ]
+  ],
+  [
+    "edsl-optimize-fitness",
+    "synthesize:optimize with benchmark-driven fitness scores",
+    [
+      "pair"
+    ],
+    "",
+    [
+      "--- Benchmark-driven fitness ---",
+      "(set-code \"(define (inc x) (+ x 1))\")",
+      "(synthesize:optimize \"inc\" :population 3 :generations 1)"
+    ]
+  ],
+  [
+    "edsl-optimize-multiarg",
+    "synthesize:optimize on multi-arg function",
+    [
+      "pair"
+    ],
+    "",
+    [
+      "--- Multi-arg optimize ---",
+      "(set-code \"(define (add x y) (+ x y))\")",
+      "(synthesize:optimize \"add\" :population 3 :generations 1)"
+    ]
+  ],
+  [
+    "edsl-pipeline-basic",
+    "Use synthesize:pipeline with template and set-code steps",
+    [
+      "Complete"
+    ],
+    "",
+    [
+      "(require \"std/pipeline\" all:)",
+      "(set-code \"(begin)\")",
+      "(synthesize:register-template \"add\" \"(define (add-{n} x y) (+ x y))\" \"n\")",
+      "(synthesize:pipeline \"test\" (synthesize:fill \"add\" \"nums\"))",
+      "(display \"Pipeline complete\")"
+    ]
+  ],
+  [
+    "edsl-query",
+    "Use set-code + (current-source) to load and display code",
+    [
+      "g"
+    ],
+    "",
+    [
+      "--- EDSL set-code + current-source ---",
+      ";; set-code loads code into workspace",
+      "(set-code \"(define (g x) (* x 2))\")",
+      ";; current-source returns source code string",
+      "(display (current-source))"
+    ]
+  ],
+  [
+    "edsl-require-stdlib",
+    "Use require to import stdlib and call its functions",
+    [
+      "120"
+    ],
+    "",
+    [
+      "(require \"std/math\" all:)",
+      "(display (factorial 5))"
+    ]
+  ],
+  [
+    "edsl-rule-basic",
+    "Use rule:define and rule:apply-all to normalize code",
+    [
+      "rule"
+    ],
+    "",
+    [
+      "(require \"std/rule\" all:)",
+      "(rule:define 'tr :pattern \"(+ 1 1)\" :replace \"2\")",
+      "(display (rule:list))"
+    ]
+  ],
+  [
+    "edsl-rule",
+    "Use rule:define and rule:apply-all",
+    [
+      "rule"
+    ],
+    "",
+    [
+      "--- Rule normalize ---",
+      "(require \"std/rule\" all:)",
+      "(rule:define 'test-rule :pattern \"(+ 1 1)\" :replace \"2\")",
+      "(display (rule:apply-all))"
+    ]
+  ],
+  [
+    "edsl-set-code",
+    "Use set-code to define a function, then query:find to verify it's loaded",
+    [
+      "Define"
+    ],
+    "",
+    [
+      "--- EDSL set-code + query ---",
+      ";; Step 1: Load code into AST",
+      "(set-code \"(define (f x) (+ x 1))\")",
+      ";; Step 2: Query the AST to verify",
+      "(display (query:node-type \"Define\"))"
+    ]
+  ],
+  [
+    "edsl-snapshot-multi",
+    "Take multiple snapshots and verify they persist",
+    [
+      "v2"
+    ],
+    "",
+    [
+      "(set-code \"(define x 1)\")",
+      "(ast:snapshot 'v1)",
+      "(set-code \"(define x 2)\")",
+      "(ast:snapshot 'v2)",
+      "(ast:list-snapshots)"
+    ]
+  ],
+  [
+    "edsl-snapshot",
+    "Use ast:snapshot then mutate then ast:restore to revert changes",
+    [
+      "g"
+    ],
+    "",
+    [
+      "--- EDSL snapshot/restore ---",
+      "(set-code \"(define (g x) (* x 2))\")",
+      "(define sid (ast:snapshot \"before\"))",
+      "(mutate:rebind \"g\" \"(lambda (x) (+ x 1))\" \"test\")",
+      "(ast:restore sid)",
+      "(display (car (query:def-use \"g\")))"
+    ]
+  ],
+  [
+    "edsl-splice-wrap",
+    "Use mutate:splice and mutate:wrap for structural AST editing",
+    [
+      "insert"
+    ],
+    "",
+    [
+      "--- Higher-order AST transforms ---",
+      "(set-code \"(begin (display 1) (display 3))\")",
+      "(mutate:splice 0 1 \"(display 2)\" \"insert\")",
+      "(display (current-source))"
+    ]
+  ],
+  [
+    "edsl-summary",
+    "Use ast:summary and compile:status to inspect workspace state",
+    [
+      "total"
+    ],
+    "",
+    [
+      "--- EDSL summary/status ---",
+      "(set-code \"(define (g x) (+ x 1))\")",
+      "(display (ast:summary))"
+    ]
+  ],
+  [
+    "edsl-synthesize-pipeline",
+    "Use synthesize:pipeline to chain multiple steps",
+    [
+      "Complete"
+    ],
+    "",
+    [
+      "--- Pipeline strategy ---",
+      "(require \"std/pipeline\" all:)",
+      "(set-code \"(begin)\")",
+      "(synthesize:register-template \"add\"",
+      "\"(define (add-{name} x y) (+ x y))\" \"name\")",
+      "(synthesize:pipeline \"test\"",
+      "(synthesize:fill \"add\" \"nums\"))",
+      "(display \"Pipeline complete\")"
+    ]
+  ],
+  [
+    "edsl-synthesize-template",
+    "Use synthesize:register-template and synthesize:fill",
+    [
+      "handle"
+    ],
+    "",
+    [
+      "--- Template strategy ---",
+      "(set-code \"(begin)\")",
+      "(synthesize:register-template \"handler\"",
+      "\"(define (handle-{name} req) (display req))\" \"name\")",
+      "(synthesize:fill \"handler\" \"test\")",
+      "(display (current-source))"
+    ]
+  ],
+  [
+    "edsl-workspace-cow",
+    "Create child workspace, switch, and verify COW isolation",
+    [
+      "iso"
+    ],
+    "",
+    [
+      "(set-code \"(define x 1)\")",
+      "(define ws (workspace:create 'test))",
+      "(workspace:switch ws)",
+      "(set-code \"(define y 2)\")",
+      "(workspace:switch 0)",
+      "(display (car (car (query:def-use 'x))))"
+    ]
+  ],
+  [
+    "edsl-workspace",
+    "Use workspace:create, switch, and merge to isolate changes",
+    [
+      "ws"
+    ],
+    "",
+    [
+      "--- Workspace layering ---",
+      "(set-code \"(define (g x) (+ x 1))\")",
+      "(define ws (workspace:create \"sandbox\"))",
+      "(workspace:switch ws)",
+      "(mutate:rebind \"g\" \"(lambda (x) (* x 2))\" \"mutate\")",
+      "(workspace:switch 0)",
+      "(workspace:merge ws)",
+      "(display (car (query:def-use \"g\")))"
+    ]
+  ],
+  [
+    "coerce-bool-int",
+    "Write (+ 1 #t) that demonstrates Bool-to-Int coercion (#t = 1), result should be 2",
+    [
+      "2"
+    ],
+    "",
+    []
+  ],
+  [
+    "coerce-float-int",
+    "Write (+ 1 2.5) that demonstrates Int-to-Float coercion, result should be a float",
+    [
+      "3.5"
+    ],
+    "",
+    []
+  ],
+  [
+    "coerce-int-string",
+    "Write (+ 1 \"2\") that demonstrates Int-to-String coercion, should return 3",
+    [
+      "3"
+    ],
+    "",
+    []
+  ],
+  [
+    "try-catch",
+    "Use (try expr (catch (var) handler)) to handle an error",
+    [
+      "caught"
+    ],
+    "",
+    [
+      "--- try-catch ---",
+      "(display (try (car ()) (catch (e) \"caught\")))"
+    ]
+  ],
+  [
+    "mat-identity",
+    "Create identity matrix and verify an element",
+    [
+      "1"
+    ],
+    "std/vector-math",
+    [
+      "--- matrix identity ---",
+      "(require \"std/vector-math\" all:)",
+      "(display (mat:ref (mat:identity 3) 1 1))"
+    ]
+  ],
+  [
+    "vec-dot",
+    "Use vec:dot to compute dot product of two vectors",
+    [
+      "32"
+    ],
+    "std/vector-math",
+    [
+      "--- vector dot ---",
+      "(require \"std/vector-math\" all:)",
+      "(display (vec:dot (vector 1 2 3) (vector 4 5 6)))"
+    ]
+  ],
+  [
+    "vec-range",
+    "Use vec:range from std/vector-math to create a range and sum it",
+    [
+      "10"
+    ],
+    "std/vector-math",
+    [
+      "--- vector-math ---",
+      "(require \"std/vector-math\" all:)",
+      "(display (vec:sum (vec:range 0 5)))"
+    ]
+  ],
+  [
+    "bench-eval",
+    "Benchmark: Evaluate a computationally intensive function",
+    [
+      "3628800"
+    ],
+    "",
+    [
+      "(set-code '(define (fact n) (if (= n 0) 1 (* n (fact (- n 1))))))",
+      "(eval-current)",
+      "(display (fact 10))"
+    ]
+  ],
+  [
+    "bench-parse",
+    "Benchmark: Use set-code to parse a large expression",
+    [
+      "parse"
+    ],
+    "",
+    [
+      "(define code '(define (fib n) (if (< n 2) n (+ (fib (- n 1))(fib (- n 2))))))",
+      "(define t1 (current-time))",
+      "(set-code code)",
+      "(display 'parse-ok)"
+    ]
+  ],
+  [
+    "bench-typecheck",
+    "Benchmark: Type-check a large recursive function",
+    [
+      "typecheck"
+    ],
+    "",
+    [
+      "(set-code '(define (fact n) (if (= n 0) 1 (* n (fact (- n 1))))))",
+      "(typecheck-current)",
+      "(display 'typecheck-ok)"
+    ]
+  ],
+  [
+    "command-output",
+    "Use (command-output \"echo 42\") to capture shell command output",
+    [
+      "42"
+    ],
+    "",
+    [
+      "--- command-output ---",
+      "(display (command-output \"echo 42\"))"
+    ]
+  ],
+  [
+    "shell-cmd",
+    "Use (shell \"echo 42\") to run a shell command and capture exit code",
+    [
+      "0"
+    ],
+    "",
+    [
+      "--- shell ---",
+      "(display (shell \"echo 42\"))"
+    ]
+  ]
+]
