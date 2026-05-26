@@ -15,6 +15,7 @@ module;
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <regex>
+#include <curl/curl.h>
 #include <cmath>
 #include "messaging_bridge.h"
 module aura.compiler.evaluator;
@@ -4950,6 +4951,45 @@ void Evaluator::update_shared_tree_root() {
     }
 }
 
+// ── Runtime-loaded libcurl via dlopen (avoids ld.bfd symbol issues) ──
+namespace {
+struct CurlAPI {
+    void* handle = nullptr;
+    CURL* (*easy_init)() = nullptr;
+    CURLcode (*easy_setopt)(CURL*, CURLoption, ...) = nullptr;
+    CURLcode (*easy_perform)(CURL*) = nullptr;
+    void (*easy_cleanup)(CURL*) = nullptr;
+    struct curl_slist* (*slist_append)(struct curl_slist*, const char*) = nullptr;
+    void (*slist_free_all)(struct curl_slist*) = nullptr;
+
+    bool load() {
+        if (handle) return true;
+        handle = ::dlopen("libcurl.so.4", RTLD_LAZY | RTLD_LOCAL);
+        if (!handle) return false;
+        easy_init = (CURL*(*)())::dlsym(handle, "curl_easy_init");
+        easy_setopt = (CURLcode(*)(CURL*,CURLoption,...))::dlsym(handle, "curl_easy_setopt");
+        easy_perform = (CURLcode(*)(CURL*))::dlsym(handle, "curl_easy_perform");
+        easy_cleanup = (void(*)(CURL*))::dlsym(handle, "curl_easy_cleanup");
+        slist_append = (struct curl_slist*(*)(struct curl_slist*,const char*))::dlsym(handle, "curl_slist_append");
+        slist_free_all = (void(*)(struct curl_slist*))::dlsym(handle, "curl_slist_free_all");
+        return easy_init && easy_setopt && easy_perform && easy_cleanup
+            && slist_append && slist_free_all;
+    }
+    ~CurlAPI() { if (handle) ::dlclose(handle); }
+};
+CurlAPI& get_curl() {
+    static CurlAPI c;
+    return c;
+}
+auto& curl_writer_fn() {
+    static auto writer = [](char* ptr, size_t size, size_t nmemb, void* ud) -> size_t {
+        static_cast<std::string*>(ud)->append(ptr, size * nmemb);
+        return size * nmemb;
+    };
+    return writer;
+}
+}
+
 Evaluator::Evaluator() {
     top_.set_primitives(&primitives_);
     top_.set_cells(&cells_);
@@ -5251,58 +5291,82 @@ Evaluator::Evaluator() {
     primitives_.add("http-post", [this](const auto& a) -> EvalValue {
         if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
             return make_void();
-        auto& url = string_heap_[types::as_string_idx(a[0])];
-        auto& body = string_heap_[types::as_string_idx(a[1])];
-        // Pipe body to curl's stdin, read stdout — no temp files, no shell escaping.
-        int in[2], out[2];
-        if (::pipe(in) < 0 || ::pipe(out) < 0)
-            return make_void();
-        pid_t pid = ::fork();
-        if (pid < 0) {
-            ::close(in[0]); ::close(in[1]); ::close(out[0]); ::close(out[1]);
-            return make_void();
+
+        // Try native libcurl first (no subprocess, no temp files)
+        std::string result;
+        if (get_curl().load()) {
+            auto& curl_url = string_heap_[types::as_string_idx(a[0])];
+            auto& curl_body = string_heap_[types::as_string_idx(a[1])];
+
+            CURL* curl = get_curl().easy_init();
+            if (curl) {
+                struct curl_slist* headers = nullptr;
+                headers = get_curl().slist_append(headers, "Content-Type: application/json");
+                if (a.size() >= 3 && types::is_string(a[2])) {
+                    auto& auth = string_heap_[types::as_string_idx(a[2])];
+                    headers = get_curl().slist_append(headers,
+                        (std::string("Authorization: Bearer ") + auth).c_str());
+                }
+
+                std::string response;
+                get_curl().easy_setopt(curl, CURLOPT_URL, curl_url.c_str());
+                get_curl().easy_setopt(curl, CURLOPT_POST, 1L);
+                get_curl().easy_setopt(curl, CURLOPT_POSTFIELDS, curl_body.c_str());
+                get_curl().easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)curl_body.size());
+                get_curl().easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+                get_curl().easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_writer_fn);
+                get_curl().easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+                get_curl().easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+                get_curl().easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+                get_curl().easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+                get_curl().easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+                get_curl().easy_setopt(curl, CURLOPT_USERAGENT, "aura/1.0");
+
+                CURLcode res = get_curl().easy_perform(curl);
+                get_curl().slist_free_all(headers);
+                get_curl().easy_cleanup(curl);
+
+                if (res == CURLE_OK && !response.empty())
+                    result = std::move(response);
+            }
         }
-        if (pid == 0) {
-            // ── child: exec curl, reading body from stdin ──
-            ::close(in[1]); ::close(out[0]);
-            ::dup2(in[0], STDIN_FILENO); ::dup2(out[1], STDOUT_FILENO);
-            ::close(in[0]); ::close(out[1]);
-            // Build auth header string first (outlives if scope, used in execvp)
+
+        if (result.empty()) {
+            // ── fallback: pipe+fork+exec curl CLI ──
+            auto& url = string_heap_[types::as_string_idx(a[0])];
+            auto& body = string_heap_[types::as_string_idx(a[1])];
             std::string auth_hdr;
             if (a.size() >= 3 && types::is_string(a[2]))
                 auth_hdr = std::string("Authorization: Bearer ")
                     + string_heap_[types::as_string_idx(a[2])];
-            const char* argv[16]{};
-            int i = 0;
-            argv[i++] = "curl";
-            argv[i++] = "-s"; argv[i++] = "-X"; argv[i++] = "POST";
-            argv[i++] = "--data-binary"; argv[i++] = "@-";
-            argv[i++] = "-H"; argv[i++] = "Content-Type: application/json";
-            if (!auth_hdr.empty()) {
-                argv[i++] = "-H";
-                argv[i++] = auth_hdr.c_str();
+            int in[2], out[2];
+            if (::pipe(in) < 0 || ::pipe(out) < 0) return make_void();
+            pid_t pid = ::fork();
+            if (pid < 0) { ::close(in[0]); ::close(in[1]); ::close(out[0]); ::close(out[1]); return make_void(); }
+            if (pid == 0) {
+                ::close(in[1]); ::close(out[0]);
+                ::dup2(in[0], STDIN_FILENO); ::dup2(out[1], STDOUT_FILENO);
+                ::close(in[0]); ::close(out[1]);
+                const char* argv[16]{}; int i = 0;
+                argv[i++] = "curl"; argv[i++] = "-s"; argv[i++] = "-X"; argv[i++] = "POST";
+                argv[i++] = "--data-binary"; argv[i++] = "@-";
+                argv[i++] = "-H"; argv[i++] = "Content-Type: application/json";
+                if (!auth_hdr.empty()) { argv[i++] = "-H"; argv[i++] = auth_hdr.c_str(); }
+                argv[i++] = "--max-time"; argv[i++] = "30";
+                argv[i++] = "--connect-timeout"; argv[i++] = "10";
+                argv[i++] = url.c_str(); argv[i] = nullptr;
+                ::execvp("curl", const_cast<char* const*>(argv));
+                ::_exit(1);
             }
-            argv[i++] = "--max-time"; argv[i++] = "30";
-            argv[i++] = "--connect-timeout"; argv[i++] = "10";
-            argv[i++] = url.c_str();
-            argv[i] = nullptr;
-            ::execvp("curl", const_cast<char* const*>(argv));
-            ::_exit(1);
+            ::close(in[0]); ::close(out[1]);
+            ::write(in[1], body.data(), body.size()); ::close(in[1]);
+            std::array<char, 4096> fbuf; ssize_t nr;
+            while ((nr = ::read(out[0], fbuf.data(), fbuf.size())) > 0)
+                result.append(fbuf.data(), static_cast<std::size_t>(nr));
+            ::close(out[0]); int cstat; ::waitpid(pid, &cstat, 0);
         }
-        // ── parent: write body, then read response ──
-        ::close(in[0]); ::close(out[1]);
-        ::write(in[1], body.data(), body.size());
-        ::close(in[1]);
-        std::array<char, 4096> buf;
-        std::string result;
-        ssize_t n;
-        while ((n = ::read(out[0], buf.data(), buf.size())) > 0)
-            result.append(buf.data(), static_cast<std::size_t>(n));
-        ::close(out[0]);
-        int status;
-        ::waitpid(pid, &status, 0);
-        if (result.empty())
-            return make_void();
+
+        if (result.empty()) return make_void();
         auto sidx = string_heap_.size();
         string_heap_.push_back(std::move(result));
         return types::make_string(sidx);
