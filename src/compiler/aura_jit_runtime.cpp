@@ -252,4 +252,21 @@ void aura_newline() {
     fflush(stdout);
 }
 
+
+// ── Float pool (shared between alloc and ref) ────
+static std::vector<double> g_float_pool;
+
+std::int64_t aura_alloc_float(double d) {
+    std::int64_t idx = (std::int64_t)g_float_pool.size();
+    g_float_pool.push_back(d);
+    return -10000000000000000LL - idx;
+}
+
+double aura_float_ref(std::int64_t val) {
+    std::int64_t idx = -val - 10000000000000000LL;
+    if (idx >= 0 && idx < (std::int64_t)g_float_pool.size())
+        return g_float_pool[(std::size_t)idx];
+    return 0.0;
+}
+
 } // extern "C"

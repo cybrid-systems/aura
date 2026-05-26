@@ -317,7 +317,10 @@ export inline std::string format_value(const types::EvalValue& v,
                 result += " ";
             result += elements[i];
         }
-        if (!types::is_truthy(current)) {
+        // Check end-of-list: void sentinel (11) or fixnum 0 are list terminators
+        bool is_proper = (current.val == 11) || (current.val == 0) ||
+                         (types::is_int(current) && types::as_int(current) == 0);
+        if (is_proper) {
             // proper list
         } else {
             if (!elements.empty())
