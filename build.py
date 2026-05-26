@@ -872,6 +872,12 @@ def test_fuzz_corpus():
 def test_repl():
     """Run REPL interactive tests via pexpect."""
     print(f"{'repl':12s} testing REPL interaction...")
+    # Check pexpect availability (install via: pip install pexpect --user --break-system-packages)
+    try:
+        import pexpect  # noqa: F401
+    except ImportError:
+        print(f"  {'⚠️':4s} pexpect not installed (pip install pexpect --user --break-system-packages)")
+        return 0
     for path in ["tests/repl_test.py"]:
         result = subprocess.run([sys.executable, path], cwd=ROOT)
         if result.returncode:
