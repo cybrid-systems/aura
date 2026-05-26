@@ -2,80 +2,6 @@
 (require "std/synthesize-v2" "std/list" "std/json" "std/fs" all:)
 
 ; ── API reference for LLM system prompt ──
-(define api-ref-str ; Static API reference (equivalent to get-full-api-ref but
-                    ; avoids module closure issues with aura-core-ref)
-  "=== Core Aura Primitives (always available, no require) ===
-(c-func lib-id \"name\" \"(ArgType) -> RetType\") -> procedure
-(: x Type val)  Type annotation: bind x with type Type and value val
-(: x Type)      Type annotation: declare type (no value binding)
-Type values: Int, Float, String, Bool, List, (-> A B), (Pair A B), Any
-
-=== std/list (no require) ===
-(filter pred lst)       -> list
-(map fn lst)            -> list
-(foldl fn init lst)     -> any
-(for-each fn lst)       -> void
-(range start end)       -> list  [start, end)
-(append a b)            -> list
-(reverse lst)           -> list
-(length lst)            -> int
-(list-ref lst i)        -> any   0-based
-(flatten lst)           -> list
-(zip a b)               -> list
-(take lst n)            -> list
-(drop lst n)            -> list
-(sort lst)              -> list   Ascending sort (numbers)
-(member x lst)          -> list | #f
-(frequencies lst)       -> hash   Count occurrences
-
-=== std/string (require \"std/string\" all:) ===
-(string-split s sep)     -> list
-(string-join strs sep)   -> str
-(string-trim s)          -> str
-(string-upcase s)        -> str
-(string-contains? h n)   -> bool
-(string-replace s o n)   -> str
-(string-reverse s)       -> str
-(string->chars s)        -> list
-(chars->string cs)       -> str
-(string-take s n)        -> str
-(string-drop s n)        -> str
-
-=== std/hash (require \"std/hash\" all:) ===
-(hash key val ...)       -> hash
-(hash-ref h k)           -> value | ()
-(hash-set! h k v)        -> void
-(hash-keys h)            -> list
-(hash-values h)          -> list
-(hash-length h)          -> int
-(hash->alist h)          -> list
-
-=== std/json (require \"std/json\" all:) ===
-(json-encode value)      -> string
-(json-parse json-str)    -> value
-
-=== std/llm (require \"std/llm\" all:) ===
-(aura-llm-call body)     -> string
-
-=== std/math (require \"std/math\" all:) ===
-(square x) (cube x) (clamp x lo hi) (avg a b)
-(mean lst) (median lst) (gcd a b) (lcm a b)
-(prime? n) (fibonacci n) (factorial n)
-(nCr n r) (nPr n r) (pi) (e)
-
-=== EDSL / Reflection Primitives ===
-(set-code \"src\")          -> void
-(eval-current)               -> bool
-(ast:snapshot tag)           -> int
-(ast:restore sid)            -> bool
-(ast:print)                  -> void
-(query:find pattern)         -> list
-(query:def-use var-name)     -> list
-(mutate:rebind node-id val reason) -> bool
-(synthesize:optimize tmpl)   -> str
-(synthesize:test-driven goal expected stdin hints) -> bool
-")
-
 ; ── extract-code from LLM response ──
 (define (extract-code response)
   ; ```lisp ... ``` → content
@@ -124,9 +50,10 @@ Type values: Int, Float, String, Bool, List, (-> A B), (Pair A B), Any
                       (let loop ((h hints-list) (acc ""))
                         (if (null? h) acc
                           (loop (cdr h) (string-append acc (car h) "\n"))))))
-  (define sys (string-append "You are an expert Aura Lisp programmer. Write a complete program ending with (display ...). The output must match exactly.\nRules:\n- (define ...) for functions, then (display (my-func args...))\n- (require std/name all:) for stdlib\n- Wrap code in ```lisp ... ``` markers.\n\n"
-    (if (string=? hints-str "") "" (string-append "--- TASK HINTS (FOLLOW THESE EXACTLY) ---\n" hints-str "\n"))
-    "\n" api-ref-str))
+  (define sys (string-append "You are Aura Lisp. Write valid code ending with (display ...).\n"
+    "CRITICAL: (display (your-function args)) — if you only (define (f x) ...)"
+    " the output will be '#<procedure>' and the TEST WILL FAIL!\n"
+    (if (string=? hints-str "") "" (string-append "\n=== TASK HINTS ===\n" hints-str "\n"))))
   (define expected-str (string-trim (list-ref expects 0)))
 
   ; ── Generator: (lambda (goal) → code-string) ──
