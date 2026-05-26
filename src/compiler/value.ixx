@@ -97,9 +97,9 @@ export inline EvalValue make_int(std::int64_t v) noexcept {
     return EvalValue(v << 1);  // fixnum encoding
 }
 export inline bool is_int(const EvalValue& v) noexcept {
-    // Fixnum: bit0=0, but STRING_BIAS values also have bit0=0.
-    // Exclude STRING_BIAS range to avoid type confusion.
-    return is_fixnum(v.val) && v.val > STRING_BIAS_VAL;
+    // Fixnum: bit0=0, but STRING_BIAS and FLOAT_BIAS values also have bit0=0.
+    // Exclude both ranges to avoid type confusion.
+    return is_fixnum(v.val) && v.val > FLOAT_BIAS_VAL;
 }
 export inline std::int64_t as_int(const EvalValue& v) noexcept {
     return v.val >> 1;
