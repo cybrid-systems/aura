@@ -13,6 +13,7 @@ module;
 #include <poll.h>
 #include <fcntl.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include <regex>
 #include <cmath>
 #include "messaging_bridge.h"
@@ -2457,13 +2458,21 @@ void Evaluator::init_pair_primitives() {
     });
 
     // ── File I/O (P0) ───────────────────────────────────────────
-    primitives_.add("read-file", [this](const auto& a) {
+    // Helper: check path is a regular file (skip directories)
+    auto is_regular = [](const std::string& path) -> bool {
+        struct stat st;
+        return ::stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
+    };
+
+    primitives_.add("read-file", [this, is_regular](const auto& a) {
         if (a.empty() || !is_string(a[0]))
             return make_void();
         auto idx = as_string_idx(a[0]);
         if (idx >= string_heap_.size())
             return make_void();
         auto& path = string_heap_[idx];
+        if (!is_regular(path))
+            return make_void();
         std::ifstream f(path);
         if (!f)
             return make_void();
@@ -2529,16 +2538,18 @@ void Evaluator::init_pair_primitives() {
         if (idx >= string_heap_.size())
             return make_int(0);
         auto& path = string_heap_[idx];
-        std::ifstream f(path);
-        return make_int(f.good() ? 1 : 0);
+        struct stat st;
+        return make_int(::stat(path.c_str(), &st) == 0 ? 1 : 0);
     });
 
     // ── File I/O: copy, delete, size, directory list ─────────────
-    primitives_.add("file-copy", [this](const auto& a) {
+    primitives_.add("file-copy", [this, is_regular](const auto& a) {
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
             return make_void();
         auto sidx = as_string_idx(a[0]), didx = as_string_idx(a[1]);
         if (sidx >= string_heap_.size() || didx >= string_heap_.size())
+            return make_void();
+        if (!is_regular(string_heap_[sidx]))
             return make_void();
         std::ifstream src(string_heap_[sidx], std::ios::binary);
         if (!src)
@@ -2559,11 +2570,11 @@ void Evaluator::init_pair_primitives() {
         return make_int(std::remove(string_heap_[idx].c_str()) == 0 ? 1 : 0);
     });
 
-    primitives_.add("file-size", [this](const auto& a) {
+    primitives_.add("file-size", [this, is_regular](const auto& a) {
         if (a.empty() || !is_string(a[0]))
             return make_int(0);
         auto idx = as_string_idx(a[0]);
-        if (idx >= string_heap_.size())
+        if (idx >= string_heap_.size() || !is_regular(string_heap_[idx]))
             return make_int(0);
         std::ifstream f(string_heap_[idx], std::ios::ate | std::ios::binary);
         if (!f)
