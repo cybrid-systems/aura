@@ -873,10 +873,12 @@ def test_repl():
     """Run REPL interactive tests via pexpect."""
     print(f"{'repl':12s} testing REPL interaction...")
     for path in ["tests/repl_test.py"]:
-        result = subprocess.run([sys.executable, path], cwd=WORKSPACE)
-        if result.returncode != 0:
-            return False
-    return True
+        result = subprocess.run([sys.executable, path], cwd=ROOT)
+        if result.returncode:
+            fail("repl tests failed")
+            return 1
+    ok("repl tests passed")
+    return 0
 
 
 def test_demo():
