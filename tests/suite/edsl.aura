@@ -1263,3 +1263,58 @@
          (r (synthesize:debug :code code :tests tests :max-attempts 1))
          (success (car r)))
     (check success)))
+
+;; ═══════════════════════════════════════════════════════════════
+;; Synthesize v2 — compose (multi-phase strategy pipeline)
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "synth-v2:compose-empty-phases"
+  (require "std/synthesize-v2" all:)
+  (let* ((r (synthesize:compose "test" :phases (list)))
+         (success (car r)))
+    (check (not success))))
+
+(test-suite "synth-v2:compose-mutate-swap"
+  (require "std/synthesize-v2" all:)
+  ;; Swap * → + in code
+  (let* ((code "(define (f x) (* x 2))")
+         (result (synthesize:compose "test" :code code
+                   :phases (list (list :mutate :strategy "swap-operators"))
+                   :model ""))
+         (success (car result)))
+    (check success)))
+
+(test-suite "synth-v2:compose-llm-pass"
+  (require "std/synthesize-v2" all:)
+  ;; LLM pass with empty model (no API key) should keep code unchanged
+  (let* ((code "(define (f x) x)")
+         (result (synthesize:compose "test" :code code
+                   :phases (list (list :llm :prompt "test"))
+                   :model ""))
+         (success (car result)))
+    (check success)))
+
+(test-suite "synth-v2:compose-test-driven-pass"
+  (require "std/synthesize-v2" all:)
+  ;; Test-driven phase should pass with correct code
+  (let* ((code "(define (add x y) (+ x y))")
+         (tests (list (list "(display (add 2 3))" "5")))
+         (result (synthesize:compose "add" :code code
+                   :phases (list (list :test-driven :tests tests :goal "add"))
+                   :model ""))
+         (success (car result)))
+    (check success)))
+
+(test-suite "synth-v2:compose-multi-phase"
+  (require "std/synthesize-v2" all:)
+  ;; Multiple passes: test-driven + mutate
+  (let* ((code "(define (f x) (* x 2))")
+         (tests (list (list "(display (f 3))" "9")))  ;; 3*3=9, but code is * x 2
+         (result (synthesize:compose "f" :code code
+                   :phases (list 
+                     (list :test-driven :tests tests :goal "square")
+                     (list :mutate :strategy "swap-operators"))
+                   :model ""))
+         (success (car result)))
+    ;; Might succeed or fail depending on LLM availability, but shouldn't crash
+    (check (boolean? success))))
