@@ -7825,14 +7825,13 @@ void Evaluator::build_primitive_slots() {
 std::string Evaluator::resolve_module_path(const std::string& path) const {
     auto try_load = [](const std::string& full) -> std::optional<std::string> {
         for (auto candidate : {full, full + ".aura"}) {
-            std::ifstream probe(candidate);
-            if (probe) {
-                probe.close();
-                char real[4096];
-                if (::realpath(candidate.c_str(), real))
-                    return std::string(real);
-                return candidate;
-            }
+            struct stat st;
+            if (::stat(candidate.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
+                continue;
+            char real[4096];
+            if (::realpath(candidate.c_str(), real))
+                return std::string(real);
+            return candidate;
         }
         return std::nullopt;
     };
@@ -7919,6 +7918,11 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     loading_stack_.insert(resolved);
 
     // 4. Read file
+    struct stat st;
+    if (::stat(resolved.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) {
+        loading_stack_.erase(resolved);
+        return types::make_void();
+    }
     std::ifstream f(resolved);
     if (!f) {
         loading_stack_.erase(resolved);
