@@ -1,0 +1,29 @@
+; lib/std/process.aura — Process management
+;
+; (require "std/process" all:)
+;
+
+(export sh sh-ok? which)
+
+(define (sh cmd) (shell cmd))
+(define (sh-ok? cmd) (= (shell cmd) 0))
+
+;; string-trim (no deps)
+(define (string-trim s)
+  (let ((n (string-length s)))
+    (let l ((i 0))
+      (if (or (>= i n) (> (string-ref s i) 32))
+        (let r ((j (- n 1)))
+          (if (or (< j i) (> (string-ref s j) 32))
+            (substring s i (+ j 1))
+            (r (- j 1))))
+        (l (+ i 1))))))
+
+(define (which program)
+  (let* ((tmp "/tmp/_aura_which")
+         (code (shell (string-append "which " program " > " tmp " 2>/dev/null"))))
+    (if (= code 0)
+      (let ((content (read-file tmp)))
+        (shell (string-append "rm -f " tmp))
+        (if (string? content) (string-trim content) ""))
+      (begin (shell (string-append "rm -f " tmp)) ""))))
