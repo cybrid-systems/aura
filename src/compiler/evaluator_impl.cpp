@@ -15,7 +15,29 @@ module;
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <regex>
+#if __has_include(<curl/curl.h>)
 #include <curl/curl.h>
+#define AURA_HAVE_CURL 1
+#else
+// Fallback types (runtime dlopen, compile-time stub)
+typedef void CURL;
+struct curl_slist {};
+using CURLcode = int;
+using CURLoption = int;
+constexpr CURLoption CURLOPT_URL = 10002;
+constexpr CURLoption CURLOPT_POST = 47;
+constexpr CURLoption CURLOPT_POSTFIELDS = 10015;
+constexpr CURLoption CURLOPT_POSTFIELDSIZE = 60;
+constexpr CURLoption CURLOPT_HTTPHEADER = 10023;
+constexpr CURLoption CURLOPT_WRITEFUNCTION = 20011;
+constexpr CURLoption CURLOPT_WRITEDATA = 10001;
+constexpr CURLoption CURLOPT_TIMEOUT = 13;
+constexpr CURLoption CURLOPT_CONNECTTIMEOUT = 78;
+constexpr CURLoption CURLOPT_SSL_VERIFYPEER = 64;
+constexpr CURLoption CURLOPT_SSL_VERIFYHOST = 81;
+constexpr CURLoption CURLOPT_USERAGENT = 10018;
+constexpr CURLcode CURLE_OK = 0;
+#endif
 #include <cmath>
 #include "messaging_bridge.h"
 module aura.compiler.evaluator;
