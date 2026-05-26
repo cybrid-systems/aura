@@ -26,9 +26,9 @@ tests = [
 
     # ── match 穷尽性 ──────────────────────────────────────
     ("match-missing", '(define-type (C) (A) (B) (C)) (let ((x A)) (match x ((A) 1) ((B) 2)))',
-     "2", "unhandled constructor"),
+     "1", "match warning"),
     ("match-wildcard", '(define-type (C) (A) (B) (C)) (let ((x A)) (match x ((A) 1) ((_) 2)))',
-     "2", ""),
+     "1", ""),
 
     # ── Phase 2: eval-current-output ──────────────────────
     ("eval-capture",
