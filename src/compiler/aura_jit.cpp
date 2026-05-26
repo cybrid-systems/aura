@@ -128,6 +128,7 @@ struct LLVMBuilder {
     llvm::Function* fn_drop_cell = nullptr;
     llvm::Function* fn_drop_closure = nullptr;
     llvm::Function* fn_drop_value = nullptr;
+    llvm::Function* fn_alloc_float = nullptr;
     llvm::Function* fn_alloc_string = nullptr;
     llvm::Function* fn_string_ref = nullptr;
 
@@ -205,6 +206,9 @@ struct LLVMBuilder {
         fn_alloc_string =
             llvm::Function::Create(llvm::FunctionType::get(i64, {ptr_i8}, false),
                                    llvm::Function::ExternalLinkage, "aura_alloc_string", mod);
+        fn_alloc_float = llvm::Function::Create(
+                                   llvm::FunctionType::get(i64, {llvm::Type::getDoubleTy(ctx)}, false),
+                                   llvm::Function::ExternalLinkage, "aura_alloc_float", mod);
         fn_string_ref =
             llvm::Function::Create(llvm::FunctionType::get(ptr_i8, {i64}, false),
                                    llvm::Function::ExternalLinkage, "aura_string_ref", mod);
@@ -368,9 +372,18 @@ struct LLVMBuilder {
                     store(inst.ops[0], c64(0));
                 }
                 return true;
-            case OpConstF64:
-                store(inst.ops[0], c64(0));
+            case OpConstF64: {
+                // Reconstruct double from operand bits (low, high).
+                // Store in float pool via aura_alloc_float for proper tagged encoding.
+                std::uint64_t bits = static_cast<std::uint64_t>(inst.ops[1]) |
+                                     (static_cast<std::uint64_t>(inst.ops[2]) << 32);
+                double d;
+                std::memcpy(&d, &bits, sizeof(d));
+                auto fp = llvm::ConstantFP::get(llvm::Type::getDoubleTy(ctx), d);
+                auto call = irb->CreateCall(fn_alloc_float, {fp});
+                store(inst.ops[0], call);
                 return true;
+            }
             case OpConstString: {
                 // Load string content from IR module's string pool
                 std::string_view str_content;
