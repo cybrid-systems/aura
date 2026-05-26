@@ -34,7 +34,7 @@ for ((i=0; i<WORKERS; i++)); do
     OUT="$OUTDIR/worker_${i}.txt"
     echo "Worker $i: offset=$OFFSET limit=$LIMIT → $OUT"
     LLM_API_KEY="$LLM_API_KEY" \
-      LLM_MODEL="${LLM_MODEL:-deepseek-chat}" \
+      LLM_MODEL="${LLM_MODEL:-deepseek-v4-flash}" \
       LLM_BASE_URL="${LLM_BASE_URL:-https://api.deepseek.com/v1}" \
       BENCH_OFFSET=$OFFSET BENCH_LIMIT=$LIMIT \
       timeout $TIMEOUT "$AURA" < tests/bench.aura > "$OUT" 2>&1 &
