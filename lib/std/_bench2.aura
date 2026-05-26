@@ -1,0 +1,14 @@
+(require "std/list" "std/json" "std/fs" all:)
+(export all-tasks task-count print-test)
+
+(define all-tasks
+  (let* ((raw (read-file "lib/std/bench-tasks.json"))
+         (parsed (json-parse raw)))
+    parsed))
+
+(define (task-count) (length all-tasks))
+
+(define (print-test x)
+  (display "print-test: ")
+  (display x)
+  (newline))

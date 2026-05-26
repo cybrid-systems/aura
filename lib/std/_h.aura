@@ -1,0 +1,2 @@
+(export my-func)
+(define (my-func x) (+ x 1))
