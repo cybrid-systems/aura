@@ -1,7 +1,7 @@
 ;; task: edsl-rule-basic
 ;; goal: Use rule:define and rule:apply-all to normalize code
 ;; expect: rule
-;; hint: (require 'std/rule all:)
-;; hint: (rule:define 'tr ':pattern '(+ 1 1) ':replace '2)
+;; hint: (require "std/rule" all:)
+;; hint: (rule:define 'tr :pattern "(+ 1 1)" :replace "2")
 ;; hint: (display (rule:list))
 

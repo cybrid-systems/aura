@@ -1,9 +1,9 @@
 ;; task: edsl-pipeline-basic
 ;; goal: Use synthesize:pipeline with template and set-code steps
 ;; expect: Complete
-;; hint: (require 'std/pipeline all:)
-;; hint: (set-code '(begin))
-;; hint: (synthesize:register-template 'add '(define (add-{n} x y) (+ x y)) 'n)
-;; hint: (synthesize:pipeline 'test (synthesize:fill 'add 'nums))
-;; hint: (display 'Pipeline complete)
+;; hint: (require "std/pipeline" all:)
+;; hint: (set-code "(begin)")
+;; hint: (synthesize:register-template "add" "(define (add-{n} x y) (+ x y))" "n")
+;; hint: (synthesize:pipeline "test" (synthesize:fill "add" "nums"))
+;; hint: (display "Pipeline complete")
 

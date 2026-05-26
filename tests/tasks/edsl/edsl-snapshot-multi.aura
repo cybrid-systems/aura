@@ -1,9 +1,9 @@
 ;; task: edsl-snapshot-multi
 ;; goal: Take multiple snapshots and verify they persist
 ;; expect: v2
-;; hint: (set-code '(define x 1))
+;; hint: (set-code "(define x 1)")
 ;; hint: (ast:snapshot 'v1)
-;; hint: (set-code '(define x 2))
+;; hint: (set-code "(define x 2)")
 ;; hint: (ast:snapshot 'v2)
 ;; hint: (ast:list-snapshots)
 
