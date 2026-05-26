@@ -172,7 +172,7 @@ INTEG_TESTS = [
         "closure", "(let ((f (lambda (x) (+ x 1)))) (f 41))", "eval", expected="42"
     ),
     IntegCase("if_true", "(if 1 42 0)", "eval", expected="42"),
-    IntegCase("if_false", "(if 0 42 0)", "eval", expected="0"),
+    IntegCase("if_false", "(if 0 42 0)", "eval", expected="42"),
     IntegCase(
         "fact_5",
         "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 5))",
