@@ -48,3 +48,63 @@
 (test-suite "stdlib:validate"
   (require std/validate)
   (check (valid? (validate '{"type": "number"} 42))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; std/net — HTTP client + URL utilities
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "net:url-encode"
+  (require "std/net" all:)
+  (check (string? (url-encode "hello")))
+  (check (= (string-index (url-encode "a b") "+" 0) 1))
+  (check (string=? (url-encode "abc") "abc")))
+
+(test-suite "net:url-encode-special"
+  (require "std/net" all:)
+  (let ((e (url-encode "a/b")))
+    (check (> (string-index e "%2F" 0) -1))))
+
+(test-suite "net:url-decode"
+  (require "std/net" all:)
+  (check (string? (url-decode "hello")))
+  (check (string=? (url-decode "hello+world") "hello world"))
+  (check (string=? (url-decode "abc") "abc")))
+
+(test-suite "net:url-decode-percent"
+  (require "std/net" all:)
+  (check (string=? (url-decode "a%2Fb") "a/b"))
+  (check (string=? (url-decode "%20") " "))
+  (check (string=? (url-decode "hello%21") "hello!")))
+
+(test-suite "net:url-decode-roundtrip"
+  (require "std/net" all:)
+  ;; encode then decode should roundtrip for basic ASCII
+  (let* ((original "hello world/foo")
+         (encoded (url-encode original))
+         (decoded (url-decode encoded)))
+    (check (string=? original decoded))))
+
+(test-suite "net:url-join"
+  (require "std/net" all:)
+  (check (string? (url-join "https://x.com" "api")))
+  (check (string=? (url-join "https://x.com" "api") "https://x.com/api"))
+  (check (string=? (url-join "https://x.com/" "api") "https://x.com/api"))
+  (check (string=? (url-join "" "api") "api")))
+
+(test-suite "net:http-get-json"
+  (require "std/net" all:)
+  ;; Should return () when no network or invalid URL (not crash)
+  (let ((result (http-get-json "https://nonexistent.example.com/test")))
+    (check (or (hash? result) (null? result)))))
+
+(test-suite "net:fetch-try"
+  (require "std/net" all:)
+  ;; Should return "" on failure (not crash)
+  (let ((result (fetch-try "https://nonexistent.example.com/x" 1)))
+    (check (string? result))))
+
+(test-suite "net:http-post-json"
+  (require "std/net" all:)
+  ;; Should return () on failure (not crash)
+  (let ((result (http-post-json "https://nonexistent.example.com/post" "{}")))
+    (check (or (hash? result) (null? result)))))
