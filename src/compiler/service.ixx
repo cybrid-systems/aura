@@ -340,8 +340,14 @@ public:
                 auto var_name = pool.resolve(nv.sym_id);
                 if (!var_name.empty() && var_name[0] == ':')
                     return true;
-                if (user_bindings_.count(std::string(var_name))) {
-
+                if (user_bindings_.count(std::string(var_name)))
+                    return true;
+                // Unknown variable — IR silently returns 0, tree-walker reports
+                // proper unbound-variable error. Trigger fallback for correct errors.
+                auto vn = std::string(var_name);
+                if (!vn.empty() &&
+                    evaluator_.primitives().slot_for_name(vn) >= evaluator_.primitives().slot_count() &&
+                    ir_cache_.count(vn) == 0) {
                     return true;
                 }
             }

@@ -292,6 +292,14 @@ INTEG_TESTS = [
     IntegCase(
         "err_unbound", "x", "eval", expected_err="unbound variable", expected_status=1
     ),
+    IntegCase(
+        "err_unbound_arg", "(display notexist)", "eval",
+        expected_err="unbound variable", expected_status=1
+    ),
+    IntegCase(
+        "err_unbound_arg2", "(+ notexist 1)", "eval",
+        expected_err="unbound variable", expected_status=1
+    ),
     IntegCase("err_type", '(+ 1 "a")', "typecheck", expected_err="", expected_status=0),
     # ── Vector operations ──────────────────────────────────
     IntegCase("vector_basic", "(vector 1 2 3)", "eval", expected="vector"),
