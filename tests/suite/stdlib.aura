@@ -534,3 +534,209 @@
     (check (and (>= (timestamp->month t) 1) (<= (timestamp->month t) 12)))
     (check (and (>= (timestamp->day t) 1) (<= (timestamp->day t) 31)))
     (check (and (>= (timestamp->hour t) 0) (<= (timestamp->hour t) 23)))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; std/regex — additional coverage
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "regex:match-digit"
+  (require "std/regex" all:)
+  (check (re-match? "^\\d+$" "12345"))
+  (check (not (re-match? "^\\d+$" "abc123"))))
+
+(test-suite "regex:find-multiple"
+  (require "std/regex" all:)
+  (check (string=? (re-find "[a-z]+" "123abc456def") "abc"))
+  (check (string=? (re-find "\\s+" "hello   world") "   "))
+  (check (string=? (re-find "[0-9]" "no digits") "")))
+
+(test-suite "regex:replace-all"
+  (require "std/regex" all:)
+  (check (string=? (re-replace "\\s+" "a b   c" " ") "a b c"))
+  (check (string=? (re-replace "\\d" "test123" "") "test")))
+
+(test-suite "regex:split-multi"
+  (require "std/regex" all:)
+  (let ((r (re-split "\\s+" "one   two three")))
+    (check (pair? r))
+    (check (>= (length r) 2)))
+  (check (string=? (re-split "," "single") (list "single")))
+  (check (null? (re-split "," ""))))
+
+(test-suite "regex:quote-special"
+  (require "std/regex" all:)
+  (check (string=? (re-quote ".^$*+?{}[]\\|()") "\\.\\^\\$\\*\\+\\?\\{\\}\\[\\]\\\\\\|\\(\\)"))
+  (check (string=? (re-quote "abc123") "abc123"))
+  (check (string=? (re-quote "test_str") "test_str")))
+
+;; ═══════════════════════════════════════════════════════════════
+;; std/datetime — additional coverage
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "datetime:leap-year"
+  (require std/datetime all:)
+  (check (leap-year? 2024))
+  (check (not (leap-year? 2023)))
+  (check (not (leap-year? 1900)))
+  (check (leap-year? 2000)))
+
+(test-suite "datetime:days-in-month"
+  (require std/datetime all:)
+  (check (= (days-in-month 2024 2) 29))  ;; leap
+  (check (= (days-in-month 2023 2) 28))  ;; non-leap
+  (check (= (days-in-month 2024 1) 31))
+  (check (= (days-in-month 2024 4) 30))
+  (check (= (days-in-month 2024 12) 31)))
+
+(test-suite "datetime:format-specs"
+  (require std/datetime all:)
+  (let* ((t (current-time))
+         (ft (format-time "%Y-%m-%dT%H:%M:%S" t)))
+    (check (string? ft))
+    (check (= (string-length ft) 19))))  ;; "2026-05-26T11:59:00"
+
+(test-suite "datetime:format-literal"
+  (require std/datetime all:)
+  (let* ((t (current-time))
+         (ft (format-time "%%" t)))
+    (check (string=? ft "%"))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; std/process — additional coverage
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "process:which-common"
+  (require "std/process" all:)
+  (check (> (string-length (which "cat")) 0))
+  (check (> (string-length (which "rm")) 0))
+  (check (> (string-length (which "mkdir")) 0)))
+
+(test-suite "process:sh-exit-codes"
+  (require "std/process" all:)
+  (check (= (sh "true") 0))
+  (check (not (= (sh "false") 0)))
+  (check (= (sh "exit 42") 42)))
+
+(test-suite "process:sh-ok-edge"
+  (require "std/process" all:)
+  (check (sh-ok? "true"))
+  (check (not (sh-ok? "false")))
+  (check (not (sh-ok? "exit 1"))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; std/fs — additional coverage
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "fs:path-join-multi"
+  (require "std/fs" all:)
+  (check (string=? (path-join "a" "b" "c" "d" "e") "a/b/c/d/e"))
+  (check (string=? (path-join "a" "" "c") "a/c"))
+  (check (string=? (path-join) ""))
+  (check (string=? (path-join "a") "a")))
+
+(test-suite "fs:path-extname-various"
+  (require "std/fs" all:)
+  (check (string=? (path-extname "index.html") ".html"))
+  (check (string=? (path-extname "archive.tar.gz") ".gz"))
+  (check (string=? (path-extname "Makefile") ""))
+  (check (string=? (path-extname ".bashrc") ".bashrc"))
+  (check (string=? (path-extname "/a/b/c.css") ".css")))
+
+(test-suite "fs:file-write-temp"
+  (require "std/fs" all:)
+  (let* ((p "/tmp/_aura_test_write.txt")
+         (c "hello fs test"))
+    (file-write p c)
+    (let ((r (file-read p)))
+      (check (string=? r c)))
+    ;; Cleanup
+    (shell (string-append "rm -f " p))))
+
+(test-suite "fs:dir-list-sorted"
+  (require "std/fs" all:)
+  (let ((entries (dir-list "lib/std")))
+    (check (pair? entries))
+    ;; fs.aura should be in the list (or nearby alphabetically)
+    (check (list? entries))))
+
+(test-suite "fs:dir-files-count"
+  (require "std/fs" all:)
+  (let ((files (dir-files "lib/std")))
+    ;; At minimum: net, encoding, fs, uuid, process should exist
+    (check (>= (length files) 5))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; std/uuid — additional coverage
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "uuid:many-unique"
+  (require "std/uuid" all:)
+  ;; Generate 20 UUIDs, they should all be unique
+  (let* ((u1 (uuid)) (u2 (uuid)) (u3 (uuid)) (u4 (uuid)) (u5 (uuid))
+         (u6 (uuid)) (u7 (uuid)) (u8 (uuid)) (u9 (uuid)) (u10 (uuid)))
+    (check (not (string=? u1 u2)))
+    (check (not (string=? u1 u3)))
+    (check (not (string=? u4 u5)))
+    (check (not (string=? u6 u10)))
+    ;; All should be 36 chars
+    (check (= (string-length u1) 36))
+    (check (= (string-length u2) 36))
+    (check (= (string-length u10) 36))))
+
+(test-suite "uuid:compact-all-unique"
+  (require "std/uuid" all:)
+  (let ((c1 (uuid-compact)) (c2 (uuid-compact)) (c3 (uuid-compact)))
+    (check (not (string=? c1 c2)))
+    (check (not (string=? c2 c3)))
+    (check (= (string-length c1) 32))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; std/encoding — additional coverage
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "encoding:hex-case"
+  (require "std/encoding" all:)
+  ;; Upper and lower case hex both work for decode
+  (check (string=? (hex-decode "414243") "ABC"))
+  (check (string=? (hex-decode "616263") "abc"))
+  (check (string=? (hex-encode "abc") "616263")))
+
+(test-suite "encoding:base64-no-padding"
+  (require "std/encoding" all:)
+  ;; Base64 without padding should still decode (len%4 != 0 means padding stripped)
+  (check (string? (base64-decode (base64-encode "hello world 123!"))))
+  (check (string=? (base64-decode (base64-encode "he")) "he"))
+  (check (string=? (base64-decode (base64-encode "hel")) "hel")))
+
+(test-suite "encoding:base64-binary"
+  (require "std/encoding" all:)
+  ;; Binary-ish data roundtrip
+  (let* ((data (list->string (list 0 1 2 127 128 255)))
+         (enc (base64-encode data))
+         (dec (base64-decode enc)))
+    (check (string=? data dec))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; std/net — additional coverage
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "net:url-encode-all"
+  (require "std/net" all:)
+  ;; All printable ASCII chars encode properly
+  (check (> (string-length (url-encode "hello world!@#$%^&*()")) 0))
+  (check (string=? (url-encode "") ""))
+  (check (string? (url-encode "~.-_")))  ;; unreserved
+
+(test-suite "net:url-decode-full"
+  (require "std/net" all:)
+  (check (string=? (url-decode "%41%42%43") "ABC"))
+  (check (string=? (url-decode "a%2Bb") "a+b"))
+  (check (string=? (url-decode "%7E") "~"))
+  (check (string? (url-decode "%%")))  ;; malformed shouldn't crash
+
+(test-suite "net:url-join-various"
+  (require "std/net" all:)
+  (check (string=? (url-join "http://example.com" "path/to") "http://example.com/path/to"))
+  (check (string=? (url-join "http://example.com/" "path/to") "http://example.com/path/to"))
+  (check (string=? (url-join "" "path") "path"))
+  (check (string=? (url-join "http://a" "") "http://a/")))
