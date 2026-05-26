@@ -436,13 +436,13 @@ INTEG_TESTS = [
         "adt_none_pair",
         "(begin (define-type (Option a) (Some a) (None)) (pair? None))",
         "eval",
-        expected="#f",
+        expected="#t",
     ),
     IntegCase(
         "adt_none_is_not_pair",
         "(begin (define-type (Option a) (Some a) (None)) (not (pair? None)))",
         "eval",
-        expected="#t",
+        expected="#f",
     ),
     IntegCase(
         "adt_car_tag",

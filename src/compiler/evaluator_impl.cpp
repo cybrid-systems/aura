@@ -9747,8 +9747,33 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         string_heap_.push_back(ctor_name);
                         auto tag_str = make_string(tag_slot);
 
-                        // Register as primitive
-                        primitives_.add(ctor_name, [this, tag_str](const auto& args) -> EvalValue {
+                        // Count fields to determine if zero-arg constructor
+                        int field_count = 0;
+                        {
+                            aura::ast::NodeId fields_node = quoted;
+                            auto fv = f->get(fields_node);
+                            if (fv.tag == aura::ast::NodeTag::Pair && fv.children.size() >= 2)
+                                fields_node = fv.child(1);
+                            while (fields_node < f->size()) {
+                                auto fnv = f->get(fields_node);
+                                if (fnv.tag != aura::ast::NodeTag::Pair || fnv.children.empty())
+                                    break;
+                                field_count++;
+                                if (fnv.children.size() >= 2)
+                                    fields_node = fnv.child(1);
+                                else
+                                    break;
+                            }
+                        }
+                        if (field_count == 0) {
+                            // Zero-arg constructor: bind directly to constructed value
+                            types::EvalValue rest = make_void();
+                            auto cid = static_cast<std::uint64_t>(pairs_.size());
+                            pairs_.push_back({tag_str, rest});
+                            me.bind(ctor_name, make_pair(cid));
+                        } else {
+                            // Multi-arg constructor: register as primitive
+                            primitives_.add(ctor_name, [this, tag_str](const auto& args) -> EvalValue {
                             types::EvalValue rest = make_void();
                             for (auto it = args.rbegin(); it != args.rend(); ++it) {
                                 auto pid = static_cast<std::uint64_t>(pairs_.size());
@@ -9759,6 +9784,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             pairs_.push_back({tag_str, rest});
                             return make_pair(pid);
                         });
+                        }  // end else (multi-arg)
                     }
                     return EvalResult(make_void());
                 }
