@@ -29,28 +29,44 @@
 
 | 模型 | 任务数 | 通过 | 通过率 | 耗时 | 变化 |
 |:----|:-----:|:----:|:-----:|:----:|:----:|
-| 🥇 **Grok 4.3** | 135 | **112** | **83.0%** | 45s | **+3.0%**, 耗时 -70% |
-| 🥈 **DeepSeek v4 Flash** | 135 | **101** | **74.8%** | 134s | −1.5% (方差内) |
+| 🥇 **Grok 4.3** | 135 | **114** | **84.4%** | 41s | **+4.4%** (累计) |
+| 🥈 **DeepSeek v4 Flash** | 135 | **103** | **76.3%** | 156s | 基线 (方差内) |
 
-### 关键改进
+### v3 改进汇总
 
-| Task | 变化 | 原因 |
-|:-----|:----|:------|
-| `type-annot-fn` (Grok) | ✅←❌ | **直接修复** — set-code 解析失败后 eval-current 传播错误 → LLM 能修正 |
-| `edsl-set-code` (DS) | ✅ (保留) | v2 修复已验证 |
-| timing | 152s→45s (Grok) | `last_full_code` guard 移除 → EDSL 模式不再需要先有 full-code 成功才工作 |
+| 优化 | 类型 | 效果 |
+|:-----|:-----|:------|
+| `set-code` 错误穿透 (C++) | 编译器 | `type-annot-fn` 等 set-code chain 修复 |
+| `#<procedure>` 自动补 display (Python) | 无 LLM 修复 | `compose-n`, `occurrence` 跳过 LLM retry |
+| `check_success` 防误判 (Python) | 正确性 | 阻止 error 字符串含 keyword 时的假通过 |
+| `last_full_code` guard 移除 (Python) | 流程 | 耗时下降 152s→41s (Grok), 219s→156s (DS) |
 
-### 共同失败（18 个 — 纯 LLM 生成质量）
+### 新增通过（vs v2 Grok 83.0% / DS 74.8%）
 
-| 类别 | Tasks | 根因 |
-|:-----|:------|:------|
-| ADT 语法不熟 | `adt-tree`, `adt-multi-ctor` (DS), `adt-wildcard` (DS), `adt-option` (DS), `adt-either` (DS) | LLM |
-| 复杂类型系统 | `type-occ-*`(3), `type-linear-hof`, `type-grad-multi-boundary`, `type-let-poly-hof` | LLM 写不出正确代码 |
-| C FFI | `ffi-strlen` | `c-func` 签名语法 |
-| EDSL 复杂 API | `edsl-rule`, `edsl-pipeline-basic`, `edsl-synthesize-pipeline`, `edsl-messaging`, `edsl-mutation-rollback`, `edsl-optimize-multiarg`, `edsl-summary` | API 复杂度 |
-| Closure 不调用 | `binary-search`, `merge-sort` | #<procedure> 检测 |
-| 算法 | `table-lookup`, `word-freq` | LLM 算不出来 |
-| 新 DS 特有 | `two-sum`, `bench-eval`, `edsl-optimize-benchmark-kw`, `edsl-rule-basic`, `edsl-synthesize-template`, `ffi-sqrt`, `occurrence`, `compose-n`, `type-boundary-call`, `type-gradual-erasure`, `type-multi-annot`, `type-ownership-linear`, `unique-hash` | 方差 / LLM |
+| Task | Grok | DS | 原因 |
+|:-----|:----:|:---:|:------|
+| `compose-n` | ❌→✅ | ❌→✅ | auto-fix #<procedure> 补 display |
+| `occurrence` | ❌→✅ | ❌→✅ | auto-fix #<procedure> 补 display |
+| `edsl-summary` | ❌→✅ | — | 误差范围内 |
+| `edsl-defuse` | ❌→✅ | — | 误差范围内 |
+| `type-boundary-call` | ❌→✅ | — | 误差范围内 |
+| `type-gradual-erasure` | ❌→✅ | — | 误差范围内 |
+| `type-ownership-linear` | ❌→✅ | — | 误差范围内 |
+
+### 共同失败（~16 个 — 纯 LLM 生成质量）
+
+| 类别 | Tasks |
+|:-----|:------|
+| Closure 不调用 | `binary-search`, `merge-sort` (auto-fix 参数复杂未命中) |
+| ADT 语法 | `adt-tree`, `adt-option` |
+| EDSL 复杂 API | `edsl-rule`, `edsl-pipeline-basic`, `edsl-synthesize-pipeline`, `edsl-messaging`, `edsl-optimize-multiarg` |
+| 类型系统 | `type-occ-cond/deep/match`, `type-linear-hof` |
+| C FFI | `ffi-strlen` |
+| 算法 | `table-lookup`, `unique-hash`, `word-freq` |
+
+### 方差说明
+- DS 方差 ±7%，Grok 方差 ±4%
+- 本次 Grok 跑出历史最高（84.4%），但首次 attempt 通过率提升了更多（auto-fix 和 check_success 减少重试）
 
 ---
 
@@ -295,7 +311,7 @@ LLM_API_KEY="$(cat ~/code/keys/grok)" \
 
 | 日期 | 版本 | 任务数 | Grok | DeepSeek | 说明 |
 |:----|:----:|:-----:|:----:|:--------:|:------|
-| 2026-05-27 | EDSL chain 穿透 | 135 | **83.0%** | 74.8% | set-code 错误穿透 begin chain |
+| 2026-05-27 | EDSL chain 穿透 (v3) | 135 | **84.4%** | 76.3% | set-code 穿透 + auto-fix + check_success |
 | 2026-05-26 | 诊断传播 v2 | 135 | 80.0% | 76.3% | eval-current 返回错误字符串 |
 | 2026-05-26 | Phase 5 | 135 | **81.5%** | 74.8% | 自托管改造（P0-P3 完成） |
 | 2026-05-26 | Phase 4 | 135 | **83.7%** | 72.6% | 全管线完成 + 3 bug fix |
