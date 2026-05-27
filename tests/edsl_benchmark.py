@@ -31,6 +31,78 @@ from pathlib import Path
 
 AURA = os.environ.get("AURA_BIN", "./build/aura")
 
+
+# ── Model routing config ────────────────────────────────────
+# Each entry: (name, model_id, key, base_url)
+# Set via env vars or defaults
+class ModelConfig:
+    def __init__(self, name, model_id, key, base_url):
+        self.name = name
+        self.model_id = model_id
+        self.key = key
+        self.base_url = base_url
+
+# Default routing: phase → model, with task-category overrides
+# Set LLM_MODEL_ROUTING=1 to enable; configure via env vars:
+#   LLM_PRIMARY=deepseek-v4-flash  (for coarse)
+#   LLM_SECONDARY=grok-4.3         (for fine/type/ffi)
+#   LLM_CHEAP=minimax-m2.7         (for putt/edsl)
+def _parse_model_cfg(name_key, model_key, url_key, key_name):
+    model = os.environ.get(model_key, "")
+    key = os.environ.get(name_key, "")
+    url = os.environ.get(url_key, "")
+    if not model or not key:
+        return None
+    return ModelConfig(key_name, model, key, url)
+
+# Primary model (used for coarse/rewrite attempts)
+_MODEL_PRIMARY = _parse_model_cfg(
+    "LLM_API_KEY", "LLM_MODEL", "LLM_BASE_URL", "primary")
+# Secondary model (used for fine/putt, type/ffi tasks)
+_MODEL_SECONDARY = _parse_model_cfg(
+    "LLM_API_KEY_2", "LLM_MODEL_2", "LLM_BASE_URL_2", "secondary")
+# Cheap model (used for simple tasks, last-resort fallback)
+_MODEL_CHEAP = _parse_model_cfg(
+    "LLM_API_KEY_3", "LLM_MODEL_3", "LLM_BASE_URL_3", "cheap")
+# If no routing configured, use the primary model for everything
+_MODEL_ROUTING_ENABLED = bool(_MODEL_SECONDARY or _MODEL_CHEAP)
+
+# Task category → model override (based on task name prefix)
+_TASK_CATEGORY_ROUTES = {
+    "type-": "secondary",
+    "ffi-": "secondary",
+    "edsl-": "primary",
+    "adt-": "primary",
+    "m4-": "primary",
+}
+
+
+# Phase → model override
+_PHASE_ROUTES = {
+    "coarse": "primary",
+    "fine": "secondary",
+    "putt": "secondary",
+}
+
+
+def _route_model(task_name, phase):
+    """Select model config based on task name and phase.
+    Returns a ModelConfig or None (caller falls back to original params)."""
+    if not _MODEL_ROUTING_ENABLED:
+        return (_MODEL_PRIMARY if _MODEL_PRIMARY else None)
+    # Phase-based routing
+    level = _PHASE_ROUTES.get(phase, "primary")
+    # Task-category override
+    for prefix, route in _TASK_CATEGORY_ROUTES.items():
+        if task_name.startswith(prefix):
+            level = route
+            break
+    if level == "secondary" and _MODEL_SECONDARY:
+        return _MODEL_SECONDARY
+    if level == "cheap" and _MODEL_CHEAP:
+        return _MODEL_CHEAP
+    return (_MODEL_PRIMARY if _MODEL_PRIMARY else None)
+
 # ── 任务定义 ─────────────────────────────────────────────
 # ── 从 tasks/ 子目录加载任务 ────────────────────────────
 TASKS_DIR = Path(__file__).resolve().parent / "tasks"
@@ -1281,6 +1353,7 @@ def run_single_task(
     model, base_url, api_key, name, prompt, expected, stdlib, api_ref, serve=None
 ):
     """Two-phase retry: coarse=full code, fine/putt=EDSL mutations.
+    Routes to different models per phase when LLM_MODEL_2 is set.
     serve: ServeClient instance from main().
     Falls back to direct subprocess if serve is None."""
     max_att = MAX_ATTEMPTS
@@ -1295,6 +1368,14 @@ def run_single_task(
         {"role": "system", "content": sys_prompt},
         {"role": "user", "content": prompt},
     ]
+    # ── Model routing: route per attempt based on phase ──
+    def _prepare_llm_call(current_phase):
+        """Return (model, base_url, api_key) for current phase.
+        Falls back to original params if routing not configured."""
+        cfg = _route_model(name, current_phase)
+        if cfg:
+            return cfg.model_id, cfg.base_url, cfg.key
+        return model, base_url, api_key
     last_full_code = ""
     phase = "coarse"
     # ── Aura 原生 serve 会话 ── 不注入 Scheme 兼容层（着力即差）
@@ -1313,9 +1394,11 @@ def run_single_task(
             return False, "", "binary not found"
 
     for attempt in range(max_att):
+        # Route to appropriate model for this phase
+        route_model_id, route_url, route_key = _prepare_llm_call(phase)
         t0 = time.time()
         try:
-            resp = llm_complete(model, base_url, api_key, messages)
+            resp = llm_complete(route_model_id, route_url, route_key, messages)
         except Exception as e:
             return False, "", str(e), total_llm_time, attempt + 1
         total_llm_time += time.time() - t0
