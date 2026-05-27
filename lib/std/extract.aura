@@ -1,0 +1,182 @@
+; lib/std/extract.aura — Code extraction from LLM responses
+;
+; Uses string->list for all character iteration to avoid
+; Aura runtime bugs with position-based substring operations.
+;
+(export extract-code)
+
+; ── Convert string to char list for pattern matching ──
+
+; Convert a substring pattern to its char code list
+(define pattern->chars
+  (lambda (s)
+    (string->list s)))
+
+; Find pattern in a char list starting at given list position.
+; Returns the string position (0-indexed) or -1.
+(define find-in-chars
+  (lambda (chars pattern-len pattern-chars start)
+    (let ((n (length chars)))
+      (let scan ((i start))
+        (if (> i (- n pattern-len)) -1
+          (if (match-at chars i pattern-chars pattern-len)
+            i
+            (scan (+ i 1))))))))
+
+; Check if pattern matches at position i in chars
+(define match-at
+  (lambda (chars i pattern-chars pattern-len)
+    (if (= pattern-len 0) #t
+      (if (not (= (list-ref chars i) (car pattern-chars)))
+        #f
+        (match-at chars (+ i 1) (cdr pattern-chars) (- pattern-len 1))))))
+
+; Find "```" (triple backtick, char code 96) in a string
+(define find-backtick
+  (lambda (text start)
+    (let ((chars (string->list text))
+          (n (string-length text)))
+      (let scan ((i start))
+        (if (> i (- n 3)) -1
+          (if (and (= (list-ref chars i) 96)
+                   (= (list-ref chars (+ i 1)) 96)
+                   (= (list-ref chars (+ i 2)) 96))
+            i
+            (scan (+ i 1))))))))
+
+; Split text by "```", return list of string segments
+(define split-backtick
+  (lambda (text)
+    (let ((n (string-length text)))
+      (let parts ((start 0) (result (list)))
+        (let ((pos (find-backtick text start)))
+          (if (= pos -1)
+            (reverse (cons (substring text start n) result))
+            (let ((segment (substring text start pos)))
+              (parts (+ pos 3) (cons segment result)))))))))
+
+; Find first newline position in a string (0-indexed), return -1 if none
+(define find-newline
+  (lambda (text start)
+    (let ((chars (string->list text))
+          (n (string-length text)))
+      (let scan ((i start))
+        (if (>= i n) -1
+          (if (= (list-ref chars i) 10)  ; \n = 10
+            i
+            (scan (+ i 1))))))))
+
+; Trim whitespace from both ends of a string
+; Whitespace: space(32), tab(9), newline(10), cr(13)
+(define trim-str
+  (lambda (s)
+    (let ((n (string-length s)))
+      (if (= n 0) ""
+        (let ((chars (string->list s)))
+          ; Count leading whitespace (and trim)
+          (let ltrim ((i 0))
+            (if (>= i n) ""  ; all whitespace
+              (let ((c (list-ref chars i)))
+                (if (or (= c 32) (= c 9) (= c 10) (= c 13))
+                  (ltrim (+ i 1))
+                  ; Found non-whitespace — now rtrim
+                  (let rtrim ((j (- n 1)))
+                    (if (< j i) ""
+                      (let ((c2 (list-ref chars j)))
+                        (if (or (= c2 32) (= c2 9) (= c2 10) (= c2 13))
+                          (rtrim (- j 1))
+                          (substring s i (+ j 1)))))))))))))))
+; Check if string contains any Aura code keywords
+(define contains-code?
+  (lambda (s)
+    (or (not (= (find-in-str s "define" 0) -1))
+        (not (= (find-in-str s "require" 0) -1))
+        (not (= (find-in-str s "lambda" 0) -1))
+        (not (= (find-in-str s "set-code" 0) -1))
+        (not (= (find-in-str s "query:" 0) -1))
+        (not (= (find-in-str s "mutate:" 0) -1))
+        (not (= (find-in-str s "display" 0) -1))
+        (not (= (find-in-str s "eval-current" 0) -1))
+        (not (= (find-in-str s "c-func" 0) -1))
+        (not (= (find-in-str s "c-load" 0) -1)))))
+
+; Find substring in string using list-based matching
+(define find-in-str
+  (lambda (text pat start)
+    (let ((chars (string->list text))
+          (pat-chars (string->list pat))
+          (n (string-length text))
+          (m (string-length pat)))
+      (if (or (= n 0) (= m 0) (< n m)) -1
+        (let scan ((i start))
+          (if (> i (- n m)) -1
+            (if (match-at chars i pat-chars m)
+              i
+              (scan (+ i 1)))))))))
+
+; Check language tag (first line of a code block)
+(define check-lang-tag
+  (lambda (first-line)
+    (let ((s (trim-str first-line)))
+      (or (string=? s "aura")
+          (string=? s "scheme")
+          (string=? s "lisp")
+          (string=? s "racket")
+          (string=? s "clojure")
+          (string=? s "python")))))
+
+; ── Main extract-code ──
+(define (extract-code text)
+  (if (not (string? text)) ""
+    (let ((text (trim-str text)))
+      (if (= (string-length text) 0) ""
+        ; Check for ``` blocks
+        (let ((bt (find-backtick text 0)))
+          (if (not (= bt -1))
+            (let ((parts (split-backtick text)))
+              ; Skip part[0] (before first ```), scan the rest
+              (let scan ((remaining (cdr parts)) (best ""))
+                (if (null? remaining) 
+                  (if (> (string-length best) 0) best
+                    ; Fallback: inline code
+                    (find-inline-code text))
+                  (let ((part (trim-str (car remaining))))
+                    (if (< (string-length part) 2)
+                      (scan (cdr remaining) best)
+                      ; Check for language tag on first line
+                      (let ((nl-pos (find-newline part 0)))
+                        (if (not (= nl-pos -1))
+                          ; Has newline — first line is language tag candidate
+                          (let ((first-line (substring part 0 nl-pos))
+                                (rest (substring part (+ nl-pos 1) (string-length part))))
+                            (if (check-lang-tag first-line)
+                              (if (contains-code? rest)
+                                (trim-str rest)  ; found!
+                                (scan (cdr remaining) best))
+                              (if (contains-code? part)
+                                (trim-str part)  ; found!
+                                (scan (cdr remaining) best))))
+                          ; No newline — single line
+                          (if (contains-code? part)
+                            (trim-str part)
+                            (scan (cdr remaining) best)))))))))
+            ; No ``` blocks
+            (find-inline-code text)))))))
+
+(define find-inline-code
+  (lambda (text)
+    (let ((n (string-length text)))
+      ; Try to find code keywords
+      (let ((def-pos (find-in-str text "(define " 0)))
+        (if (not (= def-pos -1))
+          (substring text def-pos n)
+          (let ((disp-pos (find-in-str text "(display " 0)))
+            (if (not (= disp-pos -1))
+              (substring text disp-pos n)
+              (let ((sc-pos (find-in-str text "(set-code " 0)))
+                (if (not (= sc-pos -1))
+                  (substring text sc-pos n)
+                  (let ((req-pos (find-in-str text "(require " 0)))
+                    (if (not (= req-pos -1))
+                      (substring text req-pos n)
+                      (trim-str text))))))))))))
