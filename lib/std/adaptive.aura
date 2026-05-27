@@ -119,142 +119,55 @@
            (display (sqrt-fn 25.0))\n\
    WRONG:  (c-func \"sqrt\" \"m\" double double)  ; returns procedure, never called\n")
 
-(define api-for-module
-  (lambda (mod)
+(define (api-for-module mod)
+  (string-append
     (cond
       ((string=? mod "core")
-       "=== Core Aura Primitives (always available, no require) ===\n\
-\(c-func lib-id \"name\" \"(ArgType) -> RetType\") -> procedure\n\
-   Creates a callable function from a C shared library.\n\
-   lib-id: -1 (RTLD_DEFAULT, no c-load needed) or result of c-load.\n\
-   Valid types: Int, Float, String, Opaque, Void\n\
-   Example: (define sqrt-fn (c-func -1 \"sqrt\" \"(Float) -> Float\"))\n\
-           (display (sqrt-fn 25.0))  ; MUST call the result!\n\
-   WRONG:  (display (c-func -1 \"sqrt\" \"(Float) -> Float\"))\n\
-           ; This shows #<procedure>, doesn't call the function!\n\
-(c-load \"lib.so\") -> int  Load shared library, returns handle\n\
-\
-(: x Type val)  Type annotation: bind x with type Type and value val\
-(: x Type)      Type annotation: declare type (no value binding)\
-Type values: Int, Float, String, Bool, List, (-> A B), (Pair A B), Any\
-\
-=== EDSL / Reflection Primitives ===\
-(set-code \"src\")           -> void  Replace workspace code\
-(eval-current)               -> bool  Evaluate current workspace\
-(ast:snapshot tag)           -> int   Snapshot ID for rollback\
-(ast:restore sid)            -> bool  Roll back to snapshot\
-(ast:list-snapshots)         -> list  Active snapshot list\
-(ast:print)                  -> void  Print AST (debug)\
-(ast:print-node id)          -> void  Print single AST node\
-\
-(query:find pattern)         -> list  Find AST nodes by pattern\
-(query:pattern pattern-str)  -> list  Find nodes matching pattern string\
-(query:def-use var-name)     -> list  Def-use chain for variable\
-(query:code)                 -> str   Get current code\
-\
-(mutate:rebind node-id val reason) -> bool  Replace node value\
-   Examples:\
-   (mutate:rebind 14 \"(lambda (x) (* x x))\" \"make square\")\
-(mutate:replace-value start end new-val msg) -> bool  Range replace\
-\
-(synthesize:optimize template) -> str  Optimize template against benchmarks\
-(synthesize:register-template name template) -> void  Register template\
-(synthesize:list-templates)    -> list  List registered templates\
-(synthesize:fill name args...) -> str  Fill template with args\
-(synthesize:define name sig ...) -> void  Define new template\
-\
-(ast:defs)                   -> list  Top-level definitions\
-(ast:nodes)                  -> list  All AST node IDs\
-\
-=== M4 Linear Types ===\
-(m4-move x)                  -> y     Linear move (x consumed)\
-(m4-borrow x)                -> y     Linear borrow (x still valid)\
-(define-linear x val)        -> void  Define linear variable\
-(m4-return! x)               -> void  Return linear value to scope\
-")
+       "=== Core Aura Primitives (always available, no require) ===\n(c-func lib-id \"name\" \"(ArgType) -> RetType\") -> procedure\n   Creates a callable function from a C shared library.\n   lib-id: -1 (RTLD_DEFAULT, no c-load needed) or result of c-load.\n   Valid types: Int, Float, String, Opaque, Void\n   Example: (define sqrt-fn (c-func -1 \"sqrt\" \"(Float) -> Float\"))\n           (display (sqrt-fn 25.0))  ; MUST call the result!\n   WRONG:  (display (c-func -1 \"sqrt\" \"(Float) -> Float\"))\n           ; This shows #<procedure>, doesn't call the function!\n(c-load \"lib.so\") -> int  Load shared library, returns handle\n\n(: x Type val)  Type annotation: bind x with type Type and value val\n(: x Type)      Type annotation: declare type (no value binding)\nType values: Int, Float, String, Bool, List, (-> A B), (Pair A B), Any\n\n=== EDSL / Reflection Primitives ===\n(set-code \"src\")           -> void  Replace workspace code\n(eval-current)               -> bool  Evaluate current workspace\n(ast:snapshot tag)           -> int   Snapshot ID for rollback\n(ast:restore sid)            -> bool  Roll back to snapshot\n(ast:list-snapshots)         -> list  Active snapshot list\n(ast:print)                  -> void  Print AST (debug)\n(ast:print-node id)          -> void  Print single AST node\n\n(query:find pattern)         -> list  Find AST nodes by pattern\n(query:pattern pattern-str)  -> list  Find nodes matching pattern string\n(query:def-use var-name)     -> list  Def-use chain for variable\n(query:code)                 -> str   Get current code\n\n(mutate:rebind node-id val reason) -> bool  Replace node value\n   Examples:\n   (mutate:rebind 14 \"(lambda (x) (* x x))\" \"make square\")\n(mutate:replace-value start end new-val msg) -> bool  Range replacement\n\n(synthesize:optimize template) -> str  Optimize template against benchmarks\n(synthesize:register-template name template) -> void  Register template\n(synthesize:list-templates)    -> list  List registered templates\n(synthesize:fill name args...) -> str  Fill template with args\n(synthesize:define name sig ...) -> void  Define new template\n\n(ast:defs)                   -> list  Top-level definitions\n(ast:nodes)                  -> list  All AST node IDs\n\n=== M4 Linear Types ===\n(m4-move x)                  -> y     Linear move (x consumed)\n(m4-borrow x)                -> y     Linear borrow (x still owned)\n(define-linear x val)        -> void  Define linear variable\n(m4-return! x)               -> void  Return linear value to pool\n")
       ((string=? mod "std/hash")
-       "=== std/hash ===\n\(hash key val ...)      -> <hash[N]>  Create hash\n\(hash-ref hash key)     -> value | ()  Lookup key\n\(hash-set! hash key v)  -> void  Mutate hash (BUG across modules)\n\(hash-keys hash)        -> list  Get all keys\n\(hash-values hash)      -> list  Get all values\n\(hash-length hash)      -> int   Number of entries\n\(hash->alist hash)      -> alist  Convert to association list\n\(hash-for-each hash fn)  -> void  Apply fn(key,value) to each entry\n")
+       "=== std/hash ===\n(hash key val ...)      -> <hash[N]>  Create hash\n(hash-ref hash key)     -> value | ()  Lookup key\n(hash-set! hash key v)  -> void  Mutate hash (BUG across modules)\n(hash-keys hash)        -> list  Get all keys\n(hash-values hash)      -> list  Get all values\n(hash-length hash)      -> int   Number of entries\n(hash->alist hash)      -> alist  Convert to association list\n(hash-for-each hash fn)  -> void  Apply fn(key,value) to each entry\n")
       ((string=? mod "std/list")
-       "=== std/list ===\n\(filter pred lst)       -> list  pred: element -> bool\n\(map fn lst)            -> list\n\(foldl fn init lst)     -> any   (accumulator, element) -> any\n\(for-each fn lst)       -> void  Side effect only\n\(range start end)       -> list  [start, end)\n\(append a b)            -> list  Concatenate\n\(reverse lst)           -> list\n\(length lst)            -> int\n\(list-ref lst i)        -> any   0-based index\n\(flatten lst)           -> list  Flatten nested lists\n\(zip a b)               -> list  Pair elements from two lists\n\(take lst n)            -> list  First n elements\n\(drop lst n)            -> list  Drop first n elements\n\(sort lst)              -> list  Ascending sort (numbers)\n\(member x lst)          -> list | #f  Find element\n\(frequencies lst)       -> hash  Count occurrences\n")
+       "=== std/list ===\n(filter pred lst)       -> list  pred: element -> bool\n(map fn lst)            -> list\n(foldl fn init lst)     -> any   (accumulator, element) -> any\n(for-each fn lst)       -> void  Side effect only\n(range start end)       -> list  [start, end)\n(append a b)            -> list  Concatenate\n(reverse lst)           -> list\n(length lst)            -> int\n(list-ref lst i)        -> any   0-based index\n(flatten lst)           -> list  Flatten nested lists\n(zip a b)               -> list  Pair elements from two lists\n(take lst n)            -> list  First n elements\n(drop lst n)            -> list  Drop first n elements\n(sort lst)              -> list  Ascending sort (numbers)\n(member x lst)          -> list | #f  Find element\n(frequencies lst)       -> hash  Count occurrences\n")
       ((string=? mod "std/iter")
-       "=== std/iter ===\n\(iterator lst)            -> iter  Create iterator\n\(iterator-next! iter)     -> element | ()  Mutates iter\n\(iterator-empty? iter)    -> bool\n\(iterate fn init n)       -> any  Apply fn n times\n")
+       "=== std/iter ===\n(iterator lst)            -> iter  Create iterator from list\n(iter-next iter)          -> val | ()  Get next element\n(iter-collect iter)       -> list  Collect remaining elements\n(first lst)               -> any   Safe car (returns () on empty)\n(rest lst)                -> list  Safe cdr (returns () on empty)\n(last lst)                -> any   Last element\n(take-while pred lst)     -> list\n(drop-while pred lst)     -> list\n(map fn lst)              -> list\n(filter pred lst)         -> list\n(foldl fn init lst)       -> any\n(foldr fn init lst)       -> any\n(flatten lst)             -> list\n(interleave sep lsts)     -> list\n(split-at n lst)          -> list\n(group-by keyfn lst)      -> list\n(partition pred lst)      -> (list list)\n")
       ((string=? mod "std/json")
-       "=== std/json ===\n\(json-encode value)       -> string  Serialize Aura value to JSON\n\(json-parse json-str)     -> value   Parse JSON string to Aura value\n\(json-get-string js f)    -> string  Extract string field from JSON\n")
+       "=== std/json ===\n(json-encode value)       -> string  Serialize to JSON\n(json-parse json-str)     -> value  Parse JSON string\n")
       ((string=? mod "std/llm")
-       "=== std/llm ===\n\(aura-llm-call json-body) -> string  Call LLM API\n\(aura-verify code)         -> \"#t\" | error-string  Verify code compiles+eval\n")
+       "=== std/llm ===\n(aura-llm-call json-body) -> string  Call LLM and return response\n")
       ((string=? mod "std/socket")
-       "=== std/socket ===\n\(tcp-connect host port)   -> socket | ()  TCP connect to host:port\n\(tcp-send socket data)    -> void  Send data\n\(tcp-recv socket)         -> string  Receive response\n\(tcp-close socket)        -> void  Close connection\n\HTTP response format: \"HTTP/1.1 200 OK\\n...\"\n\Parse status line to extract code (200) and message (OK).\n")
+       "=== std/socket ===\n(tcp-connect host port)   -> socket | error  Open TCP connection\n(tcp-send socket data)    -> bool  Send data\n(tcp-recv socket maxlen)  -> string  Receive data\n(tcp-close socket)        -> void  Close connection\n")
       ((string=? mod "std/string")
-       "=== std/string (require \"std/string\" all:) ===\n\(string-split s sep)        -> list  Split by char\n\(string-split-words s)      -> list  Split by whitespace\n\(string-join strs sep)       -> str   Join with separator\n\(string-trim s)              -> str   Trim whitespace\n\(string-upcase s)            -> str   Uppercase (ASCII)\n\(string-downcase s)          -> str   Lowercase (ASCII)\n\(string-contains? hs ndl)    -> bool  Substring check\n\(string-prefix? s pfx)       -> bool  Prefix check\n\(string-suffix? s sfx)       -> bool  Suffix check\n\(string-replace s old new)   -> str   Replace all\n\(string-reverse s)           -> str   Reverse\n\(string-repeat s n)          -> str   Repeat n times\n\(string->chars s)            -> list  Char codes list\n\(chars->string cs)           -> str   From char codes\n\(string-take s n)            -> str   First n chars\n\(string-drop s n)            -> str   Drop n chars\n\(string-pad-left s w)        -> str   Pad left\n\(string-pad-right s w)       -> str   Pad right\n")
+       "=== std/string (require \"std/string\" all:) ===\n(string-split str delim)  -> list  Split string\n(string-join lst sep)     -> string  Join strings\n(string-pad str len)      -> string  Pad with spaces\n(string-reverse str)      -> string\n(string-downcase str)     -> string\n(string-upcase str)       -> string\n(string-trim str)         -> string  Strip whitespace\n(string-contains? str sub) -> bool  Check substring\n")
       ((string=? mod "std/math")
-       "=== std/math (require \"std/math\" all:) ===\n\(square x)               -> square of x\n\(cube x)                 -> cube of x\n\(clamp x lo hi)          -> clamped value\n\(avg a b)                -> average of two numbers\n\(mean lst)               -> arithmetic mean\n\(median lst)             -> median\n\(gcd a b)                -> greatest common divisor\n\(lcm a b)                -> least common multiple\n\(prime? n)               -> primality test\n\(fibonacci n)            -> nth Fibonacci\n\(factorial n)            -> n!\n\(nCr n r)                -> combinations\n\(nPr n r)                -> permutations\n\(variance lst)           -> variance\n\(stddev lst)             -> standard deviation\n\(pi) (e) (phi) (tau)     -> math constants\n\(degrees->radians d)     -> convert\n\(radians->degrees r)     -> convert\n\(expt b n)               -> b^n\n\(sum lst)                -> sum of list\n\(product lst)            -> product of list\n\(range lst)              -> max - min\n\(normalize lst)          -> normalize to [0,1]\n\(percentile lst p)       -> p-th percentile\n")
+       "=== std/math (require \"std/math\" all:) ===\n(square x)                -> num\n(sqrt x)                  -> num\n(sin x)                   -> num\n(cos x)                   -> num\n(tan x)                   -> num\n(abs x)                   -> num\n(floor x)                 -> int\n(ceil x)                  -> int\n(round x)                 -> int\n(log x)                   -> num  Natural log\n(exp x)                   -> num  e^x\n")
       ((string=? mod "std/vector-math")
-       "=== std/vector-math (require \"std/vector-math\" all:) ===\n\(vec:range start end)     -> vector  [start, end)\n\(vec:map f v)             -> vector  Element-wise map\n\(vec:zip f a b)           -> vector  Pairwise operation\n\(vec:fold f init v)       -> any     Fold over vector\n\(vec:sum v)               -> number  Sum elements\n\(vec:dot a b)             -> number  Dot product\n\(vec:norm v)              -> number  L2 norm\n\(vec:normalize v)         -> vector  Unit vector\n\(vec:scale v s)           -> vector  Scale by scalar\n\(vec:add / vec:sub / vec:mul / vec:div) -> element-wise ops\n\(vec:argmin / vec:argmax) -> int     Index of min/max\n\(vec:mean v)              -> number  Arithmetic mean\n\(vec:slice v s e)         -> vector  Slice\n\(vec:concat a b)          -> vector  Concatenate\n\(mat:identity n)          -> matrix  Identity\n\(mat:ref m r c)           -> number  Matrix element\n\(mat:transpose m)         -> matrix  Transpose\n\(mat:mul a b)             -> matrix  Matrix multiply\n\(mat:shape m)             -> vector  (rows cols)\n\(vec->list v)             -> list    Convert\n\(list->vec lst)           -> vector  Convert\n")
+       "=== std/vector-math (require \"std/vector-math\" all:) ===\n(vec2 x y)                -> vec2  Create 2D vector\n(vec3 x y z)              -> vec3  Create 3D vector\n(vec-add a b)             -> vec   Element-wise add\n(vec-sub a b)             -> vec   Element-wise sub\n(vec-scale v s)           -> vec   Scale by scalar\n(vec-dot a b)             -> num   Dot product\n(vec-cross a b)           -> vec   Cross product\n(vec-length v)            -> num   Magnitude\n(vec-normalize v)         -> vec   Unit vector\n")
       ((string=? mod "std/rule")
-       "=== std/rule (require \"std/rule\" all:) ===\n\(rule:define name :pattern \"pattern\" :replace \"replacement\" ...) -> name\n\   Keywords: :pattern (required), :replace (required), :condition, :description,\
-\             :enabled (default #t), :scope (:workspace or function name)\
-\(rule:apply name)         -> int  Apply single rule\
-\(rule:apply-all)          -> int  Apply all enabled rules\
-\(rule:list)               -> list  List registered rules\
-\(rule:list-violations)    -> list  Audit mode\
-\(rule:remove name)        -> name  Remove rule\
-\(rule:enable/disable name) -> #t | #f  Toggle rule\
-\(rule:status name)        -> list | #f  Rule details\
-")
+       "=== std/rule (require \"std/rule\" all:) ===\n(rule:define name :pattern \"p\" :replace \"r\" ...) -> name\n   Keywords: :pattern (required), :replace (required), :condition, :description,\n             :enabled (default #t), :scope (:workspace or file)\n(rule:apply name)         -> int  Apply single rule\n(rule:apply-all)          -> int  Apply all enabled rules\n(rule:list)               -> list  List registered rules\n(rule:list-violations)    -> list  Audit mode\n(rule:remove name)        -> name  Remove rule\n(rule:enable/disable name) -> #t | #f  Toggle rule\n(rule:status name)        -> list | #f  Rule details\n")
       ((string=? mod "std/pipeline")
-       "=== std/pipeline (require \"std/pipeline\" all:) ===\n\(synthesize:pipeline \"name\" steps...) -> bool  Run pipeline\
-\   Each step can be: (synthesize:fill \"tmpl\" args...) or (synthesize:define ...)\
-\   Returns #t on success, rolls back AST on failure.\
-")
+       "=== std/pipeline (require \"std/pipeline\" all:) ===\n(synthesize:pipeline \"name\" steps...) -> bool  Run pipeline\n   Each step can be: (synthesize:fill \"tmpl\" args...) or (synthesize:define ...)\n   Returns #t on success, rolls back AST on failure.\n")
       ((string=? mod "std/agent")
-       "=== std/agent (require \"std/agent\" all:) ===\n\(my-id)                -> string  Agent's own session ID\
-\(session-active? id)   -> bool    Check if session exists\
-\(mailbox-count)        -> int     Messages in mailbox\
-\(send target msg)      -> bool    Send message to agent\
-\(recv)                 -> msg | () Receive message (non-blocking)\
-\(recv-timeout sec)     -> msg | () Receive with timeout\
-")
+       "=== std/agent (require \"std/agent\" all:) ===\n(my-id)                   -> str     Current session ID\n(session-active? id)   -> bool    Check if session exists\n(mailbox-count)        -> int     Messages in mailbox\n(send target msg)      -> bool    Send message to agent\n(recv)                 -> msg | () Receive message (non-blocking)\n(recv-timeout sec)     -> msg | () Receive with timeout\n")
       ((string=? mod "std/ant")
-       "=== std/ant (require \"std/ant\" all:) ===\n\(pheromone:init)          -> void  Initialize pheromone table\
-\(pheromone:update k v)    -> void  Update pheromone trail\
-\(pheromone:rank)          -> list  Ranked pheromone trails\
-\(pheromone:score k)       -> num   Score for key\
-\(colony:search expected limit) -> (#t output msg) | (#f \"\" msg)\
-\   Locally mutate workspace and test against expected output.\
-")
+       "=== std/ant (require \"std/ant\" all:) ===\n(pheromone:init)           -> void  Initialize pheromone system\n(pheromone:update k v)    -> void  Update pheromone trail\n(pheromone:rank)          -> list  Ranked pheromone trails\n(pheromone:score k)       -> num   Score for key\n(colony:search expected limit) -> (#t output msg) | (#f \"...\")\n   Locally mutate workspace and test against expected output.\n")
       ((string=? mod "std/maybe")
-       "=== std/maybe (require \"std/maybe\" all:) ===\n\(make-some val)          -> (some val)  Wrapper for Maybe values\
-\(make-none)              -> (none)  Nothing wrapper\
-\(maybe? x)               -> bool   Check if Maybe value\
-\(from-maybe default mb)  -> val    Unwrap or default\
-")
+       "=== std/maybe (require \"std/maybe\" all:) ===\n(make-some val)          -> (some val)  Wrapper for Maybe values\n(make-none)              -> (none)  Nothing wrapper\n(maybe? x)               -> bool   Check if Maybe value\n(from-maybe default mb)  -> val    Unwrap or default\n")
       ((string=? mod "std/data")
-       "=== std/data (require \"std/data\" all:) ===\n\(define-type name ctor1 ctor2 ...) -> void  Define algebraic data type\
-\   Example: (define-type Tree (leaf val) (node left right))\
-           creates constructors: (leaf val), (node left right)\
-           Type dispatch: (match expr (leaf v) ... (node l r) ...)\
-\(match expr (ctor vars) body (ctor vars) body ...) -> value\
-\   Pattern match on ADT constructors.\
-\(type-of val)             -> symbol | #f  Get type of value\
-")
-      ((#t (string-append "=== " mod " === (no detailed reference)\n")))))
+       "=== std/data (require \"std/data\" all:) ===\n(define-type name ctor1 ctor2 ...) -> void  Define algebraic data type\n   Example: (define-type Tree (leaf val) (node left right))\n           creates constructors: (leaf val), (node left right)\n           Type dispatch: (match expr (leaf v) ... (node l r) ...)\n(match expr (ctor vars) body (ctor vars) body ...) -> value\n   Pattern match on ADT constructors.\n(type-of val)             -> symbol | #f  Get type of value\n")
+      (#t (string-append "=== " mod " === (no detailed reference)\n")))))
 
-;; Always include core primitives plus any requested modules
-(define get-api-ref
-  (lambda (stdlib-list)
-    (let loop ((libs stdlib-list) (result (api-for-module "core")))
-      (if (null? libs) (string-append aura-pitfalls result)
-          (loop (cdr libs) (string-append result (api-for-module (car libs))))))))
+(define (get-api-ref stdlib-list)
+  (let loop ((libs stdlib-list) (result (api-for-module "core")))
+    (if (null? libs) (string-append aura-pitfalls result)
+        (loop (cdr libs) (string-append result (api-for-module (car libs)))))))
 
-;; Convenience: get full API ref for all commonly used modules at once
-(define get-full-api-ref
-  (lambda ()
-    (let ((all-mods (list "core" "std/hash" "std/list" "std/iter" "std/json"
-                          "std/llm" "std/socket" "std/string" "std/math"
-                          "std/vector-math" "std/rule" "std/pipeline"
-                          "std/agent" "std/ant" "std/maybe" "std/data")))
-      (get-api-ref all-mods))))
-
+(define (get-full-api-ref)
+  (let* ((all-mods (list "core" "std/hash" "std/list" "std/iter" "std/json"
+                         "std/llm" "std/socket" "std/string" "std/math"
+                         "std/vector-math" "std/rule" "std/pipeline"
+                         "std/agent" "std/ant" "std/maybe" "std/data"))
+         (ref (get-api-ref all-mods)))
+    ref))
 (define pid:analyze
   (lambda (output expected-list)
     (let* ((d (measure-distance 0 output expected-list))
