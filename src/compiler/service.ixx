@@ -189,8 +189,8 @@ public:
 
     std::optional<std::string> pop_message(int timeout_ms = -1) {
         if (mailbox_.empty() && timeout_ms == 0) return std::nullopt;
-#ifdef AURA_SERVE_ASYNC
         // Blocking wait: yield fiber until message arrives (fiber mode)
+        // In non-fiber mode, g_current_fiber is null → falls through
         while (mailbox_.empty()) {
             if (aura::serve::g_current_fiber) {
                 aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
@@ -199,9 +199,6 @@ public:
                 return std::nullopt;
             }
         }
-#else
-        if (mailbox_.empty()) return std::nullopt;
-#endif
         last_sender_ = mailbox_.front().first;
         auto msg = std::move(mailbox_.front().second);
         mailbox_.erase(mailbox_.begin());
