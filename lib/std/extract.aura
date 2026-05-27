@@ -3,7 +3,7 @@
 ; Uses string->list for all character iteration to avoid
 ; Aura runtime bugs with position-based substring operations.
 ;
-(export extract-code)
+(export extract-code trim-str)
 
 ; ── Convert string to char list for pattern matching ──
 

@@ -1,35 +1,13 @@
-; ── bench.aura — Aura Native EDSL Benchmark ───
-(require "std/synthesize-v2" "std/list" "std/json" "std/fs" "std/ant" all:)
-
-; ── API reference for LLM system prompt ──
-; ── extract-code from LLM response ──
-(define (extract-code response)
-  ; ```lisp ... ``` → content
-  ; ``` ... ``` → content
-  ; (define ...) or (display ...) → inline
-  ; else → raw trimmed
-  (let ((l (string-index response "```lisp" 0)))
-    (if (> l -1)
-      (let* ((s (+ l 8)) (e (string-index response "```" s)))
-        (if (> e -1) (string-trim (substring response s e))
-          (let ((d (string-index response "(define " 0)))
-            (if (> d -1) (substring response d (string-length response))
-              response))))
-      (let ((m (string-index response "```" 0)))
-        (if (> m -1)
-          (let* ((s (+ m 3)) (e (string-index response "```" s)))
-            (if (> e -1) (string-trim (substring response s e))
-              (let ((d (string-index response "(define " 0)))
-                (if (> d -1) (substring response d (string-length response))
-                  response))))
-          (let ((d (string-index response "(define " 0)))
-            (if (> d -1) (substring response d (string-length response))
-              (let ((dp (string-index response "(display " 0)))
-                (if (> dp -1) (substring response dp (string-length response))
-                  (string-trim response)))))))))))
+; ── lib/std/bench.aura — Aura Native EDSL Benchmark ───
+;
+; Uses std/extract for code extraction (list-based, no string-index needed).
+; Uses built-in check-success primitive (C++, false-positive guard).
+; Prompt building uses std/prompt for consistency with Python runner.
+;
+(require "std/synthesize-v2" "std/list" "std/json" "std/fs" "std/ant" "std/extract" all:)
 
 (export all-tasks task-count run-rounds aggregate)
-(export print-report extract-code run-one)
+(export print-report run-one)
 
 ; ── Load tasks from JSON ──
 (define all-tasks
@@ -40,7 +18,7 @@
 
 ; ── Runner ──
 (define (run-one task model max-a)
-  ; Build prompt parts for the generator closure
+  ; Extract task fields
   (define name (list-ref task 0))
   (define goal (list-ref task 1))
   (define expects (list-ref task 2))
@@ -50,11 +28,13 @@
                       (let loop ((h hints-list) (acc ""))
                         (if (null? h) acc
                           (loop (cdr h) (string-append acc (car h) "\n"))))))
+  (define expected-str (trim-str (list-ref expects 0)))
+
+  ; Build system prompt using std/extract's trim-str (safe, no string-index)
   (define sys (string-append "You are Aura Lisp. Write valid code ending with (display ...).\n"
     "CRITICAL: (display (your-function args)) — if you only (define (f x) ...)"
     " the output will be '#<procedure>' and the TEST WILL FAIL!\n"
     (if (string=? hints-str "") "" (string-append "\n=== TASK HINTS ===\n" hints-str "\n"))))
-  (define expected-str (string-trim (list-ref expects 0)))
 
   ; ── Generator: (lambda (goal) → code-string) ──
   (define (generator g)
@@ -68,27 +48,23 @@
            (first (if (pair? choices) (car choices) (hash)))
            (msg (hash-ref first "message"))
            (content (if (hash? msg) (hash-ref msg "content") "")))
+      ; Use std/extract's extract-code (list-based, no string-index dependency)
       (extract-code content)))
 
   ; ── Verifier: (lambda (code) → "#t" | error-string) ──
-  ;; Delegate to built-in check-success primitive (with false-positive guard)
-  (define (check-success actual expects-list)
-    (if (void? actual)
-      #f
-      (check-success actual expects-list)))
+  ; Uses the built-in check-success C++ primitive (false-positive guard, structured error detection).
+  ; NOTE: Do NOT define a local (check-success ...) — that would shadow the built-in.
   (define (verifier code)
     (let* ((full-code (string-append
                (if (string=? depend "") "" (string-append "(require \"" depend "\" all:)"))
                code))
-           ;; set-code + eval-current-output — the C++ fix makes eval-current-output
-           ;; propagate set-code parse errors even through (begin ...).
            (actual (begin (set-code full-code) (eval-current-output)))
            (actual-str actual))
       (if (check-success actual-str expects)
         "#t"
         (string-append "expected: " expected-str " got: " actual-str))))
 
-    ; ── Fixer: self-healing fallback chain ──
+  ; ── Fixer: self-healing fallback chain ──
   ; 1. diagnose + apply-fix (zero cost, no LLM)
   ; 2. ant colony (local mutations, no LLM)
   ; 3. LLM (last resort)
@@ -112,8 +88,8 @@
               (display "[SELF-HEAL via ant colony]")
               (newline)
               (current-source))
-            ; Step 2: Colony failed ─ fall back to LLM
-            (let* ((usr (string-append "Your code:\n\`\`\`lisp\n" code "\n\`\`\`\nError: " err "\n\nGoal: " g))
+            ; Step 2: Colony failed — fall back to LLM
+            (let* ((usr (string-append "Your code:\n```lisp\n" code "\n```\nError: " err "\n\nGoal: " g))
                    (msgs (list (hash "role" "system" "content" sys)
                               (hash "role" "user" "content" usr)))
                    (body (json-encode (hash "model" model "messages" msgs "temperature" 0.3)))
@@ -123,23 +99,7 @@
                    (first (if (pair? choices) (car choices) (hash)))
                    (msg (hash-ref first "message"))
                    (content (if (hash? msg) (hash-ref msg "content") "")))
-              (extract-code content))))))
-
-      (if colony-result
-        ; Colony found a fix — get the current workspace source
-        (current-source)
-        ; Step 2: Colony failed — fall back to LLM
-        (let* ((usr (string-append "Your code:\n```lisp\n" code "\n```\nError: " err "\n\nGoal: " g))
-               (msgs (list (hash "role" "system" "content" sys)
-                          (hash "role" "user" "content" usr)))
-               (body (json-encode (hash "model" model "messages" msgs "temperature" 0.3)))
-               (raw (aura-llm-call body))
-               (parsed (json-parse raw))
-               (choices (hash-ref parsed "choices"))
-               (first (if (pair? choices) (car choices) (hash)))
-               (msg (hash-ref first "message"))
-               (content (if (hash? msg) (hash-ref msg "content") "")))
-          (extract-code content)))))
+              (extract-code content)))))))
 
   ; ── intend controller ──
   (define result (intend goal generator verifier fixer max-a))
@@ -149,6 +109,7 @@
       (list #f name))
     (list #f name)))
 
+; ── Rounds ──
 (define (run-rounds tasks model max-a rounds)
   (define (loop r results)
     (if (>= r rounds) results
@@ -160,7 +121,6 @@
         (display rounds)
         (display " ===")
         (newline)
-        ; Collect results using cons (O(n) per round)
         (define rd '())
         (let iter ((tl tasks))
           (if (pair? tl)
@@ -175,15 +135,14 @@
               (set! rd (cons result rd))
               (iter (cdr tl)))
             '()))
-        ; Reverse rd to maintain task order, append to results
         (loop (+ r 1) (append results (list (reverse rd)))))))
   (loop 0 '()))
 
+; ── Aggregate & Report ──
 (define (aggregate tasks round-results)
   (define total (length tasks))
   (define rounds (if (pair? round-results) (length round-results) 0))
   
-  ; Count one task's passes/fails across all rounds
   (define (count-task ti)
     (let count-ri ((ri 0) (pc 0) (fc 0))
       (if (< ri rounds)
@@ -195,7 +154,6 @@
             (count-ri (+ ri 1) pc (+ fc 1))))
         (list pc fc))))
   
-  ; Iterate tasks, threading accumulators
   (define (iter ti all-p all-f stats)
     (if (< ti total)
       (let* ((pf (count-task ti))
@@ -207,6 +165,7 @@
       (list total all-p all-f stats)))
   
   (iter 0 0 0 '()))
+
 (define (print-report tasks results)
   (display "print-report called\n")
   (let* ((agg (aggregate tasks results))
