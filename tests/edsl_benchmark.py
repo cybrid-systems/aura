@@ -655,20 +655,22 @@ def check_success(out, expected):
 
 # ── 获取 api-reference ────────────────────────────────────
 def get_api_ref():
-    """Get full Aura API reference from std/adaptive module.
-    Includes core primitives + all stdlib modules."""
+    """Get Aura API reference from std/adaptive module.
+    Includes core primitives + commonly used stdlib modules.
+    Uses get-api-ref with a targeted module list (fast).
+    Falls back to empty string if unavailable."""
     try:
-        code = '(require "std/adaptive" all:)(display (get-full-api-ref))'
+        modules = '"std/list" "std/hash" "std/json" "std/string" "std/math"'
+        code = f'(require "std/adaptive" all:)(display (get-api-ref (list {modules})))'
         r = subprocess.run(
             [AURA], input=code, capture_output=True, text=True, timeout=10
         )
         if r.returncode == 0:
             ref = r.stdout.strip()
-            if ref:
+            if ref and len(ref) > 100:
                 return ref
     except Exception:
         pass
-    # Fallback: basic core signature
     return ""
 
 
