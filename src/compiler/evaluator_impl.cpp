@@ -3163,6 +3163,26 @@ void Evaluator::init_pair_primitives() {
         return load_module_file(string_heap_[idx]);
     });
 
+    // (while pred body) — Iterative loop with zero C++ stack growth.
+    // pred: closure returning bool (#t to continue, #f to stop).
+    // body: closure — evaluated each iteration.
+    primitives_.add("while", [this](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !types::is_closure(a[0]) || !types::is_closure(a[1]))
+            return make_void();
+        auto pred_cid = types::as_closure_id(a[0]);
+        auto body_cid = types::as_closure_id(a[1]);
+        for (;;) {
+            auto pred_result = apply_closure(pred_cid, {});
+            if (!pred_result) break;
+            auto& val = *pred_result;
+            bool cont = types::is_bool(val) ? types::as_bool(val) :
+                         types::is_int(val) ? types::as_int(val) != 0 : false;
+            if (!cont) break;
+            (void)apply_closure(body_cid, {});
+        }
+        return make_void();
+    });
+
     primitives_.add("import", [this](const auto& a) {
         if (a.empty() || !is_string(a[0]))
             return make_void();

@@ -108,9 +108,12 @@
         (display " ===")
         (newline)
         (define rd '())
-        (let iter ((tl tasks))
-          (if (pair? tl)
-            (let* ((task (car tl))
+        ; Iterative loop via while — avoids named-let recursion stack overflow
+        ; at 135+ tasks (C++ apply_closure + eval_flat frames accumulate).
+        (define tl-cursor tasks)
+        (while (lambda () (pair? tl-cursor))
+          (lambda ()
+            (let* ((task (car tl-cursor))
                    (name (list-ref task 0))
                    (result (run-one task model max-a))
                    (ok (car result)))
@@ -119,8 +122,7 @@
               (display " ")
               (if ok (display "OK") (display "FAIL"))
               (set! rd (cons result rd))
-              (iter (cdr tl)))
-            '()))
+              (set! tl-cursor (cdr tl-cursor)))))
         (loop (+ r 1) (append results (list (reverse rd)))))))
   (loop 0 '()))
 
