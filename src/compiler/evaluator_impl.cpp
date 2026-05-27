@@ -8576,6 +8576,22 @@ Evaluator::Evaluator() {
         gc_safe_closure_id_ = next_id_;
         return types::make_bool(true);
     });
+
+    // (gc-stats) — Return formatted string of all heap sizes for telemetry.
+    primitives_.add("gc-stats", [this](const auto&) -> EvalValue {
+        std::uint64_t root_count = 0;
+        for (auto& [id, _] : closures_) {
+            if (id < gc_safe_closure_id_) ++root_count;
+        }
+        auto result = std::format(
+            "string:{}/pairs:{}/cells:{}/err:{}/hash:{}/vec:{}/opq:{}/cls:{}/root:{}",
+            string_heap_.size(), pairs_.size(), cells_.size(),
+            error_values_.size(), hash_heap_.size(), vector_heap_.size(),
+            opaque_heap_.size(), closures_.size(), root_count);
+        auto sidx = string_heap_.size();
+        string_heap_.push_back(result);
+        return types::make_string(sidx);
+    });
 }
 
 // slot_for_name: find the slot for a primitive name
