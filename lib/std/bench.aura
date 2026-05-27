@@ -76,7 +76,8 @@
   ; 2. LLM with correction (last resort)
   (define (fixer code err goal-str)
     ; Step 1: Try ant colony search (zero LLM cost, fine/putt phase mutations)
-    (let* ((colony-result (try (colony:search expected-str 5)
+    ; Reduced from 5 to 3 variants to avoid OOM
+    (let* ((colony-result (try (colony:search expected-str 3)
                               (catch (e) #f))))
       (if colony-result
         (begin
