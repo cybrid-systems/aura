@@ -8538,18 +8538,16 @@ Evaluator::Evaluator() {
         return types::make_bool(!saved_src.empty());
     });
 
-    // (gc-heap) — Clear heap structures + temporary closures (those created
-    // after the last gc-freeze checkpoint). The while loop's predicate/body
-    // closures are kept because they were created before gc-freeze.
-    // Clears: string_heap_, pairs_, cells_, error_values_, hash_heap_,
-    //         opaque_heap_, vector_heap_, and non-root closures.
+    // (gc-heap) — Clear heap vectors that accumulate per task.
+    // SAFETY: Does NOT clear cells_ (shared with env via set_cells, function
+    // define bindings live there) or closures_ (also shared with env).
+    // Only non-essential per-task data is cleared: string_heap_,
+    // pairs_, error_values_, hash_heap_, vector_heap_, opaque_heap_.
     primitives_.add("gc-heap", [this](const auto&) -> EvalValue {
         string_heap_.clear();
         string_heap_.shrink_to_fit();
         pairs_.clear();
         pairs_.shrink_to_fit();
-        cells_.clear();
-        cells_.shrink_to_fit();
         error_values_.clear();
         error_values_.shrink_to_fit();
         hash_heap_.clear();
@@ -8558,13 +8556,15 @@ Evaluator::Evaluator() {
         vector_heap_.shrink_to_fit();
         opaque_heap_.clear();
         opaque_heap_.shrink_to_fit();
-        // Remove temporary closures (created after gc-freeze checkpoint)
-        for (auto it = closures_.begin(); it != closures_.end(); ) {
-            if (it->first >= gc_safe_closure_id_)
-                it = closures_.erase(it);
-            else
-                ++it;
-        }
+        return types::make_bool(true);
+    });
+
+    // (gc-freeze) — Mark current closure generation as "root".
+    // NOTE: Currently informational only — gc-heap doesn't clear closures_
+    // because cells_ (closure cells) are shared with env define bindings.
+    // Reserved for future generational GC.
+    primitives_.add("gc-freeze", [this](const auto&) -> EvalValue {
+        gc_safe_closure_id_ = next_id_;
         return types::make_bool(true);
     });
 

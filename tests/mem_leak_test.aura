@@ -1,0 +1,26 @@
+(require "std/json" all:)
+
+(define (simulate)
+  (json-parse "{\"a\":1,\"b\":2,\"c\":3}")
+  (set-code "(+ 1 2)")
+  (eval-current))
+
+(define (run)
+  (display "=== Memory Leak Test ===\n")
+  (gc-freeze)
+  (display "init: ")(display (gc-stats))(display "\n")
+
+  ; Iteration 1
+  (simulate) (display "1:")(display (gc-stats)) (gc-heap) (display "->")(display (gc-stats))(display "\n")
+  ; Iteration 2
+  (simulate) (display "2:")(display (gc-stats)) (gc-heap) (display "->")(display (gc-stats))(display "\n")
+  ; Iteration 3
+  (simulate) (display "3:")(display (gc-stats)) (gc-heap) (display "->")(display (gc-stats))(display "\n")
+  ; Iteration 4
+  (simulate) (display "4:")(display (gc-stats)) (gc-heap) (display "->")(display (gc-stats))(display "\n")
+  ; Iteration 5
+  (simulate) (display "5:")(display (gc-stats)) (gc-heap) (display "->")(display (gc-stats))(display "\n")
+
+  (display "Final: ")(display (gc-stats))(display "\nDone\n"))
+
+(run)
