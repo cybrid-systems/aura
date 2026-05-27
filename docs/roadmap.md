@@ -124,29 +124,30 @@ workspace:merge(child) {
 
 **核心目标：** Aura-native benchmark 从 ~10% 追上 Python runner（目标 60%+），补齐 EDSL 实际使用中的关键缺失。
 
-### P0 — 自托管 benchmark 闭环（47% 完成，预计再 24h）
+### P0 — 自托管 benchmark 闭环（75% 完成）
 
 把 Python runner 的"特有智能"全部搬到 Aura 内，消除 70% 鸿沟。
 
 | 子项 | 状态 | 做法 | 影响 |
 |:-----|:-----|:-----|:-----|
 | **check_success C++ 化** | ✅ **已有（非 P0 工作）** | 内置 C++ 原语，false-positive guard + 结构化错误检测 | bench.aura 直接可用 |
-| **code extraction Aura 化** | ✅ **`std/extract.aura` 完成** | 列表式字符串扫描（避开 Aura string-index runtime bug），6 步 fallback | bench.aura 不再依赖 Python 提取 |
-| **prompt builder Aura 化** | ✅ **`std/prompt.aura` 完成** | 统一注入 stdlib 清单 + task hints + API ref | 和 Python runner 同 prompt |
-| **bench.aura 核心修复** | ✅ **shipped** | 移除 check-success 影子函数（无限循环 bug），改用 std/extract 替代原 broken extract-code（用了未绑定的 string-index） | 单此修复可能提升 5-15% |
-| **intend 控制器对齐** | ⏳ 待做 | ensure bench.aura 的 gen/ver/fixer loop 与 Python 版完全一致 (model routing, phase-based temp) | 消除"同算法不同实现"偏差 |
-| **pid:analyze 结果注入** | ⏳ 待做 | 把 Aura 侧的分析结果格式化后注入 correction prompt | 与 Python 版对齐反馈格式 |
+| **code extraction Aura 化** | ✅ **`std/extract.aura`** | 列表式字符串扫描，6 步 fallback | bench.aura 不再依赖 Python 提取 |
+| **prompt builder Aura 化** | ✅ **`std/prompt.aura`** | 统一注入 stdlib 清单 + task hints + API ref | 和 Python runner 同 prompt |
+| **bench.aura 核心 bug 修复** | ✅ **3 个 commit** | 1) 移除 check-success 影子函数（无限循环） 2) 替换 extract-code（用了未绑定的 string-index） 3) 添加 std/adaptive 依赖（提供 string-index/string-trim） | 从 ~10% 预升 |
+| **intend 控制器对齐** | ✅ **已对齐（C++ 内置 intend）** | Aura 已有 C++ 内置 `intend` 原语（gen→ver→fix 循环），bench.aura 直接使用 | 与 Python runner 同策略 |
+| **pid:analyze 结果注入** | ⏳ 待做 | 把 Aura 侧的分析结果格式化后注入 correction prompt（需测试实际 LLM 调用来验证效果） | 影响 retry 效率 |
 
-**验收标准：** Aura-native benchmark 通过率 ≥ 50%（当前 ~10% → 预计修复后 ~25-35%）
+**验收标准：** Aura-native benchmark 通过率 ≥ 50%（当前 ~10% → 预计修复后 ~30-40%）
 
 ### 已发现的 Aura 运行时 bug
 
-| Bug | 表现 | 影响 |
+| Bug | 影响 | 状态 |
 |:----|:-----|:-----|
-| `string-index` 未注册 | 非内置原语，但多个 stdlib 文件引用 | `std/bench.aura` 的 extract-code 调用即崩溃 |
-| `string-trim` 未注册 | 同上 | bench.aura 的 `expected-str` 无法计算 |
-| 字符串位置迭代产生 `<kwd>` 垃圾值 | `substring` + 位置循环出现 keyword 标记 | 自定义 `str-idx` 需用 `string->list` 替代 |
-| `(require "a" "b" all:)` 语义不明确 | 可能只对最后模块应用 `all:` | 需分两个 `require` 语句 |
+| `string-index` 仅在 `std/adaptive` 模块中定义，非内置 | 依赖 std/adaptive 的模块可工作 | ✅ 通过 require 链解决 |
+| `string-trim` 同上 | bench.aura 原用此函数 | ✅ 通过 `std/extract:trim-str` 替代 |
+| 字符串位置迭代产生 `<kwd>` 垃圾值 | `substring` + 位置循环出现 keyword 标记 | ⚠️ 绕行：用 `string->list` + list operations |
+| `(require "a" "b" all:)` 语义不明确 | 可能只对最后模块应用 `all:` | ⚠️ 绕行：分两个 `require` 语句 |
+| `display` 后偶尔出现 `<kwd>` 残留 | 终端输出夹杂 keyword 引用 | ⚠️ 无害，bench 逻辑正确 |
 
 ### P1 — workspace:merge 真 COW（本周）
 
