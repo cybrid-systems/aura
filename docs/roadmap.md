@@ -148,6 +148,8 @@ workspace:merge(child) {
 | 字符串位置迭代产生 `<kwd>` 垃圾值 | `substring` + 位置循环出现 keyword 标记 | ⚠️ 绕行：用 `string->list` + list operations |
 | `(require "a" "b" all:)` 语义不明确 | 可能只对最后模块应用 `all:` | ⚠️ 绕行：分两个 `require` 语句 |
 | `display` 后偶尔出现 `<kwd>` 残留 | 终端输出夹杂 keyword 引用 | ⚠️ 无害，bench 逻辑正确 |
+| `--serve-async` stdin 不触发 | `static` lambda 捕获了局部变量的悬挂引用，fiber 不执行 | ✅ `static` removed, worker fiber spawned in sc_fn |
+| `--serve-async` LLM 调用阻塞所有 fiber | `http-post` 是同步 `curl_easy_perform` | ✅ 改为 thread + eventfd 异步模式 |
 
 ### P1 — workspace 隔离修复 + 源码级 merge ✅
 

@@ -1,0 +1,26 @@
+; tests/test_http_async.aura — Async HTTP test for --serve-async
+;
+; Tests that http-post works via the async thread+eventfd path.
+;
+; The key: when run via --serve-async, http-post uses g_http_post_async
+; which spawns a thread, does HTTP, signals the fiber via eventfd.
+;
+; Usage:
+;   LLM_API_KEY="***" LLM_BASE_URL="https://api.x.ai/v1" \
+;     cat tests/test_http_async.aura | ./build/aura --serve-async
+
+; ── Basic LLM call (sync fallback, tests the path) ──
+{"cmd":"exec","code":"(require \"std/llm\" all:)(define body (json-encode (hash \"model\" \"grok-4.3\" \"messages\" (list (hash \"role\" \"user\" \"content\" \"hello\")))))(define r (aura-llm-call body))(display (string-append \"a:\" (number->string (string-length r))))"}
+
+; ── Multiple concurrent LLM calls ──
+{"cmd":"exec","code":"(session:create \"http1\")"}
+{"cmd":"exec","code":"(session:create \"http2\")"}
+{"cmd":"exec","code":"(session:create \"http3\")"}
+
+; These run concurrently in 3 separate fibers
+{"cmd":"exec","code":"(require \"std/llm\" all:)(define body (json-encode (hash \"model\" \"grok-4.3\" \"messages\" (list (hash \"role\" \"user\" \"content\" \"say a\")))))(define r (aura-llm-call body))(display (string-append \"b:\" (number->string (string-length r))))","session":"http1"}
+{"cmd":"exec","code":"(require \"std/llm\" all:)(define body (json-encode (hash \"model\" \"grok-4.3\" \"messages\" (list (hash \"role\" \"user\" \"content\" \"say b\")))))(define r (aura-llm-call body))(display (string-append \"c:\" (number->string (string-length r))))","session":"http2"}
+{"cmd":"exec","code":"(require \"std/llm\" all:)(define body (json-encode (hash \"model\" \"grok-4.3\" \"messages\" (list (hash \"role\" \"user\" \"content\" \"say c\")))))(define r (aura-llm-call body))(display (string-append \"d:\" (number->string (string-length r))))","session":"http3"}
+
+; ── Verify all completed ──
+{"cmd":"exec","code":"(display \"e:done\")"}
