@@ -63,6 +63,12 @@ extern SessionIdFn g_session_id;
 extern SessionExistsFn g_session_exists;
 extern void* g_current_compiler_service;  // set before each eval in serve
 
+// Arena reset callback — set by CompilerService, called by Evaluator
+// to reclaim arena memory between benchmark tasks.
+// Takes a pointer to the service, returns void.
+using ResetArenaFn = void(*)(void* compiler_service);
+extern ResetArenaFn g_reset_arena;
+
 }  // namespace aura::messaging
 
 #endif  // AURA_MESSAGING_BRIDGE_H
