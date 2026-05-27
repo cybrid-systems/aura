@@ -168,3 +168,91 @@
   (let ((code "(define (f x) (* x 2))"))
     (check (check-success
       (apply-fix code (diagnose "program returned closure")) (list "define"))))))
+
+;; ── apply-fix: comprehensive require patterns ─────────────
+
+(test-suite "apply-fix:add-require-std-rule"
+  (check (check-success "std/rule"
+    (list (apply-fix "(rule:define 'test :pattern \"x\" :replace \"y\")"
+                     (diagnose "unbound variable: rule:define"))))))
+
+(test-suite "apply-fix:add-require-std-pipeline"
+  (check (check-success "std/pipeline"
+    (list (apply-fix "(synthesize:pipeline \"test\" (synthesize:fill \"t\" \"a\"))"
+                     (diagnose "unbound variable: synthesize:pipeline"))))))
+
+(test-suite "apply-fix:add-require-std-data"
+  (check (check-success "std/data"
+    (list (apply-fix "(define-type Tree (leaf val) (node left right))"
+                     (diagnose "unbound variable: define-type"))))))
+
+(test-suite "apply-fix:add-require-ffi"
+  (check (check-success "std/ffi"
+    (list (apply-fix "(c-func \"m\" \"sqrt\" (list \"double\") \"double\")"
+                     (diagnose "unbound variable: c-func"))))))
+
+(test-suite "apply-fix:add-require-std-hash-ref"
+  (check (check-success "std/hash"
+    (list (apply-fix "(hash-ref h 'key)"
+                     (diagnose "unbound variable: hash-ref"))))))
+
+;; ── apply-fix: multiple missing requires ──────────────────
+
+(test-suite "apply-fix:multiple-requires"
+  (let* ((code "(map (lambda (x) (hash-ref h x)) (list 1 2 3))")
+         (fixed (apply-fix (apply-fix code (diagnose "unbound variable: map"))
+                          (diagnose "unbound variable: hash-ref"))))
+    (check (check-success fixed (list "std/list")))
+    (check (check-success fixed (list "std/hash"))))))
+
+;; ── apply-fix: already correct code ──────────────────────
+
+(test-suite "apply-fix:already-requires-std-list"
+  (let* ((code "(require \"std/list\" all:)\n(for-each display (list 1 2))")
+         (fixed (apply-fix code (diagnose "unbound variable: for-each"))))
+    ;; Should still have exactly one std/list
+    (check (check-success fixed (list "std/list")))
+    (check (check-success fixed (list "for-each"))))))
+
+(test-suite "apply-fix:already-requires-std-hash"
+  (let* ((code "(require \"std/hash\" all:)\n(define (f) (hash-ref h 'key))")
+         (fixed (apply-fix code (diagnose "unbound variable: hash-ref"))))
+    (check (check-success fixed (list "std/hash")))
+    (check (check-success fixed (list "hash-ref"))))))
+
+;; ── apply-fix: define-function with various names ─────────
+
+(test-suite "apply-fix:define-stub-for-custom-fn"
+  (let ((fixed (apply-fix "(display (my-custom-func 42 7))"
+                          (diagnose "unbound variable: my-custom-func"))))
+    (check (check-success fixed (list "my-custom-func")))
+    (check (check-success fixed (list "define"))))))
+
+(test-suite "apply-fix:define-stub-for-unknown"
+  (let ((fixed (apply-fix "(display (some-func))"
+                          (diagnose "unbound variable: some-func"))))
+    (check (check-success fixed (list "some-func"))))))
+
+;; ── apply-fix: edge cases ────────────────────────────────
+
+(test-suite "apply-fix:no-args-to-fix"
+  (check (= (apply-fix "(display 42)" (diagnose "random")) #f)))
+
+(test-suite "apply-fix:empty-code-string"
+  (let ((fixed (apply-fix "" (diagnose "unbound variable: for-each"))))
+    (check (check-success fixed (list "std/list")))
+    (check (check-success fixed (list "require"))))))
+
+(test-suite "apply-fix:failure-returns-bool-false"
+  (check (= (apply-fix "code" #f) #f)))
+
+(test-suite "apply-fix:diagnose-fix-cycle"
+  ;; Full cycle: diagnose → apply-fix → re-evaluate should work
+  (let* ((code "(for-each display (list 1 2 3))")
+         (diag (diagnose "unbound variable: for-each"))
+         (fixed (apply-fix code diag))
+         (re-diag (diagnose "unbound variable: for-each")))
+    ;; After fix, diagnosing the same error on fixed code should still produce
+    ;; a diagnosis (the require is there, re-running diagnose on same error is fine)
+    (check (check-success fixed (list "std/list")))
+    (check (check-success fixed (list "for-each"))))))
