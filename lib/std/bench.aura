@@ -69,7 +69,9 @@
   (define (fixer code err goal-str)
     ; Step 1: Try ant colony search (zero LLM cost, fine/putt phase mutations)
     ; Reduced from 5 to 3 variants to avoid OOM
-    (let* ((colony-result (try (colony:search expected-str 3)
+    ; Reduce colony variants to 1 to avoid OOM in parallel mode
+    ; (2 workers × heap structures = double memory growth per task)
+    (let* ((colony-result (try (colony:search expected-str 1)
                               (catch (e) #f))))
       (if colony-result
         (begin
@@ -242,16 +244,20 @@
                 (let ((my-tasks (list-ref partitions i)))
                   (fiber:spawn
                     (lambda ()
-                      (let iter ((tl my-tasks) (acc '()))
-                        (if (pair? tl)
-                          (let* ((task (car tl))
+                      ; Use while loop to iterate tasks (no recursion stack)
+                      (define my-acc '())
+                      (define tl-cursor my-tasks)
+                      (while (lambda () (pair? tl-cursor))
+                        (lambda ()
+                          (let* ((task (car tl-cursor))
                                  (name (list-ref task 0))
                                  (result (run-one task model max-a))
                                  (ok (car result)))
                             (display name)(display " ")
                             (if ok (display "OK") (display "FAIL"))(newline)
-                            (iter (cdr tl) (cons result acc)))
-                          (send "default" "done")))))
+                            (set! my-acc (cons result my-acc))
+                            (set! tl-cursor (cdr tl-cursor))))
+                      (send "default" "done"))))
                   (spawn (+ i 1)))
                 #f))
             
