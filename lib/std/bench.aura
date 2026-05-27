@@ -88,11 +88,43 @@
         "#t"
         (string-append "expected: " expected-str " got: " actual-str))))
 
-  ; ── Fixer: try ant colony (fine/putt phase), fall back to LLM ──
+    ; ── Fixer: self-healing fallback chain ──
+  ; 1. diagnose + apply-fix (zero cost, no LLM)
+  ; 2. ant colony (local mutations, no LLM)
+  ; 3. LLM (last resort)
   (define (fixer code err g)
-    ; Step 1: Try colony search (fast, no LLM)
-    (let* ((colony-result (try (colony:search expected-str 20)
-                              (catch (e) #f))))
+    ; Step 0: Try diagnose + apply-fix (zero cost, known patterns)
+    (let* ((diag (try (diagnose err) (catch (e) #f)))
+           (fixed (if (and diag (pair? diag))
+                    (apply-fix code diag)
+                    #f)))
+      (if (and (string? fixed) (not (string=? fixed code)))
+        (begin
+          (display "[SELF-HEAL via apply-fix] ")
+          (display (car diag))
+          (newline)
+          fixed)
+        ; Step 1: Try colony search (still no LLM)
+        (let* ((colony-result (try (colony:search expected-str 20)
+                                  (catch (e) #f))))
+          (if colony-result
+            (begin
+              (display "[SELF-HEAL via ant colony]")
+              (newline)
+              (current-source))
+            ; Step 2: Colony failed ─ fall back to LLM
+            (let* ((usr (string-append "Your code:\n\`\`\`lisp\n" code "\n\`\`\`\nError: " err "\n\nGoal: " g))
+                   (msgs (list (hash "role" "system" "content" sys)
+                              (hash "role" "user" "content" usr)))
+                   (body (json-encode (hash "model" model "messages" msgs "temperature" 0.3)))
+                   (raw (aura-llm-call body))
+                   (parsed (json-parse raw))
+                   (choices (hash-ref parsed "choices"))
+                   (first (if (pair? choices) (car choices) (hash)))
+                   (msg (hash-ref first "message"))
+                   (content (if (hash? msg) (hash-ref msg "content") "")))
+              (extract-code content))))))
+
       (if colony-result
         ; Colony found a fix — get the current workspace source
         (current-source)
