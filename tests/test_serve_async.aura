@@ -1,0 +1,40 @@
+; tests/test_serve_async.aura — serve-async mode test suite
+;
+; Tests for multi-session concurrent execution via --serve-async.
+;
+; Usage (each test is a JSON line for the protocol):
+;   cat tests/test_serve_async.aura | ./build/aura --serve-async
+;
+; Each line is a JSON command. The protocol output is on stdout.
+; Lines starting with ; are comments.
+;
+; ── Test 1: Basic exec in default session ──
+{"cmd":"exec","code":"(display \"t1:basic\")"}
+
+; ── Test 2: Create worker session ──
+{"cmd":"exec","code":"(define cid (session:create \"w1\"))(display (string-append \"t2:created:\" (if cid \"ok\" \"fail\")))"}
+
+; ── Test 3: Exec in worker session ──
+{"cmd":"exec","code":"(display \"t3:worker\")","session":"w1"}
+
+; ── Test 4: Multiple workers ──
+{"cmd":"exec","code":"(session:create \"w2\")"}
+{"cmd":"exec","code":"(display \"t4:w1\")","session":"w1"}
+{"cmd":"exec","code":"(display \"t4:w2\")","session":"w2"}
+{"cmd":"exec","code":"(display \"t4:default\")"}
+
+; ── Test 5: LLM call (requires LLM_API_KEY env) ──
+{"cmd":"exec","code":"(require \"std/llm\" all:)(define body (json-encode (hash \"model\" \"grok-4.3\" \"messages\" (list (hash \"role\" \"user\" \"content\" \"hi\")))))(define r (aura-llm-call body))(display (string-append \"t5:llm:\" (number->string (string-length r))))"}
+
+; ── Test 6: Parallel LLM calls across workers ──
+{"cmd":"exec","code":"(session:create \"w3\")"}
+{"cmd":"exec","code":"(session:create \"w4\")"}
+{"cmd":"exec","code":"(require \"std/llm\" all:)(define body (json-encode (hash \"model\" \"grok-4.3\" \"messages\" (list (hash \"role\" \"user\" \"content\" \"hello from w3\")))))(define r (aura-llm-call body))(display (string-append \"t6:w3:\" (number->string (string-length r))))","session":"w3"}
+{"cmd":"exec","code":"(require \"std/llm\" all:)(define body (json-encode (hash \"model\" \"grok-4.3\" \"messages\" (list (hash \"role\" \"user\" \"content\" \"hello from w4\")))))(define r (aura-llm-call body))(display (string-append \"t6:w4:\" (number->string (string-length r))))","session":"w4"}
+{"cmd":"exec","code":"(display \"t6:done\")"}
+
+; ── Test 7: Workspace isolation (child workspace in serve mode) ──
+{"cmd":"exec","code":"(define c (workspace:create \"child\"))(workspace:switch c)(set-code \"(define x 42)\")(workspace:switch 0)(display (string-append \"t7:has-x:\" (if (pair? (query:find \"x\")) \"parent-yes\" \"parent-no\")))"}
+
+; ── Test 8: Cleanup — delete test sessions via recv/send ──
+{"cmd":"exec","code":"(display \"t8:all-tests-complete\")"}
