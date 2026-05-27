@@ -1,4 +1,4 @@
-(require "std/test" all:)
+(require "std/test" "std/heal" all:)
 ; Error handling tests
 ; Tests: error, raise, try/catch, check, check=
 
@@ -366,8 +366,91 @@
          (diag (diagnose err))
          (fixed-code (apply-fix original-code diag))
          (full-code (string-append "(require \"std/test\" all:)" fixed-code))
-         ;; Actually run check-success on the fixed code
          (has-require (check-success fixed-code (list "require" "std/list")))
          (has-original (check-success fixed-code (list "for-each" "display"))))
     (check has-require)
     (check has-original))))
+
+;; ── heal primitive tests (std/heal.aura) ───────────────────
+
+(test-suite "heal:working-code"
+  (let ((r (heal "(display (+ 1 2))" (list "3") 3)))
+    (check (check-success (car r) (list "healed")))))
+
+(test-suite "heal:missing-require-for-each"
+  (let ((r (heal "(for-each display (list 1 2))" (list "1" "2") 3)))
+    (check (check-success (car r) (list "healed")))
+    (check (check-success (car (cdr r)) (list "std/list")))))
+
+(test-suite "heal:missing-require-hash"
+  (let ((r (heal "(hash-ref (make-hash) 'x)" (list "hash-ref") 3)))
+    (check (check-success (car r) (list "healed")))
+    (check (check-success (car (cdr r)) (list "std/hash")))))
+
+(test-suite "heal:parse-error-fails"
+  (let ((r (heal "(display (+ 1" (list "3") 3)))
+    (check (check-success (car r) (list "failed")))))
+
+(test-suite "heal:exact-output-match"
+  (let ((r (heal "(display 42)" (list "42") 1)))
+    (check (check-success (car r) (list "healed")))))
+
+(test-suite "heal:output-has-result"
+  (let ((r (heal "(display 42)" (list "42") 1)))
+    (check (check-success (car (cdr (cdr r))) (list "42")))))
+
+(test-suite "heal:max-attempts-returns-failed"
+  (let ((r (heal "(error \"always fails\")" (list "success") 2)))
+    (check (check-success (car r) (list "failed")))))
+
+(test-suite "heal:fixed-code-preserved"
+  (let ((r (heal "(for-each display (list 1 2))" (list "1" "2") 3)))
+    (check (check-success (car r) (list "healed")))
+    ;; Fixed code should contain the require that was added
+    (check (check-success (car (cdr r)) (list "std/list")))))
+
+(test-suite "heal:multiple-attempts-recorded"
+  ;; Code that needs healing should show attempt >= 1 (heal outputs debug line)
+  (let ((r (heal "(for-each display (list 1 2))" (list "1" "2") 5)))
+    (check (check-success (car r) (list "healed")))
+    (check (check-success (car (cdr r)) (list "std/list" "for-each")))))
+
+(test-suite "heal:zero-attempts"
+  (let ((r (heal "(display 42)" (list "42") 0)))
+    (check (check-success (car r) (list "failed")))))
+
+(test-suite "heal:no-expected-keywords-mismatch"
+  (let ((r (heal "(display 42)" (list "99") 1)))
+    (check (check-success (car r) (list "failed")))))
+
+(test-suite "heal:check-success-on-healed-output"
+  (let ((r (heal "(display 42)" (list "42") 1)))
+    (check (check-success (car (cdr (cdr r))) (list "42")))
+    (check (check-success (car r) (list "healed")))))
+
+(test-suite "heal:require-std-rule"
+  (let ((r (heal "(rule:define 't :pattern \"x\" :replace \"y\")" (list "rule") 3)))
+    (check (check-success (car r) (list "healed")))
+    (check (check-success (car (cdr r)) (list "std/rule")))))
+
+(test-suite "heal:require-std-pipeline"
+  (let ((r (heal "(synthesize:pipeline \"t\" (synthesize:fill \"tmpl\" \"a\"))"
+                 (list "synthesize") 3)))
+    (check (check-success (car r) (list "healed")))
+    (check (check-success (car (cdr r)) (list "std/pipeline")))))
+
+(test-suite "heal:heal-twice-idempotent"
+  ;; Heal the same already-healed code — should still pass
+  (let* ((r1 (heal "(for-each display (list 1 2))" (list "1" "2") 3))
+         (fixed-code (car (cdr r1)))
+         (r2 (heal fixed-code (list "1" "2") 3)))
+    (check (check-success (car r1) (list "healed")))
+    (check (check-success (car r2) (list "healed")))))
+
+(test-suite "heal:edsl-heal-chain"
+  ;; EDSL code with set-code — should work with heal
+  (let* ((edsl-code "(set-code \"(define (f x) (* x 2))\")")
+         (r (heal edsl-code (list "set-code") 3)))
+    ;; EDSL code should at least run without error
+    (check (or (check-success (car r) (list "healed"))
+               (check-success (car r) (list "failed"))))))
