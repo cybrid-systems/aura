@@ -100,6 +100,9 @@
 ; ── Rounds ──
 (define (run-rounds tasks model max-a rounds)
   ; Iterative: use while for both rounds and tasks (zero recursion throughout).
+  ; gc-freeze marks current while-loop closures as roots so gc-heap
+  ; can safely erase temporary task closures between iterations.
+  (gc-freeze)
   (let ((result-acc '())
         (round-cursor 0))
     (while (lambda () (< round-cursor rounds))
