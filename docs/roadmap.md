@@ -1,6 +1,6 @@
 # Aura 路线图
 
-**更新：2026-05-26 — Phase 5 全部完成，待做 4 项**
+**更新：2026-05-27 — Phase 5 已完成，进入 Phase 6（EDSL 深度强化 + 自托管闭环）**
 
 ---
 
@@ -9,42 +9,97 @@
 | 维度 | 数值 |
 |:-----|:-----|
 | 核心测试 | ✅ 7 suites + REPL 通过 |
-| EDSL Benchmark (Grok) | 110/135 (81.5%) |
-| EDSL Benchmark (DeepSeek) | 101/135 (74.8%) |
+| EDSL Benchmark (Grok) | 110-114/135 (~80-84%) |
+| EDSL Benchmark (DeepSeek) | 100-103/135 (~74-76%) |
 | AOT emit 测试 | ✅ 57/57 全绿 |
-| Benchmark 自托管 | ⚠️ pass rate 差距大（~10% vs Python 75-81%） |
+| Aura-native Benchmark | ⚠️ **~10%**（vs Python 75-81%） |
+| 总 commits | 1071+ |
 
 ---
 
-## Phase 5 — 自托管 Benchmark 性能达标
+## 🔍 Phase 5 深度诊断（实际代码审计结论）
 
-### 已完成
+Phase 5 的 P0-P3 全部完成，但两个关键差距在 roadmap 上没有暴露：
 
-**P0 — 基础设施**
+### ⚠️ 差距 1：Aura-native benchmark 与 Python runner 有 ~70% 鸿沟
+
+```
+Python runner: 101/135 (74.8%)  ← 6 层 fallback, 自适应 prompt, pid:analyze
+Aura-native:   ~10%              ← 简陋的字符串匹配，无 prompt builder
+```
+
+每个环节 Python 都比 Aura 多了一层智能：
+
+| 环节 | Python runner | Aura-native (bench.aura) |
+|:-----|:-------------|:-------------------------|
+| prompt 构建 | 注入 stdlib 清单 + task hints + API ref | 无统一 prompt builder |
+| code extraction | 6 层 fallback (`\`\`\`lisp/scheme/racket/clojure → 无标注 → 全文) | 只有 ``\`lisp`` → define/display |
+| check_success | substring + 字边界 + 结构化错误检测 | 简单 substring |
+| retry 策略 | intend (gen/ver/fixer) + ant colony + 自适应温度 | 直白的 loop |
+| 错误诊断 | pid:analyze + 结构化 `("kind" "msg")` | 刚跟上 |
+
+**根因：** Phase 5 做了"Aura 能跑 benchmark"，但没做"跑得和 Python 一样好"。每个环节的细节缺失累积了 70% 的通过率差距。
+
+### ⚠️ 差距 2：workspace:merge 不是真 COW merge
+
+```cpp
+// evaluator_impl.cpp 实际实现 ≈
+workspace:merge(child) {
+    set-code(get-source(child));  // 用子 workspace 源码覆盖父 workspace
+}
+```
+
+当前 merge 就是把子 workspace 的源码字符串覆盖到父 workspace。不是逐符号合并——父 workspace 原有的修改（如果和子 workspace 不冲突）直接丢失。真正的 COW merge 需要用 `query:def-use` + `mutate:rebind` 逐符号合并。
+
+**影响：** 多层 workspace 目前是"伪分层"——merge 就是字符串覆盖。多 agent 协作场景下会丢修改。
+
+### ✅ 正确的认知
+
+除上述两点外，EDSL 核心非常扎实。实际代码验证：
+- `query:find/pattern/def-use/children/parent/node` — 全部 C++ 原语，支持 Ellipsis 通配符
+- `mutate:rebind/set-body/replace-value/remove-node/record-patch` — AST 级别精准编辑
+- `ast:snapshot/restore/diff/summary` — 完整快照 + diff
+- `workspace:create/switch/merge/lock/discard/sync-from` — 7 个原语
+- `synthesize:register-template/fill/define/optimize` — 注册/填充/LLM/遗传 4 策略
+- `fiber:spawn` + `session:create` — 基础异步和隔离
+- `intend` 控制器 + ant colony + PID 相位检测 — 全部纯 Aura（std/adaptive.aura, std/ant.aura）
+- `heal` 自愈三元素 — 纯 Aura（刚完成）
+
+---
+
+## Phase 5 — 已完成工作量
+
+### P0 — 基础设施
 - [x] `http-post` 加 curl 超时 + pipe+fork execvp
 - [x] `http-post` 改用 libcurl C API（dlopen 运行时加载，零子进程）
 - [x] `extract-code` 加 `(define ...)` / `(display ...)` fallback
 - [x] `LLM_BASE_URL` / `LLM_MODEL` 环境变量支持
 
-**P1 — 智能调度**
+### P1 — 智能调度
 - [x] `run-one` 改用 `intend` 控制器（generator/verifier/fixer）
 - [x] ant colony 局部变异修复（`colony:search`）
 - [x] `check_success` 灵活 substring 匹配
 - [x] TASK_HINTS 从 bench-tasks.json 注入 system prompt
 - [x] 简洁 system prompt（去掉 76 行 API ref）
 
-**P2 — 并行化**
+### P2 — 并行化
 - [x] 并行执行（`run_parallel.sh`, `BENCH_OFFSET`）
 - [x] `fiber:spawn` 原语（serve 模式可接 fiber scheduler）
 - [x] `session:create` 原语（隔离 evaluator，独立 string_heap_/pairs_）
 - [x] `run_serve.py` serve-async 多 session 编排框架
 
-**P3 — 原生 HTTP + REPL**
+### P3 — 原生 HTTP + REPL
 - [x] libcurl C API（dlopen，零子进程）
 - [x] curl/curl.h 条件编译（CI 兼容）
 - [x] REPL 测试修复 + 集成 build.py CI_CORE
 
-**修复的 Bug**
+### P4 — 自修复闭环
+- [x] 结构化错误返回 `eval-current`（`("kind" "msg")` 对偶）
+- [x] closure auto-fix（自动补 `(display ...)`，纯 Aura）
+- [x] `std/heal.aura` — 自修复执行循环
+- [x] 错误类型→API 文档映射
+
+### 修复的 Bug
 - [x] SIGSEGV at ~119 tasks（unparse depth limit 256）
 - [x] 目录 IO crash（`read-file`/`file-size`/`file-copy` S_ISREG）
 - [x] 模块解析目录 crash（`resolve_module_path` S_ISREG）
@@ -55,9 +110,163 @@
 - [x] REPL 测试 ANSI 转义（`TERM=dumb`）
 - [x] `ast:diff` keyword 标签 + `io_print_val` keyword 传播
 - [x] `build.py` `WORKSPACE`→`ROOT` + 返回类型修复
+- [x] unparse depth limit 256（防止 stack overflow）
+- [x] `set-code` 错误穿透 eval-current（不吞空字符串）
 
-### 待做
+### Phase 5 遗留待做
 - [ ] **Serve 模式**：bench.aura 改用 `--serve-async` 持久化 workspace
-- [x] **错误诊断传播**：`set-code`/`eval-current-output` 不吞空字符串
 - [ ] **JSON 结果输出**：兼容 `bench_results/*.json` 格式
 - [ ] **回归监控**：git commit + 模型 + 过率
+
+---
+
+## Phase 6 — EDSL 深度强化 + 自托管闭环
+
+**核心目标：** Aura-native benchmark 从 ~10% 追上 Python runner（目标 60%+），补齐 EDSL 实际使用中的关键缺失。
+
+### P0 — 自托管 benchmark 闭环（24-48h）
+
+把 Python runner 的"特有智能"全部搬到 Aura 内，消除 70% 鸿沟。
+
+| 子项 | 做法 | 影响 |
+|:-----|:-----|:-----|
+| **check_success Aura 化** | 从 Python 搬到 `std/check.aura`（字边界 + 结构化错误检测 + hash 检测） | `std/heal.aura` 也受益 |
+| **code extraction Aura 化** | 6 层 fallback → `std/extract.aura` | bench.aura 不再依赖 Python 提取 |
+| **prompt builder Aura 化** | `std/prompt.aura`：统一注入 stdlib 清单 + task hints + API ref | 和 Python runner 用同样的 prompt 逻辑 |
+| **intend 控制器对齐** | ensure bench.aura 的 gen/ver/fixer loop 与 Python 版完全一致 | 消除"同算法不同实现"偏差 |
+| **pid:analyze 结果注入** | 把 Aura 侧的分析结果格式化后注入 correction prompt | 与 Python 版对齐反馈格式 |
+
+**验收标准：** Aura-native benchmark 通过率 ≥ 50%（当前 ~10%）
+
+### P1 — workspace:merge 真 COW（本周）
+
+**现状：** `workspace:merge` ≈ `set-code(child-source)` — 不是真合并。
+
+**目标：** 逐符号合并，用 query+mutate 而非字符串覆盖。
+
+```scheme
+;; 应该这样：
+(workspace:merge child-id)
+  → 遍历子 workspace 的所有 Define 节点
+  → 对每个符号：(query:find parent) → 存在则 mutate:rebind，不存在则 set-code 追加
+  → 冲突报告：返回冲突符号列表
+```
+
+### P2 — fiber:spawn + session:create 接入 benchmark（本周）
+
+当前 bench.aura 仍然用 `run_parallel.sh`（shell 并行），而不是用 fiber/session 做真正的异步并行。
+
+```scheme
+;; 应该变成：
+;; --serve 模式启动 → session:create 分 N 个 session
+;; → 每个 session 独立跑不同的 task
+;; → fiber:spawn 并行执行
+;; → recv 收集结果
+```
+
+**好处：**
+- 去掉 shell 依赖，bench.aura 完全自持
+- 为 `--serve-async` 长期模式铺路
+- 与 Python runner 同一起跑线（当前 Python 用 20 workers，Aura 用 4 workers）
+
+### P3 — std/heal.aura 深度强化（本周）
+
+当前 heal 太浅——diagnose 做的是字符串匹配，apply-fix 做的是字符串替换。应该用真正的 EDSL 原语：
+
+```scheme
+;; 当前（字符串级别）
+(diagnose output)     → string       ; 肤浅的模式匹配
+(apply-fix code diag) → code        ; 正则替换
+
+;; 应该（AST 级别）
+(diagnose output code)  → (list error-kind affected-node-id diagnostic-msg)
+(apply-fix code error-kind node-id) → code
+```
+
+这样 diagnose 用 `query:pattern` / `query:def-use` 定位具体的 AST 节点，
+apply-fix 用 `mutate:rebind` / `mutate:set-body` 做精准手术级修复。
+
+**ant colony 扩展：** 当前 `colony:search` 只有 2 种变异策略（display-ref, lit-tweak）。
+加策略：`body-wrap`（套 `(display ...)`），`fn-call`（补函数调用），`sig-extend`（补参数）。
+
+### P4 — query:filter / query:where 组合查询（1-2 周）
+
+当前 query 只能单步查：
+
+```scheme
+(query:find "fib")         → 所有叫 fib 的节点
+(query:node-type "Define") → 所有 Define 节点
+
+;; 无法组合：
+;; (query:filter (query:find "fib") (query:node-type "Call")) → 没有
+```
+
+加组合查询能力：
+
+```scheme
+(query:filter pred node-ids)     → 根据谓词过滤节点列表
+(query:where field-name value)   → 按字段值匹配（如 type, name, arity）
+
+;; 应用场景：
+;; 找出所有未调用的函数定义
+(query:filter "uncalled" (query:node-type "Define"))
+;; → 返回已定义但零引用的函数
+```
+
+不需要新 C++ 原语——在 `std/query.aura` 用 `query:find` + `query:children` + `query:parent` 组合实现。
+
+---
+
+## Phase 7 — Agent 编排与高层抽象
+
+### 展望（当前不需要做，留作路线标记）
+
+**高层 refactor 复合操作**（纯 Aura stdlib）
+
+```scheme
+(refactor:rename-var old-name new-name)    ; query:find → mutate:rebind
+(refactor:extract-function region name)    ; 选区域 → 提取为新函数
+(refactor:inline-function name)            ; 内联展开
+(refactor:lift-to-letrec name expr)        ; lift lambda 到 letrec
+```
+
+全部用现有原语组合，不需要 C++ 支持。
+
+**Agent 编排框架** `std/orchestrator.aura`
+
+```scheme
+(orch:define-role "generator" (prompt) → code)
+(orch:define-role "verifier" (code) → (ok? diag))
+(orch:define-role "fixer" (code diag) → code)
+
+(orch:run-pipeline (list "generator" "verifier" "fixer")
+  :max-rounds 3
+  :on-fail 'rollback)
+```
+
+**增量编译 dirtiness 标记**
+
+`query_edsl_design.md` 留的 P2 项。当前 `eval-current` 全量重编译（500-5000 节点够快），但多 workspace + 高频 mutate 时不够。需要 DirtinessTracker。
+
+---
+
+## 总结：当前优先顺序
+
+```
+🔥 P0 — 自托管 benchmark 闭环（收益最高，24-48h）
+  把 Python runner 的智能搬到 Aura 内，~10% → 目标 50%+
+
+🔥 P1 — workspace:merge 真 COW（本周）
+  不让多层 workspace 停留在纸面上
+
+🔥 P2 — fiber/session 接入 benchmark（本周）
+  去掉 shell 依赖，真正自持
+
+🔥 P3 — heal 深度强化（本周）
+  从字符串修复升级到 AST 手术级修复
+
+📌 P4 — 组合查询能力（1-2 周）
+  降低 LLM 查询调用次数
+
+📌 Phase 7 项 — 留到上述做完后再评估需求
+```
