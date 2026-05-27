@@ -54,21 +54,8 @@
   (define results (run-parallel tasks model max-a rounds workers))
 
   ; ── Report ──
-  ; ── Simple inline report ──
-  (define (count-pf results)
-    (let count-rounds ((ri 0) (p 0) (f 0))
-      (if (< ri (length results))
-        (let ((round (list-ref results ri)))
-          (let count-tasks ((ti 0) (p2 p) (f2 f))
-            (if (< ti (length round))
-              (let* ((tr (list-ref round ti)) (ok (list-ref tr 0)))
-                (if ok
-                  (count-tasks (+ ti 1) (+ p2 1) f2)
-                  (count-tasks (+ ti 1) p2 (+ f2 1))))
-              (count-rounds (+ ri 1) p2 f2))))
-        (list p f))))
-  (define cnt (count-pf results))
+  ; OK/FAIL already printed per-task by run-rounds.
+  ; Count via grep on the output side — avoids named let recursion at 135+ tasks
+  ; (tree-walker adds C++ frames, runs out of stack space on long lists).
   (newline)
-  (display "=== Results ===")(newline)
-  (display "Passed: ")(display (list-ref cnt 0))(newline)
-  (display "Failed: ")(display (list-ref cnt 1))(newline))
+  (display "=== All tasks completed ===")(newline))
