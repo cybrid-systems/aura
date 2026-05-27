@@ -67,6 +67,19 @@ def run_model(cfg):
     env["LLM_API_KEY"] = key
     env["LLM_BASE_URL"] = base_url + "/v1"
     env["PYTHONUNBUFFERED"] = "1"
+    # Route env: map model position to LLM_MODEL_N
+    # Primary = 0, Secondary = 1, Cheap = 2
+    for i, other in enumerate(MODELS):
+        if other["name"] == name or other["model"] == model:
+            continue  # skip self
+        n = 2 + (i % 2)  # alternate: 2, 2 (if same level) or 2, 3
+        # Actually, just use position-based assignment
+        pos = MODELS.index(other)
+        if pos == 0:
+            continue  # position 0 is already primary
+        env[f"LLM_MODEL_{pos+1}"] = other["model"]
+        env[f"LLM_API_KEY_{pos+1}"] = other["key_file"].read_text().strip()
+        env[f"LLM_BASE_URL_{pos+1}"] = other["base_url"] + "/v1"
 
     cmd = [sys.executable, str(BENCH), "--json"] + EXTRA_ARGS
 
