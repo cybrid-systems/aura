@@ -37,7 +37,7 @@ MODELS = [
         "name": "MiniMax",
         "model": "minimax-m2.7",
         "key_file": KEYS_DIR / "minimax",
-        "base_url": "https://api.minimax.chat/v1",  # OpenAI-compatible endpoint
+        "base_url": "https://api.minimax.chat",  # run_bench_all.py appends /v1
     },
 ]
 
