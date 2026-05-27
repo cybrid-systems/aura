@@ -168,8 +168,8 @@ void run_serve_async() {
     }
 
     // Register session:create for Aura code (primitive in evaluator)
-    static std::function<aura::messaging::SessionCreateFn> sc_fn =
-        [&sessions, &sched, shared_workspace_tree](const std::string& name) -> bool {
+    std::function<aura::messaging::SessionCreateFn> sc_fn =
+        [&sessions, &sched, shared_workspace_tree, &stdin_lines, &stdin_eof](const std::string& name) -> bool {
         if (sessions.count(name) > 0) return false;
         auto [it, created] = sessions.try_emplace(name, std::make_unique<Session>());
         if (!created) return false;
@@ -177,6 +177,44 @@ void run_serve_async() {
         it->second->service.set_session_id(name);
         it->second->service.set_workspace_tree(shared_workspace_tree);
         aura::compiler::CompilerService::register_session(name, &it->second->service);
+        // Spawn a fiber so the session can process commands from stdin_lines
+        auto nsid = name;
+        auto* nf = sched.spawn([nsid, &sess = *it->second, &stdin_lines, &stdin_eof]() {
+            sess.mailbox.attach(aura::serve::g_current_fiber);
+            sess.service.set_wake_eventfd(aura::serve::g_current_fiber->eventfd());
+            while (sess.active) {
+                std::string sl;
+                for (auto sit = stdin_lines.begin(); sit != stdin_lines.end(); ++sit) {
+                    if (sit->find("\"session\":\"" + nsid + "\"") != std::string::npos) {
+                        sl = std::move(*sit);
+                        stdin_lines.erase(sit);
+                        break;
+                    }
+                }
+                if (sl.empty()) {
+                    if (stdin_eof) break;
+                    aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
+                    aura::serve::Fiber::yield();
+                    continue;
+                }
+                auto c = json_field(sl, "cmd");
+                if (c == "exec") {
+                    auto code = json_field(sl, "code");
+                    if (!code.empty()) {
+                        auto r = sess.service.exec_with_cache(code);
+                        if (r) {
+                            std::println("{{\"session\":\"{}\" ,\"status\":\"ok\",\"value\":\"{}\" }}",
+                                         json_escape(nsid), json_escape(fmt_val(*r, sess.service)));
+                        } else {
+                            std::println("{{\"session\":\"{}\" ,\"status\":\"error\",\"msg\":\"{}\" }}",
+                                         json_escape(nsid), json_escape(r.error().format()));
+                        }
+                    }
+                }
+                std::fflush(stdout);
+            }
+        });
+        it->second->fiber = nf;
         return true;
     };
     aura::messaging::g_session_create = &sc_fn;
@@ -239,17 +277,13 @@ void run_serve_async() {
                 }
 
                 if (cmd == "exec") {
-                    std::fprintf(stderr, "[exec_json] line=[%s]\n", line.c_str()); std::fflush(stderr);
                     auto code = json_field(line, "code");
-                    std::fprintf(stderr, "[exec_json] code=[%s]\n", code.c_str()); std::fflush(stderr);
                     if (code.empty()) {
                         std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"missing code\"}}",
                                      json_escape(sid));
                         continue;
                     }
-                    // Execute synchronously (will yield on recv when Phase 3 is implemented)
                     auto result = sess.service.exec_with_cache(code);
-                        std::fprintf(stderr, "[exec] code=[%s]\n", code.c_str()); std::fflush(stderr);
                     if (result) {
                         try {
                             auto& v = *result;
