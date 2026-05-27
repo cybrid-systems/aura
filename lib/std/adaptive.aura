@@ -240,13 +240,9 @@ Type values: Int, Float, String, Bool, List, (-> A B), (Pair A B), Any\
       ((#t (string-append "=== " mod " === (no detailed reference)\n")))))
 
 ;; Always include core primitives plus any requested modules
-(define aura-core-ref
-  (lambda ()
-    (api-for-module "core")))
-
 (define get-api-ref
   (lambda (stdlib-list)
-    (let loop ((libs stdlib-list) (result (aura-core-ref)))
+    (let loop ((libs stdlib-list) (result (api-for-module "core")))
       (if (null? libs) (string-append aura-pitfalls result)
           (loop (cdr libs) (string-append result (api-for-module (car libs))))))))
 
