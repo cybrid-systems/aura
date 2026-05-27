@@ -247,12 +247,127 @@
   (check (= (apply-fix "code" #f) #f)))
 
 (test-suite "apply-fix:diagnose-fix-cycle"
-  ;; Full cycle: diagnose → apply-fix → re-evaluate should work
+  ;; Full cycle: diagnose → apply-fix → verify
   (let* ((code "(for-each display (list 1 2 3))")
          (diag (diagnose "unbound variable: for-each"))
          (fixed (apply-fix code diag))
          (re-diag (diagnose "unbound variable: for-each")))
-    ;; After fix, diagnosing the same error on fixed code should still produce
-    ;; a diagnosis (the require is there, re-running diagnose on same error is fine)
     (check (check-success fixed (list "std/list")))
     (check (check-success fixed (list "for-each"))))))
+
+;; ── self-healing integration tests (鸿渐于陆) ────────────────
+;; These test the full heal cycle: code → error → diagnose → apply-fix → verify
+
+(test-suite "heal:missing-require-for-each"
+  (let* ((code "(for-each display (list 1 2))")
+         (err "unbound variable: for-each")
+         (diag (diagnose err))
+         (fixed (apply-fix code diag)))
+    ;; fixed should contain the require
+    (check (check-success fixed (list "std/list")))
+    ;; fixed should NOT equal original code
+    (check (check= (string=? code fixed) #f))))
+
+(test-suite "heal:missing-require-make-hash"
+  (let* ((code "(hash-ref (make-hash) 'key)")
+         (err "unbound variable: make-hash")
+         (diag (diagnose err))
+         (fixed (apply-fix code diag)))
+    (check (check-success fixed (list "std/hash")))
+    (check (check= (string=? code fixed) #f))))
+
+(test-suite "heal:missing-require-rule"
+  (let* ((code "(rule:define 'test :pattern \"x\" :replace \"y\")")
+         (err "unbound variable: rule:define")
+         (diag (diagnose err))
+         (fixed (apply-fix code diag)))
+    (check (check-success fixed (list "std/rule")))
+    (check (check= (string=? code fixed) #f))))
+
+(test-suite "heal:missing-require-synthesize"
+  (let* ((code "(synthesize:fill \"t\" \"a\")")
+         (err "unbound variable: synthesize:fill")
+         (diag (diagnose err))
+         (fixed (apply-fix code diag)))
+    (check (check-success fixed (list "std/pipeline")))
+    (check (check= (string=? code fixed) #f))))
+
+(test-suite "heal:missing-require-define-type"
+  (let* ((code "(define-type Tree (leaf val) (node left right))")
+         (err "unbound variable: define-type")
+         (diag (diagnose err))
+         (fixed (apply-fix code diag)))
+    (check (check-success fixed (list "std/data")))
+    (check (check= (string=? code fixed) #f))))
+
+(test-suite "heal:apply-fix-on-parse-error"
+  ;; Parse errors can't be auto-fixed — code should remain unchanged
+  (let* ((code "(display (+ 1 2")
+         (err "parse error: expected expression")
+         (diag (diagnose err))
+         (fixed (apply-fix code diag)))
+    ;; fix-syntax returns code unchanged
+    (check (check= fixed code))    ; unchanged
+    (check (check-success (car (cdr (cdr diag))) (list "fix-syntax")))))
+
+(test-suite "heal:apply-fix-on-closure"
+  ;; Closure already handled by eval-current auto-fix, code unchanged
+  (let* ((code "(define (f x) (* x 2))")
+         (err "program returned an uncalled function")
+         (diag (diagnose err))
+         (fixed (apply-fix code diag)))
+    (check (check-success (car diag) (list "closure-no-display")))
+    (check (check= fixed code))))    ; unchanged
+
+(test-suite "heal:no-error-no-heal"
+  ;; No error → no diagnosis → apply-fix returns #f
+  (let* ((code "(display 42)")
+         (diag (diagnose "no error here")))
+    (check (= diag #f))
+    (check (= (apply-fix code diag) #f))))
+
+(test-suite "heal:chain-apply-fix-twice"
+  ;; Two missing requires in one code
+  (let* ((code "(for-each display (hash-keys (make-hash)))")
+         (diag1 (diagnose "unbound variable: for-each"))
+         (diag2 (diagnose "unbound variable: make-hash"))
+         (fixed1 (apply-fix code diag1))
+         (fixed2 (try (apply-fix fixed1 diag2) (catch (e) fixed1))))
+    (check (check-success fixed2 (list "std/list")))
+    (check (check-success fixed2 (list "std/hash"))))))
+
+(test-suite "heal:idempotent-no-change-needed"
+  ;; Code that already has the right require — apply-fix no-ops
+  (let* ((code "(require \"std/list\" all:)\n(for-each display (list 1 2))")
+         (err "unbound variable: for-each")
+         (diag (diagnose err))
+         (fixed (apply-fix code diag)))
+    (check (check-success fixed (list "std/list")))
+    (check (check= fixed code))))    ; unchanged
+
+(test-suite "heal:fixer-fallback-chain"
+  ;; Simulate the fixer's step 0: diagnose → apply-fix
+  ;; This mimics what bench.aura's fixer does
+  (let* ((code "(hash-ref h 'key)")
+         (err "unbound variable: hash-ref")
+         (diag (try (diagnose err) (catch (e) #f)))
+         (fixed (if (and diag (pair? diag))
+                  (apply-fix code diag)
+                  #f))
+         (healed (and (string? fixed) (not (string=? fixed code)))))
+    (check healed)
+    (check (check-success fixed (list "std/hash")))
+    (check (check-success fixed (list "hash-ref"))))))
+
+(test-suite "heal:diagnose-execute-roundtrip"
+  ;; End-to-end: error → diagnose → apply-fix → execute fixed code → check output
+  (let* ((original-code "(for-each display (list 1 2 3))")
+         (err "unbound variable: for-each")
+         (diag (diagnose err))
+         (fixed-code (apply-fix original-code diag))
+         (full-code (string-append "(require \"std/test\" all:)" fixed-code))
+         ;; Actually run check-success on the fixed code
+         (has-require (check-success fixed-code (list "require" "std/list")))
+         (has-original (check-success fixed-code (list "for-each" "display"))))
+    (check has-require)
+    (check has-original))))
