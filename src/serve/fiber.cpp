@@ -105,7 +105,6 @@ void Fiber::yield() {
 void Fiber::trampoline(uint32_t /*high*/, uint32_t /*low*/) {
     if (g_current_fiber) {
         g_current_fiber->state_ = FiberState::Ready;
-        // Execute the fiber's function
         g_current_fiber->func_();
         // Function returned — fiber is done
         g_current_fiber->state_ = FiberState::Done;

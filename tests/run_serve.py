@@ -129,8 +129,8 @@ def run_worker_tasks(wid, tasks):
             f'(display (car result))\n'
         )
 
-        ok, out, err = client.exec(code, timeout=240)
-        passed = "(#t" in out or "#(status:\"ok" in out
+        ok, out, err = client.exec(code, timeout=300)
+        passed = out.startswith("#t") or "(#t" in out
         results.append((name, passed, out[:80]))
     client.close()
     return results

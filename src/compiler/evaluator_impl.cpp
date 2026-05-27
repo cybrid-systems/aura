@@ -7279,21 +7279,33 @@ Evaluator::Evaluator() {
 
     // (fiber:spawn fn) — Spawn a fiber (async in serve mode, sync fallback in stdin)
     // fn is a closure taking no arguments.
+    // Returns non-zero fiber ID on success, #f on failure.
     primitives_.add("fiber:spawn", [this](const auto& a) -> EvalValue {
         if (a.empty() || !is_closure(a[0]))
             return make_bool(false);
         auto cid = as_closure_id(a[0]);
-        // In serve mode: use g_fiber_spawn
+        // In serve-async mode: use g_fiber_spawn to create a real fiber
         if (aura::messaging::g_fiber_spawn) {
-            // Wrap the closure call in a C function
-            // For now: call synchronously (fiber integration TBD)
-            auto opt = apply_closure(cid, {});
-            if (opt) return *opt;
-            return make_void();
+            // Capture evaluator state (same-thread cooperative, safe)
+            auto fid = aura::messaging::g_fiber_spawn([this, cid]() {
+                apply_closure(cid, {});
+            });
+            if (fid > 0)
+                return make_int(fid);
+            return make_bool(false);
         }
-        // Fallback: call directly (stdin mode)
+        // Fallback (stdin mode): call directly
         auto opt = apply_closure(cid, {});
         if (opt) return *opt;
+        return make_void();
+    });
+
+    // (fiber:yield) — Yield current fiber to scheduler (serve mode only)
+    // Uses g_fiber_yield callback if available.
+    primitives_.add("fiber:yield", [this](const auto&) -> EvalValue {
+        if (aura::messaging::g_fiber_yield) {
+            aura::messaging::g_fiber_yield();
+        }
         return make_void();
     });
 

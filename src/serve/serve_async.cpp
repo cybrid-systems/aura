@@ -6,6 +6,7 @@
 #include "mailbox.h"
 
 #include <print>
+#include <iostream>
 #include <thread>
 #include <fcntl.h>
 #include <sys/wait.h>
@@ -17,7 +18,9 @@
 #include <cerrno>
 #include <cstring>
 #include <string>
+#include <poll.h>
 #include <deque>
+#include <dlfcn.h>
 #include <unordered_map>
 #include <memory>
 
@@ -47,14 +50,25 @@ static std::string json_escape(const std::string& s) {
 
 // Minimal JSON field extractor (no full parser needed for protocol)
 static std::string json_field(const std::string& json, const std::string& field) {
-    auto key = "\"" + field + "\":\"";
+    // Try with space after colon, then without
+    auto key = "\"" + field + "\": \"";
     auto pos = json.find(key);
+    if (pos == std::string::npos) {
+        key = "\"" + field + "\":\"";
+        pos = json.find(key);
+    }
     if (pos == std::string::npos) return {};
     pos += key.size();
     std::string val;
     while (pos < json.size() && json[pos] != '"') {
         if (json[pos] == '\\' && pos + 1 < json.size()) {
-            val += json[pos + 1];
+            auto next = json[pos + 1];
+            if (next == 'n') val += '\n';
+            else if (next == 't') val += '\t';
+            else if (next == 'r') val += '\r';
+            else if (next == '"') val += '"';
+            else if (next == '\\') val += '\\';
+            else val += next;
             pos += 2;
         } else {
             val += json[pos++];
@@ -90,6 +104,19 @@ void run_serve_async() {
 
     // 2. Create scheduler
     Scheduler sched;
+
+    // Register fiber:spawn callback (captures scheduler for actual fiber creation)
+    aura::messaging::g_fiber_spawn = [&sched](std::function<void()> fn) -> int64_t {
+        auto* f = sched.spawn(std::move(fn));
+        return static_cast<int64_t>(f ? f->id() : 0);
+    };
+
+    // Register fiber:yield callback (non-blocking yield, fiber stays Ready)
+    aura::messaging::g_fiber_yield = []() {
+        if (aura::serve::g_current_fiber) {
+            aura::serve::Fiber::yield();
+        }
+    };
 
     // 3. Shared state between stdin_reader and session fibers
     std::deque<std::string> stdin_lines;  // complete JSON lines from stdin
@@ -171,9 +198,8 @@ void run_serve_async() {
         aura::compiler::CompilerService::register_session("default", &sess->service);
     }
 
-    // Register async HTTP handler (uses thread + fork+exec curl CLI for non-blocking HTTP)
-    // Thread handles the blocking fork+exec while the fiber yields.
-    // When the thread completes, it signals the fiber via eventfd.
+    // Register async HTTP handler (uses thread + fork+exec curl + pipe with drain)
+    // Thread does blocking fork+exec; pipe read has a 30s timeout to avoid deadlock.
     aura::messaging::g_http_post_async = [](const std::string& url,
                                               const std::string& body,
                                               const std::string& auth) -> std::string {
@@ -184,36 +210,32 @@ void run_serve_async() {
 
         std::string result;
         std::thread t([evfd, url, body, auth, &result]() {
-            // Create pipes for child communication
             int in[2], out[2];
             if (::pipe(in) < 0 || ::pipe(out) < 0) {
-                uint64_t v = 1; ::write(evfd, &v, sizeof(v));
-                return;
+                uint64_t v = 1; ::write(evfd, &v, sizeof(v)); return;
             }
 
             pid_t pid = ::fork();
             if (pid < 0) {
                 ::close(in[0]); ::close(in[1]); ::close(out[0]); ::close(out[1]);
-                uint64_t v = 1; ::write(evfd, &v, sizeof(v));
-                return;
+                uint64_t v = 1; ::write(evfd, &v, sizeof(v)); return;
             }
 
             if (pid == 0) {
-                // Child: exec curl
                 ::close(in[1]); ::close(out[0]);
                 ::dup2(in[0], STDIN_FILENO); ::dup2(out[1], STDOUT_FILENO);
                 ::close(in[0]); ::close(out[1]);
 
+                // Build argv
                 std::vector<const char*> argv;
                 argv.push_back("curl");
-                argv.push_back("-s");
-                argv.push_back("-X"); argv.push_back("POST");
+                argv.push_back("-s"); argv.push_back("-X"); argv.push_back("POST");
                 argv.push_back("--data-binary"); argv.push_back("@-");
                 argv.push_back("-H"); argv.push_back("Content-Type: application/json");
                 if (!auth.empty()) {
-                    auto* hdr = new std::string("Authorization: Bearer " + auth);
+                    auto auth_hdr = "Authorization: Bearer " + auth;
                     argv.push_back("-H");
-                    argv.push_back(hdr->c_str());
+                    argv.push_back(auth_hdr.c_str());
                 }
                 argv.push_back("--max-time"); argv.push_back("30");
                 argv.push_back("--connect-timeout"); argv.push_back("10");
@@ -224,26 +246,36 @@ void run_serve_async() {
                 ::_exit(1);
             }
 
-            // Parent thread: send body, read response
+            // Parent: send body, close stdin pipe
             ::close(in[0]); ::close(out[1]);
             ::write(in[1], body.data(), body.size()); ::close(in[1]);
 
-            std::array<char, 4096> fbuf;
+            // Read response with timeout to prevent pipe deadlock
+            // Large LLM responses (>64KB pipe buffer) can block child write
+            auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(35);
+            std::array<char, 65536> fbuf;  // Large buffer to drain pipe fast
+            struct pollfd pfd = {out[0], POLLIN, 0};
             ssize_t nr;
-            while ((nr = ::read(out[0], fbuf.data(), fbuf.size())) > 0)
+            while (true) {
+                auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    deadline - std::chrono::steady_clock::now()).count();
+                if (remaining <= 0) break;
+                int pr = ::poll(&pfd, 1, static_cast<int>(remaining));
+                if (pr <= 0) break;
+                nr = ::read(out[0], fbuf.data(), fbuf.size());
+                if (nr <= 0) break;
                 result.append(fbuf.data(), static_cast<std::size_t>(nr));
+            }
             ::close(out[0]);
 
             int cstat;
             ::waitpid(pid, &cstat, 0);
 
-            // Signal the fiber that HTTP is done
             uint64_t v = 1;
             ::write(evfd, &v, sizeof(v));
         });
         t.detach();
 
-        // Yield — scheduler will resume this fiber when thread signals eventfd
         aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
         aura::serve::Fiber::yield();
 
@@ -322,7 +354,8 @@ void run_serve_async() {
                         // Lines without "session" field go to "default"
                         bool for_me = false;
                         if (sid == "default") {
-                            for_me = (it->find("\"session\":\"") == std::string::npos);
+                            for_me = (it->find("\"session\":\"") == std::string::npos) ||
+                                     (it->find("\"session\":\"default\"") != std::string::npos);
                         } else {
                             for_me = (it->find("\"session\":\"" + sid + "\"") != std::string::npos);
                         }
@@ -491,6 +524,206 @@ void run_serve_async() {
     // 7. Run the scheduler
     sched.run();
 
+}
+
+// ── run_serve_async_bench ────────────────────────────
+
+void run_serve_async_bench(const std::string& file_path) {
+    // 1. Set stdin to non-blocking
+    int flags = ::fcntl(STDIN_FILENO, F_GETFL);
+    ::fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+
+    // 2. Create scheduler
+    Scheduler sched;
+
+    // Register fiber:spawn callback
+    aura::messaging::g_fiber_spawn = [&sched](std::function<void()> fn) -> int64_t {
+        auto* f = sched.spawn(std::move(fn));
+        return static_cast<int64_t>(f ? f->id() : 0);
+    };
+
+    // Register fiber:yield callback
+    aura::messaging::g_fiber_yield = []() {
+        if (aura::serve::g_current_fiber) {
+            aura::serve::Fiber::yield();
+        }
+    };
+
+    // Register fiber blocking callback
+    aura::messaging::g_fiber_block = []() {
+        aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
+        aura::serve::Fiber::yield();
+    };
+
+    // Register async HTTP handler (same as run_serve_async)
+    aura::messaging::g_http_post_async = [](const std::string& url,
+                                              const std::string& body,
+                                              const std::string& auth) -> std::string {
+        auto* fiber = aura::serve::g_current_fiber;
+        if (!fiber) return {};
+        auto evfd = fiber->eventfd();
+        if (evfd < 0) return {};
+
+        std::string result;
+        std::thread t([evfd, url, body, auth, &result]() {
+            int in[2], out[2];
+            if (::pipe(in) < 0 || ::pipe(out) < 0) {
+                uint64_t v = 1; ::write(evfd, &v, sizeof(v)); return;
+            }
+            pid_t pid = ::fork();
+            if (pid < 0) {
+                ::close(in[0]); ::close(in[1]); ::close(out[0]); ::close(out[1]);
+                uint64_t v = 1; ::write(evfd, &v, sizeof(v)); return;
+            }
+            if (pid == 0) {
+                ::close(in[1]); ::close(out[0]);
+                ::dup2(in[0], STDIN_FILENO); ::dup2(out[1], STDOUT_FILENO);
+                ::close(in[0]); ::close(out[1]);
+                std::vector<const char*> argv;
+                argv.push_back("curl");
+                argv.push_back("-s"); argv.push_back("-X"); argv.push_back("POST");
+                argv.push_back("--data-binary"); argv.push_back("@-");
+                argv.push_back("-H"); argv.push_back("Content-Type: application/json");
+                if (!auth.empty()) {
+                    auto auth_hdr = "Authorization: Bearer " + auth;
+                    argv.push_back("-H");
+                    argv.push_back(auth_hdr.c_str());
+                }
+                argv.push_back("--max-time"); argv.push_back("30");
+                argv.push_back("--connect-timeout"); argv.push_back("10");
+                argv.push_back(url.c_str());
+                argv.push_back(nullptr);
+                ::execvp("curl", const_cast<char* const*>(argv.data()));
+                ::_exit(1);
+            }
+            ::close(in[0]); ::close(out[1]);
+            ::write(in[1], body.data(), body.size()); ::close(in[1]);
+            auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(35);
+            std::array<char, 65536> fbuf;
+            struct pollfd pfd = {out[0], POLLIN, 0};
+            ssize_t nr;
+            while (true) {
+                auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    deadline - std::chrono::steady_clock::now()).count();
+                if (remaining <= 0) break;
+                int pr = ::poll(&pfd, 1, static_cast<int>(remaining));
+                if (pr <= 0) break;
+                nr = ::read(out[0], fbuf.data(), fbuf.size());
+                if (nr <= 0) break;
+                result.append(fbuf.data(), static_cast<std::size_t>(nr));
+            }
+            ::close(out[0]);
+            int cstat;
+            ::waitpid(pid, &cstat, 0);
+            uint64_t v = 1;
+            ::write(evfd, &v, sizeof(v));
+        });
+        t.detach();
+        aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
+        aura::serve::Fiber::yield();
+        return result;
+    };
+
+    // 3. Create default session
+    void* shared_workspace_tree = aura::compiler::Evaluator::create_workspace_tree();
+    struct BenchSession {
+        std::string id;
+        aura::compiler::CompilerService service;
+    };
+    auto sess = std::make_unique<BenchSession>();
+    sess->id = "default";
+    sess->service.set_session_id("default");
+    sess->service.set_workspace_tree(shared_workspace_tree);
+    aura::compiler::CompilerService::register_session("default", &sess->service);
+
+    // 4. Read the bench file
+    std::ifstream f(file_path);
+    if (!f) {
+        std::println(std::cerr, "error: cannot open '{}'", file_path);
+        return;
+    }
+    std::string bench_code((std::istreambuf_iterator<char>(f)), {});
+
+    // 5. Spawn a single fiber that runs the bench code
+    // The bench code uses fiber:spawn for parallelism; spawned fibers
+    // continue running via the scheduler even after this fiber completes.
+    sched.spawn([&sess, bench_code = std::move(bench_code), &sched]() {
+        // Set wake eventfd for recv/send
+        sess->service.set_wake_eventfd(aura::serve::g_current_fiber->eventfd());
+
+        // Evaluate expressions one at a time (same as stdin pipe mode)
+        // Split by balanced parentheses to evaluate each expression separately.
+        std::string remaining = bench_code;
+        bool any_error = false;
+        while (!remaining.empty()) {
+            // Skip whitespace and comments
+            std::size_t start = 0;
+            while (start < remaining.size()) {
+                auto c = remaining[start];
+                if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+                    ++start;
+                } else if (c == ';') {
+                    // Skip comment to end of line
+                    auto nl = remaining.find('\n', start);
+                    if (nl == std::string::npos) {
+                        remaining.clear();
+                        goto done;
+                    }
+                    start = nl + 1;
+                } else {
+                    break;
+                }
+            }
+            if (start >= remaining.size()) break;
+
+            // Find the end of this balanced expression
+            int depth = 0;
+            bool in_str = false;
+            std::size_t end = start;
+            for (; end < remaining.size(); ++end) {
+                auto c = remaining[end];
+                if (in_str) {
+                    if (c == '\\' && end + 1 < remaining.size()) {
+                        ++end;  // skip escaped char
+                    } else if (c == '"') {
+                        in_str = false;
+                    }
+                } else if (c == '"') {
+                    in_str = true;
+                } else if (c == '(' || c == '[') {
+                    ++depth;
+                } else if ((c == ')' || c == ']') && depth > 0) {
+                    if (--depth == 0) {
+                        ++end;  // include closing paren
+                        break;
+                    }
+                }
+            }
+            if (depth != 0) {
+                // Unbalanced — evaluate what we have
+                end = remaining.size();
+            }
+
+            auto expr = remaining.substr(start, end - start);
+            remaining.erase(0, end);
+
+            if (!expr.empty()) {
+                auto result = sess->service.eval(expr);
+                if (!result) {
+                    std::print(std::cerr, "eval error on expr (len={}): {}\n", expr.size(), expr.substr(0, 120));
+                    std::fflush(stderr);
+                    any_error = true;
+                    break;
+                }
+            }
+        }
+        done:
+        std::fflush(stdout);
+        (void)any_error;
+    });
+
+    // 6. Run the scheduler
+    sched.run();
 }
 
 } // namespace aura::serve

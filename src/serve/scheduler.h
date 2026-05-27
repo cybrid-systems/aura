@@ -38,6 +38,8 @@ public:
     // Set the fiber that handles stdin input (for stdin event routing)
     void set_stdin_fiber(Fiber* f) { stdin_fiber_ = f; }
 
+
+
 private:
     // Ready queue: fibers that can be resumed
     std::deque<Fiber*> ready_queue_;

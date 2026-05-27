@@ -37,8 +37,14 @@ extern MessagingBridge g_messaging_bridge;
 
 // Fiber spawn — set by serve_async.cpp, used by evaluator
 // Returns 0 on failure, non-zero fiber ID on success
-using FiberSpawnFn = int64_t (*)(void (*fn)(void*), void* arg);
+// Changed from raw function pointer to std::function to allow lambda captures
+using FiberSpawnFn = std::function<int64_t(std::function<void()>)>;
 extern FiberSpawnFn g_fiber_spawn;
+
+// Fiber yield — called by (fiber:yield) primitive
+// Does a non-blocking yield (fiber stays Ready, scheduler re-enqueues)
+using FiberYieldFn = void (*)();
+extern FiberYieldFn g_fiber_yield;
 
 // Session create — set by serve_async.cpp, used by evaluator
 // Returns true on success
