@@ -710,7 +710,8 @@ void run_serve_async_bench(const std::string& file_path) {
             if (!expr.empty()) {
                 auto result = sess->service.eval(expr);
                 if (!result) {
-                    std::print(std::cerr, "eval error on expr (len={}): {}\n", expr.size(), expr.substr(0, 120));
+                    std::print(std::cerr, "eval error on expr (len={}): {}\n  msg: {}\n",
+                               expr.size(), expr.substr(0, 120), result.error().format());
                     std::fflush(stderr);
                     any_error = true;
                     break;
