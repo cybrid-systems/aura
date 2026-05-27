@@ -6,67 +6,77 @@
 
 ---
 
-## Latest: 2026-05-27 — EDSL chain 错误穿透（v3）
+## Latest: 2026-05-27 — 全链路优化（v5）
 
-**本次变更（4 files, 1 commit）：**
-- `last_set_code_error_` 字段追踪 set-code 失败
-- `eval-current` / `eval-current-output` 检测该字段，直接返回 set-code 的诊断
-- `Python runner`: 去掉 `last_full_code` guard（纯 EDSL task 不再需要先有一次成功的 full-code）
-- `Python runner`: 检测 set-code 解析错误时，给 LLM 发送明确提示
+**本次变更（4 commits）：**
 
-**核心改动示意图：**
+| # | 改动 | 位置 |
+|:-:|:-----|:----:|
+| 1 | `eval-current` 返回 `("kind" "message")` 结构化错误对偶 | **Aura** |
+| 2 | `eval-current-output` 返回 `[kind] message` 格式 | **Aura** |
+| 3 | `eval-current` 检测 closure 时自动调用 `(display ...)` 并重求值 | **Aura** |
+| 4 | 错误类型→API 文档映射（rule:define, synthesize, for-each 等） | **Python** |
+
+### 结构化错误（P1）
+
 ```
-修复前: (begin (set-code "broken") (eval-current))
-         → set-code 返回错误字符串（被 begin 丢弃）
-         → eval-current 在旧 workspace 跑 → 旧结果
-         → LLM 看到旧结果 → 无法诊断
+修复前: eval-current → "1:1: expected expression"             (平铺字符串)
+修复后: eval-current → ("parse" "1:1: expected expression")   (结构化对偶)
 
-修复后: (begin (set-code "broken") (eval-current))
-         → set-code 失败，last_set_code_error_ = "parse error"
-         → eval-current 检测到字段非空 → 直接返回 "parse error"
-         → LLM 看到精确错误 → 可以修正
+错误分类: parse | type error | unbound variable | arity mismatch | …
 ```
 
-| 模型 | 任务数 | 通过 | 通过率 | 耗时 | 变化 |
-|:----|:-----:|:----:|:-----:|:----:|:----:|
-| 🥇 **Grok 4.3** | 135 | **114** | **84.4%** | 41s | **+4.4%** (累计) |
-| 🥈 **DeepSeek v4 Flash** | 135 | **103** | **76.3%** | 156s | 基线 (方差内) |
+### Closure 自动补 display（P0，纯 Aura 内置）
 
-### v3 改进汇总
+``` scheme
+;; Before: eval-current returns #<procedure> (LLM 看不到结果, 3 轮 retry)
+;; After:
+(set-code "(define (double x) (* x 2))")
+(eval-current)  → 自动扫描 AST 的 Define 节点
+                → 提取 fn=double, arity=1
+                → 试 (display (double 42)) → 84
+                → 返回结果, 0 LLM 调用
+```
 
-| 优化 | 类型 | 效果 |
-|:-----|:-----|:------|
-| `set-code` 错误穿透 (C++) | 编译器 | `type-annot-fn` 等 set-code chain 修复 |
-| `#<procedure>` 自动补 display (Python) | 无 LLM 修复 | `compose-n`, `occurrence` 跳过 LLM retry |
-| `check_success` 防误判 (Python) | 正确性 | 阻止 error 字符串含 keyword 时的假通过 |
-| `last_full_code` guard 移除 (Python) | 流程 | 耗时下降 152s→41s (Grok), 219s→156s (DS) |
+| 模型 | 任务数 | 通过 | 通过率 | 耗时 |
+|:----|:-----:|:----:|:-----:|:----:|
+| 🥇 **Grok 4.3** | 135 | 108-114 | **~80%** (方差 ±4%) | 37-45s |
+| 🥈 **DeepSeek v4 Flash** | 135 | 100-103 | **~75%** (方差 ±7%) | 134-161s |
 
-### 新增通过（vs v2 Grok 83.0% / DS 74.8%）
+> Grok 跑分在 80.0%-84.4% 间波动（4 次跑分），提升来自结构化和 auto-fix 降低 retry 次数，不是所有 task 都能通过。
 
-| Task | Grok | DS | 原因 |
-|:-----|:----:|:---:|:------|
-| `compose-n` | ❌→✅ | ❌→✅ | auto-fix #<procedure> 补 display |
-| `occurrence` | ❌→✅ | ❌→✅ | auto-fix #<procedure> 补 display |
-| `edsl-summary` | ❌→✅ | — | 误差范围内 |
-| `edsl-defuse` | ❌→✅ | — | 误差范围内 |
-| `type-boundary-call` | ❌→✅ | — | 误差范围内 |
-| `type-gradual-erasure` | ❌→✅ | — | 误差范围内 |
-| `type-ownership-linear` | ❌→✅ | — | 误差范围内 |
+### 当前 Aura 内置能力清单
 
-### 共同失败（~16 个 — 纯 LLM 生成质量）
+| 能力 | 实现 | 依赖 Python? |
+|:-----|:----|:-----------:|
+| `set-code` 解析错误传回字符串 | ✅ evaluator_impl.cpp | ❌ 纯 Aura |
+| `eval-current` 传播 set-code 错误 | ✅ `last_set_code_error_` 字段 | ❌ 纯 Aura |
+| 结构化错误返回 `("kind" "message")` | ✅ `make_error_val()` 构建 pair | ❌ 纯 Aura |
+| closure 自动补 `(display ...)` | ✅ AST 扫描 + 参数推断 + 重求值 | ❌ 纯 Aura |
+| `intend` 控制器 (gen/ver/fixer) | ✅ bench.aura | ❌ 纯 Aura |
+| `pid:analyze` 相位检测 | ✅ std/adaptive | ❌ 纯 Aura |
+| ant colony 变异修复 | ✅ `colony:search` | ❌ 纯 Aura |
+| `#<procedure>` 自动补 display (Python兜底) | ✅ _auto_fix_procedure | ✅ Python |
+| `check_success` 防误判 | ✅ 字边界 + 结构化错误检测 | ✅ Python |
+| 错误类型→API 文档映射 | ✅ _get_api_snippet() | ✅ Python |
+| correction prompt 构建 | ✅ 类型/parse/#<procedure> 专用提示 | ✅ Python |
 
-| 类别 | Tasks |
-|:-----|:------|
-| Closure 不调用 | `binary-search`, `merge-sort` (auto-fix 参数复杂未命中) |
-| ADT 语法 | `adt-tree`, `adt-option` |
-| EDSL 复杂 API | `edsl-rule`, `edsl-pipeline-basic`, `edsl-synthesize-pipeline`, `edsl-messaging`, `edsl-optimize-multiarg` |
-| 类型系统 | `type-occ-cond/deep/match`, `type-linear-hof` |
-| C FFI | `ffi-strlen` |
-| 算法 | `table-lookup`, `unique-hash`, `word-freq` |
+### 共同失败（~18 个 — 纯 LLM 生成质量，不是编译器 bug）
 
-### 方差说明
-- DS 方差 ±7%，Grok 方差 ±4%
-- 本次 Grok 跑出历史最高（84.4%），但首次 attempt 通过率提升了更多（auto-fix 和 check_success 减少重试）
+| 类别 | Tasks | 根因 |
+|:-----|:------|:------|
+| ADT 语法 | `adt-tree/option/multi-ctor/either` | LLM 不熟 `define-type` |
+| EDSL API | `edsl-rule/pipeline/synthesize/messaging/optimize` | API 复杂度高 |
+| 类型系统 | `type-occ-cond/deep/match`, `type-linear-hof`, `type-let-poly-hof`, `type-grad-multi-boundary` | LLM 写不出正确代码 |
+| C FFI | `ffi-strlen`, `ffi-sqrt` (Grok) | `c-func` 签名语法 |
+| 算法 + closure | `binary-search`, `merge-sort` | LLM 参数复杂 → auto-fix 不命中 |
+| 纯算法 | `table-lookup`, `unique-hash`, `word-freq` | LLM 算力上限 |
+
+### 下次优化方向
+
+1. **`check` Aura 原语** — 把 check_success 移到 Aura 内，bench.aura 可完全自托管
+2. **retry 策略分离** — 按错误类型用不同 temperature/token
+3. **closure auto-fix 参数推断** — 从 task hints 提取签名，生成更准的 display 参数
 
 ---
 
@@ -311,6 +321,7 @@ LLM_API_KEY="$(cat ~/code/keys/grok)" \
 
 | 日期 | 版本 | 任务数 | Grok | DeepSeek | 说明 |
 |:----|:----:|:-----:|:----:|:--------:|:------|
+| 2026-05-27 | 全链路优化 (v5) | 135 | **80-84%** (±4%) | 74-76% (±7%) | 结构化错误 + Aura closure auto-fix + API 文档映射 |
 | 2026-05-27 | EDSL chain 穿透 (v3) | 135 | **84.4%** | 76.3% | set-code 穿透 + auto-fix + check_success |
 | 2026-05-26 | 诊断传播 v2 | 135 | 80.0% | 76.3% | eval-current 返回错误字符串 |
 | 2026-05-26 | Phase 5 | 135 | **81.5%** | 74.8% | 自托管改造（P0-P3 完成） |
