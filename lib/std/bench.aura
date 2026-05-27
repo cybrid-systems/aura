@@ -7,8 +7,13 @@
 ;   - Requires std/adaptive for string-index/string-trim/pid:analyze
 ;   - 135 tasks load correctly from bench-tasks.json
 ;
-(require "std/synthesize-v2" "std/list" "std/json" "std/fs"
-         "std/ant" "std/extract" "std/adaptive" all:)
+(require "std/synthesize-v2" all:)
+(require "std/list" all:)
+(require "std/json" all:)
+(require "std/fs" all:)
+(require "std/ant" all:)
+(require "std/extract" all:)
+(require "std/adaptive" all:)
 
 (export all-tasks task-count run-rounds aggregate)
 (export print-report run-one)
@@ -94,7 +99,9 @@
   ; ── intend controller (C++ built-in, phase-aware retry loop) ──
   (define result (intend goal generator verifier fixer max-a))
   (if (string? result)
-    (if (string=? (substring result 0 10) "#(status:")
+    ; intend returns "#(status:\"ok\" ...)" on success, or a plain error string
+    ; Check if it contains "status:\"ok\""
+    (if (not (= (string-index result "status:\"ok\"" 0) -1))
       (list #t name)
       (list #f name))
     (list #f name)))
