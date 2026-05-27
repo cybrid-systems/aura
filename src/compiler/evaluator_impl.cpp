@@ -2471,6 +2471,123 @@ void Evaluator::init_pair_primitives() {
         return make_bool(false);
     });
 
+    // (diagnose error-string) — Analyze structured error and return fix strategy
+    // Returns a pair ("root-cause" "target" "fix-type" "fix-data" "message")
+    // or #f if no diagnosis available.
+    primitives_.add("diagnose", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_bool(false);
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size())
+            return make_bool(false);
+        auto msg = string_heap_[idx];
+
+        // Build diagnosis result as list: (cause target fix-type fix-data explanation)
+        auto make_diag = [&](const std::string& cause, const std::string& target,
+                             const std::string& fix, const std::string& data,
+                             const std::string& expl) -> EvalValue {
+            auto push = [&](const std::string& s) -> std::uint64_t {
+                auto sidx = string_heap_.size();
+                string_heap_.push_back(s);
+                return sidx;
+            };
+            auto nil = EvalValue(0);
+            auto make_item = [&](const std::string& s) -> EvalValue {
+                auto sidx = push(s);
+                return make_string(sidx);
+            };
+            // Build: (cause target fix-type fix-data expl) as proper list
+            auto e_pair = make_pair(pairs_.size());
+            pairs_.push_back({make_item(expl), nil});
+            auto d_pair = make_pair(pairs_.size());
+            pairs_.push_back({make_item(data), e_pair});
+            auto f_pair = make_pair(pairs_.size());
+            pairs_.push_back({make_item(fix), d_pair});
+            auto t_pair = make_pair(pairs_.size());
+            pairs_.push_back({make_item(target), f_pair});
+            auto c_pair = make_pair(pairs_.size());
+            pairs_.push_back({make_item(cause), t_pair});
+            return c_pair;
+        };
+
+        // ── Known unbound variable mappings ──
+        // Format: {root-cause, target-fn, fix-type, fix-data, explanation}
+        struct FixEntry {
+            std::string cause;
+            std::string fix_type;
+            std::string fix_data;
+            std::string explanation;
+        };
+        static const std::unordered_map<std::string, FixEntry> unbound_fixes = {
+            {"for-each", {"missing-require", "add-require", "std/list",
+                          "Add (require \"std/list\" all:) to use for-each"}},
+            {"map", {"missing-require", "add-require", "std/list",
+                     "Add (require \"std/list\" all:) to use map"}},
+            {"filter", {"missing-require", "add-require", "std/list",
+                        "Add (require \"std/list\" all:) to use filter"}},
+            {"foldl", {"missing-require", "add-require", "std/list",
+                       "Add (require \"std/list\" all:) to use foldl"}},
+            {"make-hash", {"missing-require", "add-require", "std/hash",
+                           "Add (require \"std/hash\" all:) to use make-hash"}},
+            {"hash-ref", {"missing-require", "add-require", "std/hash",
+                          "Add (require \"std/hash\" all:) to use hash-ref"}},
+            {"rule:define", {"missing-require", "add-require", "std/rule",
+                            "Add (require \"std/rule\" all:) to use rule:define"}},
+            {"synthesize:fill", {"missing-require", "add-require", "std/pipeline",
+                                "Add (require \"std/pipeline\" all:) to use synthesize"}},
+            {"synthesize:pipeline", {"missing-require", "add-require", "std/pipeline",
+                                    "Add (require \"std/pipeline\" all:) to use synthesize"}},
+            {"define-type", {"missing-require", "add-require", "std/data",
+                            "Add (require \"std/data\" all:) to use define-type"}},
+            {"c-func", {"missing-require", "add-require", "std/ffi",
+                        "Add (require \"std/ffi\" all:) to use c-func"}},
+        };
+
+        // Detect "unbound variable: X" and match against known symbols
+        std::string prefix = "unbound variable: ";
+        auto upos = msg.find(prefix);
+        if (upos != std::string::npos) {
+            auto target = msg.substr(upos + prefix.size());
+            // Strip trailing punctuation
+            while (!target.empty() && (target.back() == '.' || target.back() == '!' ||
+                                       target.back() == '?' || target.back() == ':'))
+                target.pop_back();
+            auto it = unbound_fixes.find(target);
+            if (it != unbound_fixes.end()) {
+                return make_diag(it->second.cause, target, it->second.fix_type,
+                                 it->second.fix_data, it->second.explanation);
+            }
+            // Unknown unbound variable — generic suggestion
+            return make_diag("unbound-variable", target, "define-or-require", "",
+                            "Define '" + target + "' with (define ...) or add the right (require ...)");
+        }
+
+        // Detect "type error: cannot call: X"
+        prefix = "type error: cannot call: ";
+        auto tpos = msg.find(prefix);
+        if (tpos != std::string::npos) {
+            auto target = msg.substr(tpos + prefix.size());
+            return make_diag("type-error-unbound", target, "define-function", "",
+                            "Define the function '" + target + "' before calling it");
+        }
+
+        // Detect parse errors
+        if (msg.find("parse error") != std::string::npos ||
+            msg.find("expected expression") != std::string::npos) {
+            return make_diag("parse-error", "", "fix-syntax", msg.substr(0, 60),
+                            "Check syntax: unbalanced parens, missing quotes, or wrong form");
+        }
+
+        // Detect #<procedure> / closure
+        if (msg.find("procedure") != std::string::npos ||
+            msg.find("uncalled function") != std::string::npos) {
+            return make_diag("closure-no-display", "", "add-display", "",
+                             "Add (display (your-function args)) at the end of your code");
+        }
+
+        return make_bool(false);
+    });
+
     // (run-tests) — Find all test:* bindings in top_ env, report summary
     primitives_.add("run-tests", [this](const auto&) -> EvalValue {
         auto& bindings = top_.bindings();

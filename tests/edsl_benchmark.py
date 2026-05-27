@@ -1459,6 +1459,31 @@ def run_single_task(
             api_hint = _get_api_snippet(structured_msg)
         elif actual_output and not ok:
             api_hint = _get_api_snippet(actual_output)
+        # Try Aura diagnose primitive for structured fix suggestions
+        diagnose_hint = ""
+        try:
+            diag_code = f'(display (diagnose "{_ada_esc(structured_msg or actual_output)}"))'
+            diag_r = subprocess.run(
+                [AURA], input=diag_code, capture_output=True, text=True, timeout=5
+            )
+            if diag_r.returncode == 0 and diag_r.stdout.strip() and diag_r.stdout.strip() != "#f":
+                diag_out = diag_r.stdout.strip()
+                import re as _re4
+                # Parse: (root-cause target fix-type fix-data explanation)
+                # Parse: (cause target fix-type ... explain)
+                parts = diag_out.strip('()').split(None, 4)  # cause target fix-type fix-data explain
+                if len(parts) >= 5:
+                    cause, target, fix_type, fix_data = parts[0], parts[1], parts[2], parts[3]
+                    explain = parts[4].strip('"')
+                    if cause != "closure-no-display":  # already handled by auto-fix
+                        diagnose_hint = (
+                            "\n\n🔍 DIAGNOSIS: " + explain + "\n"
+                        )
+                        if fix_type == "add-require":
+                            diagnose_hint += f"💡 Fix: Add (require \"{fix_data}\" all:) or check your imports\n"
+        except Exception:
+            pass
+
         if api_hint:
             api_hint = "\n\n" + "=" * 35 + "\nRELEVANT API:\n" + api_hint + "\n" + "=" * 35 + "\n"
 
@@ -1471,6 +1496,7 @@ def run_single_task(
             + procedure_warn
             + set_code_error
             + type_error_hint
+            + diagnose_hint
             + api_hint +
             "Current code:\n"
             + (last_full_code[:400] if last_full_code else code[:400])
