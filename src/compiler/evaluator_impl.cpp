@@ -5402,9 +5402,20 @@ void Evaluator::update_shared_tree_root() {
     if (!workspace_tree_) return;
     auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
     if (wt->size() > 0) {
-        auto& root = wt->nodes_[0];
-        root.flat = workspace_flat_;
-        root.pool = workspace_pool_;
+        // Only update the ACTIVE node's flat/pool pointer.
+        // DO NOT update root (index 0) — that would break isolation.
+        // If the active node IS root (index 0), that gets updated naturally.
+        // This ensures set-code/mutate writes propagate to the correct
+        // WorkspaceNode. Without this, a child workspace's modifications
+        // are lost on workspace:switch back because the node still points
+        // to the pre-set-code flat.
+        auto active = wt->active_idx();
+        if (active < wt->size()) {
+            wt->nodes_[active].flat = workspace_flat_;
+            wt->nodes_[active].pool = workspace_pool_;
+            if (active > 0)
+                wt->nodes_[active].has_own_flat = true;
+        }
     }
 }
 
@@ -7051,9 +7062,10 @@ Evaluator::Evaluator() {
     });
 
     // (workspace:merge child-id)
-    //   → #t on success
-    //   Merges a child workspace's changes into its parent.
-    //   P0: set-code child's source into root workspace flat.
+    //   → result string: alist of ("name" . "updated"|"added")
+    //   Source-level merge: combines parent + child source.
+    //   Child definitions override parent for conflicting symbols.
+    //   Works because set-code now updates the correct WorkspaceNode flat.
     primitives_.add("workspace:merge", [this, get_ws_source](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]) || !workspace_tree_)
             return make_bool(false);
@@ -7066,33 +7078,87 @@ Evaluator::Evaluator() {
         auto child_source = get_ws_source(child_idx);
         if (child_source.empty()) return make_bool(false);
 
-        // Parent is always root (0) for P0
+        // Parent is root (0)
         auto& parent = tree->nodes_[0];
-        if (parent.read_only) return make_bool(false);
+        if (parent.read_only || !parent.flat || !parent.pool)
+            return make_bool(false);
 
-        // Ensure parent has own flat
-        if (!parent.flat || !parent.pool) return make_bool(false);
-
-        // Temporarily switch workspace pointers to parent, call set-code
-        auto saved_flat = workspace_flat_;
-        auto saved_pool = workspace_pool_;
+        // ── Get parent's current source ──
+        // Point to parent's workspace flat for source extraction
         workspace_flat_ = parent.flat;
         workspace_pool_ = parent.pool;
+        tree->set_active(0);
 
-        auto src_idx = string_heap_.size();
-        string_heap_.push_back(child_source);
-        auto set_fn = primitives_.lookup("set-code");
-        bool ok = false;
-        if (set_fn) {
-            auto result = (*set_fn)({make_string(src_idx)});
-            ok = is_bool(result) ? as_bool(result) : false;
+        // ── Parse child's source to extract define names ──
+        aura::ast::StringPool child_pool;
+        aura::ast::FlatAST child_flat;
+        auto child_pr = aura::parser::parse_to_flat(child_source, child_flat, child_pool);
+        if (!child_pr.success || child_pr.root == aura::ast::NULL_NODE) {
+            return make_bool(false);
+        }
+        child_flat.root = child_pr.root;
+
+        // Collect child define names
+        std::unordered_set<std::string> child_names;
+        for (aura::ast::NodeId id = 0; id < child_flat.size(); ++id) {
+            auto v = child_flat.get(id);
+            if (v.tag == aura::ast::NodeTag::Define && v.sym_id != aura::ast::INVALID_SYM) {
+                auto nm = child_pool.resolve(v.sym_id);
+                if (!nm.empty())
+                    child_names.insert(std::string(nm));
+            }
         }
 
-        workspace_flat_ = saved_flat;
-        workspace_pool_ = saved_pool;
+        // ── Get parent's current source ──
+        auto src_fn = primitives_.lookup("current-source");
+        std::string parent_source;
+        if (src_fn) {
+            auto src = (*src_fn)({});
+            if (is_string(src)) {
+                auto sidx = as_string_idx(src);
+                if (sidx < string_heap_.size())
+                    parent_source = string_heap_[sidx];
+            }
+        }
+
+        // ── Source-level merge ──
+        // Keep parent source first, then append child source.
+        // In Scheme, later definitions override earlier ones.
+        std::string merged = parent_source;
+        if (!merged.empty() && merged.back() != '\n')
+            merged += '\n';
+        merged += child_source;
+
+        // ── Apply merged source via set-code ──
+        // set-code updates the active node's flat (via update_shared_tree_root fix)
+        // so parent.flat now points to the merged workspace.
+        auto mi = string_heap_.size();
+        string_heap_.push_back(merged);
+        bool ok = false;
+        if (auto set_fn2 = primitives_.lookup("set-code")) {
+            auto r = (*set_fn2)({make_string(mi)});
+            ok = is_bool(r) ? as_bool(r) : false;
+        }
+
+        // ── Build result string ──
+        std::string result = "(";
+        bool first = true;
+        for (auto& nm : child_names) {
+            if (!first) result += " ";
+            result += "(\"" + nm + "\" . \"merged\")";
+            first = false;
+        }
+        result += ")";
+        auto ri = string_heap_.size();
+        string_heap_.push_back(result);
+
+        // Keep the new merged flat active (set-code already set workspace_flat_
+        // to the new arena-allocated flat, and update_shared_tree_root updated
+        // root's WorkspaceNode to point to it).
+        tree->set_active(0);
         defuse_version_++;
         defuse_index_ = nullptr;
-        return make_bool(ok);
+        return make_string(ri);
     });
 
     // ═══════════════════════════════════════════════════════════════
