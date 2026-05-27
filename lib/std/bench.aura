@@ -71,20 +71,11 @@
       (extract-code content)))
 
   ; ── Verifier: (lambda (code) → "#t" | error-string) ──
+  ;; Delegate to built-in check-success primitive (with false-positive guard)
   (define (check-success actual expects-list)
-    ; Flexible match: strip quotes, check substring
-    (let ((norm (if (void? actual) "" (string-trim actual))))
-      (if (= (string-length norm) 0) #f
-        (let ((noquote (if (or (= (string-ref norm 0) 34)  ; "
-                               (= (string-ref norm 0) 39)) ; '
-                         (substring norm 1 (string-length norm))
-                         norm)))
-          (let check ((tl expects-list))
-            (if (null? tl) #f
-              (if (> (string-index noquote
-                         (string-trim (if (string? (car tl)) (car tl) "")) 0) -1)
-                #t
-                (check (cdr tl)))))))))
+    (if (void? actual)
+      #f
+      (check-success actual expects-list)))
   (define (verifier code)
     (let* ((full-code (string-append
                (if (string=? depend "") "" (string-append "(require \"" depend "\" all:)"))
