@@ -36,15 +36,13 @@
                       (let loop ((h hints-list) (acc ""))
                         (if (null? h) acc
                           (loop (cdr h) (string-append acc (car h) "\n"))))))
-  (define expected-str (list-ref expects 0))  ; keep as-is, built-in check-success handles it
+  (define expected-str (list-ref expects 0))
 
-  ; System prompt (same as Python runner's build_sys_prompt identity section)
   (define sys (string-append "You are Aura Lisp. Write valid code ending with (display ...).\n"
     "CRITICAL: (display (your-function args)) — if you only (define (f x) ...)"
     " the output will be '#<procedure>' and the TEST WILL FAIL!\n"
     (if (string=? hints-str "") "" (string-append "\n=== TASK HINTS ===\n" hints-str "\n"))))
 
-  ; ── Generator: (lambda (goal) → code-string) ──
   (define (generator g)
     (let* ((usr (string-append "Goal: " g))
            (msgs (list (hash "role" "system" "content" sys)
@@ -58,9 +56,6 @@
            (content (if (hash? msg) (hash-ref msg "content") "")))
       (extract-code content)))
 
-  ; ── Verifier: (lambda (code) → "#t" | error-string) ──
-  ; Uses the built-in C++ check-success (false-positive guard, structured error detection).
-  ; DO NOT define a local (check-success ...) — that would shadow the built-in.
   (define (verifier code)
     (let* ((full-code (string-append
                (if (string=? depend "") "" (string-append "(require \"" depend "\" all:)"))
@@ -71,9 +66,6 @@
         "#t"
         (string-append "expected: " expected-str " got: " actual-str))))
 
-  ; ── Fixer: self-healing fallback chain ──
-  ; 1. ant colony (local mutations, no LLM)
-  ; 2. LLM with correction (last resort)
   (define (fixer code err goal-str)
     ; Step 1: Try ant colony search (zero LLM cost, fine/putt phase mutations)
     ; Reduced from 5 to 3 variants to avoid OOM
@@ -84,7 +76,6 @@
           (display "[SELF-HEAL via ant colony]")
           (newline)
           (current-source))
-        ; Step 2: Colony failed — fall back to LLM with correction
         (let* ((usr (string-append "Your code:\n```lisp\n" code "\n```\nError: " err "\n\nGoal: " goal-str))
                (msgs (list (hash "role" "system" "content" sys)
                           (hash "role" "user" "content" usr)))
@@ -97,11 +88,8 @@
                (content (if (hash? msg) (hash-ref msg "content") "")))
           (extract-code content)))))
 
-  ; ── intend controller (C++ built-in, phase-aware retry loop) ──
   (define result (intend goal generator verifier fixer max-a))
   (if (string? result)
-    ; intend returns "#(status:\"ok\" ...)" on success, or a plain error string
-    ; Check if it contains "status:\"ok\""
     (if (not (= (string-index result "status:\"ok\"" 0) -1))
       (list #t name)
       (list #f name))
@@ -217,76 +205,61 @@
 
 ; ── Parallel execution (fiber-based, serve-async mode only) ──
 ; Uses fiber:spawn to create real fibers for parallel task execution.
-; Each fiber takes a partition of tasks, runs them sequentially, and
-; sends results back to the main fiber via send/recv.
+; Each fiber takes a partition of tasks, runs them sequentially.
 ; Falls back to sequential if fiber:spawn is not available (stdin mode).
 ;
 (define (run-parallel tasks model max-a rounds n-workers)
-  ; Probe: does fiber:spawn return a fiber ID (integer > 0)?
-  ; If not (returns #t/#f/void), we're in stdin mode.
+  
+  ; First, check if fiber:spawn works in this context
   (define probe (fiber:spawn (lambda () #t)))
+  
   (if (not (and (integer? probe) (> probe 0)))
     (begin
       (display "[parallel] fiber:spawn not available, falling back to sequential\n")
       (run-rounds tasks model max-a rounds))
-    (let* ((n (length tasks))
-           ; Partition tasks among workers
-           (psize (max 1 (quotient n n-workers)))
-           (partitions (let loop ((rem tasks) (acc '()))
-                         (if (null? rem) (reverse acc)
-                           (let ((piece (take rem psize))
-                                 (rest (drop rem psize)))
-                             (loop rest (cons piece acc))))))
-           (nparts (length partitions))
-           ; Shared result vector (one slot per partition)
-           (results (make-vector nparts '())))
-      (display "[parallel] ")(display (number->string nparts))(display " workers, ")
-      (display (number->string n))(display " tasks\n")
-      (newline)
-      
-      ; Launch worker fibers
-      (let spawn ((i 0))
-        (if (< i nparts)
-          (let ((my-idx i)
-                (my-tasks (list-ref partitions i)))
-            (fiber:spawn
-              (lambda ()
-                (let iter ((tl my-tasks) (acc '()))
-                  (if (pair? tl)
-                    (let* ((task (car tl))
-                           (name (list-ref task 0))
-                           (result (run-one task model max-a))
-                           (ok (car result)))
-                      (display name)
-                      (display " ")
-                      (if ok (display "OK") (display "FAIL"))
-                      (newline)
-                      (iter (cdr tl) (cons result acc)))
-                    ; Done — store results and signal main fiber
-                    (begin
-                      (vector-set! results my-idx (reverse acc))
-                      (send "default" "done")))))
-            (spawn (+ i 1)))
-          #f))
-      
-      ; Workers report results as they go (via display in run-one).
-      ; Main fiber does NOT wait — workers run in background and
-      ; exit when done. Session fiber checks stdin_eof and exits.
-      ; The scheduler keeps running until all fibers are done.
-      
-      (newline)
-      (display "[parallel] workers launched, see per-task output above\n")
-      ; Return nil (workers handle their own output)
-      '())))
-
-; Helper: take first n elements
-(define take
-  (lambda (lst n)
-    (if (or (null? lst) (= n 0)) '()
-      (cons (car lst) (take (cdr lst) (- n 1))))))
-
-; Helper: drop first n elements
-(define drop
-  (lambda (lst n)
-    (if (or (null? lst) (= n 0)) lst
-      (drop (cdr lst) (- n 1)))))
+    
+    ; Parallel path
+    (let ((n (length tasks)))
+      ; Partition
+      (let ((psize (max 1 (quotient n n-workers))))
+        ; Build partitions
+        (let ((partitions (if (null? tasks) '()
+          (let split ((rem tasks) (acc '()) (batch '()))
+            (if (null? rem)
+              (reverse (cons (reverse batch) acc))
+              (if (= (length batch) psize)
+                (split (cdr rem) (cons (reverse batch) acc) (list (car rem)))
+                (split (cdr rem) acc (cons (car rem) batch))))))))
+          (let ((nparts (length partitions)))
+            (display "[parallel] ")(display nparts)(display " workers, ")(display n)(display " tasks\n")
+            (newline)
+            
+            ; Spawn worker fibers
+            (let spawn ((i 0))
+              (if (< i nparts)
+                (let ((my-tasks (list-ref partitions i)))
+                  (fiber:spawn
+                    (lambda ()
+                      (let iter ((tl my-tasks) (acc '()))
+                        (if (pair? tl)
+                          (let* ((task (car tl))
+                                 (name (list-ref task 0))
+                                 (result (run-one task model max-a))
+                                 (ok (car result)))
+                            (display name)(display " ")
+                            (if ok (display "OK") (display "FAIL"))(newline)
+                            (iter (cdr tl) (cons result acc)))
+                          (send "default" "done")))))
+                  (spawn (+ i 1)))
+                #f))
+            
+            ; Wait for all workers
+            (let wait ((remaining nparts))
+              (if (> remaining 0)
+                (begin
+                  (recv)
+                  (wait (- remaining 1)))
+                (begin
+                  (newline)
+                  (display "[parallel] all workers complete\n")
+                  '())))))))))

@@ -9,64 +9,66 @@
 
 (require "std/bench" all:)
 
-; Force tree-walker fallback (enables named lets, EDSL primitives)
-(fiber:spawn (lambda () #t))
+; Wrap everything in a single begin block so that fiber:spawn triggers
+; tree-walker fallback (via needs_tree_walker_fallback) for the entire code,
+; including module-level calls like run-parallel that use fiber:spawn.
+(begin
+  (fiber:spawn (lambda () #t))
 
-; ── Config from env ──
-(define model (try (getenv "LLM_MODEL") (catch "deepseek-v4-flash")))
-(define (get-env-num name default)
-  (let ((v (getenv name)))
-    (if (string? v) (string->number v) default)))
-(define rounds (get-env-num "BENCH_ROUNDS" 1))
-(define max-a (get-env-num "BENCH_ATTEMPTS" 3))
-(define workers (get-env-num "BENCH_WORKERS" 4))
-(define limit (get-env-num "BENCH_LIMIT" 0))
+  ; ── Config from env ──
+  (define model (try (getenv "LLM_MODEL") (catch "deepseek-v4-flash")))
+  (define (get-env-num name default)
+    (let ((v (getenv name)))
+      (if (string? v) (string->number v) default)))
+  (define rounds (get-env-num "BENCH_ROUNDS" 1))
+  (define max-a (get-env-num "BENCH_ATTEMPTS" 3))
+  (define workers (get-env-num "BENCH_WORKERS" 4))
+  (define limit (get-env-num "BENCH_LIMIT" 0))
 
-; ── Select tasks (with offset for parallel slicing) ──
-(define offset (get-env-num "BENCH_OFFSET" 0))
-(define tasks
-  (if (> limit 0)
-    (take limit (if (> offset 0)
-      ; Skip via manual loop (stdlib 'skip' not used to keep deps light)
-      (let loop ((i 0) (tl all-tasks))
-        (if (or (>= i offset) (null? tl)) tl
-          (loop (+ i 1) (cdr tl))))
-      all-tasks))
-    (if (> offset 0)
-      (let loop ((i 0) (tl all-tasks))
-        (if (or (>= i offset) (null? tl)) tl
-          (loop (+ i 1) (cdr tl))))
-      all-tasks)))
-(define task-count (length tasks))
+  ; ── Select tasks (with offset for parallel slicing) ──
+  (define offset (get-env-num "BENCH_OFFSET" 0))
+  (define tasks
+    (if (> limit 0)
+      (take limit (if (> offset 0)
+        ; Skip via manual loop (stdlib 'skip' not used to keep deps light)
+        (let loop ((i 0) (tl all-tasks))
+          (if (or (>= i offset) (null? tl)) tl
+            (loop (+ i 1) (cdr tl))))
+        all-tasks))
+      (if (> offset 0)
+        (let loop ((i 0) (tl all-tasks))
+          (if (or (>= i offset) (null? tl)) tl
+            (loop (+ i 1) (cdr tl))))
+        all-tasks)))
+  (define task-count (length tasks))
 
-; ── Run ──
-(display "=== Aura EDSL Benchmark ===")(newline)
-(display "Model: ")(display model)(newline)
-(display "Tasks: ")(display task-count)(newline)
-(display "Rounds: ")(display rounds)(newline)
-(display "Max attempts: ")(display max-a)(newline)
-(newline)
+  ; ── Run ──
+  (display "=== Aura EDSL Benchmark ===")(newline)
+  (display "Model: ")(display model)(newline)
+  (display "Tasks: ")(display task-count)(newline)
+  (display "Rounds: ")(display rounds)(newline)
+  (display "Max attempts: ")(display max-a)(newline)
+  (newline)
 
-; Use sequential runner — run-parallel needs tree-walker integration in module
-; (run-parallel's body calls fiber:spawn which requires tree-walker context)
-(define results (run-rounds tasks model max-a rounds))
+  ; Use parallel runner — tree-walker fallback covers fiber:spawn inside module
+  (define results (run-parallel tasks model max-a rounds workers))
 
-; ── Report ──
-; ── Simple inline report ──
-(define (count-pf results)
-  (let count-rounds ((ri 0) (p 0) (f 0))
-    (if (< ri (length results))
-      (let ((round (list-ref results ri)))
-        (let count-tasks ((ti 0) (p2 p) (f2 f))
-          (if (< ti (length round))
-            (let* ((tr (list-ref round ti)) (ok (list-ref tr 0)))
-              (if ok
-                (count-tasks (+ ti 1) (+ p2 1) f2)
-                (count-tasks (+ ti 1) p2 (+ f2 1))))
-            (count-rounds (+ ri 1) p2 f2))))
-      (list p f))))
-(define cnt (count-pf results))
-(newline)
-(display "=== Results ===")(newline)
-(display "Passed: ")(display (list-ref cnt 0))(newline)
-(display "Failed: ")(display (list-ref cnt 1))(newline)
+  ; ── Report ──
+  ; ── Simple inline report ──
+  (define (count-pf results)
+    (let count-rounds ((ri 0) (p 0) (f 0))
+      (if (< ri (length results))
+        (let ((round (list-ref results ri)))
+          (let count-tasks ((ti 0) (p2 p) (f2 f))
+            (if (< ti (length round))
+              (let* ((tr (list-ref round ti)) (ok (list-ref tr 0)))
+                (if ok
+                  (count-tasks (+ ti 1) (+ p2 1) f2)
+                  (count-tasks (+ ti 1) p2 (+ f2 1))))
+              (count-rounds (+ ri 1) p2 f2))))
+        (list p f))))
+  (define cnt (count-pf results))
+  (newline)
+  (display "=== Results ===")(newline)
+  (display "Passed: ")(display (list-ref cnt 0))(newline)
+  (display "Failed: ")(display (list-ref cnt 1))(newline))
