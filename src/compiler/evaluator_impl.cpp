@@ -3847,9 +3847,29 @@ void Evaluator::init_pair_primitives() {
             return make_bool(false);
         if (!arena_)
             return make_bool(false);
-        auto alloc = arena_->allocator();
-        auto* pool_ptr = arena_->create<aura::ast::StringPool>(alloc);
-        auto* flat_ptr = arena_->create<aura::ast::FlatAST>(alloc);
+
+        // REUSE existing flat/pool when possible (avoids arena growth).
+        // Clear vectors but keep capacity — subsequent parse fills them
+        // without new arena allocation (unless source is larger than cap).
+        // This is the KEY fix for OOM: ~750 consecutive set-code calls
+        // previously created 750 FlatAST objects in the arena.
+        auto* pool_ptr = workspace_pool_;
+        auto* flat_ptr = workspace_flat_;
+        bool fresh_alloc = false;
+        if (!pool_ptr || !flat_ptr) {
+            // First call or after arena reset — allocate fresh
+            auto alloc = arena_->allocator();
+            pool_ptr = arena_->create<aura::ast::StringPool>(alloc);
+            flat_ptr = arena_->create<aura::ast::FlatAST>(alloc);
+            fresh_alloc = true;
+        } else {
+            // Reuse: clear existing structures
+            // pmr::vector::clear() keeps capacity, so already-allocated
+            // buffer memory is reused for subsequent parse.
+            pool_ptr->reset();
+            flat_ptr->clear();
+        }
+
         auto pr = aura::parser::parse_to_flat(string_heap_[idx], *flat_ptr, *pool_ptr);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
             // Return structured parse error: ("parse" "message")
@@ -8445,9 +8465,14 @@ Evaluator::Evaluator() {
             }
         }
 
-        // Reset arena (invalidates workspace_flat_ and workspace_pool_)
-        // Also invalidate def-use index (pointers to freed memory)
+        // Reset arena (invalidates all arena-allocated state)
         defuse_index_ = nullptr;
+        modules_.clear();
+        module_cache_.clear();
+        current_flat_ = nullptr;
+        current_pool_ = nullptr;
+        workspace_flat_ = nullptr;
+        workspace_pool_ = nullptr;
         if (aura::messaging::g_reset_arena && compiler_service_) {
             aura::messaging::g_reset_arena(compiler_service_);
         }
