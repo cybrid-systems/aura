@@ -149,19 +149,33 @@ workspace:merge(child) {
 | `(require "a" "b" all:)` 语义不明确 | 可能只对最后模块应用 `all:` | ⚠️ 绕行：分两个 `require` 语句 |
 | `display` 后偶尔出现 `<kwd>` 残留 | 终端输出夹杂 keyword 引用 | ⚠️ 无害，bench 逻辑正确 |
 
-### P1 — workspace:merge 真 COW（本周）
+### P1 — workspace:merge 真 COW（已加入 roadmap，待深挖）
 
 **现状：** `workspace:merge` ≈ `set-code(child-source)` — 不是真合并。
 
 **目标：** 逐符号合并，用 query+mutate 而非字符串覆盖。
 
-```scheme
-;; 应该这样：
-(workspace:merge child-id)
-  → 遍历子 workspace 的所有 Define 节点
-  → 对每个符号：(query:find parent) → 存在则 mutate:rebind，不存在则 set-code 追加
-  → 冲突报告：返回冲突符号列表
-```
+**P1 阻塞性发现：**
+Aura 的 workspace tree 架构有两个根本问题阻止 C++ 级别的真 COW merge：
+
+| # | 问题 | 根因 |
+|:-:|:-----|:-----|
+| 1 | 子 workspace COW 克隆是浅拷贝 | `ensure_local_flat` 复制 SoA 数据，但 WorkspaceNode.flat 指针仍是独立的堆分配，不是 COW page sharing |
+| 2 | `set-code` 破坏 workspace 指针 | `set-code` 在 arena 里 new 一个 FlatAST 并赋值给 `workspace_flat_`，但 **不更新 WorkspaceNode.flat**（`update_shared_tree_root` 只更新 root 节点） |
+
+**后果：**
+- 子 workspace 调用 `set-code` 后，修改在 arena 分配的 Flat 里，但 WorkspaceNode 指向旧 flat
+- 切回再切回子 workspace 时，恢复的是旧 flat，修改丢失
+- `mutate:rebind` 修改 `workspace_flat_` 但 root.flat 不变
+- `workspace:merge` 只能做源码级拼接（`parent + "\n" + child`），不是真 AST merge
+
+**已做的：**
+- `lib/std/workspace.aura` — Aura 层 workspace 工具模块（ws:merge-symbols 骨架）
+- 分析清楚阻塞点（见上表）
+
+**修复方向（按优先级）：**
+1. 修复 `set-code`：写入时也更新 workspace tree active node 的 flat/pool 指针
+2. 或完全在 Aura 层实现 merge：`(set-code (string-append parent-src "\n" child-src))` 的字符串级拼接（不需要 C++ 改动）
 
 ### P2 — fiber:spawn + session:create 接入 benchmark（本周）
 
