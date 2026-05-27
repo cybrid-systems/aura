@@ -124,19 +124,29 @@ workspace:merge(child) {
 
 **核心目标：** Aura-native benchmark 从 ~10% 追上 Python runner（目标 60%+），补齐 EDSL 实际使用中的关键缺失。
 
-### P0 — 自托管 benchmark 闭环（24-48h）
+### P0 — 自托管 benchmark 闭环（47% 完成，预计再 24h）
 
 把 Python runner 的"特有智能"全部搬到 Aura 内，消除 70% 鸿沟。
 
-| 子项 | 做法 | 影响 |
-|:-----|:-----|:-----|
-| **check_success Aura 化** | 从 Python 搬到 `std/check.aura`（字边界 + 结构化错误检测 + hash 检测） | `std/heal.aura` 也受益 |
-| **code extraction Aura 化** | 6 层 fallback → `std/extract.aura` | bench.aura 不再依赖 Python 提取 |
-| **prompt builder Aura 化** | `std/prompt.aura`：统一注入 stdlib 清单 + task hints + API ref | 和 Python runner 用同样的 prompt 逻辑 |
-| **intend 控制器对齐** | ensure bench.aura 的 gen/ver/fixer loop 与 Python 版完全一致 | 消除"同算法不同实现"偏差 |
-| **pid:analyze 结果注入** | 把 Aura 侧的分析结果格式化后注入 correction prompt | 与 Python 版对齐反馈格式 |
+| 子项 | 状态 | 做法 | 影响 |
+|:-----|:-----|:-----|:-----|
+| **check_success C++ 化** | ✅ **已有（非 P0 工作）** | 内置 C++ 原语，false-positive guard + 结构化错误检测 | bench.aura 直接可用 |
+| **code extraction Aura 化** | ✅ **`std/extract.aura` 完成** | 列表式字符串扫描（避开 Aura string-index runtime bug），6 步 fallback | bench.aura 不再依赖 Python 提取 |
+| **prompt builder Aura 化** | ✅ **`std/prompt.aura` 完成** | 统一注入 stdlib 清单 + task hints + API ref | 和 Python runner 同 prompt |
+| **bench.aura 核心修复** | ✅ **shipped** | 移除 check-success 影子函数（无限循环 bug），改用 std/extract 替代原 broken extract-code（用了未绑定的 string-index） | 单此修复可能提升 5-15% |
+| **intend 控制器对齐** | ⏳ 待做 | ensure bench.aura 的 gen/ver/fixer loop 与 Python 版完全一致 (model routing, phase-based temp) | 消除"同算法不同实现"偏差 |
+| **pid:analyze 结果注入** | ⏳ 待做 | 把 Aura 侧的分析结果格式化后注入 correction prompt | 与 Python 版对齐反馈格式 |
 
-**验收标准：** Aura-native benchmark 通过率 ≥ 50%（当前 ~10%）
+**验收标准：** Aura-native benchmark 通过率 ≥ 50%（当前 ~10% → 预计修复后 ~25-35%）
+
+### 已发现的 Aura 运行时 bug
+
+| Bug | 表现 | 影响 |
+|:----|:-----|:-----|
+| `string-index` 未注册 | 非内置原语，但多个 stdlib 文件引用 | `std/bench.aura` 的 extract-code 调用即崩溃 |
+| `string-trim` 未注册 | 同上 | bench.aura 的 `expected-str` 无法计算 |
+| 字符串位置迭代产生 `<kwd>` 垃圾值 | `substring` + 位置循环出现 keyword 标记 | 自定义 `str-idx` 需用 `string->list` 替代 |
+| `(require "a" "b" all:)` 语义不明确 | 可能只对最后模块应用 `all:` | 需分两个 `require` 语句 |
 
 ### P1 — workspace:merge 真 COW（本周）
 
