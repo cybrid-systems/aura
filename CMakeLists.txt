@@ -73,7 +73,7 @@ if(LLVM_FOUND)
     set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
     set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
     target_link_libraries(aura PRIVATE ${llvm_libs})
-    target_compile_definitions(aura PRIVATE AURA_HAVE_LLVM=1 AURA_SERVE_ASYNC=1)
+    target_compile_definitions(aura PRIVATE AURA_HAVE_LLVM=1)
 else()
     message(STATUS "LLVM JIT: disabled (not found)")
 endif()
@@ -142,6 +142,8 @@ target_sources(test_ir PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/query.ixx
     src/compiler/type_checker.ixx)
 target_sources(test_ir PRIVATE
+    src/serve/fiber.cpp
+    src/serve/scheduler.cpp
     src/core/ast_impl.cpp
     src/core/type_impl.cpp
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
