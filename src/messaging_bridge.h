@@ -69,6 +69,13 @@ extern void* g_current_compiler_service;  // set before each eval in serve
 using ResetArenaFn = void(*)(void* compiler_service);
 extern ResetArenaFn g_reset_arena;
 
+// Async HTTP callback — set by serve_async.cpp, used by http-post primitive.
+// When set, http-post uses thread + eventfd for non-blocking HTTP.
+// Returns the response string (or "" on failure).
+using HttpPostAsyncFn = std::string (*)(const std::string& url, const std::string& body,
+                                         const std::string& auth);
+extern HttpPostAsyncFn g_http_post_async;
+
 }  // namespace aura::messaging
 
 #endif  // AURA_MESSAGING_BRIDGE_H

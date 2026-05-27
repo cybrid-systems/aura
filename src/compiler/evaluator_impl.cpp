@@ -5780,7 +5780,23 @@ Evaluator::Evaluator() {
         if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
             return make_void();
 
-        // Try native libcurl first (no subprocess, no temp files)
+        auto& curl_url = string_heap_[types::as_string_idx(a[0])];
+        auto& curl_body = string_heap_[types::as_string_idx(a[1])];
+        std::string auth;
+        if (a.size() >= 3 && types::is_string(a[2]))
+            auth = string_heap_[types::as_string_idx(a[2])];
+
+        // Async HTTP via thread (fiber-friendly, serve mode only)
+        if (aura::messaging::g_http_post_async) {
+            auto result = aura::messaging::g_http_post_async(curl_url, curl_body, auth);
+            if (!result.empty()) {
+                auto sidx = string_heap_.size();
+                string_heap_.push_back(std::move(result));
+                return types::make_string(sidx);
+            }
+        }
+
+        // Try native libcurl (synchronous, default path)
         std::string result;
         if (get_curl().load()) {
             auto& curl_url = string_heap_[types::as_string_idx(a[0])];
