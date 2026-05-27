@@ -33,6 +33,12 @@ MODELS = [
         "key_file": KEYS_DIR / "grok",
         "base_url": "https://api.x.ai",
     },
+    {
+        "name": "MiniMax",
+        "model": "minimax-m2.7",
+        "key_file": KEYS_DIR / "minimax",
+        "base_url": "https://api.minimax.chat/v1",  # OpenAI-compatible endpoint
+    },
 ]
 
 # Parse --rounds and --max-attempts from args
