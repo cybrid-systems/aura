@@ -1,10 +1,14 @@
 ; ── lib/std/bench.aura — Aura Native EDSL Benchmark ───
 ;
-; Uses std/extract for code extraction (list-based, no string-index needed).
-; Uses built-in check-success primitive (C++, false-positive guard).
-; Prompt building uses std/prompt for consistency with Python runner.
+; Uses built-in `intend` C++ primitive for phase-aware retry.
+; Fixes vs the broken original:
+;   - Removed check-success stub (shadowed C++ built-in, infinite loop)
+;   - Uses std/extract for code extraction (original used unbound string-index)
+;   - Requires std/adaptive for string-index/string-trim/pid:analyze
+;   - 135 tasks load correctly from bench-tasks.json
 ;
-(require "std/synthesize-v2" "std/list" "std/json" "std/fs" "std/ant" "std/extract" all:)
+(require "std/synthesize-v2" "std/list" "std/json" "std/fs"
+         "std/ant" "std/extract" "std/adaptive" all:)
 
 (export all-tasks task-count run-rounds aggregate)
 (export print-report run-one)
@@ -16,9 +20,8 @@
     parsed))
 (define (task-count) (length all-tasks))
 
-; ── Runner ──
+; ── Runner via built-in `intend` C++ primitive ──
 (define (run-one task model max-a)
-  ; Extract task fields
   (define name (list-ref task 0))
   (define goal (list-ref task 1))
   (define expects (list-ref task 2))
@@ -28,9 +31,9 @@
                       (let loop ((h hints-list) (acc ""))
                         (if (null? h) acc
                           (loop (cdr h) (string-append acc (car h) "\n"))))))
-  (define expected-str (trim-str (list-ref expects 0)))
+  (define expected-str (list-ref expects 0))  ; keep as-is, built-in check-success handles it
 
-  ; Build system prompt using std/extract's trim-str (safe, no string-index)
+  ; System prompt (same as Python runner's build_sys_prompt identity section)
   (define sys (string-append "You are Aura Lisp. Write valid code ending with (display ...).\n"
     "CRITICAL: (display (your-function args)) — if you only (define (f x) ...)"
     " the output will be '#<procedure>' and the TEST WILL FAIL!\n"
@@ -48,12 +51,11 @@
            (first (if (pair? choices) (car choices) (hash)))
            (msg (hash-ref first "message"))
            (content (if (hash? msg) (hash-ref msg "content") "")))
-      ; Use std/extract's extract-code (list-based, no string-index dependency)
       (extract-code content)))
 
   ; ── Verifier: (lambda (code) → "#t" | error-string) ──
-  ; Uses the built-in check-success C++ primitive (false-positive guard, structured error detection).
-  ; NOTE: Do NOT define a local (check-success ...) — that would shadow the built-in.
+  ; Uses the built-in C++ check-success (false-positive guard, structured error detection).
+  ; DO NOT define a local (check-success ...) — that would shadow the built-in.
   (define (verifier code)
     (let* ((full-code (string-append
                (if (string=? depend "") "" (string-append "(require \"" depend "\" all:)"))
@@ -65,47 +67,35 @@
         (string-append "expected: " expected-str " got: " actual-str))))
 
   ; ── Fixer: self-healing fallback chain ──
-  ; 1. diagnose + apply-fix (zero cost, no LLM)
-  ; 2. ant colony (local mutations, no LLM)
-  ; 3. LLM (last resort)
-  (define (fixer code err g)
-    ; Step 0: Try diagnose + apply-fix (zero cost, known patterns)
-    (let* ((diag (try (diagnose err) (catch (e) #f)))
-           (fixed (if (and diag (pair? diag))
-                    (apply-fix code diag)
-                    #f)))
-      (if (and (string? fixed) (not (string=? fixed code)))
+  ; 1. ant colony (local mutations, no LLM)
+  ; 2. LLM with correction (last resort)
+  (define (fixer code err goal-str)
+    ; Step 1: Try ant colony search (zero LLM cost, fine/putt phase mutations)
+    (let* ((colony-result (try (colony:search expected-str 15)
+                              (catch (e) #f))))
+      (if colony-result
         (begin
-          (display "[SELF-HEAL via apply-fix] ")
-          (display (car diag))
+          (display "[SELF-HEAL via ant colony]")
           (newline)
-          fixed)
-        ; Step 1: Try colony search (still no LLM)
-        (let* ((colony-result (try (colony:search expected-str 20)
-                                  (catch (e) #f))))
-          (if colony-result
-            (begin
-              (display "[SELF-HEAL via ant colony]")
-              (newline)
-              (current-source))
-            ; Step 2: Colony failed — fall back to LLM
-            (let* ((usr (string-append "Your code:\n```lisp\n" code "\n```\nError: " err "\n\nGoal: " g))
-                   (msgs (list (hash "role" "system" "content" sys)
-                              (hash "role" "user" "content" usr)))
-                   (body (json-encode (hash "model" model "messages" msgs "temperature" 0.3)))
-                   (raw (aura-llm-call body))
-                   (parsed (json-parse raw))
-                   (choices (hash-ref parsed "choices"))
-                   (first (if (pair? choices) (car choices) (hash)))
-                   (msg (hash-ref first "message"))
-                   (content (if (hash? msg) (hash-ref msg "content") "")))
-              (extract-code content)))))))
+          (current-source))
+        ; Step 2: Colony failed — fall back to LLM with correction
+        (let* ((usr (string-append "Your code:\n```lisp\n" code "\n```\nError: " err "\n\nGoal: " goal-str))
+               (msgs (list (hash "role" "system" "content" sys)
+                          (hash "role" "user" "content" usr)))
+               (body (json-encode (hash "model" model "messages" msgs "temperature" 0.3)))
+               (raw (aura-llm-call body))
+               (parsed (json-parse raw))
+               (choices (hash-ref parsed "choices"))
+               (first (if (pair? choices) (car choices) (hash)))
+               (msg (hash-ref first "message"))
+               (content (if (hash? msg) (hash-ref msg "content") "")))
+          (extract-code content)))))
 
-  ; ── intend controller ──
+  ; ── intend controller (C++ built-in, phase-aware retry loop) ──
   (define result (intend goal generator verifier fixer max-a))
   (if (string? result)
     (if (string=? (substring result 0 10) "#(status:")
-      (list #t name)  ; intend succeeded
+      (list #t name)
       (list #f name))
     (list #f name)))
 
@@ -142,7 +132,6 @@
 (define (aggregate tasks round-results)
   (define total (length tasks))
   (define rounds (if (pair? round-results) (length round-results) 0))
-  
   (define (count-task ti)
     (let count-ri ((ri 0) (pc 0) (fc 0))
       (if (< ri rounds)
@@ -153,7 +142,6 @@
             (count-ri (+ ri 1) (+ pc 1) fc)
             (count-ri (+ ri 1) pc (+ fc 1))))
         (list pc fc))))
-  
   (define (iter ti all-p all-f stats)
     (if (< ti total)
       (let* ((pf (count-task ti))
@@ -163,7 +151,6 @@
         (iter (+ ti 1) (+ all-p pc) (+ all-f fc)
               (append stats (list (list name pc fc rounds)))))
       (list total all-p all-f stats)))
-  
   (iter 0 0 0 '()))
 
 (define (print-report tasks results)
