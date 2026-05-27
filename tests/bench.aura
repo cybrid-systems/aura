@@ -47,7 +47,8 @@
 (display "Max attempts: ")(display max-a)(newline)
 (newline)
 
-; Use sequential runner (serve-async mode provides async HTTP)
+; Use sequential runner — run-parallel needs tree-walker integration in module
+; (run-parallel's body calls fiber:spawn which requires tree-walker context)
 (define results (run-rounds tasks model max-a rounds))
 
 ; ── Report ──
