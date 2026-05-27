@@ -8427,6 +8427,43 @@ Evaluator::Evaluator() {
         string_heap_.push_back(result);
         return types::make_string(sidx);
     });
+
+    // (gc) — Reset arena to reclaim memory between benchmark tasks
+    // Saves current source, resets arena, re-parses source into fresh arena.
+    primitives_.add("gc", [this](const auto&) -> EvalValue {
+        // Save current source
+        std::string saved_src;
+        if (workspace_flat_ && workspace_flat_->root != aura::ast::NULL_NODE) {
+            auto src_fn = primitives_.lookup("current-source");
+            if (src_fn) {
+                auto src = (*src_fn)({});
+                if (types::is_string(src)) {
+                    auto sidx = types::as_string_idx(src);
+                    if (sidx < string_heap_.size())
+                        saved_src = string_heap_[sidx];
+                }
+            }
+        }
+
+        // Reset arena (invalidates workspace_flat_ and workspace_pool_)
+        // Also invalidate def-use index (pointers to freed memory)
+        defuse_index_ = nullptr;
+        if (aura::messaging::g_reset_arena && compiler_service_) {
+            aura::messaging::g_reset_arena(compiler_service_);
+        }
+
+        // Re-parse saved source into fresh arena
+        if (!saved_src.empty()) {
+            auto set_fn = primitives_.lookup("set-code");
+            if (set_fn) {
+                auto si = string_heap_.size();
+                string_heap_.push_back(saved_src);
+                (*set_fn)({types::make_string(si)});
+            }
+        }
+
+        return types::make_bool(!saved_src.empty());
+    });
 }
 
 // slot_for_name: find the slot for a primitive name

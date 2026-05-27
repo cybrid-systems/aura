@@ -137,6 +137,12 @@ public:
                 return "(unknown)";
             };
         // Set per-service access functions
+        // Arena reset callback for benchmark task cleanup
+        aura::messaging::g_reset_arena = [](void* svc) {
+            if (!svc) return;
+            static_cast<CompilerService*>(svc)->reset();
+        };
+
         aura::messaging::g_mailbox_read =
             [](void* svc, int timeout_ms) -> std::optional<std::string> {
                 if (!svc) return std::nullopt;
@@ -221,7 +227,13 @@ public:
         return it != registry().end() ? it->second : nullptr;
     }
 
-    void reset() { arena_.reset(); }
+    void reset() {
+        arena_.reset();
+        // IR cache references arena-allocated FlatAST data;
+        // must be cleared after arena reset to avoid dangling pointers.
+        ir_cache_.clear();
+        ir_cache_strings_.clear();
+    }
 
     // ---- Strict mode (type errors → rejected) ------------------------
     void set_strict_mode(bool s) { strict_mode_ = s; }
