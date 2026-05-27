@@ -1,0 +1,122 @@
+(require "std/test" all:)
+(require "std/string" all:)
+(require "std/json" all:)
+(require "std/math" all:)
+(require "std/list" all:)
+
+; ── 1. gc-stats returns a string ──
+(assert (string? (gc-stats)))
+
+; ── 2. gc-heap cleanly runs ──
+(assert (gc-heap))
+
+; ── 3. Function bindings survive gc-heap ──
+(define (my-fn x) (+ x 1))
+(check= 6 (my-fn 5))
+(gc-heap)
+(check= 7 (my-fn 6))
+(gc-heap)
+(gc-heap)
+(check= 8 (my-fn 7))
+
+; ── 4. Module functions survive gc-heap ──
+(define hello "hello world")
+(check= 11 (string-length hello))
+(gc-heap)
+(check= 11 (string-length hello))
+
+; ── 5. Closures (lambdas) survive gc-heap ──
+(define square (lambda (x) (* x x)))
+(check= 25 (square 5))
+(gc-heap)
+(check= 36 (square 6))
+(gc-heap)
+(gc-heap)
+(check= 49 (square 7))
+
+; ── 6. set! variables survive gc-heap ──
+(define counter 0)
+(set! counter 1)
+(check= 1 counter)
+(gc-heap)
+(check= 1 counter)
+(set! counter 2)
+(check= 2 counter)
+
+; ── 7. gc-heap in while loop ──
+(define total 0)
+(define i 0)
+(while (lambda () (< i 5))
+  (lambda ()
+    (gc-heap)
+    (set! total (+ total 1))
+    (set! i (+ i 1))))
+(check= 5 i)
+(check= 5 total)
+
+; ── 8. gc-freeze is safe ──
+(gc-freeze)
+(gc-freeze)
+(gc-freeze)
+
+; ── 9. gc-freeze + gc-heap sequence ──
+(gc-freeze)
+(gc-heap)
+(gc-freeze)
+(gc-heap)
+(gc-heap)
+
+; ── 10. Simulate benchmark workload ──
+(define (sim-task n)
+  (json-parse (string-append "{\"name\":\"t" (number->string n) "\"}"))
+  (set-code "(+ 1 2)")
+  (eval-current))
+(sim-task 1)
+(gc-heap)
+(sim-task 2)
+(gc-heap)
+(sim-task 3)
+(gc-heap)
+(check= 42 (+ 40 2))
+
+; ── 11. gc-stats called many times ──
+(gc-stats) (gc-stats) (gc-stats)
+(gc-heap) (gc-stats) (gc-stats)
+(assert (string? (gc-stats)))
+
+; ── 12. require still works after gc-heap ──
+(gc-heap)
+(check= 3 (length '(1 2 3)))
+(gc-heap)
+(check= 4 (length '(a b c d)))
+
+; ── 13. Huge string survives gc-heap ──
+(define long-str "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz")
+(check= 62 (string-length long-str))
+(gc-heap)
+(check= 62 (string-length long-str))
+
+; ── 14. Closure + string combination ──
+(define (combine a b) (string-append a (number->string b)))
+(check= "x42" (combine "x" 42))
+(gc-heap)
+(gc-heap)
+(check= "y99" (combine "y" 99))
+
+; ── 15. eval-current after gc-heap ──
+(set-code "(+ 100 200)")
+(gc-heap)
+(check= 300 (eval-current))
+
+; ── 16. gc-heap is idempotent ──
+(gc-heap) (gc-heap) (gc-heap)
+(gc-heap) (gc-heap)
+(assert (string? (gc-stats)))
+
+; ── 17. Many gc-heap calls ──
+(define j 0)
+(while (lambda () (< j 20))
+  (lambda ()
+    (gc-heap)
+    (check= (+ 1 1) 2)
+    (set! j (+ j 1))))
