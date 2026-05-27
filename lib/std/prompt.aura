@@ -1,0 +1,71 @@
+; lib/std/prompt.aura — Unified prompt builder for LLM code generation
+;
+; Matches Python runner's build_sys_prompt() logic:
+;   - Identity section ("You are Aura Lisp...")
+;   - Available stdlib injection
+;   - Task-specific hints injection
+;   - API reference injection (via std/adaptive:get-api-ref)
+;
+(export build-sys-prompt get-api-ref-for-modules)
+
+(require "std/adaptive" all:)
+
+; ── System prompt identity section ──
+(define PROMPT_IDENTITY
+  "You are Aura Lisp. Write valid code ending with (display ...).\n\
+CRITICAL: (display (your-function args)) — if you only (define (f x) ...)\
+ the output will be '#<procedure>' and the TEST WILL FAIL!\n")
+
+; ── Build system prompt ──
+; Arguments:
+;   stdlib — list of module names (e.g. ("std/list" "std/hash"))
+;   api-ref — API reference string (or "")
+;   task-name — task identifier string (or "")
+;   hints — task hints string (or "")
+;
+; Returns: complete system prompt string
+;
+(define (build-sys-prompt stdlib api-ref task-name hints)
+  (let ((parts (list PROMPT_IDENTITY)))
+    ; Add stdlib availability
+    (if (pair? stdlib)
+      (let ((mods (string-join-modules stdlib)))
+        (set! parts (append parts
+          (list (string-append "Available stdlib: " mods ". Use (require std/name all:) to load them.\n"))))))
+    ; Add task hints
+    (if (and (string? hints) (> (string-length hints) 0))
+      (set! parts (append parts
+        (list "\n========================================\n"
+              "TASK-SPECIFIC HINT:\n" hints "\n"))))
+    ; Add API reference
+    (if (and (string? api-ref) (> (string-length api-ref) 0))
+      (set! parts (append parts
+        (list "\n========================================\n"
+              "Aura API Reference:\n" api-ref "\n"))))
+    ; Join all parts
+    (string-join-parts parts)))
+
+; ── String join for prompt parts (no external deps) ──
+(define string-join-parts
+  (lambda (parts)
+    (if (null? parts) ""
+      (let loop ((rest (cdr parts)) (acc (car parts)))
+        (if (null? rest) acc
+          (loop (cdr rest) (string-append acc (car rest))))))))
+
+(define string-join-modules
+  (lambda (modules)
+    (if (null? modules) ""
+      (let loop ((rest (cdr modules)) (acc (car modules)))
+        (if (null? rest) acc
+          (loop (cdr rest) (string-append acc ", " (car rest))))))))
+
+; ── Get API reference for a list of module names ──
+; Uses std/adaptive:get-api-ref internally.
+; Returns: API reference string (or "" if unavailable)
+;
+(define (get-api-ref-for-modules modules)
+  (try
+    (let ((ref (get-api-ref modules)))
+      (if (string? ref) ref ""))
+    (catch (e) "")))
