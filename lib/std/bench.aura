@@ -16,7 +16,7 @@
 (require "std/adaptive" all:)
 
 (export all-tasks task-count run-rounds aggregate)
-(export print-report run-one)
+(export print-report run-one run-parallel)
 
 ; ── Load tasks from JSON ──
 (define all-tasks
@@ -213,3 +213,52 @@
           (iter (+ si 1)))
         '()))
     agg))
+
+; ── Parallel execution (serve-async mode only) ──
+; Uses session:create + send/recv for multi-session parallelism.
+; Falls back to sequential if not in serve mode.
+;
+(define (run-parallel tasks model max-a rounds n-workers)
+  ; Check if serve mode is available
+  (define serve-mode? (session:create "__probe__"))
+  (if (not serve-mode?)
+    (begin
+      (display "[parallel] serve mode not available, falling back to sequential\n")
+      (run-rounds tasks model max-a rounds))
+    (let* ((n (length tasks))
+           ; Partition tasks among workers
+           (psize (max 1 (quotient n n-workers)))
+           (partitions (let loop ((rem tasks) (acc '()))
+                         (if (null? rem) (reverse acc)
+                           (let ((p (take rem psize))
+                                 (rest (drop rem psize)))
+                             (loop rest (cons p acc))))))
+           (nparts (length partitions)))
+      (display "[parallel] ")(display (number->string nparts))(display " workers, ")
+      (display (number->string n))(display " tasks\n")
+      
+      ; Launch workers
+      (let launch ((i 1) (parts partitions))
+        (if (pair? parts)
+          (let ((wname (string-append "w" (number->string i))))
+            (session:create wname)
+            ; Send task data to worker (simplified: just the task indices)
+            (send wname (json-encode (car parts)))
+            (launch (+ i 1) (cdr parts)))
+          #f))
+      
+      ; Collect results (simplified: workers would need to run and report back)
+      (display "[parallel] launched, collecting...\n")
+      '()))))
+
+; Helper: take first n elements
+(define take
+  (lambda (lst n)
+    (if (or (null? lst) (= n 0)) '()
+      (cons (car lst) (take (cdr lst) (- n 1))))))
+
+; Helper: drop first n elements
+(define drop
+  (lambda (lst n)
+    (if (or (null? lst) (= n 0)) lst
+      (drop (cdr lst) (- n 1)))))

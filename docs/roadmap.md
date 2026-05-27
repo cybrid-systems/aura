@@ -166,22 +166,20 @@ workspace:merge(child) {
 - merge 测试 PASS：`x=42, y=200`（子覆盖了父的 y=100）
 - 子 workspace merge 后不受影响
 
-### P2 — fiber:spawn + session:create 接入 benchmark（本周）
+### P2 — 多 worker benchmark runner（已完成）
 
-当前 bench.aura 仍然用 `run_parallel.sh`（shell 并行），而不是用 fiber/session 做真正的异步并行。
+**策略调整：** `--serve-async` 的 fiber scheduler 有底层 epoll 交互问题（stdin 读取不触发），短期调试成本高。改为用 `--serve` 模式的多进程方案。
 
-```scheme
-;; 应该变成：
-;; --serve 模式启动 → session:create 分 N 个 session
-;; → 每个 session 独立跑不同的 task
-;; → fiber:spawn 并行执行
-;; → recv 收集结果
-```
+**完成：** `tests/run_serve.py`
+- 启动 N 个 `./build/aura --serve` 进程
+- `ThreadPoolExecutor` 并行分发任务
+- 每个 worker 独立 serve 连接，互不阻塞
+- 支持 BENCH_LIMIT/OFFSET/ROUNDS/ATTEMPTS 环境变量
+- 汇总报告 pass/fail per round
 
-**好处：**
-- 去掉 shell 依赖，bench.aura 完全自持
-- 为 `--serve-async` 长期模式铺路
-- 与 Python runner 同一起跑线（当前 Python 用 20 workers，Aura 用 4 workers）
+**未来工作（非当前 P2 范围）：**
+- `--serve-async` 修复：epoll 注册时机问题、stdin 读取触发、stdout flush
+- 修复后可改为单进程多 fiber，去掉多进程开销
 
 ### P3 — std/heal.aura 深度强化（本周）
 
