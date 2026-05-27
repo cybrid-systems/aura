@@ -2588,6 +2588,80 @@ void Evaluator::init_pair_primitives() {
         return make_bool(false);
     });
 
+    // (apply-fix code-string diagnose-result) — Apply pre-built fix from diagnosis
+    // Returns fixed code, or original code if no auto-fix applies.
+    primitives_.add("apply-fix", [this](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !is_string(a[0]) || !is_pair(a[1]))
+            return make_bool(false);
+        auto code_idx = as_string_idx(a[0]);
+        if (code_idx >= string_heap_.size())
+            return make_bool(false);
+        auto code = string_heap_[code_idx];
+
+        // Extract fix-type (3rd element of diagnose result)
+        // diagnose returns: (cause target fix-type fix-data explanation)
+        auto pair_idx = as_pair_idx(a[1]);
+        auto get_elem = [&](auto p, int n) -> std::string {
+            for (int i = 0; i < n && is_pair(p); ++i) {
+                if (i == n - 1) {
+                    if (is_string(pairs_[as_pair_idx(p)].car)) {
+                        auto si = as_string_idx(pairs_[as_pair_idx(p)].car);
+                        if (si < string_heap_.size())
+                            return string_heap_[si];
+                    }
+                    return "";
+                }
+                p = pairs_[as_pair_idx(p)].cdr;
+            }
+            return "";
+        };
+        // Elements (1-indexed in list traversal):
+        // 1=cause, 2=target, 3=fix-type, 4=fix-data, 5=explanation
+        auto fix_type = get_elem(a[1], 3);
+        auto fix_data = get_elem(a[1], 4);
+        auto target = get_elem(a[1], 2);  // function name
+
+        std::string result;
+        if (fix_type == "add-require") {
+            // Prepend (require "module" all:) if not already present
+            auto req_line = "(require \"" + fix_data + "\" all:)";
+            if (code.find(req_line) == std::string::npos) {
+                // Check if there's already an existing require
+                auto nl = code.find('\n');
+                auto first_line = (nl == std::string::npos) ? code : code.substr(0, nl);
+                if (first_line.find("(require ") == 0) {
+                    // There's already a require, insert after it
+                    auto rest = (nl == std::string::npos) ? "" : code.substr(nl);
+                    result = first_line + "\n" + req_line + rest;
+                } else {
+                    result = req_line + "\n" + code;
+                }
+            } else {
+                result = code;
+            }
+        } else if (fix_type == "define-function" || fix_type == "define-or-require") {
+            // Add stub define for unnamed function
+            auto stub = "(define (" + target + " x)\n  x)\n";
+            if (code.find("(define (" + target) == std::string::npos) {
+                result = code + "\n" + stub;
+            } else {
+                result = code;
+            }
+        } else if (fix_type == "add-display") {
+            // Append (display result) — already handled by eval-current auto-fix
+            result = code;
+        } else if (fix_type == "fix-syntax") {
+            // Can't auto-fix syntax errors — return code as-is
+            result = code;
+        } else {
+            result = code;
+        }
+
+        auto sidx = string_heap_.size();
+        string_heap_.push_back(result);
+        return make_string(sidx);
+    });
+
     // (run-tests) — Find all test:* bindings in top_ env, report summary
     primitives_.add("run-tests", [this](const auto&) -> EvalValue {
         auto& bindings = top_.bindings();
