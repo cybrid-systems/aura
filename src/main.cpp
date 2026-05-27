@@ -1,6 +1,8 @@
 #include "compiler/aura_jit.h"
 #include "messaging_bridge.h"
 #include <unistd.h>
+#include <signal.h>
+#include <stdlib.h>
 #include "serve/serve_async.h"
 
 import std;
@@ -2020,5 +2022,24 @@ int main(int argc, char* argv[]) {
         } else if (&e == &exprs.back() && !is_void(*r))
             std::println("{}", fmt_val(*r, cs));
     }
+    // Clear messaging bridge to prevent dangling pointer access during
+    // static destruction (the CompilerService captures 'this' in lambdas
+    // and is about to go out of scope).
+    aura::messaging::g_current_compiler_service = nullptr;
+    aura::messaging::g_messaging_bridge.send = nullptr;
+    aura::messaging::g_messaging_bridge.recv = nullptr;
+    aura::messaging::g_messaging_bridge.my_id = nullptr;
+    aura::messaging::g_mailbox_read = nullptr;
+    aura::messaging::g_mailbox_last_sender = nullptr;
+    aura::messaging::g_mailbox_count = nullptr;
+    aura::messaging::g_session_id = nullptr;
+    aura::messaging::g_session_exists = nullptr;
+    aura::messaging::g_reset_arena = nullptr;
+    aura::messaging::g_http_post_async = nullptr;
+    aura::messaging::g_fiber_spawn = {};  // std::function
+    aura::messaging::g_fiber_yield = nullptr;
+    aura::messaging::g_fiber_block = nullptr;
+    aura::messaging::g_session_create = nullptr;
+
     return err ? 1 : 0;
 }
