@@ -17,9 +17,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install test dependencies
-      run: pip install pexpect --user --break-system-packages
-
     - name: Build & Core Tests
       run: python3 build.py check
 
