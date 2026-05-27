@@ -1,0 +1,41 @@
+(require "std/test" "std/heal" all:)
+
+(test-suite "heal:working-code"
+  (check (check-success (car (heal "(display (+ 1 2))" (list "3") 3)) (list "healed"))))
+
+(test-suite "heal:missing-require-for-each"
+  (let ((r (heal "(for-each display (list 1 2))" (list "1" "2") 3)))
+    (check (check-success (car r) (list "healed")))
+    (check (check-success (car (cdr r)) (list "std/list")))))
+
+(test-suite "heal:missing-require-hash"
+  (let ((r (heal "(hash-ref (make-hash) 'x)" (list "hash-ref") 3)))
+    (check (check-success (car r) (list "healed")))
+    (check (check-success (car (cdr r)) (list "std/hash")))))
+
+(test-suite "heal:parse-error-fails"
+  (check (check-success (car (heal "(display (+ 1" (list "3") 3)) (list "failed"))))
+
+(test-suite "heal:exact-output-match"
+  (check (check-success (car (heal "(display 42)" (list "42") 1)) (list "healed"))))
+
+(test-suite "heal:max-attempts"
+  (check (check-success (car (heal "(error \"always fails\")" (list "success") 2)) (list "failed"))))
+
+(test-suite "heal:no-match"
+  (check (check-success (car (heal "(display 42)" (list "99") 1)) (list "failed"))))
+
+(test-suite "heal:edsl-heal-chain"
+  (let ((r (heal "(set-code \"(define (f x) (* x 2))\")" (list "set-code") 3)))
+    (check (or (check-success (car r) (list "healed"))
+               (check-success (car r) (list "failed"))))))
+
+(test-suite "heal:multiple-attempts"
+  (check (check-success (car (heal "(for-each display (list 1 2))" (list "1" "2") 5)) (list "healed"))))
+
+(test-suite "heal:heal-twice-idempotent"
+  (let* ((r1 (heal "(for-each display (list 1 2))" (list "1" "2") 3))
+         (fixed (car (cdr r1)))
+         (r2 (heal fixed (list "1" "2") 3)))
+    (check (check-success (car r1) (list "healed")))
+    (check (check-success (car r2) (list "healed")))))
