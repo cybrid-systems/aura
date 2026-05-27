@@ -1,0 +1,49 @@
+; ── std/heal.aura — Self-healing code execution loop (鸿渐于陆) ──
+;
+; heal: Run code, auto-fix common errors, retry until success or max attempts.
+; Uses set-code + eval-current-output for correct stdout capture.
+;
+; Usage:
+;   (require "std/heal" all:)
+;   (heal "(for-each display (list 1 2))" (list "1" "2") 3)
+;   → ("healed" "(require \"std/list\" all:)\n(for-each display (list 1 2))" "1 2")
+;
+; Returns: (status fixed-code output)
+;   status = "healed" | "failed"
+
+(export heal)
+
+(define (heal code expected max-attempts)
+  (let loop ((attempt 0) (current-code code))
+    (if (>= attempt max-attempts)
+      (list "failed" current-code (string-append "max attempts (" (number->string max-attempts) ")"))
+      ; Run code via set-code + eval-current-output (captures stdout/structured errors)
+      (let* ((run-result (try (begin (set-code current-code) (eval-current-output))
+                            (catch (e) (if (is_error e) (error-message e) ""))))
+             ; Normalize: structured pair -> string, string -> string, else -> ""
+             (output (if (string? run-result) run-result
+                       (if (pair? run-result)
+                         (string-append "[" (car run-result) "] "
+                                        (car (cdr run-result)))
+                         ""))))
+        ; Check if output matches expected
+        (if (check-success output expected)
+          (list "healed" current-code output)
+          ; Diagnose and try to fix
+          (let* ((err (if (> (string-length output) 0) output "(no output)"))
+                 (diag (try (diagnose err) (catch (e) #f)))
+                 (fixed (if (and diag (pair? diag))
+                          (apply-fix current-code diag)
+                          #f)))
+            (if (and (string? fixed) (not (string=? fixed current-code)))
+              (begin
+                (display "[heal] auto-fixed via ")
+                (display (car diag))
+                (display " (attempt ")
+                (display (+ attempt 1))
+                (display "/")
+                (display max-attempts)
+                (display ")")
+                (newline)
+                (loop (+ attempt 1) fixed))
+              (list "failed" current-code output))))))))
