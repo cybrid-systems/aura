@@ -6,8 +6,12 @@
 #include "mailbox.h"
 
 #include <print>
+#include <thread>
 #include <fcntl.h>
+#include <sys/wait.h>
 #include <unistd.h>
+#include <vector>
+#include <array>
 #include <sys/epoll.h>
 #include <cstdio>
 #include <cerrno>
@@ -166,6 +170,85 @@ void run_serve_async() {
         sess->service.set_workspace_tree(shared_workspace_tree);
         aura::compiler::CompilerService::register_session("default", &sess->service);
     }
+
+    // Register async HTTP handler (uses thread + fork+exec curl CLI for non-blocking HTTP)
+    // Thread handles the blocking fork+exec while the fiber yields.
+    // When the thread completes, it signals the fiber via eventfd.
+    aura::messaging::g_http_post_async = [](const std::string& url,
+                                              const std::string& body,
+                                              const std::string& auth) -> std::string {
+        auto* fiber = aura::serve::g_current_fiber;
+        if (!fiber) return {};
+        auto evfd = fiber->eventfd();
+        if (evfd < 0) return {};
+
+        std::string result;
+        std::thread t([evfd, url, body, auth, &result]() {
+            // Create pipes for child communication
+            int in[2], out[2];
+            if (::pipe(in) < 0 || ::pipe(out) < 0) {
+                uint64_t v = 1; ::write(evfd, &v, sizeof(v));
+                return;
+            }
+
+            pid_t pid = ::fork();
+            if (pid < 0) {
+                ::close(in[0]); ::close(in[1]); ::close(out[0]); ::close(out[1]);
+                uint64_t v = 1; ::write(evfd, &v, sizeof(v));
+                return;
+            }
+
+            if (pid == 0) {
+                // Child: exec curl
+                ::close(in[1]); ::close(out[0]);
+                ::dup2(in[0], STDIN_FILENO); ::dup2(out[1], STDOUT_FILENO);
+                ::close(in[0]); ::close(out[1]);
+
+                std::vector<const char*> argv;
+                argv.push_back("curl");
+                argv.push_back("-s");
+                argv.push_back("-X"); argv.push_back("POST");
+                argv.push_back("--data-binary"); argv.push_back("@-");
+                argv.push_back("-H"); argv.push_back("Content-Type: application/json");
+                if (!auth.empty()) {
+                    auto* hdr = new std::string("Authorization: Bearer " + auth);
+                    argv.push_back("-H");
+                    argv.push_back(hdr->c_str());
+                }
+                argv.push_back("--max-time"); argv.push_back("30");
+                argv.push_back("--connect-timeout"); argv.push_back("10");
+                argv.push_back(url.c_str());
+                argv.push_back(nullptr);
+
+                ::execvp("curl", const_cast<char* const*>(argv.data()));
+                ::_exit(1);
+            }
+
+            // Parent thread: send body, read response
+            ::close(in[0]); ::close(out[1]);
+            ::write(in[1], body.data(), body.size()); ::close(in[1]);
+
+            std::array<char, 4096> fbuf;
+            ssize_t nr;
+            while ((nr = ::read(out[0], fbuf.data(), fbuf.size())) > 0)
+                result.append(fbuf.data(), static_cast<std::size_t>(nr));
+            ::close(out[0]);
+
+            int cstat;
+            ::waitpid(pid, &cstat, 0);
+
+            // Signal the fiber that HTTP is done
+            uint64_t v = 1;
+            ::write(evfd, &v, sizeof(v));
+        });
+        t.detach();
+
+        // Yield — scheduler will resume this fiber when thread signals eventfd
+        aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
+        aura::serve::Fiber::yield();
+
+        return result;
+    };
 
     // Register session:create for Aura code (primitive in evaluator)
     std::function<aura::messaging::SessionCreateFn> sc_fn =
