@@ -260,7 +260,9 @@ private:
     std::vector<HashTable> hash_heap_;
     std::vector<std::vector<types::EvalValue>> vector_heap_;
     std::uint64_t next_id_ = 1;
+    ClosureId gc_safe_closure_id_ = 0;
 };
+
 
 // Pair-aware value formatting (recursively prints lists)
 export inline std::string format_value(const types::EvalValue& v,
