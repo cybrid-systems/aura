@@ -2386,6 +2386,91 @@ void Evaluator::init_pair_primitives() {
         return make_bool(false);
     });
 
+    // (check-success output expected-list) — Flexible substring matching
+    // Returns #t if any expected keyword is found in output.
+    // Guards against false positives from error messages that happen to
+    // contain expected keywords (uses word-boundary for short keys in error output).
+    primitives_.add("check-success", [this](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !is_string(a[0]) || !is_pair(a[1]))
+            return make_bool(false);
+        // Get normalized output (strip quotes)
+        auto out_idx = as_string_idx(a[0]);
+        if (out_idx >= string_heap_.size())
+            return make_bool(false);
+        auto norm_out = string_heap_[out_idx];
+        // Strip surrounding quotes
+        if (!norm_out.empty() && (norm_out[0] == '"' || norm_out[0] == '\''))
+            norm_out = norm_out.substr(1);
+        if (!norm_out.empty() && (norm_out.back() == '"' || norm_out.back() == '\''))
+            norm_out.pop_back();
+        // Detect if output looks like an error message
+        auto lower = norm_out;
+        for (auto& c : lower) c = std::tolower(static_cast<unsigned char>(c));
+        bool is_error_like =
+            lower.find("error:") != std::string::npos ||
+            lower.find("parse error") != std::string::npos ||
+            lower.find("unbound variable") != std::string::npos ||
+            lower.find("type error") != std::string::npos ||
+            lower.find("syntax error") != std::string::npos ||
+            lower.find("invalid syntax") != std::string::npos ||
+            lower.find("expected expression") != std::string::npos ||
+            (norm_out.size() > 1 && norm_out[0] == '(' && norm_out[1] == '"');
+        // Iterate expected list
+        auto pair_idx = as_pair_idx(a[1]);
+        while (pair_idx < pairs_.size()) {
+            auto& p = pairs_[pair_idx];
+            if (is_string(p.car)) {
+                auto kw_idx = as_string_idx(p.car);
+                if (kw_idx < string_heap_.size()) {
+                    auto& kw = string_heap_[kw_idx];
+                    if (!kw.empty() && norm_out.find(kw) != std::string::npos) {
+                        // Guard: for error-like output with short keywords
+                        if (is_error_like && kw.size() <= 5) {
+                            // Generic error words that should never match in error output
+                            static const std::unordered_set<std::string> generic_words =
+                                {"error", "type", "parse", "syntax", "kind"};
+                            if (generic_words.count(kw)) {
+                                // Skip — too generic, likely part of error message
+                                if (is_pair(p.cdr)) {
+                                    pair_idx = as_pair_idx(p.cdr);
+                                    continue;
+                                }
+                                break;
+                            }
+                            // Word boundary check for other short keywords
+                            auto pos = norm_out.find(kw);
+                            bool word_boundary = true;
+                            if (pos > 0) {
+                                char prev = norm_out[pos - 1];
+                                if (std::isalnum(static_cast<unsigned char>(prev)) || prev == '_')
+                                    word_boundary = false;
+                            }
+                            if (pos + kw.size() < norm_out.size()) {
+                                char next = norm_out[pos + kw.size()];
+                                if (std::isalnum(static_cast<unsigned char>(next)) || next == '_')
+                                    word_boundary = false;
+                            }
+                            if (!word_boundary) {
+                                // Move to next keyword
+                                if (is_pair(p.cdr)) {
+                                    pair_idx = as_pair_idx(p.cdr);
+                                    continue;
+                                }
+                                break;
+                            }
+                        }
+                        return make_bool(true);
+                    }
+                }
+            }
+            if (is_pair(p.cdr))
+                pair_idx = as_pair_idx(p.cdr);
+            else
+                break;
+        }
+        return make_bool(false);
+    });
+
     // (run-tests) — Find all test:* bindings in top_ env, report summary
     primitives_.add("run-tests", [this](const auto&) -> EvalValue {
         auto& bindings = top_.bindings();
