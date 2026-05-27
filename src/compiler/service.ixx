@@ -265,6 +265,7 @@ public:
             "mutation-log",
             "query-mutation-log",
             "intend",
+            "fiber:spawn",
             "define-strategy",
             "register-strategy!",
             "intend-history",
@@ -376,8 +377,11 @@ public:
                             return true;
 
                         // Known tree-walker-only names (EDSL, special forms, module)
-                        if (tree_walker_only.count(name))
+                        if (tree_walker_only.count(name)) {
+                            std::fprintf(stderr, "DBG tw_fallback: '%s' triggers\n", name.c_str());
+                            std::fflush(stderr);
                             return true;
+                        }
 
                         // Catch binding forms like (catch (e) handler) have the
                         // variable binding (e) as a Call node with callee="e".
@@ -439,7 +443,11 @@ public:
         collect_match_info(*flat_ptr, *pool_ptr, expanded_root);
 
                 // Check if we need the tree-walker fallback
-        if (needs_tree_walker_fallback(*flat_ptr, *pool_ptr, expanded_root)) {
+        bool use_tw = needs_tree_walker_fallback(*flat_ptr, *pool_ptr, expanded_root);
+        std::fprintf(stderr, "DBG eval: use_tree_walker=%d expanded_root=%d flat_size=%zu\n",
+                    use_tw, (int)expanded_root, flat_ptr->size());
+        std::fflush(stderr);
+        if (use_tw) {
             auto result =
                 evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
             // Track all bound names so subsequent eval calls don't fall

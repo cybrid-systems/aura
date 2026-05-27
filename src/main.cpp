@@ -213,6 +213,16 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
+    // ── --serve-async-bench: run bench.aura in serve-async mode ─
+    // Loads and evaluates an Aura file directly in the serve-async runtime,
+    // enabling fiber:spawn parallelism without going through the JSON protocol.
+    // Usage: ./build/aura --serve-async-bench tests/bench.aura
+    if (argc > 1 && std::string_view(argv[1]) == "--serve-async-bench") {
+        std::string file_path = (argc > 2) ? argv[2] : "tests/bench.aura";
+        aura::serve::run_serve_async_bench(file_path);
+        return 0;
+    }
+
     // ── --serve: persistent JSON-line compile-fix loop ─────────
     // Each line of output is JSON. Agent reads with JSON.parse(line).
     // Messages: ok, error, fix, fixed, fix-fail

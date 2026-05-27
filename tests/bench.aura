@@ -9,6 +9,9 @@
 
 (require "std/bench" all:)
 
+; Force tree-walker fallback (enables named lets, EDSL primitives)
+(fiber:spawn (lambda () #t))
+
 ; ── Config from env ──
 (define model (try (getenv "LLM_MODEL") (catch "deepseek-v4-flash")))
 (define (get-env-num name default)
@@ -16,6 +19,7 @@
     (if (string? v) (string->number v) default)))
 (define rounds (get-env-num "BENCH_ROUNDS" 1))
 (define max-a (get-env-num "BENCH_ATTEMPTS" 3))
+(define workers (get-env-num "BENCH_WORKERS" 4))
 (define limit (get-env-num "BENCH_LIMIT" 0))
 
 ; ── Select tasks (with offset for parallel slicing) ──
@@ -43,6 +47,7 @@
 (display "Max attempts: ")(display max-a)(newline)
 (newline)
 
+; Use sequential runner (serve-async mode provides async HTTP)
 (define results (run-rounds tasks model max-a rounds))
 
 ; ── Report ──

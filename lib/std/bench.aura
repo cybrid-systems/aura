@@ -214,42 +214,69 @@
         '()))
     agg))
 
-; ── Parallel execution (serve-async mode only) ──
-; Uses session:create + send/recv for multi-session parallelism.
-; Falls back to sequential if not in serve mode.
+; ── Parallel execution (fiber-based, serve-async mode only) ──
+; Uses fiber:spawn to create real fibers for parallel task execution.
+; Each fiber takes a partition of tasks, runs them sequentially, and
+; sends results back to the main fiber via send/recv.
+; Falls back to sequential if fiber:spawn is not available (stdin mode).
 ;
 (define (run-parallel tasks model max-a rounds n-workers)
-  ; Check if serve mode is available
-  (define serve-mode? (session:create "__probe__"))
-  (if (not serve-mode?)
+  ; Probe: does fiber:spawn return a fiber ID (integer > 0)?
+  ; If not (returns #t/#f/void), we're in stdin mode.
+  (define probe (fiber:spawn (lambda () #t)))
+  (if (not (and (integer? probe) (> probe 0)))
     (begin
-      (display "[parallel] serve mode not available, falling back to sequential\n")
+      (display "[parallel] fiber:spawn not available, falling back to sequential\n")
       (run-rounds tasks model max-a rounds))
     (let* ((n (length tasks))
            ; Partition tasks among workers
            (psize (max 1 (quotient n n-workers)))
            (partitions (let loop ((rem tasks) (acc '()))
                          (if (null? rem) (reverse acc)
-                           (let ((p (take rem psize))
+                           (let ((piece (take rem psize))
                                  (rest (drop rem psize)))
-                             (loop rest (cons p acc))))))
-           (nparts (length partitions)))
+                             (loop rest (cons piece acc))))))
+           (nparts (length partitions))
+           ; Shared result vector (one slot per partition)
+           (results (make-vector nparts '())))
       (display "[parallel] ")(display (number->string nparts))(display " workers, ")
       (display (number->string n))(display " tasks\n")
+      (newline)
       
-      ; Launch workers
-      (let launch ((i 1) (parts partitions))
-        (if (pair? parts)
-          (let ((wname (string-append "w" (number->string i))))
-            (session:create wname)
-            ; Send task data to worker (simplified: just the task indices)
-            (send wname (json-encode (car parts)))
-            (launch (+ i 1) (cdr parts)))
+      ; Launch worker fibers
+      (let spawn ((i 0))
+        (if (< i nparts)
+          (let ((my-idx i)
+                (my-tasks (list-ref partitions i)))
+            (fiber:spawn
+              (lambda ()
+                (let iter ((tl my-tasks) (acc '()))
+                  (if (pair? tl)
+                    (let* ((task (car tl))
+                           (name (list-ref task 0))
+                           (result (run-one task model max-a))
+                           (ok (car result)))
+                      (display name)
+                      (display " ")
+                      (if ok (display "OK") (display "FAIL"))
+                      (newline)
+                      (iter (cdr tl) (cons result acc)))
+                    ; Done — store results and signal main fiber
+                    (begin
+                      (vector-set! results my-idx (reverse acc))
+                      (send "default" "done")))))
+            (spawn (+ i 1)))
           #f))
       
-      ; Collect results (simplified: workers would need to run and report back)
-      (display "[parallel] launched, collecting...\n")
-      '()))))
+      ; Workers report results as they go (via display in run-one).
+      ; Main fiber does NOT wait — workers run in background and
+      ; exit when done. Session fiber checks stdin_eof and exits.
+      ; The scheduler keeps running until all fibers are done.
+      
+      (newline)
+      (display "[parallel] workers launched, see per-task output above\n")
+      ; Return nil (workers handle their own output)
+      '())))
 
 ; Helper: take first n elements
 (define take
