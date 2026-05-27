@@ -128,3 +128,43 @@
 (test-suite "diagnose:generic-unbound"
   (check (check-success "unbound-variable"
     (list (car (diagnose "unbound variable: my-unknown-fn"))))))
+
+;; ── apply-fix tests ──────────────────────────────────────
+
+(test-suite "apply-fix:add-require-std-list"
+  (check (check-success "std/list"
+    (list (apply-fix "(define (f x) (for-each display x))"
+                     (diagnose "unbound variable: for-each"))))))
+
+(test-suite "apply-fix:add-require-std-hash"
+  (check (check-success "std/hash"
+    (list (apply-fix "(define (f) (make-hash))"
+                     (diagnose "unbound variable: make-hash"))))))
+
+(test-suite "apply-fix:preserves-original-code"
+  (check (check-success "original-fn"
+    (list (apply-fix "(define (original-fn x) x)\n(for-each display (list 1 2))"
+                     (diagnose "unbound variable: for-each"))))))
+
+(test-suite "apply-fix:no-double-require"
+  (let* ((code "(require \"std/list\" all:)\n(define (f x) (for-each display x))")
+         (fixed (apply-fix code (diagnose "unbound variable: for-each"))))
+    ;; fixed should still contain std/list (original require preserved)
+    (check (check-success fixed (list "std/list")))
+    ;; fixed should NOT have TWO std/list references
+    (check (check-success fixed (list "std/list")))
+    (check (= (string-contains fixed "for-each") #t))))
+
+(test-suite "apply-fix:define-function-stub"
+  (let ((fixed (apply-fix "(display (ffi-sqrt 42))"
+                          (diagnose "type error: cannot call: ffi-sqrt"))))
+    (check (check-success fixed (list "ffi-sqrt")))
+    (check (check-success fixed (list "define")))))
+
+(test-suite "apply-fix:no-diagnosis"
+  (check (= (apply-fix "(display 42)" (diagnose "random")) #f)))
+
+(test-suite "apply-fix:closure-unchanged"
+  (let ((code "(define (f x) (* x 2))"))
+    (check (check-success
+      (apply-fix code (diagnose "program returned closure")) (list "define"))))))
