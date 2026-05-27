@@ -46,3 +46,85 @@
 
 (test-suite "errors:string-ref-oob"
   (check (try (string-ref "abc" 100) (catch (e) #t))))
+
+;; ── check-success tests ────────────────────────────────
+
+(test-suite "check-success:basic-match"
+  (check (check-success "42" (list "42"))))
+
+(test-suite "check-success:basic-no-match"
+  (check (= (check-success "hello" (list "42")) #f)))
+
+(test-suite "check-success:substring-match"
+  (check (check-success "result: 42" (list "42"))))
+
+(test-suite "check-success:multi-keyword"
+  (check (check-success "expected Int" (list "error" "Int" "String"))))
+
+(test-suite "check-success:error-output-rejects-error"
+  (check (= (check-success "parse error: expected expression" (list "error")) #f)))
+
+(test-suite "check-success:error-output-rejects-parse"
+  (check (= (check-success "parse error: expected expression" (list "parse")) #f)))
+
+(test-suite "check-success:error-output-allows-define"
+  (check (check-success "expected Define, got Int" (list "Define"))))
+
+(test-suite "check-success:structured-error-rejects"
+  (check (= (check-success "(\"type error\" \"type mismatch\")" (list "error")) #f)))
+
+(test-suite "check-success:void-is-false"
+  (check (= (check-success (void) (list "42")) #f)))
+
+(test-suite "check-success:empty-list"
+  (check (= (check-success "anything" (list)) #f)))
+
+(test-suite "check-success:word-boundary"
+  (check (check-success "found 42" (list "42"))))
+
+(test-suite "check-success:word-boundary-no-false"
+  (check (= (check-success "type mismatch: expected Int, got 142" (list "42")) #f)))
+
+(test-suite "check-success:keyword-long"
+  (check (check-success "1:1: expected expression, got ')'" (list "expression"))))
+
+;; ── diagnose tests ───────────────────────────────────────
+
+(test-suite "diagnose:unbound-for-each"
+  (check (check-success "missing-require"
+    (list (car (diagnose "unbound variable: for-each"))))))
+
+(test-suite "diagnose:unbound-make-hash"
+  (check (check-success "missing-require"
+    (list (car (diagnose "unbound variable: make-hash"))))))
+
+(test-suite "diagnose:unbound-define-type"
+  (check (check-success "missing-require"
+    (list (car (diagnose "unbound variable: define-type"))))))
+
+(test-suite "diagnose:type-error-ffi"
+  (check (check-success "type-error-unbound"
+    (list (car (diagnose "type error: cannot call: ffi-sqrt"))))))
+
+(test-suite "diagnose:parse-error"
+  (check (check-success "parse-error"
+    (list (car (diagnose "parse error: expected expression at line 1"))))))
+
+(test-suite "diagnose:closure-no-display"
+  (check (check-success "closure-no-display"
+    (list (car (diagnose "program returned an uncalled function (closure)"))))))
+
+(test-suite "diagnose:unknown-no-match"
+  (check (= (diagnose "random message") #f)))
+
+(test-suite "diagnose:fix-type-add-require"
+  (check (check-success "add-require"
+    (list (car (cdr (cdr (diagnose "unbound variable: for-each"))))))))
+
+(test-suite "diagnose:fix-data-std-list"
+  (check (check-success "std/list"
+    (list (car (cdr (cdr (cdr (diagnose "unbound variable: for-each")))))))))
+
+(test-suite "diagnose:generic-unbound"
+  (check (check-success "unbound-variable"
+    (list (car (diagnose "unbound variable: my-unknown-fn"))))))
