@@ -1318,10 +1318,8 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
                 auto val_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
                 if (def_name.size() > 0)
                     env_.bind(std::string(def_name), val_type);
-                result = val_type;
-            } else {
-                result = reg_.void_type();
             }
+            result = reg_.void_type();
             break;
         }
         case Tag::Set:
