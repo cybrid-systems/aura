@@ -161,7 +161,7 @@ Aura：C++26，LLVM ORC JIT 后端，Sound Gradual Typing。
 |:----|:-----:|:----:|:-----:|:----:|:--------|
 | 🥇 **Grok (xAI)** | 135 | **135** | **100%** | ~2min | Aura-native, 6 workers |
 | 🥈 **DeepSeek v4 Flash** | 135 | 103-106 | 76-79% | ~3-25min | Python (103) / Aura-native (106) |
-| 🥉 **MiniMax M2.7** | 135 | 47 | 34.8% | ~8min | Python runner (历史) |
+| 🥉 **MiniMax M2.7** | 135 | 29 | 21.5% | ~8min | Python runner (variance±13%) |
 
 > Aura-native 和 Python runner 的通过率一致，差异在 LLM 方差范围内。  
 > Grok 首次生成通过率 ~22%，ant colony 零 LLM 开销修复剩余 78%。
