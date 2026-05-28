@@ -1,0 +1,67 @@
+; ── std/query.aura — 组合查询能力 ──
+;
+; 在现有 query C++ 原语之上提供组合查询和过滤。
+;
+; API:
+;   (query:filter pred node-ids)    → 过滤节点列表
+;   (query:uncalled)                → 已定义但零调用的函数
+;   (query:callers-of name)         → 调用 name 的 Define 列表
+
+(require "std/list" all:)
+
+(export query:filter query:uncalled query:callers-of)
+
+; ── query:filter — 按谓词过滤节点 ID 列表 ──
+;
+; pred: (lambda (node-id) → truthy | #f)
+; node-ids: 节点 ID 列表（如 query:node-type 的返回值）
+; → 过滤后的节点 ID 列表
+;
+(define (query:filter pred node-ids)
+  (if (null? node-ids) (quote ())
+    (if (pred (car node-ids))
+      (cons (car node-ids) (query:filter pred (cdr node-ids)))
+      (query:filter pred (cdr node-ids)))))
+
+; ── query:uncalled — 已定义但零调用的函数 ──
+;
+; 扫描所有 Define 节点，过滤未被任何代码调用的。
+;
+(define (query:uncalled)
+  (define defs (query:node-type "Define"))
+  (if (null? defs) (quote ())
+    (query:filter (lambda (id)
+      (define info (query:node id))
+      (define name (if (pair? info) (car (cdr info)) ""))
+      (and (string? name) (not (string=? name ""))
+           (null? (query:calls name))))
+      defs)))
+
+; ── query:callers-of — 调用 name 的 Define 节点列表 ──
+;
+; 扫描所有 Define，过滤其函数体内调用了 name 的。
+;
+(define (query:callers-of name)
+  (define defs (query:node-type "Define"))
+  (if (null? defs) (quote ())
+    (query:filter (lambda (id)
+      (define children (query:children id))
+      (define (walk ids)
+        (if (null? ids) #f
+          (if (refers-to? (car ids) name) #t
+            (walk (cdr ids)))))
+      (and (pair? children) (walk children)))
+      defs)))
+
+; ── 辅助：节点子树是否引用 name ──
+(define (refers-to? id name)
+  (define info (query:node id))
+  (if (null? info) #f
+    (let ((node-name (if (pair? (cdr info)) (car (cdr info)) "")))
+      (if (and (string? node-name) (string=? node-name name)) #t
+        (let ((children (query:children id)))
+          (define (walk ids)
+            (if (null? ids) #f
+              (if (refers-to? (car ids) name) #t
+                (walk (cdr ids)))))
+          (and (pair? children) (walk children)))))))

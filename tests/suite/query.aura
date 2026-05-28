@@ -1,0 +1,48 @@
+(require "std/test" all:)
+(require "std/query" all:)
+
+; ── query:filter 基础 ──
+(test-suite "query:filter-basic"
+  (check (pair? (query:filter (lambda (x) (= (% x 2) 0)) (list 1 2 3 4 5)))))
+
+(test-suite "query:filter-empty"
+  (check (null? (query:filter (lambda (x) #t) (quote ())))))
+
+(test-suite "query:filter-all-true"
+  (check (= (length (query:filter (lambda (x) #t) (list 1 2 3))) 3)))
+
+(test-suite "query:filter-all-false"
+  (check (null? (query:filter (lambda (x) #f) (list 1 2 3)))))
+
+(test-suite "query:filter-numeric-pred"
+  (check (pair? (query:filter (lambda (x) (> x 3)) (list 1 2 3 4 5)))))
+
+; ── query:uncalled ──
+(test-suite "query:uncalled-identity"
+  (set-code "(define (unused x) (* x 2)) (define (used y) (+ y 1)) (display (used 5))")
+  (check (= (length (query:uncalled)) 1)))
+
+(test-suite "query:uncalled-recursive"
+  (set-code "(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))")
+  (check (null? (query:uncalled))))
+
+(test-suite "query:uncalled-no-define"
+  (set-code "(display 42)")
+  (check (null? (query:uncalled))))
+
+(test-suite "query:uncalled-all-used"
+  (set-code "(define (a x) x) (define (b x) (a x)) (display (b 1))")
+  (check (null? (query:uncalled))))
+
+; ── query:callers-of ──
+(test-suite "query:callers-basic"
+  (set-code "(define (helper x) (* x 2)) (define (main y) (+ (helper y) 1)) (display (main 5))")
+  (check (= (length (query:callers-of "helper")) 1)))
+
+(test-suite "query:callers-no-callers"
+  (set-code "(define (alone x) x)")
+  (check (null? (query:callers-of "alone"))))
+
+(test-suite "query:callers-nonexistent"
+  (set-code "(display 42)")
+  (check (null? (query:callers-of "nobody"))))
