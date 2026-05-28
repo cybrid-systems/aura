@@ -8947,15 +8947,10 @@ Evaluator::Evaluator() {
             return merr("create-failed", std::string("could not create session \"") + name + "\"");
         }
         
-        // Stdin/pipe mode: lightweight in-process agent
-        // Register mailbox so send/recv can route to this agent
-        if (!aura::messaging::g_mailbox_registry_create ||
-            !aura::messaging::g_mailbox_registry_create(name))
-            return merr("create-failed", std::string("could not create agent \"") + name + "\"");
-        
-        auto sidx = string_heap_.size();
-        string_heap_.push_back(name);
-        return make_string(sidx);
+        // Stdin/pipe mode: lightweight in-process agent via Aura-level *agents* registry
+        // The Aura-level agent:spawn wraps this C++ primitive and falls back to
+        // the *agents* registry when g_session_create is unavailable.
+        return merr("no-serve", "agent:spawn requires serve mode or a local handler");
     });
 
     // (fiber:join fiber-id) — Wait for a fiber to complete

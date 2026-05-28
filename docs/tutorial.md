@@ -517,3 +517,56 @@ build_adaptive_feedback() → correction → LLM 再生成
 ---
 
 **下一步:** `docs/roadmap.md` · `docs/design/aura_language_spec.md` · `docs/design/ffi_c.md` · `python3 tests/edsl_benchmark.py --tasks fibonacci`
+
+## 多 Agent 编排（交响乐指挥模式）
+
+Agent 编排框架将代码进化过程视为一场交响乐演奏：
+
+```
+指挥（orch:conduct） → 总谱 → 乐手们各司其职
+```
+
+### 基础用法
+
+```scheme
+(require "std/orchestrator" all:)
+(require "std/string" all:)
+
+;; 聘用乐手
+(agent:spawn "planner"
+  (lambda (task) (string-append "PLAN: " task)))
+(agent:spawn "coder"
+  (lambda (plan) (string-append "CODE: (" plan ")")))
+(agent:spawn "tester"
+  (lambda (code) (string-append "TEST: " code " => PASS")))
+
+;; 指挥给提示
+(agent:ask "planner" "fib" 30)    → "PLAN: fib"
+
+;; 完整管线
+(orch:pipeline (list "planner" "coder" "tester") "fib")
+    → "TEST: CODE: (PLAN: fib) => PASS"
+
+;; 并行执行
+(orch:parallel
+  (list (lambda (x) (+ x 1)) (lambda (x) (* x 2)))
+  5)  → (6 15)
+```
+
+### 生命周期管理
+
+```scheme
+(agent:spawn "w" (lambda (x) (string-append "w:" x)))
+(agent:status "w")           → "running"
+(agent:stop "w")             → "stopped"
+(agent:restart "w" (lambda (x) (string-append "v2:" x)))
+(agent:ask "w" "task")       → "v2:task"
+```
+
+### AST 可视化
+
+```scheme
+(require "std/ast-viz" all:)
+(ast:to-dot)  → digraph AST { Node0 [label="Define\nadd",fillcolor="#fccde5"]; ... }
+(mutation:trace)  → "Total mutations: 1"
+```

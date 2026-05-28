@@ -581,6 +581,20 @@ def test_abf_embed_sig():
 # Run subprocess tests
 passed_s = 0
 failed_s = 0
+def test_cross_session():
+    """Cross-session agent orchestration via --serve-async."""
+    r = subprocess.run([sys.executable, "tests/test_cross_session.py"],
+                       capture_output=True, text=True, timeout=60)
+    # Parse pass count from output
+    for line in r.stdout.split("\n"):
+        if "passed" in line and "/" in line:
+            print(f"  cross-session: {line.strip()}")
+            break
+    if r.returncode != 0:
+        print(f"  stderr: {r.stderr[-200:]}")
+        raise RuntimeError(f"cross_session tests failed (rc={r.returncode})")
+
+
 def test_fuzz_edsl():
     """Run property-based EDSL mutation fuzz (quick mode)."""
     r = subprocess.run([sys.executable, "tests/fuzz_edsl.py", "--quick"],
@@ -599,6 +613,7 @@ for tf in [test_freeze_load, test_freeze_multi_expr, test_freeze_empty, test_emi
            test_aura_type_cross_module,
            test_generate_type_sigs,
            test_module_chain_5,
+           test_cross_session,
            test_fuzz_edsl]:
     try:
         tf()
