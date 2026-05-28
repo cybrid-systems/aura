@@ -150,6 +150,12 @@ export constexpr OpcodeInfo kOpcodeInfo[] = {
 
 static_assert(std::size(kOpcodeInfo) == 45, "kOpcodeInfo must have exactly one entry per IROpcode");
 
+// Helper: look up opcode info by IROpcode enum value
+inline const OpcodeInfo* lookup_opcode(IROpcode op) {
+    auto idx = static_cast<std::size_t>(op);
+    return idx < std::size(kOpcodeInfo) ? &kOpcodeInfo[idx] : nullptr;
+}
+
 // Primitive IDs for PrimCall opcode
 export enum class PrimId : std::uint8_t {
     StringAppend,
@@ -317,6 +323,90 @@ export struct IRModule {
         new_func.id = func_id;
         functions[func_id] = std::move(new_func);
         return true;
+    }
+
+    // ── 类型驱动 IR 优化 ───────────────────────────────────
+    // 基于 type_id 信息消除冗余 CastOp。当值类型已知且匹配目标
+    // 类型时，CastOp 是多余的，直接替换引用为原始值。
+    // 同时传播类型信息，减少运行时类型检查。
+    void optimize_type_info() {
+        for (auto& func : functions) {
+            for (auto& block : func.blocks) {
+                // First pass: collect known type for each slot
+                struct SlotType {
+                    std::uint32_t type_id = 0;
+                    std::uint32_t source_slot = 0; // 0 = self
+                    bool is_cast = false;
+                };
+                std::vector<SlotType> slot_types(func.local_count + func.arg_count + 4);
+                std::vector<std::uint32_t> slot_remap; // result_slot -> source_slot
+                slot_remap.resize(func.local_count + func.arg_count + 4, 0);
+
+                for (auto& instr : block.instructions) {
+                    // Record known type for this instruction's result
+                    if (auto* info = lookup_opcode(instr.opcode)) {
+                        if (info->has_result_slot && instr.operands[0] < slot_types.size()) {
+                            auto& st = slot_types[instr.operands[0]];
+                            if (instr.type_id != 0) {
+                                st.type_id = instr.type_id;
+                                st.source_slot = instr.operands[0];
+                            }
+                        }
+                    }
+
+                    // Eliminate redundant CastOp
+                    if (instr.opcode == IROpcode::CastOp) {
+                        auto val_slot = instr.operands[1];
+                        auto target_tag = instr.operands[2];
+                        auto result_slot = instr.operands[0];
+
+                        // Check if value already has the target type
+                        bool redundant = false;
+                        if (val_slot < slot_types.size() && slot_types[val_slot].type_id != 0) {
+                            if (slot_types[val_slot].type_id == target_tag) {
+                                redundant = true;
+                            }
+                        }
+
+                        if (redundant) {
+                            // Mark for replacement: result_slot -> val_slot
+                            if (result_slot < slot_remap.size())
+                                slot_remap[result_slot] = val_slot;
+                            // Also propagate type
+                            if (result_slot < slot_types.size() && val_slot < slot_types.size())
+                                slot_types[result_slot] = slot_types[val_slot];
+                        }
+                    }
+                }
+
+                // Apply remapping: replace all uses of redundant cast results
+                // with the original source slot
+                for (auto& instr : block.instructions) {
+                    if (instr.opcode == IROpcode::CastOp)
+                        continue; // skip CastOps we already marked
+                    for (auto& op : instr.operands) {
+                        if (op == 0) continue;
+                        if (op < slot_remap.size() && slot_remap[op] != 0 && slot_remap[op] != op) {
+                            // Follow the remap chain
+                            auto src = slot_remap[op];
+                            while (src < slot_remap.size() && slot_remap[src] != 0 && slot_remap[src] != src)
+                                src = slot_remap[src];
+                            op = src;
+                        }
+                    }
+                }
+
+                // Second pass: remove redundant CastOps (no operands reference them)
+                std::erase_if(block.instructions, [&](const IRInstruction& instr) {
+                    if (instr.opcode == IROpcode::CastOp) {
+                        auto result_slot = instr.operands[0];
+                        return result_slot < slot_remap.size() &&
+                               slot_remap[result_slot] != 0;
+                    }
+                    return false;
+                });
+            }
+        }
     }
 
     // Find all Call/MakeClosure instructions that reference a function
