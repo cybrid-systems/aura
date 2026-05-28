@@ -221,6 +221,24 @@ tests = [
     ("functor-cache",
      '(begin (define-module (C T) (display 1)) (C Int) (C Int) (C Int) (display "ok"))',
      "1ok", ""),
+    ("functor-export-tc",
+     '(begin (define-module (S T) (export myfn) (define (myfn x) (* x 2))) (S Int) (display "ok"))',
+     "ok", ""),
+    ("functor-multi-cache",
+     '(begin (define-module (M T) (display 1)) (M Int) (M String) (M Int) (M String) (display "ok"))',
+     "11ok", ""),
+
+    # ── DCE + 类型注解 ────────────────────────────────────────
+    ("ir-annot-float", '(: x Float 3.14)', "3.14", ""),
+    ("ir-annot-double", '(: x Int (+ (: a Int 1) (: b Int 2)))', "3", ""),
+
+    # ── 复杂 ADT 穷尽性 ─────────────────────────────────────
+    ("adt-exhaustive-pair",
+     '(define-type (Pair a b) (MkPair a b))(let ((p (MkPair 1 2)))(match p ((MkPair x y) (+ x y))))',
+     "3", ""),
+    ("adt-exhaustive-triple",
+     '(define-type (Triple a b c) (MkTriple a b c))(let ((t (MkTriple 1 2 3)))(match t ((MkTriple x y z) (+ x (+ y z)))))',
+     "6", ""),
 
     # ── closure warning → stdout ──────────────────────────
     ("closure-warning-stdout",
