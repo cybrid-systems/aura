@@ -156,6 +156,13 @@
   (check= 12
     (let ((x (* 3 4))) x)))
 
+(test-suite "typesystem:effects"
+  ;; 效果类型不破坏现有类型检查
+  (check= 42
+    (begin (define (f x) (+ x 1)) (display (f 41))))
+  ;; mutate 原语在 REPL 中可正常调用
+  (check (begin (set-code "(define (f x) (+ x 1))") (mutate:rebind "f" "(lambda (x) (* x 2))") #t)))
+
 (test-suite "typesystem:coercion"
   (check= 2
     (+ 1 #t))
