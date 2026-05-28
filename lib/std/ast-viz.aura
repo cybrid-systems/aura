@@ -1,0 +1,137 @@
+; ── std/ast-viz.aura — AST 可视化 + mutation 追踪 ──
+;
+; 提供 AST 图结构可视化和 mutation 历史追踪能力。
+; 全部纯 Aura，使用现有 query/mutation 原语。
+;
+; API:
+;   (ast:to-dot)         → DOT graph string of current workspace AST
+;   (ast:to-dot-node id) → DOT subgraph for a specific node
+;   (mutation:trace)     → mutation 历史文本摘要
+;   (mutation:trace-node id) → 单个节点的 mutation 历史
+
+(require "std/list" all:)
+(require "std/string" all:)
+
+(export ast:to-dot ast:to-dot-node mutation:trace mutation:trace-node)
+
+;; ═══════════════════════════════════════════════════════════════
+;; Section 1: AST → DOT graph
+;; ═══════════════════════════════════════════════════════════════
+
+; ── 节点标签映射 ──
+; NodeTag 枚举整数 → 显示名 + 颜色
+(define *tag-names*
+  (hash
+    1  "LiteralInt"    2  "Variable"
+    3  "Call"          4  "IfExpr"
+    5  "Lambda"        6  "Let"
+    7  "LetRec"        8  "Define"
+    9  "Begin"         10 "Set"
+    11 "Quote"         13 "LiteralString"
+    15 "TypeAnnotation" 16 "Coercion"
+    17 "LiteralFloat"  18 "Pair"
+    20 "DefineModule"  21 "Export"
+    22 "Linear"        23 "Move"
+    24 "MacroDef"      25 "Type"))
+
+(define *tag-colors*
+  (hash
+    1  "#8dd3c7"   ; LiteralInt — 青绿
+    2  "#ffffb3"   ; Variable — 淡黄
+    3  "#bebada"   ; Call — 淡紫
+    4  "#fb8072"   ; IfExpr — 淡红
+    5  "#80b1d3"   ; Lambda — 淡蓝
+    6  "#fdb462"   ; Let — 橙
+    7  "#b3de69"   ; LetRec — 淡绿
+    8  "#fccde5"   ; Define — 粉
+    9  "#d9d9d9"   ; Begin — 灰
+    10 "#bc80bd"   ; Set — 紫
+    11 "#ccebc5"   ; Quote — 淡绿
+    13 "#ffed6f"   ; LiteralString — 黄
+    17 "#e5c494"   ; LiteralFloat — 米色
+    18 "#a6cee3"   ; Pair — 淡蓝
+    ))
+
+; 获取标签名
+(define (tag-name tag)
+  (define name (try (hash-ref *tag-names* tag) (catch #f)))
+  (if name name (string-append "Tag" (number->string tag))))
+
+; 获取颜色
+(define (tag-color tag)
+  (define color (try (hash-ref *tag-colors* tag) (catch #f)))
+  (if color color "#ffffff"))
+
+; ── 构造节点 DOT 标签 ──
+(define (node-label id)
+  (define info (query:node id))
+  (if (not (pair? info)) (string-append "Node" (number->string id))
+    (let* ((tag (car info))
+           (val (if (pair? (cdr info)) (car (cdr info)) #f))
+           (children-count (try (car (cdr (cdr (cdr info)))) (catch 0)))
+           (tname (tag-name tag))
+           (label tname))
+      ; 添加值
+      (if (and (not (eq? val #f)) (number? val))
+        (set! label (string-append label "\\n" (number->string val)))
+        (if (and (not (eq? val #f)) (string? val))
+          (set! label (string-append label "\\n" val))))
+      (string-append "Node" (number->string id) " [label=\"" label
+                     "\",style=filled,fillcolor=\"" (tag-color tag) "\"];"))))
+
+; ── 构造边 DOT 定义 ──
+(define (node-edges id)
+  (define children (query:children id))
+  (if (not (pair? children)) ""
+    (let loop ((kids children) (result ""))
+      (if (null? kids) result
+        (let ((child-id (car kids)))
+          (define edge (string-append
+            "  Node" (number->string id)
+            " -> Node" (number->string child-id) ";\n"))
+          (loop (cdr kids) (string-append result edge)))))))
+
+; ── ast:to-dot-node — 单个节点转 DOT ──
+(define (ast:to-dot-node id)
+  (string-append (node-label id) "\n" (node-edges id)))
+
+; ── ast:to-dot — 当前 workspace 转 DOT 图 ──
+(define (ast:to-dot)
+  (define root (try (query:root) (catch #f)))
+  (if (not root) "digraph AST { }"
+    (let ((result "digraph AST {\n  rankdir=TB;\n  node [shape=box,fontname=\"monospace\"];\n"))
+      ; 遍历所有节点
+      (define (seen? id lst)
+        (cond ((null? lst) #f)
+              ((= (car lst) id) #t)
+              (else (seen? id (cdr lst)))))
+      (define (walk id done)
+        (if (or (not id) (not (number? id)) (seen? id done)) done
+          (let ((new-done (cons id done)))
+            (set! result (string-append result (node-label id) "\n" (node-edges id)))
+            ; 递归子节点
+            (define children (try (query:children id) (catch (quote ()))))
+            (let loop ((kids children) (d new-done))
+              (if (null? kids) d
+                (loop (cdr kids) (walk (car kids) d)))))))
+      (walk root (quote ()))
+      (string-append result "}\n"))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; Section 2: Mutation 追踪
+;; ═══════════════════════════════════════════════════════════════
+
+; ── mutation:trace-node — 单个节点 mutation 历史 ──
+(define (mutation:trace-node id)
+  (define history (try (mutation-history id) (catch (e) (quote ()))))
+  (if (not (pair? history)) ""
+    (let loop ((entries history) (result ""))
+      (if (null? entries) result
+        (loop (cdr entries)
+              (string-append result (car entries) "\n"))))))
+
+; ── mutation:trace — 全部 mutation 日志 ──
+(define (mutation:trace)
+  (define count (try (mutation-count) (catch 0)))
+  (if (= count 0) "No mutations recorded.\n"
+    (string-append "Total mutations: " (number->string count) "\n")))

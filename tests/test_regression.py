@@ -342,6 +342,14 @@ tests = [
      '(begin (set-code "(define (f x) (+ x 1))")(pair? (query:children 999)))',
      "#t", ""),
 
+    # ── Issue #16: AST Visualization ────────────────────────
+    ("ast-viz-dot",
+     '(begin (set-code "(define (f x) (+ x 1))")(require "std/ast-viz" all:)(string? (ast:to-dot)))',
+     "#t", ""),
+    ("ast-viz-dot-mutation",
+     '(begin (set-code "(define (add x y) (+ x y))")(require "std/ast-viz" all:)(mutate:rebind "add" "(lambda (a b) (* a b))" "m")(string-contains? (ast:to-dot) "*"))',
+     "#t", ""),
+
 ]
 
 # Cleanup temp files
@@ -573,12 +581,25 @@ def test_abf_embed_sig():
 # Run subprocess tests
 passed_s = 0
 failed_s = 0
+def test_fuzz_edsl():
+    """Run property-based EDSL mutation fuzz (quick mode)."""
+    r = subprocess.run([sys.executable, "tests/fuzz_edsl.py", "--quick"],
+                       capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        print(f"  fuzz-edsl stderr:\n{r.stderr}")
+        raise RuntimeError(f"fuzz_edsl failed with exit {r.returncode}")
+    # Parse pass rate from summary
+    for line in r.stdout.split("\n"):
+        if "Pass:" in line or "Fail:" in line:
+            print(f"  fuzz-edsl: {line.strip()}")
+
 for tf in [test_freeze_load, test_freeze_multi_expr, test_freeze_empty, test_emit_binary,
            test_aura_type_auto_load, test_aura_type_no_sig,
            test_aura_type_multi_func, test_aura_type_different_types,
            test_aura_type_cross_module,
            test_generate_type_sigs,
-           test_module_chain_5]:
+           test_module_chain_5,
+           test_fuzz_edsl]:
     try:
         tf()
         passed_s += 1
