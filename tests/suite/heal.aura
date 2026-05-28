@@ -1,7 +1,25 @@
 (require "std/test" "std/heal" all:)
+(require "std/string" all:)
+(require "std/list" all:)
+
+; ── 基础 heal 路径 ──
 
 (test-suite "heal:working-code"
   (check (check-success (car (heal "(display (+ 1 2))" (list "3") 3)) (list "healed"))))
+
+(test-suite "heal:exact-output-match"
+  (check (check-success (car (heal "(display 42)" (list "42") 1)) (list "healed"))))
+
+(test-suite "heal:no-match"
+  (check (check-success (car (heal "(display 42)" (list "99") 1)) (list "failed"))))
+
+(test-suite "heal:max-attempts"
+  (check (check-success (car (heal "(error \"always fails\")" (list "success") 2)) (list "failed"))))
+
+(test-suite "heal:parse-error-fails"
+  (check (check-success (car (heal "(display (+ 1" (list "3") 3)) (list "failed"))))
+
+; ── missing-require 修复路径（C++ apply-fix fallback） ──
 
 (test-suite "heal:missing-require-for-each"
   (let ((r (heal "(for-each display (list 1 2))" (list "1" "2") 3)))
@@ -13,24 +31,12 @@
     (check (check-success (car r) (list "healed")))
     (check (check-success (car (cdr r)) (list "std/hash")))))
 
-(test-suite "heal:parse-error-fails"
-  (check (check-success (car (heal "(display (+ 1" (list "3") 3)) (list "failed"))))
+(test-suite "heal:missing-require-filter"
+  (let ((r (heal "(filter (lambda (x) (> x 0)) (list 1 2))" (list "1" "2") 3)))
+    (check (check-success (car r) (list "healed")))
+    (check (check-success (car (cdr r)) (list "std/list")))))
 
-(test-suite "heal:exact-output-match"
-  (check (check-success (car (heal "(display 42)" (list "42") 1)) (list "healed"))))
-
-(test-suite "heal:max-attempts"
-  (check (check-success (car (heal "(error \"always fails\")" (list "success") 2)) (list "failed"))))
-
-(test-suite "heal:no-match"
-  (check (check-success (car (heal "(display 42)" (list "99") 1)) (list "failed"))))
-
-(test-suite "heal:edsl-heal-chain"
-  (let ((r (heal "(set-code \"(define (f x) (* x 2))\")" (list "set-code") 3)))
-    (check (or (check-success (car r) (list "healed"))
-               (check-success (car r) (list "failed"))))))
-
-(test-suite "heal:multiple-attempts"
+(test-suite "heal:multiple-attempts-require"
   (check (check-success (car (heal "(for-each display (list 1 2))" (list "1" "2") 5)) (list "healed"))))
 
 (test-suite "heal:heal-twice-idempotent"
@@ -39,3 +45,102 @@
          (r2 (heal fixed (list "1" "2") 3)))
     (check (check-success (car r1) (list "healed")))
     (check (check-success (car r2) (list "healed")))))
+
+; ── AST 级诊断：heal-diagnose ──
+
+(test-suite "heal:diagnose-procedure"
+  ; Simulate output that looks like an uncalled function
+  (define diag (begin (set-code "(define (f x) (+ x 1))") (heal-diagnose "#<procedure: f>")))
+  (check (pair? diag))
+  (check (string=? (car diag) "closure-no-display")))
+
+(test-suite "heal:diagnose-uncalled-fn"
+  (define diag (begin (set-code "(define (f x) (* x 2))") (heal-diagnose "program returned an uncalled function")))
+  (check (pair? diag))
+  (check (string=? (car diag) "closure-no-display")))
+
+(test-suite "heal:diagnose-unbound-require"
+  ; unbound variable for a known stdlib function
+  (define diag (begin (set-code "(map (lambda (x) x) '(1 2))") (heal-diagnose "unbound variable: map")))
+  (check (pair? diag))
+  (check (string=? (car diag) "missing-require"))
+  (check (string=? (list-ref diag 3) "std/list")))
+
+(test-suite "heal:diagnose-unbound-unknown"
+  (define diag (begin (set-code "(foo 42)") (heal-diagnose "unbound variable: foo")))
+  (check (pair? diag))
+  (check (string=? (car diag) "unbound-variable")))
+
+(test-suite "heal:diagnose-parse-error"
+  (define diag (heal-diagnose "parse error: expected expression"))
+  (check (pair? diag))
+  (check (string=? (car diag) "parse-error")))
+
+(test-suite "heal:diagnose-type-error"
+  (define diag (heal-diagnose "type error: cannot call: undefined-fn"))
+  (check (pair? diag))
+  (check (string=? (car diag) "type-error-unbound")))
+
+(test-suite "heal:diagnose-no-match"
+  (check (not (heal-diagnose "everything is fine"))))
+
+; ── AST 级修复：heal-apply-fix ──
+
+(test-suite "heal:apply-fix-add-require"
+  (define code "(display 42)")
+  (define diag (list "missing-require" "make-hash" "add-require" "std/hash"))
+  (define fixed (heal-apply-fix code diag))
+  (check (not (= (string-index fixed "(require \"std/hash\" all:)" 0) -1))))
+
+(test-suite "heal:apply-fix-require-already-exists"
+  (define code "(require \"std/list\" all:)(for-each display (list 1))")
+  (define diag (list "missing-require" "for-each" "add-require" "std/list"))
+  (define fixed (heal-apply-fix code diag))
+  (check (string=? fixed code)))  ; unchanged — require already there
+
+(test-suite "heal:apply-fix-define-function"
+  (define code "(display 42)")
+  (define diag (list "type-error-unbound" "my-fn" "define-function" ""))
+  (define fixed (heal-apply-fix code diag))
+  (check (not (= (string-index fixed "(define (my-fn x)" 0) -1))))
+
+(test-suite "heal:apply-fix-define-already-exists"
+  (define code "(define (my-fn x) (+ x 1))")
+  (define diag (list "type-error-unbound" "my-fn" "define-function" ""))
+  (define fixed (heal-apply-fix code diag))
+  (check (string=? fixed code)))  ; unchanged
+
+(test-suite "heal:apply-fix-add-display-workspace"
+  ; AST-level: use mutate:wrap on Define node
+  (set-code "(define (f x) (* x 2))")
+  (define def-nodes (query:node-type "Define"))
+  (define diag (list "closure-no-display" def-nodes "add-display" ""))
+  (define fixed (heal-apply-fix "(define (f x) (* x 2))" diag))
+  (check (not (= (string-index fixed "(display" 0) -1))))
+
+; ── lookup-module 遍历 ──
+
+(test-suite "heal:lookup-module-found"
+  (check (string=? (lookup-module "for-each") "std/list"))
+  (check (string=? (lookup-module "json-parse") "std/json"))
+  (check (string=? (lookup-module "c-func") "std/ffi")))
+
+(test-suite "heal:lookup-module-not-found"
+  (check (not (lookup-module "imaginary-fn")))
+  (check (not (lookup-module ""))))
+
+; ── EDSL chain 测试 ──
+
+(test-suite "heal:edsl-heal-chain"
+  (let ((r (heal "(set-code \"(define (f x) (* x 2))\")" (list "set-code") 3)))
+    (check (or (check-success (car r) (list "healed"))
+               (check-success (car r) (list "failed"))))))
+
+; ── *stdlib-map* 完整性 ──
+
+(test-suite "heal:stdlib-map-pairs"
+  ; Verify stdlib-map has proper pair structure
+  (check (pair? *stdlib-map*))
+  (check (pair? (car *stdlib-map*)))
+  (check (string? (car (car *stdlib-map*))))
+  (check (string? (cdr (car *stdlib-map*)))))
