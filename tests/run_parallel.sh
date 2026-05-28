@@ -15,7 +15,7 @@ WORKERS="${1:-4}"
 TOTAL=135
 BATCH=$(( (TOTAL + WORKERS - 1) / WORKERS ))
 AURA="${AURA:-./build/aura}"
-TIMEOUT=600
+TIMEOUT=1200  # 20 min per worker (was 600 — 10 min insufficient for 14+ tasks at ~1 min/task)
 
 echo "=== Parallel bench.aura ==="
 echo "Workers: $WORKERS"

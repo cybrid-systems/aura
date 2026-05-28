@@ -51,25 +51,9 @@
   (newline)
 
   ; Use parallel runner — tree-walker fallback covers fiber:spawn inside module
-  (define results (run-parallel tasks model max-a rounds workers))
+  (run-parallel tasks model max-a rounds workers)
 
-  ; ── Aggregated report (written to file to avoid pipe-buffer loss) ──
-  (define agg (aggregate tasks results))
-  (define total (list-ref agg 0))
-  (define pass (list-ref agg 1))
-  (define fail (list-ref agg 2))
-  (define pct (if (> (+ pass fail) 0) (number->string (quotient (* pass 100) (+ pass fail))) "0"))
-  (define summary (string-append
-    model "|" (number->string total) " tasks|"
-    (number->string rounds) " rounds|"
-    (number->string pass) " pass|"
-    (number->string fail) " fail|" pct "%"))
-  ; Also append timestamp (seconds since epoch)
-  (define ts (string-append "|" (number->string (current-time))))
-  (write-file "bench_results.txt" (string-append summary ts "\n"))
-
-  ; ── Print result to stdout (may be truncated in pipe mode) ──
-  (display "\n=== Results ===\n")
-  (display summary)
-  (display "\n")
+  ; ── Done ──
+  ; OK/FAIL lines are printed per-task by run-rounds.
+  ; Count via grep on the output side.
   (display "=== All tasks completed ===")(newline))
