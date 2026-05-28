@@ -4817,6 +4817,284 @@ void Evaluator::init_pair_primitives() {
         return make_int(static_cast<std::int64_t>(new_val));
     });
 
+    // (mutate:replace-pattern pattern replacement [summary])
+    //   → #t/#f
+    //   Finds all nodes matching a structural pattern and replaces them
+    //   with the replacement template.
+    //
+    //   Pattern syntax:
+    //     (\* 2 x)     — exact match: Call(Int(2), Var(x))
+    //     (/ ... ...)   — "..." wildcard matches any single subtree
+    //
+    //   Replacement is a string. When the pattern has wildcards "...",
+    //   each occurrence in the replacement is substituted with the
+    //   source-code string of the captured subtree.
+    //
+    //   Example:
+    //     (mutate:replace-pattern "(* 2 x)" "(+ x x)")
+    //       → replaces (* 2 x) with (+ x x) everywhere
+    //     (mutate:replace-pattern "(... (+ ... ...))" "...")
+    //       → strips outer call, keeps only the first child
+    primitives_.add("mutate:replace-pattern", [this](const auto& a) -> EvalValue {
+        using namespace aura::ast;
+        defuse_version_++;
+        if (workspace_read_only_) return make_bool(false);
+        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) ||
+            !workspace_flat_ || !workspace_pool_)
+            return make_bool(false);
+        auto pattern_idx = as_string_idx(a[0]);
+        auto repl_idx = as_string_idx(a[1]);
+        if (pattern_idx >= string_heap_.size() || repl_idx >= string_heap_.size())
+            return make_bool(false);
+        auto& flat = *workspace_flat_;
+
+        auto pattern_str = string_heap_[pattern_idx];
+        std::string repl_template = string_heap_[repl_idx];
+        std::string summary = (a.size() > 2 && is_string(a[2]))
+                                  ? string_heap_[as_string_idx(a[2])]
+                                  : "replace-pattern";
+
+        // Parse pattern into separate FlatAST
+        auto alloc = arena_->allocator();
+        auto* pat_pool = arena_->create<aura::ast::StringPool>(alloc);
+        auto* pat_flat = arena_->create<aura::ast::FlatAST>(alloc);
+        auto pat_pr = aura::parser::parse_to_flat(pattern_str, *pat_flat, *pat_pool);
+        if (!pat_pr.success || pat_pr.root == NULL_NODE)
+            return make_bool(false);
+
+        auto wildcard_sym = pat_pool->intern("...");
+
+        // ── Source-code reconstruction helper ─────────────────
+        // Given a node ID in the workspace FlatAST, reconstruct its source
+        // code as a string (same as current-source but for any node)
+        std::function<std::string(NodeId)> node_to_source;
+        node_to_source = [&](NodeId id) -> std::string {
+            if (id >= flat.size() || id == NULL_NODE) return "";
+            auto v = flat.get(id);
+            switch (v.tag) {
+                case NodeTag::LiteralInt:
+                    return std::to_string(v.int_value);
+                case NodeTag::LiteralFloat:
+                    return std::to_string(v.float_value);
+                case NodeTag::LiteralString:
+                    return "\"" + std::string(workspace_pool_->resolve(v.sym_id)) + "\"";
+                case NodeTag::Variable:
+                    return std::string(workspace_pool_->resolve(v.sym_id));
+                case NodeTag::Call: {
+                    std::string s = "(";
+                    for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
+                        if (ci > 0) s += " ";
+                        s += node_to_source(v.child(ci));
+                    }
+                    s += ")";
+                    return s;
+                }
+                case NodeTag::Lambda: {
+                    std::string s = "(lambda (";
+                    for (std::size_t pi = 0; pi < v.params.size(); ++pi) {
+                        if (pi > 0) s += " ";
+                        s += pat_pool->resolve(v.params[pi]);
+                    }
+                    s += ")";
+                    if (!v.children.empty())
+                        s += " " + node_to_source(v.child(0));
+                    s += ")";
+                    return s;
+                }
+                case NodeTag::IfExpr: {
+                    std::string s = "(if";
+                    if (v.children.size() > 0)
+                        s += " " + node_to_source(v.child(0));
+                    if (v.children.size() > 1)
+                        s += " " + node_to_source(v.child(1));
+                    if (v.children.size() > 2)
+                        s += " " + node_to_source(v.child(2));
+                    s += ")";
+                    return s;
+                }
+                case NodeTag::Begin: {
+                    std::string s = "(begin";
+                    for (auto c : v.children)
+                        s += " " + node_to_source(c);
+                    s += ")";
+                    return s;
+                }
+                case NodeTag::Define: {
+                    std::string s = "(define " + std::string(workspace_pool_->resolve(v.sym_id));
+                    if (!v.children.empty()) {
+                        auto val_node = flat.get(v.child(0));
+                        if (val_node.tag == NodeTag::Lambda) {
+                            s += " (";
+                            for (std::size_t pi = 0; pi < val_node.params.size(); ++pi) {
+                                if (pi > 0) s += " ";
+                                s += workspace_pool_->resolve(val_node.params[pi]);
+                            }
+                            s += ")";
+                            if (!val_node.children.empty())
+                                s += " " + node_to_source(val_node.child(0));
+                            s += ")";
+                        } else {
+                            s += " " + node_to_source(v.child(0));
+                        }
+                    }
+                    s += ")";
+                    return s;
+                }
+                case NodeTag::Let:
+                case NodeTag::LetRec: {
+                    std::string kw = (v.tag == NodeTag::LetRec) ? "letrec" : "let";
+                    std::string s = "(" + kw;
+                    if (v.has_name())
+                        s += " " + std::string(workspace_pool_->resolve(v.sym_id));
+                    // bindings: (var val) pairs
+                    // Not implemented for now — just print children
+                    for (auto c : v.children)
+                        s += " " + node_to_source(c);
+                    s += ")";
+                    return s;
+                }
+                default:
+                    return std::string("#<node-") + std::to_string(static_cast<int>(v.tag)) + ">";
+            }
+        };
+
+        // ── Match + capture ────────────────────────────────────
+        struct MatchResult {
+            bool matched = false;
+            std::vector<NodeId> captures;
+        };
+
+        std::function<MatchResult(NodeId, NodeId)> match_capture;
+        match_capture = [&](NodeId ws_id, NodeId pat_id) -> MatchResult {
+            if (pat_id >= pat_flat->size() || pat_id == NULL_NODE)
+                return {ws_id == NULL_NODE, {}};
+            if (ws_id >= flat.size() || ws_id == NULL_NODE)
+                return {false, {}};
+
+            auto ws_node = flat.get(ws_id);
+            auto pat_node = pat_flat->get(pat_id);
+
+            if (pat_node.tag == NodeTag::Variable && pat_node.sym_id == wildcard_sym)
+                return {true, {ws_id}};
+
+            if (ws_node.tag != pat_node.tag)
+                return {false, {}};
+
+            switch (pat_node.tag) {
+                case NodeTag::LiteralInt:
+                    return {ws_node.int_value == pat_node.int_value, {}};
+                case NodeTag::LiteralFloat:
+                    return {ws_node.float_value == pat_node.float_value, {}};
+                case NodeTag::Variable:
+                case NodeTag::LiteralString:
+                    return {workspace_pool_->resolve(ws_node.sym_id) ==
+                           pat_pool->resolve(pat_node.sym_id), {}};
+                case NodeTag::MacroDef:
+                    return {true, {}};
+                default:
+                    if (ws_node.children.size() != pat_node.children.size())
+                        return {false, {}};
+                    std::vector<NodeId> all_captures;
+                    for (std::size_t ci = 0; ci < ws_node.children.size(); ++ci) {
+                        auto child_result = match_capture(ws_node.child(ci), pat_node.child(ci));
+                        if (!child_result.matched)
+                            return {false, {}};
+                        all_captures.insert(all_captures.end(),
+                            child_result.captures.begin(), child_result.captures.end());
+                    }
+                    return {true, std::move(all_captures)};
+            }
+        };
+
+        // Find all matching nodes in workspace
+        std::vector<std::pair<NodeId, std::vector<NodeId>>> matches;
+        for (NodeId id = 0; id < flat.size(); ++id) {
+            auto mr = match_capture(id, pat_pr.root);
+            if (mr.matched)
+                matches.push_back({id, std::move(mr.captures)});
+        }
+
+        if (matches.empty())
+            return make_bool(false);
+
+        // Count wildcards in pattern
+        std::function<int(NodeId)> count_wildcards;
+        count_wildcards = [&](NodeId pat_id) -> int {
+            if (pat_id >= pat_flat->size() || pat_id == NULL_NODE) return 0;
+            auto pn = pat_flat->get(pat_id);
+            if (pn.tag == NodeTag::Variable && pn.sym_id == wildcard_sym)
+                return 1;
+            int total = 0;
+            for (auto c : pn.children)
+                total += count_wildcards(c);
+            return total;
+        };
+        int expected_captures = count_wildcards(pat_pr.root);
+
+        // ── Apply replacements via string substitution ────────
+        int replaced_count = 0;
+        for (auto& match : matches) {
+            auto match_id = match.first;
+            auto& captures = match.second;
+
+            if (static_cast<int>(captures.size()) != expected_captures)
+                continue;
+
+            // Find parent
+            auto parent_id = flat.parent_of(match_id);
+            if (parent_id == NULL_NODE) continue;
+            int child_idx = -1;
+            {
+                auto pv = flat.get(parent_id);
+                for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
+                    if (pv.child(ci) == match_id) {
+                        child_idx = static_cast<int>(ci);
+                        break;
+                    }
+                }
+            }
+            if (child_idx < 0) continue;
+
+            // Build the replacement string by substituting captures
+            std::string filled_repl;
+            if (expected_captures == 0) {
+                filled_repl = repl_template;
+            } else {
+                // Replace "..." with source code of each captured node
+                int cap_idx = 0;
+                std::size_t pos = 0;
+                while (pos < repl_template.size()) {
+                    auto dot_pos = repl_template.find("...", pos);
+                    if (dot_pos == std::string::npos) {
+                        filled_repl += repl_template.substr(pos);
+                        break;
+                    }
+                    filled_repl += repl_template.substr(pos, dot_pos - pos);
+                    if (cap_idx < static_cast<int>(captures.size())) {
+                        filled_repl += node_to_source(captures[cap_idx]);
+                        cap_idx++;
+                    }
+                    pos = dot_pos + 3; // skip "..."
+                }
+            }
+
+            // Parse the filled replacement into workspace
+            auto repl_pr = aura::parser::parse_to_flat(filled_repl, flat, *workspace_pool_);
+            if (!repl_pr.success || repl_pr.root == NULL_NODE)
+                continue;
+
+            // Replace the matched node
+            flat.set_child(parent_id, static_cast<std::uint32_t>(child_idx), repl_pr.root);
+            replaced_count++;
+        }
+
+        if (replaced_count == 0)
+            return make_bool(false);
+
+        flat.add_mutation(0, "replace-pattern", pattern_str, repl_template, summary);
+        return make_bool(true);
+    });
+
     // (typecheck-current) — Type check the workspace AST
     // Uses a persistent TypeRegistry across calls so type IDs are stable.
     // Full traversal for now; incremental skip (dirty-aware) requires
