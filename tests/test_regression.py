@@ -89,6 +89,16 @@ tests = [
      '(set-code "(define (f x) (* x 2))")(typecheck-current)(workspace:switch 0)'
      '(typecheck-current)(display "ok"))',
      "ok", ""),
+    ("incr-caller-dirty",
+     '(begin (set-code "(define (add x y) (+ x y))(define (caller z) (add z 1))(define (other z) (* z 2))")(typecheck-current)'
+     '(mutate:rebind "add" "(lambda (a b) (* a b))" "mul")(typecheck-current)'
+     '(display (eval-current))(display (caller 5))(display (other 5)))',
+     "10", ""),
+    ("incr-caller-chain",
+     '(begin (set-code "(define (f x) (+ x 1))(define (g x) (f x))(define (h x) (g x))")(typecheck-current)'
+     '(mutate:rebind "f" "(lambda (x) (* x 2))" "op")(typecheck-current)'
+     '(display (eval-current))(display (h 5)))',
+     "10", ""),
 
     # ── closure warning → stdout ──────────────────────────
     ("closure-warning-stdout",

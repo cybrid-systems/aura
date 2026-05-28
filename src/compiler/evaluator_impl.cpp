@@ -4450,6 +4450,21 @@ void Evaluator::init_pair_primitives() {
         // Redirect old Define's value child to the new nodes
         // This is a valid NodeId in workspace_flat_ since we parsed into it
         flat.set_child(old_define, 0, new_value);
+
+        // ── 增量检查：dirty 所有调用者节点 ───────────────────────
+        // mutate:rebind 只 dirty 了定义节点及其祖先，但调用者分布在
+        // AST 的不同分支，没有被标记为 dirty。扫描整个 FlatAST 找出
+        // 所有引用该函数的 Variable 节点，标记 dirty 并向上传播。
+        // 这样下次 typecheck-current 就知道这些节点需要重新类型推断。
+        if (&flat) {
+            for (aura::ast::NodeId sid = 0; sid < flat.size(); ++sid) {
+                auto sv = flat.get(sid);
+                if (sv.tag == aura::ast::NodeTag::Variable && sv.sym_id == sym) {
+                    flat.mark_dirty_upward(sid);
+                }
+            }
+        }
+
         return make_bool(true);
     });
 
