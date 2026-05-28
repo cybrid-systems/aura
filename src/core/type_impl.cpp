@@ -42,6 +42,14 @@ TypeId TypeRegistry::register_func(std::vector<TypeId> args, TypeId ret) {
     return id;
 }
 
+TypeId TypeRegistry::register_func_named(std::vector<TypeId> args, TypeId ret, std::string name) {
+    auto id = register_func(std::move(args), ret);
+    if (id.valid() && id.index < entries_.size()) {
+        entries_[id.index].name = std::move(name);
+    }
+    return id;
+}
+
 TypeId TypeRegistry::register_linear(TypeId inner) {
     auto id = TypeId{
         .index = static_cast<std::uint32_t>(entries_.size()),

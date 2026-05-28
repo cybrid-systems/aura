@@ -76,6 +76,7 @@ public:
                                     std::vector<std::string> constructors);
     const std::vector<std::string>* get_adt_constructors(aura::core::TypeId type_id) const;
     TypeId register_func(std::vector<TypeId> args, TypeId ret);
+    TypeId register_func_named(std::vector<TypeId> args, TypeId ret, std::string name);
     TypeId register_forall(TypeId var, TypeId body);
     TypeId register_linear(TypeId inner);
     TypeId make_var(std::string name = "");
