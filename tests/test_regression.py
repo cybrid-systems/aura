@@ -228,6 +228,11 @@ tests = [
      '(begin (define-module (M T) (display 1)) (M Int) (M String) (M Int) (M String) (display "ok"))',
      "11ok", ""),
 
+    # ── Functor P3: typecheck DefineModule ───────────────────
+    ("functor-tc-defmodule",
+     '(begin (set-code "(define-module (Stack T) (export push pop) (define (push s x) (cons x s)) (define (pop s) (cdr s)))")(display (typecheck-current)))',
+     'Module{push:', ""),
+
     # ── DCE + 类型注解 ────────────────────────────────────────
     ("ir-annot-float", '(: x Float 3.14)', "3.14", ""),
     ("ir-annot-double", '(: x Int (+ (: a Int 1) (: b Int 2)))', "3", ""),
