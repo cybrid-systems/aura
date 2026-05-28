@@ -4240,20 +4240,22 @@ void Evaluator::init_pair_primitives() {
                 ::dup2(saved_stdout, STDOUT_FILENO);
                 ::close(saved_stdout);
                 if (null_fd >= 0) ::close(null_fd);
-                // Re-run with display on restored stdout
+                // Return the auto-fix result silently (no display output)
                 if (auto_fixed && !winning_call.empty()) {
-                    std::string display_code = "(display " + winning_call + ")";
-                    aura::ast::StringPool disp_pool;
-                    aura::ast::FlatAST disp_flat;
-                    auto disp_pr = aura::parser::parse_to_flat(display_code, disp_flat, disp_pool);
-                    if (disp_pr.success && disp_pr.root != aura::ast::NULL_NODE) {
-                        disp_flat.root = disp_pr.root;
-                        auto disp_expanded = aura::compiler::macro_expand_all(
-                            disp_flat, disp_pool, disp_flat.root);
-                        auto disp_result = eval_flat(disp_flat, disp_pool, disp_expanded, top_);
-                        if (disp_result) {
+                    // Winners are evaluated with original stdout restored, but we
+                    // re-evaluate silently and return the raw value. Use (eval-current-output)
+                    // if you need the display output for LLM consumption.
+                    aura::ast::StringPool call_pool;
+                    aura::ast::FlatAST call_flat;
+                    auto call_pr = aura::parser::parse_to_flat(winning_call, call_flat, call_pool);
+                    if (call_pr.success && call_pr.root != aura::ast::NULL_NODE) {
+                        call_flat.root = call_pr.root;
+                        auto call_expanded = aura::compiler::macro_expand_all(
+                            call_flat, call_pool, call_flat.root);
+                        auto call_result = eval_flat(call_flat, call_pool, call_expanded, top_);
+                        if (call_result) {
                             coverage_counters_[9]++;
-                            return *disp_result;
+                            return *call_result;
                         }
                     }
                 }
