@@ -62,6 +62,28 @@ TypeId TypeRegistry::register_linear(TypeId inner) {
     return id;
 }
 
+TypeId TypeRegistry::register_module(ModuleType mt) {
+    auto id = TypeId{
+        .index = static_cast<std::uint32_t>(entries_.size()),
+        .generation = next_generation_,
+    };
+    std::string name = "Module{";
+    for (auto& [n, t] : mt.members) {
+        if (name.back() != '{') name += ", ";
+        name += n + ": " + std::string(name_of(t));
+    }
+    name += "}";
+    entries_.push_back(Entry{TypeTag::MODULE, std::move(name), std::nullopt, std::nullopt,
+                             std::nullopt, std::move(mt)});
+    return id;
+}
+
+const ModuleType* TypeRegistry::module_of(TypeId id) const {
+    if (id.index < entries_.size() && entries_[id.index].module_type)
+        return &*entries_[id.index].module_type;
+    return nullptr;
+}
+
 TypeId TypeRegistry::register_forall(TypeId var, TypeId body) {
     auto id = TypeId{
         .index = static_cast<std::uint32_t>(entries_.size()),
@@ -219,6 +241,16 @@ std::string TypeRegistry::format_type(TypeId id) const {
             if (!lt)
                 return "<linear>";
             return "(Linear " + format_type(lt->inner) + ")";
+        }
+        case TypeTag::MODULE: {
+            auto* mt = module_of(id);
+            if (!mt) return "<module>";
+            std::string s = "Module{";
+            for (auto& [n, t] : mt->members) {
+                if (s.back() != '{') s += ", ";
+                s += n + ": " + format_type(t);
+            }
+            return s + "}";
         }
         default:
             return std::string(name_of(id));

@@ -27,6 +27,7 @@ export enum class TypeTag : uint8_t {
     VOID,        // 无返回值
     TYPE,        // 类型自身的类型
     HASH,        // hash table
+    MODULE,      // 模块签名 {sym1: T1, sym2: T2, ...}
 };
 
 // ── TypeId ────────────────────────────────────────────────────
@@ -65,6 +66,11 @@ export struct LinearType {
     TypeId inner; // the wrapped type (e.g. Int in (Linear Int))
 };
 
+// Module type: {sym1: T1, sym2: T2, ...}
+export struct ModuleType {
+    std::vector<std::pair<std::string, TypeId>> members; // (name, type)
+};
+
 // ── TypeRegistry ──────────────────────────────────────────────
 export class TypeRegistry {
 public:
@@ -79,6 +85,7 @@ public:
     TypeId register_func_named(std::vector<TypeId> args, TypeId ret, std::string name);
     TypeId register_forall(TypeId var, TypeId body);
     TypeId register_linear(TypeId inner);
+    TypeId register_module(ModuleType mt);
     TypeId make_var(std::string name = "");
 
     // ── 查询 ──
@@ -87,6 +94,7 @@ public:
     const FuncType* func_of(TypeId id) const;
     const ForallType* forall_of(TypeId id) const;
     const LinearType* linear_of(TypeId id) const;
+    const ModuleType* module_of(TypeId id) const;
     bool is_var(TypeId id) const;
     bool is_subtype(TypeId sub, TypeId sup) const;
 
@@ -118,6 +126,7 @@ private:
         std::optional<FuncType> func;
         std::optional<ForallType> forall;
         std::optional<LinearType> linear;
+        std::optional<ModuleType> module_type;
         std::optional<std::vector<std::string>> adt_constructors;
     };
     std::vector<Entry> entries_;
