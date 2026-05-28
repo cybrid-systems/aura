@@ -964,21 +964,35 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id) {
         diag_.report(Diagnostic(ErrorKind::TypeError, "type constraint solving failed", cur_loc_)
                          .with_blame(BlameInfo{BlameParty::Implicit, "", "compile"}));
     }
-    return cs_.normalize(result);
+    auto normalized = cs_.normalize(result);
+    // Update the root's cached type with the final resolved type after solving.
+    // Individual sub-nodes' caches are updated during their synthesize_flat calls.
+    // Those may store TYPE_VARs that get resolved here; next incremental pass
+    // will re-compute stale TYPE_VAR caches and write back the resolved type.
+    flat.set_type(id, normalized.index);
+    flat.clear_dirty(id);
+    return normalized;
 }
 
 TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId id, NodeView v) {
     cur_loc_ = {v.line, v.col, 0};
 
-    // Incremental: if node is clean AND has cached type, return cached result.
+    // Incremental: if node is clean AND has a resolved cached type, return cached result.
     // Dirty propagation ensures ancestors of mutated nodes are marked dirty,
     // so clean nodes' cached types remain valid.
+    // Skip TYPE_VAR cache entries — they are stale pre-solve type variables
+    // that were cached before constraint solving resolved them.
     if (!flat.is_dirty(id)) {
         auto cached = flat.type_id(id);
         if (cached > 0 && cached < reg_.size()) {
-            return TypeId{cached, 1};
+            auto tid = TypeId{cached, 1};
+            // Type vars cached before constraint solving are stale;
+            // only accept concrete resolved types for incremental reuse.
+            if (reg_.tag_of(tid) != TypeTag::TYPE_VAR) {
+                return tid;
+            }
         }
-        // Clean but not cached (first run or newly inserted node): fall through
+        // Clean but not cached / stale cache: fall through to recompute
     }
 
     TypeId result;
@@ -1288,8 +1302,13 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
             break;
     }
 
-    // Cache result for future incremental calls
+    // Cache result for future incremental calls.
+    // Store the type index even if it's a fresh var — after constraint solving
+    // in infer_flat, the root's cache will be updated with the normalized type.
+    // The cache read path skips TYPE_VAR entries, so stale vars cause a
+    // re-compute which then stores the resolved type.
     flat.set_type(id, result.index);
+    flat.clear_dirty(id);
     return result;
 }
 

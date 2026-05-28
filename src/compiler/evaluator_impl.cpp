@@ -4799,15 +4799,10 @@ void Evaluator::init_pair_primitives() {
         auto result =
             tc.infer_flat(*workspace_flat_, *workspace_pool_, workspace_flat_->root, diag);
 
-        // Cache inferred TypeIds back to type_id_ for future incremental use
-        auto& flat = *workspace_flat_;
-        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            // Only overwrite if dirty (clean nodes already have valid cached type)
-            if (flat.is_dirty(id)) {
-                // We'd need a per-node type query, which the TypeChecker doesn't expose
-                // For now: mark the full traversal as a TODO for incremental
-            }
-        }
+        // TypeChecker now writes back normalized types via synthesize_flat + infer_flat,
+        // and clears per-node dirty flags. No need for post-pass cache sync.
+        // Safety clear for any nodes that may have been missed.
+        workspace_flat_->clear_all_dirty();
 
         std::string out = "type: " + treg.format_type(result) + "\n";
         auto all_diags = diag.diagnostics();
@@ -4819,8 +4814,6 @@ void Evaluator::init_pair_primitives() {
                 out += "  [" + std::to_string(static_cast<int>(d.kind)) + "] " + d.format() + "\n";
             }
         }
-
-        flat.clear_all_dirty();
 
         auto sidx = string_heap_.size();
         string_heap_.push_back(out);
