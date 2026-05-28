@@ -218,6 +218,9 @@ tests = [
     ("functor-plain-body",
      '(begin (define-module (Box T) (+ 1 2)) (Box Int) (display "ok"))',
      "ok", ""),
+    ("functor-cache",
+     '(begin (define-module (C T) (display 1)) (C Int) (C Int) (C Int) (display "ok"))',
+     "1ok", ""),
 
     # ── closure warning → stdout ──────────────────────────
     ("closure-warning-stdout",
