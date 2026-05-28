@@ -152,8 +152,40 @@ Aura：C++26，LLVM ORC JIT 后端，Sound Gradual Typing。
 
 
 
+## EDSL Benchmark
+
+135 个 LLM 代码生成任务，覆盖基础语法、标准库、类型系统、C FFI、EDSL 自修改、Workspace、ADT、所有权、Synthesize 管线。  
+自适应迭代修正（intend 模式，最多 3 次重试 + ant colony 零 LLM 变异修复）。
+
+| 模型 | 任务数 | 通过 | 通过率 | 耗时 | 运行方式 |
+|:----|:-----:|:----:|:-----:|:----:|:--------|
+| 🥇 **Grok (xAI)** | 135 | **135** | **100%** | ~2min | Aura-native, 6 workers |
+| 🥈 **DeepSeek v4 Flash** | 135 | 103-106 | 76-79% | ~3-25min | Python (103) / Aura-native (106) |
+| 🥉 **MiniMax M2.7** | 135 | 47 | 34.8% | ~8min | Python runner (历史) |
+
+> Aura-native 和 Python runner 的通过率一致，差异在 LLM 方差范围内。  
+> Grok 首次生成通过率 ~22%，ant colony 零 LLM 开销修复剩余 78%。
+
+### 运行方式
+
+**Aura-native（完全自托管，推荐）：**
+```bash
+# 单机串行（用于调试）
+LLM_API_KEY="***" BENCH_LIMIT=10 ./build/aura < tests/bench.aura
+
+# 多进程并行
+LLM_API_KEY="***" bash tests/run_parallel.sh 6
+```
+
+**Python runner（多模型对比）：**
+```bash
+LLM_API_KEY="***" python3 tests/edsl_benchmark.py --max-attempts 2
+LLM_API_KEY="***" LLM_MODEL="grok-beta" LLM_BASE_URL="https://api.x.ai/v1" python3 tests/edsl_benchmark.py
+```
+
 ## 文档
 
+- [docs/benchmark.md](docs/benchmark.md) — Benchmark 详细历史和数据分析
 - [docs/roadmap.md](docs/roadmap.md) — 路线图
 - [docs/tutorial.md](docs/tutorial.md) — 教程
 - [docs/design/](docs/design/) — 设计文档
