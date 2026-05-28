@@ -1,0 +1,42 @@
+(require "std/test" all:)
+
+;; ═══════════════════════════════════════════════════════════════════
+;; Issue #14 — 结构化错误诊断测试
+;; 验证失败路径返回 ("kind" "message") 而非 #f
+;; ═══════════════════════════════════════════════════════════════════
+
+(set-code "(define (f x) (+ x 1))")
+
+(test-suite "err:bad-arg-mutate"
+  (check (pair? (mutate:rebind)))
+  (check (pair? (mutate:set-body)))
+  (check (pair? (mutate:remove-node)))
+  (check (pair? (mutate:insert-child)))
+  (check (pair? (mutate:tweak-literal)))
+  (check (pair? (mutate:splice)))
+  (check (pair? (mutate:wrap)))
+  (check (pair? (mutate:move-node)))
+  (check (pair? (mutate:rename-symbol)))
+  (check (pair? (mutate:extract-function))))
+
+(test-suite "err:bad-arg-query"
+  (check (pair? (query:find)))
+  (check (pair? (query:children)))
+  (check (pair? (query:node)))
+  (check (pair? (query:parent)))
+  (check (pair? (query:siblings)))
+  (check (pair? (query:node-type)))
+  (check (pair? (query:pattern)))
+  (check (pair? (query:def-use)))
+  (check (pair? (query:reaches)))
+  (check (pair? (query:effects))))
+
+(test-suite "err:out-of-range"
+  (check (pair? (mutate:remove-node 999)))
+  (check (pair? (mutate:tweak-literal 999 1)))
+  (check (pair? (mutate:inline-call 999)))
+  (check (pair? (mutate:move-node 999 0 0)))
+  (check (pair? (query:node 999)))
+  (check (pair? (query:children 999)))
+  (check (pair? (query:parent 999)))
+  (check (pair? (query:siblings 999))))
