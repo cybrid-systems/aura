@@ -4963,6 +4963,14 @@ struct DefUseIndex {
     std::vector<std::uint32_t> sym_scopes_vals_;
     std::vector<std::uint32_t> sym_to_range_;
 
+    // ── Call-graph index (#10) ─────────────────────────────────
+    // callers_of_: SymId → all Call nodes that call this symbol
+    // built during build(), enables O(1) query_callers
+    std::unordered_map<SymId, std::vector<NodeId>> callers_of_;
+    // callee_of_: NodeId → SymId (only for Call nodes)
+    // enables O(1) callee lookup from a call site
+    std::vector<SymId> callee_of_;
+
     FlatAST* flat_ = nullptr;
     StringPool* pool_ = nullptr;
     bool built_ = false;
@@ -4972,6 +4980,7 @@ struct DefUseIndex {
         scopes_.clear(); def_syms_.clear(); def_nodes_.clear();
         refs_.clear(); uses_.clear(); sym_scopes_keys_.clear();
         sym_scopes_vals_.clear(); sym_to_range_.clear();
+        callers_of_.clear(); callee_of_.clear();
         flat_ = nullptr; pool_ = nullptr; built_ = false;
     }
 
@@ -5143,6 +5152,10 @@ struct DefUseIndex {
         // Pass 4: build cross-scope sym index
         build_sym_index();
 
+        // Pass 5: build call-graph index (#10)
+        // Walk all Call nodes, record callers_of_ and callee_of_
+        build_call_graph(flat);
+
         built_ = true;
     }
 
@@ -5271,6 +5284,23 @@ struct DefUseIndex {
         }
     }
 
+    // ── Build call-graph index (#10) ────────────────────────────
+    // Populates callers_of_ and callee_of_ from all Call nodes.
+    void build_call_graph(FlatAST& flat) {
+        callers_of_.clear();
+        callee_of_.resize(flat.size(), INVALID_SYM);
+        for (NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+            if (v.tag == NodeTag::Call && !v.children.empty()) {
+                auto callee = flat.get(v.child(0));
+                if (callee.tag == NodeTag::Variable && callee.sym_id != INVALID_SYM) {
+                    callers_of_[callee.sym_id].push_back(id);
+                    callee_of_[id] = callee.sym_id;
+                }
+            }
+        }
+    }
+
     // ── Query: def-use for a symbol ─────────────────────────────
     struct DefUseResult {
         std::vector<NodeId> defs;
@@ -5315,7 +5345,25 @@ struct DefUseIndex {
     }
 
     // ── Query: caller nodes for a symbol ────────────────────────
+    // O(1) callee lookup: which symbol does a Call node invoke?
+    // Returns INVALID_SYM if not a call or not indexed.
+    SymId query_callee(NodeId node) const {
+        if (node < callee_of_.size())
+            return callee_of_[node];
+        return INVALID_SYM;
+    }
+
+    // O(1) caller query using callers_of_ index (built during build())
+    // Fallback: if index not available (build_call_graph wasn't run), do O(N) scan
     std::vector<NodeId> query_callers(SymId sym, FlatAST& flat) {
+        // Try indexed path first
+        if (!callers_of_.empty()) {
+            auto it = callers_of_.find(sym);
+            if (it != callers_of_.end())
+                return it->second;
+            return {};
+        }
+        // Fallback: O(N) scan for unindexed state
         std::vector<NodeId> callers;
         for (NodeId id = 0; id < flat.size(); ++id) {
             auto v = flat.get(id);
@@ -6359,7 +6407,8 @@ Evaluator::Evaluator() {
     };
 
     // Helper: get or rebuild the def-use index
-    // Tracks defuse_version_ to detect mutations since last build
+    // Tracks defuse_version_ to detect mutations since last build.
+    // (#10) Tracks rebuild count and clears affected_syms_ after rebuild.
     auto ensure_defuse = [this]() -> DefUseIndex* {
         if (!workspace_flat_ || !workspace_pool_)
             return nullptr;
@@ -6369,13 +6418,18 @@ Evaluator::Evaluator() {
             defuse_index_ = idx;
             idx->build(*workspace_flat_, *workspace_pool_);
             defuse_version_ = 1;
+            defuse_rebuild_count_++;
         } else {
-            // If mutations happened, rebuild (full rebuild for now)
-            if (defuse_version_ > 1)
+            // If mutations happened, rebuild
+            if (defuse_version_ > 1) {
                 idx->build(*workspace_flat_, *workspace_pool_);
-            else
+                defuse_version_ = 1;
+                defuse_rebuild_count_++;
+            } else {
                 idx->rebuild_dirty(*workspace_flat_, *workspace_pool_);
+            }
         }
+        defuse_affected_syms_.clear();
         return idx;
     };
 
@@ -6482,6 +6536,60 @@ Evaluator::Evaluator() {
         auto c2 = pairs_.size(); pairs_.push_back({use_list, make_pair(c1)});
         auto c3 = pairs_.size(); pairs_.push_back({def_list, make_pair(c2)});
         return make_pair(c3);
+    });
+
+    // (query:build-index)
+    //   → #t  Explicitly rebuild all def-use and call-graph indexes.
+    //   Useful for benchmark consistency or after bulk mutations.
+    primitives_.add("query:build-index", [this, ensure_defuse](const auto& a) -> EvalValue {
+        auto idx = ensure_defuse();
+        if (!idx)
+            return make_int(0);
+        // Force full rebuild regardless of version
+        idx->build(*workspace_flat_, *workspace_pool_);
+        defuse_version_ = 1;
+        this->defuse_rebuild_count_++;
+        defuse_affected_syms_.clear();
+        return make_int(1);
+    });
+
+    // (query:index-stats)
+    //   → ((callers . N) (def-syms . N) (refs . N) (rebuilds . N) (scopes . N) (nodes . N))
+    //   Statistics about the def-use and call-graph indexes.
+    primitives_.add("query:index-stats", [this, ensure_defuse, nodes_to_list](const auto& a) -> EvalValue {
+        auto idx = ensure_defuse();
+        if (!idx)
+            return make_void();
+        auto& flat = *workspace_flat_;
+
+        // Build: ((k1 . v1) (k2 . v2) ...) as a proper Aura list.
+        // Use correct pattern: forward ref → push data → use ref.
+        // Do NOT use the ref inside the data being pushed (would self-reference).
+        auto make_kv = [&](std::string_view k, std::int64_t v) -> types::EvalValue {
+            auto kv_ref = make_pair(pairs_.size());
+            auto k_sym = string_heap_.size();
+            string_heap_.push_back(std::string(k));
+            types::EvalValue car = make_string(k_sym);
+            types::EvalValue cdr = make_int(v);
+            pairs_.push_back(Pair{car, cdr});
+            return kv_ref;
+        };
+
+        // Build list in reverse: each new pair's cdr points to previous stats
+        auto stats = make_void();
+        auto push_kv = [&](std::string_view k, std::int64_t v) {
+            auto kv_ref = make_kv(k, v);
+            auto new_ref = make_pair(pairs_.size());
+            pairs_.push_back(Pair{kv_ref, stats});
+            stats = new_ref;
+        };
+        push_kv("nodes", flat.size());
+        push_kv("scopes", idx->scopes_.size());
+        push_kv("def-syms", idx->def_syms_.size());
+        push_kv("refs", idx->refs_.size());
+        push_kv("callers", idx->callers_of_.size());
+        push_kv("rebuilds", (std::int64_t)defuse_rebuild_count_);
+        return stats;
     });
 
     // ═══════════════════════════════════════════════════════════════
