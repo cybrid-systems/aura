@@ -411,6 +411,18 @@ InferenceEngine::InferenceEngine(TypeRegistry& reg, DiagnosticCollector& diag)
     , cs_(reg)
     , env_(reg) {
     init_primitive_env();
+    // 加载 register_func_named 注册的自定义类型签名
+    // (来自 declare-type / register-module-type)
+    for (std::size_t i = 0; i < reg_.size(); ++i) {
+        auto tid = TypeId{static_cast<std::uint32_t>(i), 1};
+        auto name = reg_.name_of(tid);
+        if (name.starts_with("__decl_")) {
+            auto func_name = std::string(name.substr(7)); // 去掉 "__decl_" 前缀
+            if (auto* ft = reg_.func_of(tid)) {
+                env_.bind(func_name, tid);
+            }
+        }
+    }
 }
 
 
@@ -1954,6 +1966,29 @@ void InferenceEngine::check_flat_lambda(FlatAST& flat, StringPool& pool, NodeVie
 // ═══════════════════════════════════════════════════════════
 // TypeChecker — Public API
 // ═══════════════════════════════════════════════════════════
+
+void TypeChecker::inject_type_sigs(
+    const std::unordered_map<std::string, std::string>& sigs) {
+    auto lookup = [&](const std::string& name) -> TypeId {
+        if (name == "Int")    return types.int_type();
+        if (name == "Bool")   return types.bool_type();
+        if (name == "String") return types.string_type();
+        if (name == "Float")  return types.lookup_type("Float");
+        if (name == "Void")   return types.void_type();
+        if (name == "Any" || name == "Dyn") return types.dynamic_type();
+        return types.dynamic_type();
+    };
+    for (auto& [name, sig] : sigs) {
+        auto pipe = sig.find('|');
+        if (pipe == std::string::npos) continue;
+        std::vector<TypeId> param_types;
+        std::istringstream iss(sig.substr(0, pipe));
+        std::string tok;
+        while (iss >> tok) param_types.push_back(lookup(tok));
+        types.register_func_named(std::move(param_types), lookup(sig.substr(pipe + 1)),
+                                  "__decl_" + name);
+    }
+}
 
 TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
                                DiagnosticCollector& diag) {

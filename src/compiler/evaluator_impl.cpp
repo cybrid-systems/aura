@@ -4822,6 +4822,15 @@ void Evaluator::init_pair_primitives() {
         }
         auto& treg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
         aura::compiler::TypeChecker tc(treg);
+
+        // 注入 declare-type 声明的自定义类型签名
+        if (!declared_type_sigs_.empty()) {
+            std::unordered_map<std::string, std::string> sig_map;
+            for (auto& [name, decl] : declared_type_sigs_)
+                sig_map[name] = decl.type_str;
+            tc.inject_type_sigs(sig_map);
+        }
+
         aura::diag::DiagnosticCollector diag;
 
         auto result =
@@ -6000,6 +6009,25 @@ Evaluator::Evaluator() {
         auto sidx = string_heap_.size();
         string_heap_.push_back(std::move(buf));
         return types::make_string(sidx);
+    });
+
+    // (declare-type name "param-types..." "ret-type") — 声明函数类型签名
+    // 示例: (declare-type add "Int Int" "Int") → add: (Int, Int) -> Int
+    // 这些签名在 typecheck-current 时注入到类型环境中。
+    primitives_.add("declare-type", [this](const auto& a) -> EvalValue {
+        if (a.size() < 3 || !is_string(a[0]) || !is_string(a[1]) || !is_string(a[2]))
+            return make_bool(false);
+        auto name_idx = as_string_idx(a[0]);
+        auto params_idx = as_string_idx(a[1]);
+        auto ret_idx = as_string_idx(a[2]);
+        if (name_idx >= string_heap_.size() || params_idx >= string_heap_.size() ||
+            ret_idx >= string_heap_.size())
+            return make_bool(false);
+        declared_type_sigs_[string_heap_[name_idx]] = {
+            .type_str = string_heap_[params_idx] + "|" + string_heap_[ret_idx],
+            .resolved = false
+        };
+        return make_bool(true);
     });
 
     primitives_.add("tcp-close", [this](const auto& a) -> EvalValue {

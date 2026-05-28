@@ -255,6 +255,16 @@ private:
     std::function<std::vector<aura::ast::NodeId>(void*, aura::ast::SymId)>
         dep_caller_fn_ = nullptr;
 
+    // ── 模块类型签名（#8 跨模块类型检查） ──────────────────────
+    // (declare-type "name" "param-types" "ret-type") 存储的签名，
+    // 在 typecheck-current 时注入到类型环境中。
+    // 格式: type_str = "param1 param2|rettype" | 分隔
+    struct DeclaredType {
+        std::string type_str;
+        bool resolved = false;
+    };
+    std::unordered_map<std::string, DeclaredType> declared_type_sigs_;
+
     // ── Timeline for intend (E2, backward compat) ───────────────
     std::vector<std::string> timeline_; //
     std::vector<std::string> string_heap_;

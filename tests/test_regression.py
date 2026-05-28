@@ -172,6 +172,14 @@ tests = [
     ("ir-annot-let", '(let ((x 10)) (: y Int x))', "10", ""),
     ("ir-annot-if", '(if 1 (: a Int 42) (: b Int 0))', "42", ""),
 
+    # ── 模块类型签名 #8 ──────────────────────────────────────
+    ("declare-type-basic",
+     '(begin (declare-type "mytest" "Int Int" "Int")(display "ok"))',
+     "ok", ""),
+    ("declare-type-multi",
+     '(begin (declare-type "f1" "Int" "Int")(declare-type "f2" "Int" "Bool")(display "ok"))',
+     "ok", ""),
+
     # ── closure warning → stdout ──────────────────────────
     ("closure-warning-stdout",
      '(define (f x) (+ x 1)) f', "uncalled function", ""),

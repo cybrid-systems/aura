@@ -205,6 +205,13 @@ export struct TypeChecker {
     aura::core::TypeRegistry& types;
     explicit TypeChecker(aura::core::TypeRegistry& reg)
         : types(reg) {}
+
+    // 注入自定义类型签名（来自 declare-type / 模块类型声明）
+    // 在 infer_flat 前调用。name_to_sig: (name → "param1 param2|rettype")。
+    // 格式示例: "Int Int|Int" 表示 (Int, Int) -> Int
+    void inject_type_sigs(
+        const std::unordered_map<std::string, std::string>& sigs);
+
     aura::core::TypeId infer_flat(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                   aura::ast::NodeId node, aura::diag::DiagnosticCollector& diag);
 };
