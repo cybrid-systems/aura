@@ -11124,9 +11124,21 @@ ast::NodeId Evaluator::data_to_flat(const types::EvalValue& data, aura::ast::Fla
         auto cur = cdr_data;
         while (is_pair(cur)) {
             auto cp = as_pair_idx(cur);
-            auto a = data_to_flat(pairs_[cp].car, flat, pool, depth + 1);
-            if (a != ast::NULL_NODE)
-                args.push_back(a);
+            auto arg_data = pairs_[cp].car;
+            // Direct string arguments (e.g., "hello" in quoted form) → LiteralString
+            // Nested expressions → recurse normally
+            if (is_string(arg_data)) {
+                auto sidx = as_string_idx(arg_data);
+                if (sidx < string_heap_.size()) {
+                    auto name = string_heap_[sidx];
+                    auto ssid = pool.intern(name);
+                    args.push_back(flat.add_literalstring(ssid));
+                }
+            } else {
+                auto a = data_to_flat(arg_data, flat, pool, depth + 1);
+                if (a != ast::NULL_NODE)
+                    args.push_back(a);
+            }
             cur = pairs_[cp].cdr;
         }
         return flat.add_call(func_node, args);

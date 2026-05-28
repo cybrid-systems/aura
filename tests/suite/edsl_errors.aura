@@ -40,3 +40,11 @@
   (check (pair? (query:children 999)))
   (check (pair? (query:parent 999)))
   (check (pair? (query:siblings 999))))
+
+(test-suite "err:not-found"
+  (check (pair? (mutate:rebind "nonexistent" "(lambda (y) y)")))
+  (check (pair? (mutate:set-body "nonexistent" "(+ 1 2)")))
+  (check (pair? (mutate:rename-symbol "nonexistent" "newname"))))
+
+(test-suite "err:success-paths"
+  (check (mutate:rebind "f" "(lambda (x) (* x 2))")))
