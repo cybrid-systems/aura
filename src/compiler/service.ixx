@@ -517,10 +517,12 @@ public:
         ComputeKindWrap ck;
         ArityWrap ar;
         ConstantFoldingWrap cf;
+        DeadCoercionEliminationPass dce(&type_registry_);
         ts.run(ir_mod);
         ck.run(ir_mod);
         ar.run(ir_mod);
         cf.run(ir_mod);
+        dce.run(ir_mod);
 
         if (ar.has_error()) {
             for (auto& d : ar.result().diagnostics) {
