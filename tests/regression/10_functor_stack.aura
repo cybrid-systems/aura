@@ -1,0 +1,10 @@
+;; test: define-module + functor instantiation
+;; expect: #t
+(define-module (Stack T) (export push pop top empty)
+  (define (push s x) (cons x s))
+  (define (pop s) (cdr s))
+  (define (top s) (car s))
+  (define empty ()))
+(define s (Stack Int))
+(display (module? s))
+(newline)
