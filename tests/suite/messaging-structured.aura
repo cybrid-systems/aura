@@ -1,0 +1,28 @@
+(require "std/test" all:)
+
+(test-suite "messaging:json-roundtrip"
+  ; json-encode / json-parse round-trip for all value types
+  (check (= (json-parse (json-encode 42)) 42))
+  (check (= (json-parse (json-encode 3.14)) 3.14))
+  (check (eq? (json-parse (json-encode #t)) #t))
+  (check (eq? (json-parse (json-encode #f)) #f))
+  (check (equal? (json-parse (json-encode (list 1 2 3))) (list 1 2 3)))
+  (check (equal? (json-parse (json-encode '(#t #f 42))) '(#t #f 42)))
+  (check (equal? (json-parse (json-encode "hello")) "hello"))
+  (check (eq? (json-parse (json-encode (void))) (void)))
+  ; Nested structures
+  (define nested '(1 (2 3) (4 (5 6))))
+  (check (equal? (json-parse (json-encode nested)) nested))
+  ; Empty list
+  (check (equal? (json-parse (json-encode '())) '())))
+
+(test-suite "messaging:send-json-auto"
+  ; (send) with non-string value: auto json-encode
+  ; In pipe mode there's no bridge, so send returns #f.
+  ; But at least it shouldn't crash or return an error.
+  (let ((r (send "test-agent" 42)))
+    (check (or (eq? r #f) (eq? r #t)))))
+
+(define result (run-tests))
+(display result)
+(newline)
