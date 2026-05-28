@@ -423,6 +423,54 @@ def test_generate_type_sigs():
             assert "myfn" in content, f"sig missing myfn: {content}"
     print("  ✅ test-generate-type-sigs")
 
+def test_module_chain_5():
+    """5-module chain: A→B→C→D→E with generate-type-sigs."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Module chain: E calls D calls C calls B calls A
+        # Each module uses generate-type-sigs for the NEXT module
+        mods = {}
+        for name in ["a", "b", "c", "d", "e"]:
+            mods[name] = os.path.join(tmpdir, f"{name}.aura")
+        
+        # Write modules (reverse order so depends on already-written ones)
+        # a: base
+        with open(mods["a"], "w") as f:
+            f.write("(define (fn-a x) (* x 2))\n")
+        # b: calls a
+        with open(mods["b"], "w") as f:
+            f.write(f'(require "{mods["a"]}" all:)\n')
+            f.write("(define (fn-b x) (fn-a (+ x 1)))\n")
+        # c: calls b
+        with open(mods["c"], "w") as f:
+            f.write(f'(require "{mods["b"]}" all:)\n')
+            f.write("(define (fn-c x) (fn-b (* x 3)))\n")
+        # d: calls c
+        with open(mods["d"], "w") as f:
+            f.write(f'(require "{mods["c"]}" all:)\n')
+            f.write("(define (fn-d x) (fn-c (+ x 10)))\n")
+        # e: calls d (entry point)
+        with open(mods["e"], "w") as f:
+            f.write(f'(require "{mods["d"]}" all:)\n')
+            f.write("(define (fn-e x) (fn-d (- x 5)))\n")
+        
+        # Generate type sigs for all modules
+        steps = f'(generate-type-sigs "{mods["a"]}")'
+        for name in ["b", "c", "d", "e"]:
+            steps += f'(generate-type-sigs "{mods[name]}")'
+        
+        # Test: require e, call fn-e
+        code = f'(begin {steps}(require "{mods["e"]}" all:)(display (fn-e 20)))'
+        r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=10)
+        # fn-e(20) = fn-d(20-5) = fn-c(15+10) = fn-b(25*3) = fn-a(75+1) = 76*2 = 152
+        assert "152" in r.stdout, f"chain eval wrong: {r.stdout}"
+        
+        # Verify all sig files created
+        for name in ["a", "b", "c", "d", "e"]:
+            sig = os.path.join(tmpdir, f"{name}.aura-type")
+            assert os.path.exists(sig), f"{name}.aura-type not created"
+    print("  ✅ test-module-chain-5")
+
 # Run subprocess tests
 passed_s = 0
 failed_s = 0
@@ -430,7 +478,8 @@ for tf in [test_freeze_load, test_freeze_multi_expr, test_freeze_empty, test_emi
            test_aura_type_auto_load, test_aura_type_no_sig,
            test_aura_type_multi_func, test_aura_type_different_types,
            test_aura_type_cross_module,
-           test_generate_type_sigs]:
+           test_generate_type_sigs,
+           test_module_chain_5]:
     try:
         tf()
         passed_s += 1
