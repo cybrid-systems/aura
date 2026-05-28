@@ -1,0 +1,53 @@
+(require "std/test" all:)
+(require "std/orchestrator" all:)
+
+; ── orch:define-role ──
+(test-suite "orch:define-role-basic"
+  (orch:define-role "generator" (cons (lambda (x) x) "direct"))
+  (check #t))
+
+(test-suite "orch:define-role-overwrite"
+  (orch:define-role "test-role" (cons (lambda (x) (+ x 1)) "direct"))
+  (orch:define-role "test-role" (cons (lambda (x) (* x 2)) "direct"))
+  (check #t))
+
+; ── orch:step ──
+(test-suite "orch:step-direct"
+  (orch:define-role "double" (cons (lambda (x) (* x 2)) "direct"))
+  (check (= (orch:step "double" 5) 10)))
+
+(test-suite "orch:step-unknown-role"
+  ; 未知角色返回输入不变
+  (check (= (orch:step "nonexistent" 42) 42)))
+
+(test-suite "orch:step-string"
+  (orch:define-role "append-ok" (cons (lambda (x) (string-append x " ok")) "direct"))
+  (check (string=? (orch:step "append-ok" "hello") "hello ok")))
+
+; ── orch:pipeline ──
+(test-suite "orch:pipeline-basic"
+  (orch:define-role "add1" (cons (lambda (x) (+ x 1)) "direct"))
+  (orch:define-role "add2" (cons (lambda (x) (+ x 2)) "direct"))
+  (check (= (orch:pipeline (list "add1" "add2") 0) 3)))
+
+(test-suite "orch:pipeline-empty"
+  (check (= (orch:pipeline (quote ()) 42) 42)))
+
+(test-suite "orch:pipeline-chaining"
+  (orch:define-role "double" (cons (lambda (x) (* x 2)) "direct"))
+  (orch:define-role "square" (cons (lambda (x) (* x x)) "direct"))
+  ; (5 * 2)^2 = 100
+  (check (= (orch:pipeline (list "double" "square") 5) 100)))
+
+; ── orch:run ──
+(test-suite "orch:run-basic"
+  (orch:define-role "inc" (cons (lambda (x) (+ x 1)) "direct"))
+  (check (= (orch:run "test-pipeline" (list "inc" "inc") 0) 2)))
+
+; ── orch:parallel ──
+(test-suite "orch:parallel-basic"
+  (define result (orch:parallel (list (lambda (x) (+ x 1)) (lambda (x) (* x 2))) 5))
+  (check (= (length result) 2)))
+
+(test-suite "orch:parallel-empty"
+  (check (null? (orch:parallel (quote ()) 42))))

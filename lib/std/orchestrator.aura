@@ -1,0 +1,133 @@
+; ── std/orchestrator.aura — Agent 编排框架 ──
+;
+; 在现有 intend / query / mutate / heal 之上提供声明式管线编排。
+; 全部纯 Aura，无 C++ 改动。
+;
+; API:
+;   (orch:define-role name config)   — 定义角色
+;   (orch:step role input → output)  — 管线步骤
+;   (orch:pipeline name steps opts)  — 定义管线
+;   (orch:run name input)            — 执行管线
+;   (orch:parallel fns input)        — 并行执行多个函数
+
+(require "std/list" all:)
+(require "std/string" all:)
+
+(export orch:define-role orch:step orch:pipeline orch:run orch:parallel)
+
+; ── 角色注册表 ──
+; 存储所有已注册角色，格式：(("name" . (action-strategy . config)))
+(define *orch-roles* (quote ()))
+
+; ── orch:define-role — 注册一个角色 ──
+;
+; name:   字符串，角色名
+; config: hash，可选字段:
+;   :action     — 核心行为函数 (lambda (input) → output)
+;   :strategy   — 策略名: "intend" | "heal" | "direct" (默认 "direct")
+;   :description — 描述字符串
+;   :fallback   — 回退策略名
+;
+; 返回: #t
+(define (orch:define-role name config)
+  (set! *orch-roles* (cons (cons name config) *orch-roles*))
+  #t)
+
+; ── orch:lookup-role — 查找角色 ──
+(define (orch:lookup-role name)
+  (let loop ((roles *orch-roles*))
+    (if (null? roles) #f
+      (if (string=? (car (car roles)) name)
+        (cdr (car roles))
+        (loop (cdr roles))))))
+
+; ── orch:step — 执行单个步骤 ──
+;
+; role:   角色名（须预先注册）
+; input:  输入值
+; → 输出值
+(define (orch:step role input)
+  (define config (orch:lookup-role role))
+  (if (not config) input  ; 未知角色返回输入不变
+
+    (let* ((action (if (pair? config) (car config) #f))
+           (strategy (if (and (pair? (cdr config)) (string? (car (cdr config))))
+                       (car (cdr config)) "direct"))
+           (fallback (let ((rest (cdr (cdr config))))
+                      (if (and (pair? rest) (pair? (car rest)))
+                        (cdr (car rest)) #f))))
+
+      ; ── direct: 直接调 action ──
+      (if (string=? strategy "direct")
+        (if action
+          (try (action input) (catch (e) (begin
+            (display "[orch] direct step failed: ")(display e)(newline)
+            input)))
+          input)
+
+        ; ── intend: 用 intend 原语执行 ──
+        (if (string=? strategy "intend")
+          (if (and (pair? input) (pair? (cdr input)))
+            (let* ((goal (car input))
+                   (expected (car (cdr input)))
+                   (result (try (intend goal
+                                  (lambda (g) (if action (action g) g))
+                                  (lambda (c) (if (check-success c expected) "#t" "#f"))
+                                  (if (pair? (cdr (cdr input)))
+                                    (lambda (c e g) (action (string-append c "\n" e)))
+                                    #f)
+                                  3)
+                               (catch (e) #f))))
+              (if (and result (string? result))
+                result
+                input))
+            input)
+
+          ; ── heal: 用 heal 原语执行 ──
+          (if (string=? strategy "heal")
+            (if (and (pair? input) (pair? (cdr input)))
+              (let* ((code (car input))
+                     (expected (car (cdr input)))
+                     (result (try (heal code expected 3) (catch (e)
+                       (list "failed" code "")))))
+                (if (and (pair? result) (string=? (car result) "healed"))
+                  (car (cdr result))
+                  input))
+              input)
+
+            ; ── unknown strategy ──
+            input))))))
+
+; ── orch:pipeline — 定义并执行管线 ──
+;
+; steps: (role1 role2 ...) — 步骤名列表，依次执行
+; input: 初始输入
+; → 最终输出
+(define (orch:pipeline steps input)
+  (if (null? steps) input
+    (let ((result (orch:step (car steps) input)))
+      (if (pair? (cdr steps))
+        (orch:pipeline (cdr steps) result)
+        result))))
+
+; ── orch:run — 执行命名管线 ──
+;
+; 先用 orch:pipeline 执行步骤序列。
+; name 仅作标记。
+(define (orch:run name steps input)
+  ; name is informational; execute the steps
+  (orch:pipeline steps input))
+
+; ── orch:parallel — 并行执行多个函数 ──
+;
+; fns: (fn1 fn2 ...) — 函数列表，各接收同一 input
+; input: 输入值
+; → (output1 output2 ...)
+;
+; 串行 fallback（fiber:spawn 可用时改为并行）
+(define (orch:parallel fns input)
+  (if (null? fns) (quote ())
+    (cons (try ((car fns) input) (catch (e) (begin
+      (display "[orch] parallel fn failed: ")(display e)(newline)
+      #f)))
+      (orch:parallel (cdr fns) input))))
