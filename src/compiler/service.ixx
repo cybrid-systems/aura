@@ -5,6 +5,7 @@ module;
 #include "messaging_bridge.h"
 #include <unistd.h>
 #include <sys/stat.h>
+#include <poll.h>
 #include "serve/fiber.h"
 
 extern "C" std::int64_t aura_jit_test();
@@ -190,21 +191,46 @@ public:
     }
 
     std::optional<std::string> pop_message(int timeout_ms = -1) {
-        if (mailbox_.empty() && timeout_ms == 0) return std::nullopt;
-        // Blocking wait: yield fiber until message arrives (fiber mode)
-        // In non-fiber mode, g_current_fiber is null → falls through
-        while (mailbox_.empty()) {
-            if (aura::serve::g_current_fiber) {
-                aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
-                aura::serve::Fiber::yield();
-            } else {
-                return std::nullopt;
+        if (!mailbox_.empty()) {
+            last_sender_ = mailbox_.front().first;
+            auto msg = std::move(mailbox_.front().second);
+            mailbox_.erase(mailbox_.begin());
+            return msg;
+        }
+        if (timeout_ms == 0) return std::nullopt;
+        // Use poll() on wake_eventfd_ for timeout-capable wait
+        if (wake_eventfd_ >= 0 && timeout_ms != 0) {
+            struct pollfd pfd;
+            pfd.fd = wake_eventfd_;
+            pfd.events = POLLIN;
+            int pret = ::poll(&pfd, 1, timeout_ms > 0 ? timeout_ms : -1);
+            if (pret > 0) {
+                // Drain the eventfd
+                uint64_t val = 0;
+                ::read(wake_eventfd_, &val, sizeof(val));
+            } else if (pret == 0) {
+                return std::nullopt;  // timeout
+            }
+            // (pret < 0) = error, fall through to yield
+        }
+        // Fallback: try fiber yield (scheduler-based wake)
+        if (!mailbox_.empty()) {
+            last_sender_ = mailbox_.front().first;
+            auto msg = std::move(mailbox_.front().second);
+            mailbox_.erase(mailbox_.begin());
+            return msg;
+        }
+        if (aura::serve::g_current_fiber && timeout_ms != 0) {
+            aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
+            aura::serve::Fiber::yield();
+            if (!mailbox_.empty()) {
+                last_sender_ = mailbox_.front().first;
+                auto msg = std::move(mailbox_.front().second);
+                mailbox_.erase(mailbox_.begin());
+                return msg;
             }
         }
-        last_sender_ = mailbox_.front().first;
-        auto msg = std::move(mailbox_.front().second);
-        mailbox_.erase(mailbox_.begin());
-        return msg;
+        return std::nullopt;
     }
 
     std::string last_sender() const { return last_sender_; }
