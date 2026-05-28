@@ -8592,11 +8592,12 @@ Evaluator::Evaluator() {
         // Reset temp arena (O(1) — frees all cl_flat/cl_pool/copy_env)
         temp_arena_->reset();
 
-        // Clear heap vectors (same as gc-heap)
-        string_heap_.clear();
-        string_heap_.shrink_to_fit();
-        pairs_.clear();
-        pairs_.shrink_to_fit();
+        // Clear heap vectors.
+        // NOTE: pairs_ and string_heap_ are NOT cleared — result lists are
+        // pair-based and contain string references. gc-temp is called
+        // before the caller reads results. Use gc-heap separately to
+        // clear strings/pairs when results are no longer needed.
+        // hash_heap_, vector_heap_, opaque_heap_ are safe to clear here.
         error_values_.clear();
         error_values_.shrink_to_fit();
         hash_heap_.clear();
