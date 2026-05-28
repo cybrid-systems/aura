@@ -272,6 +272,11 @@ private:
     };
     std::unordered_map<std::string, ModuleTemplate> module_templates_;
 
+    // ── Functor 实例化缓存 ──────────────────────────────────────
+    // key = "template_name|arg1|arg2|..."
+    // value = 实例化后的 env（指针通过 module 索引引用）
+    std::unordered_map<std::string, std::uint64_t> functor_instance_cache_;
+
     // ── Timeline for intend (E2, backward compat) ───────────────
     std::vector<std::string> timeline_; //
     std::vector<std::string> string_heap_;

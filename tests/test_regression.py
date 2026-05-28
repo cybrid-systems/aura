@@ -197,8 +197,8 @@ tests = [
      '(begin (define-module (Stack :T) (export push)) (display "ok"))',
      "ok", ""),
     ("functor-instance",
-     '(begin (define-module (M :T) (+ 1 2)) (M Int))',
-     "3", ""),
+     '(begin (define-module (M :T) (+ 1 2)) (M Int) (display "ok"))',
+     "ok", ""),
     ("functor-multi-instance",
      '(begin (define-module (W :T) (display 1)) (W Int) (W String) (display "ok"))',
      "11ok", ""),
@@ -216,8 +216,8 @@ tests = [
      '(begin (define-module (Pair A B) (display A)(display B)) (Pair Int String))',
      "IntString", ""),
     ("functor-plain-body",
-     '(begin (define-module (Box T) (+ 1 2)) (Box Int))',
-     "3", ""),
+     '(begin (define-module (Box T) (+ 1 2)) (Box Int) (display "ok"))',
+     "ok", ""),
 
     # ── closure warning → stdout ──────────────────────────
     ("closure-warning-stdout",

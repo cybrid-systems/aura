@@ -10836,8 +10836,6 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                              *tail_env);
                         return make_void();
                     }
-                    // Functor instantiation: callee is a module template
-                    // Functor instantiation: callee is a %functor marker
                     // Functor instantiation: callee is a %functor marker
                     if (is_string(*fn) && as_string_idx(*fn) < string_heap_.size() &&
                         string_heap_[as_string_idx(*fn)] == "%functor") {
@@ -10846,10 +10844,22 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             auto tpl_name = std::string(p->resolve(callee_v.sym_id));
                             auto tpl_it = module_templates_.find(tpl_name);
                             if (tpl_it != module_templates_.end()) {
-                                // 获取模板的头信息来知道参数名
-                                // 目前 module_templates_ 只存 body，参数名在 AST 的 params 中
-                                // 查找 DefineModule 节点获取参数名
-                                aura::ast::NodeId defmod_id = aura::ast::NULL_NODE;
+                                // 构建缓存 key: "template|arg1|arg2|..."
+                                std::string cache_key = tpl_name;
+                                for (std::size_t ki = 1; ki < v.children.size(); ++ki) {
+                                    auto kv = f->get(v.child(ki));
+                                    cache_key += "|";
+                                    if (kv.tag == aura::ast::NodeTag::Variable)
+                                        cache_key += std::string(p->resolve(kv.sym_id));
+                                    else
+                                        cache_key += "#" + std::to_string(v.child(ki));
+                                }
+                                auto cache_it = functor_instance_cache_.find(cache_key);
+                                if (cache_it != functor_instance_cache_.end()) {
+                                    return types::make_module(cache_it->second);
+                                }
+
+                                // 获取参数名
                                 std::vector<std::string> param_names;
                                 for (aura::ast::NodeId sid = 0; sid < f->size(); ++sid) {
                                     auto sv = f->get(sid);
@@ -10893,7 +10903,13 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                     if (!br) return br;
                                     last = *br;
                                 }
-                                return last;
+                                // 缓存实例化结果
+                                // 创建模块 env 的持久化副本
+                                auto* cached_env = arena_->create<Env>(mod_env);
+                                auto mod_idx = modules_.size();
+                                modules_.push_back(cached_env);
+                                functor_instance_cache_[cache_key] = mod_idx;
+                                return types::make_module(mod_idx);
                             }
                         }
                         return make_void();
