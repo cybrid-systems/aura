@@ -274,9 +274,9 @@ private:
 
     // ── Functor 泛型模块模板 ────────────────────────────────────
     struct ModuleTemplate {
-        std::vector<aura::ast::NodeId> body_nodes;
-        std::vector<std::string> cap_param_names;     // capability parameter names (e.g., ["cap"])
-        std::vector<std::string> cap_require;          // required capabilities (e.g., ["FileRead", "FileWrite"])
+        std::string body_source;                       // body source code (re-parsed at instantiation)
+        std::vector<std::string> cap_param_names;      // capability parameter names (e.g., ["cap"])
+        std::vector<std::string> cap_require;           // required capabilities (e.g., ["FileRead", "FileWrite"])
     };
     std::unordered_map<std::string, ModuleTemplate> module_templates_;
 

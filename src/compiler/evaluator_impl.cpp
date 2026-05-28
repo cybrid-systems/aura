@@ -102,8 +102,18 @@ clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
                  const std::unordered_map<std::string, aura::ast::NodeId>* subst = nullptr,
                  std::unordered_map<std::string, std::string>* name_map = nullptr);
 
-// ── Env::lookup: returns EvalValue variant ─────────────────────
+// Depth guard: protects Env::lookup against cyclic parent chains
+// (thread_local since lookup can be called from multiple fibers)
+static constexpr std::size_t MAX_ENV_DEPTH = 1024;
+thread_local std::size_t g_env_lookup_depth = 0;
+
 std::optional<EvalValue> Env::lookup(const std::string& n) const {
+    if (++g_env_lookup_depth > MAX_ENV_DEPTH) {
+        --g_env_lookup_depth;
+        return std::nullopt;
+    }
+    struct _{ ~_() { --g_env_lookup_depth; } } dec;
+
     // 1. Check local bindings
     for (auto it = bindings_.rbegin(); it != bindings_.rend(); ++it)
         if (it->first == n) {
@@ -12402,23 +12412,45 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                     }
                                 }
 
-                                // Eval body in mod_env
+                                // Eval body by re-parsing the serialized source
                                 EvalResult last = make_void();
-                                for (auto bid : tpl_it->second.body_nodes) {
-                                    auto br = eval_flat(*f, *p, bid, mod_env);
-                                    if (!br) return br;
-                                    last = *br;
+                                auto& body_src = tpl_it->second.body_source;
+                                if (!body_src.empty()) {
+                                    aura::ast::ASTArena body_arena;
+                                    auto body_alloc = body_arena.allocator();
+                                    aura::ast::StringPool body_pool(body_alloc);
+                                    aura::ast::FlatAST body_flat(body_alloc);
+                                    auto body_pr = aura::parser::parse_to_flat(body_src, body_flat, body_pool);
+                                    if (body_pr.success && body_pr.root != aura::ast::NULL_NODE) {
+                                        body_flat.root = body_pr.root;
+                                        // Evaluate each top-level expression in the body
+                                        for (auto nid : body_flat.get(body_flat.root).children) {
+                                            auto br = eval_flat(body_flat, body_pool, nid, mod_env);
+                                            if (!br) return br;
+                                            last = *br;
+                                        }
+                                    }
                                 }
                                 // 实例化后生成 .aura-type 签名
-                                // 扫描 body 中的 define 节点并记录其类型
+                                // Extract export names from the body source
                                 std::vector<std::string> export_names;
-                                for (auto bid : tpl_it->second.body_nodes) {
-                                    auto bv = f->get(bid);
-                                    if (bv.tag == aura::ast::NodeTag::Export) {
-                                        for (auto cid : bv.children) {
-                                            auto cv2 = f->get(cid);
-                                            if (cv2.tag == aura::ast::NodeTag::Variable)
-                                                export_names.push_back(std::string(p->resolve(cv2.sym_id)));
+                                {
+                                    aura::ast::ASTArena scan_arena;
+                                    auto scan_alloc = scan_arena.allocator();
+                                    aura::ast::StringPool scan_pool(scan_alloc);
+                                    aura::ast::FlatAST scan_flat(scan_alloc);
+                                    auto scan_pr = aura::parser::parse_to_flat(body_src, scan_flat, scan_pool);
+                                    if (scan_pr.success && scan_pr.root != aura::ast::NULL_NODE) {
+                                        scan_flat.root = scan_pr.root;
+                                        for (auto nid : scan_flat.get(scan_flat.root).children) {
+                                            auto nv = scan_flat.get(nid);
+                                            if (nv.tag == aura::ast::NodeTag::Export) {
+                                                for (auto eid : nv.children) {
+                                                    auto ev = scan_flat.get(eid);
+                                                    if (ev.tag == aura::ast::NodeTag::Variable)
+                                                        export_names.push_back(std::string(scan_pool.resolve(ev.sym_id)));
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -12833,9 +12865,84 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         }
                     }
 
-                    // Children are the body expressions
-                    for (auto cid : v.children)
-                        mt.body_nodes.push_back(cid);
+                    // Serialize body expressions to source strings (for cross-eval instantiation)
+                    // Build a node-to-source serializer using the current FlatAST
+                    std::function<std::string(aura::ast::NodeId)> node_source;
+                    node_source = [&](aura::ast::NodeId nid) -> std::string {
+                        if (nid >= f->size() || nid == aura::ast::NULL_NODE) return "";
+                        auto nv = f->get(nid);
+                        switch (nv.tag) {
+                            case aura::ast::NodeTag::LiteralInt: return std::to_string(nv.int_value);
+                            case aura::ast::NodeTag::LiteralFloat: return std::to_string(nv.float_value);
+                            case aura::ast::NodeTag::LiteralString: return "\"" + std::string(p->resolve(nv.sym_id)) + "\"";
+                            case aura::ast::NodeTag::Variable: return std::string(p->resolve(nv.sym_id));
+                            case aura::ast::NodeTag::Quote: {
+                                if (nv.children.empty()) return "'()";
+                                return "'" + node_source(nv.child(0));
+                            }
+                            case aura::ast::NodeTag::Lambda: {
+                                std::string s = "(lambda (";
+                                for (std::size_t pi = 0; pi < nv.params.size(); ++pi) {
+                                    if (pi > 0) s += " ";
+                                    s += std::string(p->resolve(nv.params[pi]));
+                                }
+                                s += ")";
+                                if (!nv.children.empty())
+                                    s += " " + node_source(nv.child(0));
+                                return s + ")";
+                            }
+                            case aura::ast::NodeTag::Define: {
+                                std::string s = "(define";
+                                if (!nv.children.empty()) {
+                                    auto val_nv = f->get(nv.child(0));
+                                    if (val_nv.tag == aura::ast::NodeTag::Lambda) {
+                                        // Shorthand: (define (name params...) body...)
+                                        s += " (" + std::string(p->resolve(nv.sym_id));
+                                        for (std::size_t pi = 0; pi < val_nv.params.size(); ++pi) {
+                                            s += " ";
+                                            s += std::string(p->resolve(val_nv.params[pi]));
+                                        }
+                                        s += ")";
+                                        if (!val_nv.children.empty())
+                                            s += " " + node_source(val_nv.child(0));
+                                    } else {
+                                        s += " " + std::string(p->resolve(nv.sym_id));
+                                        s += " " + node_source(nv.child(0));
+                                    }
+                                }
+                                return s + ")";
+                            }
+                            case aura::ast::NodeTag::Export: {
+                                std::string s = "(export";
+                                for (auto eid : nv.children) {
+                                    auto ev = f->get(eid);
+                                    if (ev.tag == aura::ast::NodeTag::Variable)
+                                        s += " " + std::string(p->resolve(ev.sym_id));
+                                }
+                                return s + ")";
+                            }
+                            case aura::ast::NodeTag::Call: {
+                                std::string s = "(";
+                                for (std::size_t ci = 0; ci < nv.children.size(); ++ci) {
+                                    if (ci > 0) s += " ";
+                                    s += node_source(nv.child(ci));
+                                }
+                                return s + ")";
+                            }
+                            default: return "()";
+                        }
+                    };
+
+                    // Serialize each body expression
+                    std::string body_src;
+                    for (auto cid : v.children) {
+                        auto sexpr = node_source(cid);
+                        if (!sexpr.empty()) {
+                            if (!body_src.empty()) body_src += "\n";
+                            body_src += sexpr;
+                        }
+                    }
+                    mt.body_source = std::move(body_src);
 
                     // Scan body for `:require` directives
                     // Format: ((:require FileRead FileWrite) ...) or ((:require FileRead) ...)
