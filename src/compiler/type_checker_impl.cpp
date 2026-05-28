@@ -1312,9 +1312,18 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
             result = reg_.void_type();
             break;
         }
-        case Tag::Define:
-            result = reg_.void_type();
+        case Tag::Define: {
+            auto def_name = pool.resolve(v.sym_id);
+            if (!v.children.empty()) {
+                auto val_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
+                if (def_name.size() > 0)
+                    env_.bind(std::string(def_name), val_type);
+                result = val_type;
+            } else {
+                result = reg_.void_type();
+            }
             break;
+        }
         case Tag::Set:
             result = reg_.void_type();
             break;
@@ -1339,6 +1348,45 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
             result = reg_.register_func(std::move(param_types), body_type);
             break;
         }
+        case Tag::DefineModule: {
+            // (define-module (Name :T ...) body...)
+            // Scan body for Define/Export, build a ModuleType with export signatures.
+            auto mod_name = pool.resolve(v.sym_id);
+            std::vector<std::pair<std::string, TypeId>> members;
+            std::unordered_set<std::string> exports;
+
+            for (auto cid : v.children) {
+                auto cv = flat.get(cid);
+                if (cv.tag == NodeTag::Define && cv.sym_id != INVALID_SYM) {
+                    auto fn_name = std::string(pool.resolve(cv.sym_id));
+                    TypeId fn_type = reg_.dynamic_type();
+                    if (cv.children.size() > 0) {
+                        auto val_id = cv.child(0);
+                        fn_type = synthesize_flat(flat, pool, val_id, flat.get(val_id));
+                    }
+                    members.push_back({fn_name, fn_type});
+                } else if (cv.tag == NodeTag::Export) {
+                    for (auto eid : cv.children) {
+                        auto ev = flat.get(eid);
+                        if (ev.tag == NodeTag::Variable && ev.sym_id != INVALID_SYM)
+                            exports.insert(std::string(pool.resolve(ev.sym_id)));
+                    }
+                }
+            }
+
+            // Only include exported members in ModuleType
+            std::vector<std::pair<std::string, TypeId>> export_members;
+            for (auto& [name, ty] : members) {
+                if (exports.empty() || exports.count(name))
+                    export_members.push_back({name, ty});
+            }
+
+            ModuleType mt{std::move(export_members)};
+            auto mt_id = reg_.register_module(std::move(mt));
+            env_.bind(std::string(mod_name), mt_id);
+            result = mt_id;
+            break;
+        }
         default:
             result = reg_.dynamic_type();
             break;
@@ -1361,6 +1409,27 @@ TypeId InferenceEngine::synthesize_flat_var(StringPool& pool, NodeView v) {
         return reg_.dynamic_type();
     }
     std::string var_name(name);
+
+    // Module member access: name:member → look up module type, extract member type
+    auto colon = var_name.find(':');
+    if (colon != std::string::npos && colon > 0) {
+        auto mod_name = var_name.substr(0, colon);
+        auto member_name = var_name.substr(colon + 1);
+        auto mod_ty = env_.lookup(mod_name);
+        if (mod_ty.valid() && reg_.module_of(mod_ty)) {
+            auto* mt = reg_.module_of(mod_ty);
+            for (auto& [mname, mtype] : mt->members) {
+                if (mname == member_name)
+                    return mtype;
+            }
+            // Member not found in module type — return Dyn and report warning
+            diag_.report(Diagnostic(ErrorKind::TypeError,
+                "no member '" + member_name + "' in module " + mod_name, cur_loc_));
+            return reg_.dynamic_type();
+        }
+        // Module not found — fall through to normal variable lookup
+    }
+
     auto ty_raw = env_.lookup(var_name);
     if (!ty_raw.valid()) {
         // Collect candidate names from environment for "did you mean" suggestion
@@ -1535,6 +1604,14 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
 
 
         return ft.ret;
+    }
+
+    // Module type: functor call (Stack Int) → return the ModuleType
+    if (auto* mt = reg_.module_of(func_type)) {
+        // For functor instantiation, the ModuleType represents the result module's signature.
+        // Type parameter substitution (T → Int) would go here in a full implementation.
+        // For now, return the ModuleType as-is; members may have Dyn-parameterized types.
+        return func_type;
     }
 
     // Unknown function type: check args dynamically
