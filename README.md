@@ -39,11 +39,10 @@ python3 build.py clean           # 清理
 
 Aura 的核心是一个**自修改 Lisp 运行时**，专为 LLM Agent 编排设计：
 
-- **代码即数据** — 代码被表示为可查询、可变异、可版本化的 FlatAST，Agent 可以通过 `query:*` / `mutate:*` 原语在运行时精确读写自身代码
-- **Agent 编排** — 通过 `agent:spawn`、`orch:conduct`、`orch:pipeline` 等原语组织多 Agent 协作管线，支持并行/串行/重试/条件分支
-- **Workspace 分层** — 提供隔离的实验环境，Agent 可以在 sandbox 中安全试错，通过 `workspace:merge` 合并良好版本
+- **代码即数据** — 代码被表示为可查询、可变异、可版本化的 FlatAST。Agent 通过 `query:*` / `mutate:*` 原语在运行时精确读写自身代码，通过 `ast:snapshot` / `ast:rollback` 管理版本
+- **Agent 编排** — 通过 `agent:spawn`、`orch:conduct`、`orch:pipeline`、`orch:parallel` 原语组织多 Agent 协作管线，支持并行/串行/重试/条件分支
 
-其他技术细节（类型系统、IR、JIT、所有权、快照/diff、合成管线、规范系统、AOT 等）详见 [docs/](/docs)。
+其他技术细节（类型系统、IR、JIT、所有权、合成管线、AOT 等）详见 [docs/](/docs)。
 
 ## License
 
