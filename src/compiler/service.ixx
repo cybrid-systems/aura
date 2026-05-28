@@ -4,6 +4,7 @@ module;
 #include <atomic>
 #include "messaging_bridge.h"
 #include <unistd.h>
+#include <sys/stat.h>
 #include "serve/fiber.h"
 
 extern "C" std::int64_t aura_jit_test();
@@ -1447,7 +1448,22 @@ public:
                         disk_mod.functions.push_back(func);
                 }
             }
-            aura::compiler::cache::write_cache(cache_path, flat, pool, flat.root, 0, &disk_mod);
+            // 生成类型签名数据嵌入 ABF
+            std::string sig_embed;
+            // 从 export 声明收集已注册的类型签名
+            // 直接从模块的 FlatAST 推断类型
+            auto sig_embed_path = source;
+            if (sig_embed_path.ends_with(".aura"))
+                sig_embed_path = sig_embed_path.substr(0, sig_embed_path.size() - 5) + ".aura-type";
+            struct stat sig_st;
+            if (::stat(sig_embed_path.c_str(), &sig_st) == 0 && S_ISREG(sig_st.st_mode)) {
+                std::ifstream sf(sig_embed_path);
+                if (sf) {
+                    sig_embed.assign((std::istreambuf_iterator<char>(sf)), {});
+                }
+            }
+            aura::compiler::cache::write_cache(cache_path, flat, pool, flat.root, 0, &disk_mod,
+                                                sig_embed.empty() ? nullptr : &sig_embed);
         }
 
         return EvalResult(types::make_void());

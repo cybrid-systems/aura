@@ -23,8 +23,10 @@ export struct CacheHeader {
     std::uint32_t num_nodes;     // 4
     std::uint32_t num_strings;   // 4
     std::uint32_t num_functions; // 4
+    std::uint32_t sig_offset;    // 4
+    std::uint32_t sig_size;      // 4
 };
-static_assert(sizeof(CacheHeader) == 64, "CacheHeader must be 64 bytes");
+static_assert(sizeof(CacheHeader) == 72, "CacheHeader must be 72 bytes");
 
 // ── Mapped cache — mmap'd read-only FlatAST + StringPool ─────
 export class MappedCache {
@@ -98,7 +100,8 @@ public:
 // Write FlatAST + StringPool to a cache file.
 export bool write_cache(const std::string& path, const FlatAST& flat, const StringPool& pool,
                         NodeId root, std::uint64_t source_mtime = 0,
-                        const aura::ir::IRModule* ir_mod = nullptr);
+                        const aura::ir::IRModule* ir_mod = nullptr,
+                        const std::string* sig_data = nullptr);
 
 // Open a cache file via mmap (zero-copy read).
 export MappedCache open_cache(const std::string& path);

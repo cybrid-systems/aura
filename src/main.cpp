@@ -1158,7 +1158,7 @@ int main(int argc, char* argv[]) {
         cf.run(ir_mod);
 
         // Write cache with IR
-        if (!aura::compiler::cache::write_cache(argv[2], flat, pool, pr.root, 0, &ir_mod)) {
+        if (!aura::compiler::cache::write_cache(argv[2], flat, pool, pr.root, 0, &ir_mod, nullptr)) {
             std::println(std::cerr, "error: cannot write cache file {}", argv[2]);
             return 1;
         }

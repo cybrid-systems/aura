@@ -19,6 +19,8 @@ typedef struct CacheHeader {
     uint32_t num_nodes;
     uint32_t num_strings;
     uint32_t num_functions;
+    uint32_t sig_offset; // <-- .aura-type 签名数据在文件中的偏移（0 = 无签名）
+    uint32_t sig_size;   // 签名数据大小
 } CacheHeader;
 
 #ifdef __cplusplus
@@ -26,7 +28,7 @@ typedef struct CacheHeader {
 #endif
 
 #ifdef __cplusplus
-static_assert(sizeof(CacheHeader) == 64, "CacheHeader must be 64 bytes");
+static_assert(sizeof(CacheHeader) == 72, "CacheHeader must be 72 bytes");
 
 // C-linkage serialization API (implemented in cache_reflect.cpp)
 extern "C" {
