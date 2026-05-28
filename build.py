@@ -238,6 +238,18 @@ INTEG_TESTS = [
     ),
     IntegCase("tc_query_return", "(+ 1 2)", "typecheck", expected="Int"),
     IntegCase("tc_cons_pair", "(pair? (cons 1 2))", "typecheck", expected="Bool"),
+    # ── 增量类型检查 (P0) ─────────────────────────────────────
+    IntegCase(
+        "incr_double_typecheck",
+        '(set-code "(define (add x y) (+ x y))")(typecheck-current)(typecheck-current)(display 42)',
+        "eval", expected="42", expected_status=0
+    ),
+    IntegCase(
+        "incr_mutate_typecheck",
+        '(set-code "(define (add x y) (+ x y))")(typecheck-current)'
+        '(mutate:rebind "add" "(lambda (a b) (* a b))" "test")(typecheck-current)(display 42)',
+        "eval", expected="42", expected_status=0
+    ),
     # ── TypeAnnotation coercion boundary (P0) ─────────────────
     IntegCase("tc_annot_int", "(: x Int 42)", "typecheck", expected="Int"),
     IntegCase("coerce_annot_erasure", "(: x Int 42)", "eval", expected="42"),

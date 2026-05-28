@@ -62,6 +62,34 @@ tests = [
      '(let ((x (hash))) (if (hash? x) 42 0))', "42", ""),
     ("let-poly", '((lambda (x) (list (x 1) (x "hi"))) (lambda (y) y))', '(1 "hi")', ""),
 
+    # ── 增量类型检查 #4 ──────────────────────────────────
+    ("incr-basic",
+     '(begin (set-code "(define (add x y) (+ x y))")(display (typecheck-current))'
+     '(typecheck-current))',
+     "type: Void\nno errors", ""),
+    ("incr-cache-hit",
+     '(begin (set-code "(define (add x y) (+ x y))")(typecheck-current)(typecheck-current)(display "ok"))',
+     "ok", ""),
+    ("incr-mutate",
+     '(begin (set-code "(define (add x y) (+ x y))")(typecheck-current)'
+     '(mutate:rebind "add" "(lambda (a b) (* a b))" "test")(typecheck-current)(display "ok"))',
+     "ok", ""),
+    ("incr-multi-mutate",
+     '(begin (set-code "(define (f x) (+ x 1))(define (g x) (f x))")(typecheck-current)'
+     '(mutate:rebind "f" "(lambda (x) (* x 2))" "op")(typecheck-current)'
+     '(mutate:rebind "g" "(lambda (x) (f x))" "chain")(typecheck-current)'
+     '(display "ok"))',
+     "ok", ""),
+    ("incr-large-typecheck",
+     '(begin (set-code "(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))(define (fact n) (if (= n 0) 1 (* n (fact (- n 1))))) (define (map f l) (if (null? l) (quote ()) (cons (f (car l)) (map f (cdr l)))))(define (sum l) (if (null? l) 0 (+ (car l) (sum (cdr l)))))")(typecheck-current)(typecheck-current)(typecheck-current)(display "ok"))',
+     "ok", ""),
+    ("incr-workspace-switch",
+     '(begin (set-code "(define (f x) (+ x 1))")(typecheck-current)'
+     '(define sandbox (workspace:create "sandbox"))(workspace:switch sandbox)'
+     '(set-code "(define (f x) (* x 2))")(typecheck-current)(workspace:switch 0)'
+     '(typecheck-current)(display "ok"))',
+     "ok", ""),
+
     # ── closure warning → stdout ──────────────────────────
     ("closure-warning-stdout",
      '(define (f x) (+ x 1)) f', "uncalled function", ""),
