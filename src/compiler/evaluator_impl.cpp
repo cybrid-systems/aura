@@ -8594,7 +8594,10 @@ Evaluator::Evaluator() {
         return make_bool(bridge.send(target, msg));
     });
 
-    // (recv [timeout-ms]) → message value, or void on timeout
+    // (recv [timeout-ms]) → message value
+    //   Returns: message (string or parsed JSON value) on success,
+    //            #<void> on timeout (distinguishable from #f = no service),
+    //            #f if no messaging service available.
     // If received string is valid JSON, auto-deserialize to Aura value.
     primitives_.add("recv", [this](const auto& a) -> EvalValue {
         auto svc = aura::messaging::g_current_compiler_service;
@@ -8604,7 +8607,10 @@ Evaluator::Evaluator() {
         if (a.size() >= 1 && is_int(a[0]))
             timeout_ms = static_cast<int>(as_int(a[0]));
         auto result = aura::messaging::g_mailbox_read(svc, timeout_ms);
-        if (!result) return make_bool(false);
+        if (!result) {
+            // Timeout (we had a service but no message arrived)
+            return make_void();
+        }
         // Try JSON parse first (for structured messages)
         auto& raw = *result;
         if (!raw.empty() && (raw[0] == '{' || raw[0] == '[' || raw[0] == '"')) {
