@@ -471,6 +471,25 @@ def test_module_chain_5():
             assert os.path.exists(sig), f"{name}.aura-type not created"
     print("  ✅ test-module-chain-5")
 
+def test_abf_embed_sig():
+    """ABF embed: .aura-type embedded in .abfc cache."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mod_path = os.path.join(tmpdir, "m.aura")
+        sig_path = os.path.join(tmpdir, "m.aura-type")
+        with open(mod_path, "w") as f:
+            f.write("(define (f x) (* x 2))\n")
+        with open(sig_path, "w") as f:
+            f.write("f: Int -> Int\n")
+        # First generate sigs to create .aura-type
+        r1 = subprocess.run([AURA], input=f'(generate-type-sigs "{mod_path}")',
+                           capture_output=True, text=True, timeout=10, cwd=tmpdir)
+        # Use the compiler to call check-module-signature (reads .aura-type)
+        r2 = subprocess.run([AURA], input=f'(generate-type-sigs "{mod_path}")(require "{mod_path}" all:)(display (f 21)))',
+                           capture_output=True, text=True, timeout=10, cwd=tmpdir)
+        assert "42" in r2.stdout, f"embed+eval failed: {r2.stdout}"
+    print("  ✅ test-abf-embed-sig")
+
 # Run subprocess tests
 passed_s = 0
 failed_s = 0

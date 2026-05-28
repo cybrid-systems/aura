@@ -1204,6 +1204,20 @@ int main(int argc, char* argv[]) {
             std::println("  [{}] tag={} sym_id={} sym='{}' int={}", i, tag_int, nv.sym_id, sym,
                          nv.int_value);
         }
+        // Show embedded type signatures
+        if (mc.has_sig()) {
+            auto sig = mc.sig_data();
+            std::println("Type signatures ({} bytes):", sig.size());
+            // Print each line with indentation
+            std::size_t start = 0;
+            while (start < sig.size()) {
+                auto end = sig.find('\n', start);
+                if (end == std::string_view::npos) end = sig.size();
+                std::println("  {}", sig.substr(start, end - start));
+                start = end + 1;
+            }
+        }
+
         // Show IR cache info
         if (mc.has_ir()) {
             std::println("IR cache: {} functions, {} strings", mc.ir_functions().size(),
