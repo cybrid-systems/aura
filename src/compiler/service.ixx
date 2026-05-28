@@ -109,6 +109,7 @@ public:
     CompilerService()
         : user_bindings_{"#t", "#f", "nil"}, session_id_("default") {
         evaluator_.set_arena(&arena_);
+        evaluator_.set_temp_arena(&temp_arena_);
         evaluator_.set_type_registry(&type_registry_);
         evaluator_.set_compiler_service(this);
         evaluator_.set_session_id(session_id_);
@@ -2620,6 +2621,7 @@ private:
     }
 
     ast::ASTArena arena_;
+    ast::ASTArena temp_arena_;
     ast::ArenaGroup arena_group_;
     Evaluator evaluator_;
     aura::compiler::EvalStrategy strategy_;
