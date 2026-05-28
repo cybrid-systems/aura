@@ -4826,9 +4826,13 @@ void Evaluator::init_pair_primitives() {
         // 注入 declare-type 声明的自定义类型签名
         if (!declared_type_sigs_.empty()) {
             std::unordered_map<std::string, std::string> sig_map;
-            for (auto& [name, decl] : declared_type_sigs_)
+            std::unordered_map<std::string, std::string> mod_src_map;
+            for (auto& [name, decl] : declared_type_sigs_) {
                 sig_map[name] = decl.type_str;
-            tc.inject_type_sigs(sig_map);
+                if (!decl.module_file.empty())
+                    mod_src_map[name] = decl.module_file;
+            }
+            tc.inject_type_sigs(sig_map, mod_src_map);
         }
 
         aura::diag::DiagnosticCollector diag;
@@ -9040,6 +9044,7 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
                 if (!name.empty() && !ret_str.empty()) {
                     declared_type_sigs_[name] = {
                         .type_str = params_str + "|" + ret_str,
+                        .module_file = resolved,
                         .resolved = false
                     };
                 }

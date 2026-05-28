@@ -1968,7 +1968,8 @@ void InferenceEngine::check_flat_lambda(FlatAST& flat, StringPool& pool, NodeVie
 // ═══════════════════════════════════════════════════════════
 
 void TypeChecker::inject_type_sigs(
-    const std::unordered_map<std::string, std::string>& sigs) {
+    const std::unordered_map<std::string, std::string>& sigs,
+    const std::unordered_map<std::string, std::string>& module_src) {
     auto lookup = [&](const std::string& name) -> TypeId {
         if (name == "Int")    return types.int_type();
         if (name == "Bool")   return types.bool_type();
@@ -1987,8 +1988,21 @@ void TypeChecker::inject_type_sigs(
         while (iss >> tok) param_types.push_back(lookup(tok));
         types.register_func_named(std::move(param_types), lookup(sig.substr(pipe + 1)),
                                   "__decl_" + name);
+        auto mod_it = module_src.find(name);
+        if (mod_it != module_src.end() && !mod_it->second.empty()) {
+            type_module_src_[name] = mod_it->second;
+        }
     }
 }
+
+std::string TypeChecker::declared_type_module(const std::string& name) const {
+    auto it = type_module_src_.find(name);
+    if (it != type_module_src_.end())
+        return it->second;
+    return "";
+}
+
+
 
 TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
                                DiagnosticCollector& diag) {
