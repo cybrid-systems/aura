@@ -151,7 +151,11 @@ void run_serve_async() {
             // Extract complete lines from buffer (do this BEFORE EOF check)
             auto nl = buf.find('\n');
             while (nl != std::string::npos) {
-                stdin_lines.push_back(buf.substr(0, nl));
+                auto line = buf.substr(0, nl);
+                // Skip comment, blank, and empty lines
+                auto s = line.find_first_not_of(" \t\r\n");
+                if (s != std::string::npos && line[s] != ';')
+                    stdin_lines.push_back(std::move(line));
                 buf.erase(0, nl + 1);
                 nl = buf.find('\n');
             }
