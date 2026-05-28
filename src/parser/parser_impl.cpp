@@ -346,6 +346,8 @@ NodeId FlatParser::parse_list() {
             return parse_type_annot();
         if (kw == "define-type")
             return parse_define_type();
+        if (kw == "define-module")
+            return parse_define_module();
         if (kw == "Linear")
             return parse_linear();
         if (kw == "move")
@@ -637,6 +639,52 @@ NodeId FlatParser::parse_define_type() {
     lexer_->consume(); // ')'
 
     return flat_.add_define_type(type_name, params, ctors);
+}
+
+NodeId FlatParser::parse_define_module() {
+    auto tok = lexer_->consume(); // 'define-module'
+
+    // (define-module (Name :Param-1 :Param-2 ...) body...)
+    // Parse the header: (Name :Param ...)
+    if (lexer_->peek().kind != TokenKind::LParen)
+        return NULL_NODE;
+    lexer_->consume(); // '('
+
+    auto tok_name = lexer_->peek();
+    if (tok_name.kind != TokenKind::Identifier) {
+        skip_rparen();
+        return NULL_NODE;
+    }
+    lexer_->consume(); // Name
+    auto name_sym = pool_.intern(tok_name.text);
+
+    // Parse type parameters (identifiers starting with ':')
+    std::vector<aura::ast::SymId> type_params;
+    while (lexer_->peek().kind != TokenKind::RParen && !lexer_->eof()) {
+        auto param_tok = lexer_->peek();
+        if (param_tok.kind == TokenKind::Identifier && !param_tok.text.empty() &&
+            param_tok.text[0] == ':') {
+            lexer_->consume();
+            type_params.push_back(pool_.intern(param_tok.text));
+        } else {
+            break;
+        }
+    }
+    lexer_->consume(); // ')' after params
+
+    // Create the define-module AST node
+    auto id = flat_.add_define_module(name_sym, type_params);
+
+    // Parse body expressions
+    while (lexer_->peek().kind != TokenKind::RParen && !lexer_->eof()) {
+        auto body_expr = parse_expr();
+        if (body_expr != NULL_NODE)
+            flat_.insert_child(id, 1000000, body_expr);
+    }
+    lexer_->consume(); // ')' after body
+    flat_.set_loc(id, tok.line, tok.column);
+
+    return id;
 }
 
 NodeId FlatParser::parse_let(bool rec) {
