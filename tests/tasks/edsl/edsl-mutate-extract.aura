@@ -1,0 +1,10 @@
+;; task: edsl-mutate-extract
+;; goal: Use mutate:extract-function to extract a subexpression into a new function
+;; expect: 7
+;; hint: --- mutate:extract-function ---
+;; hint: ;; Step 1: Load code with a complex expression
+;; hint: (set-code "(define (calc x) (+ (* x 3) 1))")
+;; hint: ;; Step 2: Find the (* x 3) node and extract it
+;; hint: ;; First find the node ID of the subexpression
+;; hint: (define expr (current-source))
+;; hint: (display (calc 2))

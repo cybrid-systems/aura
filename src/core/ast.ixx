@@ -363,6 +363,13 @@ private:
 
     public:
 
+    // Low-level raw node creation (for advanced mutation).
+    // Creates a minimal node with the given tag and default fields.
+    // Children must be set up manually via set_child/insert_child.
+    [[nodiscard]] NodeId add_raw_node(NodeTag tag, SyntaxMarker m = SyntaxMarker::User) {
+        return add_node(tag, m);
+    }
+
     std::vector<MatchClauseInfo> match_info_;
     explicit FlatAST(std::pmr::polymorphic_allocator<std::byte> alloc = {})
         : tag_(alloc)
@@ -458,6 +465,7 @@ private:
         child_data_.push_back(body);
         child_begin_[id] = static_cast<std::uint32_t>(child_data_.size() - 1);
         child_count_[id] = 1;
+        link_children(id);
         return id;
     }
 
@@ -739,6 +747,11 @@ private:
     std::int64_t& int_val(NodeId id) { return int_val_[id]; }
     SymId& sym_id(NodeId id) { return sym_id_[id]; }
 
+    // ── Parent access ──────────────────────────────────────────
+    NodeId parent_of(NodeId id) const {
+        return id < parent_.size() ? parent_[id] : NULL_NODE;
+    }
+
     // ── Child field access ─────────────────────────────────────
 
     std::span<NodeId> children(NodeId id) {
@@ -746,7 +759,14 @@ private:
     }
 
     void set_child(NodeId id, std::uint32_t idx, NodeId child) {
-        child_data_[child_begin_[id] + idx] = child;
+        auto& slot = child_data_[child_begin_[id] + idx];
+        // Clear old child's parent
+        if (slot != NULL_NODE && slot < parent_.size())
+            parent_[slot] = NULL_NODE;
+        slot = child;
+        // Set new child's parent
+        if (child != NULL_NODE && child < parent_.size())
+            parent_[child] = id;
     }
 
     // Insert a child at position idx (0 = first, child_count = append)
@@ -761,12 +781,19 @@ private:
                 child_begin_[i]++;
         }
         child_count_[id]++;
+        // Set new child's parent
+        if (child != NULL_NODE && child < parent_.size())
+            parent_[child] = id;
     }
 
     // Remove a child at position idx by replacing with NULL_NODE
     void remove_child(NodeId id, std::uint32_t idx) {
-        if (idx < child_count_[id])
-            child_data_[child_begin_[id] + idx] = NULL_NODE;
+        if (idx < child_count_[id]) {
+            auto& slot = child_data_[child_begin_[id] + idx];
+            if (slot != NULL_NODE && slot < parent_.size())
+                parent_[slot] = NULL_NODE;
+            slot = NULL_NODE;
+        }
     }
 
     // ── Bulk ───────────────────────────────────────────────────

@@ -1,0 +1,10 @@
+;; task: edsl-mutate-rename
+;; goal: Use mutate:rename-symbol to rename a function
+;; expect: 5
+;; hint: --- mutate:rename-symbol ---
+;; hint: ;; Step 1: Load code with a function
+;; hint: (set-code "(define (square x) (* x x))")
+;; hint: ;; Step 2: Rename it
+;; hint: (mutate:rename-symbol "square" "double")
+;; hint: ;; Step 3: Call with new name
+;; hint: (display (double 5))
