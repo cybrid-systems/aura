@@ -10837,26 +10837,56 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         return make_void();
                     }
                     // Functor instantiation: callee is a module template
+                    // Functor instantiation: callee is a %functor marker
+                    // Functor instantiation: callee is a %functor marker
                     if (is_string(*fn) && as_string_idx(*fn) < string_heap_.size() &&
                         string_heap_[as_string_idx(*fn)] == "%functor") {
-                        // Get module name from the callee Variable node
                         auto callee_v = f->get(v.child(0));
                         if (callee_v.tag == aura::ast::NodeTag::Variable) {
                             auto tpl_name = std::string(p->resolve(callee_v.sym_id));
                             auto tpl_it = module_templates_.find(tpl_name);
                             if (tpl_it != module_templates_.end()) {
-                                // Evaluate type arguments
-                                std::vector<EvalValue> type_args;
-                                for (std::size_t ai = 1; ai < v.children.size(); ++ai) {
-                                    auto ar = eval_flat(*f, *p, v.child(ai), eval_env);
-                                    if (!ar) return ar;
-                                    type_args.push_back(*ar);
+                                // 获取模板的头信息来知道参数名
+                                // 目前 module_templates_ 只存 body，参数名在 AST 的 params 中
+                                // 查找 DefineModule 节点获取参数名
+                                aura::ast::NodeId defmod_id = aura::ast::NULL_NODE;
+                                std::vector<std::string> param_names;
+                                for (aura::ast::NodeId sid = 0; sid < f->size(); ++sid) {
+                                    auto sv = f->get(sid);
+                                    if (sv.tag == aura::ast::NodeTag::DefineModule &&
+                                        std::string(p->resolve(sv.sym_id)) == tpl_name) {
+                                        for (auto pid : sv.params)
+                                            param_names.push_back(std::string(p->resolve(pid)));
+                                        break;
+                                    }
                                 }
-                                // Create isolated env, eval body with type params bound
+
+                                // 创建隔离环境
                                 Env mod_env(&eval_env);
                                 mod_env.set_primitives(&primitives_);
                                 mod_env.set_cells(&cells_);
-                                // For now, just eval body and return result
+
+                                // 绑定类型参数到环境（按原始参数名）
+                                for (std::size_t ai = 1; ai < v.children.size(); ++ai) {
+                                    auto arg_v = f->get(v.child(ai));
+                                    std::string pname = (ai - 1 < param_names.size())
+                                        ? param_names[ai - 1]
+                                        : (":T" + std::to_string(ai - 1));
+                                    if (arg_v.tag == aura::ast::NodeTag::Variable) {
+                                        // 类型参数：存为字符串（类型名）
+                                        auto type_name = std::string(p->resolve(arg_v.sym_id));
+                                        auto sidx = string_heap_.size();
+                                        string_heap_.push_back(type_name);
+                                        mod_env.bind(pname, make_string(sidx));
+                                    } else {
+                                        // 值参数：正常 eval
+                                        auto ar = eval_flat(*f, *p, v.child(ai), eval_env);
+                                        if (!ar) return ar;
+                                        mod_env.bind(pname, *ar);
+                                    }
+                                }
+
+                                // Eval body in mod_env
                                 EvalResult last = make_void();
                                 for (auto bid : tpl_it->second.body_nodes) {
                                     auto br = eval_flat(*f, *p, bid, mod_env);

@@ -192,6 +192,23 @@ tests = [
      '(begin (declare-type "strlen" "String" "Int")(declare-type "double" "Int" "Int")(display "ok"))',
      "ok", ""),
 
+    # ── Functor 泛型模块 ───────────────────────────────────────
+    ("functor-define",
+     '(begin (define-module (Stack :T) (export push)) (display "ok"))',
+     "ok", ""),
+    ("functor-instance",
+     '(begin (define-module (M :T) (+ 1 2)) (M Int))',
+     "3", ""),
+    ("functor-multi-instance",
+     '(begin (define-module (W :T) (display 1)) (W Int) (W String) (display "ok"))',
+     "11ok", ""),
+    ("functor-body",
+     '(begin (define-module (Calc :T) (display (+ 40 2))) (Calc Int))',
+     "42", ""),
+    ("functor-multi-param",
+     '(begin (define-module (Pair :A :B) (display 1)) (Pair Int String) (display "ok"))',
+     "1ok", ""),
+
     # ── closure warning → stdout ──────────────────────────
     ("closure-warning-stdout",
      '(define (f x) (+ x 1)) f', "uncalled function", ""),
