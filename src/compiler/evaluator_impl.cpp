@@ -11038,7 +11038,9 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 if (!ar)
                                     return ar;
                                 // Propagate error values through normal eval
-                                if (is_error(*ar))
+                                // Note: is_string check prevents accidental collision
+                                // where make_string(idx) with odd idx matches is_ref/RefError encoding
+                                if (is_error(*ar) && !is_string(*ar))
                                     return ar;
                                 args.push_back(*ar);
                             }
@@ -11100,7 +11102,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 auto ar = eval_flat(*f, *p, v.child(i), eval_env);
                                 if (!ar)
                                     return ar;
-                                if (is_error(*ar))
+                                if (is_error(*ar) && !is_string(*ar))
                                     return ar;
                                 auto pid = pairs_.size();
                                 pairs_.push_back({*ar, rest});
