@@ -6138,6 +6138,14 @@ Evaluator::Evaluator() {
             }
         }
 
+        // 写入成功后，失效模块缓存强制下次 require 重新加载
+        // 这样 .aura-type 文件才能在后续的 require 中被读取。
+        // pre_exec_requires 可能在 generate-type-sigs 之前加载了模块。
+        auto cache_it = module_cache_.find(path);
+        if (cache_it != module_cache_.end()) {
+            module_cache_.erase(cache_it);
+        }
+
         std::println(std::cerr, "generate-type-sigs: wrote {} types to '{}'",
                      written, type_sig_path);
         return make_bool(written > 0);
