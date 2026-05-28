@@ -15,6 +15,7 @@ module;
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <regex>
+#include <unordered_map>
 #if __has_include(<curl/curl.h>)
 #include <curl/curl.h>
 #define AURA_HAVE_CURL 1
@@ -7304,6 +7305,590 @@ Evaluator::Evaluator() {
         pairs_.push_back({make_int(static_cast<std::int64_t>(pr.root)),
                          make_int(static_cast<std::int64_t>(parent_of_target))});
         return make_pair(result_pid);
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // P11: 结构化变异 API — rename / inline / move / fix extract
+    // ═══════════════════════════════════════════════════════════════
+
+    // ── Helper: resolve a function body from a call node ──────────
+    // Given a Call node where func is a Variable, find the Define node
+    // it refers to and return the Define's body. Returns NULL_NODE if not found.
+    auto resolve_call_target = [&](const aura::ast::FlatAST& flat, aura::ast::NodeId call_id,
+                                   aura::ast::FlatAST* override_flat = nullptr) -> aura::ast::NodeId {
+        using namespace aura::ast;
+        auto& f = override_flat ? *override_flat : flat;
+        auto cv = f.get(call_id);
+        if (cv.tag != NodeTag::Call || cv.children.empty())
+            return NULL_NODE;
+        auto func_node = cv.child(0);
+        auto fv = f.get(func_node);
+        if (fv.tag != NodeTag::Variable)
+            return NULL_NODE;
+        auto sym = fv.sym_id;
+        // Find Define with this sym
+        for (NodeId id = 0; id < f.size(); ++id) {
+            auto v = f.get(id);
+            if (v.tag == NodeTag::Define && v.sym_id == sym) {
+                if (!v.children.empty())
+                    return v.child(0); // body of define
+            }
+        }
+        return NULL_NODE;
+    };
+
+    // ── Helper: collect free variables in a subtree ─────────────
+    // Returns a list of SymIds for variables used but not defined within the subtree.
+    // Scoped bindings (lambda params, let, letrec) are excluded.
+    auto collect_free_vars = [&](const aura::ast::FlatAST& flat, aura::ast::NodeId root_id,
+                                  aura::ast::StringPool& pool) -> std::vector<aura::ast::SymId> {
+        using namespace aura::ast;
+        std::vector<SymId> free_vars;
+        std::unordered_set<SymId> bound_vars;
+        // DFS with scope tracking
+        struct Frame {
+            NodeId node;
+            std::size_t child_idx;
+        };
+        std::vector<Frame> stack;
+        // We need to track scope-introducing nodes and their bound vars.
+        // Simple approach: two-pass — first collect all bound vars in the subtree,
+        // then find all Variable refs that are not bound.
+        // Pass 1: collect bound vars
+        {
+            std::vector<Frame> pass1;
+            pass1.push_back({root_id, 0});
+            while (!pass1.empty()) {
+                auto& f = pass1.back();
+                auto v = flat.get(f.node);
+                if (f.child_idx == 0) {
+                    // Scope-introducing nodes
+                    if (v.tag == NodeTag::Lambda) {
+                        for (auto p : v.params)
+                            bound_vars.insert(p);
+                    } else if (v.tag == NodeTag::Let || v.tag == NodeTag::LetRec) {
+                        if (v.has_name())
+                            bound_vars.insert(v.sym_id);
+                    }
+                }
+                if (f.child_idx < v.children.size()) {
+                    auto c = v.child(f.child_idx);
+                    f.child_idx++;
+                    if (c != NULL_NODE)
+                        pass1.push_back({c, 0});
+                } else {
+                    pass1.pop_back();
+                }
+            }
+        }
+        // Pass 2: find Variable refs not in bound_vars
+        {
+            std::vector<Frame> pass2;
+            pass2.push_back({root_id, 0});
+            while (!pass2.empty()) {
+                auto& f = pass2.back();
+                auto v = flat.get(f.node);
+                if (f.child_idx == 0 && f.node != root_id) {
+                    // Skip bound vars in inner scopes
+                }
+                if (v.tag == NodeTag::Variable && f.node != root_id) {
+                    // Only collect variables that aren't bound
+                    // But we need to respect scope — a variable might be bound
+                    // by innermost scope. Use simple approach: if not in bound_vars,
+                    // it's free.
+                }
+                if (f.child_idx < v.children.size()) {
+                    auto c = v.child(f.child_idx);
+                    f.child_idx++;
+                    if (c != NULL_NODE)
+                        pass2.push_back({c, 0});
+                } else {
+                    if (f.child_idx == v.children.size()) {
+                        // Post-visit: check if this node is a Variable and not a lambda param
+                        if (v.tag == NodeTag::Variable) {
+                            if (bound_vars.find(v.sym_id) == bound_vars.end()) {
+                                // Not bound — check if already in free_vars
+                                if (std::find(free_vars.begin(), free_vars.end(), v.sym_id) == free_vars.end())
+                                    free_vars.push_back(v.sym_id);
+                            }
+                        }
+                    }
+                    pass2.pop_back();
+                }
+            }
+        }
+        return free_vars;
+    };
+
+    // ── mutate:rename-symbol ────────────────────────────────────
+    // (mutate:rename-symbol old-name new-name "summary")
+    //   → #t/#f
+    //   Renames all definitions and references of old-name to new-name.
+    //   Uses def-use index for finding all references.
+    primitives_.add("mutate:rename-symbol", [this, ensure_defuse](const auto& a) -> EvalValue {
+        using namespace aura::ast;
+        defuse_version_++;
+        if (workspace_read_only_) return make_bool(false);
+        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) ||
+            !workspace_flat_ || !workspace_pool_)
+            return make_bool(false);
+        auto old_name_idx = as_string_idx(a[0]);
+        auto new_name_idx = as_string_idx(a[1]);
+        if (old_name_idx >= string_heap_.size() || new_name_idx >= string_heap_.size())
+            return make_bool(false);
+        auto& flat = *workspace_flat_;
+        auto old_name = string_heap_[old_name_idx];
+        auto new_name = string_heap_[new_name_idx];
+        auto old_sym = workspace_pool_->intern(old_name);
+        auto new_sym = workspace_pool_->intern(new_name);
+
+        std::string summary = (a.size() > 2 && is_string(a[2]))
+                                  ? string_heap_[as_string_idx(a[2])]
+                                  : "rename " + old_name + " → " + new_name;
+
+        // Scan entire AST for nodes with this sym_id (defs + uses)
+        int count = 0;
+        for (NodeId id = 0; id < flat.size(); ++id) {
+            // Check if this id's sym_id matches (and is meaningful)
+            if (flat.sym_id(id) == old_sym) {
+                auto tag = flat.tag(id);
+                // Only rename Variable, Define, DefineType, DefineModule, Let, LetRec, Set
+                if (tag == NodeTag::Variable || tag == NodeTag::Define ||
+                    tag == NodeTag::DefineType || tag == NodeTag::DefineModule ||
+                    tag == NodeTag::Let || tag == NodeTag::LetRec ||
+                    tag == NodeTag::Set || tag == NodeTag::MacroDef) {
+                    flat.sym_id(id) = new_sym;
+                    count++;
+                }
+            }
+        }
+
+        if (count == 0)
+            return make_bool(false);
+
+        flat.add_mutation(0, "rename-symbol", old_name, new_name, summary);
+        return make_bool(true);
+    });
+
+    // ── mutate:move-node ────────────────────────────────────────
+    // (mutate:move-node node-id new-parent-id new-position "summary")
+    //   → #t/#f
+    //   Moves a node (and its subtree) from its current position to
+    //   a new parent at the specified child index.
+    primitives_.add("mutate:move-node", [this](const auto& a) -> EvalValue {
+        using namespace aura::ast;
+        defuse_version_++;
+        if (workspace_read_only_) return make_bool(false);
+        if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) ||
+            !workspace_flat_)
+            return make_bool(false);
+        auto node = static_cast<NodeId>(as_int(a[0]));
+        auto new_parent = static_cast<NodeId>(as_int(a[1]));
+        auto new_pos = static_cast<std::uint32_t>(as_int(a[2]));
+        auto& flat = *workspace_flat_;
+
+        if (node >= flat.size() || new_parent >= flat.size() ||
+            node == NULL_NODE || new_parent == NULL_NODE)
+            return make_bool(false);
+
+        // Can't move to self or descendant
+        if (node == new_parent)
+            return make_bool(false);
+
+        // Check if new_parent is a descendant of node (would create cycle)
+        {
+            auto p = flat.parent_of(new_parent);
+            while (p != NULL_NODE) {
+                if (p == node)
+                    return make_bool(false); // would create cycle
+                auto next = flat.parent_of(p);
+                if (next == p) break; // root
+                p = next;
+            }
+        }
+
+        // Find current parent
+        auto cur_parent = flat.parent_of(node);
+        if (cur_parent == NULL_NODE)
+            return make_bool(false);
+
+        // Find current child index
+        int cur_idx = -1;
+        auto cpv = flat.get(cur_parent);
+        for (std::size_t ci = 0; ci < cpv.children.size(); ++ci) {
+            if (cpv.child(ci) == node) {
+                cur_idx = static_cast<int>(ci);
+                break;
+            }
+        }
+        if (cur_idx < 0)
+            return make_bool(false);
+
+        std::string summary = (a.size() > 3 && is_string(a[3]))
+                                  ? string_heap_[as_string_idx(a[3])]
+                                  : "move node " + std::to_string(node);
+
+        // Remove from current parent (set to NULL_NODE).
+        // insert_child will set parent_[node] = new_parent.
+        flat.children(cur_parent)[static_cast<std::size_t>(cur_idx)] = NULL_NODE;
+
+        // Insert at new parent
+        flat.insert_child(new_parent, new_pos, node);
+
+        flat.add_mutation(node, "move-node", std::to_string(cur_parent),
+                          std::to_string(new_parent), summary);
+        return make_bool(true);
+    });
+
+    // ── Fix: mutate:refactor/extract 重写 ──────────────────────
+    // (mutate:extract-function node-id new-name "summary")
+    //   → (define-node-id . call-node-id)
+    //   Extracts a subtree into a new top-level function definition.
+    //   Analyzes free variables in the subtree and makes them parameters.
+    //   Replaces the original node with a call to the new function.
+    primitives_.add("mutate:extract-function", [this, collect_free_vars](const auto& a) -> EvalValue {
+        using namespace aura::ast;
+        defuse_version_++;
+        if (workspace_read_only_) return make_bool(false);
+        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) ||
+            !workspace_flat_ || !workspace_pool_)
+            return make_bool(false);
+        auto node = static_cast<NodeId>(as_int(a[0]));
+        auto name_idx = as_string_idx(a[1]);
+        if (name_idx >= string_heap_.size())
+            return make_bool(false);
+        auto& flat = *workspace_flat_;
+        if (node >= flat.size())
+            return make_bool(false);
+
+        auto new_name = string_heap_[name_idx];
+        std::string summary = (a.size() > 2 && is_string(a[2]))
+                                  ? string_heap_[as_string_idx(a[2])]
+                                  : "extract " + new_name;
+
+        // Find parent of target node using parent_ vector
+        auto parent_of_target = flat.parent_of(node);
+        if (parent_of_target == NULL_NODE)
+            return make_bool(false);
+
+        // Find child index in parent
+        int child_idx_in_parent = -1;
+        auto pv = flat.get(parent_of_target);
+        for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
+            if (pv.child(ci) == node) {
+                child_idx_in_parent = static_cast<int>(ci);
+                break;
+            }
+        }
+        if (child_idx_in_parent < 0)
+            return make_bool(false);
+
+        // Collect free variables in the extracted subtree
+        // Filter out common built-in symbols
+        auto raw_free_vars = collect_free_vars(flat, node, *workspace_pool_);
+        std::vector<SymId> free_vars;
+        {
+            static const char* builtins[] = {
+                "+", "-", "*", "/", "%", "=", "<", ">", "<=", ">=",
+                "display", "newline", "print", "read",
+                "car", "cdr", "cons", "pair?", "null?", "list",
+                "eq?", "eqv?", "equal?", "not", "and", "or", "if", "cond",
+                "lambda", "define", "let", "letrec", "begin", "set!",
+                "apply", "map", "filter", "foldl", "foldr",
+                "string?", "number?", "symbol?", "procedure?",
+                "void", "make-void", "error", "assert",
+            };
+            std::unordered_set<SymId> builtin_syms;
+            for (auto b : builtins)
+                builtin_syms.insert(workspace_pool_->intern(b));
+            for (auto fv : raw_free_vars) {
+                if (builtin_syms.find(fv) == builtin_syms.end())
+                    free_vars.push_back(fv);
+            }
+        }
+
+        // Step 1: Create lambda with free vars as params, body = extracted node
+        auto lambda_id = flat.add_lambda(free_vars, node);
+
+        // Step 2: Create (define new-name lambda)
+        auto new_sym = workspace_pool_->intern(new_name);
+        auto define_id = flat.add_define(new_sym, lambda_id);
+        flat.set_marker(define_id, SyntaxMarker::MacroIntroduced);
+        flat.set_marker(lambda_id, SyntaxMarker::MacroIntroduced);
+
+        // Step 3: Create call site (new-name free-var-1 ...)
+        auto var_id = flat.add_variable(new_sym);
+        flat.set_marker(var_id, SyntaxMarker::MacroIntroduced);
+        std::vector<NodeId> call_args;
+        call_args.reserve(free_vars.size());
+        for (auto fv : free_vars) {
+            auto arg_var = flat.add_variable(fv);
+            call_args.push_back(arg_var);
+        }
+        auto call_id = flat.add_call(var_id, call_args);
+        flat.set_marker(call_id, SyntaxMarker::MacroIntroduced);
+
+        // Step 5: Replace original node slot with the call
+        flat.set_child(parent_of_target, static_cast<std::uint32_t>(child_idx_in_parent), call_id);
+
+        // Step 6: Insert new define as a child of the workspace root
+        // Insert at position 0 (before other defs) to avoid forward-reference issues
+        auto ws_root = flat.root;
+        if (ws_root != NULL_NODE && ws_root < flat.size()) {
+            flat.insert_child(ws_root, 0, define_id);
+        }
+
+        flat.mark_dirty(define_id);
+
+        flat.add_mutation(define_id, "extract-function", new_name, summary, summary);
+
+        // Return (define-node-id . call-node-id)
+        auto result_pid = pairs_.size();
+        {
+            auto car_val = make_int(static_cast<std::int64_t>(define_id));
+            auto cdr_val = make_int(static_cast<std::int64_t>(call_id));
+            pairs_.push_back(Pair{car_val, cdr_val});
+        }
+        return make_pair(result_pid);
+    });
+
+    // ── mutate:inline-call ──────────────────────────────────────
+    // (mutate:inline-call call-node-id "summary")
+    //   → #t/#f
+    //   Inlines a function call. Simplest approach: replace the call node
+    //   with the body of the called function, substituting arguments for
+    //   formal parameters. Only works for directly defined named functions
+    //   and inline lambdas with matching arity.
+    primitives_.add("mutate:inline-call", [this](const auto& a) -> EvalValue {
+        using aura::ast::NodeId;
+        using aura::ast::NodeTag;
+        using aura::ast::SymId;
+        using aura::ast::NULL_NODE;
+        defuse_version_++;
+        if (workspace_read_only_) return make_bool(false);
+        if (a.empty() || !is_int(a[0]) || !workspace_flat_ || !workspace_pool_)
+            return make_bool(false);
+        auto call_id = static_cast<NodeId>(as_int(a[0]));
+        auto& flat = *workspace_flat_;
+        if (call_id >= flat.size())
+            return make_bool(false);
+
+        auto cv = flat.get(call_id);
+        if (cv.tag != NodeTag::Call || cv.children.empty())
+            return make_bool(false);
+
+        std::string summary = (a.size() > 1 && is_string(a[1]))
+                                  ? string_heap_[as_string_idx(a[1])]
+                                  : "inline call " + std::to_string(call_id);
+
+        // Get the function node and actual arguments
+        auto func_node = cv.child(0);
+        auto fv = flat.get(func_node);
+
+        // Find the function body and formal params
+        NodeId func_body_node = NULL_NODE;     // the lambda node
+        std::vector<SymId> formal_params;
+        bool is_closure_call = false;
+
+        if (fv.tag == NodeTag::Variable) {
+            // Named function — find Define with matching name
+            auto sym = fv.sym_id;
+            for (NodeId id = 0; id < flat.size(); ++id) {
+                auto v = flat.get(id);
+                if (v.tag == NodeTag::Define && v.sym_id == sym && !v.children.empty()) {
+                    func_body_node = v.child(0);
+                    break;
+                }
+            }
+            if (func_body_node == NULL_NODE)
+                return make_bool(false);
+            auto bn = flat.get(func_body_node);
+            if (bn.tag == NodeTag::Lambda) {
+                formal_params.assign(bn.params.begin(), bn.params.end());
+                if (bn.children.empty())
+                    return make_bool(false);
+                func_body_node = bn.child(0); // actual body expression
+            } else {
+                // Not a lambda — can't inline
+                return make_bool(false);
+            }
+        } else if (fv.tag == NodeTag::Lambda) {
+            // Inline lambda directly at call site
+            formal_params.assign(fv.params.begin(), fv.params.end());
+            if (fv.children.empty())
+                return make_bool(false);
+            func_body_node = fv.child(0);
+            is_closure_call = true;
+        } else {
+            return make_bool(false);
+        }
+
+        if (func_body_node == NULL_NODE)
+            return make_bool(false);
+
+        // Get actual arguments (children after the function node)
+        std::vector<NodeId> actual_args;
+        for (std::size_t i = 1; i < cv.children.size(); ++i)
+            actual_args.push_back(cv.child(i));
+
+        // Parameter count must match
+        if (formal_params.size() != actual_args.size())
+            return make_bool(false);
+
+        // Find parent of the call node
+        auto call_parent = flat.parent_of(call_id);
+        if (call_parent == NULL_NODE)
+            return make_bool(false);
+
+        // Find call index in its parent
+        int call_idx_in_parent = -1;
+        {
+            auto cpv = flat.get(call_parent);
+            for (std::size_t ci = 0; ci < cpv.children.size(); ++ci) {
+                if (cpv.child(ci) == call_id) {
+                    call_idx_in_parent = static_cast<int>(ci);
+                    break;
+                }
+            }
+        }
+        if (call_idx_in_parent < 0)
+            return make_bool(false);
+
+        // Simple inline: replace the call with the body, substituting
+        // Variable nodes for params with the actual argument nodes.
+        // Walk the body subtree and replace Variable sym_ids matching params.
+        // First, clone the body to new nodes to avoid cross-node contamination.
+        // We do a simple DFS clone.
+        std::vector<std::uint32_t> old_to_new(flat.size(), aura::ast::NULL_NODE);
+        {
+            std::vector<NodeId> dfs_stack;
+            dfs_stack.push_back(func_body_node);
+            while (!dfs_stack.empty()) {
+                auto cur = dfs_stack.back();
+                dfs_stack.pop_back();
+                if (cur >= old_to_new.size() || old_to_new[cur] != aura::ast::NULL_NODE)
+                    continue;
+                // Ensure vector is big enough
+                if (cur >= old_to_new.size())
+                    old_to_new.resize(cur + 1, aura::ast::NULL_NODE);
+                auto v = flat.get(cur);
+                NodeId new_id = aura::ast::NULL_NODE;
+                switch (v.tag) {
+                    case NodeTag::LiteralInt:
+                        new_id = flat.add_literal(v.int_value);
+                        break;
+                    case NodeTag::LiteralFloat:
+                        new_id = flat.add_literal_float(v.float_value);
+                        break;
+                    case NodeTag::LiteralString:
+                        new_id = flat.add_literalstring(v.sym_id);
+                        break;
+                    case NodeTag::Variable: {
+                        // Check if this param should be substituted
+                        bool is_param = false;
+                        for (std::size_t pi = 0; pi < formal_params.size(); ++pi) {
+                            if (formal_params[pi] == v.sym_id) {
+                                // Substitute with actual argument — reuse the arg node
+                                new_id = actual_args[pi];
+                                is_param = true;
+                                break;
+                            }
+                        }
+                        if (!is_param)
+                            new_id = flat.add_variable(v.sym_id);
+                        break;
+                    }
+                    case NodeTag::Call:
+                        new_id = flat.add_raw_node(v.tag);
+                        break;
+                    case NodeTag::Lambda:
+                        new_id = flat.add_lambda(std::span<const SymId>{}, aura::ast::NULL_NODE);
+                        break;
+                    case NodeTag::IfExpr:
+                    case NodeTag::Begin:
+                    case NodeTag::Set:
+                        new_id = flat.add_raw_node(v.tag);
+                        break;
+                    case NodeTag::Let:
+                        new_id = flat.add_let(aura::ast::INVALID_SYM, aura::ast::NULL_NODE, aura::ast::NULL_NODE);
+                        break;
+                    case NodeTag::LetRec:
+                        new_id = flat.add_letrec(aura::ast::INVALID_SYM, aura::ast::NULL_NODE, aura::ast::NULL_NODE);
+                        break;
+                    default:
+                        new_id = flat.add_raw_node(v.tag);
+                        break;
+                }
+                if (new_id != aura::ast::NULL_NODE) {
+                    old_to_new[cur] = new_id;
+                    // Copy scalar fields
+                    if (v.has_name())
+                        flat.sym_id(new_id) = v.sym_id;
+                    flat.int_val(new_id) = v.int_value;
+                    // Push children
+                    for (auto c : v.children) {
+                        if (c != aura::ast::NULL_NODE)
+                            dfs_stack.push_back(c);
+                    }
+                }
+            }
+        }
+
+        // Second pass: connect children in new nodes
+        for (std::size_t old_nid = 0; old_nid < old_to_new.size(); ++old_nid) {
+            auto new_id = old_to_new[old_nid];
+            if (new_id == aura::ast::NULL_NODE)
+                continue;
+            // Skip if this was a param substitution (reused arg node)
+            bool is_reused_arg = false;
+            for (auto arg : actual_args) {
+                if (arg == new_id) { is_reused_arg = true; break; }
+            }
+            if (is_reused_arg) continue;
+
+            auto old_v = flat.get(static_cast<NodeId>(old_nid));
+            // For Lambda, copy params
+            if (old_v.tag == NodeTag::Lambda) {
+                // Lambda params: set body child, then copy params
+                if (!old_v.children.empty()) {
+                    auto old_child = old_v.child(0);
+                    if (old_child < old_to_new.size() && old_to_new[old_child] != aura::ast::NULL_NODE)
+                        flat.set_child(new_id, 0, old_to_new[old_child]);
+                }
+                continue;
+            }
+            // Handle data params (param_data_ vector) — skip for now
+            // Connect children
+            for (std::size_t ci = 0; ci < old_v.children.size(); ++ci) {
+                auto old_child = old_v.child(ci);
+                if (old_child != aura::ast::NULL_NODE) {
+                    if (old_child < old_to_new.size() && old_to_new[old_child] != aura::ast::NULL_NODE) {
+                        flat.set_child(new_id, static_cast<std::uint32_t>(ci), old_to_new[old_child]);
+                    } else if (old_child < old_to_new.size()) {
+                        // Child was a param substitution — use actual arg
+                        // Check if old_child is a param
+                        auto old_cv = flat.get(old_child);
+                        if (old_cv.tag == NodeTag::Variable) {
+                            for (std::size_t pi = 0; pi < formal_params.size(); ++pi) {
+                                if (formal_params[pi] == old_cv.sym_id) {
+                                    flat.set_child(new_id, static_cast<std::uint32_t>(ci), actual_args[pi]);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Replace the call with the cloned body root
+        auto cloned_body = old_to_new[func_body_node];
+        if (cloned_body == aura::ast::NULL_NODE)
+            return make_bool(false);
+        flat.set_child(call_parent, static_cast<std::uint32_t>(call_idx_in_parent), cloned_body);
+
+        flat.add_mutation(call_id, "inline-call", summary, summary, summary);
+        return make_bool(true);
     });
 
     // ═══════════════════════════════════════════════════════════════
