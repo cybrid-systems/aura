@@ -10903,8 +10903,33 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                     if (!br) return br;
                                     last = *br;
                                 }
+                                // 实例化后生成 .aura-type 签名
+                                // 扫描 body 中的 define 节点并记录其类型
+                                std::vector<std::string> export_names;
+                                for (auto bid : tpl_it->second.body_nodes) {
+                                    auto bv = f->get(bid);
+                                    if (bv.tag == aura::ast::NodeTag::Export) {
+                                        for (auto cid : bv.children) {
+                                            auto cv2 = f->get(cid);
+                                            if (cv2.tag == aura::ast::NodeTag::Variable)
+                                                export_names.push_back(std::string(p->resolve(cv2.sym_id)));
+                                        }
+                                    }
+                                }
+                                if (!export_names.empty()) {
+                                    // 为每个导出函数设置默认类型 Any -> Any
+                                    for (auto& en : export_names) {
+                                        if (declared_type_sigs_.find(cache_key + "/" + en) == declared_type_sigs_.end()) {
+                                            declared_type_sigs_[cache_key + "/" + en] = {
+                                                .type_str = "Any|Any",
+                                                .module_file = "%functor:" + tpl_name,
+                                                .resolved = false
+                                            };
+                                        }
+                                    }
+                                }
+
                                 // 缓存实例化结果
-                                // 创建模块 env 的持久化副本
                                 auto* cached_env = arena_->create<Env>(mod_env);
                                 auto mod_idx = modules_.size();
                                 modules_.push_back(cached_env);
