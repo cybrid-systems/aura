@@ -240,6 +240,12 @@ tests = [
      '(define-type (Triple a b c) (MkTriple a b c))(let ((t (MkTriple 1 2 3)))(match t ((MkTriple x y z) (+ x (+ y z)))))',
      "6", ""),
 
+    # ── Capability Effects #9 ────────────────────────────────
+    ("effect-type-IO", '(type-of 42)', "Int", ""),
+    ("effect-mutate-basic",
+     '(begin (set-code "(define (f x) (+ x 1))(display (f 41))")(typecheck-current)(eval-current))',
+     "42", ""),
+
     # ── closure warning → stdout ──────────────────────────
     ("closure-warning-stdout",
      '(define (f x) (+ x 1)) f', "uncalled function", ""),
