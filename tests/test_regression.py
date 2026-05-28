@@ -179,6 +179,18 @@ tests = [
     ("declare-type-multi",
      '(begin (declare-type "f1" "Int" "Int")(declare-type "f2" "Int" "Bool")(display "ok"))',
      "ok", ""),
+    ("declare-type-void",
+     '(begin (declare-type "logfn" "String" "Void")(display "ok"))',
+     "ok", ""),
+    ("declare-type-string",
+     '(begin (declare-type "greet" "String" "String")(display "ok"))',
+     "ok", ""),
+    ("declare-type-bool",
+     '(begin (declare-type "pred" "Int" "Bool")(display "ok"))',
+     "ok", ""),
+    ("declare-type-mixed",
+     '(begin (declare-type "strlen" "String" "Int")(declare-type "double" "Int" "Int")(display "ok"))',
+     "ok", ""),
 
     # ── closure warning → stdout ──────────────────────────
     ("closure-warning-stdout",
@@ -329,11 +341,78 @@ def test_aura_type_no_sig():
         assert "unbound variable" in r.stdout, f"expected unbound: {r.stdout}"
     print("  ✅ test-aura-type-no-sig")
 
+def test_aura_type_multi_func():
+    """Multiple functions in .aura-type."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mod_path = os.path.join(tmpdir, "lib.aura")
+        sig_path = os.path.join(tmpdir, "lib.aura-type")
+        with open(mod_path, "w") as f:
+            f.write("(export add mul neg)\n")
+            f.write("(define (add x y) (+ x y))\n")
+            f.write("(define (mul x y) (* x y))\n")
+            f.write("(define (neg x) (- 0 x))\n")
+        with open(sig_path, "w") as f:
+            f.write("add: Int Int -> Int\n")
+            f.write("mul: Int Int -> Int\n")
+            f.write("neg: Int -> Int\n")
+        code = f'(begin (require "{mod_path}" all:)(set-code "(display (add 1 2))(display (mul 3 4))(display (neg 5))")(display (typecheck-current))(display "|")(eval-current))'
+        r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=10)
+        assert "no errors" in r.stdout, f"type error: {r.stdout}"
+        assert "3" in r.stdout and "12" in r.stdout and "-5" in r.stdout, f"eval wrong: {r.stdout}"
+    print("  ✅ test-aura-type-multi-func")
+
+def test_aura_type_different_types():
+    """Different return types in .aura-type."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mod_path = os.path.join(tmpdir, "fmt.aura")
+        sig_path = os.path.join(tmpdir, "fmt.aura-type")
+        with open(mod_path, "w") as f:
+            f.write("(export greet)\n")
+            f.write("(define (greet n) (string-append \"hi \" n))\n")
+        with open(sig_path, "w") as f:
+            f.write("greet: String -> String\n")
+        # Use numeric arg to avoid string escaping issues in pipe mode
+        code = f'(begin (require "{mod_path}" all:)(set-code "(display (greet 42))")(display (typecheck-current))(display "|")(eval-current))'
+        r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=10)
+        assert "no errors" in r.stdout, f"type error: {r.stdout}"
+        assert "hi 42" in r.stdout, f"eval wrong: {r.stdout}"
+    print("  ✅ test-aura-type-different-types")
+
+def test_aura_type_cross_module():
+    """Cross-module type checking with 2 modules."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Module A: math operations
+        a_path = os.path.join(tmpdir, "math.aura")
+        a_sig = os.path.join(tmpdir, "math.aura-type")
+        with open(a_path, "w") as f:
+            f.write("(export square)\n(define (square x) (* x x))\n")
+        with open(a_sig, "w") as f:
+            f.write("square: Int -> Int\n")
+        # Module B: uses math
+        b_path = os.path.join(tmpdir, "calc.aura")
+        b_sig = os.path.join(tmpdir, "calc.aura-type")
+        with open(b_path, "w") as f:
+            f.write(f'(require "{a_path}" all:)(export sum-sq)\n')
+            f.write('(define (sum-sq x y) (+ (square x) (square y)))\n')
+        with open(b_sig, "w") as f:
+            f.write("sum-sq: Int Int -> Int\n")
+        # Main: uses calc
+        code = f'(begin (require "{b_path}" all:)(set-code "(display (sum-sq 3 4))")(display (typecheck-current))(display "|")(eval-current))'
+        r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=10)
+        assert "no errors" in r.stdout, f"cross-module type error: {r.stdout}"
+        assert "25" in r.stdout, f"eval wrong (expected 25): {r.stdout}"
+    print("  ✅ test-aura-type-cross-module")
+
 # Run subprocess tests
 passed_s = 0
 failed_s = 0
 for tf in [test_freeze_load, test_freeze_multi_expr, test_freeze_empty, test_emit_binary,
-           test_aura_type_auto_load, test_aura_type_no_sig]:
+           test_aura_type_auto_load, test_aura_type_no_sig,
+           test_aura_type_multi_func, test_aura_type_different_types,
+           test_aura_type_cross_module]:
     try:
         tf()
         passed_s += 1

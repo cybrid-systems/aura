@@ -188,7 +188,11 @@
     (if (string? "hello") "type safe" "type error")))
 
 (test-suite "typesystem:declare-type"
-  (check (begin (declare-type "mytest" "Int" "Int") #t)))
+  (check (begin (declare-type "mytest" "Int" "Int") #t))
+  (check (begin (declare-type "myadd" "Int Int" "Int") #t))
+  (check (begin (declare-type "myecho" "String" "String") #t))
+  (check (begin (declare-type "mypred" "Int" "Bool") #t))
+  (check (begin (declare-type "myvoid" "String" "Void") #t)))
 
 (test-suite "typesystem:query"
   (display "typesystem:query — manual check via typecheck pipeline"))
