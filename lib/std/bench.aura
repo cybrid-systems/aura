@@ -100,8 +100,8 @@
 ; ── Rounds ──
 (define (run-rounds tasks model max-a rounds)
   ; Iterative: use while for both rounds and tasks (zero recursion throughout).
-  ; gc-freeze marks root closure generation (reserved for future GC).
-  ; gc-heap frees per-task heap vectors (strings, pairs, hashes, etc.).
+  ; gc-freeze marks root closure generation.
+  ; gc-temp frees per-task heap vectors + temp arena (closures/cells).
   (gc-freeze)
   (let ((result-acc '())
         (round-cursor 0))
@@ -128,7 +128,7 @@
                   (if ok (display "OK") (display "FAIL"))
                   (set! rd (cons result rd))
                   (set! tl-cursor (cdr tl-cursor))
-                  (gc-heap)))))
+                  (gc-temp)))))
           (set! result-acc (append result-acc (list (reverse rd)))))
         (set! round-cursor (+ round-cursor 1))))
     result-acc))

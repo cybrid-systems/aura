@@ -87,6 +87,7 @@ export struct Closure {
     ast::NodeId body_id = ast::NULL_NODE;
     const Env* env = nullptr;
     bool dotted = false;
+    ast::ASTArena* owner_arena = nullptr;  // arena where flat/pool/env lives
 };
 
 export using EvalResult = std::expected<types::EvalValue, aura::diag::Diagnostic>;
@@ -95,6 +96,7 @@ export class Evaluator {
 public:
     Evaluator();
     void set_arena(ast::ASTArena* a) { arena_ = a; }
+    void set_temp_arena(ast::ASTArena* a) { temp_arena_ = a; }
     // Set current FlatAST/Pool for mutation primitives
     void set_flat_pool(ast::FlatAST* f, ast::StringPool* p) {
         current_flat_ = f;
@@ -164,7 +166,7 @@ private:
     [[nodiscard]] EvalResult eval_data_as_code(const types::EvalValue& data, const Env& env,
                                                aura::ast::FlatAST* flat = nullptr,
                                                aura::ast::StringPool* pool = nullptr);
-    Env* copy_env(const Env& env);
+    Env* copy_env(const Env& env, ast::ASTArena* target = nullptr);
     void init_pair_primitives();
     void build_primitive_slots();
     // Load a module file, return module object (or void on failure)
@@ -174,6 +176,7 @@ private:
     Env top_;
     Primitives primitives_;
     ast::ASTArena* arena_ = nullptr;
+    ast::ASTArena* temp_arena_ = nullptr;
     ast::FlatAST* current_flat_ = nullptr;
     ast::StringPool* current_pool_ = nullptr;
     ast::FlatAST* workspace_flat_ = nullptr;
@@ -261,6 +264,7 @@ private:
     std::vector<std::vector<types::EvalValue>> vector_heap_;
     std::uint64_t next_id_ = 1;
     ClosureId gc_safe_closure_id_ = 0;
+    bool in_task_context_ = false;
 };
 
 

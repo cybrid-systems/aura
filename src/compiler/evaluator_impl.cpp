@@ -8082,10 +8082,15 @@ Evaluator::Evaluator() {
     // - fixer-fn:     (lambda (code error goal) → new-code-string, optional)
     // - max-attempts: int (optional, default 3)
     primitives_.add("intend", [this](const auto& a) -> EvalValue {
+        // Mark task context so closure bodies are allocated in temp_arena_
+        bool saved_context = in_task_context_;
+        in_task_context_ = true;
+        auto restore = [&] { in_task_context_ = saved_context; };
+
         if (a.size() < 3)
-            return make_void();
+            { restore(); return make_void(); }
         if (!types::is_string(a[0]) || !types::is_closure(a[1]) || !types::is_closure(a[2]))
-            return make_void();
+            { restore(); return make_void(); }
 
         auto goal = string_heap_[types::as_string_idx(a[0])];
         auto gen_cid = types::as_closure_id(a[1]); // generator
@@ -8224,6 +8229,7 @@ Evaluator::Evaluator() {
                 intend_history_.push_back(rec);
                 if (intend_history_.size() > MAX_HISTORY_SIZE)
                     intend_history_.erase(intend_history_.begin());
+                restore();
                 return types::make_string(rs);
             }
 
@@ -8260,6 +8266,7 @@ Evaluator::Evaluator() {
         timeline_.push_back("failed:" + last_error);
         auto rs = string_heap_.size();
         string_heap_.push_back(result);
+        restore();
         return types::make_string(rs);
     });
     // ── intend-history — 查询意图执行时间线 ────────────────────
@@ -8560,20 +8567,45 @@ Evaluator::Evaluator() {
     });
 
     // (gc-freeze) — Mark current closure generation as "root".
-    // NOTE: Currently informational only — gc-heap doesn't clear closures_
-    // because cells_ (closure cells) are shared with env define bindings.
-    // Reserved for future generational GC.
+    // The while loop's predicate/body closures are created before this
+    // call (in persistent arena when in_task_context_=false).
     primitives_.add("gc-freeze", [this](const auto&) -> EvalValue {
         gc_safe_closure_id_ = next_id_;
         return types::make_bool(true);
     });
 
-    // (gc-freeze) — Mark current closure generation as "root".
-    // All closures created from now on are temporary and will be
-    // cleaned up by the next gc-heap call.
-    // Call once before a while loop that uses gc-heap between iterations.
-    primitives_.add("gc-freeze", [this](const auto&) -> EvalValue {
-        gc_safe_closure_id_ = next_id_;
+    // (gc-temp) — Reset temp arena + clear temp closures + heap vectors.
+    // Safe to call between benchmark tasks. Temp closures (those with
+    // owner_arena == temp_arena_) are erased, their arena memory freed O(1).
+    // Module functions and while-loop closures (in persistent arena) survive.
+    primitives_.add("gc-temp", [this](const auto&) -> EvalValue {
+        if (!temp_arena_) return types::make_bool(false);
+
+        // Erase closures in temp arena
+        for (auto it = closures_.begin(); it != closures_.end(); ) {
+            if (it->second.owner_arena == temp_arena_)
+                it = closures_.erase(it);
+            else
+                ++it;
+        }
+
+        // Reset temp arena (O(1) — frees all cl_flat/cl_pool/copy_env)
+        temp_arena_->reset();
+
+        // Clear heap vectors (same as gc-heap)
+        string_heap_.clear();
+        string_heap_.shrink_to_fit();
+        pairs_.clear();
+        pairs_.shrink_to_fit();
+        error_values_.clear();
+        error_values_.shrink_to_fit();
+        hash_heap_.clear();
+        hash_heap_.shrink_to_fit();
+        vector_heap_.clear();
+        vector_heap_.shrink_to_fit();
+        opaque_heap_.clear();
+        opaque_heap_.shrink_to_fit();
+
         return types::make_bool(true);
     });
 
@@ -8782,8 +8814,9 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     return types::make_module(mod_idx);
 }
 
-Env* Evaluator::copy_env(const Env& e) {
-    return arena_ ? arena_->create<Env>(e) : nullptr;
+Env* Evaluator::copy_env(const Env& e, ast::ASTArena* target) {
+    auto* ar = target ? target : arena_;
+    return ar ? ar->create<Env>(e) : nullptr;
 }
 
 // eval_in(ast::Expr*) removed — all evaluation uses eval_flat(FlatAST&) now
@@ -9502,20 +9535,21 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 // Create lambda node and closure
                 auto lambda_id = flat->add_lambda(param_syms, body_node);
                 auto cid = next_id();
-                auto* copied_env = copy_env(env);
-
-                // Clone closure body to arena-allocated FlatAST so it survives
-                // the parent context (macro flat/pool is reused across expansions).
-                if (!arena_) {
+                // Allocate closure body in temp arena during task context,
+                // otherwise in persistent arena (module functions, while loops).
+                auto* target_arena = (temp_arena_ && in_task_context_) ? temp_arena_ : arena_;
+                if (!target_arena) {
                     return make_void();
                 }
-                auto cl_alloc = arena_->allocator();
-                auto* cl_flat = arena_->create<aura::ast::FlatAST>(cl_alloc);
-                auto* cl_pool = arena_->create<aura::ast::StringPool>(cl_alloc);
+                auto* copied_env = copy_env(env, target_arena);
+
+                auto cl_alloc = target_arena->allocator();
+                auto* cl_flat = target_arena->create<aura::ast::FlatAST>(cl_alloc);
+                auto* cl_pool = target_arena->create<aura::ast::StringPool>(cl_alloc);
                 auto cloned_body =
                     clone_macro_body(*cl_flat, *cl_pool, *flat, *pool, body_node, nullptr);
                 cl_flat->root = cloned_body;
-                closures_[cid] = Closure{/*name*/"", /*params*/{}, cl_flat, cl_pool, cloned_body, copied_env};
+                closures_[cid] = Closure{/*name*/"", /*params*/{}, cl_flat, cl_pool, cloned_body, copied_env, /*dotted*/false, target_arena};
                 // Store param names as strings for the Closure
                 for (auto& ps : param_syms) {
                     std::string pname(pool->resolve(ps));
@@ -9609,7 +9643,8 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         // Create lambda node and closure
                         auto lambda_id = flat->add_lambda(param_syms, body_node);
                         auto cid = next_id();
-                        auto* copied_env = copy_env(env);
+                        auto* target = (temp_arena_ && in_task_context_) ? temp_arena_ : arena_;
+                        auto* copied_env = copy_env(env, target);
                         Closure cl;
                         for (auto& ps : param_syms) {
                             cl.params.push_back(std::string(pool->resolve(ps)));
@@ -9619,6 +9654,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         cl.pool = pool;
                         cl.body_id = body_node;
                         cl.env = copied_env;
+                        cl.owner_arena = target;
                         closures_[cid] = std::move(cl);
 
                         // Bind in env
@@ -10450,10 +10486,12 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     for (auto pid : pspan)
                         params.push_back(std::string(p->resolve(pid)));
                     bool dotted = v.int_value != 0;
-                    auto* cap = copy_env(*current_env);
+                    auto* target = (temp_arena_ && in_task_context_) ? temp_arena_ : arena_;
+                    auto* cap = copy_env(*current_env, target);
                     auto cid = next_id();
                     auto body_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
-                    closures_[cid] = Closure{/*name*/"", std::move(params), f, p, body_id, cap, dotted};
+                    // This closure reuses f/p from caller (not arena-allocated), Env is in target
+                    closures_[cid] = Closure{/*name*/"", std::move(params), f, p, body_id, cap, dotted, target};
                     return make_closure(cid);
                 }
                 case aura::ast::NodeTag::Let:

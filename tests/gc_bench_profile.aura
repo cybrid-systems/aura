@@ -1,0 +1,48 @@
+(require "std/json" all:)
+
+(define TASK-COUNT 100)
+(define LOG-INTERVAL 10)
+
+; 模拟 benchmark 的 intend 模式：每轮创建新闭包
+(define (sim-task n)
+  (json-parse "{\"a\":1,\"b\":2,\"c\":3}")
+  ; 创建闭包（模拟 generator/verifier/fixer）
+  (define gen (lambda (g) g))
+  (define ver (lambda (c) c))
+  (define fix (lambda (c e g) c))
+  ; set-code + eval
+  (set-code (string-append "(+ 1 " (number->string n) ")"))
+  (eval-current))
+
+(define (run)
+  (display "=== GC Profile (intend-lambda pattern) ===\n")
+  (display "Tasks: ")
+  (display TASK-COUNT)
+  (display "\n")
+
+  (gc-freeze)
+  (display "0 init: ")
+  (display (gc-stats))
+  (display "\n")
+
+  (define i 0)
+  (while (lambda () (< i TASK-COUNT))
+    (lambda ()
+      (sim-task i)
+      (if (= (modulo i LOG-INTERVAL) 0)
+        (begin
+          (display i) (display " pre: ")
+          (display (gc-stats)) (display "\n")))
+      (gc-heap)
+      (if (= (modulo i LOG-INTERVAL) 0)
+        (begin
+          (display i) (display " gc:  ")
+          (display (gc-stats)) (display "\n")))
+      (set! i (+ i 1))))
+
+  (display "\nFinal: ")
+  (display (gc-stats))
+  (display "\n")
+  (display "Done\n"))
+
+(run)

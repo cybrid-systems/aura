@@ -120,3 +120,32 @@
     (gc-heap)
     (check= (+ 1 1) 2)
     (set! j (+ j 1))))
+
+; ── 18. gc-temp basic ──
+(assert (gc-temp))
+
+; ── 19. gc-temp idempotent ──
+(gc-temp) (gc-temp) (gc-temp)
+
+; ── 20. Function bindings survive gc-temp ──
+(define (add1 x) (+ x 1))
+(check= 6 (add1 5))
+(gc-temp)
+(check= 7 (add1 6))
+(gc-temp)
+(gc-temp)
+(check= 8 (add1 7))
+
+; ── 21. gc-temp after intend ──
+(define (my-gen g) "(+ 1 2)")
+(define (my-ver c) "#t")
+(intend "gc-test" my-gen my-ver 1)
+(gc-temp)
+(assert (string? (gc-stats)))
+(check= 3 (+ 1 2))
+
+; ── 22. gc-heap still works after gc-temp ──
+(gc-temp)
+(gc-heap)
+(gc-stats)
+(check= 3 (+ 1 2))
