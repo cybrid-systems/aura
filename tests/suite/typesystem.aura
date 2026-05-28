@@ -57,6 +57,53 @@
       (display (id 42))
       (display (id "hello")))))
 
+(test-suite "typesystem:let-poly-extended"
+  ;; 1. Multiple polymorphic uses
+  (check= 42t
+    (let ((id (lambda (x) x)))
+      (display (id 42))
+      (display (id #t))))
+  ;; 2. Nested let-poly
+  (check= 42t
+    (let ((f (lambda (x) x)))
+      (let ((g (lambda (y) (f y))))
+        (display (g 42))
+        (display (g #t)))))
+  ;; 3. Higher-order compose
+  (check= 42
+    (let ((compose (lambda (f g) (lambda (x) (f (g x))))))
+      (let ((add1 (lambda (x) (+ x 1)))
+            (mul2 (lambda (x) (* x 2))))
+        (let ((h (compose mul2 add1)))
+          (display (h 20))))))
+  ;; 4. Curry
+  (check= 42
+    (let ((const (lambda (x) (lambda (y) x))))
+      (display ((const 42) "ignored"))))
+  ;; 5. Multiple poly bindings
+  (check= 12
+    (let ((f (lambda (x) x))(g (lambda (x) x)))
+      (display (f 1))(display (g 2))))
+  ;; 6. Pair construction
+  (check= 2
+    (let ((pair (lambda (x y) (cons y x))))
+      (display (car (pair 1 2)))))
+  ;; 7. Let-poly inside lambda
+  (check= 42t
+    ((lambda (z)
+       (let ((f (lambda (x) x)))
+         (display (f z))
+         (display (f #t)))) 42))
+  ;; 8. Let-poly with fst
+  (check= 4
+    (let ((fst (lambda (p) (car p))))
+      (display (+ (fst (cons 1 2)) (fst (cons 3 4))))))
+  ;; 9. letrec poly
+  (check= 99f
+    (letrec ((id (lambda (x) x)))
+      (display (id 99))
+      (display (id #f)))))
+
 (test-suite "typesystem:value-restriction"
   (check= 42
     (let ((x (+ 40 2))) (+ x 0)))
