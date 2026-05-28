@@ -150,6 +150,9 @@ export class InferenceEngine {
 
     // ADT constructors are looked up via TypeRegistry::get_adt_constructors()
 public:
+    // declared_modules: name → module_path, 用于跨模块错误定位
+    std::unordered_map<std::string, std::string> declared_modules_;
+
     InferenceEngine(aura::core::TypeRegistry& reg, aura::diag::DiagnosticCollector& diag);
 
     // FlatAST inference entries

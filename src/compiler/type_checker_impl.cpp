@@ -1337,8 +1337,19 @@ TypeId InferenceEngine::synthesize_flat_var(StringPool& pool, NodeView v) {
         std::vector<std::string> candidates;
         env_.collect_names(candidates);
         auto best = closest_match(var_name, candidates);
+
+        // 跨模块错误定位：检查是否从 .aura-type 声明了此函数
+        std::string mod_info;
+        auto mod_it = declared_modules_.find(var_name);
+        if (mod_it != declared_modules_.end())
+            mod_info = " (from module '" + mod_it->second + "')";
+
+        auto msg = var_name;
+        if (!mod_info.empty())
+            msg += mod_info;
+
         auto d = Diagnostic(
-            ErrorKind::UnboundVariable, var_name, cur_loc_)
+            ErrorKind::UnboundVariable, msg, cur_loc_)
             .with_suggestion(!best.empty()
                 ? "did you mean '" + best + "'?"
                 : "");
@@ -2007,6 +2018,7 @@ std::string TypeChecker::declared_type_module(const std::string& name) const {
 TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
                                DiagnosticCollector& diag) {
     InferenceEngine engine(types, diag);
+    engine.declared_modules_ = type_module_src_;
     return engine.infer_flat(flat, pool, node);
 }
 
