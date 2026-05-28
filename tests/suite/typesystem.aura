@@ -187,5 +187,8 @@
   (check= "type safe"
     (if (string? "hello") "type safe" "type error")))
 
+(test-suite "typesystem:declare-type"
+  (check (begin (declare-type "mytest" "Int" "Int") #t)))
+
 (test-suite "typesystem:query"
   (display "typesystem:query — manual check via typecheck pipeline"))
