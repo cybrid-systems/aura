@@ -1632,6 +1632,76 @@ int main() {
             }
         }
 
+        // Test 4: DCE chain of same-type casts (3+ in a row)
+        {
+            aura::ir::IRModule mod;
+            mod.functions.push_back(aura::ir::IRFunction{.name = "test", .local_count = 10});
+            auto& func = mod.functions.back();
+            func.blocks.push_back({0});
+            auto& block = func.blocks.back();
+            // Chain: Int → Int → Int → String, should collapse to single cast
+            block.instructions = {
+                {aura::ir::IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},   // slot0 = 42, type_id=1 (Int)
+                {aura::ir::IROpcode::CastOp,   {1, 0, 1, 0}, 0, 1},    // identity Int→Int (redundant)
+                {aura::ir::IROpcode::CastOp,   {2, 1, 1, 0}, 0, 1},    // identity Int→Int (redundant)
+                {aura::ir::IROpcode::CastOp,   {3, 2, 3, 0}, 0, 3},    // real cast Int→String
+                {aura::ir::IROpcode::Return,   {3, 0, 0, 0}, 0, 0},
+            };
+            aura::compiler::DeadCoercionEliminationPass dce;
+            dce.run(mod);
+            int cast_count = 0;
+            for (auto& instr : block.instructions)
+                if (instr.opcode == aura::ir::IROpcode::CastOp) ++cast_count;
+            // Expected: 1 cast (Int→String), all identities removed
+            if (cast_count == 1) { ++dce_passed; std::println("DCE OK: chain of casts collapsed"); }
+            else { ++dce_failed; std::println(std::cerr, "DCE FAIL: {} casts remain (expected 1)", cast_count); }
+        }
+
+        // Test 5: DCE with type_id propagation through locals
+        {
+            aura::ir::IRModule mod;
+            mod.functions.push_back(aura::ir::IRFunction{.name = "test", .local_count = 10});
+            auto& func = mod.functions.back();
+            func.blocks.push_back({0});
+            auto& block = func.blocks.back();
+            // ConstI64 has type_id=1 (Int). The CastOp targeting Int should be removed.
+            block.instructions = {
+                {aura::ir::IROpcode::ConstI64, {0, 99, 0, 0}, 0, 1},   // slot0 = 99, type_id=1
+                {aura::ir::IROpcode::Local,    {1, 0, 0, 0}, 0, 1},     // slot1 = slot0 (pass-through), type_id=1
+                {aura::ir::IROpcode::CastOp,   {2, 1, 1, 0}, 0, 1},     // cast slot1→Int (redundant)
+                {aura::ir::IROpcode::Return,   {2, 0, 0, 0}, 0, 0},
+            };
+            aura::compiler::DeadCoercionEliminationPass dce;
+            dce.run(mod);
+            bool found_cast = false;
+            for (auto& instr : block.instructions)
+                if (instr.opcode == aura::ir::IROpcode::CastOp) found_cast = true;
+            if (!found_cast) { ++dce_passed; std::println("DCE OK: type propagation through Local"); }
+            else { ++dce_failed; std::println(std::cerr, "DCE FAIL: cast not removed after propagation"); }
+        }
+
+        // Test 6: DCE Float identity (different type tag)
+        {
+            aura::ir::IRModule mod;
+            mod.functions.push_back(aura::ir::IRFunction{.name = "test", .local_count = 10});
+            auto& func = mod.functions.back();
+            func.blocks.push_back({0});
+            auto& block = func.blocks.back();
+            // Float constant → identity cast to Float
+            block.instructions = {
+                {aura::ir::IROpcode::ConstF64, {0, 0, 0, 0}, 0, 4},   // slot0 = 3.14, type_id=4 (Float)
+                {aura::ir::IROpcode::CastOp,   {1, 0, 4, 0}, 0, 4},    // cast Float→Float (redundant)
+                {aura::ir::IROpcode::Return,   {1, 0, 0, 0}, 0, 0},
+            };
+            aura::compiler::DeadCoercionEliminationPass dce;
+            dce.run(mod);
+            bool found_cast = false;
+            for (auto& instr : block.instructions)
+                if (instr.opcode == aura::ir::IROpcode::CastOp) found_cast = true;
+            if (!found_cast) { ++dce_passed; std::println("DCE OK: Float identity cast eliminated"); }
+            else { ++dce_failed; std::println(std::cerr, "DCE FAIL: Float identity cast not removed"); }
+        }
+
         std::println("Dead coercion elimination: {}/{}/{} passed/failed/total",
                      dce_passed, dce_failed, dce_passed + dce_failed);
         if (dce_failed > 0) return 1;
