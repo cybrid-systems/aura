@@ -46,10 +46,20 @@ extern FiberSpawnFn g_fiber_spawn;
 using FiberYieldFn = void (*)();
 extern FiberYieldFn g_fiber_yield;
 
+// Fiber join — wait for a fiber to complete and return its result (future use)
+// Currently a placeholder — evaluator handles fiber:join internally.
+using FiberJoinFn = void(*)();
+extern FiberJoinFn g_fiber_join;
+
 // Session create — set by serve_async.cpp, used by evaluator
 // Returns true on success
 using SessionCreateFn = bool(const std::string& name);
 extern std::function<SessionCreateFn>* g_session_create;
+
+// Session list — return all active session IDs
+// Returns empty vector if no sessions or not in serve mode
+using SessionListFn = std::vector<std::string>(*)();
+extern SessionListFn g_session_list;
 
 
 // Access a CompilerService's mailbox through a void*.
