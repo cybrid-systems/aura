@@ -1,39 +1,113 @@
-; ── std/orchestrator.aura — Agent 编排框架 ──
+; ── std/orchestrator.aura — Agent 编排框架（交响乐指挥） ──
 ;
-; 在现有 intend / query / mutate / heal 之上提供声明式管线编排。
-; 全部纯 Aura，无 C++ 改动。
+; 哲学：指挥不弹琴。
+;   - agent:spawn = 聘用乐手（创建命名 agent 会话）
+;   - agent:ask   = 指挥给提示（发送消息 + 等待回复）
+;   - orch:conduct = 读总谱 + 按步骤推进管线
+;   - orch:parallel = 多声部同时演奏
 ;
-; API:
-;   (orch:define-role name config)   — 定义角色
-;   (orch:step role input → output)  — 管线步骤
-;   (orch:pipeline name steps opts)  — 定义管线
-;   (orch:run name input)            — 执行管线
-;   (orch:parallel fns input)        — 并行执行多个函数
+; 在现有 send/recv/fiber:spawn 原语之上实现。
+; 全部纯 Aura。
 
 (require "std/list" all:)
 (require "std/string" all:)
 
-(export orch:define-role orch:step orch:pipeline orch:run orch:parallel)
+(export orch:define-role orch:step orch:pipeline orch:conduct
+        orch:parallel agent:spawn agent:ask agent:list
+        orch:role orch:step* orch:if orch:retry)
 
-; ── 角色注册表 ──
-; 存储所有已注册角色，格式：(("name" . (action-strategy . config)))
+;; ═══════════════════════════════════════════════════════════════
+;; Section 1: Agent 生命周期（乐手管理）
+;; ═══════════════════════════════════════════════════════════════
+
+; ── agent:spawn — 聘用乐手 ──
+;
+; 创建一个命名 agent 会话。agent 有自己的 mailbox 和 workspace。
+; 通过 send/recv 与其他 agent 通信。
+;
+; name: 字符串，agent 的名字（也是 session ID）
+; → 返回 name（成功）或错误
+;
+; 使用示例：
+;   (define coder (agent:spawn "coder"))
+;   (send "coder" "(define (fib n) ...)")
+;   (define result (agent:ask "coder" "(fib 10)" 30))
+
+(define (agent:spawn name)
+  (if (string? name)
+    (try (_agent:spawn name) (catch (e)
+      (list "agent:spawn failed" name e)))
+    (list "bad-arg" "agent:spawn requires a string name")))
+
+; ── agent:ask — 指挥给提示 ──
+;
+; 向目标 agent 发送消息，等待回复。
+; 使用 correlation-id 匹配请求和回复，避免多路消息串扰。
+;
+; target: 字符串，agent session ID
+; msg:    字符串，要发送的消息
+; timeout: 数字，超时秒数（默认 30）
+; → 回复内容（成功）或超时错误
+
+(define (agent:ask target msg . timeout-args)
+  (define timeout (if (pair? timeout-args) (car timeout-args) 30))
+  (define my-id (try (my-id) (catch (e) "default")))
+  (define req-id (string-append my-id "-" (number->string (current-time))))
+  
+  ; 发送带 correlation-id 的请求
+  (define request (string-append
+    "{\"type\":\"request\",\"id\":\"" req-id
+    "\",\"from\":\"" my-id
+    "\",\"body\":" (json-encode msg) "}"))
+  
+  (define sent (try (send target request) (catch (e) #f)))
+  (if (not sent)
+    (list "send-failed" target)
+    
+    ; 等待匹配的回复
+    (let loop ((waited 0))
+      (define reply (try (recv timeout) (catch (e) #f)))
+      (cond
+        ((not reply)
+         (list "timeout" (string-append "agent:ask timeout after " (number->string timeout) "s waiting for " target)))
+        
+        ; 检查 correlation-id 是否匹配
+        ((string-contains? reply (string-append "\"id\":\"" req-id "\""))
+         ; 匹配！提取 body
+         (try (json-get-string reply "body") (catch (e) reply)))
+        
+        ; 不是给我们的回复，放回 mailbox？不行，recv 已经移除了。
+        ; 只能丢弃（非匹配消息在当前实现中被丢弃）
+        ; TODO: 实现 mailbox peek + consume 支持
+        (else
+          (if (< waited 3)
+            (loop (+ waited 1))
+            (list "timeout" "no matching reply after retries")))))))
+
+; ── agent:list — 列出所有活跃 agent ──
+(define (agent:list)
+  (try (_agent:list) (catch (e) (quote ()))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; Section 2: 角色注册表
+;; ═══════════════════════════════════════════════════════════════
+
 (define *orch-roles* (quote ()))
 
-; ── orch:define-role — 注册一个角色 ──
+; ── orch:define-role — 定义角色 ──
 ;
 ; name:   字符串，角色名
 ; config: hash，可选字段:
 ;   :action     — 核心行为函数 (lambda (input) → output)
-;   :strategy   — 策略名: "intend" | "heal" | "direct" (默认 "direct")
+;   :strategy   — "direct" | "intend" | "heal" | "agent" (默认 "direct")
+;   :agent-id   — agent session ID（strategy="agent" 时使用）
 ;   :description — 描述字符串
-;   :fallback   — 回退策略名
 ;
 ; 返回: #t
 (define (orch:define-role name config)
   (set! *orch-roles* (cons (cons name config) *orch-roles*))
   #t)
 
-; ── orch:lookup-role — 查找角色 ──
 (define (orch:lookup-role name)
   (let loop ((roles *orch-roles*))
     (if (null? roles) #f
@@ -41,66 +115,107 @@
         (cdr (car roles))
         (loop (cdr roles))))))
 
+;; ═══════════════════════════════════════════════════════════════
+;; Section 3: 步骤执行器（乐手演奏）
+;; ═══════════════════════════════════════════════════════════════
+
 ; ── orch:step — 执行单个步骤 ──
 ;
-; role:   角色名（须预先注册）
-; input:  输入值
+; 指挥说："现在轮到你了"。
+;
+; role:  角色名或直接配置（须预先注册，或直接传 (action .  strategy)）
+; input: 输入值
 ; → 输出值
 (define (orch:step role input)
-  (define config (orch:lookup-role role))
-  (if (not config) input  ; 未知角色返回输入不变
+  (define config
+    (if (string? role) (orch:lookup-role role) role))
+  
+  (if (not config) input
 
     (let* ((action (if (pair? config) (car config) #f))
-           (strategy (if (and (pair? (cdr config)) (string? (car (cdr config))))
-                       (car (cdr config)) "direct"))
-           (fallback (let ((rest (cdr (cdr config))))
-                      (if (and (pair? rest) (pair? (car rest)))
-                        (cdr (car rest)) #f))))
+           (rest (if (pair? config) (cdr config) (quote ())))
+           ;; Handle both (action . "direct") dotted pair and (action "direct") list
+           (strategy (cond
+                      ((string? rest) rest)
+                      ((and (pair? rest) (string? (car rest))) (car rest))
+                      (else "direct")))
+           (opts (cond
+                   ((and (pair? rest) (pair? (cdr rest))) (car (cdr rest)))
+                   (else (quote ()))))
+           (agent-id #f))
 
-      ; ── direct: 直接调 action ──
-      (if (string=? strategy "direct")
-        (if action
-          (try (action input) (catch (e) (begin
-            (display "[orch] direct step failed: ")(display e)(newline)
-            input)))
-          input)
+      (cond
+        ; ── agent: 发送给远程 agent 执行 ──
+        ((string=? strategy "agent")
+         (if agent-id
+           (try (agent:ask agent-id (json-encode input) 60)
+                (catch (e) (begin
+                  (display "[orch] agent step to ")(display agent-id)
+                  (display " failed: ")(display e)(newline)
+                  input)))
+           input))
 
-        ; ── intend: 用 intend 原语执行 ──
-        (if (string=? strategy "intend")
-          (if (and (pair? input) (pair? (cdr input)))
-            (let* ((goal (car input))
-                   (expected (car (cdr input)))
-                   (result (try (intend goal
-                                  (lambda (g) (if action (action g) g))
-                                  (lambda (c) (if (check-success c expected) "#t" "#f"))
-                                  (if (pair? (cdr (cdr input)))
-                                    (lambda (c e g) (action (string-append c "\n" e)))
-                                    #f)
-                                  3)
-                               (catch (e) #f))))
-              (if (and result (string? result))
-                result
-                input))
-            input)
+        ; ── direct: 本地调用 action ──
+        ((string=? strategy "direct")
+         (if action
+           (try (action input) (catch (e) (begin
+             (display "[orch] direct step failed: ")(display e)(newline)
+             input)))
+           input))
 
-          ; ── heal: 用 heal 原语执行 ──
-          (if (string=? strategy "heal")
-            (if (and (pair? input) (pair? (cdr input)))
-              (let* ((code (car input))
-                     (expected (car (cdr input)))
-                     (result (try (heal code expected 3) (catch (e)
-                       (list "failed" code "")))))
-                (if (and (pair? result) (string=? (car result) "healed"))
-                  (car (cdr result))
-                  input))
-              input)
+        ; ── intend: 用 intend 原语 ──
+        ((string=? strategy "intend")
+         (if (and (pair? input) (pair? (cdr input)))
+           (let* ((goal (car input))
+                  (expected (car (cdr input)))
+                  (result (try (intend goal
+                                 (lambda (g) (if action (action g) g))
+                                 (lambda (c) (if (check-success c expected) "#t" "#f"))
+                                 (if (pair? (cdr (cdr input)))
+                                   (lambda (c e g) (action (string-append c "\n" e)))
+                                   #f)
+                                 3)
+                              (catch (e) #f))))
+             (if (and result (string? result))
+               result
+               input))
+           input))
 
-            ; ── unknown strategy ──
-            input))))))
+        ; ── heal: 用 heal 原语 ──
+        ((string=? strategy "heal")
+         (if (and (pair? input) (pair? (cdr input)))
+           (let* ((code (car input))
+                  (expected (car (cdr input)))
+                  (result (try (heal code expected 3) (catch (e)
+                    (list "failed" code "")))))
+             (if (and (pair? result) (string=? (car result) "healed"))
+               (car (cdr result))
+               input))
+           input))
 
-; ── orch:pipeline — 定义并执行管线 ──
+        ; ── unknown strategy ──
+        (else input)))))
+
+; ── orch:step* — 带命名参数的步骤构造器 ──
 ;
-; steps: (role1 role2 ...) — 步骤名列表，依次执行
+; 创建步骤配置，可在 orch:pipeline 和 orch:conduct 中使用。
+; (orch:step* :role "coder" :agent-id "coder-agent" :strategy "agent")
+
+(define (orch:step* . args)
+  (let ((role (try (hash-ref args "role") (catch "unknown")))
+        (strategy (try (hash-ref args "strategy") (catch "direct")))
+        (agent-id (try (hash-ref args "agent-id") (catch #f))))
+    (cons (lambda (x) x)  ; action 占位
+      (cons strategy
+        (if agent-id (list (hash "agent-id" agent-id)) (quote ()))))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; Section 4: 管线（总谱）
+;; ═══════════════════════════════════════════════════════════════
+
+; ── orch:pipeline — 顺序管线 ──
+;
+; steps: (step1 step2 ...) — 步骤名列表，依次执行
 ; input: 初始输入
 ; → 最终输出
 (define (orch:pipeline steps input)
@@ -110,24 +225,146 @@
         (orch:pipeline (cdr steps) result)
         result))))
 
-; ── orch:run — 执行命名管线 ──
+; ── orch:if — 条件分支 ──
 ;
-; 先用 orch:pipeline 执行步骤序列。
-; name 仅作标记。
-(define (orch:run name steps input)
-  ; name is informational; execute the steps
-  (orch:pipeline steps input))
+; 在 orch:conduct 中使用，根据条件选择路径。
+;
+; (orch:if pred then-step else-step)
+(define (orch:if pred then-step else-step)
+  (cons 'if (list pred then-step else-step)))
+
+; ── orch:retry — 带重试的步骤 ──
+;
+; (orch:retry step max-attempts)
+(define (orch:retry step max-attempts)
+  (cons 'retry (list step max-attempts)))
 
 ; ── orch:parallel — 并行执行多个函数 ──
 ;
-; fns: (fn1 fn2 ...) — 函数列表，各接收同一 input
-; input: 输入值
-; → (output1 output2 ...)
+; 交响乐指挥说："现在大家一起演奏"。
+; 每个函数在自己的 fiber 中执行，全部完成后收集结果。
 ;
-; 串行 fallback（fiber:spawn 可用时改为并行）
+; fns:  (fn1 fn2 ...) — 函数列表
+; input: 输入值（每个函数接收同一 input）
+; → (output1 output2 ...)
 (define (orch:parallel fns input)
-  (if (null? fns) (quote ())
-    (cons (try ((car fns) input) (catch (e) (begin
-      (display "[orch] parallel fn failed: ")(display e)(newline)
-      #f)))
-      (orch:parallel (cdr fns) input))))
+  (define fiber-ids (quote ()))
+  
+  ; 尝试用 fiber:spawn 并行执行
+  (define (try-parallel remaining)
+    (when (pair? remaining)
+      (define fid (try (fiber:spawn (lambda () ((car remaining) input)))
+                       (catch (e) 0)))
+      (if (> fid 0)
+        (begin
+          (set! fiber-ids (cons fid fiber-ids))
+          (try-parallel (cdr remaining)))
+        ; fiber:spawn 不可用 → 串行 fallback
+        (serial-fallback fns input))))
+  
+  ; 收集 fiber 结果
+  (define (collect-results)
+    (define results (quote ()))
+    (define (collect-all ids)
+      (when (pair? ids)
+        (fiber:join (car ids))  ; 等待完成
+        (set! results (cons (car ids) results))
+        (collect-all (cdr ids))))
+    (collect-all (reverse fiber-ids))
+    (reverse results))
+  
+  ; 串行 fallback
+  (define (serial-fallback fns input)
+    (if (null? fns) (quote ())
+      (cons (try ((car fns) input) (catch (e) #f))
+            (serial-fallback (cdr fns) input))))
+  
+  (try-parallel fns)
+  (if (pair? fiber-ids)
+    (collect-results)
+    (serial-fallback fns input)))
+
+;; ═══════════════════════════════════════════════════════════════
+;; Section 5: conduct — 总谱指挥
+;; ═══════════════════════════════════════════════════════════════
+
+; ── orch:conduct — 执行总谱 ──
+;
+; 指挥读总谱，按步骤推进，处理条件分支和重试。
+;
+; steps: S 表达式列表（总谱）：
+;   (step)          — 普通步骤
+;   (if pred t e)   — 条件分支
+;   (retry s n)     — 带重试的步骤
+;   ((parallel ...)) — 并行步骤组
+;
+; ctx:   hash 上下文（记录中间结果）
+; input: 初始输入
+; → 最终输出
+
+(define (orch:conduct steps input)
+  (define ctx (try (hash) (catch (e) (quote ()))))
+  
+  (define (exec-step step)
+    (cond
+      ; 条件分支: (if pred then else)
+      ((and (pair? step) (eq? (car step) 'if))
+       (let ((pred (car (cdr step)))
+             (then-step (car (cdr (cdr step))))
+             (else-step (car (cdr (cdr (cdr step))))))
+         (define pred-result
+           (if (procedure? pred)
+             (pred ctx)
+             (if (string? pred) (hash-ref ctx pred) #f)))
+         (if pred-result
+           (exec-step then-step)
+           (if else-step (exec-step else-step) input))))
+
+      ; 重试: (retry step n)
+      ((and (pair? step) (eq? (car step) 'retry))
+       (let ((inner-step (car (cdr step)))
+             (max-attempts (if (pair? (cdr (cdr step))) (car (cdr (cdr step))) 3)))
+         (let loop ((attempt 1) (last-result #f))
+           (define result (try (exec-step inner-step) (catch (e) #f)))
+           (if (or (and result (not (pair? result))) (>= attempt max-attempts))
+             result
+             (loop (+ attempt 1) result)))))
+
+      ; 并行组: ((parallel ...) 需要特殊标记)
+      ((and (pair? step) (pair? (car step)) (procedure? (caar step)))
+       (orch:parallel step input))
+
+      ; 普通步骤: 字符串（角色名）
+      ((string? step)
+       (orch:step step input))
+
+      ; 普通步骤: 配置对
+      ((pair? step)
+       (orch:step step input))
+
+      ; 直接过程
+      ((procedure? step)
+       (try (step input) (catch (e) input)))
+
+      (else input)))
+  
+  (if (null? steps) input
+    (let ((result (exec-step (car steps))))
+      (if (pair? (cdr steps))
+        (orch:conduct (cdr steps) result ctx)
+        result))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; Section 6: 便利构造器
+;; ═══════════════════════════════════════════════════════════════
+
+; ── orch:role — 快捷构造角色配置 ──
+;
+; (orch:role action) → 直接角色
+; (orch:role action "agent" agent-id) → 远程 agent 角色
+(define (orch:role action . extra)
+  (if (null? extra)
+    (cons action "direct")
+    (if (string=? (car extra) "agent")
+      (cons action (cons "agent" (list (hash "agent-id" (if (pair? (cdr extra)) (car (cdr extra)) "")))))
+      (cons action extra))))

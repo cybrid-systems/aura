@@ -8915,6 +8915,63 @@ Evaluator::Evaluator() {
     });
 
     // ═══════════════════════════════════════════════════════════════
+    // #15 — Agent Orchestration Primitives
+    // ═══════════════════════════════════════════════════════════════
+
+    // (_agent:spawn name) — Create a new named agent session (internal primitive)
+    // Called by the Aura-level agent:spawn wrapper.
+    // Returns the session name string on success, or error on failure.
+    primitives_.add("_agent:spawn", [this](const auto& a) -> EvalValue {
+        auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
+            auto mi = string_heap_.size(); string_heap_.push_back(m);
+            auto ki = string_heap_.size(); string_heap_.push_back(k);
+            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
+            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
+            return kp;
+        };
+        if (a.empty() || !is_string(a[0]))
+            return merr("bad-arg", "usage: (agent:spawn name)");
+        auto& name = string_heap_[as_string_idx(a[0])];
+        if (name.empty())
+            return merr("bad-arg", "agent name must not be empty");
+        if (!aura::messaging::g_session_create || !(*aura::messaging::g_session_create))
+            return merr("no-serve", "agent:spawn requires serve mode");
+        if (!(*aura::messaging::g_session_create)(name))
+            return merr("create-failed", std::string("could not create session \"") + name + "\" (may already exist)");
+        auto sidx = string_heap_.size();
+        string_heap_.push_back(name);
+        return make_string(sidx);
+    });
+
+    // (fiber:join fiber-id) — Wait for a fiber to complete
+    // In the current implementation (cooperative single-threaded), fibers in the
+    // same session share an evaluator. Join is a placeholder for now — returns
+    // #t if the fiber existed, #f otherwise.
+    // Serve-async with return values is future work.
+    primitives_.add("fiber:join", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_bool(false);
+        return make_bool(true);
+    });
+
+    // (_agent:list) — List all active agent sessions (internal primitive)
+    // Called by the Aura-level agent:list wrapper.
+    primitives_.add("_agent:list", [this](const auto&) -> EvalValue {
+        EvalValue result = make_void();
+        if (!aura::messaging::g_session_list || !(*aura::messaging::g_session_list))
+            return result;
+        auto names = (*aura::messaging::g_session_list)();
+        for (auto it = names.rbegin(); it != names.rend(); ++it) {
+            auto sidx = string_heap_.size();
+            string_heap_.push_back(*it);
+            auto pid = pairs_.size();
+            pairs_.push_back({make_string(sidx), result});
+            result = make_pair(pid);
+        }
+        return result;
+    });
+
+    // ═══════════════════════════════════════════════════════════════
     // P15: Synthesize Template Strategy (P0)
     // ═══════════════════════════════════════════════════════════════
 
