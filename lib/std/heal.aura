@@ -1,43 +1,197 @@
-; ── std/heal.aura — Self-healing code execution loop (鸿渐于陆) ──
+; ── std/heal.aura — 自修复执行（AST 手术级，鸿渐于陆） ──
 ;
-; heal: Run code, auto-fix common errors, retry until success or max attempts.
-; Uses set-code + eval-current-output for correct stdout capture.
+; 从字符串修复升级为 AST 手术级修复：
+;   - heal-diagnose: query FFI → 定位具体 AST 节点
+;   - heal-apply-fix: mutate FFI → 精准编辑 AST
 ;
 ; Usage:
 ;   (require "std/heal" all:)
 ;   (heal "(for-each display (list 1 2))" (list "1" "2") 3)
-;   → ("healed" "(require \"std/list\" all:)\n(for-each display (list 1 2))" "1 2")
+;   → ("healed" "(require \"std/list\" all:)(for-each display (list 1 2))" "1 2")
 ;
-; Returns: (status fixed-code output)
+; Returns: (status code-orig output)
 ;   status = "healed" | "failed"
+
+(require "std/string" all:)
+(require "std/list" all:)
+(require "std/adaptive" all:)
 
 (export heal)
 
+; ── Known stdlib function → module mapping ──
+; Format: (fn-name . "module-name")
+(define *stdlib-map*
+  '(("for-each" . "std/list") ("map" . "std/list") ("filter" . "std/list")
+    ("foldl" . "std/list") ("length" . "std/list") ("reverse" . "std/list")
+    ("take" . "std/list") ("drop" . "std/list") ("range" . "std/list")
+    ("make-hash" . "std/hash") ("hash-ref" . "std/hash")
+    ("hash-set" . "std/hash") ("hash-keys" . "std/hash")
+    ("rule:define" . "std/rule") ("rule:apply-all" . "std/rule")
+    ("define-type" . "std/data") ("cases" . "std/data")
+    ("c-func" . "std/ffi") ("c-alloc" . "std/ffi")
+    ("string-split" . "std/string") ("string-trim" . "std/string")
+    ("json-parse" . "std/json") ("json-encode" . "std/json")
+    ("write-file" . "std/fs") ("read-file" . "std/fs")
+    ("getenv" . "std/process") ("command" . "std/process")
+    ("display" . "builtin") ("newline" . "builtin") ("set-code" . "builtin")
+    ("eval-current" . "builtin") ("eval-current-output" . "builtin")))
+
+; ── Find module for a function name ──
+(define (lookup-module fn-name)
+  (if (null? *stdlib-map*) #f
+    (let loop ((m *stdlib-map*))
+      (if (null? m) #f
+        (if (string=? (car (car m)) fn-name)
+          (cdr (car m))
+          (loop (cdr m)))))))
+
+; ── AST 级诊断 ──
+; 接收错误消息字符串，返回 (cause target fix-type fix-data)
+; 或 #f（无法诊断）
+(define (heal-diagnose output)
+  (define caused #f)
+  (define target #f)
+  (define fix-type #f)
+  (define fix-data #f)
+
+  ; ── Case 1: #<procedure> / uncalled function ──
+  (if (not (or (= (string-index output "#<procedure>" 0) -1)
+               (= (string-index output "uncalled function" 0) -1)
+               (= (string-index output "#<closure>" 0) -1)))
+    ; Query workspace for Define nodes
+    (let ((defs (try (query:node-type "Define") (catch #f))))
+      (if (and (pair? defs) (> (length defs) 0))
+        (begin
+          (set! caused "closure-no-display")
+          (set! target (car defs))
+          (set! fix-type "add-display"))
+        ; Fallback: no Define nodes in AST
+        (begin
+          (set! caused "closure-no-display")
+          (set! target #f)
+          (set! fix-type "add-display")))))
+
+  ; ── Case 2: unbound variable ──
+  (if (not caused)
+    (let ((pos (string-index output "unbound variable: " 0)))
+      (if (not (= pos -1))
+        (let* ((fn-start (+ pos (string-length "unbound variable: ")))
+               (fn-str (substring output fn-start (string-length output)))
+               (fn-name (string-trim fn-str)))
+          (if (> (string-length fn-name) 0)
+            (let ((mod (lookup-module fn-name)))
+              (if mod
+                (begin
+                  (set! caused "missing-require")
+                  (set! target fn-name)
+                  (set! fix-type "add-require")
+                  (set! fix-data mod))
+                (begin
+                  (set! caused "unbound-variable")
+                  (set! target fn-name)
+                  (set! fix-type "define-or-require")))))))))
+
+  ; ── Case 3: parse error ──
+  (if (not caused)
+    (if (or (not (= (string-index output "parse error" 0) -1))
+            (not (= (string-index output "expected expression" 0) -1)))
+      (begin
+        (set! caused "parse-error")
+        (set! fix-type "fix-syntax")
+        (set! fix-data (substring output 0 (min 60 (string-length output)))))))
+
+  ; ── Case 4: type error — cannot call ──
+  (if (not caused)
+    (let ((pos (string-index output "type error: cannot call: " 0)))
+      (if (not (= pos -1))
+        (let* ((fn-start (+ pos (string-length "type error: cannot call: ")))
+               (fn-name (string-trim (substring output fn-start (string-length output)))))
+          (if (> (string-length fn-name) 0)
+            (begin
+              (set! caused "type-error-unbound")
+              (set! target fn-name)
+              (set! fix-type "define-function")))))))
+
+  (if caused
+    (list caused target fix-type fix-data)
+    #f))
+
+; ── AST 级修复 ──
+; 在已 set-code 的 workspace 上做 AST 手术，返回修复后的代码字符串
+(define (heal-apply-fix code-str diag)
+  (define c (list-ref diag 0))
+  (define tg (list-ref diag 1))
+  (define ft (list-ref diag 2))
+  (define fd (list-ref diag 3))
+  (define result code-str)
+
+  (cond
+    ; ── add-require: 插入 stdlib require ──
+    ((string=? ft "add-require")
+     (define req (string-append "(require \"" fd "\" all:)"))
+     (if (= (string-index code-str req 0) -1)
+       (let* ((nl (string-index code-str "\n" 0))
+              (fl (if (= nl -1) code-str (substring code-str 0 nl))))
+         (if (= (string-index fl "(require " 0) 0)
+           (if (= nl -1)
+             (set! result (string-append fl "\n" req))
+             (set! result (string-append fl "\n" req "\n"
+                              (substring code-str (+ nl 1) (string-length code-str)))))
+           (set! result (string-append req "\n" code-str))))
+       (set! result code-str)))
+
+    ; ── define-function / define-or-require: 加 stub ──
+    ((or (string=? ft "define-function") (string=? ft "define-or-require"))
+     (if (= (string-index code-str (string-append "(define (" tg " ")) 0 -1)
+       (set! result (string-append code-str "\n(define (" tg " x)\n  x)\n"))
+       (set! result code-str)))
+
+    ; ── add-display: 用 mutate:wrap 给第一个 Define 节点套 display ──
+    ((string=? ft "add-display")
+     (if (pair? tg)
+       ; AST node ID available — use mutate:wrap
+       (begin
+         (try (mutate:wrap (car tg) "(display _)" "wrap") (catch #f))
+         (set! result (try (current-source) (catch code-str))))
+       ; Fallback: string level — append (display ...) at end
+       (set! result code-str)))
+
+    (else
+      (set! result code-str)))
+
+  result)
+
+; ── 主入口：heal ──
+; 在 workspace 上跑 set-code + AST 修复
 (define (heal code expected max-attempts)
   (let loop ((attempt 0) (current-code code))
     (if (>= attempt max-attempts)
-      (list "failed" current-code (string-append "max attempts (" (number->string max-attempts) ")"))
-      ; Run code via set-code + eval-current-output (captures stdout/structured errors)
-      (let* ((run-result (try (begin (set-code current-code) (eval-current-output))
-                            (catch (e) (if (is_error e) (error-message e) ""))))
-             ; Normalize: structured pair -> string, string -> string, else -> ""
-             (output (if (string? run-result) run-result
-                       (if (pair? run-result)
-                         (string-append "[" (car run-result) "] "
-                                        (car (cdr run-result)))
-                         ""))))
-        ; Check if output matches expected
+      (list "failed" current-code
+            (string-append "max attempts (" (number->string max-attempts) ")"))
+      ; Step 1: set-code into workspace
+      (let* ((set-ok (try (set-code current-code) (catch (e) #f)))
+             (run-result (if set-ok
+                           ; Step 2: evaluate from workspace
+                           (try (eval-current-output) (catch (e)
+                             (if (string? e) e
+                               (if (pair? e) (car (cdr e))
+                                 "(unknown error)"))))
+                           "(set-code failed)"))
+             (output (if (string? run-result) run-result "")))
+        ; Step 3: check success
         (if (check-success output expected)
           (list "healed" current-code output)
-          ; Diagnose and try to fix
-          (let* ((err (if (> (string-length output) 0) output "(no output)"))
-                 (diag (try (diagnose err) (catch (e) #f)))
-                 (fixed (if (and diag (pair? diag))
-                          (apply-fix current-code diag)
+          ; Step 4: AST-level diagnose + fix
+          (let* ((diag (heal-diagnose output))
+                 (fixed (if diag
+                          (begin
+                            ; Re-apply set-code before fix (eval-current-output may auto-fix)
+                            (set-code current-code)
+                            (heal-apply-fix current-code diag))
                           #f)))
             (if (and (string? fixed) (not (string=? fixed current-code)))
               (begin
-                (display "[heal] auto-fixed via ")
+                (display "[heal] AST-fixed via ")
                 (display (car diag))
                 (display " (attempt ")
                 (display (+ attempt 1))
@@ -46,4 +200,20 @@
                 (display ")")
                 (newline)
                 (loop (+ attempt 1) fixed))
-              (list "failed" current-code output))))))))
+              ; Fallback to C++ diagnose/apply-fix
+              (let* ((cpp-diag (try (diagnose output) (catch #f)))
+                     (cpp-fixed (if (and (pair? cpp-diag) (> (length cpp-diag) 1))
+                                  (try (apply-fix current-code cpp-diag) (catch #f))
+                                  #f)))
+                (if (and (string? cpp-fixed) (not (string=? cpp-fixed current-code)))
+                  (begin
+                    (display "[heal] CPP-fixed via ")
+                    (display (car cpp-diag))
+                    (display " (attempt ")
+                    (display (+ attempt 1))
+                    (display "/")
+                    (display max-attempts)
+                    (display ")")
+                    (newline)
+                    (loop (+ attempt 1) cpp-fixed))
+                  (list "failed" current-code output))))))))))
