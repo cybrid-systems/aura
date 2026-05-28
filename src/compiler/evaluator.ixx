@@ -247,6 +247,14 @@ private:
     void* defuse_index_ = nullptr;
     std::uint64_t defuse_version_ = 0;  // incremented on each mutation
 
+    // ── 依赖图查询回调 ─────────────────────────────────────────
+    // 在 mutation 原语中查询调用者节点，绕开 DefUseIndex 前向声明问题。
+    // 在 init_pair_primitives 末尾（DefUseIndex 定义完成后）注册。
+    // 签名: (defuse_index, sym_id) → [caller node IDs]
+    // 用 std::function 而非函数指针，避免不完整类型问题。
+    std::function<std::vector<aura::ast::NodeId>(void*, aura::ast::SymId)>
+        dep_caller_fn_ = nullptr;
+
     // ── Timeline for intend (E2, backward compat) ───────────────
     std::vector<std::string> timeline_; //
     std::vector<std::string> string_heap_;
