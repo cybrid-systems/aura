@@ -549,6 +549,8 @@ void InferenceEngine::init_primitive_env() {
     register_primitive("string=?", {String, String}, Bool);
     register_primitive("string<?", {String, String}, Bool);
     register_primitive("number->string", {Int}, String);
+    register_primitive("string-index", {String, String, Int}, Int);
+    register_primitive("string->number", {String}, Dyn);
     register_primitive("string->number", {String}, Int);
 
     // Pair operations
