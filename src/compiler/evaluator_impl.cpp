@@ -4165,7 +4165,8 @@ void Evaluator::init_pair_primitives() {
                     arg_pats = {""};
                 } else if (arity == 1) {
                     // Simple scalars first, then list-based
-                    arg_pats = {"42", "0", "\"test\"", "(list 3 1 4 1 5)"};
+                    // Use small ints to avoid exponential recursion (e.g., fib(42))
+                    arg_pats = {"5", "0", "1", "\"test\"", "(list 3 1 4 1 5)"};
                 } else if (arity == 2) {
                     // List+scalar for search, then plain scalars
                     // Try both (scalar list) and (list scalar) orderings
@@ -7718,12 +7719,12 @@ Evaluator::Evaluator() {
     primitives_.add("recv", [this](const auto& a) -> EvalValue {
         auto svc = aura::messaging::g_current_compiler_service;
         if (!svc || !aura::messaging::g_mailbox_read)
-            return make_void();
+            return make_bool(false);
         int timeout_ms = -1;
         if (a.size() >= 1 && is_int(a[0]))
             timeout_ms = static_cast<int>(as_int(a[0]));
         auto result = aura::messaging::g_mailbox_read(svc, timeout_ms);
-        if (!result) return make_void();
+        if (!result) return make_bool(false);
         auto idx = string_heap_.size();
         string_heap_.push_back(std::move(*result));
         return make_string(idx);
@@ -7882,7 +7883,7 @@ Evaluator::Evaluator() {
         for (std::size_t i = 0; i < g_template_patterns.size(); ++i) {
             if (g_template_patterns[i].first == name) { ti = static_cast<int>(i); break; }
         }
-        if (ti < 0) return make_void();
+        if (ti < 0) return make_bool(false);
 
         // Build substitution map
         std::unordered_map<std::string, std::string> subst;
