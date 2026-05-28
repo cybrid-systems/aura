@@ -8571,16 +8571,31 @@ Evaluator::Evaluator() {
 
     // (send target-id message) → #t on success
     primitives_.add("send", [this](const auto& a) -> EvalValue {
-        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
+        if (a.size() < 2 || !is_string(a[0]))
             return make_bool(false);
         auto& bridge = aura::messaging::g_messaging_bridge;
         if (!bridge.send) return make_bool(false);
         auto target = string_heap_[as_string_idx(a[0])];
-        auto msg = string_heap_[as_string_idx(a[1])];
+        // If message is already a string, send directly (backward compat, efficient).
+        // Otherwise, JSON-encode it.
+        std::string msg;
+        if (is_string(a[1])) {
+            msg = string_heap_[as_string_idx(a[1])];
+        } else {
+            // Use json-encode primitive to serialize
+            auto json_fn = primitives_.lookup("json-encode");
+            if (json_fn) {
+                auto result = (*json_fn)({a[1]});
+                if (is_string(result))
+                    msg = string_heap_[as_string_idx(result)];
+            }
+        }
+        if (msg.empty()) return make_bool(false);
         return make_bool(bridge.send(target, msg));
     });
 
-    // (recv [timeout-ms]) → message, or void on timeout
+    // (recv [timeout-ms]) → message value, or void on timeout
+    // If received string is valid JSON, auto-deserialize to Aura value.
     primitives_.add("recv", [this](const auto& a) -> EvalValue {
         auto svc = aura::messaging::g_current_compiler_service;
         if (!svc || !aura::messaging::g_mailbox_read)
@@ -8590,6 +8605,19 @@ Evaluator::Evaluator() {
             timeout_ms = static_cast<int>(as_int(a[0]));
         auto result = aura::messaging::g_mailbox_read(svc, timeout_ms);
         if (!result) return make_bool(false);
+        // Try JSON parse first (for structured messages)
+        auto& raw = *result;
+        if (!raw.empty() && (raw[0] == '{' || raw[0] == '[' || raw[0] == '"')) {
+            auto parse_fn = primitives_.lookup("json-parse");
+            if (parse_fn) {
+                auto sid = string_heap_.size();
+                string_heap_.push_back(raw);
+                auto parsed = (*parse_fn)({make_string(sid)});
+                if (!is_void(parsed))
+                    return parsed;
+            }
+        }
+        // Fallback: return as plain string
         auto idx = string_heap_.size();
         string_heap_.push_back(std::move(*result));
         return make_string(idx);
@@ -8608,17 +8636,28 @@ Evaluator::Evaluator() {
     });
 
     // (reply msg) → #t on success (sends to last message's sender)
+    // Supports non-string values via JSON encoding.
     primitives_.add("reply", [this](const auto& a) -> EvalValue {
-        if (a.empty() || !is_string(a[0]))
-            return make_bool(false);
+        if (a.empty()) return make_bool(false);
         auto svc = aura::messaging::g_current_compiler_service;
         if (!svc || !aura::messaging::g_mailbox_last_sender)
             return make_bool(false);
         auto target = aura::messaging::g_mailbox_last_sender(svc);
         if (target.empty()) return make_bool(false);
-        auto msg = string_heap_[as_string_idx(a[0])];
         auto& bridge = aura::messaging::g_messaging_bridge;
         if (!bridge.send) return make_bool(false);
+        std::string msg;
+        if (is_string(a[0])) {
+            msg = string_heap_[as_string_idx(a[0])];
+        } else {
+            auto json_fn = primitives_.lookup("json-encode");
+            if (json_fn) {
+                auto result = (*json_fn)({a[0]});
+                if (is_string(result))
+                    msg = string_heap_[as_string_idx(result)];
+            }
+        }
+        if (msg.empty()) return make_bool(false);
         return make_bool(bridge.send(target, msg));
     });
 
