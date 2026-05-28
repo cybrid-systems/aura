@@ -20,7 +20,7 @@ TypeId TypeRegistry::register_type(TypeTag tag, std::string name) {
         .index = static_cast<std::uint32_t>(entries_.size()),
         .generation = next_generation_,
     };
-    entries_.push_back(Entry{tag, std::move(name), std::nullopt, std::nullopt, std::nullopt});
+    entries_.push_back(Entry{tag, std::move(name), std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt});
     name_to_id_[entries_.back().name] = id;
     return id;
 }
@@ -33,7 +33,7 @@ TypeId TypeRegistry::register_func(std::vector<TypeId> args, TypeId ret) {
     auto ft = FuncType{std::move(args), ret};
     auto tag = TypeTag::FUNC;
     std::string tmp_name = "(" + std::to_string(ft.args.size()) + "->)";
-    entries_.push_back(Entry{tag, tmp_name, std::move(ft), std::nullopt});
+    entries_.push_back(Entry{tag, tmp_name, std::move(ft), std::nullopt, std::nullopt, std::nullopt, std::nullopt});
     std::string name = "(";
     for (auto& a : entries_.back().func->args)
         name += std::string(name_of(a)) + " ";
@@ -57,7 +57,7 @@ TypeId TypeRegistry::register_linear(TypeId inner) {
     };
     std::string linear_name = "(Linear " + std::string(name_of(inner)) + ")";
     entries_.push_back(Entry{TypeTag::LINEAR, std::move(linear_name), std::nullopt, std::nullopt,
-                             LinearType{inner}});
+                             LinearType{inner}, std::nullopt, std::nullopt, std::nullopt});
     name_to_id_[entries_.back().name] = id;
     return id;
 }
@@ -74,13 +74,31 @@ TypeId TypeRegistry::register_module(ModuleType mt) {
     }
     name += "}";
     entries_.push_back(Entry{TypeTag::MODULE, std::move(name), std::nullopt, std::nullopt,
-                             std::nullopt, std::move(mt)});
+                             std::nullopt, std::move(mt), std::nullopt});
     return id;
 }
 
 const ModuleType* TypeRegistry::module_of(TypeId id) const {
     if (id.index < entries_.size() && entries_[id.index].module_type)
         return &*entries_[id.index].module_type;
+    return nullptr;
+}
+
+TypeId TypeRegistry::register_effect(std::string name, TypeId arg) {
+    auto id = TypeId{
+        .index = static_cast<std::uint32_t>(entries_.size()),
+        .generation = next_generation_,
+    };
+    auto eff_name = std::string("!") + name;
+    entries_.push_back(Entry{TypeTag::EFFECT, std::move(eff_name), std::nullopt, std::nullopt,
+                             std::nullopt, std::nullopt, std::nullopt,
+                             EffectType{std::move(name), arg}});
+    return id;
+}
+
+const EffectType* TypeRegistry::effect_of(TypeId id) const {
+    if (id.index < entries_.size() && entries_[id.index].effect)
+        return &*entries_[id.index].effect;
     return nullptr;
 }
 
@@ -94,7 +112,8 @@ TypeId TypeRegistry::register_forall(TypeId var, TypeId body) {
     std::string forall_name =
         std::string("∀") + std::string(name_var) + ". " + std::string(name_body);
     entries_.push_back(Entry{TypeTag::FORALL, std::move(forall_name), std::nullopt,
-                             ForallType{var, body}, std::nullopt});
+                             ForallType{var, body}, std::nullopt, std::nullopt,
+                             std::nullopt, std::nullopt});
     return id;
 }
 
@@ -105,7 +124,7 @@ TypeId TypeRegistry::make_var(std::string name) {
         .index = static_cast<std::uint32_t>(entries_.size()),
         .generation = next_generation_,
     };
-    entries_.push_back(Entry{TypeTag::TYPE_VAR, std::move(name), std::nullopt, std::nullopt});
+    entries_.push_back(Entry{TypeTag::TYPE_VAR, std::move(name), std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt});
     return id;
 }
 
@@ -251,6 +270,14 @@ std::string TypeRegistry::format_type(TypeId id) const {
                 s += n + ": " + format_type(t);
             }
             return s + "}";
+        }
+        case TypeTag::EFFECT: {
+            auto* eff = effect_of(id);
+            if (!eff) return "<effect>";
+            auto s = std::string("!") + eff->name;
+            if (eff->arg.valid())
+                s += "[" + format_type(eff->arg) + "]";
+            return s;
         }
         default:
             return std::string(name_of(id));
