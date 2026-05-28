@@ -17,11 +17,12 @@
 
 | 模型 | 任务数 | 通过 | 通过率 | 耗时 | 说明 |
 |:----|:-----:|:----:|:-----:|:----:|:------|
-| 🥇 **Grok (xAI)** | 135 | **135** | **100%** | ~2min | 6 workers 并行，ant colony 修复 106/135 |
-| 🥈 **DeepSeek v4 Flash** | 135 | 106 | 78.5% | ~25min | 10 workers，限速致 4 worker 超时 |
+| 🥇 **Grok (xAI)** | 135 | **135** | **100%** | ~2min | Aura-native, 6 workers, ant colony 106/135 |
+| 🥈 **DeepSeek v4 Flash (Aura-native)** | 135 | 106 | 78.5% | ~25min | 10 workers，4 worker API 限速超时 |
+| 🥈 **DeepSeek v4 Flash (Python)** | 135 | 103 | 76.3% | ~10min | Python runner, 串行 |
 
-> 首次生成通过率 ~22%（30/135），ant colony 零 LLM 开销修复剩余的 106 个任务。
-> Grok 速度快 DeepSeek 约 10x（2min vs 25min）。
+> Aura-native 和 Python runner 的 DeepSeek 通过率一致（差异在 LLM 方差内），Grok 在质量和速度上均显著领先。  
+> 首次生成通过率 ~22%，ant colony 零 LLM 开销修复剩余 78%。
 
 ---
 
@@ -340,6 +341,7 @@ LLM_API_KEY="$(cat ~/code/keys/grok)" \
 
 | 日期 | 版本 | 任务数 | Grok | DeepSeek | 说明 |
 |:----|:----:|:-----:|:----:|:--------:|:------|
+| 2026-05-28 | 双 Arena (v6) | 135 | **100%** 🏆 | 76-79% | Aura-native + Grok 全量通过; 双 Arena 内存管理 |
 | 2026-05-27 | 全链路优化 (v5) | 135 | **80-84%** (±4%) | 74-76% (±7%) | 结构化错误 + Aura closure auto-fix + API 文档映射 |
 | 2026-05-27 | EDSL chain 穿透 (v3) | 135 | **84.4%** | 76.3% | set-code 穿透 + auto-fix + check_success |
 | 2026-05-26 | 诊断传播 v2 | 135 | 80.0% | 76.3% | eval-current 返回错误字符串 |
@@ -357,30 +359,25 @@ LLM_API_KEY="$(cat ~/code/keys/grok)" \
 
 Aura-native 版 benchmark，不走 Python，全在 Aura 内运行。
 
-| 指标 | Python runner | Aura-native | 差异原因 |
+| 指标 | Python runner | Aura-native | 同步状态 |
 |:-----|:-------------|:------------|:--------|
-| 全量耗时 | ~3 min | ~15 min | Python 用 20 workers；Aura 4 workers |
-| 单次过率 | 101/135 (74.8%) | ~10% | prompt 裁剪、check_success、TASK_HINTS 等仍需同步 |
-| HTTP | `http.client` | libcurl C API（popen） | ✅ 已同步 |
-| Code extraction | 6 步 fallback | ` ```lisp ` → define/display | ✅ 已同步 |
+| 全量耗时 | ~3-10 min (20wk) | ~2-25 min (6wk) | ✅ 一致 |
+| 单次过率 (DeepSeek) | 103/135 (76.3%) | 106/135 (78.5%) | ✅ **已对齐** |
+| 单次过率 (Grok) | — | 135/135 (100%) | ✅ **Aura 独占** |
+| HTTP | `http.client` | libcurl C API（dlopen） | ✅ 已同步 |
+| Code extraction | 6 步 fallback | `std/extract.aura` 6 步 fallback | ✅ 已同步 |
 | Retry | intend + ant colony | intend + ant colony | ✅ 已同步 |
-| Prompt | 2 行简洁 | 2 行简洁 | ✅ 已同步 |
-| check_success | substring 匹配 | substring 匹配 | ✅ 已同步 |
-| 并行 | 20 workers | 4 workers (shell) | ✅ 已有 |
+| Prompt | 2 行简洁 | `std/prompt.aura` | ✅ 已同步 |
+| check_success | substring + 字边界 | C++ 内置原语 | ✅ 已同步 |
+| 并行 | multi-process | `run_parallel.sh` | ✅ 已有 |
+| 结果收集 | print 汇总 | `write-file` | ✅ 已加 |
 
-### 已完成（Phase 5 P0-P3）
-- [x] `http-post` libcurl C API（dlopen 运行时加载）
-- [x] pipe+fork curl CLI 降级兜底
-- [x] `intend` 控制器（generator/verifier/fixer）
-- [x] ant colony 局部变异修复
-- [x] `check_success` 灵活匹配
-- [x] TASK_HINTS 注入
-- [x] 简洁 system prompt（去掉 76 行 API ref）
-- [x] 并行执行（`run_parallel.sh`）
-- [x] LLM_BASE_URL 支持
+### 已完成
 
-### 待做
-- [ ] SIGSEGV at ~119 tasks（`docs/issues/`）
-- [ ] `--serve-async` multi-session 模式
-- [ ] JSON 结构化输出
-- [ ] 回归监控
+**Phase 5 (P0-P3):** HTTP, intend, ant colony, check_success, 并行, prompt 等全部完成。
+**Phase 6 (P0-P5):** 自托管闭环, workspace merge, 多 worker runner, 双 Arena 内存管理。
+
+### 优化方向
+- `--serve-async` multi-session 模式（单进程 fiber 并行）
+- JSON 结构化结果输出
+- 回归监控（git commit + 模型 + 过率）
