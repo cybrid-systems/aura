@@ -4400,7 +4400,6 @@ void Evaluator::init_pair_primitives() {
     // Define's value reference to the newly parsed nodes. All pre-existing mutations
     // on other nodes are preserved.
     primitives_.add("mutate:rebind", [this](const auto& a) {
-        defuse_version_++;
         if (workspace_read_only_) return make_bool(false);
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
             !workspace_pool_)
@@ -4412,6 +4411,20 @@ void Evaluator::init_pair_primitives() {
         auto& flat = *workspace_flat_;
         auto name = string_heap_[name_idx];
         auto sym = workspace_pool_->intern(name);
+
+        // ── 依赖图驱动：dirty 所有调用者节点 ───────────────────
+        // 在 mutation 使索引失效前，先查询当前 def-use 依赖图获取
+        // 所有引用该符号的 Variable 节点。这些节点在定义变化后需要
+        // 重新类型推断。
+        // 当前实现：直接扫描 FlatAST（O(n)），后续可替换为
+        // DefUseIndex 的 O(k) 依赖图查询（需解决前向声明问题）。
+        std::vector<aura::ast::NodeId> dep_callers;
+        for (aura::ast::NodeId sid = 0; sid < flat.size(); ++sid) {
+            auto sv = flat.get(sid);
+            if (sv.tag == aura::ast::NodeTag::Variable && sv.sym_id == sym)
+                dep_callers.push_back(sid);
+        }
+        defuse_version_++;
 
         // Find old Define node by name
         aura::ast::NodeId old_define = aura::ast::NULL_NODE;
@@ -4451,18 +4464,12 @@ void Evaluator::init_pair_primitives() {
         // This is a valid NodeId in workspace_flat_ since we parsed into it
         flat.set_child(old_define, 0, new_value);
 
-        // ── 增量检查：dirty 所有调用者节点 ───────────────────────
-        // mutate:rebind 只 dirty 了定义节点及其祖先，但调用者分布在
-        // AST 的不同分支，没有被标记为 dirty。扫描整个 FlatAST 找出
-        // 所有引用该函数的 Variable 节点，标记 dirty 并向上传播。
+        // ── 依赖图驱动：dirty 所有调用者 ────────────────────────
+        // 利用从 def-use 索引预取的调用者列表，标记 dirty + 向上传播。
         // 这样下次 typecheck-current 就知道这些节点需要重新类型推断。
-        if (&flat) {
-            for (aura::ast::NodeId sid = 0; sid < flat.size(); ++sid) {
-                auto sv = flat.get(sid);
-                if (sv.tag == aura::ast::NodeTag::Variable && sv.sym_id == sym) {
-                    flat.mark_dirty_upward(sid);
-                }
-            }
+        for (std::size_t ui = 0; ui < dep_callers.size(); ++ui) {
+            if (dep_callers[ui] < flat.size())
+                flat.mark_dirty_upward(dep_callers[ui]);
         }
 
         return make_bool(true);
@@ -4656,7 +4663,6 @@ void Evaluator::init_pair_primitives() {
     // Finds (define (name params) ...) and replaces the Lambda body.
     // Parses new body INTO the workspace FlatAST so all node IDs are valid.
     primitives_.add("mutate:set-body", [this](const auto& a) {
-        defuse_version_++;
         if (workspace_read_only_) return make_bool(false);
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
             !workspace_pool_)
@@ -4668,6 +4674,15 @@ void Evaluator::init_pair_primitives() {
         auto& flat = *workspace_flat_;
         auto name = string_heap_[name_idx];
         auto sym = workspace_pool_->intern(name);
+
+        // ── 依赖图驱动：dirty 所有调用者节点 ───────────────────
+        std::vector<aura::ast::NodeId> dep_callers;
+        for (aura::ast::NodeId sid = 0; sid < flat.size(); ++sid) {
+            auto sv = flat.get(sid);
+            if (sv.tag == aura::ast::NodeTag::Variable && sv.sym_id == sym)
+                dep_callers.push_back(sid);
+        }
+        defuse_version_++;
 
         // Find Define node with matching symbol name
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
@@ -4692,6 +4707,12 @@ void Evaluator::init_pair_primitives() {
 
                 // Replace the Lambda's body — pr.root is a valid node in workspace_flat_
                 flat.set_child(lambda_id, 0, pr.root);
+
+                // 依赖图驱动：dirty 所有调用者
+                for (std::size_t ui = 0; ui < dep_callers.size(); ++ui) {
+                    if (dep_callers[ui] < flat.size())
+                        flat.mark_dirty_upward(dep_callers[ui]);
+                }
                 return make_bool(true);
             }
         }
