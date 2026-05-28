@@ -8993,6 +8993,115 @@ Evaluator::Evaluator() {
         string_heap_.push_back(result);
         return types::make_string(sidx);
     });
+
+    // ── Capability primitives (with-capability / capability? / check-capability) ──
+
+    primitives_.add("with-capability", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !types::is_string(a[0])) {
+            auto es = string_heap_.size();
+            string_heap_.push_back("with-capability: first argument must be a string or list of strings");
+            auto ev = error_values_.size();
+            error_values_.push_back(make_string(es));
+            return make_error(ev);
+        }
+        if (a.size() < 2) {
+            auto es = string_heap_.size();
+            string_heap_.push_back("with-capability: requires at least 2 args");
+            auto ev = error_values_.size();
+            error_values_.push_back(make_string(es));
+            return make_error(ev);
+        }
+        auto cap_val = a[0];
+        std::vector<std::string> caps;
+        if (types::is_string(cap_val)) {
+            auto sidx = types::as_string_idx(cap_val);
+            if (sidx < string_heap_.size())
+                caps.push_back(string_heap_[sidx]);
+        } else if (types::is_pair(cap_val)) {
+            auto cidx = types::as_pair_idx(cap_val);
+            while (cidx < pairs_.size()) {
+                auto& p = pairs_[cidx];
+                if (types::is_string(p.car)) {
+                    auto sidx2 = types::as_string_idx(p.car);
+                    if (sidx2 < string_heap_.size())
+                        caps.push_back(string_heap_[sidx2]);
+                }
+                if (types::is_int(p.cdr) && types::as_int(p.cdr) == 0)
+                    break;
+                if (types::is_pair(p.cdr))
+                    cidx = types::as_pair_idx(p.cdr);
+                else
+                    break;
+            }
+        }
+        // Push capability context
+        capability_stack_.push_back(caps);
+        // Evaluate body expression (the last arg)
+        auto body = a[1];
+        EvalValue result = make_void();
+        if (types::is_closure(body) && workspace_flat_ && workspace_pool_) {
+            auto cid = types::as_closure_id(body);
+            auto it = closures_.find(cid);
+            if (it != closures_.end() && it->second.body_id != ast::NULL_NODE)
+                result = eval_flat(*workspace_flat_, *workspace_pool_, it->second.body_id, top_env()).value_or(make_void());
+        } else {
+            result = body;
+        }
+        // Pop capability context
+        if (!capability_stack_.empty())
+            capability_stack_.pop_back();
+        return result;
+    });
+
+    primitives_.add("capability?", [](const auto& a) -> EvalValue {
+        return types::make_bool(false);
+    });
+
+    primitives_.add("check-capability", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !types::is_string(a[0])) {
+            auto es = string_heap_.size();
+            string_heap_.push_back("check-capability: first argument must be a string");
+            auto ev = error_values_.size();
+            error_values_.push_back(make_string(es));
+            return make_error(ev);
+        }
+        auto sidx = types::as_string_idx(a[0]);
+        std::string needed;
+        if (sidx < string_heap_.size())
+            needed = string_heap_[sidx];
+        // Check each capability context in reverse order for proper scoping
+        for (auto it = capability_stack_.rbegin(); it != capability_stack_.rend(); ++it) {
+            for (auto& c : *it) {
+                if (c == needed || c == "*") {
+                    return types::make_bool(true);
+                }
+            }
+        }
+        return types::make_bool(false);
+    });
+
+    primitives_.add("capability-stack", [this](const auto&) -> EvalValue {
+        // Collect all unique caps from stack
+        std::vector<std::string> caps;
+        for (auto& layer : capability_stack_) {
+            for (auto& cap : layer) {
+                bool dup = false;
+                for (auto& c : caps)
+                    if (c == cap) { dup = true; break; }
+                if (!dup) caps.push_back(cap);
+            }
+        }
+        // Build list from BACK to FRONT (append to head)
+        EvalValue result = make_void();  // '()
+        for (int i = static_cast<int>(caps.size()) - 1; i >= 0; --i) {
+            auto sidx = string_heap_.size();
+            string_heap_.push_back(caps[i]);
+            auto new_pair_idx = pairs_.size();
+            pairs_.push_back({make_string(sidx), result});
+            result = make_pair(new_pair_idx);
+        }
+        return result;
+    });
 }
 
 // slot_for_name: find the slot for a primitive name
@@ -10702,6 +10811,65 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             }
                             return make_void();
                         }
+                        // with-capability: (with-capability cap-name body...)
+                        // Bind capabilities as special variables in the environment.
+                        if (cname == "with-capability" && v.children.size() >= 2) {
+                            auto cap_id = v.child(1);
+                            auto cap_result = eval_flat(*f, *p, cap_id, eval_env);
+                            if (!cap_result)
+                                return cap_result;
+                            // Extract capability name(s)
+                            std::vector<std::string> caps;
+                            if (is_string(*cap_result)) {
+                                auto sidx = as_string_idx(*cap_result);
+                                if (sidx < string_heap_.size())
+                                    caps.push_back(string_heap_[sidx]);
+                            } else if (is_pair(*cap_result)) {
+                                auto cidx = as_pair_idx(*cap_result);
+                                while (cidx < pairs_.size()) {
+                                    auto& pr = pairs_[cidx];
+                                    if (is_string(pr.car)) {
+                                        auto sidx2 = as_string_idx(pr.car);
+                                        if (sidx2 < string_heap_.size())
+                                            caps.push_back(string_heap_[sidx2]);
+                                    }
+                                    break;
+                                }
+                            }
+                            // Create child env with %cap:name bindings
+                            tail_env.emplace(&eval_env);
+                            tail_env->set_primitives(&primitives_);
+                            tail_env->set_cells(&cells_);
+                            for (auto& cap : caps)
+                                tail_env->bind("%cap:" + cap, make_bool(true));
+                            // Push to capability_stack_ for capability-stack readout
+                            capability_stack_.push_back(caps);
+                            // Evaluate body in child env
+                            EvalResult last = make_void();
+                            for (std::size_t ci = 2; ci < v.children.size(); ++ci) {
+                                last = eval_flat(*f, *p, v.child(ci), *tail_env);
+                                if (!last) {
+                                    capability_stack_.pop_back();
+                                    return last;
+                                }
+                            }
+                            capability_stack_.pop_back();
+                            return last;
+                        }
+                        // check-capability: (check-capability "Name") — look up %cap:Name binding
+                        if (cname == "check-capability" && v.children.size() >= 2) {
+                            auto arg_result = eval_flat(*f, *p, v.child(1), eval_env);
+                            if (!arg_result) return arg_result;
+                            std::string cap_name;
+                            if (is_string(*arg_result)) {
+                                auto sidx = as_string_idx(*arg_result);
+                                if (sidx < string_heap_.size())
+                                    cap_name = string_heap_[sidx];
+                            }
+                            auto val = eval_env.lookup("%cap:" + cap_name);
+                            return val.has_value() ? make_bool(true) : make_bool(false);
+                        }
+
                         if (cname == "try" && v.children.size() >= 2) {
                             auto body_id = v.child(1);
                             auto result = eval_flat(*f, *p, body_id, eval_env);
@@ -10864,6 +11032,8 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 for (aura::ast::NodeId sid = 0; sid < f->size(); ++sid) {
                                     auto sv = f->get(sid);
                                     if (sv.tag == aura::ast::NodeTag::DefineModule &&
+                                        sv.sym_id != aura::ast::INVALID_SYM &&
+                                        sv.sym_id < p->data_size() &&
                                         std::string(p->resolve(sv.sym_id)) == tpl_name) {
                                         for (auto pid : sv.params)
                                             param_names.push_back(std::string(p->resolve(pid)));
@@ -10893,6 +11063,55 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                         auto ar = eval_flat(*f, *p, v.child(ai), eval_env);
                                         if (!ar) return ar;
                                         mod_env.bind(pname, *ar);
+                                    }
+                                }
+
+                                // Capability requirement check
+                                if (!tpl_it->second.cap_require.empty()) {
+                                    // Find the capability argument
+                                    // Capability params are stored at the end of param_names
+                                    std::string provided_caps_str;
+                                    for (std::size_t ai = 1; ai < v.children.size(); ++ai) {
+                                        auto arg_v = f->get(v.child(ai));
+                                        std::string pname = (ai - 1 < param_names.size())
+                                            ? param_names[ai - 1] : "";
+                                        // Check if this param is a cap param
+                                        bool is_cap_param = false;
+                                        for (auto& cp : tpl_it->second.cap_param_names) {
+                                            if (cp == pname) { is_cap_param = true; break; }
+                                        }
+                                        if (is_cap_param) {
+                                            if (arg_v.tag == aura::ast::NodeTag::Variable) {
+                                                provided_caps_str = std::string(p->resolve(arg_v.sym_id));
+                                            } else if (arg_v.tag == aura::ast::NodeTag::LiteralString) {
+                                                provided_caps_str = "";
+                                            }
+                                        }
+                                    }
+                                    // Check if provided caps satisfy requirements
+                                    // Simple string matching: "FileReadWrite" contains "FileRead" and "FileWrite"
+                                    std::vector<std::string> missing;
+                                    for (auto& req : tpl_it->second.cap_require) {
+                                        bool found = false;
+                                        if (provided_caps_str.find(req) != std::string::npos)
+                                            found = true;
+                                        // Also check for "*" wildcard
+                                        if (provided_caps_str == "*")
+                                            found = true;
+                                        if (!found)
+                                            missing.push_back(req);
+                                    }
+                                    if (!missing.empty()) {
+                                        std::string err = "functor " + tpl_name + ": missing capabilities: ";
+                                        for (std::size_t mi = 0; mi < missing.size(); ++mi) {
+                                            if (mi > 0) err += ", ";
+                                            err += missing[mi];
+                                        }
+                                        auto es = string_heap_.size();
+                                        string_heap_.push_back(err);
+                                        auto ev = error_values_.size();
+                                        error_values_.push_back(make_string(es));
+                                        return make_error(ev);
                                     }
                                 }
 
@@ -11267,9 +11486,54 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     // Store module template and bind Name to functor
                     auto mod_name = std::string(p->resolve(v.sym_id));
                     ModuleTemplate mt;
+
+                    // Extract capability parameter names from AST params metadata
+                    auto num_cap_params = f->cap_require_count(v.id);
+                    if (num_cap_params > 0 && v.params.size() >= num_cap_params) {
+                        // cap params are at the end of the param list
+                        for (std::size_t i = 0; i < num_cap_params; ++i) {
+                            auto pid = f->param_at(v.id, v.params.size() - num_cap_params + i);
+                            mt.cap_param_names.push_back(std::string(p->resolve(pid)));
+                        }
+                    }
+
                     // Children are the body expressions
                     for (auto cid : v.children)
                         mt.body_nodes.push_back(cid);
+
+                    // Scan body for `:require` directives
+                    // Format: ((:require FileRead FileWrite) ...) or ((:require FileRead) ...)
+                    for (auto cid : v.children) {
+                        auto cv = f->get(cid);
+                        if (cv.tag == aura::ast::NodeTag::Call && cv.children.size() > 0) {
+                            auto callee_node = f->get(cv.child(0));
+                            if (callee_node.tag == aura::ast::NodeTag::Variable ||
+                                callee_node.tag == aura::ast::NodeTag::Quote) {
+                                aura::ast::SymId sym = (callee_node.tag == aura::ast::NodeTag::Variable)
+                                    ? callee_node.sym_id : aura::ast::INVALID_SYM;
+                                std::string_view callee_name = (sym != aura::ast::INVALID_SYM)
+                                    ? p->resolve(sym) : std::string_view();
+                                // Check for :require or require keyword
+                                if (callee_name == ":require" || callee_name == ":require-all") {
+                                    // Extract required capability names from remaining children
+                                    for (std::size_t ai = 1; ai < cv.children.size(); ++ai) {
+                                        auto arg_node = f->get(cv.child(ai));
+                                        if (arg_node.tag == aura::ast::NodeTag::Variable) {
+                                            auto cap_name = std::string(p->resolve(arg_node.sym_id));
+                                            // Skip duplicates
+                                            bool dup = false;
+                                            for (auto& r : mt.cap_require) {
+                                                if (r == cap_name) { dup = true; break; }
+                                            }
+                                            if (!dup)
+                                                mt.cap_require.push_back(cap_name);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     module_templates_[mod_name] = std::move(mt);
 
                     // Bind Name in the current env (as a cell with functor marker)

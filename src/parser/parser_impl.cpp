@@ -658,11 +658,38 @@ NodeId FlatParser::parse_define_module() {
     lexer_->consume(); // Name
     auto name_sym = pool_.intern(tok_name.text);
 
-    // Parse type parameters (plain identifiers, e.g. T, K, V)
+    // Parse parameters: plain identifiers (T, K, V) or (cap :Capability)
     std::vector<aura::ast::SymId> type_params;
+    std::vector<aura::ast::SymId> cap_params;
     while (lexer_->peek().kind != TokenKind::RParen && !lexer_->eof()) {
         auto param_tok = lexer_->peek();
-        if (param_tok.kind == TokenKind::Identifier && !param_tok.text.empty() &&
+        if (param_tok.kind == TokenKind::LParen) {
+            // Capability parameter: (cap :Capability)
+            lexer_->consume(); // '('
+            auto inner_tok = lexer_->peek();
+            if (inner_tok.kind == TokenKind::Identifier) {
+                lexer_->consume(); // param name (e.g., cap)
+                // Check for ':Capability' or ':' 'Capability' annotation
+                auto next_tok = lexer_->peek();
+                bool is_cap = false;
+                if (next_tok.kind == TokenKind::Identifier && next_tok.text == ":Capability") {
+                    lexer_->consume(); // ':Capability'
+                    is_cap = true;
+                } else if (next_tok.kind == TokenKind::Identifier && next_tok.text == ":") {
+                    lexer_->consume(); // ':'
+                    auto type_tok = lexer_->peek();
+                    if (type_tok.kind == TokenKind::Identifier &&
+                        (type_tok.text == "Capability" || type_tok.text == "capability")) {
+                        lexer_->consume(); // Capability
+                        is_cap = true;
+                    }
+                }
+                type_params.push_back(pool_.intern(inner_tok.text));
+                if (is_cap)
+                    cap_params.push_back(pool_.intern(inner_tok.text));
+            }
+            skip_rparen(); // skip ')'
+        } else if (param_tok.kind == TokenKind::Identifier && !param_tok.text.empty() &&
             param_tok.text[0] != '(') {
             lexer_->consume();
             type_params.push_back(pool_.intern(param_tok.text));
@@ -673,7 +700,7 @@ NodeId FlatParser::parse_define_module() {
     lexer_->consume(); // ')' after params
 
     // Create the define-module AST node
-    auto id = flat_.add_define_module(name_sym, type_params);
+    auto id = flat_.add_define_module(name_sym, type_params, cap_params);
 
     // Parse body expressions
     while (lexer_->peek().kind != TokenKind::RParen && !lexer_->eof()) {

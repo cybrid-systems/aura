@@ -291,6 +291,10 @@ public:
             "or",
             "cond",
             "case",
+            // Capability special forms
+            "with-capability",
+            "check-capability",
+            "capability-stack",  // DEPRECATED — uses primitive path instead
             // Module system (env side-effects)
             // "import", "use", "require" — now in lowering_known
         };
