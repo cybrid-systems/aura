@@ -261,6 +261,7 @@ private:
     // 格式: type_str = "param1 param2|rettype" | 分隔
     struct DeclaredType {
         std::string type_str;
+        std::string module_file;  // 来源模块文件（用于跨模块错误定位）
         bool resolved = false;
     };
     std::unordered_map<std::string, DeclaredType> declared_type_sigs_;
