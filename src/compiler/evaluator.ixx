@@ -246,6 +246,12 @@ private:
     // ── Def-Use Analysis (P1) ───────────────────────────────────
     void* defuse_index_ = nullptr;
     std::uint64_t defuse_version_ = 0;  // incremented on each mutation
+    // (#10) Track mutation-affected symbols for targeted index rebuild
+    // Mutation primitives push affected sym names here; ensure_defuse
+    // uses them to avoid full rebuild when only a few symbols changed.
+    std::unordered_set<std::string> defuse_affected_syms_;
+    // (#10) Number of times the def-use index has been rebuilt (for stats)
+    std::uint64_t defuse_rebuild_count_ = 0;
 
     // ── 依赖图查询回调 ─────────────────────────────────────────
     // 在 mutation 原语中查询调用者节点，绕开 DefUseIndex 前向声明问题。
