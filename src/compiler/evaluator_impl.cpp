@@ -2106,7 +2106,8 @@ void Evaluator::init_pair_primitives() {
     });
 
     primitives_.add("keyword?", [this](const auto& a) {
-        return make_bool(a.size() >= 1 && is_keyword(a[0]));
+        // Guard against encoding collision: strings can accidentally pass is_keyword()
+        return make_bool(a.size() >= 1 && is_keyword(a[0]) && !is_string(a[0]));
     });
 
     primitives_.add("keyword->string", [this](const auto& a) {
@@ -2337,7 +2338,8 @@ void Evaluator::init_pair_primitives() {
     primitives_.add("error?", [this](const auto& a) -> EvalValue {
         if (a.empty())
             return make_bool(false);
-        return make_bool(is_error(a[0]));
+        // Guard against encoding collision: strings can accidentally pass is_error()
+        return make_bool(is_error(a[0]) && !is_string(a[0]));
     });
 
 
