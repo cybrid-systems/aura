@@ -12457,14 +12457,78 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                     }
                                 }
                                 if (!export_names.empty()) {
-                                    // 为每个导出函数设置默认类型 Any -> Any
-                                    for (auto& en : export_names) {
-                                        if (declared_type_sigs_.find(cache_key + "/" + en) == declared_type_sigs_.end()) {
-                                            declared_type_sigs_[cache_key + "/" + en] = {
-                                                .type_str = "Any|Any",
+                                    // 对实例化后的 body 做类型推断，生成实际签名
+                                    // Parse body source, type-check via TypeChecker, register signatures
+                                    aura::core::TypeRegistry tc_reg;
+                                    aura::compiler::TypeChecker functor_tc(tc_reg);
+                                    aura::diag::DiagnosticCollector tc_diag;
+
+                                    aura::ast::ASTArena tc_arena;
+                                    auto tc_alloc = tc_arena.allocator();
+                                    aura::ast::StringPool tc_pool(tc_alloc);
+                                    aura::ast::FlatAST tc_flat(tc_alloc);
+                                    auto tc_pr = aura::parser::parse_to_flat(body_src, tc_flat, tc_pool);
+                                    aura::ast::NodeId tc_root = tc_pr.root;
+                                    if (tc_pr.success && tc_root != aura::ast::NULL_NODE) {
+                                        tc_flat.root = tc_root;
+                                        // Type-check the whole body to populate func types
+                                        functor_tc.infer_flat(tc_flat, tc_pool, tc_root, tc_diag);
+
+                                        // Scan body for export functions and extract their types
+                                        for (auto& en : export_names) {
+                                            std::string sig_key = cache_key + "/" + en;
+                                            if (declared_type_sigs_.find(sig_key) != declared_type_sigs_.end())
+                                                continue;
+
+                                            // Find the Define node for this export
+                                            bool found = false;
+                                            std::string type_str = "Any|Any";
+                                            for (aura::ast::NodeId nid = 0; nid < tc_flat.size(); ++nid) {
+                                                auto nv = tc_flat.get(nid);
+                                                if (nv.tag == aura::ast::NodeTag::Define &&
+                                                    nv.sym_id != aura::ast::INVALID_SYM &&
+                                                    std::string(tc_pool.resolve(nv.sym_id)) == en &&
+                                                    !nv.children.empty()) {
+                                                    // Re-infer the value expression to get its type
+                                                    auto val_type = functor_tc.infer_flat(
+                                                        tc_flat, tc_pool, nv.child(0), tc_diag);
+                                                    if (val_type.valid() && val_type.index > 0) {
+                                                        // Format as type signature
+                                                        auto fmt = tc_reg.format_type(val_type);
+                                                        if (!fmt.empty()) {
+                                                            // Convert from '->' to '|' format for declared_type_sigs_
+                                                            auto pipe_pos = fmt.find(" -> ");
+                                                            if (pipe_pos != std::string::npos) {
+                                                                auto params = fmt.substr(0, pipe_pos);
+                                                                auto ret = fmt.substr(pipe_pos + 4);
+                                                                type_str = params + "|" + ret;
+                                                            } else {
+                                                                type_str = "|" + fmt;
+                                                            }
+                                                        }
+                                                    }
+                                                    found = true;
+                                                    break;
+                                                }
+                                            }
+
+                                            declared_type_sigs_[sig_key] = {
+                                                .type_str = type_str,
                                                 .module_file = "%functor:" + tpl_name,
-                                                .resolved = false
+                                                .resolved = found
                                             };
+                                        }
+                                    } else {
+                                        // Fallback: Any|Any (shouldn't happen since body was parsed earlier)
+                                        for (auto& en : export_names) {
+                                            std::string sig_key = cache_key + "/" + en;
+                                            if (declared_type_sigs_.find(sig_key) == declared_type_sigs_.end()) {
+                                                declared_type_sigs_[sig_key] = {
+                                                    .type_str = "Any|Any",
+                                                    .module_file = "%functor:" + tpl_name,
+                                                    .resolved = false
+                                                };
+                                            }
                                         }
                                     }
                                 }
