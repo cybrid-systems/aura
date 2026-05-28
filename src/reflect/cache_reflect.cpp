@@ -17,8 +17,10 @@ struct CacheHeader {
     std::uint32_t num_nodes;
     std::uint32_t num_strings;
     std::uint32_t num_functions;
+    std::uint32_t sig_offset;
+    std::uint32_t sig_size;
 };
-static_assert(sizeof(CacheHeader) == 64, "CacheHeader must be 64 bytes");
+static_assert(sizeof(CacheHeader) == 72, "CacheHeader must be 72 bytes");
 
 extern "C" {
 

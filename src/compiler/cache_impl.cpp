@@ -54,7 +54,8 @@ static StringTable build_string_table(const FlatAST& flat, const StringPool& poo
 }
 
 bool write_cache(const std::string& path, const FlatAST& flat, const StringPool& pool, NodeId root,
-                 std::uint64_t source_mtime, const aura::ir::IRModule* ir_mod) {
+                 std::uint64_t source_mtime, const aura::ir::IRModule* ir_mod,
+                 const std::string* sig_data) {
 
     std::ofstream f(path, std::ios::binary);
     if (!f)
@@ -208,7 +209,19 @@ bool write_cache(const std::string& path, const FlatAST& flat, const StringPool&
         delete[] ir_buf_data;
     }
 
-    // ── Rewrite header with IR offset ─────────────────────────────
+    // ── Type sig section (embedded .aura-type) ────────────────
+    header.sig_offset = 0;
+    header.sig_size = 0;
+    if (sig_data && !sig_data->empty()) {
+        auto sig_start = f.tellp();
+        auto sig_len = static_cast<std::uint32_t>(sig_data->size());
+        f.write(reinterpret_cast<const char*>(&sig_len), sizeof(sig_len));
+        f.write(sig_data->data(), sig_data->size());
+        header.sig_offset = static_cast<std::uint64_t>(sig_start);
+        header.sig_size = sig_len;
+    }
+
+    // ── Rewrite header with IR + sig offsets ───────────────────
     header.ir_offset = static_cast<std::uint64_t>(ir_start);
     header.num_functions = ir_mod ? 1 : 0; // signal: 1 = has IR section, 0 = no IR
     f.seekp(0);
