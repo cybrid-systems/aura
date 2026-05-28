@@ -6,7 +6,26 @@
 
 ---
 
-## Latest: 2026-05-27 — 全链路优化（v5）
+## Latest: 2026-05-28 — 双 Arena + Grok 全量通过（v6）
+
+**本次变更：**
+- 双 Arena（persistent + temp）内存管理 — `gc-temp` 原语
+- benchmark 改用并行多进程（`run_parallel.sh`），6 workers 跑 Grok
+- 结果文件写入（`write-file` 替代 stdout 管道）
+- 修复 `gc-temp` 误清 `pairs_`/`string_heap_`（aggregate 结果归零的 bug）
+- 修复 `run_parallel.sh` TIMEOUT 过短（600→1200s）
+
+| 模型 | 任务数 | 通过 | 通过率 | 耗时 | 说明 |
+|:----|:-----:|:----:|:-----:|:----:|:------|
+| 🥇 **Grok (xAI)** | 135 | **135** | **100%** | ~2min | 6 workers 并行，ant colony 修复 106/135 |
+| 🥈 **DeepSeek v4 Flash** | 135 | 106 | 78.5% | ~25min | 10 workers，限速致 4 worker 超时 |
+
+> 首次生成通过率 ~22%（30/135），ant colony 零 LLM 开销修复剩余的 106 个任务。
+> Grok 速度快 DeepSeek 约 10x（2min vs 25min）。
+
+---
+
+## 2026-05-27 — 全链路优化（v5）
 
 **本次变更（4 commits）：**
 
