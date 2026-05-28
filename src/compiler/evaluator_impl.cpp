@@ -8920,7 +8920,9 @@ Evaluator::Evaluator() {
 
     // (_agent:spawn name) — Create a new named agent session (internal primitive)
     // Called by the Aura-level agent:spawn wrapper.
-    // Returns the session name string on success, or error on failure.
+    // In serve mode: creates a full cross-session agent via g_session_create.
+    // In stdin mode: creates a lightweight in-process agent with a mailbox.
+    // Returns the agent name on success, or error on failure.
     primitives_.add("_agent:spawn", [this](const auto& a) -> EvalValue {
         auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
             auto mi = string_heap_.size(); string_heap_.push_back(m);
@@ -8934,10 +8936,23 @@ Evaluator::Evaluator() {
         auto& name = string_heap_[as_string_idx(a[0])];
         if (name.empty())
             return merr("bad-arg", "agent name must not be empty");
-        if (!aura::messaging::g_session_create || !(*aura::messaging::g_session_create))
-            return merr("no-serve", "agent:spawn requires serve mode");
-        if (!(*aura::messaging::g_session_create)(name))
-            return merr("create-failed", std::string("could not create session \"") + name + "\" (may already exist)");
+        
+        // Try serve-mode first (full session isolation)
+        if (aura::messaging::g_session_create && *aura::messaging::g_session_create) {
+            if ((*aura::messaging::g_session_create)(name)) {
+                auto sidx = string_heap_.size();
+                string_heap_.push_back(name);
+                return make_string(sidx);
+            }
+            return merr("create-failed", std::string("could not create session \"") + name + "\"");
+        }
+        
+        // Stdin/pipe mode: lightweight in-process agent
+        // Register mailbox so send/recv can route to this agent
+        if (!aura::messaging::g_mailbox_registry_create ||
+            !aura::messaging::g_mailbox_registry_create(name))
+            return merr("create-failed", std::string("could not create agent \"") + name + "\"");
+        
         auto sidx = string_heap_.size();
         string_heap_.push_back(name);
         return make_string(sidx);
