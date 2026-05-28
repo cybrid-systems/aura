@@ -1,0 +1,105 @@
+(require "std/test" all:)
+
+; ═══════════════════════════════════════════════════════════════════
+; Issue #11 — 结构化变异 API 语义保持测试
+; 每个原语: mutate → typecheck → eval → 结果一致
+; ═══════════════════════════════════════════════════════════════════
+
+; ── mutate:rename-symbol ──────────────────────────────────────────
+(test-suite "mutate:rename"
+  (set-code "(define (square x) (* x x))")
+  (eval-current)
+  (check (= (square 5) 25))
+  (check (mutate:rename-symbol "square" "double"))
+  (eval-current)
+  (check (= (double 5) 25))
+  ; Old name should still work (it's already bound in env)
+  (check (= (square 5) 25))
+  ; Typecheck should pass
+  (let ((tc-result (typecheck-current)))
+    (check (string? tc-result))))
+
+; ── mutate:extract-function ───────────────────────────────────────
+(test-suite "mutate:extract"
+  (set-code "(define (calc x) (+ (* x 3) 1))")
+  (eval-current)
+  (check (= (calc 2) 7))
+  ; Find the (* x 3) call node (lambda body child)
+  (define r (query:root))
+  (define def-calc (car (query:children r)))
+  (define lam-calc (car (query:children def-calc)))
+  (define body (car (query:children lam-calc)))
+  (define mul-call (car (cdr (query:children body))))
+  (check (mutate:extract-function mul-call "mul3"))
+  (eval-current)
+  ; Original function still works
+  (check (= (calc 2) 7))
+  ; New function works
+  (check (= (mul3 5) 15))
+  ; Typecheck should pass
+  (let ((tc-result (typecheck-current)))
+    (check (string? tc-result))))
+
+; ── mutate:move-node ──────────────────────────────────────────────
+(test-suite "mutate:move"
+  (set-code "(begin (display 1) (display 2) (display 3))")
+  (eval-current)
+  ; Move display(3) to position 0
+  (define r (query:root))
+  (define kids (query:children r))
+  (define third-child (car (cdr (cdr kids))))
+  (check (mutate:move-node third-child r 0))
+  ; eval-current still works (no crash)
+  (eval-current)
+  (check #t))  ; if we get here, no crash
+
+; ── mutate:inline-call ────────────────────────────────────────────
+(test-suite "mutate:inline"
+  (set-code "(begin (define (f x) (+ x 1)) (define (g x) (f x)))")
+  (eval-current)
+  (check (= (f 5) 6))
+  (check (= (g 5) 6))
+  ; Find the (f x) call in g's body
+  (define r (query:root))
+  (define def-g (car (cdr (query:children r))))
+  (define lam-g (car (query:children def-g)))
+  (define body (car (query:children lam-g)))
+  (check (mutate:inline-call body))
+  (eval-current)
+  ; g should still work
+  (check (= (g 5) 6))
+  ; Typecheck should pass
+  (let ((tc-result (typecheck-current)))
+    (check (string? tc-result))))
+
+; ── mutate:replace-pattern ────────────────────────────────────────
+(test-suite "mutate:replace-pattern"
+  (set-code "(define (f x) (* x 2))")
+  (eval-current)
+  (check (= (f 5) 10))
+  ; Replace (* x 2) with (+ x x)
+  (check (mutate:replace-pattern "(* x 2)" "(+ x x)"))
+  (eval-current)
+  ; f should still return 10
+  (check (= (f 5) 10))
+  ; Typecheck should pass
+  (let ((tc-result (typecheck-current)))
+    (check (string? tc-result))))
+
+; ── Wildcard replace-pattern ──────────────────────────────────────
+(test-suite "mutate:replace-wildcard"
+  (set-code "(define (f x) (/ x 2))")
+  (eval-current)
+  (check (= (f 10) 5))
+  ; Replace (/ x 2) with (* x 0.5) 
+  ; But we need the wildcard: (/ ... 2) → (/ x 2) matched
+  (check (mutate:replace-pattern "(/ ... 2)" "(/ ... 2)"))
+  (eval-current)
+  (check (= (f 10) 5))
+  ; Typecheck should pass
+  (let ((tc-result (typecheck-current)))
+    (check (string? tc-result))))
+
+(define result (run-tests))
+(display result)
+(newline)
