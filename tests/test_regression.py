@@ -111,6 +111,38 @@ tests = [
      '(mutate:rebind "f" "(lambda (x) (* x 2))" "op")(typecheck-current)'
      '(display (eval-current))(display (h 5)))',
      "10", ""),
+    # ── 依赖图驱动：set-body ────────────────────────────────
+    ("dep-set-body",
+     '(begin (set-code "(define (add x y) (+ x y))(define (calc x) (add x 1))")(typecheck-current)'
+     '(mutate:set-body "add" "(* x y)")(typecheck-current)(eval-current)(display (calc 5)))',
+     "5", ""),
+    ("dep-set-body-chain",
+     '(begin (set-code "(define (f x) (+ x 1))(define (g x) (f x))")(typecheck-current)'
+     '(mutate:set-body "f" "(* x 2)")(typecheck-current)(eval-current)(display (g 5)))',
+     "10", ""),
+    # ── 依赖图驱动：多层调用链 ──────────────────────────────
+    ("dep-chain-3",
+     '(begin (set-code "(define (f x) (+ x 1))(define (g x) (f x))(define (h x) (g x))")(typecheck-current)'
+     '(mutate:rebind "f" "(lambda (x) (* x 2))" "v2")(typecheck-current)'
+     '(eval-current)(display (h 5)))',
+     "10", ""),
+    ("dep-chain-5",
+     '(begin (set-code "(define (a x) (+ x 1))(define (b x) (a x))(define (c x) (b x))(define (d x) (c x))(define (e x) (d x))")(typecheck-current)'
+     '(mutate:rebind "a" "(lambda (x) (* x 2))" "v2")(typecheck-current)'
+     '(eval-current)(display (e 5)))',
+     "10", ""),
+    # ── 依赖图驱动：多次 mutate + interleaved typecheck ────
+    ("dep-repeat-mutate",
+     '(begin (set-code "(define (f x) (+ x 1))(define (g x) (f x))")(typecheck-current)'
+     '(mutate:rebind "f" "(lambda (x) (* x 2))" "v1")(typecheck-current)'
+     '(mutate:rebind "f" "(lambda (x) (- x 1))" "v2")(typecheck-current)'
+     '(eval-current)(display (g 5)))',
+     "4", ""),
+    ("dep-tc-stress",
+     '(begin (set-code "(define (f x) (+ x 1))(define (g x) (f x))")(typecheck-current)(typecheck-current)'
+     '(mutate:rebind "f" "(lambda (x) (* x 2))" "v2")(typecheck-current)(typecheck-current)'
+     '(typecheck-current)(eval-current)(display (g 5)))',
+     "10", ""),
 
     # ── closure warning → stdout ──────────────────────────
     ("closure-warning-stdout",
