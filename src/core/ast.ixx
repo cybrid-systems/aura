@@ -255,6 +255,7 @@ static_assert(validate_node_meta(), "kNodeMeta misaligned with NodeTag enum");
 
 // ── NodeView — lightweight non-owning read view ────────────────
 export struct NodeView {
+    NodeId id = NULL_NODE;  // node index in the FlatAST
     NodeTag tag = NodeTag::LiteralInt;
     std::int64_t int_value = 0;
     double float_value = 0.0;
@@ -321,6 +322,7 @@ private:
         child_count_.push_back(0);
         param_begin_.push_back(0);
         param_count_.push_back(0);
+        cap_require_count_.push_back(0);
         line_.push_back(0);
         col_.push_back(0);
         marker_.push_back(m);
@@ -343,6 +345,7 @@ private:
     std::pmr::vector<NodeId> parent_;
     std::pmr::vector<std::uint32_t> param_begin_;
     std::pmr::vector<std::uint32_t> param_count_;
+    std::pmr::vector<std::uint32_t> cap_require_count_;
     std::pmr::vector<SymId> param_data_;
     // Source location (line/col, 1-based)
     std::pmr::vector<std::uint32_t> line_;
@@ -372,6 +375,7 @@ private:
         , parent_(alloc)
         , param_begin_(alloc)
         , param_count_(alloc)
+        , cap_require_count_(alloc)
         , param_data_(alloc)
         , line_(alloc)
         , col_(alloc)
@@ -539,6 +543,20 @@ private:
         param_count_[id] = static_cast<std::uint32_t>(type_params.size());
         return id;
     }
+    [[nodiscard]] NodeId add_define_module(SymId name, std::span<const SymId> type_params,
+                                           std::span<const SymId> cap_require) {
+        auto id = add_node(NodeTag::DefineModule);
+        sym_id_[id] = name;
+        // type params first
+        auto pstart = static_cast<std::uint32_t>(param_data_.size());
+        param_data_.insert(param_data_.end(), type_params.begin(), type_params.end());
+        // capability requirements after type params (no separator needed, we store count)
+        param_data_.insert(param_data_.end(), cap_require.begin(), cap_require.end());
+        param_begin_[id] = pstart;
+        param_count_[id] = static_cast<std::uint32_t>(type_params.size());
+        cap_require_count_[id] = static_cast<std::uint32_t>(cap_require.size());
+        return id;
+    }
 
     [[nodiscard]] NodeId add_export(std::span<const NodeId> syms) {
         auto id = add_node(NodeTag::Export);
@@ -695,6 +713,7 @@ private:
 
     NodeView get(NodeId id) const {
         return NodeView{
+            .id = id,
             .tag = tag_[id],
             .int_value = int_val_[id],
             .float_value = float_val_[id],
@@ -1000,6 +1019,19 @@ private:
     void set_sym(NodeId id, SymId val) {
         if (id < sym_id_.size())
             sym_id_[id] = val;
+    }
+
+    // Capability require count for DefineModule nodes
+    std::uint32_t cap_require_count(NodeId id) const {
+        return id < cap_require_count_.size() ? cap_require_count_[id] : 0;
+    }
+
+    // Access a param by apparent index across the combined param+cap_require storage
+    SymId param_at(NodeId id, std::uint32_t idx) const {
+        if (idx < param_count_[id] + cap_require_count_[id] &&
+            param_begin_[id] + idx < param_data_.size())
+            return param_data_[param_begin_[id] + idx];
+        return INVALID_SYM;
     }
 
     // Resolve type names → TypeIds for all TypeAnnotation nodes

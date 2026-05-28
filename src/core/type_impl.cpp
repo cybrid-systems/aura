@@ -20,7 +20,7 @@ TypeId TypeRegistry::register_type(TypeTag tag, std::string name) {
         .index = static_cast<std::uint32_t>(entries_.size()),
         .generation = next_generation_,
     };
-    entries_.push_back(Entry{tag, std::move(name), std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt});
+    entries_.push_back(Entry{tag, std::move(name), std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt});
     name_to_id_[entries_.back().name] = id;
     return id;
 }
@@ -33,7 +33,7 @@ TypeId TypeRegistry::register_func(std::vector<TypeId> args, TypeId ret) {
     auto ft = FuncType{std::move(args), ret};
     auto tag = TypeTag::FUNC;
     std::string tmp_name = "(" + std::to_string(ft.args.size()) + "->)";
-    entries_.push_back(Entry{tag, tmp_name, std::move(ft), std::nullopt, std::nullopt, std::nullopt, std::nullopt});
+    entries_.push_back(Entry{tag, tmp_name, std::move(ft), std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt});
     std::string name = "(";
     for (auto& a : entries_.back().func->args)
         name += std::string(name_of(a)) + " ";
@@ -57,7 +57,7 @@ TypeId TypeRegistry::register_linear(TypeId inner) {
     };
     std::string linear_name = "(Linear " + std::string(name_of(inner)) + ")";
     entries_.push_back(Entry{TypeTag::LINEAR, std::move(linear_name), std::nullopt, std::nullopt,
-                             LinearType{inner}, std::nullopt, std::nullopt, std::nullopt});
+                             LinearType{inner}, std::nullopt, std::nullopt, std::nullopt, std::nullopt});
     name_to_id_[entries_.back().name] = id;
     return id;
 }
@@ -74,7 +74,7 @@ TypeId TypeRegistry::register_module(ModuleType mt) {
     }
     name += "}";
     entries_.push_back(Entry{TypeTag::MODULE, std::move(name), std::nullopt, std::nullopt,
-                             std::nullopt, std::move(mt), std::nullopt});
+                             std::nullopt, std::move(mt), std::nullopt, std::nullopt, std::nullopt});
     return id;
 }
 
@@ -92,8 +92,36 @@ TypeId TypeRegistry::register_effect(std::string name, TypeId arg) {
     auto eff_name = std::string("!") + name;
     entries_.push_back(Entry{TypeTag::EFFECT, std::move(eff_name), std::nullopt, std::nullopt,
                              std::nullopt, std::nullopt, std::nullopt,
-                             EffectType{std::move(name), arg}});
+                             EffectType{std::move(name), arg},
+                             std::nullopt});
     return id;
+}
+
+TypeId TypeRegistry::register_capability(std::vector<std::string> effects, bool unrestricted) {
+    auto id = TypeId{
+        .index = static_cast<std::uint32_t>(entries_.size()),
+        .generation = next_generation_,
+    };
+    std::string name = "Capability{";
+    bool first = true;
+    for (auto& e : effects) {
+        if (!first) name += ", ";
+        name += e;
+        first = false;
+    }
+    name += "}";
+    if (unrestricted)
+        name = "Capability{*}";
+    entries_.push_back(Entry{TypeTag::CAPABILITY, std::move(name), std::nullopt, std::nullopt,
+                             std::nullopt, std::nullopt, std::nullopt, std::nullopt,
+                             CapabilityType{std::move(effects), unrestricted}});
+    return id;
+}
+
+const CapabilityType* TypeRegistry::capability_of(TypeId id) const {
+    if (id.index < entries_.size() && entries_[id.index].capability)
+        return &*entries_[id.index].capability;
+    return nullptr;
 }
 
 const EffectType* TypeRegistry::effect_of(TypeId id) const {
@@ -268,6 +296,18 @@ std::string TypeRegistry::format_type(TypeId id) const {
             for (auto& [n, t] : mt->members) {
                 if (s.back() != '{') s += ", ";
                 s += n + ": " + format_type(t);
+            }
+            return s + "}";
+        }
+        case TypeTag::CAPABILITY: {
+            auto* cap = capability_of(id);
+            if (!cap) return "<capability>";
+            if (cap->is_unrestricted)
+                return "Capability{*}";
+            std::string s = "Capability{";
+            for (std::size_t i = 0; i < cap->effects.size(); ++i) {
+                if (i > 0) s += ", ";
+                s += cap->effects[i];
             }
             return s + "}";
         }

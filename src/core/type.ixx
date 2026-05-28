@@ -29,6 +29,7 @@ export enum class TypeTag : uint8_t {
     HASH,        // hash table
     MODULE,      // 模块签名 {sym1: T1, sym2: T2, ...}
     EFFECT,      // 效果类型 !EffectName
+    CAPABILITY,  // 能力集合 {FileRead, FileWrite}
 };
 
 // ── TypeId ────────────────────────────────────────────────────
@@ -78,6 +79,12 @@ export struct EffectType {
     TypeId arg{};
 };
 
+// Capability type: {FileRead, FileWrite} — set of required effects
+export struct CapabilityType {
+    std::vector<std::string> effects;  // 包含的 effect 名称列表
+    bool is_unrestricted = false;      // true = 允许所有 effect
+};
+
 // ── TypeRegistry ──────────────────────────────────────────────
 export class TypeRegistry {
 public:
@@ -94,6 +101,7 @@ public:
     TypeId register_linear(TypeId inner);
     TypeId register_module(ModuleType mt);
     TypeId register_effect(std::string name, TypeId arg = {});
+    TypeId register_capability(std::vector<std::string> effects, bool unrestricted = false);
     TypeId make_var(std::string name = "");
 
     // ── 查询 ──
@@ -104,6 +112,7 @@ public:
     const LinearType* linear_of(TypeId id) const;
     const ModuleType* module_of(TypeId id) const;
     const EffectType* effect_of(TypeId id) const;
+    const CapabilityType* capability_of(TypeId id) const;
     bool is_var(TypeId id) const;
     bool is_subtype(TypeId sub, TypeId sup) const;
 
@@ -138,6 +147,7 @@ private:
         std::optional<ModuleType> module_type;
         std::optional<std::vector<std::string>> adt_constructors;
         std::optional<EffectType> effect;
+        std::optional<CapabilityType> capability;
     };
     std::vector<Entry> entries_;
     std::unordered_map<std::string, TypeId> name_to_id_;

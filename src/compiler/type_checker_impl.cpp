@@ -865,6 +865,12 @@ void InferenceEngine::init_primitive_env() {
 
     // std/evolve
     register_primitive("evolve-strategy", {String}, Void);
+
+    // ── Capability primitives ──
+    register_primitive("with-capability", {String, Dyn}, Dyn);
+    register_primitive("capability?", {String}, Bool);
+    register_primitive("check-capability", {String}, Bool);
+    register_primitive("capability-stack", {}, Dyn);
 }
 
 TypeId InferenceEngine::lub(TypeId a, TypeId b) {

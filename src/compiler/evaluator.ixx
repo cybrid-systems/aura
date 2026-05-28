@@ -269,6 +269,8 @@ private:
     // ── Functor 泛型模块模板 ────────────────────────────────────
     struct ModuleTemplate {
         std::vector<aura::ast::NodeId> body_nodes;
+        std::vector<std::string> cap_param_names;     // capability parameter names (e.g., ["cap"])
+        std::vector<std::string> cap_require;          // required capabilities (e.g., ["FileRead", "FileWrite"])
     };
     std::unordered_map<std::string, ModuleTemplate> module_templates_;
 
@@ -295,6 +297,10 @@ private:
     std::uint64_t next_id_ = 1;
     ClosureId gc_safe_closure_id_ = 0;
     bool in_task_context_ = false;
+
+    // ── Capability 上下文栈 ─────────────────────────────────────
+    // 每层包含当前作用域允许的 effect 名称列表
+    std::vector<std::vector<std::string>> capability_stack_;
 };
 
 
