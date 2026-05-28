@@ -784,6 +784,10 @@ private:
         }
     }
     bool is_dirty(NodeId id) const { return id < dirty_.size() && dirty_[id]; }
+    void clear_dirty(NodeId id) {
+        if (id < dirty_.size())
+            dirty_[id] = false;
+    }
 
     // ── Match clause metadata ────────────────────────────────
     void set_match_info(NodeId id, MatchClauseInfo info) {
