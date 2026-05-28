@@ -300,10 +300,40 @@ def test_emit_binary():
     assert os.path.exists("/tmp/aura-test-out"), "emit binary not created"
     print("  ✅ test-emit-binary")
 
+# ── .aura-type 签名自动加载 ───────────────────────────────
+def test_aura_type_auto_load():
+    """require should auto-load .aura-type files."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mod_path = os.path.join(tmpdir, "mymod.aura")
+        sig_path = os.path.join(tmpdir, "mymod.aura-type")
+        with open(mod_path, "w") as f:
+            f.write("(export add)\n(define (add x y) (+ x y))\n")
+        with open(sig_path, "w") as f:
+            f.write("add: Int Int -> Int\n")
+        code = f'(begin (require "{mod_path}" all:)(set-code "(display (add 1 2))")(display (typecheck-current))(display "|")(eval-current))'
+        r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=10)
+        assert "no errors" in r.stdout, f"type error with .aura-type: {r.stdout}"
+        assert "3" in r.stdout, f"eval failed: {r.stdout}"
+    print("  ✅ test-aura-type-auto-load")
+
+def test_aura_type_no_sig():
+    """Without .aura-type, typecheck should show unbound."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mod_path = os.path.join(tmpdir, "mymod.aura")
+        with open(mod_path, "w") as f:
+            f.write("(export add)\n(define (add x y) (+ x y))\n")
+        code = f'(begin (require "{mod_path}" all:)(set-code "(display (add 1 2))")(display (typecheck-current)))'
+        r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=10)
+        assert "unbound variable" in r.stdout, f"expected unbound: {r.stdout}"
+    print("  ✅ test-aura-type-no-sig")
+
 # Run subprocess tests
 passed_s = 0
 failed_s = 0
-for tf in [test_freeze_load, test_freeze_multi_expr, test_freeze_empty, test_emit_binary]:
+for tf in [test_freeze_load, test_freeze_multi_expr, test_freeze_empty, test_emit_binary,
+           test_aura_type_auto_load, test_aura_type_no_sig]:
     try:
         tf()
         passed_s += 1

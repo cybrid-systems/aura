@@ -8874,6 +8874,44 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
         module_loaded_cb_(content, resolved);
     }
 
+    // 10c. 自动加载 .aura-type 类型签名文件
+    // 检查 {module}.aura 同目录下是否有 {module}.aura-type 文件
+    auto type_sig_path = resolved;
+    if (type_sig_path.size() > 5) {
+        auto dot = type_sig_path.rfind('.');
+        if (dot != std::string::npos)
+            type_sig_path = type_sig_path.substr(0, dot) + ".aura-type";
+    }
+    struct stat st2;
+    if (::stat(type_sig_path.c_str(), &st2) == 0 && S_ISREG(st2.st_mode)) {
+        std::ifstream tf(type_sig_path);
+        if (tf) {
+            std::string line;
+            while (std::getline(tf, line)) {
+                // 格式: "name: param1 param2 -> rettype"
+                // 例如 "add: Int Int -> Int"
+                auto colon = line.find(':');
+                if (colon == std::string::npos) continue;
+                auto arrow = line.find("->", colon);
+                if (arrow == std::string::npos) continue;
+                auto name = line.substr(0, colon);
+                name.erase(name.find_last_not_of(" \t\r") + 1);
+                auto params_str = line.substr(colon + 1, arrow - colon - 1);
+                params_str.erase(0, params_str.find_first_not_of(" \t\r"));
+                params_str.erase(params_str.find_last_not_of(" \t\r") + 1);
+                auto ret_str = line.substr(arrow + 2);
+                ret_str.erase(0, ret_str.find_first_not_of(" \t\r"));
+                ret_str.erase(ret_str.find_last_not_of(" \t\r\n") + 1);
+                if (!name.empty() && !ret_str.empty()) {
+                    declared_type_sigs_[name] = {
+                        .type_str = params_str + "|" + ret_str,
+                        .resolved = false
+                    };
+                }
+            }
+        }
+    }
+
     loading_stack_.erase(resolved);
     return types::make_module(mod_idx);
 }
