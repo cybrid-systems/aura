@@ -406,13 +406,31 @@ def test_aura_type_cross_module():
         assert "25" in r.stdout, f"eval wrong (expected 25): {r.stdout}"
     print("  ✅ test-aura-type-cross-module")
 
+def test_generate_type_sigs():
+    """generate-type-sigs creates .aura-type from module."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mod_path = os.path.join(tmpdir, "gen.aura")
+        sig_path = os.path.join(tmpdir, "gen.aura-type")
+        with open(mod_path, "w") as f:
+            f.write("(define (myfn x) (* x 2))\n")
+        code = f'(generate-type-sigs "{mod_path}")(require "{mod_path}" all:)(display (myfn 42))'
+        r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=10)
+        assert "84" in r.stdout, f"generate+require+eval wrong: {r.stdout}"
+        assert os.path.exists(sig_path), ".aura-type not created"
+        with open(sig_path) as f:
+            content = f.read()
+            assert "myfn" in content, f"sig missing myfn: {content}"
+    print("  ✅ test-generate-type-sigs")
+
 # Run subprocess tests
 passed_s = 0
 failed_s = 0
 for tf in [test_freeze_load, test_freeze_multi_expr, test_freeze_empty, test_emit_binary,
            test_aura_type_auto_load, test_aura_type_no_sig,
            test_aura_type_multi_func, test_aura_type_different_types,
-           test_aura_type_cross_module]:
+           test_aura_type_cross_module,
+           test_generate_type_sigs]:
     try:
         tf()
         passed_s += 1
