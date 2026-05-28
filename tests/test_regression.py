@@ -165,6 +165,13 @@ tests = [
      '(typecheck-current)(eval-current)(display (g 5)))',
      "10", ""),
 
+    # ── IR 类型信息 #5 ──────────────────────────────────────
+    ("ir-annot-int", '(: x Int 42)', "42", ""),
+    ("ir-annot-expr", '(: x Int (+ 1 2))', "3", ""),
+    ("ir-annot-chain", '(+ (: x Int 1) (: y Int 2))', "3", ""),
+    ("ir-annot-let", '(let ((x 10)) (: y Int x))', "10", ""),
+    ("ir-annot-if", '(if 1 (: a Int 42) (: b Int 0))', "42", ""),
+
     # ── closure warning → stdout ──────────────────────────
     ("closure-warning-stdout",
      '(define (f x) (+ x 1)) f', "uncalled function", ""),

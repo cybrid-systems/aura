@@ -514,6 +514,14 @@ INTEG_TESTS = [
     IntegCase("ir_fold_arith", "(+ (* 2 3) 4)", "ir", expected="10"),
     IntegCase("ir_let_arith", "(let ((x (+ 1 2))) (* x 3))", "ir", expected="9"),
     IntegCase("ir_nested_arith", "(+ (* 2 3) (/ 10 2))", "ir", expected="11"),
+    # ─── IR 类型信息 ────────────────────────────────────────
+    IntegCase("ir_annot_int", "(: x Int 42)", "ir", expected="42"),
+    IntegCase("ir_annot_expr", "(: x Int (+ 1 2))", "ir", expected="3"),
+    IntegCase("ir_annot_chain", "(+ (: x Int 1) (: y Int 2))", "ir", expected="3"),
+    IntegCase("ir_annot_if", "(if 1 (: a Int 42) (: b Int 0))", "ir", expected="42"),
+    IntegCase("ir_annot_let", "(let ((x 10)) (: y Int x))", "ir", expected="10"),
+    IntegCase("ir_dyn_coerce", "(: x Int 42)", "eval", expected="42"),
+    IntegCase("ir_gg_annot", "(: x Int 42)", "typecheck", expected="Int"),
     # ── Apply / variadic ──────────────────────────────────────
     IntegCase("apply_add", "(apply + (list 1 2 3))", "eval", expected="6"),
     IntegCase(
