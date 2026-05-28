@@ -149,3 +149,115 @@
 (gc-heap)
 (gc-stats)
 (check= 3 (+ 1 2))
+
+; ════════════════════════════════════════════════════════
+; ── Double Arena ── gc-temp clears temp closures
+; ════════════════════════════════════════════════════════
+
+; ── 23. gc-temp does not break module functions under stress ──
+(define (mod-fn x) (* x 3))
+(gc-temp) (gc-temp) (gc-temp)
+(gc-temp) (gc-temp)
+(check= 15 (mod-fn 5))
+(define (mod-fn2 x) (+ x 10))
+(gc-temp)
+(check= 20 (mod-fn2 10))
+
+; ── 24. gc-temp in loop (20x) ──
+(define k 0)
+(while (lambda () (< k 20))
+  (lambda ()
+    (gc-temp)
+    (check= (+ 2 2) 4)
+    (set! k (+ k 1))))
+(check= 20 k)
+
+; ── 25. gc-temp after intend that creates closures inside ──
+; Verifier creates a closure (define inside intend) which should
+; be allocated in temp_arena_ and cleaned by gc-temp.
+(define (ver-creates-closure code)
+  (define (inner-check) (+ 1 1))
+  (if (= (inner-check) 2) "#t" "#f"))
+(define (gen-returns-code g) "(display 42)")
+(intend "inner-closure" gen-returns-code ver-creates-closure 1)
+(gc-temp)
+(assert (string? (gc-stats)))
+
+; ── 26. Multiple intends with gc-temp between (no closures growth) ──
+(define (gen-simple g) "(display 1)")
+(define (ver-simple c) "#t")
+(intend "a" gen-simple ver-simple 1) (gc-temp)
+(intend "b" gen-simple ver-simple 1) (gc-temp)
+(intend "c" gen-simple ver-simple 1) (gc-temp)
+(check= 3 (+ 1 2))
+
+; ── 27. gc-temp with intend that uses fixer ──
+(define (gen-fail g) "(display bad)")  ; will fail
+(define (ver-fail c) (if (check-success c "(1)") "#t" "#f"))
+(define (fix-c c e g) "(display 1)")
+(intend "fix-me" gen-fail ver-fail fix-c 2)
+(gc-temp)
+(check= 5 (+ 2 3))
+
+; ── 28. gc-temp preserves closures created before gc-freeze ──
+(gc-freeze)
+(define (persistent-closure x) (* x x))
+(define gen-freeze "(display 1)")
+(define ver-freeze "#t")
+(intend "freeze" (lambda (g) "(display 1)") (lambda (c) "#t") 1)
+(gc-temp)
+; persistent-closure must still work
+(check= 25 (persistent-closure 5))
+(gc-temp)
+(check= 36 (persistent-closure 6))
+
+; ── 29. gc-heap → gc-temp → gc-heap sequence ──
+(gc-heap)
+(gc-temp)
+(gc-heap)
+(gc-temp)
+(json-parse "{\"x\":1}")
+(set-code "(display 99)")
+(eval-current)
+(gc-temp)
+(check= 99 99)
+
+; ── 30. gc-temp after module re-require ──
+(gc-temp)
+(require "std/math" all:)
+(check= 20 (+ 10 10))
+(gc-temp)
+(check= 30 (+ 15 15))
+
+; ── 31. gc-temp doesn't break gc-stats ──
+(gc-temp) (gc-stats) (gc-temp) (gc-stats) (gc-temp)
+(assert (string? (gc-stats)))
+
+; ── 32. Stress: 10 intends with gc-temp each, closures stable ──
+(define n 0)
+(while (lambda () (< n 10))
+  (lambda ()
+    (intend (string-append "s" (number->string n))
+      gen-simple ver-simple 1)
+    (gc-temp)
+    (set! n (+ n 1))))
+(check= 10 n)
+
+; ── 33. Module closures from require survive many gc-temp ──
+(require "std/list" all:)
+(check= 3 (length '(a b c)))
+(gc-temp) (gc-temp) (gc-temp)
+(gc-temp) (gc-temp) (gc-temp)
+(gc-temp) (gc-temp) (gc-temp)
+(gc-temp) (gc-temp)
+(check= 4 (length '(w x y z)))
+
+; ── 34. Mutating cell survives gc-temp ──
+(define mutable 0)
+(set! mutable 42)
+(check= 42 mutable)
+(gc-temp)
+(check= 42 mutable)
+(set! mutable 99)
+(gc-temp)
+(check= 99 mutable)
