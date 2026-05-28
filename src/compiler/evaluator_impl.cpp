@@ -6030,6 +6030,119 @@ Evaluator::Evaluator() {
         return make_bool(true);
     });
 
+    // (generate-type-sigs "module-path") — 类型推断并生成 .aura-type 文件
+    // 解析模块文件，对其中每个 export 的函数进行类型推断，
+    // 生成同名的 .aura-type 签名文件。
+    // 示例: (generate-type-sigs "helper.aura") → helper.aura-type
+    primitives_.add("generate-type-sigs", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_bool(false);
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size())
+            return make_bool(false);
+        auto path = resolve_module_path(string_heap_[idx]);
+        if (path.empty()) {
+            std::println(std::cerr, "generate-type-sigs: cannot resolve '{}'", string_heap_[idx]);
+            return make_bool(false);
+        }
+
+        // 读取并解析模块文件
+        std::ifstream f(path);
+        if (!f) { std::println(std::cerr, "generate-type-sigs: cannot open '{}'", path); return make_bool(false); }
+        std::string content((std::istreambuf_iterator<char>(f)), {});
+        if (content.empty()) return make_bool(false);
+
+        aura::ast::ASTArena local_arena;
+        auto alloc = local_arena.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat(content, flat, pool);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+            std::println(std::cerr, "generate-type-sigs: parse error");
+            return make_bool(false);
+        }
+        flat.root = pr.root;
+
+        // 类型推断
+        aura::core::TypeRegistry treg;
+        aura::compiler::TypeChecker tc(treg);
+        aura::diag::DiagnosticCollector diag;
+        tc.infer_flat(flat, pool, flat.root, diag);
+
+        // 扫描所有 Define 节点，收集名称
+        std::vector<std::string> fn_names;
+        std::unordered_map<std::string, aura::ast::NodeId> define_map;
+        for (aura::ast::NodeId nid = 0; nid < flat.size(); ++nid) {
+            auto nv = flat.get(nid);
+            if (nv.tag == aura::ast::NodeTag::Define) {
+                auto name = std::string(pool.resolve(nv.sym_id));
+                define_map[name] = nid;
+                fn_names.push_back(name);
+            }
+        }
+
+        // 生成类型签名文件
+        auto type_sig_path = path;
+        {
+            auto dot_pos = type_sig_path.rfind('.');
+            if (dot_pos != std::string::npos)
+                type_sig_path = type_sig_path.substr(0, dot_pos) + ".aura-type";
+        }
+
+        std::ofstream of(type_sig_path);
+        if (!of) {
+            std::println(std::cerr, "generate-type-sigs: cannot write '{}'", type_sig_path);
+            return make_bool(false);
+        }
+
+        std::function<std::string(std::uint32_t)> type_name_for =
+            [&](std::uint32_t tid) -> std::string {
+            auto t = aura::core::TypeId{tid, 1};
+            auto tag = treg.tag_of(t);
+            switch (tag) {
+                case aura::core::TypeTag::INT:    return "Int";
+                case aura::core::TypeTag::BOOL:   return "Bool";
+                case aura::core::TypeTag::STRING: return "String";
+                case aura::core::TypeTag::FLOAT:  return "Float";
+                case aura::core::TypeTag::VOID:   return "Void";
+                case aura::core::TypeTag::FUNC: {
+                    if (auto* ft = treg.func_of(t)) {
+                        std::string s;
+                        for (auto& a : ft->args) {
+                            if (!s.empty()) s += " ";
+                            s += type_name_for(a.index);
+                        }
+                        s += " -> " + type_name_for(ft->ret.index);
+                        return s;
+                    }
+                    return "Any";
+                }
+                default: return "Any";
+            }
+        };
+
+        std::size_t written = 0;
+        for (auto& name : fn_names) {
+            auto it = define_map.find(name);
+            if (it == define_map.end()) continue;
+            auto def_v = flat.get(it->second);
+            if (!def_v.children.empty()) {
+                auto val_id = def_v.child(0);
+                // 对 define 的值显式进行类型推断（define 自身不遍历子节点）
+                // 使用 tc 在同一个 TypeRegistry 中推断类型
+                auto val_type = tc.infer_flat(flat, pool, val_id, diag);
+                if (val_type.valid() && val_type.index != 0) {
+                    of << name << ": " << type_name_for(val_type.index) << "\n";
+                    ++written;
+                }
+            }
+        }
+
+        std::println(std::cerr, "generate-type-sigs: wrote {} types to '{}'",
+                     written, type_sig_path);
+        return make_bool(written > 0);
+    });
+
     primitives_.add("tcp-close", [this](const auto& a) -> EvalValue {
         if (a.empty() || !types::is_int(a[0]))
             return make_void();
