@@ -104,6 +104,48 @@
       (display (id 99))
       (display (id #f)))))
 
+(test-suite "typesystem:adt-exhaustive"
+  ;; 1. Option: all covered
+  (check= 42
+    (begin (define-type (Option a) (Some a) (None))
+      (let ((x (Some 42))) (match x ((Some v) v) ((None) 0)))))
+  ;; 2. Option: missing None — type warning expected
+  (check= 42
+    (begin (define-type (Option a) (Some a) (None))
+      (let ((x (Some 42))) (match x ((Some v) v)))))
+  ;; 3. Multi-ctor: all covered
+  (check= 1
+    (begin (define-type (Color) (Red) (Green) (Blue))
+      (let ((x Red)) (match x ((Red) 1) ((Green) 2) ((Blue) 3)))))
+  ;; 4. Multi-ctor: wildcard
+  (check= 1
+    (begin (define-type (Color) (Red) (Green) (Blue))
+      (let ((x Red)) (match x ((Red) 1) (_ 0)))))
+  ;; 5. Either (multi-param)
+  (check= 1
+    (begin (define-type (Either a b) (Left a) (Right b))
+      (let ((x (Left 1))) (match x ((Left v) v) ((Right v) 0)))))
+  ;; 6. Nested ADTs (separate match expressions)
+  (check= 42
+    (begin (define-type (Option a) (Some a) (None))
+      (define-type (Result e v) (Ok v) (Err e))
+      (let ((x (Ok (Some 42))))
+        (match x ((Ok y) (match y ((Some v) v) ((None) 0))) ((Err _) 0)))))
+  ;; 7. Recursive ADT (List)
+  (check= 6
+    (begin (define-type (List a) (Nil) (Cons a (List a)))
+      (let ((xs (Cons 1 (Cons 2 (Cons 3 Nil)))))
+        (match xs ((Cons h t) (display h) (display (+ h 1))) (Nil 0)))))
+  ;; 8. Pattern with field binding
+  (check= hello
+    (begin (define-type (Pair a b) (MkPair a b))
+      (let ((p (MkPair "hello" 42)))
+        (match p ((MkPair s n) (display s) (display n))))))
+  ;; 9. Multi-ctor covered with wildcard for rest
+  (check= 1
+    (begin (define-type (Season) (Spring) (Summer) (Fall) (Winter))
+      (let ((x Spring)) (match x ((Spring) 1) (_ 0))))))
+
 (test-suite "typesystem:value-restriction"
   (check= 42
     (let ((x (+ 40 2))) (+ x 0)))
