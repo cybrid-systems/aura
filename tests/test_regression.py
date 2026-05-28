@@ -316,6 +316,32 @@ tests = [
      '(require "std/vector-math" all:)(mat:ref (mat:identity 3) 1 1)',
      "1", ""),
 
+    # ── Issue #14: 结构化错误诊断 ────────────────────────
+    ("edsl-err-rebind",
+     '(begin (set-code "(define (f x) (+ x 1))")(pair? (mutate:rebind)))',
+     "#t", ""),
+    ("edsl-err-remove-node",
+     '(begin (set-code "(define (f x) (+ x 1))")(pair? (mutate:remove-node 999)))',
+     "#t", ""),
+    ("edsl-err-tweak-literal",
+     '(begin (set-code "(define (f x) (+ x 1))")(pair? (mutate:tweak-literal 999 1)))',
+     "#t", ""),
+    ("edsl-err-inline-call",
+     '(begin (set-code "(define (f x) (+ x 1))")(pair? (mutate:inline-call 999)))',
+     "#t", ""),
+    ("edsl-err-query-node",
+     '(begin (set-code "(define (f x) (+ x 1))")(pair? (query:node 999)))',
+     "#t", ""),
+    ("edsl-err-query-parent",
+     '(begin (set-code "(define (f x) (+ x 1))")(pair? (query:parent 999)))',
+     "#t", ""),
+    ("edsl-err-query-siblings",
+     '(begin (set-code "(define (f x) (+ x 1))")(pair? (query:siblings 999)))',
+     "#t", ""),
+    ("edsl-err-query-children",
+     '(begin (set-code "(define (f x) (+ x 1))")(pair? (query:children 999)))',
+     "#t", ""),
+
 ]
 
 # Cleanup temp files

@@ -1318,3 +1318,63 @@
          (success (car result)))
     ;; Might succeed or fail depending on LLM availability, but shouldn't crash
     (check (boolean? success))))
+
+;; ═══════════════════════════════════════════════════════════════════
+;; Issue #14 — 结构化错误诊断测试
+;; 验证失败路径返回 ("kind" "message") 而非 #f
+;; ═══════════════════════════════════════════════════════════════════
+
+(test-suite "edsl:err-bad-arg-mutate"
+  (set-code "(define (f x) (+ x 1))")
+  ;; 无参数应返回错误而非 #f
+  (check (pair? (mutate:rebind)))
+  (check (pair? (mutate:set-body)))
+  (check (pair? (mutate:remove-node)))
+  (check (pair? (mutate:insert-child)))
+  (check (pair? (mutate:tweak-literal)))
+  (check (pair? (mutate:splice)))
+  (check (pair? (mutate:wrap)))
+  (check (pair? (mutate:move-node))))
+
+(test-suite "edsl:err-bad-arg-query"
+  (set-code "(define (f x) (+ x 1))")
+  (check (pair? (query:find)))
+  (check (pair? (query:children)))
+  (check (pair? (query:node)))
+  (check (pair? (query:parent)))
+  (check (pair? (query:siblings)))
+  (check (pair? (query:node-type)))
+  (check (pair? (query:pattern)))
+  (check (pair? (query:def-use)))
+  (check (pair? (query:reaches)))
+  (check (pair? (query:effects))))
+
+(test-suite "edsl:err-out-of-range"
+  (set-code "(define (f x) (+ x 1))")
+  (check (pair? (mutate:remove-node 999)))
+  (check (pair? (mutate:tweak-literal 999 1)))
+  (check (pair? (query:node 999)))
+  (check (pair? (query:children 999)))
+  (check (pair? (query:parent 999)))
+  (check (pair? (query:siblings 999))))
+
+(test-suite "edsl:err-not-found"
+  (set-code "(define (f x) (+ x 1))")
+  (check (pair? (mutate:rebind "nonexistent" "(lambda (y) y)")))
+  (check (pair? (mutate:set-body "nonexistent" "(+ 1 2)")))
+  (check (pair? (mutate:rename-symbol "nonexistent" "newname"))))
+
+(test-suite "edsl:err-error-syntax"
+  ;; 设置初始代码
+  (set-code "(define (f x) (+ x 1))")
+  ;; 检查错误有正确的 error-kind (第一个元素是字符串)
+  (let ((err (mutate:rebind)))
+    (define kind (car err))
+    (check (string? kind))))
+
+(test-suite "edsl:err-still-works"
+  ;; 确保成功路径不受影响
+  (set-code "(define (f x) (+ x 1))")
+  (check (mutate:rebind "f" "(lambda (x) (* x 2))"))
+  (eval-current)
+  (check (= (f 3) 6)))
