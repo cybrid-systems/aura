@@ -35,7 +35,7 @@
 ### 1. 语法
 
 ```scheme
-(define-module (Stack :T)
+(define-module (Stack T)
   (export push pop top empty)
   (define (push s x) (cons x s))
   (define (pop s) (cdr s))
@@ -55,7 +55,7 @@
 ### 2. 多参数 + 约束
 
 ```scheme
-(define-module (Map :K :V)
+(define-module (Map K V)
   (export empty get set)
   (define empty (hash))
   (define (get m k) (hash-ref m k))
@@ -76,7 +76,7 @@
 
 ```
 Phase 1: 解析
-  (define-module (Stack :T) body...)
+  (define-module (Stack T) body...)
   → 存储为 ModuleTemplate{param, body_ast}
 
 Phase 2: 实例化 (Stack Int)
@@ -257,14 +257,14 @@ std::unordered_map<
 
 ```scheme
 ;; 1. 基本单参数
-(define-module (Stack :T) (export push pop)
+(define-module (Stack T) (export push pop)
   (define (push s x) (cons x s))
   (define (pop s) (cdr s)))
 (define int-stack (Stack Int))
 (display (int-stack:push () 42))
 
 ;; 2. 多参数
-(define-module (Pair :A :B) (export make fst snd)
+(define-module (Pair A B) (export make fst snd)
   (define (make a b) (cons a b))
   (define (fst p) (car p))
   (define (snd p) (cdr p)))

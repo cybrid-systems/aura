@@ -208,6 +208,16 @@ tests = [
     ("functor-multi-param",
      '(begin (define-module (Pair :A :B) (display 1)) (Pair Int String) (display "ok"))',
      "1ok", ""),
+    # ── Functor 普通符号参数 ────────────────────────────────
+    ("functor-plain-T",
+     '(begin (define-module (Stack T) (display T)) (Stack Int))',
+     "Int", ""),
+    ("functor-plain-AB",
+     '(begin (define-module (Pair A B) (display A)(display B)) (Pair Int String))',
+     "IntString", ""),
+    ("functor-plain-body",
+     '(begin (define-module (Box T) (+ 1 2)) (Box Int))',
+     "3", ""),
 
     # ── closure warning → stdout ──────────────────────────
     ("closure-warning-stdout",

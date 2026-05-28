@@ -658,12 +658,12 @@ NodeId FlatParser::parse_define_module() {
     lexer_->consume(); // Name
     auto name_sym = pool_.intern(tok_name.text);
 
-    // Parse type parameters (identifiers starting with ':')
+    // Parse type parameters (plain identifiers, e.g. T, K, V)
     std::vector<aura::ast::SymId> type_params;
     while (lexer_->peek().kind != TokenKind::RParen && !lexer_->eof()) {
         auto param_tok = lexer_->peek();
         if (param_tok.kind == TokenKind::Identifier && !param_tok.text.empty() &&
-            param_tok.text[0] == ':') {
+            param_tok.text[0] != '(') {
             lexer_->consume();
             type_params.push_back(pool_.intern(param_tok.text));
         } else {
