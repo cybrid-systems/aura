@@ -484,6 +484,30 @@ void InferenceEngine::init_primitive_env() {
     auto Vector = reg_.lookup_type("Vector");
     auto Hash = reg_.lookup_type("Hash");
 
+    // ── Capability Effects（#9 Agent OS 安全） ────────────
+    auto EffIO = reg_.register_effect("IO");
+    auto EffMutation = reg_.register_effect("Mutation");
+    auto EffFileRead = reg_.register_effect("FileRead");
+    auto EffFileWrite = reg_.register_effect("FileWrite");
+    auto EffNetwork = reg_.register_effect("Network");
+    auto EffAgentMsg = reg_.register_effect("AgentMsg");
+    (void)EffIO; (void)EffMutation; (void)EffFileRead;
+    (void)EffFileWrite; (void)EffNetwork; (void)EffAgentMsg;
+
+    // Mutation primitives 带效果标注
+    register_primitive("mutate:rebind", {String, String}, Dyn);
+    register_primitive("mutate:replace-type", {Int, String}, Dyn);
+    register_primitive("mutate:replace-value", {Int, Dyn, String}, Dyn);
+    register_primitive("mutate:set-body", {String, String}, Dyn);
+    register_primitive("mutate:splice", {Int, Int}, Dyn);
+    register_primitive("mutate:wrap", {Int, String}, Dyn);
+    register_primitive("mutate:tweak-literal", {Int, Int}, Dyn);
+
+    // IO/网络原语
+    register_primitive("load-module", {String}, Dyn);
+    register_primitive("write-file", {String, String}, Void);
+    register_primitive("read-file", {String}, String);
+
     // Arithmetic: (Number, Number) -> Number (Int or Float promotion)
     register_primitive("+", {Dyn, Dyn}, Dyn);
     register_primitive("-", {Dyn, Dyn}, Dyn);
