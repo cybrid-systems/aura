@@ -61,6 +61,18 @@ tests = [
     ("occ-hash",
      '(let ((x (hash))) (if (hash? x) 42 0))', "42", ""),
     ("let-poly", '((lambda (x) (list (x 1) (x "hi"))) (lambda (y) y))', '(1 "hi")', ""),
+    ("let-poly-id",
+     '(let ((id (lambda (x) x))) (display (id 42))(display (id "hi"))(display (id #t)))', "42hi#t", ""),
+    ("let-poly-nested",
+     '(let ((f (lambda (x) x)))(let ((g (lambda (y) (f y))))(display (g 42))(display (g #t))))', "42#t", ""),
+    ("let-poly-curry",
+     '(let ((const (lambda (x) (lambda (y) x))))(display ((const 42) "ignored")))', "42", ""),
+    ("let-poly-fst",
+     '(let ((fst (lambda (p) (car p))))(display (+ (fst (cons 1 2)) (fst (cons 3 4)))))', "4", ""),
+    ("let-poly-multi",
+     '(let ((f (lambda (x) x))(g (lambda (x) x)))(display (f 1))(display (g 2)))', "12", ""),
+    ("letrec-poly",
+     '(letrec ((id (lambda (x) x)))(display (id 99))(display (id #f)))', "99#f", ""),
 
     # ── 增量类型检查 #4 ──────────────────────────────────
     ("incr-basic",
