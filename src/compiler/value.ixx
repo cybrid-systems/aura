@@ -284,14 +284,14 @@ export inline std::string format_value(const EvalValue& v) {
         return "#<primitive " + std::to_string(as_primitive_slot(v)) + ">";
     if (is_module(v))
         return "#<module " + std::to_string(as_module_idx(v)) + ">";
+    if (is_keyword(v))
+        return "#<keyword " + std::to_string(as_keyword_idx(v)) + ">";
     if (is_error(v))
         return "#<error " + std::to_string(as_error_idx(v)) + ">";
     if (is_linear(v))
         return "#<linear " + std::to_string(as_linear_id(v)) + ">";
     if (is_opaque(v))
         return "#<opaque " + std::to_string(as_opaque_idx(v)) + ">";
-    if (is_keyword(v))
-        return "#<keyword " + std::to_string(as_keyword_idx(v)) + ">";
     return "#<unknown " + std::to_string(v.val) + ">";
 }
 

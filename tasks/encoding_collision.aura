@@ -1,0 +1,115 @@
+; ── Aura Value Encoding Collision Tests ─────────────────────
+;
+; Tests that make_string at various string_heap indices produces
+; values that correctly pass is_string / !is_error / !is_keyword.
+;
+; These are regression tests for the encoding collision bug fixed
+; in commit d2e3b19.
+;
+; Run: ./aura < tasks/encoding_collision.aura
+
+(define total-pass 0)
+(define total-fail 0)
+
+(define (report name ok)
+  (display "  ") (display name) (display ": ")
+  (if ok
+    (begin (display "PASS\n") (set! total-pass (+ total-pass 1)))
+    (begin (display "FAIL\n") (set! total-fail (+ total-fail 1))))
+  ok)
+
+(newline)
+(display "═══ Value Encoding Collision Tests ═══\n")
+(newline)
+
+; ── 1. Direct string type checks ──
+(display "── 1. Basic string predicates ──\n")
+
+(report "string?-basic-string" (string? "hello"))
+(report "string?-empty-string" (string? ""))
+(report "string?-single-char" (string? "x"))
+(report "not-keyword?-for-string" (not (keyword? "hello")))
+(report "not-error?-for-string" (not (error? "hello")))
+
+; ── 2. Push many strings to push string_heap through collision indices ──
+(display "\n── 2. String heap collision zone (idx 31 = RefError) ──\n")
+
+; Generate 40 distinct strings to exercise the collision zone
+(define (push-strings n)
+  (if (> n 0)
+    (begin
+      (display (string-append "guard-" (number->string n)))
+      (push-strings (- n 1)))
+    #t))
+
+(push-strings 40)
+(newline)
+
+; After pushing ~40 strings, the heap is past idx 31 (RefError collision)
+(report "string?-after-collision-zone" (string? "test-after-31"))
+(report "not-error?-after-31" (not (error? "test-after-31")))
+(report "not-keyword?-after-31" (not (keyword? "test-after-31")))
+
+; ── 3. Push to idx 95+ (second RefError collision) ──
+(display "\n── 3. Push to idx 95+ (second RefError zone) ──\n")
+
+(push-strings 60)
+(newline)
+
+(report "string?-after-95" (string? "test-after-95"))
+(report "not-error?-after-95" (not (error? "test-after-95")))
+
+; ── 4. Push to idx 147+ (second RefKeyword zone) ──
+(display "\n── 4. Push to idx 147+ (second RefKeyword zone) ──\n")
+
+(push-strings 55)
+(newline)
+
+(report "string?-after-147" (string? "test-after-147"))
+(report "not-keyword?-after-147" (not (keyword? "test-after-147")))
+
+; ── 5. Mixed operations after collision zone ──
+(display "\n── 5. Def-use after collision zone ──\n")
+
+(set-code "(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))")
+(let* ((r (query:def-use "fib")) (d (car r)) (u (cdr r)))
+  (report "def-use-fib-after-zone" (and (= (length d) 1) (> (length u) 0))))
+
+(report "string?-fib-string" (string? "fib"))
+(report "not-error?-for-fib" (not (error? "fib")))
+(report "not-keyword?-for-fib" (not (keyword? "fib")))
+
+; ── 6. Edge case: one-char symbols at collision indices ──
+(display "\n── 6. Edge case: single character strings ──\n")
+
+(report "string-char-a" (string? "a"))
+(report "string-char-z" (string? "z"))
+(report "string-char-0" (string? "0"))
+
+; ── 7. Display roundtrip (test display doesn't corrupt strings) ──
+(display "\n── 7. Display roundtrip ──\n")
+
+(define test-str "ThisStringShouldSurviveDisplay")
+(report "display-string" (string? test-str))
+(display test-str)
+(newline)
+
+; ── 8. Multiple consecutive query effects ──
+(display "\n── 8. Consecutive def-use queries ──\n")
+
+(set-code "(define (f x) (+ x 1))
+(define (g x) (f (f x)))
+(define (h x) (g (g x)))")
+
+(report "def-use-f" (pair? (query:def-use "f")))
+(report "def-use-g" (pair? (query:def-use "g")))
+(report "def-use-h" (pair? (query:def-use "h")))
+(report "effects-f" (pair? (query:effects "f")))
+
+; ── Results ──
+(newline)
+(display "═══ Results ═══\n")
+(display total-pass " passed, " total-fail " failed\n")
+(if (> total-fail 0)
+  (begin (display "❌ " total-fail " test(s) failed\n") #f)
+  (begin (display "✅ All encoding collision tests passed!\n") #t))
