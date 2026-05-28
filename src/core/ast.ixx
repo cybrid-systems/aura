@@ -774,14 +774,27 @@ private:
     void clear() {
         tag_.clear();
         int_val_.clear();
+        float_val_.clear();
         sym_id_.clear();
         child_begin_.clear();
         child_count_.clear();
         child_data_.clear();
+        parent_.clear();
         param_begin_.clear();
         param_count_.clear();
+        cap_require_count_.clear();
         param_data_.clear();
+        line_.clear();
+        col_.clear();
+        marker_.clear();
+        dirty_.clear();
         type_id_.clear();
+        mutation_log_.clear();
+        node_first_mutation_.clear();
+        node_gen_.clear();
+        next_mutation_id_ = 1;
+        generation_ = 1;
+        match_info_.clear();
         root = NULL_NODE;
     }
 
