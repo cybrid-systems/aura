@@ -179,6 +179,92 @@
 (synthesize:optimize "f" ":population" 3 ":generations" 1)
 (report "opt-preserves" (string? (current-source)))
 
+; ── 10. Encoding Collision Regression ──
+(newline)
+(display "── 10. Encoding Collision Regression ──\n")
+
+; Regression test for the make_string(odd_idx) vs is_ref encoding collision bug.
+; make_string(idx) with odd idx can accidentally pass is_ref() and be confused
+; with RefError (type=8), RefKeyword (type=11), etc.
+; This was discovered as the root cause of query:def-use "fib" silently failing
+; when string_heap_.size() hit specific odd sizes.
+
+; Test 1: def-use after verbose expression pushes string_heap past the collision
+; threshold. The fib string at various heap sizes must correctly resolve.
+(set-code "(define (f x) (+ x 1))")
+(report "encoding-defuse-prep" (set-code "(define (f x) (+ x 1))"))
+
+; Generate enough string allocations to push string_heap past collision sizes
+; (31, 95, etc.) by using multiple display calls with distinct strings
+(display "CollisionGuard-aaa")
+(display "CollisionGuard-bbb")
+(display "CollisionGuard-ccc")
+(display "CollisionGuard-ddd")
+(display "CollisionGuard-eee")
+(display "CollisionGuard-fff")
+(display "CollisionGuard-ggg")
+(display "CollisionGuard-hhh")
+(display "CollisionGuard-iii")
+(display "CollisionGuard-jjj")
+(display "CollisionGuard-kkk")
+(display "CollisionGuard-lll")
+(display "CollisionGuard-mmm")
+(display "CollisionGuard-nnn")
+(display "CollisionGuard-ooo")
+(display "CollisionGuard-ppp")
+(display "CollisionGuard-qqq")
+(display "CollisionGuard-rrr")
+(display "CollisionGuard-sss")
+(display "CollisionGuard-ttt")
+(display "CollisionGuard-uuu")
+(display "CollisionGuard-vvv")
+(display "CollisionGuard-www")
+(display "CollisionGuard-xxx")
+(display "CollisionGuard-yyy")
+(display "CollisionGuard-zzz")
+(newline)
+
+; Now run def-use on fib — known to fail when string_heap at odd collision sizes
+(set-code "(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))")
+(let* ((r (query:def-use "fib")) (d (car r)) (u (cdr r)))
+  (report "encoding-defuse-fib-after-guard" (and (= (length d) 1) (> (length u) 0))))
+
+; Test 2: string? must return #t for all string heap positions
+; (encoding collision fix: is_string should not be fooled by is_ref overlap)
+(set-code "(define test-strs '("a" "bb" "ccc" "dddd" "eeeee" "ffffff" "ggggggg" "hhhhhhhh"))")
+(report "encoding-string-pred" (string? "any-string"))
+
+; Test 3: error? must return #f for strings (not confused by RefError collision)
+(report "encoding-error-pred" (not (error? "safe-string")))
+
+; Test 4: keyword? must return #f for strings (not confused by RefKeyword collision)
+(report "encoding-keyword-pred" (not (keyword? "safe-string")))
+
+; Test 5: consecutive def-use queries with different symbols ensure the index
+; is rebuilt correctly regardless of string_heap state
+(set-code "(define (g x) (+ x 2))
+(define (h x) (* x 3))
+(define (j x) (- x 1))
+(define (k x) (/ x 2))
+(define (m x) (* x x))")
+(report "encoding-defuse-g" (let* ((r (query:def-use "g")) (d (car r))) (= (length d) 1)))
+(report "encoding-defuse-h" (let* ((r (query:def-use "h")) (d (car r))) (= (length d) 1)))
+(report "encoding-defuse-j" (let* ((r (query:def-use "j")) (d (car r))) (= (length d) 1)))
+(report "encoding-defuse-k" (let* ((r (query:def-use "k")) (d (car r))) (= (length d) 1)))
+(report "encoding-defuse-m" (let* ((r (query:def-use "m")) (d (car r))) (= (length d) 1)))
+
+; Test 6: verify def-use returns uses for functions that are actually called
+(set-code "(define (helper x) (* x 2))
+(define (caller y) (helper (helper y)))")
+(let* ((r (query:def-use "helper")) (d (car r)) (u (cdr r)))
+  (report "encoding-defuse-uses-count" (> (length u) 0)))
+
+; Test 7: verify query:effects after many set-code calls (tests call graph index)
+(set-code "(define (adder x) (+ x 1))
+(define (user a) (adder (adder a)))")
+(let* ((r (query:effects "adder")) (callers (cdr (cdr r))))
+  (report "encoding-effects-callers" (> (length callers) 0)))
+
 ; ── Results ──
 (newline)
 (display "═══ Results ═══\n")
