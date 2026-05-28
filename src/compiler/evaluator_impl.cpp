@@ -12119,9 +12119,21 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     std::vector<std::pair<std::string, aura::ast::NodeId>> letrec_defs;
                     bool has_multiple_defs = false;
                     int define_count = 0;
-                    aura::ast::NodeId last_expr = v.child(count - 1);
+                    // Find last non-NULL child (NULL_NODE holes may exist from mutate:move-node)
+                    aura::ast::NodeId last_expr = aura::ast::NULL_NODE;
+                    for (std::size_t si = count; si > 0; --si) {
+                        auto cid = v.child(si - 1);
+                        if (cid != aura::ast::NULL_NODE) {
+                            last_expr = cid;
+                            break;
+                        }
+                    }
+                    if (last_expr == aura::ast::NULL_NODE)
+                        return EvalResult(make_void());
                     for (std::size_t i = 0; i < count; ++i) {
-                        auto child_node = f->get(v.child(i));
+                        auto cid = v.child(i);
+                        if (cid == aura::ast::NULL_NODE) continue;
+                        auto child_node = f->get(cid);
                         if (child_node.tag == aura::ast::NodeTag::Define) {
                             define_count++;
                             if (define_count > 1)
@@ -12130,6 +12142,29 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                                    child_node.children.empty()
                                                        ? aura::ast::NULL_NODE
                                                        : child_node.child(0)});
+                        }
+                    }
+
+                    // Skip NULL_NODE children (left by mutate:move-node / mutate:remove-node)
+                    std::size_t effective_count = 0;
+                    for (std::size_t ci = 0; ci < count; ++ci) {
+                        if (v.child(ci) != aura::ast::NULL_NODE)
+                            effective_count++;
+                    }
+                    if (effective_count < count) {
+                        // Count again for the main loop using only original children
+                        // We'll check each child in the loop below
+                        has_multiple_defs = false;
+                        define_count = 0;
+                        for (std::size_t ci = 0; ci < count; ++ci) {
+                            auto cid = v.child(ci);
+                            if (cid == aura::ast::NULL_NODE) continue;
+                            auto child_node = f->get(cid);
+                            if (child_node.tag == aura::ast::NodeTag::Define) {
+                                define_count++;
+                                if (define_count > 1)
+                                    has_multiple_defs = true;
+                            }
                         }
                     }
 
@@ -12158,10 +12193,12 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         }
                         // Phase 3: evaluate remaining (non-define) expressions
                         for (std::size_t i = 0; i < count - 1; ++i) {
-                            auto child_node = f->get(v.child(i));
+                            auto cid = v.child(i);
+                            if (cid == aura::ast::NULL_NODE) continue;
+                            auto child_node = f->get(cid);
                             if (child_node.tag == aura::ast::NodeTag::Define)
                                 continue;
-                            auto r = eval_flat(*f, *p, v.child(i), eval_env);
+                            auto r = eval_flat(*f, *p, cid, eval_env);
                             if (!r)
                                 return r;
                         }
@@ -12172,11 +12209,23 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
 
                     // Single define (or no defines) — sequential evaluation
                     for (std::size_t i = 0; i < count - 1; ++i) {
-                        auto r = eval_flat(*f, *p, v.child(i), eval_env);
+                        auto cid = v.child(i);
+                        if (cid == aura::ast::NULL_NODE) continue;
+                        auto r = eval_flat(*f, *p, cid, eval_env);
                         if (!r)
                             return r;
                     }
-                    current_id = v.child(count - 1);
+                    // Find last non-NULL child
+                    current_id = aura::ast::NULL_NODE;
+                    for (std::size_t i = count; i > 0; --i) {
+                        auto cid = v.child(i - 1);
+                        if (cid != aura::ast::NULL_NODE) {
+                            current_id = cid;
+                            break;
+                        }
+                    }
+                    if (current_id == aura::ast::NULL_NODE)
+                        return EvalResult(make_void());
                     continue; // TCO: last expression in begin
                 }
                 case aura::ast::NodeTag::DefineModule: {
