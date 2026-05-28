@@ -4412,18 +4412,13 @@ void Evaluator::init_pair_primitives() {
         auto name = string_heap_[name_idx];
         auto sym = workspace_pool_->intern(name);
 
-        // ── 依赖图驱动：dirty 所有调用者节点 ───────────────────
-        // 在 mutation 使索引失效前，先查询当前 def-use 依赖图获取
-        // 所有引用该符号的 Variable 节点。这些节点在定义变化后需要
-        // 重新类型推断。
-        // 当前实现：直接扫描 FlatAST（O(n)），后续可替换为
-        // DefUseIndex 的 O(k) 依赖图查询（需解决前向声明问题）。
-        std::vector<aura::ast::NodeId> dep_callers;
-        for (aura::ast::NodeId sid = 0; sid < flat.size(); ++sid) {
-            auto sv = flat.get(sid);
-            if (sv.tag == aura::ast::NodeTag::Variable && sv.sym_id == sym)
-                dep_callers.push_back(sid);
-        }
+        // ── 依赖图查询：通过 dep_caller_fn_ 获取调用者节点 ────
+        // dep_caller_fn_ 在 init_pair_primitives 中注册，使用
+        // DefUseIndex 的 O(k) 依赖图查询（k = 调用者数量）。
+        // 在 defuse_version_++ 之前调用，因为索引在失效前有效。
+        auto dep_callers = dep_caller_fn_
+            ? dep_caller_fn_(defuse_index_, sym)
+            : std::vector<aura::ast::NodeId>{};
         defuse_version_++;
 
         // Find old Define node by name
@@ -4675,13 +4670,10 @@ void Evaluator::init_pair_primitives() {
         auto name = string_heap_[name_idx];
         auto sym = workspace_pool_->intern(name);
 
-        // ── 依赖图驱动：dirty 所有调用者节点 ───────────────────
-        std::vector<aura::ast::NodeId> dep_callers;
-        for (aura::ast::NodeId sid = 0; sid < flat.size(); ++sid) {
-            auto sv = flat.get(sid);
-            if (sv.tag == aura::ast::NodeTag::Variable && sv.sym_id == sym)
-                dep_callers.push_back(sid);
-        }
+        // ── 依赖图查询：通过 dep_caller_fn_ 获取调用者节点 ────
+        auto dep_callers = dep_caller_fn_
+            ? dep_caller_fn_(defuse_index_, sym)
+            : std::vector<aura::ast::NodeId>{};
         defuse_version_++;
 
         // Find Define node with matching symbol name
@@ -5352,7 +5344,9 @@ struct DefUseIndex {
         build(flat, pool);
         return true;
     }
-};// ═══════════════════════════════════════════════════════════════
+};
+
+// ═══════════════════════════════════════════════════════════════
 // WorkspaceTree — multi-layer workspace isolation
 // ═══════════════════════════════════════════════════════════════
 
@@ -6018,6 +6012,18 @@ Evaluator::Evaluator() {
     // ═══════════════════════════════════════════════════════════════
     // P9: Def-Use Analysis (P1 — scope-level cached)
     // ═══════════════════════════════════════════════════════════════
+
+    // ── 依赖图查询回调注册 ─────────────────────────────────────
+    // 在 def-use 索引中注册依赖图查询函数，供 mutation 原语
+    // (mutate:rebind / set-body) 在变更前查询调用者节点。
+    // 定义在这里（DefUseIndex 完整类型已知后），绕开前向声明问题。
+    dep_caller_fn_ = [](void* idx_ptr, aura::ast::SymId sym)
+        -> std::vector<aura::ast::NodeId> {
+        if (!idx_ptr) return {};
+        auto* idx = static_cast<DefUseIndex*>(idx_ptr);
+        auto result = idx->query_def_use(sym);
+        return std::move(result.uses);
+    };
 
     // Helper: get or rebuild the def-use index
     // Tracks defuse_version_ to detect mutations since last build
