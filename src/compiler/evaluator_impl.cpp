@@ -446,7 +446,7 @@ namespace {
                 auto kname = (*keywords)[kidx];
                 std::fprintf(stdout, "%s", kname.c_str());
             } else {
-                std::fprintf(stdout, ":<kwd%zu>", (size_t)kidx);
+                std::fprintf(stdout, ":%zu", (size_t)kidx);
             }
             return;
         }
@@ -1422,6 +1422,40 @@ void Evaluator::init_pair_primitives() {
         };
         return make_bool(to_str(a[0]) < to_str(a[1]));
     });
+    primitives_.add("string->number", [this](const auto& a) {
+        if (a.size() < 1 || a.size() > 2)
+            return make_int(0);
+        auto to_str = [this](const EvalValue& v) -> std::string {
+            if (is_string(v)) {
+                auto idx = as_string_idx(v);
+                return (idx < string_heap_.size()) ? string_heap_[idx] : "";
+            }
+            return "";
+        };
+        auto s = to_str(a[0]);
+        auto radix = (a.size() > 1 && is_int(a[1])) ? static_cast<int>(as_int(a[1])) : 10;
+        try {
+            if (s.find('.') != std::string::npos)
+                return make_float(std::stod(s));
+            return make_int(static_cast<std::int64_t>(std::stoll(s, nullptr, radix)));
+        } catch (...) {
+            return make_bool(false);
+        }
+    });
+
+    primitives_.add("string-index", [this](const auto& a) {
+        if (a.size() < 2)
+            return make_int(-1);
+        auto haystack = (is_string(a[0]) && as_string_idx(a[0]) < string_heap_.size())
+            ? string_heap_[as_string_idx(a[0])] : "";
+        auto needle = (is_string(a[1]) && as_string_idx(a[1]) < string_heap_.size())
+            ? string_heap_[as_string_idx(a[1])] : "";
+        auto start = (a.size() > 2 && is_int(a[2])) ? static_cast<std::size_t>(as_int(a[2])) : 0;
+        if (needle.empty()) return make_int(0);
+        auto pos = haystack.find(needle, start);
+        return make_int(pos != std::string::npos ? static_cast<std::int64_t>(pos) : -1);
+    });
+
     primitives_.add("number->string", [this](const auto& a) {
         if (a.empty())
             return make_int(0);
@@ -12007,65 +12041,64 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     if (callee.tag == aura::ast::NodeTag::Variable) {
                         auto cname = std::string(p->resolve(callee.sym_id));
                         if (cname == "require" && v.children.size() > 1) {
-                            auto req_arg = v.child(1);
-                            auto rv = f->get(req_arg);
-                            std::string mod_path;
-                            if (rv.tag == aura::ast::NodeTag::LiteralString) {
-                                mod_path = std::string(p->resolve(rv.sym_id));
-                            } else if (rv.tag == aura::ast::NodeTag::Variable) {
-                                mod_path = std::string(p->resolve(rv.sym_id));
-                            } else {
-                                return std::unexpected(Diagnostic{
-                                    ErrorKind::ParseError,
-                                    "require: expected a module name (symbol or string)"});
-                            }
-
-                            // Check for backward-compat flag: (require std/list all:)
+                            // Collect module names and check for all: flag
+                            // (require mod1 mod2 ... all:) — all: applies to ALL modules
+                            std::vector<std::string> mod_names;
                             bool use_prefix = true;
-                            if (v.children.size() > 2) {
-                                auto compat_arg = v.child(2);
-                                auto cv = f->get(compat_arg);
-                                if (cv.tag == aura::ast::NodeTag::Variable) {
-                                    auto compat_name = std::string(p->resolve(cv.sym_id));
-                                    if (compat_name == "all:")
+                            for (std::size_t ci = 1; ci < v.children.size(); ++ci) {
+                                auto arg_v = f->get(v.child(ci));
+                                if (arg_v.tag == aura::ast::NodeTag::Variable) {
+                                    auto arg_name = std::string(p->resolve(arg_v.sym_id));
+                                    if (arg_name == "all:") {
                                         use_prefix = false;
+                                    } else {
+                                        mod_names.push_back(arg_name);
+                                    }
+                                } else if (arg_v.tag == aura::ast::NodeTag::LiteralString) {
+                                    mod_names.push_back(std::string(p->resolve(arg_v.sym_id)));
                                 }
                             }
 
-                            // Derive prefix from module name (last path component)
-                            std::string prefix;
-                            if (use_prefix) {
-                                auto slash = mod_path.rfind('/');
-                                auto base = (slash == std::string::npos)
-                                                ? mod_path
-                                                : mod_path.substr(slash + 1);
-                                prefix = base + ":";
-                            }
-
-                            // Build (import "path" "prefix:") or (import "path")
-                            std::string import_expr;
-                            if (prefix.empty()) {
-                                import_expr = std::string("(import \"") + mod_path + "\")";
-                            } else {
-                                import_expr =
-                                    std::string("(import \"") + mod_path + "\" \"" + prefix + "\")";
-                            }
-
+                            // Load all modules in sequence
                             if (!arena_)
                                 return make_void();
-                            auto alloc = arena_->allocator();
-                            auto* ipool = arena_->create<aura::ast::StringPool>(alloc);
-                            auto* iflat = arena_->create<aura::ast::FlatAST>(alloc);
-                            auto pr = aura::parser::parse_to_flat(import_expr, *iflat, *ipool);
-                            if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-                                return std::unexpected(
-                                    Diagnostic{ErrorKind::ParseError, "require: internal error"});
+                            EvalResult last = make_void();
+                            for (auto& mod_path : mod_names) {
+                                // Derive prefix from module name (last path component)
+                                std::string prefix;
+                                if (use_prefix) {
+                                    auto slash = mod_path.rfind('/');
+                                    auto base = (slash == std::string::npos)
+                                                    ? mod_path
+                                                    : mod_path.substr(slash + 1);
+                                    prefix = base + ":";
+                                }
+
+                                // Build (import "path" "prefix:") or (import "path")
+                                std::string import_expr;
+                                if (prefix.empty()) {
+                                    import_expr = std::string("(import \"") + mod_path + "\")";
+                                } else {
+                                    import_expr =
+                                        std::string("(import \"") + mod_path + "\" \"" + prefix + "\")";
+                                }
+
+                                auto alloc = arena_->allocator();
+                                auto* ipool = arena_->create<aura::ast::StringPool>(alloc);
+                                auto* iflat = arena_->create<aura::ast::FlatAST>(alloc);
+                                auto pr = aura::parser::parse_to_flat(import_expr, *iflat, *ipool);
+                                if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+                                    return std::unexpected(
+                                        Diagnostic{ErrorKind::ParseError, "require: internal error"});
+                                }
+                                iflat->root = pr.root;
+                                // Pre-expand macros so import primitive is recognized
+                                auto expanded_root =
+                                    aura::compiler::macro_expand_all(*iflat, *ipool, iflat->root);
+                                last = eval_flat(*iflat, *ipool, expanded_root, eval_env);
+                                if (!last) return last;
                             }
-                            iflat->root = pr.root;
-                            // Pre-expand macros so import primitive is recognized
-                            auto expanded_root =
-                                aura::compiler::macro_expand_all(*iflat, *ipool, iflat->root);
-                            return eval_flat(*iflat, *ipool, expanded_root, eval_env);
+                            return last;
                         }
                     }
                     // try/catch: (try body (catch (var) handler))
