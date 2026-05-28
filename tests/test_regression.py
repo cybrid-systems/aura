@@ -29,6 +29,27 @@ tests = [
      "1", "match warning"),
     ("match-wildcard", '(define-type (C) (A) (B) (C)) (let ((x A)) (match x ((A) 1) ((_) 2)))',
      "1", ""),
+    ("adt-exhaustive-option",
+     '(define-type (Option a) (Some a) (None)) (let ((x (Some 42))) (match x ((Some v) v) ((None) 0)))',
+     "42", ""),
+    ("adt-exhaustive-color",
+     '(define-type (Color) (Red) (Green) (Blue)) (let ((x Red)) (match x ((Red) 1) ((Green) 2) ((Blue) 3)))',
+     "1", ""),
+    ("adt-exhaustive-either",
+     '(define-type (Either a b) (Left a) (Right b)) (let ((x (Left 1))) (match x ((Left v) v) ((Right v) 0)))',
+     "1", ""),
+    ("adt-exhaustive-nested",
+     '(begin (define-type (Option a) (Some a) (None))(define-type (Result e v) (Ok v) (Err e))'
+     '(let ((x (Ok (Some 42)))) (match x ((Ok y) (match y ((Some v) v) ((None) 0))) ((Err _) 0))))',
+     "42", ""),
+    ("adt-exhaustive-list",
+     '(define-type (List a) (Nil) (Cons a (List a)))'
+     '(let ((xs (Cons 1 (Cons 2 (Cons 3 Nil)))))'
+     '(match xs ((Cons h t) (display (+ h 1))) ((Nil) 0)))',
+     "2", ""),
+    ("adt-missing-multi",
+     '(define-type (Color) (Red) (Green) (Blue)) (let ((x Red)) (match x ((Red) 1) ((Green) 2)))',
+     "1", "unhandled"),
 
     # ── Phase 2: eval-current-output ──────────────────────
     ("eval-capture",
