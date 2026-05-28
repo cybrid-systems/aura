@@ -266,6 +266,12 @@ private:
     };
     std::unordered_map<std::string, DeclaredType> declared_type_sigs_;
 
+    // ── Functor 泛型模块模板 ────────────────────────────────────
+    struct ModuleTemplate {
+        std::vector<aura::ast::NodeId> body_nodes;
+    };
+    std::unordered_map<std::string, ModuleTemplate> module_templates_;
+
     // ── Timeline for intend (E2, backward compat) ───────────────
     std::vector<std::string> timeline_; //
     std::vector<std::string> string_heap_;

@@ -47,6 +47,7 @@ export enum class NodeTag : std::uint32_t {
     LiteralFloat = 0x11,
     Pair = 0x12,
     DefineType = 0x13,
+    DefineModule = 0x14,
     Export = 0x15,
     Linear = 0x16,
     Move = 0x17,
@@ -205,7 +206,7 @@ export constexpr std::array<NodeMeta, 26> kNodeMeta = {{
     {NodeTag::LiteralFloat, "LiteralFloat", 0, false, false, false, true, false},     // 0x11
     {NodeTag::Pair, "Pair", 2, false, false, false, false, false},                    // 0x12
     {NodeTag::LiteralInt, "<gap>", 0, false, false, false, false, false},             // 0x13 (gap)
-    {NodeTag::LiteralInt, "<gap>", 0, false, false, false, false, false},             // 0x14 (gap)
+    {NodeTag::DefineModule, "DefineModule", 0, true, false, false, false, false},    // 0x14
     {NodeTag::Export, "Export", 0, true, false, false, false, false},                 // 0x15
     {NodeTag::Linear, "Linear", 1, false, false, false, false, false},                // 0x16
     {NodeTag::Move, "Move", 1, false, false, false, false, false},                    // 0x17
@@ -529,6 +530,16 @@ private:
     }
 
     // Export: (export sym1 sym2 ...) — children = Variable nodes
+    [[nodiscard]] NodeId add_define_module(SymId name, std::span<const SymId> type_params) {
+        auto id = add_node(NodeTag::DefineModule);
+        sym_id_[id] = name;
+        auto pstart = static_cast<std::uint32_t>(param_data_.size());
+        param_data_.insert(param_data_.end(), type_params.begin(), type_params.end());
+        param_begin_[id] = pstart;
+        param_count_[id] = static_cast<std::uint32_t>(type_params.size());
+        return id;
+    }
+
     [[nodiscard]] NodeId add_export(std::span<const NodeId> syms) {
         auto id = add_node(NodeTag::Export);
         auto start = static_cast<std::uint32_t>(child_data_.size());

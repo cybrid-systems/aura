@@ -46,6 +46,7 @@ private:
     aura::ast::NodeId parse_let_star();
     aura::ast::NodeId parse_define();
     aura::ast::NodeId parse_define_type();
+    aura::ast::NodeId parse_define_module();
     aura::ast::NodeId parse_begin();
     aura::ast::NodeId parse_set();
     aura::ast::NodeId parse_quote();

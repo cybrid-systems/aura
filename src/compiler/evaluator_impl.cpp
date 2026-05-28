@@ -4061,6 +4061,15 @@ void Evaluator::init_pair_primitives() {
                                                      self(v.child(1), indent + 1, depth + 1)) +
                            ")";
                 }
+                case aura::ast::NodeTag::DefineModule: {
+                    std::string s = "(define-module (" + std::string(workspace_pool_->resolve(v.sym_id));
+                    for (auto pid : v.params)
+                        s += " " + std::string(workspace_pool_->resolve(pid));
+                    s += ")";
+                    for (auto cid : v.children)
+                        s += " " + self(cid, indent + 1, depth + 1);
+                    return s + ")";
+                }
                 case aura::ast::NodeTag::Export: {
                     std::string s = "(export";
                     for (auto pid : v.params)
@@ -10827,6 +10836,39 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                              *tail_env);
                         return make_void();
                     }
+                    // Functor instantiation: callee is a module template
+                    if (is_string(*fn) && as_string_idx(*fn) < string_heap_.size() &&
+                        string_heap_[as_string_idx(*fn)] == "%functor") {
+                        // Get module name from the callee Variable node
+                        auto callee_v = f->get(v.child(0));
+                        if (callee_v.tag == aura::ast::NodeTag::Variable) {
+                            auto tpl_name = std::string(p->resolve(callee_v.sym_id));
+                            auto tpl_it = module_templates_.find(tpl_name);
+                            if (tpl_it != module_templates_.end()) {
+                                // Evaluate type arguments
+                                std::vector<EvalValue> type_args;
+                                for (std::size_t ai = 1; ai < v.children.size(); ++ai) {
+                                    auto ar = eval_flat(*f, *p, v.child(ai), eval_env);
+                                    if (!ar) return ar;
+                                    type_args.push_back(*ar);
+                                }
+                                // Create isolated env, eval body with type params bound
+                                Env mod_env(&eval_env);
+                                mod_env.set_primitives(&primitives_);
+                                mod_env.set_cells(&cells_);
+                                // For now, just eval body and return result
+                                EvalResult last = make_void();
+                                for (auto bid : tpl_it->second.body_nodes) {
+                                    auto br = eval_flat(*f, *p, bid, mod_env);
+                                    if (!br) return br;
+                                    last = *br;
+                                }
+                                return last;
+                            }
+                        }
+                        return make_void();
+                    }
+
                     // Primitive value call: callee is a PrimitiveRef (passed as value, not a
                     // Variable node)
                     if (is_primitive(*fn)) {
@@ -11148,6 +11190,26 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     }
                     current_id = v.child(count - 1);
                     continue; // TCO: last expression in begin
+                }
+                case aura::ast::NodeTag::DefineModule: {
+                    // (define-module (Name :T ...) body...)
+                    // Store module template and bind Name to functor
+                    auto mod_name = std::string(p->resolve(v.sym_id));
+                    ModuleTemplate mt;
+                    // Children are the body expressions
+                    for (auto cid : v.children)
+                        mt.body_nodes.push_back(cid);
+                    module_templates_[mod_name] = std::move(mt);
+
+                    // Bind Name in the current env (as a cell with functor marker)
+                    Env& me = const_cast<Env&>(eval_env);
+                    me.set_cells(&cells_);
+                    auto ci = alloc_cell(make_void());
+                    auto sidx = string_heap_.size();
+                    string_heap_.push_back("%functor");
+                    me.bind(mod_name, make_cell(ci));
+                    cells_[ci] = make_string(sidx);
+                    return make_string(sidx);
                 }
                 case aura::ast::NodeTag::Export: {
                     // (export sym ...) — record module API during loading
