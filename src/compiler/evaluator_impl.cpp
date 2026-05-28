@@ -3594,20 +3594,26 @@ void Evaluator::init_pair_primitives() {
     // ── Typed mutation operators ──────────────────────────────────
 
     // (mutate:replace-type node-id new-type-str)
-    primitives_.add("mutate:replace-type", [this](const auto& a) {
+    primitives_.add("mutate:replace-type", [this](const auto& a) -> EvalValue {
+        auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
+            auto mi = string_heap_.size(); string_heap_.push_back(m);
+            auto ki = string_heap_.size(); string_heap_.push_back(k);
+            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
+            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
+            return kp;
+        };
         defuse_version_++;
-        ;
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]))
-            return make_int(0);
+            return merr("bad-arg", "usage: (mutate:replace-type node-id new-type)");
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto type_idx = as_string_idx(a[1]);
         if (type_idx >= string_heap_.size())
-            return make_int(0);
+            return merr("bad-arg", "type string index out of range");
         if (!workspace_flat_)
-            return make_int(0);
+            return merr("no-workspace", "no workspace AST loaded");
         auto& flat = *workspace_flat_;
         if (node >= flat.size())
-            return make_int(0);
+            return merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
 
         auto old_tid = flat.type_id(node);
         std::string old_type_str = (old_tid > 0) ? "#" + std::to_string(old_tid) : "Any";
@@ -3642,20 +3648,26 @@ void Evaluator::init_pair_primitives() {
     // (mutate:replace-value node-id new-value summary)
     // Replaces the value of a node. The type of new-value must match the
     // target node: int → LiteralInt, float → LiteralFloat, string → Variable/LiteralString.
-    primitives_.add("mutate:replace-value", [this](const auto& a) {
+    primitives_.add("mutate:replace-value", [this](const auto& a) -> EvalValue {
+        auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
+            auto mi = string_heap_.size(); string_heap_.push_back(m);
+            auto ki = string_heap_.size(); string_heap_.push_back(k);
+            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
+            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
+            return kp;
+        };
         defuse_version_++;
-        ;
         if (a.size() < 3 || !is_int(a[0]) || !is_string(a[2]))
-            return make_int(0);
+            return merr("bad-arg", "usage: (mutate:replace-value node-id new-value summary)");
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto sum_idx = as_string_idx(a[2]);
         if (sum_idx >= string_heap_.size())
-            return make_int(0);
+            return merr("bad-arg", "summary string index out of range");
         if (!workspace_flat_)
-            return make_int(0);
+            return merr("no-workspace", "no workspace AST loaded");
         auto& flat = *workspace_flat_;
         if (node >= flat.size())
-            return make_int(0);
+            return merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
 
         auto nv = flat.get(node);
         std::uint64_t old_val = 0;
@@ -3663,7 +3675,7 @@ void Evaluator::init_pair_primitives() {
         switch (nv.tag) {
             case aura::ast::NodeTag::LiteralInt: {
                 if (!is_int(a[1]))
-                    return make_int(0);
+                    return merr("type-error", "LiteralInt node requires an integer value");
                 auto new_val = static_cast<std::int64_t>(as_int(a[1]));
                 old_val = static_cast<std::uint64_t>(nv.int_value);
                 auto mid = flat.add_mutation_with_rollback(
@@ -3675,7 +3687,7 @@ void Evaluator::init_pair_primitives() {
             }
             case aura::ast::NodeTag::LiteralFloat: {
                 if (!is_float(a[1]))
-                    return make_int(0);
+                    return merr("type-error", "LiteralFloat node requires a float value");
                 // Pack double as uint64 for mutation log
                 double new_val = as_float(a[1]);
                 std::uint64_t new_bits;
@@ -3691,10 +3703,10 @@ void Evaluator::init_pair_primitives() {
             case aura::ast::NodeTag::Variable:
             case aura::ast::NodeTag::LiteralString: {
                 if (!is_string(a[1]))
-                    return make_int(0);
+                    return merr("type-error", "Variable/LiteralString node requires a string value");
                 auto new_sym_idx = as_string_idx(a[1]);
                 if (new_sym_idx >= string_heap_.size())
-                    return make_int(0);
+                    return merr("bad-arg", "new value string index out of range");
                 auto new_name = string_heap_[new_sym_idx];
                 old_val = nv.sym_id;
                 auto new_sym = workspace_pool_->intern(new_name);
@@ -3705,26 +3717,32 @@ void Evaluator::init_pair_primitives() {
                 return make_int(static_cast<std::int64_t>(mid));
             }
             default:
-                return make_int(0); // no replaceable value on this node type
+                return merr("type-error", "node tag does not support value replacement: " + std::to_string(static_cast<int>(nv.tag)));
         }
     });
 
     // (mutate:record-patch node-id op-name summary)
-    primitives_.add("mutate:record-patch", [this](const auto& a) {
+    primitives_.add("mutate:record-patch", [this](const auto& a) -> EvalValue {
+        auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
+            auto mi = string_heap_.size(); string_heap_.push_back(m);
+            auto ki = string_heap_.size(); string_heap_.push_back(k);
+            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
+            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
+            return kp;
+        };
         defuse_version_++;
-        ;
         if (a.size() < 3 || !is_int(a[0]) || !is_string(a[1]) || !is_string(a[2]))
-            return make_int(0);
+            return merr("bad-arg", "usage: (mutate:record-patch node-id op-name summary)");
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto op_idx = as_string_idx(a[1]);
         auto sum_idx = as_string_idx(a[2]);
         if (op_idx >= string_heap_.size() || sum_idx >= string_heap_.size())
-            return make_int(0);
+            return merr("bad-arg", "string index out of range");
         if (!workspace_flat_)
-            return make_int(0);
+            return merr("no-workspace", "no workspace AST loaded");
         auto& flat = *workspace_flat_;
         if (node >= flat.size())
-            return make_int(0);
+            return merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
 
         auto mid = flat.add_mutation(node, string_heap_[op_idx], "<runtime>", "<runtime>",
                                      string_heap_[sum_idx]);
@@ -3856,20 +3874,20 @@ void Evaluator::init_pair_primitives() {
     };
     std::function<EvalValue(const std::string&, const std::string&)> mev = make_error_val;
 
-    primitives_.add("set-code", [this, mev](const auto& a) {
-        if (workspace_read_only_) return make_bool(false);
+    primitives_.add("set-code", [this, mev](const auto& a) -> EvalValue {
+        if (workspace_read_only_) return mev("read-only", "workspace is read-only");
         // Clear any previous set-code error
         last_set_code_error_kind_.clear();
         last_set_code_error_msg_.clear();
         coverage_counters_[0]++;
         coverage_counters_[5]++;
         if (a.empty() || !is_string(a[0]))
-            return make_bool(false);
+            return mev("bad-arg", "usage: (set-code code-string)");
         auto idx = as_string_idx(a[0]);
         if (idx >= string_heap_.size())
-            return make_bool(false);
+            return mev("bad-arg", "code string index out of range");
         if (!arena_)
-            return make_bool(false);
+            return mev("internal", "no arena allocator available");
 
         // REUSE existing flat/pool when possible (avoids arena growth).
         // Clear vectors but keep capacity — subsequent parse fills them
@@ -4296,12 +4314,14 @@ void Evaluator::init_pair_primitives() {
     });
 
     // (query:find name) — Find all node IDs with matching symbol name
-    primitives_.add("query:find", [this](const auto& a) {
+    primitives_.add("query:find", [this, mev](const auto& a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
-            return make_void();
+            return mev("bad-arg", "usage: (query:find name)");
         auto idx = as_string_idx(a[0]);
-        if (idx >= string_heap_.size() || !workspace_flat_ || !workspace_pool_)
-            return make_void();
+        if (idx >= string_heap_.size())
+            return mev("bad-arg", "name string index out of range");
+        if (!workspace_flat_ || !workspace_pool_)
+            return mev("no-workspace", "no workspace AST loaded");
         auto& flat = *workspace_flat_;
         auto name = string_heap_[idx];
         auto sym = workspace_pool_->intern(name);
@@ -4318,13 +4338,13 @@ void Evaluator::init_pair_primitives() {
     });
 
     // (query:children node-id) — Get children node IDs
-    primitives_.add("query:children", [this](const auto& a) {
+    primitives_.add("query:children", [this, mev](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]) || !workspace_flat_)
-            return make_void();
+            return mev("bad-arg", "usage: (query:children node-id)");
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto& flat = *workspace_flat_;
         if (node >= flat.size())
-            return make_void();
+            return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
         auto v = flat.get(node);
         EvalValue result = make_void();
         for (std::size_t i = v.children.size(); i > 0; --i) {
@@ -4336,20 +4356,25 @@ void Evaluator::init_pair_primitives() {
     });
 
     // (query:root) — Return the current workspace root node ID, or #f if no workspace
-    primitives_.add("query:root", [this](const auto&) -> EvalValue {
-        if (!workspace_flat_ || workspace_flat_->root == aura::ast::NULL_NODE)
-            return make_bool(false);
+    primitives_.add("query:root", [this, mev](const auto&) -> EvalValue {
+        if (!workspace_flat_)
+            return mev("no-workspace", "no workspace AST loaded");
+        if (workspace_flat_->root == aura::ast::NULL_NODE)
+            return mev("no-root", "workspace AST has no root node");
         return make_int(static_cast<std::int64_t>(workspace_flat_->root));
     });
 
+
     // (query:node node-id) — Get node details as list (tag value type sym-id)
-    primitives_.add("query:node", [this](const auto& a) {
-        if (a.empty() || !is_int(a[0]) || !workspace_flat_ || !workspace_pool_)
-            return make_void();
+    primitives_.add("query:node", [this, mev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return mev("bad-arg", "usage: (query:node node-id)");
+        if (!workspace_flat_ || !workspace_pool_)
+            return mev("no-workspace", "no workspace AST loaded");
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto& flat = *workspace_flat_;
         if (node >= flat.size())
-            return make_void();
+            return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
         auto v = flat.get(node);
 
         // Build result: list of (tag-id value sym-name children-count)
@@ -4383,12 +4408,14 @@ void Evaluator::init_pair_primitives() {
     });
 
     // (query:calls name) — Find all call sites of a named function
-    primitives_.add("query:calls", [this](const auto& a) {
-        if (a.empty() || !is_string(a[0]) || !workspace_flat_ || !workspace_pool_)
-            return make_void();
+    primitives_.add("query:calls", [this, mev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return mev("bad-arg", "usage: (query:calls name)");
+        if (!workspace_flat_ || !workspace_pool_)
+            return mev("no-workspace", "no workspace AST loaded");
         auto idx = as_string_idx(a[0]);
         if (idx >= string_heap_.size())
-            return make_void();
+            return mev("bad-arg", "name string index out of range");
         auto& flat = *workspace_flat_;
         auto name = string_heap_[idx];
         auto sym = workspace_pool_->intern(name);
@@ -4412,15 +4439,15 @@ void Evaluator::init_pair_primitives() {
     // Parses new code INTO the existing workspace FlatAST, then redirects the old
     // Define's value reference to the newly parsed nodes. All pre-existing mutations
     // on other nodes are preserved.
-    primitives_.add("mutate:rebind", [this](const auto& a) {
-        if (workspace_read_only_) return make_bool(false);
+    primitives_.add("mutate:rebind", [this, mev](const auto& a) -> EvalValue {
+        if (workspace_read_only_) return mev("read-only", "workspace is read-only");
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
             !workspace_pool_)
-            return make_bool(false);
+            return mev("bad-arg", "usage: (mutate:rebind name new-code-string [summary])");
         auto name_idx = as_string_idx(a[0]);
         auto code_idx = as_string_idx(a[1]);
         if (name_idx >= string_heap_.size() || code_idx >= string_heap_.size())
-            return make_bool(false);
+            return mev("bad-arg", "string index out of range");
         auto& flat = *workspace_flat_;
         auto name = string_heap_[name_idx];
         auto sym = workspace_pool_->intern(name);
@@ -4444,13 +4471,25 @@ void Evaluator::init_pair_primitives() {
             }
         }
         if (old_define == aura::ast::NULL_NODE)
-            return make_bool(false);
+            return mev("not-found", std::string("function \"") + name + "\" not found in AST");
 
         // Parse new code INTO workspace flat (append mode). All new node IDs
         // are valid in the same FlatAST and can be cross-referenced.
         auto pr = aura::parser::parse_to_flat(string_heap_[code_idx], flat, *workspace_pool_);
-        if (!pr.success || pr.root == aura::ast::NULL_NODE)
-            return make_bool(false);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+            std::string parse_err;
+            if (!pr.errors.empty()) {
+                for (auto& e : pr.errors) {
+                    if (!parse_err.empty()) parse_err += "; ";
+                    parse_err += e.format();
+                }
+            } else if (!pr.error.empty()) {
+                parse_err = pr.error;
+            } else {
+                parse_err = "rebind code could not be parsed";
+            }
+            return mev("parse-error", parse_err);
+        }
 
         // The parsed root may be a Define (if code includes "(define (name ...) ...)")
         // or a bare expression (just the value/lambda). Extract the value.
@@ -4459,7 +4498,7 @@ void Evaluator::init_pair_primitives() {
         if (root_v.tag == aura::ast::NodeTag::Define) {
             // New code is a full define — extract its value child
             if (root_v.children.empty())
-                return make_bool(false);
+                return mev("parse-error", "define form in rebind code has no body");
             new_value = root_v.child(0);
         }
 
@@ -4488,13 +4527,15 @@ void Evaluator::init_pair_primitives() {
     // ═══════════════════════════════════════════════════════════════
 
     // (query:parent node-id) — Find parent node IDs (nodes whose children include this ID)
-    primitives_.add("query:parent", [this](const auto& a) {
-        if (a.empty() || !is_int(a[0]) || !workspace_flat_)
-            return make_void();
+    primitives_.add("query:parent", [this, mev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return mev("bad-arg", "usage: (query:parent node-id)");
+        if (!workspace_flat_)
+            return mev("no-workspace", "no workspace AST loaded");
         auto target = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto& flat = *workspace_flat_;
         if (target >= flat.size())
-            return make_void();
+            return mev("out-of-range", "node ID " + std::to_string(target) + " >= flat size " + std::to_string(flat.size()));
         EvalValue result = make_void();
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             auto v = flat.get(id);
@@ -4511,13 +4552,15 @@ void Evaluator::init_pair_primitives() {
     });
 
     // (query:siblings node-id) — Find sibling node IDs (other children of same parent)
-    primitives_.add("query:siblings", [this](const auto& a) {
-        if (a.empty() || !is_int(a[0]) || !workspace_flat_)
-            return make_void();
+    primitives_.add("query:siblings", [this, mev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return mev("bad-arg", "usage: (query:siblings node-id)");
+        if (!workspace_flat_)
+            return mev("no-workspace", "no workspace AST loaded");
         auto target = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto& flat = *workspace_flat_;
         if (target >= flat.size())
-            return make_void();
+            return mev("out-of-range", "node ID " + std::to_string(target) + " >= flat size " + std::to_string(flat.size()));
         EvalValue result = make_void();
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             auto v = flat.get(id);
@@ -4546,12 +4589,14 @@ void Evaluator::init_pair_primitives() {
     // Tag names: LiteralInt, Variable, Call, IfExpr, Lambda, Let, LetRec,
     //            Define, Begin, Set, Quote, LiteralString, TypeAnnotation,
     //            Coercion, LiteralFloat, MacroDef
-    primitives_.add("query:node-type", [this](const auto& a) {
-        if (a.empty() || !is_string(a[0]) || !workspace_flat_)
-            return make_void();
+    primitives_.add("query:node-type", [this, mev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return mev("bad-arg", "usage: (query:node-type tag-name)");
+        if (!workspace_flat_)
+            return mev("no-workspace", "no workspace AST loaded");
         auto idx = as_string_idx(a[0]);
         if (idx >= string_heap_.size())
-            return make_void();
+            return mev("bad-arg", "tag name string index out of range");
         auto target_name = string_heap_[idx];
         auto& flat = *workspace_flat_;
 
@@ -4566,7 +4611,7 @@ void Evaluator::init_pair_primitives() {
             }
         }
         if (!found_tag)
-            return make_void();
+            return mev("unknown-tag", std::string("unknown node type \"") + target_name + "\"");
 
         EvalValue result = make_void();
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
@@ -4592,12 +4637,14 @@ void Evaluator::init_pair_primitives() {
     //
     // The pattern is parsed as an S-expression. A Variable named "..." acts as
     // wildcard and matches any single node or subtree.
-    primitives_.add("query:pattern", [this](const auto& a) {
-        if (a.empty() || !is_string(a[0]) || !workspace_flat_ || !workspace_pool_)
-            return make_void();
+    primitives_.add("query:pattern", [this, mev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return mev("bad-arg", "usage: (query:pattern expr)");
+        if (!workspace_flat_ || !workspace_pool_)
+            return mev("no-workspace", "no workspace AST loaded");
         auto idx = as_string_idx(a[0]);
         if (idx >= string_heap_.size())
-            return make_void();
+            return mev("bad-arg", "pattern string index out of range");
 
         // Parse pattern string into its own FlatAST (separate from workspace)
         auto alloc = arena_->allocator();
@@ -4670,15 +4717,15 @@ void Evaluator::init_pair_primitives() {
     // (mutate:set-body name-str new-body-code-str) — Replace function body by name
     // Finds (define (name params) ...) and replaces the Lambda body.
     // Parses new body INTO the workspace FlatAST so all node IDs are valid.
-    primitives_.add("mutate:set-body", [this](const auto& a) {
-        if (workspace_read_only_) return make_bool(false);
+    primitives_.add("mutate:set-body", [this, mev](const auto& a) -> EvalValue {
+        if (workspace_read_only_) return mev("read-only", "workspace is read-only");
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
             !workspace_pool_)
-            return make_bool(false);
+            return mev("bad-arg", "usage: (mutate:set-body name new-body-code [summary])");
         auto name_idx = as_string_idx(a[0]);
         auto code_idx = as_string_idx(a[1]);
         if (name_idx >= string_heap_.size() || code_idx >= string_heap_.size())
-            return make_bool(false);
+            return mev("bad-arg", "string index out of range");
         auto& flat = *workspace_flat_;
         auto name = string_heap_[name_idx];
         auto sym = workspace_pool_->intern(name);
@@ -4695,17 +4742,29 @@ void Evaluator::init_pair_primitives() {
             if (v.tag == aura::ast::NodeTag::Define && v.sym_id == sym) {
                 // The Define should have one child: a Lambda
                 if (v.children.size() != 1)
-                    return make_bool(false);
+                    return mev("arity-error", std::string("function \"") + name + "\" define has " + std::to_string(v.children.size()) + " children, expected 1");
                 auto lambda_id = v.child(0);
                 auto lv = flat.get(lambda_id);
                 if (lv.tag != aura::ast::NodeTag::Lambda)
-                    return make_bool(false);
+                    return mev("type-error", std::string("function \"") + name + "\" body is not a Lambda node");
 
                 // Parse new body INTO workspace flat (all IDs stay valid)
                 auto pr =
                     aura::parser::parse_to_flat(string_heap_[code_idx], flat, *workspace_pool_);
-                if (!pr.success || pr.root == aura::ast::NULL_NODE)
-                    return make_bool(false);
+                if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+                    std::string parse_err;
+                    if (!pr.errors.empty()) {
+                        for (auto& e : pr.errors) {
+                            if (!parse_err.empty()) parse_err += "; ";
+                            parse_err += e.format();
+                        }
+                    } else if (!pr.error.empty()) {
+                        parse_err = pr.error;
+                    } else {
+                        parse_err = "new body code could not be parsed";
+                    }
+                    return mev("parse-error", parse_err);
+                }
 
                 // Record mutation
                 flat.add_mutation(id, "set-body", name, name, "set-body " + name);
@@ -4721,21 +4780,21 @@ void Evaluator::init_pair_primitives() {
                 return make_bool(true);
             }
         }
-        return make_bool(false);
+        return mev("not-found", std::string("function \"") + name + "\" not found in AST");
     });
 
     // (mutate:remove-node node-id) — Remove a node by setting parent's reference to NULL_NODE
     // The node entry remains in the FlatAST but is disconnected from the tree.
     // The tree walker in eval_flat skips NULL_NODE children.
-    primitives_.add("mutate:remove-node", [this](const auto& a) {
+    primitives_.add("mutate:remove-node", [this, mev](const auto& a) -> EvalValue {
         defuse_version_++;
-        if (workspace_read_only_) return make_bool(false);
+        if (workspace_read_only_) return mev("read-only", "workspace is read-only");
         if (a.empty() || !is_int(a[0]) || !workspace_flat_)
-            return make_bool(false);
+            return mev("bad-arg", "usage: (mutate:remove-node node-id)");
         auto target = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto& flat = *workspace_flat_;
         if (target >= flat.size())
-            return make_bool(false);
+            return mev("out-of-range", "node ID " + std::to_string(target) + " >= flat size " + std::to_string(flat.size()));
 
         // Find parent and remove target from its children
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
@@ -4752,32 +4811,44 @@ void Evaluator::init_pair_primitives() {
                 }
             }
         }
-        return make_bool(false);
+        return mev("not-found", "node " + std::to_string(target) + " has no parent in the AST");
     });
 
     // (mutate:insert-child parent-id position code-string "summary")
     // Insert a child node into a parent's children list at the given position.
     // Position 0 = first child, child_count = append at end.
     // Parses code-string INTO workspace, preserving all existing nodes/IDs.
-    primitives_.add("mutate:insert-child", [this](const auto& a) {
+    primitives_.add("mutate:insert-child", [this, mev](const auto& a) -> EvalValue {
         defuse_version_++;
-        if (workspace_read_only_) return make_bool(false);
+        if (workspace_read_only_) return mev("read-only", "workspace is read-only");
         if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_string(a[2]) ||
             !workspace_flat_ || !workspace_pool_)
-            return make_bool(false);
+            return mev("bad-arg", "usage: (mutate:insert-child parent-id position code-string [summary])");
         auto parent = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto pos = static_cast<std::uint32_t>(as_int(a[1]));
         auto code_idx = as_string_idx(a[2]);
         if (code_idx >= string_heap_.size())
-            return make_bool(false);
+            return mev("bad-arg", "code string index out of range");
         auto& flat = *workspace_flat_;
         if (parent >= flat.size())
-            return make_bool(false);
+            return mev("out-of-range", "parent node ID " + std::to_string(parent) + " >= flat size " + std::to_string(flat.size()));
 
         // Parse child code INTO workspace (append mode — all IDs stay valid)
         auto pr = aura::parser::parse_to_flat(string_heap_[code_idx], flat, *workspace_pool_);
-        if (!pr.success || pr.root == aura::ast::NULL_NODE)
-            return make_bool(false);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+            std::string parse_err;
+            if (!pr.errors.empty()) {
+                for (auto& e : pr.errors) {
+                    if (!parse_err.empty()) parse_err += "; ";
+                    parse_err += e.format();
+                }
+            } else if (!pr.error.empty()) {
+                parse_err = pr.error;
+            } else {
+                parse_err = "insert-child code could not be parsed";
+            }
+            return mev("parse-error", parse_err);
+        }
 
         // Insert the parsed node at position pos in parent's children
         flat.insert_child(parent, pos, pr.root);
@@ -4791,19 +4862,19 @@ void Evaluator::init_pair_primitives() {
 
     // (mutate:tweak-literal node-id delta "summary") — Tweak a LiteralInt by delta
     // Reads current value, adds delta, writes back. Simpler than read+replace-value.
-    primitives_.add("mutate:tweak-literal", [this](const auto& a) {
+    primitives_.add("mutate:tweak-literal", [this, mev](const auto& a) -> EvalValue {
         defuse_version_++;
-        if (workspace_read_only_) return make_bool(false);
+        if (workspace_read_only_) return mev("read-only", "workspace is read-only");
         if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1]) || !workspace_flat_)
-            return make_bool(false);
+            return mev("bad-arg", "usage: (mutate:tweak-literal node-id delta [summary])");
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto delta = as_int(a[1]);
         auto& flat = *workspace_flat_;
         if (node >= flat.size())
-            return make_bool(false);
+            return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
         auto v = flat.get(node);
         if (v.tag != aura::ast::NodeTag::LiteralInt)
-            return make_bool(false);
+            return mev("type-error", "node " + std::to_string(node) + " is not a LiteralInt");
         auto new_val = std::max<std::int64_t>(0, static_cast<std::int64_t>(v.int_value) + delta);
         auto old_val = v.int_value;
         std::string summary = (a.size() > 2 && is_string(a[2]))
@@ -4835,17 +4906,18 @@ void Evaluator::init_pair_primitives() {
     //       → replaces (* 2 x) with (+ x x) everywhere
     //     (mutate:replace-pattern "(... (+ ... ...))" "...")
     //       → strips outer call, keeps only the first child
-    primitives_.add("mutate:replace-pattern", [this](const auto& a) -> EvalValue {
+    primitives_.add("mutate:replace-pattern", [this, mev](const auto& a) -> EvalValue {
         using namespace aura::ast;
         defuse_version_++;
-        if (workspace_read_only_) return make_bool(false);
+        if (workspace_read_only_)
+            return mev("read-only", "workspace is read-only");
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) ||
             !workspace_flat_ || !workspace_pool_)
-            return make_bool(false);
+            return mev("bad-arg", "usage: (mutate:replace-pattern pattern replacement)");
         auto pattern_idx = as_string_idx(a[0]);
         auto repl_idx = as_string_idx(a[1]);
         if (pattern_idx >= string_heap_.size() || repl_idx >= string_heap_.size())
-            return make_bool(false);
+            return mev("bad-arg", "string index out of range");
         auto& flat = *workspace_flat_;
 
         auto pattern_str = string_heap_[pattern_idx];
@@ -4860,7 +4932,7 @@ void Evaluator::init_pair_primitives() {
         auto* pat_flat = arena_->create<aura::ast::FlatAST>(alloc);
         auto pat_pr = aura::parser::parse_to_flat(pattern_str, *pat_flat, *pat_pool);
         if (!pat_pr.success || pat_pr.root == NULL_NODE)
-            return make_bool(false);
+            return mev("parse-error", "pattern string could not be parsed");
 
         auto wildcard_sym = pat_pool->intern("...");
 
@@ -5015,7 +5087,7 @@ void Evaluator::init_pair_primitives() {
         }
 
         if (matches.empty())
-            return make_bool(false);
+            return mev("not-found", "pattern did not match any node in the AST");
 
         // Count wildcards in pattern
         std::function<int(NodeId)> count_wildcards;
@@ -5089,7 +5161,7 @@ void Evaluator::init_pair_primitives() {
         }
 
         if (replaced_count == 0)
-            return make_bool(false);
+            return mev("pattern-error", "no replacements were applied (capture mismatch or parse failure)");
 
         flat.add_mutation(0, "replace-pattern", pattern_str, repl_template, summary);
         return make_bool(true);
@@ -6731,17 +6803,26 @@ Evaluator::Evaluator() {
     //   Scope-level cached def-use chain. Builds index on first call,
     //   incrementally rebuilds dirty scopes on subsequent calls.
     primitives_.add("query:def-use", [this, ensure_defuse, nodes_to_list](const auto& a) -> EvalValue {
-        if (a.empty() || !is_string(a[0]) || !workspace_flat_ || !workspace_pool_)
-            return make_void();
+        auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
+            auto mi = string_heap_.size(); string_heap_.push_back(m);
+            auto ki = string_heap_.size(); string_heap_.push_back(k);
+            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
+            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
+            return kp;
+        };
+        if (a.empty() || !is_string(a[0]))
+            return merr("bad-arg", "usage: (query:def-use sym-name)");
+        if (!workspace_flat_ || !workspace_pool_)
+            return merr("no-workspace", "no workspace AST loaded");
         auto sym_idx = as_string_idx(a[0]);
         if (sym_idx >= string_heap_.size())
-            return make_void();
+            return merr("bad-arg", "symbol name string index out of range");
         auto target_name = string_heap_[sym_idx];
         auto target_sym = workspace_pool_->intern(target_name);
 
         auto idx = ensure_defuse();
         if (!idx)
-            return make_void();
+            return merr("internal", "failed to build def-use index");
 
         auto result = idx->query_def_use(target_sym);
         auto def_list = nodes_to_list(result.defs);
@@ -6756,12 +6837,21 @@ Evaluator::Evaluator() {
     //   → ((def-node-id ...) . (use-node-id ...))
     //   Cached implementation using def-use index.
     primitives_.add("query:reaches", [this, ensure_defuse, nodes_to_list](const auto& a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]) || !workspace_flat_ || !workspace_pool_)
-            return make_void();
+        auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
+            auto mi = string_heap_.size(); string_heap_.push_back(m);
+            auto ki = string_heap_.size(); string_heap_.push_back(k);
+            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
+            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
+            return kp;
+        };
+        if (a.empty() || !is_int(a[0]))
+            return merr("bad-arg", "usage: (query:reaches node-id)");
+        if (!workspace_flat_ || !workspace_pool_)
+            return merr("no-workspace", "no workspace AST loaded");
         auto target = static_cast<DefUseIndex::NodeId>(as_int(a[0]));
         auto& flat = *workspace_flat_;
         if (target >= flat.size())
-            return make_void();
+            return merr("out-of-range", "node ID " + std::to_string(target) + " >= flat size " + std::to_string(flat.size()));
 
         auto v = flat.get(target);
         DefUseIndex::SymId defined_sym = aura::ast::INVALID_SYM;
@@ -6772,14 +6862,14 @@ Evaluator::Evaluator() {
                 defined_sym = v.sym_id;
                 break;
             default:
-                return make_void();
+                return merr("type-error", "node " + std::to_string(target) + " is not a definition node");
         }
         if (defined_sym == aura::ast::INVALID_SYM)
-            return make_void();
+            return merr("internal", "definition node has invalid symbol id");
 
         auto idx = ensure_defuse();
         if (!idx)
-            return make_void();
+            return merr("internal", "failed to build def-use index");
 
         auto result = idx->query_def_use(defined_sym);
         auto def_list = nodes_to_list(result.defs);
@@ -6794,18 +6884,27 @@ Evaluator::Evaluator() {
     //   → ((def-node-id ...) . (use-node-id ...) . (caller-node-id ...))
     //   Cached defs + uses, linear scan for callers.
     primitives_.add("query:effects", [this, ensure_defuse, nodes_to_list](const auto& a) -> EvalValue {
-        if (a.empty() || !is_string(a[0]) || !workspace_flat_ || !workspace_pool_)
-            return make_void();
+        auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
+            auto mi = string_heap_.size(); string_heap_.push_back(m);
+            auto ki = string_heap_.size(); string_heap_.push_back(k);
+            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
+            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
+            return kp;
+        };
+        if (a.empty() || !is_string(a[0]))
+            return merr("bad-arg", "usage: (query:effects sym-name)");
+        if (!workspace_flat_ || !workspace_pool_)
+            return merr("no-workspace", "no workspace AST loaded");
         auto sym_idx = as_string_idx(a[0]);
         if (sym_idx >= string_heap_.size())
-            return make_void();
+            return merr("bad-arg", "symbol name string index out of range");
         auto target_name = string_heap_[sym_idx];
         auto target_sym = workspace_pool_->intern(target_name);
         auto& flat = *workspace_flat_;
 
         auto idx = ensure_defuse();
         if (!idx)
-            return make_void();
+            return merr("internal", "failed to build def-use index");
 
         auto duo = idx->query_def_use(target_sym);
         auto callers = idx->query_callers(target_sym, flat);
@@ -6824,9 +6923,16 @@ Evaluator::Evaluator() {
     //   → #t  Explicitly rebuild all def-use and call-graph indexes.
     //   Useful for benchmark consistency or after bulk mutations.
     primitives_.add("query:build-index", [this, ensure_defuse](const auto& a) -> EvalValue {
+        auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
+            auto mi = string_heap_.size(); string_heap_.push_back(m);
+            auto ki = string_heap_.size(); string_heap_.push_back(k);
+            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
+            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
+            return kp;
+        };
         auto idx = ensure_defuse();
         if (!idx)
-            return make_int(0);
+            return merr("internal", "failed to build def-use index");
         // Force full rebuild regardless of version
         idx->build(*workspace_flat_, *workspace_pool_);
         defuse_version_ = 1;
@@ -6839,9 +6945,16 @@ Evaluator::Evaluator() {
     //   → ((callers . N) (def-syms . N) (refs . N) (rebuilds . N) (scopes . N) (nodes . N))
     //   Statistics about the def-use and call-graph indexes.
     primitives_.add("query:index-stats", [this, ensure_defuse, nodes_to_list](const auto& a) -> EvalValue {
+        auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
+            auto mi = string_heap_.size(); string_heap_.push_back(m);
+            auto ki = string_heap_.size(); string_heap_.push_back(k);
+            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
+            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
+            return kp;
+        };
         auto idx = ensure_defuse();
         if (!idx)
-            return make_void();
+            return merr("internal", "failed to build def-use index");
         auto& flat = *workspace_flat_;
 
         // Build: ((k1 . v1) (k2 . v2) ...) as a proper Aura list.
@@ -7303,16 +7416,23 @@ Evaluator::Evaluator() {
     //   Parses and inserts multiple child expressions at the given position.
     //   code-strings can be multiple arguments (variadic).
     primitives_.add("mutate:splice", [this](const auto& a) -> EvalValue {
+        auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
+            auto mi = string_heap_.size(); string_heap_.push_back(m);
+            auto ki = string_heap_.size(); string_heap_.push_back(k);
+            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
+            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
+            return kp;
+        };
         defuse_version_++;
-        if (workspace_read_only_) return make_bool(false);
+        if (workspace_read_only_) return merr("read-only", "workspace is read-only");
         if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) ||
             !workspace_flat_ || !workspace_pool_)
-            return make_bool(false);
+            return merr("bad-arg", "usage: (mutate:splice parent-id position code-strings... [summary])");
         auto parent = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto pos = static_cast<std::uint32_t>(as_int(a[1]));
         auto& flat = *workspace_flat_;
         if (parent >= flat.size())
-            return make_bool(false);
+            return merr("out-of-range", "parent node ID " + std::to_string(parent) + " >= flat size " + std::to_string(flat.size()));
 
         // Collect all code strings (variadic) before the optional summary
         std::vector<EvalValue> code_args;
@@ -7333,7 +7453,7 @@ Evaluator::Evaluator() {
         }
 
         if (code_args.empty())
-            return make_bool(false);
+            return merr("bad-arg", "no code strings provided to splice");
 
         // Parse each code string and insert
         EvalValue result_list = make_void();
@@ -7386,18 +7506,25 @@ Evaluator::Evaluator() {
     //     (mutate:wrap 3 "(let ((x _)) x)" "bind x")
     //       → wraps in let binding
     primitives_.add("mutate:wrap", [this](const auto& a) -> EvalValue {
+        auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
+            auto mi = string_heap_.size(); string_heap_.push_back(m);
+            auto ki = string_heap_.size(); string_heap_.push_back(k);
+            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
+            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
+            return kp;
+        };
         defuse_version_++;
-        if (workspace_read_only_) return make_bool(false);
+        if (workspace_read_only_) return merr("read-only", "workspace is read-only");
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) ||
             !workspace_flat_ || !workspace_pool_)
-            return make_bool(false);
+            return merr("bad-arg", "usage: (mutate:wrap node-id wrapper-template [summary])");
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto tmpl_idx = as_string_idx(a[1]);
         if (tmpl_idx >= string_heap_.size())
-            return make_bool(false);
+            return merr("bad-arg", "template string index out of range");
         auto& flat = *workspace_flat_;
         if (node >= flat.size())
-            return make_bool(false);
+            return merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
 
         std::string summary = (a.size() > 2 && is_string(a[2]))
                                   ? string_heap_[as_string_idx(a[2])]
@@ -7421,20 +7548,32 @@ Evaluator::Evaluator() {
         }
 
         if (parent_of_target == aura::ast::NULL_NODE || child_idx_in_parent < 0)
-            return make_bool(false);
+            return merr("no-parent", "node " + std::to_string(node) + " has no parent in the AST");
 
         // Replace `_` in the template with a unique variable
         std::string sentinel = "__WRAP_TARGET_" + std::to_string(node) + "__";
         auto sentinel_pos = tmpl.find('_');
         if (sentinel_pos == std::string::npos)
-            return make_bool(false);
+            return merr("bad-arg", "wrapper-template must contain a '_' placeholder");
 
         auto parsed_tmpl = tmpl.substr(0, sentinel_pos) + sentinel + tmpl.substr(sentinel_pos + 1);
 
         // Parse the wrapper into workspace
         auto pr = aura::parser::parse_to_flat(parsed_tmpl, flat, *workspace_pool_);
-        if (!pr.success || pr.root == aura::ast::NULL_NODE)
-            return make_bool(false);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+            std::string parse_err;
+            if (!pr.errors.empty()) {
+                for (auto& e : pr.errors) {
+                    if (!parse_err.empty()) parse_err += "; ";
+                    parse_err += e.format();
+                }
+            } else if (!pr.error.empty()) {
+                parse_err = pr.error;
+            } else {
+                parse_err = "wrapper template could not be parsed";
+            }
+            return merr("parse-error", parse_err);
+        }
 
         // Find the sentinel variable and its parent in the parsed AST
         auto sentinel_sym = workspace_pool_->intern(sentinel);
@@ -7465,7 +7604,7 @@ Evaluator::Evaluator() {
         if (sentinel_id == aura::ast::NULL_NODE ||
             sentinel_parent == aura::ast::NULL_NODE ||
             sentinel_child_idx < 0)
-            return make_bool(false);
+            return merr("internal", "sentinel placeholder not found in parsed wrapper template");
 
         // Replace the sentinel variable in the wrapper with the target node
         flat.set_child(sentinel_parent, static_cast<std::uint32_t>(sentinel_child_idx), node);
@@ -7483,18 +7622,25 @@ Evaluator::Evaluator() {
     //   replacing the original node with a call to the new function.
     //   Free variables in the extracted expression become parameters.
     primitives_.add("mutate:refactor/extract", [this](const auto& a) -> EvalValue {
+        auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
+            auto mi = string_heap_.size(); string_heap_.push_back(m);
+            auto ki = string_heap_.size(); string_heap_.push_back(k);
+            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
+            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
+            return kp;
+        };
         defuse_version_++;
-        if (workspace_read_only_) return make_bool(false);
+        if (workspace_read_only_) return merr("read-only", "workspace is read-only");
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) ||
             !workspace_flat_ || !workspace_pool_)
-            return make_bool(false);
+            return merr("bad-arg", "usage: (mutate:refactor/extract node-id new-name [summary])");
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto name_idx = as_string_idx(a[1]);
         if (name_idx >= string_heap_.size())
-            return make_bool(false);
+            return merr("bad-arg", "name string index out of range");
         auto& flat = *workspace_flat_;
         if (node >= flat.size())
-            return make_bool(false);
+            return merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
 
         auto new_name = string_heap_[name_idx];
         std::string summary = (a.size() > 2 && is_string(a[2]))
@@ -7504,7 +7650,7 @@ Evaluator::Evaluator() {
         // Get the source code of the target node (for parsing)
         auto src_fn = primitives_.lookup("current-source");
         if (!src_fn)
-            return make_bool(false);
+            return merr("internal", "current-source primitive not found");
 
         // Build (define (new-name) <extracted-expr>)
         // First find the lambda params by analyzing free variables...
@@ -7546,7 +7692,7 @@ Evaluator::Evaluator() {
         }
 
         if (parent_of_target == aura::ast::NULL_NODE || child_idx_in_parent < 0)
-            return make_bool(false);
+            return merr("no-parent", "node " + std::to_string(node) + " has no parent in the AST");
 
         // Create the new function definition string
         std::string define_str = "(define (" + new_name + " x) x)";
@@ -7555,13 +7701,25 @@ Evaluator::Evaluator() {
 
         // Parse the define into workspace
         auto pr = aura::parser::parse_to_flat(define_str, flat, *workspace_pool_);
-        if (!pr.success || pr.root == aura::ast::NULL_NODE)
-            return make_bool(false);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+            std::string parse_err;
+            if (!pr.errors.empty()) {
+                for (auto& e : pr.errors) {
+                    if (!parse_err.empty()) parse_err += "; ";
+                    parse_err += e.format();
+                }
+            } else if (!pr.error.empty()) {
+                parse_err = pr.error;
+            } else {
+                parse_err = "extract function definition could not be parsed";
+            }
+            return merr("parse-error", parse_err);
+        }
 
         // The define's body (the lambda body "x") should be at pr.root's child 0's child 0
         auto define_v = flat.get(pr.root);
         if (define_v.tag != aura::ast::NodeTag::Define || define_v.children.empty())
-            return make_bool(false);
+            return merr("internal", "parsed define form has unexpected structure");
 
         // For simplicity, replace the define body's variable with the extracted node
         auto lambda_id = define_v.child(0);
@@ -7705,15 +7863,23 @@ Evaluator::Evaluator() {
     //   Uses def-use index for finding all references.
     primitives_.add("mutate:rename-symbol", [this, ensure_defuse](const auto& a) -> EvalValue {
         using namespace aura::ast;
+        auto merr = [&](const std::string& k, const std::string& m) -> EvalValue {
+            auto mi = string_heap_.size(); string_heap_.push_back(m);
+            auto ki = string_heap_.size(); string_heap_.push_back(k);
+            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
+            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
+            return kp;
+        };
         defuse_version_++;
-        if (workspace_read_only_) return make_bool(false);
+        if (workspace_read_only_)
+            return merr("read-only", "workspace is read-only");
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) ||
             !workspace_flat_ || !workspace_pool_)
-            return make_bool(false);
+            return merr("bad-arg", "usage: (mutate:rename-symbol old-name new-name)");
         auto old_name_idx = as_string_idx(a[0]);
         auto new_name_idx = as_string_idx(a[1]);
         if (old_name_idx >= string_heap_.size() || new_name_idx >= string_heap_.size())
-            return make_bool(false);
+            return merr("bad-arg", "string index out of range");
         auto& flat = *workspace_flat_;
         auto old_name = string_heap_[old_name_idx];
         auto new_name = string_heap_[new_name_idx];
@@ -7742,7 +7908,7 @@ Evaluator::Evaluator() {
         }
 
         if (count == 0)
-            return make_bool(false);
+            return merr("not-found", std::string("symbol \"") + old_name + "\" not found in AST");
 
         flat.add_mutation(0, "rename-symbol", old_name, new_name, summary);
         return make_bool(true);
@@ -7755,11 +7921,19 @@ Evaluator::Evaluator() {
     //   a new parent at the specified child index.
     primitives_.add("mutate:move-node", [this](const auto& a) -> EvalValue {
         using namespace aura::ast;
+        auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
+            auto mi = string_heap_.size(); string_heap_.push_back(m);
+            auto ki = string_heap_.size(); string_heap_.push_back(k);
+            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
+            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
+            return kp;
+        };
         defuse_version_++;
-        if (workspace_read_only_) return make_bool(false);
+        if (workspace_read_only_)
+            return merr("read-only", "workspace is read-only");
         if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) ||
             !workspace_flat_)
-            return make_bool(false);
+            return merr("bad-arg", "usage: (mutate:move-node node parent pos)");
         auto node = static_cast<NodeId>(as_int(a[0]));
         auto new_parent = static_cast<NodeId>(as_int(a[1]));
         auto new_pos = static_cast<std::uint32_t>(as_int(a[2]));
@@ -7767,30 +7941,27 @@ Evaluator::Evaluator() {
 
         if (node >= flat.size() || new_parent >= flat.size() ||
             node == NULL_NODE || new_parent == NULL_NODE)
-            return make_bool(false);
+            return merr("out-of-range", "node or parent ID out of range");
 
-        // Can't move to self or descendant
         if (node == new_parent)
-            return make_bool(false);
+            return merr("cycle", "cannot move node to itself");
 
         // Check if new_parent is a descendant of node (would create cycle)
         {
             auto p = flat.parent_of(new_parent);
             while (p != NULL_NODE) {
                 if (p == node)
-                    return make_bool(false); // would create cycle
+                    return merr("cycle", "new parent is a descendant of moved node");
                 auto next = flat.parent_of(p);
-                if (next == p) break; // root
+                if (next == p) break;
                 p = next;
             }
         }
 
-        // Find current parent
         auto cur_parent = flat.parent_of(node);
         if (cur_parent == NULL_NODE)
-            return make_bool(false);
+            return merr("no-parent", "node has no parent (possibly the root)");
 
-        // Find current child index
         int cur_idx = -1;
         auto cpv = flat.get(cur_parent);
         for (std::size_t ci = 0; ci < cpv.children.size(); ++ci) {
@@ -7800,7 +7971,7 @@ Evaluator::Evaluator() {
             }
         }
         if (cur_idx < 0)
-            return make_bool(false);
+            return merr("inconsistency", "node not found in parent's children list");
 
         std::string summary = (a.size() > 3 && is_string(a[3]))
                                   ? string_heap_[as_string_idx(a[3])]
@@ -7826,18 +7997,26 @@ Evaluator::Evaluator() {
     //   Replaces the original node with a call to the new function.
     primitives_.add("mutate:extract-function", [this, collect_free_vars](const auto& a) -> EvalValue {
         using namespace aura::ast;
+        auto merr = [&](const std::string& k, const std::string& m) -> EvalValue {
+            auto mi = string_heap_.size(); string_heap_.push_back(m);
+            auto ki = string_heap_.size(); string_heap_.push_back(k);
+            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
+            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
+            return kp;
+        };
         defuse_version_++;
-        if (workspace_read_only_) return make_bool(false);
+        if (workspace_read_only_)
+            return merr("read-only", "workspace is read-only");
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) ||
             !workspace_flat_ || !workspace_pool_)
-            return make_bool(false);
+            return merr("bad-arg", "usage: (mutate:extract-function node-id name)");
         auto node = static_cast<NodeId>(as_int(a[0]));
         auto name_idx = as_string_idx(a[1]);
         if (name_idx >= string_heap_.size())
-            return make_bool(false);
+            return merr("bad-arg", "name string index out of range");
         auto& flat = *workspace_flat_;
         if (node >= flat.size())
-            return make_bool(false);
+            return merr("out-of-range", std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
 
         auto new_name = string_heap_[name_idx];
         std::string summary = (a.size() > 2 && is_string(a[2]))
@@ -7847,7 +8026,7 @@ Evaluator::Evaluator() {
         // Find parent of target node using parent_ vector
         auto parent_of_target = flat.parent_of(node);
         if (parent_of_target == NULL_NODE)
-            return make_bool(false);
+            return merr("no-parent", "extracted node has no parent");
 
         // Find child index in parent
         int child_idx_in_parent = -1;
@@ -7859,7 +8038,7 @@ Evaluator::Evaluator() {
             }
         }
         if (child_idx_in_parent < 0)
-            return make_bool(false);
+            return merr("inconsistency", "node not found in parent's children list");
 
         // Collect free variables in the extracted subtree
         // Filter out common built-in symbols
@@ -7942,18 +8121,26 @@ Evaluator::Evaluator() {
         using aura::ast::NodeTag;
         using aura::ast::SymId;
         using aura::ast::NULL_NODE;
+        auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
+            auto mi = string_heap_.size(); string_heap_.push_back(m);
+            auto ki = string_heap_.size(); string_heap_.push_back(k);
+            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
+            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
+            return kp;
+        };
         defuse_version_++;
-        if (workspace_read_only_) return make_bool(false);
+        if (workspace_read_only_)
+            return merr("read-only", "workspace is read-only");
         if (a.empty() || !is_int(a[0]) || !workspace_flat_ || !workspace_pool_)
-            return make_bool(false);
+            return merr("bad-arg", "usage: (mutate:inline-call call-node-id)");
         auto call_id = static_cast<NodeId>(as_int(a[0]));
         auto& flat = *workspace_flat_;
         if (call_id >= flat.size())
-            return make_bool(false);
+            return merr("out-of-range", "call node ID out of range");
 
         auto cv = flat.get(call_id);
         if (cv.tag != NodeTag::Call || cv.children.empty())
-            return make_bool(false);
+            return merr("type-error", "node " + std::to_string(call_id) + " is not a call node");
 
         std::string summary = (a.size() > 1 && is_string(a[1]))
                                   ? string_heap_[as_string_idx(a[1])]
@@ -7979,30 +8166,30 @@ Evaluator::Evaluator() {
                 }
             }
             if (func_body_node == NULL_NODE)
-                return make_bool(false);
+                return merr("inline-error", "function definition not found for inlining");
             auto bn = flat.get(func_body_node);
             if (bn.tag == NodeTag::Lambda) {
                 formal_params.assign(bn.params.begin(), bn.params.end());
                 if (bn.children.empty())
-                    return make_bool(false);
+                    return merr("inline-error", "function body has no children to inline");
                 func_body_node = bn.child(0); // actual body expression
             } else {
                 // Not a lambda — can't inline
-                return make_bool(false);
+                return merr("inline-error", "inline-call failed");
             }
         } else if (fv.tag == NodeTag::Lambda) {
             // Inline lambda directly at call site
             formal_params.assign(fv.params.begin(), fv.params.end());
             if (fv.children.empty())
-                return make_bool(false);
+                return merr("inline-error", "function body has no children to inline");
             func_body_node = fv.child(0);
             is_closure_call = true;
         } else {
-            return make_bool(false);
+            return merr("inline-error", "inline-call failed");
         }
 
         if (func_body_node == NULL_NODE)
-            return make_bool(false);
+            return merr("inline-error", "function definition not found for inlining");
 
         // Get actual arguments (children after the function node)
         std::vector<NodeId> actual_args;
@@ -8011,12 +8198,12 @@ Evaluator::Evaluator() {
 
         // Parameter count must match
         if (formal_params.size() != actual_args.size())
-            return make_bool(false);
+            return merr("inline-error", "parameter count mismatch in inlining");
 
         // Find parent of the call node
         auto call_parent = flat.parent_of(call_id);
         if (call_parent == NULL_NODE)
-            return make_bool(false);
+            return merr("inline-error", "call node has no parent");
 
         // Find call index in its parent
         int call_idx_in_parent = -1;
@@ -8030,7 +8217,7 @@ Evaluator::Evaluator() {
             }
         }
         if (call_idx_in_parent < 0)
-            return make_bool(false);
+            return merr("inline-error", "call node not found in parent's children");
 
         // Simple inline: replace the call with the body, substituting
         // Variable nodes for params with the actual argument nodes.
@@ -8162,7 +8349,7 @@ Evaluator::Evaluator() {
         // Replace the call with the cloned body root
         auto cloned_body = old_to_new[func_body_node];
         if (cloned_body == aura::ast::NULL_NODE)
-            return make_bool(false);
+            return merr("inline-error", "function definition not found for inlining");
         flat.set_child(call_parent, static_cast<std::uint32_t>(call_idx_in_parent), cloned_body);
 
         flat.add_mutation(call_id, "inline-call", summary, summary, summary);
