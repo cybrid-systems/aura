@@ -14,6 +14,7 @@
 
 (export orch:define-role orch:step orch:pipeline orch:conduct
         orch:parallel agent:spawn agent:ask agent:list
+        agent:status agent:stop agent:restart
         orch:role orch:step* orch:if orch:retry)
 
 ;; ═══════════════════════════════════════════════════════════════
@@ -21,20 +22,83 @@
 ;; ═══════════════════════════════════════════════════════════════
 
 ; ── 全局 agent 注册表 ──
-; 格式: (("name" . handler-fn) ("name2" . handler-fn2) ...)
-; handler-fn: (lambda (input) → output)
+; 格式: (("name" handler status ts) ...)
+;   handler — 处理函数 (lambda (input) → output)
+;   status  — "running" | "stopped" | "error"
+;   ts      — 创建时间戳
 (define *agents* (quote ()))
 
 (define (agent-register name handler)
-  (set! *agents* (cons (cons name handler) *agents*))
+  (set! *agents* (cons (list name handler "running" (current-time)) *agents*))
   name)
 
 (define (agent-lookup name)
   (let loop ((agents *agents*))
     (cond ((null? agents) #f)
           ((string=? (car (car agents)) name)
-           (cdr (car agents)))
+           (car (cdr (car agents))))  ; handler
           (else (loop (cdr agents))))))
+
+(define (agent-get name key)
+  (let loop ((agents *agents*))
+    (cond ((null? agents) #f)
+          ((string=? (car (car agents)) name)
+           (cond ((string=? key "status") (car (cdr (cdr (car agents)))))
+                 ((string=? key "ts") (car (cdr (cdr (cdr (car agents))))))
+                 (else #f)))
+          (else (loop (cdr agents))))))
+
+(define (agent-set-status name new-status)
+  (define (update agents)
+    (if (null? agents) (quote ())
+      (if (string=? (car (car agents)) name)
+        (cons (list (car (car agents))
+                    (car (cdr (car agents)))
+                    new-status
+                    (car (cdr (cdr (cdr (car agents))))))
+              (update (cdr agents)))
+        (cons (car agents) (update (cdr agents))))))
+  (set! *agents* (update *agents*))
+  new-status)
+
+; ── agent:status — 查询乐手状态 ──
+;
+; (agent:status name) → "running" | "stopped" | "error" | #f
+(define (agent:status name)
+  (if (string? name)
+    (agent-get name "status")
+    #f))
+
+; ── agent:stop — 乐手休息 ──
+;
+; 标记 agent 为 stopped，不再接收新任务。
+; 返回: name（成功）或 #f
+(define (agent:stop name)
+  (if (and (string? name) (agent-lookup name))
+    (agent-set-status name "stopped")
+    #f))
+
+; ── agent:restart — 乐手重新加入 ──
+;
+; 重启一个已停止的 agent，或替换其 handler。
+; (agent:restart name [new-handler])
+; → name（成功）或 #f
+(define (agent:restart name . handler-arg)
+  (define existing (agent-lookup name))
+  (if (not existing)
+    (apply agent:spawn name handler-arg)  ; 不存在则创建
+    (begin
+      (when (pair? handler-arg)
+        ; 替换 handler
+        (define (update agents)
+          (if (null? agents) (quote ())
+            (if (string=? (car (car agents)) name)
+              (cons (list name (car handler-arg) "running" (current-time))
+                    (update (cdr agents)))
+              (cons (car agents) (update (cdr agents))))))
+        (set! *agents* (update *agents*)))
+      (agent-set-status name "running")
+      name)))
 
 ; ── agent:spawn — 聘用乐手 ──
 ;
@@ -157,8 +221,15 @@
   (define config
     (if (string? role) (orch:lookup-role role) role))
   
-  (if (not config) input
-    (let* ((action (if (pair? config) (car config) #f))
+  (if (not config)
+    ;; Fallback: check if role name matches a registered agent
+    (if (string? role)
+      (try (agent:ask role input) (catch (e) input))
+      input)
+    (let* ((action (cond
+                    ((procedure? config) config)        ; bare function
+                    ((pair? config) (car config))       ; (fn . strategy)
+                    (else #f)))
            (rest (if (pair? config) (cdr config) (quote ())))
            (strategy (cond
                        ((string? rest) rest)
@@ -263,35 +334,36 @@
 (define (orch:conduct steps input)
   (define (exec-step step)
     (cond
-      ; 条件
-      ((and (pair? step) (eq? (car step) (quote if)))
+      ; 角色字符串 — 必须先检查（防止 and 原语求值 car 导致类型错误）
+      ((string? step) (orch:step step input))
+      
+      ; 直接过程
+      ((procedure? step) (try (step input) (catch (e) input)))
+      
+      ; 条件: (if pred then else)
+      ((and (pair? step) (> (length step) 2) (eq? (car step) (quote if)))
        (let ((pred (car (cdr step)))
              (then-step (car (cdr (cdr step))))
-             (else-step (car (cdr (cdr (cdr step))))))
+             (else-step (try (car (cdr (cdr (cdr step)))) (catch (e) #f))))
          (define pred-val (if (procedure? pred) (pred input) pred))
          (if pred-val
            (exec-step then-step)
            (if else-step (exec-step else-step) input))))
       
-      ; 重试
-      ((and (pair? step) (eq? (car step) 'retry))
+      ; 重试: (retry step n)
+      ((and (pair? step) (eq? (car step) (quote retry)))
        (let ((inner (car (cdr step)))
-             (n (if (pair? (cdr (cdr step))) (car (cdr (cdr step))) 3)))
+             (n (if (> (length step) 2) (car (cdr (cdr step))) 3)))
          (let try ((attempt 1))
            (define result (try (exec-step inner) (catch (e) #f)))
            (if (or (not (pair? result)) (>= attempt n))
              result
              (try (+ attempt 1))))))
       
-      ; 角色字符串
-      ((string? step) (orch:step step input))
-      
-      ; 配置对
+      ; 配置对: (action . strategy)
       ((pair? step) (orch:step step input))
       
-      ; 直接过程
-      ((procedure? step) (try (step input) (catch (e) input)))
-      
+      ; 未知
       (else input)))
   
   (if (null? steps) input
