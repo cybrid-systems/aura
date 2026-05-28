@@ -2,24 +2,96 @@
 
 **AI-native Lisp — 代码自己进化。**
 
-Aura 让 AI Agent 拥有在运行时**精确读写和修改自身代码**的能力。  
+Aura 让 AI Agent 拥有在运行时**精确读写和修改自身代码**的能力。
 不是"让 LLM 输出文本然后粘贴"——而是把代码变成一块可查询、可变异、可版本化的活体 AST。
 
-## 快速开始
+---
+
+## 构建
+
+### 环境要求
+
+Aura 使用 **C++26 modules**（`ixx` 文件）和 CMake 4.3+，对工具链和 CMake 版本要求较高。
+推荐在 **[cybrid-systems/dev](https://github.com/cybrid-systems/dev)** Docker 开发环境中构建，该环境提供了完整的构建依赖。
+
+| 依赖 | 版本 | 提供方 |
+|------|------|--------|
+| CMake | ≥ 4.3 (推荐 4.3.2) | dev 环境预装 |
+| Ninja | ≥ 1.12 | dev 环境预装 |
+| GCC | ≥ 16 | dev 环境预装 |
+| LLVM | ≥ 22 (ORC JIT, 可选) | dev 环境预装 |
+| Python | ≥ 3.11 | dev 环境预装 |
+
+> **为什么需要 cybrid-systems/dev？** Aura 重度依赖 C++26 模块支持，目前只有 **GCC 16** 和 **Clang 22+**（借助 clang-scan-deps）能完整编译。`dev` 镜像提供了 Ubuntu 26.04 + GCC 16 + LLVM 22.1.6 的黄金组合，跨 arm64/x64 一致可重现。
+
+### 使用 Docker 环境构建
 
 ```bash
+# 1. 启动 dev 容器（挂载 aura 源码）
+docker run -d -it --name aura-dev \
+  --cap-add=SYS_PTRACE \
+  -e USER_UID=$(id -u) \
+  -e USER_GID=$(id -g) \
+  -v $(pwd):/home/dev/code/aura \
+  -w /home/dev/code/aura \
+  ghcr.io/cybrid-systems/dev:latest
+
+# 2. 进入容器
+docker exec -it -u dev aura-dev /bin/zsh -l
+
+# 3. 构建
+python3 build.py build
+
+# 4. 验证
+echo '(+ 1 2)' | ./build/aura              # → 3
+```
+
+### 在 dev 容器外手动构建
+
+如果要在非 dev 环境中构建，需要确保以下工具链可用：
+
+```bash
+# 安装系统级依赖（Ubuntu 26.04 示例）
+sudo apt-get install -y \
+  build-essential cmake ninja-build \
+  gcc-16 g++-16 \
+  python3 python3-pip
+
+# 可选：安装 LLVM 22 启用 JIT
+# 参见 dev 仓库的 install-llvm.sh 脚本
+
+# 确保 CMake ≥ 4.3（Ubuntu 26.04 仓库可能不够新，需要源码安装）
+wget -q https://github.com/Kitware/CMake/releases/download/v4.3.2/cmake-4.3.2.tar.gz
+tar -zxf cmake-4.3.2.tar.gz && cd cmake-4.3.2
+./bootstrap --parallel=$(nproc) --prefix=/usr/local && make -j$(nproc) && sudo make install
+
+# 选型：指定 GCC 16（系统默认可能是其他版本）
+export CC=gcc-16
+export CXX=g++-16
+
 # 构建
+python3 build.py build
+```
+
+### 常用构建命令
+
+```bash
+# 构建可执行文件
 python3 build.py build
 
 # 管道模式（一行代码）
 echo '(+ 1 2)' | ./build/aura              # → 3
 
 # 交互式 REPL
-./build/aura                                # 输入 (+ 1 2) 回车
+./build/aura
 
 # 运行测试
 python3 build.py test core                  # 核心管线：单元 + 集成 + 类型 + 套件
-python3 build.py check                      # 全量 CI（核心 + 安全回归 + fuzz）
+python3 build.py test all                   # 全部测试
+python3 build.py check                      # 全量 CI（构建 + 核心 + 安全回归 + fuzz）
+
+# 清理
+python3 build.py clean
 ```
 
 ---
