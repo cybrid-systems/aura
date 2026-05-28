@@ -12326,19 +12326,8 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                     return types::make_module(cache_it->second);
                                 }
 
-                                // 获取参数名
-                                std::vector<std::string> param_names;
-                                for (aura::ast::NodeId sid = 0; sid < f->size(); ++sid) {
-                                    auto sv = f->get(sid);
-                                    if (sv.tag == aura::ast::NodeTag::DefineModule &&
-                                        sv.sym_id != aura::ast::INVALID_SYM &&
-                                        sv.sym_id < p->data_size() &&
-                                        std::string(p->resolve(sv.sym_id)) == tpl_name) {
-                                        for (auto pid : sv.params)
-                                            param_names.push_back(std::string(p->resolve(pid)));
-                                        break;
-                                    }
-                                }
+                                // 使用 ModuleTemplate 中缓存的参数名（避免跨 FlatAST 扫描）
+                                auto& param_names = tpl_it->second.type_param_names;
 
                                 // 创建隔离环境
                                 Env mod_env(&eval_env);
@@ -12418,16 +12407,24 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 EvalResult last = make_void();
                                 auto& body_src = tpl_it->second.body_source;
                                 if (!body_src.empty()) {
+                                    // Parse body as a begin block so all expressions become children
+                                    std::string wrapped = "(begin " + body_src + ")";
                                     aura::ast::ASTArena body_arena;
                                     auto body_alloc = body_arena.allocator();
                                     aura::ast::StringPool body_pool(body_alloc);
                                     aura::ast::FlatAST body_flat(body_alloc);
-                                    auto body_pr = aura::parser::parse_to_flat(body_src, body_flat, body_pool);
+                                    auto body_pr = aura::parser::parse_to_flat(wrapped, body_flat, body_pool);
                                     if (body_pr.success && body_pr.root != aura::ast::NULL_NODE) {
                                         body_flat.root = body_pr.root;
-                                        // Evaluate each top-level expression in the body
-                                        for (auto nid : body_flat.get(body_flat.root).children) {
-                                            auto br = eval_flat(body_flat, body_pool, nid, mod_env);
+                                        auto body_v = body_flat.get(body_flat.root);
+                                        if (body_v.tag == aura::ast::NodeTag::Begin) {
+                                            for (auto nid : body_v.children) {
+                                                auto br = eval_flat(body_flat, body_pool, nid, mod_env);
+                                                if (!br) return br;
+                                                last = *br;
+                                            }
+                                        } else {
+                                            auto br = eval_flat(body_flat, body_pool, body_flat.root, mod_env);
                                             if (!br) return br;
                                             last = *br;
                                         }
@@ -12437,14 +12434,18 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 // Extract export names from the body source
                                 std::vector<std::string> export_names;
                                 {
+                                    std::string scan_wrapped = "(begin " + body_src + ")";
                                     aura::ast::ASTArena scan_arena;
                                     auto scan_alloc = scan_arena.allocator();
                                     aura::ast::StringPool scan_pool(scan_alloc);
                                     aura::ast::FlatAST scan_flat(scan_alloc);
-                                    auto scan_pr = aura::parser::parse_to_flat(body_src, scan_flat, scan_pool);
+                                    auto scan_pr = aura::parser::parse_to_flat(scan_wrapped, scan_flat, scan_pool);
                                     if (scan_pr.success && scan_pr.root != aura::ast::NULL_NODE) {
                                         scan_flat.root = scan_pr.root;
-                                        for (auto nid : scan_flat.get(scan_flat.root).children) {
+                                        auto scan_v = scan_flat.get(scan_flat.root);
+                                        auto scan_children = (scan_v.tag == aura::ast::NodeTag::Begin)
+                                            ? scan_v.children : std::span<const aura::ast::NodeId>(&scan_flat.root, 1);
+                                        for (auto nid : scan_children) {
                                             auto nv = scan_flat.get(nid);
                                             if (nv.tag == aura::ast::NodeTag::Export) {
                                                 for (auto eid : nv.children) {
@@ -12463,11 +12464,12 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                     aura::compiler::TypeChecker functor_tc(tc_reg);
                                     aura::diag::DiagnosticCollector tc_diag;
 
+                                    std::string tc_wrapped = "(begin " + body_src + ")";
                                     aura::ast::ASTArena tc_arena;
                                     auto tc_alloc = tc_arena.allocator();
                                     aura::ast::StringPool tc_pool(tc_alloc);
                                     aura::ast::FlatAST tc_flat(tc_alloc);
-                                    auto tc_pr = aura::parser::parse_to_flat(body_src, tc_flat, tc_pool);
+                                    auto tc_pr = aura::parser::parse_to_flat(tc_wrapped, tc_flat, tc_pool);
                                     aura::ast::NodeId tc_root = tc_pr.root;
                                     if (tc_pr.success && tc_root != aura::ast::NULL_NODE) {
                                         tc_flat.root = tc_root;
@@ -12921,9 +12923,16 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     auto mod_name = std::string(p->resolve(v.sym_id));
                     ModuleTemplate mt;
 
-                    // Extract capability parameter names from AST params metadata
+                    // Extract type parameter names from AST params metadata
+                    // (type params = all params minus cap params)
                     auto num_cap_params = f->cap_require_count(v.id);
-                    if (num_cap_params > 0 && v.params.size() >= num_cap_params) {
+                    std::size_t num_type_params = (num_cap_params > 0 && v.params.size() >= num_cap_params)
+                        ? v.params.size() - num_cap_params : v.params.size();
+                    for (std::size_t i = 0; i < num_type_params; ++i) {
+                        auto pid = f->param_at(v.id, i);
+                        mt.type_param_names.push_back(std::string(p->resolve(pid)));
+                    }
+                    if (num_cap_params > 0) {
                         // cap params are at the end of the param list
                         for (std::size_t i = 0; i < num_cap_params; ++i) {
                             auto pid = f->param_at(v.id, v.params.size() - num_cap_params + i);

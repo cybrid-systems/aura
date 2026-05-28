@@ -275,6 +275,7 @@ private:
     // ── Functor 泛型模块模板 ────────────────────────────────────
     struct ModuleTemplate {
         std::string body_source;                       // body source code (re-parsed at instantiation)
+        std::vector<std::string> type_param_names;     // type parameter names (e.g., ["T", "K"])
         std::vector<std::string> cap_param_names;      // capability parameter names (e.g., ["cap"])
         std::vector<std::string> cap_require;           // required capabilities (e.g., ["FileRead", "FileWrite"])
     };

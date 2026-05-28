@@ -361,6 +361,8 @@ public:
                 return true;
             if (nv.tag == aura::ast::NodeTag::DefineType)
                 return true;
+            if (nv.tag == aura::ast::NodeTag::DefineModule)
+                return true;
 
             // Dotted rest lambda cannot be lowered to IR (rest param is
             // lowered as single Arg slot, not as pair list)
