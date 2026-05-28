@@ -1,0 +1,25 @@
+(require "std/test" all:)
+(require "std/ast-viz" all:)
+
+(test-suite "ast-viz:dot"
+  (set-code "(define (f x) (+ x 1))")
+  (define dot (ast:to-dot))
+  (check (string? dot)))
+
+(test-suite "ast-viz:dot-after-mutation"
+  (set-code "(define (add x y) (+ x y))")
+  (mutate:rebind "add" "(lambda (a b) (* a b))" "mul")
+  (define dot (ast:to-dot))
+  (check (string-contains? dot "*")))
+
+(test-suite "ast-viz:mutation-trace"
+  (set-code "(define (f x) (+ x 1))")
+  (mutate:rename-symbol "f" "g" "rename")
+  (display (mutation:trace))
+  (check (pair? (mutation-history 0))))
+
+(test-suite "ast-viz:dot-node"
+  (set-code "(define (f x) (+ x 1))")
+  (define root (query:root))
+  (define dot-node (ast:to-dot-node root))
+  (check (string? dot-node)))
