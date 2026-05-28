@@ -6070,6 +6070,19 @@ Evaluator::Evaluator() {
         tc.infer_flat(flat, pool, flat.root, diag);
 
         // 扫描所有 Define 节点，收集名称
+        // 如果模块有 (export ...) 声明，只输出 export 的函数
+        std::unordered_set<std::string> export_set;
+        for (aura::ast::NodeId nid = 0; nid < flat.size(); ++nid) {
+            auto nv = flat.get(nid);
+            if (nv.tag == aura::ast::NodeTag::Export) {
+                for (auto cid : nv.children) {
+                    auto cv = flat.get(cid);
+                    if (cv.tag == aura::ast::NodeTag::Variable)
+                        export_set.insert(std::string(pool.resolve(cv.sym_id)));
+                }
+            }
+        }
+
         std::vector<std::string> fn_names;
         std::unordered_map<std::string, aura::ast::NodeId> define_map;
         for (aura::ast::NodeId nid = 0; nid < flat.size(); ++nid) {
@@ -6077,7 +6090,8 @@ Evaluator::Evaluator() {
             if (nv.tag == aura::ast::NodeTag::Define) {
                 auto name = std::string(pool.resolve(nv.sym_id));
                 define_map[name] = nid;
-                fn_names.push_back(name);
+                if (export_set.empty() || export_set.count(name))
+                    fn_names.push_back(name);
             }
         }
 
