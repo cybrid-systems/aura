@@ -569,6 +569,12 @@ INTEG_TESTS = [
     IntegCase("ir_annot_let", "(let ((x 10)) (: y Int x))", "ir", expected="10"),
     IntegCase("ir_dyn_coerce", "(: x Int 42)", "eval", expected="42"),
     IntegCase("ir_gg_annot", "(: x Int 42)", "typecheck", expected="Int"),
+    IntegCase("lambda_annot_basic", "((lambda ((: x Int)) (+ x 1)) 41)", "eval", expected="42"),
+    IntegCase("lambda_annot_string", '((lambda ((: x String)) (string-append x "!")) "hi")', "eval", expected='hi!'),
+    IntegCase("lambda_annot_multi", "((lambda ((: x Int) (: y Int)) (+ x y)) 3 4)", "eval", expected="7"),
+    IntegCase("lambda_annot_mixed", "((lambda ((: x Int) y) (+ x y)) 3 4)", "eval", expected="7"),
+    IntegCase("define_annot_shorthand", "(define (f (: x Int)) (+ x 1))(display (f 41))", "eval", expected="42"),
+    IntegCase("define_annot_2param", "(define (add (: x Int) (: y Int)) (+ x y))(display (add 3 4))", "eval", expected="7"),
     # ── Apply / variadic ──────────────────────────────────────
     IntegCase("apply_add", "(apply + (list 1 2 3))", "eval", expected="6"),
     IntegCase(
