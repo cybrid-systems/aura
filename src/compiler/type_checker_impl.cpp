@@ -1707,18 +1707,19 @@ TypeId InferenceEngine::synthesize_flat_lambda(FlatAST& flat, StringPool& pool, 
             auto annot_id = v.param_annotations[pi];
             auto annot_v = flat.get(annot_id);
             if (annot_v.tag == NodeTag::TypeAnnotation) {
-                // TypeAnnotation: sym_id = type name, child(0) = variable
+                // TypeAnnotation: sym_id = type name (simple) OR child(1) = type expr (compound)
+                // Simple type: (: x Int) — type_name = "Int"
+                // Compound type: (: s (List :T)) — type_expr_id = child(1)
                 auto type_name = pool.resolve(annot_v.sym_id);
                 if (!type_name.empty()) {
-                    // Try type registry first (Int, Bool, String, Float)
+                    // Simple type name: try registry then env
                     param_type = reg_.lookup_type(std::string(type_name));
                     if (!param_type.valid()) {
-                        // Try env lookup (for functor type params like T)
                         auto env_ty = env_.lookup(std::string(type_name));
                         if (env_ty.valid())
                             param_type = env_ty;
                     }
-                }
+                } // compound type annotations (List :T) fall through to fresh_var
             }
         }
         if (!param_type.valid())

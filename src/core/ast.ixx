@@ -654,6 +654,7 @@ private:
         link_children(id);
         return id;
     }
+
     bool has_var_annot(NodeId id) const {
         return id < size() && int_val_[id] != 0;
     }
