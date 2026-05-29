@@ -69,7 +69,18 @@ Three-tier architecture: **lowering CastOp → type checker → blame tracking**
 
 ;; Variable type annotation (no-op at runtime)
 (: x Int)                  ; Declares x has type Int (for type checker)
+(: x Int 42)               ; 3-arg form: bind x:Int with value 42
 (: f (-> Int String))      ; Function type annotation
+
+;; Lambda parameter type annotation
+((lambda ((: x Int)) (+ x 1)) 41)  ; Lambda with typed param → 42
+(define (f (: x Int)) (+ x 1))     ; Define shorthand with typed param
+(define (add (: a Int) (: b Int)) (+ a b)) ; Multiple typed params
+
+;; Functor with type-annotated params
+(define-module (Box :T) (export wrap)
+  (define (wrap (: x :T)) x))
+(Box Int)                          ; Instantiate: :T → Int
 
 ;; Runtime type predicates for occurrence typing
 (string? x)                ; → #t if x is a string
