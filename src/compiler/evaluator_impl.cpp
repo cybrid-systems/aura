@@ -10848,6 +10848,39 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
         }
     }
 
+    // 10d. 为没有 .aura-type 签名的导出函数注册 Any 级签名
+    // 这样 typecheck-current 至少知道这些函数存在，不会报 unbound variable。
+    // 如果有 .aura-type 签名，优先使用（已在 10c 中注册）。
+    for (auto& [fname, fval] : mod_env->bindings()) {
+        if (declared_type_sigs_.find(fname) != declared_type_sigs_.end())
+            continue; // 已有 .aura-type 签名
+        // Module bindings are stored as cells (define creates mutable cells).
+        // Unwrap cell to get the actual closure value.
+        types::EvalValue actual = fval;
+        if (types::is_cell(actual)) {
+            auto cid = types::as_cell_id(actual);
+            if (cid < cells_.size())
+                actual = cells_[cid];
+        }
+        if (types::is_closure(actual)) {
+            auto cid = types::as_closure_id(actual);
+            std::string param_str;
+            auto cit = closures_.find(cid);
+            if (cit != closures_.end() && !cit->second.params.empty()) {
+                for (std::size_t pi = 0; pi < cit->second.params.size(); ++pi) {
+                    if (pi > 0) param_str += " ";
+                    param_str += "Any";
+                }
+                param_str += " ";
+            }
+            declared_type_sigs_[fname] = {
+                .type_str = param_str + "|Any",
+                .module_file = resolved,
+                .resolved = false
+            };
+        }
+    }
+
     loading_stack_.erase(resolved);
     return types::make_module(mod_idx);
 }
