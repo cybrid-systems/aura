@@ -4,6 +4,7 @@
 
 #include "fiber.h"
 #include "worker.h"
+#include "metrics.h"
 #include <ucontext.h>
 #include <deque>
 #include <unordered_map>
@@ -71,12 +72,24 @@ public:
     WorkerThread* worker(int idx);
     int next_worker_id();  // round-robin assignment
 
+    // ── Phase 4: load-aware worker selection ─────────
+    // Picks the worker with the smallest local queue.
+    // Falls back to round-robin when queue sizes are unavailable.
+    int next_worker_id_load_aware();
+
     // ── Stdin fiber ─────────────────────────────────
     void set_stdin_fiber(Fiber* f) { stdin_fiber_ = f; }
     Fiber* stdin_fiber() const { return stdin_fiber_; }
 
     // ── Accessors ───────────────────────────────────
     int epoll_fd() const { return epoll_fd_; }
+
+    // ── Metrics access ──────────────────────────────
+    metrics::GlobalMetrics& metrics() { return metrics_; }
+    const metrics::GlobalMetrics& metrics() const { return metrics_; }
+    std::string metrics_json() const { return metrics_.to_json(); }
+    void enable_metrics(bool on = true) { metrics_on_ = on; }
+    bool metrics_enabled() const { return metrics_on_; }
 
 private:
     int num_workers_;
@@ -96,6 +109,14 @@ private:
 
     // Runtime flag
     std::atomic<bool> running_{true};
+
+    // ── Config ───────────────────────────────────────
+    // Use load-aware distribution instead of round-robin
+    bool use_load_aware_distribution_ = true;
+
+    // Metrics collection
+    metrics::GlobalMetrics metrics_;
+    std::atomic<bool> metrics_on_{true};
 };
 
 } // namespace aura::serve

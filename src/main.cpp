@@ -4,6 +4,7 @@
 #include <signal.h>
 #include <stdlib.h>
 #include "serve/serve_async.h"
+#include "serve/scheduler.h"
 
 import std;
 import aura.core;
@@ -244,6 +245,42 @@ int main(int argc, char* argv[]) {
     // Same JSON-line protocol as --serve, but with non-blocking I/O.
     if (argc > 1 && std::string_view(argv[1]) == "--serve-async") {
         aura::serve::run_serve_async(num_workers);
+        return 0;
+    }
+
+    // ── --concurrent-metrics: run concurrency benchmark and dump metrics ─
+    // Spawns fibers under various load patterns and prints scheduler metrics.
+    // Usage: ./build/aura --concurrent-metrics [--worker-threads=N]
+    if (argc > 1 && std::string_view(argv[1]) == "--concurrent-metrics") {
+        aura::serve::Scheduler sched(num_workers);
+        constexpr int N = 200;
+        std::atomic<int> completed{0};
+
+        // Pattern 1: burst of CPU-bound fibers
+        for (int i = 0; i < N; ++i) {
+            sched.spawn([&completed]() {
+                volatile int sum = 0;
+                for (int j = 0; j < 50000; ++j) sum += j;
+                completed.fetch_add(1);
+            });
+        }
+
+        // Pattern 2: fibers that yield (simulate IO-bound)
+        for (int i = 0; i < N; ++i) {
+            sched.spawn([&completed]() {
+                for (int k = 0; k < 3; ++k) {
+                    volatile int sum = 0;
+                    for (int j = 0; j < 10000; ++j) sum += j;
+                    aura::serve::Fiber::yield();
+                }
+                completed.fetch_add(1);
+            });
+        }
+
+        sched.run();
+
+        std::println("Completed: {}/{}", completed.load(), N * 2);
+        sched.metrics().dump();
         return 0;
     }
 
