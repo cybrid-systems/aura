@@ -131,16 +131,16 @@ void WorkerThread::run() {
             }
 
             auto fb_state = fiber->state();
-            if (fb_state == FiberState::Ready) {
-                // Non-blocking yield — re-enqueue immediately
+            if (fb_state == FiberState::Waiting) {
+                // Yielded with Waiting — fiber is on epoll, leave off queue
+                pending_.fetch_sub(1, std::memory_order_release);
+            } else {
+                // Non-Waiting yield (Ready, Running, or anything else):
+                // fiber yielded back to us, keep scheduling it
                 std::lock_guard<std::mutex> lock(queue_mutex_);
                 local_queue_.push_back(fiber);
                 // pending_ unchanged
-            } else if (fb_state == FiberState::Waiting) {
-                // Yielded for event — leave off queue, epoll will wake
-                pending_.fetch_sub(1, std::memory_order_release);
             }
-            // Done handled above; Running is transient
         }
 
         // ── Phase 2: check if any fibers remain pending ──
