@@ -312,6 +312,17 @@ private:
     // ── Capability 上下文栈 ─────────────────────────────────────
     // 每层包含当前作用域允许的 effect 名称列表
     std::vector<std::vector<std::string>> capability_stack_;
+
+    // ── Concurrent Channels (fiber-safe message passing) ─────
+    struct Channel {
+        std::mutex mtx;
+        std::condition_variable cv;
+        std::deque<std::string> queue;
+        std::size_t buffer_size = 0; // 0 = rendezvous (unbuffered)
+        bool closed = false;
+    };
+    std::vector<std::shared_ptr<Channel>> channels_;
+    std::mutex channels_mtx_;
 };
 
 

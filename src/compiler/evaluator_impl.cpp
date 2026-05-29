@@ -9212,6 +9212,111 @@ Evaluator::Evaluator() {
         return make_void();
     });
 
+    // ═══════════════════════════════════════════════════════════════
+    // Concurrent Channel Primitives
+    // ═══════════════════════════════════════════════════════════════
+
+    // (channel:create [buffer-size]) — Create a new channel
+    // Returns channel-id (fixnum) or error.
+    // buffer-size defaults to 0 (rendezvous/synchronous).
+    primitives_.add("channel:create", [this](const auto& a) -> EvalValue {
+        std::size_t buf = 0;
+        if (!a.empty() && is_int(a[0])) {
+            auto v = as_int(a[0]);
+            if (v < 0) return make_bool(false);
+            buf = static_cast<std::size_t>(v);
+        }
+        auto ch = std::make_shared<Evaluator::Channel>();
+        ch->buffer_size = buf;
+        std::lock_guard lk(channels_mtx_);
+        auto id = channels_.size();
+        channels_.push_back(ch);
+        return make_int(static_cast<std::int64_t>(id));
+    });
+
+    // (channel:send channel-id msg) — Send a message to a channel
+    // Returns #t on success, #f if channel does not exist.
+    // Blocks if buffer full (buffered) or waiting for recv (rendezvous).
+    primitives_.add("channel:send", [this](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]))
+            return make_bool(false);
+        auto ch_id = static_cast<std::size_t>(as_int(a[0]));
+        auto& msg = string_heap_[as_string_idx(a[1])];
+        std::lock_guard lk(channels_mtx_);
+        if (ch_id >= channels_.size() || !channels_[ch_id])
+            return make_bool(false);
+        auto& ch = *channels_[ch_id];
+        std::unique_lock ul(ch.mtx);
+        ch.cv.wait(ul, [&]() {
+            return ch.closed || ch.buffer_size == 0 || ch.queue.size() < ch.buffer_size;
+        });
+        if (ch.closed) return make_bool(false);
+        ch.queue.push_back(msg);
+        ul.unlock();
+        ch.cv.notify_one();
+        return make_bool(true);
+    });
+
+    // (channel:recv channel-id) — Receive a message from a channel
+    // Returns the message string, or empty string if channel closed.
+    // Blocks until a message is available.
+    primitives_.add("channel:recv", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_string(0);
+        auto ch_id = static_cast<std::size_t>(as_int(a[0]));
+        std::lock_guard lk(channels_mtx_);
+        if (ch_id >= channels_.size() || !channels_[ch_id])
+            return make_string(0);
+        auto& ch = *channels_[ch_id];
+        std::unique_lock ul(ch.mtx);
+        ch.cv.wait(ul, [&]() { return ch.closed || !ch.queue.empty(); });
+        if (ch.queue.empty()) return make_string(0);
+        auto msg = ch.queue.front();
+        ch.queue.pop_front();
+        ul.unlock();
+        ch.cv.notify_one();
+        auto idx = string_heap_.size();
+        string_heap_.push_back(msg);
+        return make_string(static_cast<std::uint64_t>(idx));
+    });
+
+    // (channel:try-recv channel-id) — Non-blocking receive
+    // Returns message string if available, or empty string if no message.
+    primitives_.add("channel:try-recv", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_string(0);
+        auto ch_id = static_cast<std::size_t>(as_int(a[0]));
+        std::lock_guard lk(channels_mtx_);
+        if (ch_id >= channels_.size() || !channels_[ch_id])
+            return make_string(0);
+        auto& ch = *channels_[ch_id];
+        std::lock_guard ul(ch.mtx);
+        if (ch.queue.empty()) return make_string(0);
+        auto msg = ch.queue.front();
+        ch.queue.pop_front();
+        auto idx = string_heap_.size();
+        string_heap_.push_back(msg);
+        return make_string(static_cast<std::uint64_t>(idx));
+    });
+
+    // (channel:close channel-id) — Close a channel
+    // Wakes all waiters; subsequent recv returns empty string.
+    primitives_.add("channel:close", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_bool(false);
+        auto ch_id = static_cast<std::size_t>(as_int(a[0]));
+        std::lock_guard lk(channels_mtx_);
+        if (ch_id >= channels_.size() || !channels_[ch_id])
+            return make_bool(false);
+        auto& ch = *channels_[ch_id];
+        {
+            std::lock_guard ul(ch.mtx);
+            ch.closed = true;
+        }
+        ch.cv.notify_all();
+        return make_bool(true);
+    });
+
     // (_agent:list) — List all active agent sessions (internal primitive)
     // Called by the Aura-level agent:list wrapper.
     primitives_.add("_agent:list", [this](const auto&) -> EvalValue {
