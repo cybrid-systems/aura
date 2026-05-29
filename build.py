@@ -250,6 +250,24 @@ INTEG_TESTS = [
         '(mutate:rebind "add" "(lambda (a b) (* a b))" "test")(typecheck-current)(display 42)',
         "eval", expected="42", expected_status=0
     ),
+    IntegCase(
+        "incr_replace_type",
+        '(set-code "(define x 42)")(typecheck-current)'
+        '(mutate:replace-type 2 "String")(typecheck-current)(display 42)',
+        "eval", expected="42", expected_status=0
+    ),
+    IntegCase(
+        "incr_tweak_literal",
+        '(set-code "(define x 10)")(typecheck-current)'
+        '(mutate:tweak-literal 2 5)(typecheck-current)(display 42)',
+        "eval", expected="42", expected_status=0
+    ),
+    IntegCase(
+        "incr_insert_child",
+        '(set-code "(define (f) 1)")(typecheck-current)'
+        '(mutate:insert-child 2 1 "42")(typecheck-current)(display 42)',
+        "eval", expected="42", expected_status=0
+    ),
     # ── TypeAnnotation coercion boundary (P0) ─────────────────
     IntegCase("tc_annot_int", "(: x Int 42)", "typecheck", expected="Int"),
     IntegCase("coerce_annot_erasure", "(: x Int 42)", "eval", expected="42"),
