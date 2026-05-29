@@ -44,9 +44,35 @@ struct LoweringState {
     // Optional type registry for call-site coercion (P0 call boundary)
     const aura::core::TypeRegistry* type_reg = nullptr;
 
+    // RAII scope guard: saves/restores current_source_id.
+    // Place at the top of lower_flat_expr so child processing
+    // doesn't overwrite the parent's source node for the result emit.
+    struct SourceScope {
+        LoweringState& state;
+        ast::NodeId saved;
+        SourceScope(LoweringState& s, ast::NodeId id)
+            : state(s), saved(s.current_source_id) {
+            state.current_source_id = id;
+        }
+        ~SourceScope() { state.current_source_id = saved; }
+        SourceScope(const SourceScope&) = delete;
+        SourceScope& operator=(const SourceScope&) = delete;
+    };
+
     explicit LoweringState(ast::ASTArena& a)
         : arena(a) {}
     std::uint32_t alloc_local() { return local_count++; }
+
+    // Emit with explicit type_id override. Use when the result type
+    // differs from current_source_id (e.g., CastOp target type).
+    void emit_with_type(aura::ir::IROpcode op, std::uint32_t tid,
+                        std::uint32_t op0, std::uint32_t op1 = 0,
+                        std::uint32_t op2 = 0, std::uint32_t op3 = 0) {
+        emit(op, op0, op1, op2, op3);
+        if (cur_func && cur_block < cur_func->blocks.size() && tid != 0) {
+            cur_func->blocks[cur_block].instructions.back().type_id = tid;
+        }
+    }
 
     void emit(aura::ir::IROpcode op, std::uint32_t op0, std::uint32_t op1 = 0,
               std::uint32_t op2 = 0, std::uint32_t op3 = 0) {

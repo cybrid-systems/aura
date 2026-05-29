@@ -59,7 +59,7 @@ static std::uint32_t lower_flat_expr(
     // Track current flat/pool for closure bridge data
     state.current_flat = &flat;
     state.current_pool = &pool;
-    state.current_source_id = id; // for type propagation to IR
+    LoweringState::SourceScope scope(state, id); // RAII: protects type_id propagation
     // Early exit for invalid ids (backup for contract-observe mode)
     if (id == NULL_NODE || id >= flat.size()) {
         auto slot = state.alloc_local();
@@ -673,7 +673,7 @@ static std::uint32_t lower_flat_expr(
                         if (arg_type != expected_type.index) {
                             auto cast_slot = state.alloc_local();
                             auto cast_tag = type_tag_for_coercion(expected_type, state.type_reg);
-                            state.emit(IROpcode::CastOp, cast_slot, val_slot, cast_tag, 0);
+                            state.emit_with_type(IROpcode::CastOp, expected_type.index, cast_slot, val_slot, cast_tag, 0);
                             state.emit(IROpcode::Local,
                                        arg_base + static_cast<std::uint32_t>(i - 1), cast_slot);
                             state.alloc_local();
@@ -1103,7 +1103,7 @@ static std::uint32_t lower_flat_expr(
                 auto ann_tid = aura::core::TypeId{ann_type_id, 1};
                 std::uint32_t type_tag = type_tag_for_coercion(ann_tid, state.type_reg);
                 std::uint32_t blame_loc = 0;
-                state.emit(IROpcode::CastOp, slot, inner_slot, type_tag, blame_loc);
+                state.emit_with_type(IROpcode::CastOp, ann_type_id, slot, inner_slot, type_tag, blame_loc);
                 return slot;
             }
             return inner_slot;
