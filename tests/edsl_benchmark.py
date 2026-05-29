@@ -520,6 +520,7 @@ def extract_code(text):
                     "c-func",
                     "tcp-connect",
                     "http-post",
+                    "(: ",
                 )
             ):
                 return c
@@ -550,7 +551,7 @@ def extract_code(text):
         # Lines containing key Lisp patterns
         if any(kw in stripped_line for kw in
                ("define", "require", "lambda", "import", "set-code",
-                "query:", "mutate:", "eval-current", "c-func", "display")):
+                "query:", "mutate:", "eval-current", "c-func", "display", ":")):
             code_start = i
             break
     if code_start >= 0:
@@ -562,7 +563,7 @@ def extract_code(text):
     # Step 5: If resulting text has natural language before code, extract last s-expr
     if stripped and not stripped.startswith(("(", "#", '"', "'")):
         # Try to find a balanced s-expression somewhere in the text
-        for kw in ["(define", "(display", "(set-code", "(require"]:
+        for kw in ["(define", "(display", "(set-code", "(require", "(: "]:
             idx = stripped.find(kw)
             if idx >= 0:
                 stripped = stripped[idx:]
