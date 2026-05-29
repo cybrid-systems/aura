@@ -253,10 +253,7 @@ export inline std::uint64_t as_keyword_idx(const EvalValue& v) noexcept {
 }
 
 // ── Truthiness ─────────────────────────────────────────
-export inline bool is_truthy(const EvalValue& v) noexcept {
-    return v.val != 3;  // only #f (val=3) is falsy
-    return v.val != 3;  // only #f (val=3) is falsy
-}
+export bool is_truthy(const EvalValue& v) noexcept;
 
 // ── Formatting (debug/error output) ────────────────────
 export inline std::string format_value(const EvalValue& v) {
