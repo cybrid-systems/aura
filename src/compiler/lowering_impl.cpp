@@ -7,6 +7,27 @@ namespace aura::compiler {
 using namespace aura::ir;
 using namespace aura::ast;
 
+// Map TypeId to CastOp type_tag (used by IR interpreter)
+// INT→0, STRING→1, BOOL→2, FLOAT→4, DYNAMIC→3
+static std::uint32_t type_tag_for_coercion(aura::core::TypeId tid,
+                                           const aura::core::TypeRegistry* type_reg) {
+    if (!type_reg)
+        return 3;
+    auto tag = type_reg->tag_of(tid);
+    switch (tag) {
+        case aura::core::TypeTag::INT:
+            return 0;
+        case aura::core::TypeTag::STRING:
+            return 1;
+        case aura::core::TypeTag::BOOL:
+            return 2;
+        case aura::core::TypeTag::FLOAT:
+            return 4;
+        default:
+            return 3; // Dynamic / pass-through
+    }
+}
+
 // ── Internal: native FlatAST lowering helpers ──────────────────
 // Lower a FlatAST node to IR instructions. Returns the result slot.
 // Reads FlatAST directly without reconstructing to Expr*.
@@ -651,8 +672,8 @@ static std::uint32_t lower_flat_expr(
                         auto expected_type = callee_func_type.args[i - 1];
                         if (arg_type != expected_type.index) {
                             auto cast_slot = state.alloc_local();
-                            state.emit(IROpcode::CastOp, cast_slot, val_slot, expected_type.index,
-                                       0);
+                            auto cast_tag = type_tag_for_coercion(expected_type, state.type_reg);
+                            state.emit(IROpcode::CastOp, cast_slot, val_slot, cast_tag, 0);
                             state.emit(IROpcode::Local,
                                        arg_base + static_cast<std::uint32_t>(i - 1), cast_slot);
                             state.alloc_local();
@@ -1079,7 +1100,8 @@ static std::uint32_t lower_flat_expr(
             if (ann_type_id != 0 && inner_type_id != 0 && ann_type_id != inner_type_id) {
                 // Emit CastOp for the type boundary
                 auto slot = state.alloc_local();
-                std::uint32_t type_tag = ann_type_id; // target type tag
+                auto ann_tid = aura::core::TypeId{ann_type_id, 1};
+                std::uint32_t type_tag = type_tag_for_coercion(ann_tid, state.type_reg);
                 std::uint32_t blame_loc = 0;
                 state.emit(IROpcode::CastOp, slot, inner_slot, type_tag, blame_loc);
                 return slot;

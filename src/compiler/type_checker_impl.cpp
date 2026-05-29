@@ -288,8 +288,17 @@ bool ConstraintSystem::consistent_unify(TypeId t1, TypeId t2) {
     t2 = find(t2);
 
     // Any consistent with everything (sound gradual core)
-    if (t1 == reg_.dynamic_type() || t2 == reg_.dynamic_type())
+    if (t1 == reg_.dynamic_type() || t2 == reg_.dynamic_type()) {
+        // If one side is Any and the other is a type variable, bind the
+        // variable to Any.  This prevents the free var from escaping into
+        // let-polymorphism generalization where it would be ∀-quantified,
+        // destroying the Any boundary (soundness fix, #18).
+        if (reg_.is_var(t1))
+            unify(t1, reg_.dynamic_type());
+        else if (reg_.is_var(t2))
+            unify(t2, reg_.dynamic_type());
         return true;
+    }
 
     // Nominal equality
     if (t1 == t2)
@@ -929,10 +938,12 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
                     if (!result) {
                         result = inner;
                     } else if (inner->var_name == result->var_name) {
-                        // Same variable: combine types via lub
-                        auto combined = reg.register_func(
-                            {result->refined_type, inner->refined_type}, reg.void_type());
-                        result->refined_type = combined;
+                        // Same variable: in the then-branch of (and p1 p2),
+                        // the variable satisfies BOTH predicates, so use
+                        // the intersection.  If both refine to the same type,
+                        // keep it; otherwise conservatively fall back to Any.
+                        if (result->refined_type != inner->refined_type)
+                            result->refined_type = reg.dynamic_type();
                     }
                 }
             }
@@ -1660,9 +1671,11 @@ TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, Node
     if (occ && !occ->is_negation) {
         // Then-branch: variable has refined type
         env_.push_scope();
+        ownership_env_.push_scope();
         if (env_.is_bound(occ->var_name))
             env_.bind(occ->var_name, occ->refined_type);
         TypeId then_type = synthesize_flat(flat, pool, then_id, flat.get(then_id));
+        ownership_env_.pop_scope();
         env_.pop_scope();
 
         // Else-branch: no refinement (keeps original type)
@@ -1679,6 +1692,7 @@ TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, Node
         // Else-branch: variable has refined type
         TypeId else_type = reg_.void_type();
         env_.push_scope();
+        ownership_env_.push_scope();
         if (env_.is_bound(occ->var_name))
             env_.bind(occ->var_name, occ->refined_type);
         if (v.children.size() >= 3 && v.child(2) != NULL_NODE)
