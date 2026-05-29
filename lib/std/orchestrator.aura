@@ -303,8 +303,7 @@
         (begin
           (define (collect-all ids)
             (when (pair? ids)
-              (fiber:join (car ids))
-              (set! results (cons (car ids) results))
+              (set! results (cons (fiber:join (car ids)) results))
               (collect-all (cdr ids))))
           (collect-all (reverse fiber-ids))
           (reverse results))
