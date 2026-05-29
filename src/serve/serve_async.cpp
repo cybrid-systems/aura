@@ -122,6 +122,41 @@ void run_serve_async() {
         s_thread_pool.enqueue(std::move(fn), evfd);
     };
 
+    // Register async eval callback: evaluates code on the thread pool.
+    // Returns the result as a JSON-escaped string. Uses the current
+    // session's CompilerService (only safe because the service's evaluator
+    // state is captured in the closure and executed FIFO on the pool).
+    aura::messaging::g_eval_async = [](const std::string& code) -> std::string {
+        auto* fiber = aura::serve::g_current_fiber;
+        if (!fiber) return "";
+        auto evfd = fiber->eventfd();
+        if (evfd < 0) return "";
+        // Capture current compiler service for eval
+        auto* svc = static_cast<aura::compiler::CompilerService*>(
+            aura::messaging::g_current_compiler_service);
+        if (!svc) return "";
+        std::string result;
+        s_thread_pool.enqueue([svc, code, &result]() {
+            auto r = svc->exec_with_cache(code);
+            if (r) {
+                result = aura::compiler::format_value(
+                    *r, &svc->evaluator().primitives().string_heap(),
+                    &svc->evaluator().pairs(), 0,
+                    &svc->evaluator().primitives(),
+                    &svc->evaluator().keyword_table());
+            } else {
+                result = "[error] " + r.error().format();
+            }
+        }, evfd);
+        // Yield and wait for completion
+        aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
+        aura::serve::Fiber::yield();
+        // Drain eventfd
+        uint64_t val;
+        ::read(evfd, &val, sizeof(val));
+        return result;
+    };
+
     // 2. Create scheduler
     Scheduler sched;
 

@@ -99,6 +99,12 @@ extern HttpPostAsyncFn g_http_post_async;
 using ThreadPoolEnqueueFn = void (*)(std::function<void()> fn, int wake_evfd);
 extern ThreadPoolEnqueueFn g_thread_pool_enqueue;
 
+// Async eval — set by serve_async.cpp. Evaluates code in the thread pool
+// and returns the result as a string. If unavailable, callers fall back
+// to synchronous eval.
+using EvalAsyncFn = std::string (*)(const std::string& code);
+extern EvalAsyncFn g_eval_async;
+
 }  // namespace aura::messaging
 
 #endif  // AURA_MESSAGING_BRIDGE_H

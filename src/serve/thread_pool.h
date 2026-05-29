@@ -9,26 +9,17 @@
 #include <condition_variable>
 #include <deque>
 #include <utility>
+#include <stop_token>
 
 namespace aura::serve {
 
 // ── ThreadPool ─────────────────────────────────────────────
-// Fixed-size thread pool for blocking operations (compilation,
-// type-checking, file I/O). Each enqueued task runs on a background
-// thread and signals completion by writing to the provided eventfd.
+// Fixed-size thread pool for blocking operations.
+// Uses std::jthread for automatic RAII join on destruction.
 //
-// The eventfd should be registered with the scheduler's epoll so
-// that the waiting fiber can be woken.
-//
-// Usage:
-//   ThreadPool pool(4);
-//   int evfd = make_eventfd();
-//   epoll_ctl(scheduler_epoll, EPOLL_CTL_ADD, evfd, &target_fiber);
-//   pool.enqueue(fn, evfd);
-//   // fiber: set Waiting → yield
-//   // thread: fn() → write(evfd, 1)
-//   // epoll: eventfd readable → scheduler enqueues fiber
-//
+// Each enqueued task runs on a background thread and signals
+// completion by writing to the provided eventfd (which should
+// be registered with the scheduler's epoll).
 class ThreadPool {
 public:
     explicit ThreadPool(size_t num_threads = 4);
@@ -36,32 +27,31 @@ public:
 
     ThreadPool(const ThreadPool&) = delete;
     ThreadPool& operator=(const ThreadPool&) = delete;
+    ThreadPool(ThreadPool&&) = delete;
+    ThreadPool& operator=(ThreadPool&&) = delete;
 
     // Enqueue a blocking task. fn runs on a background thread.
     // When fn completes, 1 is written to wake_evfd.
-    // The caller owns the wake_evfd lifecycle (create before enqueue,
-    // close after event is consumed).
     void enqueue(std::function<void()> fn, int wake_evfd);
 
-    // Number of pending (enqueued + running) tasks
+    // Pending (enqueued + running) task count
     size_t pending() const;
 
-    // Stop all worker threads (called by destructor)
+    // Request all workers stop (called by destructor automatically via jthread)
     void shutdown();
 
 private:
-    void worker_loop(int id);
+    void worker_loop(std::stop_token st);
 
     struct Task {
         std::function<void()> fn;
         int wake_evfd;
     };
 
-    std::vector<std::thread> workers_;
+    std::vector<std::jthread> workers_;
     std::deque<Task> queue_;
     mutable std::mutex mutex_;
-    std::condition_variable cv_;
-    bool stop_ = false;
+    std::condition_variable_any cv_;
     size_t pending_count_ = 0;
 };
 
