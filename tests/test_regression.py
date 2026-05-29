@@ -32,6 +32,8 @@ tests = [
      '(display (thread_pool:enqueue (lambda () (+ 1 2))))', '#f', ''),
     ("eval-async-stdin-fallback",
      '(display (eval:async "(+ 1 2)"))', '3', ''),
+    ("typecheck-status-ok",
+     '(set-code "(define (f x) (+ x 1))") (mutate:rebind "f" "(define (f x) (+ x 2))") (display (typecheck-status))', 'ok', ''),
     ("issue-18-any-annot-let",
      '(let ((x (: y Any 42))) x)', "42", ""),
     ("issue-18-any-annot-fn",

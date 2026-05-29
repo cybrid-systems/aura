@@ -243,6 +243,10 @@ private:
     std::string last_set_code_error_kind_;
     std::string last_set_code_error_msg_;
 
+    // Last mutate typecheck error (empty = no error). Set by auto-typecheck
+    // after mutate:rebind etc. Cleared on next successful mutate.
+    std::string last_mutate_error_;
+
     // ── Def-Use Analysis (P1) ───────────────────────────────────
     void* defuse_index_ = nullptr;
     std::uint64_t defuse_version_ = 0;  // incremented on each mutation
