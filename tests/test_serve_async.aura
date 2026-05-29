@@ -38,3 +38,9 @@
 
 ; ── Test 8: Cleanup — delete test sessions via recv/send ──
 {"cmd":"exec","code":"(display \"t8:all-tests-complete\")"}
+
+; ── Test 9: thread_pool:enqueue in serve-async mode ──
+{"cmd":"exec","code":"(display (string-append \"t9:enqueue:\" (if (thread_pool:enqueue (lambda () (+ 1 2))) \"ok\" \"failed\")))"}
+
+; ── Test 10: eval:async via thread pool ──
+{"cmd":"exec","code":"(display (string-append \"t10:eval-async:\" (eval:async \"(+ 10 20)\")))"}
