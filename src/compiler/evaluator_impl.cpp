@@ -4597,6 +4597,22 @@ void Evaluator::init_pair_primitives() {
                 flat.mark_dirty_upward(dep_callers[ui]);
         }
 
+        // ── Auto-typecheck: 验证变异后的代码类型正确 ────────
+        // 立即运行 typecheck-current，如果类型错误则记录到 last_mutate_error。
+        // Agent 可以通过 (typecheck-status) 查询最近一次变异的类型状态。
+        auto tc_fn = primitives_.lookup("typecheck-current");
+        if (tc_fn) {
+            auto tc_result = (*tc_fn)({});
+            if (is_string(tc_result)) {
+                auto& str = string_heap_[as_string_idx(tc_result)];
+                if (str.find("no errors") == std::string::npos) {
+                    last_mutate_error_ = std::string("typecheck after mutate:rebind failed: ") + str;
+                } else {
+                    last_mutate_error_.clear();
+                }
+            }
+        }
+
         return make_bool(true);
     });
 
@@ -4855,6 +4871,21 @@ void Evaluator::init_pair_primitives() {
                     if (dep_callers[ui] < flat.size())
                         flat.mark_dirty_upward(dep_callers[ui]);
                 }
+
+                // ── Auto-typecheck ──
+                auto tc_fn = primitives_.lookup("typecheck-current");
+                if (tc_fn) {
+                    auto tc_result = (*tc_fn)({});
+                    if (is_string(tc_result)) {
+                        auto& str = string_heap_[as_string_idx(tc_result)];
+                        if (str.find("no errors") == std::string::npos) {
+                            last_mutate_error_ = std::string("typecheck after mutate:set-body failed: ") + str;
+                        } else {
+                            last_mutate_error_.clear();
+                        }
+                    }
+                }
+
                 return make_bool(true);
             }
         }
@@ -5299,6 +5330,19 @@ void Evaluator::init_pair_primitives() {
 
         auto sidx = string_heap_.size();
         string_heap_.push_back(out);
+        return make_string(sidx);
+    });
+
+    // (typecheck-status) — Returns the last mutate typecheck result.
+    // Empty string = no errors, non-empty = last mutate caused type errors.
+    primitives_.add("typecheck-status", [this](const auto&) -> EvalValue {
+        if (last_mutate_error_.empty()) {
+            auto sidx = string_heap_.size();
+            string_heap_.push_back("ok");
+            return make_string(sidx);
+        }
+        auto sidx = string_heap_.size();
+        string_heap_.push_back(last_mutate_error_);
         return make_string(sidx);
     });
 }
