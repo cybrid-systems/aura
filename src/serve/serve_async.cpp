@@ -92,7 +92,7 @@ static std::string fmt_val(const EvalValue& v,
 
 // ── run_serve_async ─────────────────────────────────────
 
-void run_serve_async() {
+void run_serve_async(int num_workers) {
     // 1. Set stdin to non-blocking
     int flags = ::fcntl(STDIN_FILENO, F_GETFL);
     ::fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
@@ -157,8 +157,8 @@ void run_serve_async() {
         return result;
     };
 
-    // 2. Create scheduler
-    Scheduler sched;
+    // 2. Create scheduler with worker threads
+    Scheduler sched(num_workers);
 
     // Register fiber:spawn callback (captures scheduler for actual fiber creation)
     aura::messaging::g_fiber_spawn = [&sched](std::function<void()> fn) -> int64_t {
@@ -587,13 +587,13 @@ void run_serve_async() {
 
 // ── run_serve_async_bench ────────────────────────────
 
-void run_serve_async_bench(const std::string& file_path) {
+void run_serve_async_bench(const std::string& file_path, int num_workers) {
     // 1. Set stdin to non-blocking
     int flags = ::fcntl(STDIN_FILENO, F_GETFL);
     ::fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
 
-    // 2. Create scheduler
-    Scheduler sched;
+    // 2. Create scheduler with worker threads
+    Scheduler sched(num_workers);
 
     // Register fiber:spawn callback
     aura::messaging::g_fiber_spawn = [&sched](std::function<void()> fn) -> int64_t {

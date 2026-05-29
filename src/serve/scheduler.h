@@ -1,72 +1,101 @@
-// serve/scheduler.h — Fiber scheduler with epoll event loop
+// serve/scheduler.h — Multi-threaded fiber scheduler
 #ifndef AURA_SERVE_SCHEDULER_H
 #define AURA_SERVE_SCHEDULER_H
 
 #include "fiber.h"
+#include "worker.h"
 #include <ucontext.h>
 #include <deque>
 #include <unordered_map>
 #include <memory>
 #include <vector>
+#include <atomic>
+#include <mutex>
 
 namespace aura::serve {
 
-// ── Scheduler — cooperative fiber scheduler ────────────
-// Drives fibers with round-robin + epoll-based wakeup.
-// When all fibers are Waiting, blocks on epoll_wait.
+// ── Scheduler — M:N fiber scheduler ────────────────────
+//
+// Manages N WorkerThreads and an IO event loop.
+// Fibers are distributed across workers for parallel execution.
+//
+// Architecture:
+//   - IO thread (main thread): epoll_wait for eventfd/stdin events,
+//     dispatches woken fibers to workers
+//   - Worker threads: run fibers from local queues
+//   - Fiber lifecycle:         spawn → [Ready → Running → yield → Ready|Waiting → Done]
+//   - Event-driven wakeup:     Waiting fiber's eventfd fires → IO thread enqueues to worker
 class Scheduler {
 public:
-    Scheduler();
+    explicit Scheduler(int num_workers = 0);
     ~Scheduler();
 
-    // Create a new fiber
+    // Non-copyable
+    Scheduler(const Scheduler&) = delete;
+    Scheduler& operator=(const Scheduler&) = delete;
+    Scheduler(Scheduler&&) = delete;
+    Scheduler& operator=(Scheduler&&) = delete;
+
+    // Create a new fiber. The fiber is assigned to a worker
+    // (round-robin across available workers).
     Fiber* spawn(Fiber::Func func, size_t stack_size = 2 * 1024 * 1024);
 
-    // Run the event loop until all fibers are done
+    // Run the event loop until all fibers are done.
+    // This is called on the main thread (IO thread).
     void run();
 
-    // Stop the scheduler (from signal handler or another thread)
-    void stop() { running_ = false; }
+    // Stop all workers and the event loop
+    void stop();
 
-    // Register a fiber's eventfd with epoll (called after fiber creation)
-    void register_fiber_event(Fiber* fiber);
+    // ── Event management ────────────────────────────
+    // Register a fiber's eventfd with the epoll instance.
+    // Called during fiber spawn or session setup.
+    // Thread-safe.
+    void register_event_fiber(int eventfd, Fiber* fiber);
 
-    // Accessors
-    ucontext_t& main_ctx() { return main_ctx_; }
+    // Remove a fiber from the event map.
+    // Called by worker when fiber is Done.
+    // Thread-safe.
+    void unregister_fiber(int eventfd);
+
+    // ── Callbacks for workers ───────────────────────
+    // Notify scheduler that a fiber is done.
+    // Thread-safe.
+    void on_fiber_done(Fiber* fiber);
+
+    // Check if there are any fibers in Waiting state (on epoll).
+    bool has_waiting_fibers() const;
+
+    // ── Worker management ───────────────────────────
+    int num_workers() const { return num_workers_; }
+    WorkerThread* worker(int idx);
+    int next_worker_id();  // round-robin assignment
+
+    // ── Stdin fiber ─────────────────────────────────
+    void set_stdin_fiber(Fiber* f) { stdin_fiber_ = f; }
+    Fiber* stdin_fiber() const { return stdin_fiber_; }
+
+    // ── Accessors ───────────────────────────────────
     int epoll_fd() const { return epoll_fd_; }
 
-    // Set the fiber that handles stdin input (for stdin event routing)
-    void set_stdin_fiber(Fiber* f) { stdin_fiber_ = f; }
-
-
-
 private:
-    // Ready queue: fibers that can be resumed
-    std::deque<Fiber*> ready_queue_;
+    int num_workers_;
+    std::vector<std::unique_ptr<WorkerThread>> workers_;
+    std::atomic<int> next_worker_{0};  // round-robin counter
 
-    // All fibers (keeps them alive)
-    std::vector<std::unique_ptr<Fiber>> fibers_;
-
-    // eventfd → Fiber mapping (for epoll dispatch)
-    std::unordered_map<int, Fiber*> wait_map_;
-
-    // Epoll instance
+    // IO thread resources
     int epoll_fd_ = -1;
-
-    // Stdin fd
     int stdin_fd_ = -1;
 
-    // Fiber that handles stdin input (nullptr = wake all on stdin event)
+    // eventfd → Fiber mapping (protected by mutex)
+    std::unordered_map<int, Fiber*> wait_map_;
+    mutable std::mutex wait_map_mutex_;
+
+    // Stdin fiber (handles stdin line protocol in serve mode)
     Fiber* stdin_fiber_ = nullptr;
 
-    // Scheduler's own context (fibers yield back to this)
-    ucontext_t main_ctx_;
-
     // Runtime flag
-    bool running_ = true;
-
-    // Add a fiber to ready queue
-    void enqueue(Fiber* f);
+    std::atomic<bool> running_{true};
 };
 
 } // namespace aura::serve
