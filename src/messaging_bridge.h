@@ -92,6 +92,13 @@ using HttpPostAsyncFn = std::string (*)(const std::string& url, const std::strin
                                          const std::string& auth);
 extern HttpPostAsyncFn g_http_post_async;
 
+// Thread pool enqueue — set by serve_async.cpp, used by thread_pool:enqueue primitive.
+// Enqueues a blocking task to the background thread pool.
+// fn runs on a pool thread; wake_evfd receives 1 on completion.
+// The wake_evfd must already be registered with the scheduler's epoll.
+using ThreadPoolEnqueueFn = void (*)(std::function<void()> fn, int wake_evfd);
+extern ThreadPoolEnqueueFn g_thread_pool_enqueue;
+
 }  // namespace aura::messaging
 
 #endif  // AURA_MESSAGING_BRIDGE_H

@@ -14,6 +14,7 @@ std::function<aura::messaging::SessionCreateFn>* aura::messaging::g_session_crea
 aura::messaging::SessionListFn aura::messaging::g_session_list = nullptr;
 aura::messaging::ResetArenaFn aura::messaging::g_reset_arena = nullptr;
 aura::messaging::HttpPostAsyncFn aura::messaging::g_http_post_async = nullptr;
+aura::messaging::ThreadPoolEnqueueFn aura::messaging::g_thread_pool_enqueue = nullptr;
 aura::messaging::MailboxCountFn aura::messaging::g_mailbox_count = nullptr;
 aura::messaging::SessionIdFn aura::messaging::g_session_id = nullptr;
 aura::messaging::SessionExistsFn aura::messaging::g_session_exists = nullptr;
