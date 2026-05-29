@@ -1,0 +1,18 @@
+;; task: edsl-workspace-multi
+;; goal: Create two workspaces, switch between them, write code in each
+;; expect: 84
+;; depend: std/list
+;; hint: --- multi-workspace EDSL ---
+;; hint: ;; Create workspace A, write code, then workspace B
+;; hint: (workspace:create "wsA")
+;; hint: (workspace:switch "wsA")
+;; hint: (set-code "(define (f x) (+ x 1))")
+;; hint: (eval-current)
+;; hint: (workspace:create "wsB")
+;; hint: (workspace:switch "wsB")
+;; hint: (set-code "(define (g x) (* x 2))")
+;; hint: (eval-current)
+;; hint: ;; Switch back to wsA and use f
+;; hint: (workspace:switch "wsA")
+;; hint: (eval-current)
+;; hint: (display (f 41))

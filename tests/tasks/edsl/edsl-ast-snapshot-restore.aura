@@ -1,0 +1,14 @@
+;; task: edsl-ast-snapshot-restore
+;; goal: Take an AST snapshot, mutate code, then rollback to restore original
+;; expect: 13
+;; hint: --- ast:snapshot + mutate + ast:restore ---
+;; hint: ;; Step 1: Set up initial code and take a snapshot
+;; hint: (set-code "(define (double x) (* x 2))")
+;; hint: (define snap (ast:snapshot "before-mutate"))
+;; hint: ;; Step 2: Mutate the code (change to triple)
+;; hint: (mutate:rebind "double" "(lambda (x) (* x 3))")
+;; hint: (eval-current)
+;; hint: ;; Step 3: Rollback to the snapshot
+;; hint: (ast:restore snap)
+;; hint: (eval-current)
+;; hint: (display (double 6))

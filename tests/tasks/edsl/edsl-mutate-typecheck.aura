@@ -1,0 +1,12 @@
+;; task: edsl-mutate-typecheck
+;; goal: Mutate code then run typecheck-current to verify types are still correct
+;; expect: no errors
+;; hint: --- mutate + typecheck pipeline ---
+;; hint: ;; Step 1: Set up initial code
+;; hint: (set-code "(define (add x y) (+ x y))")
+;; hint: ;; Step 2: Run typecheck-current to verify
+;; hint: (typecheck-current)
+;; hint: ;; Step 3: Mutate the function
+;; hint: (mutate:rebind "add" "(lambda (a b) (* a b))")
+;; hint: ;; Step 4: Re-typecheck — should report no errors
+;; hint: (display (typecheck-current))
