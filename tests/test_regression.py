@@ -26,6 +26,8 @@ tests = [
      '(let ((x "hello")) (if (and (string? x) (number? x)) x "fallback"))', 'fallback', ''),
     ("fiber-join-basic",
      '(display (fiber:spawn (lambda () (+ 1 2))))', '3', ''),
+    ("fiber-spawn-multi",
+     '(display (+ (if (integer? (fiber:spawn (lambda () (* 3 4)))) 0 0) (fiber:spawn (lambda () (+ 10 20)))))', '30', ''),
     ("issue-18-any-annot-let",
      '(let ((x (: y Any 42))) x)', "42", ""),
     ("issue-18-any-annot-fn",

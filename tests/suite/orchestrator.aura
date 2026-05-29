@@ -40,3 +40,18 @@
 
 (test-suite "orch:agent-list-stdin"
   (check (null? (agent:list))))
+
+; ── orch:parallel ──
+(test-suite "orch:parallel-basic"
+  (orch:define-role "double" (cons (lambda (x) (* x 2)) "direct"))
+  (orch:define-role "triple" (cons (lambda (x) (* x 3)) "direct"))
+  (let ((r (orch:parallel (list double triple) 5)))
+    (and (pair? r) (= (car r) 10) (= (car (cdr r)) 15))))
+
+(test-suite "orch:parallel-empty"
+  (check (null? (orch:parallel (quote ()) 42))))
+
+(test-suite "orch:parallel-single"
+  (orch:define-role "inc" (cons (lambda (x) (+ x 1)) "direct"))
+  (let ((r (orch:parallel (list inc) 0)))
+    (and (pair? r) (= (car r) 1))))
