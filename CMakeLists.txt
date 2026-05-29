@@ -43,6 +43,7 @@ target_sources(aura PRIVATE
     src/compiler/aura_jit_bridge.cpp
     src/messaging_bridge_impl.cpp
     src/serve/fiber.cpp
+    src/serve/thread_pool.cpp
     src/serve/scheduler.cpp
     src/serve/serve_async.cpp
     src/main.cpp)
@@ -143,6 +144,7 @@ target_sources(test_ir PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/type_checker.ixx)
 target_sources(test_ir PRIVATE
     src/serve/fiber.cpp
+    src/serve/thread_pool.cpp
     src/serve/scheduler.cpp
     src/core/ast_impl.cpp
     src/core/type_impl.cpp

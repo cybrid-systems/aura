@@ -4,6 +4,7 @@
 #include "scheduler.h"
 #include "fiber.h"
 #include "mailbox.h"
+#include "thread_pool.h"
 
 #include <print>
 #include <iostream>
@@ -100,6 +101,25 @@ void run_serve_async() {
     aura::messaging::g_fiber_block = []() {
         aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
         aura::serve::Fiber::yield();
+    };
+
+    // 2. Create thread pool for blocking operations
+    // Background threads handle compilation, type-checking, file I/O,
+    // and any other blocking tasks without blocking the event loop.
+    // Pool size = num CPUs is a reasonable default.
+    unsigned pool_size = std::thread::hardware_concurrency();
+    if (pool_size < 2) pool_size = 2;
+    if (pool_size > 8) pool_size = 8;
+    static aura::serve::ThreadPool s_thread_pool(pool_size);
+
+    // Register thread pool enqueue callback:
+    // Injects the current fiber's eventfd as the wakeup mechanism.
+    aura::messaging::g_thread_pool_enqueue = [](std::function<void()> fn, int) {
+        auto* fiber = aura::serve::g_current_fiber;
+        if (!fiber) return;
+        int evfd = fiber->eventfd();
+        if (evfd < 0) return;
+        s_thread_pool.enqueue(std::move(fn), evfd);
     };
 
     // 2. Create scheduler
