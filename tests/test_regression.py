@@ -31,7 +31,7 @@ tests = [
     ("fiber-stdin-concurrent",
      '(begin (define f1 (fiber:spawn (lambda () (+ 1 2)))) (define f2 (fiber:spawn (lambda () (+ 10 20)))) (define f3 (fiber:spawn (lambda () (+ 100 200)))) (display (+ (fiber:join f1) (fiber:join f2) (fiber:join f3))))', '333', ''),
     ("thread-pool-enqueue-stdin",
-     '(display (thread_pool:enqueue (lambda () (+ 1 2))))', '#f', ''),
+     '(display (thread_pool:enqueue (lambda () (+ 1 2))))', '3', ''),
     ("eval-async-stdin-fallback",
      '(display (eval:async "(+ 1 2)"))', '3', ''),
     ("typecheck-status-ok",
