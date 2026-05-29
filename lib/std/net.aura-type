@@ -1,0 +1,6 @@
+http-get-json: Any -> Any
+http-post-json: Any Any -> Any
+url-encode: Any -> Any
+url-decode: Any -> Any
+url-join: Any Any -> Any
+fetch-try: Any Any -> Any

@@ -1,0 +1,6 @@
+json-type: Any -> String
+err: Any Any Any -> Any
+check: Any Any Any -> Any
+validate: Any Any -> Any
+valid?: Any -> Bool
+error-count: Any -> Int

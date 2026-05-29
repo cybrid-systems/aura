@@ -1,0 +1,8 @@
+make-stack:  -> Any
+stack-push: Any Any -> Any
+stack-pop: Any -> Any
+stack-top: Any -> Any
+stack-empty?: Any -> Bool
+stack-length: Any -> Int
+stack->list: Any -> Any
+list->stack: Any -> Any

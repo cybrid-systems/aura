@@ -1365,6 +1365,20 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
             auto mod_name = pool.resolve(v.sym_id);
             std::vector<std::pair<std::string, TypeId>> members;
             std::unordered_set<std::string> exports;
+            std::vector<std::string> type_param_names;
+            std::vector<TypeId> type_param_vars;
+
+            // Push scope for type param bindings
+            env_.push_scope();
+            for (auto sym : v.params) {
+                auto pname = std::string(pool.resolve(sym));
+                auto tv = cs_.fresh_var();
+                type_param_names.push_back(pname);
+                type_param_vars.push_back(tv);
+                // Bind the type param name as a type-level variable in env,
+                // so body function signatures can reference it.
+                env_.bind(pname, tv);
+            }
 
             for (auto cid : v.children) {
                 auto cv = flat.get(cid);
@@ -1384,6 +1398,7 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
                     }
                 }
             }
+            env_.pop_scope();
 
             // Only include exported members in ModuleType
             std::vector<std::pair<std::string, TypeId>> export_members;
@@ -1393,6 +1408,8 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
             }
 
             ModuleType mt{std::move(export_members)};
+            mt.type_params = std::move(type_param_names);
+            mt.type_param_vars = std::move(type_param_vars);
             auto mt_id = reg_.register_module(std::move(mt));
             env_.bind(std::string(mod_name), mt_id);
             result = mt_id;
@@ -1618,10 +1635,12 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
     }
 
     // Module type: functor call (Stack Int) → return the ModuleType
+    // The runtime evaluator handles type parameter substitution via re-evaluation.
+    // At the type checker level, functor bodies use generic type vars that don't
+    // directly reference the formal type params, so true type-level substitution
+    // would require explicit type parameter binding in the body.
+    // For now, type-check the args and return the module type as inferred.
     if (auto* mt = reg_.module_of(func_type)) {
-        // For functor instantiation, the ModuleType represents the result module's signature.
-        // Type parameter substitution (T → Int) would go here in a full implementation.
-        // For now, return the ModuleType as-is; members may have Dyn-parameterized types.
         return func_type;
     }
 

@@ -71,6 +71,8 @@ export struct LinearType {
 // Module type: {sym1: T1, sym2: T2, ...}
 export struct ModuleType {
     std::vector<std::pair<std::string, TypeId>> members; // (name, type)
+    std::vector<std::string> type_params;                // functor type param names, e.g. ["T"]
+    std::vector<TypeId> type_param_vars;                 // fresh type vars for each type param
 };
 
 // Effect type: !EffectName (e.g., !IO, !FileRead)

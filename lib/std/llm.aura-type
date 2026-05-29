@@ -1,0 +1,2 @@
+aura-llm-call: Any -> Any
+aura-verify: Any -> String

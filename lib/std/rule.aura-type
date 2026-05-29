@@ -1,0 +1,11 @@
+rule:define: Any Any -> Any
+rule:remove: Any -> Any
+rule:enable: Any -> Bool
+rule:disable: Any -> Bool
+rule:list:  -> Any
+rule:status: Any -> Any
+rule:apply: Any -> Int
+rule:apply-all:  -> Int
+rule:list-violations:  -> Any
+rule:save: Any -> String
+rule:load: String -> Int

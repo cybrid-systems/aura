@@ -1,0 +1,10 @@
+sorted?: Any -> Any
+sort-by: Any Any -> Any
+sort-stable: Any -> Any
+merge-sorted: Any Any -> Any
+binary-search: Any Any -> Any
+unique: Any -> Any
+min-by: Any Any -> Any
+max-by: Any Any -> Any
+permutations: Any -> Any
+combinations: Any Any -> Int

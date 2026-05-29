@@ -1,0 +1,9 @@
+identity: Any -> Any
+const: Any -> Any -> Any
+flip: Any -> Any Any -> Any
+compose: Any Any -> Any
+thrush: Any Any -> Any
+curry: Any Any -> Any -> Any
+rcurry: Any Any -> Any -> Any
+partial2: Any Any -> Any -> Any
+complement: Any -> Any -> Bool

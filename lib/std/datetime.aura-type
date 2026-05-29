@@ -1,0 +1,20 @@
+timestamp:  -> Any
+timestamp->year: Any -> Any
+timestamp->yday: Any -> Any
+leap-year?: Any -> Any
+days-in-month: Any Any -> Int
+timestamp->month: Any -> Any
+timestamp->day: Any -> Any
+timestamp->hour: Any -> Int
+timestamp->minute: Any -> Int
+timestamp->second: Any -> Int
+timestamp->weekday: Any -> Int
+timestamp->iso-date: Any -> String
+timestamp->iso-datetime: Any -> String
+timestamp->date-string: Any -> String
+day-of-week: Any Any Any -> Int
+time-diff: Any Any -> Any
+timestamp->rfc822: Any -> String
+timestamp->iso-week: Any -> Int
+now:  -> String
+format-time: Any Any -> Any

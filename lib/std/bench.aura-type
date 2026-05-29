@@ -1,0 +1,6 @@
+task-count:  -> Int
+run-one: Any Any Any -> Any
+run-rounds: Any Any Any Any -> Any
+aggregate: Any Any -> Any
+print-report: Any Any -> Any
+run-parallel: Any Any Any Any Any -> Any

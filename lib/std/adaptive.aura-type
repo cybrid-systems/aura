@@ -1,0 +1,8 @@
+string-index: Any Any Any -> Any
+string-contains?: Any Any -> Bool
+string-trim: Any -> Any
+measure-distance: Any Any Any -> Any
+structured-diagnosis: Any Any -> String
+get-api-ref: Any -> Any
+get-full-api-ref:  -> Any
+pid:analyze: Any Any -> Any

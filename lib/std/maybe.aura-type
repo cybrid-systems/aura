@@ -1,0 +1,5 @@
+maybe?: Any -> Bool
+maybe-ref: Any -> Any
+maybe-default: Any Any -> Any
+map-maybe: Any Any -> Any
+filter-maybe: Any Any -> Any

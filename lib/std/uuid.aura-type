@@ -1,0 +1,3 @@
+uuid:  -> String
+uuid-compact:  -> String
+uuid-nil:  -> String

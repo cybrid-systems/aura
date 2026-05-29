@@ -1,0 +1,6 @@
+pheromone:init:  -> Void
+pheromone:score: Any -> Any
+pheromone:update: Any Any -> Void
+pheromone:rank: Any -> Any
+pheromone:export:  -> String
+colony:search: Any Any -> Any

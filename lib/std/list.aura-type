@@ -1,0 +1,17 @@
+foldr: Any Any Any -> Any
+for-each: Any Any -> Any
+member?: Any Any -> Any
+zip: Any Any -> Any
+zip3: Any Any Any -> Any
+take-while: Any Any -> Any
+drop-while: Any Any -> Any
+partition: Any Any -> Any
+sort: Any -> Any
+range: Any Any -> Any
+take: Any Any -> Any
+skip: Any Any -> Any
+sum: Any -> Any
+product: Any -> Any
+last: Any -> Any
+flatten: Any -> Any
+intersperse: Any Any -> Any
