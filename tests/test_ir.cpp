@@ -2057,5 +2057,153 @@ int main() {
         if (ti_failed > 0) return 1;
     }
 
+    // ── Dirty propagation tests (Issue #28) ────────────────────
+    // Verifies that mark_dirty_upward correctly marks ancestors,
+    // and that the type checker respects the dirty flag.
+    {
+        int dp_passed = 0, dp_failed = 0;
+
+        // Test 1: mark_dirty_upward marks all ancestors
+        {
+            aura::ast::ASTArena arena2;
+            auto alloc = arena2.allocator();
+            aura::ast::FlatAST flat(alloc);
+            // Build: (let ((x 10)) (+ x 1))
+            // let node: child[0]=x, child[1]=10, child[2]=(+ x 1)
+            // (+ x 1): child[0]=+, child[1]=x, child[2]=1
+            auto ten = flat.add_literal(10);           // node 0
+            auto one = flat.add_literal(1);             // node 1
+            auto x_sym_val = static_cast<aura::ast::SymId>(42);
+            auto x_var = flat.add_variable(x_sym_val);  // node 2
+            auto plus_var = flat.add_variable(0);        // node 3 (sym 0 = "+" placeholder)
+            aura::ast::NodeId plus_args[] = {plus_var, x_var, one};
+            auto plus_call = flat.add_call(plus_var, plus_args); // node 4
+            auto let_node = flat.add_let(x_sym_val, ten, plus_call); // node 5
+            flat.root = let_node;
+            // Verify no node is dirty initially
+            bool all_clean = true;
+            for (aura::ast::NodeId i = 0; i < flat.size(); ++i)
+                if (flat.is_dirty(i)) { all_clean = false; break; }
+            // Mark ten (the value) dirty + upward: should mark ten, let_node
+            flat.mark_dirty_upward(ten);
+            bool ten_dirty = flat.is_dirty(ten);
+            bool let_dirty = flat.is_dirty(let_node);
+            bool one_clean = !flat.is_dirty(one);
+            bool x_clean = !flat.is_dirty(x_var);
+            bool plus_clean = !flat.is_dirty(plus_call);
+            if (all_clean && ten_dirty && let_dirty && one_clean && x_clean && plus_clean) {
+                std::println("DP OK: mark_dirty_upward ten → ancestors (let) dirty, siblings clean");
+                ++dp_passed;
+            } else {
+                std::println(std::cerr,
+                    "DP FAIL: all_clean={} ten_dirty={} let_dirty={} one_clean={} x_clean={} plus_clean={}",
+                    all_clean, ten_dirty, let_dirty, one_clean, x_clean, plus_clean);
+                ++dp_failed;
+            }
+        }
+
+        // Test 2: mark_dirty_upward on root marks only root (no parent = no ancestor chain)
+        {
+            aura::ast::ASTArena arena2;
+            auto alloc = arena2.allocator();
+            aura::ast::FlatAST flat(alloc);
+            // Build: (let ((x 1)) x)  →  3 nodes: lit(1), var(x), let
+            auto x_val = static_cast<aura::ast::SymId>(1);
+            auto lit = flat.add_literal(1);
+            auto var = flat.add_variable(x_val);
+            auto let_node = flat.add_let(x_val, lit, var);
+            flat.root = let_node;
+            // Mark root dirty + upward: only let_node should be dirty (no parent chain)
+            flat.mark_dirty_upward(let_node);
+            bool root_dirty = flat.is_dirty(let_node);
+            bool lit_clean = !flat.is_dirty(lit);
+            bool var_clean = !flat.is_dirty(var);
+            if (root_dirty && lit_clean && var_clean) {
+                std::println("DP OK: mark_dirty_upward root → root dirty, children clean");
+                ++dp_passed;
+            } else {
+                std::println(std::cerr,
+                    "DP FAIL: root_dirty={} lit_clean={} var_clean={}",
+                    root_dirty, lit_clean, var_clean);
+                ++dp_failed;
+            }
+        }
+
+        // Test 3: clear_all_dirty resets all
+        {
+            aura::ast::ASTArena arena2;
+            auto alloc = arena2.allocator();
+            aura::ast::FlatAST flat(alloc);
+            auto x_val = static_cast<aura::ast::SymId>(1);
+            auto lit = flat.add_literal(1);
+            auto var = flat.add_variable(x_val);
+            auto let_node = flat.add_let(x_val, lit, var);
+            flat.root = let_node;
+            // Mark dirty then clear
+            flat.mark_dirty_upward(lit);
+            flat.clear_all_dirty();
+            bool all_clean = true;
+            for (aura::ast::NodeId i = 0; i < flat.size(); ++i)
+                if (flat.is_dirty(i)) { all_clean = false; break; }
+            if (all_clean) {
+                std::println("DP OK: clear_all_dirty resets all nodes");
+                ++dp_passed;
+            } else {
+                std::println(std::cerr, "DP FAIL: clear_all_dirty did not clear all");
+                ++dp_failed;
+            }
+        }
+
+        // Test 4: double typecheck with mutation — cache vs recompute
+        // Uses a manually constructed tree + type checker to verify dirty-based caching
+        {
+            aura::core::TypeRegistry treg;
+            aura::diag::DiagnosticCollector diag;
+            aura::ast::ASTArena arena2;
+            auto alloc = arena2.allocator();
+            aura::ast::StringPool pool(alloc);
+            aura::ast::FlatAST flat(alloc);
+            // Build: (let ((x 10)) x)
+            auto x_sym = pool.intern("x");
+            auto val = flat.add_literal(10);
+            auto body = flat.add_variable(x_sym);
+            auto let_node = flat.add_let(x_sym, val, body);
+            flat.root = let_node;
+
+            aura::compiler::TypeChecker tc(treg);
+            // First type check
+            diag.clear();
+            auto ty1 = tc.infer_flat(flat, pool, let_node, diag);
+            // After first check, all nodes should be clean (typechecker clears dirty)
+            // Verify the type is Int
+            bool first_check_ok = (ty1 == treg.int_type());
+
+            // Now simulate a mutation: mark value node dirty
+            flat.mark_dirty_upward(val);
+            // The type checker's synthesize_flat should skip clean nodes (the let node
+            // is dirty via upward propagation, but body is not — it must be re-checked too)
+            // Second type check
+            diag.clear();
+            auto ty2 = tc.infer_flat(flat, pool, let_node, diag);
+
+            // Verify both checks return the same type (Int) despite dirty propagation
+            bool second_check_ok = (ty2 == treg.int_type());
+
+            if (first_check_ok && second_check_ok) {
+                std::println("DP OK: typecheck after mark_dirty_upward returns consistent type");
+                ++dp_passed;
+            } else {
+                std::println(std::cerr,
+                    "DP FAIL: first_check_ok={} second_check_ok={}",
+                    first_check_ok, second_check_ok);
+                ++dp_failed;
+            }
+        }
+
+        std::println("Dirty propagation tests: {}/{}/{} passed/failed/total",
+                     dp_passed, dp_failed, dp_passed + dp_failed);
+        if (dp_failed > 0) return 1;
+    }
+
     return (failed + ck_failed + arity_failed + mp_failed + pm_failed + cf_failed + dce_failed + gg_failed + ts_failed + flat_failed) > 0 ? 1 : 0;
 }
