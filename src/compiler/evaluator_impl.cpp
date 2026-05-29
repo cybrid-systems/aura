@@ -8917,24 +8917,37 @@ Evaluator::Evaluator() {
             aura::messaging::g_mailbox_count(svc)));
     });
 
+    // Shared result map for fiber:spawn ↔ fiber:join communication.
+    // fiber:spawn stores a shared_ptr<optional<EvalValue>> keyed by fiber ID.
+    // The fiber closure writes its result into the pointer; fiber:join reads it.
+    static std::unordered_map<int64_t, std::shared_ptr<std::optional<EvalValue>>>
+        s_fiber_results;
+
     // (fiber:spawn fn) — Spawn a fiber (async in serve mode, sync fallback in stdin)
     // fn is a closure taking no arguments.
     // Returns non-zero fiber ID on success, #f on failure.
+    // In serve mode, the result is retrievable via (fiber:join fid).
     primitives_.add("fiber:spawn", [this](const auto& a) -> EvalValue {
         if (a.empty() || !is_closure(a[0]))
             return make_bool(false);
         auto cid = as_closure_id(a[0]);
         // In serve-async mode: use g_fiber_spawn to create a real fiber
         if (aura::messaging::g_fiber_spawn) {
-            // Capture evaluator state (same-thread cooperative, safe)
-            auto fid = aura::messaging::g_fiber_spawn([this, cid]() {
-                apply_closure(cid, {});
+            auto result_ptr = std::make_shared<std::optional<EvalValue>>();
+            auto fid = aura::messaging::g_fiber_spawn([this, cid, result_ptr]() {
+                *result_ptr = apply_closure(cid, {});
             });
-            if (fid > 0)
+            if (fid > 0) {
+                s_fiber_results[fid] = std::move(result_ptr);
                 return make_int(fid);
-            return make_bool(false);
+            }
+            // Spawn failed — run inline as fallback
+            *result_ptr = apply_closure(cid, {});
+            if (*result_ptr)
+                return **result_ptr;
+            return make_void();
         }
-        // Fallback (stdin mode): call directly
+        // Fallback (stdin mode): call directly — no fiber, cannot join
         auto opt = apply_closure(cid, {});
         if (opt) return *opt;
         return make_void();
@@ -8999,15 +9012,34 @@ Evaluator::Evaluator() {
         return merr("no-serve", "agent:spawn requires serve mode or a local handler");
     });
 
-    // (fiber:join fiber-id) — Wait for a fiber to complete
-    // In the current implementation (cooperative single-threaded), fibers in the
-    // same session share an evaluator. Join is a placeholder for now — returns
-    // #t if the fiber existed, #f otherwise.
-    // Serve-async with return values is future work.
+    // (fiber:join fiber-id) — Wait for a fiber to complete and return its result
+    // Uses s_fiber_results (shared with fiber:spawn). Yields the current fiber
+    // until the target fiber is done, then returns the stored result.
+    // In stdin mode (no fiber infrastructure), returns #f.
     primitives_.add("fiber:join", [this](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
-        return make_bool(true);
+        auto fid = static_cast<int64_t>(as_int(a[0]));
+        // Wait in a yield-loop until the result is available
+        for (int iter = 0; iter < 100000; ++iter) {
+            auto it = s_fiber_results.find(fid);
+            if (it != s_fiber_results.end()) {
+                auto& result_ptr = it->second;
+                if (result_ptr && result_ptr->has_value()) {
+                    auto result = std::move(**result_ptr);
+                    s_fiber_results.erase(it);
+                    return result;
+                }
+                // shared_ptr exists but result not set yet — continue waiting
+            }
+            // Yield to scheduler so the target fiber can make progress
+            if (aura::messaging::g_fiber_yield) {
+                aura::messaging::g_fiber_yield();
+            } else {
+                break;  // no scheduler — can't wait
+            }
+        }
+        return make_void();
     });
 
     // (_agent:list) — List all active agent sessions (internal primitive)
