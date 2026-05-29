@@ -9186,31 +9186,33 @@ Evaluator::Evaluator() {
 
     // (thread_pool:enqueue fn) — Offload a blocking function to the thread pool.
     // fn is a closure taking no arguments.
-    // Returns #t on success, #f if no thread pool available.
-    // The calling fiber yields until the thread pool completes the task.
+    // Returns the result on success (may block caller until done).
+    // In serve/fiber mode: yields fiber, pool thread wakes it.
+    // In stdin mode: uses std::async, blocks synchronously.
     primitives_.add("thread_pool:enqueue", [this](const auto& a) -> EvalValue {
         if (a.empty() || !is_closure(a[0]))
             return make_bool(false);
         auto cid = as_closure_id(a[0]);
-        if (!aura::messaging::g_thread_pool_enqueue)
-            return make_bool(false);
-        // Shared result: thread writes, fiber reads after wakeup
-        auto result_ptr = std::make_shared<std::optional<EvalValue>>();
-        // Enqueue the task. We pass -1 as wake_evfd — the serve layer
-        // provides the fiber's own eventfd via a separate callback so the
-        // worker can wake the fiber directly. See serve_async.cpp.
-        aura::messaging::g_thread_pool_enqueue([this, cid, result_ptr]() {
-            *result_ptr = apply_closure(cid, {});
-        }, -1);
-        // Yield and wait — the pool thread signals our eventfd when done.
-        // g_fiber_block sets fiber to Waiting and calls Fiber::yield().
-        // The scheduler's epoll monitors our eventfd and will re-enqueue us.
-        if (aura::messaging::g_fiber_block) {
-            aura::messaging::g_fiber_block();
+        // Serve/fiber mode: use g_thread_pool_enqueue callback
+        if (aura::messaging::g_thread_pool_enqueue) {
+            auto result_ptr = std::make_shared<std::optional<EvalValue>>();
+            aura::messaging::g_thread_pool_enqueue([this, cid, result_ptr]() {
+                *result_ptr = apply_closure(cid, {});
+            }, -1);
+            if (aura::messaging::g_fiber_block) {
+                aura::messaging::g_fiber_block();
+            }
+            if (result_ptr && result_ptr->has_value())
+                return std::move(**result_ptr);
+            return make_void();
         }
-        // Return the stored result
-        if (result_ptr && result_ptr->has_value())
-            return std::move(**result_ptr);
+        // Stdin mode: use std::async
+        auto future = std::async(std::launch::async, [this, cid]() {
+            return apply_closure(cid, {});
+        });
+        auto result = future.get();
+        if (result)
+            return *result;
         return make_void();
     });
 
