@@ -340,7 +340,8 @@ export struct IRModule {
                 };
                 std::vector<SlotType> slot_types(func.local_count + func.arg_count + 4);
                 std::vector<std::uint32_t> slot_remap; // result_slot -> source_slot
-                slot_remap.resize(func.local_count + func.arg_count + 4, 0);
+                slot_remap.resize(func.local_count + func.arg_count + 4,
+                                  std::numeric_limits<std::uint32_t>::max());
 
                 for (auto& instr : block.instructions) {
                     // Record known type for this instruction's result
@@ -384,9 +385,9 @@ export struct IRModule {
                 for (auto& instr : block.instructions) {
                     if (instr.opcode == IROpcode::CastOp)
                         continue; // skip CastOps we already marked
+                    // Don't skip op==0 — a valid slot can be 0
                     for (auto& op : instr.operands) {
-                        if (op == 0) continue;
-                        if (op < slot_remap.size() && slot_remap[op] != 0 && slot_remap[op] != op) {
+                        if (op < slot_remap.size() && slot_remap[op] != std::numeric_limits<std::uint32_t>::max() && slot_remap[op] != op) {
                             // Follow the remap chain
                             auto src = slot_remap[op];
                             while (src < slot_remap.size() && slot_remap[src] != 0 && slot_remap[src] != src)
@@ -401,7 +402,7 @@ export struct IRModule {
                     if (instr.opcode == IROpcode::CastOp) {
                         auto result_slot = instr.operands[0];
                         return result_slot < slot_remap.size() &&
-                               slot_remap[result_slot] != 0;
+                               slot_remap[result_slot] != std::numeric_limits<std::uint32_t>::max();
                     }
                     return false;
                 });

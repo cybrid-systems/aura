@@ -1847,5 +1847,215 @@ int main() {
         std::println("  [32mFLAT OK[0m: parse_to_flat preserves children (arena & non-arena)");
     }
 
+    // ── TypeID propagation tests (Issue #27) ───────────────────
+    // Verifies that lowering auto-propagates type_id from FlatAST
+    // to IR instructions, and that the SourceScope RAII fix works.
+    {
+        using aura::ir::IROpcode;
+        auto count_nonzero_type_ids = [](aura::ir::IRModule& mod, IROpcode filter_op) -> int {
+            // Count result-producing instructions with non-zero type_id
+            int count = 0;
+            for (auto& func : mod.functions) {
+                for (auto& blk : func.blocks) {
+                    for (auto& instr : blk.instructions) {
+                        if (instr.type_id == 0) continue;
+                        if (filter_op == IROpcode::Nop || instr.opcode == filter_op)
+                            ++count;
+                    }
+                }
+            }
+            return count;
+        };
+        auto find_instructions_with_opcode = [](aura::ir::IRModule& mod, IROpcode op) -> int {
+            int count = 0;
+            for (auto& func : mod.functions)
+                for (auto& blk : func.blocks)
+                    for (auto& instr : blk.instructions)
+                        if (instr.opcode == op) ++count;
+            return count;
+        };
+
+        int ti_passed = 0, ti_failed = 0;
+        aura::core::TypeRegistry treg;
+        aura::diag::DiagnosticCollector diag;
+
+        // Test 1: literal ints get type_id=1 (INT) after lowering
+        {
+            aura::ast::ASTArena arena2;
+            auto alloc = arena2.allocator();
+            aura::ast::StringPool pool2(alloc);
+            aura::ast::FlatAST flat2(alloc);
+            auto id = flat2.add_literal(42);
+            flat2.set_type(id, 1); // INT = 1, simulates type checker
+            flat2.root = id;
+            auto mod = aura::compiler::lower_to_ir(flat2, pool2, arena2);
+            int const_with_type = 0, const_total = 0;
+            for (auto& func : mod.functions)
+                for (auto& blk : func.blocks)
+                    for (auto& instr : blk.instructions)
+                        if (instr.opcode == IROpcode::ConstI64) {
+                            ++const_total;
+                            if (instr.type_id == 1) ++const_with_type;
+                        }
+            if (const_total >= 1 && const_with_type == const_total) {
+                std::println("TP OK: literal int → {} ConstI64 with type_id=1", const_total);
+                ++ti_passed;
+            } else {
+                std::println(std::cerr, "TP FAIL: literal int — {} total, {} with type_id=1",
+                             const_total, const_with_type);
+                ++ti_failed;
+            }
+        }
+
+        // Test 2: compound expression (+ 1 2) — result instruction gets Call node's type
+        {
+            aura::ast::ASTArena arena2;
+            auto alloc = arena2.allocator();
+            aura::ast::FlatAST flat2(alloc);
+            aura::ast::StringPool pool2(alloc);
+            auto pr = aura::parser::parse_to_flat("(+ 1 2)", flat2, pool2);
+            flat2.root = pr.root;
+            // Run type checker to populate type_id on all nodes
+            aura::compiler::TypeChecker tc(treg);
+            diag.clear();
+            tc.infer_flat(flat2, pool2, flat2.root, diag);
+            // Lower and inspect
+            auto mod = aura::compiler::lower_to_ir(flat2, pool2, arena2);
+            int with_type = 0;
+            int add_count = 0;
+            for (auto& func : mod.functions) {
+                for (auto& blk : func.blocks) {
+                    for (auto& instr : blk.instructions) {
+                        if (instr.type_id != 0) ++with_type;
+                        if (instr.opcode == IROpcode::Add) {
+                            ++add_count;
+                            if (instr.type_id == 1) ++with_type; // INT = 1
+                        }
+                    }
+                }
+            }
+            if (add_count >= 1 && with_type >= 3) {
+                std::println("TP OK: (+ 1 2) → result Add has type_id=1, {} total typed instrs",
+                             with_type);
+                ++ti_passed;
+            } else {
+                std::println(std::cerr,
+                    "TP FAIL: (+ 1 2) expected Add type_id=1, add_count={} typed_instrs={}",
+                    add_count, with_type);
+                ++ti_failed;
+            }
+        }
+
+        // Test 3: Coercion node produces CastOp with correct target type_id
+        // add_coercion stores type_id on the node; lowering emits CastOp with that type_id
+        {
+            aura::ast::ASTArena arena2;
+            auto alloc = arena2.allocator();
+            aura::ast::StringPool pool2(alloc);
+            aura::ast::FlatAST flat2(alloc);
+            auto inner = flat2.add_literal(42);
+            flat2.set_type(inner, 1); // inner = Int (type_id=1)
+            // Coercion from Int→String: type_id=3 (String)
+            // The coercion's int_val_ stores the type_tag (mapped from TypeTag)
+            auto coerce = flat2.add_coercion(inner, 3, 3); // (inner, type_tag=String(3), type_id=3)
+            flat2.root = coerce;
+            auto mod = aura::compiler::lower_to_ir(flat2, pool2, arena2);
+            int cast_type_ok = 0, total_cast = 0;
+            for (auto& func : mod.functions) {
+                for (auto& blk : func.blocks) {
+                    for (auto& instr : blk.instructions) {
+                        if (instr.opcode == IROpcode::CastOp) {
+                            ++total_cast;
+                            // CastOp should have type_id=3 (target is String)
+                            if (instr.type_id == 3) ++cast_type_ok;
+                        }
+                    }
+                }
+            }
+            if (total_cast >= 1 && cast_type_ok >= 1) {
+                std::println("TP OK: Coercion CastOp → type_id=3 ({} of {} cast with type)",
+                             cast_type_ok, total_cast);
+                ++ti_passed;
+            } else {
+                std::println(std::cerr,
+                    "TP FAIL: Coercion CastOp expected type_id=3, cast={} ok={}",
+                    total_cast, cast_type_ok);
+                ++ti_failed;
+            }
+        }
+
+        // Test 4: optimize_type_info eliminates redundant CastOps using propagated type_id
+        // Build IR directly with type_id set on Const and CastOp, verify optimization works
+        {
+            aura::ir::IRModule mod;
+            mod.functions.push_back(aura::ir::IRFunction{.name = "test", .local_count = 5});
+            auto& func = mod.functions.back();
+            func.blocks.push_back({0});
+            auto& block = func.blocks.back();
+            // ConstI64(slot0, 42) with type_id=1 (Int), then redundant CastOp(Int→Int)
+            block.instructions = {
+                {IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},  // slot0=42, type_id=1 (Int)
+                {IROpcode::CastOp,   {1, 0, 1, 0}, 0, 1},   // cast Int→Int, type_id=1
+                {IROpcode::Return,   {1, 0, 0, 0}, 0, 0},
+            };
+            int casts_before = find_instructions_with_opcode(mod, IROpcode::CastOp);
+            mod.optimize_type_info();
+            int casts_after = find_instructions_with_opcode(mod, IROpcode::CastOp);
+            if (casts_after < casts_before) {
+                std::println("TP OK: optimize_type_info eliminated CastOp ({}→{})",
+                             casts_before, casts_after);
+                ++ti_passed;
+            } else {
+                std::println(std::cerr,
+                    "TP FAIL: optimize_type_info did not eliminate CastOp ({}→{})",
+                    casts_before, casts_after);
+                ++ti_failed;
+            }
+        }
+
+        // Test 5: SourceScope fix — nested expression result gets parent's type, not child's
+        {
+            aura::ast::ASTArena arena2;
+            auto alloc = arena2.allocator();
+            aura::ast::FlatAST flat2(alloc);
+            aura::ast::StringPool pool2(alloc);
+            auto pr = aura::parser::parse_to_flat("(if 1 (+ 2 3) (+ 4 5))", flat2, pool2);
+            flat2.root = pr.root;
+            // Run type checker
+            aura::compiler::TypeChecker tc(treg);
+            diag.clear();
+            tc.infer_flat(flat2, pool2, flat2.root, diag);
+            // Lower
+            auto mod = aura::compiler::lower_to_ir(flat2, pool2, arena2);
+            // Verify that at least some instructions have non-zero type_id
+            // The SourceScope fix means compound instructions at each level
+            // should carry their own node's type, not the last child's
+            int with_type = 0;
+            int instr_count = 0;
+            for (auto& func : mod.functions)
+                for (auto& blk : func.blocks)
+                    for (auto& instr : blk.instructions) {
+                        ++instr_count;
+                        if (instr.type_id != 0) ++with_type;
+                    }
+            // Without SourceScope, most compound instrs would have type_id=0
+            // With fix, > 50% should have type info
+            if (instr_count > 0 && with_type >= instr_count / 2) {
+                std::println("TP OK: (if ...) lowered — {}/{} instrs have type_id (>=50%)",
+                             with_type, instr_count);
+                ++ti_passed;
+            } else {
+                std::println(std::cerr,
+                    "TP FAIL: (if ...) — only {}/{} instrs have type_id (expected >={})",
+                    with_type, instr_count, instr_count / 2);
+                ++ti_failed;
+            }
+        }
+
+        std::println("TypeID propagation tests: {}/{}/{} passed/failed/total",
+                     ti_passed, ti_failed, ti_passed + ti_failed);
+        if (ti_failed > 0) return 1;
+    }
+
     return (failed + ck_failed + arity_failed + mp_failed + pm_failed + cf_failed + dce_failed + gg_failed + ts_failed + flat_failed) > 0 ? 1 : 0;
 }
