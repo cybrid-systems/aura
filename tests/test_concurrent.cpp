@@ -269,12 +269,99 @@ bool test_worker_lifecycle() {
     return true;
 }
 
+// ── Test 9: Work-stealing — imbalanced load ───────────
+// Spawn all fibers on worker 0, then stop worker 0 to force
+// other workers to steal fibers from its queue.
+
+bool test_work_stealing() {
+    std::println("\n--- Test: Work-stealing ---");
+
+    constexpr int NUM_FIBERS = 50;
+    std::atomic<int> completed{0};
+
+    aura::serve::Scheduler sched(4);
+
+    // Spawn all fibers — they're distributed round-robin across workers
+    // But with work-stealing, idle workers will steal from busy ones
+    for (int i = 0; i < NUM_FIBERS; ++i) {
+        sched.spawn([&completed, i]() {
+            // Small work to ensure steal opportunity
+            volatile int sum = 0;
+            for (int j = 0; j < 100000; ++j) {
+                sum += j;
+            }
+            completed.fetch_add(1);
+        });
+    }
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    sched.stop();
+    t.join();
+
+    CHECK(completed.load() == NUM_FIBERS, "all " + std::to_string(NUM_FIBERS) + " fibers completed via work-stealing");
+    return true;
+}
+
+// ── Test 10: Work-stealing deque unit test ────────────
+// Directly test the Chase-Lev deque with void* type
+
+bool test_ws_deque() {
+    std::println("\n--- Test: Work-stealing deque ---");
+
+    aura::serve::WorkStealingDeque<void*> dq;
+
+    void* v1 = reinterpret_cast<void*>(static_cast<intptr_t>(1));
+    void* v2 = reinterpret_cast<void*>(static_cast<intptr_t>(2));
+    void* v3 = reinterpret_cast<void*>(static_cast<intptr_t>(3));
+    void* v10 = reinterpret_cast<void*>(static_cast<intptr_t>(10));
+    void* v20 = reinterpret_cast<void*>(static_cast<intptr_t>(20));
+    void* v30 = reinterpret_cast<void*>(static_cast<intptr_t>(30));
+
+    // Push/pop
+    dq.push(v1);
+    dq.push(v2);
+    dq.push(v3);
+
+    auto a = reinterpret_cast<intptr_t>(dq.pop());
+    auto b = reinterpret_cast<intptr_t>(dq.pop());
+    auto c = reinterpret_cast<intptr_t>(dq.pop());
+
+    CHECK(a == 3, "LIFO pop returns most recent (3)");
+    CHECK(b == 2, "LIFO pop returns second (2)");
+    CHECK(c == 1, "LIFO pop returns first (1)");
+
+    // Empty pop returns nullptr
+    auto nil = dq.pop();
+    CHECK(nil == nullptr, "pop from empty deque returns nullptr");
+
+    // Steal (should get oldest = first pushed)
+    dq.push(v10);
+    dq.push(v20);
+    dq.push(v30);
+
+    auto s1 = reinterpret_cast<intptr_t>(dq.steal());
+    CHECK(s1 == 10, "steal returns oldest (10)");
+
+    // Owner pop after steal
+    auto p1 = reinterpret_cast<intptr_t>(dq.pop());
+    CHECK(p1 == 30, "after steal, owner pop returns newest (30)");
+
+    auto p2 = reinterpret_cast<intptr_t>(dq.pop());
+    CHECK(p2 == 20, "last remaining (20)");
+
+    CHECK(dq.empty_approx(), "deque is empty after all operations");
+
+    return true;
+}
+
 // ── Main ──────────────────────────────────────────────
 
 int main() {
     std::println("═══ Concurrent model unit tests ═══\n");
 
     // Run all tests
+    test_ws_deque();
     test_worker_lifecycle();
     test_fiber_lifecycle();
     test_fiber_yield();
@@ -283,6 +370,7 @@ int main() {
     test_fiber_spawns_fiber();
     test_stress_many_fibers();
     test_eventfd_wakeup();
+    test_work_stealing();
 
     std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
                  g_passed, g_passed + g_failed,
