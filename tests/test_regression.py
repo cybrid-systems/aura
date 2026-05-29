@@ -795,6 +795,31 @@ def test_jit():
         else:
             raise Exception(f"coercion-consist: {code}: --jit={out_jit!r} eval={out_eval!r}")
 
+    # ── Mutation type soundness (#25): basic mutation + typecheck ──
+    r = subprocess.run([AURA],
+        input='(begin (define (f x) (+ x 1)) (mutate:rebind "f" "(lambda (x) (* x 2))") (typecheck-status))',
+        capture_output=True, text=True, timeout=10)
+    if 'ok' in r.stdout:
+        print('  ✅ mutation-rebind-tc')
+    else:
+        raise Exception(f'mutation-rebind-tc: got {r.stdout!r}')
+
+    r = subprocess.run([AURA],
+        input='(begin (define (a x) (+ x 1)) (define (b x) (a x)) (mutate:rebind "a" "(lambda (x) (* x 2))") (typecheck-status))',
+        capture_output=True, text=True, timeout=10)
+    if 'ok' in r.stdout:
+        print('  ✅ mutation-chain-tc')
+    else:
+        raise Exception(f'mutation-chain-tc: got {r.stdout!r}')
+
+    r = subprocess.run([AURA],
+        input='(begin (define (f x) (+ x 1)) (mutate:set-body "f" "(* x 2)") (typecheck-status))',
+        capture_output=True, text=True, timeout=10)
+    if 'ok' in r.stdout:
+        print('  ✅ mutation-set-body-tc')
+    else:
+        raise Exception(f'mutation-set-body-tc: got {r.stdout!r}')
+
 def test_fuzz_edsl():
     """Run property-based EDSL mutation fuzz (quick mode)."""
     r = subprocess.run([sys.executable, "tests/fuzz_edsl.py", "--quick"],
