@@ -279,16 +279,17 @@
 ; ── orch:parallel — 并行执行 ──
 ;
 ; 交响乐指挥说："现在大家一起演奏"。
-; 通过 fiber:spawn 并行执行，串行 fallback。
+; 通过 fiber:spawn 并行执行，支持超时和错误隔离。
 ;
 ; fns:  (fn1 fn2 ...) — 函数列表
 ; input: 输入值
-; → (output1 output2 ...)
-(define (orch:parallel fns input)
+; timeout: 可选，秒数（默认等所有完成）
+; → (output1 output2 ...) — 超时/失败的结果为 #f
+(define (orch:parallel fns input . timeout-arg)
+  (define timeout-sec (if (pair? timeout-arg) (car timeout-arg) #f))
   (if (null? fns) (quote ())
-    (let ((results (quote ())))
-      ; 尝试 fiber:spawn 并行
-      (define fiber-ids (quote ()))
+    (let ((fiber-ids (quote ())))
+      ; 并行 spawn 所有 fiber
       (define (try-fiber remaining)
         (when (pair? remaining)
           (define fid (try (fiber:spawn (lambda () ((car remaining) input)))
@@ -299,14 +300,31 @@
       (try-fiber fns)
       
       (if (pair? fiber-ids)
-        ; 有 fiber — 并行执行（cooperative，实际同步等待）
-        (begin
+        (let* ((timeout-fid (if timeout-sec
+                             (fiber:spawn (lambda ()
+                               (sleep timeout-sec)
+                               'timeout))
+                             #f))
+               (all-ids (if timeout-fid (cons timeout-fid fiber-ids) fiber-ids))
+               (results (quote ())))
+          ; Collect results, handling timeout
           (define (collect-all ids)
             (when (pair? ids)
-              (set! results (cons (fiber:join (car ids)) results))
-              (collect-all (cdr ids))))
-          (collect-all (reverse fiber-ids))
-          (reverse results))
+              (define id (car ids))
+              (define r (try (fiber:join id) (catch (e) 'error)))
+              (if (and timeout-fid (equal? r 'timeout))
+                ; Timeout triggered — remaining fibers get #f
+                (begin
+                  (set! results (cons #f results))
+                  (collect-all (cdr ids)))
+                (begin
+                  (set! results (cons r results))
+                  (collect-all (cdr ids))))))
+          (collect-all (reverse all-ids))
+          ; If timeout fired, the first result is 'timeout, discard it
+          (if timeout-fid
+            (cdr (reverse results))
+            (reverse results)))
         ; 串行 fallback
         (let loop ((remaining fns) (acc (quote ())))
           (if (null? remaining) (reverse acc)
