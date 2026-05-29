@@ -3685,6 +3685,7 @@ void Evaluator::init_pair_primitives() {
             aura::ast::MutationStatus::Committed, 1, old_val, new_tid, true);
         // Actually apply the type change
         flat.set_type(node, new_tid);
+        workspace_flat_->mark_dirty_upward(node);
         defuse_version_++;
         return make_int(static_cast<std::int64_t>(mid));
     });
@@ -3727,6 +3728,7 @@ void Evaluator::init_pair_primitives() {
                     aura::ast::MutationStatus::Committed, 0, old_val,
                     static_cast<std::uint64_t>(new_val), true);
                 flat.set_int(node, new_val);
+                workspace_flat_->mark_dirty_upward(node);
                 return make_int(static_cast<std::int64_t>(mid));
             }
             case aura::ast::NodeTag::LiteralFloat: {
@@ -3742,6 +3744,7 @@ void Evaluator::init_pair_primitives() {
                     node, "replace-value", "Float", "Float", string_heap_[sum_idx],
                     aura::ast::MutationStatus::Committed, 1, old_bits, new_bits, true);
                 flat.set_float(node, new_val);
+                workspace_flat_->mark_dirty_upward(node);
                 return make_int(static_cast<std::int64_t>(mid));
             }
             case aura::ast::NodeTag::Variable:
@@ -3758,6 +3761,7 @@ void Evaluator::init_pair_primitives() {
                     node, "replace-value", "Sym", "Sym", string_heap_[sum_idx],
                     aura::ast::MutationStatus::Committed, 2, old_val, new_sym, true);
                 flat.set_sym(node, new_sym);
+                workspace_flat_->mark_dirty_upward(node);
                 return make_int(static_cast<std::int64_t>(mid));
             }
             default:
@@ -4922,6 +4926,7 @@ void Evaluator::init_pair_primitives() {
                     children[ci] = aura::ast::NULL_NODE;
                     flat.add_mutation(id, "remove-node", std::to_string(target), "",
                                       "remove node " + std::to_string(target));
+                    workspace_flat_->mark_dirty_upward(id);
                     return make_bool(true);
                 }
             }
@@ -4972,6 +4977,7 @@ void Evaluator::init_pair_primitives() {
                                   ? string_heap_[as_string_idx(a[3])]
                                   : "insert child at " + std::to_string(pos);
         flat.add_mutation(parent, "insert-child", std::to_string(pos), summary, summary);
+        workspace_flat_->mark_dirty_upward(parent);
         return make_int(static_cast<std::int64_t>(pr.root));
     });
 
@@ -5000,6 +5006,7 @@ void Evaluator::init_pair_primitives() {
             aura::ast::MutationStatus::Committed, 0, static_cast<std::uint64_t>(old_val),
             static_cast<std::uint64_t>(new_val), true);
         flat.set_int(node, new_val);
+        workspace_flat_->mark_dirty_upward(node);
         return make_int(static_cast<std::int64_t>(new_val));
     });
 
@@ -7647,6 +7654,7 @@ Evaluator::Evaluator() {
 
             flat.add_mutation(parent, "splice", std::to_string(insert_pos),
                               string_heap_[cidx], summary);
+            workspace_flat_->mark_dirty_upward(parent);
 
             auto pid = pairs_.size();
             pairs_.push_back({make_int(static_cast<std::int64_t>(pr.root)), result_list});
@@ -8270,7 +8278,9 @@ Evaluator::Evaluator() {
             flat.insert_child(ws_root, 0, define_id);
         }
 
-        flat.mark_dirty(define_id);
+        workspace_flat_->mark_dirty_upward(define_id);
+        if (ws_root != aura::ast::NULL_NODE)
+            workspace_flat_->mark_dirty_upward(ws_root);
 
         flat.add_mutation(define_id, "extract-function", new_name, summary, summary);
 
@@ -8526,6 +8536,7 @@ Evaluator::Evaluator() {
         if (cloned_body == aura::ast::NULL_NODE)
             return merr("inline-error", "function definition not found for inlining");
         flat.set_child(call_parent, static_cast<std::uint32_t>(call_idx_in_parent), cloned_body);
+        workspace_flat_->mark_dirty_upward(call_parent);
 
         flat.add_mutation(call_id, "inline-call", summary, summary, summary);
         return make_bool(true);
