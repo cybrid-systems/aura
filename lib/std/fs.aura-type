@@ -1,0 +1,11 @@
+path-join: Any -> Any
+path-dirname: Any -> Any
+path-basename: Any -> Any
+path-extname: Any -> Any
+file-read: Any -> String
+file-write: Any Any -> Bool
+file-exists?: Any -> Bool
+file-size: Any -> Int
+dir-list: Any -> Any
+dir-files: Any -> Any
+dir-dirs: Any -> Any

@@ -1,0 +1,13 @@
+set->list: Any -> Any
+list->set: Any -> Any
+set: Any -> Any
+set-add: Any Any -> Any
+set-remove: Any Any -> Any
+set-member?: Any Any -> Bool
+set-empty?: Any -> Bool
+set-size: Any -> Int
+set-union: Any Any -> Any
+set-intersect: Any Any -> Any
+set-difference: Any Any -> Any
+set-subset?: Any Any -> Bool
+set-equal?: Any Any -> Any

@@ -1,0 +1,5 @@
+make-trie:  -> Any
+trie-insert: Any Any -> Any
+trie-search: Any Any -> Any
+trie-prefix?: Any Any -> Any
+trie-keys: Any -> Any

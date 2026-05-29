@@ -1,0 +1,8 @@
+make-random: Any -> Any
+random-next: Any -> Any
+random-integer: Any -> Any
+random-float: Any -> Any
+random-range: Any Any Any -> Any
+random-vector: Any Any -> Any
+shuffle: Any Any -> Any
+random-seed: Any -> Any

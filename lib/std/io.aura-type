@@ -1,0 +1,10 @@
+file-exists?: String -> Bool
+file-size: String -> Int
+file-copy: String String -> Bool
+file-delete: String -> Bool
+file-read: Any -> String
+file-write: Any Any -> Void
+file->string: Any -> String
+string->file: Any Any -> Void
+file->lines: Any -> Any
+file->words: Any -> Any

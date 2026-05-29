@@ -1,0 +1,18 @@
+string-split: Any Any -> Any
+string-split-words: Any -> Any
+string-join: Any Any -> Any
+string-trim: Any -> String
+string-upcase: Any -> String
+string-downcase: Any -> String
+string-contains?: Any Any -> Any
+string-prefix?: Any Any -> Bool
+string-suffix?: Any Any -> Bool
+string-replace: Any Any Any -> Any
+string-pad-left: Any Any -> Any
+string-pad-right: Any Any -> Any
+string-reverse: Any -> String
+string-repeat: Any Any -> Any
+string->chars: Any -> Any
+chars->string: Any -> String
+string-take: Any Any -> String
+string-drop: Any Any -> String

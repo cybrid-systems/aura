@@ -1,0 +1,3 @@
+sh: Any -> Any
+sh-ok?: Any -> Bool
+which: Any -> Any

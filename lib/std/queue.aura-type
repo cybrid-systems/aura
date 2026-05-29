@@ -1,0 +1,9 @@
+make-queue:  -> Any
+enqueue: Any Any -> Any
+dequeue: Any -> Any
+queue-front: Any -> Any
+queue-rest: Any -> Any
+queue-empty?: Any -> Bool
+queue-length: Any -> Int
+queue->list: Any -> Any
+list->queue: Any -> Any

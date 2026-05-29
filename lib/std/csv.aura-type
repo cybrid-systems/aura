@@ -1,0 +1,7 @@
+csv-parse: Any -> Any
+csv->rows: Any -> Any
+csv->table: Any -> Any
+csv-select: Any Any -> Any
+csv-filter: Any Any -> Any
+csv-header: Any -> Any
+column-names: Any -> Any

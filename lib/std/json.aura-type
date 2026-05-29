@@ -1,0 +1,7 @@
+c2s: Any -> String
+json-parse: Any -> Any
+json-stringify: Any -> Any
+json-escape: Any -> String
+json-value: Any -> Any
+json-arr-items: Any Any -> String
+json-obj-items: Any Any Any -> String

@@ -1,0 +1,4 @@
+llm-ask: Any -> Any
+extract-code: Any -> Any
+safe-eval: Any -> Any
+auto-grow: Any Any -> Any

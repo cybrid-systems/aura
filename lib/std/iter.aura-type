@@ -1,0 +1,25 @@
+any?: Any Any -> Any
+every?: Any Any -> Any
+find: Any Any -> Any
+find-index: Any Any -> Any
+count: Any Any -> Int
+occurrences: Any Any -> Any
+group-by: Any Any -> Any
+frequencies: Any -> Any
+split-at: Any Any -> Any
+hash-map: Any Any -> Any
+hash-filter: Any Any -> Any
+hash-keys-filter: Any Any -> Any
+hash-vals: Any -> Any
+hash-update!: Any Any Any Any -> Void
+hash-merge!: Any Any -> Any
+hash-merge-into: Any Any -> Any
+hash-keys-sorted: Any -> Any
+vector-map: Any Any -> Any
+vector-reverse: Any -> Any
+vector->list-rev: Any -> Any
+vector-slice: Any Any Any -> Any
+vector-find: Any Any -> Any
+iterate: Any Any Any -> Any
+unfold: Any Any Any Any -> Any
+iota: Any -> Any

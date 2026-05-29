@@ -1,0 +1,42 @@
+e:  -> Float
+pi:  -> Float
+phi:  -> Float
+tau:  -> Float
+square: Any -> Any
+cube: Any -> Any
+clamp: Any Any Any -> Any
+avg: Any Any -> Any
+floor: Any -> Any
+ceil: Any -> Any
+round: Any -> Any
+sin: Any -> Any
+cos: Any -> Any
+tan: Any -> Any
+abs: Any -> Any
+min: Any Any -> Any
+max: Any Any -> Any
+atan2: Any Any -> Any
+degrees->radians: Any -> Any
+radians->degrees: Any -> Any
+positive?: Any -> Bool
+negative?: Any -> Bool
+zero?: Any -> Bool
+gcd: Any Any -> Any
+lcm: Any Any -> Any
+prime?: Any -> Any
+factors: Any -> Any
+fibonacci: Any -> Any
+factorial: Any -> Int
+expt: Any Any -> Any
+nPr: Any Any -> Int
+nCr: Any Any -> Int
+sum: Any -> Any
+product: Any -> Any
+mean: Any -> Int
+median: Any -> Any
+mode: Any -> Any
+variance: Any -> Int
+stddev: Any -> Any
+range: Any -> Int
+percentile: Any Any -> Any
+normalize: Any -> Any

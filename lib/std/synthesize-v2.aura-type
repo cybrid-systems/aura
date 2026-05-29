@@ -1,0 +1,6 @@
+synthesize:eval-test: Any Any Any -> Any
+synthesize:run-tests: Any Any -> Any
+synthesize:test-driven: Any Any -> Any
+synthesize:debug: Any -> Any
+synthesize:project: Any Any -> Any
+synthesize:compose: Any Any -> Any

@@ -1,0 +1,4 @@
+hex-encode: Any -> Any
+hex-decode: Any -> Any
+base64-encode: Any -> Any
+base64-decode: Any -> Any

@@ -1,0 +1,5 @@
+re-match?: Any Any -> Bool
+re-find: Any Any -> String
+re-replace: Any Any Any -> Any
+re-split: Any Any -> Any
+re-quote: Any -> Any

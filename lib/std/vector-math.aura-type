@@ -1,0 +1,34 @@
+vec:range: Any Any -> Any
+list->vec: Any -> Any
+vec->list: Any -> Any
+vec:map: Any Any -> Any
+vec:zip: Any Any Any -> Any
+vec:add: Any Any -> Any
+vec:sub: Any Any -> Any
+vec:mul: Any Any -> Any
+vec:div: Any Any -> Any
+vec:scale: Any Any -> Any
+vec:abs: Any -> Any
+vec:sq: Any -> Any
+vec:fold: Any Any Any -> Any
+vec:sum: Any -> Any
+vec:prod: Any -> Any
+vec:mean: Any -> Int
+vec:dot: Any Any -> Any
+vec:norm: Any -> Any
+vec:normalize: Any -> Any
+vec:argmin: Any -> Any
+vec:argmax: Any -> Any
+vec:slice: Any Any Any -> Any
+vec:concat: Any Any -> Any
+mat:make: Any Any Any -> Any
+mat:zeros: Any Any -> Any
+mat:ones: Any Any -> Any
+mat:identity: Any -> Any
+mat:ref: Any Any Any -> Any
+mat:shape: Any -> Any
+mat:rows: Any -> Any
+mat:cols: Any -> Any
+mat:map: Any Any -> Any
+mat:transpose: Any -> Any
+mat:mul: Any Any -> Any

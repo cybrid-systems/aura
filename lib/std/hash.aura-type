@@ -1,0 +1,9 @@
+hash-set: Any Any Any -> Any
+hash-ref: Any Any -> Any
+hash-get: Any Any -> Any
+hash-remove: Any Any -> Any
+hash-empty?: Any -> Bool
+hash->list: Any -> Any
+alist->hash: Any -> Any
+hash-merge: Any Any -> Any
+frequencies: Any -> Any
