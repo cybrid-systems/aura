@@ -681,10 +681,48 @@ PROMPT_SECTIONS = {
         "CRITICAL: (display (your-function args)) — if you only (define (f x) ...)"
         " the output will be '#<procedure>' and the TEST WILL FAIL!\n"
     ),
+    "syntax": (
+        "\n=== AURA SYNTAX REFERENCE ===\n"
+        "\nBASIC:\n  (+ 1 2)             → addition\n"
+        "  (define (f x) (+ x 1))  → define a function\n"
+        "  (lambda (x) (+ x 1))    → anonymous function\n"
+        "  (let ((x 10)) (+ x 1))  → local binding\n"
+        "  (if cond then else)   → conditional\n"
+        "  (cons 1 (list 2 3))   → pair / list\n"
+        "\nDISPLAY (required for tests):\n  (display 42)          → print 42\n"
+        "  (display (/ 10 2))    → print 5\n"
+        "  (display  (+ 1 2))    → print 3\n"
+        "\nTYPE ANNOTATIONS:\n  (: x Int 42)          → bind x:Int with value 42\n"
+        "  ((lambda ((: x Int)) (+ x 1)) 41)  → lambda with typed param\n"
+        "  (define (f (: x Int)) (+ x 1))    → define with typed param\n"
+        "  (: x String \"hello\") → string type annotation\n"
+        "\nFUNCTOR / MODULE:\n"
+        "  (define-module (Stack :T) (export push pop)\n"
+        "    (define (push s x) (cons x s)))\n"
+        "  (Stack Int)            → instantiate functor with Int\n"
+        "  (module-get (Stack Int) \"push\") → get function from instance\n"
+        "\nEDSL (self-modification):\n"
+        "  (set-code \"(define (f x) (+ x 1))\") → load code into workspace\n"
+        "  (query:root)            → get root node ID\n"
+        "  (query:children node)   → get children of a node\n"
+        "  (mutate:rebind name new-code)  → replace function definition\n"
+        "  (mutate:set-body name new-body) → replace function body\n"
+        "  (mutate:insert-child parent pos code) → insert child node\n"
+        "  (eval-current)          → evaluate workspace code\n"
+        "  (typecheck-current)     → type-check workspace code\n"
+        "  (ast:snapshot name)     → save AST snapshot\n"
+        "  (ast:restore snap-id)   → restore AST snapshot\n"
+        "\nMODULE / IMPORT:\n"
+        "  (require \"std/list\" all:)  → load stdlib module\n"
+        "  (import \"path\")            → import module\n"
+        "  (generate-type-sigs \"path\") → generate .aura-type file\n"
+        "\nTYPES:\n  Int, String, Bool, Float, Void, List, Pair, Hash\n"
+        "\n=== END REFERENCE ===\n"
+    ),
 }
 
 # Default section order (can be overridden per task)
-DEFAULT_SECTION_ORDER = ["identity"]
+DEFAULT_SECTION_ORDER = ["identity", "syntax"]
 
 # Task → section overrides for fine-grained control
 TASK_SECTION_OVERRIDES = {}
