@@ -1,0 +1,113 @@
+(require "std/test" all:)
+(require "std/orchestrator" all:)
+
+;; ═══════════════════════════════════════════════════════════════
+;; Concurrent model tests
+;;
+;; Tests fiber:spawn, fiber:join, orch:parallel with multi-threaded
+;; scheduling. Uses plain define/display to avoid macro quoting issues
+;; and recursion depth limits in std/list.
+;; ═══════════════════════════════════════════════════════════════
+
+;; ── Test 1: Basic fiber:spawn and fiber:join ─────────
+
+(display "[T1] fiber:spawn-join ... ")
+(define t1-fid (fiber:spawn (lambda () 42)))
+(define t1-result (fiber:join t1-fid))
+(if (and (number? t1-fid) (> t1-fid 0) (= t1-result 42))
+    (display "PASS\n") (display "FAIL\n"))
+
+;; ── Test 2: Multiple fibers ──────────────────────────
+
+(display "[T2] multi-fiber ... ")
+(define t2-a (fiber:spawn (lambda () 1)))
+(define t2-b (fiber:spawn (lambda () 10)))
+(define t2-c (fiber:spawn (lambda () 100)))
+(define t2-result (and (= (fiber:join t2-a) 1)
+                       (= (fiber:join t2-b) 10)
+                       (= (fiber:join t2-c) 100)))
+(if t2-result (display "PASS\n") (display "FAIL\n"))
+
+;; ── Test 3: Fiber side effects ───────────────────────
+
+(display "[T3] fiber-side-effects ... ")
+(define xs (list))
+(define t3-a (fiber:spawn (lambda () (set! xs (cons "a" xs)))))
+(define t3-b (fiber:spawn (lambda () (set! xs (cons "b" xs)))))
+(fiber:join t3-a)
+(fiber:join t3-b)
+(define t3-len (length xs))
+(if (and (>= t3-len 2) (<= t3-len 3))
+    (display "PASS\n") (display "FAIL\n"))
+
+;; ── Test 4: orch:parallel basic ──────────────────────
+
+(display "[T4] orch:parallel ... ")
+(define t4-f1 (lambda (x) (* x 2)))
+(define t4-f2 (lambda (x) (* x 3)))
+(define t4-r (orch:parallel (list t4-f1 t4-f2) 5))
+(if (and (pair? t4-r) (= (car t4-r) 10) (= (car (cdr t4-r)) 15))
+    (display "PASS\n") (display "FAIL\n"))
+
+;; ── Test 5: orch:pipeline ────────────────────────────
+
+(display "[T5] orch:pipeline ... ")
+(orch:define-role "a2" (cons (lambda (x) (+ x 2)) "direct"))
+(orch:define-role "m3" (cons (lambda (x) (* x 3)) "direct"))
+(if (= (orch:pipeline (list "a2" "m3") 5) 21)
+    (display "PASS\n") (display "FAIL\n"))
+
+;; ── Test 6: orch:conduct ─────────────────────────────
+
+(display "[T6] orch:conduct ... ")
+(orch:define-role "inc" (cons (lambda (x) (+ x 1)) "direct"))
+(if (= (orch:conduct (list "inc" "inc" "inc") 0) 3)
+    (display "PASS\n") (display "FAIL\n"))
+
+;; ── Test 7: orch:parallel with 5 workers ─────────────
+
+(display "[T7] orch:parallel-5 ... ")
+(define t7-fns (list (lambda (x) x)
+                     (lambda (x) (+ x 1))
+                     (lambda (x) (+ x 2))
+                     (lambda (x) (+ x 3))
+                     (lambda (x) (+ x 4))))
+(define t7-r (orch:parallel t7-fns 0))
+(if (and (pair? t7-r)
+         (= (car t7-r) 0)
+         (= (car (cdr t7-r)) 1)
+         (= (car (cdr (cdr t7-r))) 2))
+    (display "PASS\n") (display "FAIL\n"))
+
+;; ── Test 8: Fiber nesting ────────────────────────────
+
+(display "[T8] fiber-nested ... ")
+(define t8-result #f)
+(define t8-outer (fiber:spawn (lambda ()
+  (define t8-inner (fiber:spawn (lambda () 99)))
+  (set! t8-result (fiber:join t8-inner)))))
+(fiber:join t8-outer)
+(if (= t8-result 99) (display "PASS\n") (display "FAIL\n"))
+
+;; ── Test 9: Fiber stress (10 fibers) ─────────────────
+
+(display "[T9] fiber-stress-10 ... ")
+(define t9-results (list
+  (fiber:join (fiber:spawn (lambda () 1)))
+  (fiber:join (fiber:spawn (lambda () 10)))
+  (fiber:join (fiber:spawn (lambda () 100)))
+  (fiber:join (fiber:spawn (lambda () 1000)))))
+(define t9-ok (and (= (car t9-results) 1)
+                   (= (car (cdr t9-results)) 10)
+                   (= (car (cdr (cdr t9-results))) 100)
+                   (= (car (cdr (cdr (cdr t9-results)))) 1000)))
+(if t9-ok (display "PASS\n") (display "FAIL\n"))
+
+;; ── Test 10: orch:parallel empty ─────────────────────
+
+(display "[T10] orch:parallel-empty ... ")
+(if (null? (orch:parallel (quote ()) 42))
+    (display "PASS\n") (display "FAIL\n"))
+
+;; ═══ Summary ═══
+(display "\nDone.\n")

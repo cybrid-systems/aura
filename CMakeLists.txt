@@ -166,6 +166,23 @@ target_compile_options(test_ir PRIVATE -Wall -Wextra -Wpedantic
 )
 target_link_libraries(test_ir PRIVATE stdc++ stdc++exp aura-reflect)
 
+# ── Concurrent model tests ────────────────────────────
+# Tests fiber lifecycle, worker scheduling, and eventfd wakeup
+add_executable(test_concurrent tests/test_concurrent.cpp)
+set_property(TARGET test_concurrent PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_concurrent PRIVATE src)
+target_sources(test_concurrent PRIVATE
+    src/serve/fiber.cpp
+    src/serve/worker.cpp
+    src/serve/scheduler.cpp
+)
+target_compile_options(test_concurrent PRIVATE -Wall -Wextra -Wpedantic
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
+    -Wno-parentheses)
+target_link_libraries(test_concurrent PRIVATE pthread)
+add_test(NAME concurrent_basic COMMAND ./test_concurrent)
+
 # Link JIT for test_ir when LLVM is available (service.ixx references JIT types)
 if(LLVM_FOUND)
     target_sources(test_ir PRIVATE src/compiler/aura_jit.cpp src/compiler/aura_jit_runtime.cpp)

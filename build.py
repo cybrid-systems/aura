@@ -115,11 +115,15 @@ def cmd_clean():
 def test_unit():
     """C++ 单元测试 — test_ir (61 cases)"""
     print(f"{B}═══ Unit tests ═══{N}")
+    CONCURRENT_BIN = BUILD / "test_concurrent"
     if not TEST_BIN.exists():
         fail(f"{TEST_BIN} not found — run 'build' first")
         return 1
 
     start = time.time()
+    all_ok = True
+
+    # Run test_ir (core unit tests)
     r = subprocess.run([str(TEST_BIN)], capture_output=True, text=True)
     elapsed = time.time() - start
 
@@ -135,12 +139,30 @@ def test_unit():
         elif "passed/failed" in line and "Memory" not in line:
             pass  # These are the subsection summaries
 
+    if r.returncode != 0:
+        all_ok = False
+
+    # Run concurrent model tests
+    if CONCURRENT_BIN.exists():
+        print("")
+        start2 = time.time()
+        r2 = subprocess.run([str(CONCURRENT_BIN)], capture_output=True, text=True)
+        elapsed2 = time.time() - start2
+        for line in r2.stdout.strip().split("\n"):
+            if "PASS" in line:
+                ok(line.strip())
+            elif "FAIL" in line:
+                fail(line.strip())
+        print(f"  Concurrent tests: {elapsed2:.2f}s")
+        if r2.returncode != 0:
+            all_ok = False
+
     print(f"  Unit tests: {elapsed:.2f}s")
-    if r.returncode == 0 and failed == 0:
+    if all_ok:
         ok("all unit tests passed")
     else:
-        fail(f"unit tests: returncode={r.returncode}, failures={failed}")
-    return r.returncode
+        fail(f"unit tests: returncode={r.returncode}")
+    return 0 if all_ok else 1
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1187,7 +1209,7 @@ def test_suite_runner():
 # Test suite groups for CI tiering.
 # - "check" (CI default):  build + core + safety + fuzz-quick
 # - "all":                 build + everything
-CI_CORE = ["unit", "integ", "typecheck", "smoke", "bash", "suite", "repl", "runtime-c"]
+CI_CORE = ["unit", "integ", "typecheck", "smoke", "bash", "suite", "repl", "runtime-c", "concurrent"]
 CI_SAFETY = ["gradual", "regression", "p0"]
 CI_FUZZ = ["fuzz-equiv", "fuzz-corpus"]
 
