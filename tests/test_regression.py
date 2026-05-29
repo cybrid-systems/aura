@@ -665,10 +665,10 @@ def test_jit():
 
     # ── Eval path auto-JIT for comparisons ──────────────────
     eval_cases = [
-        ("comp-eq",   '(= 1 1)',      '#t'),
-        ("comp-neq",  '(= 1 2)',      '#f'),
-        ("comp-lt",   '(< 1 2)',      '#t'),
-        ("comp-gt",   '(> 3 1)',      '#t'),
+        ("comp-eq",   '(= 1 1)',               '#t'),
+        ("comp-neq",  '(= 1 2)',               '#f'),
+        ("comp-lt",   '(< 1 2)',               '#t'),
+        ("comp-gt",   '(> 3 1)',               '#t'),
         ("cond-str",  '(if (= 1 1) "ok" "no")', '"ok"'),
     ]
     for name, code, expected in eval_cases:
@@ -679,6 +679,56 @@ def test_jit():
             print(f"  ✅ jit-eval-{name}")
         else:
             raise Exception(f"jit-eval-{name}: expected {expected!r}, got {out!r}")
+
+    # ── Eval path: all types now go through JIT (Phase 3) ────
+    # These all go through JIT in eval() path (no --jit flag)
+    # Verify: same result as --jit mode
+    all_eval_cases = [
+        ("fixnum",      '(+ 1 2)',              '3'),
+        ("comp",        '(= 1 1)',              '#t'),
+        ("pair",        '(car (cons 10 20))',   '10'),
+        ("float",       '(+ 1.2 2.3)',          '3.5'),
+        ("string",      '"hello"',              '"hello"'),
+        ("if-str",      '(if 1 "yes" "no")',   '"yes"'),
+        ("closure",     '((lambda (x) (+ x 1)) 41)', '42'),
+        ("chain",       '(+ 1 (* 2 3))',        '7'),
+        ("nested",      '(if (and (< 1 2) (= 3 3)) 99 0)', '99'),
+        ("string-cond", '(if (= 1 1) "a" "b")', '"a"'),
+        ("nested-pair", '(car (cdr (cons 1 (cons 2 3))))', '2'),
+    ]
+    for name, code, expected in all_eval_cases:
+        r = subprocess.run([AURA], input=code, capture_output=True,
+                           text=True, timeout=10)
+        out = r.stdout.strip()
+        if out == expected:
+            print(f"  ✅ eval-jit-{name}")
+        else:
+            raise Exception(f"eval-jit-{name}: expected {expected!r}, got {out!r}")
+
+    # ── Cross-mode consistency: eval(JIT-default) vs --jit should match ──
+    consistency_codes = [
+        '(+ 1 2)', '(= 1 1)', '(< 3 5)',
+        '(if (= 1 2) 42 99)',
+        '(car (cons 10 20))', '(cdr (cons 10 20))',
+        '(+ 1.2 2.3)', '(* 2.0 3.0)',
+        '"(hello world)"',
+        '(if 1 "yes" "no")',
+        '((lambda (x) (+ x 1)) 41)',
+        '(if (= 1 1) "a" "b")',
+        '(car (cdr (cons 1 (cons 2 3))))',
+        '(if (and (< 1 2) (= 3 3)) 99 0)',
+    ]
+    for code in consistency_codes:
+        r_jit = subprocess.run([AURA, "--jit"], input=code, capture_output=True,
+                               text=True, timeout=10)
+        r_eval = subprocess.run([AURA], input=code, capture_output=True,
+                                text=True, timeout=10)
+        out_jit = r_jit.stdout.strip()
+        out_eval = r_eval.stdout.strip()
+        if out_jit == out_eval:
+            print(f"  ✅ jit-eval-consist: {code}")
+        else:
+            raise Exception(f"jit-eval-consist: {code}: --jit={out_jit!r} eval={out_eval!r}")
 
 def test_fuzz_edsl():
     """Run property-based EDSL mutation fuzz (quick mode)."""
