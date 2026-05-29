@@ -435,6 +435,7 @@ NodeId FlatParser::parse_lambda() {
         return NULL_NODE;
 
     std::vector<SymId> params;
+    std::vector<NodeId> annots; // parallel annotation node IDs (NULL_NODE = none)
     bool dotted = false;
     while (lexer_->peek().kind != TokenKind::RParen) {
         // Check for dotted rest parameter: (lambda (x . rest) body)
@@ -448,6 +449,7 @@ NodeId FlatParser::parse_lambda() {
             if (rest.kind != TokenKind::Identifier)
                 return NULL_NODE;
             params.push_back(pool_.intern(std::string(rest.text)));
+            annots.push_back(NULL_NODE);
             dotted = true;
             break;
         }
@@ -465,11 +467,13 @@ NodeId FlatParser::parse_lambda() {
                 return NULL_NODE;
             auto var_node = flat_.get(annot_tag.child(0));
             params.push_back(var_node.sym_id);
+            annots.push_back(annot_node);
         } else {
             auto t = lexer_->consume();
             if (t.kind != TokenKind::Identifier)
                 return NULL_NODE;
             params.push_back(pool_.intern(std::string(t.text)));
+            annots.push_back(NULL_NODE);
         }
     }
     lexer_->consume(); // ')'
@@ -490,7 +494,7 @@ NodeId FlatParser::parse_lambda() {
     if (body == NULL_NODE)
         return NULL_NODE;
     lexer_->consume(); // ')'
-    auto lid = flat_.add_lambda(params, body, dotted);
+    auto lid = flat_.add_lambda(params, annots, body, dotted);
     flat_.set_loc(lid, tok.line, tok.column);
     return lid;
 }
@@ -507,6 +511,7 @@ NodeId FlatParser::parse_define() {
             return NULL_NODE;
         }
         std::vector<SymId> params;
+        std::vector<NodeId> annots;
         bool dotted = false;
         while (lexer_->peek().kind != TokenKind::RParen) {
             // Check for dotted rest parameter: (define (f . rest) body)
@@ -522,15 +527,31 @@ NodeId FlatParser::parse_define() {
                     return NULL_NODE;
                 }
                 params.push_back(pool_.intern(std::string(rest.text)));
+                annots.push_back(NULL_NODE);
                 dotted = true;
                 break;
             }
-            auto p = lexer_->consume();
-            if (p.kind != TokenKind::Identifier) {
-                skip_rparen();
-                return NULL_NODE;
+            // Check for type-annotated parameter: (define (f (x : Int)) ...)
+            if (lexer_->peek().kind == TokenKind::LParen) {
+                lexer_->consume();
+                auto annot_node = parse_type_annot();
+                if (annot_node == NULL_NODE)
+                    return NULL_NODE;
+                auto annot_tag = flat_.get(annot_node);
+                if (annot_tag.children.empty())
+                    return NULL_NODE;
+                auto var_node = flat_.get(annot_tag.child(0));
+                params.push_back(var_node.sym_id);
+                annots.push_back(annot_node);
+            } else {
+                auto p = lexer_->consume();
+                if (p.kind != TokenKind::Identifier) {
+                    skip_rparen();
+                    return NULL_NODE;
+                }
+                params.push_back(pool_.intern(std::string(p.text)));
+                annots.push_back(NULL_NODE);
             }
-            params.push_back(pool_.intern(std::string(p.text)));
         }
         lexer_->consume(); // ')' after params
         // Parse multiple body expressions and wrap in begin
@@ -545,7 +566,7 @@ NodeId FlatParser::parse_define() {
         if (body_exprs.empty())
             return NULL_NODE;
         NodeId body = (body_exprs.size() == 1) ? body_exprs[0] : flat_.add_begin(body_exprs);
-        auto lambda = flat_.add_lambda(params, body, dotted);
+        auto lambda = flat_.add_lambda(params, annots, body, dotted);
         return flat_.add_define(pool_.intern(std::string(fn.text)), lambda);
     }
     // Normal: (define name value)

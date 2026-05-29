@@ -264,6 +264,7 @@ export struct NodeView {
     std::uint32_t col = 0;
     std::span<const NodeId> children;
     std::span<const SymId> params;
+    std::span<const NodeId> param_annotations; // annotation node IDs, may be NULL_NODE
     SyntaxMarker marker = SyntaxMarker::User;
 
     bool has_int() const { return tag == NodeTag::LiteralInt; }
@@ -347,6 +348,7 @@ private:
     std::pmr::vector<std::uint32_t> param_count_;
     std::pmr::vector<std::uint32_t> cap_require_count_;
     std::pmr::vector<SymId> param_data_;
+    std::pmr::vector<NodeId> param_annot_data_; // per-param annotation node IDs (NULL_NODE = none)
     // Source location (line/col, 1-based)
     std::pmr::vector<std::uint32_t> line_;
     std::pmr::vector<std::uint32_t> col_;
@@ -384,6 +386,7 @@ private:
         , param_count_(alloc)
         , cap_require_count_(alloc)
         , param_data_(alloc)
+    , param_annot_data_(alloc)
         , line_(alloc)
         , col_(alloc)
         , type_id_(alloc)
@@ -456,10 +459,19 @@ private:
 
     [[nodiscard]] NodeId add_lambda(std::span<const SymId> params, NodeId body,
                                     bool dotted = false) {
+        return add_lambda(params, {}, body, dotted);
+    }
+    [[nodiscard]] NodeId add_lambda(std::span<const SymId> params,
+                                    std::span<const NodeId> annots,
+                                    NodeId body, bool dotted = false) {
         auto id = add_node(NodeTag::Lambda);
         int_val_[id] = dotted ? 1 : 0; // store dotted flag
         auto pstart = static_cast<std::uint32_t>(param_data_.size());
         param_data_.insert(param_data_.end(), params.begin(), params.end());
+        // Store annotations (or NULL_NODE if not provided)
+        param_annot_data_.resize(param_annot_data_.size() + params.size(), aura::ast::NULL_NODE);
+        for (std::size_t i = 0; i < params.size() && i < annots.size(); ++i)
+            param_annot_data_[pstart + i] = annots[i];
         param_begin_[id] = pstart;
         param_count_[id] = static_cast<std::uint32_t>(params.size());
         child_data_.push_back(body);
@@ -511,6 +523,7 @@ private:
         // Store type params in param_data_
         auto pstart = static_cast<std::uint32_t>(param_data_.size());
         param_data_.insert(param_data_.end(), params.begin(), params.end());
+        param_annot_data_.resize(param_annot_data_.size() + params.size(), NULL_NODE);
         param_begin_[id] = pstart;
         param_count_[id] = static_cast<std::uint32_t>(params.size());
         // Store constructor nodes in child_data_
@@ -547,6 +560,7 @@ private:
         sym_id_[id] = name;
         auto pstart = static_cast<std::uint32_t>(param_data_.size());
         param_data_.insert(param_data_.end(), type_params.begin(), type_params.end());
+        param_annot_data_.resize(param_annot_data_.size() + type_params.size(), NULL_NODE);
         param_begin_[id] = pstart;
         param_count_[id] = static_cast<std::uint32_t>(type_params.size());
         return id;
@@ -558,6 +572,7 @@ private:
         // type params first
         auto pstart = static_cast<std::uint32_t>(param_data_.size());
         param_data_.insert(param_data_.end(), type_params.begin(), type_params.end());
+        param_annot_data_.resize(param_annot_data_.size() + type_params.size(), NULL_NODE);
         // capability requirements after type params (no separator needed, we store count)
         param_data_.insert(param_data_.end(), cap_require.begin(), cap_require.end());
         param_begin_[id] = pstart;
@@ -599,6 +614,7 @@ private:
         // Store params using the same SoA as Lambda params
         auto pstart = static_cast<std::uint32_t>(param_data_.size());
         param_data_.insert(param_data_.end(), params.begin(), params.end());
+        param_annot_data_.resize(param_annot_data_.size() + params.size(), NULL_NODE);
         param_begin_[id] = pstart;
         param_count_[id] = static_cast<std::uint32_t>(params.size());
         return id;
@@ -730,6 +746,7 @@ private:
             .col = id < col_.size() ? col_[id] : 0,
             .children = std::span(child_data_.data() + child_begin_[id], child_count_[id]),
             .params = std::span(param_data_.data() + param_begin_[id], param_count_[id]),
+            .param_annotations = std::span(param_annot_data_.data() + param_begin_[id], param_count_[id]),
             .marker = id < marker_.size() ? marker_[id] : SyntaxMarker::User,
         };
     }
@@ -811,6 +828,7 @@ private:
         param_count_.clear();
         cap_require_count_.clear();
         param_data_.clear();
+        param_annot_data_.clear();
         line_.clear();
         col_.clear();
         marker_.clear();

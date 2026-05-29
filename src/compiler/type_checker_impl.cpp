@@ -1388,6 +1388,7 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
                     if (cv.children.size() > 0) {
                         auto val_id = cv.child(0);
                         fn_type = synthesize_flat(flat, pool, val_id, flat.get(val_id));
+                        fn_type = cs_.normalize(fn_type);
                     }
                     members.push_back({fn_name, fn_type});
                 } else if (cv.tag == NodeTag::Export) {
@@ -1635,12 +1636,48 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
     }
 
     // Module type: functor call (Stack Int) → return the ModuleType
-    // The runtime evaluator handles type parameter substitution via re-evaluation.
-    // At the type checker level, functor bodies use generic type vars that don't
-    // directly reference the formal type params, so true type-level substitution
-    // would require explicit type parameter binding in the body.
-    // For now, type-check the args and return the module type as inferred.
+    // With type annotations on lambda params, the member types reference the formal
+    // type param vars directly. Substitution replaces them with concrete arg types.
     if (auto* mt = reg_.module_of(func_type)) {
+        if (!mt->type_params.empty() && !mt->type_param_vars.empty()) {
+            // Infer actual type for each argument
+            std::unordered_map<std::uint32_t, TypeId> subst;
+            for (std::size_t i = 0; i < mt->type_params.size() && (i + 1) < v.children.size(); ++i) {
+                auto arg_id = v.child(i + 1);
+                auto arg_v = flat.get(arg_id);
+                TypeId arg_type;
+                if (arg_v.tag == NodeTag::Variable) {
+                    auto type_name = pool.resolve(arg_v.sym_id);
+                    auto known = reg_.lookup_type(std::string(type_name));
+                    if (known.valid())
+                        arg_type = known;
+                    else
+                        arg_type = synthesize_flat(flat, pool, arg_id, arg_v);
+                } else {
+                    arg_type = synthesize_flat(flat, pool, arg_id, arg_v);
+                }
+                subst[mt->type_param_vars[i].index] = arg_type;
+            }
+            // Substitute type vars in member types
+            std::function<TypeId(TypeId)> do_subst = [&](TypeId ty) -> TypeId {
+                auto it = subst.find(ty.index);
+                if (it != subst.end())
+                    return it->second;
+                if (auto* ft = reg_.func_of(ty)) {
+                    std::vector<TypeId> new_args;
+                    for (auto a : ft->args)
+                        new_args.push_back(do_subst(a));
+                    auto new_ret = do_subst(ft->ret);
+                    return reg_.register_func(std::move(new_args), new_ret);
+                }
+                return ty;
+            };
+            std::vector<std::pair<std::string, TypeId>> new_members;
+            for (auto& [mname, mtype] : mt->members)
+                new_members.push_back({mname, do_subst(mtype)});
+            ModuleType result_mt{std::move(new_members)};
+            return reg_.register_module(std::move(result_mt));
+        }
         return func_type;
     }
 
@@ -1655,11 +1692,33 @@ TypeId InferenceEngine::synthesize_flat_lambda(FlatAST& flat, StringPool& pool, 
     env_.push_scope();
     ownership_env_.push_scope();
     std::vector<TypeId> param_types;
-    for (auto sym : v.params) {
-        auto tv = cs_.fresh_var();
-        param_types.push_back(tv);
+    for (std::size_t pi = 0; pi < v.params.size(); ++pi) {
+        auto sym = v.params[pi];
         std::string pname(pool.resolve(sym));
-        env_.bind(pname, tv);
+        // Check for type annotation on this parameter
+        TypeId param_type;
+        if (pi < v.param_annotations.size() && v.param_annotations[pi] != NULL_NODE) {
+            auto annot_id = v.param_annotations[pi];
+            auto annot_v = flat.get(annot_id);
+            if (annot_v.tag == NodeTag::TypeAnnotation) {
+                // TypeAnnotation: sym_id = type name, child(0) = variable
+                auto type_name = pool.resolve(annot_v.sym_id);
+                if (!type_name.empty()) {
+                    // Try type registry first (Int, Bool, String, Float)
+                    param_type = reg_.lookup_type(std::string(type_name));
+                    if (!param_type.valid()) {
+                        // Try env lookup (for functor type params like T)
+                        auto env_ty = env_.lookup(std::string(type_name));
+                        if (env_ty.valid())
+                            param_type = env_ty;
+                    }
+                }
+            }
+        }
+        if (!param_type.valid())
+            param_type = cs_.fresh_var();
+        param_types.push_back(param_type);
+        env_.bind(pname, param_type);
     }
     TypeId body_type = reg_.void_type();
     if (!v.children.empty()) {
