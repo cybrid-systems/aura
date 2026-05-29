@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 #include <vector>
 #include <cstring>
 
@@ -206,16 +207,77 @@ int64_t aura_prim_call(int64_t slot, int64_t a, int64_t b, int64_t count) {
     return g_prim_dispatcher(slot, args, static_cast<int32_t>(count));
 }
 
+// ── Forward declarations (defined below, same extern "C" block) ──
+int64_t aura_alloc_float(double d);
+double aura_float_ref(int64_t val);
+int64_t aura_alloc_string(const char* s);
+const char* aura_string_ref(int64_t val);
+
 // === Type coercion (CastOp) ===
-// Checks if value matches expected type_tag and coerces if needed.
-// type_tag: 0=Int, 1=String, 2=Bool, 3=Dynamic/Any (always passes)
-// Returns the (possibly coerced) value.
-// The IR interpreter path reports blame with source location.
+// Coerces a tagged value to the expected type_tag.
+// type_tag: 0=Int, 1=String, 2=Bool, 3=Dynamic/Any, 4=Float
+// Must match the IR interpreter's CastOp cases exactly.
+// Operates on EvalValue-compatible tagged values.
 int64_t aura_cast_op(int64_t val, int64_t type_tag) {
-    (void)type_tag;
-    // For now: all values are int64_t, so Int/Dynamic always pass.
-    // Future: proper runtime type checks when EvalValue is fully tagged.
-    return val;
+    auto is_bool = [](int64_t v) { return v == 3 || v == 7; };
+    auto is_string = [](int64_t v) { return v <= -9000000000000000000LL; };
+    auto is_fixnum = [](int64_t v) { return (v & 1) == 0 && v > -10000000000000000LL; };
+    auto is_float = [](int64_t v) { return v <= -10000000000000000LL && v > -9000000000000000000LL; };
+
+    switch (type_tag) {
+        case 0: { // Coerce to Int
+            if (is_fixnum(val))
+                return val;
+            if (is_bool(val))
+                return (val == 7) ? 2 : 0;  // #t→1<<1=2, #f→0<<1=0
+            if (is_string(val)) {
+                auto* s = aura_string_ref(val);
+                if (s && *s)
+                    return static_cast<int64_t>(std::atoll(s)) << 1;
+            }
+            if (is_float(val)) {
+                int64_t idx = -val - 10000000000000000LL;
+                double d = aura_float_ref(-10000000000000000LL - idx);
+                return static_cast<int64_t>(d) << 1;
+            }
+            return 0;
+        }
+        case 1: { // Coerce to String
+            if (is_string(val))
+                return val;
+            std::string s;
+            if (is_fixnum(val))
+                s = std::to_string(val >> 1);
+            else if (is_bool(val))
+                s = (val == 7) ? "#t" : "#f";
+            else if (is_float(val)) {
+                int64_t idx = -val - 10000000000000000LL;
+                double d = aura_float_ref(-10000000000000000LL - idx);
+                s = std::to_string(d);
+            } else
+                return val;
+            return aura_alloc_string(s.c_str());
+        }
+        case 2: { // Coerce to Bool
+            return (val == 3) ? 3 : 7;  // #f=3, everything else #t=7
+        }
+        case 4: { // Coerce to Float
+            if (is_float(val))
+                return val;
+            if (is_fixnum(val))
+                return aura_alloc_float(static_cast<double>(val >> 1));
+            if (is_string(val)) {
+                auto* s = aura_string_ref(val);
+                if (s && *s)
+                    return aura_alloc_float(std::stod(s));
+            }
+            if (is_bool(val))
+                return aura_alloc_float((val == 7) ? 1.0 : 0.0);
+            return val;
+        }
+        default: // Dynamic / unknown: pass through
+            return val;
+    }
 }
 
 // === Reset runtime state (for session isolation) ===

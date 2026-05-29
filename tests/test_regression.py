@@ -776,6 +776,25 @@ def test_jit():
         else:
             raise Exception(f"jit-eval-consist: {code}: --jit={out_jit!r} eval={out_eval!r}")
 
+    # ── Coercion consistency: JIT CastOp matches IR interpreter ──
+    # Note: --jit mode doesn't handle define/bind, so we test inline coercion only.
+    coercion_codes = [
+        '(+ 1 2)',
+        '(= 1 1)',
+        '(+ 1.5 2.5)',
+    ]
+    for code in coercion_codes:
+        r_jit = subprocess.run([AURA, "--jit"], input=code, capture_output=True,
+                               text=True, timeout=10)
+        r_eval = subprocess.run([AURA], input=code, capture_output=True,
+                                text=True, timeout=10)
+        out_jit = r_jit.stdout.strip()
+        out_eval = r_eval.stdout.strip()
+        if out_jit == out_eval:
+            print(f"  ✅ coercion-consist: {code}: {out_eval!r}")
+        else:
+            raise Exception(f"coercion-consist: {code}: --jit={out_jit!r} eval={out_eval!r}")
+
 def test_fuzz_edsl():
     """Run property-based EDSL mutation fuzz (quick mode)."""
     r = subprocess.run([sys.executable, "tests/fuzz_edsl.py", "--quick"],
