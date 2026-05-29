@@ -4597,6 +4597,9 @@ void Evaluator::init_pair_primitives() {
                 flat.mark_dirty_upward(dep_callers[ui]);
         }
 
+        // Record affected sym for incremental DefUseIndex update
+        defuse_affected_syms_.insert(name);
+
         // ── Auto-typecheck: 验证变异后的代码类型正确 ────────
         // 立即运行 typecheck-current，如果类型错误则记录到 last_mutate_error。
         // Agent 可以通过 (typecheck-status) 查询最近一次变异的类型状态。
@@ -4871,6 +4874,9 @@ void Evaluator::init_pair_primitives() {
                     if (dep_callers[ui] < flat.size())
                         flat.mark_dirty_upward(dep_callers[ui]);
                 }
+
+                // Record affected sym for incremental DefUseIndex update
+                defuse_affected_syms_.insert(name);
 
                 // ── Auto-typecheck ──
                 auto tc_fn = primitives_.lookup("typecheck-current");
@@ -5890,6 +5896,35 @@ struct DefUseIndex {
         build(flat, pool);
         return true;
     }
+
+    // ── Incremental: update callers_of_ for specific syms ─────
+    // Used after mutations that only modify existing nodes
+    // (rebind/set-body/replace-pattern) without adding new nodes.
+    // Full flat scan still needed but scope tree + defs/uses preserved.
+    void update_callers_for(FlatAST& flat, const std::unordered_set<SymId>& affected_syms) {
+        if (!built_ || affected_syms.empty())
+            return;
+        // Clear old callers entries for affected syms
+        for (auto sym : affected_syms)
+            callers_of_.erase(sym);
+        // Reset callee_of_ for call nodes that referenced affected syms
+        for (NodeId id = 0; id < callee_of_.size(); ++id) {
+            if (callee_of_[id] != INVALID_SYM && affected_syms.count(callee_of_[id]))
+                callee_of_[id] = INVALID_SYM;
+        }
+        // Full scan to find new Call nodes referencing affected syms
+        for (NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+            if (v.tag == NodeTag::Call && !v.children.empty()) {
+                auto callee = flat.get(v.child(0));
+                if (callee.tag == NodeTag::Variable && callee.sym_id != INVALID_SYM &&
+                    affected_syms.count(callee.sym_id)) {
+                    callers_of_[callee.sym_id].push_back(id);
+                    callee_of_[id] = callee.sym_id;
+                }
+            }
+        }
+    }
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -6895,17 +6930,35 @@ Evaluator::Evaluator() {
             idx->build(*workspace_flat_, *workspace_pool_);
             defuse_version_ = 1;
             defuse_rebuild_count_++;
-        } else {
-            // If mutations happened, rebuild
-            if (defuse_version_ > 1) {
-                idx->build(*workspace_flat_, *workspace_pool_);
-                defuse_version_ = 1;
-                defuse_rebuild_count_++;
-            } else {
-                idx->rebuild_dirty(*workspace_flat_, *workspace_pool_);
+            defuse_affected_syms_.clear();
+            return idx;
+        }
+
+        // Collect affected syms since last ensure_defuse
+        std::unordered_set<aura::ast::SymId> affected_sym_ids;
+        if (!defuse_affected_syms_.empty()) {
+            for (auto& name : defuse_affected_syms_) {
+                auto sym = workspace_pool_->intern(name);
+                if (sym != aura::ast::INVALID_SYM)
+                    affected_sym_ids.insert(sym);
             }
         }
         defuse_affected_syms_.clear();
+
+        // Incremental path: only rebuild callers_of_ for affected syms
+        // when flat size hasn't changed (mutations that modify existing nodes).
+        if (!affected_sym_ids.empty()) {
+            if (workspace_flat_->size() == idx->flat_size_at_build_) {
+                idx->update_callers_for(*workspace_flat_, affected_sym_ids);
+                defuse_version_ = 1;
+                return idx;
+            }
+        }
+
+        // Fallback: full rebuild (flat size changed or many affected syms)
+        idx->build(*workspace_flat_, *workspace_pool_);
+        defuse_version_ = 1;
+        defuse_rebuild_count_++;
         return idx;
     };
 
