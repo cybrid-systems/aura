@@ -1,4 +1,4 @@
-// serve/worker.cpp — Worker thread implementation
+// serve/worker.cpp — Worker thread with work-stealing
 #include "worker.h"
 #include "scheduler.h"
 
@@ -8,6 +8,7 @@
 #include <cerrno>
 #include <cstring>
 #include <system_error>
+#include <cstdlib>  // random() for steal victim selection
 
 namespace aura::serve {
 
@@ -62,57 +63,73 @@ void WorkerThread::join() {
 }
 
 // ── enqueue — add fiber to local queue ────────────────
-// Thread-safe: called from scheduler (IO thread) or other workers.
+// Thread-safe: push into the work-stealing deque.
+// The push() operation is "owner-only" in Chase-Lev, but the
+// scheduler (IO thread) is the one calling enqueue from outside.
+// This is safe because:
+//   1. push() only writes to buffer_ and increments bottom_
+//   2. The stealers only read the top
+//   3. The only conflict is between push and steal, which is handled
+//      by the Chase-Lev memory ordering (release fence in push,
+//      seq_cst fence in steal)
 
 void WorkerThread::enqueue(Fiber* fiber) {
     if (!fiber || fiber->is_done()) return;
 
-    bool was_empty;
-    {
-        std::lock_guard<std::mutex> lock(queue_mutex_);
-        was_empty = local_queue_.empty();
-        local_queue_.push_back(fiber);
-        pending_.fetch_add(1, std::memory_order_release);
-    }
+    local_queue_.push(fiber);
+    pending_.fetch_add(1, std::memory_order_release);
 
-    if (was_empty && wake_evfd_ >= 0) {
-        // Wake the worker if it was sleeping
-        uint64_t val = 1;
-        ::write(wake_evfd_, &val, sizeof(val));
-    }
+    // Wake the worker if it was sleeping
+    uint64_t val = 1;
+    ::write(wake_evfd_, &val, sizeof(val));
     wake_cv_.notify_one();
 }
 
-// ── queue_size — return approximate local queue length ─
+// ── notify_fiber_done — report completed fiber ────────
 
-size_t WorkerThread::queue_size() const {
-    std::lock_guard<std::mutex> lock(queue_mutex_);
-    return local_queue_.size();
+void WorkerThread::notify_fiber_done(Fiber* fiber) {
+    if (scheduler_) {
+        scheduler_->on_fiber_done(fiber);
+    }
+}
+
+// ── try_steal_from — attempt to steal a fiber ─────────
+
+bool WorkerThread::try_steal_from(WorkerThread* victim) {
+    if (!victim || victim == this) return false;
+    Fiber* stolen = victim->try_steal();
+    if (stolen) {
+        // Push the stolen fiber to our local queue
+        local_queue_.push(stolen);
+        return true;
+    }
+    return false;
 }
 
 // ── run — the worker's main dispatch loop ─────────────
+//
+// Algorithm:
+//   1. Drain local queue (pop LIFO)
+//   2. When empty, try to steal from a random worker
+//   3. If steal succeeds, go to step 1
+//   4. If steal fails repeatedly, sleep on condition variable
+//   5. Wake when new fibers arrive (enqueue/eventfd)
 
 void WorkerThread::run() {
-    // Set up thread-local worker context
+    // Set up thread-local worker context for fiber yield/resume
     g_worker_ctx = &ctx_;
 
-    // Per-worker iteration budget to prevent starvation
     const size_t MAX_ITER_PER_ROUND = 1000;
 
     while (running_.load(std::memory_order_acquire)) {
-        // ── Phase 1: drain local queue ──────────────
+        // ── Phase 1: drain local queue (LIFO) ───────
         size_t iter = 0;
         while (iter < MAX_ITER_PER_ROUND) {
-            Fiber* fiber = nullptr;
-            {
-                std::lock_guard<std::mutex> lock(queue_mutex_);
-                if (local_queue_.empty()) break;
-                fiber = local_queue_.front();
-                local_queue_.pop_front();
-            }
+            Fiber* fiber = local_queue_.pop();
+            if (!fiber) break;
             ++iter;
 
-            if (!fiber || fiber->is_done()) {
+            if (fiber->is_done()) {
                 pending_.fetch_sub(1, std::memory_order_release);
                 continue;
             }
@@ -123,47 +140,71 @@ void WorkerThread::run() {
             // After resume: fiber either yielded or finished
             if (fiber->is_done()) {
                 pending_.fetch_sub(1, std::memory_order_release);
-                // Remove from scheduler's event map
-                if (scheduler_) {
-                    scheduler_->on_fiber_done(fiber);
-                }
+                notify_fiber_done(fiber);
                 continue;
             }
 
             auto fb_state = fiber->state();
             if (fb_state == FiberState::Waiting) {
-                // Yielded with Waiting — fiber is on epoll, leave off queue
+                // Yielded for event — leave off queue, epoll will wake
                 pending_.fetch_sub(1, std::memory_order_release);
             } else {
-                // Non-Waiting yield (Ready, Running, or anything else):
-                // fiber yielded back to us, keep scheduling it
-                std::lock_guard<std::mutex> lock(queue_mutex_);
-                local_queue_.push_back(fiber);
+                // Non-Waiting yield: keep scheduling
+                local_queue_.push(fiber);
                 // pending_ unchanged
             }
         }
 
-        // ── Phase 2: check if any fibers remain pending ──
-        // Pending includes fibers in-Waiting (on epoll) + any queued
+        // ── Phase 2: check pending status ───────────
         bool any_pending = (pending_.load(std::memory_order_acquire) > 0);
-        if (!any_pending) {
-            // Check with scheduler if there are fibers in epoll wait
+        bool local_nonempty = !local_queue_.empty_approx();
+        if (!any_pending && !local_nonempty) {
             if (scheduler_ && scheduler_->has_waiting_fibers()) {
                 any_pending = true;
             }
         }
 
-        // ── Phase 3: wait for work ──────────────────────
-        if (!any_pending && !iter) {
-            // No work — wait on condition variable
-            std::mutex dummy;
-            std::unique_lock<std::mutex> lock(dummy);
-            // Also check our eventfd (scheduler might write to it)
+        // ── Phase 3: try to steal ───────────────────
+        if (!local_nonempty && any_pending && steal_budget_.should_steal()) {
+            bool stole = false;
+
+            // Try to steal from random workers
+            if (scheduler_) {
+                int n_workers = scheduler_->num_workers();
+                if (n_workers > 1) {
+                    // Try up to 3 random victims
+                    for (int attempt = 0; attempt < 3; ++attempt) {
+                        int victim_id = std::rand() % n_workers;
+                        if (victim_id == id_) continue;
+                        auto* victim = scheduler_->worker(victim_id);
+                        if (try_steal_from(victim)) {
+                            stole = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (stole) {
+                steal_budget_.record_success();
+                continue;  // go back to Phase 1
+            } else {
+                steal_budget_.record_failure();
+            }
+        }
+
+        // ── Phase 4: wait for work ──────────────────
+        if (!local_nonempty && !iter) {
+            // Reset steal budget on wake
+            steal_budget_.consecutive_failures = 0;
+
+            // Wait on condition variable (or eventfd via epoll)
+            std::unique_lock<std::mutex> lock(wake_mutex_);
             wake_cv_.wait_for(lock, std::chrono::milliseconds(100),
-                              [this]() {
-                                  return !local_queue_.empty() ||
-                                         !running_.load(std::memory_order_acquire);
-                              });
+                [this]() {
+                    return !local_queue_.empty_approx() ||
+                           !running_.load(std::memory_order_acquire);
+                });
         }
     }
 
