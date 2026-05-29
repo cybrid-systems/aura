@@ -365,29 +365,47 @@ struct LLVMBuilder {
                 return true;
             }
             case OpAnd: {
-                // Pointer tagging: #f = 3, everything else is truthy (including 0)
-                auto a = irb->CreateICmpNE(load(inst.ops[1]), c64(KWD_FALSE_VAL)),
-                     b = irb->CreateICmpNE(load(inst.ops[2]), c64(KWD_FALSE_VAL));
+                // Truthiness: #f (val=3) and integer 0 (val=0) are both falsy.
+                auto is_truthy_fn = [&](llvm::Value* v) -> llvm::Value* {
+                    auto not_false = irb->CreateICmpNE(v, c64(KWD_FALSE_VAL));
+                    auto not_zero = irb->CreateICmpNE(v, c64(0));
+                    return irb->CreateAnd(not_false, not_zero);
+                };
+                auto a = is_truthy_fn(load(inst.ops[1]));
+                auto b = is_truthy_fn(load(inst.ops[2]));
                 store(inst.ops[0],
                       irb->CreateSelect(irb->CreateAnd(a, b), c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
                 return true;
             }
             case OpOr: {
-                auto a = irb->CreateICmpNE(load(inst.ops[1]), c64(KWD_FALSE_VAL)),
-                     b = irb->CreateICmpNE(load(inst.ops[2]), c64(KWD_FALSE_VAL));
+                auto is_truthy_fn = [&](llvm::Value* v) -> llvm::Value* {
+                    auto not_false = irb->CreateICmpNE(v, c64(KWD_FALSE_VAL));
+                    auto not_zero = irb->CreateICmpNE(v, c64(0));
+                    return irb->CreateOr(not_false, not_zero);
+                };
+                auto a = is_truthy_fn(load(inst.ops[1]));
+                auto b = is_truthy_fn(load(inst.ops[2]));
                 store(inst.ops[0],
                       irb->CreateSelect(irb->CreateOr(a, b), c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
                 return true;
             }
             case OpNot: {
-                auto a = irb->CreateICmpEQ(load(inst.ops[1]), c64(KWD_FALSE_VAL));
+                // #f and int 0 are both falsy → not is true only for those
+                auto v = load(inst.ops[1]);
+                auto eq_false = irb->CreateICmpEQ(v, c64(KWD_FALSE_VAL));
+                auto eq_zero = irb->CreateICmpEQ(v, c64(0));
+                auto falsy = irb->CreateOr(eq_false, eq_zero);
                 store(inst.ops[0],
-                      irb->CreateSelect(a, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
+                      irb->CreateSelect(falsy, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
                 return true;
             }
             case OpBranch: {
-                auto cond = irb->CreateICmpNE(load(inst.ops[0]), c64(KWD_FALSE_VAL));
-                irb->CreateCondBr(cond, block_map[inst.ops[1]], block_map[inst.ops[2]]);
+                // Truthiness: #f (val=3) and integer 0 (val=0) are both falsy.
+                auto cond_val = load(inst.ops[0]);
+                auto not_false = irb->CreateICmpNE(cond_val, c64(KWD_FALSE_VAL));
+                auto not_int0 = irb->CreateICmpNE(cond_val, c64(0));
+                auto truthy = irb->CreateAnd(not_false, not_int0);
+                irb->CreateCondBr(truthy, block_map[inst.ops[1]], block_map[inst.ops[2]]);
                 return true;
             }
             case OpJump:

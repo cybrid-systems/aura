@@ -32,6 +32,7 @@ target_sources(aura PRIVATE
     src/core/ast_impl.cpp
     src/core/type_impl.cpp
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
+    src/compiler/value_impl.cpp
     src/compiler/evaluator_impl.cpp
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
@@ -151,6 +152,7 @@ target_sources(test_ir PRIVATE
     src/core/ast_impl.cpp
     src/core/type_impl.cpp
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
+    src/compiler/value_impl.cpp
     src/compiler/evaluator_impl.cpp
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp

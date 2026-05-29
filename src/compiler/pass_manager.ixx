@@ -123,9 +123,9 @@ private:
         }                                                                                          \
         break;                                                                                     \
     }
-// Tagged truthiness helper: value 3 = #f (only falsy tagged).
-// Fixnums (bit0=0) are always truthy in Aura, even 0.
-#define IS_TRUTHY(v) ((v) != 3)
+// Tagged truthiness helper: value 3 = #f, value 0 = int 0.
+// Both #f and integer 0 are falsy. Fixnum 0 encodes as val=0.
+#define IS_TRUTHY(v) ((v) != 3 && (v) != 0)
 
 #define FOLD_BOOL(OP, TRUTHY_EXPR)                                                                 \
     case aura::ir::IROpcode::OP: {                                                                 \
@@ -161,8 +161,8 @@ private:
                 case aura::ir::IROpcode::Not: {
                     auto it = known_.find(ops[1]);
                     if (it != known_.end()) {
-                        // Tagged: 3=#f (only falsy value)
-                        replace_bool(instr, ops[0], it->second == 3);
+                        // Falsy: 3=#f or 0=int 0
+                        replace_bool(instr, ops[0], !IS_TRUTHY(it->second));
                         ++folded_;
                     }
                     break;
