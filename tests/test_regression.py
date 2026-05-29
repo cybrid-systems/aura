@@ -269,6 +269,19 @@ tests = [
      '(begin (set-code "(define-module (Stack T) (export push pop) (define (push s x) (cons x s)) (define (pop s) (cdr s)))")(display (typecheck-current)))',
      'Module{push:', ""),
 
+    # ── Functor 标注类型参数替换 ────────────────────────────
+    ("functor-annot-tc",
+     '(begin (set-code "(define-module (Stack :T) (export push) (define (push (: x :T)) (+ x 1)))(Stack Int)")(display (typecheck-current)))',
+     'Int -> Int', ""),
+    ("lambda-annot-tc",
+     '(begin (set-code "((lambda ((: x Int)) (+ x 1)) 41)")(display (typecheck-current)))',
+     'type: Int', ""),
+    ("functor-annot-multi",
+     '(begin (set-code "(define-module (Pair :A :B) (export make) (define (make (: x :A) (: y :B)) (cons x y)))(Pair Int String)")(display (typecheck-current)))',
+     'Int String', ""),
+    ("functor-annot-eval",
+     '(begin (define-module (Box :T) (export wrap) (define (wrap (: x :T)) x)) (Box Int) (display 42))',
+     '42', ""),
     # ── DCE + 类型注解 ────────────────────────────────────────
     ("ir-annot-float", '(: x Float 3.14)', "3.14", ""),
     ("ir-annot-double", '(: x Int (+ (: a Int 1) (: b Int 2)))', "3", ""),
