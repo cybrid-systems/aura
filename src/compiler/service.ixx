@@ -2754,78 +2754,101 @@ private:
             reinterpret_cast<aura::jit::ScalarFn>(fn_ptr)(locals.data(), entry.arg_count);
 
         // ── Convert JIT result to proper EvalValue type ──
-        // After encoding unification: fixnums are val<<1, bools are 7/3, void is 11.
-        // JIT runtime pairs (id<<2|1), closures (raw id), cells (raw id) use incompatible
-        // encodings with EvalValue — we detect those by IR opcode scan.
         types::EvalValue result_type;
-        std::uint32_t ret_slot = std::numeric_limits<std::uint32_t>::max();
+        uint32_t ret_slot = std::numeric_limits<uint32_t>::max();
 
         for (auto& block : entry.blocks)
             for (auto& instr : block.instructions)
                 if (instr.opcode == aura::ir::IROpcode::Return)
                     ret_slot = instr.operands[0];
 
-        if (ret_slot != std::numeric_limits<std::uint32_t>::max()) {
-            for (auto& block : entry.blocks)
-                for (auto& instr : block.instructions)
-                    if (instr.operands[0] == ret_slot &&
-                        instr.opcode != aura::ir::IROpcode::Return) {
-                        switch (instr.opcode) {
-                            case aura::ir::IROpcode::ConstBool:
-                            case aura::ir::IROpcode::Eq:
-                            case aura::ir::IROpcode::Lt:
-                            case aura::ir::IROpcode::Gt:
-                            case aura::ir::IROpcode::Le:
-                            case aura::ir::IROpcode::Ge:
-                            case aura::ir::IROpcode::And:
-                            case aura::ir::IROpcode::Or:
-                            case aura::ir::IROpcode::Not:
-                                result_type = types::make_bool(raw_result == 7);
-                                goto result_done;
-                            case aura::ir::IROpcode::ConstI64:
-                                // Tagged fixnum (val<<1), already EvalValue-compatible
-                                result_type = types::EvalValue(raw_result);
-                                goto result_done;
-                            case aura::ir::IROpcode::ConstVoid:
-                                result_type = types::make_void();
-                                goto result_done;
-                            case aura::ir::IROpcode::MakePair:
-                                if (raw_result < 0)
-                                    result_type = types::make_pair(
-                                        static_cast<std::uint64_t>(-raw_result - 1));
-                                else
-                                    result_type = types::make_pair(
-                                        static_cast<std::uint64_t>(raw_result >> 2));
-                                goto result_done;
-                            case aura::ir::IROpcode::NewCell:
-                                result_type =
-                                    types::make_cell(static_cast<std::uint64_t>(raw_result));
-                                goto result_done;
-                            case aura::ir::IROpcode::MakeClosure:
-                                result_type =
-                                    types::make_closure(static_cast<std::uint64_t>(raw_result));
-                                goto result_done;
-                            case aura::ir::IROpcode::PrimCall:
-                                // PrimCall goes through evaluator which returns EvalValue-compatible int64
-                                result_type = types::EvalValue(raw_result);
-                                goto result_done;
-                            default:
-                                // Let fallthrough below handle it
-                                break;
+        // Follow data flow through OpLocal to find the actual producer
+        if (ret_slot != std::numeric_limits<uint32_t>::max()) {
+            uint32_t search_slot = ret_slot;
+            bool chasing = true;
+            while (chasing) {
+                chasing = false;
+                for (auto& block : entry.blocks) {
+                    for (auto& instr : block.instructions) {
+                        if (instr.operands[0] == search_slot &&
+                            instr.opcode != aura::ir::IROpcode::Return) {
+                            if (instr.opcode == aura::ir::IROpcode::Local) {
+                                search_slot = instr.operands[1];
+                                chasing = true;
+                                goto try_chain;
+                            }
+                            switch (instr.opcode) {
+                                case aura::ir::IROpcode::ConstBool:
+                                case aura::ir::IROpcode::Eq:
+                                case aura::ir::IROpcode::Lt:
+                                case aura::ir::IROpcode::Gt:
+                                case aura::ir::IROpcode::Le:
+                                case aura::ir::IROpcode::Ge:
+                                case aura::ir::IROpcode::And:
+                                case aura::ir::IROpcode::Or:
+                                case aura::ir::IROpcode::Not:
+                                    result_type = types::make_bool(raw_result == 7);
+                                    goto result_done;
+                                case aura::ir::IROpcode::ConstI64:
+                                    result_type = types::EvalValue(raw_result);
+                                    goto result_done;
+                                case aura::ir::IROpcode::ConstVoid:
+                                    result_type = types::make_void();
+                                    goto result_done;
+                                case aura::ir::IROpcode::MakePair:
+                                    if (raw_result < 0)
+                                        result_type = types::make_pair(
+                                            static_cast<uint64_t>(-raw_result - 1));
+                                    else
+                                        result_type = types::make_pair(
+                                            static_cast<uint64_t>(raw_result >> 2));
+                                    goto result_done;
+                                case aura::ir::IROpcode::NewCell:
+                                    result_type = types::make_cell(
+                                        static_cast<uint64_t>(raw_result));
+                                    goto result_done;
+                                case aura::ir::IROpcode::MakeClosure:
+                                    result_type = types::make_closure(
+                                        static_cast<uint64_t>(raw_result));
+                                    goto result_done;
+                                case aura::ir::IROpcode::ConstF64:
+                                    result_type = types::EvalValue(raw_result);
+                                    goto result_done;
+                                case aura::ir::IROpcode::ConstString: {
+                                    auto* str_content = aura_jit_string_content(raw_result);
+                                    if (str_content) {
+                                        auto& sh = evaluator_.primitives().string_heap();
+                                        auto new_idx = sh.size();
+                                        sh.push_back(str_content);
+                                        result_type = types::make_string(new_idx);
+                                    } else {
+                                        result_type = types::EvalValue(raw_result);
+                                    }
+                                    goto result_done;
+                                }
+                                case aura::ir::IROpcode::PrimCall:
+                                    result_type = types::EvalValue(raw_result);
+                                    goto result_done;
+                                default:
+                                    break;
+                            }
+                            goto result_done;
                         }
-                        break;
                     }
+                }
+                break;
+            try_chain:;
+            }
         }
 
     result_done:
-        // If the IR scan above didn't determine a type, fall back to decoding by value
         if (result_type.val == 0 && raw_result != 0) {
             if (raw_result == 11)
                 result_type = types::make_void();
             else if (raw_result == 3 || raw_result == 7)
                 result_type = types::make_bool(raw_result == 7);
             else if ((raw_result & 1) == 0 && raw_result > -10000000000000000LL)
-                result_type = types::EvalValue(raw_result); // tagged fixnum, EvalValue-compatible
+                result_type = types::EvalValue(raw_result);
             else
                 result_type = types::EvalValue(raw_result);
         }
