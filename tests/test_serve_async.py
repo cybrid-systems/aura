@@ -33,6 +33,8 @@ EXPECTED = [
     ("t6-w4", "t6:w4:"),
     ("t7", "t7:has-x:"),
     ("t8", "t8:all-tests-complete"),
+    ("t9", "t9:enqueue:ok"),
+    ("t10", "t10:eval-async:30"),
 ]
 
 # Tests that require LLM_API_KEY
