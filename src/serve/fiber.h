@@ -14,6 +14,7 @@ namespace aura::serve {
 // ── Fiber state ────────────────────────────────────────
 enum class FiberState : uint8_t {
     Ready,    // can be scheduled
+    Running,  // currently executing on a worker
     Waiting,  // waiting for eventfd
     Done,     // completed
 };
@@ -34,22 +35,25 @@ public:
     Fiber(Fiber&&) = delete;
     Fiber& operator=(Fiber&&) = delete;
 
-    // Switch FROM scheduler TO this fiber
+    // Switch FROM worker TO this fiber.
+    // The worker saves its own loop context via thread_local.
+    // After the fiber yields, control returns to the worker's loop.
     void resume();
 
-    // Switch FROM this fiber TO scheduler (static — yields current fiber)
+    // Switch FROM this fiber TO the current worker's loop context.
+    // Static — uses thread_local g_worker_ctx.
     static void yield();
 
     // Accessors
     uint64_t id() const { return id_; }
-    FiberState state() const { return state_; }
-    void set_state(FiberState s) { state_ = s; }
+    FiberState state() const { return state_.load(std::memory_order_acquire); }
+    void set_state(FiberState s) { state_.store(s, std::memory_order_release); }
     int eventfd() const { return eventfd_; }
-    bool is_done() const { return state_ == FiberState::Done; }
+    bool is_done() const { return state_.load(std::memory_order_acquire) == FiberState::Done; }
 
 private:
     uint64_t id_;
-    FiberState state_ = FiberState::Ready;
+    std::atomic<FiberState> state_{FiberState::Ready};
     ucontext_t ctx_;
     void* stack_ = nullptr;
     size_t stack_size_ = 0;
@@ -62,8 +66,17 @@ private:
     static void trampoline(uint32_t high, uint32_t low);
 };
 
+// ── Worker context (thread-local) ─────────────────────
+// Each WorkerThread sets this before running fibers.
+// Fiber::yield() swaps back to this context.
+// Fiber::resume() swaps from this context to the fiber.
+struct WorkerContext {
+    ucontext_t uctx;  // worker's dispatch loop context
+};
+extern thread_local WorkerContext* g_worker_ctx;
+
 // ── Global scheduler reference ─────────────────────────
-// Set during --serve-async init. Used by Fiber::yield().
+// Set during --serve-async init. Used for fiber spawn.
 struct Scheduler;
 extern Scheduler* g_scheduler;
 extern thread_local Fiber* g_current_fiber;

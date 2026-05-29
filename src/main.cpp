@@ -207,11 +207,43 @@ static std::unordered_map<std::string, std::string> parse_json_command(std::stri
 }
 
 int main(int argc, char* argv[]) {
+    // ── Parse common flags ───────────────────────────────
+    int num_workers = 0;  // 0 = auto
+    int arg_start = 1;
+
+    // Check for --worker-threads flag before the mode argument
+    auto parse_worker_threads = [&]() {
+        for (int i = 1; i < argc; ++i) {
+            std::string_view a(argv[i]);
+            if (a == "--worker-threads" && i + 1 < argc) {
+                num_workers = std::atoi(argv[i + 1]);
+                return i;  // return index of --worker-threads
+            }
+            if (a.starts_with("--worker-threads=")) {
+                num_workers = std::atoi(a.data() + 17);
+                return i;
+            }
+        }
+        return -1;
+    };
+    int wt_idx = parse_worker_threads();
+    if (wt_idx >= 0) {
+        // Shift remaining args to remove --worker-threads
+        int remove_count = (std::string_view(argv[wt_idx]) == "--worker-threads") ? 2 : 1;
+        int new_argc = 1;
+        for (int i = 1; i < argc; ++i) {
+            if (i == wt_idx) { i += remove_count - 1; continue; }
+            argv[new_argc + 1] = argv[i];
+            ++new_argc;
+        }
+        argc = new_argc + 1;
+    }
+
     // ── --serve-async: fiber-based async JSON-line protocol ─
     // Uses ucontext fibers + epoll for non-blocking multi-session support.
     // Same JSON-line protocol as --serve, but with non-blocking I/O.
     if (argc > 1 && std::string_view(argv[1]) == "--serve-async") {
-        aura::serve::run_serve_async();
+        aura::serve::run_serve_async(num_workers);
         return 0;
     }
 
@@ -221,7 +253,7 @@ int main(int argc, char* argv[]) {
     // Usage: ./build/aura --serve-async-bench tests/bench.aura
     if (argc > 1 && std::string_view(argv[1]) == "--serve-async-bench") {
         std::string file_path = (argc > 2) ? argv[2] : "tests/bench.aura";
-        aura::serve::run_serve_async_bench(file_path);
+        aura::serve::run_serve_async_bench(file_path, num_workers);
         return 0;
     }
 
