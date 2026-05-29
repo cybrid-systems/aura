@@ -79,6 +79,10 @@ void WorkerThread::enqueue(Fiber* fiber) {
     local_queue_.push(fiber);
     pending_.fetch_add(1, std::memory_order_release);
 
+    if (worker_metrics_) {
+        worker_metrics_->local_pushes.fetch_add(1, std::memory_order_relaxed);
+    }
+
     // Wake the worker if it was sleeping
     uint64_t val = 1;
     ::write(wake_evfd_, &val, sizeof(val));
@@ -119,15 +123,26 @@ void WorkerThread::run() {
     // Set up thread-local worker context for fiber yield/resume
     g_worker_ctx = &ctx_;
 
+    // Grab metrics pointer (set by scheduler before start)
+    auto* my_metrics = worker_metrics_;
+
     const size_t MAX_ITER_PER_ROUND = 1000;
 
     while (running_.load(std::memory_order_acquire)) {
+        auto cycle_start = std::chrono::steady_clock::now();
+        bool was_busy = false;
+
         // ── Phase 1: drain local queue (LIFO) ───────
         size_t iter = 0;
         while (iter < MAX_ITER_PER_ROUND) {
             Fiber* fiber = local_queue_.pop();
             if (!fiber) break;
             ++iter;
+            was_busy = true;
+
+            if (my_metrics) {
+                my_metrics->local_pops.fetch_add(1, std::memory_order_relaxed);
+            }
 
             if (fiber->is_done()) {
                 pending_.fetch_sub(1, std::memory_order_release);
@@ -135,6 +150,9 @@ void WorkerThread::run() {
             }
 
             // Resume the fiber — runs until yield() or completion
+            if (my_metrics) {
+                my_metrics->fibers_executed.fetch_add(1, std::memory_order_relaxed);
+            }
             fiber->resume();
 
             // After resume: fiber either yielded or finished
@@ -148,11 +166,24 @@ void WorkerThread::run() {
             if (fb_state == FiberState::Waiting) {
                 // Yielded for event — leave off queue, epoll will wake
                 pending_.fetch_sub(1, std::memory_order_release);
+                if (my_metrics) {
+                    my_metrics->fibers_waiting.fetch_add(1, std::memory_order_relaxed);
+                }
             } else {
                 // Non-Waiting yield: keep scheduling
                 local_queue_.push(fiber);
                 // pending_ unchanged
+                if (my_metrics) {
+                    my_metrics->fibers_yielded.fetch_add(1, std::memory_order_relaxed);
+                    my_metrics->local_pushes.fetch_add(1, std::memory_order_relaxed);
+                }
             }
+        }
+
+        // ── Phase 1.5: record queue depth ───────────
+        if (my_metrics) {
+            size_t qd = local_queue_.size_approx();
+            my_metrics->record_qdepth(qd);
         }
 
         // ── Phase 2: check pending status ───────────
@@ -177,8 +208,14 @@ void WorkerThread::run() {
                         int victim_id = std::rand() % n_workers;
                         if (victim_id == id_) continue;
                         auto* victim = scheduler_->worker(victim_id);
+                        if (my_metrics) {
+                            my_metrics->steal_attempts.fetch_add(1, std::memory_order_relaxed);
+                        }
                         if (try_steal_from(victim)) {
                             stole = true;
+                            if (my_metrics) {
+                                my_metrics->steal_successes.fetch_add(1, std::memory_order_relaxed);
+                            }
                             break;
                         }
                     }
@@ -187,6 +224,7 @@ void WorkerThread::run() {
 
             if (stole) {
                 steal_budget_.record_success();
+                was_busy = true;
                 continue;  // go back to Phase 1
             } else {
                 steal_budget_.record_failure();
@@ -198,13 +236,38 @@ void WorkerThread::run() {
             // Reset steal budget on wake
             steal_budget_.consecutive_failures = 0;
 
-            // Wait on condition variable (or eventfd via epoll)
+            // Record idle time
+            if (my_metrics) {
+                auto now = std::chrono::steady_clock::now();
+                auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    now - cycle_start).count();
+                my_metrics->record_idle(elapsed);
+            }
+
+            // Drain the wake eventfd before sleeping
+            {
+                uint64_t val;
+                ::read(wake_evfd_, &val, sizeof(val));
+                if (val > 0 && my_metrics) {
+                    my_metrics->wake_events.fetch_add(val, std::memory_order_relaxed);
+                }
+            }
+
+            // Wait on condition variable
             std::unique_lock<std::mutex> lock(wake_mutex_);
             wake_cv_.wait_for(lock, std::chrono::milliseconds(100),
                 [this]() {
                     return !local_queue_.empty_approx() ||
                            !running_.load(std::memory_order_acquire);
                 });
+        } else {
+            // Record busy time
+            if (my_metrics && was_busy) {
+                auto now = std::chrono::steady_clock::now();
+                auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    now - cycle_start).count();
+                my_metrics->record_busy(elapsed);
+            }
         }
     }
 

@@ -4,6 +4,7 @@
 
 #include "fiber.h"
 #include "ws_deque.h"
+#include "metrics.h"
 #include <ucontext.h>
 #include <memory>
 #include <mutex>
@@ -20,16 +21,82 @@ class Scheduler;
 // ── StealBudget — adaptive steal control ──────────────
 // Tracks how many consecutive steal attempts failed,
 // so workers don't burn CPU spinning on empty queues.
+//
+// Phase 4: adaptive mode. When adaptive is enabled,
+// max_before_sleep adjusts based on overall steal success rate.
+// If the system is under-loaded (many steal attempts fail),
+// workers learn to sleep sooner. Under high steal success,
+// they stay alert longer.
 struct StealBudget {
     int consecutive_failures = 0;
-    int max_before_sleep = 3;  // after 3 failures, go to sleep
+    int max_before_sleep = 3;  // after N failures, go to sleep
+
+    // Adaptive tuning state
+    static constexpr int WINDOW_SIZE = 10;
+    int history[WINDOW_SIZE] = {0};
+    int history_idx = 0;
+    int total_attempts = 0;
+    int total_successes = 0;
+    bool adaptive_enabled = true;
+
+    StealBudget() = default;
+
+    explicit StealBudget(bool adaptive) : adaptive_enabled(adaptive) {}
 
     bool should_steal() const {
         return consecutive_failures < max_before_sleep;
     }
 
-    void record_success() { consecutive_failures = 0; }
-    void record_failure() { ++consecutive_failures; }
+    void record_success() {
+        consecutive_failures = 0;
+        if (adaptive_enabled) {
+            history[history_idx % WINDOW_SIZE] = 1;
+            ++history_idx;
+            ++total_attempts;
+            ++total_successes;
+            adapt();
+        }
+    }
+
+    void record_failure() {
+        ++consecutive_failures;
+        if (adaptive_enabled) {
+            history[history_idx % WINDOW_SIZE] = 0;
+            ++history_idx;
+            ++total_attempts;
+            adapt();
+        }
+    }
+
+    // Dynamically adjust max_before_sleep based on recent steal success rate
+    //   - High success (>50%): stay alert longer (max_before_sleep = 5-8)
+    //   - Medium success (20-50%): default (3-4)
+    //   - Low success (<20%): sleep sooner (1-2)
+    void adapt() {
+        if (history_idx < WINDOW_SIZE) return;  // not enough data yet
+
+        int successes = 0;
+        for (int i = 0; i < WINDOW_SIZE; ++i) successes += history[i];
+        double rate = static_cast<double>(successes) / WINDOW_SIZE;
+
+        if (rate > 0.50) {
+            max_before_sleep = 6;
+        } else if (rate > 0.30) {
+            max_before_sleep = 4;
+        } else if (rate > 0.10) {
+            max_before_sleep = 2;
+        } else {
+            max_before_sleep = 1;
+        }
+    }
+
+    void reset() {
+        consecutive_failures = 0;
+        max_before_sleep = 3;
+        history_idx = 0;
+        total_attempts = 0;
+        total_successes = 0;
+    }
 };
 
 // ── WorkerThread — per-OS-thread fiber runner ──────────
@@ -71,6 +138,9 @@ public:
     bool is_running() const { return running_.load(std::memory_order_acquire); }
     size_t queue_size() const { return local_queue_.size_approx(); }
 
+    // Pending fiber count (for liveness check)
+    size_t pending_count() const { return pending_.load(std::memory_order_acquire); }
+
     // Join (waits for thread to finish)
     void join();
 
@@ -80,6 +150,10 @@ public:
 
     // Notify the scheduler about a done fiber (via callback)
     void notify_fiber_done(Fiber* fiber);
+
+    // ── Metrics access ──────────────────────────────
+    void set_metrics(metrics::WorkerMetrics* m) { worker_metrics_ = m; }
+    metrics::WorkerMetrics* worker_metrics() const { return worker_metrics_; }
 
 private:
     // The main loop
@@ -116,6 +190,9 @@ private:
 
     // Pending count (for IO thread's liveness check)
     std::atomic<size_t> pending_{0};
+
+    // Metrics pointer (set by scheduler, never null during run)
+    metrics::WorkerMetrics* worker_metrics_ = nullptr;
 };
 
 } // namespace aura::serve

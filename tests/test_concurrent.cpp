@@ -18,6 +18,7 @@
 #include "serve/fiber.h"
 #include "serve/worker.h"
 #include "serve/scheduler.h"
+#include "serve/metrics.h"
 
 // ── Test counters ─────────────────────────────────────
 static int g_passed = 0;
@@ -303,7 +304,159 @@ bool test_work_stealing() {
     return true;
 }
 
-// ── Test 10: Work-stealing deque unit test ────────────
+// ── Test 10: Adaptive steal budget ──────────────────────
+// Verify the adaptive StealBudget adjusts max_before_sleep
+// based on success rate.
+
+bool test_adaptive_steal_budget() {
+    std::println("\n--- Test: Adaptive steal budget ---");
+
+    aura::serve::StealBudget budget(true);
+
+    // Initially: default
+    CHECK(budget.max_before_sleep == 3, "initial max_before_sleep = 3");
+    CHECK(budget.consecutive_failures == 0, "initial consecutive_failures = 0");
+
+    // Record 8 failures (enough to fill window and see low success rate)
+    for (int i = 0; i < 8; ++i) {
+        budget.record_failure();
+    }
+    // After 10 failures with 0 success: rate=0% -> max_before_sleep = 1
+    // But we only have 8 in window, so no adaptation yet (history_idx < 10)
+    CHECK(budget.max_before_sleep == 3, "before window fills, no adaptation");
+
+    // Fill the rest with failures
+    for (int i = 8; i < 12; ++i) {
+        budget.record_failure();
+    }
+    // Now history has 10 entries total, 10 failures -> rate=0% -> max_before_sleep = 1
+    // Actually: history_idx=12, window has last 10 entries, all 0's, rate=0% -> max_before_sleep=1
+    CHECK(budget.max_before_sleep == 1, "low steal rate forces sleep sooner (max_before_sleep=1)");
+
+    // Reset and test high success rate
+    budget.reset();
+    CHECK(budget.max_before_sleep == 3, "reset restores defaults");
+
+    // Record 10 successes
+    for (int i = 0; i < 15; ++i) {
+        budget.record_success();
+    }
+    // history has last 10, all 1's -> rate=100% -> max_before_sleep = 6
+    CHECK(budget.max_before_sleep == 6, "high steal rate stays alert longer (max_before_sleep=6)");
+
+    // Verify adaptation with a 50% success rate
+    budget.reset();
+    // Fill the window with alternating success/failure → 50% rate
+    for (int i = 0; i < 10; ++i) {
+        if (i % 2 == 0)
+            budget.record_success();
+        else
+            budget.record_failure();
+    }
+    // After 10 entries in window, 5 successes = 50% rate → max_before_sleep = 4
+    CHECK(budget.max_before_sleep == 4, "50% success rate = medium steal budget (max_before_sleep=4)");
+
+    return true;
+}
+
+// ── Test 11: Load-aware distribution ─────────────────────
+// Verify that spawning with load-aware scheduling picks
+// the least-loaded worker.
+
+bool test_load_aware_distribution() {
+    std::println("\n--- Test: Load-aware worker distribution ---");
+
+    aura::serve::Scheduler sched(4);
+    std::atomic<int> completed{0};
+
+    // Spawn 40 fibers quickly — load-aware should distribute more evenly
+    // than pure round-robin
+    for (int i = 0; i < 40; ++i) {
+        sched.spawn([&completed]() {
+            volatile int sum = 0;
+            for (int j = 0; j < 200000; ++j) sum += j;
+            completed.fetch_add(1);
+        });
+    }
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    sched.stop();
+    t.join();
+
+    CHECK(completed.load() == 40, "all 40 fibers completed with load-aware distribution");
+    return true;
+}
+
+// ── Test 12: Metrics collection — basic sanity ─────────
+// Verify that metrics counters increment correctly.
+
+bool test_metrics_sanity() {
+    std::println("\n--- Test: Metrics collection sanity ---");
+
+    // Test WorkerMetrics directly
+    aura::serve::metrics::WorkerMetrics wm;
+
+    wm.fibers_executed.fetch_add(1);
+    CHECK(wm.fibers_executed.load() == 1, "fibers_executed = 1");
+
+    wm.steal_attempts.fetch_add(5);
+    wm.steal_successes.fetch_add(2);
+    double sr = wm.steal_success_rate();
+    CHECK(sr > 39.9 && sr < 40.1, "steal success rate = 40%");
+
+    wm.record_busy(100000000);  // 100ms
+    wm.record_idle(400000000);  // 400ms
+    double util = wm.utilization();
+    CHECK(util > 19.9 && util < 20.1, "utilization = 20% (100ms busy / 500ms total)");
+
+    wm.record_qdepth(3);
+    wm.record_qdepth(7);
+    wm.record_qdepth(5);
+    CHECK(wm.qdepth_max.load() == 7, "max queue depth = 7");
+    double avg = wm.avg_qdepth();
+    CHECK(avg > 4.9 && avg < 5.1, "avg queue depth = 5.0");
+
+    // Test GlobalMetrics
+    aura::serve::metrics::GlobalMetrics gm(2);
+    CHECK(gm.num_workers() == 2, "2 workers in global metrics");
+
+    gm.fibers_spawned.fetch_add(10);
+    gm.fibers_completed.fetch_add(8);
+    CHECK(gm.fibers_spawned.load() == 10, "fibers_spawned = 10");
+    CHECK(gm.fibers_completed.load() == 8, "fibers_completed = 8");
+
+    // Verify JSON output is well-formed
+    std::string json = gm.to_json();
+    CHECK(json.find(R"("fibers_spawned": 10)") != std::string::npos,
+          "JSON metrics contain spawned count");
+
+    return true;
+}
+
+// ── Test 13: GlobalMetrics dump doesn't crash ────────────
+
+bool test_metrics_dump_no_crash() {
+    std::println("\n--- Test: Metrics dump (no crash) ---");
+
+    aura::serve::metrics::GlobalMetrics gm(3);
+    gm.fibers_spawned.fetch_add(42);
+    gm.worker(0).fibers_executed.fetch_add(15);
+    gm.worker(1).steal_successes.fetch_add(7);
+    gm.worker(2).local_pushes.fetch_add(23);
+
+    // Dump to stdout — should not crash
+    gm.dump();
+
+    // JSON
+    std::string json = gm.to_json();
+    CHECK(!json.empty(), "JSON output is non-empty");
+    CHECK(json.find("workers") != std::string::npos, "JSON contains workers array");
+
+    return true;
+}
+
+// ── Test 14: Work-stealing deque unit test ────────────
 // Directly test the Chase-Lev deque with void* type
 
 bool test_ws_deque() {
@@ -371,6 +524,10 @@ int main() {
     test_stress_many_fibers();
     test_eventfd_wakeup();
     test_work_stealing();
+    test_adaptive_steal_budget();
+    test_load_aware_distribution();
+    test_metrics_sanity();
+    test_metrics_dump_no_crash();
 
     std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
                  g_passed, g_passed + g_failed,

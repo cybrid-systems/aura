@@ -13,6 +13,8 @@ namespace aura::serve {
 // ── Constructor ───────────────────────────────────────
 
 Scheduler::Scheduler(int num_workers) {
+    // Initialize metrics
+    metrics_on_ = true;
     // Default: hardware concurrency, capped at reasonable range
     if (num_workers <= 0) {
         num_workers = static_cast<int>(std::thread::hardware_concurrency());
@@ -43,6 +45,9 @@ Scheduler::Scheduler(int num_workers) {
         auto w = std::make_unique<WorkerThread>(i, this);
         workers_.push_back(std::move(w));
     }
+
+    // Size metrics to match workers
+    metrics_.resize_workers(static_cast<size_t>(num_workers_));
 }
 
 // ── Destructor ───────────────────────────────────────
@@ -84,9 +89,16 @@ Fiber* Scheduler::spawn(Fiber::Func func, size_t stack_size) {
         s_fibers.push_back(std::move(fb));
     }
 
-    // Assign to a worker
-    int wid = next_worker_id();
+    // Assign to a worker (load-aware when enabled, fallback to round-robin)
+    int wid = use_load_aware_distribution_
+        ? next_worker_id_load_aware()
+        : next_worker_id();
     workers_[wid]->enqueue(ptr);
+
+    // Metrics
+    if (metrics_on_) {
+        metrics_.fibers_spawned.fetch_add(1, std::memory_order_relaxed);
+    }
 
     return ptr;
 }
@@ -131,6 +143,10 @@ void Scheduler::on_fiber_done(Fiber* fiber) {
         std::lock_guard<std::mutex> lock(wait_map_mutex_);
         wait_map_.erase(evfd);
     }
+
+    if (metrics_on_) {
+        metrics_.fibers_completed.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 // ── has_waiting_fibers — check epoll wait map ─────────
@@ -158,6 +174,35 @@ int Scheduler::next_worker_id() {
     return id % num_workers_;
 }
 
+// ── next_worker_id_load_aware — pick least-loaded worker ──
+// Scans workers' local queue sizes and picks the one with
+// the smallest queue. Falls back to round-robin if
+// all queues are empty (avoids unnecessary scanning).
+
+int Scheduler::next_worker_id_load_aware() {
+    int best_id = 0;
+    size_t best_size = SIZE_MAX;
+    bool any_nonempty = false;
+
+    for (int i = 0; i < num_workers_; ++i) {
+        auto* w = workers_[i].get();
+        if (!w) continue;
+        size_t qs = w->queue_size();
+        if (qs > 0) any_nonempty = true;
+        if (qs <= best_size) {
+            best_size = qs;
+            best_id = i;
+        }
+    }
+
+    if (!any_nonempty) {
+        // All empty — fall back to simple round-robin
+        return next_worker_id();
+    }
+
+    return best_id;
+}
+
 // ── run — main IO event loop ─────────────────────────
 //
 // The IO thread (main thread) runs the epoll event loop.
@@ -171,6 +216,11 @@ int Scheduler::next_worker_id() {
 
 void Scheduler::run() {
     g_scheduler = this;
+
+    // Link metrics to workers before starting
+    for (size_t i = 0; i < workers_.size(); ++i) {
+        workers_[i]->set_metrics(&metrics_.worker(i));
+    }
 
     // Start all workers
     for (auto& w : workers_) {
@@ -198,6 +248,9 @@ void Scheduler::run() {
         for (int i = 0; i < n; ++i) {
             if (events[i].data.ptr == nullptr) {
                 // stdin event — wake the stdin fiber AND all waiting fibers
+                if (metrics_on_) {
+                    metrics_.io_stdin_events.fetch_add(1, std::memory_order_relaxed);
+                }
                 if (stdin_fiber_) {
                     int wid = next_worker_id();
                     workers_[wid]->enqueue(stdin_fiber_);
@@ -222,6 +275,11 @@ void Scheduler::run() {
                 uint64_t val;
                 ::read(fiber->eventfd(), &val, sizeof(val));
 
+                // Metrics
+                if (metrics_on_) {
+                    metrics_.io_events_processed.fetch_add(1, std::memory_order_relaxed);
+                }
+
                 // Enqueue to a worker for resumption
                 int wid = next_worker_id();
                 workers_[wid]->enqueue(fiber);
@@ -231,22 +289,30 @@ void Scheduler::run() {
         // Check if all fibers are done
         {
             std::lock_guard<std::mutex> lock(wait_map_mutex_);
-            if (wait_map_.empty()) {
-                // No fibers in epoll — check if any still running
-                bool all_done = true;
+            bool all_idle = wait_map_.empty();
+            if (all_idle) {
+                // No fibers in epoll — check if any have pending work
                 for (auto& w : workers_) {
-                    if (w->queue_size() > 0 || w->is_running()) {
-                        all_done = false;
+                    if (w->queue_size() > 0 || w->pending_count() > 0) {
+                        all_idle = false;
                         break;
                     }
                 }
-                // Also check if there are waiting fibers
-                if (!all_done) continue;
-                // Double check with the running flag
-                if (!running_.load(std::memory_order_acquire))
+                if (all_idle && !running_.load(std::memory_order_acquire))
                     break;
-                // Give workers a moment to finish
-                continue;
+                // If idle for multiple cycles, auto-stop (avoids hang)
+                // Use a counter to prevent premature stop
+                static thread_local int idle_cycles = 0;
+                if (all_idle) {
+                    ++idle_cycles;
+                    if (idle_cycles >= 3) {
+                        // All fibers completed — auto-stop
+                        running_.store(false, std::memory_order_release);
+                        break;
+                    }
+                } else {
+                    idle_cycles = 0;
+                }
             }
         }
     }
