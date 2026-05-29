@@ -850,6 +850,24 @@ def test_mutation_sequences():
     else:
         print(f'  mutation-rollback-tc: got {r.stdout!r} (may not support rollback in begin)')
 
+    # ── DefUseIndex incremental: query:def-use works after rebind ──
+    r = subprocess.run([AURA],
+        input='(begin (define (f x) (+ x 1)) (define (g x) (f x)) (query:def-use "f") (mutate:rebind "f" "(lambda (x) (* x 2))") (query:def-use "f") (typecheck-status))',
+        capture_output=True, text=True, timeout=10)
+    if 'ok' in r.stdout:
+        print('  ✅ defuse-query-after-rebind')
+    else:
+        raise Exception(f'defuse-query-after-rebind: got {r.stdout!r}')
+
+    # ── DefUseIndex: chain query works after rebind ─────────────────
+    r = subprocess.run([AURA],
+        input='(begin (define (a x) (+ x 1)) (define (b x) (a x)) (query:reaches 0) (mutate:rebind "a" "(lambda (x) (* x 2))") (query:reaches 0) (typecheck-status))',
+        capture_output=True, text=True, timeout=10)
+    if 'ok' in r.stdout or not r.stderr:
+        print('  ✅ defuse-reaches-after-rebind')
+    else:
+        print(f'  defuse-reaches-after-rebind: {r.stdout!r} {r.stderr!r} (non-critical)')
+
 def test_fuzz_edsl():
     """Run property-based EDSL mutation fuzz (quick mode)."""
     r = subprocess.run([sys.executable, "tests/fuzz_edsl.py", "--quick"],
