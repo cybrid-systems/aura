@@ -9063,34 +9063,38 @@ Evaluator::Evaluator() {
     static std::unordered_map<int64_t, std::shared_ptr<std::optional<EvalValue>>>
         s_fiber_results;
 
-    // (fiber:spawn fn) — Spawn a fiber (async in serve mode, sync fallback in stdin)
+    // (fiber:spawn fn) — Spawn a fiber (async)
     // fn is a closure taking no arguments.
     // Returns non-zero fiber ID on success, #f on failure.
-    // In serve mode, the result is retrievable via (fiber:join fid).
+    // Result is retrievable via (fiber:join fid).
     primitives_.add("fiber:spawn", [this](const auto& a) -> EvalValue {
         if (a.empty() || !is_closure(a[0]))
             return make_bool(false);
         auto cid = as_closure_id(a[0]);
+        auto result_ptr = std::make_shared<std::optional<EvalValue>>();
+        int64_t fid = 0;
         // In serve-async mode: use g_fiber_spawn to create a real fiber
         if (aura::messaging::g_fiber_spawn) {
-            auto result_ptr = std::make_shared<std::optional<EvalValue>>();
-            auto fid = aura::messaging::g_fiber_spawn([this, cid, result_ptr]() {
+            fid = aura::messaging::g_fiber_spawn([this, cid, result_ptr]() {
                 *result_ptr = apply_closure(cid, {});
             });
-            if (fid > 0) {
-                s_fiber_results[fid] = std::move(result_ptr);
-                return make_int(fid);
-            }
-            // Spawn failed — run inline as fallback
-            *result_ptr = apply_closure(cid, {});
-            if (*result_ptr)
-                return **result_ptr;
-            return make_void();
         }
-        // Fallback (stdin mode): call directly — no fiber, cannot join
-        auto opt = apply_closure(cid, {});
-        if (opt) return *opt;
-        return make_void();
+        // Fallback (stdin mode): use std::thread
+        if (fid <= 0) {
+            // Thread counter for unique fiber IDs (negative = thread-based)
+            static std::atomic<int64_t> thread_fiber_id{0};
+            fid = -(++thread_fiber_id); // unique negative ID
+            s_fiber_results[fid] = result_ptr;
+            std::thread([this, cid, result_ptr, fid]() {
+                *result_ptr = apply_closure(cid, {});
+            }).detach();
+            return make_int(fid);
+        }
+        if (fid > 0) {
+            s_fiber_results[fid] = std::move(result_ptr);
+            return make_int(fid);
+        }
+        return make_bool(false);
     });
 
     // (fiber:yield) — Yield current fiber to scheduler (serve mode only)
@@ -9153,15 +9157,13 @@ Evaluator::Evaluator() {
     });
 
     // (fiber:join fiber-id) — Wait for a fiber to complete and return its result
-    // Uses s_fiber_results (shared with fiber:spawn). Yields the current fiber
-    // until the target fiber is done, then returns the stored result.
-    // In stdin mode (no fiber infrastructure), returns #f.
+    // Uses s_fiber_results (shared with fiber:spawn). Works in both serve
+    // and stdin modes (thread-based fibers spin-wait with small sleep).
     primitives_.add("fiber:join", [this](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
         auto fid = static_cast<int64_t>(as_int(a[0]));
-        // Wait in a yield-loop until the result is available
-        for (int iter = 0; iter < 100000; ++iter) {
+        for (int iter = 0; iter < 200000; ++iter) {
             auto it = s_fiber_results.find(fid);
             if (it != s_fiber_results.end()) {
                 auto& result_ptr = it->second;
@@ -9170,13 +9172,13 @@ Evaluator::Evaluator() {
                     s_fiber_results.erase(it);
                     return result;
                 }
-                // shared_ptr exists but result not set yet — continue waiting
             }
-            // Yield to scheduler so the target fiber can make progress
+            // In serve mode: yield to fiber scheduler
             if (aura::messaging::g_fiber_yield) {
                 aura::messaging::g_fiber_yield();
             } else {
-                break;  // no scheduler — can't wait
+                // In stdin mode: sleep briefly so the thread can make progress
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
         }
         return make_void();
