@@ -1378,6 +1378,7 @@ NodeId FlatParser::parse_type_annot() {
     lexer_->consume(); // name
 
     auto type_tok = lexer_->peek();
+    // Compound type expression: (: name (List :T)) or (: name (Maybe :T))
     if (type_tok.kind != TokenKind::Identifier) {
         skip_rparen();
         return NULL_NODE;
