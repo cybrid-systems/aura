@@ -505,7 +505,7 @@ def test_aura_type_auto_load():
     print("  ✅ test-aura-type-auto-load")
 
 def test_aura_type_no_sig():
-    """Without .aura-type, typecheck should show unbound."""
+    """Without .aura-type, typecheck should use Any-level sig (no unbound)."""
     import tempfile
     with tempfile.TemporaryDirectory() as tmpdir:
         mod_path = os.path.join(tmpdir, "mymod.aura")
@@ -513,7 +513,7 @@ def test_aura_type_no_sig():
             f.write("(export add)\n(define (add x y) (+ x y))\n")
         code = f'(begin (require "{mod_path}" all:)(set-code "(display (add 1 2))")(display (typecheck-current)))'
         r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=10)
-        assert "unbound variable" in r.stdout, f"expected unbound: {r.stdout}"
+        assert "no errors" in r.stdout, f"expected no errors: {r.stdout}"
     print("  ✅ test-aura-type-no-sig")
 
 def test_aura_type_multi_func():
