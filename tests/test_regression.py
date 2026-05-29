@@ -636,6 +636,50 @@ def test_cross_session():
         raise RuntimeError(f"cross_session tests failed (rc={r.returncode})")
 
 
+# ── JIT mode tests (Phase 1: pointer tagging unification) ─
+def test_jit():
+    """JIT mode: arithmetic, comparisons, conditional after Phase 1 encoding fix."""
+    jit_cases = [
+        ("basic-fixnum",     '(+ 1 2)',          '3'),
+        ("comp-eq",          '(= 1 1)',          '#t'),
+        ("comp-neq",         '(= 1 2)',          '#f'),
+        ("comp-lt",          '(< 1 2)',          '#t'),
+        ("comp-gt",          '(> 3 1)',          '#t'),
+        ("comp-le",          '(<= 2 2)',         '#t'),
+        ("comp-ge",          '(>= 3 2)',         '#t'),
+        ("cond-true",        '(if (= 1 1) 42 0)','42'),
+        ("cond-false",       '(if (= 1 2) 42 0)','0'),
+        ("mul",              '(* 3 4)',          '12'),
+        ("div",              '(/ 10 3)',         '3'),
+        ("chain",            '(+ 1 (* 2 3))',    '7'),
+        ("nested-comp",      '(if (and (< 1 2) (= 3 3)) 99 0)', '99'),
+    ]
+    for name, code, expected in jit_cases:
+        r = subprocess.run([AURA, "--jit"], input=code, capture_output=True,
+                           text=True, timeout=10)
+        out = r.stdout.strip()
+        if out == expected:
+            print(f"  ✅ jit-{name}")
+        else:
+            raise Exception(f"jit-{name}: expected {expected!r}, got {out!r}")
+
+    # ── Eval path auto-JIT for comparisons ──────────────────
+    eval_cases = [
+        ("comp-eq",   '(= 1 1)',      '#t'),
+        ("comp-neq",  '(= 1 2)',      '#f'),
+        ("comp-lt",   '(< 1 2)',      '#t'),
+        ("comp-gt",   '(> 3 1)',      '#t'),
+        ("cond-str",  '(if (= 1 1) "ok" "no")', '"ok"'),
+    ]
+    for name, code, expected in eval_cases:
+        r = subprocess.run([AURA], input=code, capture_output=True,
+                           text=True, timeout=10)
+        out = r.stdout.strip()
+        if out == expected:
+            print(f"  ✅ jit-eval-{name}")
+        else:
+            raise Exception(f"jit-eval-{name}: expected {expected!r}, got {out!r}")
+
 def test_fuzz_edsl():
     """Run property-based EDSL mutation fuzz (quick mode)."""
     r = subprocess.run([sys.executable, "tests/fuzz_edsl.py", "--quick"],
@@ -648,7 +692,7 @@ def test_fuzz_edsl():
         if "Pass:" in line or "Fail:" in line:
             print(f"  fuzz-edsl: {line.strip()}")
 
-for tf in [test_freeze_load, test_freeze_multi_expr, test_freeze_empty, test_emit_binary,
+for tf in [test_jit, test_freeze_load, test_freeze_multi_expr, test_freeze_empty, test_emit_binary,
            test_aura_type_auto_load, test_aura_type_no_sig,
            test_aura_type_multi_func, test_aura_type_different_types,
            test_aura_type_cross_module,
