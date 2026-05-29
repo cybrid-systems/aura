@@ -1378,3 +1378,49 @@
   (check (mutate:rebind "f" "(lambda (x) (* x 2))"))
   (eval-current)
   (check (= (f 3) 6)))
+
+;; ── EDSL 新增覆盖测试 ──────────────────────────────────
+
+(test-suite "edsl:query-index"
+  (set-code "(define (add x y) (+ x y))(define (mul x y) (* x y))")
+  (check (query:build-index))
+  (let ((stats (query:index-stats)))
+    (check (pair? stats))
+    (check (> (length stats) 0))))
+
+(test-suite "edsl:mutate-record-patch"
+  (set-code "(define (f x) (+ x 1))")
+  (check (mutate:record-patch 2 "optimize" "replace (+ x 1) with (+ x 2)")))
+
+(test-suite "edsl:mutate-refactor"
+  (set-code "(define (f x) (+ (* x x) (* x 2)))")
+  ;; refactor/extract requires node-id and name
+  (let ((root (query:root)))
+    (define def (car (query:children root)))
+    (define lam (car (query:children def)))
+    (define body (car (query:children lam)))
+    (when (pair? (query:children body))
+      (let ((inner (car (query:children body))))
+        (check (mutate:refactor/extract inner "inner-fn"))))))
+
+(test-suite "edsl:workspace-sync-merge"
+  ;; Test workspace:sync-from and workspace:merge
+  (workspace:create "wsA")
+  (workspace:switch "wsA")
+  (set-code "(define (f x) (+ x 1))")
+  (eval-current)
+  ;; Create second workspace and sync
+  (workspace:create "wsB")
+  (workspace:switch "wsB")
+  (set-code "(define (g x) (* x 2))")
+  (eval-current)
+  ;; Sync from wsA
+  (check (workspace:sync-from "wsA"))
+  ;; Check that g still works
+  (eval-current)
+  ;; Merge wsA changes into current
+  (let ((merged (workspace:merge "wsA")))
+    (check (or (equal? merged "()") (pair? merged))))
+  ;; Cleanup
+  (workspace:delete "wsA")
+  (workspace:delete "wsB"))
