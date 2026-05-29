@@ -69,19 +69,16 @@ SEED_PROGRAMS = [
 ]
 
 MUTATIONS = [
-    # rebind an existing function with new body
     "mutate:rebind",
-    # set-body of a function
     "mutate:set-body",
-    # wrap an expression
     "mutate:wrap",
-    # splice nodes
     "mutate:splice",
-    # tweak literal values
     "mutate:tweak-literal",
+    "mutate:extract-function",
+    "mutate:inline-call",
 ]
 
-# Helper: build mutation command
+# ── Helper: build mutation commands ──────────────────────────────
 def pick_fn(existing_fns):
     return rng.choice(existing_fns)
 
@@ -91,21 +88,40 @@ def pick_op():
 def pick_val():
     return rng.randint(0, 100)
 
-def build_mutation(fns, mut_type):
+def build_mutation(fns, mut_type, serve_script):
+    """Build mutation command(s) for a given mutation type.
+    Appends necessary query commands to serve_script for operations
+    that need dynamic node IDs."""
     fn = pick_fn(fns) if fns else "add"
     if mut_type == "mutate:rebind":
         op = pick_op()
         val = pick_val()
-        return f'(mutate:rebind "{fn}" "(lambda (x) ({op} x {val}))")'
+        return [f'(mutate:rebind "{fn}" "(lambda (x) ({op} x {val}))")']
     elif mut_type == "mutate:set-body":
-        return f'(mutate:set-body "{fn}" "(display 42)")'
+        return [f'(mutate:set-body "{fn}" "(display 42)")']
     elif mut_type == "mutate:wrap":
-        return f'(mutate:wrap 0 "display")'
+        return [f'(mutate:wrap 0 "display")']
     elif mut_type == "mutate:splice":
-        return f'(mutate:splice 1 1)'
+        return [f'(mutate:splice 1 1)']
     elif mut_type == "mutate:tweak-literal":
-        return f'(mutate:tweak-literal 0 {pick_val()})'
-    return f'(mutate:rebind "{fn}" "(lambda (x) (+ x 1))")'
+        return [f'(mutate:tweak-literal 0 {pick_val()})']
+    elif mut_type == "mutate:extract-function":
+        # Query for Define nodes, then try extract-function on the first one.
+        # The node pointed to by query:find is the Define node ID.
+        # extract-function takes the BODY expression node, which for
+        # (define (name ...) body) is at Define.child[0].child[1] (Lambda's body).
+        # We store query results for the next iteration to use.
+        return [
+            f'(query:find "{fn}")',
+            f'(mutate:extract-function 2 "extracted_{rng.randint(100,999)}")',
+        ]
+    elif mut_type == "mutate:inline-call":
+        # Query and try inline-call. Use query first to check if node exists.
+        return [
+            f'(query:node-type "Call")',
+            '(mutate:inline-call 3)',
+        ]
+    return [f'(mutate:rebind "{fn}" "(lambda (x) (+ x 1))")']
 
 def parse_serve_response(raw):
     """Parse multi-line JSON response from --serve-async."""
@@ -140,8 +156,9 @@ def run_test(num_ops):
     # Step 2: apply random mutations
     for i in range(num_ops):
         mut = rng.choice(MUTATIONS)
-        cmd = build_mutation(existing_fns, mut)
-        serve_script.append(cmd)
+        cmds = build_mutation(existing_fns, mut, serve_script)
+        for cmd in cmds:
+            serve_script.append(cmd)
         serve_script.append("(typecheck-current)")
         serve_script.append("(eval-current)")
 
