@@ -441,6 +441,52 @@ def test_emit_binary():
     assert os.path.exists("/tmp/aura-test-out"), "emit binary not created"
     print("  ✅ test-emit-binary")
 
+# ── AOT native binary (Phase 4: no llc dependency) ───────
+def test_aot():
+    """AOT: emit and run native binaries for various types."""
+    import os, stat
+    cases = [
+        ("fixnum",     '(display (+ 1 2))',              '3'),
+        ("comparison", '(display (= 1 1))',              '#t'),
+        ("conditional",'(display (if (= 1 2) 42 99))',   '99'),
+        ("pair",      '(display (car (cons 10 20)))',    '10'),
+        ("nested",    '(display (+ 1 (* 2 3)))',         '7'),
+        ("closure",   '(display ((lambda (x) (+ x 1)) 41))', '42'),
+    ]
+    for name, code, expected in cases:
+        out_path = f"/tmp/aura-aot-{name}"
+        r = subprocess.run([AURA, "--emit-binary", out_path],
+                           input=code.encode(), capture_output=True, timeout=15)
+        if not os.path.exists(out_path):
+            print(f"  ❌ aot-{name}: binary not created")
+            raise Exception(f"aot-{name}: binary not created")
+        # Make executable
+        st = os.stat(out_path)
+        os.chmod(out_path, st.st_mode | stat.S_IEXEC)
+        # Run the emitted binary
+        r2 = subprocess.run([out_path], capture_output=True, timeout=10)
+        out = r2.stdout.decode().strip()
+        if out == expected:
+            print(f"  ✅ aot-{name}: {out!r}")
+        else:
+            raise Exception(f"aot-{name}: expected {expected!r}, got {out!r}")
+        os.remove(out_path)
+
+    # ── AOT with comparisons (--emit-binary file mode) ────
+    out_path = "/tmp/aura-aot-compare"
+    r = subprocess.run([AURA, "--emit-binary", out_path],
+                        input=b'(display (= 1 1))', capture_output=True, timeout=15)
+    if os.path.exists(out_path):
+        st = os.stat(out_path)
+        os.chmod(out_path, st.st_mode | stat.S_IEXEC)
+        r2 = subprocess.run([out_path], capture_output=True, timeout=10)
+        out2 = r2.stdout.decode().strip()
+        if out2 == '#t':
+            print(f"  ✅ aot-compare: {out2!r}")
+        else:
+            raise Exception(f"aot-compare: expected '#t', got {out2!r}")
+        os.remove(out_path)
+
 # ── .aura-type 签名自动加载 ───────────────────────────────
 def test_aura_type_auto_load():
     """require should auto-load .aura-type files."""
@@ -742,7 +788,7 @@ def test_fuzz_edsl():
         if "Pass:" in line or "Fail:" in line:
             print(f"  fuzz-edsl: {line.strip()}")
 
-for tf in [test_jit, test_freeze_load, test_freeze_multi_expr, test_freeze_empty, test_emit_binary,
+for tf in [test_jit, test_freeze_load, test_freeze_multi_expr, test_freeze_empty, test_emit_binary, test_aot,
            test_aura_type_auto_load, test_aura_type_no_sig,
            test_aura_type_multi_func, test_aura_type_different_types,
            test_aura_type_cross_module,
@@ -762,6 +808,9 @@ print(f"  Subprocess tests: {passed_s}/{passed_s + failed_s} passed")
 # Cleanup freeze/emit files
 for f in ["/tmp/aura-test-freeze.aura", "/tmp/aura-test-freeze2.aura",
           "/tmp/aura-test-empty.aura", "/tmp/aura-test-out.o.ir"]:
+    if os.path.exists(f):
+        os.remove(f)
+for f in ["/tmp/aura-test-out", "/tmp/aura-aot-compare", "/tmp/aura-aot-runtime"]:
     if os.path.exists(f):
         os.remove(f)
 
