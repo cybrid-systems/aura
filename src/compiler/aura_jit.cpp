@@ -235,17 +235,13 @@ struct LLVMBuilder {
         (void)block_id;
         (void)fn;
         switch (inst.opcode) {
-            case OpConstI64:
-                if (aot_mode) {
-                    // Fixnum-encode: value << 1
-                    auto raw = c64(static_cast<int64_t>(inst.ops[1]) |
-                                   (static_cast<int64_t>(inst.ops[2]) << 32));
-                    store(inst.ops[0], irb->CreateShl(raw, c64(1)));
-                } else {
-                    store(inst.ops[0], c64(static_cast<int64_t>(inst.ops[1]) |
-                                           (static_cast<int64_t>(inst.ops[2]) << 32)));
-                }
+            case OpConstI64: {
+                // Fixnum-encode: value << 1 (matching EvalValue pointer tagging)
+                auto raw = c64(static_cast<int64_t>(inst.ops[1]) |
+                               (static_cast<int64_t>(inst.ops[2]) << 32));
+                store(inst.ops[0], irb->CreateShl(raw, c64(1)));
                 return true;
+            }
             case OpLocal:
                 store(inst.ops[0], load(inst.ops[1]));
                 return true;
@@ -304,13 +300,8 @@ struct LLVMBuilder {
                     irb->CreateSIToFP(irb->CreateAShr(b, c64(1)), double_ty));
                 auto fmul = irb->CreateFMul(a_dbl, b_dbl);
                 auto float_res = irb->CreateCall(fn_alloc_float, {fmul});
-                // Fixnum path
-                llvm::Value* fixnum_res;
-                if (aot_mode) {
-                    fixnum_res = irb->CreateAShr(irb->CreateMul(a, b), c64(1));
-                } else {
-                    fixnum_res = irb->CreateMul(a, b);
-                }
+                // Fixnum path: tagged fixnums (val<<1), multiply → (a*b)>>1
+                auto fixnum_res = irb->CreateAShr(irb->CreateMul(a, b), c64(1));
                 store(inst.ops[0], irb->CreateSelect(any_float, float_res, fixnum_res));
                 return true;
             }
@@ -336,58 +327,34 @@ struct LLVMBuilder {
                 auto safe_div = irb->CreateSelect(is_zero, c64(1), divisor);
                 auto div_result = irb->CreateSDiv(dividend, safe_div);
                 auto safe = irb->CreateSelect(is_zero, c64(0), div_result);
-                llvm::Value* fixnum_res;
-                if (aot_mode) {
-                    fixnum_res = irb->CreateShl(safe, c64(1));
-                } else {
-                    fixnum_res = safe;
-                }
+                // Fixnum path: tagged fixnums (val<<1), SDiv gives integer result, shift for fixnum encoding
+                auto fixnum_res = irb->CreateShl(safe, c64(1));
                 store(inst.ops[0], irb->CreateSelect(any_float, float_res, fixnum_res));
                 return true;
             }
             case OpEq: {
                 auto c = irb->CreateICmpEQ(load(inst.ops[1]), load(inst.ops[2]));
-                if (aot_mode) {
-                    store(inst.ops[0], irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
-                } else {
-                    store(inst.ops[0], irb->CreateZExt(c, llvm::Type::getInt64Ty(ctx)));
-                }
+                store(inst.ops[0], irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
                 return true;
             }
             case OpLt: {
                 auto c = irb->CreateICmpSLT(load(inst.ops[1]), load(inst.ops[2]));
-                if (aot_mode) {
-                    store(inst.ops[0], irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
-                } else {
-                    store(inst.ops[0], irb->CreateZExt(c, llvm::Type::getInt64Ty(ctx)));
-                }
+                store(inst.ops[0], irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
                 return true;
             }
             case OpGt: {
                 auto c = irb->CreateICmpSGT(load(inst.ops[1]), load(inst.ops[2]));
-                if (aot_mode) {
-                    store(inst.ops[0], irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
-                } else {
-                    store(inst.ops[0], irb->CreateZExt(c, llvm::Type::getInt64Ty(ctx)));
-                }
+                store(inst.ops[0], irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
                 return true;
             }
             case OpLe: {
                 auto c = irb->CreateICmpSLE(load(inst.ops[1]), load(inst.ops[2]));
-                if (aot_mode) {
-                    store(inst.ops[0], irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
-                } else {
-                    store(inst.ops[0], irb->CreateZExt(c, llvm::Type::getInt64Ty(ctx)));
-                }
+                store(inst.ops[0], irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
                 return true;
             }
             case OpGe: {
                 auto c = irb->CreateICmpSGE(load(inst.ops[1]), load(inst.ops[2]));
-                if (aot_mode) {
-                    store(inst.ops[0], irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
-                } else {
-                    store(inst.ops[0], irb->CreateZExt(c, llvm::Type::getInt64Ty(ctx)));
-                }
+                store(inst.ops[0], irb->CreateSelect(c, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
                 return true;
             }
             case OpAnd: {
@@ -422,23 +389,16 @@ struct LLVMBuilder {
             case OpReturn:
                 irb->CreateRet(load(inst.ops[0]));
                 return true;
-            case OpConstBool:
-                if (aot_mode) {
-                    // Pointer tagging: #t = (1<<2)|3 = 7, #f = (0<<2)|3 = 3
-                    store(inst.ops[0], c64(inst.ops[1] ? 7 : 3));
-                } else {
-                    // Legacy: INT64_MIN sentinel (compatible with JIT)
-                    store(inst.ops[0], c64(inst.ops[1] ? 0x8000000000000000LL : 0x8000000000000001LL));
-                }
+            case OpConstBool: {
+                // Pointer tagging: #t = 7, #f = 3 (matching EvalValue)
+                store(inst.ops[0], c64(inst.ops[1] ? KWD_TRUE_VAL : KWD_FALSE_VAL));
                 return true;
-            case OpConstVoid:
-                if (aot_mode) {
-                    // Pointer tagging: void = (2<<2)|3 = 11
-                    store(inst.ops[0], c64(11));
-                } else {
-                    store(inst.ops[0], c64(0));
-                }
+            }
+            case OpConstVoid: {
+                // Pointer tagging: void = 11 (matching EvalValue)
+                store(inst.ops[0], c64(11));
                 return true;
+            }
             case OpConstF64: {
                 // Reconstruct double from operand bits (low, high).
                 // Store in float pool via aura_alloc_float for proper tagged encoding.
@@ -603,27 +563,18 @@ struct LLVMBuilder {
                     return true;
                 }
                 case PrimPairP: {
-                    if (aot_mode) {
-                        auto masked = irb->CreateAnd(a1, c64(3));
-                        auto is_pair = irb->CreateICmpEQ(masked, c64(1));
-                        store(result_slot, irb->CreateSelect(is_pair, c64(7), c64(3)));
-                    } else {
-                        auto lt = irb->CreateICmpSLT(a1, c64(0));
-                        store(result_slot, irb->CreateZExt(lt, llvm::Type::getInt64Ty(ctx)));
-                    }
+                    // Pointer tagging: low 2 bits = 01 means pair
+                    auto masked = irb->CreateAnd(a1, c64(3));
+                    auto is_pair = irb->CreateICmpEQ(masked, c64(1));
+                    store(result_slot, irb->CreateSelect(is_pair, c64(7), c64(3)));
                     return true;
                 }
                 case PrimNullP: {
-                    if (aot_mode) {
-                        // Both void sentinel (11) and fixnum 0 (from () → LiteralInt 0) are null
-                        auto is_void = irb->CreateICmpEQ(a1, c64(11));
-                        auto is_zero = irb->CreateICmpEQ(a1, c64(0));
-                        auto is_null = irb->CreateOr(is_void, is_zero);
-                        store(result_slot, irb->CreateSelect(is_null, c64(7), c64(3)));
-                    } else {
-                        auto eq = irb->CreateICmpEQ(a1, c64(0));
-                        store(result_slot, irb->CreateZExt(eq, llvm::Type::getInt64Ty(ctx)));
-                    }
+                    // Void sentinel (11) or fixnum 0 (from () → LiteralInt 0) are null
+                    auto is_void = irb->CreateICmpEQ(a1, c64(11));
+                    auto is_zero = irb->CreateICmpEQ(a1, c64(0));
+                    auto is_null = irb->CreateOr(is_void, is_zero);
+                    store(result_slot, irb->CreateSelect(is_null, c64(7), c64(3)));
                     return true;
                 }
                 default:
@@ -684,6 +635,12 @@ void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t), int32_
                       int32_t arg_count, int32_t env_count);
 void aura_reset_runtime();
 void aura_set_prim_dispatcher(int64_t (*fn)(int64_t, int64_t*, int32_t));
+// Float/string pool functions (defined in aura_jit_runtime.cpp)
+int64_t aura_alloc_float(double);
+double aura_float_ref(int64_t);
+int64_t aura_alloc_string(const char*);
+const char* aura_string_ref(int64_t);
+const char* aura_jit_string_content(int64_t);
 // Drop stubs: Aura uses bump allocator, no per-value GC needed.
 // JIT-compiled DropOp calls these; they exist for completeness.
 void aura_drop_pair(int64_t) {}
@@ -803,6 +760,17 @@ struct AuraJIT::Impl {
     bool initialized = false;
     bool optimize = true;
     std::vector<FunctionMeta> compiled_fns_{};
+    const std::vector<std::string>* string_pool_{nullptr};
+    // Per-function resource trackers for hot-swap (remove old module, add new one)
+    llvm::orc::ResourceTrackerSP get_or_create_tracker(const std::string& name) {
+        auto it = fn_trackers_.find(name);
+        if (it != fn_trackers_.end())
+            return it->second;
+        auto rt = main_dylib->createResourceTracker();
+        fn_trackers_[name] = rt;
+        return rt;
+    }
+    std::unordered_map<std::string, llvm::orc::ResourceTrackerSP> fn_trackers_;
 
     bool init() {
         if (initialized)
@@ -848,6 +816,11 @@ struct AuraJIT::Impl {
         reg("aura_register_fn", (void*)aura_register_fn);
         reg("aura_cast_op", (void*)aura_cast_op);
         reg("aura_reset_runtime", (void*)aura_reset_runtime);
+        reg("aura_alloc_float", (void*)aura_alloc_float);
+        reg("aura_float_ref", (void*)aura_float_ref);
+        reg("aura_alloc_string", (void*)aura_alloc_string);
+        reg("aura_string_ref", (void*)aura_string_ref);
+        reg("aura_jit_string_content", (void*)aura_jit_string_content);
         reg("aura_drop_pair", (void*)aura_drop_pair);
         reg("aura_drop_cell", (void*)aura_drop_cell);
         reg("aura_drop_closure", (void*)aura_drop_closure);
@@ -874,6 +847,8 @@ struct AuraJIT::Impl {
         LLVMBuilder builder{ctx};
         builder.mod = mod.get();
         builder.declare_runtime();
+        if (string_pool_)
+            builder.string_pool = string_pool_;
 
         // Build function
         auto ptr_i64 = llvm::PointerType::getUnqual(llvm::Type::getInt64Ty(ctx));
@@ -935,7 +910,8 @@ struct AuraJIT::Impl {
 
         auto tsm =
             llvm::orc::ThreadSafeModule(std::move(mod), std::make_unique<llvm::LLVMContext>());
-        if (auto err = jit->addIRModule(std::move(tsm))) {
+        auto rt = get_or_create_tracker(std::string(fn.name));
+        if (auto err = jit->addIRModule(rt, std::move(tsm))) {
             fprintf(stderr, "JIT: addIRModule failed\n");
             return nullptr;
         }
@@ -975,6 +951,29 @@ struct AuraJIT::Impl {
                          static_cast<int32_t>(arg_count), static_cast<int32_t>(env_count));
         compiled_fns_.push_back({std::string(), fn_ptr, local_count, arg_count, env_count});
     }
+
+    bool update_function(const char* name, const FlatFunction& fn) {
+        // Remove old module + recompile
+        auto tracker_it = fn_trackers_.find(name);
+        if (tracker_it != fn_trackers_.end()) {
+            if (auto err = tracker_it->second->remove()) {
+                fprintf(stderr, "JIT: remove old module for '%s' failed\n", name);
+                // Non-fatal: we can still compile new version
+            }
+            fn_trackers_.erase(tracker_it);
+        }
+        // Remove from compiled_fns_ metadata
+        for (auto it = compiled_fns_.begin(); it != compiled_fns_.end(); ++it) {
+            if (it->name == name) {
+                compiled_fns_.erase(it);
+                break;
+            }
+        }
+        // Compile new version
+        auto new_fn = compile(fn);
+        if (!new_fn) return false;
+        return true;
+    }
 };
 
 AuraJIT::AuraJIT()
@@ -992,6 +991,14 @@ void* AuraJIT::get_function_ptr(const char* name) {
 
 void AuraJIT::register_symbol(const char* name, void* ptr) {
     impl_->register_symbol_func(name, ptr);
+}
+
+void AuraJIT::set_string_pool(const std::vector<std::string>* pool) {
+    impl_->string_pool_ = pool;
+}
+
+bool AuraJIT::update_function(const char* name, const FlatFunction& fn) {
+    return impl_->update_function(name, fn);
 }
 
 void AuraJIT::register_function(int64_t func_id, ScalarFn fn_ptr, uint32_t local_count,
@@ -1051,6 +1058,7 @@ void* AuraJIT::get_function_ptr(const char*) {
     return nullptr;
 }
 void AuraJIT::register_symbol(const char*, void*) {}
+void AuraJIT::set_string_pool(const std::vector<std::string>*) {}
 void AuraJIT::register_function(int64_t, ScalarFn, uint32_t, uint32_t, uint32_t) {}
 const std::vector<FunctionMeta>& AuraJIT::compiled_functions() const {
     static std::vector<FunctionMeta> empty;

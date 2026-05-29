@@ -77,6 +77,16 @@ public:
     // Register an external C symbol with the JIT (e.g., from dlopen)
     void register_symbol(const char* name, void* ptr);
 
+    // Set string pool for OpConstString support. Must be called before compile().
+    // The pool pointer must remain valid for the lifetime of all compilations.
+    void set_string_pool(const std::vector<std::string>* pool);
+
+    // Hot-swap: replace an already-compiled function with a new version.
+    // Removes the old module from the JIT dylib and compiles + links the new one.
+    // Returns true on success. The compiled function is immediately available
+    // for subsequent lookups.
+    bool update_function(const char* name, const FlatFunction& fn);
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

@@ -269,4 +269,31 @@ double aura_float_ref(std::int64_t val) {
     return 0.0;
 }
 
+// ── String pool ────────────────────────────────────────────
+// Uses EvalValue-compatible encoding: STRING_BIAS_VAL - idx
+static std::vector<std::string> g_string_pool;
+
+std::int64_t aura_alloc_string(const char* s) {
+    std::int64_t idx = (std::int64_t)g_string_pool.size();
+    g_string_pool.push_back(s ? s : "");
+    return -9000000000000000000LL - idx;
+}
+
+const char* aura_string_ref(std::int64_t val) {
+    std::int64_t idx = -val - 9000000000000000000LL;
+    if (idx >= 0 && idx < (std::int64_t)g_string_pool.size())
+        return g_string_pool[(std::size_t)idx].c_str();
+    return "";
+}
+
+// Copy a JIT-allocated string into an external string heap.
+// Returns the new string index in the external heap, or -1 if not found.
+// callback(idx) should return the new index after pushing to the external heap.
+const char* aura_jit_string_content(std::int64_t val) {
+    std::int64_t idx = -val - 9000000000000000000LL;
+    if (idx >= 0 && idx < (std::int64_t)g_string_pool.size())
+        return g_string_pool[(std::size_t)idx].c_str();
+    return nullptr;
+}
+
 } // extern "C"
