@@ -268,6 +268,35 @@ INTEG_TESTS = [
         '(mutate:insert-child 2 1 "42")(typecheck-current)(display 42)',
         "eval", expected="42", expected_status=0
     ),
+    IntegCase(
+        "incr_extract_function",
+        '(set-code "(define (calc x) (+ (* x 3) 1))")(typecheck-current)'
+        '(define r (query:root))(define calc-def (car (query:children r)))'
+        '(define calc-lam (car (query:children calc-def)))'
+        '(define calc-body (car (query:children calc-lam)))'
+        '(define mul-call (car (cdr (query:children calc-body))))'
+        '(mutate:extract-function mul-call "mul3")(typecheck-current)(display 42)',
+        "eval", expected="42", expected_status=0
+    ),
+    IntegCase(
+        "incr_splice",
+        '(set-code "(begin 1)")(typecheck-current)'
+        '(mutate:splice 2 1 "42")(typecheck-current)(display 42)',
+        "eval", expected="42", expected_status=0
+    ),
+    IntegCase(
+        "incr_replace_value_int",
+        '(set-code "(define x 10)")(typecheck-current)'
+        '(mutate:replace-value 2 "99" "test")(typecheck-current)(display 42)',
+        "eval", expected="42", expected_status=0
+    ),
+    IntegCase(
+        "incr_multi_mutate",
+        '(set-code "(define x 10)(define y 20)")(typecheck-current)'
+        '(mutate:tweak-literal 2 5)(mutate:tweak-literal 3 10)'
+        '(mutate:replace-type 2 "String")(typecheck-current)(display 42)',
+        "eval", expected="42", expected_status=0
+    ),
     # ── TypeAnnotation coercion boundary (P0) ─────────────────
     IntegCase("tc_annot_int", "(: x Int 42)", "typecheck", expected="Int"),
     IntegCase("coerce_annot_erasure", "(: x Int 42)", "eval", expected="42"),
