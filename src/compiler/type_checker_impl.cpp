@@ -1388,7 +1388,13 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
                     if (cv.children.size() > 0) {
                         auto val_id = cv.child(0);
                         fn_type = synthesize_flat(flat, pool, val_id, flat.get(val_id));
-                        fn_type = cs_.normalize(fn_type);
+                        // Normalize only the return type to resolve constrained type vars
+                        // (e.g., + returns Int). Leave param types as-is so type param
+                        // substitution can still match their type var IDs.
+                        if (auto* ft = reg_.func_of(fn_type)) {
+                            auto new_ret = cs_.normalize(ft->ret);
+                            fn_type = reg_.register_func(ft->args, new_ret);
+                        }
                     }
                     members.push_back({fn_name, fn_type});
                 } else if (cv.tag == NodeTag::Export) {
