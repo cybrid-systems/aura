@@ -16,9 +16,16 @@
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/Support/CodeGen.h>
+#include <llvm/MC/TargetRegistry.h>
+#include <llvm/Target/TargetMachine.h>
+#include <llvm/TargetParser/Host.h>
+#include <llvm/TargetParser/Triple.h>
+#include <llvm/IR/LegacyPassManager.h>
 
 #include <cstdio>
 #include <cstdlib>
+#include <mutex>
 #include <vector>
 #include <unordered_map>
 #include <memory>
@@ -729,26 +736,46 @@ static bool emit_native_object_llvm(const FlatFunction& fn, const std::string& o
         return false;
     }
 
-    // Write .ll file
-    auto ll_path = out_obj_path + ".ll";
-    std::error_code ec;
-    llvm::raw_fd_ostream ll_out(ll_path, ec);
-    if (ec) {
-        fprintf(stderr, "AOT: cannot open %s: %s\n", ll_path.c_str(), ec.message().c_str());
-        return false;
-    }
-    mod->print(ll_out, nullptr);
-    ll_out.close();
+    // ── Emit .o directly via LLVM TargetMachine (no llc dependency) ──
+    static std::once_flag aot_target_init;
+    std::call_once(aot_target_init, []() {
+        llvm::InitializeNativeTarget();
+        llvm::InitializeNativeTargetAsmPrinter();
+    });
 
-    // Run llc to produce .o
-    std::string cmd = "llc -filetype=obj -o " + out_obj_path + " " + ll_path + " 2>/dev/null";
-    int rc = std::system(cmd.c_str());
-    if (rc != 0) {
-        fprintf(stderr, "AOT: llc failed for '%s'\n", ll_path.c_str());
-        std::remove(ll_path.c_str());
+    auto triple_str = llvm::sys::getDefaultTargetTriple();
+    llvm::Triple triple(triple_str);
+    std::string err;
+    const auto* target = llvm::TargetRegistry::lookupTarget(triple_str, err);
+    if (!target) {
+        fprintf(stderr, "AOT: cannot find target %s: %s\n", triple_str.c_str(), err.c_str());
         return false;
     }
-    std::remove(ll_path.c_str());
+
+    auto tm = std::unique_ptr<llvm::TargetMachine>(
+        target->createTargetMachine(triple, "generic", {}, {}, {}));
+    if (!tm) {
+        fprintf(stderr, "AOT: cannot create TargetMachine for %s\n", std::string(triple.str()).c_str());
+        return false;
+    }
+
+    mod->setDataLayout(tm->createDataLayout());
+
+    std::error_code ec;
+    llvm::raw_fd_ostream dest(out_obj_path, ec, llvm::sys::fs::OF_None);
+    if (ec) {
+        fprintf(stderr, "AOT: cannot open %s: %s\n", out_obj_path.c_str(), ec.message().c_str());
+        return false;
+    }
+
+    llvm::legacy::PassManager cgpm;
+    if (tm->addPassesToEmitFile(cgpm, dest, nullptr,
+                                 llvm::CodeGenFileType::ObjectFile)) {
+        fprintf(stderr, "AOT: TargetMachine cannot emit object file for '%s'\n", fn.name);
+        return false;
+    }
+    cgpm.run(*mod);
+    dest.flush();
     return true;
 }
 

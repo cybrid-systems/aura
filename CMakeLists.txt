@@ -68,7 +68,7 @@ target_compile_options(aura PRIVATE -Wall -Wextra -Wpedantic
 find_package(LLVM QUIET CONFIG)
 if(LLVM_FOUND)
     message(STATUS "LLVM JIT: ${LLVM_PACKAGE_VERSION}")
-    llvm_map_components_to_libnames(llvm_libs core orcjit native nativecodegen)
+    llvm_map_components_to_libnames(llvm_libs core orcjit native nativecodegen mc)
     target_sources(aura PRIVATE src/compiler/aura_jit.cpp src/compiler/aura_jit_runtime.cpp)
     target_include_directories(aura PRIVATE ${LLVM_INCLUDE_DIRS})
     set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
