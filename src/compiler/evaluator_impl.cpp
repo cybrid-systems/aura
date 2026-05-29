@@ -4383,6 +4383,38 @@ void Evaluator::init_pair_primitives() {
         return result;
     });
 
+    // (eval:async code) — Evaluate code asynchronously on the thread pool.
+    // Returns the result as a string, or error message.
+    // In serve-async mode, the eval runs on a background thread and the
+    // calling fiber yields until the result is ready.
+    // In stdin mode, falls back to synchronous eval (same as (eval code)).
+    primitives_.add("eval:async", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_void();
+        auto& code = string_heap_[as_string_idx(a[0])];
+        if (aura::messaging::g_eval_async) {
+            // Thread pool path: offload to background
+            auto result_str = aura::messaging::g_eval_async(code);
+            auto idx = string_heap_.size();
+            string_heap_.push_back(result_str);
+            return make_string(idx);
+        }
+        // Fallback: synchronous eval via the existing eval primitive
+        auto eval_fn = primitives_.lookup("eval");
+        if (!eval_fn) return make_void();
+        auto sidx = string_heap_.size();
+        string_heap_.push_back(code);
+        auto result = (*eval_fn)({make_string(sidx)});
+        // Format result as string
+        auto& ev = *this;
+        auto& cs = ev;
+        auto formatted = aura::compiler::format_value(
+            result, &ev.string_heap_, &ev.pairs_, 0, &ev.primitives_, &ev.keyword_table());
+        auto ris = string_heap_.size();
+        string_heap_.push_back(std::move(formatted));
+        return make_string(ris);
+    });
+
     // (query:children node-id) — Get children node IDs
     primitives_.add("query:children", [this, mev](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]) || !workspace_flat_)
