@@ -47,6 +47,12 @@ void GCCollector::unregister_root_source(int worker_id) {
     root_sources_.erase(worker_id);
 }
 
+// ── register_sweep_fn — register evaluator heap compaction (Phase 4) ─
+
+void GCCollector::register_sweep_fn(GCSweepFn fn) {
+    sweep_fn_ = std::move(fn);
+}
+
 // ── collect_roots — enumerate all registered root sources ──
 
 void GCCollector::collect_roots(GCRootSet& out) {
@@ -198,13 +204,22 @@ void GCCollector::mark_from_roots(const GCRootSet& roots,
 GCSweepResult GCCollector::sweep() {
     GCSweepResult result;
 
-    // Count dead entries (for metrics)
-    if (string_marks_.size() > 0)
-        result.strings_freed = string_marks_.count_dead();
-    if (pair_marks_.size() > 0)
-        result.pairs_freed = pair_marks_.count_dead();
-    if (closure_marks_.size() > 0)
-        result.closures_freed = closure_marks_.count_dead();
+    // If a sweep callback is registered, let the evaluator compact its heaps
+    if (sweep_fn_) {
+        GCSweepBuffers bufs;
+        bufs.string_marks = &string_marks_;
+        bufs.pair_marks = &pair_marks_;
+        bufs.closure_marks = &closure_marks_;
+        result = sweep_fn_(bufs);
+    } else {
+        // No callback: just count dead entries
+        if (string_marks_.size() > 0)
+            result.strings_freed = string_marks_.count_dead();
+        if (pair_marks_.size() > 0)
+            result.pairs_freed = pair_marks_.count_dead();
+        if (closure_marks_.size() > 0)
+            result.closures_freed = closure_marks_.count_dead();
+    }
 
     // Clear mark state for next cycle
     string_marks_ = MarkBitVector();

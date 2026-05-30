@@ -2265,6 +2265,12 @@ bool test_gc_root_no_sources();
 bool test_gc_root_unregister_source();
 bool test_gc_root_large_set();
 bool test_gc_safepoint_long_compute();
+
+bool test_gc_sweep_callback_compact();
+bool test_gc_sweep_callback_all_live();
+bool test_gc_sweep_callback_all_dead();
+bool test_gc_sweep_callback_pairs();
+bool test_gc_sweep_no_callback();
 bool test_gc_safepoint_spawn_during_gc();
 bool test_gc_mark_basic();
 bool test_gc_sweep_dead_count();
@@ -2363,6 +2369,11 @@ int main() {
     test_gc_sweep_dead_count();
     test_gc_sweep_all_live();
     test_gc_mark_sweep_integration();
+    test_gc_sweep_callback_compact();
+    test_gc_sweep_callback_all_live();
+    test_gc_sweep_callback_all_dead();
+    test_gc_sweep_callback_pairs();
+    test_gc_sweep_no_callback();
 
     std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
                  g_passed, g_passed + g_failed,
@@ -3203,6 +3214,203 @@ bool test_gc_mark_sweep_integration() {
     CHECK(gc->metrics().strings_freed.load() >= 9, "at least 9 dead strings found");
     return true;
 }
+
+// ── Test: GC sweep callback — simulated heap compaction (Phase 4) ──
+// Verifies that a sweep callback correctly compacts vectors by
+// removing unmarked entries while preserving mark order.
+
+bool test_gc_sweep_callback_compact() {
+    std::println("\n--- Test: GC sweep callback — simulated heap compaction ---");
+
+    aura::serve::GCCollector gc(nullptr);
+
+    // Create a root set marking only even indices
+    aura::serve::GCRootSet roots;
+    for (int i = 0; i < 10; i += 2)
+        roots.string_roots.push_back(i);
+
+    gc.mark_from_roots(roots, 10, 0, 0);
+
+    // Simulate an evaluator heap compaction callback
+    std::vector<std::string> sim_heap = {"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"};
+    gc.register_sweep_fn([&sim_heap](const aura::serve::GCSweepBuffers& bufs) -> aura::serve::GCSweepResult {
+        aura::serve::GCSweepResult r;
+
+        if (bufs.string_marks) {
+            size_t write = 0;
+            for (size_t i = 0; i < sim_heap.size(); ++i) {
+                if (bufs.string_marks->test(i)) {
+                    sim_heap[write++] = sim_heap[i];
+                } else {
+                    ++r.strings_freed;
+                }
+            }
+            sim_heap.resize(write);
+        }
+        return r;
+    });
+
+    auto result = gc.sweep();
+
+    CHECK(result.strings_freed == 5, "5 strings freed (odd indices)");
+    CHECK(sim_heap.size() == 5, "heap compacted to 5 entries");
+    CHECK(sim_heap[0] == "a", "first kept: a");
+    CHECK(sim_heap[1] == "c", "second kept: c");
+    CHECK(sim_heap[2] == "e", "third kept: e");
+    CHECK(sim_heap[3] == "g", "fourth kept: g");
+    CHECK(sim_heap[4] == "i", "fifth kept: i");
+    return true;
+}
+
+// ── Test: GC sweep callback — all entries live (Phase 4) ──────
+// When every entry is marked, nothing should be removed.
+
+bool test_gc_sweep_callback_all_live() {
+    std::println("\n--- Test: GC sweep callback — all entries live ---");
+
+    aura::serve::GCCollector gc(nullptr);
+    aura::serve::GCRootSet roots;
+    for (int i = 0; i < 10; ++i)
+        roots.string_roots.push_back(i);
+
+    gc.mark_from_roots(roots, 10, 0, 0);
+
+    std::vector<std::string> sim_heap = {"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"};
+    gc.register_sweep_fn([&sim_heap](const aura::serve::GCSweepBuffers& bufs) -> aura::serve::GCSweepResult {
+        aura::serve::GCSweepResult r;
+        size_t write = 0;
+        for (size_t i = 0; i < sim_heap.size(); ++i) {
+            if (bufs.string_marks->test(i))
+                sim_heap[write++] = sim_heap[i];
+            else
+                ++r.strings_freed;
+        }
+        sim_heap.resize(write);
+        return r;
+    });
+
+    auto result = gc.sweep();
+    CHECK(result.strings_freed == 0, "0 freed when all live");
+    CHECK(sim_heap.size() == 10, "heap unchanged");
+    return true;
+}
+
+// ── Test: GC sweep callback — all entries dead (Phase 4) ──────
+// When nothing is marked, everything should be removed.
+
+bool test_gc_sweep_callback_all_dead() {
+    std::println("\n--- Test: GC sweep callback — all dead ---");
+
+    aura::serve::GCCollector gc(nullptr);
+    std::vector<std::string> sim_heap = {"a", "b", "c"};
+
+    // Empty root set → nothing marked
+    aura::serve::GCRootSet roots;
+    gc.mark_from_roots(roots, 3, 0, 0);
+
+    gc.register_sweep_fn([&sim_heap](const aura::serve::GCSweepBuffers& bufs) -> aura::serve::GCSweepResult {
+        aura::serve::GCSweepResult r;
+        size_t write = 0;
+        for (size_t i = 0; i < sim_heap.size(); ++i) {
+            if (bufs.string_marks->test(i))
+                sim_heap[write++] = sim_heap[i];
+            else
+                ++r.strings_freed;
+        }
+        sim_heap.resize(write);
+        return r;
+    });
+
+    auto result = gc.sweep();
+    CHECK(result.strings_freed == 3, "3 freed when all dead");
+    CHECK(sim_heap.empty(), "heap empty after sweep");
+    return true;
+}
+
+// ── Test: GC sweep callback — pairs with references (Phase 4) ──
+// Simulates pair compaction where car/cdr need index remapping.
+
+bool test_gc_sweep_callback_pairs() {
+    std::println("\n--- Test: GC sweep callback — pair compaction ---");
+
+    aura::serve::GCCollector gc(nullptr);
+
+    // Simulate: pairs_ vector with (car,cdr) as int indices into string_heap_.
+    // Indices 0,1 are live; index 2 is dead. After compact, index 2 is gone
+    // and car/cdr references should be updated.
+    struct Pair { int64_t car; int64_t cdr; };
+    std::vector<Pair> sim_pairs = {{0, 1}, {1, 2}, {2, 0}};
+
+    // Mark pairs 0 and 1 as live; pair 2 dead
+    aura::serve::GCRootSet roots;
+    roots.pair_roots = {0, 1};
+    gc.mark_from_roots(roots, 0, 3, 0);
+
+    gc.register_sweep_fn([&sim_pairs](const aura::serve::GCSweepBuffers& bufs) -> aura::serve::GCSweepResult {
+        aura::serve::GCSweepResult r;
+        if (!bufs.pair_marks) return r;
+
+        // Compact: remove dead pairs, build index remap
+        size_t write = 0;
+        std::vector<size_t> remap(sim_pairs.size(), SIZE_MAX);
+        for (size_t i = 0; i < sim_pairs.size(); ++i) {
+            if (bufs.pair_marks->test(i)) {
+                remap[i] = write;
+                sim_pairs[write++] = sim_pairs[i];
+            } else {
+                ++r.pairs_freed;
+            }
+        }
+        sim_pairs.resize(write);
+
+        // Update references (car/cdr that point to dead pairs become 0)
+        for (auto& p : sim_pairs) {
+            if (p.car >= 0 && (size_t)p.car < remap.size() && remap[p.car] != SIZE_MAX)
+                p.car = static_cast<int64_t>(remap[p.car]);
+            else
+                p.car = 0;  // default to first pair
+            if (p.cdr >= 0 && (size_t)p.cdr < remap.size() && remap[p.cdr] != SIZE_MAX)
+                p.cdr = static_cast<int64_t>(remap[p.cdr]);
+            else
+                p.cdr = 0;
+        }
+        return r;
+    });
+
+    auto result = gc.sweep();
+    CHECK(result.pairs_freed == 1, "1 pair freed");
+    CHECK(sim_pairs.size() == 2, "2 pairs remain");
+
+    // Pair 0: (0,1) stays as (0,1) since both 0 and 1 are at remap[0]=0, remap[1]=1
+    // Pair 1: (1,2) → (1,0) since 2 was removed (dead), remap[2]=SIZE_MAX → car=0
+    // Actually wait: Pair 1 was (1,2) but after compaction pair[1] stays at index 1.
+    // But p.cdr = 2 was dead → p.cdr becomes 0
+    CHECK(sim_pairs[0].car == 0, "pair 0 car unchanged");
+    CHECK(sim_pairs[0].cdr == 1, "pair 0 cdr unchanged");
+    CHECK(sim_pairs[1].car == 1, "pair 1 car = 1 (same index)");
+    CHECK(sim_pairs[1].cdr == 0, "pair 1 cdr = 0 (dead reference redirected)");
+    return true;
+}
+
+// ── Test: GC sweep callback — no callback registered (Phase 4) ──
+// Without a sweep callback, sweep falls back to dead counting.
+
+bool test_gc_sweep_no_callback() {
+    std::println("\n--- Test: GC sweep — no callback ---");
+
+    aura::serve::GCCollector gc(nullptr);
+    aura::serve::GCRootSet roots;
+    for (int i = 0; i < 5; ++i)
+        roots.string_roots.push_back(i * 2);  // indices 0,2,4,6,8
+
+    gc.mark_from_roots(roots, 10, 0, 0);
+    auto result = gc.sweep();
+
+    CHECK(result.strings_freed == 5, "5 dead strings counted without callback");
+    CHECK(result.pairs_freed == 0, "no pairs");
+    return true;
+}
+
 
 
 
