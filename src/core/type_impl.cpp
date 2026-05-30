@@ -201,7 +201,9 @@ TypeId TypeRegistry::make_var(std::string name) {
         .index = static_cast<std::uint32_t>(entries_.size()),
         .generation = next_generation_,
     };
-    entries_.push_back(Entry{TypeTag::TYPE_VAR, std::move(name), std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt});
+    entries_.push_back(Entry{TypeTag::TYPE_VAR, std::move(name), std::nullopt, std::nullopt,
+                             std::nullopt, std::nullopt, std::nullopt, std::nullopt,
+                             std::nullopt, std::nullopt, std::nullopt});
     return id;
 }
 
@@ -359,6 +361,22 @@ std::vector<TypeId> TypeRegistry::free_vars(TypeId id) const {
         }
         if (auto* ft = forall_of(cur)) {
             stack.push_back(ft->body);
+        }
+        if (auto* lt = linear_of(cur)) {
+            stack.push_back(lt->inner);
+        }
+        if (auto* mt = module_of(cur)) {
+            for (auto& [n, t] : mt->members)
+                stack.push_back(t);
+        }
+        if (auto* vt = variant_of(cur)) {
+            for (auto& [name, args] : vt->variants)
+                for (auto& a : args)
+                    stack.push_back(a);
+        }
+        if (auto* rt = record_of(cur)) {
+            for (auto& [name, t] : rt->fields)
+                stack.push_back(t);
         }
     }
     return result;
