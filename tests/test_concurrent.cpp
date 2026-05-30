@@ -2259,9 +2259,20 @@ bool test_fiber_affinity();
 bool test_steal_skips_pinned();
 bool test_broadcast_primitive();
 bool test_scheduler_pin_primitive();
+
+
+bool test_gc_root_no_sources();
+bool test_gc_root_unregister_source();
+bool test_gc_root_large_set();
+bool test_gc_safepoint_long_compute();
+bool test_gc_safepoint_spawn_during_gc();
+bool test_gc_mark_basic();
+bool test_gc_sweep_dead_count();
+bool test_gc_sweep_all_live();
+bool test_gc_mark_sweep_integration();
+bool test_gc_root_no_sources();
 bool test_gc_root_collection();
 bool test_gc_root_multiple_sources();
-
 bool test_gc_safepoint_all_stop();
 bool test_gc_safepoint_no_fiber();
 bool test_gc_coordinator_basic();
@@ -2343,6 +2354,15 @@ int main() {
     test_gc_metrics_sanity();
     test_gc_root_collection();
     test_gc_root_multiple_sources();
+    test_gc_root_no_sources();
+    test_gc_root_unregister_source();
+    test_gc_root_large_set();
+    test_gc_safepoint_long_compute();
+    test_gc_safepoint_spawn_during_gc();
+    test_gc_mark_basic();
+    test_gc_sweep_dead_count();
+    test_gc_sweep_all_live();
+    test_gc_mark_sweep_integration();
 
     std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
                  g_passed, g_passed + g_failed,
@@ -2851,5 +2871,339 @@ bool test_gc_root_multiple_sources() {
     CHECK(root_cnt == 4, "4 roots from 2 sources");
     return true;
 }
+
+// ── Test: GC root — no registered sources (P2 edge) ──────
+// GC with no root sources should record 0 roots without crashing.
+
+bool test_gc_root_no_sources() {
+    std::println("\n--- Test: GC root — no sources ---");
+
+    aura::serve::Scheduler sched(2);
+    auto* gc = sched.gc_collector();
+
+    std::atomic<int> fc{0};
+    sched.spawn([&fc]() {
+        for (int j = 0; j < 10; ++j) {
+            volatile int64_t s = 0;
+            for (int k = 0; k < 500; ++k) s += k;
+            aura::serve::Fiber::check_gc_safepoint();
+            aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+        }
+        fc.fetch_add(1);
+    });
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    gc->set_alloc_threshold(1);
+    gc->reset_alloc_counter();
+    gc->record_alloc();
+    gc->request();
+    gc->collect();
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    sched.stop();
+    t.join();
+
+    CHECK(gc->metrics().root_count.load() == 0, "0 roots with no sources");
+    return true;
+}
+
+// ── Test: GC root — unregister source (P2 edge) ──────────
+// After unregistering a source, its roots should not be collected.
+
+bool test_gc_root_unregister_source() {
+    std::println("\n--- Test: GC root — unregister source ---");
+
+    aura::serve::Scheduler sched(2);
+    auto* gc = sched.gc_collector();
+
+    gc->register_root_source(0, [](aura::serve::GCRootSet& out) {
+        out.string_roots.push_back(42);
+    });
+    gc->unregister_root_source(0);  // remove it
+
+    std::atomic<int> fc{0};
+    sched.spawn([&fc]() {
+        for (int j = 0; j < 10; ++j) {
+            volatile int64_t s = 0;
+            for (int k = 0; k < 500; ++k) s += k;
+            aura::serve::Fiber::check_gc_safepoint();
+            aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+        }
+        fc.fetch_add(1);
+    });
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    gc->set_alloc_threshold(1);
+    gc->reset_alloc_counter();
+    gc->record_alloc();
+    gc->request();
+    gc->collect();
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    sched.stop();
+    t.join();
+
+    CHECK(gc->metrics().root_count.load() == 0, "0 roots after unregister");
+    return true;
+}
+
+// ── Test: GC large root set (P2 stress) ───────────────────
+// Verifies GC handles a large number of roots efficiently.
+
+bool test_gc_root_large_set() {
+    std::println("\n--- Test: GC root — large set ---");
+
+    aura::serve::Scheduler sched(2);
+    auto* gc = sched.gc_collector();
+
+    gc->register_root_source(0, [](aura::serve::GCRootSet& out) {
+        for (int i = 0; i < 5000; ++i)
+            out.string_roots.push_back(i);
+        for (int i = 0; i < 3000; ++i)
+            out.pair_roots.push_back(i);
+    });
+
+    std::atomic<int> fc{0};
+    sched.spawn([&fc]() {
+        for (int j = 0; j < 10; ++j) {
+            volatile int64_t s = 0;
+            for (int k = 0; k < 500; ++k) s += k;
+            aura::serve::Fiber::check_gc_safepoint();
+            aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+        }
+        fc.fetch_add(1);
+    });
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    gc->set_alloc_threshold(1);
+    gc->reset_alloc_counter();
+    gc->record_alloc();
+    gc->request();
+    gc->collect();
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    sched.stop();
+    t.join();
+
+    CHECK(gc->metrics().root_count.load() == 8000, "8000 roots from large set");
+    CHECK(gc->metrics().root_collect_us.load() > 0, "root collection time recorded");
+    return true;
+}
+
+// ── Test: GC safepoint — yield during long compute (P1 edge) ──
+// Verifies a long-running fiber that yields periodically
+// responds to GC safepoint requests.
+
+bool test_gc_safepoint_long_compute() {
+    std::println("\n--- Test: GC safepoint — long compute ---");
+
+    aura::serve::Scheduler sched(2);
+    std::atomic<int64_t> sum{0};
+    std::atomic<bool> started{false};
+
+    sched.spawn([&sum, &started]() {
+        started.store(true, std::memory_order_release);
+        for (int j = 0; j < 5000000; ++j) {
+            sum.fetch_add(j & 0xFF, std::memory_order_relaxed);
+            if (j % 100000 == 0) {
+                aura::serve::Fiber::check_gc_safepoint();
+                aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+            }
+        }
+    });
+
+    std::thread t([&sched]() { sched.run(); });
+
+    // Wait for fiber to start, then trigger multiple safepoint cycles
+    while (!started.load(std::memory_order_acquire))
+        std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    for (int i = 0; i < 3; ++i) {
+        sched.request_gc_safepoint();
+        bool arrived = sched.wait_for_safepoint(2000);
+        CHECK(arrived, "fiber reached safepoint during long compute");
+        sched.resume_from_gc();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    sched.stop();
+    t.join();
+
+    CHECK(sum.load() > 0, "fiber did work between GC cycles");
+    return true;
+}
+
+// ── Test: GC safepoint — fiber spawn during GC (P1 edge) ──
+// Ensures calling fiber spawn during GC doesn't deadlock.
+
+bool test_gc_safepoint_spawn_during_gc() {
+    std::println("\n--- Test: GC safepoint — spawn during GC ---");
+
+    aura::serve::Scheduler sched(2);
+    std::atomic<int> fc{0};
+
+    sched.spawn([&fc]() {
+        aura::serve::Fiber::check_gc_safepoint();
+        aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+        fc.fetch_add(1);
+    });
+
+    // Spawn another fiber (this is fine — spawning doesn't require safepoint)
+    sched.spawn([&fc]() {
+        aura::serve::Fiber::check_gc_safepoint();
+        aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+        fc.fetch_add(1);
+    });
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    sched.request_gc_safepoint();
+    bool arrived = sched.wait_for_safepoint(2000);
+    CHECK(arrived, "fibers reached safepoint");
+
+    sched.resume_from_gc();
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    sched.stop();
+    t.join();
+
+    CHECK(fc.load() == 2, "both fibers completed after GC");
+    return true;
+}
+
+// ── Test: GC mark from roots (Phase 3) ───────────────────
+// Verifies that roots are correctly converted to mark bits.
+
+bool test_gc_mark_basic() {
+    std::println("\n--- Test: GC mark — basic ---");
+
+    aura::serve::GCCollector gc(nullptr);
+
+    // Create a root set with strings and pairs
+    aura::serve::GCRootSet roots;
+    roots.string_roots = {0, 2, 5, 10};
+    roots.pair_roots = {1, 3, 7};
+
+    // Mark with explicit heap sizes
+    gc.mark_from_roots(roots, 12, 10, 0);
+
+    // Verify string marks
+    CHECK(gc.string_mark(0) == true, "string 0 marked");
+    CHECK(gc.string_mark(1) == false, "string 1 not marked");
+    CHECK(gc.string_mark(2) == true, "string 2 marked");
+    CHECK(gc.string_mark(5) == true, "string 5 marked");
+    CHECK(gc.string_mark(10) == true, "string 10 marked");
+    CHECK(gc.string_mark(11) == false, "string 11 not marked");
+
+    // Verify pair marks
+    CHECK(gc.pair_mark(1) == true, "pair 1 marked");
+    CHECK(gc.pair_mark(3) == true, "pair 3 marked");
+    CHECK(gc.pair_mark(7) == true, "pair 7 marked");
+    CHECK(gc.pair_mark(0) == false, "pair 0 not marked");
+    CHECK(gc.pair_mark(9) == false, "pair 9 not marked");
+
+    // Verify closures (none marked)
+    CHECK(gc.closure_mark(0) == false, "no closure marks");
+    return true;
+}
+
+// ── Test: GC sweep — dead entries counted (Phase 3) ──────
+// Verifies that sweep correctly identifies unmarked entries.
+
+bool test_gc_sweep_dead_count() {
+    std::println("\n--- Test: GC sweep — dead count ---");
+
+    aura::serve::GCCollector gc(nullptr);
+    aura::serve::GCRootSet roots;
+
+    // 15 strings, mark only 5 of them
+    roots.string_roots = {1, 3, 5, 7, 9};
+    roots.pair_roots = {0, 2};
+
+    gc.mark_from_roots(roots, 15, 5, 0);
+
+    auto result = gc.sweep();
+
+    CHECK(result.strings_freed == 10, "10 of 15 strings are dead");
+    CHECK(result.pairs_freed == 3, "3 of 5 pairs are dead");
+    CHECK(result.closures_freed == 0, "no closures to sweep");
+    return true;
+}
+
+// ── Test: GC sweep — all live (Phase 3) ──────────────────
+// If every entry is marked, nothing should be freed.
+
+bool test_gc_sweep_all_live() {
+    std::println("\n--- Test: GC sweep — all live ---");
+
+    aura::serve::GCCollector gc(nullptr);
+    aura::serve::GCRootSet roots;
+
+    // Mark every entry
+    for (int i = 0; i < 100; ++i) roots.string_roots.push_back(i);
+
+    gc.mark_from_roots(roots, 100, 0, 0);
+
+    auto result = gc.sweep();
+
+    CHECK(result.strings_freed == 0, "0 strings freed when all marked");
+    return true;
+}
+
+// ── Test: GC mark + sweep integration with collect() (Phase 3) ──
+// Full cycle: safepoint → roots → mark → sweep.
+
+bool test_gc_mark_sweep_integration() {
+    std::println("\n--- Test: GC mark+sweep integration ---");
+
+    aura::serve::Scheduler sched(2);
+    auto* gc = sched.gc_collector();
+
+    // Register root source that marks only even indices
+    gc->register_root_source(0, [](aura::serve::GCRootSet& out) {
+        for (int i = 0; i < 20; i += 2)
+            out.string_roots.push_back(i);
+        for (int i = 0; i < 10; i += 2)
+            out.pair_roots.push_back(i);
+    });
+
+    std::atomic<int> fc{0};
+    sched.spawn([&fc]() {
+        for (int j = 0; j < 5; ++j) {
+            volatile int64_t s = 0;
+            for (int k = 0; k < 500; ++k) s += k;
+            aura::serve::Fiber::check_gc_safepoint();
+            aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+        }
+        fc.fetch_add(1);
+    });
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    gc->set_alloc_threshold(1);
+    gc->reset_alloc_counter();
+    gc->record_alloc();
+    gc->request();
+    gc->collect();
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    sched.stop();
+    t.join();
+
+    CHECK(gc->metrics().gc_count.load() > 0, "GC ran");
+    CHECK(gc->metrics().strings_freed.load() >= 9, "at least 9 dead strings found");
+    return true;
+}
+
+
 
 

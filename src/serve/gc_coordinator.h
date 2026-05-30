@@ -64,13 +64,56 @@ struct GCRootSet {
 // Called during the GC root collection phase.
 using GCRootFlushFn = std::function<void(GCRootSet& out)>;
 
+// ── MarkBitVector — concurrent mark bits for vector heaps (Phase 3) ─
+// One bit per index in a heap vector. Set by parallel marking workers.
+// Uses std::vector<bool> internally which is bit-packed.
+// Thread-safe: concurrent set_bit is safe (atomic byte writes).
+class MarkBitVector {
+public:
+    explicit MarkBitVector(size_t size = 0) : bits_(size, false) {}
+
+    void resize(size_t n) { bits_.resize(n, false); }
+    void clear_all() { std::fill(bits_.begin(), bits_.end(), false); }
+    size_t size() const { return bits_.size(); }
+
+    // Mark an index as live. Thread-safe for concurrent marking.
+    void set(size_t idx) {
+        if (idx < bits_.size())
+            bits_[idx] = true;
+    }
+
+    // Check if an index is live.
+    bool test(size_t idx) const {
+        return idx < bits_.size() && bits_[idx];
+    }
+
+    // Return count of unmarked (dead) entries
+    size_t count_dead() const {
+        size_t dead = 0;
+        for (size_t i = 0; i < bits_.size(); ++i)
+            if (!bits_[i]) ++dead;
+        return dead;
+    }
+
+private:
+    std::vector<bool> bits_;
+};
+
+// ── GC sweep result (Phase 3) ────────────────────────
+// After marking and sweeping, records what was reclaimed.
+struct GCSweepResult {
+    // Number of entries removed from each heap
+    size_t strings_freed = 0;
+    size_t pairs_freed = 0;
+    size_t closures_freed = 0;
+    size_t fiber_results_freed = 0;
+};
+
 class GCCollector {
 public:
     explicit GCCollector(Scheduler* sched);
 
     // ── GC request ──────────────────────────────────
-    // Called by any fiber when alloc count crosses threshold.
-    // Returns true if GC was triggered (or was already in progress).
     bool request();
 
     // ── GC cycle ────────────────────────────────────
@@ -79,22 +122,26 @@ public:
     bool collect();
 
     // ── Root source registration (Phase 2) ──────────
-    // Each Evaluator registers a callback that enumerates its
-    // reachable roots (string_heap, pairs, closures, etc.)
-    // into a GCRootSet. Called from g_gc_flush_root_set
-    // during GC root collection.
     void register_root_source(int worker_id, GCRootFlushFn fn);
     void unregister_root_source(int worker_id);
 
+    // ── Mark + Sweep (Phase 3) ──────────────────────
+    void mark_from_roots(const GCRootSet& roots,
+                         size_t string_heap_size,
+                         size_t pairs_size,
+                         size_t closures_size);
+
+    GCSweepResult sweep();
+
+    // Mark accessors (for testing)
+    bool string_mark(size_t idx) const { return string_marks_.test(idx); }
+    bool pair_mark(size_t idx) const { return pair_marks_.test(idx); }
+    bool closure_mark(size_t idx) const { return closure_marks_.test(idx); }
+
     // ── Configuration ────────────────────────────────
-    // Sets the alloc threshold that triggers GC.
     void set_alloc_threshold(int64_t threshold) { alloc_threshold_ = threshold; }
     int64_t alloc_threshold() const { return alloc_threshold_; }
-
-    // Reset alloc counter (called after GC)
     void reset_alloc_counter() { alloc_counter_.store(0, std::memory_order_release); }
-
-    // Increment alloc counter (called from arena::alloc)
     void record_alloc() {
         alloc_counter_.fetch_add(1, std::memory_order_relaxed);
     }
@@ -105,20 +152,28 @@ public:
         std::atomic<int64_t> total_pause_us{0};
         std::atomic<int64_t> max_pause_us{0};
         std::atomic<int64_t> safepoint_wait_us{0};
-        std::atomic<int64_t> root_count{0};      // Phase 2: number of roots found
-        std::atomic<int64_t> root_collect_us{0}; // Phase 2: time to collect roots
+        std::atomic<int64_t> root_count{0};
+        std::atomic<int64_t> root_collect_us{0};
+        std::atomic<int64_t> mark_us{0};          // Phase 3: time to mark
+        std::atomic<int64_t> sweep_us{0};         // Phase 3: time to sweep
+        std::atomic<int64_t> strings_freed{0};    // entries removed
+        std::atomic<int64_t> pairs_freed{0};
+        std::atomic<int64_t> closures_freed{0};
     };
     const Metrics& metrics() const { return metrics_; }
 
 private:
     Scheduler* scheduler_;
 
-    // Root sources (Phase 2): per-worker-id callbacks
     std::mutex root_sources_mutex_;
     std::unordered_map<int, GCRootFlushFn> root_sources_;
 
-    // Collect all roots from registered sources
     void collect_roots(GCRootSet& out);
+
+    // Mark state (Phase 3)
+    MarkBitVector string_marks_;
+    MarkBitVector pair_marks_;
+    MarkBitVector closure_marks_;
 
     std::atomic<int64_t> alloc_counter_{0};
     int64_t alloc_threshold_ = 100000;

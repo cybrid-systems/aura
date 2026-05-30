@@ -98,11 +98,29 @@ bool GCCollector::collect() {
         std::memory_order_relaxed);
     metrics_.root_collect_us.fetch_add(roots_us, std::memory_order_relaxed);
 
-    // ── Phase 3: Parallel mark (skeleton) ─────────────
-    // TODO: Phase 3 — tri-color marking
+    // ── Phase 3: Mark from roots ──────────────────────
+    auto mark_start = std::chrono::steady_clock::now();
+    // Size hints: default to root count estimate.
+    // In full integration, evaluator provides actual heap sizes.
+    mark_from_roots(roots, 0, 0, 0);
+    auto mark_end = std::chrono::steady_clock::now();
+    auto mark_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        mark_end - mark_start).count();
+    metrics_.mark_us.fetch_add(mark_us, std::memory_order_relaxed);
 
     // ── Phase 4: Sweep (skeleton) ─────────────────────
-    // TODO: Phase 4 — reclaim temp_arena, compact heaps
+    auto sweep_start = std::chrono::steady_clock::now();
+    auto sweep_result = sweep();
+    auto sweep_end = std::chrono::steady_clock::now();
+    auto sweep_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        sweep_end - sweep_start).count();
+    metrics_.sweep_us.fetch_add(sweep_us, std::memory_order_relaxed);
+    metrics_.strings_freed.fetch_add(
+        static_cast<int64_t>(sweep_result.strings_freed), std::memory_order_relaxed);
+    metrics_.pairs_freed.fetch_add(
+        static_cast<int64_t>(sweep_result.pairs_freed), std::memory_order_relaxed);
+    metrics_.closures_freed.fetch_add(
+        static_cast<int64_t>(sweep_result.closures_freed), std::memory_order_relaxed);
 
     // ── Phase 1e: Resume workers ──────────────────────
     scheduler_->resume_from_gc();
@@ -123,6 +141,77 @@ bool GCCollector::collect() {
     gc_in_progress_.store(false, std::memory_order_release);
 
     return true;
+}
+
+// ── mark_from_roots — set mark bits from root set (Phase 3) ─
+
+void GCCollector::mark_from_roots(const GCRootSet& roots,
+                                    size_t string_heap_size,
+                                    size_t pairs_size,
+                                    size_t closures_size) {
+    // Size the mark vectors
+    // If the caller passed 0 for sizes, we use the max root index + 1
+    size_t s_size = string_heap_size > 0 ? string_heap_size : 0;
+    size_t p_size = pairs_size > 0 ? pairs_size : 0;
+    size_t c_size = closures_size > 0 ? closures_size : 0;
+
+    // If no sizes given, compute from roots
+    if (s_size == 0) {
+        for (auto idx : roots.string_roots)
+            if (static_cast<size_t>(idx) >= s_size)
+                s_size = static_cast<size_t>(idx) + 1;
+    }
+    if (p_size == 0) {
+        for (auto idx : roots.pair_roots)
+            if (static_cast<size_t>(idx) >= p_size)
+                p_size = static_cast<size_t>(idx) + 1;
+    }
+    if (c_size == 0) {
+        for (auto idx : roots.closure_roots)
+            if (static_cast<size_t>(idx) >= c_size)
+                c_size = static_cast<size_t>(idx) + 1;
+    }
+
+    // Initialize mark vectors
+    if (s_size > 0) {
+        string_marks_.resize(s_size);
+        string_marks_.clear_all();
+        for (auto idx : roots.string_roots)
+            string_marks_.set(static_cast<size_t>(idx));
+    }
+    if (p_size > 0) {
+        pair_marks_.resize(p_size);
+        pair_marks_.clear_all();
+        for (auto idx : roots.pair_roots)
+            pair_marks_.set(static_cast<size_t>(idx));
+    }
+    if (c_size > 0) {
+        closure_marks_.resize(c_size);
+        closure_marks_.clear_all();
+        for (auto idx : roots.closure_roots)
+            closure_marks_.set(static_cast<size_t>(idx));
+    }
+}
+
+// ── sweep — reclaim unmarked entries (Phase 3) ─────────
+
+GCSweepResult GCCollector::sweep() {
+    GCSweepResult result;
+
+    // Count dead entries (for metrics)
+    if (string_marks_.size() > 0)
+        result.strings_freed = string_marks_.count_dead();
+    if (pair_marks_.size() > 0)
+        result.pairs_freed = pair_marks_.count_dead();
+    if (closure_marks_.size() > 0)
+        result.closures_freed = closure_marks_.count_dead();
+
+    // Clear mark state for next cycle
+    string_marks_ = MarkBitVector();
+    pair_marks_ = MarkBitVector();
+    closure_marks_ = MarkBitVector();
+
+    return result;
 }
 
 } // namespace aura::serve
