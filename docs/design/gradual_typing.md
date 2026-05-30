@@ -113,9 +113,42 @@ struct CastOp_extra {
 - 当返回值声明为 `Any` 时，调用者获得 Dynamic 类型
 - `Any` 和 `Dynamic` 在 TypeRegistry 中使用同一 ID（`DYNAMIC = 0`）
 
-## 实现路径
+## 当前状态
 
-### Step 1: 修改 check_flat_call 插入 CoercionNode
+```
+                   类型检查阶段                    lowering 阶段                运行时
+┌─────────────────────────────────┐   ┌────────────────────────┐   ┌─────────────┐
+│ type_checker_impl.cpp           │   │ lowering_impl.cpp      │   │ IR Executor │
+│                                 │   │                        │   │             │
+│ ✓ synthesize_flat → 类型推导    │   │ ✓ TypeAnnotation→CastOp│   │ ✓ CastOp解释 │
+│ ✓ is_coercible → 插CoercionNode │──→│ ✓ CoercionNode→CastOp  │──→│ ✓ 运行时检查  │
+│ ✓ Dynamic→Static 边界检查       │   │ ✓ Dynamic→Zero CastOp  │   │ report_blame │
+│ ✓ Any 类型签名支持              │   │ ✓ optimize_type_info   │   │ + NodeId     │
+└─────────────────────────────────┘   └────────────────────────┘   └─────────────┘
+```
+
+### 已完成
+
+**Phase 1 (✅): CoercionNode 自动插入**
+- `check_flat_call`: 参数/返回类型不匹配时插 CoercionNode
+- `check_flat`: 通用表达式类型不匹配时插 CoercionNode
+- `synthesize_flat(Coercion)`: 返回目标类型而非 inner 类型
+
+**Phase 2 (✅): 源位置 + CastOp blame 改进**
+- CoercionNode 插入时 `set_loc()` 复制源表达式 line/col
+- CoercionNode lowering 用 `emit_with_type` 传 blame_node 到 CastOp
+- `report_blame()` 输出包含 `(node N)`
+
+**Phase 3 (✅): 测试**
+- `tests/gradual_typing.aura`: 12 个测试
+
+**Phase 4 (✅): Dynamic 类型 + Any 顶类型**
+- Dynamic → Static 边界：consistent_unify 成功后仍插 CoercionNode 做运行时 check
+- TypeAnnotation lowering: dynamic(0) → static 时也发 CastOp
+- `Any` 类型签名作为参数时正确通行（Any = DYNAMIC，consistent with everything）
+- 3 个 Any 类型专项测试
+
+## 实现路径
 
 ```cpp
 // 在 check_flat_call 中，参数类型不匹配时
