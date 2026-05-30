@@ -4733,6 +4733,158 @@ void Evaluator::init_pair_primitives() {
         return result;
     });
 
+    // ═══════════════════════════════════════════════════════════════
+    // P8a: Query/Transform EDSL — combined filter/where (P1)
+    // ═══════════════════════════════════════════════════════════════
+
+    // (where :field value) — Create a predicate for query:filter.
+    // Supported fields:
+    //   :node-type  — match NodeTag name (e.g. 'Call, 'Define, 'LiteralInt)
+    //   :callee     — for Call nodes, match callee Variable name
+    //   :has-param  — node has a parameter with given name
+    //   :defined-by — node is a Define with given name
+    //   :tag        — alias for :node-type
+    //
+    // Returns a predicate descriptor (a tagged pair) that query:filter
+    // applies to each candidate node.
+    primitives_.add("query:where", [this, mev](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !is_keyword(a[0]) || !is_string(a[1]))
+            return mev("bad-arg", "usage: (where :field-name value-string)");
+        if (!workspace_flat_ || !workspace_pool_)
+            return mev("no-workspace", "no workspace AST loaded");
+        auto field_idx = as_keyword_idx(a[0]);
+        if (field_idx >= keyword_table_.size())
+            return mev("bad-arg", "unknown keyword");
+        auto field_name = keyword_table_[field_idx];
+        auto val_idx = as_string_idx(a[1]);
+        if (val_idx >= string_heap_.size())
+            return mev("bad-arg", "value string index out of range");
+        auto value = string_heap_[val_idx];
+        auto& flat = *workspace_flat_;
+        auto& pool = *workspace_pool_;
+
+        // Store the predicate as a pair: (field-name value-sym)
+        auto field_keyword_idx = keyword_table_.size();
+        keyword_table_.push_back(field_name);
+        auto val_sym = pool.intern(value);
+        auto val_string_idx = string_heap_.size();
+        string_heap_.push_back(value);
+
+        // Encode as (key:pair key:pair) where car=field keyword, cdr=value string ref
+        // This tagged structure is opaque to users but query:filter knows how to apply it.
+        auto val_pair = pairs_.size();
+        pairs_.push_back({make_keyword(field_keyword_idx), make_string(val_string_idx)});
+        return make_pair(val_pair);
+    });
+
+    // (query:filter predicate ...) — Filter workspace nodes matching ALL predicates.
+    // Each predicate is created by (where :field value).
+    // Returns a list of matching node IDs.
+    //
+    // Usage:
+    //   (query:filter (where :node-type "Call") (where :callee "sort"))
+    //   → all Call nodes where the callee is "sort"
+    //
+    //   (query:filter (where :defined-by "fib") (where :node-type "Lambda"))
+    //   → the body Lambda of (define fib ...)
+    primitives_.add("query:filter", [this, mev](const auto& a) -> EvalValue {
+        if (a.empty())
+            return mev("bad-arg", "usage: (query:filter predicate ...)");
+        if (!workspace_flat_ || !workspace_pool_)
+            return mev("no-workspace", "no workspace AST loaded");
+        auto& flat = *workspace_flat_;
+        auto& pool = *workspace_pool_;
+
+        // Collect predicates from arguments (each is a (where ...) pair)
+        struct Predicate {
+            std::string field;
+            std::string value;
+        };
+        std::vector<Predicate> predicates;
+
+        for (std::size_t ai = 0; ai < a.size(); ++ai) {
+            if (!is_pair(a[ai]))
+                return mev("bad-arg", "each predicate must be a (where ...) pair");
+            auto pair_idx = as_pair_idx(a[ai]);
+            auto car = pairs_[pair_idx].car;
+            auto cdr = pairs_[pair_idx].cdr;
+            if (!is_keyword(car) || !is_string(cdr))
+                return mev("bad-arg", "malformed predicate");
+            auto kidx = as_keyword_idx(car);
+            auto sidx = as_string_idx(cdr);
+            if (kidx >= keyword_table_.size() || sidx >= string_heap_.size())
+                return mev("bad-arg", "predicate field/value out of range");
+            predicates.push_back({keyword_table_[kidx], string_heap_[sidx]});
+        }
+
+        if (predicates.empty())
+            return mev("bad-arg", "at least one predicate required");
+
+        // Iterate all workspace nodes, applying all predicates
+        EvalValue result = make_void();
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+            bool match = true;
+
+            for (auto& p : predicates) {
+                if (p.field == ":node-type" || p.field == ":tag") {
+                    // Match NodeTag name
+                    bool found = false;
+                    for (auto& m : aura::ast::kNodeMeta) {
+                        if (m.name == p.value && m.name != "<gap>") {
+                            if (v.tag == m.tag) found = true;
+                            break;
+                        }
+                    }
+                    if (!found) { match = false; break; }
+                }
+                else if (p.field == ":callee") {
+                    // For Call nodes, match callee Variable name
+                    if (v.tag == aura::ast::NodeTag::Call && !v.children.empty()) {
+                        auto callee = flat.get(v.child(0));
+                        if (callee.tag != aura::ast::NodeTag::Variable ||
+                            pool.resolve(callee.sym_id) != p.value) {
+                            match = false; break;
+                        }
+                    } else {
+                        match = false; break;
+                    }
+                }
+                else if (p.field == ":defined-by" || p.field == ":defines") {
+                    // Match Define nodes by name
+                    if (v.tag == aura::ast::NodeTag::Define) {
+                        auto name = pool.resolve(v.sym_id);
+                        if (name != p.value) { match = false; break; }
+                    } else {
+                        match = false; break;
+                    }
+                }
+                else if (p.field == ":has-param") {
+                    // Check if node has a parameter with the given name
+                    bool found_param = false;
+                    for (auto pid : v.params) {
+                        if (pool.resolve(pid) == p.value) {
+                            found_param = true;
+                            break;
+                        }
+                    }
+                    if (!found_param) { match = false; break; }
+                }
+                else {
+                    return mev("unknown-field",
+                               std::string("unknown where field: \"") + p.field + "\"");
+                }
+            }
+
+            if (match) {
+                auto pid = pairs_.size();
+                pairs_.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                result = make_pair(pid);
+            }
+        }
+        return result;
+    });
+
     // (query:node-type tag-name) — Find all nodes with a given NodeTag name
     // Tag names: LiteralInt, Variable, Call, IfExpr, Lambda, Let, LetRec,
     //            Define, Begin, Set, Quote, LiteralString, TypeAnnotation,
