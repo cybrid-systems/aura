@@ -4667,6 +4667,32 @@ void Evaluator::init_pair_primitives() {
             }
         }
 
+        // ── Ownership validation: ensure ownership invariants hold ──
+        if (workspace_flat_ && workspace_pool_ && last_mutate_error_.empty()) {
+            std::unordered_set<std::string> affected;
+            affected.insert(name);
+            // Also include caller names since they were dirtied
+            for (std::size_t ui = 0; ui < dep_callers.size(); ++ui) {
+                if (dep_callers[ui] < flat.size()) {
+                    auto caller_v = flat.get(dep_callers[ui]);
+                    if (caller_v.sym_id != aura::ast::INVALID_SYM) {
+                        auto caller_name = std::string(workspace_pool_->resolve(caller_v.sym_id));
+                        if (!caller_name.empty())
+                            affected.insert(caller_name);
+                    }
+                }
+            }
+            std::vector<aura::compiler::OwnershipNote> onotes;
+            bool opass = aura::compiler::OwnershipEnv::validate_ownership(
+                flat, *workspace_pool_, flat.root, affected, onotes);
+            if (!opass) {
+                std::string err = "ownership validation after mutate:rebind failed:";
+                for (auto& n : onotes)
+                    err += " [" + n.kind + " at node " + std::to_string(n.node) + "] " + n.message + ";";
+                last_mutate_error_ = err;
+            }
+        }
+
         return make_bool(true);
     });
 
@@ -5143,6 +5169,31 @@ void Evaluator::init_pair_primitives() {
                         } else {
                             last_mutate_error_.clear();
                         }
+                    }
+                }
+
+                // ── Ownership validation ──
+                if (workspace_flat_ && workspace_pool_ && last_mutate_error_.empty()) {
+                    std::unordered_set<std::string> affected;
+                    affected.insert(name);
+                    for (std::size_t ui = 0; ui < dep_callers.size(); ++ui) {
+                        if (dep_callers[ui] < flat.size()) {
+                            auto caller_v = flat.get(dep_callers[ui]);
+                            if (caller_v.sym_id != aura::ast::INVALID_SYM) {
+                                auto caller_name = std::string(workspace_pool_->resolve(caller_v.sym_id));
+                                if (!caller_name.empty())
+                                    affected.insert(caller_name);
+                            }
+                        }
+                    }
+                    std::vector<aura::compiler::OwnershipNote> onotes;
+                    bool opass = aura::compiler::OwnershipEnv::validate_ownership(
+                        flat, *workspace_pool_, flat.root, affected, onotes);
+                    if (!opass) {
+                        std::string err = "ownership validation after mutate:set-body failed:";
+                        for (auto& n : onotes)
+                            err += " [" + n.kind + " at node " + std::to_string(n.node) + "] " + n.message + ";";
+                        last_mutate_error_ = err;
                     }
                 }
 
@@ -7798,6 +7849,113 @@ Evaluator::Evaluator() {
 
         EvalValue result = make_void();
         for (int ei = 6; ei >= 0; --ei) {
+            auto cons_pair = pairs_.size();
+            pairs_.push_back({make_pair(entry_ids[ei]), result});
+            result = make_pair(cons_pair);
+        }
+        return result;
+    });
+
+    // (ast:validate-ownership) — Validate ownership invariants after mutations
+    // Returns an alist: ((:pass true/false) (:notes (...)))
+    // Each note has: (:node <id> :message <str> :kind <str>)
+    primitives_.add("ast:validate-ownership", [this](const auto&) -> EvalValue {
+        if (!workspace_flat_ || !workspace_pool_) {
+            // Return early with pass=true if no workspace
+            return make_bool(true);
+        }
+
+        auto& flat = *workspace_flat_;
+        auto& pool = *workspace_pool_;
+
+        // Collect bindings in the AST that involve ownership operations
+        std::unordered_set<std::string> ownership_bindings;
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+            if ((v.tag == aura::ast::NodeTag::Move ||
+                 v.tag == aura::ast::NodeTag::Borrow ||
+                 v.tag == aura::ast::NodeTag::MutBorrow ||
+                 v.tag == aura::ast::NodeTag::Drop) &&
+                !v.children.empty()) {
+                auto inner_v = flat.get(v.child(0));
+                if (inner_v.tag == aura::ast::NodeTag::Variable) {
+                    auto var_name = std::string(pool.resolve(inner_v.sym_id));
+                    if (!var_name.empty())
+                        ownership_bindings.insert(var_name);
+                }
+            }
+        }
+
+        if (ownership_bindings.empty()) {
+            // Build entry manually (add_entry lambda is defined later)
+            auto mk_entry = [&](const std::string& k, EvalValue v) -> std::uint64_t {
+                auto kidx = string_heap_.size();
+                string_heap_.push_back(k);
+                auto ep = pairs_.size();
+                pairs_.push_back({make_string(kidx), v});
+                return ep;
+            };
+            auto val_pass = mk_entry(":pass", make_bool(true));
+            auto val_notes = mk_entry(":notes", make_void());
+            uint64_t empty_ids[2] = {val_notes, val_pass};
+            EvalValue empty_result = make_void();
+            for (int ei = 1; ei >= 0; --ei) {
+                auto cons_pair = pairs_.size();
+                pairs_.push_back({make_pair(empty_ids[ei]), empty_result});
+                empty_result = make_pair(cons_pair);
+            }
+            return empty_result;
+        }
+
+        std::vector<aura::compiler::OwnershipNote> notes;
+        bool pass = aura::compiler::OwnershipEnv::validate_ownership(
+            flat, pool, flat.root, ownership_bindings, notes);
+
+        // Build result alist
+        // ((:pass true/false) (:notes ((:node N :message M :kind K) ...)))
+        auto add_entry = [&](const std::string& key, EvalValue val) -> std::uint64_t {
+            auto key_idx = string_heap_.size();
+            string_heap_.push_back(key);
+            auto entry_pair = pairs_.size();
+            pairs_.push_back({make_string(key_idx), val});
+            return entry_pair;
+        };
+
+        // Build notes list
+        EvalValue notes_list = make_void();
+        for (auto it = notes.rbegin(); it != notes.rend(); ++it) {
+            auto& note = *it;
+            auto node_idx = string_heap_.size();
+            string_heap_.push_back(std::to_string(note.node));
+            auto msg_idx = string_heap_.size();
+            string_heap_.push_back(note.message);
+            auto kind_idx = string_heap_.size();
+            string_heap_.push_back(note.kind);
+
+            // Build note alist: ((:node N :message M :kind K))
+            auto entry_node = add_entry(":node", make_string(node_idx));
+            auto entry_msg = add_entry(":message", make_string(msg_idx));
+            auto entry_kind = add_entry(":kind", make_string(kind_idx));
+
+            // Chain as: (((:kind K) ((:message M) ((:node N) ()))) ())
+            // Proper alist: ((:node N) (:message M) (:kind K))
+            auto pair3 = pairs_.size();
+            pairs_.push_back({make_string(kind_idx), make_void()});
+            auto pair2 = pairs_.size();
+            pairs_.push_back({make_string(msg_idx), make_pair(pair3)});
+            auto pair1 = pairs_.size();
+            pairs_.push_back({make_string(node_idx), make_pair(pair2)});
+
+            auto cons_pair = pairs_.size();
+            pairs_.push_back({make_pair(pair1), notes_list});
+            notes_list = make_pair(cons_pair);
+        }
+
+        auto entry_pass = add_entry(":pass", make_bool(pass));
+        auto entry_notes = add_entry(":notes", notes_list);
+        uint64_t entry_ids[2] = {entry_notes, entry_pass};
+        EvalValue result = make_void();
+        for (int ei = 1; ei >= 0; --ei) {
             auto cons_pair = pairs_.size();
             pairs_.push_back({make_pair(entry_ids[ei]), result});
             result = make_pair(cons_pair);
