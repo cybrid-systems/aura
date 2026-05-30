@@ -1,0 +1,5 @@
+(load "projects/kv/kv.aura")
+(kv-set "t" "ok")
+(display "[TEST] kv-get t: ") (display (kv-get "t")) (newline)
+(kv-del "t")
+(display "[TEST] after del: ") (display (kv-exists? "t")) (newline)
