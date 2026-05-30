@@ -145,6 +145,12 @@ public:
     // ── Instantiate a forall type with fresh type variables
     TypeId instantiate(TypeId forall_id, std::function<TypeId()> fresh_var);
 
+    // ── Batch instantiate a forall chain with concrete type arguments
+    // Walks the ∀ chain, replacing each bound variable with the corresponding
+    // arg from args. Remaining ∀ layers (when args < forall depth) are preserved.
+    // Returns the instantiated (inner) type.
+    TypeId instantiate_forall(TypeId forall_id, const std::vector<TypeId>& args);
+
     // ── 工具 ──
     std::string format_type(TypeId id) const;
     size_t size() const { return entries_.size(); }
