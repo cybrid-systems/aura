@@ -30,7 +30,7 @@ SCENARIOS = [
     ("mul", "(* 6 7)", "(* 6 7)", "42"),
     ("lambda_call", "((lambda (x) (* x 2)) 5)", "((lambda (x) (* x 2)) 5)", "10"),
     ("if_true", "(if 1 42 0)", "(if 1 42 0)", "42"),
-    ("if_false", "(if 0 42 99)", "(if 0 42 99)", "42"),
+    ("if_false", "(if 0 42 99)", "(if 0 42 99)", "99"),
     (
         "fact_5",
         "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 5))",
