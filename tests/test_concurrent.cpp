@@ -19,6 +19,8 @@
 #include "serve/worker.h"
 #include "serve/scheduler.h"
 #include "serve/metrics.h"
+#include "exec/execution_adapter.h"
+#include "exec/combinators.h"
 
 // ── Test counters ─────────────────────────────────────
 static int g_passed = 0;
@@ -1232,6 +1234,146 @@ bool test_round_robin_fallback() {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// ── Execution adapter tests (Issue #33) ──────────────────────
+// ═══════════════════════════════════════════════════════════════
+
+// ── Test 33: fiber_scheduler basic schedule/start ────────────
+
+bool test_exec_adapter_basic() {
+    std::println("\n--- Test: Execution adapter basic schedule ---");
+
+    aura::serve::Scheduler sched(2);
+    aura::exec::fiber_scheduler fs(sched);
+    std::atomic<int> ran{0};
+
+    auto sender = fs.schedule([&ran]() {
+        ran.store(1, std::memory_order_release);
+    });
+
+    auto op = std::move(sender).connect(aura::exec::fiber_receiver{});
+    op.start();
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    sched.stop();
+    t.join();
+
+    CHECK(ran.load() == 1, "fiber_scheduler spawned and executed the function");
+    return true;
+}
+
+// ── Test 34: when_all — parallel composition ─────────────────
+
+bool test_exec_when_all() {
+    std::println("\n--- Test: Execution adapter when_all ---");
+
+    aura::serve::Scheduler sched(4);
+    aura::exec::fiber_scheduler fs(sched);
+    std::atomic<int> counter{0};
+    constexpr int N = 10;
+
+    std::vector<std::function<void()>> fns;
+    for (int i = 0; i < N; ++i) {
+        fns.push_back([&counter]() {
+            volatile int sum = 0;
+            for (int j = 0; j < 50000; ++j) sum += j;
+            counter.fetch_add(1, std::memory_order_release);
+        });
+    }
+
+    auto sender = aura::exec::when_all(fs, std::move(fns));
+    auto op = std::move(sender).connect(aura::exec::fiber_receiver{});
+    op.start();
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+    sched.stop();
+    t.join();
+
+    CHECK(counter.load() == N,
+          "when_all executed all " + std::to_string(N) + " functions");
+    return true;
+}
+
+// ── Test 35: let_value — sequential composition ──────────────
+
+bool test_exec_let_value() {
+    std::println("\n--- Test: Execution adapter let_value (pipeline) ---");
+
+    aura::serve::Scheduler sched(2);
+    aura::exec::fiber_scheduler fs(sched);
+    std::atomic<int> stage{0};
+
+    std::vector<std::function<void()>> pipeline;
+    pipeline.push_back([&stage]() {
+        stage.store(1, std::memory_order_release);
+    });
+    pipeline.push_back([&stage]() {
+        int s = stage.load(std::memory_order_acquire);
+        stage.store(s + 10, std::memory_order_release);
+    });
+    pipeline.push_back([&stage]() {
+        int s = stage.load(std::memory_order_acquire);
+        stage.store(s + 100, std::memory_order_release);
+    });
+
+    auto sender = aura::exec::let_value(fs, std::move(pipeline));
+    auto op = std::move(sender).connect(aura::exec::fiber_receiver{});
+    op.start();
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    sched.stop();
+    t.join();
+
+    CHECK(stage.load() == 111,
+          "let_value pipeline executed stages (1+10+100 = 111)");
+    return true;
+}
+
+// ── Test 36: retry — retry on failure ───────────────────────
+
+bool test_exec_retry() {
+    std::println("\n--- Test: Execution adapter retry ---");
+
+    aura::serve::Scheduler sched(2);
+    aura::exec::fiber_scheduler fs(sched);
+    std::atomic<int> attempts{0};
+    std::atomic<bool> completed{false};
+    bool success = false;
+    bool error_caught = false;
+
+    // Function that fails on first attempt, succeeds on second
+    auto fn = [&attempts, &completed]() {
+        int a = attempts.fetch_add(1, std::memory_order_relaxed);
+        if (a == 0) {
+            throw std::runtime_error("first attempt fails");
+        }
+        completed.store(true, std::memory_order_release);
+    };
+
+    auto sender = aura::exec::retry(fs, std::move(fn), 3);
+    auto op = std::move(sender).connect(aura::exec::fiber_receiver(
+        [&success]() { success = true; },
+        [&error_caught](std::exception_ptr) { error_caught = true; },
+        []() {}
+    ));
+    op.start();
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    sched.stop();
+    t.join();
+
+    CHECK(completed.load(), "retry succeeded on second attempt");
+    CHECK(success, "retry receiver got set_value");
+    CHECK(!error_caught, "retry receiver did NOT get set_error");
+    CHECK(attempts.load() >= 2,
+          "retry made " + std::to_string(attempts.load()) + " attempts (>= 2)");
+    return true;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // ── Main ─────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════
 
@@ -1271,6 +1413,10 @@ int main() {
     test_metrics_dump_no_crash();
     test_metrics_disabled();
     test_metrics_post_run();
+    test_exec_adapter_basic();
+    test_exec_when_all();
+    test_exec_let_value();
+    test_exec_retry();
 
     std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
                  g_passed, g_passed + g_failed,
