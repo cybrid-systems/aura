@@ -416,6 +416,11 @@ bool Scheduler::wait_for_safepoint(int timeout_ms) {
         for (auto& w : workers_) {
             if (!w) continue;
             auto& gc = w->gc_state();
+            // Skip workers with no active fibers (empty queue, nothing pending)
+            if (w->queue_size() == 0 && w->pending_count() == 0
+                && gc.fibers_at_safepoint.load(std::memory_order_acquire) == 0) {
+                continue;
+            }
             if (gc.fibers_at_safepoint.load(std::memory_order_acquire) < 1) {
                 all_arrived = false;
                 break;
@@ -434,19 +439,21 @@ bool Scheduler::wait_for_safepoint(int timeout_ms) {
     }
 
     // After spin fails, fall back to epoll timeout wait
-    // The epoll loop will re-check on each iteration
     for (int attempt = 0; attempt < std::max(1, timeout_ms); ++attempt) {
         bool all_arrived = true;
         for (auto& w : workers_) {
             if (!w) continue;
             auto& gc = w->gc_state();
+            if (w->queue_size() == 0 && w->pending_count() == 0
+                && gc.fibers_at_safepoint.load(std::memory_order_acquire) == 0) {
+                continue;
+            }
             if (gc.fibers_at_safepoint.load(std::memory_order_acquire) < 1) {
                 all_arrived = false;
                 break;
             }
         }
         if (all_arrived) return true;
-        // Sleep 1ms then re-check (epoll_wait timeout handles this)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 

@@ -2259,9 +2259,15 @@ bool test_fiber_affinity();
 bool test_steal_skips_pinned();
 bool test_broadcast_primitive();
 bool test_scheduler_pin_primitive();
+bool test_gc_root_collection();
+bool test_gc_root_multiple_sources();
+
 bool test_gc_safepoint_all_stop();
 bool test_gc_safepoint_no_fiber();
 bool test_gc_coordinator_basic();
+bool test_gc_multiple_cycles();
+bool test_gc_safepoint_stress();
+bool test_gc_metrics_sanity();
 
 int main() {
     std::println("═══ Concurrent model unit tests ═══\n");
@@ -2332,6 +2338,11 @@ int main() {
     test_gc_safepoint_all_stop();
     test_gc_safepoint_no_fiber();
     test_gc_coordinator_basic();
+    test_gc_multiple_cycles();
+    test_gc_safepoint_stress();
+    test_gc_metrics_sanity();
+    test_gc_root_collection();
+    test_gc_root_multiple_sources();
 
     std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
                  g_passed, g_passed + g_failed,
@@ -2584,3 +2595,261 @@ bool test_gc_coordinator_basic() {
     CHECK(gc->metrics().gc_count.load() >= 0, "GC ran at least once");
     return true;
 }
+
+// ── Test: GC multiple cycles (P2 Phase 1) ─────────────────
+// Verifies the GC collector can be triggered multiple times.
+// Each cycle: request → collect → verify metrics update.
+
+bool test_gc_multiple_cycles() {
+    std::println("\n--- Test: GC — multiple cycles ---");
+
+    aura::serve::Scheduler sched(2);
+    std::atomic<int> fc{0};
+    auto* gc = sched.gc_collector();
+
+    // Spawn short-lived fibers so GC safepoint has targets
+    for (int i = 0; i < 4; ++i)
+        sched.spawn([&fc]() {
+            for (int j = 0; j < 50; ++j) {
+                volatile int64_t s = 0;
+                for (int k = 0; k < 1000; ++k) s += k;
+                aura::serve::Fiber::check_gc_safepoint();
+                aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+            }
+            fc.fetch_add(1);
+        });
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    gc->set_alloc_threshold(1);
+    const int CYCLES = 5;
+    int ran = 0;
+
+    for (int i = 0; i < CYCLES; ++i) {
+        // Let fibers run a bit between GC cycles
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        gc->reset_alloc_counter();
+        gc->record_alloc();
+        gc->request();
+        gc->collect();
+        if (gc->metrics().gc_count.load() > (uint64_t)i)
+            ++ran;
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    sched.stop();
+    t.join();
+
+    CHECK(ran > 0, "at least one GC cycle ran");
+    CHECK(gc->metrics().total_pause_us.load() > 0, "total pause time recorded");
+    CHECK(gc->metrics().max_pause_us.load() > 0, "max pause time recorded");
+    CHECK(gc->metrics().gc_count.load() > 0, "gc count incremented");
+    CHECK(fc.load() == 4, "all fibers completed");
+    return true;
+}
+
+// ── Test: GC safepoint stress — concurrent alloc (P2 Phase 1) ──
+// Spawns fibers that allocate and yield in parallel.
+// Repeatedly triggers GC and verifies no deadlock.
+
+bool test_gc_safepoint_stress() {
+    std::println("\n--- Test: GC safepoint stress ---");
+
+    aura::serve::Scheduler sched(4);
+    std::atomic<int> fibers_done{0};
+    const int N = 8;
+
+    for (int i = 0; i < N; ++i) {
+        sched.spawn([&fibers_done]() {
+            for (int cycle = 0; cycle < 50; ++cycle) {
+                // Simulate work + alloc pattern
+                volatile int64_t sum = 0;
+                for (int j = 0; j < 1000; ++j) sum += j;
+                aura::serve::Fiber::check_gc_safepoint();
+                aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+            }
+            fibers_done.fetch_add(1, std::memory_order_release);
+        });
+    }
+
+    // Run scheduler and trigger GC multiple times
+    std::thread t([&sched]() { sched.run(); });
+
+    for (int g = 0; g < 3; ++g) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        sched.request_gc_safepoint();
+        bool ok = sched.wait_for_safepoint(2000);
+        if (ok)
+            sched.resume_from_gc();
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    sched.stop();
+    t.join();
+
+    CHECK(fibers_done.load() == N, "all fibers completed during GC stress");
+    return true;
+}
+
+// ── Test: GC — pause metrics sanity (P2 Phase 1) ──────────
+// Verifies that GC metrics are consistent after collection.
+
+bool test_gc_metrics_sanity() {
+    std::println("\n--- Test: GC metrics sanity ---");
+
+    aura::serve::Scheduler sched(2);
+    std::atomic<int> fc{0};
+    auto* gc = sched.gc_collector();
+
+    // Set low threshold so GC triggers immediately
+    gc->set_alloc_threshold(1);
+
+    // Spawn fibers for GC targeting
+    for (int i = 0; i < 4; ++i)
+        sched.spawn([&fc]() {
+            for (int j = 0; j < 30; ++j) {
+                volatile int64_t s = 0;
+                for (int k = 0; k < 1000; ++k) s += k;
+                aura::serve::Fiber::check_gc_safepoint();
+                aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+            }
+            fc.fetch_add(1);
+        });
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // Trigger multiple GCs and verify metrics
+    const int N = 3;
+    for (int i = 0; i < N; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        gc->reset_alloc_counter();
+        gc->record_alloc();
+        bool req = gc->request();
+        gc->collect();
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    sched.stop();
+    t.join();
+
+    auto cnt = gc->metrics().gc_count.load();
+    auto total_pause = gc->metrics().total_pause_us.load();
+    auto max_pause = gc->metrics().max_pause_us.load();
+    auto sp_wait = gc->metrics().safepoint_wait_us.load();
+
+    CHECK(cnt > 0, "gc count > 0 after triggers");
+    CHECK(total_pause >= max_pause, "total pause >= max pause (consistency)");
+    CHECK(total_pause > 0, "total pause > 0");
+    CHECK(fc.load() == 4, "all fibers completed");
+    return true;
+}
+
+// ── Test: GC root set collection (P2 Phase 2) ────────────
+// Registers a root source callback and verifies that roots
+// are collected during GC.
+
+bool test_gc_root_collection() {
+    std::println("\n--- Test: GC root collection ---");
+
+    aura::serve::Scheduler sched(2);
+    auto* gc = sched.gc_collector();
+
+    // Register a simulated evaluator root source
+    gc->register_root_source(0, [](aura::serve::GCRootSet& out) {
+        out.string_roots.push_back(1);   // string "hello"
+        out.string_roots.push_back(2);   // string "world"
+        out.pair_roots.push_back(100);   // pair at index 100
+        out.closure_roots.push_back(50); // closure #50
+        out.fiber_result_roots.push_back(99); // fiber result
+    });
+
+    // Spawn some fibers so GC safepoint works
+    std::atomic<int> fc{0};
+    for (int i = 0; i < 4; ++i)
+        sched.spawn([&fc]() {
+            for (int j = 0; j < 20; ++j) {
+                volatile int64_t s = 0;
+                for (int k = 0; k < 1000; ++k) s += k;
+                aura::serve::Fiber::check_gc_safepoint();
+                aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+            }
+            fc.fetch_add(1);
+        });
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // Trigger GC
+    gc->set_alloc_threshold(1);
+    gc->reset_alloc_counter();
+    gc->record_alloc();
+    gc->request();
+    gc->collect();
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    sched.stop();
+    t.join();
+
+    // Verify root metrics were recorded
+    auto root_cnt = gc->metrics().root_count.load();
+    auto collect_us = gc->metrics().root_collect_us.load();
+
+    CHECK(root_cnt == 5, "5 roots collected from callback");
+    CHECK(collect_us > 0, "root collection time > 0");
+    CHECK(fc.load() == 4, "all fibers completed");
+    return true;
+}
+
+// ── Test: GC root source — multiple registrations (P2 Phase 2) ──
+// Verifies that multiple evaluators can register root sources
+// and all roots are collected.
+
+bool test_gc_root_multiple_sources() {
+    std::println("\n--- Test: GC root — multiple sources ---");
+
+    aura::serve::Scheduler sched(2);
+    auto* gc = sched.gc_collector();
+
+    // Two root sources (simulating two evaluators)
+    gc->register_root_source(0, [](aura::serve::GCRootSet& out) {
+        out.string_roots.push_back(1);
+        out.pair_roots.push_back(10);
+    });
+    gc->register_root_source(1, [](aura::serve::GCRootSet& out) {
+        out.string_roots.push_back(2);
+        out.closure_roots.push_back(20);
+    });
+
+    std::atomic<int> fc{0};
+    for (int i = 0; i < 2; ++i)
+        sched.spawn([&fc]() {
+            for (int j = 0; j < 10; ++j) {
+                volatile int64_t s = 0;
+                for (int k = 0; k < 500; ++k) s += k;
+                aura::serve::Fiber::check_gc_safepoint();
+                aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+            }
+            fc.fetch_add(1);
+        });
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    gc->set_alloc_threshold(1);
+    gc->reset_alloc_counter();
+    gc->record_alloc();
+    gc->request();
+    gc->collect();
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    sched.stop();
+    t.join();
+
+    auto root_cnt = gc->metrics().root_count.load();
+    CHECK(root_cnt == 4, "4 roots from 2 sources");
+    return true;
+}
+
+

@@ -13,7 +13,7 @@ namespace aura::serve {
 GCCollector::GCCollector(Scheduler* sched)
     : scheduler_(sched) {
     if (sched) {
-        alloc_threshold_ = 100000;  // ~100k allocs → GC
+        alloc_threshold_ = 100000;
     }
 }
 
@@ -21,19 +21,40 @@ GCCollector::GCCollector(Scheduler* sched)
 
 bool GCCollector::request() {
     if (gc_in_progress_.load(std::memory_order_acquire))
-        return false;  // already running, don't re-request
+        return false;
 
     int64_t count = alloc_counter_.load(std::memory_order_relaxed);
     if (count < alloc_threshold_)
         return false;
 
-    // Try to start GC
     bool expected = false;
     if (!gc_in_progress_.compare_exchange_strong(expected, true,
                                                    std::memory_order_acq_rel))
-        return false;  // someone else got there first
+        return false;
 
-    return true;  // GC should run
+    return true;
+}
+
+// ── register_root_source / unregister_root_source ──────
+
+void GCCollector::register_root_source(int worker_id, GCRootFlushFn fn) {
+    std::lock_guard<std::mutex> lock(root_sources_mutex_);
+    root_sources_[worker_id] = std::move(fn);
+}
+
+void GCCollector::unregister_root_source(int worker_id) {
+    std::lock_guard<std::mutex> lock(root_sources_mutex_);
+    root_sources_.erase(worker_id);
+}
+
+// ── collect_roots — enumerate all registered root sources ──
+
+void GCCollector::collect_roots(GCRootSet& out) {
+    out.clear();
+    std::lock_guard<std::mutex> lock(root_sources_mutex_);
+    for (auto& [wid, fn] : root_sources_) {
+        if (fn) fn(out);
+    }
 }
 
 // ── collect — full GC cycle ────────────────────────────
@@ -53,8 +74,6 @@ bool GCCollector::collect() {
     auto safepoint_end = std::chrono::steady_clock::now();
 
     if (!all_stopped) {
-        std::fprintf(stderr, "gc: safepoint timeout after 100ms — forcing resume\n");
-        // Force resume even if not all workers arrived
         scheduler_->resume_from_gc();
         gc_in_progress_.store(false, std::memory_order_release);
         return false;
@@ -63,9 +82,21 @@ bool GCCollector::collect() {
     auto safepoint_us = std::chrono::duration_cast<std::chrono::microseconds>(
         safepoint_end - safepoint_start).count();
 
-    // ── Phase 2: Collect roots (skeleton) ─────────────
-    // TODO: Phase 2 — iterate evaluator heaps, fiber stacks, etc.
-    // Not yet implemented — just log the fact that we stopped.
+    // ── Phase 2: Collect roots from all registered sources ──
+    auto roots_start = std::chrono::steady_clock::now();
+    GCRootSet roots;
+    collect_roots(roots);
+    auto roots_end = std::chrono::steady_clock::now();
+    auto roots_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        roots_end - roots_start).count();
+
+    metrics_.root_count.store(
+        static_cast<int64_t>(roots.string_roots.size() + roots.pair_roots.size()
+                             + roots.closure_roots.size()
+                             + roots.fiber_result_roots.size()
+                             + roots.workspace_roots.size()),
+        std::memory_order_relaxed);
+    metrics_.root_collect_us.fetch_add(roots_us, std::memory_order_relaxed);
 
     // ── Phase 3: Parallel mark (skeleton) ─────────────
     // TODO: Phase 3 — tri-color marking
@@ -88,14 +119,8 @@ bool GCCollector::collect() {
         std::memory_order_relaxed);
     metrics_.safepoint_wait_us.fetch_add(safepoint_us, std::memory_order_relaxed);
 
-    // Reset alloc counter for next GC cycle
     reset_alloc_counter();
     gc_in_progress_.store(false, std::memory_order_release);
-
-    // Log GC event
-    std::fprintf(stderr, "gc: #%ld complete — safepoint %ldμs total %ldμs\n",
-                 static_cast<long>(gc_idx), static_cast<long>(safepoint_us),
-                 static_cast<long>(total_us));
 
     return true;
 }

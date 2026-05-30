@@ -7,8 +7,10 @@
 #include "fiber.h"  // GCPhase, WorkerGCState
 #include <atomic>
 #include <functional>
+#include <mutex>
 #include <vector>
 #include <chrono>
+#include <unordered_map>
 
 namespace aura::serve {
 
@@ -27,6 +29,41 @@ class Scheduler;
 //
 // Phase 1 implements steps (a) and (e). Steps (b)-(d)
 // are skeletons that will be filled in Phases 2-4.
+
+// ── RootSet — GC root set (Phase 2) ─────────────────
+// Stores indices into evaluator heaps that must be kept alive.
+// The actual traversal is done by flush_gc_roots callbacks
+// registered by each evaluator.
+struct GCRootSet {
+    // Indices into string_heap_ that are still reachable
+    std::vector<int64_t> string_roots;
+    // Pair indices that are still reachable
+    std::vector<int64_t> pair_roots;
+    // Closure IDs that are still alive
+    std::vector<int64_t> closure_roots;
+    // Fiber result pointers (s_fiber_results)
+    std::vector<int64_t> fiber_result_roots;
+    // Workspace tree node flat indices
+    std::vector<int64_t> workspace_roots;
+
+    bool empty() const {
+        return string_roots.empty() && pair_roots.empty()
+            && closure_roots.empty() && fiber_result_roots.empty()
+            && workspace_roots.empty();
+    }
+    void clear() {
+        string_roots.clear();
+        pair_roots.clear();
+        closure_roots.clear();
+        fiber_result_roots.clear();
+        workspace_roots.clear();
+    }
+};
+
+// Root source callback — registered by each Evaluator (CompilerService).
+// Called during the GC root collection phase.
+using GCRootFlushFn = std::function<void(GCRootSet& out)>;
+
 class GCCollector {
 public:
     explicit GCCollector(Scheduler* sched);
@@ -40,6 +77,14 @@ public:
     // Called from IO thread's epoll loop.
     // Returns true if GC actually ran.
     bool collect();
+
+    // ── Root source registration (Phase 2) ──────────
+    // Each Evaluator registers a callback that enumerates its
+    // reachable roots (string_heap, pairs, closures, etc.)
+    // into a GCRootSet. Called from g_gc_flush_root_set
+    // during GC root collection.
+    void register_root_source(int worker_id, GCRootFlushFn fn);
+    void unregister_root_source(int worker_id);
 
     // ── Configuration ────────────────────────────────
     // Sets the alloc threshold that triggers GC.
@@ -60,14 +105,25 @@ public:
         std::atomic<int64_t> total_pause_us{0};
         std::atomic<int64_t> max_pause_us{0};
         std::atomic<int64_t> safepoint_wait_us{0};
+        std::atomic<int64_t> root_count{0};      // Phase 2: number of roots found
+        std::atomic<int64_t> root_collect_us{0}; // Phase 2: time to collect roots
     };
     const Metrics& metrics() const { return metrics_; }
 
 private:
     Scheduler* scheduler_;
+
+    // Root sources (Phase 2): per-worker-id callbacks
+    std::mutex root_sources_mutex_;
+    std::unordered_map<int, GCRootFlushFn> root_sources_;
+
+    // Collect all roots from registered sources
+    void collect_roots(GCRootSet& out);
+
     std::atomic<int64_t> alloc_counter_{0};
-    int64_t alloc_threshold_ = 100000;  // 100k allocs → trigger GC
+    int64_t alloc_threshold_ = 100000;
     std::atomic<bool> gc_in_progress_{false};
+    bool gc_in_progress() const { return gc_in_progress_.load(std::memory_order_acquire); }
     Metrics metrics_;
 };
 

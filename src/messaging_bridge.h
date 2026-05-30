@@ -130,6 +130,15 @@ extern ResetMetricsFn g_reset_scheduler_metrics;
 using FiberSetAffinityFn = void (*)(int worker_id);
 extern FiberSetAffinityFn g_fiber_set_affinity;
 
+// GC root flush — set by serve_async.cpp (P2 Phase 2).
+// Each evaluator registers a callback that fills a GCRootSet
+// with reachable roots (string_heap indices, pair indices, etc.).
+// The GC coordinator calls this during the root collection phase.
+// This uses an opaque void* to avoid circular includes between
+// messaging_bridge.h (in non-module translator) and gc_coordinator.h.
+using GCRootFlushFn = std::function<void(void* root_set_out)>;
+extern GCRootFlushFn g_gc_flush_root_set;
+
 }  // namespace aura::messaging
 
 #endif  // AURA_MESSAGING_BRIDGE_H
