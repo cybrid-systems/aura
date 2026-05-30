@@ -3936,9 +3936,10 @@ void Evaluator::init_pair_primitives() {
 
     primitives_.add("set-code", [this, mev](const auto& a) -> EvalValue {
         if (workspace_read_only_) return mev("read-only", "workspace is read-only");
-        // Clear any previous set-code error
+        // Clear any previous set-code error and eval-current cache
         last_set_code_error_kind_.clear();
         last_set_code_error_msg_.clear();
+        last_eval_current_result_.reset();
         coverage_counters_[0]++;
         coverage_counters_[5]++;
         if (a.empty() || !is_string(a[0]))
@@ -4210,7 +4211,22 @@ void Evaluator::init_pair_primitives() {
         auto expanded = aura::compiler::macro_expand_all(*workspace_flat_, *workspace_pool_,
                                                          workspace_flat_->root);
         coverage_counters_[4]++;
+
+        // Incremental eval: if the workspace root is clean and we have a cached
+        // result, skip full re-evaluation entirely (Issue #32b).
+        // The root is marked dirty by mark_dirty_upward() on any mutation.
+        // clear_cached_value is called in mark_dirty(), so we know the cache
+        // is stale when dirty flags are set.
+        if (!workspace_flat_->is_dirty(expanded) && last_eval_current_result_) {
+            return *last_eval_current_result_;
+        }
+
         auto result = eval_flat(*workspace_flat_, *workspace_pool_, expanded, top_);
+
+        // Cache successful results for incremental reuse
+        if (result)
+            last_eval_current_result_ = *result;
+
         // Clear dirty flags after successful eval
         workspace_flat_->clear_all_dirty();
         if (!result) {
@@ -12286,6 +12302,21 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
             if (current_id >= f->size())
                 return std::unexpected(Diagnostic{ErrorKind::InternalError, "invalid node id"});
             auto v = f->get(current_id);
+
+            // Incremental eval: if node is clean and has a cached result, reuse it.
+            // Skip leaf literals (LiteralInt, LiteralFloat, LiteralString) because
+            // they're always fast and the cache lookup overhead is not worth it.
+            if (v.tag != aura::ast::NodeTag::LiteralInt &&
+                v.tag != aura::ast::NodeTag::LiteralFloat &&
+                v.tag != aura::ast::NodeTag::LiteralString &&
+                v.tag != aura::ast::NodeTag::Variable &&
+                !f->is_dirty(current_id)) {
+                auto cached = f->get_cached_value(current_id);
+                if (cached != aura::ast::FlatAST::kNotCached) {
+                    return EvalResult(EvalValue(cached));
+                }
+            }
+
             switch (v.tag) {
                 case aura::ast::NodeTag::LiteralInt:
                     // #t/#f have BoolLiteral marker — convert to Bool at runtime
