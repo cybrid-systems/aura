@@ -1659,12 +1659,7 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
                 }
             } else if (arg_type == reg_.dynamic_type() &&
                        ft.args[i] != reg_.dynamic_type()) {
-                // Dynamic → Static: consistent_unify succeeded (DYNAMIC is consistent
-                // with everything), but we still need a runtime type check.
-                // Insert a CoercionNode so lowering emits a CastOp.
-                auto msg = std::string("argument ") + std::to_string(i) +
-                           ": dynamic → static boundary, inserted runtime check";
-                diag_.report(Diagnostic(ErrorKind::Note, std::move(msg), saved_loc));
+                // Dynamic → Static: insert CoercionNode for runtime type check
                 auto type_tag = type_tag_for_coercion(ft.args[i], &reg_);
                 auto coercion_id = flat.add_coercion(
                     arg_id, type_tag, ft.args[i].index);
@@ -2203,8 +2198,6 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
             // Dynamic → Static boundary: consistent_unify succeeded because
             // DYNAMIC is consistent with everything, but we need a runtime
             // check at the boundary. Insert CoercionNode for CastOp emission.
-            auto msg = "coercion from dynamic to " + std::string(reg_.format_type(expected));
-            diag_.report(Diagnostic(ErrorKind::Note, std::move(msg), cur_loc_));
             auto type_tag = type_tag_for_coercion(expected, &reg_);
             auto coercion_id = flat.add_coercion(
                 id, type_tag, expected.index);
@@ -2233,7 +2226,6 @@ void InferenceEngine::check_flat_call(FlatAST& flat, StringPool& pool, NodeView 
             auto msg = "call return type: coercion from " +
                        std::string(reg_.format_type(inferred)) + " to " +
                        std::string(reg_.format_type(expected));
-            diag_.report(Diagnostic(ErrorKind::Note, std::move(msg), cur_loc_));
             // ── Gradual Typing: wrap the entire call in a CoercionNode ──
             auto type_tag = type_tag_for_coercion(expected, &reg_);
             auto coercion_id = flat.add_coercion(
