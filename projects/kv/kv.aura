@@ -19,6 +19,22 @@
 (define *ttl* (hash))       ;; key → expire-at (epoch sec)
 (define *sets* (hash))      ;; set-key → (hash of members)
 
+;; ── 辅助函数（必需先定义，后续操作依赖）──
+
+(define (kv-expired? key)
+  "检查键是否已过期（内部使用）。"
+  (let ((expire (hash-ref *ttl* key)))
+    (if (void? expire)
+        #f
+        (>= (current-time) expire))))
+
+(define (kv-del-internal key)
+  (hash-remove! *store* key)
+  (hash-remove! *ttl* key))
+
+(define (kv-is-set? key)
+  (hash-has-key? *sets* key))
+
 ;; ── 核心操作 ──
 
 (define (kv-set key val)
@@ -44,7 +60,6 @@
   (kv-del-internal key)
   "OK")
 
-(define (kv-del-internal key)
   (hash-remove! *store* key)
   (hash-remove! *ttl* key))
 
@@ -96,7 +111,6 @@
 
 ;; ── 辅助 ──
 
-(define (kv-expired? key)
   "检查键是否已过期（内部使用）。"
   (let ((expire (hash-ref *ttl* key)))
     (if (void? expire)
@@ -171,23 +185,27 @@
 
 (define (kv-lpush key . vals)
   "向列表头部插入一个或多个值。返回列表的新长度。"
-  (let ((cur (if (kv-expired? key) (begin (kv-del-internal key) '()) (kv-get key))))
-    (if (and (not (null? cur)) (not (pair? cur)))
-        "ERR wrong type"
-        (let ((new-list (append (reverse vals) cur)))
-          (hash-set! *store* key new-list)
-          (hash-remove! *ttl* key)
-          (length new-list)))))
+  (if (kv-is-set? key)
+      "ERR wrong type"
+      (let ((cur (if (kv-expired? key) (begin (kv-del-internal key) '()) (kv-get key))))
+        (if (and (not (null? cur)) (not (pair? cur)))
+            "ERR wrong type"
+            (let ((new-list (append (reverse vals) cur)))
+              (hash-set! *store* key new-list)
+              (hash-remove! *ttl* key)
+              (length new-list))))))
 
 (define (kv-rpush key . vals)
   "向列表尾部追加一个或多个值。返回列表的新长度。"
-  (let ((cur (if (kv-expired? key) (begin (kv-del-internal key) '()) (kv-get key))))
-    (if (and (not (null? cur)) (not (pair? cur)))
-        "ERR wrong type"
-        (let ((new-list (append cur vals)))
-          (hash-set! *store* key new-list)
-          (hash-remove! *ttl* key)
-          (length new-list)))))
+  (if (kv-is-set? key)
+      "ERR wrong type"
+      (let ((cur (if (kv-expired? key) (begin (kv-del-internal key) '()) (kv-get key))))
+        (if (and (not (null? cur)) (not (pair? cur)))
+            "ERR wrong type"
+            (let ((new-list (append cur vals)))
+              (hash-set! *store* key new-list)
+              (hash-remove! *ttl* key)
+              (length new-list))))))
 
 (define (kv-lrange key start stop)
   "返回列表中指定范围的元素。支持负索引（-1=最后一个）。"
@@ -243,7 +261,6 @@
 
 ;; ── Hash 操作 ──
 
-(define (kv-is-set? key)
   (hash-has-key? *sets* key))
 
 (define (kv-hset key field val)

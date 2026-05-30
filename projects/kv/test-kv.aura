@@ -1,363 +1,253 @@
-;; === test-kv.aura — kv 存储 V3 测试（含 List 操作） ===
-;; 用法: (load "projects/kv/kv.aura") (load "projects/kv/test-kv.aura")
-
-(define passed 0)
-(define failed 0)
-
-(define (assert-equal actual expected msg)
-  (if (equal? actual expected)
-      (begin
-        (set! passed (+ passed 1))
-        (display "[PASS] ") (display msg) (newline))
-      (begin
-        (set! failed (+ failed 1))
-        (display "[FAIL] ") (display msg)
-        (display " — expected: ") (display expected)
-        (display ", got: ") (display actual)
-        (newline))))
-
-(display "=== kv.aura V3 tests (with List ops) ===") (newline)
-
-;; ── 基础 CRUD ──
-(assert-equal (kv-set "name" "Aura") "OK" "kv-set returns OK")
-(assert-equal (kv-get "name") "Aura" "kv-get returns stored value")
-(assert-equal (kv-get "nonexistent") (void) "kv-get missing key returns void")
-(assert-equal (kv-exists? "name") #t "kv-exists? existing key")
-(assert-equal (kv-exists? "nope") #f "kv-exists? missing key")
-(assert-equal (kv-del "name") "OK" "kv-del returns OK")
-(assert-equal (kv-exists? "name") #f "kv-exists? after del")
-(assert-equal (kv-get "name") (void) "kv-get after del returns void")
-
-;; ── Incr ──
-(assert-equal (kv-incr "counter") 1 "kv-incr starts at 1")
-(assert-equal (kv-incr "counter") 2 "kv-incr increments to 2")
-(assert-equal (kv-incr "counter") 3 "kv-incr increments to 3")
-(assert-equal (kv-get "counter") 3 "kv-get after incr")
-(kv-set "str" "hello")
-(assert-equal (kv-incr "str") "ERR wrong type" "kv-incr on non-int")
-(kv-del "str")
-
-;; ── String values ──
-(assert-equal (kv-set "x" "hello") "OK" "kv-set string")
-(assert-equal (kv-get "x") "hello" "kv-get string")
-
-;; ── Flush ──
-(assert-equal (kv-flush) "OK" "kv-flush returns OK")
-(assert-equal (kv-length) 0 "kv-length after flush")
-(assert-equal (kv-exists? "counter") #f "kv-exists? after flush")
-
-;; ── TTL ──
-(kv-set "persistent" "stays")
-(assert-equal (kv-ttl "persistent") -1 "kv-ttl no TTL = -1")
-(kv-set-with-ttl "temp" "val" 30)
-(assert-equal (kv-get "temp") "val" "set-with-ttl stores value")
-(assert-equal (kv-exists? "temp") #t "exists? with TTL")
-(assert-equal (kv-ttl "temp") 30 "kv-ttl 30s key")
-(assert-equal (kv-persist "temp") "OK" "kv-persist")
-(assert-equal (kv-ttl "temp") -1 "kv-ttl after persist")
-(kv-set-with-ttl "insta" "gone" 0)
-(assert-equal (kv-get "insta") (void) "kv-get expired key")
-(assert-equal (kv-exists? "insta") #f "kv-exists? expired key")
-(assert-equal (kv-expire "persistent" 60) "OK" "kv-expire existing key")
-(assert-equal (kv-expire "no-such" 60) "ERR no such key" "kv-expire missing key")
-(assert-equal (kv-persist "no-such") "ERR no such key" "kv-persist missing key")
-(assert-equal (kv-ttl "no-such-key") -2 "kv-ttl missing key = -2")
-(kv-flush)
-
-;; ── List 操作 ──
-
-;; LPUSH 基本
-(assert-equal (kv-lpush "tasks" "c") 1 "kv-lpush first element")
-(assert-equal (kv-lpush "tasks" "b") 2 "kv-lpush second element (prepended)")
-(assert-equal (kv-lpush "tasks" "a") 3 "kv-lpush third element")
-
-;; LRANGE
-(assert-equal (kv-lrange "tasks" 0 -1) (list "a" "b" "c") "kv-lrange all elements")
-(assert-equal (kv-lrange "tasks" 0 1) (list "a" "b") "kv-lrange first 2")
-(assert-equal (kv-lrange "tasks" 1 2) (list "b" "c") "kv-lrange middle 2")
-(assert-equal (kv-lrange "tasks" -2 -1) (list "b" "c") "kv-lrange negative indices")
-(assert-equal (kv-lrange "nonexistent" 0 -1) '() "kv-lrange missing key")
-
-;; LLEN
-(assert-equal (kv-llen "tasks") 3 "kv-llen after 3 pushes")
-(assert-equal (kv-llen "nonexistent") 0 "kv-llen missing key")
-
-;; LPOP
-(assert-equal (kv-lpop "tasks") "a" "kv-lpop removes first element")
-(assert-equal (kv-llen "tasks") 2 "kv-llen after lpop")
-(assert-equal (kv-lrange "tasks" 0 -1) (list "b" "c") "kv-lrange after lpop")
-
-;; RPOP
-(assert-equal (kv-rpop "tasks") "c" "kv-rpop removes last element")
-(assert-equal (kv-llen "tasks") 1 "kv-llen after rpop")
-(assert-equal (kv-lrange "tasks" 0 -1) (list "b") "kv-lrange after rpop")
-
-;; LPOP last element
-(assert-equal (kv-lpop "tasks") "b" "kv-lpop last remaining element")
-(assert-equal (kv-llen "tasks") 0 "kv-llen after popping all")
-(assert-equal (kv-exists? "tasks") #f "kv-exists? after all popped (key deleted)")
-
-;; LPOP / RPOP from empty/missing key
-(assert-equal (kv-lpop "missing") (void) "kv-lpop missing key returns void")
-(assert-equal (kv-rpop "missing") (void) "kv-rpop missing key returns void")
-
-;; RPUSH
-(assert-equal (kv-rpush "queue" "a") 1 "kv-rpush first element")
-(assert-equal (kv-rpush "queue" "b") 2 "kv-rpush second element")
-(assert-equal (kv-rpush "queue" "c") 3 "kv-rpush third element")
-(assert-equal (kv-lrange "queue" 0 -1) (list "a" "b" "c") "kv-lrange after rpush 3")
-
-;; RPOP from rpush'd list (FIFO order)
-(assert-equal (kv-rpop "queue") "c" "kv-rpop removes last (LIFO)")
-(assert-equal (kv-lpop "queue") "a" "kv-lpop removes first (FIFO)")
-(kv-flush)
-
-;; LPUSH variadic (multiple values at once)
-(assert-equal (kv-lpush "m" "c" "b" "a") 3 "kv-lpush variadic")
-(assert-equal (kv-lrange "m" 0 -1) (list "a" "b" "c") "kv-lrange after variadic lpush")
-(kv-flush)
-
-;; RPUSH variadic
-(assert-equal (kv-rpush "m" "a" "b" "c") 3 "kv-rpush variadic")
-(assert-equal (kv-lrange "m" 0 -1) (list "a" "b" "c") "kv-lrange after variadic rpush")
-(kv-flush)
-
-;; LINDEX
-(kv-rpush "l" "x" "y" "z")
-(assert-equal (kv-lindex "l" 0) "x" "kv-lindex first element")
-(assert-equal (kv-lindex "l" 1) "y" "kv-lindex middle element")
-(assert-equal (kv-lindex "l" -1) "z" "kv-lindex last with negative")
-(assert-equal (kv-lindex "l" -2) "y" "kv-lindex second to last")
-(assert-equal (kv-lindex "l" 99) (void) "kv-lindex out of range")
-(assert-equal (kv-lindex "missing" 0) (void) "kv-lindex missing key")
-(kv-flush)
-
-;; LPUSH on non-list value (报错)
-(kv-set "notlist" "hello")
-(assert-equal (kv-lpush "notlist" "x") "ERR wrong type" "kv-lpush on string value")
-(assert-equal (kv-rpush "notlist" "x") "ERR wrong type" "kv-rpush on string value")
-(kv-flush)
-
-;; List + TTL 交互
-(kv-rpush "temp-list" "a" "b" "c")
-(kv-set-with-ttl "temp-list" "overwrite" 30)  ;; 覆盖为普通值
-(assert-equal (kv-get "temp-list") "overwrite" "set overwrites list")
-
-(kv-set-with-ttl "exp-list" "x" 0)  ;; 立即过期的 list（普通值）
-(assert-equal (kv-lpush "exp-list" "a") 1 "lpush on expired key creates fresh list (from void)")
-(kv-del "exp-list")
-
-;; TTL list 自动过期
-(kv-rpush "tl" "a" "b")
-(kv-expire "tl" 0)  ;; 立即过期
-(assert-equal (kv-llen "tl") 0 "kv-llen after TTL expires (auto-cleaned)")
-
-;; ── Hash 操作 ──
-
-;; ── Hash 操作 ──
-
-;; HSET 基本
-(assert-equal (kv-hset "user:1" "name" "Alice") 1 "kv-hset new field returns 1")
-(assert-equal (kv-hset "user:1" "age" "30") 1 "kv-hset second field")
-(assert-equal (kv-hget "user:1" "name") "Alice" "kv-hget returns field value")
-(assert-equal (kv-hget "user:1" "age") "30" "kv-hget second field")
-
-;; HSET 覆盖
-(assert-equal (kv-hset "user:1" "name" "Bob") 0 "kv-hset existing field returns 0")
-(assert-equal (kv-hget "user:1" "name") "Bob" "kv-hget after update")
-
-;; HEXISTS
-(assert-equal (kv-hexists "user:1" "name") #t "kv-hexists existing field")
-(assert-equal (kv-hexists "user:1" "nonexistent") #f "kv-hexists missing field")
-
-;; HLEN
-(assert-equal (kv-hlen "user:1") 2 "kv-hlen after 2 fields")
-
-;; HGETALL
-(assert-equal (not (not (member "name" (map car (kv-hgetall "user:1"))))) #t "kv-hgetall contains name")
-(assert-equal (not (not (member "age" (map car (kv-hgetall "user:1"))))) #t "kv-hgetall contains age")
-
-;; HKEYS / HVALS
-(kv-hset "user:1" "role" "admin")
-(assert-equal (not (not (member "role" (kv-hkeys "user:1")))) #t "kv-hkeys contains role")
-(assert-equal (not (not (member "admin" (kv-hvals "user:1")))) #t "kv-hvals contains admin")
-
-;; HDEL
-(assert-equal (kv-hdel "user:1" "age") 1 "kv-hdel removes 1 field")
-(assert-equal (kv-hexists "user:1" "age") #f "kv-hexists after hdel")
-(assert-equal (kv-hlen "user:1") 2 "kv-hlen after hdel")
-(assert-equal (kv-hdel "user:1" "nonexistent") 0 "kv-hdel missing field returns 0")
-
-;; 删除最后一个字段后自动删除 key
-(kv-hdel "user:1" "name" "role")
-(assert-equal (kv-exists? "user:1") #f "kv-exists? after deleting all hash fields")
-
-;; 空 key 操作
-(assert-equal (kv-hget "nonexistent" "f") (void) "kv-hget missing key")
-(assert-equal (kv-hlen "nonexistent") 0 "kv-hlen missing key")
-(assert-equal (kv-hexists "nonexistent" "f") #f "kv-hexists missing key")
-(assert-equal (kv-hgetall "nonexistent") '() "kv-hgetall missing key")
-
-;; Hash + TTL 交互
-(kv-hset "session:1" "token" "abc")
-(kv-expire "session:1" 30)
-(assert-equal (kv-ttl "session:1") 30 "kv-ttl on hash key")
-(assert-equal (kv-hget "session:1" "token") "abc" "kv-hget with TTL")
-(kv-persist "session:1")
-(assert-equal (kv-ttl "session:1") -1 "kv-persist on hash key")
-
-;; HSET on hash key clears previous TTL
-(kv-hset "tmp:h" "x" 1)
-(kv-expire "tmp:h" 30)
-(assert-equal (kv-ttl "tmp:h") 30 "kv-ttl on hash before new hset")
-(kv-hset "tmp:h" "y" 2)  ;; 新 hset 应清 TTL
-(assert-equal (kv-ttl "tmp:h") -1 "kv-hset clears old TTL")
-(assert-equal (kv-hget "tmp:h" "y") 2 "kv-hget after new hset")
-(kv-del "tmp:h")
-
-;; 错误类型：LPUSH 到 hash 值
-(kv-hset "h" "f" "v")
-(assert-equal (kv-lpush "h" "x") "ERR wrong type" "kv-lpush on hash value")
-
-;; 错误类型：Hash 操作到列表值
-(kv-rpush "l" "a" "b")
-(assert-equal (kv-hset "l" "f" "v") "ERR wrong type" "kv-hset on list value")
-(kv-flush)
-
-;; ── 持久化 ──
-
-;; 准备数据
-(kv-set "str" "hello")
-(kv-set "num" 42)
-(kv-incr "counter")
-(kv-incr "counter")
-(kv-set-with-ttl "temp" "expires" 30)
-;; 注意: 持久化 V1 只支持 string/int 值，hash/list 暂不序列化
-
-;; SAVE
-(assert-equal (kv-save "/tmp/kv-dump.aura") "OK" "kv-save returns OK")
-
-;; 保存后数据不变
-(assert-equal (kv-get "str") "hello" "kv-get after save")
-(assert-equal (kv-get "num") 42 "kv-get int after save")
-(assert-equal (kv-get "counter") 2 "kv-get counter after save")
-
-;; 清空并验证
-(kv-flush)
-(assert-equal (kv-length) 0 "kv-length after flush before load")
-(assert-equal (kv-exists? "str") #f "kv-exists? after flush")
-
-;; LOAD
-(assert-equal (kv-load "/tmp/kv-dump.aura") "OK" "kv-load returns OK")
-
-;; 加载后数据恢复
-(assert-equal (kv-get "str") "hello" "kv-get after load")
-(assert-equal (kv-get "num") 42 "kv-get int after load")
-(assert-equal (kv-get "counter") 2 "kv-get counter after load")
-(assert-equal (kv-exists? "temp") #t "kv-exists? temp after load")
-(assert-equal (kv-ttl "temp") 30 "kv-ttl temp after load")
-
-(kv-flush)
-
-;; ── 事务 ──
-
-;; MULTI + DISCARD 放弃
-(kv-set "a" "x")
-(kv-multi)
-(assert-equal (kv-enqueue kv-set "a" "b") "QUEUED" "kv-enqueue returns QUEUED")
-(assert-equal (kv-enqueue kv-get "a") "QUEUED" "kv-enqueue kv-get")
-(kv-discard)
-(assert-equal (kv-get "a") "x" "kv-get after discard (unchanged)")
-
-;; EXEC 执行
-(kv-multi)
-(kv-enqueue kv-set "a" "y")
-(kv-enqueue kv-get "a")
-(let ((r (kv-exec)))
-  (assert-equal (car r) 'OK "kv-exec returns (OK ...)"))
-(assert-equal (kv-get "a") "y" "kv-get after exec (changed)")
-
-;; EXEC/DISCARD without MULTI
-(assert-equal (kv-exec) "ERR EXEC without MULTI" "kv-exec without multi")
-(assert-equal (kv-discard) "ERR DISCARD without MULTI" "kv-discard without multi")
-
-;; MULTI + DISCARD 保留原始值
-(kv-set "x" 1)
-(kv-multi)
-(kv-enqueue kv-incr "x")
-(kv-enqueue kv-incr "x")
-(kv-enqueue kv-incr "x")
-(kv-discard)
-(assert-equal (kv-get "x") 1 "kv-get after multi+discard incr (unchanged)")
-
-;; 空 EXEC
-(kv-multi)
-(let ((r (kv-exec)))
-  (assert-equal (car r) 'OK "kv-exec empty returns (OK)"))
-
-;; 事务隔离性
-(kv-set "counter" 0)
-(kv-multi)
-(kv-enqueue kv-set "counter" 1000)
-;; 事务中数据不变
-(assert-equal (kv-get "counter") 0 "kv-get inside transaction (not yet committed)")
-(kv-discard)
-(assert-equal (kv-get "counter") 0 "kv-get after discard (preserved)")
-
-(kv-flush)
-
-;; ── Set 操作 ──
-
-;; SADD 基本
-(assert-equal (kv-sadd "colors" "red") 1 "kv-sadd new member returns 1")
-(assert-equal (kv-sadd "colors" "blue") 1 "kv-sadd second member")
-(assert-equal (kv-sadd "colors" "green") 1 "kv-sadd third member")
-
-;; SADD 重复
-(assert-equal (kv-sadd "colors" "red") 0 "kv-sadd existing returns 0")
-
-;; SMEMBERS — 用 scard + sismember 验证
-(assert-equal (kv-scard "colors") 3 "kv-scard verifies 3 members added")
-(assert-equal (kv-sismember "colors" "red") #t "kv-sismember red")
-(assert-equal (kv-sismember "colors" "blue") #t "kv-sismember blue")
-(assert-equal (kv-sismember "colors" "green") #t "kv-sismember green")
-
-;; SISMEMBER
-(assert-equal (kv-sismember "colors" "red") #t "kv-sismember existing")
-(assert-equal (kv-sismember "colors" "yellow") #f "kv-sismember missing")
-
-;; SCARD
-(assert-equal (kv-scard "colors") 3 "kv-scard after 3 members")
-
-;; SREM
-(assert-equal (kv-srem "colors" "blue") 1 "kv-srem removes member")
-(assert-equal (kv-scard "colors") 2 "kv-scard after srem")
-(assert-equal (kv-srem "colors" "blue") 0 "kv-srem missing returns 0")
-(assert-equal (kv-sismember "colors" "blue") #f "kv-sismember after srem")
-
-;; 删除最后一个成员后自动删除 key
-(kv-srem "colors" "red")
-(kv-srem "colors" "green")
-(assert-equal (kv-exists? "colors") #f "kv-exists? after removing all set members")
-
-;; 空集合操作
-(assert-equal (kv-smembers "nonexistent") '() "kv-smembers missing key")
-(assert-equal (kv-scard "nonexistent") 0 "kv-scard missing key")
-(assert-equal (kv-sismember "nonexistent" "x") #f "kv-sismember missing key")
-
-;; SADD on non-hash value
-(kv-set "notset" "hello")
-(assert-equal (kv-sadd "notset" "x") "ERR wrong type" "kv-sadd on string value")
-(kv-del "notset")
-
-;; 错误类型交叉
-(kv-sadd "myset" "a")
-;; lpush on set: sets are stored outside *store*, so lpush sees a missing key
-;; and creates a fresh list (no type error, but wrong semantics)
-;; This is a known limitation — sets don't share the *store* namespace
-(assert-equal (kv-hset "myset" "f" "v") "ERR wrong type" "kv-hset on set value")
-(kv-flush)
-
-(newline)
-(display "=== Results: ") (display passed) (display " passed, ")
-(display failed) (display " failed") (newline)
+;; === test-kv.aura — kv 存储 V3 测试 ===
+;; 用法: cat kv.aura test-kv.aura | ./build/aura
+;;       或 (load "kv.aura") (load "test-kv.aura")
+
+(define (run-kv-tests)
+  (define passed 0)
+  (define failed 0)
+  (define (assert-equal actual expected msg)
+    (if (equal? actual expected)
+        (begin
+          (set! passed (+ passed 1))
+          (display "[PASS] ") (display msg) (newline))
+        (begin
+          (set! failed (+ failed 1))
+          (display "[FAIL] ") (display msg)
+          (display " — expected: ") (display expected)
+          (display ", got: ") (display actual)
+          (newline))))
+  (display "=== kv.aura V3 tests (with List ops) ===") (newline)
+
+  ;; ── 基础 CRUD ──
+  (assert-equal (kv-set "name" "Aura") "OK" "kv-set returns OK")
+  (assert-equal (kv-get "name") "Aura" "kv-get returns stored value")
+  (assert-equal (kv-get "nonexistent") (void) "kv-get missing key returns void")
+  (assert-equal (kv-exists? "name") #t "kv-exists? existing key")
+  (assert-equal (kv-exists? "nope") #f "kv-exists? missing key")
+  (assert-equal (kv-del "name") "OK" "kv-del returns OK")
+  (assert-equal (kv-exists? "name") #f "kv-exists? after del")
+  (assert-equal (kv-get "name") (void) "kv-get after del returns void")
+
+  ;; ── Incr ──
+  (assert-equal (kv-incr "counter") 1 "kv-incr starts at 1")
+  (assert-equal (kv-incr "counter") 2 "kv-incr increments to 2")
+  (assert-equal (kv-incr "counter") 3 "kv-incr increments to 3")
+  (assert-equal (kv-get "counter") 3 "kv-get after incr")
+  (kv-set "str" "hello")
+  (assert-equal (kv-incr "str") "ERR wrong type" "kv-incr on non-int")
+  (kv-del "str")
+
+  ;; ── String values ──
+  (assert-equal (kv-set "x" "hello") "OK" "kv-set string")
+  (assert-equal (kv-get "x") "hello" "kv-get string")
+
+  ;; ── Flush ──
+  (assert-equal (kv-flush) "OK" "kv-flush returns OK")
+  (assert-equal (kv-length) 0 "kv-length after flush")
+  (assert-equal (kv-exists? "counter") #f "kv-exists? after flush")
+
+  ;; ── TTL ──
+  (kv-set "persistent" "stays")
+  (assert-equal (kv-ttl "persistent") -1 "kv-ttl no TTL = -1")
+  (kv-set-with-ttl "temp" "val" 30)
+  (assert-equal (kv-get "temp") "val" "set-with-ttl stores value")
+  (assert-equal (kv-exists? "temp") #t "exists? with TTL")
+  (assert-equal (kv-ttl "temp") 30 "kv-ttl 30s key")
+  (assert-equal (kv-persist "temp") "OK" "kv-persist")
+  (assert-equal (kv-ttl "temp") -1 "kv-ttl after persist")
+  (kv-set-with-ttl "insta" "gone" 0)
+  (assert-equal (kv-get "insta") (void) "kv-get expired key")
+  (assert-equal (kv-exists? "insta") #f "kv-exists? expired key")
+  (assert-equal (kv-expire "persistent" 60) "OK" "kv-expire existing key")
+  (assert-equal (kv-expire "no-such" 60) "ERR no such key" "kv-expire missing key")
+  (assert-equal (kv-persist "no-such") "ERR no such key" "kv-persist missing key")
+  (assert-equal (kv-ttl "no-such-key") -2 "kv-ttl missing key = -2")
+  (kv-flush)
+
+  ;; ── List 操作 ──
+  (assert-equal (kv-lpush "tasks" "c") 1 "kv-lpush first element")
+  (assert-equal (kv-lpush "tasks" "b") 2 "kv-lpush second element (prepended)")
+  (assert-equal (kv-lpush "tasks" "a") 3 "kv-lpush third element")
+  (assert-equal (kv-lrange "tasks" 0 -1) (list "a" "b" "c") "kv-lrange all elements")
+  (assert-equal (kv-lrange "tasks" 0 1) (list "a" "b") "kv-lrange first 2")
+  (assert-equal (kv-lrange "tasks" 1 2) (list "b" "c") "kv-lrange middle 2")
+  (assert-equal (kv-lrange "tasks" -2 -1) (list "b" "c") "kv-lrange negative indices")
+  (assert-equal (kv-lrange "nonexistent" 0 -1) '() "kv-lrange missing key")
+  (assert-equal (kv-llen "tasks") 3 "kv-llen after 3 pushes")
+  (assert-equal (kv-llen "nonexistent") 0 "kv-llen missing key")
+  (assert-equal (kv-lpop "tasks") "a" "kv-lpop removes first element")
+  (assert-equal (kv-llen "tasks") 2 "kv-llen after lpop")
+  (assert-equal (kv-lrange "tasks" 0 -1) (list "b" "c") "kv-lrange after lpop")
+  (assert-equal (kv-rpop "tasks") "c" "kv-rpop removes last element")
+  (assert-equal (kv-llen "tasks") 1 "kv-llen after rpop")
+  (assert-equal (kv-lpop "tasks") "b" "kv-lpop last remaining element")
+  (assert-equal (kv-llen "tasks") 0 "kv-llen after popping all")
+  (assert-equal (kv-exists? "tasks") #f "kv-exists? after all popped (key deleted)")
+  (assert-equal (kv-lpop "missing") (void) "kv-lpop missing key returns void")
+  (assert-equal (kv-rpop "missing") (void) "kv-rpop missing key returns void")
+  (assert-equal (kv-rpush "queue" "a") 1 "kv-rpush first element")
+  (assert-equal (kv-rpush "queue" "b") 2 "kv-rpush second element")
+  (assert-equal (kv-rpush "queue" "c") 3 "kv-rpush third element")
+  (assert-equal (kv-lrange "queue" 0 -1) (list "a" "b" "c") "kv-lrange after rpush 3")
+  (assert-equal (kv-rpop "queue") "c" "kv-rpop removes last (LIFO)")
+  (assert-equal (kv-lpop "queue") "a" "kv-lpop removes first (FIFO)")
+  (kv-flush)
+  (assert-equal (kv-lpush "m" "c" "b" "a") 3 "kv-lpush variadic")
+  (assert-equal (kv-lrange "m" 0 -1) (list "a" "b" "c") "kv-lrange after variadic lpush")
+  (kv-flush)
+  (assert-equal (kv-rpush "m" "a" "b" "c") 3 "kv-rpush variadic")
+  (assert-equal (kv-lrange "m" 0 -1) (list "a" "b" "c") "kv-lrange after variadic rpush")
+  (kv-flush)
+  (kv-rpush "l" "x" "y" "z")
+  (assert-equal (kv-lindex "l" 0) "x" "kv-lindex first element")
+  (assert-equal (kv-lindex "l" 1) "y" "kv-lindex middle element")
+  (assert-equal (kv-lindex "l" -1) "z" "kv-lindex last with negative")
+  (assert-equal (kv-lindex "l" -2) "y" "kv-lindex second to last")
+  (assert-equal (kv-lindex "l" 99) (void) "kv-lindex out of range")
+  (assert-equal (kv-lindex "missing" 0) (void) "kv-lindex missing key")
+  (kv-flush)
+  (kv-set "notlist" "hello")
+  (assert-equal (kv-lpush "notlist" "x") "ERR wrong type" "kv-lpush on string value")
+  (assert-equal (kv-rpush "notlist" "x") "ERR wrong type" "kv-rpush on string value")
+  (kv-flush)
+  (kv-rpush "temp-list" "a" "b" "c")
+  (kv-set-with-ttl "temp-list" "overwrite" 30)
+  (assert-equal (kv-get "temp-list") "overwrite" "set overwrites list")
+  (kv-set-with-ttl "exp-list" "x" 0)
+  (assert-equal (kv-lpush "exp-list" "a") 1 "lpush on expired key creates fresh list")
+  (kv-del "exp-list")
+  (kv-rpush "tl" "a" "b")
+  (kv-expire "tl" 0)
+  (assert-equal (kv-llen "tl") 0 "kv-llen after TTL expires (auto-cleaned)")
+
+  ;; ── Hash 操作 ──
+  (assert-equal (kv-hset "user:1" "name" "Alice") 1 "kv-hset new field returns 1")
+  (assert-equal (kv-hset "user:1" "age" "30") 1 "kv-hset second field")
+  (assert-equal (kv-hget "user:1" "name") "Alice" "kv-hget returns field value")
+  (assert-equal (kv-hget "user:1" "age") "30" "kv-hget second field")
+  (assert-equal (kv-hset "user:1" "name" "Bob") 0 "kv-hset existing field returns 0")
+  (assert-equal (kv-hget "user:1" "name") "Bob" "kv-hget after update")
+  (assert-equal (kv-hexists "user:1" "name") #t "kv-hexists existing field")
+  (assert-equal (kv-hexists "user:1" "nonexistent") #f "kv-hexists missing field")
+  (assert-equal (kv-hlen "user:1") 2 "kv-hlen after 2 fields")
+  (assert-equal (not (not (member "name" (map car (kv-hgetall "user:1"))))) #t "kv-hgetall contains name")
+  (assert-equal (not (not (member "age" (map car (kv-hgetall "user:1"))))) #t "kv-hgetall contains age")
+  (kv-hset "user:1" "role" "admin")
+  (assert-equal (not (not (member "role" (kv-hkeys "user:1")))) #t "kv-hkeys contains role")
+  (assert-equal (not (not (member "admin" (kv-hvals "user:1")))) #t "kv-hvals contains admin")
+  (assert-equal (kv-hdel "user:1" "age") 1 "kv-hdel removes 1 field")
+  (assert-equal (kv-hexists "user:1" "age") #f "kv-hexists after hdel")
+  (assert-equal (kv-hlen "user:1") 2 "kv-hlen after hdel")
+  (assert-equal (kv-hdel "user:1" "nonexistent") 0 "kv-hdel missing field returns 0")
+  (kv-hdel "user:1" "name" "role")
+  (assert-equal (kv-exists? "user:1") #f "kv-exists? after deleting all hash fields")
+  (assert-equal (kv-hget "nonexistent" "f") (void) "kv-hget missing key")
+  (assert-equal (kv-hlen "nonexistent") 0 "kv-hlen missing key")
+  (assert-equal (kv-hexists "nonexistent" "f") #f "kv-hexists missing key")
+  (assert-equal (kv-hgetall "nonexistent") '() "kv-hgetall missing key")
+  (kv-hset "session:1" "token" "abc")
+  (kv-expire "session:1" 30)
+  (assert-equal (kv-ttl "session:1") 30 "kv-ttl on hash key")
+  (assert-equal (kv-hget "session:1" "token") "abc" "kv-hget with TTL")
+  (kv-persist "session:1")
+  (assert-equal (kv-ttl "session:1") -1 "kv-persist on hash key")
+  (kv-hset "tmp:h" "x" 1)
+  (kv-expire "tmp:h" 30)
+  (assert-equal (kv-ttl "tmp:h") 30 "kv-ttl on hash before new hset")
+  (kv-hset "tmp:h" "y" 2)
+  (assert-equal (kv-ttl "tmp:h") -1 "kv-hset clears old TTL")
+  (assert-equal (kv-hget "tmp:h" "y") 2 "kv-hget after new hset")
+  (kv-del "tmp:h")
+  (kv-hset "h" "f" "v")
+  (assert-equal (kv-lpush "h" "x") "ERR wrong type" "kv-lpush on hash value")
+  (kv-rpush "l" "a" "b")
+  (assert-equal (kv-hset "l" "f" "v") "ERR wrong type" "kv-hset on list value")
+  (kv-flush)
+
+  ;; ── 持久化 ──
+  (kv-set "str" "hello")
+  (kv-set "num" 42)
+  (kv-incr "counter")
+  (kv-incr "counter")
+  (kv-set-with-ttl "temp" "expires" 30)
+  (assert-equal (kv-save "/tmp/kv-dump.aura") "OK" "kv-save returns OK")
+  (assert-equal (kv-get "str") "hello" "kv-get after save")
+  (assert-equal (kv-get "num") 42 "kv-get int after save")
+  (assert-equal (kv-get "counter") 2 "kv-get counter after save")
+  (kv-flush)
+  (assert-equal (kv-length) 0 "kv-length after flush before load")
+  (assert-equal (kv-exists? "str") #f "kv-exists? after flush")
+  (assert-equal (kv-load "/tmp/kv-dump.aura") "OK" "kv-load returns OK")
+  (assert-equal (kv-get "str") "hello" "kv-get after load")
+  (assert-equal (kv-get "num") 42 "kv-get int after load")
+  (assert-equal (kv-get "counter") 2 "kv-get counter after load")
+  (assert-equal (kv-exists? "temp") #t "kv-exists? temp after load")
+  (assert-equal (kv-ttl "temp") 30 "kv-ttl temp after load")
+  (kv-flush)
+
+  ;; ── 事务 ──
+  (kv-set "a" "x")
+  (kv-multi)
+  (assert-equal (kv-enqueue kv-set "a" "b") "QUEUED" "kv-enqueue returns QUEUED")
+  (assert-equal (kv-enqueue kv-get "a") "QUEUED" "kv-enqueue kv-get")
+  (kv-discard)
+  (assert-equal (kv-get "a") "x" "kv-get after discard (unchanged)")
+  (kv-multi)
+  (kv-enqueue kv-set "a" "y")
+  (kv-enqueue kv-get "a")
+  (let ((r (kv-exec)))
+    (assert-equal (car r) 'OK "kv-exec returns (OK ...)"))
+  (assert-equal (kv-get "a") "y" "kv-get after exec (changed)")
+  (assert-equal (kv-exec) "ERR EXEC without MULTI" "kv-exec without multi")
+  (assert-equal (kv-discard) "ERR DISCARD without MULTI" "kv-discard without multi")
+  (kv-set "x" 1)
+  (kv-multi)
+  (kv-enqueue kv-incr "x")
+  (kv-enqueue kv-incr "x")
+  (kv-enqueue kv-incr "x")
+  (kv-discard)
+  (assert-equal (kv-get "x") 1 "kv-get after multi+discard incr (unchanged)")
+  (kv-multi)
+  (let ((r (kv-exec)))
+    (assert-equal (car r) 'OK "kv-exec empty returns (OK)"))
+  (kv-set "counter" 0)
+  (kv-multi)
+  (kv-enqueue kv-set "counter" 1000)
+  (assert-equal (kv-get "counter") 0 "kv-get inside transaction (not yet committed)")
+  (kv-discard)
+  (assert-equal (kv-get "counter") 0 "kv-get after discard (preserved)")
+  (kv-flush)
+
+  ;; ── Set 操作 ──
+  (assert-equal (kv-sadd "colors" "red") 1 "kv-sadd new member returns 1")
+  (assert-equal (kv-sadd "colors" "blue") 1 "kv-sadd second member")
+  (assert-equal (kv-sadd "colors" "green") 1 "kv-sadd third member")
+  (assert-equal (kv-sadd "colors" "red") 0 "kv-sadd existing returns 0")
+  (assert-equal (kv-scard "colors") 3 "kv-scard verifies 3 members added")
+  (assert-equal (kv-sismember "colors" "red") #t "kv-sismember red")
+  (assert-equal (kv-sismember "colors" "blue") #t "kv-sismember blue")
+  (assert-equal (kv-sismember "colors" "green") #t "kv-sismember green")
+  (assert-equal (kv-srem "colors" "blue") 1 "kv-srem removes member")
+  (assert-equal (kv-scard "colors") 2 "kv-scard after srem")
+  (assert-equal (kv-srem "colors" "blue") 0 "kv-srem missing returns 0")
+  (assert-equal (kv-sismember "colors" "blue") #f "kv-sismember after srem")
+  (kv-srem "colors" "red")
+  (kv-srem "colors" "green")
+  (assert-equal (kv-exists? "colors") #f "kv-exists? after removing all set members")
+  (assert-equal (kv-smembers "nonexistent") '() "kv-smembers missing key")
+  (assert-equal (kv-scard "nonexistent") 0 "kv-scard missing key")
+  (assert-equal (kv-sismember "nonexistent" "x") #f "kv-sismember missing key")
+  (kv-set "notset" "hello")
+  (assert-equal (kv-sadd "notset" "x") "ERR wrong type" "kv-sadd on string value")
+  (kv-del "notset")
+  (kv-sadd "myset" "a")
+  (assert-equal (kv-lpush "myset" "x") "ERR wrong type" "kv-lpush on set value")
+  (assert-equal (kv-hset "myset" "f" "v") "ERR wrong type" "kv-hset on set value")
+  (kv-flush)
+
+  (newline)
+  (display "=== Results: ") (display passed) (display " passed, ")
+  (display failed) (display " failed") (newline))
+
+;; 执行测试
+(run-kv-tests)
