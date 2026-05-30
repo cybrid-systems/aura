@@ -1647,6 +1647,8 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
                     auto type_tag = type_tag_for_coercion(ft.args[i], &reg_);
                     auto coercion_id = flat.add_coercion(
                         arg_id, type_tag, ft.args[i].index);
+                    // Copy source location from the call node for blame tracking
+                    flat.set_loc(coercion_id, v.line, v.col);
                     flat.set_child(v.id, static_cast<std::uint32_t>(i + 1), coercion_id);
                 } else {
                     auto msg = std::string("argument ") + std::to_string(i) + ": expected " +
@@ -2163,6 +2165,9 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
                 auto type_tag = type_tag_for_coercion(expected, &reg_);
                 auto coercion_id = flat.add_coercion(
                     id, type_tag, expected.index);
+                // Copy source location from the expression for blame tracking
+                auto src_v = flat.get(id);
+                flat.set_loc(coercion_id, src_v.line, src_v.col);
                 // Update parent's child reference
                 auto parent_id = flat.parent_of(id);
                 if (parent_id != aura::ast::NULL_NODE) {
@@ -2198,6 +2203,8 @@ void InferenceEngine::check_flat_call(FlatAST& flat, StringPool& pool, NodeView 
             auto type_tag = type_tag_for_coercion(expected, &reg_);
             auto coercion_id = flat.add_coercion(
                 v.id, type_tag, expected.index);
+            // Copy source location from the call node for blame tracking
+            flat.set_loc(coercion_id, v.line, v.col);
             // Replace v.id's reference in parent with the CoercionNode
             auto parent_id = flat.parent_of(v.id);
             if (parent_id != aura::ast::NULL_NODE) {
