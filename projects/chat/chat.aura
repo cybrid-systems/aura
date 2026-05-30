@@ -1,0 +1,43 @@
+;; === chat.aura — 简单 session 间消息协议 ===
+;; 依赖: send / recv / broadcast (C++ primitives)
+;;
+;; 用法 (serve mode):
+;;   (load "projects/chat/chat.aura")
+;;   (chat-start "alice")         → 注册昵称
+;;   (chat-send "bob" "hello!")   → 发送给 bob
+;;   (chat-recv)                  → 接收消息
+;;   (chat-broadcast "all hands") → 广播
+
+(define *chat-nick* #f)        ;; 当前 session 昵称
+
+(define (chat-start nick)
+  "注册昵称，开始聊天。返回 'OK'。"
+  (set! *chat-nick* nick)
+  "OK")
+
+(define (chat-send target msg)
+  "发送消息到指定会话。返回 #t 成功 #f 失败。"
+  (if (not *chat-nick*)
+      #f
+      (send target (string-append "[" *chat-nick* "] " msg))))
+
+(define (chat-recv . opt)
+  "接收消息。可选参数 timeout-ms。返回消息字符串或 #f。"
+  (if (null? opt)
+      (recv)
+      (recv (car opt))))
+
+(define (chat-broadcast msg)
+  "向所有会话广播消息。返回发送数。"
+  (broadcast (string-append "[广播] " msg)))
+
+(define (chat-reply msg)
+  "回复最近接收到的会话（自动填充 target）。"
+  (if (and *chat-nick* *chat-last-sender*)
+      (send *chat-last-sender* (string-append "[" *chat-nick* " → " *chat-last-sender* "] " msg))
+      #f))
+
+(define *chat-last-sender* #f)
+
+;; 给 recv 包装增加 sender 跟踪
+;; 注意: 导入时会覆盖 chat-recv，需要顺序
