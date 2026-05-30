@@ -38,8 +38,14 @@ public:
     Scheduler& operator=(Scheduler&&) = delete;
 
     // Create a new fiber. The fiber is assigned to a worker
-    // (round-robin across available workers).
+    // (round-robin across available workers, or load-aware when enabled).
     Fiber* spawn(Fiber::Func func, size_t stack_size = 2 * 1024 * 1024);
+
+    // Create a new fiber pinned to a specific worker (affinity).
+    // worker_id: 0..num_workers-1. The fiber will always run on
+    // that worker, even after yield/wakeup (cache-aware scheduling).
+    Fiber* spawn_with_affinity(Fiber::Func func, int worker_id,
+                                size_t stack_size = 2 * 1024 * 1024);
 
     // Run the event loop until all fibers are done.
     // This is called on the main thread (IO thread).

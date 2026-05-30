@@ -79,6 +79,10 @@ public:
                r == YieldReason::OperationBoundary;
     }
 
+    // Worker affinity (P2): -1 = any worker, 0..N-1 = specific worker
+    int affinity() const { return affinity_; }
+    void set_affinity(int worker_id) { affinity_ = worker_id; }
+
     // Accessors
     uint64_t id() const { return id_; }
     FiberState state() const { return state_.load(std::memory_order_acquire); }
@@ -90,6 +94,7 @@ private:
     uint64_t id_;
     std::atomic<FiberState> state_{FiberState::Ready};
     std::atomic<YieldReason> last_yield_reason_{YieldReason::Explicit};
+    int affinity_ = -1;  // -1 = any worker, [0,N) = pinned to specific worker
     ucontext_t ctx_;
     void* stack_ = nullptr;
     size_t stack_size_ = 0;
