@@ -64,6 +64,30 @@ struct GCRootSet {
 // Called during the GC root collection phase.
 using GCRootFlushFn = std::function<void(GCRootSet& out)>;
 
+// Forward declarations for sweep types
+class MarkBitVector;
+struct GCSweepResult;
+
+// ── GC sweep result (Phase 3+4) ────────────────────
+// After marking and sweeping, records what was reclaimed.
+struct GCSweepResult {
+    size_t strings_freed = 0;
+    size_t pairs_freed = 0;
+    size_t closures_freed = 0;
+    size_t fiber_results_freed = 0;
+};
+
+// ── Sweep callback (Phase 4) ───────────────────────
+// After marking, the GC calls this to let the evaluator compact
+// its vector heaps (string_heap_, pairs_, closures_, etc.) by
+// removing unmarked entries.
+struct GCSweepBuffers {
+    const MarkBitVector* string_marks = nullptr;
+    const MarkBitVector* pair_marks = nullptr;
+    const MarkBitVector* closure_marks = nullptr;
+};
+using GCSweepFn = std::function<GCSweepResult(const GCSweepBuffers&)>;
+
 // ── MarkBitVector — concurrent mark bits for vector heaps (Phase 3) ─
 // One bit per index in a heap vector. Set by parallel marking workers.
 // Uses std::vector<bool> internally which is bit-packed.
@@ -99,15 +123,7 @@ private:
     std::vector<bool> bits_;
 };
 
-// ── GC sweep result (Phase 3) ────────────────────────
-// After marking and sweeping, records what was reclaimed.
-struct GCSweepResult {
-    // Number of entries removed from each heap
-    size_t strings_freed = 0;
-    size_t pairs_freed = 0;
-    size_t closures_freed = 0;
-    size_t fiber_results_freed = 0;
-};
+
 
 class GCCollector {
 public:
@@ -124,6 +140,11 @@ public:
     // ── Root source registration (Phase 2) ──────────
     void register_root_source(int worker_id, GCRootFlushFn fn);
     void unregister_root_source(int worker_id);
+
+    // ── Sweep callback registration (Phase 4) ───────
+    // The evaluator registers a callback that compacts its
+    // vector heaps after marking. Called during sweep phase.
+    void register_sweep_fn(GCSweepFn fn);
 
     // ── Mark + Sweep (Phase 3) ──────────────────────
     void mark_from_roots(const GCRootSet& roots,
@@ -169,6 +190,9 @@ private:
     std::unordered_map<int, GCRootFlushFn> root_sources_;
 
     void collect_roots(GCRootSet& out);
+
+    // Sweep callback (Phase 4)
+    GCSweepFn sweep_fn_;
 
     // Mark state (Phase 3)
     MarkBitVector string_marks_;
