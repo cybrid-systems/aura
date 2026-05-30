@@ -739,21 +739,21 @@ bool test_ws_deque_concurrent_pattern() {
 
     aura::serve::WorkStealingDeque<void*> dq;
 
-    // Owner pushes 5 items
-    for (int i = 0; i < 5; ++i)
+    // Owner pushes 5 items (values 1..5, never 0 to avoid nullptr sentinel)
+    for (int i = 1; i <= 5; ++i)
         dq.push(reinterpret_cast<void*>(static_cast<intptr_t>(i)));
 
-    // Stealer steals 2 (oldest: 0, 1)
+    // Stealer steals 2 (oldest: 1, 2)
     auto s1 = reinterpret_cast<intptr_t>(dq.steal());
     auto s2 = reinterpret_cast<intptr_t>(dq.steal());
-    CHECK(s1 == 0, "steal #1 = 0");
-    CHECK(s2 == 1, "steal #2 = 1");
+    CHECK(s1 == 1, "steal #1 = 1");
+    CHECK(s2 == 2, "steal #2 = 2");
 
     // Owner pushes 3 more while stealer has stolen some
     for (int i = 10; i < 13; ++i)
         dq.push(reinterpret_cast<void*>(static_cast<intptr_t>(i)));
 
-    // Owner pops: should get most recent (LIFO: 12, 11, 10, 4, 3, 2)
+    // Owner pops: should get most recent (LIFO: 12, 11, 10, 5, 4)
     auto p1 = reinterpret_cast<intptr_t>(dq.pop());
     auto p2 = reinterpret_cast<intptr_t>(dq.pop());
     CHECK(p1 == 12, "owner pop after steal = 12");
@@ -761,10 +761,10 @@ bool test_ws_deque_concurrent_pattern() {
 
     // Steal again: gets oldest remaining
     auto s3 = reinterpret_cast<intptr_t>(dq.steal());
-    CHECK(s3 == 2, "steal #3 = 2 (oldest remaining)");
+    CHECK(s3 == 3, "steal #3 = 3 (oldest remaining)");
 
     // Pop all remaining
-    int remaining[] = {10, 4, 3};
+    int remaining[] = {10, 5, 4};
     for (int i = 0; i < 3; ++i) {
         auto val = reinterpret_cast<intptr_t>(dq.pop());
         CHECK(val == remaining[i], "remaining pop = " + std::to_string(remaining[i]));
@@ -913,6 +913,119 @@ bool test_single_worker() {
 
 // ── Test 26: Disable load-aware — verify round-robin fallback ──
 
+// ── Test 27: Multi-threaded Chase-Lev deque stress ──────────
+// Push items first (no resize during steal), then concurrent steal
+// from multiple stealers + owner pop. This avoids the resize-vs-steal
+// race while still testing concurrent top/bottom contention.
+
+bool test_ws_deque_concurrent_stress() {
+    std::println("\n--- Test: WS deque multi-threaded stress ---");
+
+    aura::serve::WorkStealingDeque<int*> dq;
+    constexpr int TOTAL = 5000;
+
+    // Push all items first (no concurrent access yet).
+    // Use values 1..TOTAL to avoid nullptr sentinel (0 → nullptr).
+    for (int i = 1; i <= TOTAL; ++i) {
+        dq.push(reinterpret_cast<int*>(static_cast<intptr_t>(i)));
+    }
+
+    std::atomic<int> stolen_count{0};
+    std::atomic<int> owner_popped{0};
+    constexpr int NUM_STEALERS = 4;
+
+    // Start stealers and owner pop concurrently
+    std::thread owner([&]() {
+        int local = 0;
+        for (int attempt = 0; attempt < 2000; ++attempt) {
+            if (dq.pop()) ++local;
+            std::this_thread::yield();
+        }
+        owner_popped.store(local, std::memory_order_release);
+    });
+
+    std::vector<std::thread> stealers;
+    for (int s = 0; s < NUM_STEALERS; ++s) {
+        stealers.push_back(std::thread([&]() {
+            int local = 0;
+            for (int attempt = 0; attempt < 3000; ++attempt) {
+                if (dq.steal()) ++local;
+                std::this_thread::yield();
+            }
+            stolen_count.fetch_add(local, std::memory_order_release);
+        }));
+    }
+
+    owner.join();
+    for (auto& t : stealers) t.join();
+
+    int total_stolen = stolen_count.load(std::memory_order_acquire);
+    int popped = owner_popped.load(std::memory_order_acquire);
+    int total = total_stolen + popped;
+
+    CHECK(total == TOTAL,
+          std::to_string(total) + " items processed (" +
+          std::to_string(TOTAL) + " total, owner popped " +
+          std::to_string(popped) + ", stealers took " +
+          std::to_string(total_stolen) + ")");
+
+    CHECK(dq.empty_approx(), "deque is empty after stress test");
+    return true;
+}
+
+// ── Test 28: Concurrent steal-only stress ───────────────────
+// Push many items, then multiple stealers fight over them.
+
+bool test_ws_deque_steal_contention() {
+    std::println("\n--- Test: WS deque steal contention (no owner pop) ---");
+
+    aura::serve::WorkStealingDeque<int*> dq;
+    constexpr int TOTAL = 5000;
+
+    // Push all items first (values 1..TOTAL, never 0/nullptr)
+    for (int i = 1; i <= TOTAL; ++i) {
+        dq.push(reinterpret_cast<int*>(static_cast<intptr_t>(i)));
+    }
+
+    std::atomic<int> stolen_total{0};
+    constexpr int NUM_STEALERS = 6;
+    // Use enough attempts for all stealers to drain the deque
+    std::vector<std::thread> stealers;
+
+    for (int s = 0; s < NUM_STEALERS; ++s) {
+        stealers.push_back(std::thread([&]() {
+            int local = 0;
+            int attempts = 0;
+            int max_attempts = TOTAL / NUM_STEALERS + 1000;  // generous
+            while (attempts < max_attempts) {
+                if (auto* item = dq.steal()) {
+                    (void)item;
+                    ++local;
+                    attempts = 0;
+                } else {
+                    ++attempts;
+                }
+                std::this_thread::yield();
+            }
+            stolen_total.fetch_add(local, std::memory_order_release);
+        }));
+    }
+
+    for (auto& t : stealers) t.join();
+
+    // Also try to pop any remaining items
+    int remaining = 0;
+    while (dq.pop()) ++remaining;
+
+    int total = stolen_total.load(std::memory_order_acquire) + remaining;
+    CHECK(total == TOTAL,
+          "all " + std::to_string(TOTAL) + " items processed (stolen=" +
+          std::to_string(stolen_total.load(std::memory_order_acquire)) +
+          ", remaining=" + std::to_string(remaining) + ")");
+    CHECK(dq.empty_approx(), "deque empty after steal contention");
+    return true;
+}
+
 bool test_round_robin_fallback() {
     std::println("\n--- Test: Round-robin fallback (load-aware disabled) ---");
 
@@ -950,6 +1063,8 @@ int main() {
     test_ws_deque();
     test_ws_deque_resize();
     test_ws_deque_concurrent_pattern();
+    test_ws_deque_concurrent_stress();
+    test_ws_deque_steal_contention();
     test_worker_lifecycle();
     test_fiber_lifecycle();
     test_fiber_yield();
