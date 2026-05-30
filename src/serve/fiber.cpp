@@ -21,6 +21,22 @@ thread_local WorkerContext* g_worker_ctx = nullptr;
 
 Scheduler* g_scheduler = nullptr;
 
+// ── GC safepoint check ────────────────────────────────
+
+void Fiber::check_gc_safepoint() {
+    auto* wctx = g_worker_ctx;
+    if (!wctx) return;
+    auto* gc = wctx->gc_state;
+    if (!gc) return;
+    auto phase = gc->phase.load(std::memory_order_acquire);
+    if (phase == GCPhase::Requested) {
+        // Arrive at safepoint: increment counter
+        gc->fibers_at_safepoint.fetch_add(1, std::memory_order_release);
+        // Spin-wait until GC completes
+        gc->wait_for_resume();
+    }
+}
+
 // ── Constructor ───────────────────────────────────────
 
 Fiber::Fiber(Func func, size_t stack_size)
@@ -115,6 +131,9 @@ void Fiber::yield() {
         return;
     }
 
+    // Check GC safepoint before yielding (P2)
+    check_gc_safepoint();
+
     auto* fb = g_current_fiber;
     if (!fb) return;
 
@@ -139,6 +158,9 @@ void Fiber::yield(YieldReason reason) {
 
     auto* fb = g_current_fiber;
     if (!fb) return;
+
+    // Check GC safepoint before yielding (P2)
+    check_gc_safepoint();
 
     // Record the yield reason for scheduler inspection
     fb->set_yield_reason(reason);

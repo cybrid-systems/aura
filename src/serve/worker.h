@@ -151,6 +151,12 @@ public:
     // Notify the scheduler about a done fiber (via callback)
     void notify_fiber_done(Fiber* fiber);
 
+    // ── GC state (P2) ────────────────────────────────
+    // Each worker has its own GC state. The scheduler's
+    // GC coordinator broadcasts phase transitions.
+    WorkerGCState gc_state_;
+    WorkerGCState& gc_state() { return gc_state_; }
+
     // ── Metrics access ──────────────────────────────
     void set_metrics(metrics::WorkerMetrics* m) { worker_metrics_ = m; }
     metrics::WorkerMetrics* worker_metrics() const { return worker_metrics_; }

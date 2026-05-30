@@ -47,6 +47,7 @@ target_sources(aura PRIVATE
     src/serve/worker.cpp
     src/serve/thread_pool.cpp
     src/serve/scheduler.cpp
+    src/serve/gc_coordinator.cpp
     src/serve/serve_async.cpp
     src/exec/execution_adapter.cpp
     src/exec/combinators.cpp
@@ -151,6 +152,7 @@ target_sources(test_ir PRIVATE
     src/serve/worker.cpp
     src/serve/thread_pool.cpp
     src/serve/scheduler.cpp
+    src/serve/gc_coordinator.cpp
     src/exec/execution_adapter.cpp
     src/exec/combinators.cpp
     src/core/ast_impl.cpp
@@ -181,6 +183,7 @@ target_sources(test_concurrent PRIVATE
     src/serve/fiber.cpp
     src/serve/worker.cpp
     src/serve/scheduler.cpp
+    src/serve/gc_coordinator.cpp
     src/exec/execution_adapter.cpp
     src/exec/combinators.cpp
 )
