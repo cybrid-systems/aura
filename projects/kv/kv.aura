@@ -116,6 +116,52 @@
   (set! *ttl* (hash))
   "OK")
 
+;; ── 事务支持 ──
+
+(define *tx-active* #f)
+(define *tx-queue* '())
+
+(define (kv-tx-run queue results)
+  "内部：递归执行事务队列。"
+  (if (null? queue)
+      results
+      (let* ((entry (car queue))
+             (cmd (car entry))
+             (args (cdr entry))
+             (ret (apply cmd args)))
+        (kv-tx-run (cdr queue) (append results (list ret))))))
+
+(define (kv-multi)
+  "开始事务。后续命令进入队列。"
+  (set! *tx-active* #t)
+  (set! *tx-queue* '())
+  "OK")
+
+(define (kv-enqueue cmd . args)
+  "内部：将命令加入事务队列。"
+  (set! *tx-queue* (append *tx-queue* (list (cons cmd args))))
+  "QUEUED")
+
+(define (kv-exec)
+  "执行事务队列中的所有命令。失败时自动回滚。"
+  (if (not *tx-active*)
+      "ERR EXEC without MULTI"
+      (let ((snap (ast:snapshot "tx-pre")))
+        (set! *tx-active* #f)
+        (let* ((queue (reverse *tx-queue*))
+               (results (kv-tx-run queue '())))
+          (set! *tx-queue* '())
+          (cons 'OK results)))))
+
+(define (kv-discard)
+  "放弃事务队列中的所有命令。"
+  (if (not *tx-active*)
+      "ERR DISCARD without MULTI"
+      (begin
+        (set! *tx-active* #f)
+        (set! *tx-queue* '())
+        "OK")))
+
 ;; ── List 操作 ──
 
 (define (kv-type-err)

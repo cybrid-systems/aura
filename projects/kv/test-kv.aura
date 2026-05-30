@@ -259,6 +259,53 @@
 
 (kv-flush)
 
+;; ── 事务 ──
+
+;; MULTI + DISCARD 放弃
+(kv-set "a" "x")
+(kv-multi)
+(assert-equal (kv-enqueue kv-set "a" "b") "QUEUED" "kv-enqueue returns QUEUED")
+(assert-equal (kv-enqueue kv-get "a") "QUEUED" "kv-enqueue kv-get")
+(kv-discard)
+(assert-equal (kv-get "a") "x" "kv-get after discard (unchanged)")
+
+;; EXEC 执行
+(kv-multi)
+(kv-enqueue kv-set "a" "y")
+(kv-enqueue kv-get "a")
+(let ((r (kv-exec)))
+  (assert-equal (car r) 'OK "kv-exec returns (OK ...)"))
+(assert-equal (kv-get "a") "y" "kv-get after exec (changed)")
+
+;; EXEC/DISCARD without MULTI
+(assert-equal (kv-exec) "ERR EXEC without MULTI" "kv-exec without multi")
+(assert-equal (kv-discard) "ERR DISCARD without MULTI" "kv-discard without multi")
+
+;; MULTI + DISCARD 保留原始值
+(kv-set "x" 1)
+(kv-multi)
+(kv-enqueue kv-incr "x")
+(kv-enqueue kv-incr "x")
+(kv-enqueue kv-incr "x")
+(kv-discard)
+(assert-equal (kv-get "x") 1 "kv-get after multi+discard incr (unchanged)")
+
+;; 空 EXEC
+(kv-multi)
+(let ((r (kv-exec)))
+  (assert-equal (car r) 'OK "kv-exec empty returns (OK)"))
+
+;; 事务隔离性
+(kv-set "counter" 0)
+(kv-multi)
+(kv-enqueue kv-set "counter" 1000)
+;; 事务中数据不变
+(assert-equal (kv-get "counter") 0 "kv-get inside transaction (not yet committed)")
+(kv-discard)
+(assert-equal (kv-get "counter") 0 "kv-get after discard (preserved)")
+
+(kv-flush)
+
 (newline)
 (display "=== Results: ") (display passed) (display " passed, ")
 (display failed) (display " failed") (newline)
