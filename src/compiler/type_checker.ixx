@@ -30,6 +30,37 @@ public:
     void collect_names(std::vector<std::string>& out) const;
 };
 
+// ── Constraint System ────────────────────────────────────
+export struct Constraint {
+    enum Kind { EQUAL, CONSISTENT };
+    Kind kind;
+    aura::core::TypeId lhs, rhs;
+};
+
+export class ConstraintSystem {
+    aura::core::TypeRegistry& reg_;
+    std::vector<Constraint> constraints_;
+    std::vector<std::int64_t> parent_;        // Union-Find parent (self=root, -1=uninitialized)
+    std::vector<std::uint32_t> rank_;         // Union-Find rank (for union-by-rank)
+    std::vector<aura::core::TypeId> binding_; // binding[rep] = concrete type for var rep
+    uint64_t fresh_counter_ = 0;
+    uint64_t first_free_var_ = 0; // first var index that belongs to this CS
+public:
+    explicit ConstraintSystem(aura::core::TypeRegistry& reg);
+    void add(Constraint c);
+    bool solve();
+    void clear();
+    aura::core::TypeId fresh_var();
+    // Union-Find core
+    aura::core::TypeId find_var(aura::core::TypeId id);
+    bool unify(aura::core::TypeId t1, aura::core::TypeId t2);
+    aura::core::TypeId find(aura::core::TypeId id); // normalize via Union-Find
+    bool consistent_unify(aura::core::TypeId t1, aura::core::TypeId t2);
+    bool consistent_subtype(aura::core::TypeId sub, aura::core::TypeId sup);
+    bool occurs_check(aura::core::TypeId var, aura::core::TypeId ty);
+    aura::core::TypeId normalize(aura::core::TypeId id);
+};
+
 // ── Ownership Environment (M4 Linear) ──────────────────────
 export enum class OwnershipState : std::uint8_t {
     Owned,       // 拥有唯一所有权
@@ -38,8 +69,17 @@ export enum class OwnershipState : std::uint8_t {
     MutBorrowed, // 被可变借用中
 };
 
+export struct OwnershipNote {
+    aura::ast::NodeId node;
+    std::string message;
+    std::string kind; // "use-after-move" | "double-borrow" | "leaked-linear" | "invalid-state"
+};
+
 export class OwnershipEnv {
     std::vector<std::unordered_map<std::string, OwnershipState>> scopes_;
+    // Tracks which variable bindings have had structural mutations applied
+    // and need ownership re-validation on the next validate pass.
+    std::unordered_set<std::string> ownership_dirty_;
 
 public:
     explicit OwnershipEnv() { scopes_.emplace_back(); }
@@ -106,40 +146,36 @@ public:
         }
         return "unknown";
     }
-};
 
-// ── Constraint System ────────────────────────────────────
-export struct Constraint {
-    enum Kind { EQUAL, CONSISTENT };
-    Kind kind;
-    aura::core::TypeId lhs, rhs;
-};
+    // ── Ownership Dirt Tracking ───────────────────────────────
+    // After structural mutations, mark affected bindings as ownership-dirty.
+    void mark_ownership_dirty(const std::string& name) {
+        ownership_dirty_.insert(name);
+    }
+    void mark_ownership_dirty_subtree(const std::vector<std::string>& names) {
+        for (auto& n : names)
+            ownership_dirty_.insert(n);
+    }
+    bool is_ownership_dirty(const std::string& name) const {
+        return ownership_dirty_.count(name) > 0;
+    }
+    void clear_ownership_dirty() {
+        ownership_dirty_.clear();
+    }
+    const std::unordered_set<std::string>& ownership_dirty_bindings() const {
+        return ownership_dirty_;
+    }
 
-export class ConstraintSystem {
-    aura::core::TypeRegistry& reg_;
-    std::vector<Constraint> constraints_;
-    std::vector<std::int64_t> parent_;        // Union-Find parent (self=root, -1=uninitialized)
-    std::vector<std::uint32_t> rank_;         // Union-Find rank (for union-by-rank)
-    std::vector<aura::core::TypeId> binding_; // binding[rep] = concrete type for var rep
-    uint64_t fresh_counter_ = 0;
-    uint64_t first_free_var_ = 0; // first var index that belongs to this CS
-public:
-    explicit ConstraintSystem(aura::core::TypeRegistry& reg);
-    void add(Constraint c);
-    bool solve();
-    void clear();
-    aura::core::TypeId fresh_var();
-    // Union-Find core
-    aura::core::TypeId find_var(aura::core::TypeId id);
-    bool unify(aura::core::TypeId t1, aura::core::TypeId t2);
-    aura::core::TypeId find(aura::core::TypeId id); // normalize via Union-Find
-    bool consistent_unify(aura::core::TypeId t1, aura::core::TypeId t2);
-    bool consistent_subtype(aura::core::TypeId sub, aura::core::TypeId sup);
-    bool occurs_check(aura::core::TypeId var, aura::core::TypeId ty);
-    aura::core::TypeId normalize(aura::core::TypeId id);
+    // ── Post-Mutation Ownership Validation ────────────────────
+    // Walks the AST within the dirty set, re-simulates ownership flow,
+    // and reports any violations. Returns true if all checks pass.
+    static bool validate_ownership(
+        const aura::ast::FlatAST& flat,
+        const aura::ast::StringPool& pool,
+        aura::ast::NodeId root,
+        const std::unordered_set<std::string>& dirty_bindings,
+        std::vector<OwnershipNote>& notes_out);
 };
-
-// ── Inference Engine ─────────────────────────────────────
 export class InferenceEngine {
     aura::core::TypeRegistry& reg_;
     aura::diag::DiagnosticCollector& diag_;
