@@ -997,28 +997,6 @@ struct AuraJIT::Impl {
         compiled_fns_.push_back({std::string(), fn_ptr, local_count, arg_count, env_count});
     }
 
-    bool update_function(const char* name, const FlatFunction& fn) {
-        // Remove old module + recompile
-        auto tracker_it = fn_trackers_.find(name);
-        if (tracker_it != fn_trackers_.end()) {
-            if (auto err = tracker_it->second->remove()) {
-                fprintf(stderr, "JIT: remove old module for '%s' failed\n", name);
-                // Non-fatal: we can still compile new version
-            }
-            fn_trackers_.erase(tracker_it);
-        }
-        // Remove from compiled_fns_ metadata
-        for (auto it = compiled_fns_.begin(); it != compiled_fns_.end(); ++it) {
-            if (it->name == name) {
-                compiled_fns_.erase(it);
-                break;
-            }
-        }
-        // Compile new version
-        auto new_fn = compile(fn);
-        if (!new_fn) return false;
-        return true;
-    }
 };
 
 AuraJIT::AuraJIT()
@@ -1040,10 +1018,6 @@ void AuraJIT::register_symbol(const char* name, void* ptr) {
 
 void AuraJIT::set_string_pool(const std::vector<std::string>* pool) {
     impl_->string_pool_ = pool;
-}
-
-bool AuraJIT::update_function(const char* name, const FlatFunction& fn) {
-    return impl_->update_function(name, fn);
 }
 
 void AuraJIT::register_function(int64_t func_id, ScalarFn fn_ptr, uint32_t local_count,
