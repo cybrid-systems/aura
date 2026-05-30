@@ -1132,6 +1132,21 @@ def test_regression():
     return 0 if failed == 0 else 1
 
 
+def test_concurrent():
+    """Run concurrent model unit tests (test_concurrent)."""
+    import subprocess
+    base = Path(__file__).resolve().parent
+    bin = base / "build" / "test_concurrent"
+    if not bin.exists():
+        print("  test_concurrent binary not found")
+        return 1
+    r = subprocess.run([str(bin)], capture_output=True, text=True, timeout=120)
+    print(r.stdout)
+    if r.returncode != 0:
+        print(r.stderr[:500], file=sys.stderr) if r.stderr else None
+    return r.returncode
+
+
 def test_p0_regression():
     """Run P0 fix regression tests."""
     import subprocess
