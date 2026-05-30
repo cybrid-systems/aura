@@ -17,6 +17,25 @@ module;
 #include <regex>
 #include <unordered_map>
 #if __has_include(<curl/curl.h>)
+// Helper: evaluate `expr` and cache the result in the current FlatAST's
+// value_cache_ at `current_id`. Used by eval_flat for incremental eval.
+// Captures `f` (FlatAST*) and `current_id` from the enclosing TCO loop.
+// Only evaluated on non-leaf returns (leaf literals use plain `return`).
+// Cache-and-return for EvalResult (std::expected<EvalValue, Diagnostic>)
+#define EVAL_CACHE_RETURN(expr)                                                                    \
+    do {                                                                                           \
+        auto _er_ = (expr);                                                                        \
+        if (_er_) { f->set_cached_value(current_id, _er_->val); }                                  \
+        return _er_;                                                                               \
+    } while (0)
+
+// Cache-and-return for plain EvalValue (used by leaf returns like make_closure)
+#define EVAL_CACHE_RETURN_VAL(expr)                                                                \
+    do {                                                                                           \
+        auto _ev_ = (expr);                                                                        \
+        f->set_cached_value(current_id, _ev_.val);                                                 \
+        return _ev_;                                                                               \
+    } while (0)
 #include <curl/curl.h>
 #define AURA_HAVE_CURL 1
 #else
@@ -13069,7 +13088,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     auto body_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
                     // This closure reuses f/p from caller (not arena-allocated), Env is in target
                     closures_[cid] = Closure{/*name*/"", std::move(params), f, p, body_id, cap, dotted, target};
-                    return make_closure(cid);
+                    EVAL_CACHE_RETURN_VAL(make_closure(cid));
                 }
                 case aura::ast::NodeTag::Let:
                 case aura::ast::NodeTag::LetRec: {

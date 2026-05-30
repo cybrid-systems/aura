@@ -951,7 +951,14 @@ private:
 
     void clear_all_dirty() {
         std::fill(dirty_.begin(), dirty_.end(), false);
-        std::fill(value_cache_.begin(), value_cache_.end(), kNotCached);
+        // DO NOT clear value_cache_ here! The value cache persists across
+        // eval-current calls so that non-dirty subtrees keep their cached
+        // results. Only mark_dirty() (called on mutation) clears individual
+        // cache entries. This enables subtree-level incremental re-evaluation:
+        // after eval-current, the cache is populated. On the next call, clean
+        // nodes return cached results immediately (see eval_flat cache check).
+        // When a mutation marks nodes dirty, their cache entries are cleared
+        // by mark_dirty() → clear_cached_value().
     }
 
     // ── Mutation audit ──────────────────────────────────────────
