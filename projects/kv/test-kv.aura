@@ -152,6 +152,78 @@
 (kv-expire "tl" 0)  ;; 立即过期
 (assert-equal (kv-llen "tl") 0 "kv-llen after TTL expires (auto-cleaned)")
 
+;; ── Hash 操作 ──
+
+;; ── Hash 操作 ──
+
+;; HSET 基本
+(assert-equal (kv-hset "user:1" "name" "Alice") 1 "kv-hset new field returns 1")
+(assert-equal (kv-hset "user:1" "age" "30") 1 "kv-hset second field")
+(assert-equal (kv-hget "user:1" "name") "Alice" "kv-hget returns field value")
+(assert-equal (kv-hget "user:1" "age") "30" "kv-hget second field")
+
+;; HSET 覆盖
+(assert-equal (kv-hset "user:1" "name" "Bob") 0 "kv-hset existing field returns 0")
+(assert-equal (kv-hget "user:1" "name") "Bob" "kv-hget after update")
+
+;; HEXISTS
+(assert-equal (kv-hexists "user:1" "name") #t "kv-hexists existing field")
+(assert-equal (kv-hexists "user:1" "nonexistent") #f "kv-hexists missing field")
+
+;; HLEN
+(assert-equal (kv-hlen "user:1") 2 "kv-hlen after 2 fields")
+
+;; HGETALL
+(assert-equal (not (not (member "name" (map car (kv-hgetall "user:1"))))) #t "kv-hgetall contains name")
+(assert-equal (not (not (member "age" (map car (kv-hgetall "user:1"))))) #t "kv-hgetall contains age")
+
+;; HKEYS / HVALS
+(kv-hset "user:1" "role" "admin")
+(assert-equal (not (not (member "role" (kv-hkeys "user:1")))) #t "kv-hkeys contains role")
+(assert-equal (not (not (member "admin" (kv-hvals "user:1")))) #t "kv-hvals contains admin")
+
+;; HDEL
+(assert-equal (kv-hdel "user:1" "age") 1 "kv-hdel removes 1 field")
+(assert-equal (kv-hexists "user:1" "age") #f "kv-hexists after hdel")
+(assert-equal (kv-hlen "user:1") 2 "kv-hlen after hdel")
+(assert-equal (kv-hdel "user:1" "nonexistent") 0 "kv-hdel missing field returns 0")
+
+;; 删除最后一个字段后自动删除 key
+(kv-hdel "user:1" "name" "role")
+(assert-equal (kv-exists? "user:1") #f "kv-exists? after deleting all hash fields")
+
+;; 空 key 操作
+(assert-equal (kv-hget "nonexistent" "f") (void) "kv-hget missing key")
+(assert-equal (kv-hlen "nonexistent") 0 "kv-hlen missing key")
+(assert-equal (kv-hexists "nonexistent" "f") #f "kv-hexists missing key")
+(assert-equal (kv-hgetall "nonexistent") '() "kv-hgetall missing key")
+
+;; Hash + TTL 交互
+(kv-hset "session:1" "token" "abc")
+(kv-expire "session:1" 30)
+(assert-equal (kv-ttl "session:1") 30 "kv-ttl on hash key")
+(assert-equal (kv-hget "session:1" "token") "abc" "kv-hget with TTL")
+(kv-persist "session:1")
+(assert-equal (kv-ttl "session:1") -1 "kv-persist on hash key")
+
+;; HSET on hash key clears previous TTL
+(kv-hset "tmp:h" "x" 1)
+(kv-expire "tmp:h" 30)
+(assert-equal (kv-ttl "tmp:h") 30 "kv-ttl on hash before new hset")
+(kv-hset "tmp:h" "y" 2)  ;; 新 hset 应清 TTL
+(assert-equal (kv-ttl "tmp:h") -1 "kv-hset clears old TTL")
+(assert-equal (kv-hget "tmp:h" "y") 2 "kv-hget after new hset")
+(kv-del "tmp:h")
+
+;; 错误类型：LPUSH 到 hash 值
+(kv-hset "h" "f" "v")
+(assert-equal (kv-lpush "h" "x") "ERR wrong type" "kv-lpush on hash value")
+
+;; 错误类型：Hash 操作到列表值
+(kv-rpush "l" "a" "b")
+(assert-equal (kv-hset "l" "f" "v") "ERR wrong type" "kv-hset on list value")
+(kv-flush)
+
 (newline)
 (display "=== Results: ") (display passed) (display " passed, ")
 (display failed) (display " failed") (newline)
