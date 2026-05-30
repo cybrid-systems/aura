@@ -69,6 +69,11 @@ target_compile_options(aura PRIVATE -Wall -Wextra -Wpedantic
     -Wno-misleading-indentation -Wno-parentheses
 )
 
+# C++26 Contracts — GCC 16 has __cpp_contracts but not [[pre:]]/[[post:]] attribute syntax yet.
+# Enable when GCC 17+ / clang 20+ support it:
+#   target_compile_options(aura PRIVATE -fcontracts -fcontract-build-mode=on)
+# Until then, AURA_CONTRACT_PRE / AURA_CONTRACT_POST expand to assert().
+
 # LLVM JIT (optional, skipped if not found)
 find_package(LLVM QUIET CONFIG)
 if(LLVM_FOUND)
