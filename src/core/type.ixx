@@ -75,6 +75,18 @@ export struct ModuleType {
     std::vector<TypeId> type_param_vars;                 // fresh type vars for each type param
 };
 
+export struct VariantType {
+    std::vector<std::pair<std::string, std::vector<TypeId>>> variants;
+    // e.g. (Maybe a) = {Just: [a], Nothing: []}
+    // variant name → field types
+};
+
+export struct RecordType {
+    std::vector<std::pair<std::string, TypeId>> fields;
+    // e.g. Person: {name: String, age: Int}
+    // field name → field type
+};
+
 // Effect type: !EffectName (e.g., !IO, !FileRead)
 export struct EffectType {
     std::string name;
@@ -101,6 +113,8 @@ public:
     TypeId register_func_named(std::vector<TypeId> args, TypeId ret, std::string name);
     TypeId register_forall(TypeId var, TypeId body);
     TypeId register_linear(TypeId inner);
+    TypeId register_variant(VariantType vt);
+    TypeId register_record(RecordType rt);
     TypeId register_module(ModuleType mt);
     TypeId register_effect(std::string name, TypeId arg = {});
     TypeId register_capability(std::vector<std::string> effects, bool unrestricted = false);
@@ -113,6 +127,8 @@ public:
     const ForallType* forall_of(TypeId id) const;
     const LinearType* linear_of(TypeId id) const;
     const ModuleType* module_of(TypeId id) const;
+    const VariantType* variant_of(TypeId id) const;
+    const RecordType* record_of(TypeId id) const;
     const EffectType* effect_of(TypeId id) const;
     const CapabilityType* capability_of(TypeId id) const;
     bool is_var(TypeId id) const;
@@ -150,6 +166,8 @@ private:
         std::optional<std::vector<std::string>> adt_constructors;
         std::optional<EffectType> effect;
         std::optional<CapabilityType> capability;
+        std::optional<VariantType> variant;
+        std::optional<RecordType> record;
     };
     std::vector<Entry> entries_;
     std::unordered_map<std::string, TypeId> name_to_id_;

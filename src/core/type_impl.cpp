@@ -33,7 +33,7 @@ TypeId TypeRegistry::register_func(std::vector<TypeId> args, TypeId ret) {
     auto ft = FuncType{std::move(args), ret};
     auto tag = TypeTag::FUNC;
     std::string tmp_name = "(" + std::to_string(ft.args.size()) + "->)";
-    entries_.push_back(Entry{tag, tmp_name, std::move(ft), std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt});
+    entries_.push_back(Entry{tag, tmp_name, std::move(ft), std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt});
     std::string name = "(";
     for (auto& a : entries_.back().func->args)
         name += std::string(name_of(a)) + " ";
@@ -76,6 +76,55 @@ TypeId TypeRegistry::register_module(ModuleType mt) {
     entries_.push_back(Entry{TypeTag::MODULE, std::move(name), std::nullopt, std::nullopt,
                              std::nullopt, std::move(mt), std::nullopt, std::nullopt, std::nullopt});
     return id;
+}
+
+TypeId TypeRegistry::register_variant(VariantType vt) {
+    auto id = TypeId{
+        .index = static_cast<std::uint32_t>(entries_.size()),
+        .generation = next_generation_,
+    };
+    std::string name = "Variant{";
+    for (auto& [n, args] : vt.variants) {
+        if (name.back() != '{') name += ", ";
+        name += "(" + n;
+        for (auto& a : args)
+            name += " " + std::string(name_of(a));
+        name += ")";
+    }
+    name += "}";
+    entries_.push_back(Entry{TypeTag::VARIANT, std::move(name), std::nullopt, std::nullopt,
+                             std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt,
+                             std::move(vt), std::nullopt});
+    return id;
+}
+
+TypeId TypeRegistry::register_record(RecordType rt) {
+    auto id = TypeId{
+        .index = static_cast<std::uint32_t>(entries_.size()),
+        .generation = next_generation_,
+    };
+    std::string name = "Record{";
+    for (auto& [n, t] : rt.fields) {
+        if (name.back() != '{') name += ", ";
+        name += n + ": " + std::string(name_of(t));
+    }
+    name += "}";
+    entries_.push_back(Entry{TypeTag::RECORD, std::move(name), std::nullopt, std::nullopt,
+                             std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt,
+                             std::nullopt, std::move(rt)});
+    return id;
+}
+
+const VariantType* TypeRegistry::variant_of(TypeId id) const {
+    if (id.index < entries_.size() && entries_[id.index].variant)
+        return &*entries_[id.index].variant;
+    return nullptr;
+}
+
+const RecordType* TypeRegistry::record_of(TypeId id) const {
+    if (id.index < entries_.size() && entries_[id.index].record)
+        return &*entries_[id.index].record;
+    return nullptr;
 }
 
 const ModuleType* TypeRegistry::module_of(TypeId id) const {
@@ -296,6 +345,29 @@ std::string TypeRegistry::format_type(TypeId id) const {
             for (auto& [n, t] : mt->members) {
                 if (s.back() != '{') s += ", ";
                 s += n + ": " + format_type(t);
+            }
+            return s + "}";
+        }
+        case TypeTag::VARIANT: {
+            auto* vt = variant_of(id);
+            if (!vt) return "<variant>";
+            std::string s = "Variant{";
+            for (auto& [name, args] : vt->variants) {
+                if (s.back() != '{') s += ", ";
+                s += "(" + name;
+                for (auto& a : args)
+                    s += " " + format_type(a);
+                s += ")";
+            }
+            return s + "}";
+        }
+        case TypeTag::RECORD: {
+            auto* rt = record_of(id);
+            if (!rt) return "<record>";
+            std::string s = "Record{";
+            for (auto& [name, type] : rt->fields) {
+                if (s.back() != '{') s += ", ";
+                s += name + ": " + format_type(type);
             }
             return s + "}";
         }
