@@ -113,6 +113,17 @@ extern ThreadPoolEnqueueFn g_thread_pool_enqueue;
 using EvalAsyncFn = std::string (*)(const std::string& code);
 extern EvalAsyncFn g_eval_async;
 
+// Scheduler metrics — set by serve_async.cpp (Issue #32).
+// Returns scheduler performance counters as a JSON string.
+// nullptr when not in serve-async mode.
+using GetMetricsFn = std::function<std::string()>;
+extern GetMetricsFn g_get_scheduler_metrics;
+
+// Reset scheduler metrics — set by serve_async.cpp.
+// Resets all counters to zero. nullptr when not in serve-async mode.
+using ResetMetricsFn = std::function<void()>;
+extern ResetMetricsFn g_reset_scheduler_metrics;
+
 }  // namespace aura::messaging
 
 #endif  // AURA_MESSAGING_BRIDGE_H

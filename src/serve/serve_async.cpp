@@ -181,6 +181,17 @@ void run_serve_async(int num_workers) {
         }
     };
 
+    // Register scheduler metrics callback (Issue #32):
+    // Agents can call (orch:metrics) to get real-time scheduler stats.
+    aura::messaging::g_get_scheduler_metrics = [&sched]() -> std::string {
+        return sched.metrics().to_json();
+    };
+    aura::messaging::g_reset_scheduler_metrics = [&sched]() {
+        // Re-initialize metrics (clear counters, keep worker count)
+        auto n = sched.metrics().num_workers();
+        sched.metrics().resize_workers(n);
+    };
+
     // 3. Shared state between stdin_reader and session fibers
     std::deque<std::string> stdin_lines;  // complete JSON lines from stdin
     bool stdin_eof = false;
@@ -620,6 +631,14 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
         if (aura::serve::g_current_fiber) {
             aura::serve::Fiber::yield(aura::serve::YieldReason::MutationBoundary);
         }
+    };
+
+    aura::messaging::g_get_scheduler_metrics = [&sched]() -> std::string {
+        return sched.metrics().to_json();
+    };
+    aura::messaging::g_reset_scheduler_metrics = [&sched]() {
+        auto n = sched.metrics().num_workers();
+        sched.metrics().resize_workers(n);
     };
 
     // Register fiber blocking callback

@@ -9208,6 +9208,33 @@ Evaluator::Evaluator() {
         return make_void();
     });
 
+    // ── orch:metrics — scheduler metrics (Issue #32) ─────────────
+    // (orch:metrics) → Returns a JSON string with scheduler counters.
+    // Fields: fibers_spawned, fibers_completed, io_events,
+    // steal_attempts, steal_successes, per-worker breakdown.
+    // Returns empty string when not in serve-async mode.
+    primitives_.add("orch:metrics", [this](const auto&) -> EvalValue {
+        if (!aura::messaging::g_get_scheduler_metrics) {
+            // Not in serve-async mode — return empty list
+            return types::make_void();
+        }
+        auto json = aura::messaging::g_get_scheduler_metrics();
+        auto idx = string_heap_.size();
+        string_heap_.push_back(json);
+        return types::make_string(idx);
+    });
+
+    // ── orch:reset-metrics — reset scheduler counters (Issue #32) ─
+    // (orch:reset-metrics) → Resets all metrics to zero.
+    // Returns #t when done, #f when not in serve-async mode.
+    primitives_.add("orch:reset-metrics", [this](const auto&) -> EvalValue {
+        if (aura::messaging::g_reset_scheduler_metrics) {
+            aura::messaging::g_reset_scheduler_metrics();
+            return types::make_bool(true);
+        }
+        return types::make_bool(false);
+    });
+
     // (thread_pool:enqueue fn) — Offload a blocking function to the thread pool.
     // fn is a closure taking no arguments.
     // Returns the result on success (may block caller until done).
