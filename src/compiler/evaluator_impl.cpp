@@ -3577,6 +3577,8 @@ void Evaluator::init_pair_primitives() {
             return make_void();
         auto n = static_cast<std::size_t>(as_int(a[0]));
         auto v = a[1];
+        if (n == 0 || is_end_of_list(v))
+            return make_void();
         EvalValue result = make_void();
         // Build result in reverse then reverse it
         for (std::size_t i = 0; i < n; ++i) {
@@ -3612,12 +3614,12 @@ void Evaluator::init_pair_primitives() {
         auto v = a[1];
         for (std::size_t i = 0; i < n; ++i) {
             if (is_end_of_list(v))
-                return v;
+                return make_void();
             if (!is_pair(v))
-                return v;
+                return make_void();
             auto idx = as_pair_idx(v);
             if (idx >= pairs_.size())
-                return v;
+                return make_void();
             v = pairs_[idx].cdr;
         }
         return v;

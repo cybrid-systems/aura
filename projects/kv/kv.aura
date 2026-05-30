@@ -141,13 +141,9 @@
           (hash-remove! *ttl* key)
           (length new-list)))))
 
-(define (kv-range-helper lst start end idx)
-  "内部：递归构造子列表 [start, end]。"
-  (cond
-   ((null? lst) '())
-   ((> idx end) '())
-   ((< idx start) (kv-range-helper (cdr lst) start end (+ idx 1)))
-   (#t (cons (car lst) (kv-range-helper (cdr lst) start end (+ idx 1))))))
+;; kv-drop: Lisp-level drop (C++ drop prim has dispatch issues)
+(define (kv-drop n lst)
+  (if (= n 0) lst (kv-drop (- n 1) (cdr lst))))
 
 (define (kv-lrange key start stop)
   "返回列表中指定范围的元素。支持负索引（-1=最后一个）。"
@@ -156,8 +152,9 @@
         '()
         (let* ((len (length cur))
                (s (if (>= start 0) start (max 0 (+ len start))))
-               (e (if (>= stop 0) (min stop (- len 1)) (+ len stop))))
-          (if (> s e) '() (kv-range-helper cur s e 0))))))
+               (e (if (>= stop 0) (min stop (- len 1)) (+ len stop)))
+               (count (max 0 (- e s -1))))
+          (take count (kv-drop s cur))))))
 
 (define (kv-llen key)
   "返回列表的长度。"
