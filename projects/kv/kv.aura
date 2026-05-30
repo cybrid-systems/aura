@@ -115,3 +115,87 @@
   (set! *store* (hash))
   (set! *ttl* (hash))
   "OK")
+
+;; ── List 操作 ──
+
+(define (kv-type-err)
+  "ERR wrong type")
+
+(define (kv-lpush key . vals)
+  "向列表头部插入一个或多个值。返回列表的新长度。"
+  (let ((cur (if (kv-expired? key) (begin (kv-del-internal key) '()) (kv-get key))))
+    (if (and (not (null? cur)) (not (pair? cur)))
+        "ERR wrong type"
+        (let ((new-list (append (reverse vals) cur)))
+          (hash-set! *store* key new-list)
+          (hash-remove! *ttl* key)
+          (length new-list)))))
+
+(define (kv-rpush key . vals)
+  "向列表尾部追加一个或多个值。返回列表的新长度。"
+  (let ((cur (if (kv-expired? key) (begin (kv-del-internal key) '()) (kv-get key))))
+    (if (and (not (null? cur)) (not (pair? cur)))
+        "ERR wrong type"
+        (let ((new-list (append cur vals)))
+          (hash-set! *store* key new-list)
+          (hash-remove! *ttl* key)
+          (length new-list)))))
+
+(define (kv-range-helper lst start end idx)
+  "内部：递归构造子列表 [start, end]。"
+  (cond
+   ((null? lst) '())
+   ((> idx end) '())
+   ((< idx start) (kv-range-helper (cdr lst) start end (+ idx 1)))
+   (#t (cons (car lst) (kv-range-helper (cdr lst) start end (+ idx 1))))))
+
+(define (kv-lrange key start stop)
+  "返回列表中指定范围的元素。支持负索引（-1=最后一个）。"
+  (let ((cur (kv-get key)))
+    (if (void? cur)
+        '()
+        (let* ((len (length cur))
+               (s (if (>= start 0) start (max 0 (+ len start))))
+               (e (if (>= stop 0) (min stop (- len 1)) (+ len stop))))
+          (if (> s e) '() (kv-range-helper cur s e 0))))))
+
+(define (kv-llen key)
+  "返回列表的长度。"
+  (let ((cur (kv-get key)))
+    (if (void? cur) 0 (length cur))))
+
+(define (kv-lpop key)
+  "移除并返回列表的第一个元素。"
+  (let ((cur (kv-get key)))
+    (if (or (void? cur) (null? cur))
+        (void)
+        (let ((val (car cur))
+              (rest (cdr cur)))
+          (if (null? rest)
+              (kv-del-internal key)
+              (hash-set! *store* key rest))
+          val))))
+
+(define (kv-rpop key)
+  "移除并返回列表的最后一个元素。"
+  (let ((cur (kv-get key)))
+    (if (or (void? cur) (null? cur))
+        (void)
+        (let* ((rev (reverse cur))
+               (val (car rev))
+               (rest (reverse (cdr rev))))
+          (if (null? rest)
+              (kv-del-internal key)
+              (hash-set! *store* key rest))
+          val))))
+
+(define (kv-lindex key index)
+  "获取列表中指定索引的元素。支持负索引。"
+  (let ((cur (kv-get key)))
+    (if (void? cur)
+        (void)
+        (let* ((len (length cur))
+               (idx (if (>= index 0) index (+ len index))))
+          (if (or (< idx 0) (>= idx len))
+              (void)
+              (list-ref cur idx))))))

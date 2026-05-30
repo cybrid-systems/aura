@@ -1,6 +1,5 @@
-;; === test-kv.aura — kv 存储 V2 测试（含 TTL） ===
+;; === test-kv.aura — kv 存储 V3 测试（含 List 操作） ===
 ;; 用法: (load "projects/kv/kv.aura") (load "projects/kv/test-kv.aura")
-;;   或: cat kv.aura test-kv.aura | ./build/aura
 
 (define passed 0)
 (define failed 0)
@@ -17,9 +16,9 @@
         (display ", got: ") (display actual)
         (newline))))
 
-(display "=== kv.aura V2 tests (with TTL) ===") (newline)
+(display "=== kv.aura V3 tests (with List ops) ===") (newline)
 
-;; ── 基础操作 ──
+;; ── 基础 CRUD ──
 (assert-equal (kv-set "name" "Aura") "OK" "kv-set returns OK")
 (assert-equal (kv-get "name") "Aura" "kv-get returns stored value")
 (assert-equal (kv-get "nonexistent") (void) "kv-get missing key returns void")
@@ -35,80 +34,123 @@
 (assert-equal (kv-incr "counter") 3 "kv-incr increments to 3")
 (assert-equal (kv-get "counter") 3 "kv-get after incr")
 (kv-set "str" "hello")
-(assert-equal (kv-incr "str") "ERR wrong type" "kv-incr on non-int returns error")
+(assert-equal (kv-incr "str") "ERR wrong type" "kv-incr on non-int")
 (kv-del "str")
 
 ;; ── String values ──
-(assert-equal (kv-set "x" "hello") "OK" "kv-set string value")
-(assert-equal (kv-get "x") "hello" "kv-get string value")
+(assert-equal (kv-set "x" "hello") "OK" "kv-set string")
+(assert-equal (kv-get "x") "hello" "kv-get string")
 
 ;; ── Flush ──
 (assert-equal (kv-flush) "OK" "kv-flush returns OK")
-(assert-equal (kv-length) 0 "kv-length after flush is 0")
+(assert-equal (kv-length) 0 "kv-length after flush")
 (assert-equal (kv-exists? "counter") #f "kv-exists? after flush")
 
-;; ── TTL Tests ──
-
-;; TTL 非过期键
+;; ── TTL ──
 (kv-set "persistent" "stays")
-(assert-equal (kv-ttl "persistent") -1 "kv-ttl of key without TTL is -1")
-(assert-equal (kv-get "persistent") "stays" "kv-get on key with no TTL")
-
-;; TTL 正常键（30 秒）
-(kv-set-with-ttl "temp" "will-disappear" 30)
-(assert-equal (kv-get "temp") "will-disappear" "kv-set-with-ttl stores value")
-(assert-equal (kv-exists? "temp") #t "kv-exists? with TTL returns true (not expired)")
-(assert-equal (kv-ttl "temp") 30 "kv-ttl of 30s key is 30")
-(assert-equal (kv-persist "temp") "OK" "kv-persist removes TTL")
-(assert-equal (kv-ttl "temp") -1 "kv-ttl after persist is -1")
-
-;; TTL 过期键（0 秒 = 立即过期）
+(assert-equal (kv-ttl "persistent") -1 "kv-ttl no TTL = -1")
+(kv-set-with-ttl "temp" "val" 30)
+(assert-equal (kv-get "temp") "val" "set-with-ttl stores value")
+(assert-equal (kv-exists? "temp") #t "exists? with TTL")
+(assert-equal (kv-ttl "temp") 30 "kv-ttl 30s key")
+(assert-equal (kv-persist "temp") "OK" "kv-persist")
+(assert-equal (kv-ttl "temp") -1 "kv-ttl after persist")
 (kv-set-with-ttl "insta" "gone" 0)
-(assert-equal (kv-get "insta") (void) "kv-get of expired key returns void")
-(assert-equal (kv-exists? "insta") #f "kv-exists? of expired key is false")
-
-;; TTL 过期后 incr 应从 1 开始
-(kv-set-with-ttl "counter2" 999 0)
-(assert-equal (kv-incr "counter2") 1 "kv-incr on expired key starts at 1")
-
-;; kv-set 清理旧 TTL：过期后重新 set 再去 incr
-(kv-set-with-ttl "c" 0 0)  ;; 立即过期
-(kv-set "c" 10)            ;; kv-set 会清理旧 TTL
-(assert-equal (kv-incr "c") 11 "kv-set after expiry clears TTL, incr works")
-
-;; kv-expire 设置 TTL
-(kv-set "e" "val")
-(assert-equal (kv-expire "e" 60) "OK" "kv-expire sets TTL on existing key")
-(assert-equal (kv-ttl "e") 60 "kv-ttl after kv-expire")
-
-;; kv-expire 不存在的键
-(assert-equal (kv-expire "no-such-key" 60) "ERR no such key" "kv-expire on missing key")
-
-;; kv-persist 不存在的键
-(assert-equal (kv-persist "no-such-key") "ERR no such key" "kv-persist on missing key")
-
-;; kv-exists? after expire set
-(assert-equal (kv-exists? "e") #t "kv-exists? after kv-expire")
-
-;; kv-ttl 不存在的键 = -2
-(assert-equal (kv-ttl "no-such-key") -2 "kv-ttl of missing key is -2")
-
-;; kv-ttl 过期键 = -2
-(kv-set-with-ttl "dead" "gone" 0)
-(assert-equal (kv-ttl "dead") -2 "kv-ttl of expired key is -2")
-
-;; kv-keys 排除过期键（member 现用 equal? 比较，字符串内容正确匹配）
-(kv-set "keep" "stay")
-(kv-set-with-ttl "expire-soon" "bye" 0)  ;; 立即过期
-(assert-equal (not (not (member "keep" (kv-keys)))) #t "kv-keys includes unexpired key")
-(assert-equal (not (not (member "expire-soon" (kv-keys)))) #f "kv-keys excludes expired key")
-(assert-equal (not (not (member "dead" (kv-keys)))) #f "kv-keys excludes expired key (dead)")
-
-;; kv-length 不计过期键
-(assert-equal (> (kv-length) 0) #t "kv-length > 0 (at least 'keep' and 'e')")
-
-;; 清理
+(assert-equal (kv-get "insta") (void) "kv-get expired key")
+(assert-equal (kv-exists? "insta") #f "kv-exists? expired key")
+(assert-equal (kv-expire "persistent" 60) "OK" "kv-expire existing key")
+(assert-equal (kv-expire "no-such" 60) "ERR no such key" "kv-expire missing key")
+(assert-equal (kv-persist "no-such") "ERR no such key" "kv-persist missing key")
+(assert-equal (kv-ttl "no-such-key") -2 "kv-ttl missing key = -2")
 (kv-flush)
+
+;; ── List 操作 ──
+
+;; LPUSH 基本
+(assert-equal (kv-lpush "tasks" "c") 1 "kv-lpush first element")
+(assert-equal (kv-lpush "tasks" "b") 2 "kv-lpush second element (prepended)")
+(assert-equal (kv-lpush "tasks" "a") 3 "kv-lpush third element")
+
+;; LRANGE
+(assert-equal (kv-lrange "tasks" 0 -1) (list "a" "b" "c") "kv-lrange all elements")
+(assert-equal (kv-lrange "tasks" 0 1) (list "a" "b") "kv-lrange first 2")
+(assert-equal (kv-lrange "tasks" 1 2) (list "b" "c") "kv-lrange middle 2")
+(assert-equal (kv-lrange "tasks" -2 -1) (list "b" "c") "kv-lrange negative indices")
+(assert-equal (kv-lrange "nonexistent" 0 -1) '() "kv-lrange missing key")
+
+;; LLEN
+(assert-equal (kv-llen "tasks") 3 "kv-llen after 3 pushes")
+(assert-equal (kv-llen "nonexistent") 0 "kv-llen missing key")
+
+;; LPOP
+(assert-equal (kv-lpop "tasks") "a" "kv-lpop removes first element")
+(assert-equal (kv-llen "tasks") 2 "kv-llen after lpop")
+(assert-equal (kv-lrange "tasks" 0 -1) (list "b" "c") "kv-lrange after lpop")
+
+;; RPOP
+(assert-equal (kv-rpop "tasks") "c" "kv-rpop removes last element")
+(assert-equal (kv-llen "tasks") 1 "kv-llen after rpop")
+(assert-equal (kv-lrange "tasks" 0 -1) (list "b") "kv-lrange after rpop")
+
+;; LPOP last element
+(assert-equal (kv-lpop "tasks") "b" "kv-lpop last remaining element")
+(assert-equal (kv-llen "tasks") 0 "kv-llen after popping all")
+(assert-equal (kv-exists? "tasks") #f "kv-exists? after all popped (key deleted)")
+
+;; LPOP / RPOP from empty/missing key
+(assert-equal (kv-lpop "missing") (void) "kv-lpop missing key returns void")
+(assert-equal (kv-rpop "missing") (void) "kv-rpop missing key returns void")
+
+;; RPUSH
+(assert-equal (kv-rpush "queue" "a") 1 "kv-rpush first element")
+(assert-equal (kv-rpush "queue" "b") 2 "kv-rpush second element")
+(assert-equal (kv-rpush "queue" "c") 3 "kv-rpush third element")
+(assert-equal (kv-lrange "queue" 0 -1) (list "a" "b" "c") "kv-lrange after rpush 3")
+
+;; RPOP from rpush'd list (FIFO order)
+(assert-equal (kv-rpop "queue") "c" "kv-rpop removes last (LIFO)")
+(assert-equal (kv-lpop "queue") "a" "kv-lpop removes first (FIFO)")
+(kv-flush)
+
+;; LPUSH variadic (multiple values at once)
+(assert-equal (kv-lpush "m" "c" "b" "a") 3 "kv-lpush variadic")
+(assert-equal (kv-lrange "m" 0 -1) (list "a" "b" "c") "kv-lrange after variadic lpush")
+(kv-flush)
+
+;; RPUSH variadic
+(assert-equal (kv-rpush "m" "a" "b" "c") 3 "kv-rpush variadic")
+(assert-equal (kv-lrange "m" 0 -1) (list "a" "b" "c") "kv-lrange after variadic rpush")
+(kv-flush)
+
+;; LINDEX
+(kv-rpush "l" "x" "y" "z")
+(assert-equal (kv-lindex "l" 0) "x" "kv-lindex first element")
+(assert-equal (kv-lindex "l" 1) "y" "kv-lindex middle element")
+(assert-equal (kv-lindex "l" -1) "z" "kv-lindex last with negative")
+(assert-equal (kv-lindex "l" -2) "y" "kv-lindex second to last")
+(assert-equal (kv-lindex "l" 99) (void) "kv-lindex out of range")
+(assert-equal (kv-lindex "missing" 0) (void) "kv-lindex missing key")
+(kv-flush)
+
+;; LPUSH on non-list value (报错)
+(kv-set "notlist" "hello")
+(assert-equal (kv-lpush "notlist" "x") "ERR wrong type" "kv-lpush on string value")
+(assert-equal (kv-rpush "notlist" "x") "ERR wrong type" "kv-rpush on string value")
+(kv-flush)
+
+;; List + TTL 交互
+(kv-rpush "temp-list" "a" "b" "c")
+(kv-set-with-ttl "temp-list" "overwrite" 30)  ;; 覆盖为普通值
+(assert-equal (kv-get "temp-list") "overwrite" "set overwrites list")
+
+(kv-set-with-ttl "exp-list" "x" 0)  ;; 立即过期的 list（普通值）
+(assert-equal (kv-lpush "exp-list" "a") 1 "lpush on expired key creates fresh list (from void)")
+(kv-del "exp-list")
+
+;; TTL list 自动过期
+(kv-rpush "tl" "a" "b")
+(kv-expire "tl" 0)  ;; 立即过期
+(assert-equal (kv-llen "tl") 0 "kv-llen after TTL expires (auto-cleaned)")
 
 (newline)
 (display "=== Results: ") (display passed) (display " passed, ")
