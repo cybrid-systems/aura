@@ -192,6 +192,14 @@ void run_serve_async(int num_workers) {
         sched.metrics().resize_workers(n);
     };
 
+    // Fiber affinity — pin current fiber to a specific worker (P2)
+    aura::messaging::g_fiber_set_affinity = [](int worker_id) {
+        auto fb = aura::serve::g_current_fiber;
+        if (fb) {
+            fb->set_affinity(worker_id);
+        }
+    };
+
     // 3. Shared state between stdin_reader and session fibers
     std::deque<std::string> stdin_lines;  // complete JSON lines from stdin
     bool stdin_eof = false;

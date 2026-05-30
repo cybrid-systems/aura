@@ -80,8 +80,6 @@ Fiber* Scheduler::spawn(Fiber::Func func, size_t stack_size) {
     }
 
     // Store fiber for lifetime management
-    // We need to keep it alive — use a global list or let workers own it
-    // For now, fibers are owned by the scheduler (simplest)
     static std::mutex s_fibers_mutex;
     static std::vector<std::unique_ptr<Fiber>> s_fibers;
     {
@@ -90,12 +88,53 @@ Fiber* Scheduler::spawn(Fiber::Func func, size_t stack_size) {
     }
 
     // Assign to a worker (load-aware when enabled, fallback to round-robin)
-    int wid = use_load_aware_distribution_
-        ? next_worker_id_load_aware()
-        : next_worker_id();
+    int wid;
+    if (ptr->affinity() >= 0) {
+        // Pinned fiber: respect affinity, clamp to valid range
+        wid = std::min(ptr->affinity(), static_cast<int>(workers_.size()) - 1);
+        if (wid < 0) wid = 0;
+    } else {
+        wid = use_load_aware_distribution_
+            ? next_worker_id_load_aware()
+            : next_worker_id();
+    }
     workers_[wid]->enqueue(ptr);
 
     // Metrics
+    if (metrics_on_) {
+        metrics_.fibers_spawned.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    return ptr;
+}
+
+Fiber* Scheduler::spawn_with_affinity(Fiber::Func func, int worker_id,
+                                        size_t stack_size) {
+    auto fb = std::make_unique<Fiber>(std::move(func), stack_size);
+    auto* ptr = fb.get();
+    if (worker_id >= 0 && worker_id < static_cast<int>(workers_.size())) {
+        ptr->set_affinity(worker_id);
+    }
+
+    struct epoll_event ee;
+    ee.events = EPOLLIN;
+    ee.data.ptr = ptr;
+    ::epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, ptr->eventfd(), &ee);
+
+    {
+        std::lock_guard<std::mutex> lock(wait_map_mutex_);
+        wait_map_[ptr->eventfd()] = ptr;
+    }
+
+    static std::mutex s_fibers_mutex;
+    static std::vector<std::unique_ptr<Fiber>> s_fibers;
+    {
+        std::lock_guard<std::mutex> lock(s_fibers_mutex);
+        s_fibers.push_back(std::move(fb));
+    }
+
+    workers_[worker_id]->enqueue(ptr);
+
     if (metrics_on_) {
         metrics_.fibers_spawned.fetch_add(1, std::memory_order_relaxed);
     }
@@ -252,7 +291,14 @@ void Scheduler::run() {
                     metrics_.io_stdin_events.fetch_add(1, std::memory_order_relaxed);
                 }
                 if (stdin_fiber_) {
-                    int wid = next_worker_id();
+                    int wid;
+                    if (stdin_fiber_->affinity() >= 0) {
+                        wid = std::min(stdin_fiber_->affinity(),
+                                       static_cast<int>(workers_.size()) - 1);
+                        if (wid < 0) wid = 0;
+                    } else {
+                        wid = next_worker_id();
+                    }
                     workers_[wid]->enqueue(stdin_fiber_);
                 }
                 // Always wake all waiting fibers on stdin activity
@@ -261,7 +307,14 @@ void Scheduler::run() {
                     std::lock_guard<std::mutex> lock(wait_map_mutex_);
                     for (auto& [evfd, fiber] : wait_map_) {
                         if (fiber && fiber->state() == FiberState::Waiting) {
-                            int wid = next_worker_id();
+                            int wid;
+                            if (fiber->affinity() >= 0) {
+                                wid = std::min(fiber->affinity(),
+                                               static_cast<int>(workers_.size()) - 1);
+                                if (wid < 0) wid = 0;
+                            } else {
+                                wid = next_worker_id();
+                            }
                             workers_[wid]->enqueue(fiber);
                         }
                     }
@@ -280,8 +333,15 @@ void Scheduler::run() {
                     metrics_.io_events_processed.fetch_add(1, std::memory_order_relaxed);
                 }
 
-                // Enqueue to a worker for resumption
-                int wid = next_worker_id();
+                // Enqueue to a worker for resumption (respect affinity)
+                int wid;
+                if (fiber->affinity() >= 0) {
+                    wid = std::min(fiber->affinity(),
+                                   static_cast<int>(workers_.size()) - 1);
+                    if (wid < 0) wid = 0;
+                } else {
+                    wid = next_worker_id();
+                }
                 workers_[wid]->enqueue(fiber);
             }
         }

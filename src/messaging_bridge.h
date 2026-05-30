@@ -124,6 +124,12 @@ extern GetMetricsFn g_get_scheduler_metrics;
 using ResetMetricsFn = std::function<void()>;
 extern ResetMetricsFn g_reset_scheduler_metrics;
 
+// Fiber affinity — set by serve_async.cpp (P2).
+// Pins the current fiber to a specific worker thread.
+// nullptr when not in serve-async mode.
+using FiberSetAffinityFn = void (*)(int worker_id);
+extern FiberSetAffinityFn g_fiber_set_affinity;
+
 }  // namespace aura::messaging
 
 #endif  // AURA_MESSAGING_BRIDGE_H

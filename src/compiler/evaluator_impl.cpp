@@ -9229,6 +9229,39 @@ Evaluator::Evaluator() {
         return make_bool(bridge.send(target, msg));
     });
 
+    // (broadcast message) — Send a message to ALL registered sessions (P2)
+    // Uses g_session_list to enumerate sessions and bridge.send for each.
+    // Returns number of messages sent (0 if no sessions or no service).
+    primitives_.add("broadcast", [this](const auto& a) -> EvalValue {
+        if (a.empty())
+            return make_int(0);
+        auto& bridge = aura::messaging::g_messaging_bridge;
+        if (!bridge.send) return make_int(0);
+        std::string msg;
+        if (is_string(a[0])) {
+            msg = string_heap_[as_string_idx(a[0])];
+        } else {
+            auto json_fn = primitives_.lookup("json-encode");
+            if (json_fn) {
+                auto result = (*json_fn)({a[0]});
+                if (is_string(result))
+                    msg = string_heap_[as_string_idx(result)];
+            }
+        }
+        if (msg.empty()) return make_int(0);
+
+        // Enumerate sessions and send to each
+        int sent = 0;
+        if (aura::messaging::g_session_list && *aura::messaging::g_session_list) {
+            auto names = (*aura::messaging::g_session_list)();
+            for (auto& name : names) {
+                if (bridge.send(name, msg))
+                    ++sent;
+            }
+        }
+        return make_int(sent);
+    });
+
     // (recv [timeout-ms]) → message value
     //   Returns: message (string or parsed JSON value) on success,
     //            #<void> on timeout (distinguishable from #f = no service),
@@ -9460,6 +9493,24 @@ Evaluator::Evaluator() {
         auto idx = string_heap_.size();
         string_heap_.push_back(json);
         return types::make_string(idx);
+    });
+
+    // ── scheduler:pin — pin current fiber to a specific worker (P2) ─
+    // (scheduler:pin worker-id) → Pins the current fiber to the given
+    // worker thread for cache-aware scheduling. The fiber will always
+    // run on that worker (won't be stolen). Returns #t on success, #f
+    // when not in serve-async mode or invalid worker ID.
+    // worker-id: 0..N-1 where N = number of workers.
+    primitives_.add("scheduler:pin", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return make_bool(false);
+        auto wid = static_cast<int>(as_int(a[0]));
+        if (wid < 0) return make_bool(false);
+        if (aura::messaging::g_fiber_set_affinity) {
+            aura::messaging::g_fiber_set_affinity(wid);
+            return make_bool(true);
+        }
+        return make_bool(false);
     });
 
     // ── orch:reset-metrics — reset scheduler counters (Issue #32) ─

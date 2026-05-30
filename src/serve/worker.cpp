@@ -110,6 +110,13 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
         Fiber* stolen = victim->try_steal();
         if (!stolen) break;
 
+        // Skip fibers pinned to another worker (affinity)
+        if (stolen->affinity() >= 0 && stolen->affinity() != id()) {
+            // Pinned to a different worker — put it back
+            victim->enqueue(stolen);
+            continue;
+        }
+
         if (stolen->is_stealable()) {
             local_queue_.push(stolen);
             return true;
