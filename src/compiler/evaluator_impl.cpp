@@ -4581,6 +4581,10 @@ void Evaluator::init_pair_primitives() {
         auto name = string_heap_[name_idx];
         auto sym = workspace_pool_->intern(name);
 
+        // ── 安全点：保存当前状态作为 panic checkpoint ────────
+        // 如果 auto-rollback-on-panic 开启且后续失败，自动恢复到此状态
+        bool had_checkpoint = save_panic_checkpoint();
+
         // ── 依赖图查询：通过 dep_caller_fn_ 获取调用者节点 ────
         // dep_caller_fn_ 在 init_pair_primitives 中注册，使用
         // DefUseIndex 的 O(k) 依赖图查询（k = 调用者数量）。
@@ -4691,6 +4695,19 @@ void Evaluator::init_pair_primitives() {
                     err += " [" + n.kind + " at node " + std::to_string(n.node) + "] " + n.message + ";";
                 last_mutate_error_ = err;
             }
+        }
+
+        // ── Auto-rollback: if typecheck/ownership failed, restore checkpoint ──
+        if (!last_mutate_error_.empty()) {
+            if (panic_auto_rollback_ && had_checkpoint) {
+                restore_panic_checkpoint();
+                return mev("mutation-failed",
+                           std::string(typeid(*this).name()) + ": mutation rejected — auto-rolled back: " +
+                               last_mutate_error_);
+            }
+        } else if (had_checkpoint) {
+            // Mutation succeeded — commit the checkpoint
+            commit_panic_checkpoint();
         }
 
         return make_bool(true);
@@ -5107,6 +5124,9 @@ void Evaluator::init_pair_primitives() {
         auto name = string_heap_[name_idx];
         auto sym = workspace_pool_->intern(name);
 
+        // ── 安全点：保存当前状态作为 panic checkpoint ────────
+        bool had_checkpoint = save_panic_checkpoint();
+
         // ── 依赖图查询：通过 dep_caller_fn_ 获取调用者节点 ────
         auto dep_callers = dep_caller_fn_
             ? dep_caller_fn_(defuse_index_, sym)
@@ -5195,6 +5215,17 @@ void Evaluator::init_pair_primitives() {
                             err += " [" + n.kind + " at node " + std::to_string(n.node) + "] " + n.message + ";";
                         last_mutate_error_ = err;
                     }
+                }
+
+                // ── Auto-rollback: if typecheck/ownership failed, restore checkpoint ──
+                if (!last_mutate_error_.empty()) {
+                    if (panic_auto_rollback_ && had_checkpoint) {
+                        restore_panic_checkpoint();
+                        return mev("mutation-failed",
+                                   "mutation rejected — auto-rolled back: " + last_mutate_error_);
+                    }
+                } else if (had_checkpoint) {
+                    commit_panic_checkpoint();
                 }
 
                 return make_bool(true);
@@ -5670,6 +5701,41 @@ void Evaluator::init_pair_primitives() {
         auto sidx = string_heap_.size();
         string_heap_.push_back(last_mutate_error_);
         return make_string(sidx);
+    });
+
+    // (auto-rollback-on-panic [#t|#f]) — Get/set auto-rollback on panic flag
+    // When enabled, runtime error triggers automatic rollback to last safe
+    // checkpoint. Returns previous value.
+    primitives_.add("auto-rollback-on-panic", [this](const auto& a) -> EvalValue {
+        bool old = panic_auto_rollback_;
+        if (!a.empty() && types::is_bool(a[0]))
+            panic_auto_rollback_ = types::as_bool(a[0]);
+        return make_bool(old);
+    });
+
+    // (panic-auto-rollback?) — Query current auto-rollback state
+    primitives_.add("panic-auto-rollback?", [this](const auto&) -> EvalValue {
+        return make_bool(panic_auto_rollback_);
+    });
+
+    // (panic-checkpoint) — Save current workspace as a safe checkpoint
+    // Returns #t on success, #f if no workspace loaded.
+    primitives_.add("panic-checkpoint", [this](const auto&) -> EvalValue {
+        return make_bool(save_panic_checkpoint());
+    });
+
+    // (panic-restore) — Restore to the last safe checkpoint
+    // Returns #t on success, #f if no checkpoint available or restore failed.
+    primitives_.add("panic-restore", [this](const auto&) -> EvalValue {
+        return make_bool(restore_panic_checkpoint());
+    });
+
+    // (panic-safe-source) — Return the checkpoint source code
+    // Returns empty string if no checkpoint.
+    primitives_.add("panic-safe-source", [this](const auto&) -> EvalValue {
+        auto idx = string_heap_.size();
+        string_heap_.push_back(panic_safe_source_);
+        return make_string(idx);
     });
 }
 
@@ -14545,6 +14611,40 @@ void Evaluator::destroy_workspace_tree(void* wt) {
         }
     }
     delete tree;
+}
+
+// ── Panic auto-rollback (Issue #39) ────────────────────────────
+bool Evaluator::save_panic_checkpoint() {
+    if (!workspace_flat_ || !workspace_pool_)
+        return false;
+    auto src_fn = primitives_.lookup("current-source");
+    if (!src_fn)
+        return false;
+    auto src = (*src_fn)({});
+    if (!types::is_string(src))
+        return false;
+    auto idx = types::as_string_idx(src);
+    if (idx >= string_heap_.size())
+        return false;
+    panic_safe_source_ = string_heap_[idx];
+    return true;
+}
+
+bool Evaluator::restore_panic_checkpoint() {
+    if (panic_safe_source_.empty())
+        return false;
+    auto set_fn = primitives_.lookup("set-code");
+    if (!set_fn)
+        return false;
+    auto idx = string_heap_.size();
+    string_heap_.push_back(panic_safe_source_);
+    auto result = (*set_fn)({make_string(idx)});
+    bool ok = types::is_bool(result) && types::as_bool(result);
+    if (ok) {
+        // Clear checkpoint after successful restore
+        panic_safe_source_.clear();
+    }
+    return ok;
 }
 
 } // namespace aura::compiler

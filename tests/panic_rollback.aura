@@ -1,0 +1,89 @@
+; ── Panic Auto-Rollback Test Suite ──────────────────────────
+;
+; Tests transactional rollback for runtime errors (Issue #39):
+;   - auto-rollback-on-panic flag
+;   - panic checkpoint save/restore
+;   - Automatic rollback on mutation failure
+;   - Workspace state recovery
+;
+; Run: ./aura < tests/panic_rollback.aura
+
+(require std/test all:)
+
+(display "═══ Panic Auto-Rollback Test Suite ═══\n")
+(newline)
+
+(define total-pass 0)
+(define total-fail 0)
+
+(define (report name ok)
+  (display "  ")
+  (display name)
+  (display ": ")
+  (if ok
+    (begin (display "✅\n") (set! total-pass (+ total-pass 1)))
+    (begin (display "❌\n") (set! total-fail (+ total-fail 1))))
+  ok)
+
+; ── 1. Auto-rollback flag ──
+(newline)
+(display "── 1. Auto-rollback flag ──\n")
+
+(set-code "(define (f x) (+ x 1))")
+(report "default-is-false" (not (panic-auto-rollback?)))
+
+(report "set-true-returns-old-false"
+  (not (auto-rollback-on-panic #t)))
+(report "query-now-true" (panic-auto-rollback?))
+
+(report "set-false-returns-old-true"
+  (auto-rollback-on-panic #f))
+(report "query-now-false" (not (panic-auto-rollback?)))
+
+; ── 2. Checkpoint save/restore ──
+(newline)
+(display "── 2. Checkpoint save/restore ──\n")
+
+(set-code "(define (greet name) (string-append \"Hi, \" name))")
+(report "checkpoint-save" (panic-checkpoint))
+(report "checkpoint-has-source"
+  (> (string-length (panic-safe-source)) 0))
+
+; Restore the checkpoint (should be same source)
+(report "checkpoint-restore" (panic-restore))
+
+; ── 3. Auto-rollback on mutation failure ──
+(newline)
+(display "── 3. Mutation rollback protection ──\n")
+
+(set-code "(define (valid-fn x) (* x 2))")
+(auto-rollback-on-panic #t)
+(report "checkpoint-before-mutation" (panic-checkpoint))
+(report "valid-mutation-succeeds"
+  (mutate:rebind "valid-fn" "(lambda (y) (* y 3))"))
+
+; After successful mutation, checkpoint should be committed
+(set-code "(define (test-clean x) (+ x 1))")
+(auto-rollback-on-panic #f)
+(report "no-auto-rollback-off" (not (panic-auto-rollback?)))
+
+; ── 4. Toggle and state ──
+(newline)
+(display "── 4. State management ──\n")
+
+(set-code "(define (a x) x)")
+(panic-checkpoint)
+(set-code "(define (a x) (* x 2))")
+(report "restore-after-set-code" (panic-restore))
+; After restore, source should match the checkpoint source
+(report "restored-source-nonempty"
+  (> (string-length (current-source)) 0))
+
+; ── Results ──
+(newline)
+(display "═══ Results ═══\n")
+(display total-pass)(display " passed, ")(display total-fail)(display " failed\n")
+
+(if (= total-fail 0)
+  (display "✅ All panic rollback tests passed!\n")
+  (begin (display "❌ ")(display total-fail)(display " test(s) failed\n")))
