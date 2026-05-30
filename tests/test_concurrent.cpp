@@ -15,6 +15,7 @@
 #include <sys/eventfd.h>
 #include <unistd.h>
 
+#include "messaging_bridge.h"
 #include "serve/fiber.h"
 #include "serve/gc_coordinator.h"
 #include "serve/scheduler.h"
@@ -2271,6 +2272,8 @@ bool test_gc_sweep_callback_all_live();
 bool test_gc_sweep_callback_all_dead();
 bool test_gc_sweep_callback_pairs();
 bool test_gc_sweep_no_callback();
+bool test_gc_collect_hook();
+bool test_gc_heap_mutex_hook();
 bool test_gc_safepoint_spawn_during_gc();
 bool test_gc_mark_basic();
 bool test_gc_sweep_dead_count();
@@ -2374,6 +2377,8 @@ int main() {
     test_gc_sweep_callback_all_dead();
     test_gc_sweep_callback_pairs();
     test_gc_sweep_no_callback();
+    test_gc_collect_hook();
+    test_gc_heap_mutex_hook();
 
     std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
                  g_passed, g_passed + g_failed,
@@ -3415,3 +3420,73 @@ bool test_gc_sweep_no_callback() {
 
 
 
+
+
+bool test_gc_collect_hook() {
+    std::println("\n--- Test: GC collect hook ---");
+
+    aura::serve::Scheduler sched(2);
+    bool gc_ran = false;
+
+    auto old_hook = aura::messaging::g_gc_collect;
+    aura::messaging::g_gc_collect = [&sched, &gc_ran]() -> bool {
+        auto* gc = sched.gc_collector();
+        if (!gc) return false;
+        gc->set_alloc_threshold(1);
+        gc->reset_alloc_counter();
+        gc->record_alloc();
+        bool r = gc->request() && gc->collect();
+        gc_ran = true;
+        return r;
+    };
+
+    std::atomic<int> fc{0};
+    sched.spawn([&fc]() {
+        for (int j = 0; j < 10; ++j) {
+            volatile int64_t s = 0;
+            for (int k = 0; k < 500; ++k) s += k;
+            aura::serve::Fiber::check_gc_safepoint();
+            aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+        }
+        fc.fetch_add(1);
+    });
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    bool gc_result = aura::messaging::g_gc_collect();
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    sched.stop();
+    t.join();
+
+    CHECK(gc_ran, "GC collector was triggered via hook");
+    CHECK(gc_result, "GC collect returned true");
+    aura::messaging::g_gc_collect = old_hook;
+    return true;
+}
+
+bool test_gc_heap_mutex_hook() {
+    std::println("\n--- Test: GC heap mutex hook ---");
+
+    std::mutex test_mtx;
+    bool locked = false;
+
+    aura::messaging::g_heap_mutex = [&test_mtx, &locked]() -> std::mutex& {
+        locked = true;
+        return test_mtx;
+    };
+
+    {
+        auto& mtx = aura::messaging::g_heap_mutex();
+        std::lock_guard<std::mutex> lock(mtx);
+        CHECK(locked, "heap mutex hook returns valid mutex");
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(aura::messaging::g_heap_mutex());
+    }
+
+    aura::messaging::g_heap_mutex = nullptr;
+    return true;
+}

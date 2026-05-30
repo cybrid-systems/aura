@@ -202,16 +202,22 @@ void run_serve_async(int num_workers) {
     };
 
     // GC root flush — temporarily routes through the GC collector.
-    // The evaluator calls this during GC root collection. In Phase 2,
-    // evaluator_impl.cpp registers a GCRootFlushFn that fills in the
-    // evaluator's roots. Here we provide a passthrough that registers
-    // with the GC collector.
     aura::messaging::g_gc_flush_root_set = [&sched](void*) {
         auto* gc = sched.gc_collector();
         if (gc) {
-            // The evaluator already registered its root source
-            // via register_root_source during initialization.
+            // Evaluator registered its root source via register_root_source
         }
+    };
+
+    // GC collect — triggers a GC cycle via the GC collector.
+    // Called from (gc-heap) primitives.
+    aura::messaging::g_gc_collect = [&sched]() -> bool {
+        auto* gc = sched.gc_collector();
+        if (!gc) return false;
+        gc->set_alloc_threshold(1);
+        gc->reset_alloc_counter();
+        gc->record_alloc();
+        return gc->request() && gc->collect();
     };
 
     // 3. Shared state between stdin_reader and session fibers
