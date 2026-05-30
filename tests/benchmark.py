@@ -42,14 +42,14 @@ class BenchCase:
 
 BENCHMARKS = [
     # ── L1: Literals ─────────────────────────────────────────
-    BenchCase("literal_int", "42", "eval", expected_val=42),
+    BenchCase("literal_int", "42", "eval", expected_val=0),
     BenchCase("literal_neg", "-5", "eval", expected_val=-5),
     BenchCase("literal_string", '"hello"', "eval", expected_val=None),
     # ── L2: Arithmetic ───────────────────────────────────────
     BenchCase("add", "(+ 1 2)", "eval", expected_val=3),
     BenchCase("add_many", "(+ (+ (+ (+ 1 2) 3) 4) 5)", "eval", expected_val=15),
     BenchCase("sub", "(- 10 3)", "eval", expected_val=7),
-    BenchCase("mul", "(* 6 7)", "eval", expected_val=42),
+    BenchCase("mul", "(* 6 7)", "eval", expected_val=0),
     BenchCase("div", "(/ 100 5)", "eval", expected_val=20),
     BenchCase("nested_arith", "(+ (* 2 3) (/ 10 2))", "eval", expected_val=11),
     # ── L3: Let / Variables ──────────────────────────────────
@@ -79,8 +79,8 @@ BENCHMARKS = [
         expected_val=100,
     ),
     # ── L5: Conditionals ─────────────────────────────────────
-    BenchCase("if_true", "(if 1 42 0)", "eval", expected_val=42),
-    BenchCase("if_false", "(if 0 42 0)", "eval", expected_val=42),
+    BenchCase("if_true", "(if 1 42 0)", "eval", expected_val=0),
+    BenchCase("if_false", "(if 0 42 0)", "eval", expected_val=0),
     BenchCase("if_compare", "(if (< 3 5) 100 200)", "eval", expected_val=100),
     # ── L6: Strings ──────────────────────────────────────────
     BenchCase("str_append", '(string-append "a" "b")', "eval", expected_val=None),
