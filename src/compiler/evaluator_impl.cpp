@@ -4744,6 +4744,8 @@ void Evaluator::init_pair_primitives() {
     //   :has-param  — node has a parameter with given name
     //   :defined-by — node is a Define with given name
     //   :tag        — alias for :node-type
+    //   :has-child  — node has at least one child with the given NodeTag name
+    //   :depth      — node is at the given depth from root (e.g. "0" = root)
     //
     // Returns a predicate descriptor (a tagged pair) that query:filter
     // applies to each candidate node.
@@ -4869,6 +4871,55 @@ void Evaluator::init_pair_primitives() {
                         }
                     }
                     if (!found_param) { match = false; break; }
+                }
+                else if (p.field == ":has-child") {
+                    // Check if node has at least one child with the given NodeTag name
+                    aura::ast::NodeTag child_tag = static_cast<aura::ast::NodeTag>(-1);
+                    bool found_tag = false;
+                    for (auto& m : aura::ast::kNodeMeta) {
+                        if (m.name == p.value && m.name != "<gap>") {
+                            child_tag = m.tag;
+                            found_tag = true;
+                            break;
+                        }
+                    }
+                    if (!found_tag) { match = false; break; }
+                    bool has_child = false;
+                    for (auto cid : v.children) {
+                        if (cid != aura::ast::NULL_NODE && flat.get(cid).tag == child_tag) {
+                            has_child = true;
+                            break;
+                        }
+                    }
+                    if (!has_child) { match = false; break; }
+                }
+                else if (p.field == ":depth") {
+                    // Check if node is at the given depth from root
+                    int target_depth = 0;
+                    try { target_depth = std::stoi(p.value); }
+                    catch (...) { match = false; break; }
+                    if (target_depth < 0) { match = false; break; }
+                    // Starting from this node, walk up via children_of to count depth
+                    int actual_depth = 0;
+                    aura::ast::NodeId cur = id;
+                    while (cur != 0) {  // root is always NodeId 0
+                        // Find parent by scanning all nodes for one that has cur as child
+                        aura::ast::NodeId parent = aura::ast::NULL_NODE;
+                        for (aura::ast::NodeId pid = 0; pid < flat.size(); ++pid) {
+                            auto pv = flat.get(pid);
+                            for (auto cid : pv.children) {
+                                if (cid == cur) {
+                                    parent = pid;
+                                    break;
+                                }
+                            }
+                            if (parent != aura::ast::NULL_NODE) break;
+                        }
+                        if (parent == aura::ast::NULL_NODE) break;
+                        cur = parent;
+                        ++actual_depth;
+                    }
+                    if (actual_depth != target_depth) { match = false; break; }
                 }
                 else {
                     return mev("unknown-field",
