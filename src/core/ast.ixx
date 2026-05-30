@@ -888,6 +888,26 @@ private:
             dirty_[id] = false;
     }
 
+    // ── Node validation (NodeMeta invariants) ─────────────────
+    // Checks a single node against its NodeMeta invariants.
+    // Returns a description of the first violation, or empty string if valid.
+    // If fail_on_error is true, asserts on violation.
+    std::string validate_node(NodeId id, bool fail_on_error = true) const;
+
+    // Validate all nodes in the FlatAST. Returns total violations found.
+    // If fail_on_error is true, asserts on first violation.
+    std::size_t validate_all_nodes(bool fail_on_error = true) const;
+
+    // Validation note type (for non-fatal reporting)
+    struct ValidationError {
+        NodeId node;
+        std::string message;
+        std::string expected;
+        std::string actual;
+    };
+    // Validate all nodes, populating errors vector instead of asserting.
+    std::size_t validate_all_nodes(std::vector<ValidationError>& errors) const;
+
     // ── Value result cache (for incremental eval) ────────────
     // Stores the last EvalValue result for each node.
     // kNotCached = not yet evaluated or cache invalidated.
