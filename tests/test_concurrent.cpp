@@ -1373,6 +1373,230 @@ bool test_exec_retry() {
     return true;
 }
 
+// ── Test 37: when_all with one error — verify propagation ────
+
+bool test_exec_when_all_error() {
+    std::println("\n--- Test: when_all with error propagation ---");
+
+    aura::serve::Scheduler sched(2);
+    aura::exec::fiber_scheduler fs(sched);
+    bool got_error = false;
+    std::atomic<int> ok_count{0};
+
+    std::vector<std::function<void()>> fns;
+    // 3 tasks that succeed
+    for (int i = 0; i < 3; ++i)
+        fns.push_back([&ok_count]() { ok_count.fetch_add(1); });
+    // 1 task that throws
+    fns.push_back([]() { throw std::runtime_error("intentional"); });
+
+    auto sender = aura::exec::when_all(fs, std::move(fns));
+    auto op = std::move(sender).connect(aura::exec::fiber_receiver(
+        []() { /* success — won't be called */ },
+        [&got_error](std::exception_ptr e) {
+            got_error = true;
+            try { std::rethrow_exception(e); }
+            catch (const std::runtime_error& ex) {
+                // expected
+            }
+        },
+        []() {}
+    ));
+    op.start();
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    sched.stop();
+    t.join();
+
+    CHECK(got_error, "when_all propagated error when one task failed");
+    // The 3 successful tasks may or may not run before error is detected
+    // (race between concurrent tasks). Just verify the error fired.
+    return true;
+}
+
+// ── Test 38: let_value with error in middle step ─────────────
+
+bool test_exec_let_value_error() {
+    std::println("\n--- Test: let_value error in middle step ---");
+
+    aura::serve::Scheduler sched(2);
+    aura::exec::fiber_scheduler fs(sched);
+    std::atomic<int> steps_run{0};
+    bool got_error = false;
+
+    std::vector<std::function<void()>> pipeline;
+    pipeline.push_back([&steps_run]() {
+        steps_run.fetch_add(1);  // step 1
+    });
+    pipeline.push_back([&steps_run]() {
+        steps_run.fetch_add(10); // step 2 — will fail
+        throw std::runtime_error("pipe error");
+    });
+    pipeline.push_back([&steps_run]() {
+        steps_run.fetch_add(100); // step 3 — should NOT run
+    });
+
+    auto sender = aura::exec::let_value(fs, std::move(pipeline));
+    auto op = std::move(sender).connect(aura::exec::fiber_receiver(
+        []() {},
+        [&got_error](std::exception_ptr) { got_error = true; },
+        []() {}
+    ));
+    op.start();
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    sched.stop();
+    t.join();
+
+    CHECK(got_error, "let_value error propagates when mid-step fails");
+    CHECK(steps_run.load() <= 11,
+          "let_value stopped after error (steps_run=" +
+          std::to_string(steps_run.load()) + ", expected <= 11)");
+    return true;
+}
+
+// ── Test 39: retry — all attempts fail ──────────────────────
+
+bool test_exec_retry_all_fail() {
+    std::println("\n--- Test: retry all attempts fail ---");
+
+    aura::serve::Scheduler sched(2);
+    aura::exec::fiber_scheduler fs(sched);
+    std::atomic<int> attempts{0};
+    bool got_error = false;
+
+    auto sender = aura::exec::retry(fs,
+        [&attempts]() {
+            attempts.fetch_add(1);
+            throw std::runtime_error("always fails");
+        },
+        5
+    );
+    auto op = std::move(sender).connect(aura::exec::fiber_receiver(
+        []() {},
+        [&got_error](std::exception_ptr) { got_error = true; },
+        []() {}
+    ));
+    op.start();
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    sched.stop();
+    t.join();
+
+    CHECK(got_error, "retry sends set_error after all attempts fail");
+    CHECK(attempts.load() == 5,
+          "retry made exactly " + std::to_string(attempts.load()) + " attempts");
+    return true;
+}
+
+// ── Test 40: multiple concurrent when_all operations ─────────
+
+bool test_exec_multi_when_all() {
+    std::println("\n--- Test: Multiple concurrent when_all operations ---");
+
+    aura::serve::Scheduler sched(4);
+    aura::exec::fiber_scheduler fs(sched);
+    std::atomic<int> total{0};
+
+    auto make_when_all = [&]() {
+        std::vector<std::function<void()>> fns;
+        for (int i = 0; i < 5; ++i)
+            fns.push_back([&total]() {
+                volatile int sum = 0;
+                for (int j = 0; j < 20000; ++j) sum += j;
+                total.fetch_add(1);
+            });
+        return aura::exec::when_all(fs, std::move(fns));
+    };
+
+    // Launch 3 when_all operations
+    auto s1 = make_when_all();
+    auto s2 = make_when_all();
+    auto s3 = make_when_all();
+
+    auto o1 = std::move(s1).connect(aura::exec::fiber_receiver{}); o1.start();
+    auto o2 = std::move(s2).connect(aura::exec::fiber_receiver{}); o2.start();
+    auto o3 = std::move(s3).connect(aura::exec::fiber_receiver{}); o3.start();
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+    sched.stop();
+    t.join();
+
+    CHECK(total.load() == 15,
+          "3 when_all x 5 fibers = " + std::to_string(total.load()) + " completed");
+    return true;
+}
+
+// ── Test 41: mixed individual schedule + when_all ────────────
+
+bool test_exec_mixed_schedule() {
+    std::println("\n--- Test: Mixed schedule + when_all ---");
+
+    aura::serve::Scheduler sched(4);
+    aura::exec::fiber_scheduler fs(sched);
+    std::atomic<int> solo{0};
+    std::atomic<int> group{0};
+
+    // Solo fibers via schedule
+    auto snd1 = fs.schedule([&solo]() { solo.fetch_add(1); });
+    auto snd2 = fs.schedule([&solo]() { solo.fetch_add(1); });
+    auto o1 = std::move(snd1).connect(aura::exec::fiber_receiver{}); o1.start();
+    auto o2 = std::move(snd2).connect(aura::exec::fiber_receiver{}); o2.start();
+
+    // Group via when_all
+    std::vector<std::function<void()>> fns;
+    for (int i = 0; i < 5; ++i)
+        fns.push_back([&group]() { group.fetch_add(1); });
+    auto ws = aura::exec::when_all(fs, std::move(fns));
+    auto ow = std::move(ws).connect(aura::exec::fiber_receiver{}); ow.start();
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    sched.stop();
+    t.join();
+
+    CHECK(solo.load() == 2, "solo fibers: " + std::to_string(solo.load()) + " / 2");
+    CHECK(group.load() == 5, "group fibers: " + std::to_string(group.load()) + " / 5");
+    return true;
+}
+
+// ── Test 42: receiver callbacks fire correctly ───────────────
+// Verify that the receiver's set_value is called on success.
+
+bool test_exec_receiver_callback() {
+    std::println("\n--- Test: Receiver callback verification ---");
+
+    aura::serve::Scheduler sched(2);
+    aura::exec::fiber_scheduler fs(sched);
+    std::atomic<int> callbacks{0};
+
+    auto sender = fs.schedule([&callbacks]() {
+        callbacks.fetch_add(1);
+    });
+
+    auto op = std::move(sender).connect(aura::exec::fiber_receiver(
+        [&callbacks]() { callbacks.fetch_add(10); },
+        [](std::exception_ptr) {},
+        []() {}
+    ));
+    op.start();
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    sched.stop();
+    t.join();
+
+    // Function ran (1) + set_value called (10) = 11
+    CHECK(callbacks.load() == 11,
+          "fiber ran + receiver set_value = " + std::to_string(callbacks.load()) +
+          " (expected 11)");
+    return true;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // ── Main ─────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════
@@ -1417,6 +1641,12 @@ int main() {
     test_exec_when_all();
     test_exec_let_value();
     test_exec_retry();
+    test_exec_when_all_error();
+    test_exec_let_value_error();
+    test_exec_retry_all_fail();
+    test_exec_multi_when_all();
+    test_exec_mixed_schedule();
+    test_exec_receiver_callback();
 
     std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
                  g_passed, g_passed + g_failed,
