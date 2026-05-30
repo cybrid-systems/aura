@@ -4108,11 +4108,31 @@ void Evaluator::init_pair_primitives() {
             return make_void();
         auto expanded = aura::compiler::macro_expand_all(*workspace_flat_, *workspace_pool_,
                                                          workspace_flat_->root);
-        auto result = eval_flat(*workspace_flat_, *workspace_pool_, expanded, top_);
+        // Evaluate each top-level expression individually to ensure closure
+        // environments capture correct cell bindings. When wrapped in a single
+        // begin block, the tree-walker's begin handler can create closures with
+        // stale cells_ pointers for variables defined at different positions.
+        EvalValue last = make_void();
+        if (expanded < workspace_flat_->size()) {
+            auto root_v = workspace_flat_->get(expanded);
+            if (root_v.tag == aura::ast::NodeTag::Begin) {
+                for (auto cid : root_v.children) {
+                    if (cid == aura::ast::NULL_NODE) continue;
+                    auto r = eval_flat(*workspace_flat_, *workspace_pool_, cid, top_);
+                    if (r) {
+                        last = *r;
+                    } else {
+                        // Continue on error — some top-level orphans may error
+                        // but later expressions (defines) should still be processed
+                    }
+                }
+            } else {
+                auto r = eval_flat(*workspace_flat_, *workspace_pool_, expanded, top_);
+                if (r) last = *r;
+            }
+        }
         workspace_flat_->clear_all_dirty();
-        if (result)
-            return *result;
-        return make_void();
+        return last;
     });
 
     // (eval-expr value) — Evaluate any Aura value (not just strings)
