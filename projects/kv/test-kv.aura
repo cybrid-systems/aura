@@ -245,24 +245,16 @@
   (kv-flush)
 
   (newline)
-  (display "=== Results: ") (display passed) (display " passed, ")
-  (display failed) (display " failed") (newline)
+  ;; 跨类型测试
+  (kv-sadd "myset" "a")
+  (assert-equal (kv-lpush "myset" "x") "ERR wrong type" "kv-lpush on set value")
+  (assert-equal (kv-hset "myset" "f" "v") "ERR wrong type" "kv-hset on set value")
+  (kv-flush)
 
-  (kv-flush))
+  (newline)
+  (display "=== Results: ") (display passed) (display " passed, ")
+  (display failed) (display " failed") (newline))
 
 ;; 执行测试
+;; 执行测试（整文件只有 1 个顶层 define，避免 has_multiple_defs 污染 top_）
 (run-kv-tests)
-
-;; 跨类型测试（在函数外部执行，避免局部 env 干扰）
-(define extra-passed 0)
-(define extra-failed 0)
-(define (extra-assert a e m)
-  (if (equal? a e)
-      (begin (set! extra-passed (+ extra-passed 1)) (display "[PASS] ") (display m) (newline))
-      (begin (set! extra-failed (+ extra-failed 1)) (display "[FAIL] ") (display m) (display " got: ") (display a) (newline))))
-(kv-sadd "myset" "a")
-(extra-assert (kv-lpush "myset" "x") "ERR wrong type" "kv-lpush on set value")
-(extra-assert (kv-hset "myset" "f" "v") "ERR wrong type" "kv-hset on set value")
-(kv-flush)
-(newline)
-(display "Extra tests: ") (display extra-passed) (display "/") (display (+ extra-passed extra-failed)) (display " passed") (newline)
