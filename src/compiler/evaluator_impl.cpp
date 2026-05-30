@@ -4132,7 +4132,7 @@ void Evaluator::init_pair_primitives() {
             }
         }
         workspace_flat_->clear_all_dirty();
-        return last;
+        return make_void();
     });
 
     // (eval-expr value) — Evaluate any Aura value (not just strings)
@@ -12411,10 +12411,10 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         auto bp = types::as_pair_idx(body_rest);
                         last = eval_data_as_code(pairs_[bp].car, env, flat, pool);
                         if (!last)
-                            return last;
+                            return make_void();
                         body_rest = pairs_[bp].cdr;
                     }
-                    return last;
+                    return make_void();
                 }
             }
             return make_void();
@@ -12492,10 +12492,10 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 auto elem_pair = types::as_pair_idx(current);
                 last = eval_data_as_code(pairs_[elem_pair].car, env, flat, pool);
                 if (!last)
-                    return last;
+                    return make_void();
                 current = pairs_[elem_pair].cdr;
             }
-            return last;
+            return make_void();
         }
 
         // ── quote: (quote expr) ──
@@ -12655,10 +12655,10 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                     auto elem_pair = types::as_pair_idx(body_current);
                     last = eval_data_as_code(pairs_[elem_pair].car, new_env, flat, pool);
                     if (!last)
-                        return last;
+                        return make_void();
                     body_current = pairs_[elem_pair].cdr;
                 }
-                return last;
+                return make_void();
             }
             return make_void();
         }
@@ -13187,9 +13187,9 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 auto expanded_root =
                                     aura::compiler::macro_expand_all(*iflat, *ipool, iflat->root);
                                 last = eval_flat(*iflat, *ipool, expanded_root, eval_env);
-                                if (!last) return last;
+                                if (!last) return make_void();
                             }
-                            return last;
+                            return make_void();
                         }
                     }
                     // try/catch: (try body (catch (var) handler))
@@ -13209,9 +13209,9 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 for (std::size_t ci = 2; ci < v.children.size(); ++ci) {
                                     last = eval_flat(*f, *p, v.child(ci), eval_env);
                                     if (!last)
-                                        return last;
+                                        return make_void();
                                 }
-                                return last;
+                                return make_void();
                             }
                             return make_void();
                         }
@@ -13226,9 +13226,9 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 for (std::size_t ci = 2; ci < v.children.size(); ++ci) {
                                     last = eval_flat(*f, *p, v.child(ci), eval_env);
                                     if (!last)
-                                        return last;
+                                        return make_void();
                                 }
-                                return last;
+                                return make_void();
                             }
                             return make_void();
                         }
@@ -13271,11 +13271,11 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 last = eval_flat(*f, *p, v.child(ci), *tail_env);
                                 if (!last) {
                                     capability_stack_.pop_back();
-                                    return last;
+                                    return make_void();
                                 }
                             }
                             capability_stack_.pop_back();
-                            return last;
+                            return make_void();
                         }
                         // check-capability: (check-capability "Name") — look up %cap:Name binding
                         if (cname == "check-capability" && v.children.size() >= 2) {
