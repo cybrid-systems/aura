@@ -389,6 +389,14 @@ run_test "agent:pipe-mode" "$(printf '(display 42)')" "42"
 # EDSL mutate: rebind function
 run_test "agent:mutate-rebind" "$(printf '(set-code "(define (add x y) (+ x y))")(query:find \"add\")(mutate:rebind \"add\" \"(define (add x y) (* x y))\")(eval-current)(add 1 2)')" "2"
 
+# query:filter / query:where — combined filter queries
+run_test "edsl:filter-where" \
+  "$(printf '(set-code "(define (sort lst) (if (null? lst) () (sort (cdr lst))))")(query:filter (query:where :node-type "Call") (query:where :callee "sort"))')" \
+  "(8)"
+run_test "edsl:filter-define-name" \
+  "$(printf '(set-code "(define (add x y) (+ x y))")(query:filter (query:where :node-type "Define") (query:where :defines "add"))')" \
+  "(5)"
+
 # query:pattern
 
 # EDSL query:pattern (use escaped quotes to avoid shell conflicts)
