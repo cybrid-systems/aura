@@ -20,7 +20,7 @@ TypeId TypeRegistry::register_type(TypeTag tag, std::string name) {
         .index = static_cast<std::uint32_t>(entries_.size()),
         .generation = next_generation_,
     };
-    entries_.push_back(Entry{tag, std::move(name), std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt});
+    entries_.push_back(Entry{tag, std::move(name), std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt});
     name_to_id_[entries_.back().name] = id;
     return id;
 }
@@ -190,7 +190,7 @@ TypeId TypeRegistry::register_forall(TypeId var, TypeId body) {
         std::string("∀") + std::string(name_var) + ". " + std::string(name_body);
     entries_.push_back(Entry{TypeTag::FORALL, std::move(forall_name), std::nullopt,
                              ForallType{var, body}, std::nullopt, std::nullopt,
-                             std::nullopt, std::nullopt});
+                             std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt});
     return id;
 }
 
@@ -341,6 +341,7 @@ std::vector<TypeId> TypeRegistry::free_vars(TypeId id) const {
         return result;
     std::vector<TypeId> stack = {id};
     std::unordered_set<std::uint32_t> seen;
+    std::unordered_set<std::uint32_t> bound; // variables bound by enclosing ForallType
     while (!stack.empty()) {
         auto cur = stack.back();
         stack.pop_back();
@@ -348,17 +349,20 @@ std::vector<TypeId> TypeRegistry::free_vars(TypeId id) const {
             continue;
         if (!seen.insert(cur.index).second)
             continue;
+        if (auto* ft = forall_of(cur)) {
+            bound.insert(ft->var.index);
+            stack.push_back(ft->body);
+            continue;
+        }
         if (entries_[cur.index].tag == TypeTag::TYPE_VAR) {
-            result.push_back(cur); // preserve exact TypeId with generation
+            if (!bound.contains(cur.index))
+                result.push_back(cur); // preserve exact TypeId with generation
             continue;
         }
         if (auto* f = func_of(cur)) {
             stack.push_back(f->ret);
             for (auto& a : f->args)
                 stack.push_back(a);
-        }
-        if (auto* ft = forall_of(cur)) {
-            stack.push_back(ft->body);
         }
         if (auto* lt = linear_of(cur)) {
             stack.push_back(lt->inner);
