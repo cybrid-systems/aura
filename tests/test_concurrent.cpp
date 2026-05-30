@@ -1598,6 +1598,200 @@ bool test_exec_receiver_callback() {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// ── Yield reason tests (Issue #31) ──────────────────────────
+// ═══════════════════════════════════════════════════════════════
+
+// ── Test 43: Fiber yield reason is tracked correctly ─────────
+
+bool test_yield_reason_tracking() {
+    std::println("\n--- Test: Yield reason tracking ---");
+
+    aura::serve::Scheduler sched(2);
+    std::atomic<int> stage{0};
+
+    sched.spawn([&stage]() {
+        // Default reason after construction should be Explicit
+        CHECK(aura::serve::g_current_fiber->is_stealable(),
+              "default fiber is stealable");
+        stage.store(1);
+
+        // Yield explicitly — should be stealable
+        aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+        stage.store(2);
+        CHECK(aura::serve::g_current_fiber->is_stealable(),
+              "fiber stealable after Explicit yield");
+
+        // Yield at mutation boundary — stealable
+        aura::serve::Fiber::yield(aura::serve::YieldReason::MutationBoundary);
+        stage.store(3);
+        CHECK(aura::serve::g_current_fiber->is_stealable(),
+              "fiber stealable after MutationBoundary yield");
+
+        // Check last_yield_reason
+        CHECK(aura::serve::g_current_fiber->last_yield_reason() ==
+              aura::serve::YieldReason::MutationBoundary,
+              "last_yield_reason = MutationBoundary");
+
+        // Default yield() also sets Explicit
+        aura::serve::Fiber::yield();
+        stage.store(4);
+        CHECK(aura::serve::g_current_fiber->is_stealable(),
+              "fiber stealable after default yield()");
+    });
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    sched.stop();
+    t.join();
+
+    CHECK(stage.load() == 4, "all yield stages executed (stage=" +
+          std::to_string(stage.load()) + ")");
+    return true;
+}
+
+// ── Test 44: Fiber yield(BlockingIO) sets Waiting state ──────
+
+bool test_yield_blocking_io_state() {
+    std::println("\n--- Test: Fiber yield(BlockingIO) sets Waiting state ---");
+
+    aura::serve::Scheduler sched(2);
+    std::atomic<int> stage{0};
+
+    sched.spawn([&stage]() {
+        // Initially Running
+        CHECK(aura::serve::g_current_fiber->state() ==
+              aura::serve::FiberState::Running,
+              "initial state = Running");
+        stage.store(1);
+
+        // Yield with BlockingIO — transitions to Waiting
+        aura::serve::Fiber::yield(aura::serve::YieldReason::BlockingIO);
+
+        // After resume (should happen if epoll wakes us): still Running
+        CHECK(aura::serve::g_current_fiber->state() ==
+              aura::serve::FiberState::Running,
+              "after resume state = Running");
+        stage.store(2);
+    });
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    sched.stop();
+    t.join();
+
+    CHECK(stage.load() >= 1, "fiber at least started (stage=" +
+          std::to_string(stage.load()) + ")");
+    return true;
+}
+
+// ── Test 45: Fiber yield(Explicit) keeps Ready state ─────────
+
+bool test_yield_explicit_state() {
+    std::println("\n--- Test: Fiber yield(Explicit) keeps Ready state ---");
+
+    aura::serve::Scheduler sched(2);
+    std::atomic<int> counter{0};
+
+    sched.spawn([&counter]() {
+        aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+        counter.fetch_add(1);
+        aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+        counter.fetch_add(10);
+    });
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    sched.stop();
+    t.join();
+
+    CHECK(counter.load() == 11,
+          "fiber with Explicit yields preserves state (1+10 = " +
+          std::to_string(counter.load()) + ")");
+    return true;
+}
+
+// ── Test 46: Fiber yield chain — BlockingIO then Explicit ────
+
+bool test_yield_reason_chain() {
+    std::println("\n--- Test: Yield reason chaining ---");
+
+    aura::serve::Scheduler sched(2);
+    std::atomic<int> stage{0};
+
+    sched.spawn([&stage]() {
+        // Yield chain: Explicit → MutationBoundary → Explicit → default yield
+
+        aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+        stage.store(1);
+        CHECK(aura::serve::g_current_fiber->last_yield_reason() ==
+              aura::serve::YieldReason::Explicit,
+              "reason 1 = Explicit");
+
+        aura::serve::Fiber::yield(aura::serve::YieldReason::MutationBoundary);
+        stage.store(2);
+        CHECK(aura::serve::g_current_fiber->last_yield_reason() ==
+              aura::serve::YieldReason::MutationBoundary,
+              "reason 2 = MutationBoundary");
+        CHECK(aura::serve::g_current_fiber->is_stealable(),
+              "stealable after MutationBoundary");
+
+        aura::serve::Fiber::yield();
+        stage.store(3);
+        CHECK(aura::serve::g_current_fiber->last_yield_reason() ==
+              aura::serve::YieldReason::Explicit,
+              "reason 3 = Explicit (default yield)");
+
+        aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+        stage.store(4);
+        CHECK(aura::serve::g_current_fiber->is_stealable(),
+              "stealable after Explicit");
+    });
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    sched.stop();
+    t.join();
+
+    CHECK(stage.load() == 4, "all chain stages executed");
+    return true;
+}
+
+// ── Test 47: Multiple fibers with mixed yield reasons ────────
+
+bool test_yield_mixed_reasons() {
+    std::println("\n--- Test: Mixed yield reasons across fibers ---");
+
+    aura::serve::Scheduler sched(4);
+    std::atomic<int> stealable_count{0};
+    std::atomic<int> nonstealable_count{0};
+
+    // Spawn fibers with different yield patterns.
+    // Odd-indexed fibers yield with default yield() (Explicit, stealable).
+    // Even-indexed fibers yield with MutationBoundary (also stealable).
+    for (int i = 0; i < 5; ++i) {
+        sched.spawn([&stealable_count, i]() {
+            if (i % 2 == 0) {
+                aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+            } else {
+                aura::serve::Fiber::yield(aura::serve::YieldReason::MutationBoundary);
+            }
+            if (aura::serve::g_current_fiber->is_stealable())
+                stealable_count.fetch_add(1);
+        });
+    }
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    sched.stop();
+    t.join();
+
+    CHECK(stealable_count.load() == 5,
+          std::to_string(stealable_count.load()) +
+          " fibers reported stealable (expected 5)");
+    return true;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // ── Main ─────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════
 
@@ -1647,6 +1841,11 @@ int main() {
     test_exec_multi_when_all();
     test_exec_mixed_schedule();
     test_exec_receiver_callback();
+    test_yield_reason_tracking();
+    test_yield_blocking_io_state();
+    test_yield_explicit_state();
+    test_yield_reason_chain();
+    test_yield_mixed_reasons();
 
     std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
                  g_passed, g_passed + g_failed,
