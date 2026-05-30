@@ -20,6 +20,7 @@ aura::messaging::EvalAsyncFn aura::messaging::g_eval_async = nullptr;
 aura::messaging::GetMetricsFn aura::messaging::g_get_scheduler_metrics;
 aura::messaging::ResetMetricsFn aura::messaging::g_reset_scheduler_metrics;
 aura::messaging::FiberSetAffinityFn aura::messaging::g_fiber_set_affinity = nullptr;
+aura::messaging::GCRootFlushFn aura::messaging::g_gc_flush_root_set;
 aura::messaging::MailboxCountFn aura::messaging::g_mailbox_count = nullptr;
 aura::messaging::SessionIdFn aura::messaging::g_session_id = nullptr;
 aura::messaging::SessionExistsFn aura::messaging::g_session_exists = nullptr;

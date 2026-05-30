@@ -2,6 +2,7 @@
 #include "serve_async.h"
 #include "messaging_bridge.h"
 #include "scheduler.h"
+#include "gc_coordinator.h"
 #include "fiber.h"
 #include "mailbox.h"
 #include "thread_pool.h"
@@ -197,6 +198,19 @@ void run_serve_async(int num_workers) {
         auto fb = aura::serve::g_current_fiber;
         if (fb) {
             fb->set_affinity(worker_id);
+        }
+    };
+
+    // GC root flush — temporarily routes through the GC collector.
+    // The evaluator calls this during GC root collection. In Phase 2,
+    // evaluator_impl.cpp registers a GCRootFlushFn that fills in the
+    // evaluator's roots. Here we provide a passthrough that registers
+    // with the GC collector.
+    aura::messaging::g_gc_flush_root_set = [&sched](void*) {
+        auto* gc = sched.gc_collector();
+        if (gc) {
+            // The evaluator already registered its root source
+            // via register_root_source during initialization.
         }
     };
 
