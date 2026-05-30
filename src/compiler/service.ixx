@@ -2175,13 +2175,32 @@ public:
             return {0, false, result.error().message};
         }
         auto& val = *result;
-        auto mid = static_cast<std::uint64_t>(
-            aura::compiler::types::is_int(val) ? aura::compiler::types::as_int(val) : 0);
-        if (mid > 0) {
+
+        // Check if the mutation's auto-typecheck reported errors (P2 #34)
+        if (evaluator_.has_type_error()) {
+            auto err = evaluator_.last_mutate_error();
+            evaluator_.clear_last_mutate_error();
+            // Transaction auto-rollbacks on destructor
+            return {0, false, err};
+        }
+
+        // Mutation primitives return make_bool(true) on success or an int mutation ID.
+        // Accept both: bool true = success, positive int = success with mutation ID.
+        bool is_success = false;
+        std::uint64_t mid = 0;
+        if (aura::compiler::types::is_int(val)) {
+            mid = static_cast<std::uint64_t>(aura::compiler::types::as_int(val));
+            is_success = mid > 0;
+        } else if (aura::compiler::types::is_bool(val)) {
+            is_success = aura::compiler::types::as_bool(val);
+            mid = 0;  // no explicit mutation ID for bool returns
+        }
+
+        if (is_success) {
             tx.commit();
             return {mid, true, ""};
         }
-        // If mutation returned 0, it indicates failure — transaction auto-rollbacks
+        // If mutation returned 0/false, it indicates failure — transaction auto-rollbacks
         return {0, false, "mutation returned zero (failed)"};
     }
 

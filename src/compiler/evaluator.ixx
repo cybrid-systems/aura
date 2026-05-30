@@ -130,6 +130,11 @@ public:
     void set_compiler_service(void* svc) { compiler_service_ = svc; }
     void set_session_id(const std::string& id) { session_id_ = id; }
 
+    // Mutation typecheck error state (P2 #34)
+    const std::string& last_mutate_error() const { return last_mutate_error_; }
+    void clear_last_mutate_error() { last_mutate_error_.clear(); }
+    bool has_type_error() const { return !last_mutate_error_.empty(); }
+
     // Set/get a shared workspace tree (for cross-session workspace sharing in serve mode).
     void set_workspace_tree(void* wt) { workspace_tree_ = wt; }
     void* workspace_tree() const { return workspace_tree_; }
