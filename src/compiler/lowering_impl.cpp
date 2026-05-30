@@ -1097,7 +1097,11 @@ static std::uint32_t lower_flat_expr(
             // Check if coercion is needed: compare annotation type_id with inner type_id
             auto ann_type_id = flat.type_id(id);
             auto inner_type_id = flat.type_id(v.child(0));
-            if (ann_type_id != 0 && inner_type_id != 0 && ann_type_id != inner_type_id) {
+            // Emit CastOp for type boundary when:
+            // 1. Both types are known and differ (static → static coercion)
+            // 2. Annotation is static but inner is dynamic (runtime type check)
+            if ((ann_type_id != 0 && inner_type_id != 0 && ann_type_id != inner_type_id) ||
+                (ann_type_id != 0 && inner_type_id == 0)) {
                 // Emit CastOp for the type boundary
                 auto slot = state.alloc_local();
                 auto ann_tid = aura::core::TypeId{ann_type_id, 1};

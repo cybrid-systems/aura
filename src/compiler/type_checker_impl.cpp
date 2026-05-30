@@ -1657,6 +1657,19 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
                     diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg), saved_loc)
                                      .with_blame(BlameInfo{BlameParty::Caller, "", "compile"}));
                 }
+            } else if (arg_type == reg_.dynamic_type() &&
+                       ft.args[i] != reg_.dynamic_type()) {
+                // Dynamic → Static: consistent_unify succeeded (DYNAMIC is consistent
+                // with everything), but we still need a runtime type check.
+                // Insert a CoercionNode so lowering emits a CastOp.
+                auto msg = std::string("argument ") + std::to_string(i) +
+                           ": dynamic → static boundary, inserted runtime check";
+                diag_.report(Diagnostic(ErrorKind::Note, std::move(msg), saved_loc));
+                auto type_tag = type_tag_for_coercion(ft.args[i], &reg_);
+                auto coercion_id = flat.add_coercion(
+                    arg_id, type_tag, ft.args[i].index);
+                flat.set_loc(coercion_id, v.line, v.col);
+                flat.set_child(v.id, static_cast<std::uint32_t>(i + 1), coercion_id);
             }
         }
         std::size_t num_args = v.children.size() > 1 ? v.children.size() - 1 : 0;
@@ -2184,6 +2197,28 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
                            ", got " + std::string(reg_.format_type(inferred));
                 diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg), cur_loc_)
                                  .with_blame(BlameInfo{BlameParty::Annotation, "", "compile"}));
+            }
+        } else if (inferred == reg_.dynamic_type() &&
+                   expected != reg_.dynamic_type()) {
+            // Dynamic → Static boundary: consistent_unify succeeded because
+            // DYNAMIC is consistent with everything, but we need a runtime
+            // check at the boundary. Insert CoercionNode for CastOp emission.
+            auto msg = "coercion from dynamic to " + std::string(reg_.format_type(expected));
+            diag_.report(Diagnostic(ErrorKind::Note, std::move(msg), cur_loc_));
+            auto type_tag = type_tag_for_coercion(expected, &reg_);
+            auto coercion_id = flat.add_coercion(
+                id, type_tag, expected.index);
+            auto src_v = flat.get(id);
+            flat.set_loc(coercion_id, src_v.line, src_v.col);
+            auto parent_id = flat.parent_of(id);
+            if (parent_id != aura::ast::NULL_NODE) {
+                auto parent_v = flat.get(parent_id);
+                for (std::size_t ci = 0; ci < parent_v.children.size(); ++ci) {
+                    if (parent_v.child(static_cast<std::uint32_t>(ci)) == id) {
+                        flat.set_child(parent_id, static_cast<std::uint32_t>(ci), coercion_id);
+                        break;
+                    }
+                }
             }
         }
     }

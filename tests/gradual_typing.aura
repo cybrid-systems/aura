@@ -116,6 +116,33 @@
 ")
 (report "nested-chain-typecheck" (safe-typecheck))
 
+; ── 9. Any type annotation (Phase 4) ──
+(newline)
+(display "── 9. Any type annotation ──\n")
+
+(set-code "
+(define (accept-any (: x Any))
+  x)
+")
+(report "any-param-accepts" (safe-typecheck))
+
+(set-code "
+(define (ignore [x : Any])
+  42)
+(define (call-ignore y) (ignore y))
+")
+(report "dynamic-to-any-no-coercion" (safe-typecheck))
+
+(set-code "
+(define (id-any (: x Any))
+  x)
+(define (use-int [n : Int])
+  n)
+(define (bridge val)
+  (use-int (id-any val)))
+")
+(report "any-to-static-boundary" (safe-typecheck))
+
 ; ── Results ──
 (newline)
 (display "═══ Results ═══\n")
