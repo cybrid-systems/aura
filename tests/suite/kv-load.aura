@@ -1,5 +1,79 @@
+;; ── kv-load.aura — 验证 (load) 路径跨文件闭包绑定 ──
+;; 验证多个 (load) 调用之间 define 能正确持久化和访问。
 (load "projects/kv/kv.aura")
-(kv-set "t" "ok")
-(display "[TEST] kv-get t: ") (display (kv-get "t")) (newline)
-(kv-del "t")
-(display "[TEST] after del: ") (display (kv-exists? "t")) (newline)
+
+(define (run-tests)
+  (define passed 0)
+  (define failed 0)
+  (define (check actual expected msg)
+    (if (equal? actual expected)
+        (begin (set! passed (+ passed 1))
+               (display "[PASS] ") (display msg) (newline))
+        (begin (set! failed (+ failed 1))
+               (display "[FAIL] ") (display msg)
+               (display " - expected: ") (display expected)
+               (display ", got: ") (display actual) (newline))))
+  (display "=== kv-load regression tests ===\n")
+
+  ;; Basic CRUD
+  (check (kv-set "name" "Aura") "OK" "kv-set")
+  (check (kv-get "name") "Aura" "kv-get")
+  (check (kv-exists? "name") #t "kv-exists? true")
+  (check (kv-exists? "nope") #f "kv-exists? false")
+  (check (kv-del "name") "OK" "kv-del")
+  (check (kv-exists? "name") #f "kv-exists? after del")
+  (check (kv-get "name") (void) "kv-get after del")
+
+  ;; Multiple keys
+  (kv-set "x" 10) (kv-set "y" 20)
+  (check (kv-get "x") 10 "kv-get x")
+  (check (kv-get "y") 20 "kv-get y")
+  (kv-del "x")
+  (check (kv-exists? "x") #f "kv-del removes")
+  (check (kv-exists? "y") #t "other keys preserved")
+
+  ;; Counter
+  (check (kv-incr "c") 1 "kv-incr 1")
+  (check (kv-incr "c") 2 "kv-incr 2")
+  (check (kv-incr "c") 3 "kv-incr 3")
+  (kv-del "c")
+
+  ;; TTL
+  (kv-set-with-ttl "t" "v" 60)
+  (check (kv-exists? "t") #t "kv-exists? with TTL")
+  (check (kv-ttl "t") 60 "kv-ttl 60s")
+  (kv-persist "t")
+  (check (kv-ttl "t") -1 "kv-persist clears TTL")
+  (kv-del "t")
+
+  ;; Transaction (basic - without kv-exec)
+  (kv-flush)
+  (check (kv-set "a" "x") "OK" "tx-set")
+  (check (kv-multi) "OK" "kv-multi")
+  (check (kv-enqueue kv-set "a" "b") "QUEUED" "kv-enqueue")
+  (check (kv-enqueue kv-get "a") "QUEUED" "kv-enqueue kv-get")
+  (kv-discard)
+  (check (kv-get "a") "x" "kv-get after discard")
+  (check (kv-exists? "a") #t "kv-exists? after discard")
+
+  ;; Lists
+  (kv-flush)
+  (kv-lpush "l" "a")(kv-lpush "l" "b")
+  (check (kv-llen "l") 2 "kv-llen")
+  (check (kv-lpop "l") "b" "kv-lpop")
+  (check (kv-llen "l") 1 "kv-llen after pop")
+  (kv-del "l")
+
+  ;; Hash operations
+  (kv-flush)
+  (check (kv-hset "h" "f1" 1) 1 "kv-hset")
+  (check (kv-hget "h" "f1") 1 "kv-hget")
+  (check (kv-hset "h" "f1" 2) 0 "kv-hset update")
+  (check (kv-hget "h" "f1") 2 "kv-hget after update")
+  (kv-del "h")
+
+  (newline)
+  (display "=== Results: ") (display passed) (display " passed, ")
+  (display failed) (display " failed") (newline))
+
+(run-tests)

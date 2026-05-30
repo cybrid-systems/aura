@@ -4132,6 +4132,27 @@ void Evaluator::init_pair_primitives() {
             }
         }
         workspace_flat_->clear_all_dirty();
+        // Second pass: re-evaluate all function defines to fix stale cell bindings.
+        // When defines are processed sequentially within the same begin block,
+        // closures may capture wrong cells_ pointer. Re-evaluating each function
+        // define individually with fresh eval_flat corrects this.
+        if (expanded < workspace_flat_->size()) {
+            auto root_v = workspace_flat_->get(expanded);
+            if (root_v.tag == aura::ast::NodeTag::Begin) {
+                for (auto cid : root_v.children) {
+                    if (cid == aura::ast::NULL_NODE) continue;
+                    auto cv = workspace_flat_->get(cid);
+                    if (cv.tag == aura::ast::NodeTag::Define && cv.sym_id != aura::ast::INVALID_SYM) {
+                        if (!cv.children.empty()) {
+                            auto body_v = workspace_flat_->get(cv.child(0));
+                            if (body_v.tag == aura::ast::NodeTag::Lambda) {
+                                (void)eval_flat(*workspace_flat_, *workspace_pool_, cid, top_);
+                            }
+                        }
+                    }
+                }
+            }
+        }
         return make_void();
     });
 
