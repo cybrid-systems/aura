@@ -152,6 +152,10 @@ public:
     // Lookup type by name (returns invalid TypeId if not found)
     TypeId lookup_type(const std::string& name) const;
 
+    // Substitute type variables in a type using the given substitution map
+    // Returns a new TypeId (may register new types), does not modify original
+    TypeId substitute(TypeId ty, const std::unordered_map<std::uint32_t, TypeId>& subst);
+
     // Collect all type variables in a type (for let-polymorphism)
     std::vector<TypeId> free_vars(TypeId id) const;
 

@@ -280,6 +280,61 @@ TypeId TypeRegistry::lookup_type(const std::string& name) const {
     return TypeId{};
 }
 
+TypeId TypeRegistry::substitute(TypeId ty,
+                                 const std::unordered_map<std::uint32_t, TypeId>& subst) {
+    auto it = subst.find(ty.index);
+    if (it != subst.end())
+        return it->second;
+
+    switch (tag_of(ty)) {
+    case TypeTag::FUNC: {
+        auto* f = func_of(ty);
+        std::vector<TypeId> new_args;
+        for (auto& a : f->args)
+            new_args.push_back(substitute(a, subst));
+        return register_func(std::move(new_args), substitute(f->ret, subst));
+    }
+    case TypeTag::FORALL: {
+        auto* ft = forall_of(ty);
+        return register_forall(ft->var, substitute(ft->body, subst));
+    }
+    case TypeTag::LINEAR: {
+        auto* lt = linear_of(ty);
+        return register_linear(substitute(lt->inner, subst));
+    }
+    case TypeTag::MODULE: {
+        auto* mt = module_of(ty);
+        ModuleType new_mt;
+        for (auto& [n, t] : mt->members)
+            new_mt.members.push_back({n, substitute(t, subst)});
+        new_mt.type_params = mt->type_params;
+        for (auto& v : mt->type_param_vars)
+            new_mt.type_param_vars.push_back(substitute(v, subst));
+        return register_module(std::move(new_mt));
+    }
+    case TypeTag::VARIANT: {
+        auto* vt = variant_of(ty);
+        VariantType new_vt;
+        for (auto& [name, args] : vt->variants) {
+            std::vector<TypeId> new_args;
+            for (auto& a : args)
+                new_args.push_back(substitute(a, subst));
+            new_vt.variants.push_back({name, std::move(new_args)});
+        }
+        return register_variant(std::move(new_vt));
+    }
+    case TypeTag::RECORD: {
+        auto* rt = record_of(ty);
+        RecordType new_rt;
+        for (auto& [name, type] : rt->fields)
+            new_rt.fields.push_back({name, substitute(type, subst)});
+        return register_record(std::move(new_rt));
+    }
+    default:
+        return ty;
+    }
+}
+
 std::vector<TypeId> TypeRegistry::free_vars(TypeId id) const {
     std::vector<TypeId> result;
     if (!id.valid() || id.index >= entries_.size())
