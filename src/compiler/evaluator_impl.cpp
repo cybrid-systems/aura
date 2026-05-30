@@ -7963,6 +7963,63 @@ Evaluator::Evaluator() {
         return result;
     });
 
+    // (ast:validate-nodes) — Validate all nodes against NodeMeta invariants
+    // Returns an alist: ((:pass . #t/#f) (:total . N) (:errors . ((:node N :message M) ...)))
+    primitives_.add("ast:validate-nodes", [this](const auto&) -> EvalValue {
+        if (!workspace_flat_) {
+            return make_bool(true);
+        }
+
+        auto& flat = *workspace_flat_;
+        std::vector<aura::ast::FlatAST::ValidationError> errors;
+        auto count = flat.validate_all_nodes(errors);
+
+        // Build alist: ((:pass . #t/#f) (:total . N) (:errors . ...))
+        auto add_entry = [&](const std::string& key, EvalValue val) -> std::uint64_t {
+            auto key_idx = string_heap_.size();
+            string_heap_.push_back(key);
+            auto entry_pair = pairs_.size();
+            pairs_.push_back({make_string(key_idx), val});
+            return entry_pair;
+        };
+
+        // Build errors list: ((:node N :message M) ...)
+        EvalValue errors_list = make_void();
+        for (auto it = errors.rbegin(); it != errors.rend(); ++it) {
+            auto& e = *it;
+            auto node_idx = string_heap_.size();
+            string_heap_.push_back(std::to_string(e.node));
+            auto msg_idx = string_heap_.size();
+            string_heap_.push_back(e.message);
+
+            auto pair_msg = pairs_.size();
+            pairs_.push_back({make_string(msg_idx), make_void()});
+            auto pair_node = pairs_.size();
+            pairs_.push_back({make_string(node_idx), make_pair(pair_msg)});
+            auto cons_pair = pairs_.size();
+            pairs_.push_back({make_pair(pair_node), errors_list});
+            errors_list = make_pair(cons_pair);
+        }
+
+        auto val_pass = add_entry(":pass", make_bool(count == 0));
+        auto val_total_k = string_heap_.size();
+        string_heap_.push_back(":total");
+        auto val_total_v = string_heap_.size();
+        string_heap_.push_back(std::to_string(count));
+        auto entry_total = pairs_.size();
+        pairs_.push_back({make_string(val_total_k), make_string(val_total_v)});
+        auto entry_errors = add_entry(":errors", errors_list);
+
+        uint64_t eids[3] = {entry_errors, entry_total, val_pass};
+        EvalValue result = make_void();
+        for (int ei = 2; ei >= 0; --ei) {
+            auto cons_pair = pairs_.size();
+            pairs_.push_back({make_pair(eids[ei]), result});
+            result = make_pair(cons_pair);
+        }
+        return result;
+    });
+
     // (compile:status)
     //   → ((:key value) ...)  association list
     //   Returns incremental compilation status:
