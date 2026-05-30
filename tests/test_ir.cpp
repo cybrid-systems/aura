@@ -1324,6 +1324,371 @@ int main() {
                 "(let ((id (lambda (x) x))) (id 42))", "42");
         }
 
+        // ── 14. VariantType registration + queries (Issue #41) ───
+        {
+            TypeRegistry treg;
+
+            // Register a simple Maybe variant: (Maybe a) = {Just: [a], Nothing: []}
+            auto a_var = treg.make_var("a");
+            VariantType maybe_vt;
+            maybe_vt.variants.push_back({"Just", {a_var}});
+            maybe_vt.variants.push_back({"Nothing", {}});
+            auto maybe_id = treg.register_variant(std::move(maybe_vt));
+
+            if (treg.tag_of(maybe_id) == TypeTag::VARIANT) {
+                ++ts_passed; std::println("TS OK: variant registered with VARIANT tag");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: variant tag not VARIANT");
+            }
+
+            auto* vt = treg.variant_of(maybe_id);
+            if (vt && vt->variants.size() == 2 &&
+                vt->variants[0].first == "Just" && vt->variants[0].second.size() == 1 &&
+                vt->variants[1].first == "Nothing" && vt->variants[1].second.empty()) {
+                ++ts_passed; std::println("TS OK: variant fields match");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: variant fields mismatch");
+            }
+
+            auto fmt = treg.format_type(maybe_id);
+            if (fmt.find("Variant") != std::string::npos) {
+                ++ts_passed; std::println("TS OK: variant format = {}", fmt);
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: variant format missing Variant");
+            }
+        }
+
+        // ── 15. RecordType registration + queries (Issue #41) ───
+        {
+            TypeRegistry treg;
+
+            RecordType person_rt;
+            person_rt.fields.push_back({"name", treg.string_type()});
+            person_rt.fields.push_back({"age", treg.int_type()});
+            auto person_id = treg.register_record(std::move(person_rt));
+
+            if (treg.tag_of(person_id) == TypeTag::RECORD) {
+                ++ts_passed; std::println("TS OK: record registered with RECORD tag");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: record tag not RECORD");
+            }
+
+            auto* rt = treg.record_of(person_id);
+            if (rt && rt->fields.size() == 2 &&
+                rt->fields[0].first == "name" && rt->fields[0].second == treg.string_type() &&
+                rt->fields[1].first == "age" && rt->fields[1].second == treg.int_type()) {
+                ++ts_passed; std::println("TS OK: record fields match");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: record fields mismatch");
+            }
+
+            auto fmt = treg.format_type(person_id);
+            if (fmt.find("Record") != std::string::npos) {
+                ++ts_passed; std::println("TS OK: record format = {}", fmt);
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: record format missing Record");
+            }
+        }
+
+        // ── 16. occurs_check with all compound types (Issue #41 Step 2) ───
+        {
+            TypeRegistry treg;
+            ConstraintSystem cs(treg);
+
+            auto a_var = treg.make_var("a");
+            auto b_var = treg.make_var("b");
+
+            // occurs check: a in FuncType (a → Int)
+            auto func_a = treg.register_func({a_var}, treg.int_type());
+            if (cs.occurs_check(a_var, func_a)) {
+                ++ts_passed; std::println("TS OK: occurs(FuncType: a in (-> a Int))");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: occurs missed a in FuncType");
+            }
+
+            // occurs check: a in ForallType (∀b. a)
+            auto forall_a = treg.register_forall(b_var, a_var);
+            if (cs.occurs_check(a_var, forall_a)) {
+                ++ts_passed; std::println("TS OK: occurs(ForallType: a in ∀b. a)");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: occurs missed a in ForallType");
+            }
+
+            // occurs check: a in LinearType (Linear a)
+            auto linear_a = treg.register_linear(a_var);
+            if (cs.occurs_check(a_var, linear_a)) {
+                ++ts_passed; std::println("TS OK: occurs(LinearType: a in Linear a)");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: occurs missed a in LinearType");
+            }
+
+            // occurs check: a in VariantType {Just: a}
+            VariantType vt;
+            vt.variants.push_back({"Just", {a_var}});
+            auto var_id = treg.register_variant(std::move(vt));
+            if (cs.occurs_check(a_var, var_id)) {
+                ++ts_passed; std::println("TS OK: occurs(VariantType: a in {{Just: a}})");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: occurs missed a in VariantType");
+            }
+
+            // occurs check: a in RecordType {field: a}
+            RecordType rt;
+            rt.fields.push_back({"field", a_var});
+            auto rec_id = treg.register_record(std::move(rt));
+            if (cs.occurs_check(a_var, rec_id)) {
+                ++ts_passed; std::println("TS OK: occurs(RecordType: a in {{field: a}})");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: occurs missed a in RecordType");
+            }
+
+            // occurs check: a in ModuleType {x: a}
+            ModuleType mt;
+            mt.members.push_back({"x", a_var});
+            auto mod_id = treg.register_module(std::move(mt));
+            if (cs.occurs_check(a_var, mod_id)) {
+                ++ts_passed; std::println("TS OK: occurs(ModuleType: a in {{x: a}})");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: occurs missed a in ModuleType");
+            }
+
+            // occurs check: a NOT in unrelated type (Int)
+            if (!cs.occurs_check(a_var, treg.int_type())) {
+                ++ts_passed; std::println("TS OK: occurs(Int) — a not found");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: occurs falsely found a in Int");
+            }
+
+            // occurs check: a NOT in nested unrelated type (b → b)
+            auto func_bb = treg.register_func({b_var}, b_var);
+            if (!cs.occurs_check(a_var, func_bb)) {
+                ++ts_passed; std::println("TS OK: occurs(b → b) — a not found");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: occurs falsely found a in b→b");
+            }
+        }
+
+        // ── 17. substitute() with all compound types (Issue #41 Step 3) ───
+        {
+            TypeRegistry treg;
+
+            auto a_var = treg.make_var("a");
+            auto b_var = treg.make_var("b");
+
+            // Build subst: a → Int
+            std::unordered_map<std::uint32_t, TypeId> subst;
+            subst[a_var.index] = treg.int_type();
+
+            // substitute in FuncType: (a, Int) → Int → substitutes to (Int, Int) → Int
+            auto func_a = treg.register_func({a_var, treg.int_type()}, treg.int_type());
+            auto func_subst = treg.substitute(func_a, subst);
+            auto* f = treg.func_of(func_subst);
+            if (f && f->args.size() == 2 && f->args[0] == treg.int_type() && f->args[1] == treg.int_type()) {
+                ++ts_passed; std::println("TS OK: substitute(FuncType) replaced a→Int");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: substitute(FuncType) failed");
+            }
+
+            // substitute in ForallType: ∀b. a → ∀b. Int
+            auto forall_a = treg.register_forall(b_var, a_var);
+            auto forall_s = treg.substitute(forall_a, subst);
+            auto* ft = treg.forall_of(forall_s);
+            if (ft && ft->body == treg.int_type()) {
+                ++ts_passed; std::println("TS OK: substitute(ForallType) body replaced");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: substitute(ForallType) failed");
+            }
+
+            // substitute in LinearType: Linear a → Linear Int
+            auto linear_a = treg.register_linear(a_var);
+            auto linear_s = treg.substitute(linear_a, subst);
+            auto* lt = treg.linear_of(linear_s);
+            if (lt && lt->inner == treg.int_type()) {
+                ++ts_passed; std::println("TS OK: substitute(LinearType) inner replaced");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: substitute(LinearType) failed");
+            }
+
+            // substitute in VariantType: {Just: a, Nothing: []} → {Just: Int, Nothing: []}
+            VariantType vt;
+            vt.variants.push_back({"Just", {a_var}});
+            vt.variants.push_back({"Nothing", {}});
+            auto var_id = treg.register_variant(std::move(vt));
+            auto var_s = treg.substitute(var_id, subst);
+            auto* vtp = treg.variant_of(var_s);
+            if (vtp && vtp->variants.size() == 2 &&
+                vtp->variants[0].second.size() == 1 && vtp->variants[0].second[0] == treg.int_type() &&
+                vtp->variants[1].second.empty()) {
+                ++ts_passed; std::println("TS OK: substitute(VariantType) field replaced");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: substitute(VariantType) failed");
+            }
+
+            // substitute in RecordType: {field: a} → {field: Int}
+            RecordType rt;
+            rt.fields.push_back({"field", a_var});
+            auto rec_id = treg.register_record(std::move(rt));
+            auto rec_s = treg.substitute(rec_id, subst);
+            auto* rtp = treg.record_of(rec_s);
+            if (rtp && rtp->fields.size() == 1 && rtp->fields[0].second == treg.int_type()) {
+                ++ts_passed; std::println("TS OK: substitute(RecordType) field replaced");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: substitute(RecordType) failed");
+            }
+
+            // substitute in ModuleType: {x: a} → {x: Int}
+            ModuleType mt;
+            mt.members.push_back({"x", a_var});
+            auto mod_id = treg.register_module(std::move(mt));
+            auto mod_s = treg.substitute(mod_id, subst);
+            auto* mtp = treg.module_of(mod_s);
+            if (mtp && mtp->members.size() == 1 && mtp->members[0].second == treg.int_type()) {
+                ++ts_passed; std::println("TS OK: substitute(ModuleType) member replaced");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: substitute(ModuleType) failed");
+            }
+
+            // substitute: unbound variable stays unchanged
+            auto func_b = treg.register_func({b_var}, treg.int_type());
+            auto func_b_s = treg.substitute(func_b, subst);
+            auto* fb = treg.func_of(func_b_s);
+            if (fb && fb->args.size() == 1 && fb->args[0] == b_var) {
+                ++ts_passed; std::println("TS OK: substitute(unbound var b) unchanged");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: substitute changed unbound var b");
+            }
+        }
+
+        // ── 18. free_vars with all compound types (Issue #41 Step 4) ───
+        {
+            TypeRegistry treg;
+
+            auto a_var = treg.make_var("a");
+            auto b_var = treg.make_var("b");
+
+            // free_vars of FuncType: (a, b) → Int → {a, b}
+            auto func = treg.register_func({a_var, b_var}, treg.int_type());
+            auto fv = treg.free_vars(func);
+            // We just check count — vars appear in order they're discovered
+            if (fv.size() == 2) {
+                ++ts_passed; std::println("TS OK: free_vars(FuncType a b) = 2 vars");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: free_vars(FuncType) got {} vars", fv.size());
+            }
+
+            // free_vars of VariantType: {Just: a, Nothing: []} → {a}
+            VariantType vt;
+            vt.variants.push_back({"Just", {a_var}});
+            vt.variants.push_back({"Nothing", {}});
+            auto var_id = treg.register_variant(std::move(vt));
+            fv = treg.free_vars(var_id);
+            if (fv.size() == 1) {
+                ++ts_passed; std::println("TS OK: free_vars(VariantType {{Just: a}}) = 1 var");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: free_vars(VariantType) got {} vars", fv.size());
+            }
+
+            // free_vars of RecordType: {field: a} → {a}
+            RecordType rt;
+            rt.fields.push_back({"field", a_var});
+            auto rec_id = treg.register_record(std::move(rt));
+            fv = treg.free_vars(rec_id);
+            if (fv.size() == 1) {
+                ++ts_passed; std::println("TS OK: free_vars(RecordType {{field: a}}) = 1 var");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: free_vars(RecordType) got {} vars", fv.size());
+            }
+
+            // free_vars of LinearType: Linear a → {a}
+            auto linear_a = treg.register_linear(a_var);
+            fv = treg.free_vars(linear_a);
+            if (fv.size() == 1) {
+                ++ts_passed; std::println("TS OK: free_vars(LinearType a) = 1 var");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: free_vars(LinearType) got {} vars", fv.size());
+            }
+
+            // free_vars of ForallType: ∀b. (a → b) → {a} (b is bound)
+            auto func_ab = treg.register_func({a_var}, b_var);
+            auto forall = treg.register_forall(b_var, func_ab);
+            fv = treg.free_vars(forall);
+            if (fv.size() == 1) {
+                ++ts_passed; std::println("TS OK: free_vars(∀b. a → b) = 1 var (a free)");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: free_vars(ForallType) got {} vars", fv.size());
+            }
+
+            // free_vars of ModuleType: {x: a} → {a}
+            ModuleType mt;
+            mt.members.push_back({"x", a_var});
+            auto mod_id = treg.register_module(std::move(mt));
+            fv = treg.free_vars(mod_id);
+            if (fv.size() == 1) {
+                ++ts_passed; std::println("TS OK: free_vars(ModuleType {{x: a}}) = 1 var");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: free_vars(ModuleType) got {} vars", fv.size());
+            }
+
+            // free_vars of concrete type (Int) = 0
+            fv = treg.free_vars(treg.int_type());
+            if (fv.empty()) {
+                ++ts_passed; std::println("TS OK: free_vars(Int) = 0 vars");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: free_vars(Int) returned {} vars", fv.size());
+            }
+        }
+
+        // ── 19. instantiate + instantiate_forall (Issue #41 Step 5) ───
+        {
+            TypeRegistry treg;
+
+            auto a_var = treg.make_var("a");
+            auto b_var = treg.make_var("b");
+
+            // Single instantiate: ∀a. a → Int  gives fresh_a → Int
+            auto forall_a = treg.register_forall(a_var, treg.register_func({a_var}, treg.int_type()));
+            auto inst = treg.instantiate(forall_a, [&]() { return treg.make_var("fresh"); });
+            auto* fi = treg.func_of(inst);
+            if (fi && fi->args.size() == 1 && treg.is_var(fi->args[0]) &&
+                treg.tag_of(fi->args[0]) == TypeTag::TYPE_VAR &&
+                fi->args[0] != a_var) {  // fresh variable, not the same as a
+                ++ts_passed; std::println("TS OK: instantiate(∀a. a→Int) → fresh→Int");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: instantiate forall failed");
+            }
+
+            // instantiate_forall: ∀a. ∀b. (a → b)  with [Int, String]
+            auto func_ab = treg.register_func({a_var}, b_var);
+            auto forall_ab = treg.register_forall(b_var, func_ab);
+            auto forall_ab2 = treg.register_forall(a_var, forall_ab);
+            auto inst2 = treg.instantiate_forall(forall_ab2, {treg.int_type(), treg.string_type()});
+            auto* fi2 = treg.func_of(inst2);
+            if (fi2 && fi2->args.size() == 1 && fi2->args[0] == treg.int_type() &&
+                fi2->ret == treg.string_type()) {
+                ++ts_passed; std::println("TS OK: instantiate_forall(∀a∀b. a→b, [Int,String]) → Int→String");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: instantiate_forall batch failed");
+            }
+
+            // instantiate_forall with fewer args than ∀ layers: remaining ∀ preserved
+            auto inst3 = treg.instantiate_forall(forall_ab2, {treg.int_type()});
+            auto* ft3 = treg.forall_of(inst3);
+            auto* fi3 = treg.func_of(ft3 ? ft3->body : TypeId{});
+            if (ft3 && fi3 && fi3->args[0] == treg.int_type()) {
+                ++ts_passed; std::println("TS OK: instantiate_forall w/ partial args preserves remaining ∀");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: instantiate_forall partial failed");
+            }
+
+            // instantiate_forall with empty args: preserves all ∀ layers
+            auto inst4 = treg.instantiate_forall(forall_ab2, {});
+            if (treg.forall_of(inst4) && treg.forall_of(treg.forall_of(inst4)->body)) {
+                ++ts_passed; std::println("TS OK: instantiate_forall w/ empty args preserves all ∀");
+            } else {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: instantiate_forall empty args failed");
+            }
+        }
+
         std::println("Type system detail tests: {}/{}/{} passed/failed/total",
                      ts_passed, ts_failed, ts_passed + ts_failed);
         if (ts_failed > 0) return 1;
