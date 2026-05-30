@@ -245,26 +245,24 @@ TypeId TypeRegistry::instantiate(TypeId forall_id, std::function<TypeId()> fresh
     auto* ft = forall_of(forall_id);
     if (!ft)
         return forall_id;
-    // Build substitution map: bound var → fresh var
-    auto fresh = fresh_var();
-    // Recursively replace the bound variable in the body
-    auto replace_var = [&](this const auto& self, TypeId tid) -> TypeId {
-        if (tid == ft->var)
-            return fresh;
-        if (auto* f = func_of(tid)) {
-            std::vector<TypeId> new_args;
-            for (auto& a : f->args)
-                new_args.push_back(self(a));
-            return register_func(std::move(new_args), self(f->ret));
-        }
-        // Forall body could be nested
-        if (auto* f2 = forall_of(tid)) {
-            auto new_body = self(f2->body);
-            return register_forall(f2->var, new_body);
-        }
-        return tid;
-    };
-    return replace_var(ft->body);
+    // Build substitution map: bound var → fresh var, then delegate to substitute()
+    std::unordered_map<std::uint32_t, TypeId> subst;
+    subst[ft->var.index] = fresh_var();
+    return substitute(ft->body, subst);
+}
+
+TypeId TypeRegistry::instantiate_forall(TypeId forall_id,
+                                         const std::vector<TypeId>& args) {
+    TypeId result = forall_id;
+    std::size_t arg_idx = 0;
+    while (auto* ft = forall_of(result)) {
+        if (arg_idx >= args.size())
+            break; // 剩余 forall 保留
+        std::unordered_map<std::uint32_t, TypeId> subst;
+        subst[ft->var.index] = args[arg_idx++];
+        result = substitute(ft->body, subst);
+    }
+    return result;
 }
 
 bool TypeRegistry::is_subtype(TypeId sub, TypeId sup) const {
