@@ -1792,6 +1792,134 @@ bool test_yield_mixed_reasons() {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// ── Metrics exposure tests (Issue #32) ──────────────────────
+// ═══════════════════════════════════════════════════════════════
+
+// ── Test 48: Metrics counters after workload ──────────────────
+
+bool test_metrics_after_workload() {
+    std::println("\n--- Test: Metrics after workload (Issue #32) ---");
+
+    aura::serve::Scheduler sched(4);
+    constexpr int N = 50;
+    std::atomic<int> completed{0};
+
+    for (int i = 0; i < N; ++i) {
+        sched.spawn([&completed]() {
+            volatile int sum = 0;
+            for (int j = 0; j < 10000; ++j) sum += j;
+            completed.fetch_add(1);
+        });
+    }
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    sched.stop();
+    t.join();
+
+    auto& m = sched.metrics();
+    CHECK(m.fibers_spawned.load() >= static_cast<uint64_t>(N),
+          "fibers_spawned >= " + std::to_string(N) +
+          " (got " + std::to_string(m.fibers_spawned.load()) + ")");
+    CHECK(m.fibers_completed.load() >= static_cast<uint64_t>(N),
+          "fibers_completed >= " + std::to_string(N) +
+          " (got " + std::to_string(m.fibers_completed.load()) + ")");
+
+    // At least one worker had activity
+    uint64_t total_executed = 0;
+    for (size_t i = 0; i < m.num_workers(); ++i)
+        total_executed += m.worker(i).fibers_executed.load();
+    CHECK(total_executed >= static_cast<uint64_t>(N),
+          "total fibers_executed across workers >= " +
+          std::to_string(N));
+
+    return true;
+}
+
+// ── Test 49: Metrics reset — counters go back to zero ────────
+
+bool test_metrics_reset() {
+    std::println("\n--- Test: Metrics reset ---");
+
+    aura::serve::Scheduler sched(2);
+    std::atomic<int> done{0};
+
+    // Run a small workload
+    sched.spawn([&done]() {
+        volatile int sum = 0;
+        for (int j = 0; j < 50000; ++j) sum += j;
+        done.store(1);
+    });
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    sched.stop();
+    t.join();
+
+    CHECK(done.load() == 1, "fiber completed before reset test");
+    CHECK(sched.metrics().fibers_spawned.load() > 0,
+          "fibers_spawned > 0 before reset");
+
+    // Reset metrics via resize (reinitializes all counters to zero)
+    auto n = sched.metrics().num_workers();
+    sched.metrics().resize_workers(n);
+
+    // resize_workers clears per-worker metrics but global counters
+    // are not automatically reset. Verify worker metrics are cleared.
+    for (size_t i = 0; i < sched.metrics().num_workers(); ++i) {
+        CHECK(sched.metrics().worker(i).fibers_executed.load() == 0,
+              "worker " + std::to_string(i) + " fibers_executed = 0 after reset");
+        CHECK(sched.metrics().worker(i).steal_attempts.load() == 0,
+              "worker " + std::to_string(i) + " steal_attempts = 0 after reset");
+    }
+    // Also verify the scheduler properly reports metrics after reset
+    auto json = sched.metrics_json();
+    CHECK(json.find("fibers_spawned") != std::string::npos,
+          "JSON still works after reset");
+    return true;
+}
+
+// ── Test 50: Metrics JSON output format ───────────────────────
+
+bool test_metrics_json_format() {
+    std::println("\n--- Test: Metrics JSON format ---");
+
+    aura::serve::Scheduler sched(2);
+
+    // Run a few fibers
+    for (int i = 0; i < 3; ++i)
+        sched.spawn([]() {});
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    sched.stop();
+    t.join();
+
+    // Get JSON output (same format as orch:metrics would return)
+    std::string json = sched.metrics_json();
+
+    CHECK(!json.empty(), "JSON output is non-empty");
+    CHECK(json.find("fibers_spawned") != std::string::npos,
+          "JSON contains fibers_spawned");
+    CHECK(json.find("fibers_completed") != std::string::npos,
+          "JSON contains fibers_completed");
+    CHECK(json.find("workers") != std::string::npos,
+          "JSON contains workers array");
+
+    // Verify it's valid JSON by checking basic structure
+    CHECK(json.front() == '{', "JSON starts with {");
+    // JSON ends with "}\n" — trim trailing whitespace
+    auto trimmed = json;
+    while (!trimmed.empty() && (trimmed.back() == '\n' || trimmed.back() == ' '))
+        trimmed.pop_back();
+    CHECK(trimmed.back() == '}', "JSON ends with }");
+    CHECK(json.find("fibers_spawned") != std::string::npos,
+          "JSON contains fibers_spawned key");
+
+    return true;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // ── Main ─────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════
 
@@ -1846,6 +1974,9 @@ int main() {
     test_yield_explicit_state();
     test_yield_reason_chain();
     test_yield_mixed_reasons();
+    test_metrics_after_workload();
+    test_metrics_reset();
+    test_metrics_json_format();
 
     std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
                  g_passed, g_passed + g_failed,

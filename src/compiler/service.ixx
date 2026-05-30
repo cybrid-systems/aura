@@ -307,6 +307,9 @@ public:
             "json-encode",
             "json-get-string",
             "json-parse",
+            // Scheduler metrics (Issue #32)
+            "orch:metrics",
+            "orch:reset-metrics",
             // Special forms not in IR
             "when",
             "unless",
