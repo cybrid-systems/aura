@@ -1747,23 +1747,10 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
                 }
                 subst[mt->type_param_vars[i].index] = arg_type;
             }
-            // Substitute type vars in member types
-            std::function<TypeId(TypeId)> do_subst = [&](TypeId ty) -> TypeId {
-                auto it = subst.find(ty.index);
-                if (it != subst.end())
-                    return it->second;
-                if (auto* ft = reg_.func_of(ty)) {
-                    std::vector<TypeId> new_args;
-                    for (auto a : ft->args)
-                        new_args.push_back(do_subst(a));
-                    auto new_ret = do_subst(ft->ret);
-                    return reg_.register_func(std::move(new_args), new_ret);
-                }
-                return ty;
-            };
+            // Substitute type vars in member types using TypeRegistry::substitute
             std::vector<std::pair<std::string, TypeId>> new_members;
             for (auto& [mname, mtype] : mt->members)
-                new_members.push_back({mname, do_subst(mtype)});
+                new_members.push_back({mname, reg_.substitute(mtype, subst)});
             ModuleType result_mt{std::move(new_members)};
             return reg_.register_module(std::move(result_mt));
         }
