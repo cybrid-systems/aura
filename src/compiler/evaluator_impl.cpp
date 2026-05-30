@@ -4079,23 +4079,15 @@ void Evaluator::init_pair_primitives() {
         std::string content((std::istreambuf_iterator<char>(f)),
                              std::istreambuf_iterator<char>());
 
-        // Reuse workspace state: set-code into workspace, then eval-current
+        // Fresh workspace state for each load — resetting the pool corrupts
+        // existing top_ bindings that reference string indices from the old pool.
         last_set_code_error_kind_.clear();
         last_set_code_error_msg_.clear();
         last_eval_current_result_.reset();
 
-        auto* pool_ptr = workspace_pool_;
-        auto* flat_ptr = workspace_flat_;
-        bool fresh_alloc = false;
-        if (!pool_ptr || !flat_ptr) {
-            auto alloc = arena_->allocator();
-            pool_ptr = arena_->create<aura::ast::StringPool>(alloc);
-            flat_ptr = arena_->create<aura::ast::FlatAST>(alloc);
-            fresh_alloc = true;
-        } else {
-            pool_ptr->reset();
-            flat_ptr->clear();
-        }
+        auto alloc = arena_->allocator();
+        auto* pool_ptr = arena_->create<aura::ast::StringPool>(alloc);
+        auto* flat_ptr = arena_->create<aura::ast::FlatAST>(alloc);
 
         auto pr = aura::parser::parse_to_flat(content, *flat_ptr, *pool_ptr);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
@@ -9636,9 +9628,10 @@ Evaluator::Evaluator() {
     //   Returns: message (string or parsed JSON value) on success,
     //            #<void> on timeout (distinguishable from #f = no service),
     //            #f if no messaging service available.
-    // If received string is valid JSON, auto-deserialize to Aura value.
+    //   Uses evaluator's stored compiler_service_ (not global) for safety.
+    //   Global g_current_compiler_service may dangle after service destruction.
     primitives_.add("recv", [this](const auto& a) -> EvalValue {
-        auto svc = aura::messaging::g_current_compiler_service;
+        auto svc = compiler_service_;
         if (!svc || !aura::messaging::g_mailbox_read)
             return make_bool(false);
         int timeout_ms = -1;
