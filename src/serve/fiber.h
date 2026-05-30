@@ -11,6 +11,21 @@
 
 namespace aura::serve {
 
+// ── Yield reason — why a fiber yielded (Issue #31) ────
+// Used by the scheduler to determine if a fiber is at a safe
+// point to steal. Only fibers that yielded for Explicit or
+// MutationBoundary reasons can be safely stolen — they have
+// completed an operation and their state is consistent.
+// Fibers in Waiting or BlockingIO have an eventfd pending
+// and should not be moved between workers.
+enum class YieldReason : uint8_t {
+    BlockingIO,         // waiting for external IO (eventfd)
+    MutationBoundary,   // yield after completing a mutation/ast:* op
+    Explicit,           // explicit yield() call
+    SchedulerSteal,     // fiber was stolen by another worker
+    OperationBoundary,  // yield at sender/receiver boundary (exec adapter)
+};
+
 // ── Fiber state ────────────────────────────────────────
 enum class FiberState : uint8_t {
     Ready,    // can be scheduled
@@ -44,6 +59,26 @@ public:
     // Static — uses thread_local g_worker_ctx.
     static void yield();
 
+    // Yield with reason — allows scheduler to make safe-steal decisions.
+    // Fibers that yield with BlockingIO will not be stolen; fibers that
+    // yield with MutationBoundary or Explicit are safe to steal.
+    static void yield(YieldReason reason);
+
+    // Current yield reason (for the scheduler to inspect)
+    YieldReason last_yield_reason() const { return last_yield_reason_; }
+    void set_yield_reason(YieldReason r) { last_yield_reason_ = r; }
+
+    // Is this fiber at a safe point to steal/move?
+    // A fiber is stealable if it yielded for Explicit, MutationBoundary,
+    // or OperationBoundary — meaning it's not in the middle of an
+    // inconsistent state.
+    bool is_stealable() const {
+        auto r = last_yield_reason_.load(std::memory_order_acquire);
+        return r == YieldReason::Explicit ||
+               r == YieldReason::MutationBoundary ||
+               r == YieldReason::OperationBoundary;
+    }
+
     // Accessors
     uint64_t id() const { return id_; }
     FiberState state() const { return state_.load(std::memory_order_acquire); }
@@ -54,6 +89,7 @@ public:
 private:
     uint64_t id_;
     std::atomic<FiberState> state_{FiberState::Ready};
+    std::atomic<YieldReason> last_yield_reason_{YieldReason::Explicit};
     ucontext_t ctx_;
     void* stack_ = nullptr;
     size_t stack_size_ = 0;

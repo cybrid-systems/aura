@@ -173,6 +173,14 @@ void run_serve_async(int num_workers) {
         }
     };
 
+    // Register mutation boundary yield callback (Issue #31):
+    // Called by mutate:* and eval-current before/after mutation operations.
+    aura::messaging::g_fiber_yield_mutation_boundary = []() {
+        if (aura::serve::g_current_fiber) {
+            aura::serve::Fiber::yield(aura::serve::YieldReason::MutationBoundary);
+        }
+    };
+
     // 3. Shared state between stdin_reader and session fibers
     std::deque<std::string> stdin_lines;  // complete JSON lines from stdin
     bool stdin_eof = false;
@@ -605,6 +613,12 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
     aura::messaging::g_fiber_yield = []() {
         if (aura::serve::g_current_fiber) {
             aura::serve::Fiber::yield();
+        }
+    };
+
+    aura::messaging::g_fiber_yield_mutation_boundary = []() {
+        if (aura::serve::g_current_fiber) {
+            aura::serve::Fiber::yield(aura::serve::YieldReason::MutationBoundary);
         }
     };
 

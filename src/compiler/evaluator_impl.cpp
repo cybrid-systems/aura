@@ -3639,6 +3639,10 @@ void Evaluator::init_pair_primitives() {
 
     // (mutate:replace-type node-id new-type-str)
     primitives_.add("mutate:replace-type", [this](const auto& a) -> EvalValue {
+        // Yield at mutation boundary (Issue #31) — safe point before/after mutation.
+        if (aura::messaging::g_fiber_yield_mutation_boundary)
+            aura::messaging::g_fiber_yield_mutation_boundary();
+
         auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
             auto mi = string_heap_.size(); string_heap_.push_back(m);
             auto ki = string_heap_.size(); string_heap_.push_back(k);
@@ -3687,6 +3691,8 @@ void Evaluator::init_pair_primitives() {
         flat.set_type(node, new_tid);
         workspace_flat_->mark_dirty_upward(node);
         defuse_version_++;
+        if (aura::messaging::g_fiber_yield_mutation_boundary)
+            aura::messaging::g_fiber_yield_mutation_boundary();
         return make_int(static_cast<std::int64_t>(mid));
     });
 
@@ -3702,6 +3708,9 @@ void Evaluator::init_pair_primitives() {
             return kp;
         };
         defuse_version_++;
+        aura::messaging::g_fiber_yield_mutation_boundary
+                ? aura::messaging::g_fiber_yield_mutation_boundary()
+                : (void)0;  // safe point before mutation
         if (a.size() < 3 || !is_int(a[0]) || !is_string(a[2]))
             return merr("bad-arg", "usage: (mutate:replace-value node-id new-value summary)");
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
@@ -3779,6 +3788,9 @@ void Evaluator::init_pair_primitives() {
             return kp;
         };
         defuse_version_++;
+        aura::messaging::g_fiber_yield_mutation_boundary
+                ? aura::messaging::g_fiber_yield_mutation_boundary()
+                : (void)0;  // safe point before mutation
         if (a.size() < 3 || !is_int(a[0]) || !is_string(a[1]) || !is_string(a[2]))
             return merr("bad-arg", "usage: (mutate:record-patch node-id op-name summary)");
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
@@ -4907,6 +4919,9 @@ void Evaluator::init_pair_primitives() {
     // The tree walker in eval_flat skips NULL_NODE children.
     primitives_.add("mutate:remove-node", [this, mev](const auto& a) -> EvalValue {
         defuse_version_++;
+        aura::messaging::g_fiber_yield_mutation_boundary
+                ? aura::messaging::g_fiber_yield_mutation_boundary()
+                : (void)0;  // safe point before mutation
         if (workspace_read_only_) return mev("read-only", "workspace is read-only");
         if (a.empty() || !is_int(a[0]) || !workspace_flat_)
             return mev("bad-arg", "usage: (mutate:remove-node node-id)");
@@ -4940,6 +4955,9 @@ void Evaluator::init_pair_primitives() {
     // Parses code-string INTO workspace, preserving all existing nodes/IDs.
     primitives_.add("mutate:insert-child", [this, mev](const auto& a) -> EvalValue {
         defuse_version_++;
+        aura::messaging::g_fiber_yield_mutation_boundary
+                ? aura::messaging::g_fiber_yield_mutation_boundary()
+                : (void)0;  // safe point before mutation
         if (workspace_read_only_) return mev("read-only", "workspace is read-only");
         if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_string(a[2]) ||
             !workspace_flat_ || !workspace_pool_)
@@ -4985,6 +5003,9 @@ void Evaluator::init_pair_primitives() {
     // Reads current value, adds delta, writes back. Simpler than read+replace-value.
     primitives_.add("mutate:tweak-literal", [this, mev](const auto& a) -> EvalValue {
         defuse_version_++;
+        aura::messaging::g_fiber_yield_mutation_boundary
+                ? aura::messaging::g_fiber_yield_mutation_boundary()
+                : (void)0;  // safe point before mutation
         if (workspace_read_only_) return mev("read-only", "workspace is read-only");
         if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1]) || !workspace_flat_)
             return mev("bad-arg", "usage: (mutate:tweak-literal node-id delta [summary])");
@@ -5031,6 +5052,9 @@ void Evaluator::init_pair_primitives() {
     primitives_.add("mutate:replace-pattern", [this, mev](const auto& a) -> EvalValue {
         using namespace aura::ast;
         defuse_version_++;
+        aura::messaging::g_fiber_yield_mutation_boundary
+                ? aura::messaging::g_fiber_yield_mutation_boundary()
+                : (void)0;  // safe point before mutation
         if (workspace_read_only_)
             return mev("read-only", "workspace is read-only");
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) ||

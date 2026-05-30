@@ -9,6 +9,7 @@ aura::messaging::MailboxSenderFn aura::messaging::g_mailbox_last_sender = nullpt
 void (*aura::messaging::g_fiber_block)() = nullptr;
 aura::messaging::FiberSpawnFn aura::messaging::g_fiber_spawn = nullptr;
 aura::messaging::FiberYieldFn aura::messaging::g_fiber_yield = nullptr;
+aura::messaging::FiberYieldMutationFn aura::messaging::g_fiber_yield_mutation_boundary = nullptr;
 aura::messaging::FiberJoinFn aura::messaging::g_fiber_join = nullptr;
 std::function<aura::messaging::SessionCreateFn>* aura::messaging::g_session_create = nullptr;
 aura::messaging::SessionListFn aura::messaging::g_session_list = nullptr;

@@ -46,6 +46,14 @@ extern FiberSpawnFn g_fiber_spawn;
 using FiberYieldFn = void (*)();
 extern FiberYieldFn g_fiber_yield;
 
+// Fiber yield at mutation boundary — called by mutate:* and eval-current
+// primitives before/after mutation operations. This ensures the fiber is
+// at a safe point for the scheduler to steal (Issue #31).
+// Set by serve_async.cpp when the fiber scheduler is active.
+// nullptr when not in serve mode.
+using FiberYieldMutationFn = void (*)();
+extern FiberYieldMutationFn g_fiber_yield_mutation_boundary;
+
 // Fiber join — wait for a fiber to complete and return its result (future use)
 // Currently a placeholder — evaluator handles fiber:join internally.
 using FiberJoinFn = void(*)();
