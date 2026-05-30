@@ -247,6 +247,12 @@ private:
     // after mutate:rebind etc. Cleared on next successful mutate.
     std::string last_mutate_error_;
 
+    // ── Incremental eval cache ───────────────────────────────────
+    // Caches the last eval-current result. Cleared when workspace dirty flags
+    // are set (which happens on any mutation). This lets eval-current skip
+    // full re-evaluation when nothing has changed.
+    std::optional<types::EvalValue> last_eval_current_result_;
+
     // ── Def-Use Analysis (P1) ───────────────────────────────────
     void* defuse_index_ = nullptr;
     std::uint64_t defuse_version_ = 0;  // incremented on each mutation

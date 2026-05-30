@@ -329,6 +329,11 @@ private:
         marker_.push_back(m);
         type_id_.push_back(0);
         dirty_.push_back(0);
+        // value cache initialized lazily (not in arena — module-level vector)
+        if (id >= static_cast<NodeId>(value_cache_.size()))
+            value_cache_.resize(id + 1, kNotCached);
+        else
+            value_cache_[id] = kNotCached;
         node_first_mutation_.push_back(0);
         parent_.push_back(NULL_NODE);
         node_gen_.push_back(generation_);
@@ -356,7 +361,11 @@ private:
     std::pmr::vector<SyntaxMarker> marker_;
     std::pmr::vector<std::uint8_t> dirty_;
     std::pmr::vector<std::uint32_t> type_id_;
-    // Mutation audit log (heap-allocated, small+append-only)
+    // Module-level eval result cache (int64_t = EvalValue serialization).
+    // Used by Evaluator::eval_flat for incremental evaluation (Issue #32b).
+    // Indexed by NodeId. Zero = not cached. Stored at module level (not arena)
+    // because the evaluator outlives individual arena scopes.
+    std::vector<std::int64_t> value_cache_;
     std::vector<MutationRecord> mutation_log_;
     std::vector<std::uint32_t> node_first_mutation_;
     std::uint64_t next_mutation_id_ = 1;
@@ -863,6 +872,7 @@ private:
         if (id >= dirty_.size())
             dirty_.resize(id + 1, false);
         dirty_[id] = true;
+        clear_cached_value(id);  // invalidate result cache
     }
     void mark_subtree_dirty(NodeId id) {
         mark_dirty(id);
@@ -876,6 +886,24 @@ private:
     void clear_dirty(NodeId id) {
         if (id < dirty_.size())
             dirty_[id] = false;
+    }
+
+    // ── Value result cache (for incremental eval) ────────────
+    // Stores the last EvalValue result for each node.
+    // kNotCached = not yet evaluated or cache invalidated.
+    // When a node is marked dirty, its cache is cleared automatically.
+    static constexpr std::int64_t kNotCached = 0x7FFFFFFFFFFFFFFFLL;  // INT64_MAX as sentinel
+    std::int64_t get_cached_value(NodeId id) const {
+        return id < static_cast<NodeId>(value_cache_.size()) ? value_cache_[id] : kNotCached;
+    }
+    void set_cached_value(NodeId id, std::int64_t val) {
+        if (id >= static_cast<NodeId>(value_cache_.size()))
+            value_cache_.resize(static_cast<std::size_t>(id) + 1, kNotCached);
+        value_cache_[id] = val;
+    }
+    void clear_cached_value(NodeId id) {
+        if (id < static_cast<NodeId>(value_cache_.size()))
+            value_cache_[id] = kNotCached;
     }
 
     // ── Match clause metadata ────────────────────────────────
@@ -921,7 +949,10 @@ private:
         return false;
     }
 
-    void clear_all_dirty() { std::fill(dirty_.begin(), dirty_.end(), false); }
+    void clear_all_dirty() {
+        std::fill(dirty_.begin(), dirty_.end(), false);
+        std::fill(value_cache_.begin(), value_cache_.end(), kNotCached);
+    }
 
     // ── Mutation audit ──────────────────────────────────────────
 
