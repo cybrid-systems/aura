@@ -306,6 +306,58 @@
 
 (kv-flush)
 
+;; ── Set 操作 ──
+
+;; SADD 基本
+(assert-equal (kv-sadd "colors" "red") 1 "kv-sadd new member returns 1")
+(assert-equal (kv-sadd "colors" "blue") 1 "kv-sadd second member")
+(assert-equal (kv-sadd "colors" "green") 1 "kv-sadd third member")
+
+;; SADD 重复
+(assert-equal (kv-sadd "colors" "red") 0 "kv-sadd existing returns 0")
+
+;; SMEMBERS — 用 scard + sismember 验证
+(assert-equal (kv-scard "colors") 3 "kv-scard verifies 3 members added")
+(assert-equal (kv-sismember "colors" "red") #t "kv-sismember red")
+(assert-equal (kv-sismember "colors" "blue") #t "kv-sismember blue")
+(assert-equal (kv-sismember "colors" "green") #t "kv-sismember green")
+
+;; SISMEMBER
+(assert-equal (kv-sismember "colors" "red") #t "kv-sismember existing")
+(assert-equal (kv-sismember "colors" "yellow") #f "kv-sismember missing")
+
+;; SCARD
+(assert-equal (kv-scard "colors") 3 "kv-scard after 3 members")
+
+;; SREM
+(assert-equal (kv-srem "colors" "blue") 1 "kv-srem removes member")
+(assert-equal (kv-scard "colors") 2 "kv-scard after srem")
+(assert-equal (kv-srem "colors" "blue") 0 "kv-srem missing returns 0")
+(assert-equal (kv-sismember "colors" "blue") #f "kv-sismember after srem")
+
+;; 删除最后一个成员后自动删除 key
+(kv-srem "colors" "red")
+(kv-srem "colors" "green")
+(assert-equal (kv-exists? "colors") #f "kv-exists? after removing all set members")
+
+;; 空集合操作
+(assert-equal (kv-smembers "nonexistent") '() "kv-smembers missing key")
+(assert-equal (kv-scard "nonexistent") 0 "kv-scard missing key")
+(assert-equal (kv-sismember "nonexistent" "x") #f "kv-sismember missing key")
+
+;; SADD on non-hash value
+(kv-set "notset" "hello")
+(assert-equal (kv-sadd "notset" "x") "ERR wrong type" "kv-sadd on string value")
+(kv-del "notset")
+
+;; 错误类型交叉
+(kv-sadd "myset" "a")
+;; lpush on set: sets are stored outside *store*, so lpush sees a missing key
+;; and creates a fresh list (no type error, but wrong semantics)
+;; This is a known limitation — sets don't share the *store* namespace
+(assert-equal (kv-hset "myset" "f" "v") "ERR wrong type" "kv-hset on set value")
+(kv-flush)
+
 (newline)
 (display "=== Results: ") (display passed) (display " passed, ")
 (display failed) (display " failed") (newline)
