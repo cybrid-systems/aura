@@ -9440,7 +9440,8 @@ Evaluator::Evaluator() {
         auto result = aura::messaging::g_mailbox_read(svc, timeout_ms);
         if (!result) {
             // Timeout (we had a service but no message arrived)
-            return make_void();
+            // Return #f so callers can distinguish timeout vs message
+            return make_bool(false);
         }
         // Try JSON parse first (for structured messages)
         auto& raw = *result;
