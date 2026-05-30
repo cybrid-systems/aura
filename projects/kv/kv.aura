@@ -261,3 +261,43 @@
     (if (hash? cur)
         (hash-values cur)
         '())))
+
+;; ── 持久化 ──
+
+(define (kv-dump-lines keys lines)
+  "内部：遍历 keys 生成序列化行。"
+  (if (null? keys)
+      lines
+      (let* ((k (car keys))
+             (v (hash-ref *store* k))
+             (expire (hash-ref *ttl* k))
+             ;; 生成 store 行
+             (lines2 (cond
+                      ((string? v)
+                       (cons (string-append "(hash-set! *store* \"" k "\" \"" v "\")") lines))
+                      ((integer? v)
+                       (cons (string-append "(hash-set! *store* \"" k "\" " (number->string v) ")") lines))
+                      (#t lines)))
+             ;; 生成 TTL 行
+             (lines3 (if (not (void? expire))
+                         (cons (string-append "(hash-set! *ttl* \"" k "\" " (number->string expire) ")") lines2)
+                         lines2)))
+        (kv-dump-lines (cdr keys) lines3))))
+
+(define (kv-save path)
+  "将当前数据保存到文件。格式为可 eval 的 Aura 代码。"
+  (let* ((init-lines (list "(set! *ttl* (hash))" "(set! *store* (hash))"))
+         (all-lines (kv-dump-lines (hash-keys *store*) init-lines))
+         (content (string-join (reverse all-lines) "\n")))
+    (write-file path content)
+    "OK"))
+
+(define (kv-load path)
+  "从文件加载数据。覆盖当前所有数据。"
+  (eval (read-file path))
+  "OK")
+
+(define (kv-load path)
+  "从文件加载数据。覆盖当前所有数据。"
+  (eval (read-file path))
+  "OK")
