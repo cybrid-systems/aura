@@ -1026,6 +1026,185 @@ bool test_ws_deque_steal_contention() {
     return true;
 }
 
+// ── Test 29: Concurrent grow + steal ────────────────────────
+// Push just enough to trigger resize (capacity 64 → 128),
+// while stealers are concurrently stealing. This tests the
+// resize-vs-steal race on buffer pointer and mask.
+
+bool test_ws_deque_grow_during_steal() {
+    std::println("\n--- Test: WS deque grow during steal (capacity boundary) ---");
+
+    aura::serve::WorkStealingDeque<void*> dq;
+    std::atomic<int> stolen{0};
+    std::atomic<int> popped{0};
+
+    // Push 60 items (just below the 64-capacity resize threshold)
+    for (int i = 1; i <= 60; ++i)
+        dq.push(reinterpret_cast<void*>(static_cast<intptr_t>(i)));
+
+    // Start stealers
+    std::thread stealer([&]() {
+        for (int i = 0; i < 2000; ++i) {
+            if (dq.steal()) {
+                stolen.fetch_add(1, std::memory_order_relaxed);
+            }
+            std::this_thread::yield();
+        }
+    });
+
+    // While stealer is active, push more items (triggers resize at 64)
+    for (int i = 61; i <= 200; ++i) {
+        dq.push(reinterpret_cast<void*>(static_cast<intptr_t>(i)));
+        std::this_thread::yield();
+    }
+
+    stealer.join();
+
+    // Drain remaining
+    int local_pop = 0;
+    while (auto* item = dq.pop()) {
+        (void)item;
+        ++local_pop;
+    }
+    popped.store(local_pop, std::memory_order_release);
+
+    int total = stolen.load(std::memory_order_acquire) +
+                popped.load(std::memory_order_acquire);
+    CHECK(total == 200, std::to_string(total) + " items processed (stolen=" +
+          std::to_string(stolen.load(std::memory_order_acquire)) +
+          ", popped=" + std::to_string(popped.load(std::memory_order_acquire)) + ")");
+    CHECK(dq.empty_approx(), "deque empty after grow+steal");
+    return true;
+}
+
+// ── Test 30: Multiple deque instances cache alignment ───────
+// Verify that multiple deques don't interfere via false sharing.
+// Creates many adjacent deques and operates on them concurrently.
+
+bool test_ws_deque_multi_instance() {
+    std::println("\n--- Test: Multiple deque instances (false sharing check) ---");
+
+    constexpr int NUM_DEQUES = 8;
+    aura::serve::WorkStealingDeque<void*> deques[NUM_DEQUES];
+    std::atomic<int> total_ok{0};
+
+    // Verify each deque is independently functional
+    for (int d = 0; d < NUM_DEQUES; ++d) {
+        auto& dq = deques[d];
+        for (int i = 1; i <= 10; ++i)
+            dq.push(reinterpret_cast<void*>(static_cast<intptr_t>(d * 100 + i)));
+    }
+
+    // Pop from each concurrently
+    std::vector<std::thread> threads;
+    for (int d = 0; d < NUM_DEQUES; ++d) {
+        threads.push_back(std::thread([&, d]() {
+            int count = 0;
+            while (deques[d].pop()) ++count;
+            if (count == 10)
+                total_ok.fetch_add(1, std::memory_order_relaxed);
+        }));
+    }
+    for (auto& t : threads) t.join();
+
+    CHECK(total_ok.load() == NUM_DEQUES,
+          std::to_string(total_ok.load()) + " of " +
+          std::to_string(NUM_DEQUES) + " deques returned all 10 items");
+
+    // Also verify with steal
+    for (int d = 0; d < NUM_DEQUES; ++d) {
+        CHECK(deques[d].empty_approx(),
+              "deque[" + std::to_string(d) + "] is empty");
+    }
+    return true;
+}
+
+// ── Test 31: Rapid push/pop/steal cycles (ABA detection) ───
+// Many cycles of push → steal → pop to detect subtle ABA issues.
+
+bool test_ws_deque_rapid_cycles() {
+    std::println("\n--- Test: WS deque rapid push/pop/steal cycles ---");
+
+    aura::serve::WorkStealingDeque<void*> dq;
+    constexpr int CYCLES = 5000;
+
+    for (int cycle = 0; cycle < CYCLES; ++cycle) {
+        // Push 3 items
+        for (int i = 1; i <= 3; ++i)
+            dq.push(reinterpret_cast<void*>(static_cast<intptr_t>(cycle * 3 + i)));
+
+        // Steal 1, pop 2 (drain)
+        auto* s = dq.steal();
+        auto* p1 = dq.pop();
+        auto* p2 = dq.pop();
+
+        if (!s || !p1 || !p2) {
+            std::println("  FAIL at cycle {}: s={}, p1={}, p2={}",
+                         cycle, (intptr_t)s, (intptr_t)p1, (intptr_t)p2);
+            return false;
+        }
+
+        CHECK(dq.empty_approx(), "deque empty after cycle " + std::to_string(cycle));
+    }
+
+    CHECK(dq.empty_approx(),
+          "deque empty after " + std::to_string(CYCLES) + " cycles");
+    return true;
+}
+
+// ── Test 32: Grow with wrapped indices ───────────────────────
+// Push many items, pop some, then push more to trigger grow
+// with wrapped (non-zero) bottom and top indices.
+
+bool test_ws_deque_grow_wrapped() {
+    std::println("\n--- Test: WS deque grow with wrapped indices ---");
+
+    aura::serve::WorkStealingDeque<void*> dq;
+
+    // Phase 1: push 60, pop 30 (bottom=30, top=0, capacity=64)
+    for (int i = 1; i <= 60; ++i)
+        dq.push(reinterpret_cast<void*>(static_cast<intptr_t>(i)));
+    for (int i = 0; i < 30; ++i)
+        dq.pop();
+
+    CHECK(dq.size_approx() == 30,
+          "phase 1: 30 items remain after 30 pops");
+
+    // Phase 2: push 60 more (triggers grow: bottom=90, top=0)
+    for (int i = 61; i <= 120; ++i)
+        dq.push(reinterpret_cast<void*>(static_cast<intptr_t>(i)));
+
+    CHECK(dq.size_approx() == 90,
+          "phase 2: 90 items remain after grow+bottom wrap");
+
+    // Phase 3: steal 40 (moves top_ to 40)
+    for (int i = 0; i < 40; ++i)
+        dq.steal();
+
+    CHECK(dq.size_approx() == 50,
+          "phase 3: 50 items remain after 40 steals");
+
+    // Phase 4: push 100 more (triggers second grow with wrapped indices)
+    for (int i = 121; i <= 220; ++i)
+        dq.push(reinterpret_cast<void*>(static_cast<intptr_t>(i)));
+
+    CHECK(dq.size_approx() == 150,
+          "phase 4: 150 items remain after second grow");
+
+    // Phase 5: drain all via steal + pop
+    int stolen = 0;
+    while (dq.steal()) ++stolen;
+    int popped = 0;
+    while (dq.pop()) ++popped;
+
+    CHECK(stolen + popped == 150,
+          std::to_string(stolen + popped) + " items drained (" +
+          std::to_string(stolen) + " stolen + " + std::to_string(popped) + " popped)");
+
+    CHECK(dq.empty_approx(), "deque empty after all phases");
+    return true;
+}
+
 bool test_round_robin_fallback() {
     std::println("\n--- Test: Round-robin fallback (load-aware disabled) ---");
 
@@ -1065,6 +1244,10 @@ int main() {
     test_ws_deque_concurrent_pattern();
     test_ws_deque_concurrent_stress();
     test_ws_deque_steal_contention();
+    test_ws_deque_grow_during_steal();
+    test_ws_deque_multi_instance();
+    test_ws_deque_rapid_cycles();
+    test_ws_deque_grow_wrapped();
     test_worker_lifecycle();
     test_fiber_lifecycle();
     test_fiber_yield();
