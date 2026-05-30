@@ -5,7 +5,10 @@ namespace aura::ast {
 
 // ── Patch application ──────────────────────────────────────────
 bool apply_patches(FlatAST& ast, std::span<const Patch> patches) {
+    // Precondition: all patch targets must be valid node IDs
     for (auto& p : patches) {
+        if (!ast.is_valid(p.node))
+            std::abort();  // AURA_PRE equivalent
         if (p.node >= ast.size())
             return false;
         switch (p.field_offset) {
@@ -68,6 +71,9 @@ namespace {
 // Returns a description of the first violation, or empty string if valid.
 
 std::string FlatAST::validate_node(NodeId id, bool fail_on_error) const {
+    // AURA_PRE
+    if (!is_valid(id))
+        std::abort();
     if (id >= size())
         return make_node_error(id, "node ID out of range");
 
