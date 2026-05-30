@@ -135,6 +135,29 @@ public:
     void clear_last_mutate_error() { last_mutate_error_.clear(); }
     bool has_type_error() const { return !last_mutate_error_.empty(); }
 
+    // ── Panic auto-rollback (Issue #39) ─────────────────────
+    // When enabled, runtime errors after mutations automatically
+    // restore the workspace to the last known good state.
+    void set_auto_rollback_on_panic(bool v) { panic_auto_rollback_ = v; }
+    bool auto_rollback_on_panic() const { return panic_auto_rollback_; }
+
+    // Save current source as a safe checkpoint. Returns true if saved.
+    // Call before a mutation to ensure we can rollback on failure.
+    bool save_panic_checkpoint();
+
+    // Restore to the last safe checkpoint (ast:restore-like).
+    // Returns true if restore was performed.
+    bool restore_panic_checkpoint();
+
+    // Clear the checkpoint (call after successful mutation commit).
+    void commit_panic_checkpoint() { panic_safe_source_.clear(); }
+
+    // Check if a safe checkpoint exists.
+    bool has_panic_checkpoint() const { return !panic_safe_source_.empty(); }
+
+    // Get the safe checkpoint source (for introspection).
+    const std::string& panic_safe_source() const { return panic_safe_source_; }
+
     // Set/get a shared workspace tree (for cross-session workspace sharing in serve mode).
     void set_workspace_tree(void* wt) { workspace_tree_ = wt; }
     void* workspace_tree() const { return workspace_tree_; }
@@ -242,6 +265,10 @@ private:
     // ── Snapshot storage (ast:snapshot / ast:restore) ───────────
     std::vector<std::string> snapshot_sources_;  // source code per snapshot
     std::vector<std::string> snapshot_names_;    // optional names
+
+    // ── Panic auto-rollback (Issue #39) ─────────────────────────
+    bool panic_auto_rollback_ = false;
+    std::string panic_safe_source_;  // last known good source code
 
     // ── EDSL set-code error propagation ──────────────────────────
     // Stores (kind, message) for structured diagnostic return
