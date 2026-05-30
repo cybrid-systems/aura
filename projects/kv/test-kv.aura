@@ -224,6 +224,41 @@
 (assert-equal (kv-hset "l" "f" "v") "ERR wrong type" "kv-hset on list value")
 (kv-flush)
 
+;; ── 持久化 ──
+
+;; 准备数据
+(kv-set "str" "hello")
+(kv-set "num" 42)
+(kv-incr "counter")
+(kv-incr "counter")
+(kv-set-with-ttl "temp" "expires" 30)
+;; 注意: 持久化 V1 只支持 string/int 值，hash/list 暂不序列化
+
+;; SAVE
+(assert-equal (kv-save "/tmp/kv-dump.aura") "OK" "kv-save returns OK")
+
+;; 保存后数据不变
+(assert-equal (kv-get "str") "hello" "kv-get after save")
+(assert-equal (kv-get "num") 42 "kv-get int after save")
+(assert-equal (kv-get "counter") 2 "kv-get counter after save")
+
+;; 清空并验证
+(kv-flush)
+(assert-equal (kv-length) 0 "kv-length after flush before load")
+(assert-equal (kv-exists? "str") #f "kv-exists? after flush")
+
+;; LOAD
+(assert-equal (kv-load "/tmp/kv-dump.aura") "OK" "kv-load returns OK")
+
+;; 加载后数据恢复
+(assert-equal (kv-get "str") "hello" "kv-get after load")
+(assert-equal (kv-get "num") 42 "kv-get int after load")
+(assert-equal (kv-get "counter") 2 "kv-get counter after load")
+(assert-equal (kv-exists? "temp") #t "kv-exists? temp after load")
+(assert-equal (kv-ttl "temp") 30 "kv-ttl temp after load")
+
+(kv-flush)
+
 (newline)
 (display "=== Results: ") (display passed) (display " passed, ")
 (display failed) (display " failed") (newline)
