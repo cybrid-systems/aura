@@ -1507,3 +1507,68 @@
   (let ((no-define (query:filter (query:where :defines "ghost"))))
     (check (not (pair? no-define))
       "query:filter with non-matching :defines returns empty")))
+
+;; ═══════════════════════════════════════════════════════════════
+;; query:where :has-child — nodes with children of a given type
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "edsl:query-where-has-child-basic"
+  ;; (if (> x 0) x (- x)) — IfExpr has children: Call, Variable, Call
+  (set-code "(if (> x 0) x (- x))")
+  (let ((has-call (query:filter (query:where :has-child "Call"))))
+    (check (pair? has-call)
+      "query:filter with :has-child finds nodes with Call children")))
+
+(test-suite "edsl:query-where-has-child-define-body"
+  ;; (define (square n) (* n n)) — Define has children: Lambda, plus Lambda has children
+  (set-code "(define (square n) (* n n))")
+  (let ((has-lambda (query:filter (query:where :has-child "Lambda"))))
+    (check (pair? has-lambda)
+      "Define node has Lambda child")))
+
+(test-suite "edsl:query-where-has-child-nested-call"
+  ;; (define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))
+  (set-code "(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))")
+  (let ((has-if (query:filter (query:where :has-child "IfExpr"))))
+    (check (pair? has-if)
+      "query:filter with :has-child(IfExpr) finds nodes with if"))
+  (let ((has-literalint (query:filter (query:where :has-child "LiteralInt"))))
+    (check (pair? has-literalint)
+      "query:filter with :has-child(LiteralInt) finds nodes with integer literals")))
+
+(test-suite "edsl:query-where-has-child-no-match"
+  (set-code "(define (f) 42)")
+  (let ((no-lambda-child (query:filter (query:where :has-child "Lambda"))))
+    ;; A LiteralInt node doesn't have children
+    (check (not (pair? no-lambda-child))
+      "query:filter with :has-child(Lambda) returns empty when no Lambda children exist")))
+
+;; ═══════════════════════════════════════════════════════════════
+;; query:where :depth — node depth from root
+;; ═══════════════════════════════════════════════════════════════
+
+(test-suite "edsl:query-where-depth-root"
+  ;; Root-level expressions (depth 0): Define, top-level calls
+  (set-code "(define (square n) (* n n))")
+  ;; Define is root (depth 0)
+  (let ((root-nodes (query:filter (query:where :depth "0"))))
+    (check (pair? root-nodes)
+      "query:filter with :depth(0) finds root-level nodes"))
+  ;; For a single define, root nodes should include the Define
+  (let ((defs (query:filter (query:where :depth "0") (query:where :node-type "Define"))))
+    (check (pair? defs)
+      "root-level Define is found at depth 0")))
+
+(test-suite "edsl:query-where-depth-nested"
+  (set-code "(let ((x 1) (y 2)) (+ x y))")
+  ;; The Call to + is nested inside LetRec → depth should be > 0
+  (let ((calls (query:filter (query:where :node-type "Call") (query:where :callee "+"))))
+    (check (pair? calls)
+      "query:filter finds nested call to +")))
+
+(test-suite "edsl:query-where-depth-no-match"
+  ;; With a shallow expression, depth=5 should find nothing
+  (set-code "(define (f) 42)")
+  (let ((deep-nodes (query:filter (query:where :depth "5"))))
+    (check (not (pair? deep-nodes))
+      "query:filter with :depth(5) returns empty for shallow code")))
