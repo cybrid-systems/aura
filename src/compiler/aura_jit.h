@@ -83,11 +83,7 @@ public:
 
     // Hot-swap: replace an already-compiled function with a new version.
     // Removes the old module from the JIT dylib and compiles + links the new one.
-    // Returns true on success. The compiled function is immediately available
-    // for subsequent lookups.
-    bool update_function(const char* name, const FlatFunction& fn);
-
-private:
+    private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
