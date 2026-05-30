@@ -593,6 +593,9 @@ void Evaluator::init_pair_primitives() {
             return make_bool(false);
         return make_bool(is_void(a[0]));
     });
+    primitives_.add("void", [](const auto&) {
+        return make_void();
+    });
     // ── Character operations (chars are integers in Aura) ──────────
     primitives_.add("char=?", [](const auto& a) {
         if (a.size() < 2)

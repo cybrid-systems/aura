@@ -1,0 +1,66 @@
+;; === kv.aura — 最小键值存储 ===
+;; 状态: 🟡 writing
+;;
+;; 依赖验证:
+;;   (hash)         ✅ 存在 — 创建 hash 表
+;;   (hash-set!)    ✅ 存在 — 设置键值对
+;;   (hash-ref)     ✅ 存在 — 获取值，不存在返回 void
+;;   (hash-has-key?)✅ 存在 — 检查键是否存在
+;;   (hash-remove!) ✅ 存在 — 删除键值对
+;;   (hash-keys)    ✅ 存在 — 返回所有键
+;;   (hash-length)  ✅ 存在 — 返回条目数
+;;
+;; 发现的 gap:
+;;   - make-hash-table 不存在，正确名称是 hash
+;;   - hash-ref 在键不存在时返回 void，不是 #f
+;;   - integer? 对 hash 存储的值有效
+;;   - load 原语不存在，只有 load-module
+
+(define *store* (hash))
+
+(define (kv-set key val)
+  "设置键值对。返回 'OK' 表示成功。"
+  (hash-set! *store* key val)
+  "OK")
+
+(define (kv-get key)
+  "获取键对应的值。不存在时返回 void。"
+  (hash-ref *store* key))
+
+(define (kv-del key)
+  "删除键值对。返回 'OK' 表示成功。"
+  (hash-remove! *store* key)
+  "OK")
+
+(define (kv-incr key)
+  "原子自增。如果键不存在则初始化为 1。值必须为整数，否则返回错误。"
+  (let ((cur (hash-ref *store* key)))
+    (cond
+     ;; 键不存在 → 初始化为 1
+     ((void? cur)
+      (hash-set! *store* key 1)
+      1)
+     ;; 值是整数 → 自增
+     ((integer? cur)
+      (let ((new (+ cur 1)))
+        (hash-set! *store* key new)
+        new))
+     ;; 值不是整数 → 错误
+     (#t "ERR wrong type"))))
+
+(define (kv-exists? key)
+  "检查键是否存在。"
+  (hash-has-key? *store* key))
+
+(define (kv-keys)
+  "返回所有键的列表。"
+  (hash-keys *store*))
+
+(define (kv-length)
+  "返回存储中的条目数。"
+  (hash-length *store*))
+
+(define (kv-flush)
+  "清空所有数据。"
+  (set! *store* (hash))
+  "OK")
