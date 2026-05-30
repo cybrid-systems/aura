@@ -2,6 +2,16 @@ export module aura.core.ast;
 import std;
 import aura.core.type;
 
+// C++26 Contracts — placeholder until GCC supports [[pre:]]/[[post:]] attribute syntax.
+// See https://github.com/cybrid-systems/aura/issues/46
+// When ready, replace these macros with:
+//   [[pre: expr]] / [[post r: expr]] / [[assert: expr]]
+// Cannot include <cassert> inside a module with import std (conflicts),
+// so we use std::abort() directly.
+#define AURA_CONTRACT_PRE(expr)      do { if (!(expr)) std::abort(); } while(0)
+#define AURA_CONTRACT_POST(expr)     do { if (!(expr)) std::abort(); } while(0)
+#define AURA_CONTRACT_ASSERT(expr)   do { if (!(expr)) std::abort(); } while(0)
+
 namespace aura::ast {
 
 // ── Common type aliases ──────────────────────────────────────
@@ -745,7 +755,10 @@ private:
 
     // ── Access ─────────────────────────────────────────────────
 
-    NodeView get(NodeId id) const {
+    NodeView get(NodeId id) const
+    {
+        AURA_CONTRACT_PRE(id != NULL_NODE);
+        AURA_CONTRACT_PRE(is_valid(id));
         return NodeView{
             .id = id,
             .tag = tag_[id],
@@ -1058,7 +1071,9 @@ private:
     }
 
     // Safe get — returns nullopt on stale/invalid NodeId.
-    std::optional<NodeView> get_safe(NodeId id) const {
+    std::optional<NodeView> get_safe(NodeId id) const
+    {
+        AURA_CONTRACT_PRE(true);  // always safe — nullopt on invalid
         if (!is_valid(id))
             return std::nullopt;
         return get(id);
