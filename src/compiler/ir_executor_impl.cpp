@@ -82,11 +82,14 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
             "the function body is empty"));
 
     // ── Coercion helpers shared across arithmetic opcodes ────────
-    // Report CastOp blame with source location
+    // Report CastOp blame with source location and optional NodeId
     auto report_blame = [&](const char* expected_kind, const char* got_kind,
-                            std::uint32_t blame_loc) {
+                            std::uint32_t blame_loc, std::uint32_t blame_node = 0) {
         std::string msg =
             std::string("runtime type mismatch: expected ") + expected_kind + ", got " + got_kind;
+        if (blame_node != 0) {
+            msg += " (node " + std::to_string(blame_node) + ")";
+        }
         auto diag = Diagnostic(ErrorKind::TypeError, std::move(msg))
                         .with_blame(BlameInfo{BlameParty::Implicit, "", "runtime"});
         if (blame_loc != 0) {
@@ -330,9 +333,11 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 case IROpcode::CastOp: {
                     // CastOp: result_slot=ops[0], value_slot=ops[1], type_tag=ops[2]
                     // ops[3] = blame_loc packed (line<<16)|col (or 0)
+                    // instr.type_id = blame_node (AST NodeId for error reporting)
                     // type_tag: 0=Int, 1=String, 2=Bool, 3+=Dynamic
                     auto& val = locals[ops[1]];
                     auto blame_loc = ops[3];
+                    auto blame_node = instr.type_id;
 
                     switch (ops[2]) {
                         case 0: { // Coerce to Int
@@ -355,7 +360,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             } else if (is_float(val)) {
                                 locals[ops[0]] = make_int(static_cast<std::int64_t>(as_float(val)));
                             } else {
-                                report_blame("Int", "unknown", blame_loc);
+                                report_blame("Int", "unknown", blame_loc, blame_node);
                                 locals[ops[0]] = make_int(0);
                             }
                             break;
@@ -406,7 +411,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             } else if (is_bool(val)) {
                                 locals[ops[0]] = make_float(as_bool(val) ? 1.0 : 0.0);
                             } else {
-                                report_blame("Float", "unknown", 0);
+                                report_blame("Float", "unknown", 0, blame_node);
                                 locals[ops[0]] = make_float(0.0);
                             }
                             break;
