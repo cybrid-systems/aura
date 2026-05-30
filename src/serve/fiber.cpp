@@ -118,6 +118,36 @@ void Fiber::yield() {
     auto* fb = g_current_fiber;
     if (!fb) return;
 
+    // Mark as explicit yield (safe to steal)
+    fb->set_yield_reason(YieldReason::Explicit);
+
+    // Swap from fiber's context back to worker's loop context
+    if (::swapcontext(&fb->ctx_, &wctx->uctx) == -1) {
+        std::fprintf(stderr, "fiber: yield swapcontext failed: %s\n",
+                     std::strerror(errno));
+    }
+}
+
+// ── yield(YieldReason) — yield with reason ────────────
+
+void Fiber::yield(YieldReason reason) {
+    auto* wctx = g_worker_ctx;
+    if (!wctx) {
+        std::fprintf(stderr, "fiber: yield called with no worker context\n");
+        return;
+    }
+
+    auto* fb = g_current_fiber;
+    if (!fb) return;
+
+    // Record the yield reason for scheduler inspection
+    fb->set_yield_reason(reason);
+
+    // If blocking IO, set state to Waiting (IO thread will wake via epoll)
+    if (reason == YieldReason::BlockingIO) {
+        fb->set_state(FiberState::Waiting);
+    }
+
     // Swap from fiber's context back to worker's loop context
     if (::swapcontext(&fb->ctx_, &wctx->uctx) == -1) {
         std::fprintf(stderr, "fiber: yield swapcontext failed: %s\n",

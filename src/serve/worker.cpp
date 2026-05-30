@@ -101,11 +101,24 @@ void WorkerThread::notify_fiber_done(Fiber* fiber) {
 
 bool WorkerThread::try_steal_from(WorkerThread* victim) {
     if (!victim || victim == this) return false;
-    Fiber* stolen = victim->try_steal();
-    if (stolen) {
-        // Push the stolen fiber to our local queue
-        local_queue_.push(stolen);
-        return true;
+
+    // Try to steal a fiber from the victim's deque.
+    // The deque only contains fibers that yielded (Explicit/MutationBoundary),
+    // but we also check is_stealable() as a safety measure against stale fibers
+    // that may have been mutated after being enqueued.
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        Fiber* stolen = victim->try_steal();
+        if (!stolen) break;
+
+        if (stolen->is_stealable()) {
+            local_queue_.push(stolen);
+            return true;
+        }
+
+        // Not stealable — put it back on the victim's queue.
+        // This could happen if the fiber state changed after it was enqueued.
+        // Give up after a few attempts to avoid infinite loop.
+        victim->enqueue(stolen);
     }
     return false;
 }
