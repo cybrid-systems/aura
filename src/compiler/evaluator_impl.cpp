@@ -1611,18 +1611,31 @@ void Evaluator::init_pair_primitives() {
         }
         return v;
     });
+    // (member val list) — Find val in list using content equality (equal?)
+    // Returns the tail of the list starting with val, or #f if not found
     primitives_.add("member", [this](const auto& a) {
         if (a.size() < 2)
             return make_int(0);
         auto& val = a[0];
         auto v = a[1];
+        auto elem_eq = [&](const EvalValue& x, const EvalValue& y) -> bool {
+            if (x == y) return true;
+            if (is_int(x) && is_int(y)) return as_int(x) == as_int(y);
+            if (is_string(x) && is_string(y)) {
+                auto xi = as_string_idx(x), yi = as_string_idx(y);
+                return xi < string_heap_.size() && yi < string_heap_.size() &&
+                       string_heap_[xi] == string_heap_[yi];
+            }
+            if (is_bool(x) && is_bool(y)) return as_bool(x) == as_bool(y);
+            return false;
+        };
         while (!is_end_of_list(v)) {
             if (!is_pair(v))
                 return make_int(0);
             auto idx = as_pair_idx(v);
             if (idx >= pairs_.size())
                 return make_int(0);
-            if (pairs_[idx].car == val)
+            if (elem_eq(pairs_[idx].car, val))
                 return v;
             v = pairs_[idx].cdr;
         }

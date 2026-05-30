@@ -97,18 +97,12 @@
 (kv-set-with-ttl "dead" "gone" 0)
 (assert-equal (kv-ttl "dead") -2 "kv-ttl of expired key is -2")
 
-;; kv-keys 排除过期键
-;; 注意: Aura 的 member 用 eq? 比较（原始值），字符串副本不一定匹配
-;; 这里用自定义查找避免 member 的局限性
-(define (has-key? keys key)
-  (if (null? keys) #f
-      (if (equal? (car keys) key) #t
-          (has-key? (cdr keys) key))))
+;; kv-keys 排除过期键（member 现用 equal? 比较，字符串内容正确匹配）
 (kv-set "keep" "stay")
 (kv-set-with-ttl "expire-soon" "bye" 0)  ;; 立即过期
-(assert-equal (has-key? (kv-keys) "keep") #t "kv-keys includes unexpired key")
-(assert-equal (has-key? (kv-keys) "expire-soon") #f "kv-keys excludes expired key")
-(assert-equal (has-key? (kv-keys) "dead") #f "kv-keys excludes expired key (dead)")
+(assert-equal (not (not (member "keep" (kv-keys)))) #t "kv-keys includes unexpired key")
+(assert-equal (not (not (member "expire-soon" (kv-keys)))) #f "kv-keys excludes expired key")
+(assert-equal (not (not (member "dead" (kv-keys)))) #f "kv-keys excludes expired key (dead)")
 
 ;; kv-length 不计过期键
 (assert-equal (> (kv-length) 0) #t "kv-length > 0 (at least 'keep' and 'e')")
