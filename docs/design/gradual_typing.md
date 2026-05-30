@@ -9,6 +9,34 @@
 ┌─────────────────────────────────┐   ┌────────────────────────┐   ┌─────────────┐
 │ type_checker_impl.cpp           │   │ lowering_impl.cpp      │   │ IR Executor │
 │                                 │   │                        │   │             │
+│ ✓ synthesize_flat → 类型推导    │   │ ✓ TypeAnnotation→CastOp│   │ ✓ CastOp解释 │
+│ ✓ is_coercible → 插CoercionNode │──→│ ✓ CoercionNode→CastOp  │──→│ ✓ 运行时检查  │
+│ ✓ set_loc + blame_node 传递     │   │ ✓ blame_node 存type_id │   │ ✓ report_    │
+│                                 │   │ ✓ optimize_type_info   │   │   blame+node │
+└─────────────────────────────────┘   └────────────────────────┘   └─────────────┘
+```
+
+### 已完成
+
+**Phase 1 (✅): CoercionNode 自动插入**
+- `check_flat_call`: 参数类型不匹配时插 CoercionNode
+- `check_flat_call`: 返回类型不匹配时插 CoercionNode（wrap 整个 call）
+- `check_flat`: 通用表达式类型不匹配时插 CoercionNode
+- `synthesize_flat(Coercion)`: 返回目标类型而非 inner 类型
+
+**Phase 2 (✅): 源位置 + CastOp blame 改进**
+- CoercionNode 插入时 `set_loc()` 复制源表达式 line/col
+- CoercionNode lowering 用 `emit_with_type` 传 blame_node 到 CastOp
+- `report_blame()` 输出包含 `(node N)`，Agent 可定位到具体 AST 节点
+
+**Phase 3 (✅): 测试**
+- `tests/gradual_typing.aura`: 9 个测试
+
+```
+                   类型检查阶段                    lowering 阶段                运行时
+┌─────────────────────────────────┐   ┌────────────────────────┐   ┌─────────────┐
+│ type_checker_impl.cpp           │   │ lowering_impl.cpp      │   │ IR Executor │
+│                                 │   │                        │   │             │
 │ synthesize_flat → 类型推导      │   │ TypeAnnotation → CastOp│   │ CastOp 解释  │
 │ is_coercible → emit Note（只报  │──→│ CoercionNode → CastOp  │──→│ 含运行时检查  │
 │    告不插入节点）               │   │ optimize_type_info 消  │   │ report_blame│
