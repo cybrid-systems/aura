@@ -8,7 +8,8 @@
 
 | 项目 | 状态 | 核心缺口 |
 |------|------|---------|
-| [kv/](kv/) — 最小键值存储 | 🟡 writing | 见 `GAPS.md` |
+| [kv/](kv/) — 最小键值存储 | ✅ works | 6 个 core gap 已修 |
+| [chat/](chat/) — session 间消息 | ✅ works | send/recv/broadcast 内建 |
 | cli/ — CLI 工具 | ⬜ planning | — |
 | todo/ — TODO 应用 | ⬜ planning | — |
 | chat/ — 聊天协议 | ⬜ planning | — |
