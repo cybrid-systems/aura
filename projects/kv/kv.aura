@@ -109,12 +109,6 @@
 
 ;; ── 辅助 ──
 
-  "检查键是否已过期（内部使用）。"
-  (let ((expire (hash-ref *ttl* key)))
-    (if (void? expire)
-        #f
-        (>= (current-time) expire))))
-
 (define (kv-keys)
   "返回所有未过期键的列表。"
   (filter (lambda (k) (not (kv-expired? k))) (hash-keys *store*)))
@@ -258,7 +252,6 @@
               (list-ref cur idx))))))
 
 ;; ── Hash 操作 ──
-  (hash-has-key? *sets* key))
 
 (define (kv-hset key field val)
   "设置 hash 中指定字段的值。返回新字段数（1=新增, 0=覆盖）。"
@@ -439,13 +432,16 @@
       (begin (set! *tx-queue* (append *tx-queue* (list (cons cmd args)))) "QUEUED")))
 (define (kv-exec)
   (if (not *tx-active*) "ERR EXEC without MULTI"
-      (begin (set! *tx-active* #f) (define results '())
-             (for-each (lambda (item)
-                         (let* ((cmd (car item)) (args (cdr item))
-                                (val (apply cmd args)))
-                           (set! results (append results (list (cons 'OK val))))))
-                       *tx-queue*)
-             (set! *tx-queue* '()) (cons 'OK results))))
+      (begin (set! *tx-active* #f)
+             (let ((results (let run ((queue *tx-queue*) (acc '()))
+                              (if (null? queue) acc
+                                  (let* ((item (car queue))
+                                         (cmd (car item))
+                                         (args (cdr item))
+                                         (val (apply cmd args)))
+                                    (run (cdr queue) (append acc (list (cons 'OK val)))))))))
+               (set! *tx-queue* '())
+               (cons 'OK results)))))
 (define (kv-discard)
   (if (not *tx-active*) "ERR DISCARD without MULTI"
       (begin (set! *tx-active* #f) (set! *tx-queue* '()))))
