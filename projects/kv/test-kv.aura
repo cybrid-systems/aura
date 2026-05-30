@@ -1,0 +1,62 @@
+;; === test-kv.aura — kv 存储自测脚本 ===
+;; 用法: cat projects/kv/kv.aura projects/kv/test-kv.aura | ./build/aura
+;;
+;; 注意: Aura 没有 load 原语，需要通过 pipe 串联文件
+
+(define passed 0)
+(define failed 0)
+
+(define (assert-equal actual expected msg)
+  (if (equal? actual expected)
+      (begin
+        (set! passed (+ passed 1))
+        (display "[PASS] ") (display msg) (newline))
+      (begin
+        (set! failed (+ failed 1))
+        (display "[FAIL] ") (display msg)
+        (display " — expected: ") (display expected)
+        (display ", got: ") (display actual)
+        (newline))))
+
+(display "=== kv.aura tests ===") (newline)
+
+;; 基础 Set / Get
+(assert-equal (kv-set "name" "Aura") "OK" "kv-set returns OK")
+(assert-equal (kv-get "name") "Aura" "kv-get returns stored value")
+(assert-equal (kv-get "nonexistent") (void) "kv-get missing key returns void")
+
+;; Exists
+(assert-equal (kv-exists? "name") #t "kv-exists? existing key")
+(assert-equal (kv-exists? "nope") #f "kv-exists? missing key")
+
+;; Delete
+(assert-equal (kv-del "name") "OK" "kv-del returns OK")
+(assert-equal (kv-exists? "name") #f "kv-exists? after del")
+(assert-equal (kv-get "name") (void) "kv-get after del returns void")
+
+;; Incr
+(assert-equal (kv-incr "counter") 1 "kv-incr starts at 1")
+(assert-equal (kv-incr "counter") 2 "kv-incr increments to 2")
+(assert-equal (kv-incr "counter") 3 "kv-incr increments to 3")
+(assert-equal (kv-get "counter") 3 "kv-get after incr")
+
+;; Incr on non-int returns error
+(kv-set "str" "hello")
+(assert-equal (kv-incr "str") "ERR wrong type" "kv-incr on non-int returns error")
+
+;; String values
+(assert-equal (kv-set "x" "hello") "OK" "kv-set string value")
+(assert-equal (kv-get "x") "hello" "kv-get string value")
+
+;; Keys / Length
+(assert-equal (kv-exists? "counter") #t "incr key exists")
+(assert-equal (kv-exists? "x") #t "string key exists")
+
+;; Flush
+(assert-equal (kv-flush) "OK" "kv-flush returns OK")
+(assert-equal (kv-length) 0 "kv-length after flush is 0")
+(assert-equal (kv-exists? "counter") #f "kv-exists? after flush")
+
+(newline)
+(display "=== Results: ") (display passed) (display " passed, ")
+(display failed) (display " failed") (newline)
