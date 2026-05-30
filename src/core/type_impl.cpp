@@ -57,7 +57,8 @@ TypeId TypeRegistry::register_linear(TypeId inner) {
     };
     std::string linear_name = "(Linear " + std::string(name_of(inner)) + ")";
     entries_.push_back(Entry{TypeTag::LINEAR, std::move(linear_name), std::nullopt, std::nullopt,
-                             LinearType{inner}, std::nullopt, std::nullopt, std::nullopt, std::nullopt});
+                             LinearType{inner}, std::nullopt, std::nullopt, std::nullopt,
+                             std::nullopt, std::nullopt, std::nullopt});
     name_to_id_[entries_.back().name] = id;
     return id;
 }
@@ -74,7 +75,8 @@ TypeId TypeRegistry::register_module(ModuleType mt) {
     }
     name += "}";
     entries_.push_back(Entry{TypeTag::MODULE, std::move(name), std::nullopt, std::nullopt,
-                             std::nullopt, std::move(mt), std::nullopt, std::nullopt, std::nullopt});
+                             std::nullopt, std::move(mt), std::nullopt, std::nullopt,
+                             std::nullopt, std::nullopt, std::nullopt});
     return id;
 }
 
@@ -142,7 +144,7 @@ TypeId TypeRegistry::register_effect(std::string name, TypeId arg) {
     entries_.push_back(Entry{TypeTag::EFFECT, std::move(eff_name), std::nullopt, std::nullopt,
                              std::nullopt, std::nullopt, std::nullopt,
                              EffectType{std::move(name), arg},
-                             std::nullopt});
+                             std::nullopt, std::nullopt, std::nullopt});
     return id;
 }
 
@@ -163,7 +165,8 @@ TypeId TypeRegistry::register_capability(std::vector<std::string> effects, bool 
         name = "Capability{*}";
     entries_.push_back(Entry{TypeTag::CAPABILITY, std::move(name), std::nullopt, std::nullopt,
                              std::nullopt, std::nullopt, std::nullopt, std::nullopt,
-                             CapabilityType{std::move(effects), unrestricted}});
+                             CapabilityType{std::move(effects), unrestricted},
+                             std::nullopt, std::nullopt});
     return id;
 }
 
@@ -425,7 +428,13 @@ std::string TypeRegistry::format_type(TypeId id) const {
         }
         case TypeTag::VARIANT: {
             auto* vt = variant_of(id);
-            if (!vt) return "<variant>";
+            if (!vt) {
+                // Registered via register_type(name) — use the stored name
+                auto n = name_of(id);
+                if (!n.empty() && n != "<variant>")
+                    return std::string(n);
+                return "<variant>";
+            }
             std::string s = "Variant{";
             for (auto& [name, args] : vt->variants) {
                 if (s.back() != '{') s += ", ";
@@ -438,7 +447,12 @@ std::string TypeRegistry::format_type(TypeId id) const {
         }
         case TypeTag::RECORD: {
             auto* rt = record_of(id);
-            if (!rt) return "<record>";
+            if (!rt) {
+                auto n = name_of(id);
+                if (!n.empty() && n != "<record>")
+                    return std::string(n);
+                return "<record>";
+            }
             std::string s = "Record{";
             for (auto& [name, type] : rt->fields) {
                 if (s.back() != '{') s += ", ";
