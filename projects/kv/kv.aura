@@ -408,3 +408,44 @@
   (if (hash-has-key? *sets* key)
       (hash-length (hash-ref *sets* key))
       0))
+
+;; ── 重绑定修复段 ──
+;; 修复 (load) 路径中后续函数闭包捕获错误 cell 索引的问题。
+(define (kv-sadd key member)
+  (if (and (hash-has-key? *store* key) (not (hash-has-key? *sets* key)))
+      "ERR wrong type"
+      (let ((s (if (hash-has-key? *sets* key) (hash-ref *sets* key) (hash))))
+        (if (not (hash-has-key? s member))
+            (begin (hash-set! s member #t)
+                   (when (not (hash-has-key? *sets* key)) (hash-set! *sets* key s))
+                   1) 0))))
+(define (kv-srem key member)
+  (if (hash-has-key? *sets* key)
+      (let ((s (hash-ref *sets* key)))
+        (if (hash-has-key? s member)
+            (begin (hash-remove! s member)
+                   (when (= (hash-length s) 0) (hash-remove! *sets* key)) 1) 0)) 0))
+(define (kv-scard key)
+  (if (hash-has-key? *sets* key) (hash-length (hash-ref *sets* key)) 0))
+(define (kv-sismember key member)
+  (if (hash-has-key? *sets* key) (hash-has-key? (hash-ref *sets* key) member) #f))
+(define (kv-smembers key)
+  (if (hash-has-key? *sets* key) (hash-keys (hash-ref *sets* key)) '()))
+(define (kv-multi)
+  (if *tx-active* "ERR MULTI without EXEC"
+      (begin (set! *tx-active* #t) (set! *tx-queue* '()) "OK")))
+(define (kv-enqueue cmd . args)
+  (if (not *tx-active*) "ERR no active transaction"
+      (begin (set! *tx-queue* (append *tx-queue* (list (cons cmd args)))) "QUEUED")))
+(define (kv-exec)
+  (if (not *tx-active*) "ERR EXEC without MULTI"
+      (begin (set! *tx-active* #f) (define results '())
+             (for-each (lambda (item)
+                         (let* ((cmd (car item)) (args (cdr item))
+                                (val (apply cmd args)))
+                           (set! results (append results (list (cons 'OK val))))))
+                       *tx-queue*)
+             (set! *tx-queue* '()) (cons 'OK results))))
+(define (kv-discard)
+  (if (not *tx-active*) "ERR DISCARD without MULTI"
+      (begin (set! *tx-active* #f) (set! *tx-queue* '()))))
