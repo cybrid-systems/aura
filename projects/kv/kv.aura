@@ -196,3 +196,72 @@
           (if (or (< idx 0) (>= idx len))
               (void)
               (list-ref cur idx))))))
+
+;; ── Hash 操作 ──
+
+(define (kv-hset key field val)
+  "设置 hash 中指定字段的值。返回新字段数（1=新增, 0=覆盖）。"
+  (let ((cur (if (kv-expired? key) (begin (kv-del-internal key) (void)) (kv-get key))))
+    (if (and (not (void? cur)) (not (hash? cur)))
+        "ERR wrong type"
+        (let ((h (if (hash? cur) cur (hash))))
+          (hash-remove! *ttl* key)
+          (if (hash-has-key? h field)
+              (begin (hash-set! h field val) (hash-set! *store* key h) 0)
+              (begin (hash-set! h field val) (hash-set! *store* key h) 1))))))
+
+(define (kv-hget key field)
+  "获取 hash 中指定字段的值。不存在则返回 void。"
+  (let ((cur (kv-get key)))
+    (if (hash? cur)
+        (hash-ref cur field)
+        (void))))
+
+(define (kv-hgetall key)
+  "获取 hash 中所有字段和值。返回 ((field val) ...) 列表。"
+  (let ((cur (kv-get key)))
+    (if (hash? cur)
+        (map (lambda (f) (list f (hash-ref cur f))) (hash-keys cur))
+        '())))
+
+(define (kv-hdel key . fields)
+  "删除 hash 中一个或多个字段。返回实际删除的字段数。"
+  (let ((cur (kv-get key)))
+    (if (hash? cur)
+        (let ((removed (length (filter (lambda (f)
+                                         (if (hash-has-key? cur f)
+                                             (begin (hash-remove! cur f) #t)
+                                             #f))
+                                       fields))))
+          (if (= 0 (hash-length cur))
+              (kv-del-internal key))
+          removed)
+        0)))
+
+(define (kv-hexists key field)
+  "检查 hash 中指定字段是否存在。"
+  (let ((cur (kv-get key)))
+    (if (hash? cur)
+        (hash-has-key? cur field)
+        #f)))
+
+(define (kv-hlen key)
+  "返回 hash 中的字段数。"
+  (let ((cur (kv-get key)))
+    (if (hash? cur)
+        (hash-length cur)
+        0)))
+
+(define (kv-hkeys key)
+  "返回 hash 中的所有字段名。"
+  (let ((cur (kv-get key)))
+    (if (hash? cur)
+        (hash-keys cur)
+        '())))
+
+(define (kv-hvals key)
+  "返回 hash 中的所有字段值。"
+  (let ((cur (kv-get key)))
+    (if (hash? cur)
+        (hash-values cur)
+        '())))
