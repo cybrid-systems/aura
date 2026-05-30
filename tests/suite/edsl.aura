@@ -1424,3 +1424,86 @@
   ;; Cleanup
   (workspace:delete "wsA")
   (workspace:delete "wsB"))
+
+;; ═══════════════════════════════════════════════════════════
+;; EDSL query:filter / query:where — combined queries
+;; ═══════════════════════════════════════════════════════════
+
+(test-suite "edsl:query-where-basic"
+  (set-code "(define (map f lst) (if (null? lst) '() (cons (f (car lst)) (map f (cdr lst)))))")
+  (check (pair? (query:where :node-type "Call"))
+    "query:where returns a predicate pair"))
+
+(test-suite "edsl:query-filter-all-calls"
+  (set-code "(define (sort lst) (if (null? lst) '() (sort (cdr lst))))")
+  (check (pair? (query:filter (query:where :node-type "Call")))
+    "query:filter finds all Call nodes"))
+
+(test-suite "edsl:query-filter-callee"
+  (set-code "(define (sort lst) (if (null? lst) '() (sort (cdr lst))))")
+  (check (pair? (query:filter (query:where :node-type "Call") (query:where :callee "sort")))
+    "query:filter with :callee finds matching call sites")
+  (let ((calls (query:filter (query:where :node-type "Call") (query:where :callee "sort"))))
+    (check (= (length calls) 1)
+      "exactly 1 call to 'sort' inside sort's body")))
+
+(test-suite "edsl:query-filter-define"
+  (set-code "(define (id x) x)")
+  (check (pair? (query:filter (query:where :node-type "Define")))
+    "query:filter finds Define nodes")
+  (let ((defs (query:filter (query:where :node-type "Define") (query:where :defines "id"))))
+    (check (pair? defs) "query:filter with :defines finds matching define")
+    (check (= (length defs) 1) "exactly 1 define for 'id'")))
+
+(test-suite "edsl:query-filter-multi-pred"
+  (set-code "(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))")
+  ;; Find all call sites that call fib
+  (let ((fib-calls (query:filter (query:where :node-type "Call") (query:where :callee "fib"))))
+    (check (>= (length fib-calls) 2)
+      (string "found " (length fib-calls) " fib calls (expected >= 2)")))
+  ;; Find all LiteralInt nodes
+  (let ((ints (query:filter (query:where :node-type "LiteralInt"))))
+    (check (>= (length ints) 1)
+      "query:filter for LiteralInt returns >= 1 result"))
+  ;; Combined: Define named fib
+  (let ((fib-def (query:filter (query:where :node-type "Define") (query:where :defines "fib"))))
+    (check (= (length fib-def) 1)
+      "query:filter for define named 'fib' returns exactly 1")))
+
+(test-suite "edsl:query-filter-all-types"
+  (set-code "(define (f x) (if (> x 0) (+ x 1) (- x 1)))")
+  ;; Every possible filter should return something
+  (check (pair? (query:filter (query:where :node-type "Call")))
+    "query:filter Call works")
+  (check (pair? (query:filter (query:where :node-type "Variable")))
+    "query:filter Variable works")
+  (check (pair? (query:filter (query:where :node-type "LiteralInt")))
+    "query:filter LiteralInt works")
+  (check (pair? (query:filter (query:where :node-type "IfExpr")))
+    "query:filter IfExpr works")
+  (check (pair? (query:filter (query:where :node-type "Lambda")))
+    "query:filter Lambda works")
+  (check (pair? (query:filter (query:where :node-type "Define")))
+    "query:filter Define works"))
+
+(test-suite "edsl:query-filter-cross-type"
+  (set-code "(define (add n) (+ n 1))")
+  ;; Intersection of Define and Call should be empty (a node is either one)
+  (let ((impossible (query:filter (query:where :node-type "Define") (query:where :node-type "Call"))))
+    (check (not (pair? impossible))
+      "intersection of Define and Call is empty (no node is both)"))
+  ;; But Define and :defines together work
+  (let ((named-def (query:filter (query:where :node-type "Define") (query:where :defines "add"))))
+    (check (pair? named-def)
+      "Define with :defines 'add' works")))
+
+(test-suite "edsl:query-filter-no-match"
+  (set-code "(define (f) 42)")
+  ;; Non-existent callee should return empty (void)
+  (let ((no-match (query:filter (query:where :node-type "Call") (query:where :callee "nonexistent"))))
+    (check (not (pair? no-match))
+      "query:filter with non-matching callee returns empty"))
+  ;; Non-existent define name
+  (let ((no-define (query:filter (query:where :defines "ghost"))))
+    (check (not (pair? no-define))
+      "query:filter with non-matching :defines returns empty")))
