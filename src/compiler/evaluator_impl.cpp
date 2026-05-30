@@ -2832,6 +2832,11 @@ void Evaluator::init_pair_primitives() {
         return ::stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
     };
 
+    // (current-time) → integer epoch seconds
+    primitives_.add("current-time", [](const auto&) -> EvalValue {
+        return make_int(static_cast<std::int64_t>(std::time(nullptr)));
+    });
+
     primitives_.add("read-file", [this, is_regular](const auto& a) {
         if (a.empty() || !is_string(a[0]))
             return make_void();
