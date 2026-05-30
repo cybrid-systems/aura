@@ -68,6 +68,12 @@ public:
     YieldReason last_yield_reason() const { return last_yield_reason_; }
     void set_yield_reason(YieldReason r) { last_yield_reason_ = r; }
 
+    // Check if a GC safepoint has been requested (P2).
+    // If so, block until the GC phase returns to None.
+    // Called from yield() and alloc() paths.
+    // Implementation in fiber.cpp (to avoid inline issues with C++26 modules).
+    static void check_gc_safepoint();
+
     // Is this fiber at a safe point to steal/move?
     // A fiber is stealable if it yielded for Explicit, MutationBoundary,
     // or OperationBoundary — meaning it's not in the middle of an
@@ -107,12 +113,41 @@ private:
     static void trampoline(uint32_t high, uint32_t low);
 };
 
+// ── GCPhase — GC safepoint state machine (P2) ────────
+enum class GCPhase : uint8_t {
+    None,        // 正常执行
+    Requested,   // GC 已请求，等待 fiber 到达安全点
+    Sweeping,    // 同步 sweep 进行中
+    Complete,    // GC 完成
+};
+
+// ── WorkerGCState — per-worker GC state (P2) ──────────
+struct WorkerGCState {
+    std::atomic<GCPhase> phase{GCPhase::None};
+    std::atomic<int32_t> fibers_at_safepoint{0};
+    std::atomic<int64_t> gc_epoch{0};
+
+    // Spin-wait until phase returns to None (safepoint resume)
+    void wait_for_resume() {
+        while (phase.load(std::memory_order_acquire) != GCPhase::None) {
+#if defined(__x86_64__)
+            __builtin_ia32_pause();
+#elif defined(__aarch64__)
+            asm volatile("yield" ::: "memory");
+#else
+            asm volatile("" ::: "memory");
+#endif
+        }
+    }
+};
+
 // ── Worker context (thread-local) ─────────────────────
 // Each WorkerThread sets this before running fibers.
 // Fiber::yield() swaps back to this context.
 // Fiber::resume() swaps from this context to the fiber.
 struct WorkerContext {
     ucontext_t uctx;  // worker's dispatch loop context
+    WorkerGCState* gc_state = nullptr;  // set by worker thread (P2)
 };
 extern thread_local WorkerContext* g_worker_ctx;
 

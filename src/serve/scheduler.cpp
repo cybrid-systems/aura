@@ -1,5 +1,6 @@
 // serve/scheduler.cpp — Multi-threaded fiber scheduler
 #include "scheduler.h"
+#include "gc_coordinator.h"
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 #include <unistd.h>
@@ -48,6 +49,9 @@ Scheduler::Scheduler(int num_workers) {
 
     // Size metrics to match workers
     metrics_.resize_workers(static_cast<size_t>(num_workers_));
+
+    // Initialize GC collector
+    gc_collector_ = std::make_unique<GCCollector>(this);
 }
 
 // ── Destructor ───────────────────────────────────────
@@ -386,6 +390,75 @@ void Scheduler::run() {
     }
 
     g_scheduler = nullptr;
+}
+
+// ── GC safepoint support (P2) ─────────────────────────
+
+int Scheduler::request_gc_safepoint() {
+    // Broadcast GCPhase::Requested to all workers
+    int acknowledged = 0;
+    for (auto& w : workers_) {
+        if (!w) continue;
+        auto& gc = w->gc_state();
+        gc.phase.store(GCPhase::Requested, std::memory_order_release);
+        gc.fibers_at_safepoint.store(0, std::memory_order_release);
+        ++acknowledged;
+    }
+    return acknowledged;
+}
+
+bool Scheduler::wait_for_safepoint(int timeout_ms) {
+    // Spin for a short time first (fast path)
+    constexpr int SPIN_US = 100;
+    int elapsed_us = 0;
+    while (elapsed_us < SPIN_US * 10) {  // max ~1ms spin
+        bool all_arrived = true;
+        for (auto& w : workers_) {
+            if (!w) continue;
+            auto& gc = w->gc_state();
+            if (gc.fibers_at_safepoint.load(std::memory_order_acquire) < 1) {
+                all_arrived = false;
+                break;
+            }
+        }
+        if (all_arrived) return true;
+        // Tiny pause to avoid hammering
+#if defined(__x86_64__)
+        __builtin_ia32_pause();
+#elif defined(__aarch64__)
+        asm volatile("yield" ::: "memory");
+#else
+        asm volatile("" ::: "memory");
+#endif
+        elapsed_us += 1;
+    }
+
+    // After spin fails, fall back to epoll timeout wait
+    // The epoll loop will re-check on each iteration
+    for (int attempt = 0; attempt < std::max(1, timeout_ms); ++attempt) {
+        bool all_arrived = true;
+        for (auto& w : workers_) {
+            if (!w) continue;
+            auto& gc = w->gc_state();
+            if (gc.fibers_at_safepoint.load(std::memory_order_acquire) < 1) {
+                all_arrived = false;
+                break;
+            }
+        }
+        if (all_arrived) return true;
+        // Sleep 1ms then re-check (epoll_wait timeout handles this)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    return false;  // timeout
+}
+
+void Scheduler::resume_from_gc() {
+    for (auto& w : workers_) {
+        if (!w) continue;
+        auto& gc = w->gc_state();
+        gc.phase.store(GCPhase::None, std::memory_order_release);
+    }
 }
 
 } // namespace aura::serve

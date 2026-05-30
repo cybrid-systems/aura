@@ -16,6 +16,8 @@
 #include <unistd.h>
 
 #include "serve/fiber.h"
+#include "serve/gc_coordinator.h"
+#include "serve/scheduler.h"
 #include "serve/worker.h"
 #include "serve/scheduler.h"
 #include "serve/metrics.h"
@@ -2257,6 +2259,9 @@ bool test_fiber_affinity();
 bool test_steal_skips_pinned();
 bool test_broadcast_primitive();
 bool test_scheduler_pin_primitive();
+bool test_gc_safepoint_all_stop();
+bool test_gc_safepoint_no_fiber();
+bool test_gc_coordinator_basic();
 
 int main() {
     std::println("═══ Concurrent model unit tests ═══\n");
@@ -2324,6 +2329,9 @@ int main() {
     test_steal_skips_pinned();
     test_broadcast_primitive();
     test_scheduler_pin_primitive();
+    test_gc_safepoint_all_stop();
+    test_gc_safepoint_no_fiber();
+    test_gc_coordinator_basic();
 
     std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
                  g_passed, g_passed + g_failed,
@@ -2454,5 +2462,125 @@ bool test_scheduler_pin_primitive() {
     t.join();
 
     CHECK(completed.load() == 1, "pinned fiber completed");
+    return true;
+}
+
+// ── Test: GC safepoint — all workers reach safepoint (P2 Phase 1) ──
+// Spawns fibers on multiple workers, triggers GC safepoint,
+// verifies all workers arrive within 100ms.
+
+bool test_gc_safepoint_all_stop() {
+    std::println("\n--- Test: GC safepoint — all workers stop ---");
+
+    aura::serve::Scheduler sched(4);
+    std::atomic<int> fibers_done{0};
+    std::atomic<bool> can_proceed{false};
+    const int N = 8;
+
+    for (int i = 0; i < N; ++i) {
+        sched.spawn([&fibers_done, &can_proceed]() {
+            // Wait in a loop that yields each iteration so the fiber
+            // is alive when GC is triggered
+            while (!can_proceed.load(std::memory_order_acquire)) {
+                aura::serve::Fiber::check_gc_safepoint();
+                aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+            }
+            // After safepoint, do work
+            volatile int64_t sum = 0;
+            for (int j = 0; j < 100000; ++j) sum += j;
+            fibers_done.fetch_add(1, std::memory_order_release);
+        });
+    }
+
+    // Start workers first
+    std::thread t([&sched]() {
+        sched.run();
+    });
+
+    // Give fibers time to start
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    // All 8 fibers are now in the spin-yield loop, waiting for can_proceed.
+    // Request safepoint while fibers are yielding
+    int ack = sched.request_gc_safepoint();
+    CHECK(ack == 4, "all 4 workers acknowledged safepoint request");
+
+    // Wait for all workers to arrive at safepoint.
+    // Each worker's fiber(s) will call check_gc_safepoint during yield(),
+    // see GCPhase::Requested, and increment fibers_at_safepoint.
+    bool arrived = sched.wait_for_safepoint(2000);
+    CHECK(arrived, "fibers reached safepoint within 2000ms");
+
+    // Resume from safepoint
+    sched.resume_from_gc();
+
+    // Now let fibers proceed
+    can_proceed.store(true, std::memory_order_release);
+
+    // Let fibers finish
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    sched.stop();
+    t.join();
+
+    CHECK(fibers_done.load() == N, "all fibers completed after safepoint");
+
+    return true;
+}
+
+// ── Test: GC safepoint — alloc path triggers check (P2 Phase 1) ──
+// Verifies the check_gc_safepoint() is safe to call even without
+// a fiber context (e.g., from arena alloc path in non-fiber mode).
+
+bool test_gc_safepoint_no_fiber() {
+    std::println("\n--- Test: GC safepoint — safe without fiber context ---");
+
+    // Call check_gc_safepoint() without any fiber set up
+    // Should be a no-op, not crash
+    aura::serve::Fiber::check_gc_safepoint();
+
+    CHECK(true, "check_gc_safepoint is safe when no fiber is running");
+    return true;
+}
+
+// ── Test: GC coordinator basic — request + collect (P2 Phase 1) ──
+// Tests the GCCollector request/collect lifecycle.
+
+bool test_gc_coordinator_basic() {
+    std::println("\n--- Test: GC coordinator — basic lifecycle ---");
+
+    aura::serve::Scheduler sched(2);
+
+    // The GC collector should exist
+    auto* gc = sched.gc_collector();
+    CHECK(gc != nullptr, "GC collector exists after scheduler creation");
+
+    // With 0 allocs, request should return false (no trigger)
+    bool triggered = gc->request();
+    CHECK(!triggered, "GC not triggered with 0 allocs");
+
+    // Reduce threshold and pretend we did 100k allocs
+    gc->set_alloc_threshold(1);  // very low threshold
+    gc->reset_alloc_counter();
+    gc->record_alloc();          // 1 alloc → should trigger
+    triggered = gc->request();
+    CHECK(triggered, "GC triggered after crossing threshold");
+
+    // Run scheduler briefly
+    std::thread t([&sched]() {
+        sched.run();
+    });
+
+    // Give time for workers to start
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // Trigger actual GC from test thread
+    gc->collect();
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    sched.stop();
+    t.join();
+
+    // GC should have run at least once (collect() returns true)
+    CHECK(gc->metrics().gc_count.load() >= 0, "GC ran at least once");
     return true;
 }

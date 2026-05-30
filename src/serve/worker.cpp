@@ -142,6 +142,7 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
 void WorkerThread::run() {
     // Set up thread-local worker context for fiber yield/resume
     g_worker_ctx = &ctx_;
+    ctx_.gc_state = &gc_state_;  // link GC state for safepoint check
 
     // Grab metrics pointer (set by scheduler before start)
     auto* my_metrics = worker_metrics_;
@@ -292,6 +293,7 @@ void WorkerThread::run() {
     }
 
     g_worker_ctx = nullptr;
+    ctx_.gc_state = nullptr;
 }
 
 } // namespace aura::serve

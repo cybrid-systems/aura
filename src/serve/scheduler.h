@@ -15,6 +15,9 @@
 
 namespace aura::serve {
 
+// Forward declarations
+class GCCollector;
+
 // ── Scheduler — M:N fiber scheduler ────────────────────
 //
 // Manages N WorkerThreads and an IO event loop.
@@ -87,7 +90,22 @@ public:
     void set_stdin_fiber(Fiber* f) { stdin_fiber_ = f; }
     Fiber* stdin_fiber() const { return stdin_fiber_; }
 
-    // ── Accessors ───────────────────────────────────
+    // ── GC support (P2) ─────────────────────────────
+    // Access the GC collector (may be null if not initialized).
+    GCCollector* gc_collector() const { return gc_collector_.get(); }
+
+    // Request all workers reach safepoint for GC.
+    // Returns number of workers that acknowledged.
+    int request_gc_safepoint();
+
+    // Wait for all workers to reach safepoint.
+    // Returns true if all workers arrived within timeout_ms.
+    bool wait_for_safepoint(int timeout_ms = 100);
+
+    // Resume all workers after GC completes.
+    void resume_from_gc();
+
+    // Accessors
     int epoll_fd() const { return epoll_fd_; }
 
     // ── Metrics access ──────────────────────────────
@@ -119,6 +137,9 @@ private:
     // ── Config ───────────────────────────────────────
     // Use load-aware distribution instead of round-robin
     bool use_load_aware_distribution_ = true;
+
+    // GC collector (Phase 1-4, initialized in constructor)
+    std::unique_ptr<GCCollector> gc_collector_;
 
     // Metrics collection
     metrics::GlobalMetrics metrics_;
