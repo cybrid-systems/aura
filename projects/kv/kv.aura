@@ -60,8 +60,6 @@
   (kv-del-internal key)
   "OK")
 
-  (hash-remove! *store* key)
-  (hash-remove! *ttl* key))
 
 (define (kv-incr key)
   "原子自增。如果键不存在则初始化为 1。值必须为整数，否则返回错误。"
@@ -260,7 +258,6 @@
               (list-ref cur idx))))))
 
 ;; ── Hash 操作 ──
-
   (hash-has-key? *sets* key))
 
 (define (kv-hset key field val)
