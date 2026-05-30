@@ -186,6 +186,7 @@ target_sources(test_concurrent PRIVATE
     src/serve/gc_coordinator.cpp
     src/exec/execution_adapter.cpp
     src/exec/combinators.cpp
+    src/messaging_bridge_impl.cpp
 )
 target_compile_options(test_concurrent PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function

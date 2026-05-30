@@ -6372,6 +6372,11 @@ auto& curl_writer_fn() {
 }
 
 Evaluator::Evaluator() {
+    // Register heap mutex for thread-safe GC (P2)
+    aura::messaging::g_heap_mutex = [this]() -> std::mutex& {
+        return heap_mutex();
+    };
+
     top_.set_primitives(&primitives_);
     top_.set_cells(&cells_);
     primitives_.set_string_heap(&string_heap_);
@@ -10883,24 +10888,32 @@ Evaluator::Evaluator() {
         return types::make_bool(!saved_src.empty());
     });
 
-    // (gc-heap) — Clear heap vectors that accumulate per task.
-    // SAFETY: Does NOT clear cells_ (shared with env via set_cells, function
-    // define bindings live there) or closures_ (also shared with env).
-    // Only non-essential per-task data is cleared: string_heap_,
-    // pairs_, error_values_, hash_heap_, vector_heap_, opaque_heap_.
+    // (gc-heap) — Trigger GC or clear heap vectors.
+    // When a GC collector is available (serve-async mode with
+    // thread-safe GC), triggers a full GC cycle instead of
+    // blindly clearing. Falls back to direct clear for stdin mode.
     primitives_.add("gc-heap", [this](const auto&) -> EvalValue {
-        string_heap_.clear();
-        string_heap_.shrink_to_fit();
-        pairs_.clear();
-        pairs_.shrink_to_fit();
-        error_values_.clear();
-        error_values_.shrink_to_fit();
-        hash_heap_.clear();
-        hash_heap_.shrink_to_fit();
-        vector_heap_.clear();
-        vector_heap_.shrink_to_fit();
-        opaque_heap_.clear();
-        opaque_heap_.shrink_to_fit();
+        // If GC collector is available, use it
+        if (aura::messaging::g_gc_collect) {
+            std::lock_guard<std::mutex> lock(heap_mutex());
+            return types::make_bool(aura::messaging::g_gc_collect());
+        }
+        // Fallback: direct clear (stdin mode)
+        {
+            std::lock_guard<std::mutex> lock(heap_mutex());
+            string_heap_.clear();
+            string_heap_.shrink_to_fit();
+            pairs_.clear();
+            pairs_.shrink_to_fit();
+            error_values_.clear();
+            error_values_.shrink_to_fit();
+            hash_heap_.clear();
+            hash_heap_.shrink_to_fit();
+            vector_heap_.clear();
+            vector_heap_.shrink_to_fit();
+            opaque_heap_.clear();
+            opaque_heap_.shrink_to_fit();
+        }
         return types::make_bool(true);
     });
 

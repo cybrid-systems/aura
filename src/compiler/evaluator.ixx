@@ -329,6 +329,13 @@ private:
     };
     std::vector<std::shared_ptr<Channel>> channels_;
     std::mutex channels_mtx_;
+
+    // ── Heap mutex (P2 thread-safe GC) ────────────────────────
+    // Protects string_heap_, pairs_, closures_, cells_,
+    // hash_heap_, vector_heap_, opaque_heap_, error_values_.
+    // Locked during gc-heap and gc-temp operations.
+    std::mutex heap_mtx_;
+    std::mutex& heap_mutex() { return heap_mtx_; }
 };
 
 

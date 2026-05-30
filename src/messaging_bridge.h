@@ -4,6 +4,7 @@
 #include <string>
 #include <optional>
 #include <functional>
+#include <mutex>
 
 // ── Messaging Bridge ───────────────────────────────────────────
 //
@@ -138,6 +139,20 @@ extern FiberSetAffinityFn g_fiber_set_affinity;
 // messaging_bridge.h (in non-module translator) and gc_coordinator.h.
 using GCRootFlushFn = std::function<void(void* root_set_out)>;
 extern GCRootFlushFn g_gc_flush_root_set;
+
+// GC collect — set by serve_async.cpp (P2).
+// Triggers a full GC cycle on the scheduler's GC collector.
+// The evaluator calls this instead of blindly clearing heaps.
+// If no GC collector is available (stdin mode), gc-heap falls
+// back to the original clear behavior. nullptr when not available.
+using GCCollectFn = std::function<bool()>;
+extern GCCollectFn g_gc_collect;
+
+// Evaluator heap mutex — set by evaluator (P2).
+// Protects string_heap_, pairs_, closures_ during GC.
+// nullptr when not in serve-async mode or not initialized.
+using HeapMutexFn = std::function<std::mutex&()>;
+extern HeapMutexFn g_heap_mutex;
 
 }  // namespace aura::messaging
 
