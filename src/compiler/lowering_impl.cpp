@@ -1118,8 +1118,10 @@ static std::uint32_t lower_flat_expr(
             std::uint32_t type_tag = static_cast<std::uint32_t>(v.int_value);
             std::uint32_t blame_loc = (static_cast<std::uint32_t>(v.line) << 16) |
                                       (static_cast<std::uint32_t>(v.col) & 0xFFFFu);
-            // Store blame_node ID in type_id for runtime error reporting
-            state.emit_with_type(IROpcode::CastOp, id, slot, inner, type_tag, blame_loc);
+            // CastOp type_id = coercion target type (stored on the Coercion node)
+            // blame info is carried via blame_loc operand and source_id, not type_id
+            auto target_type_id = flat.type_id(v.id);
+            state.emit_with_type(IROpcode::CastOp, target_type_id, slot, inner, type_tag, blame_loc);
             return slot;
         }
         case NodeTag::Linear: {
