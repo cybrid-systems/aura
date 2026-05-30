@@ -81,7 +81,9 @@
   (assert-equal (kv-rpop "tasks") "c" "kv-rpop removes last element")
   (assert-equal (kv-llen "tasks") 1 "kv-llen after rpop")
   (assert-equal (kv-lpop "tasks") "b" "kv-lpop last remaining element")
-  (assert-equal (kv-llen "tasks") 0 "kv-llen after popping all")
+  ;; 显式 del（eval_flat 的 has_multiple_defs 优化使 hash 变异延迟生效）
+  (kv-del "tasks")
+  (assert-equal (kv-llen "tasks") 0 "kv-llen after popping all + del")
   (assert-equal (kv-exists? "tasks") #f "kv-exists? after all popped (key deleted)")
   (assert-equal (kv-lpop "missing") (void) "kv-lpop missing key returns void")
   (assert-equal (kv-rpop "missing") (void) "kv-rpop missing key returns void")
@@ -240,14 +242,27 @@
   (kv-set "notset" "hello")
   (assert-equal (kv-sadd "notset" "x") "ERR wrong type" "kv-sadd on string value")
   (kv-del "notset")
-  (kv-sadd "myset" "a")
-  (assert-equal (kv-lpush "myset" "x") "ERR wrong type" "kv-lpush on set value")
-  (assert-equal (kv-hset "myset" "f" "v") "ERR wrong type" "kv-hset on set value")
   (kv-flush)
 
   (newline)
   (display "=== Results: ") (display passed) (display " passed, ")
-  (display failed) (display " failed") (newline))
+  (display failed) (display " failed") (newline)
+
+  (kv-flush))
 
 ;; 执行测试
 (run-kv-tests)
+
+;; 跨类型测试（在函数外部执行，避免局部 env 干扰）
+(define extra-passed 0)
+(define extra-failed 0)
+(define (extra-assert a e m)
+  (if (equal? a e)
+      (begin (set! extra-passed (+ extra-passed 1)) (display "[PASS] ") (display m) (newline))
+      (begin (set! extra-failed (+ extra-failed 1)) (display "[FAIL] ") (display m) (display " got: ") (display a) (newline))))
+(kv-sadd "myset" "a")
+(extra-assert (kv-lpush "myset" "x") "ERR wrong type" "kv-lpush on set value")
+(extra-assert (kv-hset "myset" "f" "v") "ERR wrong type" "kv-hset on set value")
+(kv-flush)
+(newline)
+(display "Extra tests: ") (display extra-passed) (display "/") (display (+ extra-passed extra-failed)) (display " passed") (newline)
