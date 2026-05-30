@@ -218,12 +218,47 @@ bool ConstraintSystem::occurs_check(TypeId var, TypeId ty) {
     ty = find(ty);
     if (var == ty)
         return true;
+
+    // FuncType
     if (auto* f = reg_.func_of(ty)) {
         for (auto a : f->args)
             if (occurs_check(var, a))
                 return true;
         return occurs_check(var, f->ret);
     }
+
+    // ForallType
+    if (auto* ft = reg_.forall_of(ty)) {
+        return occurs_check(var, ft->body);
+    }
+
+    // LinearType
+    if (auto* lt = reg_.linear_of(ty)) {
+        return occurs_check(var, lt->inner);
+    }
+
+    // ModuleType
+    if (auto* mt = reg_.module_of(ty)) {
+        for (auto& [name, t] : mt->members)
+            if (occurs_check(var, t))
+                return true;
+    }
+
+    // VariantType
+    if (auto* vt = reg_.variant_of(ty)) {
+        for (auto& [name, args] : vt->variants)
+            for (auto& a : args)
+                if (occurs_check(var, a))
+                    return true;
+    }
+
+    // RecordType
+    if (auto* rt = reg_.record_of(ty)) {
+        for (auto& [name, t] : rt->fields)
+            if (occurs_check(var, t))
+                return true;
+    }
+
     return false;
 }
 
