@@ -394,6 +394,7 @@ void run_serve_async(int num_workers) {
                 if (c == "exec") {
                     auto code = json_field(sl, "code");
                     if (!code.empty()) {
+                        aura::messaging::g_current_compiler_service = &sess.service;
                         auto r = sess.service.exec_with_cache(code);
                         if (r) {
                             std::println("{{\"session\":\"{}\" ,\"status\":\"ok\",\"value\":\"{}\" }}",
@@ -477,6 +478,7 @@ void run_serve_async(int num_workers) {
                                      json_escape(sid));
                         continue;
                     }
+                    aura::messaging::g_current_compiler_service = &sess.service;
                     auto result = sess.service.exec_with_cache(code);
                     if (result) {
                         try {
@@ -601,6 +603,8 @@ void run_serve_async(int num_workers) {
 
     // 7. Run the scheduler
     sched.run();
+
+    std::fflush(stdout);
 
 }
 
