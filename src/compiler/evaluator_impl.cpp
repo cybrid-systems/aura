@@ -4042,6 +4042,67 @@ void Evaluator::init_pair_primitives() {
         return make_void();
     });
 
+    // (load filename) — Load and evaluate a file of Aura code
+    // Uses set-code + eval-current internally so definitions persist
+    // in the workspace and closures are properly rooted.
+    primitives_.add("load", [this, mev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_void();
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size())
+            return make_void();
+        auto& path = string_heap_[idx];
+
+        std::ifstream f(path);
+        if (!f)
+            return make_void();
+        std::string content((std::istreambuf_iterator<char>(f)),
+                             std::istreambuf_iterator<char>());
+
+        // Reuse workspace state: set-code into workspace, then eval-current
+        last_set_code_error_kind_.clear();
+        last_set_code_error_msg_.clear();
+        last_eval_current_result_.reset();
+
+        auto* pool_ptr = workspace_pool_;
+        auto* flat_ptr = workspace_flat_;
+        bool fresh_alloc = false;
+        if (!pool_ptr || !flat_ptr) {
+            auto alloc = arena_->allocator();
+            pool_ptr = arena_->create<aura::ast::StringPool>(alloc);
+            flat_ptr = arena_->create<aura::ast::FlatAST>(alloc);
+            fresh_alloc = true;
+        } else {
+            pool_ptr->reset();
+            flat_ptr->clear();
+        }
+
+        auto pr = aura::parser::parse_to_flat(content, *flat_ptr, *pool_ptr);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+            return mev("parse", "load failed to parse file");
+        }
+        flat_ptr->root = pr.root;
+        workspace_flat_ = flat_ptr;
+        workspace_pool_ = pool_ptr;
+        update_shared_tree_root();
+        defuse_index_ = nullptr;
+
+        // Evaluate the workspace AST
+        if (!last_set_code_error_kind_.empty()) {
+            auto msg = std::move(last_set_code_error_msg_);
+            return mev("load", msg);
+        }
+        if (!workspace_flat_ || !workspace_pool_)
+            return make_void();
+        auto expanded = aura::compiler::macro_expand_all(*workspace_flat_, *workspace_pool_,
+                                                         workspace_flat_->root);
+        auto result = eval_flat(*workspace_flat_, *workspace_pool_, expanded, top_);
+        workspace_flat_->clear_all_dirty();
+        if (result)
+            return *result;
+        return make_void();
+    });
+
     // (eval-expr value) — Evaluate any Aura value (not just strings)
     // Useful for evaluating stored expressions (e.g., from pipeline steps)
     primitives_.add("eval-expr", [this](const auto& a) -> EvalValue {
