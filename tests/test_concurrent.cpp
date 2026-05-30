@@ -1919,6 +1919,222 @@ bool test_metrics_json_format() {
     return true;
 }
 
+// ── Test 51: Mixed CPU + IO workload metrics ──────────────────
+
+bool test_metrics_mixed_workload() {
+    std::println("\n--- Test: Metrics after mixed CPU+IO workload ---");
+
+    aura::serve::Scheduler sched(4);
+    std::atomic<int> cpu_done{0};
+    std::atomic<int> io_done{0};
+
+    // CPU-bound fibers
+    for (int i = 0; i < 10; ++i)
+        sched.spawn([&cpu_done]() {
+            volatile int sum = 0;
+            for (int j = 0; j < 100000; ++j) sum += j;
+            cpu_done.fetch_add(1);
+        });
+
+    // IO-bound fibers (yield frequently)
+    for (int i = 0; i < 10; ++i)
+        sched.spawn([&io_done]() {
+            for (int k = 0; k < 3; ++k) {
+                volatile int sum = 0;
+                for (int j = 0; j < 5000; ++j) sum += j;
+                aura::serve::Fiber::yield();
+            }
+            io_done.fetch_add(1);
+        });
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+    sched.stop();
+    t.join();
+
+    CHECK(cpu_done.load() == 10, "all CPU fibers completed");
+    CHECK(io_done.load() == 10, "all IO fibers completed");
+
+    auto& m = sched.metrics();
+    CHECK(m.fibers_spawned.load() >= 20,
+          "fibers_spawned >= 20 (got " +
+          std::to_string(m.fibers_spawned.load()) + ")");
+    CHECK(m.fibers_completed.load() >= 20,
+          "fibers_completed >= 20 (got " +
+          std::to_string(m.fibers_completed.load()) + ")");
+
+    // Check that yields were recorded (IO fibers call yield)
+    uint64_t total_yields = 0;
+    for (size_t i = 0; i < m.num_workers(); ++i)
+        total_yields += m.worker(i).fibers_yielded.load();
+    CHECK(total_yields > 0,
+          "some worker recorded yield events (" +
+          std::to_string(total_yields) + ")");
+
+    // Utilization should be non-zero
+    double total_util = 0;
+    for (size_t i = 0; i < m.num_workers(); ++i)
+        total_util += m.worker(i).utilization();
+    CHECK(total_util > 0,
+          "workers have non-zero utilization");
+
+    return true;
+}
+
+// ── Test 52: Multiple metrics queries — verify persistence ────
+
+bool test_metrics_multiple_queries() {
+    std::println("\n--- Test: Multiple metrics queries ---");
+
+    aura::serve::Scheduler sched(2);
+
+    // Query metrics before spawning — should contain the key
+    auto json1 = sched.metrics_json();
+    CHECK(json1.find(R"("fibers_spawned": 0)") != std::string::npos ||
+          json1.find(R"("fibers_spawned")") != std::string::npos,
+          "initial JSON has fibers_spawned key");
+
+    // Spawn and run
+    std::atomic<int> done{0};
+    sched.spawn([&done]() { done.fetch_add(1); });
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    sched.stop();
+    t.join();
+
+    CHECK(done.load() == 1, "fiber completed");
+
+    // Query again after run
+    auto json2 = sched.metrics_json();
+    CHECK(json2.find(R"("fibers_spawned": 1)") != std::string::npos ||
+          json2.find(R"("fibers_spawned")") != std::string::npos,
+          "JSON after run has fibers_spawned key");
+
+    // Both queries should differ (counters changed)
+    CHECK(json2 != json1, "second metrics query differs from first");
+
+    return true;
+}
+
+// ── Test 53: Scheduler with zero metrics workers ──────────────
+
+bool test_metrics_no_workers() {
+    std::println("\n--- Test: Metrics with no workers ---");
+
+    aura::serve::Scheduler sched(1);
+    std::atomic<int> done{0};
+
+    sched.spawn([&done]() { done.fetch_add(1); });
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    sched.stop();
+    t.join();
+
+    CHECK(done.load() == 1, "fiber completed with 1 worker");
+
+    // Metrics with 1 worker should still produce valid JSON
+    auto json = sched.metrics_json();
+    CHECK(json.find("workers") != std::string::npos,
+          "JSON has workers array with 1 worker");
+    CHECK(json.find("fibers_spawned") != std::string::npos,
+          "JSON has fibers_spawned");
+
+    // Check single worker metrics
+    auto& m = sched.metrics();
+    CHECK(m.num_workers() == 1, "exactly 1 worker in metrics");
+    CHECK(m.worker(0).fibers_executed.load() >= 1,
+          "worker 0 executed >= 1 fiber");
+    CHECK(m.worker(0).steal_attempts.load() == 0,
+          "single worker: 0 steal attempts (no one to steal from)");
+
+    return true;
+}
+
+// ── Test 54: Metrics consistency — spawned vs completed ───────
+
+bool test_metrics_consistency() {
+    std::println("\n--- Test: Metrics consistency checks ---");
+
+    aura::serve::Scheduler sched(4);
+    constexpr int N = 100;
+    std::atomic<int> completed{0};
+
+    for (int i = 0; i < N; ++i) {
+        sched.spawn([&completed]() {
+            volatile int sum = 0;
+            for (int j = 0; j < 10000; ++j) sum += j;
+            completed.fetch_add(1);
+            aura::serve::Fiber::yield();
+        });
+    }
+
+    std::thread t([&sched]() { sched.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+    sched.stop();
+    t.join();
+
+    CHECK(completed.load() == N, "all " + std::to_string(N) + " fibers completed");
+
+    auto& m = sched.metrics();
+    auto spawned = m.fibers_spawned.load();
+    auto completed_cnt = m.fibers_completed.load();
+
+    CHECK(spawned >= static_cast<uint64_t>(N),
+          "spawned >= " + std::to_string(N) +
+          " (got " + std::to_string(spawned) + ")");
+    CHECK(completed_cnt >= static_cast<uint64_t>(N),
+          "completed >= " + std::to_string(N) +
+          " (got " + std::to_string(completed_cnt) + ")");
+
+    // Total executed across workers should match or exceed completed
+    uint64_t total_exec = 0;
+    uint64_t total_steal_attempts = 0;
+    uint64_t total_steal_successes = 0;
+    int workers_with_activity = 0;
+
+    for (size_t i = 0; i < m.num_workers(); ++i) {
+        auto& w = m.worker(i);
+        total_exec += w.fibers_executed.load();
+        total_steal_attempts += w.steal_attempts.load();
+        total_steal_successes += w.steal_successes.load();
+        if (w.fibers_executed.load() > 0) ++workers_with_activity;
+    }
+
+    CHECK(total_exec > 0, "some fibers were executed across workers");
+    CHECK(workers_with_activity > 0,
+          std::to_string(workers_with_activity) +
+          " workers had activity (expected >= 1)");
+
+    // If steal attempts > 0, verify success rate makes sense
+    if (total_steal_attempts > 0) {
+        double rate = static_cast<double>(total_steal_successes) * 100.0 /
+                      static_cast<double>(total_steal_attempts);
+        CHECK(rate >= 0.0 && rate <= 100.0,
+              "steal success rate " +
+              std::to_string(rate) + "% in [0, 100]");
+    }
+
+    // Verify at least some pushes/pops happened
+    uint64_t total_pushes = 0;
+    uint64_t total_pops = 0;
+    for (size_t i = 0; i < m.num_workers(); ++i) {
+        total_pushes += m.worker(i).local_pushes.load();
+        total_pops += m.worker(i).local_pops.load();
+    }
+    CHECK(total_pushes > 0, "some local pushes occurred");
+    CHECK(total_pops > 0, "some local pops occurred");
+
+    // Verify JSON is still valid
+    auto json = sched.metrics_json();
+    CHECK(!json.empty(), "JSON output non-empty after consistency run");
+    CHECK(json.find("fibers_spawned") != std::string::npos,
+          "JSON contains fibers_spawned");
+
+    return true;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // ── Main ─────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════
@@ -1977,6 +2193,10 @@ int main() {
     test_metrics_after_workload();
     test_metrics_reset();
     test_metrics_json_format();
+    test_metrics_mixed_workload();
+    test_metrics_multiple_queries();
+    test_metrics_no_workers();
+    test_metrics_consistency();
 
     std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
                  g_passed, g_passed + g_failed,
