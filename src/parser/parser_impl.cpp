@@ -356,8 +356,9 @@ NodeId FlatParser::parse_list() {
             return parse_borrow();
         if (kw == "mut-borrow")
             return parse_mut_borrow();
-        if (kw == "drop")
-            return parse_drop();
+        // Note: 'drop' is intentionally NOT a parser special form.
+        // It's a C++ primitive (list drop) defined in evaluator_impl.cpp.
+        // The linear-type drop is accessible via a different name if needed.
         if (kw == "export") {
             lexer_->consume(); // consume 'export'
             std::vector<aura::ast::NodeId> syms;

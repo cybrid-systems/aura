@@ -6,23 +6,23 @@
 
 ## 待修复
 
-### G9: `drop` C++ prim 在树遍历求值器中总是返回第一个参数
+### G9: Parser 拦截 `(drop ...)` 创建线性类型 NodeTag::Drop
 
 - **发现于:** kv-store LRANGE 实现 (2026-05-30)
 - **严重度:** 🟠
 - **场景:** `(drop 0 '(a b c))` 返回 `0` 而非 `(a b c)`
-- **原因:** `eval_ir` 路径下 `drop` 的原语分派有问题。`take` 接口相同却正常。
-  通过 `apply` 调用或 `--ir` 模式都正常，仅直接调用时异常。
-- **绕过方式:** kv.aura 中使用 Lisp 层 `kv-drop`（纯递归实现）
-- **状态:** ⬜ 待修（根因在 IR evaluator 的原语分派机制）
+- **根因:** `src/parser/parser_impl.cpp` 中 `parse_drop()` 将 `(drop x)` 解析为
+  `NodeTag::Drop`（线性类型析构器），而非普通函数调用。树遍历求值器对
+  `NodeTag::Drop` 只返回 `v.child(0)`（第一个参数）。
+- **修复:** 移除 parser 对 `drop` 的特殊拦截，使其走正常函数调用路径。
+- **状态:** ✅ 已修
 
-### G10: `take`/`drop` 在 n=0 时返回空/0 而非原列表
+### G10: `take` 在 n=0 时返回 void 而非空列表
 
 - **发现于:** kv-store LRANGE 实现 (2026-05-30)
 - **严重度:** 🟡
-- **场景:** `(take 0 '(a b c))` 应返回 `'()` 而非 void
-- **修复:** C++ `take` 加了 n==0 early return
-- **状态:** ✅ `take` 已修，`drop` 见 G9
+- **修复:** C++ `take` 加 n==0 early return
+- **状态:** ✅ 已修
 
 ### G7: `member` 使用 `eq?` 而非 `equal?` 比较元素
 
