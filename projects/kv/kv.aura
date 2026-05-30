@@ -17,6 +17,7 @@
 
 (define *store* (hash))
 (define *ttl* (hash))       ;; key → expire-at (epoch sec)
+(define *sets* (hash))      ;; set-key → (hash of members)
 
 ;; ── 核心操作 ──
 
@@ -111,9 +112,10 @@
   (length (kv-keys)))
 
 (define (kv-flush)
-  "清空所有数据（包括 TTL）。"
+  "清空所有数据（包括 TTL 和 Set）。"
   (set! *store* (hash))
   (set! *ttl* (hash))
+  (set! *sets* (hash))
   "OK")
 
 ;; ── 事务支持 ──
@@ -241,16 +243,21 @@
 
 ;; ── Hash 操作 ──
 
+(define (kv-is-set? key)
+  (hash-has-key? *sets* key))
+
 (define (kv-hset key field val)
   "设置 hash 中指定字段的值。返回新字段数（1=新增, 0=覆盖）。"
-  (let ((cur (if (kv-expired? key) (begin (kv-del-internal key) (void)) (kv-get key))))
-    (if (and (not (void? cur)) (not (hash? cur)))
-        "ERR wrong type"
-        (let ((h (if (hash? cur) cur (hash))))
-          (hash-remove! *ttl* key)
-          (if (hash-has-key? h field)
-              (begin (hash-set! h field val) (hash-set! *store* key h) 0)
-              (begin (hash-set! h field val) (hash-set! *store* key h) 1))))))
+  (if (kv-is-set? key)
+      "ERR wrong type"
+      (let ((cur (if (kv-expired? key) (begin (kv-del-internal key) (void)) (kv-get key))))
+        (if (and (not (void? cur)) (not (hash? cur)))
+            "ERR wrong type"
+            (let ((h (if (hash? cur) cur (hash))))
+              (hash-remove! *ttl* key)
+              (if (hash-has-key? h field)
+                  (begin (hash-set! h field val) (hash-set! *store* key h) 0)
+                  (begin (hash-set! h field val) (hash-set! *store* key h) 1)))))))
 
 (define (kv-hget key field)
   "获取 hash 中指定字段的值。不存在则返回 void。"
@@ -343,7 +350,47 @@
   (eval (read-file path))
   "OK")
 
-(define (kv-load path)
-  "从文件加载数据。覆盖当前所有数据。"
-  (eval (read-file path))
-  "OK")
+;; ── Set 操作 ──
+
+(define (kv-sadd key member)
+  "向集合添加成员。返回 1（新增）或 0（已存在）。"
+  (if (and (hash-has-key? *store* key) (not (hash-has-key? *sets* key)))
+      "ERR wrong type"  ;; key 在 store 中但不是 set
+      (let ((s (if (hash-has-key? *sets* key)
+                   (hash-ref *sets* key)
+                   (hash))))
+        (if (hash-has-key? s member)
+            0
+            (begin (hash-set! s member #t)
+                   (hash-set! *sets* key s)
+                   1)))))
+
+(define (kv-srem key member)
+  "从集合移除成员。返回 1（已移除）或 0（不存在）。"
+  (if (hash-has-key? *sets* key)
+      (let ((s (hash-ref *sets* key)))
+        (if (hash-has-key? s member)
+            (begin (hash-remove! s member)
+                   (if (= (hash-length s) 0)
+                       (hash-remove! *sets* key))
+                   1)
+            0))
+      0))
+
+(define (kv-smembers key)
+  "返回集合的所有成员。"
+  (if (hash-has-key? *sets* key)
+      (hash-keys (hash-ref *sets* key))
+      '()))
+
+(define (kv-sismember key member)
+  "检查成员是否在集合中。"
+  (if (hash-has-key? *sets* key)
+      (hash-has-key? (hash-ref *sets* key) member)
+      #f))
+
+(define (kv-scard key)
+  "返回集合的成员数。"
+  (if (hash-has-key? *sets* key)
+      (hash-length (hash-ref *sets* key))
+      0))
