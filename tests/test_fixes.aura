@@ -1,0 +1,51 @@
+;; === test_fixes.aura — 编译器/运行时修复回归测试 ===
+;; 用法: cat test_fixes.aura | ./build/aura
+
+(define passed 0) (define failed 0)
+(define (chk a e m)
+  (if (equal? a e) (set! passed (+ passed 1))
+      (begin (set! failed (+ failed 1))
+             (display "[FAIL] ") (display m)
+             (display " exp=") (display e)
+             (display " got=") (display a) (newline))))
+
+(display "=== 1. equal? string ===\n")
+(chk (equal? "a" "a") #t "equal? same string")
+(chk (equal? "hello" "world") #f "equal? diff string")
+(chk (equal? "" "") #t "equal? empty string")
+(chk (equal? "a" 1) #f "equal? string vs int")
+
+(display "=== 2. equal? pair/list ===\n")
+(chk (equal? (list 1 2) (list 1 2)) #t "equal? same list")
+(chk (equal? (list 1) (list 2)) #f "equal? diff list")
+(chk (equal? (list 1 (list 2 3)) (list 1 (list 2 3))) #t "equal? nested list")
+(chk (equal? (cons 1 2) (cons 1 2)) #t "equal? same pair")
+(chk (equal? (cons 1 2) (cons 2 1)) #f "equal? diff pair")
+
+(display "=== 3. while loop ===\n")
+;; while with expression-based set!
+(define wc 0)
+(while (< wc 3)
+  (display "i=") (display wc) (display " ") (newline)
+  (set! wc (+ wc 1)))
+(chk wc 3 "while iterates 3 times")
+
+(display "=== 4. load scope ===\n")
+(write-file "/tmp/test-load-fix.aura"
+  "(define (loaded-fn) 99)\n(define *loaded-var* \"from-load\")\n")
+(load "/tmp/test-load-fix.aura")
+(chk (loaded-fn) 99 "load defines function")
+(chk *loaded-var* "from-load" "load defines variable")
+
+(display "=== 5. equal? mixed types ===\n")
+(chk (equal? 42 42) #t "equal? same int")
+(chk (equal? 3.14 3.14) #t "equal? same float")
+(chk (equal? #t #t) #t "equal? same bool")
+(chk (equal? #f #f) #t "equal? same false")
+
+(display "=== 6. equal? edge cases ===\n")
+(chk (equal? 'foo 'foo) #t "equal? same symbol")
+(chk (equal? 'foo 'bar) #f "equal? diff symbol")
+
+(display "=== Results: ") (display passed) (display " passed, ")
+(display failed) (display " failed\n")
