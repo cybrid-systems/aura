@@ -1,0 +1,258 @@
+;; === evo-kv-zset.aura — Sorted Set (ZSET) 实现 ===
+;; 要求: (load "evo-kv-core.aura")
+;;
+;; 注意: Aura 的 while 不是循环（只 exec body 一次），所以所有循环用 letrec。
+;;       hash-set!/hash-remove! 是原地修改，返回 void。
+
+(define *evo-zset-scores* (hash))
+(define *evo-zset-ordered* (hash))
+
+;; ── 内部: 有序列表辅助 ──
+
+(define (zset-cmp a b)
+  (or (< (car a) (car b))
+      (and (= (car a) (car b))
+           (string<? (cdr a) (cdr b)))))
+
+(define (zset-list-insert sorted pair)
+  (if (null? sorted)
+      (list pair)
+      (if (zset-cmp pair (car sorted))
+          (cons pair sorted)
+          (cons (car sorted) (zset-list-insert (cdr sorted) pair)))))
+
+(define (zset-list-remove sorted member)
+  (filter (lambda (p) (not (string=? (cdr p) member))) sorted))
+
+;; ── 内部: 存储 ──
+
+(define (zset-ensure-scores key)
+  (let ((h (hash-ref *evo-zset-scores* key)))
+    (if (hash? h) h
+        (let ((new (hash)))
+          (hash-set! *evo-zset-scores* key new)
+          new))))
+
+(define (zset-get-ordered key)
+  (let ((v (hash-ref *evo-zset-ordered* key)))
+    (if (pair? v) v '())))
+
+(define (zset-set-ordered key lst)
+  (if (null? lst)
+      (hash-remove! *evo-zset-ordered* key)
+      (hash-set! *evo-zset-ordered* key lst)))
+
+(define (zset-cleanup key scores)
+  (when (= (hash-length scores) 0)
+    (hash-remove! *evo-zset-scores* key)
+    (hash-remove! *evo-zset-ordered* key)))
+
+;; ── ZADD ──
+
+(define (zadd key . args)
+  (if (not (= (remainder (length args) 2) 0))
+      "ERR wrong number of arguments"
+      (let ((scores (zset-ensure-scores key))
+            (ordered (zset-get-ordered key)))
+        (letrec ((go (lambda (remaining ordered added)
+                       (if (null? remaining)
+                           (list ordered added)
+                           (let ((score (car remaining))
+                                 (member (cadr remaining))
+                                 (rest (cddr remaining)))
+                             (if (hash-has-key? scores member)
+                                 (let ((old (hash-ref scores member)))
+                                   (if (= old score)
+                                       (go rest ordered added)
+                                       (begin
+                                         (hash-set! scores member score)
+                                         (go rest (zset-list-insert
+                                                   (zset-list-remove ordered member)
+                                                   (cons score member)) added))))
+                                 (begin
+                                   (hash-set! scores member score)
+                                   (go rest (zset-list-insert ordered (cons score member)) (+ added 1)))))))))
+          (let ((result (go args ordered 0)))
+            (zset-set-ordered key (car result))
+            (cadr result))))))
+
+;; ── ZRANGE ──
+
+(define (zrange key start stop . opts)
+  (let ((ordered (zset-get-ordered key))
+        (ws (if (pair? opts) (string=? (car opts) "WITHSCORES") #f)))
+    (if (null? ordered) '()
+        (let* ((len (length ordered))
+               (s (if (>= start 0) start (max 0 (+ len start))))
+               (e (if (>= stop 0) (min stop (- len 1)) (+ len stop)))
+               (count (max 0 (- e s -1)))
+               (slice (take count (drop s ordered))))
+          (if ws
+              (letrec ((flatten (lambda (lst acc)
+                                  (if (null? lst) (reverse acc)
+                                      (let ((p (car lst)))
+                                        (flatten (cdr lst)
+                                                 (cons (car p) (cons (cdr p) acc))))))))
+                (flatten slice '()))
+              (map cdr slice))))))
+
+(define (zrevrange key start stop . opts)
+  (let ((ordered (reverse (zset-get-ordered key)))
+        (ws (if (pair? opts) (string=? (car opts) "WITHSCORES") #f)))
+    (if (null? ordered) '()
+        (let* ((len (length ordered))
+               (s (if (>= start 0) start (max 0 (+ len start))))
+               (e (if (>= stop 0) (min stop (- len 1)) (+ len stop)))
+               (count (max 0 (- e s -1)))
+               (slice (take count (drop s ordered))))
+          (if ws
+              (letrec ((flatten (lambda (lst acc)
+                                  (if (null? lst) (reverse acc)
+                                      (let ((p (car lst)))
+                                        (flatten (cdr lst)
+                                                 (cons (car p) (cons (cdr p) acc))))))))
+                (flatten slice '()))
+              (map cdr slice))))))
+
+;; ── ZSCORE / ZRANK / ZREVRANK ──
+
+(define (zscore key member)
+  (let ((scores (zset-ensure-scores key)))
+    (hash-ref scores member)))
+
+(define (zrank key member)
+  (let ((ordered (zset-get-ordered key)))
+    (letrec ((search (lambda (lst idx)
+                       (if (null? lst) (void)
+                           (if (string=? (cdr (car lst)) member) idx
+                               (search (cdr lst) (+ idx 1)))))))
+      (search ordered 0))))
+
+(define (zrevrank key member)
+  (let ((r (zrank key member)))
+    (if (void? r) (void)
+        (- (length (zset-get-ordered key)) 1 r))))
+
+;; ── ZREM ──
+
+(define (zrem key . members)
+  (let ((scores (zset-ensure-scores key))
+        (ordered (zset-get-ordered key)))
+    (letrec ((go (lambda (remaining ordered removed)
+                   (if (null? remaining)
+                       (list ordered removed)
+                       (let ((member (car remaining))
+                             (rest (cdr remaining)))
+                         (if (hash-has-key? scores member)
+                             (begin
+                               (hash-remove! scores member)
+                               (go rest (zset-list-remove ordered member) (+ removed 1)))
+                             (go rest ordered removed)))))))
+      (let ((result (go members ordered 0)))
+        (zset-set-ordered key (car result))
+        (zset-cleanup key scores)
+        (cadr result)))))
+
+;; ── ZCARD ──
+
+(define (zcard key)
+  (let ((scores (zset-ensure-scores key)))
+    (hash-length scores)))
+
+;; ── ZINCRBY ──
+
+(define (zincrby key increment member)
+  (let ((scores (zset-ensure-scores key))
+        (ordered (zset-get-ordered key))
+        (old (hash-ref scores member))
+        (new-score (+ (if (number? old) old 0) increment)))
+    (hash-set! scores member new-score)
+    ;; 手动 remove + insert（inline zset-list-remove 避免跨函数闭包问题）
+    (let ((new-ordered
+           (if (number? old)
+               (zset-list-insert
+                (letrec ((rm (lambda (items)
+                           (if (null? items) ()
+                               (let* ((p (car items))
+                                      (rest (rm (cdr items))))
+                                 (if (string=? (cdr p) member)
+                                     rest
+                                     (cons p rest)))))))
+                  (rm ordered))
+                (cons new-score member))
+               (zset-list-insert ordered (cons new-score member)))))
+      (zset-set-ordered key new-ordered))
+    new-score))
+
+;; ── ZCOUNT ──
+
+(define (zcount key min max)
+  (let ((ordered (zset-get-ordered key)))
+    (letrec ((go (lambda (remaining count)
+                   (if (null? remaining) count
+                       (let ((s (car (car remaining))))
+                         (go (cdr remaining)
+                             (if (and (>= s min) (<= s max)) (+ count 1) count)))))))
+      (go ordered 0))))
+
+;; ── ZPOPMIN ──
+
+(define (zpopmin key . opt)
+  (if (null? opt) (set! opt (list 1)))
+  (let ((n (car opt))
+        (ordered (zset-get-ordered key)))
+    (if (null? ordered) '()
+        (let ((popped (take n ordered))
+              (remaining (drop n ordered)))
+          (let ((scores (zset-ensure-scores key)))
+            (letrec ((clean (lambda (items)
+                              (when (pair? items)
+                                (hash-remove! scores (cdr (car items)))
+                                (clean (cdr items))))))
+              (clean popped))
+            (zset-set-ordered key remaining)
+            (when (= (hash-length scores) 0)
+              (hash-remove! *evo-zset-scores* key)
+              (hash-remove! *evo-zset-ordered* key)))
+          (letrec ((flatten (lambda (lst acc)
+                              (if (null? lst) (reverse acc)
+                                  (let ((p (car lst)))
+                                    (flatten (cdr lst)
+                                             (cons (car p) (cons (cdr p) acc))))))))
+            (flatten popped '()))))))
+
+;; ── ZPOPMAX ──
+
+(define (zpopmax key . opt)
+  (if (null? opt) (set! opt (list 1)))
+  (let ((n (car opt))
+        (ordered (reverse (zset-get-ordered key))))
+    (if (null? ordered) '()
+        (let ((popped (take n ordered)))
+          (let ((scores (zset-ensure-scores key)))
+            (letrec ((clean (lambda (items)
+                              (when (pair? items)
+                                (hash-remove! scores (cdr (car items)))
+                                (clean (cdr items))))))
+              (clean popped))
+            (letrec ((rebuild (lambda (items result)
+                                (if (null? items) result
+                                    (if (hash-has-key? scores (cdr (car items)))
+                                        (rebuild (cdr items) (cons (car items) result))
+                                        (rebuild (cdr items) result))))))
+              (if (= (hash-length scores) 0)
+                  (begin
+                    (hash-remove! *evo-zset-scores* key)
+                    (hash-remove! *evo-zset-ordered* key))
+                  (zset-set-ordered key (reverse (rebuild (zset-get-ordered key) ())))))
+            (letrec ((flatten (lambda (lst acc)
+                                (if (null? lst) (reverse acc)
+                                    (let ((p (car lst)))
+                                      (flatten (cdr lst)
+                                               (cons (car p) (cons (cdr p) acc))))))))
+              (flatten popped '())))))))
+
+(display "evo-kv zset loaded") (newline)
+(display "  zadd / zrange / zrevrange / zscore / zrank / zrevrank") (newline)
+(display "  zrem / zcard / zincrby / zcount / zpopmin / zpopmax") (newline)
+"OK"
