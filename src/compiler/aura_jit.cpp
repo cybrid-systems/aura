@@ -717,6 +717,7 @@ void run_escape_analysis(
     uint32_t local_count,
     std::vector<uint8_t>& escape_map)
 {
+    // Use IROpcode values matching ir.ixx exactly
     enum Op : uint32_t {
         OpConstI64 = 1, OpConstF64 = 2, OpLocal = 3, OpArg = 4,
         OpAdd = 5, OpSub = 6, OpMul = 7, OpDiv = 8,
@@ -726,27 +727,31 @@ void run_escape_analysis(
         OpMakeClosure = 21, OpCapture = 22, OpCaptureRef = 23, OpApply = 24,
         OpNewCell = 25, OpCellSet = 26, OpCellGet = 27,
         OpCastOp = 28, OpConstString = 29,
-        OpPrimitive = 30, OpPrimCall = 31,
-        OpCellAlloc = 32, OpMakePair = 34, OpCar = 35, OpCdr = 36,
-        OpMakeVector = 37, OpVectorRef = 38, OpVectorSet = 39,
-        OpDrop = 40, OpDropOp = 41, OpMakeClosureOp = 42, OpCaptureOp = 43,
-        OpMakeRef = 44, OpRefGet = 45, OpRefSet = 46,
+        OpPrimCall = 30, OpPrimitive = 31,
+        /* unused: 32=ConstBool, 33=ConstVoid */
+        OpMakePair = 34, OpCar = 35, OpCdr = 36,
+        /* 37=Raise, 38=IsError */
+        OpHashRef = 39, OpHashSet = 40, OpHashRemove = 41,
+        /* M4 linear ownership: 42-47, not escape-relevant */
     };
 
     escape_map.assign(local_count, 0);
 
     // First pass: mark escape points
+    // Escape points are instructions where a value reaches a location
+    // that outlives the current scope (return, store in hash, store in
+    // cell, pass to call, capture in closure).
     for (auto& block : flat_instrs) {
         for (auto& inst : block) {
             uint32_t result = inst.ops[0];
             switch (inst.opcode) {
             case OpReturn:
-                // Return(value) — value escapes
+                // Return(value) — value escapes to caller
                 if (inst.ops[0] < local_count)
                     escape_map[inst.ops[0]] = 1;
                 break;
             case OpCall:
-                // Call(callee, arg_base, arg_count, result) — callee + all args escape
+                // Call(callee, arg_base, arg_count, result) — all operands escape
                 {
                     uint32_t callee = inst.ops[0];
                     uint32_t arg_base = inst.ops[1];
@@ -757,25 +762,43 @@ void run_escape_analysis(
                         escape_map[arg_base + i] = 1;
                 }
                 break;
+            case OpApply:
+                // Apply(closure, arg_count, result) — closure + all inline args escape
+                {
+                    uint32_t closure_slot = inst.ops[0];
+                    uint32_t arg_count = inst.ops[1];
+                    if (closure_slot < local_count)
+                        escape_map[closure_slot] = 1;
+                    for (uint32_t i = 0; i < arg_count && (closure_slot + 1 + i) < local_count; ++i)
+                        escape_map[closure_slot + 1 + i] = 1;
+                }
+                break;
             case OpCapture:
             case OpCaptureRef:
-            case OpCaptureOp:
-                // Capture(result, env_ptr_or_val) — captured value escapes
-                if (inst.ops[1] < local_count)
-                    escape_map[inst.ops[1]] = 1;
+                // Capture(closure, env_idx, var) / CaptureRef(closure, env_idx, cell)
+                // captured value escapes into closure env
+                if (inst.ops[2] < local_count)
+                    escape_map[inst.ops[2]] = 1;
                 break;
             case OpCellSet:
-                // CellSet(cell, val) — val escapes
+                // CellSet(cell, val) — val escapes into persistent cell
                 if (inst.ops[1] < local_count)
                     escape_map[inst.ops[1]] = 1;
                 break;
+            case OpHashSet:
+                // HashSet(result, hash, keyval_pair) — pair stored in persistent hash
+                // The keyval pair at ops[2] escapes into the hash
+                if (inst.ops[2] < local_count)
+                    escape_map[inst.ops[2]] = 1;
+                break;
             case OpPrimCall:
-                // PrimCall(slot, a, b, count) — call args escape
+                // PrimCall(prim_id, arg_base, arg_count, result)
+                // Primitive calls can store values (e.g., vector-set!, hash-set! via PrimCall)
                 {
-                    uint32_t a_op = inst.ops[1];
-                    uint32_t b_op = inst.ops[2];
-                    if (a_op < local_count) escape_map[a_op] = 1;
-                    if (b_op < local_count) escape_map[b_op] = 1;
+                    uint32_t arg_base = inst.ops[1];
+                    uint32_t arg_count = inst.ops[2];
+                    for (uint32_t i = 0; i < arg_count && (arg_base + i) < local_count; ++i)
+                        escape_map[arg_base + i] = 1;
                 }
                 break;
             default:
