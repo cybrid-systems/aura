@@ -424,7 +424,20 @@ NodeId FlatParser::parse_if() {
     auto c = parse_expr();
     auto t = parse_expr();
     auto e = parse_expr();
-    lexer_->consume(); // ')'
+    // Check if the next token is the closing paren; if not, there are extra
+    // arguments that belong to the else branch. Wrap them in begin.
+    if (lexer_->peek().kind == TokenKind::RParen) {
+        lexer_->consume(); // ')'
+    } else {
+        std::vector<NodeId> extra = {e};
+        while (lexer_->peek().kind != TokenKind::RParen && !lexer_->eof()) {
+            auto x = parse_expr();
+            if (x != aura::ast::NULL_NODE)
+                extra.push_back(x);
+        }
+        lexer_->consume(); // ')'
+        e = (extra.size() == 1) ? extra[0] : flat_.add_begin(extra);
+    }
     auto id = flat_.add_if(c, t, e);
     flat_.set_loc(id, tok.line, tok.column);
     return id;
