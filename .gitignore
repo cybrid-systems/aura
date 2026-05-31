@@ -30,3 +30,4 @@ tests/__pycache__/
 Thumbs.db
 .vscode/
 *.zo
+build_o0/
