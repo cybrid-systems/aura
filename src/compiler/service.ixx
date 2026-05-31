@@ -2084,6 +2084,10 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         }
 
         if (is_redefine) {
+            // Clear stale JIT cache entries — the inlined __lambda__ function
+            // from the previous definition is cached by name and won't be
+            // evicted by invalidate_function (which erases by fn name, not lambda)
+            jit_cache_.erase("__lambda__");
             invalidate_function(name_str);
             mark_module_dirty(name_str);
         }
