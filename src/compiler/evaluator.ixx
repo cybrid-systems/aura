@@ -51,6 +51,8 @@ public:
     }
     types::EvalValue* lookup_cell_ptr(const std::string& n,
                                       std::vector<types::EvalValue>* cells) const;
+    // Return cell index (stable across vector reallocation) or nullopt if not a cell
+    std::optional<std::uint64_t> lookup_cell_index(const std::string& n) const;
     const Env* parent() const { return parent_; }
     std::vector<std::pair<std::string, types::EvalValue>>& bindings() { return bindings_; }
     const std::vector<std::pair<std::string, types::EvalValue>>& bindings() const {
@@ -108,6 +110,8 @@ public:
     Primitives& primitives() { return primitives_; }
     const Env& top_env() const { return top_; }
     Env& top_env() { return top_; }
+    const std::vector<types::EvalValue>& cells() const { return cells_; }
+    std::vector<types::EvalValue>& cells() { return cells_; }
     const std::vector<Pair>& pairs() const { return pairs_; }
     const std::vector<std::string>& keyword_table() const { return keyword_table_; }
 

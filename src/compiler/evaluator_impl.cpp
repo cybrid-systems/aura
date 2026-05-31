@@ -5856,6 +5856,27 @@ EvalValue* Env::lookup_cell_ptr(const std::string& n, std::vector<EvalValue>* ce
     return nullptr;
 }
 
+// ── Env::lookup_cell_index: returns uint64_t (stable) ─────────────
+std::optional<std::uint64_t> Env::lookup_cell_index(const std::string& n) const {
+    for (auto& b : bindings_) {
+        if (b.first == n) {
+            if (is_cell(b.second))
+                return as_cell_id(b.second);
+            return std::nullopt;
+        }
+    }
+    for (auto* p = parent_; p; p = p->parent_) {
+        for (auto& b : p->bindings_) {
+            if (b.first == n) {
+                if (is_cell(b.second))
+                    return as_cell_id(b.second);
+                return std::nullopt;
+            }
+        }
+    }
+    return std::nullopt;
+}
+
 std::optional<PrimFn> Primitives::lookup(const std::string& n) const {
     auto i = table_.find(n);
     return i != table_.end() ? std::optional(i->second) : std::nullopt;
@@ -12585,9 +12606,9 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         auto name_idx = types::as_string_idx(name_val);
                         auto name_str =
                             name_idx < string_heap_.size() ? string_heap_[name_idx] : "";
-                        auto* cell_ptr = const_cast<Env&>(env).lookup_cell_ptr(name_str, &cells_);
-                        if (cell_ptr) {
-                            *cell_ptr = *val;
+                        auto cell_idx = const_cast<Env&>(env).lookup_cell_index(name_str);
+                        if (cell_idx && *cell_idx < cells_.size()) {
+                            cells_[*cell_idx] = *val;
                             return *val;
                         }
                     }
@@ -14200,12 +14221,11 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     auto val = eval_flat(*f, *p, val_id, eval_env);
                     if (!val)
                         return val;
-                    // Walk env chain to find the cell pointer, scanning both current
-                    // and parent envs (lookup_cell_ptr already does this, but fallback
-                    // below also handles non-cell direct bindings)
-                    auto* cell_ptr = eval_env.lookup_cell_ptr(std::string(name), &cells_);
-                    if (cell_ptr) {
-                        *cell_ptr = *val;
+                    // Use stable index instead of pointer (cells_ may reallocate)
+                    auto cell_idx = eval_env.lookup_cell_index(std::string(name));
+                    if (cell_idx) {
+                        if (*cell_idx < cells_.size())
+                            cells_[*cell_idx] = *val;
                         return *val;
                     }
                     // Fallback 1: direct binding in current env
