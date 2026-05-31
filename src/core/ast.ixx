@@ -2,20 +2,6 @@ export module aura.core.ast;
 import std;
 import aura.core.type;
 
-// C++26 Contracts — placeholder until GCC supports [[pre:]]/[[post:]] attribute syntax.
-// See https://github.com/cybrid-systems/aura/issues/46
-// When ready, replace these macros with:
-//   [[pre: expr]] / [[post r: expr]] / [[assert: expr]]
-// Cannot include <cassert> inside a module with import std (conflicts),
-// so we use std::abort() directly.
-// Shorter aliases used by issue contracts.
-#define AURA_PRE(cond)          do { if (!(cond)) std::abort(); } while(0)
-#define AURA_POST(cond)         do { if (!(cond)) std::abort(); } while(0)
-#define AURA_ASSERT(cond)       do { if (!(cond)) std::abort(); } while(0)
-#define AURA_CONTRACT_PRE       AURA_PRE
-#define AURA_CONTRACT_POST      AURA_POST
-#define AURA_CONTRACT_ASSERT    AURA_ASSERT
-
 namespace aura::ast {
 
 // ── Common type aliases ──────────────────────────────────────
@@ -759,10 +745,7 @@ private:
 
     // ── Access ─────────────────────────────────────────────────
 
-    NodeView get(NodeId id) const
-    {
-        AURA_CONTRACT_PRE(id != NULL_NODE);
-        AURA_CONTRACT_PRE(is_valid(id));
+    NodeView get(NodeId id) const {
         return NodeView{
             .id = id,
             .tag = tag_[id],
@@ -803,9 +786,6 @@ private:
     }
 
     void set_child(NodeId id, std::uint32_t idx, NodeId child) {
-        AURA_PRE(is_valid(id));
-        AURA_PRE(idx < child_count_[id]);
-        AURA_PRE(child == NULL_NODE || is_valid(child));
         auto& slot = child_data_[child_begin_[id] + idx];
         // Clear old child's parent
         if (slot != NULL_NODE && slot < parent_.size())
@@ -819,9 +799,6 @@ private:
     // Insert a child at position idx (0 = first, child_count = append)
     // Shifts all subsequent children and updates child_begin_ for later nodes.
     void insert_child(NodeId id, std::uint32_t idx, NodeId child) {
-        AURA_PRE(is_valid(id));
-        AURA_PRE(idx <= child_count_[id]);
-        AURA_PRE(child == NULL_NODE || is_valid(child));
         auto pos = child_begin_[id] + std::min(idx, child_count_[id]);
         child_data_.insert(child_data_.begin() + pos, 1, child);
         // Shift child_begin only for nodes whose children start at or after pos.
@@ -838,12 +815,12 @@ private:
 
     // Remove a child at position idx by replacing with NULL_NODE
     void remove_child(NodeId id, std::uint32_t idx) {
-        AURA_PRE(is_valid(id));
-        AURA_PRE(idx < child_count_[id]);
-        auto& slot = child_data_[child_begin_[id] + idx];
-        if (slot != NULL_NODE && slot < parent_.size())
-            parent_[slot] = NULL_NODE;
-        slot = NULL_NODE;
+        if (idx < child_count_[id]) {
+            auto& slot = child_data_[child_begin_[id] + idx];
+            if (slot != NULL_NODE && slot < parent_.size())
+                parent_[slot] = NULL_NODE;
+            slot = NULL_NODE;
+        }
     }
 
     // ── Bulk ───────────────────────────────────────────────────
@@ -1081,9 +1058,7 @@ private:
     }
 
     // Safe get — returns nullopt on stale/invalid NodeId.
-    std::optional<NodeView> get_safe(NodeId id) const
-    {
-        AURA_CONTRACT_PRE(true);  // always safe — nullopt on invalid
+    std::optional<NodeView> get_safe(NodeId id) const {
         if (!is_valid(id))
             return std::nullopt;
         return get(id);
