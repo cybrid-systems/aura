@@ -879,6 +879,11 @@ public:
         last_closures_ = ir_interp.list_closures();
         last_cells_ = ir_interp.list_cells();
 
+        // ── Shape profile recording (Phase 1, #53) ─────────────
+        if (result) {
+            record_eval_result_shape(session_id_, last_ir_mod_, &ir_interp, *result);
+        }
+
         return result;
     }
 
@@ -2937,6 +2942,64 @@ private:
         return result_type;
     }
 
+    // ── Shape profiler integration (#53) ────────────────────────
+
+    // Record shape of eval result for profiling.
+    // Called after each successful IR interpreter execution.
+    // Uses the last module's entry function as the FnKey.
+    void record_eval_result_shape(const std::string& session,
+                                  const std::optional<aura::ir::IRModule>& mod,
+                                  const aura::compiler::IRInterpreter* interp,
+                                  const types::EvalValue& result) {
+        auto& profiler = shape_profiler_;
+
+        if (!mod) {
+            // No IR module — record against a generic key
+            auto fn_key = shape::make_fn_key(session, "__eval__");
+            auto shape_id = shape::inline_shape_of(result.val);
+            profiler.record_shape(fn_key, shape_id);
+            return;
+        }
+
+        // Record per-function: use IR function name as key
+        for (auto& fn : mod->functions) {
+            if (fn.id == mod->entry_function_id) {
+                auto fn_key = shape::make_fn_key(session, fn.name);
+                auto shape_id = shape::inline_shape_of(result.val);
+                profiler.record_shape(fn_key, shape_id);
+
+                // Also record argument shapes if we have them
+                // (Phase 2: expand to arg-level shape tracking)
+                break;
+            }
+        }
+    }
+
+    // Get shape profiler metrics for a function name.
+    // Returns empty metrics if the function hasn't been profiled.
+    shape::ShapeFnMetrics shape_metrics(const std::string& name) const {
+        auto fn_key = shape::make_fn_key(session_id_, name);
+        return shape_profiler_.metrics(fn_key);
+    }
+
+    // Check if a function's shape has stabilized (for speculative JIT).
+    bool is_shape_stable(const std::string& name) const {
+        auto fn_key = shape::make_fn_key(session_id_, name);
+        return shape_profiler_.is_stable(fn_key);
+    }
+
+    // Get the dominant shape ID for a function.
+    shape::ShapeID dominant_shape(const std::string& name) const {
+        auto fn_key = shape::make_fn_key(session_id_, name);
+        return shape_profiler_.dominant_shape(fn_key);
+    }
+
+    // Invalidate shape profile for a function (called after mutate:*).
+    void invalidate_shape(const std::string& name) {
+        auto fn_key = shape::make_fn_key(session_id_, name);
+        shape_profiler_.invalidate(fn_key);
+    }
+
     // Register evaluator primitives with JIT runtime
     void register_jit_primitives() {
         // Set the global primitives pointer for the JIT dispatcher
@@ -2958,6 +3021,9 @@ private:
     std::unique_ptr<std::function<bool(const std::string&, const std::string&)>> msg_send_fn_;
     std::unique_ptr<std::function<std::optional<std::string>(int)>> msg_recv_fn_;
     std::unique_ptr<std::function<std::string()>> msg_id_fn_;
+
+    // ── Shape profiler (Phase 1, #53) ─────────────────────────
+    shape::ShapeProfiler shape_profiler_;
 
     // ── Static registry ──────────────────────────────────────
     // Using Scott Meyer's singletons to avoid ODR issues with module static members
