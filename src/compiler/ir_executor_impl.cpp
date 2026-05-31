@@ -487,6 +487,46 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 case IROpcode::Raise: {
                     // Raise: result_slot=ops[0], cause_slot=ops[1]
                     // Create an error value by calling the raise primitive
+                case IROpcode::HashRef: {
+                    auto pfn = primitives_.lookup("hash-ref");
+                    if (pfn) {
+                        auto& hash_val = locals[ops[1]];
+                        auto& key_val = locals[ops[2]];
+                        locals[ops[0]] = (*pfn)({hash_val, key_val});
+                    } else {
+                        locals[ops[0]] = make_void();
+                    }
+                    break;
+                }
+                case IROpcode::HashSet: {
+                    auto pfn = primitives_.lookup("hash-set!");
+                    if (pfn) {
+                        auto& hash_val = locals[ops[1]];
+                        auto& pair_val = locals[ops[2]];
+                        auto cfn = primitives_.lookup("car");
+                        auto dfn = primitives_.lookup("cdr");
+                        if (cfn && dfn) {
+                            auto key = (*cfn)({pair_val});
+                            auto val = (*dfn)({pair_val});
+                            (*pfn)({hash_val, key, val});
+                        }
+                    }
+                    locals[ops[0]] = make_void();
+                    break;
+                }
+                case IROpcode::HashRemove: {
+                    auto pfn = primitives_.lookup("hash-remove!");
+                    if (pfn) {
+                        auto& hash_val = locals[ops[1]];
+                        auto& key_val = locals[ops[2]];
+                        locals[ops[0]] = (*pfn)({hash_val, key_val});
+                    } else {
+                        locals[ops[0]] = make_void();
+                    }
+                    break;
+                }
+
+
                     auto pfn = primitives_.lookup("raise");
                     if (pfn) {
                         locals[ops[0]] = (*pfn)({locals[ops[1]]});

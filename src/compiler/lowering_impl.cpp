@@ -449,6 +449,29 @@ static std::uint32_t lower_flat_expr(
                     {"pair?", PrimId::PairP},
                     {"null?", PrimId::NullP},
                 };
+                // Hash operations: emit inline opcodes (avoid PrimCall dispatch)
+                static const std::unordered_map<std::string, IROpcode> hash_op_map = {
+                    {"hash-ref", IROpcode::HashRef},
+                    {"hash-set!", IROpcode::HashSet},
+                    {"hash-remove!", IROpcode::HashRemove},
+                };
+                auto hop = hash_op_map.find(std::string(callee_name));
+                if (hop != hash_op_map.end()) {
+                    auto result_slot = state.alloc_local();
+                    auto hash_slot = lower_flat_expr(state, flat, pool, v.child(1), cache, cache_hits);
+                    auto key_slot = lower_flat_expr(state, flat, pool, v.child(2), cache, cache_hits);
+                    if (v.children.size() >= 4) {
+                        auto val_slot = lower_flat_expr(state, flat, pool, v.child(3), cache, cache_hits);
+                        auto pair_slot = state.alloc_local();
+                        state.emit(IROpcode::MakePair, pair_slot, key_slot, val_slot);
+                        state.emit(hop->second, result_slot, hash_slot, pair_slot);
+                    } else {
+                        state.emit(hop->second, result_slot, hash_slot, key_slot);
+                    }
+                    return result_slot;
+                }
+
+
                 auto pcit = prim_call_map.find(std::string(callee_name));
                 if (pcit != prim_call_map.end()) {
                     auto prim_id = static_cast<std::uint32_t>(pcit->second);

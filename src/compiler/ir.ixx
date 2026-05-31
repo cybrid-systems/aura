@@ -59,6 +59,10 @@ export enum class IROpcode : std::uint8_t {
     // Error handling
     Raise,   // raise error: result_slot, cause_slot
     IsError, // check if error: result_slot, value_slot
+    // Hash operations (inline, avoids PrimCall dispatch)
+    HashRef,    // hash-ref: result, hash, key
+    HashSet,    // hash-set!: result, hash, key, val
+    HashRemove, // hash-remove!: result, hash, key
     // M4 Linear ownership
     LinearWrap,  // wrap linear value: result_slot, inner_slot
     MoveOp,      // move ownership: result_slot, inner_slot
@@ -139,7 +143,11 @@ export constexpr OpcodeInfo kOpcodeInfo[] = {
     // 37-38  Error handling
     {"raise", 2, true},    // Raise: result, cause
     {"is-error", 2, true}, // IsError: result, value
-    // 39-44  M4 Linear ownership
+    // 39-41  Hash operations (inline, avoids PrimCall dispatch)
+    {"hash-ref", 3, true},     // HashRef: result, hash, key
+    {"hash-set", 3, true},     // HashSet: void, hash, keyval
+    {"hash-remove", 3, true},  // HashRemove: void, hash, key
+    // 42-47  M4 Linear ownership
     {"linear-wrap", 2, true},   // LinearWrap: result, inner
     {"move-op", 2, true},       // MoveOp: result, inner
     {"borrow-op", 2, true},     // BorrowOp: result, inner
@@ -148,7 +156,7 @@ export constexpr OpcodeInfo kOpcodeInfo[] = {
     {"ref-count-op", 3, true},  // RefCountOp: result, inner, inc/dec
 };
 
-static_assert(std::size(kOpcodeInfo) == 45, "kOpcodeInfo must have exactly one entry per IROpcode");
+static_assert(std::size(kOpcodeInfo) == 48, "kOpcodeInfo must have exactly one entry per IROpcode");
 
 // Helper: look up opcode info by IROpcode enum value
 inline const OpcodeInfo* lookup_opcode(IROpcode op) {
