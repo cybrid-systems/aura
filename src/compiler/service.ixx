@@ -539,6 +539,17 @@ public:
                     return result;
                 return EvalResult(types::make_void());
             }
+            // Value define: try compile-time constant evaluation
+            auto const_val = try_const_eval(*flat_ptr, *pool_ptr, body_id);
+            if (const_val) {
+                // Bind via cell at compile time — same as runtime define path,
+                // ensures set! can find the cell via lookup_cell_index
+                auto ci = evaluator_.cells().size();
+                evaluator_.cells().push_back(*const_val);
+                evaluator_.top_env().bind(std::string(name), types::make_cell(ci));
+                user_bindings_.insert(std::string(name));
+                return *const_val;
+            }
             // Value define: send through tree-walker for env persistence,
             // then track the name for subsequent IR fallback detection.
             auto result =
@@ -2251,6 +2262,47 @@ private:
             return std::make_pair(std::string(name), body);
         }
         return std::nullopt;
+    }
+
+    // Try to evaluate a define value expression at compile time.
+    // Returns the value if the expression is a pure constant (no side effects,
+    // no runtime dependencies), or nullopt if it needs runtime evaluation.
+    std::optional<types::EvalValue> try_const_eval(const aura::ast::FlatAST& flat,
+                                                    const aura::ast::StringPool& pool,
+                                                    aura::ast::NodeId node_id) {
+        if (node_id >= flat.size())
+            return std::nullopt;
+        auto v = flat.get(node_id);
+        switch (v.tag) {
+            case aura::ast::NodeTag::LiteralInt:
+                return types::make_int(v.int_value);
+            case aura::ast::NodeTag::LiteralFloat:
+                return types::make_float(v.float_value);
+            case aura::ast::NodeTag::LiteralString: {
+                // Push string to heap at compile time
+                auto str = std::string(pool.resolve(v.sym_id));
+                auto sid = evaluator_.primitives().string_heap().size();
+                evaluator_.primitives().string_heap().push_back(str);
+                return types::make_string(sid);
+            }
+            case aura::ast::NodeTag::Call: {
+                if (v.children.size() < 1)
+                    return std::nullopt;
+                auto callee = flat.get(v.child(0));
+                if (callee.tag != aura::ast::NodeTag::Variable)
+                    return std::nullopt;
+                auto name = std::string(pool.resolve(callee.sym_id));
+                if (name == "hash" && v.children.size() == 1) {
+                    // (hash) — call the hash primitive at compile time
+                    auto pfn = evaluator_.primitives().lookup("hash");
+                    if (pfn)
+                        return (*pfn)({});
+                }
+                return std::nullopt;
+            }
+            default:
+                return std::nullopt;
+        }
     }
 
     // Check if a node is a require/import/use call.
