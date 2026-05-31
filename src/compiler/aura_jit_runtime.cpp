@@ -6,6 +6,69 @@
 #include <string>
 #include <vector>
 #include <cstring>
+#include <new>
+#include "runtime_shared.h"
+
+// ── TL Arena (thread-local bump allocator) ────────────────────
+__thread TLarena g_tl_arena;
+
+void tl_arena_init(TLarena* arena) {
+    if (!arena->base) {
+        arena->base = (uint8_t*)malloc(arena->capacity);
+        if (!arena->base) {
+            fprintf(stderr, "tl_arena: alloc %zu failed\n", arena->capacity);
+            exit(1);
+        }
+    }
+    arena->offset = 0;
+}
+
+void tl_arena_destroy(TLarena* arena) {
+    free(arena->base);
+    arena->base = nullptr;
+    arena->offset = 0;
+}
+
+void tl_arena_reset(TLarena* arena) {
+    arena->offset = 0;
+}
+
+void* tl_arena_alloc(TLarena* arena, size_t size, size_t align) {
+    size_t aligned = (arena->offset + align - 1) & ~(align - 1);
+    if (aligned + size > arena->capacity) {
+        // Double capacity
+        size_t new_cap = arena->capacity * 2;
+        uint8_t* new_base = (uint8_t*)realloc(arena->base, new_cap);
+        if (!new_base) {
+            fprintf(stderr, "tl_arena: overflow\n");
+            exit(1);
+        }
+        arena->base = new_base;
+        arena->capacity = new_cap;
+    }
+    size_t aligned2 = (arena->offset + align - 1) & ~(align - 1);
+    void* ptr = arena->base + aligned2;
+    arena->offset = aligned2 + size;
+    return ptr;
+}
+
+void tl_arena_push(TLarena* arena) {
+    // Save current offset on a simple stack (reuses arena memory for stack)
+    // Top of arena = stack of saved offsets
+    size_t* stack_top = (size_t*)(arena->base + arena->offset);
+    *stack_top = arena->offset;
+    arena->offset += sizeof(size_t);
+}
+
+void tl_arena_pop(TLarena* arena) {
+    // Restore offset from stack
+    arena->offset = ((size_t*)(arena->base + arena->offset))[-1];
+}
+
+// ── Arena flag ──
+bool g_use_arena = true;
+
+// ── Forward declarations ──
 
 // ── Runtime state (shared between all JIT functions) ──────────
 extern "C" {
@@ -167,40 +230,38 @@ void aura_cell_set(int64_t cell_id, int64_t val) {
         g_cell_heap[static_cast<size_t>(cell_id)] = val;
 }
 
-// === Pair runtime ===
-static std::vector<int64_t> g_pair_cars;
-static std::vector<int64_t> g_pair_cdrs;
+// === Pair runtime (unified PairSlot storage) ===
+static std::vector<PairSlot> g_pair_slots;
 
 int64_t aura_alloc_pair(int64_t car, int64_t cdr) {
-    int64_t id = static_cast<int64_t>(g_pair_cars.size());
-    g_pair_cars.push_back(car);
-    g_pair_cdrs.push_back(cdr);
+    int64_t id = static_cast<int64_t>(g_pair_slots.size());
+    g_pair_slots.push_back(PairSlot{car, cdr});
     return (id << 2) | 1; // pointer tagging: low 2 bits = 01
 }
 
 int64_t aura_pair_car(int64_t pair_val) {
     uint64_t id = static_cast<uint64_t>(pair_val >> 2);
-    if (id < g_pair_cars.size())
-        return g_pair_cars[id];
+    if (id < g_pair_slots.size())
+        return g_pair_slots[id].car;
     return 0;
 }
 
 int64_t aura_pair_cdr(int64_t pair_val) {
     uint64_t id = static_cast<uint64_t>(pair_val >> 2);
-    if (id < g_pair_cdrs.size())
-        return g_pair_cdrs[id];
+    if (id < g_pair_slots.size())
+        return g_pair_slots[id].cdr;
     return 0;
 }
 
 // L2 specialization: unchecked pair access (skips bounds check)
 int64_t aura_pair_car_unchecked(int64_t pair_val) {
     uint64_t id = static_cast<uint64_t>(pair_val >> 2);
-    return g_pair_cars[id];
+    return g_pair_slots[id].car;
 }
 
 int64_t aura_pair_cdr_unchecked(int64_t pair_val) {
     uint64_t id = static_cast<uint64_t>(pair_val >> 2);
-    return g_pair_cdrs[id];
+    return g_pair_slots[id].cdr;
 }
 
 // === Primitive call bridge ===
@@ -296,8 +357,7 @@ void aura_reset_runtime() {
     g_closure_func_ids.clear();
     g_closure_envs.clear();
     g_cell_heap.clear();
-    g_pair_cars.clear();
-    g_pair_cdrs.clear();
+    g_pair_slots.clear();
     std::memset(g_jit_fns, 0, sizeof(g_jit_fns));
     // Clear closure inline cache
     for (int i = 0; i < CLOSURE_CACHE_SIZE; ++i)

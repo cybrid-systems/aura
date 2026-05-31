@@ -1,5 +1,6 @@
 #include "compiler/aura_jit.h"
 #include "compiler/messaging_bridge.h"
+#include "compiler/runtime_shared.h"
 #include <unistd.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -209,8 +210,20 @@ static std::unordered_map<std::string, std::string> parse_json_command(std::stri
 
 int main(int argc, char* argv[]) {
     // ── Parse common flags ───────────────────────────────
-    int num_workers = 0;  // 0 = auto
+    int num_workers = 0;
     int arg_start = 1;
+
+    // Check for --no-arena flag
+    for (int i = 1; i < argc; ++i) {
+        if (std::string_view(argv[i]) == "--no-arena") {
+            g_use_arena = false;
+            break;
+        }
+    }
+
+    // Initialize TL arena
+    if (g_use_arena)
+        tl_arena_init(&g_tl_arena);
 
     // Check for --worker-threads flag before the mode argument
     auto parse_worker_threads = [&]() {
