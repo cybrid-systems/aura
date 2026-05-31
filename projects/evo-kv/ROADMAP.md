@@ -11,7 +11,7 @@ R1  LRU 缓存层                          ✅ 已推送
 R2  auto 驱动修复 + 集成                ✅ 已推送
 R3  Sorted Set (ZSET)                   ✅ 已推送
 R4  逐出策略 + INFO                     ✅ 已推送
-R5  Pub/Sub                             ⬜ 本轮
+R5  Pub/Sub                             ✅ 已推送
 R6  AOF 持久化                          ⬜
 R7  Benchmark 套件                      ⬜
 R8  RESP 协议层                         ⬜
