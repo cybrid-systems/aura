@@ -173,6 +173,7 @@ target_sources(test_ir PRIVATE
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
+    src/compiler/spec_jit_controller.cpp
     src/compiler/type_checker_impl.cpp
     src/compiler/arity_impl.cpp
     src/compiler/messaging_bridge_impl.cpp)
