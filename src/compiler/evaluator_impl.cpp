@@ -13359,6 +13359,33 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         }
                     }
 
+                    // and/or: short-circuit evaluation (not eager arg eval)
+                    if (callee.tag == aura::ast::NodeTag::Variable) {
+                        auto cname = std::string(p->resolve(callee.sym_id));
+                        if (cname == "and" && v.children.size() >= 2) {
+                            for (std::size_t ci = 1; ci < v.children.size(); ++ci) {
+                                auto ar = eval_flat(*f, *p, v.child(ci), eval_env);
+                                if (!ar) return ar;
+                                if (!is_truthy(*ar))
+                                    return *ar;  // short-circuit: return falsy value
+                                if (ci + 1 == v.children.size())
+                                    return *ar;  // last arg: return its value
+                            }
+                            return make_int(1); // (and) with no args → #t
+                        }
+                        if (cname == "or" && v.children.size() >= 2) {
+                            for (std::size_t ci = 1; ci < v.children.size(); ++ci) {
+                                auto ar = eval_flat(*f, *p, v.child(ci), eval_env);
+                                if (!ar) return ar;
+                                if (is_truthy(*ar))
+                                    return *ar;  // short-circuit: return first truthy value
+                                if (ci + 1 == v.children.size())
+                                    return *ar;  // last arg: return last value (falsy)
+                            }
+                            return make_int(0); // (or) with no args → #f
+                        }
+                    }
+
                     // Primitive call (all arg evals are recursive)
                     if (callee.tag == aura::ast::NodeTag::Variable) {
                         auto cname = std::string(p->resolve(callee.sym_id));
