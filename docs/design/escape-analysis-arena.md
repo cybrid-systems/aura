@@ -109,57 +109,117 @@ MakeClosure Yes (closure)         func_slot, env_size, ...
 NewCell     Yes (cell)            init_slot, result_slot
 ```
 
-### 3.2 Escape Analysis Pass
+### 3.2 Scope (Phase 2 only: Pair + Vector)
 
-A dataflow analysis that runs after lowering, before JIT codegen.
+Phase 2 of the escape analysis pass only covers `MakePair` and `MakeVector`.
+`MakeString`, `MakeClosure`, and `NewCell` are handled in later phases.
+This covers the evo-kv hot path (hash bucket chains, list processing)
+without the complexity of string internment or closure environment analysis.
+
+### 3.3 Escape Analysis Pass: Backward (Reverse) Dataflow
+
+A **reverse dataflow analysis** that runs after lowering, before JIT codegen.
+Instead of propagating forward from allocation sites, it propagates **backward**
+from known escape points (Return, Store, Capture). This is simpler because:
+
+- Escape points are few and well-defined
+- Default (unmarked) = NON_ESCAPING
+- No need to track allocation edges forward
 
 **Lattice values for each slot:**
 
 ```
-NON_ESCAPING     → Value never leaves its defining scope
 ESCAPED          → Value may be returned, stored in hash, or captured
-UNKNOWN          → Initial state (needs analysis)
+NON_ESCAPING     → Default. Value never leaves its defining scope.
 ```
 
-**Transfer rules:**
+(No UNKNOWN needed — conservative assumption is NON_ESCAPING.)
+
+**Backward transfer rules:**
+
+Rules propagate the ESCAPED mark **upward** through the IR (from result to operands).
 
 ```
-Operation                      Input → Output
-──────────────────────────────────────────────────────────
-Return(result_slot)            result_slot → ESCAPED
-Call(callee, arg_slot, ...)   arg_slot → ESCAPED (passed to unknown function)
-Store(hash, key, val)         val → ESCAPED (stored in persistent hash)
-Capture(env, val)             val → ESCAPED (captured in closure)
-CellSet(cell, val)            val → ESCAPED (could outlive scope)
-MakePair(a, b, result)        result.mark = max(a.mark, b.mark)
-                              a, b stay unchanged
-Arg(pos, result)              result.mark = ESCAPED (function argument may escape)
-
-Branch/Jump                   No effect (values flow through PHI-like merge)
-Local(a, b)                   b.mark = a.mark (copy propagation)
-
-AllocPair(result)             result.mark = ESCAPED if returned/stored
-                              else NON_ESCAPING
+Instruction                    Effect (if output is ESCAPED)
+─────────────────────────────────────────────────────────────────
+Return(result_slot)            result_slot → ESCAPED         ← ESCAPE POINT
+Call(callee, arg_slot, ...)    arg_slot → ESCAPED            ← ESCAPE POINT
+Store(hash, key, val)          val → ESCAPED                 ← ESCAPE POINT
+Capture(env, val)              val → ESCAPED                 ← ESCAPE POINT
+CellSet(cell, val)             val → ESCAPED                 ← ESCAPE POINT
+Local(a, b)                    if b is ESCAPED → a is ESCAPED
+MakePair(a, b, result)         if result is ESCAPED → a, b are ESCAPED
+                               Also: result stays NON_ESCAPING if no escape point reachable
+Arg(pos, result)               if result is ESCAPED → (nothing; args can't be un-escaped)
 ```
 
-**Implementation: iterative dataflow on IRFunction's CFG.**
+**Algorithm:**
 
-Pseudo-code:
 ```
-for each block in function:
-    for each instruction:
-        if instruction creates a heap object (AllocPair/AllocVector/...):
-            slot.mark = NON_ESCAPING (optimistic)
-        else:
-            apply transfer rules
-
-Repeat until fixed point:
-    for each block in reverse postorder:
-        for each instruction:
-            update output slot marks based on transfer rules
+1. Initialize empty worklist
+2. For each ESCAPE POINT (Return, Call, Store, Capture, CellSet):
+     Mark the operand slot as ESCAPED
+     Add the defining instruction to worklist
+3. While worklist is not empty:
+     Pop instruction I
+     If I defines a slot S and S is ESCAPED:
+       Propagate ESCAPED to I's operands following backward rules
+       Add defining instructions of newly-escaped operands to worklist
+4. Remaining unmarked slots = NON_ESCAPING
 ```
 
-### 3.3 Output: EscapeInfo
+**Key advantage over forward analysis:**
+No need to iterate to a fixed point over PHI-like merges. Each slot is
+touched at most once (when it first becomes ESCAPED).
+
+### 3.4 Mutation Safety
+
+`mutate:*` can rewrite control flow, which may invalidate escape analysis results.
+A pair that was non-escaping before mutation might escape after (e.g., mutation
+wraps a function body in a lambda that captures a local pair).
+
+**Strategy: conservative reset** (same pattern as shape profiler `reset()` in #53)
+
+```
+after mutation → escape_analysis_cache_.clear()
+```
+
+On the next evaluation, escape analysis re-runs from scratch for the mutated
+function. All previously cached EscapeInfo entries are invalidated.
+
+This is simpler than incremental update and is correct by construction.
+The cost is a one-time re-analysis per mutation, which is negligible compared
+to the mutation loop's total latency.
+
+### 3.5 with-arena Safety: Intraprocedural Only, Runtime Guard
+
+Escape analysis in Phase 2-3 is **intraprocedural** — it looks at one function
+at a time. Cross-function call sites are treated conservatively:
+
+```lisp
+(with-arena ()
+  (let ((x (cons 1 2)))
+    (set! *global* x)    ;; ← Call to set! is an escape point → x is ESCAPED
+    ))                    ;;    Compiler allocates x on global heap, not arena
+```
+
+The `set!` call is visible in the current function's IR, so the backward
+analysis marks `x` as ESCAPED. No interprocedural analysis needed.
+
+**Runtime guard:** For Phase 2 TL Arena (before escape analysis is ready),
+a runtime assertion catches arena-allocated values being stored to globals:
+
+```c
+void hash_set(Hash* h, int64_t key, int64_t val) {
+    assert(!is_arena_ptr(val) && "storing arena-allocated value in hash");
+    ...
+}
+```
+
+This is a debugging aid, enabled only in debug builds. In release builds,
+the compiler's escape analysis (Phase 3) makes the guarantee statically.
+
+### 3.6 Output: EscapeInfo
 
 ```cpp
 struct EscapeInfo {
@@ -505,77 +565,126 @@ The main savings:
 
 ---
 
-## 9. Implementation Plan
+## 9. `--no-arena` Runtime Flag
 
-### Phase 1: Unified Pair Storage (estimated: 2-3 days)
+A command-line flag and environment variable to force all allocations to the
+global heap, bypassing the TL arena entirely.
 
-**Goal:** Replace `g_pair_cars/g_pair_cdrs` and `evaluator::pairs_` with a single `g_pair_slots` structure.
+```bash
+./aura --no-arena           # disable arena allocation
+AURA_NO_ARENA=1 ./aura      # same via env var
+./aura --ir --no-arena      # combine with --ir for debugging
+```
 
-- [ ] Define `PairSlot` struct in `value.h` or `runtime.h`
-- [ ] Create `g_pair_slots` global (small vector of pointers)
-- [ ] Rewrite `alloc_pair` in `runtime.c` + `aura_jit_runtime.cpp` to use `g_pair_slots`
-- [ ] Rewrite `pair_car/pair_cdr` to dereference through `g_pair_slots[id]->car`
-- [ ] Update tree-walker evaluator to use same API
-- [ ] **Verify:** 106/106 tests pass
+**Purpose:**
+- Debug arena-related bugs: if a bug reproduces with `--no-arena`, it's arena-related
+- Regression testing: run test suite with and without arena to verify correctness
+- Fallback if escape analysis misses an escape (wrong NON_ESCAPING classification)
 
-### Phase 2: Per-Thread Arena (estimated: 2 days)
+**Implementation:**
+```c
+// runtime.h
+extern bool g_use_arena;  // set from --no-arena flag
 
-**Goal:** Replace global `bump_arena` with thread-local arena, add push/pop.
+// alloc_pair: when g_use_arena is false, always use gc_alloc
+int64_t alloc_pair(int64_t car, int64_t cdr, bool escaping) {
+    bool use_arena = g_use_arena && !escaping;
+    PairSlot* slot = use_arena
+        ? (PairSlot*)tl_arena_alloc(sizeof(PairSlot), alignof(PairSlot))
+        : (PairSlot*)gc_alloc(sizeof(PairSlot));
+    ...
+}
+```
+
+## 10. Implementation Plan (Revised from Review Feedback)
+
+Review note: original plan had Unified Pair Storage as Phase 1.
+Revised: TL Arena first (quick win), escape analysis second.
+See reviewer comment: "Phase 1 只做 Thread-Local Arena（不做 escape analysis）".
+
+### Phase 1: TL Arena + Unified Pair Storage (estimated: 3-4 days)
+
+**Goal:** Single `g_pair_slots` global replacing three backends, plus
+a thread-local bump arena. This phase requires **no escape analysis** —
+all pairs go through the unified slot system. Immediate wins:
+- JIT pairs no longer leak (arena resets per function call)
+- Tree-walker and JIT share the same pair ID space
+- Foundation for later escape-directed arena allocation
 
 - [ ] Define `TLarena` struct with base, offset, capacity
 - [ ] Create `__thread TLarena tl_arena` in `runtime.c`
 - [ ] Move `aura_bump_init/reset/alloc` to per-thread
 - [ ] Add `tl_arena_push/pop` (save/restore offset)
-- [ ] Make non-escaping `alloc_pair` use `tl_arena_alloc`
-- [ ] **Verify:** 106/106 tests pass
+- [ ] Define `PairSlot` struct in `runtime.h` or `value.h`
+- [ ] Create `g_pair_slots` global (small vector of pointers)
+- [ ] Rewrite `alloc_pair` in `runtime.c` + `aura_jit_runtime.cpp` to use `g_pair_slots` + `tl_arena_alloc`
+- [ ] Rewrite `pair_car/pair_cdr` to dereference through `g_pair_slots[id]->car`
+- [ ] Update tree-walker evaluator to use same API
+- [ ] Add `--no-arena` flag
+- [ ] **Verify:** 106/106 tests pass with and without `--no-arena`
 
-### Phase 3: IR Escape Analysis Pass (estimated: 3-4 days)
+### Phase 2: IR Escape Analysis (estimated: 3-4 days)
 
-**Goal:** Dataflow analysis marking each allocation slot as ESCAPED/NON_ESCAPING.
+**Goal:** Backward dataflow analysis marking Pair + Vector allocation
+sites as ESCAPED or NON_ESCAPING. Phase 2 uses the escape info to
+select TL arena vs global heap.
 
 - [ ] Define `EscapeInfo` struct
-- [ ] Implement iterative dataflow in `src/compiler/escape_analysis.cpp`
-- [ ] Hook into `pass_manager` (run after lowering, before JIT)
-- [ ] **Verify:** Escape analysis correctly classifies simple cases
+- [ ] Implement backward dataflow in `src/compiler/escape_analysis.cpp`
+  - Only MakePair + MakeVector initially
+- [ ] Hook into `pass_manager` (run after lowering, before JIT codegen)
+- [ ] IR interpreter reads escape info → selects allocator
+- [ ] Add test file: `tests/test_escape.cpp` with 20+ cases
+- [ ] **Verify:** Escape analysis correctly classifies fundamental patterns
+  - `(cons 1 2)` in tail position → ESCAPED
+  - `(cons 1 2)` as intermediate, never returned → NON_ESCAPING
+  - `(set! global (cons 1 2))` → ESCAPED
+  - `(cons 1 (cons 2 3))` → outer ESCAPED if returned, inner NON_ESCAPING
 - [ ] **Verify:** No regression on 106 tests
 
-### Phase 4: JIT Integration (estimated: 2 days)
+### Phase 3: JIT + IRInterpreter Integration (estimated: 2 days)
 
-**Goal:** JIT emits `tl_arena_alloc` for non-escaping, `gc_alloc` for escaping.
+**Goal:** Both backends read EscapeInfo and select allocator accordingly.
 
-- [ ] Pass `EscapeInfo` to `aura_jit.cpp` compilation
-- [ ] LLVMBuilder reads escape status for each `AllocPair`/`AllocVector`/`AllocString`
-- [ ] Emit different allocation call for escaping vs non-escaping
-- [ ] **Verify:** Benchmarks show arena allocations
+- [ ] Pass `EscapeInfo` to `aura_jit.cpp` compilation context
+- [ ] LLVMBuilder reads escape status for `AllocPair`/`AllocVector`
+- [ ] Emit `tl_arena_alloc` for NON_ESCAPING, `gc_alloc` for ESCAPED
+- [ ] IR interpreter reads EscapeInfo and uses conditional alloc
+- [ ] **Verify:** Benchmarks show arena allocation on hot paths
 
-### Phase 5: `with-arena` Primitive (estimated: 1-2 days)
+### Phase 4: `with-arena` Primitive (estimated: 1-2 days)
 
-**Goal:** Lisp-level arena control.
+**Goal:** Lisp-level arena scoping.
 
 - [ ] Lower `(with-arena (size) body)` to IR push/pop
-- [ ] Escape analysis rejects escaping results
+- [ ] Escape analysis rejects escaping results from `with-arena` bodies
+- [ ] Runtime guard in debug builds
 - [ ] Add test cases
 - [ ] **Verify:** `with-arena` correctly scopes arena allocations
 
-### Phase 6: evo-kv Optimization (estimated: 1 day)
+### Phase 5: evo-kv Optimization + Extended Escape Coverage (estimated: 2 days)
 
-**Goal:** Measure ≤ 110B/key.
+**Goal:** Verify ≤ 110B/key, extend escape analysis to String + Closure.
 
 - [ ] Add memory usage tracking (arena offset delta per operation)
 - [ ] Benchmark hash-intensive evo-kv workloads
+- [ ] Extend escape analysis to MakeString
+- [ ] Extend escape analysis to MakeClosure (env allocation)
 - [ ] Profile and identify remaining allocations
 - [ ] **Verify:** Memory ≤ 110B/key
+- [ ] **Verify:** No regression on 106 tests
 
 ### Regression Prevention
 
 - All 106 existing tests must pass at each phase
-- New test: `tests/test_escape.cpp` with 20+ escape analysis test cases
-- New test: `tests/test_arena.cpp` with arena push/pop/alloc tests
-- evo-kv suite: benchmark + memory measurement
+- Phase 1: run full suite with and without `--no-arena`
+- Phase 2: `tests/test_escape.cpp` with 20+ escape analysis test cases
+- Phase 3: benchmark suite must not regress on non-arena benchmarks
+- Phase 5: evo-kv suite: benchmark + memory measurement
 
 ---
 
-## 10. Open Questions
+## 11. Open Questions
 
 1. **GC interaction**: When a non-escaping pair is stored in a global hash (escapes dynamically), how do we detect this and promote it to the global heap? 
    → *Possible answer:* Escape analysis is conservative — if the pair is passed to `hash-set!`, it's marked ESCAPED. No runtime promotion needed.
@@ -594,7 +703,7 @@ The main savings:
 
 ---
 
-## 11. Related Documents
+## 12. Related Documents
 
 - `docs/design/double-arena.md` — Existing double arena for AST/closure memory
 - `docs/design/unify_cell_heap.md` — Unified cell heap (completed)
