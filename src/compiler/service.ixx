@@ -2896,12 +2896,17 @@ private:
                                                 0,
                                                 final_shape_map};
 
-                fn_ptr = jit_.compile(flat_fn);
-                if (!fn_ptr)
-                    return std::nullopt;
-                if (ir_fn.name != "__top__") {
-                    jit_cache_[ir_fn.name] = {fn_ptr, ir_fn.local_count, ir_fn.arg_count, env_count,
-                                              final_shape_map != nullptr};
+                // Skip if already cached (prevents duplicate JIT symbols)
+                if (ir_fn.name != "__top__" && jit_cache_.count(ir_fn.name)) {
+                    fn_ptr = jit_cache_[ir_fn.name].fn_ptr;
+                } else {
+                    fn_ptr = jit_.compile(flat_fn);
+                    if (!fn_ptr)
+                        return std::nullopt;
+                    if (ir_fn.name != "__top__") {
+                        jit_cache_[ir_fn.name] = {fn_ptr, ir_fn.local_count, ir_fn.arg_count, env_count,
+                                                  final_shape_map != nullptr};
+                    }
                 }
             }
 

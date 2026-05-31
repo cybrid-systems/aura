@@ -863,9 +863,15 @@ struct AuraJIT::Impl {
     const std::vector<std::string>* string_pool_{nullptr};
     // Per-function resource trackers for hot-swap (remove old module, add new one)
     llvm::orc::ResourceTrackerSP get_or_create_tracker(const std::string& name) {
+        // Remove old tracker/module for this name before creating a new one.
+        // This fixes duplicate symbol errors when the same function name
+        // is compiled from different eval() calls (e.g., inlined lambdas).
         auto it = fn_trackers_.find(name);
-        if (it != fn_trackers_.end())
-            return it->second;
+        if (it != fn_trackers_.end()) {
+            // Remove old module from JITDylib before adding the new one
+            if (auto err = it->second->remove())
+                llvm::consumeError(std::move(err));
+        }
         auto rt = main_dylib->createResourceTracker();
         fn_trackers_[name] = rt;
         return rt;
