@@ -1,0 +1,53 @@
+;; === evo-kv-bench.aura -- Benchmark 套件 ===
+;; Usage: load core first, then load this file
+
+(define *bench-ht* (hash))    ;; section name -> function
+(define *bench-res* '())
+(define *bench-id* 0)
+
+(define (bench-add name fn)
+  (hash-set! *bench-ht* name fn)
+  name)
+
+(define (time-ms) (* (current-time) 1000))
+
+(define (bench-iter)
+  (let ((n (hash-length *evo-store*)))
+    (if (< n 10) 200 (if (< n 100) 100 50))))
+
+(define (bench-run . args)
+  (let ((n (if (and (pair? args) (number? (car args))) (car args) (bench-iter)))
+        (id *bench-id*))
+    (set! *bench-id* (+ id 1))
+    (display "=== bench #") (display id) (display " (") (display n) (display "x) ===") (newline)
+    (let ((keys (hash-keys *bench-ht*)))
+      (letrec ((go (lambda (ks)
+                     (when (pair? ks)
+                       (let* ((k (car ks))
+                              (fn (hash-ref *bench-ht* k))
+                              (t0 (time-ms))
+                              (c (fn n))
+                              (dt (- (time-ms) t0)))
+                         (display "  ") (display k) (display " ")
+                         (display (inexact->exact (/ (* c 1000) (if (> dt 0) dt 1))))
+                         (display " ops/s") (newline))
+                       (go (cdr ks))))))
+        (go keys)))
+    (display "=== done ===") (newline)
+    (set! *bench-res* (cons (cons id '()) *bench-res*))
+    '()))
+
+(define (bench-report)
+  (if (null? *bench-res*)
+      (display "no bench data") (newline)
+      (display (string-append "latest: bench #" (number->string (car (car *bench-res*))))) (newline)))
+
+(bench-add "ping" (lambda (n) (letrec ((lp (lambda (i c) (if (>= i n) c (lp (+ i 1) (+ c 1)))))) (lp 0 0))))
+(bench-add "set" (lambda (n) (letrec ((lp (lambda (i) (when (< i n) (evo-set (string-append "bk" (number->string i)) (number->string i)) (lp (+ i 1)))))) (lp 0)) n))
+(bench-add "get" (lambda (n) (letrec ((lp (lambda (i) (when (< i n) (evo-get (string-append "bk" (number->string i))) (lp (+ i 1)))))) (lp 0)) n))
+(bench-add "del" (lambda (n) (letrec ((lp (lambda (i) (when (< i n) (evo-del (string-append "bk" (number->string i))) (lp (+ i 1)))))) (lp 0)) n))
+
+(display "evo-kv bench loaded") (newline)
+(display "  (bench-run [n])   -- run all") (newline)
+(display "  (bench-report)    -- results") (newline)
+"OK"
