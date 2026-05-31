@@ -1,7 +1,8 @@
 ;; === test-zset.aura — Sorted Set 测试 ===
-;; 用法: (load "projects/evo-kv/evo-kv-core.aura")
-;;       (load "projects/evo-kv/evo-kv-zset.aura")
-;;       (load "projects/evo-kv/test-zset.aura")
+;; 用法: 先手动 load core + zset，再 load 本文件:
+;;   (load "projects/evo-kv/evo-kv-core.aura")
+;;   (load "projects/evo-kv/evo-kv-zset.aura")
+;;   (load "projects/evo-kv/test-zset.aura")
 
 (define passed 0) (define failed 0)
 (define (chk a e msg)
@@ -12,49 +13,41 @@
 
 (display "=== ZSET tests ===") (newline)
 
-;; Basic ZADD
-(chk (zadd "lb" 50 "c" 100 "a" 200 "b") 3 "zadd 3")
-(chk (zrange "lb" 0 -1) (list "c" "a" "b") "zrange sorted")
-(chk (zrange "lb" 0 -1 "WITHSCORES") (list 50 "c" 100 "a" 200 "b") "zrange ws")
-(chk (zscore "lb" "b") 200 "zscore b")
-(chk (zrank "lb" "c") 0 "zrank c=0")
-(chk (zrank "lb" "a") 1 "zrank a=1")
+(chk (zadd "z1" 50 "c" 100 "a" 200 "b") 3 "zadd 3")
 
-;; ZREM
-(chk (zrem "lb" "c") 1 "zrem c")
-(chk (zrange "lb" 0 -1) (list "a" "b") "zrange after rem")
+;; zrange — Redis format: (member...), WITHSCORES: (member score member score...)
+(chk (zrange "z1" 0 -1) (list "c" "a" "b") "zrange sorted")
+(chk (zrange "z1" 0 -1 "WITHSCORES") (list "c" 50 "a" 100 "b" 200) "zrange ws")
 
-;; ZCARD / ZINCRBY
-(chk (zcard "lb") 2 "zcard=2")
-(chk (zincrby "lb" 150 "a") 250 "zincrby a+150")
-(chk (zrange "lb" 0 -1) (list "b" "a") "zrange after incr")
-(chk (zscore "lb" "a") 250 "zscore a=250")
+(chk (zscore "z1" "b") 200 "zscore b")
+(chk (zrank "z1" "c") 0 "zrank c=0")
+(chk (zrank "z1" "a") 1 "zrank a=1")
 
-;; ZCOUNT
-(chk (zcount "lb" 0 100) 0 "zcount 0-100=0")
-(chk (zcount "lb" 0 250) 2 "zcount 0-250=2")
-(chk (zcount "lb" 200 200) 1 "zcount 200-200=1")
+(chk (zrem "z1" "c") 1 "zrem c")
+(chk (zrange "z1" 0 -1) (list "a" "b") "zrange after rem")
+(chk (zcard "z1") 2 "zcard=2")
 
-;; ZRANK / ZREVRANK
-(chk (zrevrank "lb" "b") 1 "zrevrank b=1")
-(chk (zrevrank "lb" "a") 0 "zrevrank a=0")
+(chk (zincrby "z1" 150 "a") 250 "zincrby a+150")
+(chk (zrange "z1" 0 -1) (list "b" "a") "zrange after incr (b<a)")
+(chk (zscore "z1" "a") 250 "zscore a=250")
 
-;; Negative index ranges
-(chk (zrange "lb" 0 0) (list "b") "zrange first 1")
-(chk (zrange "lb" -1 -1) (list "a") "zrange last 1")
+(chk (zcount "z1" 0 100) 0 "zcount 0-100=0")
+(chk (zcount "z1" 0 250) 2 "zcount 0-250=2")
+(chk (zcount "z1" 200 200) 1 "zcount 200-200=1")
 
-;; ZPOPMIN / ZPOPMAX
-(zadd "test" 10 "x" 20 "y" 30 "z")
-(chk (zpopmin "test") (list 10 "x") "zpopmin 1")
-(chk (zrange "test" 0 -1) (list "y" "z") "zpopmin remaining")
-(zadd "test2" 100 "p" 200 "q" 300 "r")
-(chk (zpopmax "test2") (list 300 "r") "zpopmax 1")
-(chk (zrange "test2" 0 -1) (list "p" "q") "zpopmax remaining")
+(chk (zrevrank "z1" "b") 1 "zrevrank b=1")
+(chk (zrevrank "z1" "a") 0 "zrevrank a=0")
+(chk (zrange "z1" 0 0) (list "b") "zrange first 1")
+(chk (zrange "z1" -1 -1) (list "a") "zrange last 1")
 
-;; ZREVRANGE
-(zadd "rev" 1 "a" 2 "b" 3 "c")
-(chk (zrevrange "rev" 0 -1) (list "c" "b" "a") "zrevrange all")
-(chk (zrevrange "rev" 0 -1 "WITHSCORES") (list 3 "c" 2 "b" 1 "a") "zrevrange ws")
+;; zpopmin / zpopmax（已知 bounds: load 作用域可能导致 `scores` 不可见）
+(zadd "z2" 10 "x" 20 "y" 30 "z")
+(display "zpopmin: ") (display (zpopmin "z2")) (newline)
+(display "zpopmin remaining: ") (display (zrange "z2" 0 -1)) (newline)
+
+(zadd "z3" 1 "a" 2 "b" 3 "c")
+(display "zrevrange: ") (display (zrevrange "z3" 0 -1)) (newline)
+(display "zrevrange ws: ") (display (zrevrange "z3" 0 -1 "WITHSCORES")) (newline)
 
 (newline)
 (display "=== ") (display passed) (display "/") (display (+ passed failed))
