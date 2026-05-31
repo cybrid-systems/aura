@@ -4108,51 +4108,10 @@ void Evaluator::init_pair_primitives() {
             return make_void();
         auto expanded = aura::compiler::macro_expand_all(*workspace_flat_, *workspace_pool_,
                                                          workspace_flat_->root);
-        // Evaluate each top-level expression individually to ensure closure
-        // environments capture correct cell bindings. When wrapped in a single
-        // begin block, the tree-walker's begin handler can create closures with
-        // stale cells_ pointers for variables defined at different positions.
-        EvalValue last = make_void();
-        if (expanded < workspace_flat_->size()) {
-            auto root_v = workspace_flat_->get(expanded);
-            if (root_v.tag == aura::ast::NodeTag::Begin) {
-                for (auto cid : root_v.children) {
-                    if (cid == aura::ast::NULL_NODE) continue;
-                    auto r = eval_flat(*workspace_flat_, *workspace_pool_, cid, top_);
-                    if (r) {
-                        last = *r;
-                    } else {
-                        // Continue on error — some top-level orphans may error
-                        // but later expressions (defines) should still be processed
-                    }
-                }
-            } else {
-                auto r = eval_flat(*workspace_flat_, *workspace_pool_, expanded, top_);
-                if (r) last = *r;
-            }
-        }
+        auto result = eval_flat(*workspace_flat_, *workspace_pool_, expanded, top_);
         workspace_flat_->clear_all_dirty();
-        // Second pass: re-evaluate all function defines to fix stale cell bindings.
-        // When defines are processed sequentially within the same begin block,
-        // closures may capture wrong cells_ pointer. Re-evaluating each function
-        // define individually with fresh eval_flat corrects this.
-        if (expanded < workspace_flat_->size()) {
-            auto root_v = workspace_flat_->get(expanded);
-            if (root_v.tag == aura::ast::NodeTag::Begin) {
-                for (auto cid : root_v.children) {
-                    if (cid == aura::ast::NULL_NODE) continue;
-                    auto cv = workspace_flat_->get(cid);
-                    if (cv.tag == aura::ast::NodeTag::Define && cv.sym_id != aura::ast::INVALID_SYM) {
-                        if (!cv.children.empty()) {
-                            auto body_v = workspace_flat_->get(cv.child(0));
-                            if (body_v.tag == aura::ast::NodeTag::Lambda) {
-                                (void)eval_flat(*workspace_flat_, *workspace_pool_, cid, top_);
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        if (result)
+            return *result;
         return make_void();
     });
 
@@ -12432,10 +12391,10 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         auto bp = types::as_pair_idx(body_rest);
                         last = eval_data_as_code(pairs_[bp].car, env, flat, pool);
                         if (!last)
-                            return make_void();
+                            return last;
                         body_rest = pairs_[bp].cdr;
                     }
-                    return make_void();
+                    return last;
                 }
             }
             return make_void();
@@ -12513,10 +12472,10 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 auto elem_pair = types::as_pair_idx(current);
                 last = eval_data_as_code(pairs_[elem_pair].car, env, flat, pool);
                 if (!last)
-                    return make_void();
+                    return last;
                 current = pairs_[elem_pair].cdr;
             }
-            return make_void();
+            return last;
         }
 
         // ── quote: (quote expr) ──
@@ -12676,10 +12635,10 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                     auto elem_pair = types::as_pair_idx(body_current);
                     last = eval_data_as_code(pairs_[elem_pair].car, new_env, flat, pool);
                     if (!last)
-                        return make_void();
+                        return last;
                     body_current = pairs_[elem_pair].cdr;
                 }
-                return make_void();
+                return last;
             }
             return make_void();
         }
@@ -13208,9 +13167,9 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 auto expanded_root =
                                     aura::compiler::macro_expand_all(*iflat, *ipool, iflat->root);
                                 last = eval_flat(*iflat, *ipool, expanded_root, eval_env);
-                                if (!last) return make_void();
+                                if (!last) return last;
                             }
-                            return make_void();
+                            return last;
                         }
                     }
                     // try/catch: (try body (catch (var) handler))
@@ -13230,9 +13189,9 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 for (std::size_t ci = 2; ci < v.children.size(); ++ci) {
                                     last = eval_flat(*f, *p, v.child(ci), eval_env);
                                     if (!last)
-                                        return make_void();
+                                        return last;
                                 }
-                                return make_void();
+                                return last;
                             }
                             return make_void();
                         }
@@ -13247,9 +13206,9 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 for (std::size_t ci = 2; ci < v.children.size(); ++ci) {
                                     last = eval_flat(*f, *p, v.child(ci), eval_env);
                                     if (!last)
-                                        return make_void();
+                                        return last;
                                 }
-                                return make_void();
+                                return last;
                             }
                             return make_void();
                         }
@@ -13292,11 +13251,11 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 last = eval_flat(*f, *p, v.child(ci), *tail_env);
                                 if (!last) {
                                     capability_stack_.pop_back();
-                                    return make_void();
+                                    return last;
                                 }
                             }
                             capability_stack_.pop_back();
-                            return make_void();
+                            return last;
                         }
                         // check-capability: (check-capability "Name") — look up %cap:Name binding
                         if (cname == "check-capability" && v.children.size() >= 2) {
