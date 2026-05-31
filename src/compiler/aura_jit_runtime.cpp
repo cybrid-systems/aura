@@ -192,6 +192,17 @@ int64_t aura_pair_cdr(int64_t pair_val) {
     return 0;
 }
 
+// L2 specialization: unchecked pair access (skips bounds check)
+int64_t aura_pair_car_unchecked(int64_t pair_val) {
+    uint64_t id = static_cast<uint64_t>(pair_val >> 2);
+    return g_pair_cars[id];
+}
+
+int64_t aura_pair_cdr_unchecked(int64_t pair_val) {
+    uint64_t id = static_cast<uint64_t>(pair_val >> 2);
+    return g_pair_cdrs[id];
+}
+
 // === Primitive call bridge ===
 // Global dispatcher function pointer — set by service.ixx to wrap evaluator primitives
 static int64_t (*g_prim_dispatcher)(int64_t slot, int64_t* args, int32_t argc) = nullptr;

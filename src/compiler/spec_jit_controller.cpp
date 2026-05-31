@@ -22,6 +22,10 @@ static constexpr std::int64_t kFloatBias  = -10000000000000000LL;
 static constexpr std::int64_t kStringBias = -9000000000000000000LL;
 
 static inline bool is_fixnum_val(std::int64_t v) noexcept { return (v & 1) == 0; }
+static inline bool is_ref_val(std::int64_t v) noexcept    { return (v & 3) == 1; }
+static inline std::uint64_t ref_type_val(std::int64_t v) noexcept {
+    return (static_cast<std::uint64_t>(v) >> 2) & 0xF;
+}
 
 bool check_shape_guard(const std::int64_t* args, std::uint32_t arg_count,
                        const std::uint8_t* shape_map, std::uint32_t map_size) {
@@ -49,6 +53,21 @@ bool check_shape_guard(const std::int64_t* args, std::uint32_t arg_count,
                 break;
             case 5:  // Void
                 match = (val == 11);
+                break;
+            case 10: // Pair (ref type 0)
+                match = is_ref_val(val) && ref_type_val(val) == 0;
+                break;
+            case 11: // Vector (ref type 3)
+                match = is_ref_val(val) && ref_type_val(val) == 3;
+                break;
+            case 12: // Hash (ref type 4)
+                match = is_ref_val(val) && ref_type_val(val) == 4;
+                break;
+            case 13: // Closure (ref type 1)
+                match = is_ref_val(val) && ref_type_val(val) == 1;
+                break;
+            case 14: // Ref (generic)
+                match = is_ref_val(val);
                 break;
             default:
                 match = true;  // Unknown shapes → pass through

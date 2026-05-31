@@ -28,6 +28,11 @@ constexpr ShapeID SHAPE_FLOAT   = 3;
 constexpr ShapeID SHAPE_BOOL    = 4;
 constexpr ShapeID SHAPE_STRING  = 5;
 constexpr ShapeID SHAPE_VOID    = 6;
+constexpr ShapeID SHAPE_PAIR    = 10;
+constexpr ShapeID SHAPE_VECTOR  = 11;
+constexpr ShapeID SHAPE_HASH    = 12;
+constexpr ShapeID SHAPE_CLOSURE = 13;
+constexpr ShapeID SHAPE_REF     = 14;
 
 // ── ShapeTag: top-level classification ─────────────────────────
 enum class ShapeTag : std::uint8_t {

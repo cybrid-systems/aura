@@ -996,6 +996,11 @@ public:
                 else if (dom == shape::SHAPE_BOOL)  code = 3;
                 else if (dom == shape::SHAPE_STRING) code = 4;
                 else if (dom == shape::SHAPE_VOID)   code = 5;
+                else if (dom == shape::SHAPE_PAIR)   code = 10;
+                else if (dom == shape::SHAPE_VECTOR) code = 11;
+                else if (dom == shape::SHAPE_HASH)   code = 12;
+                else if (dom == shape::SHAPE_CLOSURE) code = 13;
+                else if (dom == shape::SHAPE_REF)    code = 14;
                 else
                     return;  // Not a simple leaf shape
 
