@@ -13781,7 +13781,10 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     auto body_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
                     // This closure reuses f/p from caller (not arena-allocated), Env is in target
                     closures_[cid] = Closure{/*name*/"", std::move(params), f, p, body_id, cap, dotted, target};
-                    EVAL_CACHE_RETURN_VAL(make_closure(cid));
+                    // Do NOT cache closure values — the closure captures the current env and a
+                    // cached closure would reuse the same env on subsequent evaluations (wrong
+                    // when the same Lambda node is evaluated with different captured variables).
+                    return make_closure(cid);
                 }
                 case aura::ast::NodeTag::Let:
                 case aura::ast::NodeTag::LetRec: {
