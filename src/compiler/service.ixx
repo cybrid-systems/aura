@@ -638,6 +638,8 @@ public:
             if (!has_non_int_nodes) {
                 auto jit_result = try_jit_execute(ir_mod);
                 if (jit_result) {
+                    // Record JIT result shape for profiling (#53 hot-recompile)
+                    record_eval_result_shape(session_id_, last_ir_mod_, nullptr, *jit_result);
                     return *jit_result;
                 }
             }
@@ -981,12 +983,12 @@ public:
 
             // Populate shape_map from profiler data.
             // Fills shape_map_storage and sets flat_fn.shape_map.
-            void set_shape_map(const shape::ShapeProfiler& profiler,
-                               const std::string& session,
-                               const std::string& fn_name) {
+            bool set_shape_map(const shape::ShapeProfiler& profiler,
+                                const std::string& session,
+                                const std::string& fn_name) {
                 auto fn_key = shape::make_fn_key(session, fn_name);
                 if (!profiler.is_stable(fn_key))
-                    return;
+                    return false;
 
                 auto dom = profiler.dominant_shape(fn_key);
                 // Map ShapeID to shape_map byte code
@@ -1002,7 +1004,7 @@ public:
                 else if (dom == shape::SHAPE_CLOSURE) code = 13;
                 else if (dom == shape::SHAPE_REF)    code = 14;
                 else
-                    return;  // Not a simple leaf shape
+                    return false;  // Not a simple leaf shape
 
                 shape_map_storage.resize(flat_fn.local_count, 0);
                 // Only annotate argument slots (slots 0..arg_count-1 are args)
@@ -1013,6 +1015,7 @@ public:
 
                 std::fprintf(stderr, "spec: L1 for '%s' — arg shape=%d\n",
                             fn_name.c_str(), (int)code);
+                return true;
             }
         };
 
@@ -1030,11 +1033,24 @@ public:
             aura::jit::ScalarFn fn_ptr = nullptr;
             auto cache_it = jit_cache_.find(ir_fn.name);
             if (cache_it != jit_cache_.end()) {
-                fn_ptr = cache_it->second.fn_ptr;
-            } else {
+                // Hot recompilation: if profiler now has stable shape for this
+                // function but cache entry was compiled without shape_map,
+                // evict and recompile with shape specialization.
+                auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
+                if (!cache_it->second.has_shape_map &&
+                    shape_profiler_.is_stable(fn_key)) {
+                    // Evict cache → will recompile below
+                    std::fprintf(stderr, "spec: hot-recompile '%s' (shape now stable)\n",
+                                ir_fn.name.c_str());
+                    jit_cache_.erase(cache_it);
+                } else {
+                    fn_ptr = cache_it->second.fn_ptr;
+                }
+            }
+            if (!fn_ptr) {
                 FlatFnBuilder builder(ir_fn);
                 // Set shape_map from profiler for L1 specialization
-                builder.set_shape_map(shape_profiler_, session_id_, ir_fn.name);
+                bool had_shape = builder.set_shape_map(shape_profiler_, session_id_, ir_fn.name);
                 fn_ptr = jit_.compile(builder.flat_fn);
                 if (!fn_ptr) {
                     return std::unexpected(aura::diag::Diagnostic{
@@ -1042,7 +1058,7 @@ public:
                         std::string("JIT compilation failed for function '") + ir_fn.name + "'"});
                 }
                 // Cache compiled function
-                jit_cache_[ir_fn.name] = {fn_ptr, ir_fn.local_count, ir_fn.arg_count, env_count};
+                jit_cache_[ir_fn.name] = {fn_ptr, ir_fn.local_count, ir_fn.arg_count, env_count, had_shape};
             }
 
             // Register with runtime for closure calls
@@ -1192,6 +1208,8 @@ public:
                 if (types::is_void(ev_result)) break;
             }
         }
+        // Record JIT result shape for profiling (triggers hot-recompilation)
+        record_eval_result_shape(session_id_, last_ir_mod_, nullptr, ev_result);
         return EvalResult(ev_result);
 #else
         (void)input;
@@ -2822,6 +2840,7 @@ private:
         std::uint32_t local_count = 0;
         std::uint32_t arg_count = 0;
         std::uint32_t env_count = 0;
+        bool has_shape_map = false;  // true if compiled with shape_map
     };
     std::unordered_map<std::string, JitCachedFn> jit_cache_;
 
@@ -2842,8 +2861,18 @@ private:
             aura::jit::ScalarFn fn_ptr = nullptr;
             auto cache_it = jit_cache_.find(ir_fn.name);
             if (cache_it != jit_cache_.end()) {
-                fn_ptr = cache_it->second.fn_ptr;
-            } else {
+                // Hot recompilation (same as exec_jit)
+                auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
+                if (!cache_it->second.has_shape_map &&
+                    shape_profiler_.is_stable(fn_key)) {
+                    std::fprintf(stderr, "spec: hot-recompile '%s' (try_jit)\n",
+                                ir_fn.name.c_str());
+                    jit_cache_.erase(cache_it);
+                } else {
+                    fn_ptr = cache_it->second.fn_ptr;
+                }
+            }
+            if (!fn_ptr) {
                 // Build FlatFunction from IR function
                 std::vector<std::vector<aura::jit::FlatInstruction>> flat_instrs(
                     ir_fn.blocks.size());
@@ -2858,6 +2887,29 @@ private:
                     flat_blocks[bi] = {block.id, flat_instrs[bi].data(),
                                        static_cast<std::uint32_t>(flat_instrs[bi].size())};
                 }
+                // Set up shape_storage for shape_map (keep alive until compile)
+                std::vector<std::uint8_t> shape_storage;
+                const uint8_t* final_shape_map = nullptr;
+                auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
+                if (shape_profiler_.is_stable(fn_key)) {
+                    auto dom = shape_profiler_.dominant_shape(fn_key);
+                    uint8_t code = 0;
+                    if (dom == shape::SHAPE_INT)      code = 1;
+                    else if (dom == shape::SHAPE_FLOAT) code = 2;
+                    else if (dom == shape::SHAPE_BOOL)  code = 3;
+                    else if (dom == shape::SHAPE_STRING) code = 4;
+                    else if (dom == shape::SHAPE_VOID)   code = 5;
+                    else if (dom == shape::SHAPE_PAIR)   code = 10;
+                    if (code) {
+                        shape_storage.resize(ir_fn.local_count, 0);
+                        for (uint32_t i = 0; i < ir_fn.arg_count && i < ir_fn.local_count; ++i)
+                            shape_storage[i] = code;
+                        final_shape_map = shape_storage.data();
+                        std::fprintf(stderr, "spec: try_jit L1 for '%s'\n",
+                                    ir_fn.name.c_str());
+                    }
+                }
+
                 aura::jit::FlatFunction flat_fn{ir_fn.name.c_str(),
                                                 ir_fn.entry_block,
                                                 ir_fn.local_count,
@@ -2865,12 +2917,14 @@ private:
                                                 flat_blocks.data(),
                                                 static_cast<std::uint32_t>(flat_blocks.size()),
                                                 nullptr,
-                                                0};
+                                                0,
+                                                final_shape_map};
 
                 fn_ptr = jit_.compile(flat_fn);
                 if (!fn_ptr)
                     return std::nullopt;
-                jit_cache_[ir_fn.name] = {fn_ptr, ir_fn.local_count, ir_fn.arg_count, env_count};
+                jit_cache_[ir_fn.name] = {fn_ptr, ir_fn.local_count, ir_fn.arg_count, env_count,
+                                          final_shape_map != nullptr};
             }
 
             // Register with runtime for closure calls
