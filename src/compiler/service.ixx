@@ -312,6 +312,7 @@ public:
             "orch:reset-metrics",
             // Special forms not in IR
             "when",
+            "load",
             "unless",
             "export",
             "and",
