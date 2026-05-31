@@ -1,0 +1,61 @@
+;; === test-zset.aura — Sorted Set 测试 ===
+;; 用法: (load "projects/evo-kv/evo-kv-core.aura")
+;;       (load "projects/evo-kv/evo-kv-zset.aura")
+;;       (load "projects/evo-kv/test-zset.aura")
+
+(define passed 0) (define failed 0)
+(define (chk a e msg)
+  (if (equal? a e)
+      (begin (set! passed (+ passed 1)) (display "[PASS] ") (display msg) (newline))
+      (begin (set! failed (+ failed 1)) (display "[FAIL] ") (display msg)
+             (display " exp=") (display e) (display " got=") (display a) (newline))))
+
+(display "=== ZSET tests ===") (newline)
+
+;; Basic ZADD
+(chk (zadd "lb" 50 "c" 100 "a" 200 "b") 3 "zadd 3")
+(chk (zrange "lb" 0 -1) (list "c" "a" "b") "zrange sorted")
+(chk (zrange "lb" 0 -1 "WITHSCORES") (list 50 "c" 100 "a" 200 "b") "zrange ws")
+(chk (zscore "lb" "b") 200 "zscore b")
+(chk (zrank "lb" "c") 0 "zrank c=0")
+(chk (zrank "lb" "a") 1 "zrank a=1")
+
+;; ZREM
+(chk (zrem "lb" "c") 1 "zrem c")
+(chk (zrange "lb" 0 -1) (list "a" "b") "zrange after rem")
+
+;; ZCARD / ZINCRBY
+(chk (zcard "lb") 2 "zcard=2")
+(chk (zincrby "lb" 150 "a") 250 "zincrby a+150")
+(chk (zrange "lb" 0 -1) (list "b" "a") "zrange after incr")
+(chk (zscore "lb" "a") 250 "zscore a=250")
+
+;; ZCOUNT
+(chk (zcount "lb" 0 100) 0 "zcount 0-100=0")
+(chk (zcount "lb" 0 250) 2 "zcount 0-250=2")
+(chk (zcount "lb" 200 200) 1 "zcount 200-200=1")
+
+;; ZRANK / ZREVRANK
+(chk (zrevrank "lb" "b") 1 "zrevrank b=1")
+(chk (zrevrank "lb" "a") 0 "zrevrank a=0")
+
+;; Negative index ranges
+(chk (zrange "lb" 0 0) (list "b") "zrange first 1")
+(chk (zrange "lb" -1 -1) (list "a") "zrange last 1")
+
+;; ZPOPMIN / ZPOPMAX
+(zadd "test" 10 "x" 20 "y" 30 "z")
+(chk (zpopmin "test") (list 10 "x") "zpopmin 1")
+(chk (zrange "test" 0 -1) (list "y" "z") "zpopmin remaining")
+(zadd "test2" 100 "p" 200 "q" 300 "r")
+(chk (zpopmax "test2") (list 300 "r") "zpopmax 1")
+(chk (zrange "test2" 0 -1) (list "p" "q") "zpopmax remaining")
+
+;; ZREVRANGE
+(zadd "rev" 1 "a" 2 "b" 3 "c")
+(chk (zrevrange "rev" 0 -1) (list "c" "b" "a") "zrevrange all")
+(chk (zrevrange "rev" 0 -1 "WITHSCORES") (list 3 "c" 2 "b" 1 "a") "zrevrange ws")
+
+(newline)
+(display "=== ") (display passed) (display "/") (display (+ passed failed))
+(display " passed ===") (newline)
