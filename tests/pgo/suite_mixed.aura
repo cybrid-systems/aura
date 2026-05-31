@@ -1,0 +1,14 @@
+;; ============================================================
+;; PGO Training: Mixed Workload
+;;
+;; Combines general Aura operations + evo-kv workloads for
+;; balanced PGO training. Runs both suites sequentially.
+;; ============================================================
+
+(load "tests/pgo/suite_general.aura")
+(load "tests/pgo/suite_evo_kv.aura")
+
+;; Run general suite first, then evo-kv
+(define result (pgo-run-suite))
+(define result2 (pgo-run-evo-kv))
+(+ result result2)
