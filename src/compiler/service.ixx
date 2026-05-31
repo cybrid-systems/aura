@@ -391,8 +391,11 @@ public:
                 auto var_name = pool.resolve(nv.sym_id);
                 if (!var_name.empty() && var_name[0] == ':')
                     return true;
-                if (user_bindings_.count(std::string(var_name)))
-                    return true;
+                if (user_bindings_.count(std::string(var_name))) {
+                    // If also in ir_cache_, IR pipeline can handle it
+                    if (ir_cache_.count(std::string(var_name)) == 0)
+                        return true;
+                }
                 // Unknown variable — IR silently returns 0, tree-walker reports
                 // proper unbound-variable error. Trigger fallback for correct errors.
                 auto vn = std::string(var_name);
@@ -446,7 +449,6 @@ public:
     }
 
     [[nodiscard]] EvalResult eval(std::string_view input) {
-        std::fprintf(stderr, "eval enter\n");
         // Phase 4: parse directly into FlatAST, evaluator reads FlatAST directly.
         // Arena-allocate FlatAST/Pool so closures can reference them across calls.
         auto alloc = arena_.allocator();
@@ -483,8 +485,14 @@ public:
         // where node IDs are stable for the type checker and tree-walker)
         collect_match_info(*flat_ptr, *pool_ptr, expanded_root);
 
-                // Check if we need the tree-walker fallback
-        if (needs_tree_walker_fallback(*flat_ptr, *pool_ptr, expanded_root)) {
+        // If root is a define form, skip fallback check — the IR pipeline
+        // handles defines via try_extract_define + cache_define.
+        // The Variable checks in needs_tree_walker_fallback would otherwise
+        // always trigger fallback (variables in function body aren't in cache yet).
+        auto expanded_v = expanded_root < flat_ptr->size() ? flat_ptr->get(expanded_root) : aura::ast::NodeView{};
+        bool is_define_form = (expanded_v.tag == aura::ast::NodeTag::Define);
+
+        if (!is_define_form && needs_tree_walker_fallback(*flat_ptr, *pool_ptr, expanded_root)) {
             auto result =
                 evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
             // Track all bound names so subsequent eval calls don't fall
@@ -541,6 +549,7 @@ public:
                     cache_define(input, *flat_ptr, *pool_ptr, expanded_root, std::string(name));
                 if (!result)
                     return result;
+                user_bindings_.insert(std::string(name));
                 return EvalResult(types::make_void());
             }
             // Value define: try compile-time constant evaluation
@@ -597,13 +606,11 @@ public:
                 jit_initialized_ = true;
             }
 
-            std::fprintf(stderr, "JIT_TRY\n");
             // try_jit_execute handles all function types (not just arithmetic).
             // It returns nullopt on any failure, so this is self-guarding.
             {
                 auto jit_result = try_jit_execute(ir_mod);
                 if (jit_result) {
-                    std::fprintf(stderr, "JIT_OK\n");
                     record_eval_result_shape(session_id_, last_ir_mod_, nullptr, *jit_result);
                     return *jit_result;
                 }
@@ -764,7 +771,7 @@ public:
         // === Normal IR path (with cache awareness) ===
         auto cache_ptr_local = ir_cache_.empty() ? nullptr : &ir_cache_;
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
-        auto ir_mod = aura::compiler::lower_to_ir_with_cache(
+auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             *flat_ptr, *pool_ptr, arena_, cache_ptr_local, nullptr, &evaluator_.primitives(),
             nullptr, cache_strings_ptr);
 
