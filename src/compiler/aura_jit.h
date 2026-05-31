@@ -35,6 +35,11 @@ struct FlatFunction {
     uint32_t num_callees;        // number of entries in func_id_map
     // Type tags for const values: [local_count], 0=Int, 1=Bool, 5=Void, 255=Dynamic
     const uint8_t* const_tags;
+    // Shape map for speculative JIT: [local_count], 0=Dynamic, 1=Int, 2=Float,
+    // 3=Bool, 4=String, 5=Void, 10=Pair, 11=Vector, 12=Hash.
+    // When non-null, the JIT will skip tag checks for known shapes.
+    // A shape guard is generated at function entry to verify runtime shapes match.
+    const uint8_t* shape_map;
 };
 
 using ScalarFn = int64_t (*)(int64_t*, uint32_t);
