@@ -208,8 +208,51 @@ run_test "error:mod-divzero"  "$(printf '(try (modulo 10 0) (catch (e) "err"))')
 
 
 echo ""
+echo "=== Escape Analysis Tests ==="
+
+# Non-escaping pair: pair created locally, not returned, consumed via car
+run_test "ea:local-cons-car" "(car (cons 1 2))" "1"
+run_test "ea:local-cons-cdr" "(cdr (cons 1 2))" "2"
+
+# Escaping pair via return
+run_test "ea:return-cons" "$(printf '(define (f x) (cons x x)) (car (f 42))')" "42"
+
+# Non-escaping nested: inner pair consumed by outer
+
+# List operations (all pairs local within map)
+run_test "ea:local-list" "(car (map (lambda (x) (* x 2)) (list 1 2 3)))" "2"
+run_test "ea:local-filter" "(car (filter (lambda (x) (> x 2)) (list 1 2 3)))" "3"
+
+# Pair in hash: escaping via hash-set!
+run_test "ea:hash-store" "$(printf '(let ((h (hash)) (k "x")) (hash-set! h k (cons 1 2)) (car (hash-ref h k)))')" "1"
+
+# Long chain
+run_test "ea:chain" "$(printf '(begin (define (make-pair x) (cons x x)) (define (f n) (if (< n 0) 0 (car (make-pair n)))) (f 42))')" "42"
+
+# --no-arena still produces correct results
+run_with_flag() {
+    local name="$1"
+    local input="$2"
+    local expected="$3"
+    local result
+    result=$(printf '%s' "$input" | timeout 5 "$AURA" --no-arena 2>&1 | tr -d '\n')
+    if [ "$result" = "$expected" ]; then
+        green "$name"
+        PASS=$((PASS + 1))
+    else
+        red "$name"
+        echo "       expected: $expected"
+        echo "       got:      $result"
+        FAIL=$((FAIL + 1))
+    fi
+}
+run_with_flag "ea:no-arena-car" "(car (cons 1 2))" "1"
+run_with_flag "ea:no-arena-list" "(map (lambda (x) (* x 2)) (list 1 2 3))" "(2 4 6)"
+run_with_flag "ea:no-arena-hash" "$(printf '(let ((h (hash))) (hash-set! h "k" (cons 1 2)) (car (hash-ref h "k")))')" "1"
+
+echo ""
 echo "============"
-printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL"
+printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL" 
 [ "$FAIL" -eq 0 ] || exit 1
 
 echo ""
