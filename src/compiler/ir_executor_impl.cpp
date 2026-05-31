@@ -1,6 +1,12 @@
+module;
+#include "runtime_shared.h"
 module aura.compiler.ir_executor;
 import std;
 import aura.compiler.value;
+
+// Shared runtime pair allocation (defined in aura_jit_runtime.cpp)
+extern "C" std::int64_t aura_alloc_pair_arena(std::int64_t car, std::int64_t cdr);
+extern "C" std::int64_t aura_alloc_pair(std::int64_t car, std::int64_t cdr);
 
 namespace aura::compiler {
 
@@ -459,19 +465,42 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     goto next_block;
 
                 case IROpcode::MakePair: {
-                    // Note: IR interpreter uses evaluator's pair system (pairs_), not
-                    // the shared JIT pair storage (g_pair_slots). Arena allocation via
-                    // aura_alloc_pair_arena is used by the JIT path. The interpreter's
-                    // Car/Cdr handlers also call evaluator primitives which look up in
-                    // pairs_. To use arena allocation here, we'd need the interpreter's
-                    // pair ops to also access g_pair_slots — deferred to pair unification.
-                    //
-                    // Escape info is available via escape_maps_[func.id] if needed.
+                    // Allocate pair via evaluator's cons (stores in pairs_ for
+                    // format_value/display to find), then also register in
+                    // g_pair_slots for arena/heap access by JIT runtime.
                     auto pfn = primitives_.lookup("cons");
-                    if (pfn)
+                    if (pfn) {
                         locals[ops[0]] = (*pfn)({locals[ops[1]], locals[ops[2]]});
-                    else
+                        // Also push to shared g_pair_slots so JIT runtime + car/cdr
+                        // fallback find this pair. Use arena alloc when non-escaping.
+                        int64_t idx = static_cast<int64_t>(types::as_pair_idx(locals[ops[0]]));
+                        bool use_arena = false;
+                        if (g_use_arena && func.id < escape_maps_.size() &&
+                            ops[0] < escape_maps_[func.id].size()) {
+                            use_arena = (escape_maps_[func.id][ops[0]] == 0);
+                        }
+                        // Only push to g_pair_slots if this is a new pair ID
+                        // (cons already created it in pairs_). Ensure g_pair_slots
+                        // has enough space.
+                        while (idx >= static_cast<int64_t>(g_pair_slots.size()))
+                            g_pair_slots.push_back(nullptr);
+                        if (!g_pair_slots[idx]) {
+                            if (use_arena) {
+                                auto* slot = (PairSlot*)tl_arena_alloc(
+                                    &g_tl_arena, sizeof(PairSlot), alignof(PairSlot));
+                                slot->car = locals[ops[1]].val;
+                                slot->cdr = locals[ops[2]].val;
+                                g_pair_slots[idx] = slot;
+                            } else {
+                                auto* slot = (PairSlot*)std::malloc(sizeof(PairSlot));
+                                slot->car = locals[ops[1]].val;
+                                slot->cdr = locals[ops[2]].val;
+                                g_pair_slots[idx] = slot;
+                            }
+                        }
+                    } else {
                         locals[ops[0]] = make_void();
+                    }
                     break;
                 }
                 case IROpcode::Car: {

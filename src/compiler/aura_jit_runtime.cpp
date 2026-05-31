@@ -70,6 +70,9 @@ bool g_use_arena = true;
 
 // ── Forward declarations ──
 
+// ── Shared pair storage (must be outside extern "C" for C++ type) ──
+std::vector<PairSlot*> g_pair_slots;
+
 // ── Runtime state (shared between all JIT functions) ──────────
 extern "C" {
 
@@ -234,7 +237,6 @@ void aura_cell_set(int64_t cell_id, int64_t val) {
 // Phase 2: g_pair_slots stores pointers to PairSlot structs.
 // NON_ESCAPING: PairSlot allocated from TL arena
 // ESCAPED: PairSlot allocated from global heap
-static std::vector<PairSlot*> g_pair_slots;
 
 int64_t aura_alloc_pair(int64_t car, int64_t cdr) {
     auto* slot = (PairSlot*)malloc(sizeof(PairSlot));
