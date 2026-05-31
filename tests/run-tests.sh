@@ -250,6 +250,50 @@ run_with_flag "ea:no-arena-car" "(car (cons 1 2))" "1"
 run_with_flag "ea:no-arena-list" "(map (lambda (x) (* x 2)) (list 1 2 3))" "(2 4 6)"
 run_with_flag "ea:no-arena-hash" "$(printf '(let ((h (hash))) (hash-set! h "k" (cons 1 2)) (car (hash-ref h "k")))')" "1"
 
+# ── Nested pair access ──────────────────────────────────
+# caar on nested non-escaping pairs
+run_test "ea:nested-cons-caar" "$(printf '(caar (cons (cons 1 2) 3))')" "1"
+run_test "ea:nested-cons-cdar" "$(printf '(cdar (cons (cons 1 2) 3))')" "2"
+run_test "ea:nested-cons-cadr" "$(printf '(cadr (cons 1 (cons 2 3)))')" "2"
+run_test "ea:list-nth" "$(printf '(car (cdr (cdr (list 1 2 3))))')" "3"
+run_test "ea:cadr-list" "$(printf '(car (cdr (list 1 2 3)))')" "2"
+
+# ── Multiple independent non-escaping pairs ─────────────
+run_test "ea:multiple-pairs" "$(printf '(+ (car (cons 10 20)) (cdr (cons 30 40)))')" "50"
+run_test "ea:pair-product" "$(printf '(* (car (cons 6 7)) (cdr (cons 8 9)))')" "54"
+
+# ── Triple-nested pair ──────────────────────────────────
+run_test "ea:triple-nest" "$(printf '(car (car (car (cons (cons (cons 1 2) 3) 4))))')" "1"
+
+# ── Pair consumed by outer cons (inner non-escaping)────
+run_test "ea:cons-of-cons-car" "$(printf '(car (car (cons (cons 1 2) (cons 3 4))))')" "1"
+run_test "ea:cons-of-cons-cadr" "$(printf '(car (cdr (cons (cons 1 2) (cons 3 4))))')" "3"
+
+# ── Pair returned from map callback (escaping) ──────────
+run_test "ea:map-cons-pairs" "$(printf '(car (car (map (lambda (x) (cons x x)) (list 1 2 3))))')" "1"
+run_test "ea:filter-map-cons" "$(printf '(car (car (filter (lambda (p) (> (car p) 2)) (map (lambda (x) (cons x x)) (list 1 2 3 4)))))')" "3"
+
+# ── Pair captured in closure (escaping via closure env) ─
+run_test "ea:closure-capture" "$(printf '(begin (define f (let ((p (cons 42 0))) (lambda () (car p)))) (f))')" "42"
+
+# ── Pair in conditional (one branch, non-escaping) ─────
+run_test "ea:pairs-in-cond" "(if #t (car (cons 1 2)) (car (cons 3 4)))" "1"
+
+# ── Improper list via cons chain ────────────────────────
+run_test "ea:improper-chain" "$(printf '(car (cdr (cons 1 (cons 2 3))))')" "2"
+run_test "ea:improper-caddr" "$(printf '(cdr (cdr (cons 1 (cons 2 3))))')" "3"
+
+# ── Predicate tests on arena pairs ──────────────────────
+run_test "ea:pair-p-true" "(pair? (cons 1 2))" "#t"
+run_test "ea:pair-p-false" "(pair? 42)" "#f"
+run_test "ea:null-p-on-cons" "(null? (cons 1 2))" "#f"
+
+# ── --no-arena variants for nested/multiple cases ───────
+run_with_flag "ea:no-arena-nested-caar" "$(printf '(caar (cons (cons 1 2) 3))')" "1"
+run_with_flag "ea:no-arena-multiple" "$(printf '(+ (car (cons 10 20)) (cdr (cons 30 40)))')" "50"
+run_with_flag "ea:no-arena-cons-of-cons" "$(printf '(car (car (cons (cons 1 2) (cons 3 4))))')" "1"
+run_with_flag "ea:no-arena-map-cons" "$(printf '(car (car (map (lambda (x) (cons x x)) (list 1 2))))')" "1"
+
 echo ""
 echo "============"
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL" 
