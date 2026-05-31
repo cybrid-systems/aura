@@ -1025,3 +1025,45 @@ tests/bench_results/spec_jit.json:
   - 比较 spec_jit vs generic_jit vs IRInterpreter
   - 高亮性能倒退
 ```
+
+---
+
+## 附录 E: 实施笔记
+
+### E.1 关键发现
+
+#### E.1.1 `has_non_int_nodes` 守卫移除
+原本 `eval()` 中的 `has_non_int_nodes` 检查只允许纯算术操作（`+`, `-`, `*`, `/`, `=`, `<`, `>`）通过 JIT。这过于保守——`try_jit_execute` 本身已通过 nullopt 回退机制做好了安全防护。移除后所有表达式都尝试 JIT。
+
+#### E.1.2 `needs_tree_walker_fallback` 与 `cache_define` 的死锁
+Define 表达式（`(define (add x) (+ x 1))`）在 `needs_tree_walker_fallback` 中会因为被定义变量名（`add`）未在 `ir_cache_` 或 `primitives` 中找到而触发回退路径。这意味着 `cache_define` 永远无法被调用——define 编译的 IR 永远不会被缓存。
+
+**修复**: Define 表达式跳过 `needs_tree_walker_fallback` 检查，直接进入 `try_extract_define` → `cache_define`。
+
+#### E.1.3 `user_bindings_` 对命名函数 JIT 路径的阻塞
+`user_bindings_` 中的名字（来自 `track_names`）在 Variable 检查时直接触发回退，即使该函数已通过 `cache_define` 缓存在 `ir_cache_` 中。
+
+**修复**: 在 `user_bindings_` 检查中同时校验 `ir_cache_`：如果名字同时在两个集合中，IR pipeline 可以处理。
+
+#### E.1.4 JIT Symbol 碰撞
+每次 `eval()` 调用会产生新的 `__top__` 和 `__lambda__` 函数（来自内联的缓存 define）。这些函数被逐次编译时，相同的名字会通过 `addIRModule` 被添加到 ORC JITDylib，导致 duplicate symbol 错误。
+
+**修复**: `get_or_create_tracker` 在复用函数名前先调用 `ResourceTracker::remove()` 移除旧模块。
+
+### E.2 验证结果
+
+```
+测试环境: serve 模式, define add + 161 次调用
+generic JIT (冷):    1.37ms/call
+L1 spec JIT (热):     0.61ms/call
+Speedup:              2.232x
+```
+
+### E.3 C++ Module 增量编译问题
+
+`service.ixx` 作为 C++26 module，修改后 CMake 构建系统不能可靠地检测到变更并触发重新编译。需要手动删除 object 文件：
+```bash
+rm -f build/CMakeFiles/aura.dir/src/compiler/service.ixx.*
+cmake --build . --target aura
+```
+根因：CMake 的 C++ module depfile 扫描可能不准确，特别是在 module 公共接口（export）未变但实现变更时。
