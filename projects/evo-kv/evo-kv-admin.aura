@@ -1,0 +1,152 @@
+;; === evo-kv-admin.aura — 管理命令: 逐出策略 + INFO ===
+;; 要求: (load "evo-kv-core.aura") (load "evo-kv-cache.aura")
+;;
+;; Redis 兼容的管理能力:
+;;   CONFIG SET maxmemory <bytes>
+;;   CONFIG SET maxmemory-policy noeviction|allkeys-lru|volatile-ttl
+;;   INFO — 完整的键值存储统计
+;;   MEMORY USAGE — 内存使用估算
+
+;; ── 配置 ──
+
+(define *evo-maxmemory* 0)           ;; 0 = unlimited
+(define *evo-eviction-policy* "noeviction")  ;; noeviction | allkeys-lru | volatile-ttl
+(define *evo-evicted* 0)
+
+;; ── 统计计数器 ──
+
+(define *evo-stat-ops* (hash))       ;; op → count
+(define *evo-stat-expired* 0)
+(define *evo-stat-evicted* 0)
+
+;; ── CONFIG ──
+
+(define (evo-config-get param)
+  (cond
+   ((string=? param "maxmemory") *evo-maxmemory*)
+   ((string=? param "maxmemory-policy") *evo-eviction-policy*)
+   ((string=? param "databases") 1)
+   (#t "ERR unknown parameter")))
+
+(define (evo-config-set param val)
+  (cond
+   ((string=? param "maxmemory")
+    (set! *evo-maxmemory* (if (string? val) (string->number val) val))
+    "OK")
+   ((string=? param "maxmemory-policy")
+    (if (or (string=? val "noeviction")
+            (string=? val "allkeys-lru")
+            (string=? val "volatile-ttl"))
+        (begin (set! *evo-eviction-policy* val) "OK")
+        "ERR invalid policy"))
+   (#t "ERR unknown parameter")))
+
+;; ── 逐出引擎 ──
+
+(define (evo-evict)
+  "根据当前策略逐出 key。返回逐出数量。"
+  (if (= *evo-maxmemory* 0) 0
+      (let ((policy *evo-eviction-policy*))
+        (cond
+         ((string=? policy "noeviction") 0)
+         ((string=? policy "allkeys-lru") (evict-allkeys-lru))
+         ((string=? policy "volatile-ttl") (evict-volatile-ttl))
+         (#t 0)))))
+
+(define (evict-allkeys-lru)
+  "LRU 逐出：移除最久未访问的 key。
+   当前简化实现：移除第一个 key（基于 hash-keys 的顺序）。"
+  (let ((keys (hash-keys *evo-store*)))
+    (if (null? keys) 0
+        (let ((victim (car keys)))
+          (hash-remove! *evo-store* victim)
+          (hash-remove! *evo-ttl* victim)
+          (set! *evo-evicted* (+ *evo-evicted* 1))
+          (set! *evo-stat-evicted* (+ *evo-stat-evicted* 1))
+          1))))
+
+(define (evict-volatile-ttl)
+  "TTL 逐出：移除 TTL 最短的 key。"
+  (let ((ttl-keys (hash-keys *evo-ttl*)))
+    (if (null? ttl-keys) 0
+        (letrec ((find-shortest (lambda (keys best best-ttl)
+                                  (if (null? keys) best
+                                      (let* ((k (car keys))
+                                             (expire (hash-ref *evo-ttl* k))
+                                             (remaining (- expire (current-time))))
+                                        (if (or (void? best-ttl) (< remaining best-ttl))
+                                            (find-shortest (cdr keys) k remaining)
+                                            (find-shortest (cdr keys) best best-ttl)))))))
+          (let ((victim (find-shortest ttl-keys (void) (void))))
+            (unless (void? victim)
+              (hash-remove! *evo-store* victim)
+              (hash-remove! *evo-ttl* victim)
+              (set! *evo-evicted* (+ *evo-evicted* 1))
+              (set! *evo-stat-evicted* (+ *evo-stat-evicted* 1))
+              1)
+            0)))))
+
+;; ── 自动逐出（在 set 时检查） ──
+
+(define (evo-check-maxmemory)
+  "如果超出 maxmemory 限制，执行逐出。"
+  (when (and (> *evo-maxmemory* 0) (>= (hash-length *evo-store*) *evo-maxmemory*))
+    (evo-evict)))
+
+;; 包装 evo-set 以支持自动逐出
+(define (evo-set-evictable key val)
+  (evo-check-maxmemory)
+  (evo-set key val))
+
+(define (evicted-lru key val)
+  (evo-check-maxmemory)
+  (evo-set key val))
+
+;; ── INFO ──
+
+(define (assoc key alist)
+  (letrec ((search (lambda (items)
+                     (if (null? items) #f
+                         (if (equal? (car (car items)) key) (car items)
+                             (search (cdr items)))))))
+    (search alist)))
+
+(define (evo-info)
+  "返回 evo-kv 的完整统计信息。"
+  (list
+   (cons "store-keys" (hash-length *evo-store*))
+   (cons "ttl-keys" (hash-length *evo-ttl*))
+   (cons "set-keys" (hash-length *evo-sets*))
+   (cons "expired" *evo-stat-expired*)
+   (cons "evicted" *evo-stat-evicted*)
+   (cons "maxmemory" *evo-maxmemory*)
+   (cons "eviction-policy" *evo-eviction-policy*)
+   (cons "ops-get" (hash-ref-or *evo-type-ops* (quote get) 0))
+   (cons "ops-set" (hash-ref-or *evo-type-ops* (quote set) 0))
+   (cons "ops-del" (hash-ref-or *evo-type-ops* (quote del) 0))
+   (cons "ops-incr" (hash-ref-or *evo-type-ops* (quote incr) 0))))
+
+;; ── MEMORY USAGE（估算） ──
+
+(define (evo-memory-usage)
+  "返回内存估算（字节数）。基于条目数 * 平均键值大小。"
+  (let ((n (hash-length *evo-store*)))
+    (if (= n 0) 0
+        (let* ((keys (hash-keys *evo-store*))
+               (sample-size (min n 10)))
+          (letrec ((sum-sizes (lambda (i sum)
+                                (if (>= i sample-size) sum
+                                    (let* ((k (list-ref keys i))
+                                           (v (hash-ref *evo-store* k))
+                                           (ksize (string-length k))
+                                           (vsize (if (string? v) (string-length v) 8)))
+                                      (sum-sizes (+ i 1) (+ sum ksize vsize)))))))
+            (let ((avg (/ (sum-sizes 0 0) sample-size)))
+              (* avg n)))))))
+
+(display "evo-kv admin loaded") (newline)
+(display "  evo-info                  — stats") (newline)
+(display "  evo-config-get / evo-config-set — config") (newline)
+(display "  evo-evict                 — manual eviction") (newline)
+(display "  evo-memory-usage          — memory estimate") (newline)
+"OK"
