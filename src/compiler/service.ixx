@@ -606,9 +606,27 @@ public:
                 jit_initialized_ = true;
             }
 
-            // try_jit_execute handles all function types (not just arithmetic).
-            // It returns nullopt on any failure, so this is self-guarding.
-            {
+            // Only try JIT for expressions without complex structural nodes
+            // (Lambda, strings, floats, Let/LetRec, macros, quotes, coercions).
+            // Named function calls like (add 42) ARE allowed (unlike the old
+            // jit_safe_primitives guard which blocked all non-arithmetic calls).
+            bool skip_jit = false;
+            for (aura::ast::NodeId nid = 0; nid < flat_ptr->size(); ++nid) {
+                auto nv = flat_ptr->get(nid);
+                auto tag = nv.tag;
+                if (tag == aura::ast::NodeTag::Lambda ||
+                    tag == aura::ast::NodeTag::LiteralString ||
+                    tag == aura::ast::NodeTag::LiteralFloat ||
+                    tag == aura::ast::NodeTag::Let ||
+                    tag == aura::ast::NodeTag::LetRec ||
+                    tag == aura::ast::NodeTag::Quote ||
+                    tag == aura::ast::NodeTag::Coercion ||
+                    tag == aura::ast::NodeTag::MacroDef) {
+                    skip_jit = true;
+                    break;
+                }
+            }
+            if (!skip_jit) {
                 auto jit_result = try_jit_execute(ir_mod);
                 if (jit_result) {
                     record_eval_result_shape(session_id_, last_ir_mod_, nullptr, *jit_result);
