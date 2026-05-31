@@ -8,6 +8,7 @@ module;
 #include <dlfcn.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include "runtime_shared.h"
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <poll.h>
@@ -755,7 +756,12 @@ void Evaluator::init_pair_primitives() {
             } while (0);
         }
         auto id = as_pair_idx(a[0]);
-        return id < pairs_.size() ? pairs_[id].car : make_int(0);
+        if (id < pairs_.size())
+            return pairs_[id].car;
+        // Fallback to shared pair storage (JIT/arena pairs)
+        if (id < g_pair_slots.size() && g_pair_slots[id])
+            return types::EvalValue{g_pair_slots[id]->car};
+        return make_int(0);
     });
     primitives_.add("cdr", [this](const auto& a) {
         if (a.empty() || !is_pair(a[0])) {
@@ -768,7 +774,12 @@ void Evaluator::init_pair_primitives() {
             } while (0);
         }
         auto id = as_pair_idx(a[0]);
-        return id < pairs_.size() ? pairs_[id].cdr : make_int(0);
+        if (id < pairs_.size())
+            return pairs_[id].cdr;
+        // Fallback to shared pair storage (JIT/arena pairs)
+        if (id < g_pair_slots.size() && g_pair_slots[id])
+            return types::EvalValue{g_pair_slots[id]->cdr};
+        return make_int(0);
     });
     primitives_.add("pair?", [](const auto& a) {
         if (a.empty())
@@ -928,18 +939,22 @@ void Evaluator::init_pair_primitives() {
         if (a.size() < 2 || !is_pair(a[0]))
             return make_void();
         auto idx = as_pair_idx(a[0]);
-        if (idx >= pairs_.size())
-            return make_void();
-        pairs_[idx].car = a[1];
+        if (idx < pairs_.size()) {
+            pairs_[idx].car = a[1];
+        } else if (idx < g_pair_slots.size() && g_pair_slots[idx]) {
+            g_pair_slots[idx]->car = a[1].val;
+        }
         return make_void();
     });
     primitives_.add("set-cdr!", [this](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_pair(a[0]))
             return make_void();
         auto idx = as_pair_idx(a[0]);
-        if (idx >= pairs_.size())
-            return make_void();
-        pairs_[idx].cdr = a[1];
+        if (idx < pairs_.size()) {
+            pairs_[idx].cdr = a[1];
+        } else if (idx < g_pair_slots.size() && g_pair_slots[idx]) {
+            g_pair_slots[idx]->cdr = a[1].val;
+        }
         return make_void();
     });
 

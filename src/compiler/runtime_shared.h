@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <vector>
 
 // ── PairSlot: unified pair storage format ──
 // Replaces separate g_pair_cars/g_pair_cdrs or evaluator's Pair struct.
@@ -23,6 +24,11 @@ struct TLarena {
 
 // Per-thread global arena instance
 extern __thread TLarena g_tl_arena;
+
+// ── Shared pair storage (used by JIT runtime + IR interpreter) ──
+// Stores pointers to pairs allocated on arena (non-escaping) or heap (escaping).
+// Evaluator's car/cdr primitives check this as fallback.
+extern std::vector<PairSlot*> g_pair_slots;
 
 // ── Flags ──
 extern bool g_use_arena;
