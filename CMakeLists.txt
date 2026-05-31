@@ -286,6 +286,13 @@ target_link_libraries(test_spec_jit PRIVATE stdc++)
 add_test(NAME test_spec_jit COMMAND test_spec_jit
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
+# ── Speculative JIT runtime tests (Phase 3, #53) ────────────
+add_executable(test_spec_runtime tests/test_spec_runtime.cpp)
+target_include_directories(test_spec_runtime PRIVATE src)
+target_link_libraries(test_spec_runtime PRIVATE stdc++)
+add_test(NAME test_spec_runtime COMMAND test_spec_runtime
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
 # linenoise — single-file line editing library
 add_library(linenoise STATIC
     src/linenoise/linenoise.c)
