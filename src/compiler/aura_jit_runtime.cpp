@@ -230,38 +230,55 @@ void aura_cell_set(int64_t cell_id, int64_t val) {
         g_cell_heap[static_cast<size_t>(cell_id)] = val;
 }
 
-// === Pair runtime (unified PairSlot storage) ===
-static std::vector<PairSlot> g_pair_slots;
+// === Pair runtime (unified PairSlot pointer-based storage) ===
+// Phase 2: g_pair_slots stores pointers to PairSlot structs.
+// NON_ESCAPING: PairSlot allocated from TL arena
+// ESCAPED: PairSlot allocated from global heap
+static std::vector<PairSlot*> g_pair_slots;
 
 int64_t aura_alloc_pair(int64_t car, int64_t cdr) {
+    auto* slot = (PairSlot*)malloc(sizeof(PairSlot));
+    slot->car = car;
+    slot->cdr = cdr;
     int64_t id = static_cast<int64_t>(g_pair_slots.size());
-    g_pair_slots.push_back(PairSlot{car, cdr});
-    return (id << 2) | 1; // pointer tagging: low 2 bits = 01
+    g_pair_slots.push_back(slot);
+    return (id << 2) | 1;
 }
 
 int64_t aura_pair_car(int64_t pair_val) {
     uint64_t id = static_cast<uint64_t>(pair_val >> 2);
-    if (id < g_pair_slots.size())
-        return g_pair_slots[id].car;
+    if (id < g_pair_slots.size() && g_pair_slots[id])
+        return g_pair_slots[id]->car;
     return 0;
 }
 
 int64_t aura_pair_cdr(int64_t pair_val) {
     uint64_t id = static_cast<uint64_t>(pair_val >> 2);
-    if (id < g_pair_slots.size())
-        return g_pair_slots[id].cdr;
+    if (id < g_pair_slots.size() && g_pair_slots[id])
+        return g_pair_slots[id]->cdr;
     return 0;
+}
+
+// Arena-based pair allocation (for NON_ESCAPING pairs, Phase 2)
+// Allocates PairSlot from TL arena instead of global heap.
+int64_t aura_alloc_pair_arena(int64_t car, int64_t cdr) {
+    auto* slot = (PairSlot*)tl_arena_alloc(&g_tl_arena, sizeof(PairSlot), alignof(PairSlot));
+    slot->car = car;
+    slot->cdr = cdr;
+    int64_t id = static_cast<int64_t>(g_pair_slots.size());
+    g_pair_slots.push_back(slot);
+    return (id << 2) | 1;
 }
 
 // L2 specialization: unchecked pair access (skips bounds check)
 int64_t aura_pair_car_unchecked(int64_t pair_val) {
     uint64_t id = static_cast<uint64_t>(pair_val >> 2);
-    return g_pair_slots[id].car;
+    return g_pair_slots[id]->car;
 }
 
 int64_t aura_pair_cdr_unchecked(int64_t pair_val) {
     uint64_t id = static_cast<uint64_t>(pair_val >> 2);
-    return g_pair_slots[id].cdr;
+    return g_pair_slots[id]->cdr;
 }
 
 // === Primitive call bridge ===

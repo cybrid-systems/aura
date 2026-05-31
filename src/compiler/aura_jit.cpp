@@ -128,6 +128,7 @@ struct LLVMBuilder {
     llvm::Function* fn_cell_get = nullptr;
     llvm::Function* fn_cell_set = nullptr;
     llvm::Function* fn_alloc_pair = nullptr;
+    llvm::Function* fn_alloc_pair_arena = nullptr;
     llvm::Function* fn_pair_car = nullptr;
     llvm::Function* fn_pair_cdr = nullptr;
     llvm::Function* fn_prim_call = nullptr;
@@ -181,6 +182,10 @@ struct LLVMBuilder {
         fn_alloc_pair =
             llvm::Function::Create(llvm::FunctionType::get(i64, {i64, i64}, false),
                                    llvm::Function::ExternalLinkage, "aura_alloc_pair", mod);
+
+        fn_alloc_pair_arena =
+            llvm::Function::Create(llvm::FunctionType::get(i64, {i64, i64}, false),
+                                   llvm::Function::ExternalLinkage, "aura_alloc_pair_arena", mod);
 
         fn_pair_car = llvm::Function::Create(llvm::FunctionType::get(i64, {i64}, false),
                                              llvm::Function::ExternalLinkage, "aura_pair_car", mod);
@@ -567,8 +572,19 @@ struct LLVMBuilder {
 
             // Pairs
             case OpMakePair: {
-                auto call = irb->CreateCall(fn_alloc_pair, {load(inst.ops[1]), load(inst.ops[2])});
-                store(inst.ops[0], call);
+                auto car = load(inst.ops[1]);
+                auto cdr = load(inst.ops[2]);
+                auto result_slot = inst.ops[0];
+                // Check escape analysis: non-escaping pairs use arena allocation
+                if (fn.escape_map && result_slot < fn.local_count && !fn.escape_map[result_slot]) {
+                    // NON_ESCAPING: allocate from TL arena
+                    auto call = irb->CreateCall(fn_alloc_pair_arena, {car, cdr});
+                    store(result_slot, call);
+                } else {
+                    // ESCAPED or unknown: allocate from global heap
+                    auto call = irb->CreateCall(fn_alloc_pair, {car, cdr});
+                    store(result_slot, call);
+                }
                 return true;
             }
             case OpCar: {
@@ -690,6 +706,125 @@ struct LLVMBuilder {
     }
 };
 
+// ── Escape Analysis (backward dataflow) ───────────────────────
+
+// Run backward escape analysis on flat IR. Fills escape_map (size = local_count).
+// Each entry: 0 = NON_ESCAPING, 1 = ESCAPED.
+// Escape points: Return(value), Call(callee, args...), Capture(env, val),
+// Store(hash, key, val), CellSet(cell, val).
+void run_escape_analysis(
+    const std::vector<std::vector<FlatInstruction>>& flat_instrs,
+    uint32_t local_count,
+    std::vector<uint8_t>& escape_map)
+{
+    enum Op : uint32_t {
+        OpConstI64 = 1, OpConstF64 = 2, OpLocal = 3, OpArg = 4,
+        OpAdd = 5, OpSub = 6, OpMul = 7, OpDiv = 8,
+        OpEq = 9, OpLt = 10, OpGt = 11, OpLe = 12, OpGe = 13,
+        OpAnd = 14, OpOr = 15, OpNot = 16,
+        OpBranch = 17, OpJump = 18, OpCall = 19, OpReturn = 20,
+        OpMakeClosure = 21, OpCapture = 22, OpCaptureRef = 23, OpApply = 24,
+        OpNewCell = 25, OpCellSet = 26, OpCellGet = 27,
+        OpCastOp = 28, OpConstString = 29,
+        OpPrimitive = 30, OpPrimCall = 31,
+        OpCellAlloc = 32, OpMakePair = 34, OpCar = 35, OpCdr = 36,
+        OpMakeVector = 37, OpVectorRef = 38, OpVectorSet = 39,
+        OpDrop = 40, OpDropOp = 41, OpMakeClosureOp = 42, OpCaptureOp = 43,
+        OpMakeRef = 44, OpRefGet = 45, OpRefSet = 46,
+    };
+
+    escape_map.assign(local_count, 0);
+
+    // First pass: mark escape points
+    for (auto& block : flat_instrs) {
+        for (auto& inst : block) {
+            uint32_t result = inst.ops[0];
+            switch (inst.opcode) {
+            case OpReturn:
+                // Return(value) — value escapes
+                if (inst.ops[0] < local_count)
+                    escape_map[inst.ops[0]] = 1;
+                break;
+            case OpCall:
+                // Call(callee, arg_base, arg_count, result) — callee + all args escape
+                {
+                    uint32_t callee = inst.ops[0];
+                    uint32_t arg_base = inst.ops[1];
+                    uint32_t arg_count = inst.ops[2];
+                    if (callee < local_count)
+                        escape_map[callee] = 1;
+                    for (uint32_t i = 0; i < arg_count && (arg_base + i) < local_count; ++i)
+                        escape_map[arg_base + i] = 1;
+                }
+                break;
+            case OpCapture:
+            case OpCaptureRef:
+            case OpCaptureOp:
+                // Capture(result, env_ptr_or_val) — captured value escapes
+                if (inst.ops[1] < local_count)
+                    escape_map[inst.ops[1]] = 1;
+                break;
+            case OpCellSet:
+                // CellSet(cell, val) — val escapes
+                if (inst.ops[1] < local_count)
+                    escape_map[inst.ops[1]] = 1;
+                break;
+            case OpPrimCall:
+                // PrimCall(slot, a, b, count) — call args escape
+                {
+                    uint32_t a_op = inst.ops[1];
+                    uint32_t b_op = inst.ops[2];
+                    if (a_op < local_count) escape_map[a_op] = 1;
+                    if (b_op < local_count) escape_map[b_op] = 1;
+                }
+                break;
+            default:
+                break;
+            }
+        }
+    }
+
+    // Backward propagation: if a result escapes, its operands escape
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (auto& block : flat_instrs) {
+            for (auto& inst : block) {
+                uint32_t result = inst.ops[0];
+                if (result >= local_count) continue;
+                if (!escape_map[result]) continue; // result doesn't escape
+
+                switch (inst.opcode) {
+                case OpLocal:
+                    // Local(result, src) — src escapes
+                    if (inst.ops[1] < local_count && !escape_map[inst.ops[1]]) {
+                        escape_map[inst.ops[1]] = 1;
+                        changed = true;
+                    }
+                    break;
+                case OpMakePair:
+                    // MakePair(result, car, cdr) — car + cdr escape
+                    if (inst.ops[1] < local_count && !escape_map[inst.ops[1]]) {
+                        escape_map[inst.ops[1]] = 1;
+                        changed = true;
+                    }
+                    if (inst.ops[2] < local_count && !escape_map[inst.ops[2]]) {
+                        escape_map[inst.ops[2]] = 1;
+                        changed = true;
+                    }
+                    break;
+                case OpCall:
+                    // Call(callee, arg_base, count, result) — propagate back to callee
+                    // (already marked in first pass)
+                    break;
+                default:
+                    break;
+                }
+            }
+        }
+    }
+}
+
 // ── AuraJIT implementation ────────────────────────────────────
 
 // Runtime function declarations (C linkage, defined in aura_jit_runtime.cpp)
@@ -701,6 +836,7 @@ int64_t aura_new_cell();
 int64_t aura_cell_get(int64_t);
 void aura_cell_set(int64_t, int64_t);
 int64_t aura_alloc_pair(int64_t, int64_t);
+int64_t aura_alloc_pair_arena(int64_t, int64_t);
 int64_t aura_pair_car(int64_t);
 int64_t aura_pair_cdr(int64_t);
 int64_t aura_pair_car_unchecked(int64_t);
@@ -911,6 +1047,7 @@ struct AuraJIT::Impl {
         reg("aura_cell_get", (void*)aura_cell_get);
         reg("aura_cell_set", (void*)aura_cell_set);
         reg("aura_alloc_pair", (void*)aura_alloc_pair);
+        reg("aura_alloc_pair_arena", (void*)aura_alloc_pair_arena);
         reg("aura_pair_car", (void*)aura_pair_car);
         reg("aura_pair_cdr", (void*)aura_pair_cdr);
         reg("aura_pair_car_unchecked", (void*)aura_pair_car_unchecked);

@@ -40,6 +40,10 @@ struct FlatFunction {
     // When non-null, the JIT will skip tag checks for known shapes.
     // A shape guard is generated at function entry to verify runtime shapes match.
     const uint8_t* shape_map;
+    // Escape analysis map: [local_count], 0=NON_ESCAPING, 1=ESCAPED.
+    // When non-null, MakePair ops with ESCAPED result slots use heap allocation;
+    // NON_ESCAPING result slots use arena (bump) allocation.
+    const uint8_t* escape_map = nullptr;
 };
 
 using ScalarFn = int64_t (*)(int64_t*, uint32_t);
@@ -105,6 +109,13 @@ bool emit_object(const std::string& ir_dump, const std::string& out_path);
 
 /// Emit object file from an already-compiled IRModule.
 bool emit_object_module(void* ir_module, const std::string& out_path);
+
+/// Run backward escape analysis on flat IR instructions.
+/// Fills escape_map (size = local_count). 0 = NON_ESCAPING, 1 = ESCAPED.
+void run_escape_analysis(
+    const std::vector<std::vector<FlatInstruction>>& flat_instrs,
+    uint32_t local_count,
+    std::vector<uint8_t>& escape_map);
 
 } // namespace aura::jit
 
