@@ -117,6 +117,9 @@ eval():
 
 ### 3.1 形状定义
 
+> **⚠️ C++ Module 注意事项**: `Shape` 定义依赖传统 PIMPL 或纯头文件。`value.ixx` C++ module 中无法轻松放置递归 union 类型。
+> **方案**: `ShapeTag` 定义在 `shape.h`（传统头文件），`Shape` 结构体通过 `std::unique_ptr<ShapeImpl>` 桥接，将递归部分隔离到实现文件中。
+
 形状是对值布局和操作模式的抽象描述：
 
 ```cpp
@@ -224,6 +227,27 @@ class ShapeProfiler {
     ShapeSnapshot current_snapshot(FnKey fn);
 };
 ```
+**扩展指标（暴露给 auto-evolution 引擎）**:
+
+```cpp
+struct ShapeMetrics {
+    std::unordered_map<FnKey, ShapeFnMetrics> fn_metrics_;
+};
+
+struct ShapeFnMetrics {
+    uint64_t total_calls;              // total calls
+    uint64_t deopt_count;              // deoptimization count
+    double   shape_stability_ratio;    // dominant shape ratio (last 1000 calls)
+    uint64_t shape_change_frequency;   // shape changes / time window
+    uint32_t unique_shapes_seen;
+    bool     is_good_deopt_candidate;
+};
+```
+
+通过 `(query:metrics shape-profile)` 暴露。auto evolution 引擎可用 `shape_change_frequency` 判断：
+- 低频变化（<1% 调用）→ 值得特化
+- 高频变化（>5% 调用）→ 不值得，维持通用路径
+- 极高频（>20%）→ 可能是 polymorphic site，考虑 Union shape 或放弃特化
 
 ### 3.5 稳定性判定算法
 
@@ -479,7 +503,40 @@ deopt_path:
 
 优先调用通用 IRInterpreter 版本（最安全，无需维护多个 deopt 目标）。
 
-### 5.6 去优化安全性保证
+### 5.6 去优化生命周期与恢复策略
+
+当 Guard 触发后，需要明确的**恢复路径**以避免反复 deopt 的抖动：
+
+```
+DeoptGuard 触发
+    ↓
+1. 记录 deopt 原因到 ShapeChangeLog
+    ↓
+2. 调用 IRInterpreter 通用路径（当前调用正常完成）
+    ↓
+3. 检查去优化频率: same_fn + same_shape 在 1s 内 deopt > 3 次?
+    ├── 否 → 进入 profile 阶段，等待新形状稳定
+    │         (重新积累 kStableThreshold=100 次调用)
+    └── 是 → 判定为「不稳定形状」:
+              - 临时提升 kStableRatio 到 0.99（更保守）
+              - 或标记该 FnKey 为 no_spec，24h 内不再尝试特化
+              - 或 fallback 到 L0（通用路径），跳过 profile
+    ↓
+4. 如果新形状稳定 → 后台编译新特化版本
+    ↓
+5. 原子替换 SpecEntry → 下次调用走新特化路径
+```
+
+**防抖动机制**的关键参数：
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| kDeoptThrottleWindow | 1s | 去优化频率统计时间窗口 |
+| kDeoptThrottleCount | 3 | 窗口内触发去优化上限 |
+| kDeoptBanDuration | 24h | 标记 no_spec 后的禁用时长 |
+| kStableThresholdAfterDeopt | 200 | 去优化后需要更多 profile 样本 |
+
+### 5.7 去优化安全性保证
 
 | 场景 | 行为 | 正确性 |
 |------|------|--------|
@@ -594,7 +651,42 @@ SpecJIT 遵循相同约束：
 - guard 检查在 eval 线程执行（版本号用 relaxed atomic load）
 - deopt 路径在 eval 线程执行（安全）
 
-### 7.4 递归 mutate 保护
+### 7.4 特化代码生命周期管理
+
+特化版本的缓存不是无限增长的——需要明确的创建/销毁策略：
+
+```cpp
+class SpecCacheManager {
+    static constexpr uint32_t kMaxSpecEntries = 1024;  // 全局上限
+    static constexpr uint32_t kMaxPerFn       = 4;     // 单函数最多 4 个形状版本
+    static constexpr uint32_t kEvictThreshold = 100;   // 超过上限时触发淘汰
+
+    struct CacheEntry {
+        FnKey fn;
+        ShapeID shape;
+        JITTargetAddress addr;
+        uint64_t compile_time;
+        uint32_t hit_count;
+        uint32_t miss_count;
+        double   hit_ratio;
+        bool     is_stale;
+    };
+
+    void evict_if_needed();
+    void collect_garbage();
+};
+```
+
+**关键约束**:
+- 已失效的 SpecEntry 不能立即删除 ORC JIT 模块——可能有正在执行的调用
+- ORC JIT 的 ResourceTracker 提供引用计数：所有调用完成 → 自动释放
+- 每个特化版本独立 ResourceTracker，失效后标记为 is_stale，tracker 为空时回收
+- hit_ratio < 0.1 且 is_stale 的条目优先淘汰
+
+**内存上限**: 全局 ≤1024 条 SpecEntry | 每函数 ≤4 个形状版本
+预期单条 ~256 bytes + JIT 代码（平均 ~2KB）→ 总 ~2-3MB
+
+### 7.5 递归 mutate 保护
 
 ```
 ; 在推测 JIT 代码中调用 mutate:* 的可能
@@ -691,12 +783,16 @@ ShapeSnapshot ShapeProfiler::snapshot(FnKey fn);
 
 | 风险 | 影响 | 概率 | 缓解 |
 |------|------|------|------|
-| Shape 稳定性误判 | 频繁 deopt → 性能下降 | 中 | 保守的 `kStableRatio=0.95` |
+| Shape 稳定性误判 | 频繁 deopt → 性能下降 | 中 | 保守的 kStableRatio=0.95 + 防抖动机制 |
 | Guard 开销抵消收益 | 小函数特化后反而更慢 | 低 | 函数大小阈值（≥10 opcode） |
 | mutate 后 deopt 不及时 | 执行旧形状的推测代码 | 低 | Version Guard + PrimCall 检查 |
-| Shape profile 内存膨胀 | 过多独特形状 | 低 | LRU 淘汰 + 合并相似形状 |
+| Shape profile 内存膨胀 | 过多独特形状 | 低 | LRU 淘汰 + 合并相似形状（SpecCacheManager） |
 | LLVM IR 复杂度 | 编译时间增加 | 中 | 后台编译，不阻塞 eval |
 | deopt 路径引入 bug | 罕见的 guard 触发路径 | 中 | 全面的 deopt fuzz 测试 |
+| **后台编译线程安全** | ORC JIT + 后台线程 + mutate 并发 | 中高 | 使用 LLVM ThreadSafeContext + std::mutex 保护 SpecCache |
+| **ShapeID 碰撞** | 不同形状映射到同一 ID → 误特化 | 低 | SHA-256 64bit 截断碰撞概率 ~2⁻³²。额外防御：启用时校验 shape tag |
+| **缓存冷启动延迟** | 首次稳定后后台编译未完成 | 中 | L0 通用路径可用；可选 predict 模式（缓存已知形状） |
+| **编译时间爆炸** | 大量小函数同时触发后台编译 | 低 | 后台编译线程池限制（默认 2 线程） |
 
 ### 10.1 关键决策记录
 
@@ -719,7 +815,18 @@ ShapeSnapshot ShapeProfiler::snapshot(FnKey fn);
 | 短字符串池 | ✅ (`opt-short-str.md`) | 互补（减少 string alloc → 更快 shape profile） |
 | 内联 hash IR opcode | ✅ (`opt-primitive-inline.md`) | 互补（提升通用路径性能，让特化路径对比更清晰） |
 | PGO | #52 (规划中) | **前置依赖**：PGO 提供准确的冷热路径数据 |
-| 逃逸分析+Arena | #54 (规划中) | 互补（Arena 减少 GC，SpecJIT 减少 dispatch 开销） |
+| 逃逸分析+Arena | #54 (规划中) | **深度联动**: Arena 分配与 SpecJIT 结合后可做栈分配推测
+  - 如果 shape profile 显示某 hash 对象存活期 <= 当前函数 -> 直接在栈上分配（arena bypass）
+  - 但如果 deopt 后对象需要逃逸 -> 需要把栈上对象提升到 GC heap
+  - 这就是 SpecJIT + Escape Analysis 的交叉点：推测栈分配 + deopt materialization
+  - 实现顺序建议：先 SpecJIT L1/L2，再 Arena，再结合 |
+
+### L2 布局特化实现步骤（推荐顺序）
+
+1. **Pair 布局** -- 最简单，car/cdr 布局已知时直接 gep 字段访问
+2. **Vector 布局** -- 元素类型和长度范围已知时取消 bounds check + 内联访问
+3. **Hash 布局** -- key/value 形状已知时内联 hash function 调用
+4. **Struct 布局** -- 综合上述，字段名 -> 偏移量直接映射
 
 ### 优先顺序建议
 
@@ -792,32 +899,82 @@ LLVM Pass Manager (#56) → 编译器自进化
 
 ## 附录 C: 性能模型
 
-### C.1 加速估算
+### C.0 指令级分析
 
-```python
-# evo-kv get 热路径性能模型
-# 基于现有 IRInterpreter/JIT benchmark (fib-20: JIT 7.55x IRInterpreter)
-
-generic_jit_time = 100ns  # 当前 JIT (含 tag dispatch + type checks)
-spec_jit_time = {
-    'L1_type': 55ns,       # 消 tag check
-    'L2_layout': 35ns,     # +消字段 dispatch + 内联 hash ops
-    'L3_devirt': 25ns,     # +函数去虚拟化
-}
-
-guard_overhead = 2ns       # ShapeID + Version check
-
-effective_time = guard_overhead + (
-    0.95 * spec_jit_time +       # 95% 命中特化路径
-    0.05 * generic_jit_time      # 5% deopt 到通用路径
-)
-
-# L1: 55 + 2 + 0.05*100 = 62ns → ~1.6x
-# L2: 35 + 2 + 0.05*100 = 42ns → ~2.4x
-# L3: 25 + 2 + 0.05*100 = 32ns → ~3.1x
+**通用 JIT（evo-kv get 热路径）**:
+```
+hash_ref(key, store):
+  ; === 类型检查 + dispatch ===
+  load key.tag           ; 1 LD
+  cmp key.tag, STRING    ; 1 CMP + 1 BR
+  extract key.ptr        ; 1 extract (insert/extract on tagged union)
+  
+  load store.tag         ; 1 LD
+  cmp store.tag, HASH    ; 1 CMP + 1 BR
+  extract store.ptr       ; 1 extract
+  
+  ; === hash function call ===
+  load hash_ops.str_hash  ; 1 LD (间接函数指针)
+  call hash_ops(key.ptr)  ; 1 CALL
+  
+  ; === bucket lookup ===
+  load bucket_ptr         ; 1 LD
+  load bucket.count       ; 1 LD
+  ; ... chain walk ...
+  ; 总计: ~12 条 LLVM IR 指令 + 3 个分支
 ```
 
-### C.2 evo-kv 端到端预期
+**L1 类型特化（key 已知为 String）**:
+```
+hash_ref_str(store, key_str):
+  ; === 跳过 tag check ===
+  ; key_str 直接作为 i8* 参数传入
+  
+  load store.tag         ; 仍需要 1 LD（store 形状可能变）
+  cmp store.tag, HASH    ; 1 CMP + 1 BR
+  extract store.ptr       ; 1 extract
+  
+  ; === 内联 str hash ===
+  ; 直接调用 __builtin_strhash(key_str)
+  ; 消除了间接函数指针
+  call @__builtin_strhash ; 1 CALL
+  
+  ; === bucket lookup ===
+  ; 相同
+  ; 总计: ~8 条 LLVM IR 指令 + 1 个分支
+  ; 节约: 4 条指令 + 2 个分支
+```
+
+**L2 布局特化（store 已知为 Hash<String→Int> + key 为 String）**:
+```
+hash_ref_int_str(store_ptr, key_str):
+  ; === 跳过全部类型检查 ===
+  ; store 直接作为 hash struct 指针
+  ; key 直接作为 char* 指针
+  
+  ; === 内联 str hash ===
+  call @__builtin_strhash(key_str) ; 1 CALL
+  
+  ; === 直接访问已知槽位 ===
+  ; store_ptr->buckets[hash % nslots] 直接用 gep
+  %slot = urem %hash, %nslots          ; 1 UREM
+  %gep = getelementptr %slot_ptr        ; 1 GEP
+  %val = load i64, %gep                 ; 1 LD
+  
+  ; 总计: ~4 条 LLVM IR 指令 + 0 个分支
+  ; 节约: 8 条指令 + 3 个分支
+```
+
+### C.1 指令级加速换算
+
+| 路径 | LLVM IR 指令 | 分支预测 | 预期等效延迟 |
+|------|-------------|---------|-------------|
+| 通用 JIT | ~12 | 3 (2 个可能 mispredict) | ~100ns |
+| L1 类型 | ~8 | 1 | ~55ns (1.8x) |
+| L2 布局 | ~4 | 0 | ~35ns (2.9x) |
+| L3 调用约定 | ~3 | 0 | ~25ns (4.0x) |
+
+### C.3 evo-kv 端到端预期
 
 | 模式 | get 延迟 | get 吞吐量 | 对比 baseline |
 |------|---------|-----------|-------------|
