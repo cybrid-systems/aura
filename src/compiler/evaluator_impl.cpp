@@ -13271,6 +13271,18 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             return val.has_value() ? make_bool(true) : make_bool(false);
                         }
 
+                        // while: (while cond body) — evaluate condition, if true evaluate body, repeat
+                        if (cname == "while" && v.children.size() >= 3) {
+                            while (true) {
+                                auto cond_result = eval_flat(*f, *p, v.child(1), eval_env);
+                                if (!cond_result) return cond_result;
+                                if (!is_truthy(*cond_result)) break;
+                                auto body_result = eval_flat(*f, *p, v.child(2), eval_env);
+                                if (!body_result) return body_result;
+                            }
+                            return make_void();
+                        }
+
                         if (cname == "try" && v.children.size() >= 2) {
                             auto body_id = v.child(1);
                             auto result = eval_flat(*f, *p, body_id, eval_env);

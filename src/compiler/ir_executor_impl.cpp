@@ -8,6 +8,19 @@ using namespace aura::ir;
 using namespace aura::diag;
 using namespace types;
 
+// Content-aware equality helper for strings (used by Eq instruction)
+static bool eq_str_content(const EvalValue& a, const EvalValue& b,
+                            std::vector<std::string>& string_heap) {
+    if (a == b) return true;
+    if (is_string(a) && is_string(b)) {
+        auto ai = as_string_idx(a), bi = as_string_idx(b);
+        if (ai < string_heap.size() && bi < string_heap.size())
+            return string_heap[ai] == string_heap[bi];
+        return false;
+    }
+    return false;
+}
+
 EvalResult IRInterpreter::execute() {
     if (module_.functions.empty())
         return std::unexpected(Diagnostic{ErrorKind::IRNoReturn, "empty module"});
@@ -259,7 +272,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 }
 
                 case IROpcode::Eq: {
-                    // Variant-safe equality: compares EvalValues directly.
+                    // Content-aware equality (not just raw pointer comparison)
                     auto& a = locals[ops[1]];
                     auto& b = locals[ops[2]];
                     auto to_val = [](const EvalValue& v) -> double {
@@ -267,10 +280,24 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         if (is_int(v)) return static_cast<double>(as_int(v));
                         return 0.0;
                     };
+                    // Float comparison
                     if (is_float(a) || is_float(b)) {
                         locals[ops[0]] = make_bool(to_val(a) == to_val(b));
-                    } else
+                        break;
+                    }
+                    // String comparison by content
+                    if (is_string(a) && is_string(b)) {
+                        locals[ops[0]] = make_bool(
+                            eq_str_content(a, b, string_heap_));
+                        break;
+                    }
+                    // Pair/list: fall back to raw equality (no pairs_ access here)
+                    if (is_pair(a) && is_pair(b)) {
                         locals[ops[0]] = make_bool(a == b);
+                        break;
+                    }
+                    // Default: raw EvalValue comparison
+                    locals[ops[0]] = make_bool(a == b);
                     break;
                 }
                 case IROpcode::Lt: {
