@@ -92,7 +92,7 @@
                                   (if (null? lst) (reverse acc)
                                       (let ((p (car lst)))
                                         (flatten (cdr lst)
-                                                 (cons (car p) (cons (cdr p) acc))))))))
+                                                 (cons (cdr p) (cons (car p) acc))))))))
                 (flatten slice '()))
               (map cdr slice))))))
 
@@ -110,7 +110,7 @@
                                   (if (null? lst) (reverse acc)
                                       (let ((p (car lst)))
                                         (flatten (cdr lst)
-                                                 (cons (car p) (cons (cdr p) acc))))))))
+                                                 (cons (cdr p) (cons (car p) acc))))))))
                 (flatten slice '()))
               (map cdr slice))))))
 
@@ -218,7 +218,7 @@
                               (if (null? lst) (reverse acc)
                                   (let ((p (car lst)))
                                     (flatten (cdr lst)
-                                             (cons (car p) (cons (cdr p) acc))))))))
+                                             (cons (cdr p) (cons (car p) acc))))))))
             (flatten popped '()))))))
 
 ;; ── ZPOPMAX ──
@@ -249,7 +249,7 @@
                                 (if (null? lst) (reverse acc)
                                     (let ((p (car lst)))
                                       (flatten (cdr lst)
-                                               (cons (car p) (cons (cdr p) acc))))))))
+                                               (cons (cdr p) (cons (car p) acc))))))))
               (flatten popped '())))))))
 
 (display "evo-kv zset loaded") (newline)
