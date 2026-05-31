@@ -43,6 +43,7 @@ target_sources(aura PRIVATE
     src/compiler/type_checker_impl.cpp
     src/compiler/arity_impl.cpp
     src/compiler/aura_jit_bridge.cpp
+    src/compiler/spec_jit_controller.cpp
     src/messaging_bridge_impl.cpp
     src/serve/fiber.cpp
     src/serve/worker.cpp
@@ -274,6 +275,15 @@ add_executable(test_shape tests/test_shape.cpp src/compiler/shape_profiler.cpp)
 target_include_directories(test_shape PRIVATE src)
 target_link_libraries(test_shape PRIVATE stdc++)
 add_test(NAME test_shape COMMAND test_shape
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+# ── Speculative JIT tests (Phase 2, #53) ─────────────────────
+add_executable(test_spec_jit tests/test_spec_jit.cpp
+    src/compiler/spec_jit_controller.cpp
+    src/compiler/shape_profiler.cpp)
+target_include_directories(test_spec_jit PRIVATE src)
+target_link_libraries(test_spec_jit PRIVATE stdc++)
+add_test(NAME test_spec_jit COMMAND test_spec_jit
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # linenoise — single-file line editing library

@@ -7,6 +7,9 @@ module;
 #include <sys/stat.h>
 #include <poll.h>
 #include "serve/fiber.h"
+#include "shape.h"
+#include "shape_profiler.h"
+#include "spec_jit_controller.h"
 
 extern "C" std::int64_t aura_jit_test();
 extern "C" const char* aura_jit_string_content(std::int64_t val);
@@ -934,12 +937,18 @@ public:
         // Pass string pool to JIT compiler for OpConstString support
         jit_.set_string_pool(&ir_mod.string_pool);
 
+        // Shape map storage for specialized compilation
+        std::vector<std::uint8_t> current_shape_map;
+
         // Helper: convert IR function to FlatFunction
+        // Optionally includes shape_map for L1 specialization.
         struct FlatFnBuilder {
             std::vector<std::vector<aura::jit::FlatInstruction>> flat_instrs;
             std::vector<aura::jit::FlatBlock> flat_blocks;
             aura::jit::FlatFunction flat_fn;
             std::string name_storage;
+            // Shape map storage (must outlive FlatFunction usage)
+            std::vector<std::uint8_t> shape_map_storage;
 
             FlatFnBuilder(const aura::ir::IRFunction& ir_fn) {
                 flat_instrs.resize(ir_fn.blocks.size());
@@ -965,8 +974,40 @@ public:
                     flat_blocks.data(),
                     static_cast<std::uint32_t>(flat_blocks.size()),
                     nullptr,
-                    0 // func_id_map not used for entry
+                    0,  // func_id_map not used for entry
+                    nullptr  // shape_map (set after if needed)
                 };
+            }
+
+            // Populate shape_map from profiler data.
+            // Fills shape_map_storage and sets flat_fn.shape_map.
+            void set_shape_map(const shape::ShapeProfiler& profiler,
+                               const std::string& session,
+                               const std::string& fn_name) {
+                auto fn_key = shape::make_fn_key(session, fn_name);
+                if (!profiler.is_stable(fn_key))
+                    return;
+
+                auto dom = profiler.dominant_shape(fn_key);
+                // Map ShapeID to shape_map byte code
+                std::uint8_t code = 0;  // Dynamic
+                if (dom == shape::SHAPE_INT)      code = 1;
+                else if (dom == shape::SHAPE_FLOAT) code = 2;
+                else if (dom == shape::SHAPE_BOOL)  code = 3;
+                else if (dom == shape::SHAPE_STRING) code = 4;
+                else if (dom == shape::SHAPE_VOID)   code = 5;
+                else
+                    return;  // Not a simple leaf shape
+
+                shape_map_storage.resize(flat_fn.local_count, 0);
+                // Only annotate argument slots (slots 0..arg_count-1 are args)
+                for (std::uint32_t i = 0; i < flat_fn.arg_count && i < flat_fn.local_count; ++i)
+                    shape_map_storage[i] = code;
+
+                flat_fn.shape_map = shape_map_storage.data();
+
+                std::fprintf(stderr, "spec: L1 for '%s' — arg shape=%d\n",
+                            fn_name.c_str(), (int)code);
             }
         };
 
@@ -987,6 +1028,8 @@ public:
                 fn_ptr = cache_it->second.fn_ptr;
             } else {
                 FlatFnBuilder builder(ir_fn);
+                // Set shape_map from profiler for L1 specialization
+                builder.set_shape_map(shape_profiler_, session_id_, ir_fn.name);
                 fn_ptr = jit_.compile(builder.flat_fn);
                 if (!fn_ptr) {
                     return std::unexpected(aura::diag::Diagnostic{
@@ -3024,6 +3067,8 @@ private:
 
     // ── Shape profiler (Phase 1, #53) ─────────────────────────
     shape::ShapeProfiler shape_profiler_;
+    // ── Speculative JIT controller (Phase 2, #53) ──────────────
+    shape::SpecJITController spec_jit_{jit_};
 
     // ── Static registry ──────────────────────────────────────
     // Using Scott Meyer's singletons to avoid ODR issues with module static members

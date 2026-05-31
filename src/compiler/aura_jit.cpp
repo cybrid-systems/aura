@@ -107,6 +107,11 @@ struct LLVMBuilder {
 
     // AOT mode: OpPrimitive stores negative sentinel for primitive dispatch
     bool aot_mode = false;
+    // Shape map from FlatFunction: null = dynamic, non-null = known shapes
+    // Values: 0=Dynamic, 1=Int, 2=Float, 3=Bool, 4=String, 5=Void
+    const uint8_t* shape_map = nullptr;
+    uint32_t shape_map_size = 0;
+
     // Pointer tagging constants (must match lib/runtime.c)
     static constexpr int64_t KWD_TRUE_VAL = 7;
     static constexpr int64_t KWD_FALSE_VAL = 3;
@@ -260,10 +265,17 @@ struct LLVMBuilder {
             }
             case OpAdd: {
                 auto a = load(inst.ops[1]), b = load(inst.ops[2]);
+                // L1 specialization: if both args known Int, skip float check
+                bool spec_int = (shape_map &&
+                    inst.ops[1] < shape_map_size && shape_map[inst.ops[1]] == 1 &&
+                    inst.ops[2] < shape_map_size && shape_map[inst.ops[2]] == 1);
+                if (spec_int) {
+                    store(inst.ops[0], irb->CreateAdd(a, b));
+                    return true;
+                }
                 auto a_is_float = irb->CreateICmpSLE(a, c64(FLOAT_BIAS_VAL));
                 auto b_is_float = irb->CreateICmpSLE(b, c64(FLOAT_BIAS_VAL));
                 auto any_float = irb->CreateOr(a_is_float, b_is_float);
-                // Float path: extract both values as double
                 auto a_dbl = irb->CreateSelect(a_is_float,
                     irb->CreateCall(fn_float_ref, {a}),
                     irb->CreateSIToFP(irb->CreateAShr(a, c64(1)), double_ty));
@@ -272,13 +284,19 @@ struct LLVMBuilder {
                     irb->CreateSIToFP(irb->CreateAShr(b, c64(1)), double_ty));
                 auto fsum = irb->CreateFAdd(a_dbl, b_dbl);
                 auto float_res = irb->CreateCall(fn_alloc_float, {fsum});
-                // Fixnum path (current)
                 auto fixnum_res = irb->CreateAdd(a, b);
                 store(inst.ops[0], irb->CreateSelect(any_float, float_res, fixnum_res));
                 return true;
             }
             case OpSub: {
                 auto a = load(inst.ops[1]), b = load(inst.ops[2]);
+                bool spec_int = (shape_map &&
+                    inst.ops[1] < shape_map_size && shape_map[inst.ops[1]] == 1 &&
+                    inst.ops[2] < shape_map_size && shape_map[inst.ops[2]] == 1);
+                if (spec_int) {
+                    store(inst.ops[0], irb->CreateSub(a, b));
+                    return true;
+                }
                 auto a_is_float = irb->CreateICmpSLE(a, c64(FLOAT_BIAS_VAL));
                 auto b_is_float = irb->CreateICmpSLE(b, c64(FLOAT_BIAS_VAL));
                 auto any_float = irb->CreateOr(a_is_float, b_is_float);
@@ -296,6 +314,14 @@ struct LLVMBuilder {
             }
             case OpMul: {
                 auto a = load(inst.ops[1]), b = load(inst.ops[2]);
+                bool spec_int = (shape_map &&
+                    inst.ops[1] < shape_map_size && shape_map[inst.ops[1]] == 1 &&
+                    inst.ops[2] < shape_map_size && shape_map[inst.ops[2]] == 1);
+                if (spec_int) {
+                    // Tagged fixnums: (a*b) >> 1
+                    store(inst.ops[0], irb->CreateAShr(irb->CreateMul(a, b), c64(1)));
+                    return true;
+                }
                 auto a_is_float = irb->CreateICmpSLE(a, c64(FLOAT_BIAS_VAL));
                 auto b_is_float = irb->CreateICmpSLE(b, c64(FLOAT_BIAS_VAL));
                 auto any_float = irb->CreateOr(a_is_float, b_is_float);
@@ -315,10 +341,20 @@ struct LLVMBuilder {
             case OpDiv: {
                 auto dividend = load(inst.ops[1]);
                 auto divisor = load(inst.ops[2]);
+                bool spec_int = (shape_map &&
+                    inst.ops[1] < shape_map_size && shape_map[inst.ops[1]] == 1 &&
+                    inst.ops[2] < shape_map_size && shape_map[inst.ops[2]] == 1);
+                if (spec_int) {
+                    auto is_zero = irb->CreateICmpEQ(divisor, c64(0));
+                    auto safe_div = irb->CreateSelect(is_zero, c64(2), divisor);  // fixnum 1
+                    auto div_result = irb->CreateSDiv(dividend, safe_div);
+                    auto safe = irb->CreateSelect(is_zero, c64(0), div_result);
+                    store(inst.ops[0], irb->CreateShl(safe, c64(1)));
+                    return true;
+                }
                 auto a_is_float = irb->CreateICmpSLE(dividend, c64(FLOAT_BIAS_VAL));
                 auto b_is_float = irb->CreateICmpSLE(divisor, c64(FLOAT_BIAS_VAL));
                 auto any_float = irb->CreateOr(a_is_float, b_is_float);
-                // Float path
                 auto a_dbl = irb->CreateSelect(a_is_float,
                     irb->CreateCall(fn_float_ref, {dividend}),
                     irb->CreateSIToFP(irb->CreateAShr(dividend, c64(1)), double_ty));
@@ -329,12 +365,10 @@ struct LLVMBuilder {
                 auto safe_b = irb->CreateSelect(is_zero_f, llvm::ConstantFP::get(double_ty, 1.0), b_dbl);
                 auto fdiv = irb->CreateFDiv(a_dbl, safe_b);
                 auto float_res = irb->CreateCall(fn_alloc_float, {fdiv});
-                // Fixnum path
                 auto is_zero = irb->CreateICmpEQ(divisor, c64(0));
                 auto safe_div = irb->CreateSelect(is_zero, c64(1), divisor);
                 auto div_result = irb->CreateSDiv(dividend, safe_div);
                 auto safe = irb->CreateSelect(is_zero, c64(0), div_result);
-                // Fixnum path: tagged fixnums (val<<1), SDiv gives integer result, shift for fixnum encoding
                 auto fixnum_res = irb->CreateShl(safe, c64(1));
                 store(inst.ops[0], irb->CreateSelect(any_float, float_res, fixnum_res));
                 return true;
@@ -892,6 +926,8 @@ struct AuraJIT::Impl {
         LLVMBuilder builder{ctx};
         builder.mod = mod.get();
         builder.declare_runtime();
+        builder.shape_map = fn.shape_map;
+        builder.shape_map_size = fn.local_count;
         if (string_pool_)
             builder.string_pool = string_pool_;
 
