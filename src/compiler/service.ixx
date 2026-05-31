@@ -399,6 +399,11 @@ public:
                 }
             }
 
+            // Set nodes (from set!) must go through tree-walker because they
+            // mutate cells in the evaluator's cell heap, not the IR's local heap.
+            if (nv.tag == aura::ast::NodeTag::Set)
+                return true;
+
             if (nv.tag == aura::ast::NodeTag::Call) {
                 auto callee = nv.child(0);
                 if (callee != aura::ast::NULL_NODE && callee < flat.size()) {
