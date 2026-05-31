@@ -1,0 +1,51 @@
+;; === test-evo-kv.aura — 自测试 ===
+;; 用法: (load "projects/evo-kv/evo-kv.aura") (load "projects/evo-kv/test-evo-kv.aura")
+
+(display "=== evo-kv test suite ===") (newline)
+
+(define passed 0)
+(define failed 0)
+
+(define (check-eq actual expected msg)
+  (if (equal? actual expected)
+      (begin (set! passed (+ passed 1))
+             (display "[PASS] ") (display msg) (newline))
+      (begin (set! failed (+ failed 1))
+             (display "[FAIL] ") (display msg)
+             (display " exp: ") (display expected)
+             (display " got: ") (display actual) (newline))))
+
+;; ── Core API ──
+(check-eq (evo-set "a" "hello") "OK" "core: evo-set")
+(check-eq (evo-get "a") "hello" "core: evo-get")
+(check-eq (evo-del "a") "OK" "core: evo-del")
+(check-eq (not (eq? (evo-get "a") #f)) #t "core: evo-del clears value")
+
+;; ── Track wrapper ──
+(evo-flush)
+(metrics-reset)
+(check-eq (track-evo-set "x" "val") "OK" "track: evo-set")
+(check-eq (track-evo-get "x") "val" "track: evo-get #1")
+(check-eq (track-evo-get "x") "val" "track: evo-get #2")
+(check-eq (hash-ref-or *evo-type-ops* (quote get) 0) 2 "track: 2 gets counted")
+
+;; ── Hot keys ──
+(track-evo-get "hot:1") (track-evo-get "hot:1")
+(track-evo-get "hot:1") (track-evo-get "hot:2")
+(check-eq (not (null? (metrics-hot-keys 1))) #t "hot: keys tracked")
+
+;; ── Evolution log ──
+(evo-log! "test" "before" "after" "manual" "ok")
+(check-eq (not (null? (evo-history 1))) #t "log: entry created")
+
+;; ── Auto scan ──
+(check-eq (not (null? (evo-auto-scan))) #t "scan: returns results")
+
+;; ── Grok gateway ──
+(check-eq (pair? (grok-command "status")) #t "grok: status returns pair")
+(check-eq (not (null? (grok-command "unknown"))) #t "grok: unknown handled")
+
+;; ── Summary ──
+(newline)
+(display "=== Results: ") (display passed) (display " passed, ")
+(display failed) (display " failed") (newline)
