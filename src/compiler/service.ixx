@@ -2269,6 +2269,12 @@ public:
         }
 
         if (is_success) {
+            // Phase 4 (#53): invalidate shape profiles on mutation
+            // to trigger deoptimization on next eval.
+            // Conservative: reset all profiles since we don't know which
+            // functions were affected.
+            shape_profiler_.reset();
+
             tx.commit();
             return {mid, true, ""};
         }
