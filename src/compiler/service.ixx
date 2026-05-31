@@ -313,6 +313,7 @@ public:
             // Special forms not in IR
             "when",
             "load",
+            "equal?",
             "unless",
             "export",
             "and",

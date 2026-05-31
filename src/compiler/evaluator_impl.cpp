@@ -14200,15 +14200,32 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     auto val = eval_flat(*f, *p, val_id, eval_env);
                     if (!val)
                         return val;
+                    // Walk env chain to find the cell pointer, scanning both current
+                    // and parent envs (lookup_cell_ptr already does this, but fallback
+                    // below also handles non-cell direct bindings)
                     auto* cell_ptr = eval_env.lookup_cell_ptr(std::string(name), &cells_);
                     if (cell_ptr) {
                         *cell_ptr = *val;
                         return *val;
                     }
+                    // Fallback 1: direct binding in current env
                     for (auto& b : const_cast<Env&>(eval_env).bindings()) {
                         if (b.first == name) {
                             b.second = *val;
                             return *val;
+                        }
+                    }
+                    // Fallback 2: scan parent envs for direct (non-cell) bindings
+                    {
+                        const Env* e = eval_env.parent();
+                        while (e) {
+                            for (auto& b : const_cast<Env&>(*e).bindings()) {
+                                if (b.first == name) {
+                                    b.second = *val;
+                                    return *val;
+                                }
+                            }
+                            e = e->parent();
                         }
                     }
                     // Suggest closest bound variables
