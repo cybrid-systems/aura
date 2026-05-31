@@ -490,9 +490,17 @@ public:
         // The Variable checks in needs_tree_walker_fallback would otherwise
         // always trigger fallback (variables in function body aren't in cache yet).
         auto expanded_v = expanded_root < flat_ptr->size() ? flat_ptr->get(expanded_root) : aura::ast::NodeView{};
-        bool is_define_form = (expanded_v.tag == aura::ast::NodeTag::Define);
+        bool is_fn_define = false;
+        if (expanded_v.tag == aura::ast::NodeTag::Define && !expanded_v.children.empty()) {
+            auto body_id = expanded_v.child(0);
+            if (body_id < flat_ptr->size()) {
+                auto body_node = flat_ptr->get(body_id);
+                if (body_node.tag == aura::ast::NodeTag::Lambda)
+                    is_fn_define = true;
+            }
+        }
 
-        if (!is_define_form && needs_tree_walker_fallback(*flat_ptr, *pool_ptr, expanded_root)) {
+        if (!is_fn_define && needs_tree_walker_fallback(*flat_ptr, *pool_ptr, expanded_root)) {
             auto result =
                 evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
             // Track all bound names so subsequent eval calls don't fall
@@ -624,6 +632,26 @@ public:
                     tag == aura::ast::NodeTag::MacroDef) {
                     skip_jit = true;
                     break;
+                }
+                // Check Call nodes for non-user-defined callees.
+                // Built-in primitives (number?, cons, display, etc.) have
+                // different result encoding than user-defined functions.
+                // Allow calls to cached user-defined functions to pass
+                // through for JIT optimization.
+                if (tag == aura::ast::NodeTag::Call && !nv.children.empty()) {
+                    auto callee_id = nv.child(0);
+                    if (callee_id < flat_ptr->size()) {
+                        auto callee_v = flat_ptr->get(callee_id);
+                        if (callee_v.tag == aura::ast::NodeTag::Variable) {
+                            auto callee_name = pool_ptr->resolve(callee_v.sym_id);
+                            auto cname = std::string(callee_name);
+                            // Only block if NOT a cached user-defined function
+                            if (ir_cache_.count(cname) == 0) {
+                                skip_jit = true;
+                                break;
+                            }
+                        }
+                    }
                 }
             }
             if (!skip_jit) {
