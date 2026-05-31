@@ -1839,7 +1839,7 @@ int main(int argc, char* argv[]) {
 
         // ── Environment dump ─────────────────────────────────────
         auto closures = cs.last_closures();
-        auto& cells = cs.evaluator().cells();
+        auto cells = cs.last_cells();
 
         std::println("┌─ closures ({})", closures.size());
         for (auto& c : closures) {
@@ -1868,8 +1868,8 @@ int main(int argc, char* argv[]) {
         }
 
         std::println("┌─ cells ({})", cells.size());
-        for (std::size_t ci = 0; ci < cells.size(); ++ci) {
-            std::println("├ [{}] = {}", ci, fmt_val(cells[ci], cs));
+        for (auto& c : cells) {
+            std::println("├ [{}] = {}", c.id, fmt_val(c.value, cs));
         }
 
         return result ? 0 : 1;
@@ -1893,7 +1893,7 @@ int main(int argc, char* argv[]) {
         }
 
         auto closures = cs.last_closures();
-        auto& cells = cs.evaluator().cells();
+        auto cells = cs.last_cells();
 
         for (auto& c : closures) {
             std::println("closure [{}] = func[{}] '{}'", c.id, c.func_id, c.func_name);
@@ -1904,8 +1904,8 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        for (std::size_t ci = 0; ci < cells.size(); ++ci) {
-            std::println("cell [{}] = {}", ci, fmt_val(cells[ci], cs));
+        for (auto& c : cells) {
+            std::println("cell [{}] = {}", c.id, fmt_val(c.value, cs));
         }
 
         return result ? 0 : 1;
@@ -1923,7 +1923,7 @@ int main(int argc, char* argv[]) {
 
         auto result = cs.eval_ir(input);
         auto closures = cs.last_closures();
-        auto& cells = cs.evaluator().cells();
+        auto cells = cs.last_cells();
 
         std::println("{{\"status\":\"{}\",\"result\":{},\"closures\":[", result ? "ok" : "error",
                      result ? fmt_val(*result, cs) : std::string("null"));
@@ -1944,7 +1944,7 @@ int main(int argc, char* argv[]) {
 
         std::println("],\"cells\":[");
         for (std::size_t i = 0; i < cells.size(); ++i) {
-            std::println("  {{\"id\":{},\"value\":{}}}{}", i, fmt_val(cells[i], cs),
+            std::println("  {{\"id\":{},\"value\":{}}}{}", cells[i].id, fmt_val(cells[i].value, cs),
                          i + 1 < cells.size() ? "," : "");
         }
         std::println("]}}");
