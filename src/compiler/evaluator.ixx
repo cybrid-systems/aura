@@ -335,6 +335,9 @@ private:
     // ── Timeline for intend (E2, backward compat) ───────────────
     std::vector<std::string> timeline_; //
     std::vector<std::string> string_heap_;
+    // Short string cache: ≤6 byte strings are deduplicated via this hash
+    // (avoids redundant string_heap_ pushes and enables faster equal?)
+    std::unordered_map<std::string, types::EvalValue> short_str_cache_;
     std::vector<std::string> keyword_table_; // keyword name strings (indexed by KeywordRef)
     std::size_t eval_depth_ = 0; // recursion counter for friendly stack overflow
     static constexpr std::size_t MAX_EVAL_DEPTH = 50000;

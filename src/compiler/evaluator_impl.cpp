@@ -12992,8 +12992,20 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                 case aura::ast::NodeTag::LiteralFloat:
                     return make_float(v.float_value);
                 case aura::ast::NodeTag::LiteralString: {
+                    auto raw = std::string(p->resolve(v.sym_id));
+                    // Short strings: use cache to avoid duplicate heap pushes
+                    if (raw.size() <= 6) {
+                        auto it = short_str_cache_.find(raw);
+                        if (it != short_str_cache_.end())
+                            return it->second;
+                        auto sid = string_heap_.size();
+                        string_heap_.push_back(raw);
+                        auto val = make_string(sid);
+                        short_str_cache_[raw] = val;
+                        return val;
+                    }
                     auto sid = string_heap_.size();
-                    string_heap_.push_back(std::string(p->resolve(v.sym_id)));
+                    string_heap_.push_back(std::move(raw));
                     return make_string(sid);
                 }
                 case aura::ast::NodeTag::Variable: {
