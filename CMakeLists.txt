@@ -44,7 +44,7 @@ target_sources(aura PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/aura_jit_bridge.cpp
     src/compiler/spec_jit_controller.cpp
-    src/messaging_bridge_impl.cpp
+    src/compiler/messaging_bridge_impl.cpp
     src/serve/fiber.cpp
     src/serve/worker.cpp
     src/serve/thread_pool.cpp
@@ -175,7 +175,7 @@ target_sources(test_ir PRIVATE
     src/compiler/shape_profiler.cpp
     src/compiler/type_checker_impl.cpp
     src/compiler/arity_impl.cpp
-    src/messaging_bridge_impl.cpp)
+    src/compiler/messaging_bridge_impl.cpp)
 target_compile_options(test_ir PRIVATE -Wall -Wextra -Wpedantic
     -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter
@@ -194,7 +194,7 @@ target_sources(test_concurrent PRIVATE
     src/serve/gc_coordinator.cpp
     src/exec/execution_adapter.cpp
     src/exec/combinators.cpp
-    src/messaging_bridge_impl.cpp
+    src/compiler/messaging_bridge_impl.cpp
 )
 target_compile_options(test_concurrent PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
