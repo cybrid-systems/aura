@@ -9,13 +9,14 @@
 ```
 R1  LRU 缓存层                          ✅ 已推送
 R2  auto 驱动修复 + 集成                ✅ 已推送
-R3  Sorted Set (ZSET)                   ✅ 已推送
+R3  Sorted Set (ZSET)                   ✅ 已推送 (fix: flatten排序)
 R4  逐出策略 + INFO                     ✅ 已推送
 R5  Pub/Sub                             ✅ 已推送
-R6  AOF 持久化                          ⬜
-R7  Benchmark 套件                      ⬜
-R8  RESP 协议层                         ⬜
-R9  Replication / 集群                  ⬜
+R6  AOF 持久化                          ✅ 已推送
+R7  Benchmark 套件                      ✅ 已推送
+R8  RESP 协议层                         ✅ 已推送
+R9  Replication / 集群                  ✅ 已推送
+全模块集成测试                          ✅ 22 tests (R1-R4)
 ```
 
 ### R4（当前）
