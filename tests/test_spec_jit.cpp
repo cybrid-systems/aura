@@ -488,6 +488,213 @@ int main() {
     }
 
     // ═══════════════════════════════════════════════════════════
+    // Section 7: Heap shape guard — Pair/Vector/Hash/Closure/Ref
+    // ═══════════════════════════════════════════════════════════
+
+    // ── 7a: Pair guard (10) matches pair refs ────────────────
+    {
+        // Pair ref encoding: (index << 6) | (0 << 2) | 1, ref_type=0
+        // index=0: (0<<6) | 0 | 1 = 1
+        // index=1: (1<<6) | 0 | 1 = 65
+        std::int64_t args[] = {1, 65, 129};  // all ref_type=0 (Pair)
+        std::uint8_t map[] = {10, 10, 10};
+        TEST("Pair guard (10) matches pair refs",
+             check_shape_guard(args, 3, map, 3));
+    }
+
+    // ── 7b: Pair guard rejects non-ref ──────────────────────
+    {
+        std::int64_t args[] = {42 << 1};  // fixnum, not pair ref
+        std::uint8_t map[] = {10};
+        TEST("Pair guard rejects fixnum",
+             !check_shape_guard(args, 1, map, 1));
+    }
+
+    // ── 7c: Pair guard rejects bool ──────────────────────────
+    {
+        std::int64_t args[] = {7};  // bool #t (has bit pattern 3, not 1)
+        std::uint8_t map[] = {10};
+        TEST("Pair guard rejects bool #t",
+             !check_shape_guard(args, 1, map, 1));
+    }
+
+    // ── 7d: Pair guard rejects void ──────────────────────────
+    {
+        std::int64_t args[] = {11};  // void
+        std::uint8_t map[] = {10};
+        TEST("Pair guard rejects void",
+             !check_shape_guard(args, 1, map, 1));
+    }
+
+    // ── 7e: Vector guard (11) matches vector refs ────────────
+    {
+        // Vector ref: ref_type=3 → (anything << 2) | 1 with bits 2-5 = 3
+        // (0 << 6) | (3 << 2) | 1 = 13
+        std::int64_t args[] = {13, 13 + 64, 13 + 128};  // vectors
+        std::uint8_t map[] = {11, 11, 11};
+        TEST("Vector guard (11) matches vector refs",
+             check_shape_guard(args, 3, map, 3));
+    }
+
+    // ── 7f: Vector guard rejects Pair ref ────────────────────
+    {
+        std::int64_t args[] = {1};  // pair ref (ref_type=0)
+        std::uint8_t map[] = {11};  // expected vector
+        TEST("Vector guard rejects pair ref",
+             !check_shape_guard(args, 1, map, 1));
+    }
+
+    // ── 7g: Hash guard (12) matches hash refs ────────────────
+    {
+        // Hash ref: ref_type=4 → (4 << 2) | 1 = 17
+        std::int64_t args[] = {17, 17 + 64};
+        std::uint8_t map[] = {12, 12};
+        TEST("Hash guard (12) matches hash refs",
+             check_shape_guard(args, 2, map, 2));
+    }
+
+    // ── 7h: Hash guard rejects vector ────────────────────────
+    {
+        std::int64_t args[] = {13};  // vector ref (ref_type=3)
+        std::uint8_t map[] = {12};  // expected hash
+        TEST("Hash guard rejects vector ref",
+             !check_shape_guard(args, 1, map, 1));
+    }
+
+    // ── 7i: Closure guard (13) matches closure refs ─────────
+    {
+        // Closure ref: ref_type=1 → (1 << 2) | 1 = 5
+        std::int64_t args[] = {5, 69};  // (0<<6)|4|1=5, (1<<6)|4|1=69
+        std::uint8_t map[] = {13, 13};
+        TEST("Closure guard (13) matches closure refs",
+             check_shape_guard(args, 2, map, 2));
+    }
+
+    // ── 7j: Closure guard rejects void ──────────────────────
+    {
+        std::int64_t args[] = {11};  // void
+        std::uint8_t map[] = {13};  // expected closure
+        TEST("Closure guard rejects void",
+             !check_shape_guard(args, 1, map, 1));
+    }
+
+    // ── 7k: Generic Ref guard (14) matches any ref ──────────
+    {
+        std::int64_t args[] = {1, 5, 13, 17};  // Pair, Closure, Vector, Hash
+        std::uint8_t map[] = {14, 14, 14, 14};  // generic ref
+        TEST("Ref guard (14) matches any ref type",
+             check_shape_guard(args, 4, map, 4));
+    }
+
+    // ── 7l: Ref guard rejects non-ref (fixnum) ───────────────
+    {
+        std::int64_t args[] = {42 << 1};  // fixnum
+        std::uint8_t map[] = {14};  // generic ref
+        TEST("Ref guard rejects fixnum",
+             !check_shape_guard(args, 1, map, 1));
+    }
+
+    // ── 7m: Ref guard rejects bool ───────────────────────────
+    {
+        std::int64_t args[] = {7};  // bool #t
+        std::uint8_t map[] = {14};
+        TEST("Ref guard rejects bool",
+             !check_shape_guard(args, 1, map, 1));
+   }
+
+    // ═══════════════════════════════════════════════════════════
+    // Section 8: Version Guard — mutate awareness
+    // ═══════════════════════════════════════════════════════════
+
+    // ── 8a: Version increments on invalidate ─────────────────
+    {
+        ShapeProfiler profiler;
+        FnKey fn = make_fn_key("sess", "version_test");
+
+        for (int i = 0; i < 100; i++)
+            profiler.record_shape(fn, SHAPE_INT);
+
+        auto snap = profiler.current_snapshot(fn);
+        TEST("Version: initial version == 0", snap.version == 0);
+
+        profiler.invalidate(fn);  // simulate mutate
+        snap = profiler.current_snapshot(fn);
+        TEST("Version: after 1 mutate == 1", snap.version == 1);
+
+        profiler.invalidate(fn);  // another mutate
+        snap = profiler.current_snapshot(fn);
+        TEST("Version: after 2 mutates == 2", snap.version == 2);
+    }
+
+    // ── 8b: Version + shape guard integration ───────────────
+    {
+        ShapeProfiler profiler;
+        FnKey fn = make_fn_key("sess", "version_guard");
+
+        for (int i = 0; i < 100; i++)
+            profiler.record_shape(fn, SHAPE_INT);
+        TEST("Version guard: stable before mutate", profiler.is_stable(fn));
+
+        // Build shape map
+        uint8_t map[1] = {1};  // Int
+        std::int64_t arg = 42 << 1;
+        TEST("Version guard: pre-mutate guard passes",
+             check_shape_guard(&arg, 1, map, 1));
+
+        // Simulate version check (as service.ixx would do):
+        // after invalidate, the snapshot version changes
+        auto pre_snap = profiler.current_snapshot(fn);
+        std::uint64_t expected_version = pre_snap.version;
+
+        // mutate
+        profiler.invalidate(fn);
+        auto post_snap = profiler.current_snapshot(fn);
+
+        // Version check: caller compares cached version vs current
+        bool version_match = (post_snap.version == expected_version);
+        TEST("Version guard: version mismatch after mutate",
+             !version_match);
+        TEST("Version guard: new version == old + 1",
+             post_snap.version == expected_version + 1);
+
+        // After invalidate, shape_map is cleared → guard won't be set
+        // so the system falls back to IRInterpreter
+        TEST("Version guard: not stable after mutate",
+             !profiler.is_stable(fn));
+    }
+
+    // ── 8c: Multiple mutates with interleaved re-stabilize ──
+    {
+        ShapeProfiler profiler;
+        FnKey fn = make_fn_key("sess", "multi_mutate");
+
+        for (int i = 0; i < 100; i++)
+            profiler.record_shape(fn, SHAPE_INT);
+        auto snap1 = profiler.current_snapshot(fn);
+        TEST("Multi mutate: initial version 0", snap1.version == 0);
+
+        profiler.invalidate(fn);  // mutate 1
+        profiler.invalidate(fn);  // mutate 2
+        auto snap2 = profiler.current_snapshot(fn);
+        TEST("Multi mutate: version 2 after 2 mutates", snap2.version == 2);
+
+        // Re-stabilize on different shape
+        for (int i = 0; i < 100; i++)
+            profiler.record_shape(fn, SHAPE_FLOAT);
+
+        // Version stays at 2 (mutate count, not affected by re-stabilize)
+        auto snap3 = profiler.current_snapshot(fn);
+        TEST("Multi mutate: version 2 after restabilize", snap3.version == 2);
+        TEST("Multi mutate: stable on Float",
+             profiler.is_stable(fn) && profiler.dominant_shape(fn) == SHAPE_FLOAT);
+
+        // Another mutate resets to version 3
+        profiler.invalidate(fn);
+        TEST("Multi mutate: version 3 after another mutate",
+             profiler.current_snapshot(fn).version == 3);
+    }
+
+    // ═══════════════════════════════════════════════════════════
     // Summary
     // ═══════════════════════════════════════════════════════════
     std::fprintf(stdout, "\n=== Results: %d/%d passed ===\n",
