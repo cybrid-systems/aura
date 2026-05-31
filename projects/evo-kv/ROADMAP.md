@@ -9,15 +9,22 @@
 ```
 R1  LRU 缓存层                          ✅ 已推送
 R2  auto 驱动修复 + 集成                ✅ 已推送
-R3  Sorted Set (ZSET)                   ⬅️ 本轮
-R4  逐出策略 (LRU/LFU/TTL)             ⬜
-R5  Pub/Sub                             ⬜
+R3  Sorted Set (ZSET)                   ✅ 已推送
+R4  逐出策略 + INFO                     ✅ 已推送
+R5  Pub/Sub                             ⬜ 本轮
 R6  AOF 持久化                          ⬜
 R7  Benchmark 套件                      ⬜
-R8  INFO / SLOWLOG / MONITOR            ⬜
-R9  RESP 协议层                         ⬜
-R10 Replication / 集群                  ⬜
+R8  RESP 协议层                         ⬜
+R9  Replication / 集群                  ⬜
 ```
+
+### R4（当前）
+
+- `evo-kv-admin.aura` — 管理命令层
+- CONFIG SET/GET: maxmemory, maxmemory-policy
+- 逐出策略: noeviction / allkeys-lru / volatile-ttl
+- INFO: 键值统计 + 操作计数
+- MEMORY USAGE: 采样估算
 
 ## 各轮详情
 
