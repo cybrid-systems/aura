@@ -15,7 +15,7 @@
 #include <sys/eventfd.h>
 #include <unistd.h>
 
-#include "messaging_bridge.h"
+#include "compiler/messaging_bridge.h"
 #include "serve/fiber.h"
 #include "serve/gc_coordinator.h"
 #include "serve/scheduler.h"
