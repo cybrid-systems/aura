@@ -1,0 +1,120 @@
+;; === test-evo-kv-full.aura — 全模块集成测试 ===
+;; 用法: 先 load 所有模块，然后 load 本文件
+
+(display "=== evo-kv full integration test ===") (newline)
+
+(define passed 0)
+(define failed 0)
+
+(define (check-eq actual expected msg)
+  (if (equal? actual expected)
+      (begin (set! passed (+ passed 1))
+             (display "[PASS] ") (display msg) (newline))
+      (begin (set! failed (+ failed 1))
+             (display "[FAIL] ") (display msg)
+             (display " exp=") (display expected)
+             (display " got=") (display actual) (newline))))
+
+(define (check-true actual msg) (check-eq actual #t msg))
+(define (check-false actual msg) (check-eq actual #f msg))
+
+;; ═══════════════════════════════════════════════════════════════
+;; R1: Cache Layer
+;; ═══════════════════════════════════════════════════════════════
+(display "\n--- R1: Cache ---\n")
+(evo-flush)
+(cache-set "c:k1" "cached-val")
+(check-eq (cache-get "c:k1") "cached-val" "cache: get after set")
+(cache-set "c:k2" "val2")
+(check-eq (cache-get "c:k2") "val2" "cache: second key")
+;; cache misses go to evo-store
+(evo-set "c:k3" "direct")
+(check-eq (cache-get "c:k3") "direct" "cache: miss goes to evo-get")
+
+;; ═══════════════════════════════════════════════════════════════
+;; R3: ZSET (Sorted Set)
+;; ═══════════════════════════════════════════════════════════════
+(display "\n--- R3: ZSET ---\n")
+(zadd "leaderboard" 100 "alice")
+(zadd "leaderboard" 200 "bob")
+(zadd "leaderboard" 50 "charlie")
+(check-eq (zscore "leaderboard" "alice") 100 "zset: zscore alice")
+(check-eq (zscore "leaderboard" "bob") 200 "zset: zscore bob")
+(check-eq (zscore "leaderboard" "charlie") 50 "zset: zscore charlie")
+(check-eq (zcard "leaderboard") 3 "zset: zcard 3 members")
+(check-eq (zscore "leaderboard" "nonexistent") '() "zset: zscore missing member")
+(check-eq (zrank "leaderboard" "alice") 1 "zset: zrank alice=1 (by score)")
+(check-eq (zrank "leaderboard" "bob") 2 "zset: zrank bob=2")
+(check-eq (zrank "leaderboard" "charlie") 0 "zset: zrank charlie=0")
+(check-eq (zrem "leaderboard" "bob") 1 "zset: zrem bob")
+(check-eq (zcard "leaderboard") 2 "zset: zcard after zrem")
+(zincrby "leaderboard" 50 "alice")
+(check-eq (zscore "leaderboard" "alice") 150 "zset: zincrby alice +50")
+(zadd "leaderboard" 75 "dave")
+(zadd "leaderboard" 25 "eve")
+(check-eq (zcount "leaderboard" 0 80) 3 "zset: zcount score 0-80")
+(check-eq (zcount "leaderboard" 100 200) 1 "zset: zcount score 100-200")
+;; zpopmin / zpopmax
+(zadd "zpop-test" 10 "a")(zadd "zpop-test" 20 "b")(zadd "zpop-test" 30 "c")
+(check-eq (zpopmin "zpop-test") '(10 a) "zset: zpopmin lowest")
+(check-eq (zpopmax "zpop-test") '(30 c) "zset: zpopmax highest")
+(check-eq (zcard "zpop-test") 1 "zset: zcard after pops")
+
+;; ═══════════════════════════════════════════════════════════════
+;; R4: Admin (CONFIG / INFO / EVICTION)
+;; ═══════════════════════════════════════════════════════════════
+(display "\n--- R4: Admin ---\n")
+;; CONFIG SET/GET
+(check-eq (evo-config-set "maxmemory" "1000000") "OK" "admin: config set maxmemory")
+(check-eq (evo-config-get "maxmemory") 1000000 "admin: config get maxmemory")
+(check-eq (evo-config-set "maxmemory-policy" "allkeys-lru") "OK" "admin: config set policy")
+(check-eq (evo-config-get "maxmemory-policy") "allkeys-lru" "admin: config get policy")
+;; INFO
+(check-true (string? (evo-info)) "admin: info returns string")
+(check-true (not (equal? (evo-info) "")) "admin: info non-empty")
+(check-eq (evo-config-set "maxmemory-policy" "noeviction") "OK" "admin: reset to noeviction")
+;; MEMORY USAGE
+(check-true (>= (evo-memory-usage) 0) "admin: memory-usage returns number")
+
+;; ═══════════════════════════════════════════════════════════════
+;; R5: Pub/Sub
+;; ═══════════════════════════════════════════════════════════════
+(display "\n--- R5: Pub/Sub ---\n")
+(check-true (string? (pubsub-channels)) "pubsub: channels returns string")
+
+;; ═══════════════════════════════════════════════════════════════
+;; R6: AOF (file-based persistence)
+;; ═══════════════════════════════════════════════════════════════
+(display "\n--- R6: AOF ---\n")
+(check-eq (aof-open "/tmp/evo-aof-test.aof") "OK" "aof: open temp file")
+(check-eq (aof-close) "OK" "aof: close")
+(check-eq (aof-open "/tmp/evo-aof-test2.aof") "OK" "aof: reopen")
+
+;; ═══════════════════════════════════════════════════════════════
+;; R7: Bench (smoke test)
+;; ═══════════════════════════════════════════════════════════════
+(display "\n--- R7: Bench ---\n")
+(bench-run 2)
+(check-true (string? (bench-report)) "bench: report returns string")
+
+;; ═══════════════════════════════════════════════════════════════
+;; R8: RESP (protocol layer — smoke test)
+;; ═══════════════════════════════════════════════════════════════
+(display "\n--- R8: RESP ---\n")
+;; PING response: +PONG plus trailing \r\n, check prefix
+(check-true (string? (resp-run "PING")) "resp: PING returns string")
+(check-true (string? (resp-run "SET x 1")) "resp: SET returns string")
+(check-true (string? (resp-run "GET x")) "resp: GET returns string")
+
+;; ═══════════════════════════════════════════════════════════════
+;; R9: Replication (smoke test)
+;; ═══════════════════════════════════════════════════════════════
+(display "\n--- R9: Replication ---\n")
+(check-true (pair? (repl-status)) "repl: status returns pair (alist)")
+
+;; ═══════════════════════════════════════════════════════════════
+;; Summary
+;; ═══════════════════════════════════════════════════════════════
+(newline)
+(display "=== Results: ") (display passed) (display " passed, ")
+(display failed) (display " failed") (newline)
