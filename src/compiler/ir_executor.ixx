@@ -101,6 +101,13 @@ public:
     void set_strict_mode(bool s) { strict_mode_ = s; }
     bool strict_mode() const { return strict_mode_; }
 
+    // Escape analysis: set per-function escape maps.
+    // escape_maps_[func_id] is a vector<uint8_t>: 1=ESCAPED, 0=NON_ESCAPING.
+    void set_escape_maps(std::vector<std::vector<std::uint8_t>> maps) {
+        escape_maps_ = std::move(maps);
+    }
+    bool has_escape_info() const { return !escape_maps_.empty(); }
+
     // Counters
     std::size_t closure_count() const { return runtime_closures_.size(); }
     std::size_t cell_count() const { return cell_heap_.size(); }
@@ -158,6 +165,11 @@ private:
 
     // Explicit call stack: replaces C++ recursion for closure calls
     std::vector<ExecFrame> call_stack_;
+
+    // Per-function escape maps from IR escape analysis.
+    // escape_maps_[func_id][slot] = 1 (ESCAPED) or 0 (NON_ESCAPING).
+    // Empty if no escape info available.
+    std::vector<std::vector<std::uint8_t>> escape_maps_;
 };
 
 } // namespace aura::compiler

@@ -459,7 +459,14 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     goto next_block;
 
                 case IROpcode::MakePair: {
-                    // Use the evaluator's cons primitive so pairs are in the same table
+                    // Note: IR interpreter uses evaluator's pair system (pairs_), not
+                    // the shared JIT pair storage (g_pair_slots). Arena allocation via
+                    // aura_alloc_pair_arena is used by the JIT path. The interpreter's
+                    // Car/Cdr handlers also call evaluator primitives which look up in
+                    // pairs_. To use arena allocation here, we'd need the interpreter's
+                    // pair ops to also access g_pair_slots — deferred to pair unification.
+                    //
+                    // Escape info is available via escape_maps_[func.id] if needed.
                     auto pfn = primitives_.lookup("cons");
                     if (pfn)
                         locals[ops[0]] = (*pfn)({locals[ops[1]], locals[ops[2]]});

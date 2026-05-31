@@ -665,9 +665,30 @@ public:
         }
 #endif
 
+        // ── Escape analysis for IR interpreter ────────────────
+        std::vector<std::vector<std::uint8_t>> interp_escape_maps;
+        if (g_use_arena) {
+            interp_escape_maps.resize(ir_mod.functions.size());
+            for (auto& fn : ir_mod.functions) {
+                // Convert IR function to flat instructions for escape analysis
+                std::vector<std::vector<aura::jit::FlatInstruction>> flat_instrs(fn.blocks.size());
+                for (std::size_t bi = 0; bi < fn.blocks.size(); ++bi) {
+                    for (auto& instr : fn.blocks[bi].instructions) {
+                        flat_instrs[bi].push_back({static_cast<std::uint32_t>(instr.opcode),
+                                                   {instr.operands[0], instr.operands[1],
+                                                    instr.operands[2], instr.operands[3]}});
+                    }
+                }
+                aura::jit::run_escape_analysis(flat_instrs, fn.local_count,
+                                                interp_escape_maps[fn.id]);
+            }
+        }
+
         aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, evaluator_.primitives(),
                                                 &type_registry_);
         ir_interp.set_strategy(strategy_);
+        if (!interp_escape_maps.empty())
+            ir_interp.set_escape_maps(std::move(interp_escape_maps));
         if (strict_mode_)
             ir_interp.set_strict_mode(true);
 
@@ -970,6 +991,7 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             std::string name_storage;
             // Shape map storage (must outlive FlatFunction usage)
             std::vector<std::uint8_t> shape_map_storage;
+            std::vector<std::uint8_t> escape_map_storage;
 
             FlatFnBuilder(const aura::ir::IRFunction& ir_fn) {
                 flat_instrs.resize(ir_fn.blocks.size());
@@ -996,8 +1018,19 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                     static_cast<std::uint32_t>(flat_blocks.size()),
                     nullptr,
                     0,  // func_id_map not used for entry
-                    nullptr  // shape_map (set after if needed)
+                    nullptr,  // shape_map (set after if needed)
+                    nullptr   // escape_map (set after if needed)
                 };
+            }
+
+            // Run escape analysis and set escape_map.
+            void set_escape_map() {
+                if (!g_use_arena)
+                    return;
+                escape_map_storage.resize(flat_fn.local_count, 0);
+                aura::jit::run_escape_analysis(flat_instrs, flat_fn.local_count,
+                                                escape_map_storage);
+                flat_fn.escape_map = escape_map_storage.data();
             }
 
             // Populate shape_map from profiler data.
@@ -1071,6 +1104,7 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             if (!fn_ptr) {
                 FlatFnBuilder builder(ir_fn);
                 // Set shape_map from profiler for L1 specialization
+                builder.set_escape_map();
                 bool had_shape = builder.set_shape_map(shape_profiler_, session_id_, ir_fn.name);
                 fn_ptr = jit_.compile(builder.flat_fn);
                 if (!fn_ptr) {
