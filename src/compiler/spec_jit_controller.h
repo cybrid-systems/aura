@@ -59,6 +59,11 @@ public:
     static constexpr uint8_t kShapeBool = 3;
     static constexpr uint8_t kShapeString = 4;
     static constexpr uint8_t kShapeVoid = 5;
+    static constexpr uint8_t kShapePair = 10;
+    static constexpr uint8_t kShapeVector = 11;
+    static constexpr uint8_t kShapeHash = 12;
+    static constexpr uint8_t kShapeClosure = 13;
+    static constexpr uint8_t kShapeRef = 14;
 
 private:
     struct SpecEntry {

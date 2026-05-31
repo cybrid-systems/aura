@@ -193,6 +193,18 @@ int64_t aura_pair_cdr(int64_t pair_val) {
     return pairs[id].cdr;
 }
 
+// L2 specialization: unchecked pair access (skips bounds/live checks).
+// Only safe when caller has verified the value is a valid pair via shape guard.
+int64_t aura_pair_car_unchecked(int64_t pair_val) {
+    uint64_t id = (uint64_t)(pair_val >> 2);
+    return pairs[id].car;
+}
+
+int64_t aura_pair_cdr_unchecked(int64_t pair_val) {
+    uint64_t id = (uint64_t)(pair_val >> 2);
+    return pairs[id].cdr;
+}
+
 void aura_drop_pair(int64_t pair_val) {
     uint64_t id = (uint64_t)(pair_val >> 2);
     if (id >= pair_count || !pairs[id].live) return;

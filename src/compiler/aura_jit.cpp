@@ -146,6 +146,9 @@ struct LLVMBuilder {
     llvm::Function* fn_float_ref = nullptr;
     llvm::Function* fn_alloc_string = nullptr;
     llvm::Function* fn_string_ref = nullptr;
+    // L2 specialization: unchecked pair access (skips tag check)
+    llvm::Function* fn_pair_car_unchecked = nullptr;
+    llvm::Function* fn_pair_cdr_unchecked = nullptr;
 
     void declare_runtime() {
         auto i64 = llvm::Type::getInt64Ty(ctx);
@@ -184,6 +187,12 @@ struct LLVMBuilder {
 
         fn_pair_cdr = llvm::Function::Create(llvm::FunctionType::get(i64, {i64}, false),
                                              llvm::Function::ExternalLinkage, "aura_pair_cdr", mod);
+
+        fn_pair_car_unchecked = llvm::Function::Create(llvm::FunctionType::get(i64, {i64}, false),
+                                             llvm::Function::ExternalLinkage, "aura_pair_car_unchecked", mod);
+
+        fn_pair_cdr_unchecked = llvm::Function::Create(llvm::FunctionType::get(i64, {i64}, false),
+                                             llvm::Function::ExternalLinkage, "aura_pair_cdr_unchecked", mod);
 
         fn_prim_call =
             llvm::Function::Create(llvm::FunctionType::get(i64, {i64, i64, i64, i64}, false),
@@ -563,12 +572,22 @@ struct LLVMBuilder {
                 return true;
             }
             case OpCar: {
-                auto call = irb->CreateCall(fn_pair_car, {load(inst.ops[1])});
+                auto pair_val = load(inst.ops[1]);
+                // L2 specialization: if pair arg known to be Pair, call unchecked variant
+                bool spec_pair = (shape_map &&
+                    inst.ops[1] < shape_map_size && shape_map[inst.ops[1]] == 10);
+                auto car_fn = spec_pair ? fn_pair_car_unchecked : fn_pair_car;
+                auto call = irb->CreateCall(car_fn, {pair_val});
                 store(inst.ops[0], call);
                 return true;
             }
             case OpCdr: {
-                auto call = irb->CreateCall(fn_pair_cdr, {load(inst.ops[1])});
+                auto pair_val = load(inst.ops[1]);
+                // L2 specialization: if pair arg known to be Pair, call unchecked variant
+                bool spec_pair = (shape_map &&
+                    inst.ops[1] < shape_map_size && shape_map[inst.ops[1]] == 10);
+                auto cdr_fn = spec_pair ? fn_pair_cdr_unchecked : fn_pair_cdr;
+                auto call = irb->CreateCall(cdr_fn, {pair_val});
                 store(inst.ops[0], call);
                 return true;
             }
@@ -684,6 +703,8 @@ void aura_cell_set(int64_t, int64_t);
 int64_t aura_alloc_pair(int64_t, int64_t);
 int64_t aura_pair_car(int64_t);
 int64_t aura_pair_cdr(int64_t);
+int64_t aura_pair_car_unchecked(int64_t);
+int64_t aura_pair_cdr_unchecked(int64_t);
 int64_t aura_prim_call(int64_t, int64_t, int64_t, int64_t);
 void aura_display_int(int64_t);
 void aura_display_char(char);
@@ -886,6 +907,8 @@ struct AuraJIT::Impl {
         reg("aura_alloc_pair", (void*)aura_alloc_pair);
         reg("aura_pair_car", (void*)aura_pair_car);
         reg("aura_pair_cdr", (void*)aura_pair_cdr);
+        reg("aura_pair_car_unchecked", (void*)aura_pair_car_unchecked);
+        reg("aura_pair_cdr_unchecked", (void*)aura_pair_cdr_unchecked);
         reg("aura_prim_call", (void*)aura_prim_call);
         reg("aura_set_prim_dispatcher", (void*)aura_set_prim_dispatcher);
         reg("aura_display_int", (void*)aura_display_int);
