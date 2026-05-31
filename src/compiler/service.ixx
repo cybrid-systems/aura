@@ -630,7 +630,7 @@ public:
 #endif
 
         aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, evaluator_.primitives(),
-                                                &type_registry_, &evaluator_.cells());
+                                                &type_registry_);
         ir_interp.set_strategy(strategy_);
         if (strict_mode_)
             ir_interp.set_strict_mode(true);
@@ -711,6 +711,7 @@ public:
             evaluator_.set_closure_bridge(aura::compiler::Evaluator::ClosureBridgeFn());
 
             last_closures_ = ir_interp.list_closures();
+            last_cells_ = ir_interp.list_cells();
             return result;
         } catch (const std::exception& e) {
             return std::unexpected(aura::diag::Diagnostic{
@@ -813,7 +814,7 @@ public:
         last_ir_mod_ = ir_mod;
 
         aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, evaluator_.primitives(),
-                                                &type_registry_, &evaluator_.cells());
+                                                &type_registry_);
         ir_interp.set_strategy(strategy_);
         if (strict_mode_)
             ir_interp.set_strict_mode(true);
@@ -864,6 +865,7 @@ public:
 
         // Capture runtime state for --inspect
         last_closures_ = ir_interp.list_closures();
+        last_cells_ = ir_interp.list_cells();
 
         return result;
     }
@@ -1617,12 +1619,13 @@ public:
         }
 
         aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, evaluator_.primitives(),
-                                                &type_registry_, &evaluator_.cells());
+                                                &type_registry_);
         ir_interp.set_strategy(strategy_);
         if (strict_mode_)
             ir_interp.set_strict_mode(true);
         auto result = ir_interp.execute();
 
+        last_cells_ = ir_interp.list_cells();
         last_closures_ = ir_interp.list_closures();
         return result;
     }
@@ -1631,6 +1634,7 @@ public:
 
     // Closures persisted from last IR execution
     std::vector<aura::compiler::ClosureSnapshot> last_closures() const { return last_closures_; }
+    std::vector<aura::compiler::CellSnapshot> last_cells() const { return last_cells_; }
     const aura::compiler::EvalStrategy& strategy() const { return strategy_; }
     void set_strategy(const aura::compiler::EvalStrategy& s) { strategy_ = s; }
 
@@ -2673,6 +2677,7 @@ private:
     aura::compiler::EvalStrategy strategy_;
     aura::core::TypeRegistry type_registry_; // persistent type registry (L6)
     std::vector<aura::compiler::ClosureSnapshot> last_closures_;
+    std::vector<aura::compiler::CellSnapshot> last_cells_;
     std::optional<aura::ir::IRModule> last_ir_mod_;
 
     // Set of loaded module names (for ArenaGroup tracking).

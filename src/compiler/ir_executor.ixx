@@ -72,12 +72,10 @@ export struct EvalStrategy {
 export class IRInterpreter {
 public:
     explicit IRInterpreter(const aura::ir::IRModule& mod, const Primitives& prims,
-                           const aura::core::TypeRegistry* types = nullptr,
-                           std::vector<EvalValue>* shared_cells = nullptr)
+                           const aura::core::TypeRegistry* types = nullptr)
         : module_(mod)
         , primitives_(prims)
-        , type_registry_(types)
-        , shared_cells_(shared_cells) {}
+        , type_registry_(types) {}
 
     // Execute the top-level function and return result
     EvalResult execute();
@@ -105,7 +103,7 @@ public:
 
     // Counters
     std::size_t closure_count() const { return runtime_closures_.size(); }
-    std::size_t cell_count() const { return shared_cells_ ? shared_cells_->size() : 0; }
+    std::size_t cell_count() const { return cell_heap_.size(); }
 
 private:
     // Result of run_function: either an EvalResult (Return/error) or PendingCall (need to push
@@ -143,8 +141,9 @@ private:
     std::uint64_t next_closure_id_ = 1ull << 48;
     std::unordered_map<std::uint64_t, IRClosure> runtime_closures_;
 
-    // Shared mutable cell vector (points to Evaluator::cells_ for unified heap)
-    std::vector<EvalValue>* shared_cells_ = nullptr;
+    // Per-instance mutable cell heap (for letrec)
+    std::uint64_t next_cell_id_ = 1;
+    std::unordered_map<std::uint64_t, EvalValue> cell_heap_;
 
     // M4 Linear ownership runtime heap
     struct LinearEntry {
