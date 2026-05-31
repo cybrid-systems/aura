@@ -13294,14 +13294,21 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
 
                         // while: (while cond body) — evaluate condition, if true evaluate body, repeat
                         if (cname == "while" && v.children.size() >= 3) {
-                            while (true) {
-                                auto cond_result = eval_flat(*f, *p, v.child(1), eval_env);
-                                if (!cond_result) return cond_result;
-                                if (!is_truthy(*cond_result)) break;
-                                auto body_result = eval_flat(*f, *p, v.child(2), eval_env);
-                                if (!body_result) return body_result;
+                            // Check if args are Lambda nodes (EDSL while with closures)
+                            // In that case, fall through to primitive dispatch instead
+                            auto c1_node = v.child(1) < f->size() ? f->get(v.child(1)) : v;
+                            auto c2_node = v.child(2) < f->size() ? f->get(v.child(2)) : v;
+                            if (c1_node.tag != aura::ast::NodeTag::Lambda &&
+                                c2_node.tag != aura::ast::NodeTag::Lambda) {
+                                while (true) {
+                                    auto cond_result = eval_flat(*f, *p, v.child(1), eval_env);
+                                    if (!cond_result) return cond_result;
+                                    if (!is_truthy(*cond_result)) break;
+                                    auto body_result = eval_flat(*f, *p, v.child(2), eval_env);
+                                    if (!body_result) return body_result;
+                                }
+                                return make_void();
                             }
-                            return make_void();
                         }
 
                         if (cname == "try" && v.children.size() >= 2) {
