@@ -1,5 +1,5 @@
 #include "compiler/aura_jit.h"
-#include "messaging_bridge.h"
+#include "compiler/messaging_bridge.h"
 #include <unistd.h>
 #include <signal.h>
 #include <stdlib.h>

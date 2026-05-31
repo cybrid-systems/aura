@@ -1,6 +1,6 @@
 // serve/serve_async.cpp — Async serve mode implementation
 #include "serve_async.h"
-#include "messaging_bridge.h"
+#include "compiler/messaging_bridge.h"
 #include "scheduler.h"
 #include "gc_coordinator.h"
 #include "fiber.h"

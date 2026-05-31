@@ -171,7 +171,7 @@ private:
 |------|------|
 | `src/serve/thread_pool.h` | ThreadPool class 声明 |
 | `src/serve/thread_pool.cpp` | ThreadPool 实现 + eventfd 管理 |
-| `src/messaging_bridge.h` | 新增 `g_thread_pool_enqueue` 回调 |
+| `src/compiler/messaging_bridge.h` | 新增 `g_thread_pool_enqueue` 回调 |
 | `src/compiler/evaluator_impl.cpp` | `thread_pool:enqueue` 原语 |
 
 ### Phase 2 — 编译 Offload（~50 行）
@@ -179,7 +179,7 @@ private:
 | 文件 | 内容 |
 |------|------|
 | `src/serve/serve_async.cpp` | `eval-current` 自动 offload 到线程池 |
-| `src/messaging_bridge.h` | 新增 `g_compile_async` 回调 |
+| `src/compiler/messaging_bridge.h` | 新增 `g_compile_async` 回调 |
 
 ### Phase 3 — 测试
 
