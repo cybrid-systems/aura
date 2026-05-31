@@ -1,0 +1,246 @@
+(require "std/test" all:)
+(require std/list)
+(require std/math)
+(require std/string)
+(require std/json)
+
+;; ============================================================
+;; PGO Training: General Aura Operations
+;;
+;; This suite exercises the full Aura pipeline — parsing,
+;; lowering, IR execution, JIT compilation, and runtime — with
+;; a diverse mix of operations. Designed for AOT PGO training,
+;; not correctness testing.
+;;
+;; Each section runs hot operations in a loop to drive
+;; branch predictor / inline cache / JIT pipeline profiles.
+;; ============================================================
+
+;; ── warmup ──
+(define (pgo-warmup count)
+  (letrec ((n 0))
+    (while (< n count)
+      (begin
+        (set! n (+ n 1))
+        (void)))))
+
+(pgo-warmup 1000)
+
+(define iterations 5000)
+
+;; ──────────────────────────────────────
+;; 1. Arithmetic (int, float, mixed)
+;; ──────────────────────────────────────
+(define (pgo-arith-int)
+  (letrec ((i 0) (sum 0))
+    (while (< i iterations)
+      (set! i (+ i 1))
+      (set! sum (+ sum (* 2 i) (/ i 3) (- i 1))))))
+
+(define (pgo-arith-float)
+  (letrec ((i 0) (sum 0.0))
+    (while (< i 2000)
+      (set! i (+ i 1))
+      (set! sum (+ sum (* 2.5 i) (/ i 3.0) (- i 1.0))))))
+
+;; ──────────────────────────────────────
+;; 2. Closure creation & calling
+;; ──────────────────────────────────────
+(define (pgo-closure-basic)
+  (letrec ((i 0))
+    (while (< i iterations)
+      (letrec ((f (lambda (x) (+ x 1)))
+               (g (lambda (x) (* x 2)))
+               (h (lambda (x) (/ x 3))))
+        (h (g (f i))))
+      (set! i (+ i 1)))))
+
+(define (pgo-closure-hof)
+  (letrec ((i 0))
+    (while (< i iterations)
+      (letrec ((app (lambda (f x) (f x)))
+               (add1 (lambda (x) (+ x 1)))
+               (dbl (lambda (x) (* x 2))))
+        (app dbl (app add1 i)))
+      (set! i (+ i 1)))))
+
+(define (pgo-closure-arity)
+  (letrec ((i 0))
+    (while (< i 2000)
+      (letrec ((f (lambda (a b c d e) (+ a b c d e))))
+        (f i (+ i 1) (+ i 2) (+ i 3) (+ i 4)))
+      (set! i (+ i 1)))))
+
+;; ──────────────────────────────────────
+;; 3. Recursion
+;; ──────────────────────────────────────
+(define (pgo-fact n)
+  (if (< n 2) 1 (* n (pgo-fact (- n 1)))))
+
+(define (pgo-fib n)
+  (if (< n 2) n (+ (pgo-fib (- n 1)) (pgo-fib (- n 2)))))
+
+(define (pgo-recursion)
+  (pgo-fact 10)
+  (pgo-fib 20)
+  (pgo-fib 25))
+
+;; ──────────────────────────────────────
+;; 4. List / pair operations
+;; ──────────────────────────────────────
+(define (pgo-list-make)
+  (letrec ((i 0))
+    (while (< i 2000)
+      (list i (+ i 1) (+ i 2) (+ i 3) (+ i 4) (+ i 5) (+ i 6) (+ i 7))
+      (set! i (+ i 1)))))
+
+(define (pgo-list-traverse)
+  (letrec ((i 0) (lst (range 0 100)))
+    (while (< i 100)
+      (begin
+        (foldl + 0 lst)
+        (foldl (lambda (a x) (if (> x a) x a)) 0 lst))
+      (set! i (+ i 1)))))
+
+(define (pgo-list-transform)
+  (letrec ((i 0))
+    (while (< i 2000)
+      (map (lambda (x) (* x 2)) (list 1 2 3 4 5 6 7 8 9 10))
+      (set! i (+ i 1)))))
+
+;; ──────────────────────────────────────
+;; 5. String operations
+;; ──────────────────────────────────────
+(define (pgo-string-ops)
+  (letrec ((i 0))
+    (while (< i 2000)
+      (begin
+        (string-append "hello" " " "world" " " "pgo")
+        (string-length "the quick brown fox")
+        (string-ref "abcdefghijklmnopqrstuvwxyz" 13)
+        (string-split "a,b,c,d,e,f,g" ",")
+        (string-join '("x" "y" "z") "-"))
+      (set! i (+ i 1)))))
+
+;; ──────────────────────────────────────
+;; 6. Vector operations
+;; ──────────────────────────────────────
+(define (pgo-vector-ops)
+  (letrec ((i 0) (v (vector 0 1 2 3 4 5 6 7 8 9)))
+    (while (< i 2000)
+      (begin
+        (vector-ref v 5)
+        (vector-length v)
+        (vector->list v))
+      (set! i (+ i 1)))))
+
+;; ──────────────────────────────────────
+;; 7. Hash (basic)
+;; ──────────────────────────────────────
+(define (pgo-hash-ops)
+  (letrec ((i 0) (h (hash)))
+    (while (< i 2000)
+      (begin
+        (hash-set! h (number->string i) i)
+        (hash-get h (number->string (modulo i 100)))
+        (hash-exists? h (number->string (modulo i 50))))
+      (set! i (+ i 1)))))
+
+;; ──────────────────────────────────────
+;; 8. Branching / control flow
+;; ──────────────────────────────────────
+(define (pgo-branch-ops)
+  (letrec ((i 0) (sum 0))
+    (while (< i iterations)
+      (if (> (modulo i 3) 0)
+        (if (> (modulo i 2) 0)
+          (set! sum (+ sum i))
+          (set! sum (* sum 2)))
+        (set! sum (/ sum 2)))
+      (set! i (+ i 1)))))
+
+;; ──────────────────────────────────────
+;; 9. Multiple defines & calls
+;; ──────────────────────────────────────
+(define (pgo-hot-func x)  (+ (* x x) (* 2 x) 1))
+(define (pgo-hot-func2 x) (* x (+ x 1)))
+(define (pgo-hot-func3 x y) (* (+ x y) (- x y)))
+
+(define (pgo-defined-calls)
+  (letrec ((i 0))
+    (while (< i 2000)
+      (pgo-hot-func i)
+      (pgo-hot-func2 i)
+      (pgo-hot-func3 i (+ i 1))
+      (set! i (+ i 1)))))
+
+;; ──────────────────────────────────────
+;; 10. Type management
+;; ──────────────────────────────────────
+(define (pgo-type-ops)
+  (letrec ((i 0))
+    (while (< i 2000)
+      (begin
+        (number? i)
+        (string? "hello")
+        (pair? (cons 1 2))
+        (boolean? #t)
+        (null? (quote ()))
+        (procedure? (lambda (x) x))
+        (symbol? (quote foo)))
+      (set! i (+ i 1)))))
+
+;; ──────────────────────────────────────
+;; 11. let / letrec binding
+;; ──────────────────────────────────────
+(define (pgo-let-ops)
+  (letrec ((i 0))
+    (while (< i iterations)
+      (letrec ((a 10) (b 20) (c 30) (d 40))
+        (letrec ((x (* a 2)) (y (+ b c)) (z (- d a)))
+          (+ x y z)))
+      (set! i (+ i 1)))))
+
+;; ──────────────────────────────────────
+;; 12. Mutation (set!)
+;; ──────────────────────────────────────
+(define (pgo-mutation-ops)
+  (letrec ((i 0) (state '()) (count 0))
+    (while (< i 2000)
+      (begin
+        (set! state (cons i state))
+        (set! count (+ count 1))
+        (if (> (length state) 20)
+          (set! state (cdr state))))
+      (set! i (+ i 1)))))
+
+;; ──────────────────────────────────────
+;; Run all — drive profile generation
+;; ──────────────────────────────────────
+(define (pgo-run-suite)
+  (begin
+    ;; Tier 1: Hot loops (high iteration count)
+    (pgo-arith-int)
+    (pgo-closure-basic)
+    (pgo-closure-hof)
+    (pgo-branch-ops)
+    (pgo-let-ops)
+    (pgo-defined-calls)
+
+    ;; Tier 2: Medium frequency
+    (pgo-list-traverse)
+    (pgo-string-ops)
+    (pgo-vector-ops)
+    (pgo-hash-ops)
+    (pgo-type-ops)
+    (pgo-mutation-ops)
+    (pgo-list-transform)
+    (pgo-list-make)
+    (pgo-closure-arity)
+    (pgo-recursion)
+    (pgo-arith-float)
+
+    ;; Tier 3: Standard library paths
+    0))
+
+(. pgo-run-suite)

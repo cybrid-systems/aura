@@ -1,0 +1,144 @@
+(require "std/test" all:)
+
+;; ============================================================
+;; PGO Training: evo-kv Workload
+;;
+;; Exercises the evo-kv style data structure paths — hash CRUD,
+;; sorted sets, list/vector ops, RESP-like string processing.
+;; Designed for AOT PGO training.
+;; ============================================================
+
+(define iterations 3000)
+
+;; ──────────────────────────────────────
+;; 1. Hash CRUD — hot path
+;; ──────────────────────────────────────
+(define (pgo-hash-crud)
+  (letrec ((i 0) (h (hash)))
+    (while (< i iterations)
+      (begin
+        ;; set
+        (hash-set! h "key" i)
+        (hash-set! h (number->string (modulo i 100)) i)
+        (hash-set! h "counter" i)
+        ;; get
+        (hash-get h "key")
+        (hash-get h (number->string (modulo i 50)))
+        (hash-get h "counter")
+        ;; exists / delete
+        (hash-exists? h "key")
+        (if (> (modulo i 100) 90)
+          (hash-delete! h (number->string (modulo i 50))))
+        ;; keys / size
+        (hash-keys h)
+        (hash-size h))
+      (set! i (+ i 1)))))
+
+;; ──────────────────────────────────────
+;; 2. String processing (RESP-like)
+;; ──────────────────────────────────────
+(define (pgo-resp-like)
+  (letrec ((i 0))
+    (while (< i 2000)
+      (begin
+        (string-append "+" "OK" "\r\n")
+        (string-append "-" "ERR" " " "unknown command" "\r\n")
+        (string-append "$" "5" "\r\n" "hello" "\r\n")
+        (string-append "*" "2" "\r\n" "$3\r\n" "GET\r\n" "$3\r\n" "key\r\n")
+        (string-split "SET mykey somevalue" " ")
+        (->string (string-length "mykey"))
+        (->string 1000))
+      (set! i (+ i 1)))))
+
+;; ──────────────────────────────────────
+;; 3. Sorted set–like operations
+;; ──────────────────────────────────────
+(define (pgo-zset-ops)
+  (letrec ((i 0) (scores '()) (members '()))
+    (while (< i 2000)
+      (begin
+        ;; zadd-like: maintain ordered pairs
+        (set! scores (cons (cons (modulo i 1000) (->string i)) scores))
+        (set! members (cons (->string i) members))
+        ;; zrange-like: sort by score
+        (sort scores (lambda (a b) (< (car a) (car b))))
+        ;; zcard-like: count
+        (length scores)
+        ;; zscore-like: find by member
+        (foldl (lambda (acc kv)
+                (if (string=? (cdr kv) (->string (modulo i 500)))
+                  (car kv)
+                  acc))
+              0 scores)
+        ;; trim to 100 max
+        (if (> (length scores) 100)
+          (set! scores (take scores 100))))
+      (set! i (+ i 1)))))
+
+;; ──────────────────────────────────────
+;; 4. List-as-queue operations
+;; ──────────────────────────────────────
+(define (pgo-queue-ops)
+  (letrec ((i 0) (q '()) (back '()))
+    (while (< i 2000)
+      (begin
+        ;; lpush (cons to front)
+        (set! q (cons i q))
+        ;; rpush (append to back)
+        (set! back (append back (list i)))
+        ;; lpop (car + cdr)
+        (if (pair? q)
+          (set! q (cdr q)))
+        ;; llen
+        (length q)
+        ;; lrange-like
+        (take q 10))
+      (set! i (+ i 1)))))
+
+;; ──────────────────────────────────────
+;; 5. Numeric operations (score calc)
+;; ──────────────────────────────────────
+(define (pgo-score-ops)
+  (letrec ((i 0))
+    (while (< i 2000)
+      (begin
+        (modulo i 997)
+        (quotient i 3)
+        (* i (modulo i 100))
+        (/ (+ i 1) 2)
+        (abs (- i 500))
+        (min (modulo i 100) (modulo (+ i 50) 100))
+        (max (modulo i 100) (modulo (+ i 25) 100)))
+      (set! i (+ i 1)))))
+
+;; ──────────────────────────────────────
+;; 6. Multi-key / batch ops (mget-ish)
+;; ──────────────────────────────────────
+(define (pgo-batch-ops)
+  (letrec ((i 0) (h (hash)))
+    ;; pre-populate
+    (while (< i 500)
+      (hash-set! h (->string i) (* i 10))
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i 2000)
+      (begin
+        (hash-get h (->string (modulo i 500)))
+        (hash-get h (->string (modulo (+ i 1) 500)))
+        (hash-get h (->string (modulo (+ i 2) 500))))
+      (set! i (+ i 1)))))
+
+;; ──────────────────────────────────────
+;; Run all evo-kv PGO suite
+;; ──────────────────────────────────────
+(define (pgo-run-evo-kv)
+  (begin
+    (pgo-hash-crud)
+    (pgo-resp-like)
+    (pgo-zset-ops)
+    (pgo-queue-ops)
+    (pgo-score-ops)
+    (pgo-batch-ops)
+    0))
+
+(. pgo-run-evo-kv)
