@@ -39,6 +39,7 @@ target_sources(aura PRIVATE
     src/compiler/ir_executor_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
+    src/compiler/shape_profiler.cpp
     src/compiler/type_checker_impl.cpp
     src/compiler/arity_impl.cpp
     src/compiler/aura_jit_bridge.cpp
@@ -170,6 +171,7 @@ target_sources(test_ir PRIVATE
     src/compiler/ir_executor_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
+    src/compiler/shape_profiler.cpp
     src/compiler/type_checker_impl.cpp
     src/compiler/arity_impl.cpp
     src/messaging_bridge_impl.cpp)
@@ -266,6 +268,13 @@ add_test(NAME tc_let
     COMMAND sh -c "printf '(let ((x 10)) x)' | timeout 5 ./aura --typecheck | grep -q 'type: Int'"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
+
+# ── Shape profiler tests (Phase 1, #53) ─────────────────────
+add_executable(test_shape tests/test_shape.cpp src/compiler/shape_profiler.cpp)
+target_include_directories(test_shape PRIVATE src)
+target_link_libraries(test_shape PRIVATE stdc++)
+add_test(NAME test_shape COMMAND test_shape
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # linenoise — single-file line editing library
 add_library(linenoise STATIC
