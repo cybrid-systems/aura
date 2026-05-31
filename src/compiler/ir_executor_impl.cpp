@@ -210,7 +210,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         // Only treat as cell ref if the index is within the heap
                         if (is_int(val) && as_int(val) < 0) {
                             auto cell_slot = static_cast<std::size_t>(-as_int(val) - 1);
-                            if (cell_slot < cell_heap_.size()) {
+                            auto cell_cnt = shared_cells_ ? shared_cells_->size() : 0;
+                            if (cell_slot < cell_cnt) {
                                 locals[ops[0]] = locals[cell_slot];
                             } else {
                                 // Not a cell reference — actual negative int
@@ -657,27 +658,31 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 }
 
                 case IROpcode::NewCell: {
-                    auto cell_id = next_cell_id_++;
-                    cell_heap_[cell_id] = make_void();
+                    auto cell_id = shared_cells_ ? shared_cells_->size() : 0;
+                    if (shared_cells_)
+                        shared_cells_->push_back(make_void());
                     locals[ops[0]] = make_cell(cell_id);
                     break;
                 }
 
                 case IROpcode::CellSet: {
                     auto& cell_id_val = locals[ops[0]];
-                    if (is_cell(cell_id_val)) {
+                    if (is_cell(cell_id_val) && shared_cells_) {
                         auto cell_id = as_cell_id(cell_id_val);
-                        cell_heap_[cell_id] = locals[ops[1]];
+                        if (cell_id < shared_cells_->size())
+                            (*shared_cells_)[cell_id] = locals[ops[1]];
                     }
                     break;
                 }
 
                 case IROpcode::CellGet: {
                     auto& cell_id_val = locals[ops[1]];
-                    if (is_cell(cell_id_val)) {
+                    if (is_cell(cell_id_val) && shared_cells_) {
                         auto cell_id = as_cell_id(cell_id_val);
-                        auto it = cell_heap_.find(cell_id);
-                        locals[ops[0]] = (it != cell_heap_.end()) ? it->second : make_void();
+                        if (cell_id < shared_cells_->size())
+                            locals[ops[0]] = (*shared_cells_)[cell_id];
+                        else
+                            locals[ops[0]] = make_void();
                     } else {
                         locals[ops[0]] = make_void();
                     }
@@ -990,9 +995,10 @@ std::string IRInterpreter::type_of_closure(std::uint64_t closure_id) const {
 
 std::vector<CellSnapshot> IRInterpreter::list_cells() const {
     std::vector<CellSnapshot> result;
-    result.reserve(cell_heap_.size());
-    for (auto& [id, val] : cell_heap_) {
-        result.push_back(CellSnapshot{.id = id, .value = val});
+    if (!shared_cells_) return result;
+    result.reserve(shared_cells_->size());
+    for (std::size_t i = 0; i < shared_cells_->size(); ++i) {
+        result.push_back(CellSnapshot{.id = static_cast<std::uint64_t>(i), .value = (*shared_cells_)[i]});
     }
     return result;
 }
