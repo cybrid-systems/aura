@@ -1246,6 +1246,7 @@ SUITES = {
     "bash": test_bash,
     "suite": test_suite_runner,
     "repl": test_repl,
+    "concurrent": test_concurrent,
 }
 
 
