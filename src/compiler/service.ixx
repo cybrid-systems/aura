@@ -446,6 +446,7 @@ public:
     }
 
     [[nodiscard]] EvalResult eval(std::string_view input) {
+        std::fprintf(stderr, "eval enter\n");
         // Phase 4: parse directly into FlatAST, evaluator reads FlatAST directly.
         // Arena-allocate FlatAST/Pool so closures can reference them across calls.
         auto alloc = arena_.allocator();
@@ -596,49 +597,13 @@ public:
                 jit_initialized_ = true;
             }
 
-            // JIT now produces pointer-tagged values (fixnum=val<<1, bool=7/3, void=11)
-            // matching EvalValue encoding, so all arithmetic and comparison ops are safe.
-            static const std::unordered_set<std::string> jit_safe_primitives = {
-                "+", "-", "*", "/",
-                "=", "<", ">", "<=", ">=",
-            };
-            bool has_non_int_nodes = false;
-            for (aura::ast::NodeId nid = 0; nid < flat_ptr->size(); ++nid) {
-                auto nv = flat_ptr->get(nid);
-                auto tag = nv.tag;
-                if (tag == aura::ast::NodeTag::Lambda || tag == aura::ast::NodeTag::LiteralString ||
-                    tag == aura::ast::NodeTag::LiteralFloat ||
-                    tag == aura::ast::NodeTag::Coercion || tag == aura::ast::NodeTag::Quote ||
-                    tag == aura::ast::NodeTag::MacroDef || tag == aura::ast::NodeTag::Let ||
-                    tag == aura::ast::NodeTag::LetRec) {
-                    has_non_int_nodes = true;
-                    break;
-                }
-                if (tag == aura::ast::NodeTag::LiteralInt &&
-                    nv.marker == aura::ast::SyntaxMarker::BoolLiteral) {
-                    has_non_int_nodes = true;
-                    break;
-                }
-                // Check Call nodes for non-arithmetic callees (cons, eq?, display, etc.)
-                if (tag == aura::ast::NodeTag::Call && !nv.children.empty()) {
-                    auto callee_id = nv.child(0);
-                    if (callee_id < flat_ptr->size()) {
-                        auto callee_v = flat_ptr->get(callee_id);
-                        if (callee_v.tag == aura::ast::NodeTag::Variable) {
-                            auto callee_name = pool_ptr->resolve(callee_v.sym_id);
-                            if (!jit_safe_primitives.count(std::string(callee_name))) {
-                                has_non_int_nodes = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (!has_non_int_nodes) {
+            std::fprintf(stderr, "JIT_TRY\n");
+            // try_jit_execute handles all function types (not just arithmetic).
+            // It returns nullopt on any failure, so this is self-guarding.
+            {
                 auto jit_result = try_jit_execute(ir_mod);
                 if (jit_result) {
-                    // Record JIT result shape for profiling (#53 hot-recompile)
+                    std::fprintf(stderr, "JIT_OK\n");
                     record_eval_result_shape(session_id_, last_ir_mod_, nullptr, *jit_result);
                     return *jit_result;
                 }
@@ -1031,20 +996,22 @@ public:
 
             // Check JIT cache
             aura::jit::ScalarFn fn_ptr = nullptr;
-            auto cache_it = jit_cache_.find(ir_fn.name);
-            if (cache_it != jit_cache_.end()) {
-                // Hot recompilation: if profiler now has stable shape for this
-                // function but cache entry was compiled without shape_map,
-                // evict and recompile with shape specialization.
-                auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
-                if (!cache_it->second.has_shape_map &&
-                    shape_profiler_.is_stable(fn_key)) {
-                    // Evict cache → will recompile below
-                    std::fprintf(stderr, "spec: hot-recompile '%s' (shape now stable)\n",
-                                ir_fn.name.c_str());
-                    jit_cache_.erase(cache_it);
-                } else {
-                    fn_ptr = cache_it->second.fn_ptr;
+            bool is_top_level = (ir_fn.name == "__top__");
+            if (!is_top_level) {
+                auto cache_it = jit_cache_.find(ir_fn.name);
+                if (cache_it != jit_cache_.end()) {
+                    // Hot recompilation: if profiler now has stable shape for this
+                    // function but cache entry was compiled without shape_map,
+                    // evict and recompile with shape specialization.
+                    auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
+                    if (!cache_it->second.has_shape_map &&
+                        shape_profiler_.is_stable(fn_key)) {
+                        std::fprintf(stderr, "spec: hot-recompile '%s' (shape now stable)\n",
+                                    ir_fn.name.c_str());
+                        jit_cache_.erase(cache_it);
+                    } else {
+                        fn_ptr = cache_it->second.fn_ptr;
+                    }
                 }
             }
             if (!fn_ptr) {
@@ -1057,8 +1024,10 @@ public:
                         aura::diag::ErrorKind::InternalError,
                         std::string("JIT compilation failed for function '") + ir_fn.name + "'"});
                 }
-                // Cache compiled function
-                jit_cache_[ir_fn.name] = {fn_ptr, ir_fn.local_count, ir_fn.arg_count, env_count, had_shape};
+                    // Cache compiled function (skip __top__ — IR varies per eval)
+                if (ir_fn.name != "__top__") {
+                    jit_cache_[ir_fn.name] = {fn_ptr, ir_fn.local_count, ir_fn.arg_count, env_count, had_shape};
+                }
             }
 
             // Register with runtime for closure calls
@@ -2923,8 +2892,10 @@ private:
                 fn_ptr = jit_.compile(flat_fn);
                 if (!fn_ptr)
                     return std::nullopt;
-                jit_cache_[ir_fn.name] = {fn_ptr, ir_fn.local_count, ir_fn.arg_count, env_count,
-                                          final_shape_map != nullptr};
+                if (ir_fn.name != "__top__") {
+                    jit_cache_[ir_fn.name] = {fn_ptr, ir_fn.local_count, ir_fn.arg_count, env_count,
+                                              final_shape_map != nullptr};
+                }
             }
 
             // Register with runtime for closure calls
