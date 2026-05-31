@@ -62,7 +62,7 @@ void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t), int32_
 
 int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
     if (closure_id < 0 || static_cast<size_t>(closure_id) >= g_closure_func_ids.size())
-        return 0;
+        return closure_id; /* match IRInterpreter: return callee_val for non-callable */
 
     // ── Inline cache check ──
     int cache_idx = static_cast<int>(closure_id % CLOSURE_CACHE_SIZE);
