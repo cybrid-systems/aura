@@ -1,0 +1,84 @@
+;; === evo-kv-aof.aura -- AOF 持久化 ===
+;; 用法: 先 load core.aura, 然后 load 本文件
+;;
+;; aof-open path     -- 启用 AOF
+;; aof-close         -- 关闭 AOF
+;; aof key val       -- SET + AOF 日志
+;; aof-del key       -- DEL + AOF 日志
+;; aof-rewrite       -- 压缩 AOF
+;; aof-load path     -- 从 AOF 恢复
+
+(define *aof-enabled* #f)
+(define *aof-path* "")
+
+(define (aof-open path)
+  (set! *aof-path* path)
+  (set! *aof-enabled* #t)
+  (write-file path ";; evo-kv AOF\n")
+  "OK")
+
+(define (aof-close)
+  (set! *aof-enabled* #f)
+  "OK")
+
+(define (aof-log expr-string)
+  (when *aof-enabled*
+    (let ((path *aof-path*))
+      (unless (string=? path "")
+        (write-file path (string-append (read-file path) expr-string "\n"))))))
+
+(define (safe-str val)
+  (cond ((string? val) (string-append "\"" val "\""))
+        ((number? val) (number->string val))
+        (#t (number->string val))))
+
+(define (aof key val)
+  (aof-log (string-append "(hash-set! *evo-store* " (safe-str key) " " (safe-str val) ")"))
+  (evo-set key val))
+
+(define (aof-del key)
+  (aof-log (string-append "(hash-remove! *evo-store* " (safe-str key) ")"))
+  (evo-del key))
+
+(define (aof-load path)
+  (let ((content (read-file path)))
+    (if (string? content)
+        (begin
+          (eval (string-append "(begin " content ")"))
+          "OK")
+        "ERR cannot read file")))
+
+(define (aof-rewrite)
+  (when *aof-enabled*
+    (let ((path *aof-path*)
+          (exprs (list (string-append ";; evo-kv AOF rewrite " (number->string (current-time))))))
+      (letrec ((iter (lambda (keys)
+                       (when (pair? keys)
+                         (let ((k (car keys)) (v (hash-ref *evo-store* k)))
+                           (unless (void? v)
+                             (set! exprs (cons (string-append "(hash-set! *evo-store* "
+                                                              (safe-str k) " " (safe-str v) ")") exprs))))
+                         (iter (cdr keys))))))
+        (iter (hash-keys *evo-store*)))
+      (letrec ((iter2 (lambda (keys)
+                        (when (pair? keys)
+                          (let ((k (car keys)) (exp (hash-ref *evo-ttl* k)))
+                            (unless (void? exp)
+                              (set! exprs (cons (string-append "(hash-set! *evo-ttl* "
+                                                               (safe-str k) " " (number->string exp) ")") exprs))))
+                          (iter2 (cdr keys))))))
+        (iter2 (hash-keys *evo-ttl*)))
+      (letrec ((join (lambda (items result)
+                       (if (null? items) result
+                           (join (cdr items)
+                                 (string-append result "\n" (car items)))))))
+        (write-file path (join (reverse exprs) "")))
+      "OK")))
+
+(display "evo-kv aof loaded") (newline)
+(display "  (aof-open path)          -- enable") (newline)
+(display "  (aof key val)            -- set+log") (newline)
+(display "  (aof-del key)            -- del+log") (newline)
+(display "  (aof-rewrite)            -- compact") (newline)
+(display "  (aof-load path)          -- replay") (newline)
+"OK"
