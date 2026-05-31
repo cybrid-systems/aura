@@ -80,9 +80,15 @@ def cmd_build():
     )
     if r != 0:
         return r
-    # Also build test_ir so unit tests can run
+    # Also build test_ir and test_concurrent so unit tests can run
     r = run(
         ["cmake", "--build", str(BUILD), "--target", "test_ir", "-j", str(nproc)],
+        cwd=ROOT,
+    )
+    if r != 0:
+        return r
+    r = run(
+        ["cmake", "--build", str(BUILD), "--target", "test_concurrent", "-j", str(nproc)],
         cwd=ROOT,
     )
     if r == 0:
