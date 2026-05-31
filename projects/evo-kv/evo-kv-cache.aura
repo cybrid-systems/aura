@@ -42,12 +42,15 @@
         (set! *cache-hits* (+ *cache-hits* 1))
         (cache-touch key)
         (hash-ref *cache-store* key))
-      (begin
+      ;; miss path: 直接调用 cache-put，不用 unless+void?
+      (let ((val (evo-get key)))
         (set! *cache-misses* (+ *cache-misses* 1))
-        (let ((val (evo-get key)))
-          (unless (void? val)
-            (cache-put key val))
-          val))))
+        (if (void? val)
+            val
+            (begin
+              (hash-set! *cache-store* key val)  ;; 直接 inline，绕过 cache-put
+              (cache-touch key)
+              val)))))
 
 (define (cache-put key val)
   "写入缓存（不写入 store）"

@@ -1,78 +1,56 @@
 ;; === evo-kv-auto.aura — 自动续驱动进化循环 ===
-;; 要求: (load "evo-kv.aura")
+;; 要求: 先加载以下文件:
+;;   (load "projects/evo-kv/evo-kv-core.aura")
+;;   (load "projects/evo-kv/evo-kv-metrics.aura")
+;;   (load "projects/evo-kv/evo-kv-evolve.aura")
+;;   (load "projects/evo-kv/evo-kv-grok.aura")
+;; 或者: (load "projects/evo-kv/evo-kv.aura")
+;; 然后: (load "projects/evo-kv/evo-kv-auto.aura")
 ;;
 ;; 自动监控 → 检测 gap → 尝试自修 → 修不动问 Grok → 继续
-;;
-;; 用法:
-;;   (load "projects/evo-kv/evo-kv-auto.aura")
-;;   (auto-start)                       ← 启动自动循环 (默认 10s 间隔)
-;;   (auto-start :interval 5)           ← 5 秒间隔
-;;   (auto-stop)                        ← 停止
-;;   (auto-status)                      ← 状态
-;;   (auto-find-and-evolve)             ← 一键检测+修复
-
-;; ── 状态 ──
 
 (define *auto-active* #f)
 (define *auto-interval* 10)
 (define *auto-cycle* 0)
 (define *auto-errors* 0)
-(define *auto-grok-needs* '())  ;; 待问 Grok 的问题
+(define *auto-grok-needs* '())
 
 ;; ── Gap 检测 ──
 
 (define (auto-detect-gaps)
-  "扫描当前状态，返回发现的 gap 列表"
   (define gaps '())
-
-  ;; G1: 热键 → 需要缓存策略
   (let ((hot (metrics-hot-keys 50)))
     (unless (null? hot)
       (set! gaps (cons (list 'hot-key (car (car hot)) (car (cdr (car hot)))) gaps))))
-
-  ;; G2: 读写比异常
   (let* ((gets (hash-ref-or *evo-type-ops* (quote get) 0))
          (sets (hash-ref-or *evo-type-ops* (quote set) 0))
          (ratio (if (= sets 0) 1000 (inexact->exact (/ gets sets)))))
-    (cond
-     ((> ratio 50)
-      (set! gaps (cons (list 'read-heavy ratio) gaps)))
-     ((< ratio 0.2)
-      (set! gaps (cons (list 'write-heavy ratio) gaps)))))
-
-  ;; G3: TTL 占比高
+    (cond ((> ratio 50) (set! gaps (cons (list 'read-heavy ratio) gaps)))
+          ((< ratio 0.2) (set! gaps (cons (list 'write-heavy ratio) gaps)))))
   (let ((ttl-n (hash-length *evo-ttl*))
         (all-n (hash-length *evo-store*)))
     (when (and (> all-n 0) (>= ttl-n all-n))
       (set! gaps (cons (list 'all-ttl ttl-n) gaps))))
-
-  ;; G4: 存储大小
   (let ((n (hash-length *evo-store*)))
     (when (> n 100)
       (set! gaps (cons (list 'store-large n) gaps))))
-
   gaps)
-
-;; ── Gap 优先级打分 ──
 
 (define (auto-score gap)
   (let ((type (car gap)))
-    (cond
-     ((eq? type 'hot-key) 100)
-     ((eq? type 'read-heavy) 80)
-     ((eq? type 'write-heavy) 70)
-     ((eq? type 'all-ttl) 40)
-     ((eq? type 'store-large) 30)
-     (#t 0))))
+    (cond ((eq? type 'hot-key) 100)
+          ((eq? type 'read-heavy) 80)
+          ((eq? type 'write-heavy) 70)
+          ((eq? type 'all-ttl) 40)
+          ((eq? type 'store-large) 30)
+          (#t 0))))
 
 (define (auto-prioritize gaps)
-  "按优先级排序"
   (sort gaps (lambda (a b) (> (auto-score a) (auto-score b)))))
 
 ;; ── 自修 ──
 
 (define (auto-fix-simple gap)
-  "尝试自修简单 gap，返回 #t / #f"
   (let ((type (car gap)))
     (cond
      ((eq? type 'hot-key)
@@ -81,119 +59,51 @@
         (display " (") (display ops) (display " ops)") (newline)
         (evo-log! "auto-detect" "" (string-append "hot:" key ":" (number->string ops))
                   "needs-cache" "deferred")
-        #f))  ;; 热键缓存需要 Grok 决策
-
+        #f))
      ((eq? type 'all-ttl)
       (display "[auto] cleaning stale TTL entries...") (newline)
-      (let ((keys (hash-keys *evo-ttl*)))
-        (for-each (lambda (k)
-                    (let ((expire (hash-ref *evo-ttl* k)))
-                      (unless (void? expire)
-                        (when (>= (current-time) expire)
-                          (hash-remove! *evo-store* k)
-                          (hash-remove! *evo-ttl* k)))))
-                  keys)
-        (display "[auto] TTL cleanup done") (newline)
-        #t))
-
-     ((eq? type 'store-large)
-      (display "[auto] store has ") (display (cadr gap))
-      (display " keys, consider sharding") (newline)
-      (evo-log! "auto-detect" "" (string-append "keys:" (number->string (cadr gap)))
-                "sharding-suggestion" "deferred")
-      #f)
-
+      (letrec ((clean (lambda (remaining)
+                        (when (pair? remaining)
+                          (let ((k (car remaining)))
+                            (let ((expire (hash-ref *evo-ttl* k)))
+                              (unless (void? expire)
+                                (when (>= (current-time) expire)
+                                  (hash-remove! *evo-store* k)
+                                  (hash-remove! *evo-ttl* k)))))
+                          (clean (cdr remaining))))))
+        (clean (hash-keys *evo-ttl*)))
+      (display "[auto] TTL cleanup done") (newline)
+      #t)
      (#t #f))))
 
-;; ── 升级到 Grok ──
-
 (define (auto-escalate gap)
-  "将无法自修的 gap 加入 Grok 问题队列"
-  (let ((entry (list (car gap) (current-time) (auto-grok-prompt gap))))
+  (let ((entry (list (car gap) (current-time) (car gap))))
     (set! *auto-grok-needs* (cons entry *auto-grok-needs*))
     (display "[auto] -> grok queue: ") (display (car entry)) (newline)))
-
-(define (auto-grok-prompt gap)
-  "生成给 Grok 的提示文本"
-  (let ((type (car gap)))
-    (string-append
-     "Evo-KV needs help: " type
-     "\nMetrics: " (number->string (if (pair? (cdr gap)) (car (cdr gap)) 0)))))
-
-;; ── 基准测试 ──
-
-(define (auto-benchmark n)
-  "跑 n 次 get/set，返回 ops/s"
-  (let ((start (current-time)))
-    (letrec ((run (lambda (i)
-                    (when (< i n)
-                      (track-evo-get (string-append "b:" (number->string i)))
-                      (track-evo-set (string-append "b:" (number->string i)) "v")
-                      (run (+ i 1))))))
-      (run 0))
-    (let* ((elapsed (- (current-time) start))
-           (total (* n 2)))
-      (if (> elapsed 0) (inexact->exact (/ total elapsed)) 0))))
-
-;; ── 检查字符串是否包含子串 ──
-
-(define (string-contains? s sub)
-  (let ((slen (string-length s))
-        (sublen (string-length sub)))
-    (letrec ((search (lambda (i)
-                       (if (> i (- slen sublen))
-                           #f
-                           (if (= (substring i (+ i sublen) s) sub)
-                               #t
-                               (search (+ i 1)))))))
-      (search 0))))
-
-;; ── 输出 gap 描述 ──
-
-(define (gap-description gap)
-  (string-append
-   (car gap) " "
-   (if (number? (cadr gap)) (number->string (cadr gap)) (cadr gap))))
 
 ;; ── 单次 tick ──
 
 (define (auto-tick)
-  "单次检测→修复→升级→日志"
   (set! *auto-cycle* (+ *auto-cycle* 1))
   (display "[auto] cycle #") (display *auto-cycle*) (newline)
-
-  ;; 1. 检测
   (let* ((all-gaps (auto-detect-gaps))
          (sorted (auto-prioritize all-gaps)))
     (display "  gaps: ") (display (length all-gaps)) (newline)
-
-    ;; 2. 尝试修复
     (for-each (lambda (gap)
-                (unless (auto-fix-simple gap)
-                  (auto-escalate gap)))
+                (unless (auto-fix-simple gap) (auto-escalate gap)))
               sorted)
-
-    ;; 3. 如果有待发送到 Grok 的问题
-    (when (pair? *auto-grok-needs*)
-      (let ((pending (car *auto-grok-needs*)))
-        (set! *auto-grok-needs* (cdr *auto-grok-needs*))
-        (display "  grok: ") (display (car pending)) (newline))))
-
-  (display "  done") (newline))
+    (display "  done") (newline)))
 
 ;; ── 公共 API ──
 
 (define (auto-start . opts)
-  "执行一次自动循环。
-   关键字参数: :interval N — 间隔秒数 (仅供记录, 实际间隔由外部控制)"
   (let loop ((rest opts))
     (when (pair? rest)
-      (cond
-       ((eq? (car rest) (quote interval))
-        (set! *auto-interval* (cadr rest))))
+      (cond ((eq? (car rest) (quote interval))
+             (set! *auto-interval* (cadr rest))))
       (loop (cddr rest))))
   (set! *auto-active* #t)
-  (display "[auto] start cycle (interval ") (display *auto-interval*) (display "s)") (newline)
+  (display "[auto] start (interval ") (display *auto-interval*) (display "s)") (newline)
   (auto-tick)
   "OK")
 
@@ -203,7 +113,6 @@
   "OK")
 
 (define (auto-status)
-  "查看状态"
   (list
    (cons 'active *auto-active*)
    (cons 'cycles *auto-cycle*)
@@ -213,7 +122,6 @@
    (cons 'hot-keys (length (metrics-hot-keys 10)))))
 
 (define (auto-find-and-evolve)
-  "一键：检测 gap → 尽可能修复 → 报告"
   (display "=== auto find & evolve ===") (newline)
   (let* ((gaps (auto-detect-gaps))
          (sorted (auto-prioritize gaps))
@@ -222,17 +130,13 @@
     (for-each (lambda (gap)
                 (let ((fixed (auto-fix-simple gap)))
                   (display "  - ") (display (car gap))
-                  (if fixed
-                      (display " [fixed]")
-                      (display " [deferred]"))
+                  (if fixed (display " [fixed]") (display " [deferred]"))
                   (newline)
                   (set! results (cons (list (car gap) fixed) results))))
               sorted)
     (list 'done results)))
 
-;; ── 加载提示 ──
-
-(display "evo-kv auto driver loaded.") (newline)
+(display "evo-kv auto driver loaded") (newline)
 (display "  (auto-start)               — start loop") (newline)
 (display "  (auto-stop)                — stop loop") (newline)
 (display "  (auto-status)              — status") (newline)
