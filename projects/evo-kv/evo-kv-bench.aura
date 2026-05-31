@@ -1,8 +1,8 @@
-;; === evo-kv-bench.aura -- Benchmark 套件 ===
+;; === evo-kv-bench.aura -- Benchmark 套件（结构化版） ===
 ;; Usage: load core first, then load this file
 
 (define *bench-ht* (hash))    ;; section name -> function
-(define *bench-res* '())
+(define *bench-res* '())      ;; ( (id name ops-s count dt-ms) ... )
 (define *bench-id* 0)
 
 (define (bench-add name fn)
@@ -13,41 +13,86 @@
 
 (define (bench-iter)
   (let ((n (hash-length *evo-store*)))
-    (if (< n 10) 200 (if (< n 100) 100 50))))
+    (cond ((< n 10) 200)
+          ((< n 100) 100)
+          (#t 50))))
 
 (define (bench-run . args)
-  (let ((n (if (and (pair? args) (number? (car args))) (car args) (bench-iter)))
-        (id *bench-id*))
+  (let* ((n (if (and (pair? args) (number? (car args))) (car args) (bench-iter)))
+         (id *bench-id*)
+         (keys (hash-keys *bench-ht*))
+         (results '()))
     (set! *bench-id* (+ id 1))
     (display "=== bench #") (display id) (display " (") (display n) (display "x) ===") (newline)
-    (let ((keys (hash-keys *bench-ht*)))
-      (letrec ((go (lambda (ks)
-                     (when (pair? ks)
-                       (let* ((k (car ks))
-                              (fn (hash-ref *bench-ht* k))
-                              (t0 (time-ms))
-                              (c (fn n))
-                              (dt (- (time-ms) t0)))
-                         (display "  ") (display k) (display " ")
-                         (display (inexact->exact (/ (* c 1000) (if (> dt 0) dt 1))))
-                         (display " ops/s") (newline))
-                       (go (cdr ks))))))
-        (go keys)))
+    ;; Iterate benchmarks via letrec since Aura while is a primitive
+    (letrec ((go (lambda (ks)
+                   (when (pair? ks)
+                     (let* ((k (car ks))
+                            (fn (hash-ref *bench-ht* k))
+                            (t0 (time-ms))
+                            (c (fn n))
+                            (dt (- (time-ms) t0))
+                            (ops-s (inexact->exact (/ (* c 1000) (if (> dt 0) dt 1)))))
+                       (display "  ") (display k) (display " ")
+                       (display ops-s) (display " ops/s") (newline)
+                       (set! results (cons (list k ops-s c dt) results))
+                       (go (cdr ks)))))))
+      (go keys))
     (display "=== done ===") (newline)
-    (set! *bench-res* (cons (cons id '()) *bench-res*))
-    '()))
+    ;; Store structured results with all data
+    (set! *bench-res* (cons (list id (reverse results)) *bench-res*))
+    (list id (reverse results))))
+
+(define (bench-stats)
+  "返回最新基准测试的结构化结果。格式: ((name ops-s count dt-ms) ...)"
+  (if (null? *bench-res*)
+      '()
+      (cadr (car *bench-res*))))
+
+(define (bench-compare . opts)
+  "比较最近两次基准测试。返回 (name delta-ops-s) 列表。"
+  (if (< (length *bench-res*) 2)
+      "need at least 2 bench runs"
+      (let ((prev (cadr (cadr *bench-res*)))  ;; second-to-last
+            (curr (cadr (car *bench-res*))))  ;; last
+        (letrec ((compare (lambda (a b acc)
+                            (if (null? a) (reverse acc)
+                                (let ((name (car (car a)))
+                                      (op-a (cadr (car a)))
+                                      (op-b (cadr (car b))))
+                                  (compare (cdr a) (cdr b)
+                                           (cons (list name (- op-b op-a)) acc)))))))
+          (compare prev curr '())))))
 
 (define (bench-report)
+  "显示最新基准测试摘要。"
   (if (null? *bench-res*)
       (display "no bench data") (newline)
-      (display (string-append "latest: bench #" (number->string (car (car *bench-res*))))) (newline)))
+      (let ((latest (car *bench-res*))
+            (stats (bench-stats)))
+        (display "bench #") (display (car latest)) (display ": ")
+        (letrec ((show (lambda (items)
+                         (when (pair? items)
+                           (display (car (car items))) (display " ")
+                           (display (cadr (car items))) (display " ops/s")
+                           (when (pair? (cdr items)) (display ", "))
+                           (show (cdr items))))))
+          (show stats))
+        (newline))))
 
+;; ── 注册基准测试 ──
+;; ping: 纯函数调用
 (bench-add "ping" (lambda (n) (letrec ((lp (lambda (i c) (if (>= i n) c (lp (+ i 1) (+ c 1)))))) (lp 0 0))))
+;; set: 写入 evo-store
 (bench-add "set" (lambda (n) (letrec ((lp (lambda (i) (when (< i n) (evo-set (string-append "bk" (number->string i)) (number->string i)) (lp (+ i 1)))))) (lp 0)) n))
+;; get: 读取 evo-store
 (bench-add "get" (lambda (n) (letrec ((lp (lambda (i) (when (< i n) (evo-get (string-append "bk" (number->string i))) (lp (+ i 1)))))) (lp 0)) n))
+;; del: 删除 evo-store
 (bench-add "del" (lambda (n) (letrec ((lp (lambda (i) (when (< i n) (evo-del (string-append "bk" (number->string i))) (lp (+ i 1)))))) (lp 0)) n))
 
-(display "evo-kv bench loaded") (newline)
-(display "  (bench-run [n])   -- run all") (newline)
-(display "  (bench-report)    -- results") (newline)
+
+(display "evo-kv bench loaded (structured)") (newline)
+(display "  (bench-run [n])      -- run all benchmarks") (newline)
+(display "  (bench-stats)        -- get structured results") (newline)
+(display "  (bench-compare)      -- compare last 2 runs") (newline)
 "OK"
