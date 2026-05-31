@@ -1,6 +1,7 @@
 module;
 #include <cstdint>
 #include "aura_jit.h"
+#include "runtime_shared.h"
 #include <atomic>
 #include "messaging_bridge.h"
 #include <unistd.h>
@@ -2913,6 +2914,12 @@ private:
                     flat_blocks[bi] = {block.id, flat_instrs[bi].data(),
                                        static_cast<std::uint32_t>(flat_instrs[bi].size())};
                 }
+                // Run escape analysis on flat instructions
+                std::vector<std::uint8_t> escape_storage;
+                if (g_use_arena) {
+                    escape_storage.resize(ir_fn.local_count, 0);
+                    aura::jit::run_escape_analysis(flat_instrs, ir_fn.local_count, escape_storage);
+                }
                 // Set up shape_storage for shape_map (keep alive until compile)
                 std::vector<std::uint8_t> shape_storage;
                 const uint8_t* final_shape_map = nullptr;
@@ -2945,6 +2952,9 @@ private:
                                                 nullptr,
                                                 0,
                                                 final_shape_map};
+                // Set escape map from escape analysis
+                if (!escape_storage.empty())
+                    flat_fn.escape_map = escape_storage.data();
 
                 // Skip if already cached (prevents duplicate JIT symbols)
                 if (ir_fn.name != "__top__" && jit_cache_.count(ir_fn.name)) {
