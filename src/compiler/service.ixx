@@ -312,6 +312,7 @@ public:
             "orch:reset-metrics",
             // Special forms not in IR
             "when",
+            "set!",
             "load",
             "equal?",
             "unless",
