@@ -176,16 +176,7 @@ public:
     static void destroy_workspace_tree(void* wt);
     const std::string& session_id() const { return session_id_; }
 
-    // Hash table type + accessor for JIT inline hash dispatch (Phase 4a)
-    struct HashTable {
-        std::vector<std::uint8_t> metadata; // 0xFF=empty, 0x00-0x7F=occupied(7-bit fingerprint)
-        std::vector<types::EvalValue> keys;
-        std::vector<types::EvalValue> values;
-        std::size_t size = 0;     // live entries
-        std::size_t capacity = 0; // power of 2
-    };
-    const std::vector<HashTable>& hash_heap() const { return hash_heap_; }
-    std::vector<HashTable>& hash_heap() { return hash_heap_; }
+
 
     void set_messaging_callbacks(
         std::function<bool(const std::string&, const std::string&)>* send_fn,
@@ -353,7 +344,7 @@ private:
     std::vector<std::string> keyword_table_; // keyword name strings (indexed by KeywordRef)
     std::size_t eval_depth_ = 0; // recursion counter for friendly stack overflow
     static constexpr std::size_t MAX_EVAL_DEPTH = 50000;
-    std::vector<HashTable> hash_heap_;
+
     std::vector<std::vector<types::EvalValue>> vector_heap_;
     std::uint64_t next_id_ = 1;
     ClosureId gc_safe_closure_id_ = 0;
@@ -376,7 +367,7 @@ private:
 
     // ── Heap mutex (P2 thread-safe GC) ────────────────────────
     // Protects string_heap_, pairs_, closures_, cells_,
-    // hash_heap_, vector_heap_, opaque_heap_, error_values_.
+    // vector_heap_, opaque_heap_, error_values_.
     // Locked during gc-heap and gc-temp operations.
     std::mutex heap_mtx_;
     std::mutex& heap_mutex() { return heap_mtx_; }

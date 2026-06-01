@@ -160,11 +160,9 @@ struct LLVMBuilder {
     llvm::Function* fn_hash_ref = nullptr;
     llvm::Function* fn_hash_set = nullptr;
     llvm::Function* fn_hash_remove = nullptr;
-    // Hash table inline accessor (Phase 4b): single call + GEP
-    llvm::Function* fn_hash_get_table = nullptr;
+    // Hash table direct accessor (Phase 4c): returns FlatHashTable*, then GEP
+    llvm::Function* fn_hash_get_flat_table = nullptr;
     llvm::Function* fn_hash_key_eq = nullptr;
-    llvm::StructType* hash_info_type = nullptr;
-    llvm::PointerType* hash_info_ptr = nullptr;
 
     void declare_runtime() {
         auto i64 = llvm::Type::getInt64Ty(ctx);
@@ -278,17 +276,12 @@ struct LLVMBuilder {
         fn_hash_remove = llvm::Function::Create(llvm::FunctionType::get(i64, {i64, i64}, false),
                                                 llvm::Function::ExternalLinkage, "aura_hash_remove", mod);
 
-        // Hash table info (Phase 4b): single call + GEP
+        // Hash table direct accessor (Phase 4c): get FlatHashTable*, then GEP
         {
             auto i8_ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(ctx));
-            auto i64_ptr = llvm::PointerType::getUnqual(i64);
-            // HashTableInfo struct: {i64, ptr, ptr, ptr}
-            hash_info_type = llvm::StructType::create(ctx, {i64, i64_ptr, i64_ptr, i8_ptr}, "HashTableInfo");
-            hash_info_ptr = llvm::PointerType::getUnqual(hash_info_type);
-
-            fn_hash_get_table =
-                llvm::Function::Create(llvm::FunctionType::get(llvm::Type::getVoidTy(ctx), {i64, hash_info_ptr}, false),
-                                        llvm::Function::ExternalLinkage, "aura_hash_get_table", mod);
+            fn_hash_get_flat_table =
+                llvm::Function::Create(llvm::FunctionType::get(i8_ptr, {i64}, false),
+                                        llvm::Function::ExternalLinkage, "aura_hash_get_flat_table", mod);
             fn_hash_key_eq =
                 llvm::Function::Create(llvm::FunctionType::get(i64, {i64, i64}, false),
                                         llvm::Function::ExternalLinkage, "aura_hash_key_eq", mod);
@@ -769,33 +762,30 @@ struct LLVMBuilder {
             // HashSet: result, hash, pair  —  (hash-set! hash key val) with pair=(key . val)
             // HashRemove: result, hash, key  —  (hash-remove! hash key)
             case OpHashRef: {
-                // Phase 4b: Inline LLVM IR hash table scan loop.
-                // Single call to aura_hash_get_table, then GEP from the struct fields.
+                // Phase 4c: Inline LLVM IR hash table scan loop.
+                // Single call to aura_hash_get_flat_table, then GEP from the pointer.
+                // FlatHashTable layout:
+                //   [0]  capacity  (uint64_t)
+                //   [8]  size      (uint64_t)
+                //   [16] metadata  (uint8_t[capacity])
+                //   [16+capacity]  keys (int64_t[capacity])
+                //   [16+capacity*9] values (int64_t[capacity])
                 auto hash_val = load(inst.ops[1]);
                 auto key_val  = load(inst.ops[2]);
                 auto result_slot = inst.ops[0];
                 auto entry_bb = irb->GetInsertBlock(); auto func = entry_bb->getParent();
 
-                // Alloca for HashTableInfo struct
-                auto info_alloca = irb->CreateAlloca(hash_info_type, nullptr, "ht_info");
-                irb->CreateCall(fn_hash_get_table, {hash_val, info_alloca});
-
-                // Extract fields once via GEP
                 auto i64_ty   = llvm::Type::getInt64Ty(ctx);
                 auto i8_ty    = llvm::Type::getInt8Ty(ctx);
-                auto i64_ptr = llvm::PointerType::getUnqual(i64_ty);
-                auto i8_ptr  = llvm::PointerType::getUnqual(i8_ty);
-                auto capacity = irb->CreateLoad(i64_ty, irb->CreateStructGEP(hash_info_type, info_alloca, 0));
-                auto keys_ptr = irb->CreateLoad(i64_ptr, irb->CreateStructGEP(hash_info_type, info_alloca, 1));
-                auto vals_ptr = irb->CreateLoad(i64_ptr, irb->CreateStructGEP(hash_info_type, info_alloca, 2));
-                auto meta_ptr = irb->CreateLoad(i8_ptr,  irb->CreateStructGEP(hash_info_type, info_alloca, 3));
+                auto i8_ptr   = llvm::PointerType::getUnqual(i8_ty);
+                auto i64_ptr  = llvm::PointerType::getUnqual(i64_ty);
 
-                // Build the scan loop entirely in LLVM IR
-                //    for i = 0..capacity:
-                //      if metadata[i] == 0xFF: continue
-                //      if key_eq(keys[i], key_val): return values[i]
-                //    return void sentinel (11)
+                // Call aura_hash_get_flat_table — returns i8* (FlatHashTable*)
+                auto ht_ptr = irb->CreateCall(fn_hash_get_flat_table, {hash_val});
 
+                // Declare all basic blocks upfront
+                auto null_bb = llvm::BasicBlock::Create(ctx, "hnull", func);
+                auto live_bb = llvm::BasicBlock::Create(ctx, "hlive", func);
                 auto loop_bb  = llvm::BasicBlock::Create(ctx, "hloop", func);
                 auto check_bb = llvm::BasicBlock::Create(ctx, "hchk", func);
                 auto cmp_bb   = llvm::BasicBlock::Create(ctx, "hcmp", func);
@@ -804,13 +794,49 @@ struct LLVMBuilder {
                 auto miss_bb  = llvm::BasicBlock::Create(ctx, "hmis", func);
                 auto done_bb  = llvm::BasicBlock::Create(ctx, "hdone", func);
 
-                // Jump to loop header
+                auto is_null = irb->CreateICmpEQ(ht_ptr, llvm::ConstantPointerNull::get(i8_ptr));
+                irb->CreateCondBr(is_null, null_bb, live_bb);
+
+                // ── Null case: return void ──
+                irb->SetInsertPoint(null_bb);
+                irb->CreateBr(done_bb);
+
+                // ── Live case: load from FlatHashTable ──
+                irb->SetInsertPoint(live_bb);
+
+                // Load capacity from offset 0
+                auto cap_gep = irb->CreateGEP(i8_ty, ht_ptr, c64(0));
+                auto capacity = irb->CreateLoad(i64_ty, irb->CreateBitCast(cap_gep, i64_ptr));
+
+                // Compute pointer offsets based on FlatHashTable layout
+                // metadata starts at offset 16
+                auto meta_ptr = irb->CreateGEP(i8_ty, ht_ptr, c64(16));
+
+                // keys at offset 16 + capacity
+                auto cap64 = irb->CreateIntCast(capacity, i64_ty, false);
+                auto keys_offset = irb->CreateAdd(c64(16), cap64);
+                auto keys_raw = irb->CreateGEP(i8_ty, ht_ptr, keys_offset);
+                auto keys_ptr = irb->CreateBitCast(keys_raw, i64_ptr);
+
+                // values at offset 16 + capacity * 9
+                auto cap_x_9 = irb->CreateMul(cap64, c64(9));
+                auto vals_offset = irb->CreateAdd(c64(16), cap_x_9);
+                auto vals_raw = irb->CreateGEP(i8_ty, ht_ptr, vals_offset);
+                auto vals_ptr = irb->CreateBitCast(vals_raw, i64_ptr);
+
+                // Build the scan loop entirely in LLVM IR
+                //    for i = 0..capacity:
+                //      if metadata[i] == 0xFF: continue
+                //      if key_eq(keys[i], key_val): return values[i]
+                //    return void sentinel (11)
+
+
                 irb->CreateBr(loop_bb);
 
                 // ── Loop header (PHI for index) ──
                 irb->SetInsertPoint(loop_bb);
                 auto phi_idx = irb->CreatePHI(i64_ty, 2, "hidx");
-                phi_idx->addIncoming(c64(0), entry_bb);
+                phi_idx->addIncoming(c64(0), live_bb);
 
                 // Check: i < capacity?
                 auto at_end = irb->CreateICmpUGE(phi_idx, capacity);
@@ -849,9 +875,10 @@ struct LLVMBuilder {
 
                 // ── Done PHI ──
                 irb->SetInsertPoint(done_bb);
-                auto phi_result = irb->CreatePHI(i64_ty, 2, "hres");
+                auto phi_result = irb->CreatePHI(i64_ty, 3, "hres");
                 phi_result->addIncoming(val_ld, found_bb);
                 phi_result->addIncoming(c64(11), miss_bb);  // void sentinel
+                phi_result->addIncoming(c64(11), null_bb);   // null case returns void
                 store(result_slot, phi_result);
                 return true;
             }
@@ -1060,11 +1087,10 @@ void aura_set_hash_dispatchers(
 int64_t aura_hash_ref(int64_t, int64_t);
 int64_t aura_hash_set(int64_t, int64_t);
 int64_t aura_hash_remove(int64_t, int64_t);
-// Hash table inline accessor (Phase 4b): single call + GEP
-struct HashTableInfo;
-void aura_hash_get_table(int64_t, HashTableInfo*);
+// Hash table direct accessor (Phase 4c): returns FlatHashTable*, then GEP
+struct FlatHashTable;
+const FlatHashTable* aura_hash_get_flat_table(int64_t);
 int64_t aura_hash_key_eq(int64_t, int64_t);
-void aura_set_hash_table_info_callback(void (*)(int64_t, HashTableInfo*));
 void aura_set_hash_key_eq_callback(int64_t (*)(int64_t, int64_t));
 // Float/string pool functions (defined in aura_jit_runtime.cpp)
 int64_t aura_alloc_float(double);
@@ -1300,9 +1326,8 @@ struct AuraJIT::Impl {
         reg("aura_arena_offset", (void*)aura_arena_offset);
         reg("aura_alloc_closure_arena", (void*)aura_alloc_closure_arena);
 
-        reg("aura_hash_get_table", (void*)aura_hash_get_table);
+        reg("aura_hash_get_flat_table", (void*)aura_hash_get_flat_table);
         reg("aura_hash_key_eq", (void*)aura_hash_key_eq);
-        reg("aura_set_hash_table_info_callback", (void*)aura_set_hash_table_info_callback);
         reg("aura_set_hash_key_eq_callback", (void*)aura_set_hash_key_eq_callback);
 
         // C standard library functions
