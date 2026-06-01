@@ -44,6 +44,7 @@ import aura.diag;
 
 // PrimId name table (mirrors ir.ixx kPrimNames — must stay in sync)
 static constexpr const char* kPrimNameTable[] = {
+    "hash",
     "string-append", "string-length",  "string-ref",     "substring",     "string=?",
     "string<?",      "number->string", "string->number", "display",       "write",
     "newline",       "error",          "assert",         "read",          "read-file",
@@ -120,8 +121,9 @@ static std::int64_t convert_str_for_eval(std::int64_t val,
                                           const aura::compiler::Primitives* prims) {
     if (!is_str_val(val))
         return val; // not a string, pass through
-    // JIT string encoding: STRING_BIAS_VAL - idx
-    std::int64_t idx = -val - STRING_BIAS_VAL;
+    // JIT string encoding: STRING_BIAS_VAL - idx (val is STRING_BIAS_VAL - pool_idx)
+    // idx = STR_BIAS - val = STR_BIAS - (STR_BIAS - pool_idx) = pool_idx
+    std::int64_t idx = STRING_BIAS_VAL - val;
     if (idx < 0)
         return val;
     // Get the string content from the JIT string pool
