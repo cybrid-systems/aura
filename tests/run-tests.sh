@@ -294,6 +294,29 @@ run_with_flag "ea:no-arena-multiple" "$(printf '(+ (car (cons 10 20)) (cdr (cons
 run_with_flag "ea:no-arena-cons-of-cons" "$(printf '(car (car (cons (cons 1 2) (cons 3 4))))')" "1"
 run_with_flag "ea:no-arena-map-cons" "$(printf '(car (car (map (lambda (x) (cons x x)) (list 1 2))))')" "1"
 
+# ── Mutation tests on arena pairs ─────────────────────────
+# set-car!/set-cdr! must work on arena-allocated pairs
+run_test "ea:set-car-local" "$(printf '(let ((p (cons 1 2))) (set-car! p 3) (car p))')" "3"
+run_test "ea:set-cdr-local" "$(printf '(let ((p (cons 1 2))) (set-cdr! p 3) (cdr p))')" "3"
+run_test "ea:set-car-global" "$(printf '(define p (cons 1 2)) (set-car! p 3) (car p)')" "3"
+run_test "ea:set-car-chain" "$(printf '(begin (define p (cons 1 2)) (set-car! p 3) (set-cdr! p 4) (+ (car p) (cdr p)))')" "7"
+
+# ── apply + pair construction ─────────────────────────────
+run_test "ea:apply-cons" "$(printf '(apply cons (list 1 2))')" "(1 . 2)"
+
+# ── Pair stored in multiple hashes (escaping) ─────────────
+run_test "ea:stored-twice" "$(printf '(let ((h1 (hash)) (h2 (hash)) (p (cons 1 2))) (hash-set! h1 "a" p) (hash-set! h2 "b" p) (+ (car (hash-ref h1 "a")) (car (hash-ref h2 "b"))))')" "2"
+
+# ── Pair returned from map (escaping via return) ─────────
+run_test "ea:map-cadr-cons" "$(printf '(car (cdr (map (lambda (x) (cons x x)) (list 10 20 30))))')" "(20 . 20)"
+
+# ── append builds cons chain (all non-escaping intermediate) ─
+run_test "ea:append-pairs" "$(printf '(append (list 1 2) (list 3 4))')" "(1 2 3 4)"
+
+# ── --no-arena: mutation still correct ────────────────────
+run_with_flag "ea:no-arena-set-car" "$(printf '(let ((p (cons 1 2))) (set-car! p 3) (car p))')" "3"
+run_with_flag "ea:no-arena-stored-twice" "$(printf '(let ((h1 (hash)) (h2 (hash)) (p (cons 1 2))) (hash-set! h1 "a" p) (hash-set! h2 "b" p) (+ (car (hash-ref h1 "a")) (car (hash-ref h2 "b"))))')" "2"
+
 echo ""
 echo "============"
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL" 
