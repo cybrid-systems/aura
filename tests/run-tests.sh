@@ -385,6 +385,16 @@ run_with_flag "hash:no-arena-fixnum" "$(printf '(let ((h (hash))) (hash-set! h 4
 run_with_flag "hash:no-arena-string" "$(printf '(let ((h (hash))) (hash-set! h "k" 99) (hash-ref h "k"))')" "99"
 run_with_flag "hash:no-arena-has-key" "$(printf '(let ((h (hash))) (hash-set! h 42 1) (hash-has-key? h 42))')" "#t"
 
+# ── JIT hash edge cases (string + fixnum interop) ────────
+run_test "hash:string-multi" "$(printf '(let ((h (hash))) (hash-set! h "a" 10) (hash-set! h "b" 20) (hash-set! h "c" 30) (+ (hash-ref h "a") (hash-ref h "b") (hash-ref h "c")))')" "60"
+run_test "hash:mixed-keys" "$(printf '(let ((h (hash))) (hash-set! h 1 10) (hash-set! h "k" 2) (+ (hash-ref h 1) (hash-ref h "k")))')" "12"
+run_test "hash:string-update" "$(printf '(let ((h (hash))) (hash-set! h "k" 1) (hash-set! h "k" 2) (hash-ref h "k"))')" "2"
+run_test "hash:string-remove" "$(printf '(let ((h (hash))) (hash-set! h "k" 1) (hash-remove! h "k") (hash-ref h "k"))')" ""
+run_test "hash:string-has-key" "$(printf '(let ((h (hash))) (hash-set! h "k" 1) (hash-has-key? h "k"))')" "#t"
+run_test "hash:string-key-keys" "$(printf '(let ((h (hash))) (hash-set! h "x" 1) (hash-set! h "y" 2) (length (hash-keys h)))')" "2"
+run_test "hash:large-set-get" "$(printf '(let ((h (hash))) (hash-set! h "k" 1) (hash-set! h "k" 2) (hash-set! h "k" 3) (hash-ref h "k"))')" "3"
+run_test "hash:fill-5" "$(printf '(let ((h (hash 1 10 2 20 3 30 4 40 5 50))) (+ (hash-ref h 1) (hash-ref h 5)))')" "60"
+
 # ── Escape analysis + hash interactions ──────────────────
 run_test "ea:hash-escaped-pair" "$(printf '(let ((h (hash))) (hash-set! h "k" (cons 1 2)) (car (hash-ref h "k")))')" "1"
 run_test "ea:hash-stored-multi" "$(printf '(let ((ht (hash))) (hash-set! ht "a" (cons 10 20)) (hash-set! ht "b" (cons 30 40)) (+ (car (hash-ref ht "a")) (cdr (hash-ref ht "b"))))')" "50"
