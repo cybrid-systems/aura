@@ -408,6 +408,7 @@ public:
         // not primitives or cached defines.
         static const std::unordered_set<std::string> lowering_known = {
             "try", "catch", "raise", "require", "import", "use",
+            "with-arena",
         };
 
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
@@ -451,7 +452,8 @@ public:
                 auto vn = std::string(var_name);
                 if (!vn.empty() &&
                     evaluator_.primitives().slot_for_name(vn) >= evaluator_.primitives().slot_count() &&
-                    ir_cache_.count(vn) == 0) {
+                    ir_cache_.count(vn) == 0 &&
+                    !lowering_known.count(vn)) {
                     return true;
                 }
             }

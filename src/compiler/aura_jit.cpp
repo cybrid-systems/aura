@@ -90,6 +90,9 @@ enum Op : uint32_t {
     OpDrop = 39,
     // M4 Linear ownership opcodes (must match ir.ixx IROpcode values)
     // DropOp is 41 in ir.ixx — handle alongside OpDrop
+    // Arena operations
+    OpArenaPush = 48,
+    OpArenaPop = 49,
 };
 
 // Map IROpcode::DropOp (41) to the OpDrop handler.
@@ -143,6 +146,8 @@ struct LLVMBuilder {
     llvm::Function* fn_drop_cell = nullptr;
     llvm::Function* fn_drop_closure = nullptr;
     llvm::Function* fn_drop_value = nullptr;
+    llvm::Function* fn_arena_push = nullptr;
+    llvm::Function* fn_arena_pop = nullptr;
     llvm::Function* fn_alloc_float = nullptr;
     llvm::Function* fn_float_ref = nullptr;
     llvm::Function* fn_alloc_string = nullptr;
@@ -230,6 +235,12 @@ struct LLVMBuilder {
                                                llvm::Function::ExternalLinkage, "aura_drop_cell", mod);
         fn_drop_closure = llvm::Function::Create(llvm::FunctionType::get(void_ty, {i64}, false),
                                                   llvm::Function::ExternalLinkage, "aura_drop_closure", mod);
+
+        // Arena push/pop
+        fn_arena_push = llvm::Function::Create(llvm::FunctionType::get(void_ty, false),
+                                                llvm::Function::ExternalLinkage, "aura_arena_push", mod);
+        fn_arena_pop = llvm::Function::Create(llvm::FunctionType::get(void_ty, false),
+                                               llvm::Function::ExternalLinkage, "aura_arena_pop", mod);
 
         // String functions
         fn_alloc_string =
@@ -698,6 +709,18 @@ struct LLVMBuilder {
                 return true;
             }
 
+            case OpArenaPush: {
+                // ArenaPush(result_slot, size) — push TL arena frame
+                irb->CreateCall(fn_arena_push);
+                store(inst.ops[0], c64(0));
+                return true;
+            }
+            case OpArenaPop: {
+                // ArenaPop(saved_offset_slot) — pop TL arena frame
+                irb->CreateCall(fn_arena_pop);
+                return true;
+            }
+
             default:
                 if (inst.ops[0] < fn.local_count)
                     store(inst.ops[0], c64(0));
@@ -733,6 +756,9 @@ void run_escape_analysis(
         /* 37=Raise, 38=IsError */
         OpHashRef = 39, OpHashSet = 40, OpHashRemove = 41,
         /* M4 linear ownership: 42-47, not escape-relevant */
+        /* Arena */
+        OpArenaPush = 48,
+        OpArenaPop = 49,
     };
 
     escape_map.assign(local_count, 0);
@@ -885,6 +911,9 @@ const char* aura_jit_string_content(int64_t);
 void aura_drop_pair(int64_t) {}
 void aura_drop_cell(int64_t) {}
 void aura_drop_closure(int64_t) {}
+// Arena push/pop wrappers (defined in aura_jit_runtime.cpp)
+void aura_arena_push();
+void aura_arena_pop();
 }
 
 // C standard library functions (declared in <cstdio>, registered as JIT symbols)
@@ -1092,6 +1121,8 @@ struct AuraJIT::Impl {
         reg("aura_drop_pair", (void*)aura_drop_pair);
         reg("aura_drop_cell", (void*)aura_drop_cell);
         reg("aura_drop_closure", (void*)aura_drop_closure);
+        reg("aura_arena_push", (void*)aura_arena_push);
+        reg("aura_arena_pop", (void*)aura_arena_pop);
 
         // C standard library functions
         reg("printf", (void*)printf);

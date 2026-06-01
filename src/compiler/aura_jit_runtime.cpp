@@ -448,4 +448,8 @@ const char* aura_jit_string_content(std::int64_t val) {
     return nullptr;
 }
 
+// ── Arena push/pop wrappers (no pointer arg needed for JIT) ──
+void aura_arena_push() { tl_arena_push(&g_tl_arena); }
+void aura_arena_pop() { tl_arena_pop(&g_tl_arena); }
+
 } // extern "C"

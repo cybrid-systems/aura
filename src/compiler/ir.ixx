@@ -70,6 +70,8 @@ export enum class IROpcode : std::uint8_t {
     MutBorrowOp, // mutable borrow: result_slot, inner_slot
     DropOp,      // explicit destruct: inner_slot
     RefCountOp,  // runtime refcount: result_slot, inner_slot, inc(1)/dec(0)
+    ArenaPush,   // push TL arena frame: result_slot (saved offset), size
+    ArenaPop,    // pop TL arena frame: saved_offset_slot
 };
 
 export struct IRInstruction {
@@ -154,9 +156,11 @@ export constexpr OpcodeInfo kOpcodeInfo[] = {
     {"mut-borrow-op", 2, true}, // MutBorrowOp: result, inner
     {"drop-op", 1, false},      // DropOp: inner (no result)
     {"ref-count-op", 3, true},  // RefCountOp: result, inner, inc/dec
+    {"arena-push", 2, true},     // ArenaPush: result, size
+    {"arena-pop", 1, false},     // ArenaPop: saved_offset (no result)
 };
 
-static_assert(std::size(kOpcodeInfo) == 48, "kOpcodeInfo must have exactly one entry per IROpcode");
+static_assert(std::size(kOpcodeInfo) == 50, "kOpcodeInfo must have exactly one entry per IROpcode");
 
 // Helper: look up opcode info by IROpcode enum value
 inline const OpcodeInfo* lookup_opcode(IROpcode op) {
