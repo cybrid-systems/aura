@@ -56,6 +56,7 @@ import aura.diag;
 // PrimId name table (mirrors ir.ixx kPrimNames — must stay in sync)
 static constexpr const char* kPrimNameTable[] = {
     "hash",
+    "hash-length", "hash-has-key?", "hash-keys", "hash-values",
     "string-append", "string-length",  "string-ref",     "substring",     "string=?",
     "string<?",      "number->string", "string->number", "display",       "write",
     "newline",       "error",          "assert",         "read",          "read-file",
