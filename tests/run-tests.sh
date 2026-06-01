@@ -551,3 +551,9 @@ run_test "bridge:cached-fn" "$(printf '(define (my-map f lst) (if (null? lst) ()
 
 # Nested closure bridge via cached function
 run_test "bridge:nested-lambda" "$(printf '(define (twice f) (lambda (x) (f (f x))))((twice (lambda (x) (+ x 1))) 5)')" "7"
+
+# ── Arena memory tracking tests ────────────────────────────
+# arena-offset returns an integer >= 0 when arena is active
+run_test "arena:offset-nonneg" "$(printf '(>= (arena-offset) 0)')" "#t"
+run_test "arena:offset-usable" "$(printf '(let ((a (arena-offset))) (cons (* 2 3) (* 4 5)) (>= (arena-offset) a))')" "#t"
+run_test "arena:offset-type" "$(printf '(integer? (arena-offset))')" "#t"

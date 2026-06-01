@@ -125,6 +125,7 @@ struct LLVMBuilder {
 
     // Runtime function declarations
     llvm::Function* fn_alloc_closure = nullptr;
+    llvm::Function* fn_alloc_closure_arena = nullptr;
     llvm::Function* fn_closure_capture = nullptr;
     llvm::Function* fn_closure_call = nullptr;
     llvm::Function* fn_new_cell = nullptr;
@@ -166,6 +167,10 @@ struct LLVMBuilder {
         fn_alloc_closure =
             llvm::Function::Create(llvm::FunctionType::get(i64, {i64}, false),
                                    llvm::Function::ExternalLinkage, "aura_alloc_closure", mod);
+
+        fn_alloc_closure_arena =
+            llvm::Function::Create(llvm::FunctionType::get(i64, {i64}, false),
+                                   llvm::Function::ExternalLinkage, "aura_alloc_closure_arena", mod);
 
         fn_closure_capture =
             llvm::Function::Create(llvm::FunctionType::get(void_ty, {i64, i64, i64}, false),
@@ -508,8 +513,17 @@ struct LLVMBuilder {
 
             // Closures
             case OpMakeClosure: {
-                auto call = irb->CreateCall(fn_alloc_closure, {c64(inst.ops[1])});
-                store(inst.ops[0], call);
+                auto result_slot = inst.ops[0];
+                // Check escape analysis: non-escaping closures use arena allocation
+                if (fn.escape_map && result_slot < fn.local_count && !fn.escape_map[result_slot]) {
+                    // NON_ESCAPING: arena-allocated closure
+                    auto call = irb->CreateCall(fn_alloc_closure_arena, {c64(inst.ops[1])});
+                    store(result_slot, call);
+                } else {
+                    // ESCAPED or unknown: heap-allocated closure
+                    auto call = irb->CreateCall(fn_alloc_closure, {c64(inst.ops[1])});
+                    store(result_slot, call);
+                }
                 return true;
             }
             case OpCapture: {
@@ -914,6 +928,8 @@ void aura_drop_closure(int64_t) {}
 // Arena push/pop wrappers (defined in aura_jit_runtime.cpp)
 void aura_arena_push();
 void aura_arena_pop();
+int64_t aura_alloc_closure_arena(int64_t);
+int64_t aura_arena_offset();
 }
 
 // C standard library functions (declared in <cstdio>, registered as JIT symbols)
@@ -1123,6 +1139,8 @@ struct AuraJIT::Impl {
         reg("aura_drop_closure", (void*)aura_drop_closure);
         reg("aura_arena_push", (void*)aura_arena_push);
         reg("aura_arena_pop", (void*)aura_arena_pop);
+        reg("aura_arena_offset", (void*)aura_arena_offset);
+        reg("aura_alloc_closure_arena", (void*)aura_alloc_closure_arena);
 
         // C standard library functions
         reg("printf", (void*)printf);

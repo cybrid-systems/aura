@@ -2865,6 +2865,12 @@ void Evaluator::init_pair_primitives() {
         return make_int(static_cast<std::int64_t>(std::time(nullptr)));
     });
 
+    // (arena-offset) → integer (current TL arena offset in bytes, 0 = disabled)
+    primitives_.add("arena-offset", [](const auto&) -> EvalValue {
+        // g_tl_arena is thread-local TLarena declared in runtime_shared.h
+        return make_int(static_cast<int64_t>(g_tl_arena.offset));
+    });
+
     primitives_.add("read-file", [this, is_regular](const auto& a) {
         if (a.empty() || !is_string(a[0]))
             return make_void();
