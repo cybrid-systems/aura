@@ -1,0 +1,276 @@
+;; === evo-kv-core-perf.aura — Layer 1: 核心 KV store (performance-region optimized) ===
+;; 继承自 kv.aura，保持向后兼容
+;; 所有内部存储使用 *evo-* 前缀，避免与 kv.aura 冲突
+
+(define *evo-store* (hash))
+(define *evo-ttl* (hash))
+(define *evo-sets* (hash))
+
+;; ── 辅助 ──
+
+(define (evo-expired? key)
+  (let ((expire (hash-ref *evo-ttl* key)))
+    (if (void? expire) #f (>= (current-time) expire))))
+
+(define (evo-del-internal key)
+  (hash-remove! *evo-store* key)
+  (hash-remove! *evo-ttl* key))
+
+(define (evo-is-set? key)
+  (hash-has-key? *evo-sets* key))
+
+;; ── 核心 CRUD ──
+
+(define (evo-set key val)
+  (performance-region
+    (hash-set! *evo-store* key val)
+    (hash-remove! *evo-ttl* key)
+    "OK"))
+
+(define (evo-get key)
+  (performance-region
+    (if (evo-expired? key)
+        (begin (evo-del-internal key) (void))
+        (hash-ref *evo-store* key))))
+
+(define (evo-del key)
+  (performance-region
+    (evo-del-internal key)
+    "OK"))
+
+(define (evo-exists? key)
+  (and (hash-has-key? *evo-store* key)
+       (not (evo-expired? key))))
+
+(define (evo-keys)
+  (filter (lambda (k) (not (evo-expired? k))) (hash-keys *evo-store*)))
+
+(define (evo-length)
+  (length (evo-keys)))
+
+(define (evo-flush)
+  (set! *evo-store* (hash))
+  (set! *evo-ttl* (hash))
+  (set! *evo-sets* (hash))
+  "OK")
+
+;; ── Incr ──
+
+(define (evo-incr key)
+  (performance-region
+    (if (evo-expired? key) (evo-del-internal key))
+    (let ((cur (hash-ref *evo-store* key)))
+      (cond
+       ((void? cur) (hash-set! *evo-store* key 1) 1)
+       ((integer? cur) (let ((new (+ cur 1))) (hash-set! *evo-store* key new) new))
+       (#t "ERR wrong type")))))
+
+;; ── TTL ──
+
+(define (evo-set-with-ttl key val ttl-sec)
+  (hash-set! *evo-store* key val)
+  (hash-set! *evo-ttl* key (+ (current-time) ttl-sec))
+  "OK")
+
+(define (evo-ttl key)
+  (if (not (hash-has-key? *evo-store* key)) -2
+      (let ((expire (hash-ref *evo-ttl* key)))
+        (if (void? expire) -1
+            (let ((remaining (- expire (current-time))))
+              (if (> remaining 0) remaining -2))))))
+
+(define (evo-expire key ttl-sec)
+  (if (hash-has-key? *evo-store* key)
+      (begin (hash-set! *evo-ttl* key (+ (current-time) ttl-sec)) "OK")
+      "ERR no such key"))
+
+(define (evo-persist key)
+  (if (hash-has-key? *evo-store* key)
+      (begin (hash-remove! *evo-ttl* key) "OK")
+      "ERR no such key"))
+
+;; ── List 操作 ──
+
+(define (evo-lpush key . vals)
+  (if (evo-is-set? key) "ERR wrong type"
+      (let ((cur (if (evo-expired? key) (begin (evo-del-internal key) '()) (evo-get key))))
+        (if (and (not (null? cur)) (not (pair? cur))) "ERR wrong type"
+            (let ((new (append (reverse vals) cur)))
+              (hash-set! *evo-store* key new)
+              (hash-remove! *evo-ttl* key)
+              (length new))))))
+
+(define (evo-rpush key . vals)
+  (if (evo-is-set? key) "ERR wrong type"
+      (let ((cur (if (evo-expired? key) (begin (evo-del-internal key) '()) (evo-get key))))
+        (if (and (not (null? cur)) (not (pair? cur))) "ERR wrong type"
+            (let ((new (append cur vals)))
+              (hash-set! *evo-store* key new)
+              (hash-remove! *evo-ttl* key)
+              (length new))))))
+
+(define (evo-lrange key start stop)
+  (let ((cur (evo-get key)))
+    (if (void? cur) '()
+        (let* ((len (length cur))
+               (s (if (>= start 0) start (max 0 (+ len start))))
+               (e (if (>= stop 0) (min stop (- len 1)) (+ len stop))))
+          (take (max 0 (- e s -1)) (drop s cur))))))
+
+(define (evo-llen key)
+  (let ((cur (evo-get key))) (if (void? cur) 0 (length cur))))
+
+(define (evo-lpop key)
+  (let ((cur (evo-get key)))
+    (if (or (void? cur) (null? cur)) (void)
+        (let ((val (car cur)) (rest (cdr cur)))
+          (if (null? rest) (evo-del-internal key) (hash-set! *evo-store* key rest))
+          val))))
+
+(define (evo-rpop key)
+  (let ((cur (evo-get key)))
+    (if (or (void? cur) (null? cur)) (void)
+        (let* ((rev (reverse cur)) (val (car rev)) (rest (reverse (cdr rev))))
+          (if (null? rest) (evo-del-internal key) (hash-set! *evo-store* key rest))
+          val))))
+
+(define (evo-lindex key index)
+  (let ((cur (evo-get key)))
+    (if (void? cur) (void)
+        (let* ((len (length cur)) (idx (if (>= index 0) index (+ len index))))
+          (if (or (< idx 0) (>= idx len)) (void) (list-ref cur idx))))))
+
+;; ── Hash 操作 ──
+
+(define (evo-hset key field val)
+  (if (evo-is-set? key) "ERR wrong type"
+      (let ((cur (if (evo-expired? key) (begin (evo-del-internal key) (void)) (evo-get key))))
+        (if (and (not (void? cur)) (not (hash? cur))) "ERR wrong type"
+            (let ((h (if (hash? cur) cur (hash))))
+              (hash-remove! *evo-ttl* key)
+              (if (hash-has-key? h field)
+                  (begin (hash-set! h field val) (hash-set! *evo-store* key h) 0)
+                  (begin (hash-set! h field val) (hash-set! *evo-store* key h) 1)))))))
+
+(define (evo-hget key field)
+  (let ((cur (evo-get key)))
+    (if (hash? cur) (hash-ref cur field) (void))))
+
+(define (evo-hgetall key)
+  (let ((cur (evo-get key)))
+    (if (hash? cur)
+        (map (lambda (f) (list f (hash-ref cur f))) (hash-keys cur))
+        '())))
+
+(define (evo-hdel key . fields)
+  (let ((cur (evo-get key)))
+    (if (hash? cur)
+        (let ((removed (length (filter (lambda (f)
+                                         (if (hash-has-key? cur f)
+                                             (begin (hash-remove! cur f) #t) #f))
+                                       fields))))
+          (if (= 0 (hash-length cur)) (evo-del-internal key))
+          removed)
+        0)))
+
+(define (evo-hexists key field)
+  (let ((cur (evo-get key)))
+    (if (hash? cur) (hash-has-key? cur field) #f)))
+
+(define (evo-hlen key)
+  (let ((cur (evo-get key))) (if (hash? cur) (hash-length cur) 0)))
+
+(define (evo-hkeys key)
+  (let ((cur (evo-get key))) (if (hash? cur) (hash-keys cur) '())))
+
+(define (evo-hvals key)
+  (let ((cur (evo-get key))) (if (hash? cur) (hash-values cur) '())))
+
+;; ── Set 操作 ──
+
+(define (evo-sadd key member)
+  (if (and (hash-has-key? *evo-store* key)
+           (not (hash-has-key? *evo-sets* key)))
+      "ERR wrong type"
+      (let ((s (if (hash-has-key? *evo-sets* key) (hash-ref *evo-sets* key) (hash))))
+        (if (hash-has-key? s member) 0
+            (begin (hash-set! s member #t)
+                   (hash-set! *evo-sets* key s) 1)))))
+
+(define (evo-srem key member)
+  (if (hash-has-key? *evo-sets* key)
+      (let ((s (hash-ref *evo-sets* key)))
+        (if (hash-has-key? s member)
+            (begin (hash-remove! s member)
+                   (if (= (hash-length s) 0) (hash-remove! *evo-sets* key)) 1)
+            0))
+      0))
+
+(define (evo-smembers key)
+  (if (hash-has-key? *evo-sets* key)
+      (hash-keys (hash-ref *evo-sets* key)) '()))
+
+(define (evo-sismember key member)
+  (if (hash-has-key? *evo-sets* key)
+      (hash-has-key? (hash-ref *evo-sets* key) member) #f))
+
+(define (evo-scard key)
+  (if (hash-has-key? *evo-sets* key)
+      (hash-length (hash-ref *evo-sets* key)) 0))
+
+;; ── 事务 ──
+
+(define *evo-tx-active* #f)
+(define *evo-tx-queue* '())
+
+(define (evo-multi)
+  (if *evo-tx-active* "ERR MULTI without EXEC"
+      (begin (set! *evo-tx-active* #t) (set! *evo-tx-queue* '()) "OK")))
+
+(define (evo-enqueue cmd . args)
+  (if (not *evo-tx-active*) "ERR no active transaction"
+      (begin (set! *evo-tx-queue* (append *evo-tx-queue* (list (cons cmd args)))) "QUEUED")))
+
+(define (evo-exec)
+  (if (not *evo-tx-active*) "ERR EXEC without MULTI"
+      (begin (set! *evo-tx-active* #f)
+             (let ((results (let run ((queue *evo-tx-queue*) (acc '()))
+                              (if (null? queue) acc
+                                  (let* ((item (car queue))
+                                         (cmd (car item))
+                                         (args (cdr item))
+                                         (val (apply cmd args)))
+                                    (run (cdr queue) (append acc (list (cons 'OK val)))))))))
+               (set! *evo-tx-queue* '())
+               (cons 'OK results)))))
+
+(define (evo-discard)
+  (if (not *evo-tx-active*) "ERR DISCARD without MULTI"
+      (begin (set! *evo-tx-active* #f) (set! *evo-tx-queue* '()))))
+
+;; ── 持久化 ──
+
+(define (evo-save path)
+  (let ((lines (reverse
+                (foldl (lambda (k acc)
+                         (let* ((v (hash-ref *evo-store* k))
+                                (exp (hash-ref *evo-ttl* k))
+                                (acc2 (cond ((string? v)
+                                             (cons (string-append "(hash-set! *evo-store* \"" k "\" \"" v "\")") acc))
+                                            ((integer? v)
+                                             (cons (string-append "(hash-set! *evo-store* \"" k "\" " (number->string v) ")") acc))
+                                            (#t acc)))
+                                (acc3 (if (not (void? exp))
+                                          (cons (string-append "(hash-set! *evo-ttl* \"" k "\" " (number->string exp) ")") acc2)
+                                          acc2)))
+                           acc3))
+                       (list "(set! *evo-sets* (hash))"
+                             "(set! *evo-ttl* (hash))"
+                             "(set! *evo-store* (hash))")
+                       (hash-keys *evo-store*)))))
+    (write-file path (string-join lines "\n"))
+    "OK"))
+
+(define (evo-load path)
+  (eval (read-file path))
+  "OK")
