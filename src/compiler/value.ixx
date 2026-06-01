@@ -1,3 +1,5 @@
+module;
+#include "value_tags.h"
 export module aura.compiler.value;
 import std;
 
@@ -7,87 +9,42 @@ namespace aura::compiler::types {
 // Unified tagged value representation (matches AOT runtime tagging)
 // ═══════════════════════════════════════════════════════════
 //
-// Bit encoding:
+// Bit encoding is defined in value_tags.h. See the header for the
+// rationale on why these constants live in a traditional header
+// instead of being `export`ed from this module (issue #58).
+//
 //   bits 0-1: TAG
 //     00 = Fixnum (signed integer, value >> 1)
-//     01 = Ref    (pool-indexed heap type) 
+//     01 = Ref    (pool-indexed heap type)
 //     11 = Special (#f=3, #t=7, void=11)
 //
-//   Ref sub-type (bits 2-5, 4 bits = 16 types):
-//     0=Pair, 1=Closure, 2=Cell, 3=Vector,
-//     4=Hash, 5=Primitive, 6=String, 7=Module,
-//     8=Error, 9=Opaque, 10=Linear, 11=Keyword
-//
+//   Ref sub-type (bits 2-5, 4 bits = 16 types): see value_tags.h
 //   Ref bit layout: (pool_index << 6) | (type << 2) | 1
 //
 //   Float: stored in runtime pool with FLOAT_BIAS encoding
-//          (is_float checks v <= FLOAT_BIAS && v > STRING_BIAS_AREA)
-//
-//   String: stored in runtime pool with STRING_BIAS encoding 
-//           (is_string checks v <= STRING_BIAS_AREA)
+//   String: stored in runtime pool with STRING_BIAS encoding
 //
 // ═══════════════════════════════════════════════════════════
-
-static constexpr std::int64_t FLOAT_BIAS_VAL = -10000000000000000LL;
-static constexpr std::int64_t STRING_BIAS_VAL = -9000000000000000000LL;
-
-// Ref type ids (bits 2-5)
-using RefType = std::uint64_t;
-constexpr std::uint64_t RefPair = 0;
-constexpr std::uint64_t RefClosure = 1;
-constexpr std::uint64_t RefCell = 2;
-constexpr std::uint64_t RefVector = 3;
-constexpr std::uint64_t RefHash = 4;
-constexpr std::uint64_t RefPrimitive = 5;
-constexpr std::uint64_t RefString = 6;
-constexpr std::uint64_t RefModule = 7;
-constexpr std::uint64_t RefError = 8;
-constexpr std::uint64_t RefOpaque = 9;
-constexpr std::uint64_t RefLinear = 10;
-constexpr std::uint64_t RefKeyword = 11;
 
 // The universal runtime value — a single int64_t with pointer tagging
 export struct EvalValue {
     std::int64_t val = 0;
-    
+
     constexpr EvalValue() noexcept : val(0) {}
     constexpr explicit EvalValue(std::int64_t v) noexcept : val(v) {}
-    
+
     constexpr bool operator==(const EvalValue& o) const noexcept = default;
     constexpr auto operator<=>(const EvalValue& o) const noexcept = default;
-    
+
     explicit operator bool() const = delete; // prevent implicit boolean conversion
     explicit operator std::int64_t() const noexcept { return val; }
 };
 
-// ── Tag helpers ────────────────────────────────────────
-constexpr inline bool is_fixnum(std::int64_t v) noexcept { return (v & 1) == 0; }
-constexpr inline bool is_ref(std::int64_t v) noexcept    { return (v & 3) == 1; }
-constexpr inline bool is_special(std::int64_t v) noexcept { return (v & 3) == 3; }
-
-constexpr inline std::uint64_t ref_type(std::int64_t v) noexcept {
-    return (static_cast<std::uint64_t>(v) >> 2) & 0xF;
-}
-constexpr inline std::uint64_t ref_index(std::int64_t v) noexcept {
-    return static_cast<std::uint64_t>(v) >> 6;
-}
-constexpr inline std::int64_t make_ref(std::uint64_t type, std::uint64_t index) noexcept {
-    return static_cast<std::int64_t>((index << 6) | (type << 2) | 1ULL);
-}
-
 // ── Float helpers (extern "C" runtime functions) ──────
-// These are provided by lib/runtime.c 
+// These are provided by lib/runtime.c
 extern "C" {
     std::int64_t aura_alloc_float(double d);
     double aura_float_ref(std::int64_t val);
-}
-
-// ── String bias encoding (must match lib/runtime.c) ───
-constexpr inline std::int64_t make_string_raw(std::uint64_t idx) noexcept {
-    return STRING_BIAS_VAL - static_cast<std::int64_t>(idx);
-}
-constexpr inline std::uint64_t string_idx_raw(std::int64_t v) noexcept {
-    return static_cast<std::uint64_t>(-static_cast<std::int64_t>(v) - 9000000000000000000LL);
 }
 
 // ── make_* / is_* / as_* helpers ──────────────────────

@@ -4,6 +4,10 @@
 // Kept as a traditional header because C++ modules can't easily express
 // recursive union types (value.ixx limitation).
 //
+// The shape tag ↔ value-tag mapping (e.g. SHAPE_PAIR ↔ RefPair=0) is
+// defined alongside the value tag set in value_tags.h. See that header
+// for the module-vs-header boundary rationale (issue #58).
+//
 // Part of Phase 1: Shape infrastructure (#53 Shape-based Speculative JIT)
 //
 #ifndef AURA_COMPILER_SHAPE_H

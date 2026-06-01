@@ -6,6 +6,7 @@
 // recursive type issues.
 //
 #include "shape_profiler.h"
+#include "value_tags.h"
 #include <algorithm>
 #include <unordered_set>
 #include <cstdint>
@@ -30,9 +31,11 @@ namespace aura::compiler::shape {
 //   STRING_BIAS (≤ -9000000000000000000) : String
 //
 // Timing: ~2-5ns (bit ops, no heap access)
-
-static constexpr std::int64_t kFloatBias  = -10000000000000000LL;
-static constexpr std::int64_t kStringBias = -9000000000000000000LL;
+//
+// Tag/bit constants come from value_tags.h (issue #58); we just
+// alias them under the local names this file used before.
+static constexpr std::int64_t kFloatBias  = aura::compiler::types::FLOAT_BIAS_VAL;
+static constexpr std::int64_t kStringBias = aura::compiler::types::STRING_BIAS_VAL;
 
 static inline bool is_fixnum_val(std::int64_t v) noexcept { return (v & 1) == 0; }
 static inline bool is_ref_val(std::int64_t v) noexcept    { return (v & 3) == 1; }
@@ -55,11 +58,11 @@ ShapeID inline_shape_of(std::int64_t val) {
     if (is_ref_val(val)) {
         auto rt = ref_type_val(val);
         switch (rt) {
-            case 0:  return 10;  // Pair
-            case 3:  return 11;  // Vector
-            case 4:  return 12;  // Hash
-            case 1:  return 13;  // Closure
-            default: return 14;  // Ref (generic)
+            case aura::compiler::types::RefPair:     return 10;  // SHAPE_PAIR
+            case aura::compiler::types::RefVector:   return 11;  // SHAPE_VECTOR
+            case aura::compiler::types::RefHash:     return 12;  // SHAPE_HASH
+            case aura::compiler::types::RefClosure:  return 13;  // SHAPE_CLOSURE
+            default:                                   return 14;  // SHAPE_REF
         }
     }
     return SHAPE_ANY;
