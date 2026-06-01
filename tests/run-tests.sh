@@ -366,6 +366,29 @@ run_test "wa:empty-body" "$(printf '(with-arena (64))')" ""
 # Note: with-arena requires g_use_arena=true (TL arena must be initialized).
 # --no-arena tests are not applicable — with-arena is inherently arena-based.
 
+# ── Hash operation tests (fixnum + string keys) ────────────
+run_test "hash:fixnum-set-get" "$(printf '(let ((h (hash))) (hash-set! h 42 1) (hash-ref h 42))')" "1"
+run_test "hash:string-set-get" "$(printf '(let ((h (hash))) (hash-set! h "k" 99) (hash-ref h "k"))')" "99"
+run_test "hash:multi-fixnum" "$(printf '(let ((h (hash))) (hash-set! h 1 10) (hash-set! h 2 20) (+ (hash-ref h 1) (hash-ref h 2)))')" "30"
+run_test "hash:multi-string" "$(printf '(let ((h (hash))) (hash-set! h "a" 10) (hash-set! h "b" 20) (+ (hash-ref h "a") (hash-ref h "b")))')" "30"
+run_test "hash:remove-miss" "$(printf '(let ((h (hash))) (hash-set! h 42 1) (hash-remove! h 42) (hash-ref h 42))')" ""
+run_test "hash:length-single" "$(printf '(let ((h (hash))) (hash-set! h 42 1) (hash-length h))')" "1"
+run_test "hash:has-key-true" "$(printf '(let ((h (hash))) (hash-set! h 42 1) (hash-has-key? h 42))')" "#t"
+run_test "hash:has-key-false" "$(printf '(let ((h (hash))) (hash-has-key? h 42))')" "#f"
+run_test "hash:keys" "$(printf '(let ((h (hash))) (hash-set! h "k" 1) (hash-keys h))')" "(\"k\")"
+run_test "hash:values" "$(printf '(let ((h (hash))) (hash-set! h "k" 1) (hash-values h))')" "(1)"
+run_test "hash:update" "$(printf '(let ((h (hash))) (hash-set! h 42 1) (hash-set! h 42 2) (hash-ref h 42))')" "2"
+run_test "hash:combo" "$(printf '(let ((h (hash))) (hash-set! h 1 10) (hash-set! h 2 20) (hash-set! h 3 30) (+ (hash-length h) (hash-ref h 1) (hash-ref h 3)))')" "43"
+
+# ── --no-arena: hash operations still correct ─────────────
+run_with_flag "hash:no-arena-fixnum" "$(printf '(let ((h (hash))) (hash-set! h 42 1) (hash-ref h 42))')" "1"
+run_with_flag "hash:no-arena-string" "$(printf '(let ((h (hash))) (hash-set! h "k" 99) (hash-ref h "k"))')" "99"
+run_with_flag "hash:no-arena-has-key" "$(printf '(let ((h (hash))) (hash-set! h 42 1) (hash-has-key? h 42))')" "#t"
+
+# ── Escape analysis + hash interactions ──────────────────
+run_test "ea:hash-escaped-pair" "$(printf '(let ((h (hash))) (hash-set! h "k" (cons 1 2)) (car (hash-ref h "k")))')" "1"
+run_test "ea:hash-stored-multi" "$(printf '(let ((ht (hash))) (hash-set! ht "a" (cons 10 20)) (hash-set! ht "b" (cons 30 40)) (+ (car (hash-ref ht "a")) (cdr (hash-ref ht "b"))))')" "50"
+
 echo ""
 echo "============"
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL" 
