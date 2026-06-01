@@ -332,6 +332,19 @@ run_test "ea:begin-multi" "$(printf '(begin (cons 1 2) (cons 3 4) (car (cons 5 6
 # ─── no-arena: multiple pairs in hash ────────────────────
 run_with_flag "ea:no-arena-multi-hash" "$(printf '(let ((h (hash))) (hash-set! h "a" (cons 1 2)) (hash-set! h "b" (cons 3 4)) (+ (car (hash-ref h "a")) (car (hash-ref h "b"))))')" "4"
 
+# ── cxr accessor regression tests ─────────────────────────
+run_test "ea:caadr" "$(printf '(caadr (list (list 1 2) (list 3 4)))')" "3"
+run_test "ea:caaar" "$(printf '(caaar (list (list (list 1 2) 3) 4))')" "1"
+run_test "ea:cdaar" "$(printf '(cdaar (list (list (list 1 2) 3) 4))')" "(2)"
+run_test "ea:cddar" "$(printf '(cddar (list (list 1 2 3) 4))')" "(3)"
+
+# ── with-arena: tree-walker + deep-copy tests ────────────
+run_test "wa:in-define" "$(printf '(define (f) (with-arena (1024) 42)) (f)')" "42"
+run_test "wa:nested-define" "$(printf '(define (g) (with-arena () (+ (with-arena (512) 10) (with-arena (256) 20)))) (g)')" "30"
+run_test "wa:deep-copy" "$(printf '(let ((x (with-arena (64) (cons 1 2)))) (car x))')" "1"
+run_test "wa:deep-copy-list" "$(printf '(let ((x (with-arena (128) (list 1 2 3)))) (car x))')" "1"
+run_test "wa:deep-copy-nested" "$(printf '(let ((x (with-arena (128) (cons (cons 1 2) (cons 3 4))))) (caar x))')" "1"
+
 # ── with-arena: arena scope tests ─────────────────────────
 run_test "wa:basic" "$(printf '(with-arena (1024) (+ 1 2))')" "3"
 run_test "wa:multi-body" "$(printf '(with-arena (1024) (+ 1 2) (+ 3 4))')" "7"

@@ -839,7 +839,12 @@ void Evaluator::init_pair_primitives() {
         if (idx >= pairs_.size())
             return make_void();
         auto c = pairs_[idx].car;
-        return is_pair(c) ? pairs_[as_pair_idx(c)].car : make_void();
+        if (!is_pair(c))
+            return make_void();
+        auto d = pairs_[as_pair_idx(c)].car;
+        if (!is_pair(d))
+            return make_void();
+        return pairs_[as_pair_idx(d)].car;
     });
     primitives_.add("caadr", [this](const auto& a) -> EvalValue {
         if (a.empty() || !is_pair(a[0]))
@@ -850,7 +855,10 @@ void Evaluator::init_pair_primitives() {
         auto c = pairs_[idx].cdr;
         if (!is_pair(c))
             return make_void();
-        return pairs_[as_pair_idx(c)].car;
+        auto d = pairs_[as_pair_idx(c)].car;
+        if (!is_pair(d))
+            return make_void();
+        return pairs_[as_pair_idx(d)].car;
     });
     primitives_.add("cadar", [this](const auto& a) -> EvalValue {
         if (a.empty() || !is_pair(a[0]))
@@ -889,7 +897,10 @@ void Evaluator::init_pair_primitives() {
         auto c = pairs_[idx].car;
         if (!is_pair(c))
             return make_void();
-        return pairs_[as_pair_idx(c)].cdr;
+        auto d = pairs_[as_pair_idx(c)].car;
+        if (!is_pair(d))
+            return make_void();
+        return pairs_[as_pair_idx(d)].cdr;
     });
     primitives_.add("cdadr", [this](const auto& a) -> EvalValue {
         if (a.empty() || !is_pair(a[0]))
@@ -911,7 +922,7 @@ void Evaluator::init_pair_primitives() {
         auto idx = as_pair_idx(a[0]);
         if (idx >= pairs_.size())
             return make_void();
-        auto c = pairs_[idx].cdr;
+        auto c = pairs_[idx].car;
         if (!is_pair(c))
             return make_void();
         auto d = pairs_[as_pair_idx(c)].cdr;
@@ -13265,6 +13276,42 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 return last;
                             }
                             return make_void();
+                        }
+                        // with-arena: (with-arena (size) body...)
+                        if (cname == "with-arena" && v.children.size() >= 1) {
+                            std::size_t body_start = 1;
+                            if (v.children.size() >= 2) {
+                                auto first_id = v.child(1);
+                                auto first_v = f->get(first_id);
+                                if (first_v.tag == ast::NodeTag::Call && first_v.children.size() >= 1)
+                                    body_start = 2;
+                            }
+                            tl_arena_push(&g_tl_arena);
+                            EvalResult last_result = make_void();
+                            for (std::size_t ci = body_start; ci < v.children.size(); ++ci) {
+                                last_result = eval_flat(*f, *p, v.child(ci), eval_env);
+                                if (!last_result)
+                                    return last_result;
+                            }
+                            // Deep-copy result if it's an arena-allocated pair
+                            if (last_result && is_pair(*last_result)) {
+                                auto idx = as_pair_idx(*last_result);
+                                if (idx < g_pair_slots.size() && g_pair_slots[idx]) {
+                                    auto* slot = g_pair_slots[idx];
+                                    auto arena_end = g_tl_arena.base + g_tl_arena.offset;
+                                    auto ptr = (uint8_t*)slot;
+                                    if (g_tl_arena.base && ptr >= g_tl_arena.base && ptr < arena_end) {
+                                        auto* new_slot = (PairSlot*)std::malloc(sizeof(PairSlot));
+                                        new_slot->car = slot->car;
+                                        new_slot->cdr = slot->cdr;
+                                        auto new_id = static_cast<int64_t>(g_pair_slots.size());
+                                        g_pair_slots.push_back(new_slot);
+                                        *last_result = types::make_pair(static_cast<std::uint64_t>(new_id));
+                                    }
+                                }
+                            }
+                            tl_arena_pop(&g_tl_arena);
+                            return last_result;
                         }
                         // with-capability: (with-capability cap-name body...)
                         // Bind capabilities as special variables in the environment.
