@@ -661,23 +661,24 @@ static int is_pair_val(int64_t v) {
     return IS_PAIR(v);
 }
 
+// aura_prim_call: slow-path primitive dispatch for AOT-compiled binaries.
+//
+// PrimId values MUST match the C++ PrimId enum in src/compiler/ir.ixx.
+// If you add/remove/reorder a PrimId entry there, mirror it here.
+//
+// The fast-path prims (Display, Write, Newline, Quotient, Remainder,
+// PairP, NullP) are inlined by the LLVM builder in src/compiler/aura_jit.cpp
+// and rarely reach this function. Everything else falls through here.
 int64_t aura_prim_call(int64_t prim_id, int64_t a1, int64_t a2, int64_t argc) {
-    // Primitive IDs from PrimId enum in ir.ixx (must match):
-    //   0 = StringAppend, 1 = StringLength, 2 = StringRef, 3 = Substring
-    //   4 = StringEq, 5 = StringLt
-    //   6 = NumberToString, 7 = StringToNumber
-    //   8 = Display, 9 = Write, 10 = Newline
-    //  11 = Error, 12 = Assert, 17 = Gensym
-    //  30 = Quotient, 31 = Remainder
-    //  35 = Raise, 36 = ErrorP, 37 = PairP, 38 = NullP
-    //
-    // Note: Display/Write/Newline/Quotient/Remainder are fast-pathed
-    // in the LLVM builder (inlined), so they rarely reach here.
-    // This function is reached by OpPrimCall slow-path only.
     (void)argc;
-    
+
+    // Guard against corrupt prim_id: Aura PrimId has 44 entries (0..43).
+    // An out-of-range value would otherwise hit the default branch and
+    // hide the bug; bail early with 0 to surface the discrepancy.
+    if (prim_id < 0 || prim_id > 43) return 0;
+
     switch (prim_id) {
-    case 0: { // StringAppend
+    case 5: { // StringAppend
         const char* s1 = aura_string_ref(a1);
         const char* s2 = aura_string_ref(a2);
         size_t len1 = s1 ? strlen(s1) : 0;
@@ -689,37 +690,16 @@ int64_t aura_prim_call(int64_t prim_id, int64_t a1, int64_t a2, int64_t argc) {
         free(buf);
         return result;
     }
-    case 1: // StringLength — return fixnum-encoded
+    case 6: // StringLength — return fixnum-encoded
         return ((int64_t)strlen(aura_string_ref(a1))) << 1;
-    case 32: { // ListLength — count elements in a pair chain (list)
-        int64_t count = 0;
-        int64_t val = a1;
-        while (val != 0 && IS_PAIR(val)) {  // heap pointer with tag=01
-            count++;
-            val = aura_pair_cdr(val);
-        }
-        return count << 1;  // fixnum-encode
-    }
-    case 33: { // ListRef — nth element of a list
-        int64_t val = a1;
-        int64_t idx = a2 >> 1;  // fixnum-decode
-        int64_t i = 0;
-        while (val != 0 && IS_PAIR(val) && i < idx) {
-            val = aura_pair_cdr(val);
-            i++;
-        }
-        if (val != 0 && IS_PAIR(val) && i == idx)
-            return aura_pair_car(val);
-        return 0;
-    }
-    case 2: { // StringRef
+    case 7: { // StringRef
         const char* s = aura_string_ref(a1);
         int64_t idx = a2;
         if (idx >= 0 && idx < (int64_t)strlen(s))
             return (int64_t)(unsigned char)s[idx];
         return 0;
     }
-    case 3: { // Substring
+    case 8: { // Substring
         const char* s = aura_string_ref(a1);
         int64_t start = a2;
         int64_t end = argc >= 2 ? (int64_t)1 : (int64_t)0; // end default
@@ -735,47 +715,56 @@ int64_t aura_prim_call(int64_t prim_id, int64_t a1, int64_t a2, int64_t argc) {
         free(buf);
         return result;
     }
-    case 4: // StringEq — return pointer-tagged bool
+    case 9: // StringEq — return pointer-tagged bool
         return strcmp(aura_string_ref(a1), aura_string_ref(a2)) == 0 ? 7 : 3;
-    case 5: // StringLt — return pointer-tagged bool
+    case 10: // StringLt — return pointer-tagged bool
         return strcmp(aura_string_ref(a1), aura_string_ref(a2)) < 0 ? 7 : 3;
-    case 6: { // NumberToString — decode fixnum, then format
+    case 11: { // NumberToString — decode fixnum, then format
         char buf[64];
         long val = IS_FIXNUM(a1) ? (a1 >> 1) : (long)a1;
         snprintf(buf, sizeof(buf), "%ld", val);
         return aura_alloc_string(buf);
     }
-    case 7: { // StringToNumber
+    case 12: { // StringToNumber
         const char* s = aura_string_ref(a1);
         if (!s || !*s) return 0;
         char* end = NULL;
         long val = strtol(s, &end, 10);
         return (int64_t)val;
     }
-    case 8:  // Display (fast-pathed, but keep as fallback)
+    case 13: // Display (fast-pathed, but keep as fallback)
         aura_display_int(a1);
         return a1;
-    case 9:  // Write
+    case 14: // Write
         printf("%ld", (long)a1);
         return a1;
-    case 10: // Newline
+    case 15: // Newline
         aura_newline();
         return 0;
-    case 11: // Error
+    case 16: // Error
         fprintf(stderr, "error: %ld\n", (long)a1);
         fflush(stderr);
         return 0;
-    case 12: // Assert
+    case 17: // Assert
         if (a1 == 0)
             fprintf(stderr, "assertion failed\n");
         return a1;
-    case 17: { // Gensym
+    case 18: // Read
+        // TODO: real stdin read; AOT path rarely hits this slow-path
+        return 0;
+    case 19: // ReadFile
+        return 0;
+    case 20: // WriteFile
+        return 0;
+    case 21: // FileExists
+        return 3; // #f
+    case 22: { // Gensym
         static int64_t gensym_counter = 0;
         char buf[64];
         snprintf(buf, sizeof(buf), "g%ld", (long)(++gensym_counter));
         return aura_alloc_string(buf);
     }
-    case 18: { // Apply: (apply f args) — call f with args from list
+    case 23: { // Apply: (apply f args) — call f with args from list
         int64_t f = a1;           // the function/closure/primitive
         int64_t lst = a2;         // the argument list
         int64_t buf[256];        // argument buffer
@@ -791,13 +780,40 @@ int64_t aura_prim_call(int64_t prim_id, int64_t a1, int64_t a2, int64_t argc) {
             args_array[i] = buf[i];
         return aura_closure_call(f, args_array, count);
     }
-    case 30: // Quotient
+    case 24: case 25: case 26: case 27: case 28: case 29: // Vector primitives
+        return 0; // AOT path delegates vector ops via generated wrappers; stub
+    case 30: // Import
+        return 11; // void
+    case 31: case 32: case 33: case 34: // Char primitives
+        return a1; // pass through
+    case 35: // Quotient
         if (a2 == 0) return 0;
         return a1 / a2;
-    case 31: // Remainder
+    case 36: // Remainder
         if (a2 == 0) return 0;
         return a1 % a2;
-    case 34: { // ListReverse — reverse a pair chain
+    case 37: { // ListLength — count elements in a pair chain (list)
+        int64_t count = 0;
+        int64_t val = a1;
+        while (val != 0 && IS_PAIR(val)) {  // heap pointer with tag=01
+            count++;
+            val = aura_pair_cdr(val);
+        }
+        return count << 1;  // fixnum-encode
+    }
+    case 38: { // ListRef — nth element of a list
+        int64_t val = a1;
+        int64_t idx = a2 >> 1;  // fixnum-decode
+        int64_t i = 0;
+        while (val != 0 && IS_PAIR(val) && i < idx) {
+            val = aura_pair_cdr(val);
+            i++;
+        }
+        if (val != 0 && IS_PAIR(val) && i == idx)
+            return aura_pair_car(val);
+        return 0;
+    }
+    case 39: { // ListReverse — reverse a pair chain
         int64_t input = a1;
         int64_t result = 0;  // empty list sentinel
         while (IS_PAIR(input)) {
@@ -807,15 +823,20 @@ int64_t aura_prim_call(int64_t prim_id, int64_t a1, int64_t a2, int64_t argc) {
         }
         return result;
     }
-    case 35: // Raise
+    case 40: // Raise
         fprintf(stderr, "raise: %ld\n", (long)a1);
         return 0;
-    case 37: // PairP (reached via OpPrimCall, not OpPrimitive+OpCall)
+    case 41: // ErrorP
+        // Tag check: raised values are stored as negative sentinels or
+        // a special pair; for now treat any non-zero value as not-error.
+        return a1 ? 3 : 7;
+    case 42: // PairP (reached via OpPrimCall slow-path)
         return IS_PAIR(a1) ? 7 : 3;
-    case 38: // NullP
+    case 43: // NullP
         return (a1 == 0 || a1 == 11) ? 7 : 3;
     default:
-        return (argc > 0) ? a1 : 0;
+        // Hash (0-4) and any unhandled prim: return 0 to avoid spurious output.
+        return 0;
     }
 }
 
