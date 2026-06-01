@@ -572,4 +572,41 @@ void aura_arena_push() { tl_arena_push(&g_tl_arena); }
 void aura_arena_pop() { tl_arena_pop(&g_tl_arena); }
 int64_t aura_arena_offset() { return static_cast<int64_t>(g_tl_arena.offset); }
 
+// ── Hash table inline accessors for JIT (Phase 4a) ──────────
+static int64_t (*g_hash_cap_fn)(int64_t) = nullptr;
+static const int64_t* (*g_hash_keys_fn)(int64_t) = nullptr;
+static const int64_t* (*g_hash_vals_fn)(int64_t) = nullptr;
+static const uint8_t* (*g_hash_meta_fn)(int64_t) = nullptr;
+static int64_t (*g_hash_key_eq_fn)(int64_t, int64_t) = nullptr;
+
+int64_t aura_hash_get_capacity(int64_t hash_val) {
+    return g_hash_cap_fn ? g_hash_cap_fn(hash_val) : 0;
+}
+const int64_t* aura_hash_get_keys(int64_t hash_val) {
+    return g_hash_keys_fn ? g_hash_keys_fn(hash_val) : nullptr;
+}
+const int64_t* aura_hash_get_values(int64_t hash_val) {
+    return g_hash_vals_fn ? g_hash_vals_fn(hash_val) : nullptr;
+}
+const uint8_t* aura_hash_get_metadata(int64_t hash_val) {
+    return g_hash_meta_fn ? g_hash_meta_fn(hash_val) : nullptr;
+}
+int64_t aura_hash_key_eq(int64_t stored_key, int64_t search_key) {
+    return g_hash_key_eq_fn ? g_hash_key_eq_fn(stored_key, search_key) : 0;
+}
+
+void aura_set_hash_inline_accessors(
+    int64_t (*cap_fn)(int64_t),
+    const int64_t* (*keys_fn)(int64_t),
+    const int64_t* (*vals_fn)(int64_t),
+    const uint8_t* (*meta_fn)(int64_t),
+    int64_t (*key_eq_fn)(int64_t, int64_t))
+{
+    g_hash_cap_fn = cap_fn;
+    g_hash_keys_fn = keys_fn;
+    g_hash_vals_fn = vals_fn;
+    g_hash_meta_fn = meta_fn;
+    g_hash_key_eq_fn = key_eq_fn;
+}
+
 } // extern "C"

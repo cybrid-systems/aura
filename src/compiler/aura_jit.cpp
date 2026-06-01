@@ -160,6 +160,12 @@ struct LLVMBuilder {
     llvm::Function* fn_hash_ref = nullptr;
     llvm::Function* fn_hash_set = nullptr;
     llvm::Function* fn_hash_remove = nullptr;
+    // Hash table inline accessors (Phase 4a)
+    llvm::Function* fn_hash_get_capacity = nullptr;
+    llvm::Function* fn_hash_get_keys = nullptr;
+    llvm::Function* fn_hash_get_values = nullptr;
+    llvm::Function* fn_hash_get_metadata = nullptr;
+    llvm::Function* fn_hash_key_eq = nullptr;
 
     void declare_runtime() {
         auto i64 = llvm::Type::getInt64Ty(ctx);
@@ -272,6 +278,27 @@ struct LLVMBuilder {
                                              llvm::Function::ExternalLinkage, "aura_hash_set", mod);
         fn_hash_remove = llvm::Function::Create(llvm::FunctionType::get(i64, {i64, i64}, false),
                                                 llvm::Function::ExternalLinkage, "aura_hash_remove", mod);
+
+        // Hash table inline accessors (Phase 4a)
+        {
+            auto i8_ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(ctx));
+            auto i64_ptr = llvm::PointerType::getUnqual(i64);
+            fn_hash_get_capacity =
+                llvm::Function::Create(llvm::FunctionType::get(i64, {i64}, false),
+                                        llvm::Function::ExternalLinkage, "aura_hash_get_capacity", mod);
+            fn_hash_get_keys =
+                llvm::Function::Create(llvm::FunctionType::get(i64_ptr, {i64}, false),
+                                        llvm::Function::ExternalLinkage, "aura_hash_get_keys", mod);
+            fn_hash_get_values =
+                llvm::Function::Create(llvm::FunctionType::get(i64_ptr, {i64}, false),
+                                        llvm::Function::ExternalLinkage, "aura_hash_get_values", mod);
+            fn_hash_get_metadata =
+                llvm::Function::Create(llvm::FunctionType::get(i8_ptr, {i64}, false),
+                                        llvm::Function::ExternalLinkage, "aura_hash_get_metadata", mod);
+            fn_hash_key_eq =
+                llvm::Function::Create(llvm::FunctionType::get(i64, {i64, i64}, false),
+                                        llvm::Function::ExternalLinkage, "aura_hash_key_eq", mod);
+        }
 
         // Closure registration (JIT linking)
         fn_register_closure =
@@ -748,11 +775,85 @@ struct LLVMBuilder {
             // HashSet: result, hash, pair  —  (hash-set! hash key val) with pair=(key . val)
             // HashRemove: result, hash, key  —  (hash-remove! hash key)
             case OpHashRef: {
-                // HashRef(result_slot, hash_slot, key_slot)
-                auto hash = load(inst.ops[1]);
-                auto key = load(inst.ops[2]);
-                auto call = irb->CreateCall(fn_hash_ref, {hash, key});
-                store(inst.ops[0], call);
+                // Phase 4a: Inline LLVM IR hash table scan loop.
+                // Gets array pointers once, builds the scan loop entirely in LLVM IR.
+                auto hash_val = load(inst.ops[1]);
+                auto key_val  = load(inst.ops[2]);
+                auto result_slot = inst.ops[0];
+
+                // 1. Get hash table array pointers + capacity (called ONCE)
+                auto capacity  = irb->CreateCall(fn_hash_get_capacity, {hash_val});
+                auto keys_ptr  = irb->CreateCall(fn_hash_get_keys, {hash_val});
+                auto vals_ptr  = irb->CreateCall(fn_hash_get_values, {hash_val});
+                auto meta_ptr  = irb->CreateCall(fn_hash_get_metadata, {hash_val});
+
+                // 2. Build the scan loop entirely in LLVM IR
+                //    for i = 0..capacity:
+                //      if metadata[i] == 0xFF: continue
+                //      if key_eq(keys[i], key_val): return values[i]
+                //    return void sentinel (11)
+
+                auto entry_bb = irb->GetInsertBlock();
+                auto func = entry_bb->getParent();
+                auto loop_bb  = llvm::BasicBlock::Create(ctx, "hloop", func);
+                auto check_bb = llvm::BasicBlock::Create(ctx, "hchk", func);
+                auto cmp_bb   = llvm::BasicBlock::Create(ctx, "hcmp", func);
+                auto next_bb  = llvm::BasicBlock::Create(ctx, "hnext", func);
+                auto found_bb = llvm::BasicBlock::Create(ctx, "hfnd", func);
+                auto miss_bb  = llvm::BasicBlock::Create(ctx, "hmis", func);
+                auto done_bb  = llvm::BasicBlock::Create(ctx, "hdone", func);
+                auto i8_ty    = llvm::Type::getInt8Ty(ctx);
+                auto i64_ty   = llvm::Type::getInt64Ty(ctx);
+
+                // Jump to loop header
+                irb->CreateBr(loop_bb);
+
+                // ── Loop header (PHI for index) ──
+                irb->SetInsertPoint(loop_bb);
+                auto phi_idx = irb->CreatePHI(i64_ty, 2, "hidx");
+                phi_idx->addIncoming(c64(0), entry_bb);
+
+                // Check: i < capacity?
+                auto at_end = irb->CreateICmpUGE(phi_idx, capacity);
+                irb->CreateCondBr(at_end, miss_bb, check_bb);
+
+                // ── Check metadata[i] ──
+                irb->SetInsertPoint(check_bb);
+                auto meta_gep = irb->CreateGEP(i8_ty, meta_ptr, phi_idx);
+                auto meta_val = irb->CreateLoad(i8_ty, meta_gep);
+                auto is_empty = irb->CreateICmpEQ(meta_val, irb->getInt8(0xFF));
+                irb->CreateCondBr(is_empty, next_bb, cmp_bb);
+
+                // ── Compare keys[i] with key_val ──
+                irb->SetInsertPoint(cmp_bb);
+                auto key_gep = irb->CreateGEP(i64_ty, keys_ptr, phi_idx);
+                auto stored_key = irb->CreateLoad(i64_ty, key_gep);
+                auto eq_res = irb->CreateCall(fn_hash_key_eq, {stored_key, key_val});
+                auto eq = irb->CreateICmpNE(eq_res, c64(0));
+                irb->CreateCondBr(eq, found_bb, next_bb);
+
+                // ── Next iteration ──
+                irb->SetInsertPoint(next_bb);
+                auto next_idx = irb->CreateAdd(phi_idx, c64(1));
+                phi_idx->addIncoming(next_idx, next_bb);
+                irb->CreateBr(loop_bb);
+
+                // ── Found: load values[i] ──
+                irb->SetInsertPoint(found_bb);
+                auto val_gep = irb->CreateGEP(i64_ty, vals_ptr, phi_idx);
+                auto val_ld  = irb->CreateLoad(i64_ty, val_gep);
+                irb->CreateBr(done_bb);
+
+                // ── Miss: void sentinel ──
+                irb->SetInsertPoint(miss_bb);
+                irb->CreateBr(done_bb);
+
+                // ── Done PHI ──
+                irb->SetInsertPoint(done_bb);
+                auto phi_result = irb->CreatePHI(i64_ty, 2, "hres");
+                phi_result->addIncoming(val_ld, found_bb);
+                phi_result->addIncoming(c64(11), miss_bb);  // void sentinel
+                store(result_slot, phi_result);
                 return true;
             }
             case OpHashSet: {
@@ -960,6 +1061,19 @@ void aura_set_hash_dispatchers(
 int64_t aura_hash_ref(int64_t, int64_t);
 int64_t aura_hash_set(int64_t, int64_t);
 int64_t aura_hash_remove(int64_t, int64_t);
+// Hash table inline accessors (Phase 4a)
+int64_t aura_hash_get_capacity(int64_t);
+const int64_t* aura_hash_get_keys(int64_t);
+const int64_t* aura_hash_get_values(int64_t);
+const uint8_t* aura_hash_get_metadata(int64_t);
+int64_t aura_hash_key_eq(int64_t, int64_t);
+void aura_set_hash_inline_accessors(
+    int64_t (*)(int64_t),
+    const int64_t* (*)(int64_t),
+    const int64_t* (*)(int64_t),
+    const uint8_t* (*)(int64_t),
+    int64_t (*)(int64_t, int64_t));
+void aura_set_hash_heap_ptr(const void*);
 // Float/string pool functions (defined in aura_jit_runtime.cpp)
 int64_t aura_alloc_float(double);
 double aura_float_ref(int64_t);
@@ -1193,6 +1307,14 @@ struct AuraJIT::Impl {
         reg("aura_arena_pop", (void*)aura_arena_pop);
         reg("aura_arena_offset", (void*)aura_arena_offset);
         reg("aura_alloc_closure_arena", (void*)aura_alloc_closure_arena);
+
+        reg("aura_hash_get_capacity", (void*)aura_hash_get_capacity);
+        reg("aura_hash_get_keys", (void*)aura_hash_get_keys);
+        reg("aura_hash_get_values", (void*)aura_hash_get_values);
+        reg("aura_hash_get_metadata", (void*)aura_hash_get_metadata);
+        reg("aura_hash_key_eq", (void*)aura_hash_key_eq);
+        reg("aura_set_hash_inline_accessors", (void*)aura_set_hash_inline_accessors);
+        reg("aura_set_hash_heap_ptr", (void*)aura_set_hash_heap_ptr);
 
         // C standard library functions
         reg("printf", (void*)printf);
