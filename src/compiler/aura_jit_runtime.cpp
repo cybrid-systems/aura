@@ -100,6 +100,17 @@ int64_t aura_alloc_closure(int64_t func_id) {
     return id;
 }
 
+int64_t aura_alloc_closure_arena(int64_t func_id) {
+    // TODO(PHASE5): Use arena-backed env storage instead of heap std::vector.
+    // For now, arena-allocated closures still use g_closure_envs (heap) for env
+    // data, but the closure slot is marked non-escaping. Future optimization:
+    // store env data directly in arena memory instead of std::vector.
+    int64_t id = static_cast<int64_t>(g_closure_func_ids.size());
+    g_closure_func_ids.push_back(func_id);
+    g_closure_envs.emplace_back();
+    return id;
+}
+
 void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
     if (closure_id >= 0 && static_cast<size_t>(closure_id) < g_closure_envs.size()) {
         auto& env = g_closure_envs[static_cast<size_t>(closure_id)];
@@ -451,5 +462,6 @@ const char* aura_jit_string_content(std::int64_t val) {
 // ── Arena push/pop wrappers (no pointer arg needed for JIT) ──
 void aura_arena_push() { tl_arena_push(&g_tl_arena); }
 void aura_arena_pop() { tl_arena_pop(&g_tl_arena); }
+int64_t aura_arena_offset() { return static_cast<int64_t>(g_tl_arena.offset); }
 
 } // extern "C"
