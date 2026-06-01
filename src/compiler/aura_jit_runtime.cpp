@@ -414,54 +414,81 @@ int64_t aura_prim_call(int64_t slot, int64_t a, int64_t b, int64_t count) {
     return g_prim_dispatcher(slot, args, static_cast<int32_t>(count));
 }
 
-// === Hash operation dispatchers ===
-// Separate from g_prim_dispatcher because hash ops (hash-ref, hash-set!, hash-remove!)
-// are not in the kPrimNameTable and are dispatched by the evaluator's primitives.
-// Set by aura_set_hash_dispatchers from the service layer.
-static int64_t (*g_hash_ref_fn)(int64_t hash, int64_t key) = nullptr;
 static int64_t (*g_hash_set_fn)(int64_t hash, int64_t key, int64_t val) = nullptr;
-static int64_t (*g_hash_remove_fn)(int64_t hash, int64_t key) = nullptr;
-
-void aura_set_hash_dispatchers(
-    int64_t (*ref)(int64_t, int64_t),
-    int64_t (*set)(int64_t, int64_t, int64_t),
-    int64_t (*remove)(int64_t, int64_t))
-{
-    g_hash_ref_fn = ref;
-    g_hash_set_fn = set;
-    g_hash_remove_fn = remove;
-}
 
 // Hash-ref: (hash-ref hash key) → value or void
-int64_t aura_hash_ref(int64_t hash_val, int64_t key_val) {
-    if (g_hash_ref_fn) return g_hash_ref_fn(hash_val, key_val);
-    return 0; // fallback: void
-}
 
-// Hash-set: (hash-set! hash key val) — extracts key/val from pair via car/cdr
-// IR lowering wraps (key val) into a pair before emitting HashSet opcode.
-// Returns void (0) always — the real result is the side effect on the hash.
-int64_t aura_hash_set(int64_t hash_val, int64_t pair_val) {
-    if (g_hash_set_fn) {
-        // Extract key and value from the pair using JIT pair accessors.
-        // The pair was created by aura_alloc_pair/aura_alloc_pair_arena in the JIT,
-        // so it's accessible via g_pair_slots.
-        uint64_t id = static_cast<uint64_t>(pair_val >> 2);
-        if (id < g_pair_slots.size() && g_pair_slots[id]) {
-            int64_t key = g_pair_slots[id]->car;
-            int64_t val = g_pair_slots[id]->cdr;
-            g_hash_set_fn(hash_val, key, val);
+
+
+// ── FlatHashTable direct accessors (Phase 4c-d) ──
+int64_t aura_hash_ref(int64_t hash_val, int64_t key_val) {
+    auto hidx = static_cast<std::size_t>(static_cast<uint64_t>(hash_val) >> 6);
+    if (hidx < g_hash_tables.size() && g_hash_tables[hidx]) {
+        auto* ht = g_hash_tables[hidx];
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        for (uint64_t i = 0; i < ht->capacity; ++i) {
+            if (meta[i] == 0xFF) continue;
+            if (keys[i] == key_val) return vals[i];
         }
     }
-    return 0; // hash-set! always returns void
+    return 11; // void sentinel
 }
 
-// Hash-remove: (hash-remove! hash key) → bool (true if removed)
+static int64_t (*g_hash_str_convert_fn)(int64_t) = nullptr;
+extern "C" void aura_set_hash_str_convert_callback(int64_t (*fn)(int64_t)) {
+    g_hash_str_convert_fn = fn;
+}
+int64_t aura_hash_set(int64_t hash_val, int64_t pair_val) {
+    uint64_t id = static_cast<uint64_t>(pair_val >> 2);
+    if (id < g_pair_slots.size() && g_pair_slots[id]) {
+        int64_t key = g_pair_slots[id]->car;
+        // Convert JIT string to evaluator string heap index for consistent comparison
+        if ((key & 1) == 0 && key > -9000000000000000000LL) {
+            // Fixnum — stored as-is
+        } else if ((key & 1) == 0 && key <= -9000000000000000000LL && g_hash_str_convert_fn) {
+            // String — convert to evaluator string heap
+            int64_t converted = g_hash_str_convert_fn(key);
+            if (converted != 0) key = converted;
+        }
+        int64_t val = g_pair_slots[id]->cdr;
+        auto hidx = static_cast<std::size_t>(static_cast<uint64_t>(hash_val) >> 6);
+        if (hidx < g_hash_tables.size() && g_hash_tables[hidx]) {
+            auto* ht = g_hash_tables[hidx];
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            uint64_t cap = ht->capacity;
+            uint64_t empty_slot = cap;
+            for (uint64_t i = 0; i < cap; ++i) {
+                if (meta[i] == 0xFF) { if (empty_slot >= cap) empty_slot = i; continue; }
+                if (keys[i] == key) { vals[i] = val; return 0; }
+            }
+            if (empty_slot < cap) {
+                meta[empty_slot] = 0x80;
+                keys[empty_slot] = key;
+                vals[empty_slot] = val;
+                ++ht->size;
+            }
+        }
+    }
+    return 0;
+}
+
 int64_t aura_hash_remove(int64_t hash_val, int64_t key_val) {
-    if (g_hash_remove_fn) return g_hash_remove_fn(hash_val, key_val);
-    return 0; // fallback: void
+    auto hidx = static_cast<std::size_t>(static_cast<uint64_t>(hash_val) >> 6);
+    if (hidx < g_hash_tables.size() && g_hash_tables[hidx]) {
+        auto* ht = g_hash_tables[hidx];
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        for (uint64_t i = 0; i < ht->capacity; ++i) {
+            if (meta[i] == 0xFF) continue;
+            if (keys[i] == key_val) { meta[i] = 0xFF; --ht->size; return 1; }
+        }
+    }
+    return 0;
 }
-
 // ── Forward declarations (defined below, same extern "C" block) ──
 int64_t aura_alloc_float(double d);
 double aura_float_ref(int64_t val);
@@ -624,9 +651,7 @@ const char* aura_string_ref(std::int64_t val) {
 // Copy a JIT-allocated string into an external string heap.
 // Returns the new string index in the external heap, or -1 if not found.
 // callback(idx) should return the new index after pushing to the external heap.
-// Hash key equality callback (set by service.ixx, for string comparison in JIT loop)
-static int64_t (*g_hash_key_eq_fn)(int64_t, int64_t) = nullptr;
-
+// 
 const char* aura_jit_string_content(std::int64_t val) {
     std::int64_t idx = -val - 9000000000000000000LL;
     if (idx >= 0 && idx < (std::int64_t)g_string_pool.size())
@@ -642,12 +667,36 @@ int64_t aura_arena_offset() { return static_cast<int64_t>(g_tl_arena.offset); }
 // ── Single-call hash table info (Phase 4b) ────────────────
 // Returns all hash table data in one call. LLVM IR does 1 call, then GEP from the pointers.
 
-extern "C" int64_t aura_hash_key_eq(int64_t stored_key, int64_t search_key) {
-    return g_hash_key_eq_fn ? g_hash_key_eq_fn(stored_key, search_key) : (stored_key == search_key ? 1 : 0);
+// String key comparison callback (set by service.ixx).
+// Both keys are EvalValue-encoded strings from different heaps.
+// NULL = no string comparison needed (fixnum-only mode).
+static int64_t (*g_hash_str_eq_fn)(int64_t, int64_t) = nullptr;
+
+
+extern "C" void aura_set_hash_str_eq_callback(int64_t (*fn)(int64_t, int64_t)) {
+    g_hash_str_eq_fn = fn;
 }
 
-extern "C" void aura_set_hash_key_eq_callback(int64_t (*fn)(int64_t, int64_t)) {
-    g_hash_key_eq_fn = fn;
+extern "C" int64_t aura_hash_key_eq(int64_t stored_key, int64_t search_key) {
+    // Fast path: same raw value
+    if (stored_key == search_key) return 1;
+    // Fixnum comparison
+    if ((stored_key & 1) == 0 && (search_key & 1) == 0)
+        return (stored_key >> 1) == (search_key >> 1) ? 1 : 0;
+    // String comparison: convert JIT keys to evaluator keys, then compare
+    if (stored_key <= -9000000000000000000LL && search_key <= -9000000000000000000LL) {
+        // Use the string callback for evaluator-heap-based comparison
+        if (g_hash_str_eq_fn)
+            return g_hash_str_eq_fn(stored_key, search_key);
+        // Fallback: try converting and re-comparing
+        if (g_hash_str_convert_fn) {
+            int64_t stored_eval = g_hash_str_convert_fn(stored_key);
+            int64_t search_eval = g_hash_str_convert_fn(search_key);
+            if (stored_eval != 0 && search_eval != 0)
+                return (stored_eval == search_eval) ? 1 : 0;
+        }
+    }
+    return 0;
 }
 
 } // extern "C"
