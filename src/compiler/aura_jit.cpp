@@ -87,17 +87,16 @@ enum Op : uint32_t {
     OpCdr = 36,
     OpRaise = 37,
     OpIsError = 38,
-    OpDrop = 39,
-    // M4 Linear ownership opcodes (must match ir.ixx IROpcode values)
-    // DropOp is 41 in ir.ixx — handle alongside OpDrop
+    // Hash operations (inline dispatch, avoids PrimCall overhead)
+    OpHashRef = 39,
+    OpHashSet = 40,
+    OpHashRemove = 41,
+    // M4 Linear ownership opcodes — handled by literal IR opcode values
+    // in the lower() switch (42-47). OpDrop=46, RefCountOp=47.
     // Arena operations
     OpArenaPush = 48,
     OpArenaPop = 49,
 };
-
-// Map IROpcode::DropOp (41) to the OpDrop handler.
-// In the lowering pass, DropOp is emitted for explicit destructors.
-// The LLVM builder handles both opcode values the same way.
 
 // LLVM IR Builder
 struct LLVMBuilder {
@@ -156,6 +155,10 @@ struct LLVMBuilder {
     // L2 specialization: unchecked pair access (skips tag check)
     llvm::Function* fn_pair_car_unchecked = nullptr;
     llvm::Function* fn_pair_cdr_unchecked = nullptr;
+    // Hash operations (inline dispatch, avoids PrimCall overhead)
+    llvm::Function* fn_hash_ref = nullptr;
+    llvm::Function* fn_hash_set = nullptr;
+    llvm::Function* fn_hash_remove = nullptr;
 
     void declare_runtime() {
         auto i64 = llvm::Type::getInt64Ty(ctx);
@@ -260,6 +263,14 @@ struct LLVMBuilder {
         fn_string_ref =
             llvm::Function::Create(llvm::FunctionType::get(ptr_i8, {i64}, false),
                                    llvm::Function::ExternalLinkage, "aura_string_ref", mod);
+
+        // Hash operation functions (inline dispatch via C-linkage wrappers)
+        fn_hash_ref = llvm::Function::Create(llvm::FunctionType::get(i64, {i64, i64}, false),
+                                             llvm::Function::ExternalLinkage, "aura_hash_ref", mod);
+        fn_hash_set = llvm::Function::Create(llvm::FunctionType::get(i64, {i64, i64}, false),
+                                             llvm::Function::ExternalLinkage, "aura_hash_set", mod);
+        fn_hash_remove = llvm::Function::Create(llvm::FunctionType::get(i64, {i64, i64}, false),
+                                                llvm::Function::ExternalLinkage, "aura_hash_remove", mod);
 
         // Closure registration (JIT linking)
         fn_register_closure =
@@ -572,22 +583,22 @@ struct LLVMBuilder {
 
             // Drop: call all safe drop functions (runtime's live-flag is idempotent)
             // ── M4 Linear ownership ops (IROpcode values from ir.ixx) ─
-            // LinearWrap=39, MoveOp=40, BorrowOp=41, MutBorrowOp=42,
-            // DropOp=43, RefCountOp=44
+            // LinearWrap=42, MoveOp=43, BorrowOp=44, MutBorrowOp=45,
+            // DropOp=46, RefCountOp=47
             // For untagged AOT runtime:
             //   LinearWrap/MoveOp/BorrowOp/MutBorrowOp/RefCountOp =
             //     no-ops (compile-time concepts, pass through)
-            //   DropOp (43) = actually calls drop functions
+            //   DropOp (46) = actually calls drop functions
 
-            case 39: /* IROpcode::LinearWrap */
-            case 40: /* IROpcode::MoveOp */
-            case 41: /* IROpcode::BorrowOp */
-            case 42: /* IROpcode::MutBorrowOp */
-            case 44: /* IROpcode::RefCountOp */ {
+            case 42: /* IROpcode::LinearWrap */
+            case 43: /* IROpcode::MoveOp */
+            case 44: /* IROpcode::BorrowOp */
+            case 45: /* IROpcode::MutBorrowOp */
+            case 47: /* IROpcode::RefCountOp */ {
                 store(inst.ops[0], load(inst.ops[1]));
                 return true;
             }
-            case 43: /* IROpcode::DropOp */ {
+            case 46: /* IROpcode::DropOp */ {
                 auto val = load(inst.ops[0]);
                 irb->CreateCall(fn_drop_pair, {val});
                 irb->CreateCall(fn_drop_cell, {val});
@@ -709,17 +720,12 @@ struct LLVMBuilder {
                 // IR: operands[0]=result_slot, operands[1]=prim_slot_index
                 auto result_slot = inst.ops[0];
                 auto prim_slot = inst.ops[1];
-                if (aot_mode) {
-                    // AOT: store negative sentinel for primitive dispatch.
-                    // aura_closure_call will recognize negative values as primitive
-                    // references and dispatch to the runtime's primitive table.
-                    // Encoding: -(prim_slot + 1)
-                    store(result_slot, c64(-((int64_t)prim_slot + 1)));
-                } else {
-                    // JIT: call through evaluator's primitive dispatcher
-                    auto call = irb->CreateCall(fn_prim_call, {c64(prim_slot), c64(0), c64(0), c64(0)});
-                    store(result_slot, call);
-                }
+                // Encode as a primitive reference matching EvalValue:
+                //   (prim_slot << 6) | (RefPrimitive << 2) | 1
+                // where RefPrimitive = 5 (from value.ixx).
+                // AOT mode uses negative sentinel; JIT mode uses proper encoding.
+                int64_t encoded = (static_cast<int64_t>(prim_slot) << 6) | (5 << 2) | 1;
+                store(result_slot, c64(encoded));
                 return true;
             }
 
@@ -732,6 +738,38 @@ struct LLVMBuilder {
             case OpArenaPop: {
                 // ArenaPop(saved_offset_slot) — pop TL arena frame
                 irb->CreateCall(fn_arena_pop);
+                return true;
+            }
+
+            // ═══ Hash opcodes (inline dispatch) ═══
+            // IR lowering wraps these into dedicated IROpcodes to avoid PrimCall overhead.
+            // HashRef: result, hash, key  —  (hash-ref hash key)
+            // HashSet: result, hash, pair  —  (hash-set! hash key val) with pair=(key . val)
+            // HashRemove: result, hash, key  —  (hash-remove! hash key)
+            case OpHashRef: {
+                // HashRef(result_slot, hash_slot, key_slot)
+                auto hash = load(inst.ops[1]);
+                auto key = load(inst.ops[2]);
+                auto call = irb->CreateCall(fn_hash_ref, {hash, key});
+                store(inst.ops[0], call);
+                return true;
+            }
+            case OpHashSet: {
+                // HashSet(result_slot, hash_slot, pair_slot)
+                // The pair was created by a MakePair (key . val) during lowering.
+                // fn_hash_set extracts key/val from pair via g_pair_slots.
+                auto hash = load(inst.ops[1]);
+                auto pair = load(inst.ops[2]);
+                auto call = irb->CreateCall(fn_hash_set, {hash, pair});
+                store(inst.ops[0], call); // hash-set! returns void (0)
+                return true;
+            }
+            case OpHashRemove: {
+                // HashRemove(result_slot, hash_slot, key_slot)
+                auto hash = load(inst.ops[1]);
+                auto key = load(inst.ops[2]);
+                auto call = irb->CreateCall(fn_hash_remove, {hash, key});
+                store(inst.ops[0], call);
                 return true;
             }
 
@@ -914,6 +952,13 @@ void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t), int32_
                       int32_t arg_count, int32_t env_count);
 void aura_reset_runtime();
 void aura_set_prim_dispatcher(int64_t (*fn)(int64_t, int64_t*, int32_t));
+void aura_set_hash_dispatchers(
+    int64_t (*)(int64_t, int64_t),
+    int64_t (*)(int64_t, int64_t, int64_t),
+    int64_t (*)(int64_t, int64_t));
+int64_t aura_hash_ref(int64_t, int64_t);
+int64_t aura_hash_set(int64_t, int64_t);
+int64_t aura_hash_remove(int64_t, int64_t);
 // Float/string pool functions (defined in aura_jit_runtime.cpp)
 int64_t aura_alloc_float(double);
 double aura_float_ref(int64_t);
@@ -1124,6 +1169,10 @@ struct AuraJIT::Impl {
         reg("aura_pair_cdr_unchecked", (void*)aura_pair_cdr_unchecked);
         reg("aura_prim_call", (void*)aura_prim_call);
         reg("aura_set_prim_dispatcher", (void*)aura_set_prim_dispatcher);
+        reg("aura_set_hash_dispatchers", (void*)aura_set_hash_dispatchers);
+        reg("aura_hash_ref", (void*)aura_hash_ref);
+        reg("aura_hash_set", (void*)aura_hash_set);
+        reg("aura_hash_remove", (void*)aura_hash_remove);
         reg("aura_display_int", (void*)aura_display_int);
         reg("aura_display_char", (void*)aura_display_char);
         reg("aura_newline", (void*)aura_newline);

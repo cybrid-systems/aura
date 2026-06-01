@@ -16,6 +16,10 @@ extern "C" std::int64_t aura_jit_test();
 extern "C" const char* aura_jit_string_content(std::int64_t val);
 extern "C" void aura_set_prim_dispatcher(std::int64_t (*fn)(std::int64_t, std::int64_t*,
                                                             std::int32_t));
+extern "C" void aura_set_hash_dispatchers(
+    std::int64_t (*ref)(std::int64_t, std::int64_t),
+    std::int64_t (*set)(std::int64_t, std::int64_t, std::int64_t),
+    std::int64_t (*remove)(std::int64_t, std::int64_t));
 
 export module aura.compiler.service;
 import std;
@@ -85,6 +89,91 @@ extern "C" std::int64_t aura_jit_prim_dispatch(std::int64_t prim_id, std::int64_
     // Convert result back to int64_t.
     // EvalValue uses same pointer tagging, return the raw tagged value.
     return result.val;
+}
+
+// ── Hash operation dispatch ──────────────────────────────
+// Bridges OpHashRef/OpHashSet/OpHashRemove from JIT code to evaluator's hash primitives.
+// These are separate from kPrimNameTable (which covers PrimCall-level primitives)
+// because hash ops have dedicated IROpcodes for inline dispatch.
+
+// ── Helpers: convert JIT strings to evaluator string heap indices ──
+// JIT-compiled code allocates strings in its own g_string_pool, but the
+// evaluator's hash primitives use the evaluator's string_heap_ for equality
+// and hashing.  We must migrate JIT strings to the evaluator heap on the fly.
+
+// STRING_BIAS used to encode string indices in EvalValue (from value.hpp).
+static constexpr std::int64_t STRING_BIAS_VAL = -9000000000000000000LL;
+
+// Returns true when val is a JIT/evaluator string-encoded value.
+static bool is_str_val(std::int64_t val) {
+    return val <= STRING_BIAS_VAL;
+}
+
+// JIT string pool access (declared in aura_jit_runtime.cpp)
+extern "C" std::size_t aura_jit_pool_size();
+extern "C" const char* aura_jit_pool_string(std::size_t idx);
+
+// Convert one JIT-string argument to an evaluator-string argument by
+// copying the content from the JIT pool to the evaluator string heap.
+// Non-string values pass through unchanged.
+static std::int64_t convert_str_for_eval(std::int64_t val,
+                                          const aura::compiler::Primitives* prims) {
+    if (!is_str_val(val))
+        return val; // not a string, pass through
+    // JIT string encoding: STRING_BIAS_VAL - idx
+    std::int64_t idx = -val - STRING_BIAS_VAL;
+    if (idx < 0)
+        return val;
+    // Get the string content from the JIT string pool
+    const char* content = aura_jit_pool_string(static_cast<std::size_t>(idx));
+    if (!content)
+        return val;
+    // Push into evaluator string heap and return evaluator encoding
+    auto& eval_heap = const_cast<aura::compiler::Primitives*>(prims)->string_heap();
+    auto new_idx = eval_heap.size();
+    eval_heap.push_back(content);
+    return STRING_BIAS_VAL - static_cast<std::int64_t>(new_idx);
+}
+
+extern "C" int64_t aura_hash_ref_fn(int64_t hash_val, int64_t key_val) {
+    auto* prims = g_jit_prim_ctx.load(std::memory_order_acquire);
+    if (!prims) return 0;
+    auto pfn = prims->lookup("hash-ref");
+    if (!pfn) return 0;
+    // Convert JIT strings to evaluator strings before passing to primitive
+    std::int64_t eval_key = convert_str_for_eval(key_val, prims);
+    std::vector<aura::compiler::types::EvalValue> args;
+    args.emplace_back(hash_val);
+    args.emplace_back(eval_key);
+    return (*pfn)(args).val;
+}
+
+extern "C" int64_t aura_hash_set_fn(int64_t hash_val, int64_t key_val, int64_t val_val) {
+    auto* prims = g_jit_prim_ctx.load(std::memory_order_acquire);
+    if (!prims) return 0;
+    auto pfn = prims->lookup("hash-set!");
+    if (!pfn) return 0;
+    // Convert JIT strings to evaluator strings before passing to primitive
+    std::int64_t eval_key = convert_str_for_eval(key_val, prims);
+    std::vector<aura::compiler::types::EvalValue> args;
+    args.emplace_back(hash_val);
+    args.emplace_back(eval_key);
+    args.emplace_back(val_val);
+    (*pfn)(args);
+    return 0; // hash-set! returns void
+}
+
+extern "C" int64_t aura_hash_remove_fn(int64_t hash_val, int64_t key_val) {
+    auto* prims = g_jit_prim_ctx.load(std::memory_order_acquire);
+    if (!prims) return 0;
+    auto pfn = prims->lookup("hash-remove!");
+    if (!pfn) return 0;
+    // Convert JIT strings to evaluator strings before passing to primitive
+    std::int64_t eval_key = convert_str_for_eval(key_val, prims);
+    std::vector<aura::compiler::types::EvalValue> args;
+    args.emplace_back(hash_val);
+    args.emplace_back(eval_key);
+    return (*pfn)(args).val;
 }
 
 namespace aura::compiler {
@@ -3132,6 +3221,8 @@ private:
                                     result_type = types::make_bool(raw_result == 7);
                                     goto result_done;
                                 case aura::ir::IROpcode::ConstI64:
+                                case aura::ir::IROpcode::HashRef:
+                                case aura::ir::IROpcode::HashRemove:
                                     result_type = types::EvalValue(raw_result);
                                     goto result_done;
                                 case aura::ir::IROpcode::ConstVoid:
@@ -3265,6 +3356,11 @@ private:
         // aura_jit_prim_dispatch is defined at file scope (after imports)
         // and aura_set_prim_dispatcher is declared at file scope.
         aura_set_prim_dispatcher(aura_jit_prim_dispatch);
+
+        // Register the hash operation dispatchers (hash-ref, hash-set!, hash-remove!)
+        // These are separate from the prim dispatcher because hash ops have dedicated
+        // IROpcodes (OpHashRef/OpHashSet/OpHashRemove) for inline dispatch.
+        aura_set_hash_dispatchers(aura_hash_ref_fn, aura_hash_set_fn, aura_hash_remove_fn);
 #endif
     }
 
