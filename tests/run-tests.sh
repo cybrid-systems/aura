@@ -317,6 +317,18 @@ run_test "ea:append-pairs" "$(printf '(append (list 1 2) (list 3 4))')" "(1 2 3 
 run_with_flag "ea:no-arena-set-car" "$(printf '(let ((p (cons 1 2))) (set-car! p 3) (car p))')" "3"
 run_with_flag "ea:no-arena-stored-twice" "$(printf '(let ((h1 (hash)) (h2 (hash)) (p (cons 1 2))) (hash-set! h1 "a" p) (hash-set! h2 "b" p) (+ (car (hash-ref h1 "a")) (car (hash-ref h2 "b"))))')" "2"
 
+# ── with-arena: arena scope tests ─────────────────────────
+run_test "wa:basic" "$(printf '(with-arena (1024) (+ 1 2))')" "3"
+run_test "wa:multi-body" "$(printf '(with-arena (1024) (+ 1 2) (+ 3 4))')" "7"
+run_test "wa:default-size" "$(printf '(with-arena () (car (cons 1 2)))')" "1"
+run_test "wa:nested" "$(printf '(with-arena (1024) (with-arena (512) (+ 10 20)) (+ 30 40))')" "70"
+run_test "wa:with-pairs" "$(printf '(with-arena () (car (cons 42 0)))')" "42"
+# (with-arena with no body) returns void, which produces no output
+run_test "wa:empty-body" "$(printf '(with-arena (64))')" ""
+
+# Note: with-arena requires g_use_arena=true (TL arena must be initialized).
+# --no-arena tests are not applicable — with-arena is inherently arena-based.
+
 echo ""
 echo "============"
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL" 

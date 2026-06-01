@@ -236,6 +236,42 @@ static std::uint32_t lower_flat_expr(
                     return result_slot;
                 }
 
+                // ── (with-arena (size) body ...) ──────────────────────
+                if (std::string(callee_name) == "with-arena") {
+                    auto result_slot = state.alloc_local();
+                    std::uint32_t arena_size = 65536; // default 64KB
+                    std::uint32_t body_start = 1;
+
+                    // Parse optional (size) argument
+                    if (v.children.size() >= 2) {
+                        auto first_arg = v.child(1);
+                        auto first_v = flat.get(first_arg);
+                        if (first_v.tag == NodeTag::Call && first_v.children.size() >= 1) {
+                            auto size_expr = first_v.child(0);
+                            auto sv = flat.get(size_expr);
+                            if (sv.tag == NodeTag::LiteralInt && sv.int_value > 0)
+                                arena_size = static_cast<std::uint32_t>(sv.int_value);
+                            body_start = 2; // (with-arena (N) body...)
+                        }
+                    }
+
+                    auto saved_slot = state.alloc_local();
+                    state.emit(IROpcode::ArenaPush, saved_slot, arena_size, 0, 0);
+
+                    // Evaluate all body expressions, keep last result
+                    auto last_slot = result_slot;
+                    for (auto ci = body_start; ci < v.children.size(); ++ci) {
+                        last_slot = lower_flat_expr(state, flat, pool, v.child(ci), cache, cache_hits);
+                    }
+                    if (body_start >= v.children.size()) {
+                        state.emit(IROpcode::ConstVoid, result_slot);
+                    } else {
+                        state.emit(IROpcode::Local, result_slot, last_slot);
+                    }
+                    state.emit(IROpcode::ArenaPop, saved_slot, 0, 0, 0);
+                    return result_slot;
+                }
+
                 static const std::unordered_map<std::string, IROpcode> prim_map = {
                     {"+", IROpcode::Add},         {"-", IROpcode::Sub},   {"*", IROpcode::Mul},
                     {"/", IROpcode::Div},         {"=", IROpcode::Eq},    {"<", IROpcode::Lt},

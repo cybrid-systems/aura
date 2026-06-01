@@ -908,6 +908,18 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     break;
                 }
 
+                case IROpcode::ArenaPush: {
+                    // ArenaPush(result_slot, size) — push frame, save offset
+                    tl_arena_push(&g_tl_arena);
+                    locals[ops[0]] = types::make_int(0);
+                    break;
+                }
+                case IROpcode::ArenaPop: {
+                    // ArenaPop(saved_slot) — pop frame
+                    tl_arena_pop(&g_tl_arena);
+                    break;
+                }
+
                 default:
                     break;
             }
