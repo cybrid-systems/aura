@@ -29,6 +29,7 @@ target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/repl/repl.cppm)
 
 target_sources(aura PRIVATE
+    src/core/contract_handler.cpp
     src/core/ast_impl.cpp
     src/core/type_impl.cpp
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
@@ -54,6 +55,8 @@ target_sources(aura PRIVATE
     src/exec/execution_adapter.cpp
     src/exec/combinators.cpp
     src/main.cpp)
+
+set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts")
  
 
 
@@ -155,6 +158,7 @@ target_sources(test_ir PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/query.ixx
     src/compiler/type_checker.ixx)
 target_sources(test_ir PRIVATE
+    src/core/contract_handler.cpp
     src/serve/fiber.cpp
     src/serve/worker.cpp
     src/serve/thread_pool.cpp
@@ -177,6 +181,8 @@ target_sources(test_ir PRIVATE
     src/compiler/type_checker_impl.cpp
     src/compiler/arity_impl.cpp
     src/compiler/messaging_bridge_impl.cpp)
+
+set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts")
 target_compile_options(test_ir PRIVATE -Wall -Wextra -Wpedantic
     -Wno-unused-variable -Wno-unused-function
     -Wno-unused-but-set-variable -Wno-unused-parameter

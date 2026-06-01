@@ -1,10 +1,5 @@
 module aura.core.type;
 
-// C++26 Contracts placeholder — same pattern as ast.ixx / arena.ixx
-#define AURA_PRE(cond)     do { if (!(cond)) std::abort(); } while(0)
-#define AURA_POST(cond)    do { if (!(cond)) std::abort(); } while(0)
-#define AURA_ASSERT(cond)  do { if (!(cond)) std::abort(); } while(0)
-
 namespace aura::core {
 
 TypeRegistry::TypeRegistry() {
@@ -44,7 +39,6 @@ TypeId TypeRegistry::register_func(std::vector<TypeId> args, TypeId ret) {
         name += std::string(name_of(a)) + " ";
     name += std::string("-> ") + std::string(name_of(ret)) + ")";
     entries_.back().name = name;
-    AURA_POST(id.valid());
     return id;
 }
 
@@ -217,7 +211,6 @@ TypeId TypeRegistry::make_var(std::string name) {
 }
 
 TypeTag TypeRegistry::tag_of(TypeId id) const {
-    AURA_PRE(id.valid());
     if (id.index < entries_.size())
         return entries_[id.index].tag;
     return TypeTag::DYNAMIC;
@@ -276,8 +269,6 @@ TypeId TypeRegistry::instantiate_forall(TypeId forall_id,
 }
 
 bool TypeRegistry::is_subtype(TypeId sub, TypeId sup) const {
-    AURA_PRE(sub.valid());
-    AURA_PRE(sup.valid());
     if (sub == sup)
         return true;
     if (sup == dynamic_type())

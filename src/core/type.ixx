@@ -1,6 +1,7 @@
 module;
 #include <cstdint>
 #include <string_view>
+#include <contracts>
 
 export module aura.core.type;
 
@@ -109,7 +110,8 @@ public:
     void register_adt_constructors(aura::core::TypeId type_id,
                                     std::vector<std::string> constructors);
     const std::vector<std::string>* get_adt_constructors(aura::core::TypeId type_id) const;
-    TypeId register_func(std::vector<TypeId> args, TypeId ret);
+    TypeId register_func(std::vector<TypeId> args, TypeId ret)
+        post (r: r.valid());
     TypeId register_func_named(std::vector<TypeId> args, TypeId ret, std::string name);
     TypeId register_forall(TypeId var, TypeId body);
     TypeId register_linear(TypeId inner);
@@ -121,7 +123,8 @@ public:
     TypeId make_var(std::string name = "");
 
     // ── 查询 ──
-    TypeTag tag_of(TypeId id) const;
+    TypeTag tag_of(TypeId id) const
+        pre (id.valid());
     std::string_view name_of(TypeId id) const;
     const FuncType* func_of(TypeId id) const;
     const ForallType* forall_of(TypeId id) const;
@@ -132,7 +135,9 @@ public:
     const EffectType* effect_of(TypeId id) const;
     const CapabilityType* capability_of(TypeId id) const;
     bool is_var(TypeId id) const;
-    bool is_subtype(TypeId sub, TypeId sup) const;
+    bool is_subtype(TypeId sub, TypeId sup) const
+        pre (sub.valid())
+        pre (sup.valid());
 
     // ── 预定义常量 ──
     TypeId dynamic_type() const { return TypeId{0, 1}; }
