@@ -256,6 +256,12 @@ export struct BasicBlock {
     std::vector<std::uint32_t> successors;
 };
 
+export enum class Region : std::uint8_t {
+    Default = 0,
+    Performance = 1,
+    Evolution = 2,
+};
+
 export struct IRFunction {
     std::uint32_t id = 0;
     std::string name;
@@ -266,6 +272,7 @@ export struct IRFunction {
     std::uint32_t local_count = 0; // number of local slots needed
     std::uint32_t arg_count = 0;   // number of arguments
     bool variadic = false;         // dotted rest param
+    Region region = Region::Default;
 };
 
 // Closure bridge data: original tree-walker info for IR closures.

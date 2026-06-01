@@ -272,6 +272,38 @@ static std::uint32_t lower_flat_expr(
                     return result_slot;
                 }
 
+                // ── (performance-region body ...) → set region flag ──────
+                if (std::string(callee_name) == "performance-region") {
+                    state.region = aura::ir::Region::Performance;
+                    auto result_slot = state.alloc_local();
+                    if (v.children.size() <= 1) {
+                        state.emit(IROpcode::ConstVoid, result_slot);
+                    } else {
+                        auto last_slot = result_slot;
+                        for (std::size_t ci = 1; ci < v.children.size(); ++ci) {
+                            last_slot = lower_flat_expr(state, flat, pool, v.child(ci), cache, cache_hits);
+                        }
+                        state.emit(IROpcode::Local, result_slot, last_slot);
+                    }
+                    return result_slot;
+                }
+
+                // ── (evolution-region body ...) → set region flag ────────
+                if (std::string(callee_name) == "evolution-region") {
+                    state.region = aura::ir::Region::Evolution;
+                    auto result_slot = state.alloc_local();
+                    if (v.children.size() <= 1) {
+                        state.emit(IROpcode::ConstVoid, result_slot);
+                    } else {
+                        auto last_slot = result_slot;
+                        for (std::size_t ci = 1; ci < v.children.size(); ++ci) {
+                            last_slot = lower_flat_expr(state, flat, pool, v.child(ci), cache, cache_hits);
+                        }
+                        state.emit(IROpcode::Local, result_slot, last_slot);
+                    }
+                    return result_slot;
+                }
+
                 static const std::unordered_map<std::string, IROpcode> prim_map = {
                     {"+", IROpcode::Add},         {"-", IROpcode::Sub},   {"*", IROpcode::Mul},
                     {"/", IROpcode::Div},         {"=", IROpcode::Eq},    {"<", IROpcode::Lt},
@@ -834,6 +866,7 @@ static std::uint32_t lower_flat_expr(
             func.params = param_names;
             func.arg_count = static_cast<std::uint32_t>(param_names.size());
             func.variadic = (v.int_value != 0);
+            func.region = state.region;
 
             // Save parent state
             auto* saved_func = state.cur_func;
@@ -1263,6 +1296,7 @@ static IRModule lower_to_ir_impl(
     // Emit return
     state.emit(IROpcode::Return, result_slot);
     top_func.local_count = state.local_count;
+    top_func.region = state.region;
     auto top_id = state.module.add_function(std::move(top_func));
     state.module.entry_function_id = top_id;
     return state.module;
