@@ -3,6 +3,7 @@
 // Phase 2: L1 type specialization (#53 Shape-based Speculative JIT)
 //
 #include "spec_jit_controller.h"
+#include "value_tags.h"
 #include <algorithm>
 #include <cstdio>
 
@@ -17,9 +18,9 @@
 //
 namespace aura::compiler::shape {
 
-// ── FLOAT_BIAS from shape_profiler.cpp / value.ixx ────────────
-static constexpr std::int64_t kFloatBias  = -10000000000000000LL;
-static constexpr std::int64_t kStringBias = -9000000000000000000LL;
+// ── FLOAT_BIAS from value_tags.h (issue #58) ────────────────────
+static constexpr std::int64_t kFloatBias  = aura::compiler::types::FLOAT_BIAS_VAL;
+static constexpr std::int64_t kStringBias = aura::compiler::types::STRING_BIAS_VAL;
 
 static inline bool is_fixnum_val(std::int64_t v) noexcept { return (v & 1) == 0; }
 static inline bool is_ref_val(std::int64_t v) noexcept    { return (v & 3) == 1; }
@@ -54,17 +55,17 @@ bool check_shape_guard(const std::int64_t* args, std::uint32_t arg_count,
             case 5:  // Void
                 match = (val == 11);
                 break;
-            case 10: // Pair (ref type 0)
-                match = is_ref_val(val) && ref_type_val(val) == 0;
+            case 10: // Pair (ref type RefPair=0)
+                match = is_ref_val(val) && ref_type_val(val) == aura::compiler::types::RefPair;
                 break;
-            case 11: // Vector (ref type 3)
-                match = is_ref_val(val) && ref_type_val(val) == 3;
+            case 11: // Vector (ref type RefVector=3)
+                match = is_ref_val(val) && ref_type_val(val) == aura::compiler::types::RefVector;
                 break;
-            case 12: // Hash (ref type 4)
-                match = is_ref_val(val) && ref_type_val(val) == 4;
+            case 12: // Hash (ref type RefHash=4)
+                match = is_ref_val(val) && ref_type_val(val) == aura::compiler::types::RefHash;
                 break;
-            case 13: // Closure (ref type 1)
-                match = is_ref_val(val) && ref_type_val(val) == 1;
+            case 13: // Closure (ref type RefClosure=1)
+                match = is_ref_val(val) && ref_type_val(val) == aura::compiler::types::RefClosure;
                 break;
             case 14: // Ref (generic)
                 match = is_ref_val(val);

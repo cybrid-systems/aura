@@ -1,7 +1,12 @@
 // aura_jit.cpp — LLVM ORC JIT backend for Aura IR
 #include "aura_jit.h"
+#include "value_tags.h"
 
 #if AURA_HAVE_LLVM
+
+// Short alias for the value tag namespace — keeps the JIT/IR
+// builder code free of fully-qualified names.
+namespace types = aura::compiler::types;
 
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Function.h>
@@ -159,10 +164,12 @@ struct LLVMBuilder {
     const uint8_t* shape_map = nullptr;
     uint32_t shape_map_size = 0;
 
-    // Pointer tagging constants (must match lib/runtime.c)
+    // Pointer tagging constants (must match lib/runtime.c).
+    // FLOAT_BIAS_VAL comes from value_tags.h so .cpp code stays in
+    // lockstep with the module-side encoding (issue #58).
     static constexpr int64_t KWD_TRUE_VAL = 7;
     static constexpr int64_t KWD_FALSE_VAL = 3;
-    static constexpr int64_t FLOAT_BIAS_VAL = -10000000000000000LL;
+    static constexpr int64_t FLOAT_BIAS_VAL = types::FLOAT_BIAS_VAL;
     llvm::Type* double_ty = llvm::Type::getDoubleTy(ctx);
     // String pool for OpConstString (IR module's string pool content)
     const std::vector<std::string>* string_pool = nullptr;
@@ -788,11 +795,15 @@ struct LLVMBuilder {
                 // AOT mode: negative sentinel so lib/runtime.c's aura_closure_call
                 //   detects (closure_id < 0) and dispatches to s_prim_fns[slot]
                 //   — slot is recovered as -closure_id - 1.
-                // JIT mode: positive EvalValue encoding so the IR interpreter's
-                //   is_primitive()/as_primitive_slot() can read it back.
+                // JIT mode: positive EvalValue encoding (RefPrimitive tag) so the
+                //   IR interpreter's is_primitive()/as_primitive_slot() can read
+                //   it back. The (RefPrimitive << 2) | 1 form is the same shape
+                //   as make_ref(RefPrimitive, slot); using the named tag keeps
+                //   us in lockstep with the encoding if the bit layout changes.
                 int64_t encoded = aot_mode
                     ? -(static_cast<int64_t>(prim_slot) + 1)
-                    : (static_cast<int64_t>(prim_slot) << 6) | (5 << 2) | 1;
+                    : (static_cast<int64_t>(prim_slot) << 6)
+                      | (static_cast<int64_t>(types::RefPrimitive) << 2) | 1;
                 store(result_slot, c64(encoded));
                 return true;
             }
