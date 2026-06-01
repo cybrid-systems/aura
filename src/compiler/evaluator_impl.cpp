@@ -1056,19 +1056,22 @@ void Evaluator::init_pair_primitives() {
 
             if (types::is_hash(v)) {
                 auto hidx = types::as_hash_idx(v);
-                if (hidx >= hash_heap_.size())
+                if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
                     return "null";
-                auto& ht = hash_heap_[hidx];
+                auto* ht = g_hash_tables[hidx];
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
                 std::string r = "{";
                 bool first = true;
-                for (std::size_t i = ht.capacity; i > 0; --i) {
-                    if (ht.metadata[i - 1] != 0xFF) {
+                for (std::size_t i = ht->capacity; i > 0; --i) {
+                    if (meta[i - 1] != 0xFF) {
                         if (!first)
                             r += ",";
                         first = false;
-                        r += to_json(ht.keys[i - 1]);
+                        r += to_json(EvalValue{keys[i - 1]});
                         r += ":";
-                        r += to_json(ht.values[i - 1]);
+                        r += to_json(EvalValue{vals[i - 1]});
                     }
                 }
                 r += "}";
@@ -1257,11 +1260,12 @@ void Evaluator::init_pair_primitives() {
 
         auto parse_object = [&]() -> EvalValue {
             pos++; // skip {
-            HashTable ht;
-            ht.capacity = 8;
-            ht.metadata.resize(ht.capacity, 0xFF);
-            ht.keys.resize(ht.capacity);
-            ht.values.resize(ht.capacity);
+            auto* ht = FlatHashTable::create(8);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto cap = ht->capacity;
             while (pos < json_str.size() && json_str[pos] != '}') {
                 skip_ws();
                 auto key_val = parse_string();
@@ -1286,34 +1290,34 @@ void Evaluator::init_pair_primitives() {
                 auto fp = static_cast<std::uint8_t>(kh >> 57) | 0x80;
                 // Check if key already exists (need string content comparison)
                 bool found = false;
-                for (std::size_t at = 0; at < ht.capacity; ++at) {
-                    auto idx = ((kh >> 1) + at) & (ht.capacity - 1);
-                    if (ht.metadata[idx] != 0xFF) {
+                for (std::size_t at = 0; at < cap; ++at) {
+                    auto idx = ((kh >> 1) + at) & (cap - 1);
+                    if (meta[idx] != 0xFF) {
                         bool eq = false;
-                        auto& existing_key = ht.keys[idx];
+                        auto existing_key = EvalValue{keys[idx]};
                         if (types::is_string(existing_key) && types::is_string(key_val)) {
                             auto ai = types::as_string_idx(existing_key);
                             auto bi = types::as_string_idx(key_val);
                             eq = (ai < string_heap_.size() && bi < string_heap_.size()) &&
                                  string_heap_[ai] == string_heap_[bi];
                         } else {
-                            eq = existing_key == key_val;
+                            eq = keys[idx] == key_val.val;
                         }
                         if (eq) {
-                            ht.values[idx] = val;
+                            vals[idx] = val.val;
                             found = true;
                             break;
                         }
                     }
                 }
                 if (!found) {
-                    for (std::size_t at = 0; at < ht.capacity; ++at) {
-                        auto idx = ((kh >> 1) + at) & (ht.capacity - 1);
-                        if (ht.metadata[idx] == 0xFF) {
-                            ht.metadata[idx] = fp;
-                            ht.keys[idx] = key_val;
-                            ht.values[idx] = val;
-                            ht.size++;
+                    for (std::size_t at = 0; at < cap; ++at) {
+                        auto idx = ((kh >> 1) + at) & (cap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_val.val;
+                            vals[idx] = val.val;
+                            ht->size++;
                             break;
                         }
                     }
@@ -1325,8 +1329,8 @@ void Evaluator::init_pair_primitives() {
             }
             if (pos < json_str.size() && json_str[pos] == '}')
                 pos++;
-            auto hidx = hash_heap_.size();
-            hash_heap_.push_back(std::move(ht));
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
             return types::make_hash(hidx);
         };
 
@@ -1949,11 +1953,12 @@ void Evaluator::init_pair_primitives() {
     // ── Hash table (Swiss table) primitives ──────────────────────
     primitives_.add("hash", [this](const auto& a) {
         auto sh = &string_heap_;
-        HashTable ht;
-        ht.capacity = 8;
-        ht.metadata.resize(ht.capacity, 0xFF);
-        ht.keys.resize(ht.capacity);
-        ht.values.resize(ht.capacity);
+        auto* ht = FlatHashTable::create(8);
+        if (!ht) return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto cap = ht->capacity;
         auto khash = [sh](const EvalValue& k) -> std::uint64_t {
             if (is_int(k))
                 return static_cast<std::uint64_t>(as_int(k)) * 0x9e3779b97f4a7c15ull;
@@ -1972,33 +1977,36 @@ void Evaluator::init_pair_primitives() {
         for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
             auto h = khash(a[i]);
             auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
-            for (std::size_t at = 0; at < ht.capacity; ++at) {
-                auto idx = ((h >> 1) + at) & (ht.capacity - 1);
-                if (ht.metadata[idx] == 0xFF) {
-                    ht.metadata[idx] = fp;
-                    ht.keys[idx] = a[i];
-                    ht.values[idx] = a[i + 1];
-                    ht.size++;
+            for (std::size_t at = 0; at < cap; ++at) {
+                auto idx = ((h >> 1) + at) & (cap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    keys[idx] = a[i].val;
+                    vals[idx] = a[i + 1].val;
+                    ht->size++;
                     break;
                 }
             }
         }
-        auto hidx = hash_heap_.size();
-        hash_heap_.push_back(std::move(ht));
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
         return make_hash(hidx);
     });
     primitives_.add("hash-ref", [this](const auto& a) {
         if (a.size() < 2 || !is_hash(a[0]))
             return make_void();
         auto hidx = as_hash_idx(a[0]);
-        if (hidx >= hash_heap_.size())
+        if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
             return make_void();
-        auto& ht = hash_heap_[hidx];
+        auto* ht = g_hash_tables[hidx];
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
         auto sh = &string_heap_;
-        for (std::size_t i = 0; i < ht.capacity; ++i) {
-            if (ht.metadata[i] == 0xFF)
+        for (std::size_t i = 0; i < ht->capacity; ++i) {
+            if (meta[i] == 0xFF)
                 continue;
-            auto& k = ht.keys[i];
+            auto k = EvalValue{keys[i]};
             bool eq = false;
             if (is_int(k) && is_int(a[1]))
                 eq = as_int(k) == as_int(a[1]);
@@ -2006,9 +2014,9 @@ void Evaluator::init_pair_primitives() {
                 auto ai = as_string_idx(k), bi = as_string_idx(a[1]);
                 eq = (ai < sh->size() && bi < sh->size()) && (*sh)[ai] == (*sh)[bi];
             } else
-                eq = k == a[1];
+                eq = keys[i] == a[1].val;
             if (eq)
-                return ht.values[i];
+                return EvalValue{vals[i]};
         }
         return make_void();
     });
@@ -2018,14 +2026,16 @@ void Evaluator::init_pair_primitives() {
         if (a.size() < 2 || !is_hash(a[0]))
             return make_bool(false);
         auto hidx = as_hash_idx(a[0]);
-        if (hidx >= hash_heap_.size())
+        if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
             return make_bool(false);
-        auto& ht = hash_heap_[hidx];
+        auto* ht = g_hash_tables[hidx];
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
         auto sh = &string_heap_;
-        for (std::size_t i = 0; i < ht.capacity; ++i) {
-            if (ht.metadata[i] == 0xFF)
+        for (std::size_t i = 0; i < ht->capacity; ++i) {
+            if (meta[i] == 0xFF)
                 continue;
-            auto& k = ht.keys[i];
+            auto k = EvalValue{keys[i]};
             bool eq = false;
             if (is_int(k) && is_int(a[1]))
                 eq = as_int(k) == as_int(a[1]);
@@ -2033,7 +2043,7 @@ void Evaluator::init_pair_primitives() {
                 auto ai = as_string_idx(k), bi = as_string_idx(a[1]);
                 eq = (ai < sh->size() && bi < sh->size()) && (*sh)[ai] == (*sh)[bi];
             } else
-                eq = k == a[1];
+                eq = keys[i] == a[1].val;
             if (eq)
                 return make_bool(true);
         }
@@ -2044,14 +2054,18 @@ void Evaluator::init_pair_primitives() {
         if (a.size() < 3 || !is_hash(a[0]))
             return make_void();
         auto hidx = as_hash_idx(a[0]);
-        if (hidx >= hash_heap_.size())
+        if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
             return make_void();
-        auto& ht = hash_heap_[hidx];
+        auto* ht = g_hash_tables[hidx];
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
         auto sh = &string_heap_;
-        for (std::size_t i = 0; i < ht.capacity; ++i) {
-            if (ht.metadata[i] == 0xFF)
+        // First pass: check for existing key
+        for (std::size_t i = 0; i < ht->capacity; ++i) {
+            if (meta[i] == 0xFF)
                 continue;
-            auto& k = ht.keys[i];
+            auto k = EvalValue{keys[i]};
             bool eq = false;
             if (is_int(k) && is_int(a[1]))
                 eq = as_int(k) == as_int(a[1]);
@@ -2059,14 +2073,15 @@ void Evaluator::init_pair_primitives() {
                 auto ai = as_string_idx(k), bi = as_string_idx(a[1]);
                 eq = (ai < sh->size() && bi < sh->size()) && (*sh)[ai] == (*sh)[bi];
             } else
-                eq = k == a[1];
+                eq = keys[i] == a[1].val;
             if (eq) {
-                ht.values[i] = a[2];
+                vals[i] = a[2].val;
                 return make_void();
             }
         }
-        for (std::size_t i = 0; i < ht.capacity; ++i) {
-            if (ht.metadata[i] == 0xFF) {
+        // Second pass: insert new key
+        for (std::size_t i = 0; i < ht->capacity; ++i) {
+            if (meta[i] == 0xFF) {
                 std::uint64_t h = 0x9e3779b97f4a7c15ull;
                 if (is_int(a[1]))
                     h = static_cast<std::uint64_t>(as_int(a[1])) * h;
@@ -2078,10 +2093,10 @@ void Evaluator::init_pair_primitives() {
                             h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
                     }
                 }
-                ht.metadata[i] = static_cast<std::uint8_t>(h >> 57) | 0x80;
-                ht.keys[i] = a[1];
-                ht.values[i] = a[2];
-                ht.size++;
+                meta[i] = static_cast<std::uint8_t>(h >> 57) | 0x80;
+                keys[i] = a[1].val;
+                vals[i] = a[2].val;
+                ht->size++;
                 return make_void();
             }
         }
@@ -2091,22 +2106,24 @@ void Evaluator::init_pair_primitives() {
         if (a.empty() || !is_hash(a[0]))
             return make_int(0);
         auto hidx = as_hash_idx(a[0]);
-        if (hidx >= hash_heap_.size())
+        if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
             return make_int(0);
-        return make_int(static_cast<std::int64_t>(hash_heap_[hidx].size));
+        return make_int(static_cast<std::int64_t>(g_hash_tables[hidx]->size));
     });
     primitives_.add("hash-keys", [this](const auto& a) {
         if (a.empty() || !is_hash(a[0]))
             return make_void();
         auto hidx = as_hash_idx(a[0]);
-        if (hidx >= hash_heap_.size())
+        if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
             return make_void();
-        auto& ht = hash_heap_[hidx];
+        auto* ht = g_hash_tables[hidx];
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
         EvalValue result = make_void();
-        for (std::size_t i = ht.capacity; i > 0; --i) {
-            if (ht.metadata[i - 1] != 0xFF) {
+        for (std::size_t i = ht->capacity; i > 0; --i) {
+            if (meta[i - 1] != 0xFF) {
                 auto pid = pairs_.size();
-                pairs_.push_back({ht.keys[i - 1], result});
+                pairs_.push_back({EvalValue{keys[i - 1]}, result});
                 result = make_pair(pid);
             }
         }
@@ -2116,14 +2133,16 @@ void Evaluator::init_pair_primitives() {
         if (a.empty() || !is_hash(a[0]))
             return make_void();
         auto hidx = as_hash_idx(a[0]);
-        if (hidx >= hash_heap_.size())
+        if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
             return make_void();
-        auto& ht = hash_heap_[hidx];
+        auto* ht = g_hash_tables[hidx];
+        auto meta = ht->metadata();
+        auto vals = ht->values();
         EvalValue result = make_void();
-        for (std::size_t i = ht.capacity; i > 0; --i) {
-            if (ht.metadata[i - 1] != 0xFF) {
+        for (std::size_t i = ht->capacity; i > 0; --i) {
+            if (meta[i - 1] != 0xFF) {
                 auto pid = pairs_.size();
-                pairs_.push_back({ht.values[i - 1], result});
+                pairs_.push_back({EvalValue{vals[i - 1]}, result});
                 result = make_pair(pid);
             }
         }
@@ -2138,14 +2157,16 @@ void Evaluator::init_pair_primitives() {
         if (a.size() < 2 || !is_hash(a[0]))
             return make_void();
         auto hidx = as_hash_idx(a[0]);
-        if (hidx >= hash_heap_.size())
+        if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
             return make_void();
-        auto& ht = hash_heap_[hidx];
+        auto* ht = g_hash_tables[hidx];
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
         auto sh = &string_heap_;
-        for (std::size_t i = 0; i < ht.capacity; ++i) {
-            if (ht.metadata[i] == 0xFF)
+        for (std::size_t i = 0; i < ht->capacity; ++i) {
+            if (meta[i] == 0xFF)
                 continue;
-            auto& k = ht.keys[i];
+            auto k = EvalValue{keys[i]};
             bool eq = false;
             if (is_int(k) && is_int(a[1]))
                 eq = as_int(k) == as_int(a[1]);
@@ -2153,10 +2174,10 @@ void Evaluator::init_pair_primitives() {
                 auto ai = as_string_idx(k), bi = as_string_idx(a[1]);
                 eq = (ai < sh->size() && bi < sh->size()) && (*sh)[ai] == (*sh)[bi];
             } else
-                eq = k == a[1];
+                eq = keys[i] == a[1].val;
             if (eq) {
-                ht.metadata[i] = 0xFF;
-                ht.size--;
+                meta[i] = 0xFF;
+                ht->size--;
                 return make_bool(true);
             }
         }
@@ -11319,8 +11340,9 @@ Evaluator::Evaluator() {
             pairs_.shrink_to_fit();
             error_values_.clear();
             error_values_.shrink_to_fit();
-            hash_heap_.clear();
-            hash_heap_.shrink_to_fit();
+            for (auto* fht : g_hash_tables) FlatHashTable::destroy(fht);
+            g_hash_tables.clear();
+            g_hash_tables.shrink_to_fit();
             vector_heap_.clear();
             vector_heap_.shrink_to_fit();
             opaque_heap_.clear();
@@ -11360,11 +11382,12 @@ Evaluator::Evaluator() {
         // pair-based and contain string references. gc-temp is called
         // before the caller reads results. Use gc-heap separately to
         // clear strings/pairs when results are no longer needed.
-        // hash_heap_, vector_heap_, opaque_heap_ are safe to clear here.
+        // vector_heap_, opaque_heap_ are safe to clear here.
         error_values_.clear();
         error_values_.shrink_to_fit();
-        hash_heap_.clear();
-        hash_heap_.shrink_to_fit();
+        for (auto* fht : g_hash_tables) FlatHashTable::destroy(fht);
+        g_hash_tables.clear();
+        g_hash_tables.shrink_to_fit();
         vector_heap_.clear();
         vector_heap_.shrink_to_fit();
         opaque_heap_.clear();
@@ -11382,7 +11405,7 @@ Evaluator::Evaluator() {
         auto result = std::format(
             "string:{}/pairs:{}/cells:{}/err:{}/hash:{}/vec:{}/opq:{}/cls:{}/root:{}",
             string_heap_.size(), pairs_.size(), cells_.size(),
-            error_values_.size(), hash_heap_.size(), vector_heap_.size(),
+            error_values_.size(), g_hash_tables.size(), vector_heap_.size(),
             opaque_heap_.size(), closures_.size(), root_count);
         auto sidx = string_heap_.size();
         string_heap_.push_back(result);

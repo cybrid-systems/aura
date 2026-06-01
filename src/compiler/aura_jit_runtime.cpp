@@ -68,57 +68,74 @@ void tl_arena_pop(TLarena* arena) {
 // ── Arena flag ──
 bool g_use_arena = true;
 
-// ── Flat hash table storage (Phase 4b: full IR inlining) ──
-// Single contiguous memory block layout (all offsets in bytes):
-//   [0..capacity)         metadata       uint8_t[capacity]
-//   [offset_keys ..)      keys           int64_t[capacity]
-//   [offset_values ..)    values         int64_t[capacity]
-//   [header_capacity]     capacity       uint64_t
-//   [header_size]         size           uint64_t
-// Total: capacity + capacity*8 + capacity*8 + 8 + 8 = capacity*17 + 16 bytes
-struct FlatHashTable {
-    static constexpr uint64_t HEADER_SIZE = 16; // capacity + size
-    uint64_t capacity;
-    uint64_t size;
-    // Data follows: metadata[capacity], keys[capacity], values[capacity]
-
-    static uint64_t total_size(uint64_t cap) {
-        return cap + cap * 8 + cap * 8 + HEADER_SIZE;
-    }
-    // Layout: base+0..HEADER_SIZE-1 = header
-    //         base+HEADER_SIZE..HEADER_SIZE+cap-1 = metadata
-    //         base+HEADER_SIZE+cap..HEADER_SIZE+cap+cap*8-1 = keys
-    //         base+HEADER_SIZE+cap+cap*8.. = values
-    uint8_t* metadata_at() { return ((uint8_t*)this) + HEADER_SIZE; }
-    int64_t* keys_at() { return (int64_t*)(((uint8_t*)this) + HEADER_SIZE + capacity); }
-    int64_t* values_at() { return (int64_t*)(((uint8_t*)this) + HEADER_SIZE + capacity + capacity * 8); }
-
-    static FlatHashTable* create(uint64_t cap) {
-        auto mem = (FlatHashTable*)std::malloc(total_size(cap));
-        mem->capacity = cap;
-        mem->size = 0;
-        auto meta = mem->metadata_at();
-        for (uint64_t i = 0; i < cap; ++i)
-            meta[i] = 0xFF;
-        auto keys = mem->keys_at();
-        for (uint64_t i = 0; i < cap; ++i)
-            keys[i] = 0;
-        auto vals = mem->values_at();
-        for (uint64_t i = 0; i < cap; ++i)
-            vals[i] = 0;
-        return mem;
-    }
-};
-
-// Shared hash table index space: g_hash_tables[id] = FlatHashTable*
-// Index is extracted from EvalValue hash encoding: (val >> 4) >> 2
-// (RefHash=4, make_hash returns (idx<<6)|(4<<2)|1, so idx = val>>6)
-static std::vector<FlatHashTable*> g_hash_tables;
-
 // ── Forward declarations ──
 
 // ── Shared pair storage (must be outside extern "C" for C++ type) ──
 std::vector<PairSlot*> g_pair_slots;
+
+// ── FlatHashTable index space (Phase 4c) ──
+std::vector<FlatHashTable*> g_hash_tables;
+
+extern "C" const FlatHashTable* aura_hash_get_flat_table(int64_t hash_val) {
+    auto hidx = static_cast<std::size_t>(static_cast<uint64_t>(hash_val) >> 6);
+    if (hidx >= g_hash_tables.size())
+        return nullptr;
+    return g_hash_tables[hidx];
+}
+
+// ── FlatHashTable allocation ──
+FlatHashTable* FlatHashTable::create(uint64_t cap) {
+    auto* ht = (FlatHashTable*)std::malloc(total_bytes(cap));
+    if (!ht) return nullptr;
+    ht->capacity = cap;
+    ht->size = 0;
+    auto meta = ht->metadata();
+    for (uint64_t i = 0; i < cap; ++i) meta[i] = 0xFF;
+    auto k = ht->keys();
+    for (uint64_t i = 0; i < cap; ++i) k[i] = 0;
+    auto v = ht->values();
+    for (uint64_t i = 0; i < cap; ++i) v[i] = 0;
+    return ht;
+}
+
+void FlatHashTable::destroy(FlatHashTable* ht) {
+    if (ht) std::free(ht);
+}
+
+void FlatHashTable::rebuild(uint64_t new_cap) {
+    auto old_cap = capacity;
+    // Save old data before we potentially overwrite this
+    auto old_meta = metadata();
+    auto old_keys = keys();
+    auto old_vals = values();
+    auto* new_ht = create(new_cap);
+    if (!new_ht) return;
+    auto new_meta = new_ht->metadata();
+    auto new_keys = new_ht->keys();
+    auto new_vals = new_ht->values();
+    for (uint64_t i = 0; i < old_cap; ++i) {
+        if (old_meta[i] != 0xFF) {
+            for (uint64_t j = 0; j < new_cap; ++j) {
+                if (new_meta[j] == 0xFF) {
+                    new_meta[j] = old_meta[i];
+                    new_keys[j] = old_keys[i];
+                    new_vals[j] = old_vals[i];
+                    ++new_ht->size;
+                    break;
+                }
+            }
+        }
+    }
+    // Copy header (capacity, size) from new block
+    std::memcpy(this, new_ht, sizeof(FlatHashTable));
+    // Copy data arrays (this->metadata() now uses new capacity)
+    auto new_mem_meta = metadata();  // uses this->capacity (just set from new_ht)
+    uint64_t cp = capacity;
+    std::memcpy(new_mem_meta, new_meta, cp);
+    std::memcpy(keys(), new_keys, cp * 8);
+    std::memcpy(values(), new_vals, cp * 8);
+    std::free(new_ht);
+}
 
 // ── Runtime state (shared between all JIT functions) ──────────
 extern "C" {
@@ -607,6 +624,9 @@ const char* aura_string_ref(std::int64_t val) {
 // Copy a JIT-allocated string into an external string heap.
 // Returns the new string index in the external heap, or -1 if not found.
 // callback(idx) should return the new index after pushing to the external heap.
+// Hash key equality callback (set by service.ixx, for string comparison in JIT loop)
+static int64_t (*g_hash_key_eq_fn)(int64_t, int64_t) = nullptr;
+
 const char* aura_jit_string_content(std::int64_t val) {
     std::int64_t idx = -val - 9000000000000000000LL;
     if (idx >= 0 && idx < (std::int64_t)g_string_pool.size())
@@ -621,33 +641,6 @@ int64_t aura_arena_offset() { return static_cast<int64_t>(g_tl_arena.offset); }
 
 // ── Single-call hash table info (Phase 4b) ────────────────
 // Returns all hash table data in one call. LLVM IR does 1 call, then GEP from the pointers.
-struct HashTableInfo {
-    int64_t capacity;
-    const int64_t* keys;
-    const int64_t* values;
-    const uint8_t* metadata;
-};
-
-// C callback set by service.ixx — fills HashTableInfo from evaluator's hash_heap_
-static void (*g_hash_table_info_fn)(int64_t hash_val, HashTableInfo* out) = nullptr;
-
-// Key equality callback (kept separate for use in LLVM IR scan loop)
-static int64_t (*g_hash_key_eq_fn)(int64_t, int64_t) = nullptr;
-
-extern "C" void aura_hash_get_table(int64_t hash_val, HashTableInfo* out) {
-    if (g_hash_table_info_fn) {
-        g_hash_table_info_fn(hash_val, out);
-    } else {
-        out->capacity = 0;
-        out->keys = nullptr;
-        out->values = nullptr;
-        out->metadata = nullptr;
-    }
-}
-
-extern "C" void aura_set_hash_table_info_callback(void (*fn)(int64_t, HashTableInfo*)) {
-    g_hash_table_info_fn = fn;
-}
 
 extern "C" int64_t aura_hash_key_eq(int64_t stored_key, int64_t search_key) {
     return g_hash_key_eq_fn ? g_hash_key_eq_fn(stored_key, search_key) : (stored_key == search_key ? 1 : 0);
