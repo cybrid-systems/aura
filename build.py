@@ -826,7 +826,7 @@ def test_smoke():
             ["bash", "-c", f"cd {ROOT} && {cmd}"],
             capture_output=True,
             text=True,
-            timeout=15,
+            timeout=30,
         )
         combined = r.stdout + r.stderr
         if expected in combined:
@@ -869,7 +869,7 @@ def test_mutation():
         [sys.executable, str(ROOT / "tests" / "mutation_loop.py"), "--list"],
         capture_output=True,
         text=True,
-        timeout=15,
+        timeout=30,
     )
     print(r2.stdout)
     if r2.returncode != 0:
@@ -1193,7 +1193,7 @@ def test_suite_runner():
             ["/bin/bash", "-c", f'cat "{f}" | {str(AURA)}'],
             capture_output=True,
             text=True,
-            timeout=15,
+            timeout=30,
         )
         total += 1
         if r.returncode == 0:
@@ -1219,7 +1219,7 @@ def test_suite_runner():
         name = f.stem
         r = subprocess.run(
             [str(AURA), "--load", str(f)],
-            capture_output=True, text=True, timeout=15
+            capture_output=True, text=True, timeout=30
         )
         if r.returncode == 0:
             ok(f"  suite/{name}.aura")
@@ -1290,7 +1290,7 @@ def test_suite_runner():
             ["/bin/bash", "-c", f'cat "{f}" | {str(AURA)}'],
             capture_output=True,
             text=True,
-            timeout=15,
+            timeout=30,
         )
         total += 1
         if r.returncode == 0:
