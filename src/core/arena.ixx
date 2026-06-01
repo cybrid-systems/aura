@@ -1,10 +1,7 @@
+module;
+#include <contracts>
 export module aura.core.arena;
 import std;
-
-// C++26 Contracts placeholder — same pattern as ast.ixx
-#define AURA_PRE(cond)     do { if (!(cond)) std::abort(); } while(0)
-#define AURA_POST(cond)    do { if (!(cond)) std::abort(); } while(0)
-#define AURA_ASSERT(cond)  do { if (!(cond)) std::abort(); } while(0)
 
 namespace aura::ast {
 
@@ -124,11 +121,12 @@ public:
         , resource_(buffer_.data(), buffer_.size(), std::pmr::new_delete_resource()) {}
 
     // Allocate and construct an object of type T
-    template <typename T, typename... Args> [[nodiscard]] T* create(Args&&... args) {
+    template <typename T, typename... Args> [[nodiscard]] T* create(Args&&... args)
+        post (r: r != nullptr)
+    {
         void* raw = allocate_raw(sizeof(T), alignof(T));
         ++stats_.allocation_count;
         auto* result = std::construct_at(static_cast<T*>(raw), std::forward<Args>(args)...);
-        AURA_POST(result != nullptr);
         return result;
     }
 
@@ -139,14 +137,15 @@ public:
     }
 
     // Release all allocated memory in one shot
-    void reset() {
+    void reset()
+        post (used() == 0)
+        post (stats_.allocation_count == 0)
+    {
         small_pool_.reset();
         resource_.release();
         stats_.used = 0;
         stats_.allocation_count = 0;
         stats_.wasted = 0;
-        AURA_POST(used() == 0);
-        AURA_POST(stats_.allocation_count == 0);
     }
 
     // Get a pmr-compatible allocator for std::pmr containers
@@ -174,14 +173,14 @@ public:
     }
 
 private:
-    void* allocate_raw(std::size_t size, std::size_t alignment) {
-        AURA_PRE(size > 0);
-        AURA_PRE(alignment > 0 && (alignment & (alignment - 1)) == 0);
+    void* allocate_raw(std::size_t size, std::size_t alignment)
+        pre (size > 0)
+        pre (alignment > 0 && (alignment & (alignment - 1)) == 0)
+    {
         // Try small-object pool first (for objects <= 64 bytes)
         if (size <= SmallObjectPool::kMaxSmallSize) {
             void* ptr = small_pool_.try_allocate(size);
             if (ptr) {
-                AURA_POST(ptr != nullptr);
                 return ptr;
             }
             // Small-object tier exhausted — fall through to main arena
@@ -190,7 +189,6 @@ private:
         // Allocate from main pmr buffer
         void* ptr = resource_.allocate(size, alignment);
         stats_.used += size;
-        AURA_POST(ptr != nullptr);
         return ptr;
     }
 
