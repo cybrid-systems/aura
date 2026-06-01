@@ -1091,7 +1091,8 @@ int64_t aura_hash_remove(int64_t, int64_t);
 struct FlatHashTable;
 const FlatHashTable* aura_hash_get_flat_table(int64_t);
 int64_t aura_hash_key_eq(int64_t, int64_t);
-void aura_set_hash_key_eq_callback(int64_t (*)(int64_t, int64_t));
+void aura_set_hash_str_eq_callback(int64_t (*fn)(int64_t, int64_t));
+void aura_set_hash_str_convert_callback(int64_t (*fn)(int64_t));
 // Float/string pool functions (defined in aura_jit_runtime.cpp)
 int64_t aura_alloc_float(double);
 double aura_float_ref(int64_t);
@@ -1302,7 +1303,6 @@ struct AuraJIT::Impl {
         reg("aura_pair_cdr_unchecked", (void*)aura_pair_cdr_unchecked);
         reg("aura_prim_call", (void*)aura_prim_call);
         reg("aura_set_prim_dispatcher", (void*)aura_set_prim_dispatcher);
-        reg("aura_set_hash_dispatchers", (void*)aura_set_hash_dispatchers);
         reg("aura_hash_ref", (void*)aura_hash_ref);
         reg("aura_hash_set", (void*)aura_hash_set);
         reg("aura_hash_remove", (void*)aura_hash_remove);
@@ -1327,8 +1327,9 @@ struct AuraJIT::Impl {
         reg("aura_alloc_closure_arena", (void*)aura_alloc_closure_arena);
 
         reg("aura_hash_get_flat_table", (void*)aura_hash_get_flat_table);
+        reg("aura_set_hash_str_eq_callback", (void*)aura_set_hash_str_eq_callback);
+        reg("aura_set_hash_str_convert_callback", (void*)aura_set_hash_str_convert_callback);
         reg("aura_hash_key_eq", (void*)aura_hash_key_eq);
-        reg("aura_set_hash_key_eq_callback", (void*)aura_set_hash_key_eq_callback);
 
         // C standard library functions
         reg("printf", (void*)printf);
