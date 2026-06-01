@@ -43,7 +43,8 @@ struct FlatFunction {
     // Escape analysis map: [local_count], 0=NON_ESCAPING, 1=ESCAPED.
     // When non-null, MakePair ops with ESCAPED result slots use heap allocation;
     // NON_ESCAPING result slots use arena (bump) allocation.
-    const uint8_t* escape_map = nullptr;
+    const uint8_t* escape_map;
+    uint8_t region; // 0=Default, 1=Performance, 2=Evolution
 };
 
 using ScalarFn = int64_t (*)(int64_t*, uint32_t);

@@ -408,7 +408,7 @@ public:
         // not primitives or cached defines.
         static const std::unordered_set<std::string> lowering_known = {
             "try", "catch", "raise", "require", "import", "use",
-            "with-arena",
+            "with-arena", "performance-region", "evolution-region",
         };
 
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
@@ -1060,18 +1060,18 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                 }
 
                 name_storage = ir_fn.name;
-                flat_fn = {
-                    name_storage.c_str(),
-                    ir_fn.entry_block,
-                    ir_fn.local_count,
-                    ir_fn.arg_count,
-                    flat_blocks.data(),
-                    static_cast<std::uint32_t>(flat_blocks.size()),
-                    nullptr,
-                    0,  // func_id_map not used for entry
-                    nullptr,  // shape_map (set after if needed)
-                    nullptr   // escape_map (set after if needed)
-                };
+                flat_fn.name = name_storage.c_str();
+                flat_fn.entry_block = ir_fn.entry_block;
+                flat_fn.local_count = ir_fn.local_count;
+                flat_fn.arg_count = ir_fn.arg_count;
+                flat_fn.blocks = flat_blocks.data();
+                flat_fn.num_blocks = static_cast<std::uint32_t>(flat_blocks.size());
+                flat_fn.func_id_map = nullptr;
+                flat_fn.num_callees = 0;
+                flat_fn.const_tags = nullptr;
+                flat_fn.shape_map = nullptr;
+                flat_fn.escape_map = nullptr;
+                flat_fn.region = static_cast<std::uint8_t>(ir_fn.region);
 
                 // Apply pre-computed escape map, or run analysis inline
                 if (g_use_arena) {

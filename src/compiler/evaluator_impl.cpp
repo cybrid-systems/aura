@@ -13313,6 +13313,24 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             tl_arena_pop(&g_tl_arena);
                             return last_result;
                         }
+                        // performance-region: (performance-region body...)
+                        if (cname == "performance-region" && v.children.size() >= 2) {
+                            EvalResult last = make_void();
+                            for (std::size_t ci = 1; ci < v.children.size(); ++ci) {
+                                last = eval_flat(*f, *p, v.child(ci), eval_env);
+                                if (!last) return last;
+                            }
+                            return last;
+                        }
+                        // evolution-region: (evolution-region body...)
+                        if (cname == "evolution-region" && v.children.size() >= 2) {
+                            EvalResult last = make_void();
+                            for (std::size_t ci = 1; ci < v.children.size(); ++ci) {
+                                last = eval_flat(*f, *p, v.child(ci), eval_env);
+                                if (!last) return last;
+                            }
+                            return last;
+                        }
                         // with-capability: (with-capability cap-name body...)
                         // Bind capabilities as special variables in the environment.
                         if (cname == "with-capability" && v.children.size() >= 2) {

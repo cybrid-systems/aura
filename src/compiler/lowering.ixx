@@ -41,6 +41,8 @@ struct LoweringState {
     // Current source AST node being lowered (for type propagation to IR)
     ast::NodeId current_source_id = ast::NULL_NODE;
 
+    aura::ir::Region region = aura::ir::Region::Default;
+
     // Optional type registry for call-site coercion (P0 call boundary)
     const aura::core::TypeRegistry* type_reg = nullptr;
 

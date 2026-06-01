@@ -345,6 +345,15 @@ run_test "wa:deep-copy" "$(printf '(let ((x (with-arena (64) (cons 1 2)))) (car 
 run_test "wa:deep-copy-list" "$(printf '(let ((x (with-arena (128) (list 1 2 3)))) (car x))')" "1"
 run_test "wa:deep-copy-nested" "$(printf '(let ((x (with-arena (128) (cons (cons 1 2) (cons 3 4))))) (caar x))')" "1"
 
+# ── performance-region / evolution-region tests ──────────
+run_test "pr:basic" "$(printf '(performance-region (+ 1 2))')" "3"
+run_test "pr:multi" "$(printf '(performance-region (+ 1 2) (+ 3 4))')" "7"
+run_test "pr:with-cons" "$(printf '(performance-region (car (cons 1 2)))')" "1"
+run_test "er:basic" "$(printf '(evolution-region (+ 1 2))')" "3"
+run_test "er:multi" "$(printf '(evolution-region (+ 1 2) (+ 3 4))')" "7"
+run_test "pr:in-define" "$(printf '(define (f) (performance-region 42)) (f)')" "42"
+run_test "pr:nested" "$(printf '(performance-region (evolution-region (+ 1 2)))')" "3"
+
 # ── with-arena: arena scope tests ─────────────────────────
 run_test "wa:basic" "$(printf '(with-arena (1024) (+ 1 2))')" "3"
 run_test "wa:multi-body" "$(printf '(with-arena (1024) (+ 1 2) (+ 3 4))')" "7"
