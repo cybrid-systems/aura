@@ -21,14 +21,15 @@ extern "C" void aura_set_hash_dispatchers(
     std::int64_t (*set)(std::int64_t, std::int64_t, std::int64_t),
     std::int64_t (*remove)(std::int64_t, std::int64_t));
 
-// Hash table inline accessors for JIT (Phase 4a)
-extern "C" void aura_set_hash_inline_accessors(
-    std::int64_t (*cap_fn)(std::int64_t),
-    const std::int64_t* (*keys_fn)(std::int64_t),
-    const std::int64_t* (*vals_fn)(std::int64_t),
-    const std::uint8_t* (*meta_fn)(std::int64_t),
-    std::int64_t (*key_eq_fn)(std::int64_t, std::int64_t));
-extern "C" void aura_set_hash_heap_ptr(const void* ptr);
+// Hash table inline accessor (Phase 4b)
+struct HashTableInfo {
+    std::int64_t capacity;
+    const std::int64_t* keys;
+    const std::int64_t* values;
+    const std::uint8_t* metadata;
+};
+extern "C" void aura_set_hash_table_info_callback(void (*fn)(std::int64_t, HashTableInfo*));
+extern "C" void aura_set_hash_key_eq_callback(std::int64_t (*fn)(std::int64_t, std::int64_t));
 extern "C" std::size_t aura_jit_pool_size();
 extern "C" const char* aura_jit_pool_string(std::size_t idx);
 
@@ -69,74 +70,64 @@ static constexpr const char* kPrimNameTable[] = {
     "pair?",         "null?",
 };
 
-static std::atomic<const void*> g_hash_heap_ptr{nullptr};
-
 static std::atomic<const aura::compiler::Primitives*> g_jit_prim_ctx{nullptr};
 
-extern "C" void aura_set_hash_heap_ptr(const void* ptr) {
-    g_hash_heap_ptr.store(ptr, std::memory_order_release);
-}
+// Hash heap pointer for hash table info callback (set by register_jit_primitives)
+using HashTableVec = std::vector<aura::compiler::Evaluator::HashTable>;
+static const HashTableVec* g_hash_heap_ptr = nullptr;
 
-// Helper: decode hash value into pointer to HashTable
-static const void* hash_table_for_val(std::int64_t hash_val) {
-    auto heap_ptr = g_hash_heap_ptr.load(std::memory_order_acquire);
-    if (!heap_ptr) return nullptr;
-    using HashTableVec = std::vector<aura::compiler::Evaluator::HashTable>;
-    const auto& heap = *static_cast<const HashTableVec*>(heap_ptr);
+// Hash table info callback (Phase 4b)
+extern "C" void aura_hash_table_info_callback(std::int64_t hash_val, HashTableInfo* out) {
+    auto heap_ptr = g_hash_heap_ptr;
+    if (!heap_ptr) {
+        out->capacity = 0;
+        out->keys = nullptr;
+        out->values = nullptr;
+        out->metadata = nullptr;
+        return;
+    }
     auto ev = aura::compiler::types::EvalValue(hash_val);
-    if (!aura::compiler::types::is_hash(ev)) return nullptr;
+    if (!aura::compiler::types::is_hash(ev)) {
+        out->capacity = 0;
+        out->keys = nullptr;
+        out->values = nullptr;
+        out->metadata = nullptr;
+        return;
+    }
     auto hidx = aura::compiler::types::as_hash_idx(ev);
-    if (hidx >= heap.size()) return nullptr;
-    return &heap[hidx];
+    if (hidx >= heap_ptr->size()) {
+        out->capacity = 0;
+        out->keys = nullptr;
+        out->values = nullptr;
+        out->metadata = nullptr;
+        return;
+    }
+    auto* ht = &(*heap_ptr)[hidx];
+    out->capacity = static_cast<std::int64_t>(ht->capacity);
+    out->keys = reinterpret_cast<const std::int64_t*>(ht->keys.data());
+    out->values = reinterpret_cast<const std::int64_t*>(ht->values.data());
+    out->metadata = ht->metadata.data();
 }
 
-extern "C" std::int64_t aura_hash_callback_capacity(std::int64_t hash_val) {
-    using HashTable = aura::compiler::Evaluator::HashTable;
-    auto* ht = static_cast<const HashTable*>(hash_table_for_val(hash_val));
-    return ht ? static_cast<std::int64_t>(ht->capacity) : 0;
-}
-
-extern "C" const std::int64_t* aura_hash_callback_keys(std::int64_t hash_val) {
-    using HashTable = aura::compiler::Evaluator::HashTable;
-    auto* ht = static_cast<const HashTable*>(hash_table_for_val(hash_val));
-    return ht ? reinterpret_cast<const std::int64_t*>(ht->keys.data()) : nullptr;
-}
-
-extern "C" const std::int64_t* aura_hash_callback_values(std::int64_t hash_val) {
-    using HashTable = aura::compiler::Evaluator::HashTable;
-    auto* ht = static_cast<const HashTable*>(hash_table_for_val(hash_val));
-    return ht ? reinterpret_cast<const std::int64_t*>(ht->values.data()) : nullptr;
-}
-
-extern "C" const std::uint8_t* aura_hash_callback_metadata(std::int64_t hash_val) {
-    using HashTable = aura::compiler::Evaluator::HashTable;
-    auto* ht = static_cast<const HashTable*>(hash_table_for_val(hash_val));
-    return ht ? ht->metadata.data() : nullptr;
-}
-
+// Key equality callback for JIT hash scan loop (Phase 4b)
+// Compares two string-encoded values, handling both JIT and evaluator string encoding.
 extern "C" std::int64_t aura_hash_callback_key_eq(std::int64_t stored_key, std::int64_t search_key) {
     auto* prims = g_jit_prim_ctx.load(std::memory_order_acquire);
     // Fast path: raw value equality
     if (stored_key == search_key) return 1;
     // String comparison
-    // stored_key is evaluator-encoded (STRING_BIAS_VAL - eval_heap_idx)
-    // search_key may be JIT-encoded (STRING_BIAS_VAL - jit_pool_idx)
-    // We must get the actual string content and compare.
     auto is_str_val = [](std::int64_t v) { return v <= -9000000000000000000LL; };
     if (is_str_val(stored_key) && is_str_val(search_key) && prims) {
         auto& sh = const_cast<aura::compiler::Primitives*>(prims)->string_heap();
         std::int64_t eval_idx = -stored_key - 9000000000000000000LL;
         if (eval_idx < 0 || static_cast<std::size_t>(eval_idx) >= sh.size())
             return 0;
-        // search_key could be JIT-encoded (g_string_pool) or evaluator-encoded
         const std::string* search_str = nullptr;
         std::int64_t s_idx = -search_key - 9000000000000000000LL;
         if (s_idx >= 0) {
-            // Try JIT pool
             const char* jit_s = aura_jit_pool_string(static_cast<std::size_t>(s_idx));
             if (jit_s)
                 return (sh[static_cast<std::size_t>(eval_idx)] == jit_s) ? 1 : 0;
-            // Try evaluator heap
             if (static_cast<std::size_t>(s_idx) < sh.size())
                 return (sh[static_cast<std::size_t>(eval_idx)] == sh[static_cast<std::size_t>(s_idx)]) ? 1 : 0;
         }
@@ -3449,14 +3440,10 @@ private:
         // IROpcodes (OpHashRef/OpHashSet/OpHashRemove) for inline dispatch.
         aura_set_hash_dispatchers(aura_hash_ref_fn, aura_hash_set_fn, aura_hash_remove_fn);
 
-        // Set up hash table inline accessors for JIT (Phase 4a)
-        aura_set_hash_heap_ptr(&evaluator_.hash_heap());
-        aura_set_hash_inline_accessors(
-            aura_hash_callback_capacity,
-            aura_hash_callback_keys,
-            aura_hash_callback_values,
-            aura_hash_callback_metadata,
-            aura_hash_callback_key_eq);
+        // Set up hash table info callback for JIT (Phase 4b)
+        g_hash_heap_ptr = &evaluator_.hash_heap();
+        aura_set_hash_table_info_callback(aura_hash_table_info_callback);
+        aura_set_hash_key_eq_callback(aura_hash_callback_key_eq);
 #endif
     }
 

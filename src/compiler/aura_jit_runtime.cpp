@@ -68,6 +68,53 @@ void tl_arena_pop(TLarena* arena) {
 // ── Arena flag ──
 bool g_use_arena = true;
 
+// ── Flat hash table storage (Phase 4b: full IR inlining) ──
+// Single contiguous memory block layout (all offsets in bytes):
+//   [0..capacity)         metadata       uint8_t[capacity]
+//   [offset_keys ..)      keys           int64_t[capacity]
+//   [offset_values ..)    values         int64_t[capacity]
+//   [header_capacity]     capacity       uint64_t
+//   [header_size]         size           uint64_t
+// Total: capacity + capacity*8 + capacity*8 + 8 + 8 = capacity*17 + 16 bytes
+struct FlatHashTable {
+    static constexpr uint64_t HEADER_SIZE = 16; // capacity + size
+    uint64_t capacity;
+    uint64_t size;
+    // Data follows: metadata[capacity], keys[capacity], values[capacity]
+
+    static uint64_t total_size(uint64_t cap) {
+        return cap + cap * 8 + cap * 8 + HEADER_SIZE;
+    }
+    // Layout: base+0..HEADER_SIZE-1 = header
+    //         base+HEADER_SIZE..HEADER_SIZE+cap-1 = metadata
+    //         base+HEADER_SIZE+cap..HEADER_SIZE+cap+cap*8-1 = keys
+    //         base+HEADER_SIZE+cap+cap*8.. = values
+    uint8_t* metadata_at() { return ((uint8_t*)this) + HEADER_SIZE; }
+    int64_t* keys_at() { return (int64_t*)(((uint8_t*)this) + HEADER_SIZE + capacity); }
+    int64_t* values_at() { return (int64_t*)(((uint8_t*)this) + HEADER_SIZE + capacity + capacity * 8); }
+
+    static FlatHashTable* create(uint64_t cap) {
+        auto mem = (FlatHashTable*)std::malloc(total_size(cap));
+        mem->capacity = cap;
+        mem->size = 0;
+        auto meta = mem->metadata_at();
+        for (uint64_t i = 0; i < cap; ++i)
+            meta[i] = 0xFF;
+        auto keys = mem->keys_at();
+        for (uint64_t i = 0; i < cap; ++i)
+            keys[i] = 0;
+        auto vals = mem->values_at();
+        for (uint64_t i = 0; i < cap; ++i)
+            vals[i] = 0;
+        return mem;
+    }
+};
+
+// Shared hash table index space: g_hash_tables[id] = FlatHashTable*
+// Index is extracted from EvalValue hash encoding: (val >> 4) >> 2
+// (RefHash=4, make_hash returns (idx<<6)|(4<<2)|1, so idx = val>>6)
+static std::vector<FlatHashTable*> g_hash_tables;
+
 // ── Forward declarations ──
 
 // ── Shared pair storage (must be outside extern "C" for C++ type) ──
@@ -572,41 +619,42 @@ void aura_arena_push() { tl_arena_push(&g_tl_arena); }
 void aura_arena_pop() { tl_arena_pop(&g_tl_arena); }
 int64_t aura_arena_offset() { return static_cast<int64_t>(g_tl_arena.offset); }
 
-// ── Hash table inline accessors for JIT (Phase 4a) ──────────
-static int64_t (*g_hash_cap_fn)(int64_t) = nullptr;
-static const int64_t* (*g_hash_keys_fn)(int64_t) = nullptr;
-static const int64_t* (*g_hash_vals_fn)(int64_t) = nullptr;
-static const uint8_t* (*g_hash_meta_fn)(int64_t) = nullptr;
+// ── Single-call hash table info (Phase 4b) ────────────────
+// Returns all hash table data in one call. LLVM IR does 1 call, then GEP from the pointers.
+struct HashTableInfo {
+    int64_t capacity;
+    const int64_t* keys;
+    const int64_t* values;
+    const uint8_t* metadata;
+};
+
+// C callback set by service.ixx — fills HashTableInfo from evaluator's hash_heap_
+static void (*g_hash_table_info_fn)(int64_t hash_val, HashTableInfo* out) = nullptr;
+
+// Key equality callback (kept separate for use in LLVM IR scan loop)
 static int64_t (*g_hash_key_eq_fn)(int64_t, int64_t) = nullptr;
 
-int64_t aura_hash_get_capacity(int64_t hash_val) {
-    return g_hash_cap_fn ? g_hash_cap_fn(hash_val) : 0;
-}
-const int64_t* aura_hash_get_keys(int64_t hash_val) {
-    return g_hash_keys_fn ? g_hash_keys_fn(hash_val) : nullptr;
-}
-const int64_t* aura_hash_get_values(int64_t hash_val) {
-    return g_hash_vals_fn ? g_hash_vals_fn(hash_val) : nullptr;
-}
-const uint8_t* aura_hash_get_metadata(int64_t hash_val) {
-    return g_hash_meta_fn ? g_hash_meta_fn(hash_val) : nullptr;
-}
-int64_t aura_hash_key_eq(int64_t stored_key, int64_t search_key) {
-    return g_hash_key_eq_fn ? g_hash_key_eq_fn(stored_key, search_key) : 0;
+extern "C" void aura_hash_get_table(int64_t hash_val, HashTableInfo* out) {
+    if (g_hash_table_info_fn) {
+        g_hash_table_info_fn(hash_val, out);
+    } else {
+        out->capacity = 0;
+        out->keys = nullptr;
+        out->values = nullptr;
+        out->metadata = nullptr;
+    }
 }
 
-void aura_set_hash_inline_accessors(
-    int64_t (*cap_fn)(int64_t),
-    const int64_t* (*keys_fn)(int64_t),
-    const int64_t* (*vals_fn)(int64_t),
-    const uint8_t* (*meta_fn)(int64_t),
-    int64_t (*key_eq_fn)(int64_t, int64_t))
-{
-    g_hash_cap_fn = cap_fn;
-    g_hash_keys_fn = keys_fn;
-    g_hash_vals_fn = vals_fn;
-    g_hash_meta_fn = meta_fn;
-    g_hash_key_eq_fn = key_eq_fn;
+extern "C" void aura_set_hash_table_info_callback(void (*fn)(int64_t, HashTableInfo*)) {
+    g_hash_table_info_fn = fn;
+}
+
+extern "C" int64_t aura_hash_key_eq(int64_t stored_key, int64_t search_key) {
+    return g_hash_key_eq_fn ? g_hash_key_eq_fn(stored_key, search_key) : (stored_key == search_key ? 1 : 0);
+}
+
+extern "C" void aura_set_hash_key_eq_callback(int64_t (*fn)(int64_t, int64_t)) {
+    g_hash_key_eq_fn = fn;
 }
 
 } // extern "C"
