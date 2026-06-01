@@ -1004,7 +1004,9 @@ static bool emit_native_object_llvm(const FlatFunction& fn, const std::string& o
         pb.registerLoopAnalyses(lam);
         pb.crossRegisterProxies(lam, fam, cgam, mam);
 
-        auto mpm = pb.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
+        auto opt_level = fn.region == 1 ? llvm::OptimizationLevel::O3
+                                         : llvm::OptimizationLevel::O2;
+        auto mpm = pb.buildPerModuleDefaultPipeline(opt_level);
         mpm.run(*mod, mam);
     }
 
@@ -1218,7 +1220,9 @@ struct AuraJIT::Impl {
             pb.registerLoopAnalyses(lam);
             pb.crossRegisterProxies(lam, fam, cgam, mam);
 
-            auto mpm = pb.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
+            auto jit_opt = fn.region == 1 ? llvm::OptimizationLevel::O3
+                                            : llvm::OptimizationLevel::O2;
+            auto mpm = pb.buildPerModuleDefaultPipeline(jit_opt);
             mpm.run(*mod, mam);
         }
 

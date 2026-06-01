@@ -106,6 +106,28 @@ bench_cmd "no-arena-closures" "--no-arena
  (mk 1000))"
 
 echo ""
+blue "=== 8. Performance-region comparison ==="
+echo "Compare O2 vs O3 optimization with performance-region"
+
+bench_cmd "pr-cons" "
+(performance-region
+  (letrec ((go (lambda (i acc) (if (< i 0) (car acc) (go (- i 1) (cons i acc))))))
+    (go 10000 ())))"
+
+bench_cmd "pr-closure" "
+(performance-region
+  (letrec ((mk (lambda (n)
+     (if (< n 0) 'ok
+       (begin ((lambda (x) (+ x 1)) n) (mk (- n 1)))))))
+   (mk 1000)))"
+
+bench_cmd "pr-ping" "
+(performance-region
+  (letrec ((lp (lambda (i c) (if (>= i 5000) c (lp (+ i 1) (+ c 1))))))
+    (lp 0 0)))"
+
+echo ""
+echo ""
 blue "=== 7. evo-kv test (if available) ==="
 EVO_KV_TEST="$(dirname "$0")/../projects/evo-kv/test-evo-kv.aura"
 if [ -f "$EVO_KV_TEST" ]; then
@@ -119,6 +141,10 @@ if [ -f "$EVO_KV_TEST" ]; then
 else
     echo "  SKIP: $EVO_KV_TEST not found"
 fi
+
+echo ""
+echo "=== Benchmark Summary ==="
+echo "All benchmarks completed."
 
 echo ""
 echo "=== Benchmark Summary ==="
