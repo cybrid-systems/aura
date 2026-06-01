@@ -317,6 +317,21 @@ run_test "ea:append-pairs" "$(printf '(append (list 1 2) (list 3 4))')" "(1 2 3 
 run_with_flag "ea:no-arena-set-car" "$(printf '(let ((p (cons 1 2))) (set-car! p 3) (car p))')" "3"
 run_with_flag "ea:no-arena-stored-twice" "$(printf '(let ((h1 (hash)) (h2 (hash)) (p (cons 1 2))) (hash-set! h1 "a" p) (hash-set! h2 "b" p) (+ (car (hash-ref h1 "a")) (car (hash-ref h2 "b"))))')" "2"
 
+# ── letrec + pair ────────────────────────────────────────
+run_test "ea:letrec-pair" "$(printf '(letrec ((p (cons 1 2))) (car p))')" "1"
+
+# ── if both branches return pairs (escaping) ─────────────
+run_test "ea:if-escapes" "$(printf '(define (pick n) (if (> n 0) (cons n n) (cons (- n) (- n)))) (car (pick 42))')" "42"
+
+# ── Pairs inside begin block ─────────────────────────────
+run_test "ea:begin-cons" "$(printf '(begin (car (cons 1 2)) (car (cons 3 4)))')" "3"
+
+# ── Multiple cons inside begin ───────────────────────────
+run_test "ea:begin-multi" "$(printf '(begin (cons 1 2) (cons 3 4) (car (cons 5 6)))')" "5"
+
+# ─── no-arena: multiple pairs in hash ────────────────────
+run_with_flag "ea:no-arena-multi-hash" "$(printf '(let ((h (hash))) (hash-set! h "a" (cons 1 2)) (hash-set! h "b" (cons 3 4)) (+ (car (hash-ref h "a")) (car (hash-ref h "b"))))')" "4"
+
 # ── with-arena: arena scope tests ─────────────────────────
 run_test "wa:basic" "$(printf '(with-arena (1024) (+ 1 2))')" "3"
 run_test "wa:multi-body" "$(printf '(with-arena (1024) (+ 1 2) (+ 3 4))')" "7"
