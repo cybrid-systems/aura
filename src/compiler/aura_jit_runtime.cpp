@@ -350,6 +350,54 @@ int64_t aura_prim_call(int64_t slot, int64_t a, int64_t b, int64_t count) {
     return g_prim_dispatcher(slot, args, static_cast<int32_t>(count));
 }
 
+// === Hash operation dispatchers ===
+// Separate from g_prim_dispatcher because hash ops (hash-ref, hash-set!, hash-remove!)
+// are not in the kPrimNameTable and are dispatched by the evaluator's primitives.
+// Set by aura_set_hash_dispatchers from the service layer.
+static int64_t (*g_hash_ref_fn)(int64_t hash, int64_t key) = nullptr;
+static int64_t (*g_hash_set_fn)(int64_t hash, int64_t key, int64_t val) = nullptr;
+static int64_t (*g_hash_remove_fn)(int64_t hash, int64_t key) = nullptr;
+
+void aura_set_hash_dispatchers(
+    int64_t (*ref)(int64_t, int64_t),
+    int64_t (*set)(int64_t, int64_t, int64_t),
+    int64_t (*remove)(int64_t, int64_t))
+{
+    g_hash_ref_fn = ref;
+    g_hash_set_fn = set;
+    g_hash_remove_fn = remove;
+}
+
+// Hash-ref: (hash-ref hash key) → value or void
+int64_t aura_hash_ref(int64_t hash_val, int64_t key_val) {
+    if (g_hash_ref_fn) return g_hash_ref_fn(hash_val, key_val);
+    return 0; // fallback: void
+}
+
+// Hash-set: (hash-set! hash key val) — extracts key/val from pair via car/cdr
+// IR lowering wraps (key val) into a pair before emitting HashSet opcode.
+// Returns void (0) always — the real result is the side effect on the hash.
+int64_t aura_hash_set(int64_t hash_val, int64_t pair_val) {
+    if (g_hash_set_fn) {
+        // Extract key and value from the pair using JIT pair accessors.
+        // The pair was created by aura_alloc_pair/aura_alloc_pair_arena in the JIT,
+        // so it's accessible via g_pair_slots.
+        uint64_t id = static_cast<uint64_t>(pair_val >> 2);
+        if (id < g_pair_slots.size() && g_pair_slots[id]) {
+            int64_t key = g_pair_slots[id]->car;
+            int64_t val = g_pair_slots[id]->cdr;
+            g_hash_set_fn(hash_val, key, val);
+        }
+    }
+    return 0; // hash-set! always returns void
+}
+
+// Hash-remove: (hash-remove! hash key) → bool (true if removed)
+int64_t aura_hash_remove(int64_t hash_val, int64_t key_val) {
+    if (g_hash_remove_fn) return g_hash_remove_fn(hash_val, key_val);
+    return 0; // fallback: void
+}
+
 // ── Forward declarations (defined below, same extern "C" block) ──
 int64_t aura_alloc_float(double d);
 double aura_float_ref(int64_t val);
@@ -477,6 +525,24 @@ double aura_float_ref(std::int64_t val) {
 // ── String pool ────────────────────────────────────────────
 // Uses EvalValue-compatible encoding: STRING_BIAS_VAL - idx
 static std::vector<std::string> g_string_pool;
+
+// Expose the JIT string pool for use by the evaluator's hash wrappers
+// (defined in service.ixx). Returns pointer to the pool vector.
+const std::vector<std::string>* aura_jit_pool_ptr() {
+    return &g_string_pool;
+}
+
+// Access string by index from JIT pool
+const char* aura_jit_pool_string(std::size_t idx) {
+    if (idx < g_string_pool.size())
+        return g_string_pool[idx].c_str();
+    return nullptr;
+}
+
+// Get JIT pool size
+std::size_t aura_jit_pool_size() {
+    return g_string_pool.size();
+}
 
 std::int64_t aura_alloc_string(const char* s) {
     std::int64_t idx = (std::int64_t)g_string_pool.size();
