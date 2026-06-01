@@ -175,6 +175,18 @@ public:
     // Free a workspace tree created by create_workspace_tree().
     static void destroy_workspace_tree(void* wt);
     const std::string& session_id() const { return session_id_; }
+
+    // Hash table type + accessor for JIT inline hash dispatch (Phase 4a)
+    struct HashTable {
+        std::vector<std::uint8_t> metadata; // 0xFF=empty, 0x00-0x7F=occupied(7-bit fingerprint)
+        std::vector<types::EvalValue> keys;
+        std::vector<types::EvalValue> values;
+        std::size_t size = 0;     // live entries
+        std::size_t capacity = 0; // power of 2
+    };
+    const std::vector<HashTable>& hash_heap() const { return hash_heap_; }
+    std::vector<HashTable>& hash_heap() { return hash_heap_; }
+
     void set_messaging_callbacks(
         std::function<bool(const std::string&, const std::string&)>* send_fn,
         std::function<std::optional<std::string>(int)>* recv_fn,
@@ -341,13 +353,6 @@ private:
     std::vector<std::string> keyword_table_; // keyword name strings (indexed by KeywordRef)
     std::size_t eval_depth_ = 0; // recursion counter for friendly stack overflow
     static constexpr std::size_t MAX_EVAL_DEPTH = 50000;
-    struct HashTable {
-        std::vector<std::uint8_t> metadata; // 0xFF=empty, 0x00-0x7F=occupied(7-bit fingerprint)
-        std::vector<types::EvalValue> keys;
-        std::vector<types::EvalValue> values;
-        std::size_t size = 0;     // live entries
-        std::size_t capacity = 0; // power of 2
-    };
     std::vector<HashTable> hash_heap_;
     std::vector<std::vector<types::EvalValue>> vector_heap_;
     std::uint64_t next_id_ = 1;

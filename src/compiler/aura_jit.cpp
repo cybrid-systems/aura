@@ -36,15 +36,16 @@ namespace aura::jit {
 // PrimId values (must match ir.ixx PrimId enum order)
 // Used for PrimCall fast-path dispatch — skipping aura_prim_call runtime.
 enum : uint32_t {
-    PrimDisplay = 8,
-    PrimWrite = 9,
-    PrimNewline = 10,
-    PrimQuotient = 30,
-    PrimRemainder = 31,
+    PrimHash = 0,
+    PrimDisplay = 9,
+    PrimWrite = 10,
+    PrimNewline = 11,
+    PrimQuotient = 31,
+    PrimRemainder = 32,
     PrimRaise = 35,
     PrimErrorP = 36,
-    PrimPairP = 37,
-    PrimNullP = 38,
+    PrimPairP = 38,
+    PrimNullP = 39,
 };
 
 // Opcode enum values (must match ir.ixx IROpcode)

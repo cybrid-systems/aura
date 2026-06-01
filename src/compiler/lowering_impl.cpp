@@ -477,6 +477,7 @@ static std::uint32_t lower_flat_expr(
 
                 // Check if callee is a known non-arithmetic primitive (string ops, etc.)
                 static const std::unordered_map<std::string, PrimId> prim_call_map = {
+            {"hash", PrimId::Hash},
                     {"string-append", PrimId::StringAppend},
                     {"string-length", PrimId::StringLength},
                     {"string-ref", PrimId::StringRef},

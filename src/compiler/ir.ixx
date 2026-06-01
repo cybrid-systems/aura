@@ -170,6 +170,7 @@ inline const OpcodeInfo* lookup_opcode(IROpcode op) {
 
 // Primitive IDs for PrimCall opcode
 export enum class PrimId : std::uint8_t {
+    Hash,
     StringAppend,
     StringLength,
     StringRef,
@@ -222,6 +223,7 @@ export enum class PrimId : std::uint8_t {
 // Names for each PrimId, indexed by enum value.
 // Must match PrimId enum order exactly.
 export constexpr std::string_view kPrimNames[] = {
+    "hash",
     "string-append", "string-length",  "string-ref",     "substring",     "string=?",
     "string<?",      "number->string", "string->number", "display",       "write",
     "newline",       "error",          "assert",         "read",          "read-file",
@@ -237,7 +239,7 @@ export constexpr std::string_view kPrimNames[] = {
     "pair?",         "null?",
 };
 
-static_assert(std::size(kPrimNames) == 39, "kPrimNames must have exactly one entry per PrimId");
+static_assert(std::size(kPrimNames) == 40, "kPrimNames must have exactly one entry per PrimId");
 
 // Helper: pack two uint32 into one (for Call: args_begin << 16 | arg_count)
 export constexpr std::uint32_t pack_pair(std::uint32_t hi, std::uint32_t lo) {
