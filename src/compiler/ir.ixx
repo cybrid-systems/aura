@@ -326,9 +326,15 @@ export struct IRModule {
 
     std::vector<std::string> string_pool; // string constants (for ConstString opcode)
 
+    // Deduplicated string pool (Phase 4e: JIT hash string keys)
+    std::unordered_map<std::string, std::uint32_t> string_map_;
+
     std::uint32_t add_string(std::string s) {
+        auto it = string_map_.find(s);
+        if (it != string_map_.end()) return it->second;
         auto id = static_cast<std::uint32_t>(string_pool.size());
-        string_pool.push_back(std::move(s));
+        string_pool.push_back(s);
+        string_map_[std::move(s)] = id;
         return id;
     }
 

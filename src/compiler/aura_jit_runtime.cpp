@@ -444,14 +444,8 @@ int64_t aura_hash_set(int64_t hash_val, int64_t pair_val) {
     uint64_t id = static_cast<uint64_t>(pair_val >> 2);
     if (id < g_pair_slots.size() && g_pair_slots[id]) {
         int64_t key = g_pair_slots[id]->car;
-        // Convert JIT string to evaluator string heap index for consistent comparison
-        if ((key & 1) == 0 && key > -9000000000000000000LL) {
-            // Fixnum — stored as-is
-        } else if ((key & 1) == 0 && key <= -9000000000000000000LL && g_hash_str_convert_fn) {
-            // String — convert to evaluator string heap
-            int64_t converted = g_hash_str_convert_fn(key);
-            if (converted != 0) key = converted;
-        }
+        // Key stored as-is (JIT encoding). aura_hash_key_eq handles comparison
+        // for both fixnum and string keys via g_string_pool content comparison.
         int64_t val = g_pair_slots[id]->cdr;
         auto hidx = static_cast<std::size_t>(static_cast<uint64_t>(hash_val) >> 6);
         if (hidx < g_hash_tables.size() && g_hash_tables[hidx]) {
@@ -680,21 +674,20 @@ extern "C" void aura_set_hash_str_eq_callback(int64_t (*fn)(int64_t, int64_t)) {
 extern "C" int64_t aura_hash_key_eq(int64_t stored_key, int64_t search_key) {
     // Fast path: same raw value
     if (stored_key == search_key) return 1;
-    // Fixnum comparison
-    if ((stored_key & 1) == 0 && (search_key & 1) == 0)
+    // Fixnum comparison (low bit 0, not in string range)
+    if ((stored_key & 1) == 0 && stored_key > -9000000000000000000LL &&
+        (search_key & 1) == 0 && search_key > -9000000000000000000LL)
         return (stored_key >> 1) == (search_key >> 1) ? 1 : 0;
-    // String comparison: convert JIT keys to evaluator keys, then compare
+    // String comparison: both use g_string_pool encoding (STRING_BIAS_VAL - idx)
     if (stored_key <= -9000000000000000000LL && search_key <= -9000000000000000000LL) {
-        // Use the string callback for evaluator-heap-based comparison
+        // Compare content via g_string_pool (JIT runtime's string storage)
+        auto si = static_cast<std::size_t>(-stored_key - 9000000000000000000LL);
+        auto qi = static_cast<std::size_t>(-search_key - 9000000000000000000LL);
+        if (si < g_string_pool.size() && qi < g_string_pool.size())
+            return (g_string_pool[si] == g_string_pool[qi]) ? 1 : 0;
+        // Fallback: evaluator heap comparison (converted keys)
         if (g_hash_str_eq_fn)
             return g_hash_str_eq_fn(stored_key, search_key);
-        // Fallback: try converting and re-comparing
-        if (g_hash_str_convert_fn) {
-            int64_t stored_eval = g_hash_str_convert_fn(stored_key);
-            int64_t search_eval = g_hash_str_convert_fn(search_key);
-            if (stored_eval != 0 && search_eval != 0)
-                return (stored_eval == search_eval) ? 1 : 0;
-        }
     }
     return 0;
 }
