@@ -231,7 +231,10 @@
 
 ; Test 2: string? must return #t for all string heap positions
 ; (encoding collision fix: is_string should not be fooled by is_ref overlap)
-(set-code "(define test-strs '("a" "bb" "ccc" "dddd" "eeeee" "ffffff" "ggggggg" "hhhhhhhh"))")
+; Inner quotes escaped — the outer string in this .aura source file would
+; otherwise terminate at the first inner " and the parser sees an unbound
+; variable (regression from the encoding-collision era).
+(set-code "(define test-strs '(\"a\" \"bb\" \"ccc\" \"dddd\" \"eeeee\" \"ffffff\" \"ggggggg\" \"hhhhhhhh\"))")
 (report "encoding-string-pred" (string? "any-string"))
 
 ; Test 3: error? must return #f for strings (not confused by RefError collision)

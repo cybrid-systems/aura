@@ -42,12 +42,12 @@
   (check= 0
     (let ((x (list 1 2 3)))
       (match x
-        ((a b c) 0)
+        ((list a b c) 0)
         (else 1))))
   (check= "a"
     (let ((x (list "a" 2)))
       (match x
-        ((a b) a)
+        ((list a b) a)
         (else "z"))))
 
 
@@ -135,12 +135,15 @@
   (check= 6
     (begin (define-type (List a) (Nil) (Cons a (List a)))
       (let ((xs (Cons 1 (Cons 2 (Cons 3 Nil)))))
-        (match xs ((Cons h t) (display h) (display (+ h 1))) (Nil 0)))))
+        (match xs
+          ((Cons h t) (begin (display h) (display (+ h 1))))
+          (Nil 0)))))
   ;; 8. Pattern with field binding
   (check= hello
     (begin (define-type (Pair a b) (MkPair a b))
       (let ((p (MkPair "hello" 42)))
-        (match p ((MkPair s n) (display s) (display n))))))
+        (match p
+          ((MkPair s n) (begin (display s) (display n))))))))
   ;; 9. Multi-ctor covered with wildcard for rest
   (check= 1
     (begin (define-type (Season) (Spring) (Summer) (Fall) (Winter))
