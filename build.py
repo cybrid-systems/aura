@@ -199,7 +199,7 @@ INTEG_TESTS = [
         "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 5))",
         "ir", expected="120"),
     IntegCase("ir_fib",
-        "(letrec ((fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))) (fib 10))",
+        "(letrec ((fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))))) (fib 10))",
         "ir", expected="55"),
     # ── Typecheck pipeline ───────────────────────────────────
     IntegCase("tc_int", "42", "typecheck", expected="Int"),
@@ -855,7 +855,7 @@ def test_suite_runner():
             warn(f"  suite/{name}.aura: empty")
             failed += 1
             continue
-        r = subprocess.run(["/bin/bash", "-c", f'cat "{f}" | {str(AURA)}'],
+        r = subprocess.run([str(AURA), "--load", str(f)],
                           capture_output=True, text=True, timeout=30)
         if r.returncode == 0:
             ok(f"  suite/{name}.aura")
