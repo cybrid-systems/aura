@@ -37,16 +37,60 @@ namespace aura::jit {
 // Used for PrimCall fast-path dispatch — skipping aura_prim_call runtime.
 enum : uint32_t {
     PrimHash = 0,
-    PrimDisplay = 9,
-    PrimWrite = 10,
-    PrimNewline = 11,
-    PrimQuotient = 31,
-    PrimRemainder = 32,
-    PrimRaise = 35,
-    PrimErrorP = 36,
-    PrimPairP = 38,
-    PrimNullP = 39,
+    PrimStringAppend = 5,
+    PrimStringLength = 6,
+    PrimStringRef = 7,
+    PrimSubstring = 8,
+    PrimStringEq = 9,
+    PrimStringLt = 10,
+    PrimNumberToString = 11,
+    PrimStringToNumber = 12,
+    PrimDisplay = 13,
+    PrimWrite = 14,
+    PrimNewline = 15,
+    PrimError = 16,
+    PrimAssert = 17,
+    PrimRead = 18,
+    PrimReadFile = 19,
+    PrimWriteFile = 20,
+    PrimFileExists = 21,
+    PrimGensym = 22,
+    PrimApply = 23,
+    PrimVector = 24,
+    PrimVectorRef = 25,
+    PrimVectorSet = 26,
+    PrimVectorLength = 27,
+    PrimVectorP = 28,
+    PrimMakeVector = 29,
+    PrimImport = 30,
+    PrimCharEq = 31,
+    PrimCharLt = 32,
+    PrimCharToInteger = 33,
+    PrimIntegerToChar = 34,
+    PrimQuotient = 35,
+    PrimRemainder = 36,
+    PrimListLength = 37,
+    PrimListRef = 38,
+    PrimListReverse = 39,
+    PrimRaise = 40,
+    PrimErrorP = 41,
+    PrimPairP = 42,
+    PrimNullP = 43,
 };
+// Compile-time lockstep with ir.ixx PrimId enum.
+// If you add/remove/reorder a PrimId entry, both sides must change together.
+static_assert(PrimDisplay == 13, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimWrite == 14, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimNewline == 15, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimQuotient == 35, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimRemainder == 36, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimListLength == 37, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimListRef == 38, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimListReverse == 39, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimRaise == 40, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimErrorP == 41, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimPairP == 42, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimNullP == 43, "PrimId drift: aura_jit.cpp vs ir.ixx");
 
 // Opcode enum values (must match ir.ixx IROpcode)
 enum Op : uint32_t {
@@ -299,9 +343,15 @@ struct LLVMBuilder {
     void store(uint32_t slot, llvm::Value* val) { irb->CreateStore(val, llvm_locals[slot]); }
     llvm::Value* c64(int64_t v) { return llvm::ConstantInt::get(llvm::Type::getInt64Ty(ctx), v); }
 
-    bool lower(const FlatInstruction& inst, uint32_t block_id, const FlatFunction& fn) {
+    // Lower one FlatInstruction into the current LLVM IR builder.
+    // Contract: inst.opcode must be a valid IROpcode value (< MaxIROpcode);
+    // for result-producing opcodes, inst.ops[0] must be a valid local slot
+    // (< fn.local_count). Violations indicate a corrupted IR module.
+    bool lower(const FlatInstruction& inst, uint32_t block_id, const FlatFunction& fn)
+        pre (block_id < fn.num_blocks)
+        pre (fn.num_blocks == 0 || fn.blocks != nullptr)
+    {
         (void)block_id;
-        (void)fn;
         switch (inst.opcode) {
             case OpConstI64: {
                 // Fixnum-encode: value << 1 (matching EvalValue pointer tagging)
@@ -735,11 +785,14 @@ struct LLVMBuilder {
                 // IR: operands[0]=result_slot, operands[1]=prim_slot_index
                 auto result_slot = inst.ops[0];
                 auto prim_slot = inst.ops[1];
-                // Encode as a primitive reference matching EvalValue:
-                //   (prim_slot << 6) | (RefPrimitive << 2) | 1
-                // where RefPrimitive = 5 (from value.ixx).
-                // AOT mode uses negative sentinel; JIT mode uses proper encoding.
-                int64_t encoded = (static_cast<int64_t>(prim_slot) << 6) | (5 << 2) | 1;
+                // AOT mode: negative sentinel so lib/runtime.c's aura_closure_call
+                //   detects (closure_id < 0) and dispatches to s_prim_fns[slot]
+                //   — slot is recovered as -closure_id - 1.
+                // JIT mode: positive EvalValue encoding so the IR interpreter's
+                //   is_primitive()/as_primitive_slot() can read it back.
+                int64_t encoded = aot_mode
+                    ? -(static_cast<int64_t>(prim_slot) + 1)
+                    : (static_cast<int64_t>(prim_slot) << 6) | (5 << 2) | 1;
                 store(result_slot, c64(encoded));
                 return true;
             }
