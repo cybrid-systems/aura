@@ -78,7 +78,8 @@ extern "C" {
 
 // === Closure runtime ===
 static std::vector<int64_t> g_closure_func_ids;          // func_id for each closure
-static std::vector<std::vector<int64_t>> g_closure_envs; // env for each closure
+static std::vector<std::vector<int64_t>> g_closure_envs; // env for each closure (heap)
+static std::vector<int64_t*> g_arena_closure_envs;       // arena env ptrs (parallel, null=heap)
 
 // ── Closure inline cache (monomorphic, direct-mapped) ──
 // Caches the resolved function pointer + metadata for recently-accessed closures.
@@ -101,23 +102,45 @@ int64_t aura_alloc_closure(int64_t func_id) {
 }
 
 int64_t aura_alloc_closure_arena(int64_t func_id) {
-    // TODO(PHASE5): Use arena-backed env storage instead of heap std::vector.
-    // For now, arena-allocated closures still use g_closure_envs (heap) for env
-    // data, but the closure slot is marked non-escaping. Future optimization:
-    // store env data directly in arena memory instead of std::vector.
     int64_t id = static_cast<int64_t>(g_closure_func_ids.size());
     g_closure_func_ids.push_back(func_id);
-    g_closure_envs.emplace_back();
+    g_closure_envs.emplace_back();  // still push heap env as fallback
+    g_arena_closure_envs.push_back(nullptr);  // arena ptr, set by later captures
     return id;
 }
 
 void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
-    if (closure_id >= 0 && static_cast<size_t>(closure_id) < g_closure_envs.size()) {
-        auto& env = g_closure_envs[static_cast<size_t>(closure_id)];
-        if (static_cast<size_t>(idx) >= env.size())
-            env.resize(static_cast<size_t>(idx) + 1);
-        env[static_cast<size_t>(idx)] = val;
+    if (closure_id < 0)
+        return;
+    size_t cid = static_cast<size_t>(closure_id);
+    if (cid >= g_closure_envs.size())
+        return;
+    // Arena env path: allocate from TL arena on first capture
+    if (cid < g_arena_closure_envs.size()) {
+        int64_t*& arena_ptr = g_arena_closure_envs[cid];
+        if (arena_ptr) {
+            // Env already allocated on arena — write directly
+            arena_ptr[static_cast<size_t>(idx)] = val;
+            return;
+        }
+        // First capture for this arena closure: allocate env from arena
+        // Estimate env size from idx (grow to fit)
+        size_t env_size = static_cast<size_t>(idx) + 4;  // pad for future captures
+        int64_t* arena_env = (int64_t*)tl_arena_alloc(
+            &g_tl_arena, env_size * sizeof(int64_t), alignof(int64_t));
+        if (arena_env) {
+            for (size_t i = 0; i < env_size; ++i)
+                arena_env[i] = 0;
+            arena_env[static_cast<size_t>(idx)] = val;
+            arena_ptr = arena_env;
+            return;
+        }
     }
+    // Fallback: use heap std::vector
+    auto& env = g_closure_envs[cid];
+    if (static_cast<size_t>(idx) >= env.size())
+        env.resize(static_cast<size_t>(idx) + 1);
+    env[static_cast<size_t>(idx)] = val;
 }
 
 
@@ -163,10 +186,17 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
                     locals[i] = 0;
             }
 
-            // Place captured env values first
-            auto& env = g_closure_envs[static_cast<size_t>(closure_id)];
-            for (int32_t i = 0; i < env_count && static_cast<size_t>(i) < env.size(); ++i)
-                locals[i] = env[i];
+            // Place captured env values first (prefer arena env, fallback to heap)
+            size_t cid_cast = static_cast<size_t>(closure_id);
+            if (cid_cast < g_arena_closure_envs.size() && g_arena_closure_envs[cid_cast]) {
+                int64_t* arena_env = g_arena_closure_envs[cid_cast];
+                for (int32_t i = 0; i < env_count; ++i)
+                    locals[i] = arena_env[i];
+            } else {
+                auto& env = g_closure_envs[cid_cast];
+                for (int32_t i = 0; i < env_count && static_cast<size_t>(i) < env.size(); ++i)
+                    locals[i] = env[i];
+            }
 
             // Place call arguments after env
             for (int32_t i = 0; i < nargs; ++i)
@@ -182,7 +212,7 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
         return 0;
 
     auto& entry = g_jit_fns[func_id];
-    auto& env = g_closure_envs[static_cast<size_t>(closure_id)];
+    size_t slow_cid = static_cast<size_t>(closure_id);
 
     // Stack buffer for small locals, fallback to heap for large
     int32_t nlocals = entry.local_count > 0 ? entry.local_count : 16;
@@ -197,15 +227,26 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
             locals[i] = 0;
     }
 
-    // Place captured env values first
-    for (size_t i = 0; i < env.size(); ++i) {
-        if (i < static_cast<size_t>(nlocals))
-            locals[i] = env[i];
+    // Place captured env values first (prefer arena env, fallback to heap)
+    if (slow_cid < g_arena_closure_envs.size() && g_arena_closure_envs[slow_cid]) {
+        int64_t* arena_env = g_arena_closure_envs[slow_cid];
+        for (int32_t i = 0; i < entry.env_count; ++i)
+            if (i < nlocals)
+                locals[i] = arena_env[i];
+    } else {
+        auto& env = g_closure_envs[slow_cid];
+        for (size_t i = 0; i < env.size(); ++i) {
+            if (i < static_cast<size_t>(nlocals))
+                locals[i] = env[i];
+        }
     }
 
     // Place call arguments after env
     int32_t nargs = argc < entry.arg_count ? static_cast<int32_t>(argc) : entry.arg_count;
-    int32_t env_offset = static_cast<int32_t>(env.size());
+    size_t env_count_check = slow_cid < g_arena_closure_envs.size() && g_arena_closure_envs[slow_cid]
+                                 ? static_cast<size_t>(entry.env_count)
+                                 : g_closure_envs[slow_cid].size();
+    int32_t env_offset = static_cast<int32_t>(env_count_check);
     for (int32_t i = 0; i < nargs; ++i) {
         int32_t slot = env_offset + i;
         if (slot < nlocals)
@@ -219,7 +260,7 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
     g_closure_cache[cache_idx].fn = entry.fn;
     g_closure_cache[cache_idx].local_count = entry.local_count;
     g_closure_cache[cache_idx].arg_count = entry.arg_count;
-    g_closure_cache[cache_idx].env_count = static_cast<int32_t>(env.size());
+    g_closure_cache[cache_idx].env_count = static_cast<int32_t>(env_count_check);
 
     return result;
 }
@@ -386,6 +427,7 @@ int64_t aura_cast_op(int64_t val, int64_t type_tag) {
 void aura_reset_runtime() {
     g_closure_func_ids.clear();
     g_closure_envs.clear();
+    g_arena_closure_envs.clear();
     g_cell_heap.clear();
     g_pair_slots.clear();
     std::memset(g_jit_fns, 0, sizeof(g_jit_fns));
