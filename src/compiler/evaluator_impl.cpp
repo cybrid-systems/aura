@@ -11731,51 +11731,6 @@ Evaluator::Evaluator() {
         return make_hash(hidx);
     });
 
-    // Helper: build a 6-key policy hash from the current MemoryPolicy.
-    // Used by both set-memory-policy (return prev) and get-memory-policy.
-    auto build_policy_hash = [this](const Evaluator::MemoryPolicy& p) -> EvalValue {
-        std::vector<std::pair<std::string, EvalValue>> kv;
-        kv.push_back({"auto-gc",              make_bool(p.auto_gc)});
-        kv.push_back({"warn-pct",             make_int(p.warn_pct)});
-        kv.push_back({"critical-pct",         make_int(p.critical_pct)});
-        kv.push_back({"sample-every",         make_int(static_cast<std::int64_t>(p.sample_every))});
-        kv.push_back({"cooldown-evals",      make_int(static_cast<std::int64_t>(p.cooldown_evals))});
-        kv.push_back({"recent-gc-temp-window", make_int(static_cast<std::int64_t>(p.recent_gc_temp_window))});
-        auto* ht = FlatHashTable::create(8);
-        if (!ht) return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto cap = ht->capacity;
-        for (auto& [k, v] : kv) {
-            std::uint64_t h = 0xcbf29ce484222325ull;
-            for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
-            auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
-            auto kidx = string_heap_.size();
-            string_heap_.push_back(k);
-            EvalValue key_ev = make_string(kidx);
-            bool inserted = false;
-            for (std::size_t at = 0; at < cap; ++at) {
-                auto idx = ((h >> 1) + at) & (cap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    keys[idx] = key_ev.val;
-                    vals[idx] = v.val;
-                    ht->size++;
-                    inserted = true;
-                    break;
-                }
-            }
-            if (!inserted) {
-                FlatHashTable::destroy(ht);
-                return make_void();
-            }
-        }
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    };
-
     // (set-memory-policy hash) — Configure the auto-governance policy
     // for memory pressure. The hash may contain any of:
     //   "auto-gc":              #t / #f       ; default #f
@@ -11786,7 +11741,7 @@ Evaluator::Evaluator() {
     //   "recent-gc-temp-window": int (>= 1)   ; default 100
     // Returns the previous policy as a hash. Pass #f to disable
     // auto-governance (resets to defaults).
-    primitives_.add("set-memory-policy", [this, &build_policy_hash](const auto& a) -> EvalValue {
+    primitives_.add("set-memory-policy", [this](const auto& a) -> EvalValue {
         // Snapshot the current policy to return as "previous".
         auto prev = memory_policy_;
         // Reset to defaults first; then apply overrides from the hash.
@@ -11851,7 +11806,7 @@ Evaluator::Evaluator() {
     });
 
     // (get-memory-policy) — Return the current policy as a hash.
-    primitives_.add("get-memory-policy", [this, &build_policy_hash](const auto&) -> EvalValue {
+    primitives_.add("get-memory-policy", [this](const auto&) -> EvalValue {
         return build_policy_hash(memory_policy_);
     });
 
@@ -12300,6 +12255,52 @@ bool Evaluator::gc_module(const std::string& path) {
 Env* Evaluator::copy_env(const Env& e, ast::ASTArena* target) {
     auto* ar = target ? target : arena_;
     return ar ? ar->create<Env>(e) : nullptr;
+}
+
+// Build a 6-key policy hash from a MemoryPolicy. Interned in string_heap_.
+// Defined as a member function (not a local lambda) so it can be referenced
+// from std::function-captured primitives without dangling.
+EvalValue Evaluator::build_policy_hash(const MemoryPolicy& p) {
+    std::vector<std::pair<std::string, EvalValue>> kv;
+    kv.push_back({"auto-gc",              make_bool(p.auto_gc)});
+    kv.push_back({"warn-pct",             make_int(p.warn_pct)});
+    kv.push_back({"critical-pct",         make_int(p.critical_pct)});
+    kv.push_back({"sample-every",         make_int(static_cast<std::int64_t>(p.sample_every))});
+    kv.push_back({"cooldown-evals",      make_int(static_cast<std::int64_t>(p.cooldown_evals))});
+    kv.push_back({"recent-gc-temp-window", make_int(static_cast<std::int64_t>(p.recent_gc_temp_window))});
+    auto* ht = FlatHashTable::create(8);
+    if (!ht) return make_void();
+    auto meta = ht->metadata();
+    auto keys = ht->keys();
+    auto vals = ht->values();
+    auto cap = ht->capacity;
+    for (auto& [k, v] : kv) {
+        std::uint64_t h = 0xcbf29ce484222325ull;
+        for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+        auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+        auto kidx = string_heap_.size();
+        string_heap_.push_back(k);
+        EvalValue key_ev = make_string(kidx);
+        bool inserted = false;
+        for (std::size_t at = 0; at < cap; ++at) {
+            auto idx = ((h >> 1) + at) & (cap - 1);
+            if (meta[idx] == 0xFF) {
+                meta[idx] = fp;
+                keys[idx] = key_ev.val;
+                vals[idx] = v.val;
+                ht->size++;
+                inserted = true;
+                break;
+            }
+        }
+        if (!inserted) {
+            FlatHashTable::destroy(ht);
+            return make_void();
+        }
+    }
+    auto hidx = g_hash_tables.size();
+    g_hash_tables.push_back(ht);
+    return make_hash(hidx);
 }
 
 // eval_in(ast::Expr*) removed — all evaluation uses eval_flat(FlatAST&) now

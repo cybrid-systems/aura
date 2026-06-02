@@ -201,6 +201,15 @@ private:
         cells_.push_back(v);
         return cells_.size() - 1;
     }
+    // Forward decl: MemoryPolicy is defined further down in the class
+    // (after the long state-decl block). The build_policy_hash helper
+    // (which needs it as a parameter) is also defined further down.
+    struct MemoryPolicy;
+    // Build a 6-key policy hash (for set-memory-policy and get-memory-policy).
+    // Member function (not a local lambda) so it has proper lifetime when
+    // captured by std::function in the primitive table. A captured local
+    // lambda would dangle as soon as the enclosing function returns.
+    [[nodiscard]] types::EvalValue build_policy_hash(const MemoryPolicy& p);
     // (apply_closure and expand_macro removed — use eval_flat directly)
     [[nodiscard]] EvalValue ast_to_data(const aura::ast::FlatAST& flat,
                                         const aura::ast::StringPool& pool, aura::ast::NodeId nid);
