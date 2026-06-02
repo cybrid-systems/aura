@@ -11427,6 +11427,11 @@ Evaluator::Evaluator() {
         return types::make_bool(gc_module(string_heap_[sidx]));
     });
 
+    // (gc-module-count) — Number of modules currently in the module cache.
+    primitives_.add("gc-module-count", [this](const auto&) -> EvalValue {
+        return make_int(static_cast<std::int64_t>(modules_.size()));
+    });
+
     // (gc-arena-stats) — Report per-arena allocation. Shows main arena +
     // every per-module arena. Format: "main:0.1MB/8.0MB;json.aura:0.5MB/8.0MB;..."
     // (semicolons separate entries; slashes separate used/capacity within an entry).
