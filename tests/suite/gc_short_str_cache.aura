@@ -1,0 +1,150 @@
+;; tests/suite/gc_short_str_cache.aura
+;;
+;; Scenario coverage for the short_str_cache_ invalidation class.
+;;
+;; Context: eval_flat caches String EvalValues for short LiteralString
+;; nodes (length ≤ 6) in short_str_cache_ (keyed by string content).
+;; (gc-heap) clears string_heap_ but, before commit f39f0a3, did NOT
+;; clear short_str_cache_, so subsequent LiteralString evals returned
+;; stale cached String EvalValues whose string_heap_ index no longer
+;; exists — segfault on std::string::_M_construct at line 10938
+;; (intend's call_fn does `return string_heap_[idx]` WITHOUT bounds
+;; check).
+;;
+;; Primary regression guard: tests/suite/gc.aura lines 202-209
+;; (the intend+lambda+gc-temp combination that originally segfaulted).
+;; This file adds scenario coverage so future changes to the cache
+;; (e.g. adding a new caller, or a new code path that clears
+;; string_heap_ without clearing the cache) are caught with focused
+;; tests instead of just the one combination in gc.aura.
+;;
+;; Each test below:
+;;   1. Grows string_heap_ with many entries (so cached idx is high)
+;;   2. Evaluates a short string literal (populating the cache)
+;;   3. Calls (gc-heap)
+;;   4. Re-evaluates the same content
+;;   5. Verifies the result is still correct via check=
+
+(require "std/test" all:)
+
+; ── helper: grow string_heap_ via runtime string-append. Each call
+; binds the result so the std::string lives in string_heap_ (not
+; discarded with the scope).
+(define (flood n)
+  (if (= n 0)
+      0
+      (begin
+        (define _pad (string-append "pad-" (number->string n) "-padding-string"))
+        (flood (- n 1)))))
+
+; ── 1. The exact original bug pattern (closure returns short string
+; after gc-heap). Pre-flood to ~50 entries so cache gets a high idx.
+(flood 50)
+(define (verifier c) "#t")
+(check= "#t" (verifier "first"))   ; populates cache for "#t" + "first"
+(gc-heap)
+;; After gc-heap, "#t" must re-evaluate cleanly. The cache must have
+;; been cleared; otherwise we'd get a stale idx → segfault in
+;; callers that read string_heap_ without bounds check (e.g. intend).
+;; check= bounds-checks, so this catches the silent case where the
+;; result is wrong; the original test 28 in gc.aura exercises the
+;; crash path via intend.
+(check= "#t" (verifier "first"))
+
+; ── 2. Cache boundary: every cached string length (1, 2, 3, 4, 5, 6)
+; and the first uncached length (7). The cache triggers for
+; raw.size() <= 6 (evaluator_impl.cpp:13193).
+(flood 50)
+(define (gen s) (lambda () s))
+(define a      (gen "a"))       ; 1 byte
+(define bb     (gen "bb"))      ; 2
+(define ccc    (gen "ccc"))     ; 3
+(define dddd   (gen "dddd"))    ; 4
+(define eeeee  (gen "eeeee"))   ; 5
+(define ffffff (gen "ffffff"))  ; 6  (last cached length)
+(define ggggggg (gen "ggggggg")) ; 7 (first uncached length)
+(check= "a" (a))
+(check= "bb" (bb))
+(check= "ccc" (ccc))
+(check= "dddd" (dddd))
+(check= "eeeee" (eeeee))
+(check= "ffffff" (ffffff))
+(check= "ggggggg" (ggggggg))
+(gc-heap)
+(check= "a" (a))
+(check= "bb" (bb))
+(check= "ccc" (ccc))
+(check= "dddd" (dddd))
+(check= "eeeee" (eeeee))
+(check= "ffffff" (ffffff))
+(check= "ggggggg" (ggggggg))
+
+; ── 3. Two closures with the same body content share one cache entry.
+; The cache is keyed by content, so two closures with identical bodies
+; collide. After gc-heap, both must still work.
+(flood 50)
+(define g1 (lambda () "abc"))
+(define g2 (lambda () "abc"))
+(check= "abc" (g1))
+(check= "abc" (g2))
+(gc-heap)
+(check= "abc" (g1))
+(check= "abc" (g2))
+
+; ── 4. Repeated gc-heap cycles. Each gc-heap must clear the cache;
+; consecutive cycles must all leave subsequent evals correct.
+(flood 50)
+(check= "abc" (g1))
+(gc-heap)
+(check= "abc" (g1))
+(gc-heap)
+(check= "abc" (g1))
+
+; ── 5. intend-style two-stage call pattern: gen returns "(+ 1 2)"
+; (12 bytes, NOT cached — exercises the non-cached path), ver
+; returns "#t" (3 bytes, cached — exercises the cached path). All
+; three string pushes hit the cache for short content. Run this
+; pattern, gc-heap, repeat.
+(flood 50)
+(define (gen-code g) "(+ 1 2)")
+(define (ver-code c) "#t")
+(check= "(+ 1 2)" (gen-code "x"))
+(check= "#t" (ver-code "(+ 1 2)"))
+(gc-heap)
+(check= "(+ 1 2)" (gen-code "x"))
+(check= "#t" (ver-code "(+ 1 2)"))
+
+; ── 6. Many distinct short strings all in cache.
+(flood 50)
+(define (k s) (lambda () s))
+(check= "k1" (k "k1"))
+(check= "k2" (k "k2"))
+(check= "k3" (k "k3"))
+(check= "k4" (k "k4"))
+(check= "k5" (k "k5"))
+(check= "k6" (k "k6"))
+(check= "k7" (k "k7"))
+(check= "k8" (k "k8"))
+(gc-heap)
+(check= "k1" (k "k1"))
+(check= "k2" (k "k2"))
+(check= "k3" (k "k3"))
+(check= "k4" (k "k4"))
+(check= "k5" (k "k5"))
+(check= "k6" (k "k6"))
+(check= "k7" (k "k7"))
+(check= "k8" (k "k8"))
+
+; ── 7. Mixed: short (cached) and long (uncached) strings interleaved.
+(flood 50)
+(define (mix n)
+  (if (= n 0)
+      "abc"                        ; cached
+      (string-append "x" (number->string n))))  ; uncached
+(check= "abc" (mix 0))
+(check= "x1" (mix 1))
+(check= "x2" (mix 2))
+(gc-heap)
+(check= "abc" (mix 0))
+(check= "x1" (mix 1))
+(check= "x2" (mix 2))

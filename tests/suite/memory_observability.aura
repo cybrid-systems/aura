@@ -1,0 +1,83 @@
+;; tests/suite/memory_observability.aura
+;;
+;; Regression tests for Issue #69 (memory pressure observability).
+;;
+;; After per-module arena work, the next layer is structured telemetry:
+;;   - (gc-arena-info): vector of hashes, one per arena + a summary entry
+;;   - (memory-pressure): hash with level / used-pct / top-arena / suggestions
+;;
+;; These primitives are the foundation for set-memory-policy (P1) and
+;; long-running benchmark (P2). They must:
+;;   - Return hashes (not strings) for Agent code to consume
+;;   - Be deterministic (top-arena tie-breaks name asc)
+;;   - Suggest "gc-module <name>" for arenas >= 80% full
+;;   - Suggest "gc-temp" when no recent gc-temp call (within 100 evals)
+;;   - Have no side effects (read-only snapshot)
+
+(require "std/test" all:)
+
+; ── 1. (gc-arena-info) returns a vector (not a string) ──
+(define info (gc-arena-info))
+(check= #t (vector? info))
+;; At least the summary entry is present, even on cold start.
+(check= #t (>= (vector-length info) 1))
+
+; ── 2. First entry is a summary with the expected keys ──
+(define summary (vector-ref info 0))
+(check= #t (hash? summary))
+(check= #t (hash-has-key? summary "summary"))
+(check= #t (hash-has-key? summary "total-arenas"))
+(check= #t (hash-has-key? summary "total-used"))
+(check= #t (hash-has-key? summary "total-capacity"))
+(check= #t (hash-has-key? summary "overall-pct"))
+(check= #t (hash-ref summary "summary"))     ; the "summary" key is #t
+
+; ── 3. Per-arena entries have name / used / capacity / used-pct ──
+(if (> (vector-length info) 1)
+    (begin
+      (define first (vector-ref info 1))
+      (check= #t (hash? first))
+      (check= #t (hash-has-key? first "name"))
+      (check= #t (hash-has-key? first "used"))
+      (check= #t (hash-has-key? first "capacity"))
+      (check= #t (hash-has-key? first "used-pct"))
+      (check= "main" (hash-ref first "name"))))   ; first arena is the main one
+
+; ── 4. (memory-pressure) returns a hash with the expected keys ──
+(define p (memory-pressure))
+(check= #t (hash? p))
+(check= #t (hash-has-key? p "level"))
+(check= #t (hash-has-key? p "used-pct"))
+(check= #t (hash-has-key? p "total-used"))
+(check= #t (hash-has-key? p "total-capacity"))
+(check= #t (hash-has-key? p "top-arena"))
+(check= #t (hash-has-key? p "top-pct"))
+(check= #t (hash-has-key? p "suggestions"))
+(check= #t (vector? (hash-ref p "suggestions")))
+
+; ── 5. Level is one of low / medium / high / critical ──
+(define level-val (hash-ref p "level"))
+(check= #t (or (string=? level-val "low")
+                (or (string=? level-val "medium")
+                    (or (string=? level-val "high") (string=? level-val "critical")))))
+
+; ── 6. Cold start: level should be "low" and pct < 60 ──
+(check= "low" level-val)
+(check= #t (< (hash-ref p "used-pct") 60))
+
+; ── 7. (gc-arena-info) summary.total-arenas == (gc-module-count) + 1 ──
+;; (gc-module-count) returns the number of per-module instances (not the
+;; main arena). (gc-arena-info) summary reports the total number of
+;; per-arena entries (including main), so total-arenas = count + 1.
+(check= (+ 1 (gc-module-count)) (hash-ref summary "total-arenas"))
+
+; ── 8. Calling (gc-arena-info) twice gives consistent summary shape ──
+(define info2 (gc-arena-info))
+(check= (vector-length info) (vector-length info2))
+(check= (hash-ref (vector-ref info2 0) "total-arenas")
+       (hash-ref summary "total-arenas"))
+
+; ── 9. Final assertion: every check= above passed if we reach here ──
+;; In the suite test framework, the program exits 0 iff no check= returned
+;; an error value. The last expression is a 1 on success.
+1
