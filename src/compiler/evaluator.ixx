@@ -365,6 +365,28 @@ private:
     // eval_depth_ - last_gc_temp_eval_depth_ > 100).
     std::size_t last_gc_temp_eval_depth_ = 0;
 
+    // ── Memory pressure governance (P1) ─────────────────────
+    // Policy is configured by (set-memory-policy hash). Default: no
+    // auto-gc, warn at 80%, critical at 95%, sample every 1000 evals,
+    // cooldown 5000 evals between auto-gc firings, gc-temp "recent"
+    // window 100 evals. The auto-gc fires (gc-module top-arena) when
+    // overall used-pct >= critical-pct AND the cooldown has elapsed
+    // since the last auto-gc.
+    struct MemoryPolicy {
+        bool auto_gc = false;
+        int warn_pct = 80;
+        int critical_pct = 95;
+        std::size_t sample_every = 1000;
+        std::size_t cooldown_evals = 5000;
+        std::size_t recent_gc_temp_window = 100;
+    } memory_policy_;
+    // Last eval_depth_ at which auto-gc fired (for cooldown).
+    std::size_t last_auto_gc_eval_depth_ = 0;
+    // Counter to implement "sample every N evals".
+    std::size_t sample_counter_ = 0;
+    // Last logged warning level (so we don't spam the same warning).
+    std::string last_warn_level_;
+
     std::vector<std::vector<types::EvalValue>> vector_heap_;
     std::uint64_t next_id_ = 1;
     ClosureId gc_safe_closure_id_ = 0;

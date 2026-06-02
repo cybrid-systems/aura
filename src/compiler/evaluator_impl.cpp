@@ -11668,7 +11668,7 @@ Evaluator::Evaluator() {
                 suggestions.push_back(make_string(sidx));
             }
         }
-        if (eval_depth_ - last_gc_temp_eval_depth_ > 100) {
+        if (eval_depth_ - last_gc_temp_eval_depth_ > memory_policy_.recent_gc_temp_window) {
             auto sidx = string_heap_.size();
             string_heap_.push_back("gc-temp");
             suggestions.push_back(make_string(sidx));
@@ -11729,6 +11729,130 @@ Evaluator::Evaluator() {
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
+    });
+
+    // Helper: build a 6-key policy hash from the current MemoryPolicy.
+    // Used by both set-memory-policy (return prev) and get-memory-policy.
+    auto build_policy_hash = [this](const Evaluator::MemoryPolicy& p) -> EvalValue {
+        std::vector<std::pair<std::string, EvalValue>> kv;
+        kv.push_back({"auto-gc",              make_bool(p.auto_gc)});
+        kv.push_back({"warn-pct",             make_int(p.warn_pct)});
+        kv.push_back({"critical-pct",         make_int(p.critical_pct)});
+        kv.push_back({"sample-every",         make_int(static_cast<std::int64_t>(p.sample_every))});
+        kv.push_back({"cooldown-evals",      make_int(static_cast<std::int64_t>(p.cooldown_evals))});
+        kv.push_back({"recent-gc-temp-window", make_int(static_cast<std::int64_t>(p.recent_gc_temp_window))});
+        auto* ht = FlatHashTable::create(8);
+        if (!ht) return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto cap = ht->capacity;
+        for (auto& [k, v] : kv) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+            auto kidx = string_heap_.size();
+            string_heap_.push_back(k);
+            EvalValue key_ev = make_string(kidx);
+            bool inserted = false;
+            for (std::size_t at = 0; at < cap; ++at) {
+                auto idx = ((h >> 1) + at) & (cap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    keys[idx] = key_ev.val;
+                    vals[idx] = v.val;
+                    ht->size++;
+                    inserted = true;
+                    break;
+                }
+            }
+            if (!inserted) {
+                FlatHashTable::destroy(ht);
+                return make_void();
+            }
+        }
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    };
+
+    // (set-memory-policy hash) — Configure the auto-governance policy
+    // for memory pressure. The hash may contain any of:
+    //   "auto-gc":              #t / #f       ; default #f
+    //   "warn-pct":             int (0-100)   ; default 80
+    //   "critical-pct":         int (0-100)   ; default 95
+    //   "sample-every":         int (>= 1)    ; default 1000
+    //   "cooldown-evals":       int (>= 1)    ; default 5000
+    //   "recent-gc-temp-window": int (>= 1)   ; default 100
+    // Returns the previous policy as a hash. Pass #f to disable
+    // auto-governance (resets to defaults).
+    primitives_.add("set-memory-policy", [this, &build_policy_hash](const auto& a) -> EvalValue {
+        // Snapshot the current policy to return as "previous".
+        auto prev = memory_policy_;
+        // Reset to defaults first; then apply overrides from the hash.
+        memory_policy_ = Evaluator::MemoryPolicy{};
+
+        if (a.size() >= 1 && is_hash(a[0])) {
+            auto hidx = as_hash_idx(a[0]);
+            if (hidx < g_hash_tables.size() && g_hash_tables[hidx]) {
+                auto* ht = g_hash_tables[hidx];
+                // The hash stores keys as the encoded EvalValue (int64) of
+                // the key string at the time the hash was built. The current
+                // string_heap_ may have a different interning. So we have
+                // to compare by content: for each slot, decode the key
+                // back to a string and compare to the target.
+                auto hget = [&](const std::string& k) -> EvalValue {
+                    for (std::uint64_t i = 0; i < ht->capacity; ++i) {
+                        if (ht->metadata()[i] == 0xFF) continue;
+                        EvalValue kev(ht->keys()[i]);
+                        if (is_string(kev)) {
+                            auto kidx = as_string_idx(kev);
+                            if (kidx < string_heap_.size() &&
+                                string_heap_[kidx] == k) {
+                                return EvalValue(ht->values()[i]);
+                            }
+                        }
+                    }
+                    return make_void();
+                };
+                auto try_int = [&](const std::string& k, int& out) {
+                    auto v = hget(k);
+                    if (is_int(v)) { out = static_cast<int>(as_int(v)); return true; }
+                    return false;
+                };
+                auto try_bool = [&](const std::string& k, bool& out) {
+                    auto v = hget(k);
+                    if (is_bool(v)) { out = as_bool(v); return true; }
+                    return false;
+                };
+                int v_i = 0; bool v_b = false;
+                if (try_bool("auto-gc", v_b))        memory_policy_.auto_gc = v_b;
+                if (try_int("warn-pct", v_i))        memory_policy_.warn_pct = v_i;
+                if (try_int("critical-pct", v_i))    memory_policy_.critical_pct = v_i;
+                if (try_int("sample-every", v_i)) {
+                    memory_policy_.sample_every = static_cast<std::size_t>(v_i);
+                }
+                if (try_int("cooldown-evals", v_i)) {
+                    memory_policy_.cooldown_evals = static_cast<std::size_t>(v_i);
+                }
+                if (try_int("recent-gc-temp-window", v_i)) {
+                    memory_policy_.recent_gc_temp_window = static_cast<std::size_t>(v_i);
+                }
+            }
+        }
+        // If #f was passed (or empty), the policy stays at defaults.
+
+        // Reset cooldown so the new policy starts fresh.
+        last_auto_gc_eval_depth_ = 0;
+        sample_counter_ = 0;
+        last_warn_level_.clear();
+
+        return build_policy_hash(prev);
+    });
+
+    // (get-memory-policy) — Return the current policy as a hash.
+    primitives_.add("get-memory-policy", [this, &build_policy_hash](const auto&) -> EvalValue {
+        return build_policy_hash(memory_policy_);
     });
 
     // ── Capability primitives (with-capability / capability? / check-capability) ──
@@ -13403,6 +13527,81 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
             return std::unexpected(
                 Diagnostic{ErrorKind::InternalError,
                            std::format("recursion depth exceeded (>{})", MAX_C_STACK_DEPTH)});
+
+        // ── Memory pressure auto-governance sampling (P1) ─────────
+        // Every sample_every_ calls to eval_flat, recompute pressure
+        // and (if policy allows) auto-trigger gc-module for the top arena.
+        // Outside the hot path for typical evals (default 1-in-1000).
+        if (++sample_counter_ >= memory_policy_.sample_every) {
+            sample_counter_ = 0;
+            // Snapshot arena state. Inline rather than refactoring into
+            // a shared helper to avoid std::function capture-lifetime issues.
+            struct Snap { std::string name; double used; double cap; int pct; };
+            std::vector<Snap> snaps;
+            double total_used = 0.0, total_cap = 0.0;
+            if (arena_) {
+                auto s = arena_->stats();
+                double u = s.used / 1048576.0;
+                double c = s.capacity / 1048576.0;
+                snaps.push_back({"main", u, c, c > 0 ? static_cast<int>(u / c * 100.0) : 0});
+                total_used += u;
+                total_cap += c;
+            }
+            if (arena_group_) {
+                for (auto& [full_name, stats] : arena_group_->module_stats()) {
+                    auto slash = full_name.rfind('/');
+                    auto short_name = slash == std::string::npos ? full_name : full_name.substr(slash + 1);
+                    double u = stats.used / 1048576.0;
+                    double c = stats.capacity / 1048576.0;
+                    snaps.push_back({short_name, u, c, c > 0 ? static_cast<int>(u / c * 100.0) : 0});
+                    total_used += u;
+                    total_cap += c;
+                }
+            }
+            int overall = total_cap > 0 ? static_cast<int>(total_used / total_cap * 100.0) : 0;
+            std::string level = "low";
+            if (overall >= 95)      level = "critical";
+            else if (overall >= 80) level = "high";
+            else if (overall >= 60) level = "medium";
+
+            // Log warning on level transitions (avoid spam — only log when
+            // the level string changes from the last warned one).
+            if (level != last_warn_level_ &&
+                (level == "high" || level == "critical")) {
+                std::println(std::cerr,
+                             "[memory-pressure] WARNING: level={} overall-pct={} total-used={:.1f}MB",
+                             level, overall, total_used);
+                last_warn_level_ = level;
+            } else if (level == "low" || level == "medium") {
+                last_warn_level_ = level;
+            }
+
+            // Auto-gc: only at critical AND policy enabled AND cooldown elapsed.
+            if (memory_policy_.auto_gc &&
+                level == "critical" &&
+                eval_depth_ - last_auto_gc_eval_depth_ > memory_policy_.cooldown_evals) {
+                // Find top arena (highest used-pct, then largest used, then name asc).
+                std::string top_name;
+                int top_pct = 0;
+                double top_used = 0.0;
+                for (auto& s : snaps) {
+                    if (s.pct > top_pct ||
+                        (s.pct == top_pct && s.used > top_used) ||
+                        (s.pct == top_pct && s.used == top_used && s.name < top_name)) {
+                        top_name = s.name;
+                        top_pct = s.pct;
+                        top_used = s.used;
+                    }
+                }
+                if (!top_name.empty()) {
+                    std::println(std::cerr,
+                                 "[memory-pressure] AUTO-GC: freeing arena '{}' ({}% full)",
+                                 top_name, top_pct);
+                    gc_module(top_name);
+                    last_auto_gc_eval_depth_ = eval_depth_;
+                }
+            }
+        }
 
         while (true) {
             current_flat_ = f;
