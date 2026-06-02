@@ -199,6 +199,16 @@ public:
     // add/mul dedup'd to one entry, mul's name overwrote add's.)
     std::unordered_map<std::string, aura::core::TypeId> declared_sigs_;
 
+    // Issue #72: per-engine incremental typecheck stats.
+    // Accumulated on TypeChecker (via stats()) for visibility.
+    struct InnerStats {
+        std::uint64_t cache_hits = 0;
+        std::uint64_t cache_misses = 0;
+        std::uint64_t stale_cache = 0;
+    };
+    InnerStats stats_;
+    InnerStats stats() const { return stats_; }
+
     InferenceEngine(aura::core::TypeRegistry& reg, aura::diag::DiagnosticCollector& diag);
 
     // FlatAST inference entries
@@ -271,6 +281,18 @@ export struct TypeChecker {
     // 查询已注入类型的来源模块名
     std::string declared_type_module(const std::string& name) const;
 
+    // Issue #72: access the incremental typecheck stats across
+    // infer_flat calls. The InferenceEngine is short-lived (per
+    // infer_flat), so we accumulate stats on the TypeChecker
+    // itself for visibility.
+    struct IncrementalStats {
+        std::uint64_t cache_hits = 0;
+        std::uint64_t cache_misses = 0;
+        std::uint64_t stale_cache = 0;
+    };
+    IncrementalStats stats() const { return stats_; }
+    void reset_stats() { stats_ = {}; }
+
     explicit TypeChecker(aura::core::TypeRegistry& reg)
         : types(reg) {}
 
@@ -283,6 +305,10 @@ private:
     // the env even if its TypeId is shared with another name
     // (post-#70 interning).
     std::unordered_map<std::string, aura::core::TypeId> type_sigs_;
+
+    // Issue #72: incremental typecheck stats (accumulated across
+    // infer_flat calls for test visibility).
+    IncrementalStats stats_{};
 };
 
 } // namespace aura::compiler
