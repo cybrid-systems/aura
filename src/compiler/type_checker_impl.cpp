@@ -79,14 +79,27 @@ void TypeEnv::pop_scope() {
 }
 
 void TypeEnv::bind(std::string name, TypeId type) {
-    scopes_.back()[std::move(name)] = Binding{type, false, {}};
+    // Issue #71: auto-detect polymorphism. If the bound type is a
+    // Forall wrapper, mark the binding as polymorphic so lookup
+    // knows to instantiate it.
+    bool is_poly = reg_.forall_of(type) != nullptr;
+    scopes_.back()[std::move(name)] = Binding{type, is_poly, {}};
 }
 
 TypeId TypeEnv::lookup(const std::string& name) {
     for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
         auto f = it->find(name);
-        if (f != it->end())
+        if (f != it->end()) {
+            // Issue #71: let-polymorphism. If the binding is
+            // polymorphic, return a fresh instantiation so each
+            // use site gets its own copy. (Without this, bound
+            // vars would leak across use sites and unification
+            // would conflict.)
+            if (f->second.is_poly) {
+                return reg_.instantiate_forall(f->second.type, {});
+            }
             return f->second.type;
+        }
     }
     return TypeId{}; // invalid = not found
 }
