@@ -268,12 +268,147 @@ TypeId TypeRegistry::instantiate_forall(TypeId forall_id,
     return result;
 }
 
+// Issue #70: real structural subtyping. See docs/design/issue-70-subtyping-design.md
+// for the full design. The public is_subtype delegates to the depth-limited
+// helper so the public API stays clean.
 bool TypeRegistry::is_subtype(TypeId sub, TypeId sup) const {
-    if (sub == sup)
-        return true;
-    if (sup == dynamic_type())
-        return true;
-    return false;
+    return is_subtype_impl(sub, sup, 0);
+}
+
+bool TypeRegistry::is_subtype_impl(TypeId sub, TypeId sup, int depth) const {
+    // Safety net: pathological types could cycle if someone interns them
+    // (shouldn't happen, but bounded recursion keeps us safe).
+    if (depth > 64) return false;
+
+    // Reflexivity: T <: T.
+    if (sub == sup) return true;
+
+    // Dynamic: T <: Any. Any is the top type (not a subtype of any
+    // concrete type — but it IS equal to itself via the reflexivity
+    // check above).
+    if (sup == dynamic_type()) return true;
+
+    // Type variables: defer to substitution. The caller's
+    // instantiate/substitute pipeline will resolve these. Returning
+    // true here makes subtyping "open" w.r.t. unresolved vars, which
+    // matches the design where free vars are placeholders.
+    if (is_var(sub) || is_var(sup)) return true;
+
+    auto sub_tag = tag_of(sub);
+    auto sup_tag = tag_of(sup);
+
+    // Different leaf tags → not subtype. A few cross-tag equalities
+    // would belong here (e.g. Int <-> Float coercion) but those are
+    // handled by the explicit coercion pass, not by is_subtype.
+    if (sub_tag != sup_tag) return false;
+
+    switch (sub_tag) {
+        case TypeTag::FUNC: {
+            // (A1->A2) <: (B1->B2) iff
+            //   B1 <: A1  (contravariant in arg)
+            //   A2 <: B2  (covariant in return)
+            auto* sf = func_of(sub);
+            auto* st = func_of(sup);
+            if (!sf || !st) return false;
+            if (sf->args.size() != st->args.size()) return false;
+            for (std::size_t i = 0; i < sf->args.size(); ++i) {
+                if (!is_subtype_impl(st->args[i], sf->args[i], depth + 1)) return false;
+            }
+            return is_subtype_impl(sf->ret, st->ret, depth + 1);
+        }
+        case TypeTag::RECORD: {
+            // Width subtyping: sub has at least the fields of sup,
+            // with each shared field's type being a subtype.
+            auto* sr = record_of(sub);
+            auto* tr = record_of(sup);
+            if (!sr || !tr) return false;
+            for (auto& [name, sup_type] : tr->fields) {
+                TypeId sub_type{};
+                for (auto& [n2, t2] : sr->fields) {
+                    if (n2 == name) { sub_type = t2; break; }
+                }
+                if (!sub_type.valid()) return false;
+                if (!is_subtype_impl(sub_type, sup_type, depth + 1)) return false;
+            }
+            return true;
+        }
+        case TypeTag::VARIANT: {
+            // Width subtyping the other way: sub's constructors must
+            // each match a sup constructor by name (Aura variants are
+            // nominal by constructor name) with covariant args.
+            auto* sv = variant_of(sub);
+            auto* tv = variant_of(sup);
+            if (!sv || !tv) return false;
+            for (auto& [name, sub_args] : sv->variants) {
+                bool found = false;
+                for (auto& [n2, sup_args] : tv->variants) {
+                    if (n2 != name) continue;
+                    if (sub_args.size() != sup_args.size()) return false;
+                    bool args_ok = true;
+                    for (std::size_t i = 0; i < sub_args.size(); ++i) {
+                        if (!is_subtype_impl(sub_args[i], sup_args[i], depth + 1)) {
+                            args_ok = false;
+                            break;
+                        }
+                    }
+                    if (args_ok) { found = true; break; }
+                }
+                if (!found) return false;
+            }
+            return true;
+        }
+        case TypeTag::LINEAR: {
+            auto* sl = linear_of(sub);
+            auto* tl = linear_of(sup);
+            if (!sl || !tl) return false;
+            return is_subtype_impl(sl->inner, tl->inner, depth + 1);
+        }
+        case TypeTag::MODULE: {
+            // Width subtyping on members, like records.
+            auto* sm = module_of(sub);
+            auto* tm = module_of(sup);
+            if (!sm || !tm) return false;
+            for (auto& [name, sup_type] : tm->members) {
+                TypeId sub_type{};
+                for (auto& [n2, t2] : sm->members) {
+                    if (n2 == name) { sub_type = t2; break; }
+                }
+                if (!sub_type.valid()) return false;
+                if (!is_subtype_impl(sub_type, sup_type, depth + 1)) return false;
+            }
+            return true;
+        }
+        case TypeTag::FORALL: {
+            // Forall subtyping requires alpha-renaming + substitution.
+            // Out of scope for the initial fix (see design doc).
+            return false;
+        }
+        case TypeTag::CAPABILITY: {
+            // Cap{e1,e2,...} <: Cap{e1',e2',...} iff sup's effects are a
+            // subset of sub's effects. A more restrictive cap (fewer
+            // effects) is a subtype of a less restrictive one — that
+            // matches the access-modelling direction.
+            auto* sc = capability_of(sub);
+            auto* tc = capability_of(sup);
+            if (!sc || !tc) return false;
+            for (auto& e : tc->effects) {
+                bool found = false;
+                for (auto& e2 : sc->effects) {
+                    if (e == e2) { found = true; break; }
+                }
+                if (!found) return false;
+            }
+            return true;
+        }
+        case TypeTag::EFFECT: {
+            // Effect types are nominal: same name = same effect.
+            return std::string(name_of(sub)) == std::string(name_of(sup));
+        }
+        // Leaf types (INT, BOOL, STRING, VOID, TYPE, VECTOR, FLOAT,
+        // PAIR, HASH): handled by the identity check at the top.
+        default:
+            return false;
+    }
 }
 
 TypeId TypeRegistry::lookup_type(const std::string& name) const {

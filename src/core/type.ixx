@@ -178,6 +178,14 @@ public:
     // Returns the number of entries reclaimed.
     std::uint32_t compact();
 
+    // Issue #70: is_subtype — replace the stub with real structural
+    // subtyping rules. The private impl is a depth-limited helper that
+    // is_subtype delegates to (avoids recursing the public method for
+    // every level, keeping the depth counter consistent).
+  private:
+    bool is_subtype_impl(TypeId sub, TypeId sup, int depth) const;
+  public:
+
     // Substitute type variables in a type using the given substitution map
     // Returns a new TypeId (may register new types), does not modify original
     TypeId substitute(TypeId ty, const std::unordered_map<std::uint32_t, TypeId>& subst);
