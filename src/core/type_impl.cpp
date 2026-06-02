@@ -558,7 +558,15 @@ TypeId TypeRegistry::substitute(TypeId ty,
     }
     case TypeTag::FORALL: {
         auto* ft = forall_of(ty);
-        return register_forall(ft->var, substitute(ft->body, subst));
+        // Issue #77: capture avoidance. The bound var inside the
+        // body is a fresh variable (in the HM sense) that happens
+        // to share an index with whatever was outer. Shadow it by
+        // removing its index from subst before recursing, so a free
+        // var in the body that coincidentally shares the index
+        // doesn't get captured by an outer subst entry.
+        auto inner_subst = subst;
+        inner_subst.erase(ft->var.index);
+        return register_forall(ft->var, substitute(ft->body, inner_subst));
     }
     case TypeTag::LINEAR: {
         auto* lt = linear_of(ty);
