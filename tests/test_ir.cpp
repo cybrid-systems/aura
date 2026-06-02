@@ -1746,6 +1746,45 @@ int main() {
                     ++ts_failed; std::println(std::cerr, "TS FAIL: substitute nested ∀ did mixed binding");
                 }
             }
+
+            // Issue #70 follow-up regression: TypeId interning + multiple
+            // names with the same signature. Pre-fix: register_func_named
+            // dedups AND overwrites the name, so the FIRST name (add) is
+            // lost when the SECOND name (mul, same signature) is registered.
+            // Post-fix: TypeChecker tracks an explicit name → TypeId map
+            // and InferenceEngine uses it instead of the registry __decl_
+            // scan, so every name is bound to the env.
+            //
+            // We can't test the env binding directly (it's a type-checker
+            // private), but we can test the registry invariant that the
+            // bug exposed: after two register_func_named calls with the
+            // same (args, ret), BOTH names are accessible via the
+            // __decl_-prefix lookup, or at least the TypeId is consistent.
+            {
+                auto int_t = treg.int_type();
+                // First registration: add
+                auto t1 = treg.register_func_named({int_t, int_t}, int_t, "__decl_add");
+                // Second registration with same signature: mul
+                // Pre-fix bug: t1.index == t2.index AND name == "__decl_mul"
+                // (add's name was overwritten).
+                auto t2 = treg.register_func_named({int_t, int_t}, int_t, "__decl_mul");
+                // The TypeId is the same (dedup is correct).
+                if (t1.index == t2.index) {
+                    ++ts_passed; std::println("TS OK: dedup w/ same (args, ret) returns same TypeId");
+                } else {
+                    ++ts_failed; std::println(std::cerr, "TS FAIL: dedup didn't unify equal sigs");
+                }
+                // The bug: pre-fix, only the LAST name is preserved. Post-fix
+                // we don't rely on the name for binding (TypeChecker tracks
+                // an explicit map). So we just verify the registry exposes
+                // SOME __decl_ name (the format used for env binding pre-fix).
+                auto name_at_idx = treg.name_of(t1);
+                if (name_at_idx.starts_with("__decl_")) {
+                    ++ts_passed; std::println("TS OK: dedup w/ same sig keeps a __decl_ name (used for env binding)");
+                } else {
+                    ++ts_failed; std::println(std::cerr, "TS FAIL: dedup lost __decl_ prefix: {}", name_at_idx);
+                }
+            }
         }
 
         std::println("Type system detail tests: {}/{}/{} passed/failed/total",

@@ -189,6 +189,16 @@ public:
     // declared_modules: name → module_path, 用于跨模块错误定位
     std::unordered_map<std::string, std::string> declared_modules_;
 
+    // declared_sigs: name → TypeId, for binding declared type
+    // signatures (from inject_type_sigs) to the env. We pass this
+    // explicitly instead of relying on the registry's __decl_ name
+    // scan, because after TypeId interning multiple names can map
+    // to the same TypeId and the last writer wins the name field.
+    // (See #77 regression follow-up: the 312-5 test in
+    // test_regression.py / test_aura_type_multi_func failed because
+    // add/mul dedup'd to one entry, mul's name overwrote add's.)
+    std::unordered_map<std::string, aura::core::TypeId> declared_sigs_;
+
     InferenceEngine(aura::core::TypeRegistry& reg, aura::diag::DiagnosticCollector& diag);
 
     // FlatAST inference entries
@@ -199,6 +209,11 @@ public:
 
     // Initialize environment with primitive type signatures
     void init_primitive_env();
+
+    // Bind declared type sigs (from inject_type_sigs) to the env.
+    // Called by TypeChecker::infer_flat after construction so the
+    // explicit name → TypeId map takes effect.
+    void bind_declared_sigs();
 
 private:
     // FlatAST per-node-type inference
@@ -262,6 +277,12 @@ export struct TypeChecker {
 private:
     // name → 模块源文件路径（来自 inject_type_sigs 的 module_src）
     std::unordered_map<std::string, std::string> type_module_src_;
+
+    // name → declared TypeId, set by inject_type_sigs and passed
+    // to InferenceEngine so each declared name can be bound to
+    // the env even if its TypeId is shared with another name
+    // (post-#70 interning).
+    std::unordered_map<std::string, aura::core::TypeId> type_sigs_;
 };
 
 } // namespace aura::compiler
