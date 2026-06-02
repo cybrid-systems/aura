@@ -6647,6 +6647,7 @@ Evaluator::Evaluator() {
     top_.set_primitives(&primitives_);
     top_.set_cells(&cells_);
     primitives_.set_string_heap(&string_heap_);
+    arena_group_ = std::make_unique<aura::ast::ArenaGroup>();
     init_pair_primitives();
 
     // ── C FFI primitives ────────────────────────────────
@@ -11412,6 +11413,47 @@ Evaluator::Evaluator() {
         return types::make_string(sidx);
     });
 
+    // (gc-module "path") — Free a previously-loaded module's per-module
+    // arena and remove it from the module cache. Returns #t on success,
+    // #f if the path wasn't loaded. The path must match exactly what was
+    // passed to (import) / (require) — for stdlib modules loaded via
+    // AURA_PATH, this is the resolved absolute path.
+    primitives_.add("gc-module", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !types::is_string(a[0]))
+            return types::make_bool(false);
+        auto sidx = types::as_string_idx(a[0]);
+        if (sidx >= string_heap_.size())
+            return types::make_bool(false);
+        return types::make_bool(gc_module(string_heap_[sidx]));
+    });
+
+    // (gc-arena-stats) — Report per-arena allocation. Shows main arena +
+    // every per-module arena. Format: "main:0.1MB/8.0MB;json.aura:0.5MB/8.0MB;..."
+    // (semicolons separate entries; slashes separate used/capacity within an entry).
+    primitives_.add("gc-arena-stats", [this](const auto&) -> EvalValue {
+        std::string out;
+        auto fmt_arena = [&](const char* label, std::size_t used, std::size_t cap) {
+            auto s = std::format("{}{}:{:.1f}MB/{:.1f}MB", out.empty() ? "" : ";",
+                                 label, used / 1048576.0, cap / 1048576.0);
+            out += s;
+        };
+        if (arena_) {
+            auto s = arena_->stats();
+            fmt_arena("main", s.used, s.capacity);
+        }
+        if (arena_group_) {
+            for (auto& [name, stats] : arena_group_->module_stats()) {
+                // Trim path to basename for readability.
+                auto slash = name.rfind('/');
+                auto short_name = slash == std::string::npos ? name : name.substr(slash + 1);
+                fmt_arena(short_name.c_str(), stats.used, stats.capacity);
+            }
+        }
+        auto sidx = string_heap_.size();
+        string_heap_.push_back(out);
+        return types::make_string(sidx);
+    });
+
     // ── Capability primitives (with-capability / capability? / check-capability) ──
 
     primitives_.add("with-capability", [this](const auto& a) -> EvalValue {
@@ -11654,22 +11696,30 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
         std::println(std::cerr, "load_module_file: no arena");
         return types::make_void();
     }
-    auto alloc = arena_->allocator();
-    auto* pool_ptr = arena_->create<aura::ast::StringPool>(alloc);
-    auto* flat_ptr = arena_->create<aura::ast::FlatAST>(alloc);
+    // Per-module arena: StringPool / FlatAST / mod_env all live here so the
+    // entire module (incl. closures that reference its FlatAST/Pool) can be
+    // freed in O(1) by reset_module(resolved). The default 8MB initial size
+    // matches ASTArena's main arena budget; can be tuned per module later.
+    auto& mod_arena = arena_group_->module_arena(resolved);
+    auto alloc = mod_arena.allocator();
+    auto* pool_ptr = mod_arena.create<aura::ast::StringPool>(alloc);
+    auto* flat_ptr = mod_arena.create<aura::ast::FlatAST>(alloc);
     auto pr = aura::parser::parse_to_flat(content, *flat_ptr, *pool_ptr);
     if (!pr.success || pr.root == aura::ast::NULL_NODE) {
         loading_stack_.erase(resolved);
         std::println(std::cerr, "load_module_file: parse error for {}", resolved);
         if (!pr.error.empty())
             std::println(std::cerr, "  {}", pr.error);
+        // Free the partial allocation — module was never inserted into cache.
+        arena_group_->reset_module(resolved);
         return types::make_void();
     }
     flat_ptr->root = pr.root;
 
     // 6. Create isolated module env (child of top_ for primitive access)
-    // Arena-allocate so closures captured during module eval stay valid
-    auto* mod_env = arena_->create<Env>(&top_);
+    // Arena-allocate in the per-module arena so closures captured during
+    // module eval stay valid for the module's lifetime.
+    auto* mod_env = mod_arena.create<Env>(&top_);
     mod_env->set_primitives(&primitives_);
     mod_env->set_cells(&cells_);
 
@@ -11694,10 +11744,12 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
         current_export_set_->clear();
     }
 
-    // 10. Store module (pointer to arena-allocated env — persists forever)
+    // 10. Store module (pointer to arena-allocated env — persists for the
+    // module's lifetime, freed by gc_module(resolved)).
     auto mod_idx = modules_.size();
     modules_.push_back(mod_env);
     module_cache_[resolved] = mod_idx;
+    module_arena_ptrs_[resolved] = &mod_arena;
     string_heap_.push_back(resolved);
     module_names_.push_back(resolved);
 
@@ -11780,6 +11832,55 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
 
     loading_stack_.erase(resolved);
     return types::make_module(mod_idx);
+}
+
+// Free a module's per-module arena and all closures it owns. Removes the
+// module from modules_ / module_cache_ / module_names_. After the call,
+// module lookup by name returns void. Caller must ensure no in-flight
+// calls into the module (the language runtime is single-threaded per
+// Evaluator, so this is the caller's responsibility).
+bool Evaluator::gc_module(const std::string& path) {
+    auto cache_it = module_cache_.find(path);
+    if (cache_it == module_cache_.end())
+        return false;
+    auto mod_idx = cache_it->second;
+    if (mod_idx >= modules_.size())
+        return false;
+
+    // Erase closures whose owner_arena matches the module's arena.
+    auto arena_it = module_arena_ptrs_.find(path);
+    if (arena_it != module_arena_ptrs_.end() && arena_it->second) {
+        auto* owner = arena_it->second;
+        for (auto it = closures_.begin(); it != closures_.end();) {
+            if (it->second.owner_arena == owner)
+                it = closures_.erase(it);
+            else
+                ++it;
+        }
+    }
+
+    // Reset the module arena (O(1) — frees all of StringPool/FlatAST/mod_env
+    // and any pmr containers they owned).
+    arena_group_->reset_module(path);
+
+    // Clear the module slot. Swap-with-last keeps indices stable for
+    // any other live modules; update module_cache_ accordingly.
+    auto last = modules_.size() - 1;
+    if (mod_idx != last) {
+        modules_[mod_idx] = modules_[last];
+        for (auto& [p, idx] : module_cache_) {
+            if (idx == last) {
+                module_cache_[p] = mod_idx;
+                break;
+            }
+        }
+    }
+    modules_.pop_back();
+    module_names_.pop_back();
+    module_cache_.erase(cache_it);
+    module_arena_ptrs_.erase(path);
+
+    return true;
 }
 
 Env* Evaluator::copy_env(const Env& e, ast::ASTArena* target) {
