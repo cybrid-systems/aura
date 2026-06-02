@@ -2779,6 +2779,84 @@ int main() {
             }
         }
 
+        // Test 5: Issue #72 — incremental typecheck gives consistent
+        // results on a clean (un-mutated) tree. Verifies the
+        // post-fix cache check correctly fires for fully-resolved
+        // cached types (not just non-TYPE_VAR top-level).
+        {
+            aura::core::TypeRegistry treg;
+            aura::diag::DiagnosticCollector diag;
+            aura::ast::ASTArena arena2;
+            auto alloc = arena2.allocator();
+            aura::ast::StringPool pool(alloc);
+            aura::ast::FlatAST flat(alloc);
+            // Build: (+ 1 2)  — simple, all types fully resolved
+            auto one = flat.add_literal(1);
+            auto two = flat.add_literal(2);
+            auto plus_sym = pool.intern("+");
+            auto plus_var = flat.add_variable(plus_sym);
+            aura::ast::NodeId plus_args[] = {plus_var, one, two};
+            auto plus_call = flat.add_call(plus_var, plus_args);
+            flat.root = plus_call;
+
+            aura::compiler::TypeChecker tc(treg);
+            // First check
+            diag.clear();
+            auto ty1 = tc.infer_flat(flat, pool, plus_call, diag);
+            // Second check (no mutation) — cache should fire for all
+            // clean sub-nodes whose cached types are fully resolved.
+            diag.clear();
+            auto ty2 = tc.infer_flat(flat, pool, plus_call, diag);
+            // Verify cache actually fired (the post-#72 fix should
+            // make this > 0). We test via the exposed stats API.
+            auto stats2 = tc.stats();
+            if (ty1 == treg.int_type() && ty2 == treg.int_type() &&
+                stats2.cache_hits > 0) {
+                std::println("DP OK: incremental typecheck fires cache_hits={} on clean tree",
+                             stats2.cache_hits);
+                ++dp_passed;
+            } else {
+                std::println(std::cerr, "DP FAIL: clean tree typecheck: ty1={} ty2={} cache_hits={}",
+                             treg.format_type(ty1), treg.format_type(ty2),
+                             stats2.cache_hits);
+                ++dp_failed;
+            }
+        }
+
+        // Test 6: Issue #72 — small mutation on a leaf re-infers
+        // the dirty subtree; the result remains correct.
+        {
+            aura::core::TypeRegistry treg;
+            aura::diag::DiagnosticCollector diag;
+            aura::ast::ASTArena arena2;
+            auto alloc = arena2.allocator();
+            aura::ast::StringPool pool(alloc);
+            aura::ast::FlatAST flat(alloc);
+            // Build: (let ((x 10)) x)  — simple let
+            auto x_sym = pool.intern("x");
+            auto val = flat.add_literal(10);
+            auto body = flat.add_variable(x_sym);
+            auto let_node = flat.add_let(x_sym, val, body);
+            flat.root = let_node;
+
+            aura::compiler::TypeChecker tc(treg);
+            diag.clear();
+            auto ty1 = tc.infer_flat(flat, pool, let_node, diag);
+            // Mutate: change x's value from 10 to 99
+            flat.set_int(val, 99);
+            flat.mark_dirty_upward(val);
+            diag.clear();
+            auto ty2 = tc.infer_flat(flat, pool, let_node, diag);
+            if (ty1 == treg.int_type() && ty2 == treg.int_type()) {
+                std::println("DP OK: leaf mutation re-infers dirty subtree, type stays Int");
+                ++dp_passed;
+            } else {
+                std::println(std::cerr, "DP FAIL: leaf mutation typecheck wrong: ty1={} ty2={}",
+                             treg.format_type(ty1), treg.format_type(ty2));
+                ++dp_failed;
+            }
+        }
+
         std::println("Dirty propagation tests: {}/{}/{} passed/failed/total",
                      dp_passed, dp_failed, dp_passed + dp_failed);
         if (dp_failed > 0) return 1;

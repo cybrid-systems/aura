@@ -1123,12 +1123,19 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
         auto cached = flat.type_id(id);
         if (cached > 0 && cached < reg_.size()) {
             auto tid = TypeId{cached, 1};
-            // Type vars cached before constraint solving are stale;
-            // only accept concrete resolved types for incremental reuse.
-            if (reg_.tag_of(tid) != TypeTag::TYPE_VAR) {
+            // Issue #72: also reject cached types that CONTAIN
+            // TYPE_VARs (not just types whose top-level tag is
+            // TYPE_VAR). Pre-solve cached types often have free
+            // vars in polymorphic contexts, and those vars are
+            // stale (the union-find has been cleared). free_vars()
+            // returning empty means the type is fully resolved.
+            if (reg_.free_vars(tid).empty()) {
+                ++stats_.cache_hits;
                 return tid;
             }
+            ++stats_.stale_cache;
         }
+        ++stats_.cache_misses;
         // Clean but not cached / stale cache: fall through to recompute
     }
 
@@ -2382,7 +2389,13 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
     engine.declared_modules_ = type_module_src_;
     engine.declared_sigs_ = type_sigs_;
     engine.bind_declared_sigs();
-    return engine.infer_flat(flat, pool, node);
+    auto result = engine.infer_flat(flat, pool, node);
+    // Accumulate stats for the TypeChecker (Issue #72).
+    auto es = engine.stats();
+    stats_.cache_hits += es.cache_hits;
+    stats_.cache_misses += es.cache_misses;
+    stats_.stale_cache += es.stale_cache;
+    return result;
 }
 
 // ── Ownership Validation ────────────────────────────────────────
