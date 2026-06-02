@@ -58,17 +58,21 @@ def main():
     env = os.environ.copy()
     env["AURA_PATH"] = str(ROOT / "lib")
 
-    # Call (eval-expr ...) N times with the same simple value. Each call
-    # allocates a StringPool + FlatAST in the main arena (line 4180).
-    # We bracket the loop with two gc-freeze / gc-arena-stats snapshots
-    # to measure growth attributed to the loop alone.
+    # Call (eval-expr ...) N times via a let loop so the INPUT program
+    # itself is small (otherwise the program's parsed AST inflates the
+    # main arena, drowning the signal). Each eval-expr allocates a
+    # StringPool + FlatAST in temp_arena_ post-fix (line 4180) — with
+    # the migration, main arena should stay at 0.0MB.
+    # The let loop's value is the final (gc-arena-stats) string, so
+    # we can capture it without scope-escape issues.
     program = (
         "(gc-freeze)"
         "(define _s0 (gc-arena-stats))"
-        + "\n".join(f"(eval-expr {i})" for i in range(args.iterations))
-        + "\n(define _s1 (gc-arena-stats))"
-        "\n(display _s0)(display \"\\n\")"
-        "\n(display _s1)(display \"\\n\")"
+        f"(define _s1 (let loop ((i 0)) (if (< i {args.iterations})"
+        f" (begin (eval-expr i) (loop (+ i 1)))"
+        f" (gc-arena-stats))))"
+        "(display _s0)(display \"\\n\")"
+        "(display _s1)(display \"\\n\")"
     )
 
     try:

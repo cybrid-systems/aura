@@ -2833,14 +2833,16 @@ void Evaluator::init_pair_primitives() {
                 auto check_form = pairs_[fi].car;
                 forms = pairs_[fi].cdr;
 
-                // Convert check_form data back to AST and evaluate
+                // Convert check_form data back to AST and evaluate.
+                // Use temp_arena_ so (gc-temp) reclaims parse state after
+                // each check clause (was: arena_ = monotonic = leaked).
                 if (!arena_) {
                     sf++;
                     continue;
                 }
-                auto alloc = arena_->allocator();
-                auto* cf_pool = arena_->create<aura::ast::StringPool>(alloc);
-                auto* cf_flat = arena_->create<aura::ast::FlatAST>(alloc);
+                auto alloc = temp_arena_->allocator();
+                auto* cf_pool = temp_arena_->create<aura::ast::StringPool>(alloc);
+                auto* cf_flat = temp_arena_->create<aura::ast::FlatAST>(alloc);
                 auto ast_root = data_to_flat(check_form, *cf_flat, *cf_pool, 0);
                 if (ast_root == aura::ast::NULL_NODE) {
                     sf++;
@@ -4138,9 +4140,12 @@ void Evaluator::init_pair_primitives() {
         last_set_code_error_msg_.clear();
         last_eval_current_result_.reset();
 
-        auto alloc = arena_->allocator();
-        auto* pool_ptr = arena_->create<aura::ast::StringPool>(alloc);
-        auto* flat_ptr = arena_->create<aura::ast::FlatAST>(alloc);
+        // Use temp_arena_ for the parse state so (gc-temp) reclaims it.
+        // The workspace_pool_ / workspace_flat_ pointers below are the
+        // long-lived handles; the temp allocation is just a parse scratch.
+        auto alloc = temp_arena_->allocator();
+        auto* pool_ptr = temp_arena_->create<aura::ast::StringPool>(alloc);
+        auto* flat_ptr = temp_arena_->create<aura::ast::FlatAST>(alloc);
 
         auto pr = aura::parser::parse_to_flat(content, *flat_ptr, *pool_ptr);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
@@ -4173,12 +4178,14 @@ void Evaluator::init_pair_primitives() {
     primitives_.add("eval-expr", [this](const auto& a) -> EvalValue {
         if (a.empty())
             return make_void();
-        // Convert the value to a FlatAST and evaluate
+        // Convert the value to a FlatAST and evaluate.
+        // Use temp_arena_ so (gc-temp) reclaims the parse state per call
+        // (was: arena_ = monotonic = 1 FlatAST/StringPool leaked per call).
         if (!arena_)
             return make_void();
-        auto alloc = arena_->allocator();
-        auto* pool = arena_->create<aura::ast::StringPool>(alloc);
-        auto* flat = arena_->create<aura::ast::FlatAST>(alloc);
+        auto alloc = temp_arena_->allocator();
+        auto* pool = temp_arena_->create<aura::ast::StringPool>(alloc);
+        auto* flat = temp_arena_->create<aura::ast::FlatAST>(alloc);
         auto root = data_to_flat(a[0], *flat, *pool, 0);
         if (root == aura::ast::NULL_NODE)
             return make_void();
@@ -5169,10 +5176,11 @@ void Evaluator::init_pair_primitives() {
         if (idx >= string_heap_.size())
             return mev("bad-arg", "pattern string index out of range");
 
-        // Parse pattern string into its own FlatAST (separate from workspace)
-        auto alloc = arena_->allocator();
-        auto* pat_pool = arena_->create<aura::ast::StringPool>(alloc);
-        auto* pat_flat = arena_->create<aura::ast::FlatAST>(alloc);
+        // Parse pattern string into its own FlatAST (separate from workspace).
+        // Use temp_arena_ so (gc-temp) reclaims it per call.
+        auto alloc = temp_arena_->allocator();
+        auto* pat_pool = temp_arena_->create<aura::ast::StringPool>(alloc);
+        auto* pat_flat = temp_arena_->create<aura::ast::FlatAST>(alloc);
         auto pr = aura::parser::parse_to_flat(string_heap_[idx], *pat_flat, *pat_pool);
         if (!pr.success || pr.root == aura::ast::NULL_NODE)
             return make_void();
@@ -5521,10 +5529,11 @@ void Evaluator::init_pair_primitives() {
                                   ? string_heap_[as_string_idx(a[2])]
                                   : "replace-pattern";
 
-        // Parse pattern into separate FlatAST
-        auto alloc = arena_->allocator();
-        auto* pat_pool = arena_->create<aura::ast::StringPool>(alloc);
-        auto* pat_flat = arena_->create<aura::ast::FlatAST>(alloc);
+        // Parse pattern into separate FlatAST.
+        // Use temp_arena_ so (gc-temp) reclaims it per call.
+        auto alloc = temp_arena_->allocator();
+        auto* pat_pool = temp_arena_->create<aura::ast::StringPool>(alloc);
+        auto* pat_flat = temp_arena_->create<aura::ast::FlatAST>(alloc);
         auto pat_pr = aura::parser::parse_to_flat(pattern_str, *pat_flat, *pat_pool);
         if (!pat_pr.success || pat_pr.root == NULL_NODE)
             return mev("parse-error", "pattern string could not be parsed");
@@ -13348,9 +13357,11 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                         std::string("(import \"") + mod_path + "\" \"" + prefix + "\")";
                                 }
 
-                                auto alloc = arena_->allocator();
-                                auto* ipool = arena_->create<aura::ast::StringPool>(alloc);
-                                auto* iflat = arena_->create<aura::ast::FlatAST>(alloc);
+                                // Use temp_arena_ so (gc-temp) reclaims the
+                                // parse state for each (require ...) call.
+                                auto alloc = temp_arena_->allocator();
+                                auto* ipool = temp_arena_->create<aura::ast::StringPool>(alloc);
+                                auto* iflat = temp_arena_->create<aura::ast::FlatAST>(alloc);
                                 auto pr = aura::parser::parse_to_flat(import_expr, *iflat, *ipool);
                                 if (!pr.success || pr.root == aura::ast::NULL_NODE) {
                                     return std::unexpected(

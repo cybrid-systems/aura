@@ -72,13 +72,22 @@ def main():
         '(import "std/list")',
         '(import "std/algorithm")',
     ]
-    for i in range(args.iterations):
-        lines.append(f"(eval-expr {i})")
-        lines.append('(set-code "(define (f x) (+ x 1))")')
-        lines.append('(set-code "(define (g y) (* y 2))")')
-        lines.append('(query:pattern "(define ...)")')
-        if i % 10 == 9:
-            lines.append("(gc-temp)")  # shouldn't be necessary; invariant says we don't need it
+    # Capture arena stats at start of loop so we can compare before/after.
+    # Loop body exercises eval-expr / set-code / query:pattern N times.
+    # Wrapped in a let loop so the input program itself stays small
+    # (otherwise its parsed AST would inflate main arena).
+    lines.append("(define _s0 (gc-arena-stats))")
+    lines.append(
+        f"(define _s1 (let loop ((i 0)) (if (< i {args.iterations})"
+        f" (begin (eval-expr i)"
+        f'        (set-code "(define (f x) (+ x 1))")'
+        f'        (set-code "(define (g y) (* y 2))")'
+        f'        (query:pattern "(define ...)")'
+        f"        (loop (+ i 1)))"
+        f" (gc-arena-stats))))"
+    )
+    lines.append("(display _s0)(display \"\\n\")")
+    lines.append("(display _s1)(display \"\\n\")")
     lines.append("(display (gc-arena-stats))(display \"\\n\")")
     lines.append("(display (gc-stats))(display \"\\n\")")
 
@@ -98,28 +107,37 @@ def main():
         return 4
 
     out_lines = [l for l in r.stdout.splitlines() if l.strip()]
-    if len(out_lines) < 2:
-        print("FAIL: expected 2 output lines, got:", file=sys.stderr)
+    if len(out_lines) < 4:
+        print("FAIL: expected 4 output lines, got:", file=sys.stderr)
         print(r.stdout, file=sys.stderr)
         return 5
 
-    arena_str = out_lines[-2]
-    stats_str = out_lines[-1]
-    arenas = parse_arena_stats(arena_str)
-    main_used = arenas.get("main", (0, 0))[0]
-    n_per_mod = len([k for k in arenas if k != "main"])
+    s0 = parse_arena_stats(out_lines[0])  # _s0: before loop
+    s1 = parse_arena_stats(out_lines[1])  # _s1: after loop
+    arena_str = out_lines[2]              # final gc-arena-stats
+    stats_str = out_lines[3]              # final gc-stats
+    main_before = s0.get("main", (0, 0))[0]
+    main_after = s1.get("main", (0, 0))[0]
+    main_delta = main_after - main_before
+    final_arenas = parse_arena_stats(arena_str)
+    final_main = final_arenas.get("main", (0, 0))[0]
+    n_per_mod = len([k for k in final_arenas if k != "main"])
 
     print("=== Arena-Owner Invariant Test ===")
     print(f"iterations:           {args.iterations}")
     print(f"budget:               {args.budget_mb} MB")
-    print(f"main arena:           {main_used:.2f} MB")
+    print(f"main arena delta:     {main_before:.2f}MB → {main_after:.2f}MB (Δ {main_delta:+.2f}MB)")
+    print(f"main arena (final):   {final_main:.2f} MB")
     print(f"per-module arenas:    {n_per_mod}")
-    print(f"arena stats:          {arena_str}")
+    print(f"arena stats (final):  {arena_str}")
     print(f"heap stats:           {stats_str}")
 
-    if main_used > args.budget_mb:
-        print(f"FAIL: main arena at {main_used:.2f}MB exceeds budget {args.budget_mb}MB",
-              file=sys.stderr)
+    # The invariant: main arena shouldn't grow from the workload itself.
+    # Use the delta measurement (before vs after the loop) to filter out
+    # pre-existing main arena usage from the program setup.
+    if main_delta > args.budget_mb:
+        print(f"FAIL: main arena grew by {main_delta:+.2f}MB during workload "
+              f"(budget {args.budget_mb}MB)", file=sys.stderr)
         print("  Possible leak sources:", file=sys.stderr)
         print("    - src/compiler/evaluator_impl.cpp:2842 (suite check form)", file=sys.stderr)
         print("    - src/compiler/evaluator_impl.cpp:4142 (set-code 2nd path)", file=sys.stderr)
@@ -131,7 +149,6 @@ def main():
         return 6
 
     if n_per_mod < 3:
-        # 3 imports at the top should have created 3 per-module arenas.
         print(f"FAIL: expected at least 3 per-module arenas, got {n_per_mod}",
               file=sys.stderr)
         return 7
