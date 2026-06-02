@@ -2862,5 +2862,123 @@ int main() {
         if (dp_failed > 0) return 1;
     }
 
+    // ═══════════════════════════════════════════════════════════
+    // Issue #74: OwnershipEnv scope-aware tracking + leak diagnostics
+    // ═══════════════════════════════════════════════════════════
+    {
+        int own_passed = 0, own_failed = 0;
+
+        // Helper: build a FlatAST with a single dirty linear binding
+        // and a body, then run validate_ownership.
+        auto run_own = [&](const std::string& name, std::function<void(
+                aura::ast::FlatAST&, aura::ast::StringPool&,
+                aura::ast::NodeId&)> build_ast) -> int {
+            aura::ast::ASTArena arena3;
+            auto alloc = arena3.allocator();
+            aura::ast::FlatAST flat(alloc);
+            aura::ast::StringPool pool(alloc);
+            aura::ast::NodeId root = 0;
+            build_ast(flat, pool, root);
+            flat.root = root;
+            std::unordered_set<std::string> dirty = {"x"};
+            std::vector<aura::compiler::OwnershipNote> notes;
+            bool pass = aura::compiler::OwnershipEnv::validate_ownership(
+                flat, pool, root, dirty, notes);
+            int leak_count = 0;
+            int use_after_move_count = 0;
+            for (auto& n : notes) {
+                if (n.kind == "leaked-linear") leak_count++;
+                if (n.kind == "use-after-move") use_after_move_count++;
+            }
+            std::println("OWN: {} → pass={} leaks={} uam={}", name, pass, leak_count, use_after_move_count);
+            return leak_count;
+        };
+
+        // Test 1: linear resource declared but never moved → leaked-linear
+        // Build: (let ((x mk)) (display x))  — x is never moved
+        {
+            int leaks = run_own("let-no-move",
+                [](aura::ast::FlatAST& flat, aura::ast::StringPool& pool, aura::ast::NodeId& root) {
+                    auto x_sym = pool.intern("x");
+                    auto x_var = flat.add_variable(x_sym);
+                    auto mk = pool.intern("mk");
+                    auto mk_var = flat.add_variable(mk);
+                    aura::ast::NodeId mk_args[] = {mk_var};
+                    auto mk_call = flat.add_call(mk_var, mk_args);
+                    auto disp_sym = pool.intern("display");
+                    auto disp_var = flat.add_variable(disp_sym);
+                    aura::ast::NodeId disp_args[] = {disp_var, x_var};
+                    auto disp_call = flat.add_call(disp_var, disp_args);
+                    root = flat.add_let(x_sym, mk_call, disp_call);
+                });
+            if (leaks >= 1) {
+                ++own_passed;
+                std::println("OWN OK: linear resource never moved → leaked-linear diagnostic");
+            } else {
+                ++own_failed;
+                std::println(std::cerr, "OWN FAIL: linear resource never moved should leak");
+            }
+        }
+
+        // Test 2: linear resource moved in inner scope, leaked in outer scope
+        // Build: (let ((x mk) (y mk)) (move y))
+        //   — y is moved, OK. x is declared in outer let and never moved
+        //   → x leaks
+        // (Actually with my walker, the let introduces x and y both in the
+        // let body scope. y is moved, x is leaked.)
+        {
+            int leaks = run_own("let-y-moved-x-leaked",
+                [](aura::ast::FlatAST& flat, aura::ast::StringPool& pool, aura::ast::NodeId& root) {
+                    auto x_sym = pool.intern("x");
+                    auto y_sym = pool.intern("y");
+                    auto mk = pool.intern("mk");
+                    auto mk_var = flat.add_variable(mk);
+                    aura::ast::NodeId mk_args[] = {mk_var};
+                    auto mk_call = flat.add_call(mk_var, mk_args);
+                    // (move y)  — y is moved before scope end
+                    auto y_var = flat.add_variable(y_sym);
+                    auto move_node = flat.add_move(y_var);
+                    // (let ((x mk) (y mk)) (move y))  — nested let
+                    // outer let: x = mk, body = (let ((y mk)) (move y))
+                    auto inner_let = flat.add_let(y_sym, mk_call, move_node);
+                    root = flat.add_let(x_sym, mk_call, inner_let);
+                });
+            if (leaks >= 1) {
+                ++own_passed;
+                std::println("OWN OK: x leaked in outer scope, y moved in inner");
+            } else {
+                ++own_failed;
+                std::println(std::cerr, "OWN FAIL: x should leak in outer scope");
+            }
+        }
+
+        // Test 3: linear resource properly moved → no leak
+        // Build: (let ((x mk)) (move x))  — x is moved at end of body
+        {
+            int leaks = run_own("let-moved",
+                [](aura::ast::FlatAST& flat, aura::ast::StringPool& pool, aura::ast::NodeId& root) {
+                    auto x_sym = pool.intern("x");
+                    auto mk = pool.intern("mk");
+                    auto mk_var = flat.add_variable(mk);
+                    aura::ast::NodeId mk_args[] = {mk_var};
+                    auto mk_call = flat.add_call(mk_var, mk_args);
+                    auto x_var = flat.add_variable(x_sym);
+                    auto move_node = flat.add_move(x_var);
+                    root = flat.add_let(x_sym, mk_call, move_node);
+                });
+            if (leaks == 0) {
+                ++own_passed;
+                std::println("OWN OK: linear resource moved → no leak");
+            } else {
+                ++own_failed;
+                std::println(std::cerr, "OWN FAIL: properly moved resource should not leak");
+            }
+        }
+
+        std::println("Ownership validation tests: {}/{}/{} passed/failed/total",
+                     own_passed, own_failed, own_passed + own_failed);
+        if (own_failed > 0) return 1;
+    }
+
     return (failed + ck_failed + arity_failed + mp_failed + pm_failed + cf_failed + dce_failed + gg_failed + ts_failed + flat_failed) > 0 ? 1 : 0;
 }
