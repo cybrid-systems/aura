@@ -2428,21 +2428,124 @@ bool OwnershipEnv::validate_ownership(
         tmp_env.mark(name, OwnershipState::Owned);
     }
 
-    // Walk the AST root collecting ownership-related node IDs for dirty
-    // bindings, then re-simulate to detect violations.
-    struct OwnershipOp {
-        NodeId node;
-        NodeTag op_type; // Move, Borrow, MutBorrow, Drop
-        std::string target_var;
-        bool is_linear;
+    // Issue #74: scope-aware tracking. The previous implementation
+    // walked ops in a flat list, ignoring scope nesting. As a result,
+    // a linear resource declared in a let body that was never moved
+    // before the let ended was silently passed (the final-Owned
+    // check was a no-op comment). We now maintain a scope stack so
+    // that on scope exit, we can detect linear bindings that ended
+    // in Owned state (i.e., never moved or dropped) and report them
+    // as leaked-linear.
+    //
+    // Scope structure:
+    //   - Each Let (body) introduces a new scope
+    //   - Each Lambda body is a new scope
+    //   - Each If then/else branch is a new scope
+    //   - The whole Begin is one scope (per-expression scopes would
+    //     be too granular for typical Lisp code)
+    struct ScopeInfo {
+        NodeId exit_node = NULL_NODE;             // node that ends this scope
+        std::unordered_set<std::string> introduced;  // bindings declared here
     };
-    std::vector<OwnershipOp> ops;
+    std::vector<ScopeInfo> scope_stack;
+    scope_stack.push_back({root, {}});  // root scope ends at root
 
-    auto collect_ops = [&](this const auto& self, NodeId id) -> void {
+    bool all_pass = true;
+
+    // Helper: process an op and update state.
+    auto apply_op = [&](NodeId op_node, NodeTag op_type,
+                        const std::string& target_var) -> void {
+        switch (op_type) {
+            case NodeTag::Move:
+                if (!tmp_env.can_move(target_var)) {
+                    auto st = tmp_env.get(target_var);
+                    notes_out.push_back({op_node,
+                                         "use-after-move: " + target_var + " is " +
+                                             tmp_env.state_name(st),
+                                         "use-after-move"});
+                    all_pass = false;
+                }
+                tmp_env.mark(target_var, OwnershipState::Moved);
+                break;
+            case NodeTag::Borrow:
+                if (!tmp_env.can_borrow(target_var)) {
+                    auto st = tmp_env.get(target_var);
+                    std::string kind;
+                    if (st == OwnershipState::MutBorrowed)
+                        kind = "double-borrow";
+                    else
+                        kind = "invalid-state";
+                    notes_out.push_back({op_node,
+                                         "immutable borrow of " + target_var +
+                                             " denied — current state: " +
+                                             tmp_env.state_name(st),
+                                         kind});
+                    all_pass = false;
+                }
+                tmp_env.mark(target_var, OwnershipState::Borrowed);
+                break;
+            case NodeTag::MutBorrow:
+                if (!tmp_env.can_mut_borrow(target_var)) {
+                    auto st = tmp_env.get(target_var);
+                    std::string kind;
+                    if (st == OwnershipState::Borrowed || st == OwnershipState::MutBorrowed)
+                        kind = "double-borrow";
+                    else
+                        kind = "invalid-state";
+                    notes_out.push_back({op_node,
+                                         "mutable borrow of " + target_var +
+                                             " denied — current state: " +
+                                             tmp_env.state_name(st),
+                                         kind});
+                    all_pass = false;
+                }
+                tmp_env.mark(target_var, OwnershipState::MutBorrowed);
+                break;
+            case NodeTag::Drop:
+                if (!tmp_env.can_drop(target_var)) {
+                    auto st = tmp_env.get(target_var);
+                    notes_out.push_back({op_node,
+                                         "cannot drop " + target_var + " — " +
+                                             tmp_env.state_name(st),
+                                         "leaked-linear"});
+                    all_pass = false;
+                }
+                tmp_env.mark(target_var, OwnershipState::Moved);
+                break;
+            default:
+                break;
+        }
+    };
+
+    // Helper: pop a scope and check for leaks.
+    auto pop_scope = [&]() -> void {
+        if (scope_stack.size() <= 1) return;  // never pop root
+        auto info = scope_stack.back();
+        scope_stack.pop_back();
+        for (auto& name : info.introduced) {
+            // Only check linear bindings that are in the dirty set
+            // (other bindings are not under ownership simulation).
+            if (dirty_bindings.count(name) == 0) continue;
+            auto st = tmp_env.get(name);
+            if (st == OwnershipState::Owned) {
+                // Linear resource declared in this scope was never
+                // moved or dropped. That's a leak.
+                notes_out.push_back({info.exit_node,
+                                     "leaked linear resource: " + name +
+                                         " (never moved or dropped at end of scope)",
+                                     "leaked-linear"});
+                all_pass = false;
+            }
+        }
+    };
+
+    // Recursive walker.
+    auto walk = [&](this const auto& self, NodeId id) -> void {
         if (id >= flat.size())
             return;
         auto v = flat.get(id);
 
+        // Process op nodes (Move/Borrow/MutBorrow/Drop).
         if (v.tag == NodeTag::Move || v.tag == NodeTag::Borrow ||
             v.tag == NodeTag::MutBorrow || v.tag == NodeTag::Drop) {
             if (!v.children.empty()) {
@@ -2450,113 +2553,86 @@ bool OwnershipEnv::validate_ownership(
                 if (inner_v.tag == NodeTag::Variable) {
                     auto var_name = std::string(pool.resolve(inner_v.sym_id));
                     if (dirty_bindings.count(var_name)) {
-                        ops.push_back({id, v.tag, var_name, true});
+                        apply_op(id, v.tag, var_name);
                     }
                 }
             }
         }
 
+        // Handle scope-introducing nodes.
+        if (v.tag == NodeTag::Let) {
+            // add_let layout: children = [val, body]; name in sym_id_
+            // Standard ML/Scheme semantics: the bound name is introduced
+            // in the let BODY's scope (not the outer). The value is
+            // evaluated in the outer scope. The body scope pops when the
+            // let ends, and any linear bindings still Owned at that point
+            // are reported as leaked.
+            std::string name;
+            if (v.sym_id != INVALID_SYM) {
+                name = std::string(pool.resolve(v.sym_id));
+            }
+            // Process value (child 0) in current scope.
+            if (v.children.size() >= 1 && v.child(0) != NULL_NODE)
+                self(v.child(0));
+            // Push new scope for the body, with x as introduced.
+            if (v.children.size() >= 2 && v.child(1) != NULL_NODE) {
+                ScopeInfo body_scope;
+                body_scope.exit_node = id;
+                if (!name.empty()) {
+                    body_scope.introduced.insert(name);
+                }
+                scope_stack.push_back(std::move(body_scope));
+                self(v.child(1));
+                pop_scope();
+            }
+            return;
+        }
+        if (v.tag == NodeTag::Lambda) {
+            // (lambda (params...) body) — children: [0..n-1]=params, [n]=body
+            // Params and body are in a new scope.
+            scope_stack.push_back({id, {}});
+            // Add all param names to the new scope's introduced set.
+            for (std::size_t i = 0; i + 1 < v.children.size(); ++i) {
+                auto param = flat.get(v.child(i));
+                if (param.tag == NodeTag::Variable && param.sym_id != INVALID_SYM) {
+                    auto name = std::string(pool.resolve(param.sym_id));
+                    scope_stack.back().introduced.insert(name);
+                }
+            }
+            // Process body.
+            if (!v.children.empty()) {
+                auto last = v.children.back();
+                if (last != NULL_NODE)
+                    self(last);
+            }
+            pop_scope();
+            return;
+        }
+        if (v.tag == NodeTag::IfExpr) {
+            // (if cond then else) — children: [0]=cond, [1]=then, [2]=else (optional)
+            // cond is in current scope; then/else are in new scopes.
+            if (!v.children.empty() && v.child(0) != NULL_NODE)
+                self(v.child(0));
+            if (v.children.size() >= 2 && v.child(1) != NULL_NODE) {
+                scope_stack.push_back({id, {}});
+                self(v.child(1));
+                pop_scope();
+            }
+            if (v.children.size() >= 3 && v.child(2) != NULL_NODE) {
+                scope_stack.push_back({id, {}});
+                self(v.child(2));
+                pop_scope();
+            }
+            return;
+        }
+
+        // Default: recurse into children in current scope.
         for (auto c : v.children) {
             if (c != NULL_NODE)
                 self(c);
         }
     };
-    collect_ops(root);
-
-    bool all_pass = true;
-
-    // Re-simulate: for each op, check the state at that point.
-    // This is a simplified linear walk — it assumes ops appear in
-    // program order within a single scope. For full precision we'd
-    // need to track scope nesting, but this catches the main violations.
-    for (auto& op : ops) {
-        switch (op.op_type) {
-            case NodeTag::Move:
-                if (!tmp_env.can_move(op.target_var)) {
-                    auto st = tmp_env.get(op.target_var);
-                    notes_out.push_back({op.node,
-                                         "use-after-move: " + op.target_var + " is " +
-                                             tmp_env.state_name(st),
-                                         "use-after-move"});
-                    all_pass = false;
-                }
-                tmp_env.mark(op.target_var, OwnershipState::Moved);
-                break;
-
-            case NodeTag::Borrow:
-                if (!tmp_env.can_borrow(op.target_var)) {
-                    auto st = tmp_env.get(op.target_var);
-                    std::string kind;
-                    if (st == OwnershipState::MutBorrowed)
-                        kind = "double-borrow";
-                    else
-                        kind = "invalid-state";
-                    notes_out.push_back({op.node,
-                                         "immutable borrow of "+ op.target_var +
-                                             " denied — current state: " +
-                                             tmp_env.state_name(st),
-                                         kind});
-                    all_pass = false;
-                }
-                tmp_env.mark(op.target_var, OwnershipState::Borrowed);
-                break;
-
-            case NodeTag::MutBorrow:
-                if (!tmp_env.can_mut_borrow(op.target_var)) {
-                    auto st = tmp_env.get(op.target_var);
-                    std::string kind;
-                    if (st == OwnershipState::Borrowed || st == OwnershipState::MutBorrowed)
-                        kind = "double-borrow";
-                    else
-                        kind = "invalid-state";
-                    notes_out.push_back({op.node,
-                                         "mutable borrow of "+ op.target_var +
-                                             " denied — current state: " +
-                                             tmp_env.state_name(st),
-                                         kind});
-                    all_pass = false;
-                }
-                tmp_env.mark(op.target_var, OwnershipState::MutBorrowed);
-                break;
-
-            case NodeTag::Drop:
-                if (!tmp_env.can_drop(op.target_var)) {
-                    auto st = tmp_env.get(op.target_var);
-                    notes_out.push_back({op.node,
-                                         "cannot drop "+ op.target_var + " — " +
-                                             tmp_env.state_name(st),
-                                         "leaked-linear"});
-                    all_pass = false;
-                }
-                tmp_env.mark(op.target_var, OwnershipState::Moved);
-                break;
-
-            default:
-                break;
-        }
-    }
-
-    // Check 2: any dirty linear binding still in Owned state at end of walk?
-    // This indicates a linear resource that was never moved or dropped.
-    for (auto& name : dirty_bindings) {
-        auto st = tmp_env.get(name);
-        if (st == OwnershipState::Owned) {
-            // Only warn if we actually saw ops for this binding and it never
-            // transitioned — otherwise it might be unused by design.
-            // We check this by seeing if the binding appears in any op.
-            bool appeared = false;
-            for (auto& op : ops) {
-                if (op.target_var == name) {
-                    appeared = true;
-                    break;
-                }
-            }
-            if (appeared) {
-                // All ops passed but binding ended still Owned — that's fine.
-                // The ownership check already validated proper transitions.
-            }
-        }
-    }
+    walk(root);
 
     return all_pass;
 }
