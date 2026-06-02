@@ -11454,6 +11454,70 @@ Evaluator::Evaluator() {
         return make_int(static_cast<std::int64_t>(modules_.size()));
     });
 
+    // (type-registry-stats) — Issue #78: TypeRegistry observability.
+    // Returns a hash with current size, generation, and predefined count.
+    // Use this to monitor TypeRegistry growth in long-running sessions.
+    primitives_.add("type-registry-stats", [this](const auto&) -> EvalValue {
+        if (!type_registry_) {
+            return make_void();
+        }
+        auto& treg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
+        std::vector<std::pair<std::string, EvalValue>> kv;
+        kv.push_back({"size", make_int(static_cast<std::int64_t>(treg.size()))});
+        kv.push_back({"generation", make_int(static_cast<std::int64_t>(treg.generation()))});
+        kv.push_back({"predefined-count", make_int(static_cast<std::int64_t>(
+            aura::core::TypeRegistry::kPredefinedCount))});
+        kv.push_back({"user-types", make_int(static_cast<std::int64_t>(
+            treg.size() - aura::core::TypeRegistry::kPredefinedCount))});
+        // Build a hash with the 4 keys.
+        auto* ht = FlatHashTable::create(8);
+        if (!ht) return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto cap = ht->capacity;
+        for (auto& [k, v] : kv) {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+            auto kidx = string_heap_.size();
+            string_heap_.push_back(k);
+            EvalValue key_ev = make_string(kidx);
+            bool inserted = false;
+            for (std::size_t at = 0; at < cap; ++at) {
+                auto idx = ((h >> 1) + at) & (cap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    keys[idx] = key_ev.val;
+                    vals[idx] = v.val;
+                    ht->size++;
+                    inserted = true;
+                    break;
+                }
+            }
+            if (!inserted) {
+                FlatHashTable::destroy(ht);
+                return make_void();
+            }
+        }
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    });
+
+    // (type-registry-compact) — Issue #78: reclaim all non-predefined
+    // entries. Bumps the generation counter so any TypeId from the
+    // previous generation becomes stale. Returns the number of entries
+    // reclaimed.
+    primitives_.add("type-registry-compact", [this](const auto&) -> EvalValue {
+        if (!type_registry_) {
+            return make_int(0);
+        }
+        auto& treg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
+        std::uint32_t reclaimed = treg.compact();
+        return make_int(static_cast<std::int64_t>(reclaimed));
+    });
+
     // (gc-arena-stats) — Report per-arena allocation. Shows main arena +
     // every per-module arena. Format: "main:0.1MB/8.0MB;json.aura:0.5MB/8.0MB;..."
     // (semicolons separate entries; slashes separate used/capacity within an entry).

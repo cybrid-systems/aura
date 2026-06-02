@@ -159,9 +159,24 @@ public:
     // ── 工具 ──
     std::string format_type(TypeId id) const;
     size_t size() const { return entries_.size(); }
+    uint32_t generation() const { return next_generation_; }
+    // Number of entries at construction (the predefined types that
+    // survive every compact() call). Used to distinguish "user types"
+    // from "always-present" types in tests / diagnostics.
+    static constexpr size_t kPredefinedCount = 9;
 
     // Lookup type by name (returns invalid TypeId if not found)
     TypeId lookup_type(const std::string& name) const;
+
+    // Bump the generation counter and clear all non-predefined entries.
+    // After compact() returns, any TypeId with generation less than
+    // generation() (i.e. type_id.generation < next_generation_) is
+    // stale and must be considered invalid by callers. The 9
+    // predefined types are re-registered so int_type(), string_type(),
+    // etc. continue to work (but their TypeIds have the new generation).
+    //
+    // Returns the number of entries reclaimed.
+    std::uint32_t compact();
 
     // Substitute type variables in a type using the given substitution map
     // Returns a new TypeId (may register new types), does not modify original
