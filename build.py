@@ -841,13 +841,8 @@ def test_p0_regression():
 # not fail the suite. These are tracked as follow-up work — see
 # commit messages on the relevant fixes for context.
 SUITE_SKIP = {
-    # gc.aura — Segfaults in --load mode (works in stdin mode). Pre-existing
-    # regression introduced after commit 64bc0ee; bisected to the
-    # `gc-freeze` + top-level `intend` with lambda args + `gc-temp`
-    # combination (lines 202-209). Independent of the arena/closure work
-    # in 472e983 — fails identically on 8e38623. Needs deep closure-state
-    # investigation; tracked as follow-up.
-    "gc.aura": "pre-existing --load segfault, see suite/gc.aura:202-209",
+    # Add entries here as {filename: reason} for tests that should be
+    # temporarily skipped. Empty = all suite tests run.
 }
 
 

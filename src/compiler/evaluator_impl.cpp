@@ -11344,6 +11344,12 @@ Evaluator::Evaluator() {
         // Fallback: direct clear (stdin mode)
         {
             std::lock_guard<std::mutex> lock(heap_mutex());
+            // Clear short_str_cache_ BEFORE string_heap_ so cached EvalValues
+            // referencing old indices aren't returned after the heap shrinks.
+            // Without this, the next LiteralString eval returns a stale
+            // cached String EvalValue pointing past the end of string_heap_,
+            // and string_heap_[idx] is UB (segfault on .data() access).
+            short_str_cache_.clear();
             string_heap_.clear();
             string_heap_.shrink_to_fit();
             pairs_.clear();
