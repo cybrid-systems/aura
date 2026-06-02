@@ -57,31 +57,22 @@ def main():
     env["AURA_PATH"] = str(ROOT / "lib")
 
     # Set up a small workspace so query:pattern / mutate:replace-pattern
-    # have something to work against. Use a larger source to make the per-call
-    # FlatAST allocation more visible in the arena budget.
-    setup = [
-        '(set-code "(define (f x) (+ x 1)) (define (g x) (* x 2)) (define (h a b) (+ a b)) (define (i x) (* x 3))")',
-    ]
+    # have something to work against. Use a let loop so the input program
+    # itself is small (otherwise the parsed AST inflates main arena).
+    setup = '(set-code "(define (f x) (+ x 1)) (define (g x) (* x 2)) (define (h a b) (+ a b)) (define (i x) (* x 3))")'
     if args.op == "pattern":
-        # Use a non-trivial pattern (Define + Call + BinOp) so the parsed
-        # FlatAST is non-trivial in size, making the leak visible per call.
-        body = "\n".join(
-            f'(query:pattern "(define (F _ _) (+ _ _))")' for _ in range(args.iterations)
-        )
+        loop_body = "(query:pattern \"(define (F _ _) (+ _ _))\")"
     else:  # replace
-        body = "\n".join(
-            f'(mutate:replace-pattern "(define (F _ _))" "(define (F x y))" "iter-{i}")'
-            for i in range(args.iterations)
-        )
-
+        loop_body = '(mutate:replace-pattern "(define (F _ _))" "(define (F x y))" "iter")'
     program = (
         "(gc-freeze)\n"
-        + "\n".join(setup) + "\n"
-        + "(define _s0 (gc-arena-stats))\n"
-        + body + "\n"
-        + "(define _s1 (gc-arena-stats))\n"
-        + "(display _s0)(display \"\\n\")\n"
-        + "(display _s1)(display \"\\n\")\n"
+        f"{setup}\n"
+        "(define _s0 (gc-arena-stats))\n"
+        f"(define _s1 (let loop ((i 0)) (if (< i {args.iterations})"
+        f" (begin {loop_body} (loop (+ i 1)))"
+        f" (gc-arena-stats))))"
+        "(display _s0)(display \"\\n\")\n"
+        "(display _s1)(display \"\\n\")\n"
     )
 
     try:
