@@ -99,6 +99,14 @@ public:
     Evaluator();
     void set_arena(ast::ASTArena* a) { arena_ = a; }
     void set_temp_arena(ast::ASTArena* a) { temp_arena_ = a; }
+    // Per-module arena group: load_module_file allocates each module's
+    // StringPool/FlatAST/mod_env in a dedicated arena so the whole module
+    // can be freed in one shot via reset_module(path).
+    ast::ArenaGroup& arena_group() { return *arena_group_; }
+    const ast::ArenaGroup& arena_group() const { return *arena_group_; }
+    // Free a module's arena + all closures it owns. Returns false if
+    // the module is not in the cache.
+    bool gc_module(const std::string& path);
     // Set current FlatAST/Pool for mutation primitives
     void set_flat_pool(ast::FlatAST* f, ast::StringPool* p) {
         current_flat_ = f;
@@ -212,6 +220,10 @@ private:
     Primitives primitives_;
     ast::ASTArena* arena_ = nullptr;
     ast::ASTArena* temp_arena_ = nullptr;
+    // Owned multi-arena manager. Created in ctor so load_module_file can
+    // hand each module its own arena without depending on a caller setting
+    // it up. Lives for the Evaluator's whole lifetime.
+    std::unique_ptr<ast::ArenaGroup> arena_group_;
     ast::FlatAST* current_flat_ = nullptr;
     ast::StringPool* current_pool_ = nullptr;
     ast::FlatAST* workspace_flat_ = nullptr;
@@ -225,6 +237,7 @@ private:
     std::unordered_map<std::string, std::uint64_t> module_cache_; // path → index
     std::unordered_set<std::string> loading_stack_;               // circular dep detection
     std::vector<std::string> module_names_;                       // display names for modules
+    std::unordered_map<std::string, ast::ASTArena*> module_arena_ptrs_; // path → owning arena (for gc_module)
     std::vector<types::EvalValue> cells_;
     std::vector<Pair> pairs_;
     std::vector<types::EvalValue> error_values_; // error cause values (indexed by ErrorRef)
