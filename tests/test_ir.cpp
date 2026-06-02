@@ -1693,6 +1693,59 @@ int main() {
             } else {
                 ++ts_failed; std::println(std::cerr, "TS FAIL: instantiate_forall empty args (expected fresh→fresh, no ∀)");
             }
+
+            // Issue #77: capture avoidance in substitute. When the
+            // subst targets the bound variable of a Forall, the
+            // bound var must shadow the subst entry (standard HM).
+            {
+                auto a2 = treg.make_var("a2");
+                auto b2 = treg.make_var("b2");
+                auto forall_a = treg.register_forall(a2, treg.register_func({a2}, b2));
+                std::unordered_map<std::uint32_t, aura::core::TypeId> sub;
+                sub[a2.index] = treg.int_type();  // try to replace bound a2
+                auto subst_result = treg.substitute(forall_a, sub);
+                // Expected: unchanged. The bound a2 shadows the subst
+                // entry. Pre-fix bug: result was ∀a2. (Int → b2).
+                auto fmt_before = treg.format_type(forall_a);
+                auto fmt_after = treg.format_type(subst_result);
+                if (fmt_before == fmt_after) {
+                    ++ts_passed; std::println("TS OK: substitute w/ bound-var target shadows (no capture)");
+                } else {
+                    ++ts_failed; std::println(std::cerr, "TS FAIL: substitute captured bound var: {} -> {}", fmt_before, fmt_after);
+                }
+            }
+
+            // Issue #77: nested Forall with mixed bound/free vars.
+            // subst targets the outer bound (a) and an inner free (c).
+            // Expected: only c is substituted; a (bound) is preserved.
+            {
+                auto a3 = treg.make_var("a3");
+                auto b3 = treg.make_var("b3");
+                auto c3 = treg.make_var("c3");
+                auto func_abc = treg.register_func({a3}, c3);
+                auto forall_b_abc = treg.register_forall(b3, func_abc);
+                auto forall_a_b_abc = treg.register_forall(a3, forall_b_abc);
+                std::unordered_map<std::uint32_t, aura::core::TypeId> sub;
+                sub[a3.index] = treg.int_type();  // outer bound, should be shadowed
+                sub[c3.index] = treg.string_type();  // free, should be substituted
+                auto subst_result = treg.substitute(forall_a_b_abc, sub);
+                // Expected: ∀a3. (∀b3. (a3 → String))
+                // (a3 is the bound var, NOT Int; c3 became String.)
+                // Pre-fix bug: ∀a3. (∀b3. (Int → String)) — a3 wrongly
+                // replaced with Int.
+                auto* outer_ft = treg.forall_of(subst_result);
+                auto* inner_ft = outer_ft ? treg.forall_of(outer_ft->body) : nullptr;
+                auto* body_f = inner_ft ? treg.func_of(inner_ft->body) : nullptr;
+                if (outer_ft && inner_ft && body_f &&
+                    body_f->args.size() == 1 &&
+                    body_f->args[0] == a3 &&  // a3 preserved as bound
+                    body_f->ret == treg.string_type()  // c3 replaced
+                ) {
+                    ++ts_passed; std::println("TS OK: substitute nested ∀ w/ bound+free targets (only free replaced)");
+                } else {
+                    ++ts_failed; std::println(std::cerr, "TS FAIL: substitute nested ∀ did mixed binding");
+                }
+            }
         }
 
         std::println("Type system detail tests: {}/{}/{} passed/failed/total",
