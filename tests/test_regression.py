@@ -89,6 +89,43 @@ tests = [
      '(define-type (Color) (Red) (Green) (Blue)) (let ((x Red)) (match x ((Red) 1) ((Green) 2)))',
      "1", "unhandled"),
 
+    # ── Issue #75: ADT exhaustiveness (bare-identifier + correct target type) ──
+    # Bare-identifier pattern `Nil` (no parens) is a constructor pattern, not a wildcard.
+    # Both Cons and Nil are covered, so no warning should fire.
+    ("adt-bare-id-cons-then-nil",
+     '(define-type (List a) (Nil) (Cons a (List a)))'
+     '(let ((xs (Cons 1 (Cons 2 Nil)))) (match xs ((Cons h t) h) (Nil 0)))',
+     "1", ""),
+    # Bare-id Cons alone, Nil missing → warn
+    ("adt-bare-id-cons-only",
+     '(define-type (List a) (Nil) (Cons a (List a)))'
+     '(let ((xs (Cons 1 Nil))) (match xs ((Cons h t) h)))',
+     "1", "unhandled"),
+    # Nil only, Cons missing → warn
+    ("adt-bare-id-nil-only",
+     '(define-type (List a) (Nil) (Cons a (List a)))'
+     '(let ((xs Nil)) (match xs (Nil 0)))',
+     "0", "unhandled"),
+    # Multi-ADT: Color ctors covered; Shape (earlier in registry) has Triangle
+    # missing. The check must target the actual matched type (Color), not the
+    # first ADT in the registry.
+    ("adt-multi-adt-correct-target",
+     '(begin (define-type (Shape) (Circle) (Square) (Triangle))'
+     '(define-type (Color) (Red) (Green) (Blue))'
+     '(let ((c Red)) (match c ((Red) 1) ((Green) 2) ((Blue) 3))))',
+     "1", ""),
+    # Multi-ADT: Color with Blue missing. Earlier ADT (Shape) has Triangle
+    # missing. Should warn about Blue, not Triangle.
+    ("adt-multi-adt-warn-correct-target",
+     '(begin (define-type (Shape) (Circle) (Square) (Triangle))'
+     '(define-type (Color) (Red) (Green) (Blue))'
+     '(let ((c Red)) (match c ((Red) 1) ((Green) 2))))',
+     "1", "Blue"),
+    # Non-ADT subject (Int) with literal/wildcard patterns — no ADT warning.
+    ("adt-non-adt-subject",
+     '(let ((n 1)) (match n (1 "one") (_ "other")))',
+     "one", ""),
+
     # ── Phase 2: eval-current-output ──────────────────────
     ("eval-capture",
      '(begin (set-code "(display 42)") (eval-current-output))', "42", ""),

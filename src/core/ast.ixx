@@ -305,8 +305,14 @@ export struct Patch {
 // ── Match clause metadata (for exhaustiveness checking) ──
 // Maps let-node-id → list of constructor SymIds used in match clauses.
 // If a wildcard pattern (_) is used, stores a single INVALID_SYM entry.
+//
+// `used_constructors` collects patterns like (Ctor args...) — definite.
+// `candidate_constructors` collects bare-identifier patterns like `Nil` —
+// these are ambiguous (could be a constructor or a variable binding) and
+// are resolved by the type checker against the actual subject type.
 export struct MatchClauseInfo {
     std::vector<SymId> used_constructors;
+    std::vector<SymId> candidate_constructors;
     bool has_wildcard = false;
 };
 
@@ -933,14 +939,13 @@ private:
         match_info_[id] = std::move(info);
     }
     bool has_match_info(NodeId id) const {
-        return id < match_info_.size() &&
-               (!match_info_[id].used_constructors.empty() || match_info_[id].has_wildcard);
+        if (id >= match_info_.size()) return false;
+        const auto& mi = match_info_[id];
+        return !mi.used_constructors.empty() || !mi.candidate_constructors.empty() || mi.has_wildcard;
     }
     const MatchClauseInfo* get_match_info(NodeId id) const {
-        if (id < match_info_.size() &&
-            (!match_info_[id].used_constructors.empty() || match_info_[id].has_wildcard))
-            return &match_info_[id];
-        return nullptr;
+        if (!has_match_info(id)) return nullptr;
+        return &match_info_[id];
     }
     // Propagate dirty upward: mark this node AND all ancestors dirty
     // Uses parent_ SoA column for O(depth) traversal (iterative, no recursion)

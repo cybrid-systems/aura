@@ -893,6 +893,24 @@ int main() {
             }
         }
 
+        // ── Issue #75: ADT exhaustiveness check ───────────────────
+        // Test: ADT ctors are registered on a defined parametric type, so
+        // match exhaustiveness can find them via the registry scan fallback.
+        {
+            diag.clear();
+            auto color_tid = treg.register_type(aura::core::TypeTag::VARIANT, "ColorTC75");
+            treg.register_adt_constructors(color_tid, {"RedTC75", "GreenTC75", "BlueTC75"});
+            auto ctors = treg.get_adt_constructors(color_tid);
+            if (ctors && ctors->size() == 3 &&
+                std::find(ctors->begin(), ctors->end(), "RedTC75") != ctors->end()) {
+                std::println("TC75 OK: ADT ctors registered on parametric type");
+                ++tc_passed;
+            } else {
+                std::println(std::cerr, "TC75 FAIL: ADT ctors not registered");
+                ++tc_failed;
+            }
+        }
+
         std::println("TypeChecker test: {}/{}/{} passed/failed/total",
                      tc_passed, tc_failed, tc_passed + tc_failed);
         if (tc_failed > 0) return 1;
