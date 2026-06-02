@@ -184,6 +184,14 @@ public:
     // every level, keeping the depth counter consistent).
   private:
     bool is_subtype_impl(TypeId sub, TypeId sup, int depth) const;
+
+    // TypeId interning: type_equals compares two TypeIds by structural
+    // content (not raw id). type_hash produces a stable hash for the
+    // structural content (used for the dedup intern table — though the
+    // initial implementation uses linear scan over entries_).
+    bool type_equals(TypeId a, TypeId b) const;
+    std::uint64_t type_hash(TypeId a) const;
+
   public:
 
     // Substitute type variables in a type using the given substitution map
