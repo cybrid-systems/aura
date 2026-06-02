@@ -500,4 +500,38 @@ const std::vector<std::string>* TypeRegistry::get_adt_constructors(TypeId type_i
     return nullptr;
 }
 
+// Issue #78: TypeRegistry unbounded memory growth.
+// compact() reclaims all non-predefined entries, bumps the generation
+// counter (invalidating all TypeIds from prior generations), and
+// re-registers the 9 predefined types so int_type() / string_type()
+// etc. continue to work. After this call, any TypeId with
+// `generation < generation()` is stale.
+std::uint32_t TypeRegistry::compact() {
+    std::uint32_t before = static_cast<std::uint32_t>(entries_.size());
+    // Bump generation FIRST so any in-flight TypeId registrations
+    // that race with us get a stale generation and can be detected.
+    ++next_generation_;
+    // Clear all entries. shrink_to_fit() to actually release memory
+    // (the std::optional members can leave residual capacity even
+    // after clear()).
+    entries_.clear();
+    entries_.shrink_to_fit();
+    name_to_id_.clear();
+    name_to_id_.rehash(0);  // rehash to smallest bucket count
+    // Re-register the 9 predefined types so the basic lookups work.
+    // Each new TypeId carries the bumped generation.
+    register_type(TypeTag::DYNAMIC, "Any");
+    register_type(TypeTag::INT, "Int");
+    register_type(TypeTag::BOOL, "Bool");
+    register_type(TypeTag::STRING, "String");
+    register_type(TypeTag::VOID, "Void");
+    register_type(TypeTag::TYPE, "Type");
+    register_type(TypeTag::VECTOR, "Vector");
+    register_type(TypeTag::FLOAT, "Float");
+    register_type(TypeTag::PAIR, "Pair");
+    register_type(TypeTag::HASH, "Hash");
+    std::uint32_t reclaimed = before - static_cast<std::uint32_t>(entries_.size());
+    return reclaimed;
+}
+
 } // namespace aura::core
