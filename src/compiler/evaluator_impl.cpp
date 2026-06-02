@@ -11363,6 +11363,10 @@ Evaluator::Evaluator() {
             vector_heap_.shrink_to_fit();
             opaque_heap_.clear();
             opaque_heap_.shrink_to_fit();
+            // gc-heap is a stronger reset than gc-temp; also record
+            // the eval-depth snapshot so memory-pressure won't keep
+            // suggesting "gc-temp" right after a gc-heap.
+            last_gc_temp_eval_depth_ = eval_depth_;
         }
         return types::make_bool(true);
     });
@@ -11392,6 +11396,9 @@ Evaluator::Evaluator() {
 
         // Reset temp arena (O(1) — frees all cl_flat/cl_pool/copy_env)
         temp_arena_->reset();
+        // Record the eval-depth snapshot so memory-pressure knows
+        // when to suggest "gc-temp" again.
+        last_gc_temp_eval_depth_ = eval_depth_;
 
         // Clear heap vectors.
         // NOTE: pairs_ and string_heap_ are NOT cleared — result lists are
@@ -11472,6 +11479,256 @@ Evaluator::Evaluator() {
         auto sidx = string_heap_.size();
         string_heap_.push_back(out);
         return types::make_string(sidx);
+    });
+
+    // (gc-arena-info) — Return structured per-arena usage as Aura value.
+    //
+    //   Returns: vector of hashes, each describing one arena:
+    //     {name: "main", used: 1.23, capacity: 11.0, used-pct: 11}
+    //     {name: "json.aura", used: 0.5, capacity: 8.0, used-pct: 6}
+    //     ...
+    //
+    //   First entry is a summary hash:
+    //     {summary: #t, total-arenas: 3, total-used: 1.73, total-capacity: 19.0,
+    //      overall-pct: 9}
+    //
+    //   All numeric values are in megabytes (MB). Pct values are integers 0-100.
+    primitives_.add("gc-arena-info", [this](const auto&) -> EvalValue {
+        // Snapshot arena state. Each entry: (short_name, used-MB, cap-MB, pct).
+        struct Snap { std::string name; double used; double cap; int pct; };
+        std::vector<Snap> snaps;
+        double total_used = 0.0, total_cap = 0.0;
+        if (arena_) {
+            auto s = arena_->stats();
+            double u = s.used / 1048576.0;
+            double c = s.capacity / 1048576.0;
+            snaps.push_back({"main", u, c, c > 0 ? static_cast<int>(u / c * 100.0) : 0});
+            total_used += u;
+            total_cap += c;
+        }
+        if (arena_group_) {
+            for (auto& [full_name, stats] : arena_group_->module_stats()) {
+                auto slash = full_name.rfind('/');
+                auto short_name = slash == std::string::npos ? full_name : full_name.substr(slash + 1);
+                double u = stats.used / 1048576.0;
+                double c = stats.capacity / 1048576.0;
+                snaps.push_back({short_name, u, c, c > 0 ? static_cast<int>(u / c * 100.0) : 0});
+                total_used += u;
+                total_cap += c;
+            }
+        }
+        int overall = total_cap > 0 ? static_cast<int>(total_used / total_cap * 100.0) : 0;
+
+        // Build a small Swiss-table hash. Inline copy of the (hash ...) primitive
+        // pattern. Capacity 8 is enough for the 5-field hashes below.
+        auto build_hash = [&](const std::vector<std::pair<std::string, EvalValue>>& kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto cap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                // Hash the key with FNV-1a (matches user-level (hash ...) behavior).
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+                // Intern the key as a String EvalValue.
+                auto kidx = string_heap_.size();
+                string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < cap; ++at) {
+                    auto idx = ((h >> 1) + at) & (cap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) {
+                    // 8 slots should be enough for the 5-key hashes we build.
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+
+        std::vector<EvalValue> result;
+        // Summary entry first.
+        {
+            std::vector<std::pair<std::string, EvalValue>> kv;
+            kv.push_back({"summary", make_bool(true)});
+            kv.push_back({"total-arenas", make_int(static_cast<std::int64_t>(snaps.size()))});
+            kv.push_back({"total-used", make_float(total_used)});
+            kv.push_back({"total-capacity", make_float(total_cap)});
+            kv.push_back({"overall-pct", make_int(overall)});
+            result.push_back(build_hash(kv));
+        }
+        for (auto& s : snaps) {
+            auto name_idx = string_heap_.size();
+            string_heap_.push_back(s.name);
+            std::vector<std::pair<std::string, EvalValue>> kv;
+            kv.push_back({"name", make_string(name_idx)});
+            kv.push_back({"used", make_float(s.used)});
+            kv.push_back({"capacity", make_float(s.cap)});
+            kv.push_back({"used-pct", make_int(s.pct)});
+            result.push_back(build_hash(kv));
+        }
+        auto vidx = vector_heap_.size();
+        vector_heap_.push_back(std::move(result));
+        return make_vector(vidx);
+    });
+
+    // (memory-pressure) — Assess overall memory pressure and suggest actions.
+    //
+    //   Returns hash:
+    //     {
+    //       level: "low" | "medium" | "high" | "critical",
+    //       used-pct: 87,                  ; overall usage %
+    //       total-used: 12.5,              ; MB
+    //       total-capacity: 16.0,          ; MB
+    //       top-arena: "json.aura",        ; highest-pct arena name (or "" if none)
+    //       top-pct: 92,                   ; top arena's pct (or 0)
+    //       suggestions: ["gc-module json.aura", "gc-temp"]  ; vector of strings
+    //     }
+    //
+    //   Thresholds (percent of arena capacity used):
+    //     low      < 60
+    //     medium   60-79
+    //     high     80-94
+    //     critical >= 95
+    //
+    //   Suggestions: for each arena with used-pct >= 80, add "gc-module <name>".
+    //   If no gc-temp has been called in the last 100 evaluations, also
+    //   add "gc-temp".
+    //
+    //   Tie-breaking for top-arena: highest used-pct, then largest used
+    //   bytes, then name (lexicographic) for determinism.
+    primitives_.add("memory-pressure", [this](const auto&) -> EvalValue {
+        // Snapshot arena state.
+        struct Snap { std::string name; double used; double cap; int pct; };
+        std::vector<Snap> snaps;
+        double total_used = 0.0, total_cap = 0.0;
+        if (arena_) {
+            auto s = arena_->stats();
+            double u = s.used / 1048576.0;
+            double c = s.capacity / 1048576.0;
+            snaps.push_back({"main", u, c, c > 0 ? static_cast<int>(u / c * 100.0) : 0});
+            total_used += u;
+            total_cap += c;
+        }
+        if (arena_group_) {
+            for (auto& [full_name, stats] : arena_group_->module_stats()) {
+                auto slash = full_name.rfind('/');
+                auto short_name = slash == std::string::npos ? full_name : full_name.substr(slash + 1);
+                double u = stats.used / 1048576.0;
+                double c = stats.capacity / 1048576.0;
+                snaps.push_back({short_name, u, c, c > 0 ? static_cast<int>(u / c * 100.0) : 0});
+                total_used += u;
+                total_cap += c;
+            }
+        }
+        int overall = total_cap > 0 ? static_cast<int>(total_used / total_cap * 100.0) : 0;
+
+        // Determine level from overall used-pct.
+        const char* level = "low";
+        if (overall >= 95)      level = "critical";
+        else if (overall >= 80) level = "high";
+        else if (overall >= 60) level = "medium";
+
+        // Find top-arena (highest used-pct, then largest used, then name asc).
+        std::string top_name;
+        int top_pct = 0;
+        double top_used = 0.0;
+        for (auto& s : snaps) {
+            if (s.pct > top_pct ||
+                (s.pct == top_pct && s.used > top_used) ||
+                (s.pct == top_pct && s.used == top_used && s.name < top_name)) {
+                top_name = s.name;
+                top_pct = s.pct;
+                top_used = s.used;
+            }
+        }
+
+        // Build suggestions: for each arena with used-pct >= 80, add a
+        // "gc-module <name>" hint. If no recent gc-temp call (within the
+        // last 100 evaluations), also add "gc-temp".
+        std::vector<EvalValue> suggestions;
+        for (auto& s : snaps) {
+            if (s.pct >= 80) {
+                auto sidx = string_heap_.size();
+                string_heap_.push_back("gc-module " + s.name);
+                suggestions.push_back(make_string(sidx));
+            }
+        }
+        if (eval_depth_ - last_gc_temp_eval_depth_ > 100) {
+            auto sidx = string_heap_.size();
+            string_heap_.push_back("gc-temp");
+            suggestions.push_back(make_string(sidx));
+        }
+
+        // Build the result hash. Inline Swiss-table construction (same
+        // shape as gc-arena-info's build_hash, 8-slot capacity).
+        auto* ht = FlatHashTable::create(8);
+        if (!ht) return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto cap = ht->capacity;
+        // Helper: insert a (string-key, EvalValue) pair into the hash.
+        // String values are interned in string_heap_ first.
+        auto hput = [&](const std::string& k, const EvalValue& v) -> bool {
+            std::uint64_t h = 0xcbf29ce484222325ull;
+            for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+            auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+            auto kidx = string_heap_.size();
+            string_heap_.push_back(k);
+            EvalValue key_ev = make_string(kidx);
+            for (std::size_t at = 0; at < cap; ++at) {
+                auto idx = ((h >> 1) + at) & (cap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    keys[idx] = key_ev.val;
+                    vals[idx] = v.val;
+                    ht->size++;
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        // String values: intern the level and top_name, then build String EvalValues.
+        auto level_idx = string_heap_.size();
+        string_heap_.push_back(level);
+        auto top_name_idx = string_heap_.size();
+        string_heap_.push_back(top_name);
+
+        // Suggestions vector
+        auto sugg_vidx = vector_heap_.size();
+        vector_heap_.push_back(std::move(suggestions));
+
+        bool ok = true;
+        ok = ok && hput("level",          make_string(level_idx));
+        ok = ok && hput("used-pct",       make_int(overall));
+        ok = ok && hput("total-used",     make_float(total_used));
+        ok = ok && hput("total-capacity", make_float(total_cap));
+        ok = ok && hput("top-arena",      make_string(top_name_idx));
+        ok = ok && hput("top-pct",        make_int(top_pct));
+        ok = ok && hput("suggestions",    make_vector(sugg_vidx));
+        if (!ok) {
+            FlatHashTable::destroy(ht);
+            return make_void();
+        }
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
     });
 
     // ── Capability primitives (with-capability / capability? / check-capability) ──

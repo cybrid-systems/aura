@@ -358,6 +358,13 @@ private:
     std::size_t eval_depth_ = 0; // recursion counter for friendly stack overflow
     static constexpr std::size_t MAX_EVAL_DEPTH = 50000;
 
+    // ── Memory pressure observability (Issue #69) ───────────────
+    // eval_depth_ snapshot at the last (gc-temp) call. Used by
+    // memory-pressure to decide whether to suggest "gc-temp" in the
+    // suggestions vector (only if no recent gc-temp call, i.e.
+    // eval_depth_ - last_gc_temp_eval_depth_ > 100).
+    std::size_t last_gc_temp_eval_depth_ = 0;
+
     std::vector<std::vector<types::EvalValue>> vector_heap_;
     std::uint64_t next_id_ = 1;
     ClosureId gc_safe_closure_id_ = 0;
