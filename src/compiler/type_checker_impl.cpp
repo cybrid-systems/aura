@@ -1306,12 +1306,17 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
             // Create the variant type itself (parametric if needed)
             // For now, use the registry to create a named type entry
             TypeId variant_type;
+            // Always look up or create a named type entry so ADT ctors can be
+            // registered against it (for match exhaustiveness checking).
+            // For parametric types, we still want a named entry for the ADT
+            // itself; the parametric instance is built via Forall.
+            auto named_tid = reg_.lookup_type(type_name);
+            if (!named_tid.valid()) {
+                named_tid = reg_.register_type(aura::core::TypeTag::VARIANT, type_name);
+            }
             if (type_params.empty()) {
                 // Look up or create concrete variant type
-                variant_type = reg_.lookup_type(type_name);
-                if (!variant_type.valid()) {
-                    variant_type = reg_.register_type(aura::core::TypeTag::VARIANT, type_name);
-                }
+                variant_type = named_tid;
             } else if (type_params.size() == 1) {
                 // Single-param type: use the type var as return marker
                 // Forall instantiation will propagate the concrete type
@@ -1986,50 +1991,91 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool,
         env_.bind(var_name, val_norm);
     }
 
-    // ── Match exhaustiveness check — recursive ADT support ──
-    // Detect match on ADT by checking if let name is __match_tmp
-    // and the value is a constructor call.
+    // ── Match exhaustiveness check ──
+    // Detect match on ADT by checking if let name is __match_tmp.
+    // The previous implementation iterated over all ADTs in the registry and
+    // picked the first one (bug: incorrect when multiple ADTs are defined).
+    // Now we use the actual inferred type of the subject value (val_norm).
     auto let_name = std::string(pool.resolve(v.sym_id));
     if (let_name == "__match_tmp" && !v.children.empty()) {
         auto* scan_minfo = flat.get_match_info(node_id);
 
-        // Scan TypeRegistry for ADTs
-        for (std::size_t i = 0; i < reg_.size(); ++i) {
-            auto tid = TypeId{static_cast<std::uint32_t>(i), 1};
-            auto* ctors = reg_.get_adt_constructors(tid);
-            if (!ctors) continue;
-
-            auto type_name = std::string(reg_.name_of(tid));
-
-            // Helper: recursively collect missing constructors with depth limit
-            // to support recursive ADTs like (List a) → (Nil) (Cons a List)
-            std::vector<std::string> missing;
-            auto check_adt_recursive =
-                [&](this const auto& self, const std::vector<std::string>& ctor_names,
-                    const std::vector<aura::ast::SymId>& used_sym,
-                    std::string_view context_name, int depth) -> void {
-                if (depth <= 0 || ctor_names.empty())
-                    return;
-                for (auto& cname : ctor_names) {
-                    auto found = std::find_if(
-                        used_sym.begin(), used_sym.end(),
-                        [&](SymId sid) {
-                            return pool.resolve(sid) == cname;
-                        });
-                    if (found == used_sym.end()) {
-                        missing.push_back(cname);
+        // Wildcard covers everything — nothing to check.
+        if (scan_minfo && !scan_minfo->has_wildcard) {
+            // Look up the ADT constructors of the actual subject type.
+            // val_norm is the normalized type of the value bound to __match_tmp.
+            // Common case: subject is already an ADT value (e.g. (Some 42)).
+            // Edge case: subject is a constructor function (e.g. (let ((x Red))
+            // — then x has type (-> Color) and we want to check the return type.
+            TypeId subject_type = val_norm;
+            if (reg_.tag_of(subject_type) == TypeTag::FUNC) {
+                auto* f = reg_.func_of(subject_type);
+                if (f) subject_type = f->ret;
+            }
+            const std::vector<std::string>* ctors = reg_.get_adt_constructors(subject_type);
+            if (!ctors && reg_.tag_of(subject_type) == TypeTag::TYPE_VAR) {
+                // Parametric ADT case: the subject type is a type variable that
+                // stands in for `List a` etc. ctors aren't directly registered
+                // against the type variable, so fall back to scanning the
+                // registry for an ADT whose first used_ctor matches one of
+                // the constructors we know about.
+                for (auto sid : scan_minfo->used_constructors) {
+                    auto cname = std::string(pool.resolve(sid));
+                    for (std::size_t ti = 0; ti < reg_.size(); ++ti) {
+                        auto tid2 = TypeId{static_cast<std::uint32_t>(ti), 1};
+                        auto* c2 = reg_.get_adt_constructors(tid2);
+                        if (!c2) continue;
+                        if (std::find(c2->begin(), c2->end(), cname) != c2->end()) {
+                            ctors = c2;
+                            subject_type = tid2;
+                            break;
+                        }
+                    }
+                    if (ctors) break;
+                }
+                if (!ctors) {
+                    for (auto sid : scan_minfo->candidate_constructors) {
+                        auto cname = std::string(pool.resolve(sid));
+                        for (std::size_t ti = 0; ti < reg_.size(); ++ti) {
+                            auto tid2 = TypeId{static_cast<std::uint32_t>(ti), 1};
+                            auto* c2 = reg_.get_adt_constructors(tid2);
+                            if (!c2) continue;
+                            if (std::find(c2->begin(), c2->end(), cname) != c2->end()) {
+                                ctors = c2;
+                                subject_type = tid2;
+                                break;
+                            }
+                        }
+                        if (ctors) break;
                     }
                 }
-            };
+            }
+            if (ctors) {
+                // Build the set of effective used constructors. Definite uses
+                // (Call patterns) are always counted. Bare-identifier candidates
+                // are counted only if they are real constructors of this ADT
+                // (so a variable binding like `(let ((x 5)) (match x (a a) ...))`
+                // doesn't false-positive on a non-existent `a` constructor).
+                std::vector<std::string> used_eff;
+                used_eff.reserve(scan_minfo->used_constructors.size() +
+                                 scan_minfo->candidate_constructors.size());
+                for (auto sid : scan_minfo->used_constructors)
+                    used_eff.push_back(std::string(pool.resolve(sid)));
+                for (auto sid : scan_minfo->candidate_constructors) {
+                    auto cname = std::string(pool.resolve(sid));
+                    if (std::find(ctors->begin(), ctors->end(), cname) != ctors->end())
+                        used_eff.push_back(std::move(cname));
+                }
 
-            // Run recursive check (depth limit = 3 for nested ADTs)
-            if (scan_minfo && !scan_minfo->has_wildcard) {
-                std::vector<aura::ast::SymId> used = scan_minfo->used_constructors;
-                check_adt_recursive(
-                    *ctors, used, type_name, 3);
+                // Find missing constructors
+                std::vector<std::string> missing;
+                for (auto& cname : *ctors) {
+                    if (std::find(used_eff.begin(), used_eff.end(), cname) == used_eff.end())
+                        missing.push_back(cname);
+                }
 
-                // Report all missing constructors
                 if (!missing.empty()) {
+                    auto type_name = std::string(reg_.name_of(subject_type));
                     std::string msg = "match: ";
                     if (missing.size() == 1) {
                         msg += "missing constructor '" + missing[0] + "'";
@@ -2041,7 +2087,6 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool,
                         }
                     }
                     msg += " in " + type_name;
-                    // Add fix-it suggestion (chained on temporary, no self-move)
                     if (missing.size() == 1) {
                         diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_)
                             .with_suggestion(
@@ -2057,13 +2102,9 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool,
                     }
                 }
             }
-
-            // Emit a note for the ADT being matched
-            diag_.report(Diagnostic(ErrorKind::Note,
-                "match on '" + type_name +
-                "' (" + std::to_string(ctors->size()) + " constructors)",
-                cur_loc_));
-            break; // Only process the first ADT found
+            // If subject isn't an ADT (Int, String, etc.) we don't try to
+            // enforce exhaustiveness — non-ADT subjects are typically matched
+            // with literal/wildcard patterns and the runtime check is enough.
         }
     }
 

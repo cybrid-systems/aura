@@ -14604,32 +14604,63 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             return vv;
 
                         // ── Match exhaustiveness check (tree-walker path) ──
+                        // At runtime we don't have static type info, so we resolve the
+                        // target ADT by finding which ADT in the registry contains the
+                        // first used constructor (e.g. `Cons` -> `List`). Bare-identifier
+                        // candidates are only counted as used if they are real ctors of
+                        // that ADT (so a variable binding doesn't false-positive).
                         if (!rec && type_registry_ && f->has_match_info(current_id)) {
                             auto* minfo = f->get_match_info(current_id);
-                            if (minfo && !minfo->has_wildcard && !minfo->used_constructors.empty()) {
+                            if (minfo && !minfo->has_wildcard &&
+                                (!minfo->used_constructors.empty() ||
+                                 !minfo->candidate_constructors.empty())) {
                                 auto& treg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
-                                // Get first constructor name to find ADT
-                                auto first_ctor = std::string(p->resolve(minfo->used_constructors[0]));
-                                for (std::size_t ti = 0; ti < treg.size(); ++ti) {
-                                    auto tid = aura::core::TypeId{static_cast<std::uint32_t>(ti), 1};
-                                    auto* ctors = treg.get_adt_constructors(tid);
-                                    if (!ctors) continue;
-                                    auto it = std::find(ctors->begin(), ctors->end(), first_ctor);
-                                    if (it != ctors->end()) {
-                                        for (auto& expected_ctor : *ctors) {
-                                            auto found = std::find_if(
-                                                minfo->used_constructors.begin(),
-                                                minfo->used_constructors.end(),
-                                                [&](aura::ast::SymId sid) {
-                                                    return std::string(p->resolve(sid)) == expected_ctor;
-                                                });
-                                            if (found == minfo->used_constructors.end()) {
-                                                std::println(std::cerr,
-                                                    "match warning: unhandled constructor '{}' in {}",
-                                                    expected_ctor, treg.name_of(tid));
-                                            }
+                                // Find the target ADT by scanning for the first used_ctor
+                                // or candidate_ctor (bare-id patterns).
+                                const std::vector<std::string>* target_ctors = nullptr;
+                                aura::core::TypeId target_tid{};
+                                auto find_adt_for = [&](aura::ast::SymId sid) -> bool {
+                                    auto cname = std::string(p->resolve(sid));
+                                    for (std::size_t ti = 0; ti < treg.size(); ++ti) {
+                                        auto tid = aura::core::TypeId{static_cast<std::uint32_t>(ti), 1};
+                                        auto* c = treg.get_adt_constructors(tid);
+                                        if (!c) continue;
+                                        if (std::find(c->begin(), c->end(), cname) != c->end()) {
+                                            target_ctors = c;
+                                            target_tid = tid;
+                                            return true;
                                         }
-                                        break;
+                                    }
+                                    return false;
+                                };
+                                for (auto sid : minfo->used_constructors) {
+                                    if (find_adt_for(sid)) break;
+                                }
+                                if (!target_ctors) {
+                                    for (auto sid : minfo->candidate_constructors) {
+                                        if (find_adt_for(sid)) break;
+                                    }
+                                }
+                                if (target_ctors) {
+                                    // Build effective used set
+                                    std::vector<std::string> used_eff;
+                                    used_eff.reserve(minfo->used_constructors.size() +
+                                                     minfo->candidate_constructors.size());
+                                    for (auto sid : minfo->used_constructors)
+                                        used_eff.push_back(std::string(p->resolve(sid)));
+                                    for (auto sid : minfo->candidate_constructors) {
+                                        auto cname = std::string(p->resolve(sid));
+                                        if (std::find(target_ctors->begin(), target_ctors->end(),
+                                                      cname) != target_ctors->end())
+                                            used_eff.push_back(std::move(cname));
+                                    }
+                                    for (auto& expected_ctor : *target_ctors) {
+                                        if (std::find(used_eff.begin(), used_eff.end(),
+                                                      expected_ctor) == used_eff.end()) {
+                                            std::println(std::cerr,
+                                                "match warning: unhandled constructor '{}' in {}",
+                                                expected_ctor, treg.name_of(target_tid));
+                                        }
                                     }
                                 }
                             }

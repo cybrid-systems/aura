@@ -1197,6 +1197,12 @@ NodeId FlatParser::parse_match() {
             auto pname = pool_.resolve(pv.sym_id);
             if (pname == "_" || (pname.size() > 1 && pname[0] == '_')) {
                 minfo.has_wildcard = true;
+            } else {
+                // Bare-identifier pattern: ambiguous — could be a constructor
+                // (e.g. `Nil`, `Red`) or a variable binding (e.g. `x`).
+                // Record as a candidate; the type checker resolves against
+                // the actual subject type at exhaustiveness time.
+                minfo.candidate_constructors.push_back(pv.sym_id);
             }
         } else if (pv.tag == NodeTag::Call && !pv.children.empty()) {
             // Constructor pattern: (Ctor args...) -> callee is constructor name
@@ -1217,7 +1223,8 @@ NodeId FlatParser::parse_match() {
     flat_.set_loc(result, tok.line, tok.column);
 
     // Store match metadata on the let node
-    if (!minfo.used_constructors.empty() || minfo.has_wildcard)
+    if (!minfo.used_constructors.empty() || !minfo.candidate_constructors.empty() ||
+        minfo.has_wildcard)
         flat_.set_match_info(result, std::move(minfo));
 
     return result;
