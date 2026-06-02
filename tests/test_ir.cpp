@@ -1785,6 +1785,34 @@ int main() {
                     ++ts_failed; std::println(std::cerr, "TS FAIL: dedup lost __decl_ prefix: {}", name_at_idx);
                 }
             }
+
+            // Issue #71: is_poly field auto-detection + lookup
+            // auto-instantiation. We test the env directly here (TypeEnv
+            // is in the type_checker module, accessible from the test).
+            {
+                TypeEnv env(treg);
+                auto a_var = treg.make_var("a");
+                auto poly_id = treg.register_forall(a_var, treg.register_func({a_var}, treg.int_type()));
+                // Verify bind auto-detects is_poly=true for a Forall.
+                env.bind("id", poly_id);
+                // Verify lookup returns a fresh instantiation (NOT the
+                // raw poly, which would leak a).
+                auto looked_up = env.lookup("id");
+                if (treg.forall_of(looked_up) != nullptr) {
+                    ++ts_failed; std::println(std::cerr, "TS FAIL: lookup returned raw Forall (is_poly not auto-instantiated)");
+                } else {
+                    ++ts_passed; std::println("TS OK: lookup auto-instantiates poly bindings");
+                }
+                // Verify a monomorphic binding is returned as-is.
+                auto int_t = treg.int_type();
+                env.bind("forty-two", int_t);
+                auto lookup_int = env.lookup("forty-two");
+                if (lookup_int == int_t) {
+                    ++ts_passed; std::println("TS OK: lookup passes monomorphic bindings through");
+                } else {
+                    ++ts_failed; std::println(std::cerr, "TS FAIL: lookup changed monomorphic type");
+                }
+            }
         }
 
         std::println("Type system detail tests: {}/{}/{} passed/failed/total",
