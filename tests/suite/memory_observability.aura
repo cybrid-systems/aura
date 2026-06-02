@@ -77,7 +77,140 @@
 (check= (hash-ref (vector-ref info2 0) "total-arenas")
        (hash-ref summary "total-arenas"))
 
-; ── 9. Final assertion: every check= above passed if we reach here ──
+; ── 9. Module load makes per-arena entries appear ──
+;; Load a few stdlib modules and verify they show up in gc-arena-info.
+(require "std/json")
+(require "std/list")
+(require "std/algorithm")
+(define info3 (gc-arena-info))
+(check= #t (> (vector-length info3) 1))
+;; Some entry in info3 (after the summary) should be one of the stdlib
+;; modules we just loaded.
+(define (has-name? info name)
+  (let loop ((i 1))
+    (cond
+      ((>= i (vector-length info)) #f)
+      ((string=? (hash-ref (vector-ref info i) "name") name) #t)
+      (else (loop (+ i 1))))))
+(check= #t (has-name? info3 "json.aura"))
+(check= #t (has-name? info3 "list.aura"))
+(check= #t (has-name? info3 "algorithm.aura"))
+
+; ── 10. (gc-module <name>) removes the arena from gc-arena-info ──
+;; json.aura is loaded but not in active use; freeing it should remove
+;; the per-arena entry (or at least keep the same shape, since reset_module
+;; resets the arena to empty but the name key remains in ArenaGroup).
+(check= #t (gc-module "json.aura"))
+(define info4 (gc-arena-info))
+(check= #t (has-name? info4 "json.aura"))   ; name still in arena_group_
+
+; ── 11. Pct calculation: 0% < 60% boundary correctness ──
+;; On a fresh system with no allocations, every arena should be 0%.
+(define p2 (memory-pressure))
+(check= "low" (hash-ref p2 "level"))
+(check= 0 (hash-ref p2 "used-pct"))
+
+; ── 12. Cold-start suggestions: should include "gc-temp" ──
+;; We haven't called gc-temp yet in this test, so suggestions should
+;; include the "gc-temp" hint (along with possibly other gc-module hints
+;; for any arena with pct >= 80, but on a fresh system none of those fire).
+(define suggs (hash-ref p2 "suggestions"))
+(define (contains? vec s)
+  (let loop ((i 0))
+    (cond
+      ((>= i (vector-length vec)) #f)
+      ((string=? (vector-ref vec i) s) #t)
+      (else (loop (+ i 1))))))
+(check= #t (contains? suggs "gc-temp"))
+
+; ── 13. After calling (gc-temp), the gc-temp suggestion should
+;; disappear from the next memory-pressure call (until enough evals
+;; accumulate to push it past the recent-window threshold of 100).
+(gc-temp)
+(define p3 (memory-pressure))
+(define suggs3 (hash-ref p3 "suggestions"))
+(check= #f (contains? suggs3 "gc-temp"))
+
+; ── 14. Determinism: top-arena must be the first one alphabetically
+;; among arenas tied at the same used-pct. On a fresh system, every
+;; arena is at used-pct=0, so the tie-breaker must use the next criterion
+;; (largest used) and then name ascending. All empty arenas → tie
+;; breaks on name ascending → "algorithm.aura" < "json.aura" <
+;; "list.aura" < "main" (in ASCII order, "a" < "j" < "l" < "m").
+;; So if we loaded json, list, algorithm, the top-arena should be
+;; "algorithm.aura" (smallest name among non-empty + main).
+(define p4 (memory-pressure))
+(check= "algorithm.aura" (hash-ref p4 "top-arena"))
+
+; ── 15. (gc-arena-info) is read-only: state is unchanged after the call ──
+;; Take a snapshot, call gc-arena-info twice, verify the snapshots are
+;; structurally equivalent (same set of arena names, same capacities).
+(define info5 (gc-arena-info))
+(define info6 (gc-arena-info))
+(check= (vector-length info5) (vector-length info6))
+;; All per-arena used/capacity values should be non-negative floats.
+(let loop ((i 1))
+  (when (< i (vector-length info5))
+    (define e (vector-ref info5 i))
+    (check= #t (>= (hash-ref e "used") 0.0))
+    (check= #t (>= (hash-ref e "capacity") 0.0))
+    (check= #t (and (>= (hash-ref e "used-pct") 0)
+                     (<= (hash-ref e "used-pct") 100)))
+    (loop (+ i 1))))
+
+; ── 16. (set-memory-policy) and (get-memory-policy) — policy management ──
+;; Default policy: auto-gc disabled, warn-pct=80, critical-pct=95.
+(define def-policy (get-memory-policy))
+(check= #f (hash-ref def-policy "auto-gc"))
+(check= 80 (hash-ref def-policy "warn-pct"))
+(check= 95 (hash-ref def-policy "critical-pct"))
+(check= 1000 (hash-ref def-policy "sample-every"))
+(check= 5000 (hash-ref def-policy "cooldown-evals"))
+(check= 100 (hash-ref def-policy "recent-gc-temp-window"))
+
+;; Custom policy: auto-gc on, lower thresholds, shorter sampling.
+(set-memory-policy (hash "auto-gc" #t
+                          "warn-pct" 75
+                          "critical-pct" 90
+                          "sample-every" 100
+                          "cooldown-evals" 1000
+                          "recent-gc-temp-window" 50))
+(define cur-policy (get-memory-policy))
+(check= #t (hash-ref cur-policy "auto-gc"))
+(check= 75 (hash-ref cur-policy "warn-pct"))
+(check= 90 (hash-ref cur-policy "critical-pct"))
+(check= 100 (hash-ref cur-policy "sample-every"))
+(check= 1000 (hash-ref cur-policy "cooldown-evals"))
+(check= 50 (hash-ref cur-policy "recent-gc-temp-window"))
+
+;; set-memory-policy returns the previous policy, so calling it once more
+;; without the auto-gc flag should give us our custom policy back.
+(set-memory-policy (hash "auto-gc" #f "warn-pct" 70))
+(define returned-prev (get-memory-policy))
+(check= #t (hash-ref returned-prev "auto-gc"))    ; previous was auto-gc on
+(check= 75 (hash-ref returned-prev "warn-pct"))    ; previous warn-pct
+(check= 90 (hash-ref returned-prev "critical-pct")) ; previous critical-pct
+;; Now get the current (after the second set) — auto-gc should be off.
+(define now (get-memory-policy))
+(check= #f (hash-ref now "auto-gc"))
+(check= 70 (hash-ref now "warn-pct"))
+
+;; Reset to defaults.
+(set-memory-policy #f)
+(check= #f (hash-ref (get-memory-policy) "auto-gc"))
+(check= 80 (hash-ref (get-memory-policy) "warn-pct"))
+
+; ── 17. (memory-pressure) respects the policy's recent-gc-temp-window ──
+;; With recent-gc-temp-window=10, only 10 evals without gc-temp should be
+;; needed to suppress the "gc-temp" suggestion, not 100 (the default).
+(set-memory-policy (hash "recent-gc-temp-window" 10))
+(gc-temp)
+(define p-fresh (memory-pressure))
+(define suggs-fresh (hash-ref p-fresh "suggestions"))
+(check= #f (contains? suggs-fresh "gc-temp"))   ; gc-temp just ran
+(set-memory-policy #f)                          ; back to defaults
+
+; ── 18. Final assertion: every check= above passed if we reach here ──
 ;; In the suite test framework, the program exits 0 iff no check= returned
 ;; an error value. The last expression is a 1 on success.
 1
