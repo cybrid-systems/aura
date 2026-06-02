@@ -11884,7 +11884,8 @@ bool Evaluator::gc_module(const std::string& path) {
     arena_group_->reset_module(path);
 
     // Clear the module slot. Swap-with-last keeps indices stable for
-    // any other live modules; update module_cache_ accordingly.
+    // any other live modules; update module_cache_ and
+    // functor_instance_cache_ accordingly.
     auto last = modules_.size() - 1;
     if (mod_idx != last) {
         modules_[mod_idx] = modules_[last];
@@ -11894,11 +11895,23 @@ bool Evaluator::gc_module(const std::string& path) {
                 break;
             }
         }
+        for (auto& [key, idx] : functor_instance_cache_) {
+            if (idx == last) {
+                functor_instance_cache_[key] = mod_idx;
+                break;
+            }
+        }
     }
     modules_.pop_back();
     module_names_.pop_back();
     module_cache_.erase(cache_it);
     module_arena_ptrs_.erase(path);
+    // Also remove from functor instance cache if present (the
+    // swap-with-last above already fixed indices for survivors; the
+    // removed entry's key is the path itself for functor instances).
+    auto fic_it = functor_instance_cache_.find(path);
+    if (fic_it != functor_instance_cache_.end())
+        functor_instance_cache_.erase(fic_it);
 
     return true;
 }
@@ -13950,10 +13963,16 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                     }
                                 }
 
-                                // 缓存实例化结果
-                                auto* cached_env = arena_->create<Env>(mod_env);
+                                // 缓存实例化结果 — per-instance arena so the
+                                // Env and any closures it owns can be freed later
+                                // via gc_module(cache_key).
+                                auto& inst_arena = arena_group_->module_arena(cache_key);
+                                auto* cached_env = inst_arena.create<Env>(mod_env);
                                 auto mod_idx = modules_.size();
                                 modules_.push_back(cached_env);
+                                module_cache_[cache_key] = mod_idx;
+                                module_arena_ptrs_[cache_key] = &inst_arena;
+                                module_names_.push_back(cache_key);
                                 functor_instance_cache_[cache_key] = mod_idx;
                                 return types::make_module(mod_idx);
                             }
