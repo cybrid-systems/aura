@@ -1670,22 +1670,28 @@ int main() {
                 ++ts_failed; std::println(std::cerr, "TS FAIL: instantiate_forall batch failed");
             }
 
-            // instantiate_forall with fewer args than ∀ layers: remaining ∀ preserved
+            // Issue #76: instantiate_forall with fewer args than ∀ layers
+            // now fully instantiates with fresh vars for the residual layers
+            // (soundness: no free vars leak into monomorphic contexts).
             auto inst3 = treg.instantiate_forall(forall_ab2, {treg.int_type()});
-            auto* ft3 = treg.forall_of(inst3);
-            auto* fi3 = treg.func_of(ft3 ? ft3->body : TypeId{});
-            if (ft3 && fi3 && fi3->args[0] == treg.int_type()) {
-                ++ts_passed; std::println("TS OK: instantiate_forall w/ partial args preserves remaining ∀");
+            // Result should be Int → fresh_b (not a residual ∀b. Int → b)
+            auto* fi3 = treg.func_of(inst3);
+            if (fi3 && fi3->args.size() == 1 && fi3->args[0] == treg.int_type() &&
+                treg.is_var(fi3->ret) && fi3->ret != b_var) {
+                ++ts_passed; std::println("TS OK: instantiate_forall w/ partial args fully instantiates w/ fresh residual");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: instantiate_forall partial failed");
+                ++ts_failed; std::println(std::cerr, "TS FAIL: instantiate_forall partial failed (expected Int→fresh_b)");
             }
 
-            // instantiate_forall with empty args: preserves all ∀ layers
+            // Issue #76: instantiate_forall with empty args fully instantiates
+            // all layers with fresh vars (no residual ∀ wrappers).
             auto inst4 = treg.instantiate_forall(forall_ab2, {});
-            if (treg.forall_of(inst4) && treg.forall_of(treg.forall_of(inst4)->body)) {
-                ++ts_passed; std::println("TS OK: instantiate_forall w/ empty args preserves all ∀");
+            auto* fi4 = treg.func_of(inst4);
+            if (fi4 && treg.is_var(fi4->args[0]) && fi4->args[0] != a_var &&
+                treg.is_var(fi4->ret) && fi4->ret != b_var) {
+                ++ts_passed; std::println("TS OK: instantiate_forall w/ empty args fully instantiates w/ fresh vars");
             } else {
-                ++ts_failed; std::println(std::cerr, "TS FAIL: instantiate_forall empty args failed");
+                ++ts_failed; std::println(std::cerr, "TS FAIL: instantiate_forall empty args (expected fresh→fresh, no ∀)");
             }
         }
 

@@ -377,10 +377,16 @@ TypeId TypeRegistry::instantiate_forall(TypeId forall_id,
     TypeId result = forall_id;
     std::size_t arg_idx = 0;
     while (auto* ft = forall_of(result)) {
-        if (arg_idx >= args.size())
-            break; // 剩余 forall 保留
+        // Issue #76 fix: instead of breaking when args runs out,
+        // continue with a fresh type variable for the residual
+        // bound var. This keeps the returned type fully instantiated
+        // (no free vars), so any monomorphic consumer stays sound.
         std::unordered_map<std::uint32_t, TypeId> subst;
-        subst[ft->var.index] = args[arg_idx++];
+        if (arg_idx < args.size()) {
+            subst[ft->var.index] = args[arg_idx++];
+        } else {
+            subst[ft->var.index] = make_var("");  // fresh, unnamed
+        }
         result = substitute(ft->body, subst);
     }
     return result;
