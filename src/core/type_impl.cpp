@@ -16,6 +16,12 @@ TypeRegistry::TypeRegistry() {
 }
 
 TypeId TypeRegistry::register_type(TypeTag tag, std::string name) {
+    // Dedup: same tag + same name returns the existing TypeId.
+    for (std::uint32_t i = 0; i < entries_.size(); ++i) {
+        if (entries_[i].tag == tag && entries_[i].name == name) {
+            return TypeId{i, next_generation_};
+        }
+    }
     auto id = TypeId{
         .index = static_cast<std::uint32_t>(entries_.size()),
         .generation = next_generation_,
@@ -26,6 +32,22 @@ TypeId TypeRegistry::register_type(TypeTag tag, std::string name) {
 }
 
 TypeId TypeRegistry::register_func(std::vector<TypeId> args, TypeId ret) {
+    // Dedup: same (args, ret) returns the existing TypeId. The
+    // existing entry's name may differ from what we'd compute
+    // (e.g. user named it via register_func_named); we keep the
+    // first registration's name to preserve identity.
+    for (std::uint32_t i = 0; i < entries_.size(); ++i) {
+        if (entries_[i].tag != TypeTag::FUNC || !entries_[i].func) continue;
+        const auto& f = *entries_[i].func;
+        if (f.args.size() != args.size()) continue;
+        if (!(f.ret == ret) && !type_equals(f.ret, ret)) continue;
+        bool match = true;
+        for (std::size_t j = 0; j < args.size(); ++j) {
+            if (f.args[j] == args[j]) continue;
+            if (!type_equals(f.args[j], args[j])) { match = false; break; }
+        }
+        if (match) return TypeId{i, next_generation_};
+    }
     const auto id = TypeId{
         .index = static_cast<std::uint32_t>(entries_.size()),
         .generation = next_generation_,
@@ -43,6 +65,9 @@ TypeId TypeRegistry::register_func(std::vector<TypeId> args, TypeId ret) {
 }
 
 TypeId TypeRegistry::register_func_named(std::vector<TypeId> args, TypeId ret, std::string name) {
+    // Register via the standard path (which dedups), then OVERWRITE
+    // the name. If the same (args, ret) was already registered, we
+    // still update the name so the user's chosen name takes effect.
     auto id = register_func(std::move(args), ret);
     if (id.valid() && id.index < entries_.size()) {
         entries_[id.index].name = std::move(name);
@@ -51,6 +76,14 @@ TypeId TypeRegistry::register_func_named(std::vector<TypeId> args, TypeId ret, s
 }
 
 TypeId TypeRegistry::register_linear(TypeId inner) {
+    // Dedup: same inner returns the existing TypeId.
+    for (std::uint32_t i = 0; i < entries_.size(); ++i) {
+        if (entries_[i].tag != TypeTag::LINEAR || !entries_[i].linear) continue;
+        const auto& l = *entries_[i].linear;
+        if (l.inner == inner || type_equals(l.inner, inner)) {
+            return TypeId{i, next_generation_};
+        }
+    }
     auto id = TypeId{
         .index = static_cast<std::uint32_t>(entries_.size()),
         .generation = next_generation_,
@@ -64,6 +97,19 @@ TypeId TypeRegistry::register_linear(TypeId inner) {
 }
 
 TypeId TypeRegistry::register_module(ModuleType mt) {
+    // Dedup: same member list (in order) returns the existing TypeId.
+    for (std::uint32_t i = 0; i < entries_.size(); ++i) {
+        if (entries_[i].tag != TypeTag::MODULE || !entries_[i].module_type) continue;
+        const auto& m = *entries_[i].module_type;
+        if (m.members.size() != mt.members.size()) continue;
+        bool match = true;
+        for (std::size_t j = 0; j < m.members.size(); ++j) {
+            if (m.members[j].first != mt.members[j].first) { match = false; break; }
+            if (m.members[j].second == mt.members[j].second) continue;
+            if (!type_equals(m.members[j].second, mt.members[j].second)) { match = false; break; }
+        }
+        if (match) return TypeId{i, next_generation_};
+    }
     auto id = TypeId{
         .index = static_cast<std::uint32_t>(entries_.size()),
         .generation = next_generation_,
@@ -81,6 +127,26 @@ TypeId TypeRegistry::register_module(ModuleType mt) {
 }
 
 TypeId TypeRegistry::register_variant(VariantType vt) {
+    // Dedup: same constructor list (in order) returns the existing TypeId.
+    for (std::uint32_t i = 0; i < entries_.size(); ++i) {
+        if (entries_[i].tag != TypeTag::VARIANT || !entries_[i].variant) continue;
+        const auto& v = *entries_[i].variant;
+        if (v.variants.size() != vt.variants.size()) continue;
+        bool match = true;
+        for (std::size_t j = 0; j < v.variants.size(); ++j) {
+            if (v.variants[j].first != vt.variants[j].first) { match = false; break; }
+            if (v.variants[j].second.size() != vt.variants[j].second.size()) { match = false; break; }
+            for (std::size_t k = 0; k < v.variants[j].second.size(); ++k) {
+                if (v.variants[j].second[k] == vt.variants[j].second[k]) continue;
+                if (!type_equals(v.variants[j].second[k], vt.variants[j].second[k])) {
+                    match = false;
+                    break;
+                }
+            }
+            if (!match) break;
+        }
+        if (match) return TypeId{i, next_generation_};
+    }
     auto id = TypeId{
         .index = static_cast<std::uint32_t>(entries_.size()),
         .generation = next_generation_,
@@ -101,6 +167,19 @@ TypeId TypeRegistry::register_variant(VariantType vt) {
 }
 
 TypeId TypeRegistry::register_record(RecordType rt) {
+    // Dedup: same field list (in order) returns the existing TypeId.
+    for (std::uint32_t i = 0; i < entries_.size(); ++i) {
+        if (entries_[i].tag != TypeTag::RECORD || !entries_[i].record) continue;
+        const auto& r = *entries_[i].record;
+        if (r.fields.size() != rt.fields.size()) continue;
+        bool match = true;
+        for (std::size_t j = 0; j < r.fields.size(); ++j) {
+            if (r.fields[j].first != rt.fields[j].first) { match = false; break; }
+            if (r.fields[j].second == rt.fields[j].second) continue;
+            if (!type_equals(r.fields[j].second, rt.fields[j].second)) { match = false; break; }
+        }
+        if (match) return TypeId{i, next_generation_};
+    }
     auto id = TypeId{
         .index = static_cast<std::uint32_t>(entries_.size()),
         .generation = next_generation_,
@@ -136,6 +215,15 @@ const ModuleType* TypeRegistry::module_of(TypeId id) const {
 }
 
 TypeId TypeRegistry::register_effect(std::string name, TypeId arg) {
+    // Dedup: same name + same arg returns the existing TypeId.
+    for (std::uint32_t i = 0; i < entries_.size(); ++i) {
+        if (entries_[i].tag != TypeTag::EFFECT || !entries_[i].effect) continue;
+        const auto& e = *entries_[i].effect;
+        if (e.name != name) continue;
+        if (e.arg == arg || type_equals(e.arg, arg)) {
+            return TypeId{i, next_generation_};
+        }
+    }
     auto id = TypeId{
         .index = static_cast<std::uint32_t>(entries_.size()),
         .generation = next_generation_,
@@ -149,6 +237,24 @@ TypeId TypeRegistry::register_effect(std::string name, TypeId arg) {
 }
 
 TypeId TypeRegistry::register_capability(std::vector<std::string> effects, bool unrestricted) {
+    // Dedup: same effect set (order-independent) + same unrestricted
+    // returns the existing TypeId.
+    for (std::uint32_t i = 0; i < entries_.size(); ++i) {
+        if (entries_[i].tag != TypeTag::CAPABILITY || !entries_[i].capability) continue;
+        const auto& c = *entries_[i].capability;
+        if (c.is_unrestricted != unrestricted) continue;
+        if (c.effects.size() != effects.size()) continue;
+        // Set equality (order-independent).
+        bool all_found = true;
+        for (auto& e : effects) {
+            bool found = false;
+            for (auto& e2 : c.effects) {
+                if (e == e2) { found = true; break; }
+            }
+            if (!found) { all_found = false; break; }
+        }
+        if (all_found) return TypeId{i, next_generation_};
+    }
     auto id = TypeId{
         .index = static_cast<std::uint32_t>(entries_.size()),
         .generation = next_generation_,
@@ -183,6 +289,18 @@ const EffectType* TypeRegistry::effect_of(TypeId id) const {
 }
 
 TypeId TypeRegistry::register_forall(TypeId var, TypeId body) {
+    // Dedup: same var index + same body returns the existing TypeId.
+    // (Caveat: bound var is by INDEX. Two calls with structurally
+    // equal bodies but different vars collapse — correct per
+    // structural-identity semantics.)
+    for (std::uint32_t i = 0; i < entries_.size(); ++i) {
+        if (entries_[i].tag != TypeTag::FORALL || !entries_[i].forall) continue;
+        const auto& f = *entries_[i].forall;
+        if (f.var.index != var.index) continue;
+        if (f.body == body || type_equals(f.body, body)) {
+            return TypeId{i, next_generation_};
+        }
+    }
     auto id = TypeId{
         .index = static_cast<std::uint32_t>(entries_.size()),
         .generation = next_generation_,
@@ -667,6 +785,205 @@ std::uint32_t TypeRegistry::compact() {
     register_type(TypeTag::HASH, "Hash");
     std::uint32_t reclaimed = before - static_cast<std::uint32_t>(entries_.size());
     return reclaimed;
+}
+
+// Issue #70 follow-up: TypeId interning. Two helpers that compare
+// TypeIds by structural content rather than by raw id. Used by the
+// register_* methods to dedup identical types.
+
+// Structural hash. FNV-1a, combining the tag with the relevant
+// components. Order matters for records/variants/modules (use the
+// insertion order — which is the canonical order). Sets (capability
+// effects) sort first for hash invariance.
+std::uint64_t TypeRegistry::type_hash(TypeId a) const {
+    auto tag = tag_of(a);
+    std::uint64_t h = 0xcbf29ce484222325ull;
+    auto mix = [&](std::uint64_t v) { h = (h ^ v) * 0x100000001b3ull; };
+    mix(static_cast<std::uint64_t>(tag));
+    switch (tag) {
+        case TypeTag::TYPE_VAR:  mix(a.index); break;
+        case TypeTag::FUNC: {
+            auto* f = func_of(a);
+            if (f) {
+                mix(f->args.size());
+                for (auto arg : f->args) mix(type_hash(arg));
+                mix(type_hash(f->ret));
+            }
+            break;
+        }
+        case TypeTag::LINEAR: {
+            auto* l = linear_of(a);
+            if (l) mix(type_hash(l->inner));
+            break;
+        }
+        case TypeTag::MODULE: {
+            auto* m = module_of(a);
+            if (m) {
+                mix(m->members.size());
+                for (auto& [n, t] : m->members) {
+                    mix(std::hash<std::string>{}(n));
+                    mix(type_hash(t));
+                }
+            }
+            break;
+        }
+        case TypeTag::VARIANT: {
+            auto* v = variant_of(a);
+            if (v) {
+                mix(v->variants.size());
+                for (auto& [n, args] : v->variants) {
+                    mix(std::hash<std::string>{}(n));
+                    mix(args.size());
+                    for (auto a : args) mix(type_hash(a));
+                }
+            }
+            break;
+        }
+        case TypeTag::RECORD: {
+            auto* r = record_of(a);
+            if (r) {
+                mix(r->fields.size());
+                for (auto& [n, t] : r->fields) {
+                    mix(std::hash<std::string>{}(n));
+                    mix(type_hash(t));
+                }
+            }
+            break;
+        }
+        case TypeTag::EFFECT: {
+            auto* e = effect_of(a);
+            if (e) {
+                mix(std::hash<std::string>{}(e->name));
+                mix(type_hash(e->arg));
+            }
+            break;
+        }
+        case TypeTag::CAPABILITY: {
+            auto* c = capability_of(a);
+            if (c) {
+                // Sort effects for order-independent hash.
+                std::vector<std::string> sorted(c->effects);
+                std::sort(sorted.begin(), sorted.end());
+                mix(c->is_unrestricted);
+                mix(sorted.size());
+                for (auto& e : sorted) mix(std::hash<std::string>{}(e));
+            }
+            break;
+        }
+        case TypeTag::FORALL: {
+            auto* f = forall_of(a);
+            if (f) {
+                mix(f->var.index);
+                mix(type_hash(f->body));
+            }
+            break;
+        }
+        default: break;  // leaves: tag alone is enough
+    }
+    return h;
+}
+
+// Structural equality. Same-tag rules: args/ret/inner/members/variants/
+// fields compared recursively. For capability, the effect SETS must
+// match (order-independent). For different tags, never equal.
+bool TypeRegistry::type_equals(TypeId a, TypeId b) const {
+    if (a == b) return true;
+    auto tag_a = tag_of(a);
+    auto tag_b = tag_of(b);
+    if (tag_a != tag_b) return false;
+    switch (tag_a) {
+        case TypeTag::TYPE_VAR:  return a.index == b.index;
+        case TypeTag::FUNC: {
+            auto* fa = func_of(a);
+            auto* fb = func_of(b);
+            if (!fa || !fb) return false;
+            if (fa->args.size() != fb->args.size()) return false;
+            for (std::size_t i = 0; i < fa->args.size(); ++i) {
+                if (fa->args[i] == fb->args[i]) continue;
+                if (!type_equals(fa->args[i], fb->args[i])) return false;
+            }
+            if (fa->ret == fb->ret) return true;
+            return type_equals(fa->ret, fb->ret);
+        }
+        case TypeTag::LINEAR: {
+            auto* la = linear_of(a);
+            auto* lb = linear_of(b);
+            if (!la || !lb) return false;
+            if (la->inner == lb->inner) return true;
+            return type_equals(la->inner, lb->inner);
+        }
+        case TypeTag::MODULE: {
+            auto* ma = module_of(a);
+            auto* mb = module_of(b);
+            if (!ma || !mb) return false;
+            if (ma->members.size() != mb->members.size()) return false;
+            for (std::size_t i = 0; i < ma->members.size(); ++i) {
+                if (ma->members[i].first != mb->members[i].first) return false;
+                if (ma->members[i].second == mb->members[i].second) continue;
+                if (!type_equals(ma->members[i].second, mb->members[i].second)) return false;
+            }
+            return true;
+        }
+        case TypeTag::VARIANT: {
+            auto* va = variant_of(a);
+            auto* vb = variant_of(b);
+            if (!va || !vb) return false;
+            if (va->variants.size() != vb->variants.size()) return false;
+            for (std::size_t i = 0; i < va->variants.size(); ++i) {
+                if (va->variants[i].first != vb->variants[i].first) return false;
+                if (va->variants[i].second.size() != vb->variants[i].second.size()) return false;
+                for (std::size_t j = 0; j < va->variants[i].second.size(); ++j) {
+                    if (va->variants[i].second[j] == vb->variants[i].second[j]) continue;
+                    if (!type_equals(va->variants[i].second[j], vb->variants[i].second[j])) return false;
+                }
+            }
+            return true;
+        }
+        case TypeTag::RECORD: {
+            auto* ra = record_of(a);
+            auto* rb = record_of(b);
+            if (!ra || !rb) return false;
+            if (ra->fields.size() != rb->fields.size()) return false;
+            for (std::size_t i = 0; i < ra->fields.size(); ++i) {
+                if (ra->fields[i].first != rb->fields[i].first) return false;
+                if (ra->fields[i].second == rb->fields[i].second) continue;
+                if (!type_equals(ra->fields[i].second, rb->fields[i].second)) return false;
+            }
+            return true;
+        }
+        case TypeTag::EFFECT: {
+            auto* ea = effect_of(a);
+            auto* eb = effect_of(b);
+            if (!ea || !eb) return false;
+            return ea->name == eb->name && type_equals(ea->arg, eb->arg);
+        }
+        case TypeTag::CAPABILITY: {
+            auto* ca = capability_of(a);
+            auto* cb = capability_of(b);
+            if (!ca || !cb) return false;
+            if (ca->is_unrestricted != cb->is_unrestricted) return false;
+            if (ca->effects.size() != cb->effects.size()) return false;
+            // Order-independent set comparison.
+            for (auto& e : ca->effects) {
+                bool found = false;
+                for (auto& e2 : cb->effects) {
+                    if (e == e2) { found = true; break; }
+                }
+                if (!found) return false;
+            }
+            return true;
+        }
+        case TypeTag::FORALL: {
+            auto* fa = forall_of(a);
+            auto* fb = forall_of(b);
+            if (!fa || !fb) return false;
+            if (fa->var.index != fb->var.index) return false;
+            if (fa->body == fb->body) return true;
+            return type_equals(fa->body, fb->body);
+        }
+        default:
+            return false;  // leaves: handled by a == b above (only same tag)
+    }
 }
 
 } // namespace aura::core
