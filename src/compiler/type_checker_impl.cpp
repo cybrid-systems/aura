@@ -477,16 +477,28 @@ InferenceEngine::InferenceEngine(TypeRegistry& reg, DiagnosticCollector& diag)
     , cs_(reg)
     , env_(reg) {
     init_primitive_env();
-    // 加载 register_func_named 注册的自定义类型签名
-    // (来自 declare-type / register-module-type)
-    for (std::size_t i = 0; i < reg_.size(); ++i) {
-        auto tid = TypeId{static_cast<std::uint32_t>(i), 1};
-        auto name = reg_.name_of(tid);
-        if (name.starts_with("__decl_")) {
-            auto func_name = std::string(name.substr(7)); // 去掉 "__decl_" 前缀
-            if (auto* ft = reg_.func_of(tid)) {
-                env_.bind(func_name, tid);
-            }
+    // Bind declared type sigs (from inject_type_sigs) to the env.
+    // We use the explicit name → TypeId map (declared_sigs_) set by
+    // TypeChecker::infer_flat, instead of scanning the registry for
+    // __decl_ prefix. The old scan had a latent bug exposed by
+    // TypeId interning (Issue #70 follow-up #1): when multiple names
+    // shared the same TypeId via dedup, the last writer won the name
+    // field, so only the last name was bound to the env. (See the
+    // 312-5 / test_aura_type_multi_func regression.)
+    // The declared_sigs_ map preserves every name → TypeId binding
+    // regardless of TypeId sharing.
+    // (The __decl_ scan is intentionally removed; the registry
+    // names are now purely for formatting / debugging.)
+}
+
+void InferenceEngine::bind_declared_sigs() {
+    // Bind each declared name to its TypeId in the env. Called by
+    // TypeChecker::infer_flat after constructing the engine, so
+    // the explicit name → TypeId map (set post-construction) takes
+    // effect. (See ctor comment for why we don't scan the registry.)
+    for (auto& [name, tid] : declared_sigs_) {
+        if (tid.valid() && !name.empty()) {
+            env_.bind(name, tid);
         }
     }
 }
@@ -2327,8 +2339,14 @@ void TypeChecker::inject_type_sigs(
         std::istringstream iss(sig.substr(0, pipe));
         std::string tok;
         while (iss >> tok) param_types.push_back(lookup(tok));
-        types.register_func_named(std::move(param_types), lookup(sig.substr(pipe + 1)),
-                                  "__decl_" + name);
+        auto tid = types.register_func_named(std::move(param_types),
+                                              lookup(sig.substr(pipe + 1)),
+                                              "__decl_" + name);
+        // Record the name → TypeId mapping so InferenceEngine can
+        // bind each declared name to the env, even if multiple names
+        // share the same TypeId post-interning. (See #70 follow-up
+        // interning + #77 regression: 312-5 / test_aura_type_multi_func.)
+        type_sigs_[name] = tid;
         auto mod_it = module_src.find(name);
         if (mod_it != module_src.end() && !mod_it->second.empty()) {
             type_module_src_[name] = mod_it->second;
@@ -2349,6 +2367,8 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
                                DiagnosticCollector& diag) {
     InferenceEngine engine(types, diag);
     engine.declared_modules_ = type_module_src_;
+    engine.declared_sigs_ = type_sigs_;
+    engine.bind_declared_sigs();
     return engine.infer_flat(flat, pool, node);
 }
 
