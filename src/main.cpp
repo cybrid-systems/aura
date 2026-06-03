@@ -1031,10 +1031,40 @@ int main(int argc, char* argv[]) {
         aura::core::TypeRegistry tr;
         flat.resolve_type_ids(tr, pool);
         aura::compiler::QueryEngine engine(flat, pool);
-        auto results = engine.query(argv[2]);
-        std::println("query: {} matches", results.size());
-        for (auto id : results)
-            std::println("  node[{}]: tag={}", id, static_cast<int>(flat.get(id).tag));
+        // Issue #62 Iter 4: parse the query first, check if it's
+        // a global observability kind, and route to
+        // execute_global() if so. Otherwise fall through to the
+        // per-node execute() path.
+        auto qexpr = engine.parse(argv[2]);
+        if (qexpr.kind == aura::compiler::QueryExpr::Kind::DeoptCount ||
+            qexpr.kind == aura::compiler::QueryExpr::Kind::ArenaUsage ||
+            qexpr.kind == aura::compiler::QueryExpr::Kind::SpecializationCount) {
+            // Live metrics from the singleton CompilerService.
+            // The provider is non-owning; safe because the CLI exits
+            // immediately after.
+            struct LiveProvider : aura::compiler::QueryEngine::MetricsProvider {
+                aura::compiler::CompilerService* cs;
+                std::uint64_t deopt_count() const {
+                    return cs->metrics().deopt_count.load(std::memory_order_relaxed);
+                }
+                std::uint64_t arena_bytes_used() const {
+                    return cs->metrics().arena_bytes_used.load(std::memory_order_relaxed);
+                }
+                std::uint64_t jit_compilations() const {
+                    return cs->metrics().jit_compilations.load(std::memory_order_relaxed);
+                }
+            };
+            aura::compiler::CompilerService cs;
+            LiveProvider lp = LiveProvider{{}, &cs};
+            engine.set_metrics_provider(&lp);
+            std::uint64_t v = engine.execute_global(qexpr);
+            std::println("{}: {}", argv[2], v);
+        } else {
+            auto results = engine.execute(qexpr);
+            std::println("query: {} matches", results.size());
+            for (auto id : results)
+                std::println("  node[{}]: tag={}", id, static_cast<int>(flat.get(id).tag));
+        }
         return 0;
     }
 
