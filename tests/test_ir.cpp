@@ -1057,6 +1057,46 @@ int main() {
                 }
             }
         }
+        // Issue #59 Iter 4: std::atomic<ScalarFn> in jit_cache_.
+        // Verify atomic round-trip and concurrent reader safety.
+        {
+            using ScalarFn = long int (*)(long int*, unsigned int);
+            using AtomicFnPtr = std::atomic<ScalarFn>;
+            AtomicFnPtr slot{nullptr};
+            if (slot.load(std::memory_order_acquire) == nullptr) {
+                ++tc_passed; std::println("TC59 OK: atomic fn_ptr default-constructs to nullptr");
+            } else {
+                ++tc_failed; std::println(std::cerr, "TC59 FAIL: default not nullptr");
+            }
+            auto sentinel = reinterpret_cast<long int (*)(long int*, unsigned int)>(0x1234);
+            slot.store(sentinel, std::memory_order_release);
+            if (slot.load(std::memory_order_acquire) == sentinel) {
+                ++tc_passed; std::println("TC59 OK: atomic fn_ptr store+load round-trips");
+            } else {
+                ++tc_failed; std::println(std::cerr, "TC59 FAIL: store+load mismatch");
+            }
+            slot.store(sentinel, std::memory_order_release);
+            std::atomic<int> errors{0};
+            constexpr int N = 8;
+            std::vector<std::thread> threads;
+            for (int i = 0; i < N; ++i) {
+                threads.emplace_back([&]() {
+                    for (int j = 0; j < 1000; ++j) {
+                        auto p = slot.load(std::memory_order_acquire);
+                        if (p != nullptr && p != sentinel) {
+                            errors.fetch_add(1, std::memory_order_relaxed);
+                        }
+                    }
+                });
+            }
+            for (auto& t : threads) t.join();
+            if (errors.load() == 0) {
+                ++tc_passed; std::println("TC59 OK: {} concurrent readers see only valid values", N);
+            } else {
+                ++tc_failed; std::println(std::cerr,
+                    "TC59 FAIL: {} concurrent reads observed garbage", errors.load());
+            }
+        }
 
         std::println("TypeChecker test: {}/{}/{} passed/failed/total",
                      tc_passed, tc_failed, tc_passed + tc_failed);
