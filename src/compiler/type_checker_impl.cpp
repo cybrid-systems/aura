@@ -520,9 +520,21 @@ void InferenceEngine::bind_declared_sigs() {
 bool InferenceEngine::is_coercible(TypeId from, TypeId to) {
     if (from == to)
         return true;
-    // Dynamic coerce to/from anything (gradual core)
+    // Dynamic coerce to/from anything (gradual core, always allowed)
     if (from == reg_.dynamic_type() || to == reg_.dynamic_type())
         return true;
+    // Issue #79: In strict mode, cross-type coercions are TypeErrors,
+    // not silent "Notes" that pass through has_errors() == false. We
+    // only allow numeric narrowing (Float → Int) because that's a real
+    // number-narrows-to-integer operation, not a stringification.
+    if (strict_) {
+        auto from_tag = reg_.tag_of(from);
+        auto to_tag = reg_.tag_of(to);
+        // Float → Int is the only cross-type coercion allowed in strict mode
+        if (from_tag == TypeTag::FLOAT && to_tag == TypeTag::INT)
+            return true;
+        return false;
+    }
     auto from_tag = reg_.tag_of(from);
     auto to_tag = reg_.tag_of(to);
     // Int ↔ String
@@ -1099,7 +1111,8 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id) {
     auto result = synthesize_flat(flat, pool, id, flat.get(id));
     if (!cs_.solve()) {
         diag_.report(Diagnostic(ErrorKind::TypeError, "type constraint solving failed", cur_loc_)
-                         .with_blame(BlameInfo{BlameParty::Implicit, "", "compile"}));
+                         .with_blame(BlameInfo{BlameParty::Implicit, "", "compile"})
+                         .with_suggestion("check for type mismatches in function arguments, return values, or recursive bindings"));
     }
     auto normalized = cs_.normalize(result);
     // Update the root's cached type with the final resolved type after solving.
@@ -1210,7 +1223,13 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
                             auto st = ownership_env_.get(var_name);
                             auto msg = "cannot move " + var_name + " — " +
                                        ownership_env_.state_name(st);
-                            diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_));
+                            // Issue #79: linear-resource violations are
+                            // System-level (not Caller) — the resource
+                            // state is invariant of the call site.
+                            diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_)
+                                             .with_blame(BlameInfo{BlameParty::System, "", "compile"})
+                                             .with_suggestion("rebind " + var_name +
+                                                              " to a fresh value, or end the active borrow first"));
                         }
                         ownership_env_.mark(var_name, OwnershipState::Moved);
                     }
@@ -1234,7 +1253,10 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
                             auto st = ownership_env_.get(var_name);
                             auto msg = "cannot borrow " + var_name + " — " +
                                        ownership_env_.state_name(st);
-                            diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_));
+                            diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_)
+                                             .with_blame(BlameInfo{BlameParty::System, "", "compile"})
+                                             .with_suggestion("end the active mutable borrow of " + var_name +
+                                                              " before taking an immutable borrow"));
                         }
                         ownership_env_.mark(var_name, OwnershipState::Borrowed);
                     }
@@ -1258,7 +1280,10 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
                             auto st = ownership_env_.get(var_name);
                             auto msg = "cannot mutably borrow " + var_name + " — " +
                                        ownership_env_.state_name(st);
-                            diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_));
+                            diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_)
+                                             .with_blame(BlameInfo{BlameParty::System, "", "compile"})
+                                             .with_suggestion("end any active borrows of " + var_name +
+                                                              " before taking a mutable borrow"));
                         }
                         ownership_env_.mark(var_name, OwnershipState::MutBorrowed);
                     }
@@ -1281,7 +1306,10 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
                             auto st = ownership_env_.get(var_name);
                             auto msg = "cannot drop " + var_name + " — " +
                                        ownership_env_.state_name(st);
-                            diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_));
+                            diag_.report(Diagnostic(ErrorKind::TypeError, msg, cur_loc_)
+                                             .with_blame(BlameInfo{BlameParty::System, "", "compile"})
+                                             .with_suggestion("end active borrows of " + var_name +
+                                                              " before dropping"));
                         }
                         ownership_env_.mark(var_name, OwnershipState::Moved);
                     }
@@ -1561,8 +1589,23 @@ TypeId InferenceEngine::synthesize_flat_var(StringPool& pool, NodeView v) {
                     return mtype;
             }
             // Member not found in module type — return Dyn and report warning
+            // Issue #79: BlameParty::Caller (the wrong member name came from
+            // the call site) + closest-match suggestion so AI agents can
+            // auto-fix the typo.
+            std::vector<std::string> candidates;
+            for (auto& [mname, mtype] : mt->members)
+                candidates.push_back(mname);
+            auto best = closest_match(member_name, candidates);
+            std::string sugg = best.empty()
+                ? std::string("check the member list of module " + mod_name)
+                : ("did you mean '" + mod_name + ":" + best + "'?");
             diag_.report(Diagnostic(ErrorKind::TypeError,
-                "no member '" + member_name + "' in module " + mod_name, cur_loc_));
+                "no member '" + member_name + "' in module " + mod_name, cur_loc_)
+                .with_blame(BlameInfo{BlameParty::Caller, "", "compile"})
+                .with_suggestion(std::move(sugg)));
+            // Issue #79: would tag the node, but synthesize_flat_var doesn't
+            // take a flat reference. The diagnostic carries the source
+            // location, which AuraQuery can match against node positions.
             return reg_.dynamic_type();
         }
         // Module not found — fall through to normal variable lookup
@@ -1707,12 +1750,42 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
         for (std::size_t i = 0; i < n_expected; i++) {
             auto arg_id = v.child(i + 1);
             TypeId arg_type = synthesize_flat(flat, pool, arg_id, flat.get(arg_id));
-            if (!cs_.consistent_unify(arg_type, ft.args[i])) {
+            // Issue #79: in strict mode, treat two ground types as a mismatch
+            // unless they are equal (consistent_unify's gradual-core fallback
+            // silently says Int ~ String is OK, which violates strict mode).
+            // In non-strict mode, keep the original gradual behavior.
+            bool arg_exp_unify = cs_.consistent_unify(arg_type, ft.args[i]);
+            if (strict_ && arg_exp_unify) {
+                // Verify the unification was for real (same type or Dynamic),
+                // not just the "ground types are consistent" fallback.
+                auto a_norm = cs_.find(arg_type);
+                auto p_norm = cs_.find(ft.args[i]);
+                bool dynamic_ok = (a_norm == reg_.dynamic_type() ||
+                                    p_norm == reg_.dynamic_type());
+                // Issue #79: in strict mode, the only ground-type compatibility
+                // is identity. TypeRegistry::type_equals is private; compare
+                // by structural format (interned types are canonical, so
+                // string equality means the types are the same).
+                if (!dynamic_ok &&
+                    reg_.format_type(a_norm) != reg_.format_type(p_norm)) {
+                    arg_exp_unify = false;
+                }
+            }
+            if (!arg_exp_unify) {
+                // Issue #79: tag the offending argument node with the error
+                // kind so AuraQuery `(has-error? N)` can find it directly.
+                flat.set_node_error(arg_id, static_cast<std::uint8_t>(ErrorKind::TypeError));
                 if (is_coercible(arg_type, ft.args[i])) {
                     auto msg = std::string("argument ") + std::to_string(i) + ": coercion from " +
                                std::string(reg_.format_type(arg_type)) + " to " +
                                std::string(reg_.format_type(ft.args[i]));
-                    diag_.report(Diagnostic(ErrorKind::Note, std::move(msg), saved_loc));
+                    // Issue #79: in non-strict mode this is a Note (gradual);
+                    // in strict mode, is_coercible() only allows Float→Int,
+                    // which is a real numeric narrowing and gets a CoercionNode.
+                    diag_.report(Diagnostic(ErrorKind::Note, std::move(msg), saved_loc)
+                                     .with_suggestion("consider adding a type annotation (: arg"
+                                                      " " + std::string(reg_.format_type(ft.args[i])) +
+                                                      ") to make this static"));
                     // ── Gradual Typing: insert CoercionNode into AST ──
                     // Wraps the argument expression with a CoercionNode that
                     // signals the lowering phase to emit a CastOp at runtime.
@@ -1755,6 +1828,8 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
                        "': expected " + std::to_string(ft.args.size()) + " arguments, got " +
                        std::to_string(num_args);
             diag_.report(Diagnostic(ErrorKind::ArityMismatch, std::move(msg), cur_loc_));
+            // Issue #79: tag the call node so AuraQuery can find it.
+            flat.set_node_error(v.id, static_cast<std::uint8_t>(ErrorKind::ArityMismatch));
         }
 
 
@@ -2356,7 +2431,8 @@ void InferenceEngine::check_flat_lambda(FlatAST& flat, StringPool& pool, NodeVie
                                 "expected a function type but got " +
                                     std::string(reg_.format_type(expected)),
                                 cur_loc_)
-                         .with_blame(BlameInfo{BlameParty::Annotation, "", "compile"}));
+                         .with_blame(BlameInfo{BlameParty::Annotation, "", "compile"})
+                         .with_suggestion("the context annotation does not match a function; check the type annotation or the binding site"));
         return;
     }
     if (f_ty->args.size() != v.params.size()) {
@@ -2429,6 +2505,7 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
     InferenceEngine engine(types, diag);
     engine.declared_modules_ = type_module_src_;
     engine.declared_sigs_ = type_sigs_;
+    engine.set_strict(strict_);  // Issue #79: plumb strict mode
     engine.bind_declared_sigs();
     auto result = engine.infer_flat(flat, pool, node);
     // Accumulate stats for the TypeChecker (Issue #72).

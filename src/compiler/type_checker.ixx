@@ -184,7 +184,17 @@ export class InferenceEngine {
     OwnershipEnv ownership_env_;
     aura::diag::SourceLocation cur_loc_; // location of expression being checked
 
+    // Issue #79: strict type-check mode. In strict mode, cross-type
+    // coercions (Int ↔ String, Int ↔ Bool, Float ↔ String) are reported
+    // as TypeError instead of being silently coerced. Plumbed from
+    // TypeChecker::infer_flat.
+    bool strict_ = false;
+
     // ADT constructors are looked up via TypeRegistry::get_adt_constructors()
+public:
+    // Issue #79: set strict mode. Called by TypeChecker::infer_flat
+    // before delegating to the engine.
+    void set_strict(bool s) { strict_ = s; }
 public:
     // declared_modules: name → module_path, 用于跨模块错误定位
     std::unordered_map<std::string, std::string> declared_modules_;
@@ -293,6 +303,20 @@ export struct TypeChecker {
     IncrementalStats stats() const { return stats_; }
     void reset_stats() { stats_ = {}; }
 
+    // Issue #79: strict type-check mode.
+    //
+    // When strict == true, `is_coercible` rejects cross-type coercions
+    // (e.g. Int ↔ String) and the type-checker reports them as hard
+    // `TypeError` diagnostics rather than silent `Note`s that pass
+    // through `has_errors() == false`. Dynamic ↔ X (gradual core) is
+    // still allowed in both modes.
+    //
+    // Default is `false` for backward compatibility with existing
+    // callers (EDSL, tests). `CompilerService::typecheck()` opts in
+    // because that's what users mean by "typecheck".
+    void set_strict(bool s) { strict_ = s; }
+    bool is_strict() const { return strict_; }
+
     explicit TypeChecker(aura::core::TypeRegistry& reg)
         : types(reg) {}
 
@@ -309,6 +333,11 @@ private:
     // Issue #72: incremental typecheck stats (accumulated across
     // infer_flat calls for test visibility).
     IncrementalStats stats_{};
+
+    // Issue #79: strict type-check mode. When true, the InferenceEngine
+    // rejects cross-type coercions (Int ↔ String, Int ↔ Bool, etc.) and
+    // reports them as TypeError instead of silently coercing via Notes.
+    bool strict_ = false;
 };
 
 } // namespace aura::compiler

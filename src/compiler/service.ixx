@@ -1422,13 +1422,32 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
     // Run the TypeChecker on a input expression.
     // Returns a string with the inferred type or error messages.
     std::string typecheck(std::string_view input) {
+        auto r = typecheck_full(input);
+        return r.output;
+    }
+
+    // Issue #79: structured typecheck result. The `has_errors` flag is the
+    // source of truth for "did typecheck find anything wrong?", and the
+    // caller (e.g. main.cpp) should use this to set exit code rather than
+    // parsing the output string.
+    struct TypecheckResult {
+        std::string output;
+        bool has_errors = false;
+        std::vector<aura::diag::Diagnostic> diagnostics;
+    };
+
+    TypecheckResult typecheck_full(std::string_view input) {
+        TypecheckResult r;
         auto alloc = arena_.allocator();
         aura::ast::StringPool pool(alloc);
         aura::ast::FlatAST flat(alloc);
         auto pr = aura::parser::parse_to_flat(input, flat, pool);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
             auto diag = parse_error_diag(pr);
-            return std::string("parse error: ") + diag.format();
+            r.output = std::string("parse error: ") + diag.format() + "\n";
+            r.has_errors = true;
+            r.diagnostics.push_back(diag);
+            return r;
         }
         flat.root = pr.root;
 
@@ -1438,21 +1457,27 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         aura::compiler::TypeChecker tc(type_registry_);
         aura::diag::DiagnosticCollector diag;
 
+        // Issue #79: opt into strict mode. The `typecheck` command's whole
+        // purpose is to surface type errors; without strict mode, the
+        // gradual-coercion path reports cross-type mismatches as `Note`
+        // diagnostics that pass through `has_errors() == false` (Bug A).
+        tc.set_strict(true);
+
         auto result = tc.infer_flat(flat, pool, pr.root, diag);
 
-        std::string out;
+        std::string& out = r.output;
         out += "type: " + type_registry_.format_type(result) + "\n";
 
-        auto all_diags = diag.diagnostics();
-        if (all_diags.empty()) {
-            out += "no errors\n";
-        } else {
-            for (auto& d : all_diags) {
-                out += d.format() + "\n";
-            }
+        for (auto& d : diag.diagnostics()) {
+            r.diagnostics.push_back(d);
+            if (d.kind != aura::diag::ErrorKind::Note)
+                r.has_errors = true;
+            out += d.format() + "\n";
         }
+        if (r.diagnostics.empty())
+            out += "no errors\n";
 
-        return out;
+        return r;
     }
 
     // ---- Multi-module arena support ----------------------------------

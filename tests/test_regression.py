@@ -126,6 +126,20 @@ tests = [
      '(let ((n 1)) (match n (1 "one") (_ "other")))',
      "one", ""),
 
+    # ── Issue #79: strict typecheck + rich diagnostics ────────
+    # Strict mode catches type mismatches that the gradual path silently
+    # coerces. The runtime/eval path also catches typed-function arg
+    # mismatches (CastOp at the call site). This is the default-invocation
+    # path (not --typecheck, which is exercised separately by
+    # tests/test_ir.cpp).
+    ("tc-strict-runtime-typed-arg-mismatch",
+     '(begin (define (f x) (+ x 1)) (f "hello"))',
+     "1", "type mismatch"),
+    # Poly primitive `+` accepts Dyn args so even strict-static lets this
+    # through; runtime coerces via CastOp.
+    ("tc-strict-pass-int-eq-int",
+     '(+ 1 2)', "3", ""),
+
     # ── Phase 2: eval-current-output ──────────────────────
     ("eval-capture",
      '(begin (set-code "(display 42)") (eval-current-output))', "42", ""),
