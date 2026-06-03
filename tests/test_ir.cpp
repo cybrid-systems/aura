@@ -911,6 +911,63 @@ int main() {
             }
         }
 
+        // ── Issue #79: per-node error tracking + strict mode ────
+        // Test: FlatAST::set_node_error / node_error / clear_node_error
+        // round-trip. The AuraQuery `(has-error? N)` clause reads
+        // node_error(id); without this, the query is a no-op stub.
+        {
+            aura::ast::ASTArena arena79;
+            auto alloc = arena79.allocator();
+            aura::ast::FlatAST flat79(alloc);
+            auto a = flat79.add_literal(1);
+            auto b = flat79.add_literal(2);
+            // Default: no error
+            if (flat79.node_error(a) != 0) {
+                std::println(std::cerr, "TC79 FAIL: fresh node has nonzero error");
+                ++tc_failed;
+            } else {
+                // Mark a as TypeError (8 in the ErrorKind enum), b as ArityMismatch (7)
+                flat79.set_node_error(a, 8);
+                flat79.set_node_error(b, 7);
+                if (flat79.node_error(a) == 8 && flat79.node_error(b) == 7) {
+                    std::println("TC79 OK: per-node error tracking");
+                    ++tc_passed;
+                } else {
+                    std::println(std::cerr, "TC79 FAIL: error tracking round-trip");
+                    ++tc_failed;
+                }
+                // Clear restores
+                flat79.clear_node_error(a);
+                if (flat79.node_error(a) == 0) {
+                    std::println("TC79 OK: clear_node_error");
+                    ++tc_passed;
+                } else {
+                    std::println(std::cerr, "TC79 FAIL: clear_node_error");
+                    ++tc_failed;
+                }
+            }
+        }
+
+        // Test: TypeChecker strict mode is opt-in and defaults to off.
+        {
+            aura::compiler::TypeChecker tc79(treg);
+            if (tc79.is_strict() == false) {
+                std::println("TC79 OK: strict defaults to off");
+                ++tc_passed;
+            } else {
+                std::println(std::cerr, "TC79 FAIL: strict should default to off");
+                ++tc_failed;
+            }
+            tc79.set_strict(true);
+            if (tc79.is_strict() == true) {
+                std::println("TC79 OK: set_strict(true) -> on");
+                ++tc_passed;
+            } else {
+                std::println(std::cerr, "TC79 FAIL: set_strict");
+                ++tc_failed;
+            }
+        }
+
         std::println("TypeChecker test: {}/{}/{} passed/failed/total",
                      tc_passed, tc_failed, tc_passed + tc_failed);
         if (tc_failed > 0) return 1;

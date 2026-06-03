@@ -277,7 +277,11 @@ bool QueryEngine::match(NodeId id, const QueryExpr& q, int depth) {
             return sym_index_->count(v.sym_id) == static_cast<std::size_t>(q.int_value);
         }
         case QueryExpr::Kind::HasError:
-            return false; // Error tracking not yet implemented in FlatAST
+            // Issue #79: per-node error kind is now tracked in FlatAST's
+            // error_kind_ SoA column. Populated by the type-checker and
+            // runtime evaluator via flat.set_node_error(id, kind). The
+            // query returns true iff the node has any non-zero error kind.
+            return id < index_.ast.size() && index_.ast.node_error(id) != 0;
         default:
             return false;
     }

@@ -335,6 +335,10 @@ private:
         marker_.push_back(m);
         type_id_.push_back(0);
         dirty_.push_back(0);
+        // Issue #79: per-node error kind (0 = no error, non-zero = ErrorKind).
+        // Populated by the type-checker and runtime evaluator; queryable via
+        // the AuraQuery `(has-error? N)` clause.
+        error_kind_.push_back(0);
         // value cache initialized lazily (not in arena — module-level vector)
         if (id >= static_cast<NodeId>(value_cache_.size()))
             value_cache_.resize(id + 1, kNotCached);
@@ -367,6 +371,10 @@ private:
     std::pmr::vector<SyntaxMarker> marker_;
     std::pmr::vector<std::uint8_t> dirty_;
     std::pmr::vector<std::uint32_t> type_id_;
+    // Issue #79: per-node error kind, 0 = no error, non-zero = ErrorKind
+    // enum value. Populated by the type-checker and runtime evaluator;
+    // queryable via the AuraQuery `(has-error? N)` clause.
+    std::pmr::vector<std::uint8_t> error_kind_;
     // Module-level eval result cache (int64_t = EvalValue serialization).
     // Used by Evaluator::eval_flat for incremental evaluation (Issue #32b).
     // Indexed by NodeId. Zero = not cached. Stored at module level (not arena)
@@ -405,6 +413,7 @@ private:
         , line_(alloc)
         , col_(alloc)
         , type_id_(alloc)
+        , error_kind_(alloc)
         , node_gen_(alloc) {}
 
     // ── Builders ───────────────────────────────────────────────
@@ -1128,6 +1137,22 @@ private:
     void set_type(NodeId id, std::uint32_t tid) {
         if (id < type_id_.size())
             type_id_[id] = tid;
+    }
+
+    // ── Error kind access (Issue #79) ────────────────────────
+    // 0 = no error, non-zero = ErrorKind enum value. Lets the type-checker
+    // and runtime evaluator tag the offending node so AuraQuery
+    // `(has-error? N)` can find it without scanning all diagnostics.
+    std::uint8_t node_error(NodeId id) const {
+        return id < error_kind_.size() ? error_kind_[id] : 0;
+    }
+    void set_node_error(NodeId id, std::uint8_t kind) {
+        if (id < error_kind_.size())
+            error_kind_[id] = kind;
+    }
+    void clear_node_error(NodeId id) {
+        if (id < error_kind_.size())
+            error_kind_[id] = 0;
     }
 
     void set_int(NodeId id, std::int64_t val) {

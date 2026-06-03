@@ -1072,9 +1072,12 @@ int main(int argc, char* argv[]) {
         } else {
             std::getline(std::cin, input);
         }
-        auto result = cs.typecheck(input);
-        std::print("{}", result);
-        return result.find("diagnostics:") == std::string::npos ? 0 : 1;
+        // Issue #79: use the structured result so we can return a proper
+        // exit code. The old code parsed the output for "diagnostics:"
+        // which the formatter never produces (always returned 0).
+        auto result = cs.typecheck_full(input);
+        std::print("{}", result.output);
+        return result.has_errors ? 1 : 0;
     }
 
     // ── --auto-fix: run built-in optimization fixes ──────────────
