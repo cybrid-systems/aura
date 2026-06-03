@@ -946,6 +946,32 @@ public:
         // Re-register ADT constructors from define-types for match exhaustiveness
         register_adt_from_define_types(*flat_ptr, *pool_ptr, flat_ptr->root);
 
+        // Issue #73: run typecheck before lowering so the FlatAST's
+        // type_id column is populated. Without this, the IR-direct
+        // path (eval_ir) reads 0 from flat.type_id() and the IR's
+        // type_id field is never set — which means type-driven
+        // optimizations (TypeSpecializationWrap), the runtime type
+        // check (IRInterpreter), and --inspect ir all see no types.
+        // Compare to eval() (line ~661) which does this already.
+        {
+            aura::compiler::TypeCheckWrap tc_pass;
+            aura::diag::DiagnosticCollector diags;
+            tc_pass.check_before_lowering(*flat_ptr, *pool_ptr, flat_ptr->root,
+                                          type_registry_, diags);
+            bool has_type_error = false;
+            for (auto& d : diags.diagnostics()) {
+                if (d.kind == aura::diag::ErrorKind::TypeError) {
+                    std::println(std::cerr, "type warning (eval_ir): {}", d.format());
+                    has_type_error = true;
+                }
+            }
+            if (strict_mode_ && has_type_error) {
+                return std::unexpected(
+                    aura::diag::Diagnostic{aura::diag::ErrorKind::TypeError,
+                                           "type error (strict mode, eval_ir)"});
+            }
+        }
+
         // === Phase 1: Define separation (IR caching) ===
         auto def = try_extract_define(*flat_ptr, *pool_ptr, flat_ptr->root);
         if (def) {
