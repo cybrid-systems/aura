@@ -96,6 +96,12 @@ export struct QueryExpr {
         HasType,    // (has-type? Int) — node's type_id matches
         ReturnType, // (return-type Int) — call return type matches
         ArgType,    // (argument-type 0 Int) — call arg type matches
+        // Issue #62 Iter 4: global observability queries. Routed
+        // through a separate code path (not per-node match); see
+        // QueryEngine::execute_global().
+        DeoptCount,         // (:deopt-count)
+        ArenaUsage,         // (:arena-usage)
+        SpecializationCount, // (:specialization-count)
     };
 
     Kind kind = Kind::AllNodes;
@@ -112,6 +118,17 @@ export class SymRefIndex;
 
 export class QueryEngine {
 public:
+    // Issue #62 Iter 4: read-only metrics source. The QueryEngine
+    // doesn't own a CompilerService; this interface lets the
+    // --query CLI inject the live counters from outside. Callers
+    // implement this on the metrics struct (just return the
+    // atomic.load()). Non-virtual; stack-only.
+    struct MetricsProvider {
+        std::uint64_t deopt_count() const { return 0; }
+        std::uint64_t arena_bytes_used() const { return 0; }
+        std::uint64_t jit_compilations() const { return 0; }
+    };
+
     QueryEngine(aura::ast::FlatAST& ast, aura::ast::StringPool& pool)
         : index_{ast, pool} {}
 
@@ -120,6 +137,16 @@ public:
 
     // Execute a parsed query, returning matching NodeIds
     std::vector<aura::ast::NodeId> execute(const QueryExpr& q);
+
+    // Issue #62 Iter 4: global observability query. Returns the
+    // counter value for one of the 3 new kinds (DeoptCount,
+    // ArenaUsage, SpecializationCount), or
+    // std::numeric_limits<uint64_t>::max() for other kinds.
+    std::uint64_t execute_global(const QueryExpr& q) const;
+
+    // Issue #62 Iter 4: install an external metrics source. The
+    // provider is non-owning; lifetime must outlive this engine.
+    void set_metrics_provider(MetricsProvider* p) { metrics_provider = p; }
 
     // Convenience: parse + execute in one call
     std::vector<aura::ast::NodeId> query(std::string_view sexpr) { return execute(parse(sexpr)); }
@@ -135,6 +162,7 @@ private:
     ASTIndex index_;
     mutable SymRefIndex* sym_index_ = nullptr;
     mutable bool sym_index_built_ = false;
+    MetricsProvider* metrics_provider = nullptr;
 
     void ensure_sym_index() const;
 };

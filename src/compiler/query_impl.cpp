@@ -161,6 +161,13 @@ static QueryExpr parse_list(PS& ps) {
         q.int_value = std::stoll(std::string(ps.next()));
     } else if (op == "has-error?" || op == "has-error") {
         q.kind = QueryExpr::Kind::HasError;
+    } else if (op == "deopt-count" || op == ":deopt-count") {
+        // Issue #62 Iter 4: global observability queries.
+        q.kind = QueryExpr::Kind::DeoptCount;
+    } else if (op == "arena-usage" || op == ":arena-usage") {
+        q.kind = QueryExpr::Kind::ArenaUsage;
+    } else if (op == "specialization-count" || op == ":specialization-count") {
+        q.kind = QueryExpr::Kind::SpecializationCount;
     }
 
     if (!ps.end())
@@ -312,6 +319,36 @@ std::vector<NodeId> QueryEngine::execute(const QueryExpr& q) {
         if (match(i, q))
             r.push_back(i);
     return r;
+}
+
+// Issue #62 Iter 4: global observability queries. Returns the
+// counter value (uint64_t) for one of the 3 new kinds, or
+// 0xFFFFFFFFFFFFFFFF if the query kind isn't a global
+// observability kind.
+std::uint64_t QueryEngine::execute_global(const QueryExpr& q) const {
+    switch (q.kind) {
+        case QueryExpr::Kind::DeoptCount:
+            if (metrics_provider) return metrics_provider->deopt_count();
+            return 0;
+        case QueryExpr::Kind::ArenaUsage:
+            if (metrics_provider) return metrics_provider->arena_bytes_used();
+            return 0;
+        case QueryExpr::Kind::SpecializationCount:
+            if (metrics_provider)
+                return metrics_provider->jit_compilations();
+            return 0;
+        default:
+            return std::numeric_limits<std::uint64_t>::max();
+    }
+}
+
+// Issue #62 Iter 4: attach an external metrics source. The
+// QueryEngine doesn't own a CompilerService; callers (e.g. the
+// --query CLI in main.cpp) wire a metrics provider that can
+// return counter values. The provider is held as a non-owning
+// pointer; lifetime must outlive the QueryEngine.
+void QueryEngine::set_metrics_provider(MetricsProvider* p) {
+    metrics_provider = p;
 }
 
 } // namespace aura::compiler
