@@ -79,6 +79,12 @@ export struct IRInstruction {
     std::array<std::uint32_t, 4> operands = {};
     std::uint32_t source_ast_node_id = 0;
     std::uint32_t type_id = 0; // 0 = unknown/dynamic, from FlatAST type_id
+    // Issue #60 Iter 1: shape_id from the per-function shape_map
+    // (populated by FlatFnBuilder at IR-build time). 0 = unknown
+    // or Dynamic. The JIT consumes this for L1 fast paths
+    // (OpAdd etc.) and for L2 layout specialization
+    // (OpPairAlloc, OpVectorRef, etc.).
+    std::uint32_t shape_id = 0;
 };
 
 // ── Opcode metadata table ─────────────────────────────────────
