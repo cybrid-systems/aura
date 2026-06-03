@@ -11068,6 +11068,55 @@ Evaluator::Evaluator() {
         return types::make_string(sidx);
     });
 
+    // ── workspace-state — 汇总当前 workspace 的定义 + 近期 mutations ───
+    // Issue #63 Phase 2: a single primitive that gives the LLM
+    // (or the EDSL) a snapshot of the workspace. The output is a
+    // human-readable string: lines starting with "DEFINE: " list
+    // top-level definitions; lines starting with "MUTATION: " list
+    // the most recent timeline entries (capped at last 10). The
+    // first line is a summary header "WORKSPACE: <n> defines" so
+    // the LLM has a one-token extractable count.
+    primitives_.add("workspace-state", [this](const auto&) -> EvalValue {
+        if (!workspace_flat_ || !workspace_pool_) {
+            auto sidx = string_heap_.size();
+            string_heap_.push_back(
+                std::string("WORKSPACE-ERROR: no workspace AST loaded"));
+            return types::make_string(sidx);
+        }
+        auto& flat = *workspace_flat_;
+        auto& pool = *workspace_pool_;
+        std::string out;
+        // Top-level defines: walk the flat for Define nodes and
+        // collect their bound name.
+        std::size_t define_count = 0;
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+            if (v.tag == aura::ast::NodeTag::Define &&
+                v.sym_id != aura::ast::INVALID_SYM) {
+                out += "DEFINE: " + std::string(pool.resolve(v.sym_id)) + "\n";
+                ++define_count;
+            }
+        }
+        if (define_count == 0) out += "(no defines)\n";
+        // Recent mutations: last 10 timeline entries
+        out += "MUTATIONS (last 10):\n";
+        if (timeline_.empty()) {
+            out += "  (none)\n";
+        } else {
+            std::size_t start = timeline_.size() > 10
+                                    ? timeline_.size() - 10 : 0;
+            for (std::size_t i = start; i < timeline_.size(); ++i)
+                out += "  " + std::to_string(i) + ":" + timeline_[i] + "\n";
+        }
+        // Prepend a one-line summary header so the LLM has an
+        // easy parse target: "WORKSPACE: <n> defines".
+        out = "WORKSPACE: " + std::to_string(define_count) + " defines\n"
+              + out;
+        auto sidx = string_heap_.size();
+        string_heap_.push_back(std::move(out));
+        return types::make_string(sidx);
+    });
+
     // ── intend-analytics — 聚合 intend 历史数据 ────────────────
     primitives_.add("intend-analytics", [this](const auto& a) -> EvalValue {
         std::string filter_strategy;

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Aura EDSL Benchmark -- 多模型 × 多任务 × 多轮 × 迭代修正。
 
-支持：
+支持:
   - 多轮运行抵消 LLM 方差 (--rounds N)
-  - 原生 intend 迭代修正（默认）
+  - 原生 intend 迭代修正(默认)
   - Phase 自适应温度/tokens控制
   - Execution trace 注入算法任务
   - JSON 输出 (--json)
@@ -441,7 +441,7 @@ def llm_complete(model, base_url, key, messages, retries=3):
     else:
         temp = 0.3
         request_timeout = 120
-    # MiniMax M2.7 wraps reasoning in <think> tags — use reasoning_split to separate
+    # MiniMax M2.7 wraps reasoning in <think> tags - use reasoning_split to separate
     # MiniMax-M3 also wraps reasoning; same handling applies.
     extra_params = {}
     if "minimax" in model_lower:
@@ -493,10 +493,16 @@ def llm_complete(model, base_url, key, messages, retries=3):
 def extract_code(text):
     # Some models (MiniMax m2.7) wrap entire response in <think> tags
     original = text
-    
-    # Step 1: Try to find code in ``` blocks first
+
+    # Step 1: Try to find code in ``` blocks first.
+    # Guard: skip blocks that are inside <think>...</think> tags
+    # (their content is the model's thinking, not code).
     if "```" in text:
-        for p in text.split("```"):
+        # Mask out <think>...</think> segments before scanning for
+        # fence blocks, so the think content (which mentions
+        # keywords like (define, display) doesn't false-match).
+        masked = re.sub(r"<think>.*?(</think>|$)", "\n", text, flags=re.DOTALL)
+        for p in masked.split("```"):
             lines = p.strip().split("\n")
             lines = [
                 l
@@ -506,6 +512,10 @@ def extract_code(text):
                 )
             ]
             c = "\n".join(lines).strip()
+            # Skip blocks that look like plain text (no parens at
+            # all) — those are the intro / outro paragraphs, not code.
+            if not c or "(" not in c:
+                continue
             if any(
                 k in c
                 for k in (
@@ -528,18 +538,18 @@ def extract_code(text):
                 )
             ):
                 return c
-    
+
     # Step 2: Strip think/XML tags (MiniMax reasons in <think>)
     text = re.sub(r"<think>.*?(</think>|$)", "\n", text, flags=re.DOTALL)
     text = re.sub(r"</?\w[^>]*>", "", text, flags=re.DOTALL)
-    
+
     # Step 3: If nothing left after stripping, try content INSIDE think tags
     if not text.strip():
         m = re.search(r"<think>(.*?)</think>", original, flags=re.DOTALL)
         if m:
             text = m.group(1)
             text = re.sub(r"</?\w[^>]*>", "", text, flags=re.DOTALL)
-    
+
     # Step 4: Strip leading garbage lines (MiniMax adds Chinese explanation)
     lines = text.strip().split("\n")
     # Find the first line that looks like code
@@ -560,10 +570,10 @@ def extract_code(text):
             break
     if code_start >= 0:
         lines = lines[code_start:]
-    
+
     text = "\n".join(lines)
     stripped = text.strip()
-    
+
     # Step 5: If resulting text has natural language before code, extract last s-expr
     if stripped and not stripped.startswith(("(", "#", '"', "'")):
         # Try to find a balanced s-expression somewhere in the text
@@ -571,7 +581,7 @@ def extract_code(text):
             idx = stripped.find(kw)
             if idx >= 0:
                 stripped = stripped[idx:]
-                # Trim at the end too — stop at first blank line or natural language
+                # Trim at the end too - stop at first blank line or natural language
                 end_idx = len(stripped)
                 for nl in ["\n\n", "\n\r\n"]:
                     ni = stripped.find(nl)
@@ -581,7 +591,7 @@ def extract_code(text):
                 break
         if not stripped.startswith(("(", "#", '"', "'")):
             return ""
-    
+
     # Step 6: Trim trailing Chinese/natural language after code
     if stripped:
         last_paren = stripped.rfind(")")
@@ -590,7 +600,7 @@ def extract_code(text):
             if idx >= 0:
                 stripped = stripped[:idx].strip()
                 break
-    
+
     return stripped
 
 
@@ -683,7 +693,7 @@ def get_api_ref():
 PROMPT_SECTIONS = {
     "identity": (
         "You are Aura Lisp. Write valid code ending with (display ...).\n"
-        "CRITICAL: (display (your-function args)) — if you only (define (f x) ...)"
+        "CRITICAL: (display (your-function args)) - if you only (define (f x) ...)"
         " the output will be '#<procedure>' and the TEST WILL FAIL!\n"
     ),
     "syntax": (
@@ -717,6 +727,8 @@ PROMPT_SECTIONS = {
         "  (typecheck-current)     → type-check workspace code\n"
         "  (ast:snapshot name)     → save AST snapshot\n"
         "  (ast:restore snap-id)   → restore AST snapshot\n"
+        "  (workspace-state)       → multi-line string with WORKSPACE: <n> defines header\n"
+        "                              (use to count defines / show current state)\n"
         "\nMODULE / IMPORT:\n"
         "  (require \"std/list\" all:)  → load stdlib module\n"
         "  (import \"path\")            → import module\n"
@@ -731,7 +743,7 @@ DEFAULT_SECTION_ORDER = ["identity", "syntax"]
 
 # Task → section overrides for fine-grained control
 TASK_SECTION_OVERRIDES = {}
-# Task-specific overrides not needed — prompt is compact enough for all tasks.
+# Task-specific overrides not needed - prompt is compact enough for all tasks.
 
 
 def build_sys_prompt(stdlib, api_ref, task_name=""):
@@ -906,10 +918,10 @@ def build_adaptive_feedback(
     return structured_feedback, p, temp_v, tokens_v
 
 
-# ── 单任务（通过内置 intend 原语）────────────────────────
+# ── 单任务(通过内置 intend 原语)────────────────────────
 
 
-# ── 蚁群控制器 — 局部变异搜索 ──────────────────────────
+# ── 蚁群控制器 - 局部变异搜索 ──────────────────────────
 
 # ── Phase A: EDSL 级殖民地搜索 ──────────────────────────
 
@@ -934,7 +946,7 @@ def _find_reference(code, expected):
 
 
 # 使用 set-code + mutate:rebind + eval-current 代替字符串替换
-# 每个变体是一次增量编译，不是全量重跑
+# 每个变体是一次增量编译,不是全量重跑
 
 
 def _find_functions(code):
@@ -954,7 +966,7 @@ def _find_functions(code):
         # Skip args until closing paren of (define (fn-name args)
         depth = 1
         pos = idx + m.start() + len(m.group(0)) - 1  # back to after fn-name
-        # Skip args — find closing ) of (fn-name args...)
+        # Skip args - find closing ) of (fn-name args...)
         while pos < len(code):
             ch = code[pos]
             if ch == "(":
@@ -1423,7 +1435,7 @@ def run_single_task(
         return model, base_url, api_key
     last_full_code = ""
     phase = "coarse"
-    # ── Aura 原生 serve 会话 ── 不注入 Scheme 兼容层（着力即差）
+    # ── Aura 原生 serve 会话 ── 不注入 Scheme 兼容层(着力即差)
 
     def run_code(code):
         if serve:
@@ -1526,7 +1538,7 @@ def run_single_task(
             "putt": "Almost there! Just minor fixes needed.",
         }.get(phase, "Fix the code.")
 
-        # Detect #<procedure> — LLM forgot (display ...)
+        # Detect #<procedure> - LLM forgot (display ...)
         procedure_warn = ""
         if "#<procedure>" in actual_output or "#<procedu" in actual_output:
             procedure_warn = (
@@ -1805,10 +1817,10 @@ def main():
         task_results = []
         tasks_to_run = [(name, prompt, expected, stdlib) for name, prompt, expected, stdlib in TASKS
                            if not filter_list or name in filter_list]
-        
+
         pool_args = [(model, base_url, api_key, name, prompt, expected, stdlib, api_ref)
                      for name, prompt, expected, stdlib in tasks_to_run]
-        
+
         # Run tasks in parallel
         max_workers = int(os.environ.get("BENCH_WORKERS", "20"))
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -1829,7 +1841,7 @@ def main():
                         safe_print(f"  ❌ {name}: {err_short} ({llm_t:.1f}s, {attempts} att)")
                 except Exception as e:
                     safe_print(f"  ❌ task error: {e}")
-        
+
         elapsed = time.time() - start_time
         task_stats["__meta__"] = {"elapsed": round(elapsed, 1)}
 
