@@ -442,10 +442,14 @@ def llm_complete(model, base_url, key, messages, retries=3):
         temp = 0.3
         request_timeout = 120
     # MiniMax M2.7 wraps reasoning in <think> tags — use reasoning_split to separate
+    # MiniMax-M3 also wraps reasoning; same handling applies.
     extra_params = {}
     if "minimax" in model_lower:
         # Use correct model ID (case-sensitive)
-        model = "MiniMax-M2.7"
+        if "m3" in model_lower:
+            model = "MiniMax-M3"
+        else:
+            model = "MiniMax-M2.7"
         extra_params["reasoning_split"] = True
     for attempt in range(retries):
         try:

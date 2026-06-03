@@ -1,0 +1,17 @@
+;; task: query-where-basic
+;; goal: Use query:where + query:filter to count how many Call nodes in a sample AST have '+' as their callee.
+;; expect: 1
+;; hint: Steps to count Call-to-+ nodes:
+;; hint:   1. Set up source: (set-code "(+ 1 2) (- 10 5) (* 2 3)")
+;; hint:   2. (query:where :callee "+")  → predicate for Call-to-+ nodes
+;; hint:   3. (query:filter (query:where :callee "+") (query:where :node-type "Call"))
+;; hint:      → returns a list of matching node IDs
+;; hint:   4. (length <list>)             → count
+;; hint: Full code:
+;; hint:   (begin
+;; hint:     (set-code "(+ 1 2) (- 10 5) (* 2 3)")
+;; hint:     (display (length
+;; hint:       (query:filter
+;; hint:         (query:where :callee "+")
+;; hint:         (query:where :node-type "Call"))))
+;; depend: edsl
