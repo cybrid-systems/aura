@@ -1,3 +1,33 @@
+// ═══════════════════════════════════════════════════════════════════
+// MODULE BOUNDARY (Issue #58)
+// ═══════════════════════════════════════════════════════════════════
+//
+// value.ixx is a `module;` followed by `#include "value_tags.h"`.
+// The header carries the tag/bias constants and the RefType ids that
+// are shared with lib/runtime.c (a traditional .c file that has no
+// knowledge of C++26 modules). Those constants are intentionally NOT
+// `export`ed from this module — they are implementation details of
+// the tagged-value encoding.
+//
+// What's EXPORTED from this module:
+//   * EvalValue struct and its operator== / operator<=>
+//   * make_int / make_float / make_string / make_* helpers
+//   * is_int / is_float / is_string / is_* inspectors
+//   * as_int / as_string / as_* accessors
+//
+// What must be accessed via value_tags.h (NOT the module interface):
+//   * FLOAT_BIAS_VAL, STRING_BIAS_VAL  (raw bias sentinels)
+//   * make_string_raw, make_ref         (low-level encoders)
+//   * is_fixnum, is_ref, is_special     (bit-pattern inspectors)
+//   * RefPair / RefClosure / ...        (RefType ids)
+//
+// Why this split? If we `export` FLOAT_BIAS_VAL, every .cpp that
+// imports this module gets a constexpr std::int64_t. The header
+// path is cheaper for lib/runtime.c, JIT runtime C++, and any
+// non-module consumer.
+//
+// Related: docs/design/issue-58-module-boundaries.md
+//
 module;
 #include "value_tags.h"
 export module aura.compiler.value;

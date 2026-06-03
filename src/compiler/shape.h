@@ -6,7 +6,8 @@
 //
 // The shape tag ↔ value-tag mapping (e.g. SHAPE_PAIR ↔ RefPair=0) is
 // defined alongside the value tag set in value_tags.h. See that header
-// for the module-vs-header boundary rationale (issue #58).
+// for the module-vs-header boundary rationale (issue #58), and
+// docs/design/issue-58-module-boundaries.md for the full rule set.
 //
 // Part of Phase 1: Shape infrastructure (#53 Shape-based Speculative JIT)
 //

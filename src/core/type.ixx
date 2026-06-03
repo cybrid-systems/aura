@@ -1,3 +1,33 @@
+// ═══════════════════════════════════════════════════════════════════
+// MODULE BOUNDARY (Issue #58)
+// ═══════════════════════════════════════════════════════════════════
+//
+// aura.core.type is a C++26 module. It exports the canonical TypeTag
+// and TypeId used by every other compiler subsystem. Because
+// constexpr constants in a module interface are hard to share with
+// traditional translation units (lib/runtime.c, JIT C++ glue), the
+// rule for THIS file is:
+//
+//   * TypeTag + TypeId are EXPORTED and used by the rest of the
+//     compiler (.ixx modules and .cpp TUs that import this module).
+//   * No constants leak to lib/runtime.c. The runtime C code uses its
+//     own enum and a hand-written header
+//     (src/compiler/value_tags.h) to keep in sync.
+//
+// Why not put TypeTag in a plain .h header like value_tags.h?
+// Because TypeTag is referenced by every .ixx module via `import` and
+// the module-exported enum is the single source of truth. Moving it to
+// a header would force every consumer to do #include <type.h>
+// in addition to `import`, and would lose the module's encapsulation
+// benefits (private helpers, type_id interning, etc.).
+//
+// If you need a TypeTag-equivalent in a non-module TU (a .cpp that
+// doesn't import aura.core.type), you must hand-define the enum and
+// keep the numeric values in sync with this file. See
+// src/compiler/value_tags.h for an example of how that's done.
+//
+// Related: docs/design/issue-58-module-boundaries.md
+//
 module;
 #include <cstdint>
 #include <string_view>

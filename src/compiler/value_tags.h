@@ -73,6 +73,40 @@ inline constexpr RefType RefKeyword  = 11;
 // switch to 8-bit type tag in both this header and lib/runtime.c.
 static_assert(RefKeyword == 11, "RefType drift: update value_tags.h + lib/runtime.c");
 
+// ═══════════════════════════════════════════════════════════════════
+// Cross-cutting tag map (Issue #58 documentation)
+// ═══════════════════════════════════════════════════════════════════
+//
+// The shape system (src/compiler/shape.h) and the type system
+// (src/core/type.ixx) need to map onto the runtime value tag
+// (RefType below). Add a NEW entry to BOTH the ShapeTag enum (in
+// shape.h) and the RefType list above, then update the table here.
+//
+//   ShapeTag              RefType        Notes
+//   ─────────────────     ─────────      ───────────────────
+//   ShapeTag::Any         DYNAMIC        (no ref encoding; type_id = 0)
+//   ShapeTag::Int         (fixnum)       not a RefType; encoded in val bits
+//   ShapeTag::Float       (float bias)   not a RefType; FLOAT_BIAS encoding
+//   ShapeTag::Bool        (special)      not a RefType; val == 3 or 7
+//   ShapeTag::String      (string bias)  not a RefType; STRING_BIAS encoding
+//   ShapeTag::Void        (special)      not a RefType; val == 11
+//   ShapeTag::Pair        RefPair = 0
+//   ShapeTag::Vector      RefVector = 3
+//   ShapeTag::Hash        RefHash = 4
+//   ShapeTag::Closure     RefClosure = 1
+//   ShapeTag::Ref         (any)          runtime-agnostic; subtype via type_id
+//   ShapeTag::Struct      RefOpaque = 9
+//   ShapeTag::Union       RefOpaque = 9  (one mapping; could be split later)
+//
+// The ShapeTag in shape.h is its own enum class. RefType here is
+// the on-disk/in-memory tag. When a Shape is constructed (e.g. in
+// shape_profiler.cpp), it must call `static_cast<std::uint8_t>(...)`
+// to match RefType before storing — see shape_profiler.cpp:49-55 for
+// the canonical mapping function.
+//
+// Related: docs/design/issue-58-module-boundaries.md
+//
+
 // ── Tag inspection / construction (low-level) ────────────────────
 //
 // .cpp code that doesn't want to import the full value.ixx module
