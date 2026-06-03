@@ -1775,19 +1775,37 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
             // In non-strict mode, keep the original gradual behavior.
             bool arg_exp_unify = cs_.consistent_unify(arg_type, ft.args[i]);
             if (strict_ && arg_exp_unify) {
-                // Verify the unification was for real (same type or Dynamic),
-                // not just the "ground types are consistent" fallback.
+                // Issue #79: in strict mode, second-guess the "ground types
+                // are consistent" fallback in consistent_unify (line ~408).
+                // That fallback returns true for any two ground types, which
+                // is too permissive under strict mode.
+                //
+                // We only re-verify for the GROUND-TYPE case. For FUNC and
+                // VAR types, consistent_unify already does the right thing
+                // (contravariant/covariant args, return covariance, or
+                // Union-Find var merge) — those are NOT the "ground types
+                // are consistent" fallback and should be respected.
                 auto a_norm = cs_.find(arg_type);
                 auto p_norm = cs_.find(ft.args[i]);
                 bool dynamic_ok = (a_norm == reg_.dynamic_type() ||
                                     p_norm == reg_.dynamic_type());
-                // Issue #79: in strict mode, the only ground-type compatibility
-                // is identity. TypeRegistry::type_equals is private; compare
-                // by structural format (interned types are canonical, so
-                // string equality means the types are the same).
-                if (!dynamic_ok &&
-                    reg_.format_type(a_norm) != reg_.format_type(p_norm)) {
-                    arg_exp_unify = false;
+                bool a_is_ground = !reg_.is_var(a_norm) &&
+                                    reg_.func_of(a_norm) == nullptr;
+                bool p_is_ground = !reg_.is_var(p_norm) &&
+                                    reg_.func_of(p_norm) == nullptr;
+                if (!dynamic_ok && a_is_ground && p_is_ground) {
+                    // Ground-type fallback fired. In strict mode, only equal
+                    // ground types are compatible. Compare structurally
+                    // (TypeRegistry::type_equals is private, so we walk the
+                    // type tree directly here for the small set of cases
+                    // that can show up: INT, FLOAT, STRING, BOOL, MODULE,
+                    // and a few named variants).
+                    auto a_tag = reg_.tag_of(a_norm);
+                    auto p_tag = reg_.tag_of(p_norm);
+                    if (a_tag != p_tag ||
+                        reg_.name_of(a_norm) != reg_.name_of(p_norm)) {
+                        arg_exp_unify = false;
+                    }
                 }
             }
             if (!arg_exp_unify) {
