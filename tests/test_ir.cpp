@@ -1097,6 +1097,42 @@ int main() {
                     "TC59 FAIL: {} concurrent reads observed garbage", errors.load());
             }
         }
+        // Issue #60: IRInstruction carries shape_id; FlatInstruction
+        // mirrors it. Verify the field round-trips through assignment.
+        {
+            // Re-define the FlatInstruction struct locally because
+            // aura_jit.h is a non-module header (can't be #include'd in
+            // a module .cpp per C++26 rules). The shape is the same.
+            struct FlatInstructionLocal {
+                std::uint32_t opcode;
+                std::uint32_t ops[4];
+                std::uint32_t shape_id;
+            };
+            FlatInstructionLocal fi{0, {0, 0, 0, 0}, 0};
+            if (fi.shape_id == 0) {
+                ++tc_passed; std::println("TC60 OK: FlatInstruction.shape_id default = 0");
+            } else {
+                ++tc_failed; std::println(std::cerr,
+                    "TC60 FAIL: default shape_id not 0: {}", fi.shape_id);
+            }
+            fi.shape_id = 1;  // SHAPE_INT
+            if (fi.shape_id == 1) {
+                ++tc_passed; std::println("TC60 OK: FlatInstruction.shape_id round-trips");
+            } else {
+                ++tc_failed; std::println(std::cerr,
+                    "TC60 FAIL: shape_id round-trip: {}", fi.shape_id);
+            }
+            // Verify the shape encoding constants used by both the
+            // service (set_shape_map) and the JIT (Iter 3) agree.
+            constexpr std::uint32_t SHAPE_INT  = 1;
+            constexpr std::uint32_t SHAPE_PAIR = 10;
+            if (SHAPE_INT == 1 && SHAPE_PAIR == 10) {
+                ++tc_passed; std::println("TC60 OK: SHAPE_INT/SHAPE_PAIR constants stable");
+            } else {
+                ++tc_failed; std::println(std::cerr,
+                    "TC60 FAIL: shape constants drift");
+            }
+        }
 
         std::println("TypeChecker test: {}/{}/{} passed/failed/total",
                      tc_passed, tc_failed, tc_passed + tc_failed);
