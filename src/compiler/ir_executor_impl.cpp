@@ -14,6 +14,19 @@ using namespace aura::ir;
 using namespace aura::diag;
 using namespace types;
 
+// Issue #61 Iter 3: runtime shape of a value. Mirrors the
+// encoding in aura_jit.h (SHAPE_INT=1, SHAPE_PAIR=10) and the
+// service's set_shape_map encoder. Returns 0 for unknown/Dynamic.
+static std::uint32_t runtime_shape_of(const EvalValue& v) {
+    if (is_int(v))   return 1;  // SHAPE_INT
+    if (is_bool(v))  return 3;  // SHAPE_BOOL (encoded as Int encoding in
+                                // value but logically Bool shape)
+    if (is_float(v)) return 2;  // SHAPE_FLOAT
+    if (is_string(v)) return 4; // SHAPE_STRING
+    if (is_pair(v))  return 10; // SHAPE_PAIR
+    return 0;                  // SHAPE_DYNAMIC (default)
+}
+
 // Content-aware equality helper for strings (used by Eq instruction)
 static bool eq_str_content(const EvalValue& a, const EvalValue& b,
                             std::vector<std::string>& string_heap) {
@@ -459,6 +472,22 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 case IROpcode::Branch:
                     current = is_truthy(locals[ops[0]]) ? ops[1] : ops[2];
                     goto next_block;
+
+                // Issue #61 Iter 3: lazy-deopt guard. Compares the
+                // runtime shape of ops[1] against the expected
+                // shape (ops[2]). Writes 1 to ops[0] on match, 0 on
+                // mismatch. The branch instruction that follows the
+                // guard in the IR takes the mismatch to ops[3] (the
+                // generic-trampoline block).
+                case IROpcode::GuardShape: {
+                    auto& val = locals[ops[1]];
+                    auto expected = static_cast<std::uint32_t>(ops[2]);
+                    auto actual = runtime_shape_of(val);
+                    locals[ops[0]] = (actual == expected)
+                        ? types::make_bool(true)
+                        : types::make_bool(false);
+                    break;
+                }
 
                 case IROpcode::Jump:
                     current = ops[0];
