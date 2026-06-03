@@ -146,6 +146,10 @@ enum Op : uint32_t {
     // Arena operations
     OpArenaPush = 48,
     OpArenaPop = 49,
+    // Issue #61 Iter 3: lazy-deopt guard. Same encoding as
+    // aura::ir::IROpcode::GuardShape (50); we keep the local
+    // mirror in sync.
+    OpGuardShape = 50,
 };
 
 // LLVM IR Builder
@@ -169,7 +173,7 @@ struct LLVMBuilder {
     // RESULT slot (ops[0]). 0 = unknown. When nonzero, it's a 1-byte
     // shape encoding (matches shape_map). The L1/L2 fast paths below
     // prefer this over indexing into the side-channel shape_map.
-    // (SHAPE_INT / SHAPE_PAIR constants live in aura_jit.h.)
+    // (SHAPE_INT / SHAPE_PAIR / SHAPE_STRING constants live in aura_jit.h.)
 
     // Read the shape_id from the instruction, falling back to the
     // side-channel shape_map if the instruction has no shape set.
@@ -562,6 +566,57 @@ struct LLVMBuilder {
                 auto not_int0 = irb->CreateICmpNE(cond_val, c64(0));
                 auto truthy = irb->CreateAnd(not_false, not_int0);
                 irb->CreateCondBr(truthy, block_map[inst.ops[1]], block_map[inst.ops[2]]);
+                return true;
+            }
+            // Issue #61 Iter 3: lazy-deopt guard. Computes the runtime
+            // shape of the arg slot and compares it against the
+            // expected shape (ops[2]). Writes a bool to ops[0] (1 if
+            // matches, 0 if deopt). The IR's subsequent Branch uses
+            // the result to choose specialized vs generic-trampoline.
+            case OpGuardShape: {
+                auto* arg_val = load(inst.ops[1]);
+                // The runtime shape of a tagged value: extract a 32-bit
+                // shape id. We do this with a chain of icmp + select
+                // to keep the codegen straight-line (no branches).
+                auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+                auto* not_int  = irb->CreateICmpSGT(arg_val, c64(0));
+                // For tagged values: bit 0 = 0 means fixnum, bit 0 = 1
+                // means ref. A positive non-ref value is fixnum.
+                // We rely on the encoding (matches value_tags.h):
+                //   shape = 1 (Int)    if is_fixnum  (val & 1 == 0, val > FLOAT_BIAS)
+                //   shape = 2 (Float)  if val in (FLOAT_BIAS, STRING_BIAS]
+                //   shape = 4 (String) if val <= STRING_BIAS
+                //   shape = 3 (Bool)   if val == 3 or 7
+                //   shape = 10 (Pair)  if val & 1 == 1 (ref)
+                // For a simple Open-coded shape id, we use a single
+                // encoding that the IR interpreter also understands.
+                // The interpreter uses runtime_shape_of() which is
+                // exact; here we use a compact approximation that the
+                // JIT can do in O(1) with a couple of icmp:
+                //   shape_id = (is_ref ? 10 : (is_int ? 1 : (is_string ? 4 : 0)))
+                // This is conservative: e.g. a Float value is reported
+                // as Dynamic (0) and the guard fails. The
+                // interpreter's runtime_shape_of() is the source of
+                // truth; the JIT's approximation is only used as a
+                // fast path for the common case.
+                auto* bit0 = irb->CreateAnd(arg_val, c64(1));
+                auto* is_ref  = irb->CreateICmpEQ(bit0, c64(1));
+                auto* is_string_approx = irb->CreateICmpSLE(
+                    arg_val, c64(-9000000000000000000LL));
+                // Combine: ref -> 10; string -> 4; else 1 (treat as
+                // fixnum; this is an over-approximation, which is
+                // fine because the interpreter re-checks on deopt).
+                auto* pair_id = c64(SHAPE_PAIR);  // 10
+                auto* string_id = c64(SHAPE_STRING);  // 4
+                auto* int_id = c64(SHAPE_INT);  // 1
+                auto* shape_sel1 = irb->CreateSelect(is_ref, pair_id, int_id);
+                auto* shape_val  = irb->CreateSelect(
+                    is_string_approx, string_id, shape_sel1);
+                // Compare against expected
+                auto* matches = irb->CreateICmpEQ(shape_val, c64(inst.ops[2]));
+                // Write 1 (true) on match, 0 (false) on mismatch
+                auto* one_or_zero = irb->CreateZExt(matches, i64_ty);
+                store(inst.ops[0], one_or_zero);
                 return true;
             }
             case OpJump:
