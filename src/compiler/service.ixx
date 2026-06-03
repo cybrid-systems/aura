@@ -1185,16 +1185,25 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             // Build from IR function, optionally accepting pre-computed escape map.
             FlatFnBuilder(const aura::ir::IRFunction& ir_fn,
                           const std::uint8_t* precomputed_escape = nullptr,
-                          std::size_t precomputed_size = 0) {
+                          std::size_t precomputed_size = 0,
+                          const std::uint8_t* precomputed_shape = nullptr) {
                 flat_instrs.resize(ir_fn.blocks.size());
                 flat_blocks.resize(ir_fn.blocks.size());
 
                 for (std::size_t bi = 0; bi < ir_fn.blocks.size(); ++bi) {
                     auto& block = ir_fn.blocks[bi];
                     for (auto& instr : block.instructions) {
+                        // Issue #60 Iter 2: stamp shape_id on the FlatInstruction
+                        // from the per-function shape_map. ops[0] is the result
+                        // slot for ops with a result (most arith/load ops).
+                        std::uint32_t shape = 0;
+                        if (precomputed_shape && instr.operands[0] < ir_fn.local_count) {
+                            shape = precomputed_shape[instr.operands[0]];
+                        }
                         flat_instrs[bi].push_back({static_cast<std::uint32_t>(instr.opcode),
                                                    {instr.operands[0], instr.operands[1],
-                                                    instr.operands[2], instr.operands[3]}});
+                                                    instr.operands[2], instr.operands[3]},
+                                                   shape});
                     }
                     flat_blocks[bi] = {block.id, flat_instrs[bi].data(),
                                        static_cast<std::uint32_t>(flat_instrs[bi].size())};
@@ -1329,6 +1338,21 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                 FlatFnBuilder builder(ir_fn, precomp_escape, precomp_size);
                 // Set shape_map from profiler for L1 specialization
                 bool had_shape = builder.set_shape_map(shape_profiler_, session_id_, ir_fn.name);
+                // Issue #60 Iter 2: rebuild flat_instrs with shape_id stamped
+                // onto each instruction from the shape_map. We rebuild
+                // instead of patching because the builder has already
+                // populated flat_instrs in its ctor; we need to redo
+                // the stamping after shape_map is known.
+                if (had_shape) {
+                    auto& shape_vec = builder.shape_map_storage;
+                    for (std::size_t bi = 0; bi < builder.flat_instrs.size(); ++bi) {
+                        for (auto& fi : builder.flat_instrs[bi]) {
+                            if (fi.ops[0] < shape_vec.size()) {
+                                fi.shape_id = shape_vec[fi.ops[0]];
+                            }
+                        }
+                    }
+                }
                 fn_ptr = jit_.compile(builder.flat_fn);
                 if (!fn_ptr) {
                     return std::unexpected(aura::diag::Diagnostic{
@@ -3252,34 +3276,9 @@ private:
                 }
             }
             if (!fn_ptr) {
-                // Build FlatFunction from IR function
-                std::vector<std::vector<aura::jit::FlatInstruction>> flat_instrs(
-                    ir_fn.blocks.size());
-                std::vector<aura::jit::FlatBlock> flat_blocks(ir_fn.blocks.size());
-                for (std::size_t bi = 0; bi < ir_fn.blocks.size(); ++bi) {
-                    auto& block = ir_fn.blocks[bi];
-                    for (auto& instr : block.instructions) {
-                        flat_instrs[bi].push_back({static_cast<std::uint32_t>(instr.opcode),
-                                                   {instr.operands[0], instr.operands[1],
-                                                    instr.operands[2], instr.operands[3]}});
-                    }
-                    flat_blocks[bi] = {block.id, flat_instrs[bi].data(),
-                                       static_cast<std::uint32_t>(flat_instrs[bi].size())};
-                }
-                // Use pre-computed escape maps when available (from EscapeAnalysisWrap pass)
-                std::vector<std::uint8_t> escape_storage;
-                if (g_use_arena) {
-                    if (escape_maps && ir_fn.id < escape_maps->size() &&
-                        !(*escape_maps)[ir_fn.id].empty()) {
-                        // Use pre-computed maps from the pass
-                        escape_storage = (*escape_maps)[ir_fn.id];
-                    } else {
-                        // Fallback: run escape analysis inline
-                        escape_storage.resize(ir_fn.local_count, 0);
-                        aura::jit::run_escape_analysis(flat_instrs, ir_fn.local_count, escape_storage);
-                    }
-                }
-                // Set up shape_storage for shape_map (keep alive until compile)
+                // Set up shape_storage for shape_map (keep alive until compile).
+                // Issue #60 Iter 2: must be done BEFORE building flat_instrs
+                // because the shape_id stamping reads final_shape_map.
                 std::vector<std::uint8_t> shape_storage;
                 const uint8_t* final_shape_map = nullptr;
                 auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
@@ -3301,6 +3300,41 @@ private:
                                     ir_fn.name.c_str());
                     }
                 }
+
+                // Build FlatFunction from IR function (with shape_id stamping)
+                std::vector<std::vector<aura::jit::FlatInstruction>> flat_instrs(
+                    ir_fn.blocks.size());
+                std::vector<aura::jit::FlatBlock> flat_blocks(ir_fn.blocks.size());
+                for (std::size_t bi = 0; bi < ir_fn.blocks.size(); ++bi) {
+                    auto& block = ir_fn.blocks[bi];
+                    for (auto& instr : block.instructions) {
+                        std::uint32_t shape = 0;
+                        if (final_shape_map && instr.operands[0] < ir_fn.local_count) {
+                            shape = final_shape_map[instr.operands[0]];
+                        }
+                        flat_instrs[bi].push_back({static_cast<std::uint32_t>(instr.opcode),
+                                                   {instr.operands[0], instr.operands[1],
+                                                    instr.operands[2], instr.operands[3]},
+                                                   shape});
+                    }
+                    flat_blocks[bi] = {block.id, flat_instrs[bi].data(),
+                                       static_cast<std::uint32_t>(flat_instrs[bi].size())};
+                }
+                // Use pre-computed escape maps when available (from EscapeAnalysisWrap pass)
+                std::vector<std::uint8_t> escape_storage;
+                if (g_use_arena) {
+                    if (escape_maps && ir_fn.id < escape_maps->size() &&
+                        !(*escape_maps)[ir_fn.id].empty()) {
+                        // Use pre-computed maps from the pass
+                        escape_storage = (*escape_maps)[ir_fn.id];
+                    } else {
+                        // Fallback: run escape analysis inline
+                        escape_storage.resize(ir_fn.local_count, 0);
+                        aura::jit::run_escape_analysis(flat_instrs, ir_fn.local_count, escape_storage);
+                    }
+                }
+                // (Issue #60 Iter 2: shape_storage and final_shape_map
+                // are now set above, before the flat_instrs build.)
 
                 aura::jit::FlatFunction flat_fn{ir_fn.name.c_str(),
                                                 ir_fn.entry_block,
