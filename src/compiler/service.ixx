@@ -3,6 +3,7 @@ module;
 #include "aura_jit.h"
 #include "runtime_shared.h"
 #include "observability_metrics.h"
+#include "observability_snapshot.h"
 #include <atomic>
 #include "messaging_bridge.h"
 #include <unistd.h>
@@ -2438,6 +2439,35 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
     // Surfaced via --evo-explain (Iter 3) and AuraQuery (Iter 4).
     CompilerMetrics& metrics() { return metrics_; }
     const CompilerMetrics& metrics() const { return metrics_; }
+
+    // Issue #62 Iter 3: a POD snapshot of the observability state
+    // for --evo-explain. Atomics are loaded with relaxed order;
+    // counts are advisory, not contractual.
+    CompilerSnapshot snapshot() const {
+        CompilerSnapshot s;
+        s.deopt_count = metrics_.deopt_count.load(std::memory_order_relaxed);
+        s.specialization_hits = metrics_.specialization_hits.load(std::memory_order_relaxed);
+        s.specialization_misses = metrics_.specialization_misses.load(std::memory_order_relaxed);
+        s.shape_changes_observed = metrics_.shape_changes_observed.load(std::memory_order_relaxed);
+        s.jit_compilations = metrics_.jit_compilations.load(std::memory_order_relaxed);
+        s.jit_compile_misses = metrics_.jit_compile_misses.load(std::memory_order_relaxed);
+        s.jit_cache_evictions = metrics_.jit_cache_evictions.load(std::memory_order_relaxed);
+        s.aot_emits = metrics_.aot_emits.load(std::memory_order_relaxed);
+        s.aot_fallbacks = metrics_.aot_fallbacks.load(std::memory_order_relaxed);
+        s.arena_bytes_used = metrics_.arena_bytes_used.load(std::memory_order_relaxed);
+        s.arena_bytes_peak = metrics_.arena_bytes_peak.load(std::memory_order_relaxed);
+        // Populate per-function metrics from the JIT cache
+        {
+            std::shared_lock cache_read(jit_cache_mtx_);
+            for (auto& [name, entry] : jit_cache_) {
+                FnMetrics fm;
+                fm.name = name;
+                fm.has_shape_map = entry.has_shape_map;
+                s.functions.push_back(std::move(fm));
+            }
+        }
+        return s;
+    }
     void set_workspace_tree(void* wt) { evaluator_.set_workspace_tree(wt); }
 
     // Return current number of cached define functions

@@ -1,7 +1,7 @@
-// observability_logger.h — structured JSON logger (Issue #62 Iter 2)
+// observability_logger.h — structured JSON logger (Issue #62 Iter 2/3)
 //
 // Replaces ad-hoc fprintf(stderr, ...) with a single
-// log_event_json() helper that emits a JSON object to stderr.
+// log_event_deopt() helper that emits a JSON object to stderr.
 // Off by default; enable with AURA_OBS_LOG=1 (env var), like the
 // deopt trace from #61 Iter 4.
 //
@@ -11,6 +11,11 @@
 // use std::fprintf with manual JSON formatting. The schema is
 // fixed (fn/expected/actual/generic_block for deopt events).
 // For more complex event types, extend the dispatcher below.
+//
+// For --evo-explain (Iter 3), the JSON serialization of
+// CompilerSnapshot is done in observability_json.cpp (a
+// non-module TU compiled with -freflection). Module TU's
+// call the `snapshot_to_json()` function below.
 //
 // Usage:
 //   log_event_deopt("foo", 1, 4, 7);
@@ -22,6 +27,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+
+#include "observability_snapshot.h"
 
 namespace aura::compiler {
 
@@ -46,6 +53,11 @@ inline void log_event_deopt(const char* fn,
                  "\"fn\":\"%s\",\"expected\":%u,\"actual\":%u,\"generic_block\":%u}}\n",
                  fn_str, expected_shape, actual_shape, generic_block);
 }
+
+// Issue #62 Iter 3: forward-declared in observability_json.cpp.
+// Returns a JSON object literal of the snapshot. Compiled with
+// -freflection (the framework's auto_to_json).
+std::string snapshot_to_json(const CompilerSnapshot& s);
 
 } // namespace aura::compiler
 
