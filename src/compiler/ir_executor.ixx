@@ -1,3 +1,5 @@
+module;
+#include "observability_metrics.h"
 export module aura.compiler.ir_executor;
 import std;
 import aura.core;
@@ -77,6 +79,12 @@ public:
         , primitives_(prims)
         , type_registry_(types) {}
 
+    // Issue #62 Iter 1: attach a metrics struct. Optional so the
+    // existing test code that constructs IRInterpreter with two args
+    // keeps working. When set, hot paths increment counters for
+    // --evo-explain and AuraQuery.
+    void set_metrics(CompilerMetrics* m) { metrics_ = m; }
+
     // Execute the top-level function and return result
     EvalResult execute();
 
@@ -143,6 +151,9 @@ private:
     const aura::core::TypeRegistry* type_registry_ = nullptr;
     EvalStrategy strategy_;
     bool strict_mode_ = false;
+    // Issue #62 Iter 1: optional pointer to the compiler-wide
+    // metrics struct. Hot paths check it before incrementing.
+    CompilerMetrics* metrics_ = nullptr;
 
     // Per-instance closure storage
     std::uint64_t next_closure_id_ = 1ull << 48;

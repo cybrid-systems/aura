@@ -492,9 +492,14 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     auto expected = static_cast<std::uint32_t>(ops[2]);
                     auto actual = runtime_shape_of(val);
                     if (actual != expected) {
-                        // Issue #61 Iter 4: tracing. Disabled by
-                        // default; enable with AURA_DEOPT_TRACE=1
-                        // (env var) or by changing the constexpr.
+                        // Issue #62 Iter 1: increment the global
+                        // deopt counter so --evo-explain can report it.
+                        // Thread-safe via the atomic on the metrics
+                        // struct.
+                        if (metrics_) {
+                            metrics_->deopt_count.fetch_add(
+                                1, std::memory_order_relaxed);
+                        }
                         if (kDeoptTrace) {
                             std::fprintf(stderr,
                                 "[deopt] %s: shape mismatch (expected=%u actual=%u) "
