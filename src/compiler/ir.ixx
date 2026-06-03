@@ -282,6 +282,17 @@ export struct IRFunction {
     std::uint32_t arg_count = 0;   // number of arguments
     bool variadic = false;         // dotted rest param
     Region region = Region::Default;
+    // Issue #61 Iter 1: shape this function was specialized for.
+    // 0 = no specialization (generic version). When non-zero, the
+    // IRFunction entry must contain a GuardShape (Iter 2) that
+    // checks the actual arg shape against this and deopts to
+    // generic_id on mismatch.
+    std::uint32_t specialized_for = 0;
+    // Index into IRModule.functions[] of the un-specialized
+    // counterpart. 0xFFFFFFFF = "no generic version" (deopt
+    // falls back to the interpreter). When the function is itself
+    // generic (specialized_for == 0), generic_id is ignored.
+    std::uint32_t generic_id = 0xFFFFFFFF;
 };
 
 // Closure bridge data: original tree-walker info for IR closures.
