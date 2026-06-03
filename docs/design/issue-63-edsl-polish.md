@@ -73,17 +73,39 @@ that uses hyphens)
 - Hint: trigger a type error, show how `error -> suggestion` is
   encoded in stderr.
 
-### Phase 2 — task 3 (workspace injection)
+### Phase 2 — task 3 (workspace injection) ✅ DONE
 
-**Cost**: 1-2 days (new compiler feature)
-**Value**: medium — niche
+**Commit**: `0a61077` (2026-06-03)
+**Actual approach**: a `(workspace-state)` primitive, not a
+compiler flag. The original design proposed an
+`--inject-workspace-state` flag that auto-emits the mutation
+history into the LLM's context. The implementation went with
+a pull-style primitive instead, because:
+- Pull-style is more compositional (the LLM can call it
+  conditionally, e.g. only when the user asks about workspace).
+- Avoids the complexity of injecting into LLM context (which
+  requires threading through the eval loop).
+- Mirrors how `intend-history` / `intend-analytics` work
+  (also pull-style, not injected).
 
-**Task 3: `workspace-context-awareness.aura`**
-- Compiler needs `--inject-workspace-state` flag that emits the
-  recent mutation history into the LLM's context.
-- Task: LLM should be able to answer "what functions exist in
-  the workspace right now?" by reading the injected state.
-- Not done in this PR (defer; high cost).
+**Task 3: `workspace-context-awareness.aura`** ✅ added
+- New primitive: `(workspace-state)` in `evaluator_impl.cpp:11079`.
+  Returns a multi-line string:
+  ```
+  WORKSPACE: <n> defines
+  DEFINE: foo
+  DEFINE: bar
+  MUTATIONS (last 10):
+    0:...
+  ```
+  First line is a summary header so the LLM has a one-token
+  extractable count.
+- New task: parse the count from the header line.
+- Bug fixes in `tests/edsl_benchmark.py` (extract_code):
+  - Mask `<think>...</think>` blocks before scanning for
+    ``` fence blocks (thinking content was false-matching).
+  - Skip fence blocks that don't contain `(` (intro/outro
+    paragraphs were being captured as code).
 
 ### Phase 3 — task 4 (E4 auto-tune)
 
@@ -93,9 +115,28 @@ that uses hyphens)
 
 ## Out of scope (defer)
 
-- Phase 2 and Phase 3 (above)
+- Phase 3 (E4 auto-tune, above)
 - Updating `docs/benchmark.md` to add "EDSL Polish" subsection
-  (defer; not in core task list)
+  (defer; not in core task list) — task count updated to 148
+
+## Phase 1+2 acceptance
+
+- ✅ 3 micro-tasks added to existing benchmark task list
+  (Phase 1: query-where-basic, structured-error-feedback;
+   Phase 2: workspace-context-awareness)
+- ✅ All use existing or new EDSL primitives (no new compiler
+  flag, just the `workspace-state` primitive)
+- ✅ `minimax-m3` model routing works via env var
+- ✅ Existing tasks still load (no regressions; 148 total)
+- ✅ Design documented, deferred work (Phase 3) clearly scoped
+- ✅ Verified `workspace-state` primitive output:
+  ```
+  WORKSPACE: 2 defines
+  DEFINE: foo
+  DEFINE: bar
+  MUTATIONS (last 10):
+    (none)
+  ```
 
 ## Model support: add `minimax-m3` to benchmark
 
