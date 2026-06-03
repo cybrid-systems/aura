@@ -1942,6 +1942,26 @@ int main() {
             }
         }
 
+        // Issue #73 Phase 3: TypeSpecializationWrap warns on missing registry.
+        // Pre-fix: run() silently returned. Post-fix: it logs a warning
+        // to stderr and exits cleanly. Verify no crash and no exception.
+        {
+            aura::ir::IRModule mod;
+            aura::compiler::TypeSpecializationWrap ts_no_reg;  // default ctor, type_reg_=nullptr
+            aura::ir::IRFunction fn;
+            fn.id = 0;
+            fn.name = "__top__";
+            fn.entry_block = 0;
+            fn.blocks.push_back({0});
+            mod.add_function(fn);
+            try {
+                ts_no_reg.run(mod);
+                ++ts_passed; std::println("TS OK: TypeSpecializationWrap no-reg run is safe");
+            } catch (...) {
+                ++ts_failed; std::println(std::cerr, "TS FAIL: TypeSpecializationWrap no-reg run threw");
+            }
+        }
+
         std::println("Type system detail tests: {}/{}/{} passed/failed/total",
                      ts_passed, ts_failed, ts_passed + ts_failed);
         if (ts_failed > 0) return 1;
