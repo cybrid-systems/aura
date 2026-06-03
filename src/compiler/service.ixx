@@ -1296,7 +1296,7 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                             shape_profiler_.is_stable(fn_key)) {
                             // Drop shared lock; take unique for erase.
                         } else {
-                            fn_ptr = cache_it->second.fn_ptr;
+                            fn_ptr = cache_it->second.fn_ptr.load(std::memory_order_acquire);
                             need_compile = false;
                         }
                     }
@@ -1317,7 +1317,7 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                         // Set fn_ptr to whatever's there (might be a cached entry
                         // with shape already).
                         if (cache_it != jit_cache_.end()) {
-                            fn_ptr = cache_it->second.fn_ptr;
+                            fn_ptr = cache_it->second.fn_ptr.load(std::memory_order_acquire);
                             need_compile = false;
                         }
                     }
@@ -1338,7 +1338,12 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                     // Cache compiled function (skip __top__ — IR varies per eval)
                 if (ir_fn.name != "__top__") {
                     std::unique_lock cache_write(jit_cache_mtx_);
-                    jit_cache_[ir_fn.name] = {fn_ptr, ir_fn.local_count, ir_fn.arg_count, env_count, had_shape};
+                    auto [it, _ins] = jit_cache_.try_emplace(ir_fn.name);
+                    it->second.fn_ptr.store(fn_ptr, std::memory_order_release);
+                    it->second.local_count = ir_fn.local_count;
+                    it->second.arg_count = ir_fn.arg_count;
+                    it->second.env_count = env_count;
+                    it->second.has_shape_map = had_shape;
                 }
             }
 
@@ -3161,7 +3166,12 @@ private:
 
     // JIT function cache — maps function name → compiled function pointer + metadata
     struct JitCachedFn {
-        aura::jit::ScalarFn fn_ptr = nullptr;
+        // Issue #59 Iter 4: atomic function pointer. A fiber that
+        // observed fn_ptr before a mutate is allowed to keep using
+        // it; a fiber that observes it after the mutate sees nullptr
+        // and falls through to recompile. The erase path stores
+        // nullptr first, then optionally frees the original.
+        std::atomic<aura::jit::ScalarFn> fn_ptr{nullptr};
         std::uint32_t local_count = 0;
         std::uint32_t arg_count = 0;
         std::uint32_t env_count = 0;
@@ -3221,7 +3231,7 @@ private:
                         shape_profiler_.is_stable(fn_key)) {
                         // hot-recompile path: needs unique lock
                     } else {
-                        fn_ptr = cache_it->second.fn_ptr;
+                        fn_ptr = cache_it->second.fn_ptr.load(std::memory_order_acquire);
                         need_compile = false;
                     }
                 }
@@ -3237,7 +3247,7 @@ private:
                                 ir_fn.name.c_str());
                     jit_cache_.erase(cache_it);
                 } else if (cache_it != jit_cache_.end()) {
-                    fn_ptr = cache_it->second.fn_ptr;
+                    fn_ptr = cache_it->second.fn_ptr.load(std::memory_order_acquire);
                     need_compile = false;
                 }
             }
@@ -3318,8 +3328,12 @@ private:
                         return std::nullopt;
                     if (ir_fn.name != "__top__") {
                         std::unique_lock cache_write(jit_cache_mtx_);
-                        jit_cache_[ir_fn.name] = {fn_ptr, ir_fn.local_count, ir_fn.arg_count, env_count,
-                                                  final_shape_map != nullptr};
+                        auto [it, _ins] = jit_cache_.try_emplace(ir_fn.name);
+                        it->second.fn_ptr.store(fn_ptr, std::memory_order_release);
+                        it->second.local_count = ir_fn.local_count;
+                        it->second.arg_count = ir_fn.arg_count;
+                        it->second.env_count = env_count;
+                        it->second.has_shape_map = final_shape_map != nullptr;
                     }
                 }
             }
