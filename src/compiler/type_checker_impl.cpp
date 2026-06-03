@@ -129,7 +129,26 @@ void ConstraintSystem::add(Constraint c) {
 }
 
 TypeId ConstraintSystem::fresh_var() {
-    auto id = reg_.make_var("__t" + std::to_string(fresh_counter_++));
+    return fresh_var_named("");
+}
+
+TypeId ConstraintSystem::fresh_var_named(std::string_view hint) {
+    // Issue #79: if a hint is provided, use it (sanitized) as the var name
+    // so error messages show the user's variable name. Otherwise fall back
+    // to the auto-generated __t<N>.
+    std::string name;
+    if (!hint.empty()) {
+        name.reserve(hint.size());
+        for (char c : hint) {
+            if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-')
+                name.push_back(c);
+            else
+                name.push_back('_');
+        }
+    }
+    if (name.empty())
+        name = "__t" + std::to_string(fresh_counter_++);
+    auto id = reg_.make_var(name);
     // Ensure Union-Find arrays are sized for this variable
     auto idx = static_cast<std::size_t>(id.index);
     if (idx >= parent_.size()) {
@@ -1905,7 +1924,7 @@ TypeId InferenceEngine::synthesize_flat_lambda(FlatAST& flat, StringPool& pool, 
             }
         }
         if (!param_type.valid())
-            param_type = cs_.fresh_var();
+            param_type = cs_.fresh_var_named(pname);
         param_types.push_back(param_type);
         env_.bind(pname, param_type);
     }

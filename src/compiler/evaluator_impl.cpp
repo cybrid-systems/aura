@@ -13755,7 +13755,11 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         }
                     }
                     auto best = closest_match(var_name, candidates);
-                    Diagnostic d(ErrorKind::UnboundVariable, std::move(var_name));
+                    // Issue #79: source location from the offending node so the
+                    // error report includes line:col instead of just node[id:N].
+                    Diagnostic d(ErrorKind::UnboundVariable, std::move(var_name),
+                                 aura::diag::SourceLocation{v.line, v.col, 0},
+                                 current_id);
                     if (!best.empty())
                         d.with_suggestion("did you mean '" + best + "'?");
                     return std::unexpected(std::move(d));
@@ -15112,13 +15116,19 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             }
                         }
                         auto best = closest_match(name, candidates);
-                        Diagnostic d(ErrorKind::UnboundVariable, "set!: " + std::string(name));
+                        // Issue #79: source location from the offending node.
+                        Diagnostic d(ErrorKind::UnboundVariable, "set!: " + std::string(name),
+                                     aura::diag::SourceLocation{v.line, v.col, 0},
+                                     current_id);
                         if (!best.empty())
                             d.with_suggestion("did you mean '" + best + "'?");
                         return std::unexpected(std::move(d));
                     }
-                    return std::unexpected(
-                        Diagnostic{ErrorKind::UnboundVariable, "set!: " + std::string(name)});
+                    return std::unexpected(Diagnostic{
+                        ErrorKind::UnboundVariable,
+                        "set!: " + std::string(name),
+                        aura::diag::SourceLocation{v.line, v.col, 0},
+                        current_id});
                 }
                 case aura::ast::NodeTag::Quote: {
                     if (v.children.empty())

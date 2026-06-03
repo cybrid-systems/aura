@@ -51,6 +51,10 @@ public:
     bool solve();
     void clear();
     aura::core::TypeId fresh_var();
+    // Issue #79: variant that takes a name hint, so the resulting type var
+    // shows up in error messages as a meaningful name (e.g. 'a' or 'xs')
+    // instead of the default '__t<N>'. The hint may be empty.
+    aura::core::TypeId fresh_var_named(std::string_view hint);
     // Union-Find core
     aura::core::TypeId find_var(aura::core::TypeId id);
     bool unify(aura::core::TypeId t1, aura::core::TypeId t2);

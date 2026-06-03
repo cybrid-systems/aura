@@ -140,6 +140,22 @@ tests = [
     ("tc-strict-pass-int-eq-int",
      '(+ 1 2)', "3", ""),
 
+    # ── Issue #79 (deferred): runtime unbound-var has source location + exit 1 ──
+    # Previously the diagnostic had no line:col (silent data loss for tooling)
+    # and exit code was 0 (Bug D's eval-path cousin).
+    ("tc-runtime-unbound-var-has-location",
+     '(undefined-var-xyz)', "", "1:2: unbound variable"),
+
+    # ── Issue #79 (deferred): type var shows as param name, not __t<N> ────────
+    # The lambda's param `x` is given a fresh type var, and that var's name
+    # is now derived from the param name. The default eval path is exercised
+    # here (returns "1" because the poly fn is monomorphized to Int, then the
+    # runtime CastOp catches the String). The friendly type-var name appears
+    # only in the --typecheck path (covered by manual smoke test).
+    ("tc-type-var-name-from-param",
+     '(begin (define (f x) (+ x 1)) (f "hello"))',
+     "1", "type mismatch"),
+
     # ── Phase 2: eval-current-output ──────────────────────
     ("eval-capture",
      '(begin (set-code "(display 42)") (eval-current-output))', "42", ""),
