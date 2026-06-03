@@ -156,6 +156,31 @@ tests = [
      '(begin (define (f x) (+ x 1)) (f "hello"))',
      "1", "type mismatch"),
 
+    # ── File primitive type signature consistency (discovered during #73) ──
+    # file-exists? / file-delete / file-copy all return Int (0/1), not Bool.
+    # Before the fix, the static typecheck said Bool but the runtime
+    # returned Int, causing the existing arithmetic-coercion runtime check
+    # to fire on every file-* call. Now the typecheck signature matches
+    # evaluator_impl.cpp and the tests pass cleanly.
+    ("file-prim-exists-yes",
+     '(begin (write-file "/tmp/aura-fp1.txt" "hi") (file-exists? "/tmp/aura-fp1.txt"))',
+     "1", ""),
+    ("file-prim-exists-no",
+     '(file-exists? "/tmp/aura-fp-nope-xyz")',
+     "0", ""),
+    ("file-prim-delete",
+     '(begin (write-file "/tmp/aura-fp2.txt" "x") (file-delete "/tmp/aura-fp2.txt") (file-exists? "/tmp/aura-fp2.txt"))',
+     "0", ""),
+    ("file-prim-copy",
+     '(begin (file-copy "/tmp/aura-fp1.txt" "/tmp/aura-fp1-copy.txt") (read-file "/tmp/aura-fp1-copy.txt"))',
+     "hi", ""),
+    ("file-prim-size",
+     '(file-size "/tmp/aura-fp1.txt")',
+     "2", ""),
+    ("file-prim-write-read",
+     '(begin (write-file "/tmp/aura-fp3.txt" "hello 42") (read-file "/tmp/aura-fp3.txt"))',
+     "hello 42", ""),
+
     # ── Phase 2: eval-current-output ──────────────────────
     ("eval-capture",
      '(begin (set-code "(display 42)") (eval-current-output))', "42", ""),
