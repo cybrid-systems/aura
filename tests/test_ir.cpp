@@ -9,6 +9,7 @@ import aura.compiler.compute_kind;
 import aura.compiler.arity;
 import aura.compiler.service;
 import aura.compiler.pass_manager;
+import aura.compiler.cache;
 import aura.compiler.query;
 import aura.core.type;
 import aura.diag;
@@ -965,6 +966,57 @@ int main() {
             } else {
                 std::println(std::cerr, "TC79 FAIL: set_strict");
                 ++tc_failed;
+            }
+        }
+
+        // Issue #73 Phase 2: TypeId on NodeView + cache round-trip.
+        // Test 1: NodeView from FlatAST::get carries the type_id.
+        {
+            aura::ast::ASTArena arena73;
+            auto alloc73 = arena73.allocator();
+            aura::ast::FlatAST flat73(alloc73);
+            auto lit_id = flat73.add_literal(42);
+            flat73.set_type(lit_id, 7);  // some TypeId (not 0)
+            auto v = flat73.get(lit_id);
+            if (v.type_id == 7) {
+                std::println("TC73 OK: NodeView.type_id from FlatAST");
+                ++tc_passed;
+            } else {
+                std::println(std::cerr, "TC73 FAIL: NodeView.type_id mismatch: got {}", v.type_id);
+                ++tc_failed;
+            }
+        }
+        // Test 2: write+open cache preserves TypeId.
+        {
+            const char* cache_path = "/tmp/aura_test73_cache.bin";
+            aura::ast::ASTArena arena73w;
+            auto alloc = arena73w.allocator();
+            aura::ast::FlatAST flat_w(alloc);
+            aura::ast::StringPool pool_w(alloc);
+            auto lid = flat_w.add_literal(42);
+            flat_w.set_type(lid, 9);
+            flat_w.root = lid;
+            if (!aura::compiler::cache::write_cache(cache_path, flat_w, pool_w,
+                                                     lid, 12345, nullptr, nullptr)) {
+                std::println(std::cerr, "TC73 SKIP: cache write failed (filesystem?)");
+            } else {
+                auto mc = aura::compiler::cache::open_cache(cache_path);
+                if (!mc.valid()) {
+                    std::println(std::cerr, "TC73 FAIL: cache open failed");
+                    ++tc_failed;
+                } else if (mc.type_id(lid) != 9) {
+                    std::println(std::cerr, "TC73 FAIL: cached type_id mismatch: got {}",
+                                 mc.type_id(lid));
+                    ++tc_failed;
+                } else if (mc.get(lid).type_id != 9) {
+                    std::println(std::cerr, "TC73 FAIL: NodeView.type_id from cache: got {}",
+                                 mc.get(lid).type_id);
+                    ++tc_failed;
+                } else {
+                    std::println("TC73 OK: cache round-trip preserves TypeId");
+                    ++tc_passed;
+                }
+                std::remove(cache_path);
             }
         }
 

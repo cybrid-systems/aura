@@ -46,6 +46,14 @@ public:
     // StringPool access (O(1) via offset array)
     std::string_view resolve(SymId id) const;
 
+    // Issue #73 Phase 2: per-node TypeId accessor. 0 means DYNAMIC /
+    // unknown (or no type_ids column in this cache file). Cheap,
+    // bounds-checked.
+    std::uint32_t type_id(NodeId id) const {
+        if (id >= num_nodes_ || !type_ids_) return 0;
+        return type_ids_[id];
+    }
+
 private:
     friend MappedCache open_cache(const std::string& path);
     friend void setup_pointers(MappedCache& cache);
@@ -68,7 +76,10 @@ private:
     const std::uint32_t* param_begins_ = nullptr;
     const std::uint32_t* param_counts_ = nullptr;
     const SymId* param_data_ = nullptr;
-    const NodeId* type_ids_ = nullptr;
+    // Issue #73 Phase 2: TypeId per node, populated alongside the
+    // FlatAST type_id SoA column. nullptr means "no type_ids column
+    // in this cache file" (old cache or too-small mmap).
+    const std::uint32_t* type_ids_ = nullptr;
     const std::uint32_t* lines_ = nullptr;
     const std::uint32_t* cols_ = nullptr;
     const std::uint8_t* markers_ = nullptr;
