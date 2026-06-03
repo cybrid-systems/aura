@@ -1310,6 +1310,12 @@ struct AuraJIT::Impl {
     bool optimize = true;
     std::vector<FunctionMeta> compiled_fns_{};
     const std::vector<std::string>* string_pool_{nullptr};
+    // Issue #59 Iter 1: serialize addIRModule + lookup across threads.
+    // Held for the duration of a single compile() call. The ORC
+    // ThreadSafeModule already provides per-module thread safety;
+    // this mutex is the entry-point serialization (prevents two
+    // concurrent compiles from racing on the symbol table).
+    std::mutex compile_mtx_;
     // Per-function resource trackers for hot-swap (remove old module, add new one)
     llvm::orc::ResourceTrackerSP get_or_create_tracker(const std::string& name) {
         // Remove old tracker/module for this name before creating a new one.
@@ -1408,6 +1414,11 @@ struct AuraJIT::Impl {
     }
 
     ScalarFn compile(const FlatFunction& fn) {
+        // Issue #59 Iter 1: serialize addIRModule + lookup across threads.
+        // Held through the whole LLVM pipeline run + verify + addIRModule
+        // + lookup. Sub-ms per call in practice; readers don't contend
+        // because ORC's ThreadSafeModule is per-module atomic.
+        std::lock_guard<std::mutex> compile_lock(compile_mtx_);
         if (!init())
             return nullptr;
 
