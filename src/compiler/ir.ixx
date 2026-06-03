@@ -72,6 +72,12 @@ export enum class IROpcode : std::uint8_t {
     RefCountOp,  // runtime refcount: result_slot, inner_slot, inc(1)/dec(0)
     ArenaPush,   // push TL arena frame: result_slot (saved offset), size
     ArenaPop,    // pop TL arena frame: saved_offset_slot
+    // Issue #61 Iter 2: lazy-deopt guard. Inserted at the entry
+    // of a function specialized for a particular shape. The
+    // expected shape id is in operands[2]; operands[3] is the
+    // generic-trampoline block id (branch target on mismatch).
+    // The guard writes a bool to operands[0]: 1 = matches, 0 = deopt.
+    GuardShape,   // deopt guard: result, arg_slot, expected_shape, generic_block
 };
 
 export struct IRInstruction {
@@ -164,9 +170,11 @@ export constexpr OpcodeInfo kOpcodeInfo[] = {
     {"ref-count-op", 3, true},  // RefCountOp: result, inner, inc/dec
     {"arena-push", 2, true},     // ArenaPush: result, size
     {"arena-pop", 1, false},     // ArenaPop: saved_offset (no result)
+    // Issue #61 Iter 2: GuardShape. result + arg + expected + generic_block.
+    {"guard-shape", 4, true},    // GuardShape: result, arg, expected, generic
 };
 
-static_assert(std::size(kOpcodeInfo) == 50, "kOpcodeInfo must have exactly one entry per IROpcode");
+static_assert(std::size(kOpcodeInfo) == 51, "kOpcodeInfo must have exactly one entry per IROpcode");
 
 // Helper: look up opcode info by IROpcode enum value
 inline const OpcodeInfo* lookup_opcode(IROpcode op) {
