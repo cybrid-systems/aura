@@ -1019,6 +1019,44 @@ int main() {
                 std::remove(cache_path);
             }
         }
+        // Issue #73 Phase 5: the JIT path (aura_jit.cpp) was type-blind
+        // because the lower_to_ir call in exec_jit never saw a
+        // typecheck. Verify the pre-lowering typecheck path now
+        // populates FlatAST type_id for IR + JIT consumers.
+        {
+            aura::ast::ASTArena ar_p5;
+            auto alloc = ar_p5.allocator();
+            aura::ast::FlatAST flat_p5(alloc);
+            aura::ast::StringPool pool_p5(alloc);
+            auto pr = aura::parser::parse_to_flat("(: x Int) (+ x 1)", flat_p5, pool_p5);
+            if (!pr.success) {
+                std::println(std::cerr, "TC73 FAIL: parse failed");
+                ++tc_failed;
+            } else {
+                flat_p5.root = pr.root;
+                // Simulate the exec_jit typecheck pass.
+                aura::core::TypeRegistry treg_p5;
+                aura::compiler::TypeChecker tc_p5(treg_p5);
+                aura::diag::DiagnosticCollector diags_p5;
+                tc_p5.infer_flat(flat_p5, pool_p5, pr.root, diags_p5);
+                // Find a literal-1 with non-zero type_id.
+                int found_int = 0;
+                for (aura::ast::NodeId id = 0; id < flat_p5.size(); ++id) {
+                    auto v = flat_p5.get(id);
+                    if (v.tag == aura::ast::NodeTag::LiteralInt && v.int_value == 1 &&
+                        v.type_id != 0) {
+                        ++found_int;
+                    }
+                }
+                if (found_int > 0) {
+                    std::println("TC73 OK: pre-lowering typecheck populates FlatAST type_id (Phase 5)");
+                    ++tc_passed;
+                } else {
+                    std::println(std::cerr, "TC73 FAIL: pre-lowering typecheck did not populate type_id");
+                    ++tc_failed;
+                }
+            }
+        }
 
         std::println("TypeChecker test: {}/{}/{} passed/failed/total",
                      tc_passed, tc_failed, tc_passed + tc_failed);

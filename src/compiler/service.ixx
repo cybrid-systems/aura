@@ -1102,6 +1102,32 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         current_ast_ = flat_ptr;
         current_pool_ = pool_ptr;
 
+        // Issue #73 Phase 5: run typecheck before lowering so the
+        // FlatAST's type_id column is populated. Without this, the
+        // JIT path compiles type-blind IR (every instruction's
+        // type_id = 0) and any type-driven optimization (CastOp
+        // insertion via TypeSpecializationWrap, type-aware
+        // specialization) sees no types. Compare to eval_ir
+        // (line ~957) and eval (line ~663) which both do this already.
+        {
+            aura::compiler::TypeCheckWrap tc_pass;
+            aura::diag::DiagnosticCollector diags;
+            tc_pass.check_before_lowering(*flat_ptr, *pool_ptr, flat_ptr->root,
+                                          type_registry_, diags);
+            bool has_type_error = false;
+            for (auto& d : diags.diagnostics()) {
+                if (d.kind == aura::diag::ErrorKind::TypeError) {
+                    std::println(std::cerr, "type warning (exec_jit): {}", d.format());
+                    has_type_error = true;
+                }
+            }
+            if (strict_mode_ && has_type_error) {
+                return std::unexpected(
+                    aura::diag::Diagnostic{aura::diag::ErrorKind::TypeError,
+                                           "type error (strict mode, exec_jit)"});
+            }
+        }
+
         // Lower to IR
         auto ir_mod = aura::compiler::lower_to_ir(*flat_ptr, *pool_ptr, arena_,
                                                   &evaluator_.primitives(), &type_registry_);
