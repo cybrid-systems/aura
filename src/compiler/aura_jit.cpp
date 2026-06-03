@@ -164,6 +164,24 @@ struct LLVMBuilder {
     const uint8_t* shape_map = nullptr;
     uint32_t shape_map_size = 0;
 
+    // Issue #60 Iter 3: per-instruction shape_id. Set during the build
+    // loop in AuraJIT::compile, this is the shape of the instruction's
+    // RESULT slot (ops[0]). 0 = unknown. When nonzero, it's a 1-byte
+    // shape encoding (matches shape_map). The L1/L2 fast paths below
+    // prefer this over indexing into the side-channel shape_map.
+    static constexpr uint32_t SHAPE_INT  = 1;
+    static constexpr uint32_t SHAPE_PAIR = 10;
+
+    // Read the shape_id from the instruction, falling back to the
+    // side-channel shape_map if the instruction has no shape set.
+    // Returns 0 (Dynamic / unknown) if neither source has a value.
+    inline uint32_t inst_shape(const FlatInstruction& inst) const {
+        if (inst.shape_id != 0) return inst.shape_id;
+        if (shape_map && inst.ops[0] < shape_map_size)
+            return shape_map[inst.ops[0]];
+        return 0;
+    }
+
     // Pointer tagging constants (must match lib/runtime.c).
     // FLOAT_BIAS_VAL comes from value_tags.h so .cpp code stays in
     // lockstep with the module-side encoding (issue #58).
@@ -378,10 +396,8 @@ struct LLVMBuilder {
             }
             case OpAdd: {
                 auto a = load(inst.ops[1]), b = load(inst.ops[2]);
-                // L1 specialization: if both args known Int, skip float check
-                bool spec_int = (shape_map &&
-                    inst.ops[1] < shape_map_size && shape_map[inst.ops[1]] == 1 &&
-                    inst.ops[2] < shape_map_size && shape_map[inst.ops[2]] == 1);
+                // L1 specialization: if the result is known Int, skip float check
+                bool spec_int = (inst_shape(inst) == SHAPE_INT);
                 if (spec_int) {
                     store(inst.ops[0], irb->CreateAdd(a, b));
                     return true;
@@ -403,9 +419,7 @@ struct LLVMBuilder {
             }
             case OpSub: {
                 auto a = load(inst.ops[1]), b = load(inst.ops[2]);
-                bool spec_int = (shape_map &&
-                    inst.ops[1] < shape_map_size && shape_map[inst.ops[1]] == 1 &&
-                    inst.ops[2] < shape_map_size && shape_map[inst.ops[2]] == 1);
+                bool spec_int = (inst_shape(inst) == SHAPE_INT);
                 if (spec_int) {
                     store(inst.ops[0], irb->CreateSub(a, b));
                     return true;
@@ -427,9 +441,7 @@ struct LLVMBuilder {
             }
             case OpMul: {
                 auto a = load(inst.ops[1]), b = load(inst.ops[2]);
-                bool spec_int = (shape_map &&
-                    inst.ops[1] < shape_map_size && shape_map[inst.ops[1]] == 1 &&
-                    inst.ops[2] < shape_map_size && shape_map[inst.ops[2]] == 1);
+                bool spec_int = (inst_shape(inst) == SHAPE_INT);
                 if (spec_int) {
                     // Tagged fixnums: (a*b) >> 1
                     store(inst.ops[0], irb->CreateAShr(irb->CreateMul(a, b), c64(1)));
@@ -454,9 +466,7 @@ struct LLVMBuilder {
             case OpDiv: {
                 auto dividend = load(inst.ops[1]);
                 auto divisor = load(inst.ops[2]);
-                bool spec_int = (shape_map &&
-                    inst.ops[1] < shape_map_size && shape_map[inst.ops[1]] == 1 &&
-                    inst.ops[2] < shape_map_size && shape_map[inst.ops[2]] == 1);
+                bool spec_int = (inst_shape(inst) == SHAPE_INT);
                 if (spec_int) {
                     auto is_zero = irb->CreateICmpEQ(divisor, c64(0));
                     auto safe_div = irb->CreateSelect(is_zero, c64(2), divisor);  // fixnum 1
@@ -697,9 +707,8 @@ struct LLVMBuilder {
             }
             case OpCar: {
                 auto pair_val = load(inst.ops[1]);
-                // L2 specialization: if pair arg known to be Pair, call unchecked variant
-                bool spec_pair = (shape_map &&
-                    inst.ops[1] < shape_map_size && shape_map[inst.ops[1]] == 10);
+                // L2 specialization: if the result is known Pair, call unchecked variant
+                bool spec_pair = (inst_shape(inst) == SHAPE_PAIR);
                 auto car_fn = spec_pair ? fn_pair_car_unchecked : fn_pair_car;
                 auto call = irb->CreateCall(car_fn, {pair_val});
                 store(inst.ops[0], call);
@@ -707,9 +716,8 @@ struct LLVMBuilder {
             }
             case OpCdr: {
                 auto pair_val = load(inst.ops[1]);
-                // L2 specialization: if pair arg known to be Pair, call unchecked variant
-                bool spec_pair = (shape_map &&
-                    inst.ops[1] < shape_map_size && shape_map[inst.ops[1]] == 10);
+                // L2 specialization: if the result is known Pair, call unchecked variant
+                bool spec_pair = (inst_shape(inst) == SHAPE_PAIR);
                 auto cdr_fn = spec_pair ? fn_pair_cdr_unchecked : fn_pair_cdr;
                 auto call = irb->CreateCall(cdr_fn, {pair_val});
                 store(inst.ops[0], call);
