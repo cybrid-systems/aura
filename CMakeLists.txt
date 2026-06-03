@@ -98,9 +98,13 @@ target_link_libraries(aura PRIVATE stdc++ stdc++exp)
 
 # ── Separate compilation for std::meta reflection ───────────────
 # cache_reflect.cpp needs -freflection, can't be in the module build.
+# observability_json.cpp is in the same library for linker convenience
+# (it doesn't use reflect directly; hand-rolled JSON to keep GCC 16
+# compat).
 add_library(aura-reflect STATIC
     src/reflect/cache_reflect.cpp
     src/compiler/ir_reflect_serialize.cpp
+    src/compiler/observability_json.cpp
 )
 target_include_directories(aura-reflect PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_compile_options(aura-reflect PRIVATE -freflection)

@@ -1,6 +1,9 @@
 #include "compiler/aura_jit.h"
 #include "compiler/messaging_bridge.h"
 #include "compiler/runtime_shared.h"
+#include "compiler/observability_snapshot.h"
+#include "compiler/observability_metrics.h"
+#include "compiler/observability_logger.h"  // for snapshot_to_json
 #include <unistd.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -1971,6 +1974,38 @@ int main(int argc, char* argv[]) {
         }
         std::println("]}}");
         return result ? 0 : 1;
+    }
+
+    // ── --evo-explain: emit a JSON snapshot of the observability
+    // state (Issue #62 Iter 3). Runs the program (argv[2] or
+    // stdin), then dumps CompilerSnapshot via the reflect
+    // framework's auto_to_json. Off by default; set AURA_OBS=1
+    // to enable.
+    if (argc > 1 && std::string_view(argv[1]) == "--evo-explain") {
+        static const bool enabled = []() {
+            const char* e = std::getenv("AURA_OBS");
+            return e && (e[0] == '1' || e[0] == 't' || e[0] == 'T');
+        }();
+        if (!enabled) {
+            std::println(stderr,
+                "evo-explain: disabled (set AURA_OBS=1 to enable)");
+            return 0;
+        }
+        aura::compiler::CompilerService cs;
+        cs.set_session_id("evo-explain");
+        std::string input;
+        if (argc > 2) {
+            input = argv[2];
+        } else {
+            std::getline(std::cin, input);
+        }
+        // Run the program so the metrics are populated.
+        auto _ = cs.eval_ir(input);
+        auto snap = cs.snapshot();
+        // Issue #62 Iter 3: dump the snapshot via the helper in
+        // observability_json.cpp (which uses -freflection).
+        std::println("{}", snapshot_to_json(snap));
+        return 0;
     }
 
     // ── Normal REPL / pipe mode ─────────────────────
