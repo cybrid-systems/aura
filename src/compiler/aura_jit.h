@@ -21,6 +21,11 @@ struct FlatInstruction {
     uint32_t shape_id;
 };
 
+// Issue #60 Iter 3: shape encoding constants. Must match the
+// shape_map byte values in set_shape_map (service.ixx). 0=Dynamic.
+constexpr uint32_t SHAPE_INT  = 1;
+constexpr uint32_t SHAPE_PAIR = 10;
+
 struct FlatBlock {
     uint32_t id;
     const FlatInstruction* instructions;
