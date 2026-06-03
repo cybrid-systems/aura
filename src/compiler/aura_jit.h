@@ -15,6 +15,10 @@ namespace aura::jit {
 struct FlatInstruction {
     uint32_t opcode;
     uint32_t ops[4];
+    // Issue #60 Iter 2: shape_id from the per-function shape_map.
+    // 0 = unknown / Dynamic. The JIT uses this for L1 fast paths
+    // (OpAdd etc.) and for L2 layout specialization.
+    uint32_t shape_id;
 };
 
 struct FlatBlock {
