@@ -14,6 +14,14 @@ using namespace aura::ir;
 using namespace aura::diag;
 using namespace types;
 
+// Issue #61 Iter 4: deopt tracing switch. Off by default
+// (perf: avoid a printf on every guard). Enable by setting
+// AURA_DEOPT_TRACE=1 in the env before launching the process.
+static const bool kDeoptTrace = []() {
+    const char* e = std::getenv("AURA_DEOPT_TRACE");
+    return e && (e[0] == '1' || e[0] == 't' || e[0] == 'T');
+}();
+
 // Issue #61 Iter 3: runtime shape of a value. Mirrors the
 // encoding in aura_jit.h (SHAPE_INT=1, SHAPE_PAIR=10) and the
 // service's set_shape_map encoder. Returns 0 for unknown/Dynamic.
@@ -483,6 +491,21 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     auto& val = locals[ops[1]];
                     auto expected = static_cast<std::uint32_t>(ops[2]);
                     auto actual = runtime_shape_of(val);
+                    if (actual != expected) {
+                        // Issue #61 Iter 4: tracing. Disabled by
+                        // default; enable with AURA_DEOPT_TRACE=1
+                        // (env var) or by changing the constexpr.
+                        if (kDeoptTrace) {
+                            std::fprintf(stderr,
+                                "[deopt] %s: shape mismatch (expected=%u actual=%u) "
+                                "→ deopt to generic block %u\n",
+                                module_.functions.size() > 0
+                                    && func.id < module_.functions.size()
+                                    ? module_.functions[func.id].name.c_str()
+                                    : "?",
+                                expected, actual, ops[3]);
+                        }
+                    }
                     locals[ops[0]] = (actual == expected)
                         ? types::make_bool(true)
                         : types::make_bool(false);

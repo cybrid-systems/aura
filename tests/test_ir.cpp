@@ -1133,6 +1133,43 @@ int main() {
                     "TC60 FAIL: shape constants drift");
             }
         }
+        // Issue #61: IRFunction gains specialized_for + generic_id,
+        // and the GuardShape opcode is in the IROpcode enum.
+        {
+            aura::ir::IRFunction f;
+            // Defaults: 0 (no specialization) and 0xFFFFFFFF
+            // (no generic version).
+            if (f.specialized_for == 0) {
+                ++tc_passed; std::println("TC61 OK: IRFunction.specialized_for default = 0");
+            } else {
+                ++tc_failed; std::println(std::cerr,
+                    "TC61 FAIL: default specialized_for not 0: {}", f.specialized_for);
+            }
+            if (f.generic_id == 0xFFFFFFFFu) {
+                ++tc_passed; std::println("TC61 OK: IRFunction.generic_id default = 0xFFFFFFFF");
+            } else {
+                ++tc_failed; std::println(std::cerr,
+                    "TC61 FAIL: default generic_id: {}", f.generic_id);
+            }
+            f.specialized_for = 1;       // SHAPE_INT
+            f.generic_id = 0;             // entry function as generic
+            if (f.specialized_for == 1 && f.generic_id == 0) {
+                ++tc_passed; std::println("TC61 OK: specialized_for + generic_id round-trip");
+            } else {
+                ++tc_failed; std::println(std::cerr,
+                    "TC61 FAIL: round-trip: spec={} gen={}",
+                    f.specialized_for, f.generic_id);
+            }
+            // GuardShape opcode is in the enum and the value is 50.
+            aura::ir::IROpcode guard_op = aura::ir::IROpcode::GuardShape;
+            if (static_cast<std::uint32_t>(guard_op) == 50) {
+                ++tc_passed; std::println("TC61 OK: GuardShape opcode value = 50");
+            } else {
+                ++tc_failed; std::println(std::cerr,
+                    "TC61 FAIL: GuardShape opcode value: {}",
+                    static_cast<std::uint32_t>(guard_op));
+            }
+        }
 
         std::println("TypeChecker test: {}/{}/{} passed/failed/total",
                      tc_passed, tc_failed, tc_passed + tc_failed);
