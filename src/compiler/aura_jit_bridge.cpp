@@ -307,6 +307,15 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
             return true;
 
         fprintf(stderr, "AOT: LLVM pipeline failed, falling back to shell wrapper\n");
+        // Issue #62 Iter 2: structured JSON log of the AOT fallback
+        // event (gated by AURA_OBS_LOG=1).
+        if (const char* e = std::getenv("AURA_OBS_LOG");
+            e && (e[0] == '1' || e[0] == 't' || e[0] == 'T')) {
+            std::fprintf(stderr,
+                "{\"event\":\"aot_fallback\",\"fields\":{"
+                "\"reason\":\"llvm_pipeline_failed\",\"num_functions\":%u}}\n",
+                num_functions);
+        }
     }
 
     // Original fallback: run aura --ir on the source to get the evaluated output

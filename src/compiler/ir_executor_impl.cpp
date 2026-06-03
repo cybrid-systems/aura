@@ -1,5 +1,6 @@
 module;
 #include "runtime_shared.h"
+#include "observability_logger.h"
 module aura.compiler.ir_executor;
 import std;
 import aura.compiler.value;
@@ -500,15 +501,22 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             metrics_->deopt_count.fetch_add(
                                 1, std::memory_order_relaxed);
                         }
+                        // Issue #62 Iter 2: structured JSON log.
+                        // Gated by AURA_OBS_LOG=1 (independent of the
+                        // human-readable kDeoptTrace form).
+                        const char* fn_name = "?";
+                        if (module_.functions.size() > 0 &&
+                            func.id < module_.functions.size())
+                            fn_name = module_.functions[func.id].name.c_str();
+                        log_event_deopt(fn_name, expected,
+                                         static_cast<std::uint32_t>(actual),
+                                         ops[3]);
                         if (kDeoptTrace) {
+                            // Human-readable form (legacy)
                             std::fprintf(stderr,
                                 "[deopt] %s: shape mismatch (expected=%u actual=%u) "
                                 "→ deopt to generic block %u\n",
-                                module_.functions.size() > 0
-                                    && func.id < module_.functions.size()
-                                    ? module_.functions[func.id].name.c_str()
-                                    : "?",
-                                expected, actual, ops[3]);
+                                fn_name, expected, actual, ops[3]);
                         }
                     }
                     locals[ops[0]] = (actual == expected)
