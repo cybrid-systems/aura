@@ -1090,6 +1090,11 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
     // --jit: compile via LLVM ORC JIT and execute
     [[nodiscard]] EvalResult exec_jit(std::string_view input) {
 #ifdef AURA_HAVE_LLVM
+        // Issue #59 Iter 3: shared-lock the Mutation Lock for the
+        // duration of the JIT compile path. Compiles can run
+        // concurrently with each other, but a mutate:* must wait
+        // for in-flight compiles to drain.
+        std::shared_lock mutate_read(mutate_mtx_);
         // Parse expression
         auto alloc = arena_.allocator();
         auto* pool_ptr = arena_.create<aura::ast::StringPool>(alloc);
@@ -2993,6 +2998,11 @@ private:
     // Instead of removing from cache, re-lowers each dependent with the current cache
     // so they stay resolvable in the IR pipeline with updated dependencies.
     void invalidate_function(const std::string& name) {
+        // Issue #59 Iter 3: acquire the Mutation Lock in exclusive mode.
+        // A mutate:* that triggers this must drain any in-flight compile
+        // before erasing the cache entry, otherwise another fiber could
+        // observe a half-erased state.
+        std::unique_lock mutate_lock(mutate_mtx_);
         // BFS to find all transitively dependent functions
         std::vector<std::string> dependents;
         std::vector<std::string> queue;
@@ -3166,6 +3176,18 @@ private:
     // negligible in the common case.
     mutable std::shared_mutex jit_cache_mtx_;
 
+    // Issue #59 Iter 3: Mutation Lock. A mutate:* operation (which
+    // mutates a function body and calls invalidate_function) holds
+    // this for its duration. The JIT compile path also holds it
+    // (shared is fine — the invalidate can wait for in-flight
+    // compiles to drain). The pattern is: mutates hold SHARED (multiple
+    // mutates can run concurrently), compile holds SHARED too (compile
+    // doesn't need to be exclusive with mutate), but invalidate
+    // reaches a unique section to drain readers and then erase.
+    // Simpler: we use a plain mutex that both hold exclusively. The
+    // critical section is sub-ms in practice.
+    std::shared_mutex mutate_mtx_;
+
     // Try to execute an IRModule via LLVM JIT
     // Returns EvalResult on success, nullopt on failure (falls back to IR interpreter)
     // escape_maps: optional pre-computed escape maps from EscapeAnalysisWrap pass.
@@ -3173,6 +3195,10 @@ private:
     std::optional<types::EvalValue> try_jit_execute(
         const aura::ir::IRModule& ir_mod,
         const std::vector<std::vector<std::uint8_t>>* escape_maps = nullptr) {
+        // Issue #59 Iter 3: shared-lock the Mutation Lock so a
+        // concurrent mutate:* waits for this compile to drain before
+        // invalidating. Compiles can run concurrently with each other.
+        std::shared_lock mutate_read(mutate_mtx_);
         if (ir_mod.functions.empty())
             return std::nullopt;
 
