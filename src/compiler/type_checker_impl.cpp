@@ -754,7 +754,8 @@ void InferenceEngine::init_primitive_env() {
     register_primitive("load-module", {String}, Dyn);
     register_primitive("import", {String}, Dyn);
     register_primitive("write-file", {String, String}, Void);
-    register_primitive("file-exists?", {String}, Bool);
+    // file-exists? returns 0/1 (Int), not Bool — matches evaluator_impl.cpp
+    register_primitive("file-exists?", {String}, Int);
     register_primitive("gensym", {}, String);
 
     // Typed mutation operators (runtime-only, minimal type info)
@@ -876,11 +877,12 @@ void InferenceEngine::init_primitive_env() {
     register_primitive("product", {Dyn}, Int);
     register_primitive("factorial", {Int}, Int);
 
-    // std/io
-    register_primitive("file-exists?", {String}, Bool);
+    // std/io — return types match evaluator_impl.cpp (Int 0/1 for
+    // success/failure, not Bool; the runtime never makes Bool here)
+    register_primitive("file-exists?", {String}, Int);
     register_primitive("file-size", {String}, Int);
-    register_primitive("file-copy", {String, String}, Bool);
-    register_primitive("file-delete", {String}, Bool);
+    register_primitive("file-copy", {String, String}, Int);
+    register_primitive("file-delete", {String}, Int);
     register_primitive("file-read", {String}, String);
     register_primitive("file-write", {String, String}, Void);
     register_primitive("file->string", {String}, String);
