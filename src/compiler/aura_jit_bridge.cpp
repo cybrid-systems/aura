@@ -134,12 +134,17 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
     // Step 2: Compile runtime.c (contains main(), bump allocator, closures,
     //          cells, pairs, I/O, strings — the complete standalone runtime)
     std::string cc = ::getenv("CC") ? ::getenv("CC") : "gcc";
+    // Issue #62 hardening: -fPIC + -fno-pie so the runtime.o links cleanly
+    // with the LLVM-generated .o on x86_64 modern gcc (which defaults to
+    // PIE for executables; without these flags the link fails with
+    // "relocation R_X86_64_32S ... can not be used when making a PIE").
+    std::string pic_flag = "-fPIC -fno-pie";
     std::string runtime_o = out_path + ".runtime.o";
     {
-        std::string cmd = cc + " -c " + runtime_c_path + " -o " + runtime_o + " 2>/dev/null";
+        std::string cmd = cc + " -c " + pic_flag + " " + runtime_c_path + " -o " + runtime_o + " 2>/dev/null";
         int rc = ::system(cmd.c_str());
         if (rc != 0) {
-            cmd = "clang -c " + runtime_c_path + " -o " + runtime_o + " 2>/dev/null";
+            cmd = "clang -c " + pic_flag + " " + runtime_c_path + " -o " + runtime_o + " 2>/dev/null";
             rc = ::system(cmd.c_str());
         }
         if (rc != 0) {
@@ -162,7 +167,7 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
     std::string reg_c_path = out_path + "._reg.c";
     std::string reg_o_path = out_path + "._reg.o";
     if (generate_registration_c(functions, func_ids.data(), num_functions, reg_c_path)) {
-        std::string cmd = cc + " -c " + reg_c_path + " -o " + reg_o_path + " 2>/dev/null";
+        std::string cmd = cc + " -c " + pic_flag + " " + reg_c_path + " -o " + reg_o_path + " 2>/dev/null";
         int rc = ::system(cmd.c_str());
         if (rc != 0) {
             cmd = "clang -c " + reg_c_path + " -o " + reg_o_path + " 2>/dev/null";
@@ -184,7 +189,7 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
         if (f) {
             std::fputs(g_prim_reg_c_code.c_str(), f);
             std::fclose(f);
-            std::string cmd = cc + " -c " + prim_reg_path + " -o " + prim_reg_o + " 2>&1";
+            std::string cmd = cc + " -c " + pic_flag + " " + prim_reg_path + " -o " + prim_reg_o + " 2>&1";
             int rc = ::system(cmd.c_str());
             if (rc != 0) {
                 cmd = "clang -c " + prim_reg_path + " -o " + prim_reg_o + " 2>&1";
@@ -197,10 +202,13 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
     }
 
     // Step 5: Link all .o files into binary
+    // Issue #62 hardening: explicit -no-pie to defeat gcc's default-PIE on
+    // x86_64 modern toolchains. Without it, the link fails with
+    // "cannot use a PIE object with a non-PIE executable" or similar.
     std::string link_cmd = cc;
     for (auto& p : obj_files)
         link_cmd += " " + p;
-    link_cmd += " -o " + out_path + " -lm 2>&1";
+    link_cmd += " -o " + out_path + " -no-pie -lm 2>&1";
     int rc = ::system(link_cmd.c_str());
 
     // Cleanup temp .o files
@@ -346,10 +354,12 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
 
     std::string out_binary(out_path);
     std::string cc = ::getenv("CC") ? ::getenv("CC") : "gcc";
-    cmd = cc + " " + c_path + " -o " + out_binary + " 2>/dev/null";
+    // Issue #62 hardening: -no-pie for the shell-wrapper fallback's link
+    // (consistent with the main AOT link command).
+    cmd = cc + " " + c_path + " -o " + out_binary + " -no-pie 2>/dev/null";
     int rc = ::system(cmd.c_str());
     if (rc != 0) {
-        cmd = "clang " + c_path + " -o " + out_binary + " 2>/dev/null";
+        cmd = "clang " + c_path + " -o " + out_binary + " -no-pie 2>/dev/null";
         rc = ::system(cmd.c_str());
     }
 
