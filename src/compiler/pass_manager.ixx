@@ -237,8 +237,20 @@ public:
         : type_reg_(reg) {}
 
     void run(aura::ir::IRModule& module) {
-        if (!type_reg_)
+        // Issue #73 Phase 3: don't silently bail out when no registry
+        // is provided. Fall through so the per-instruction checks below
+        // can no-op naturally (their \`type_id == 0\` guards handle the
+        // missing-registry case the same way the early-exit did). The
+        // difference: a missing registry is now visible to the caller
+        // and the pass produces a clean run instead of silently
+        // dropping every type-driven optimization.
+        if (!type_reg_) {
+            std::println(std::cerr,
+                "TypeSpecializationWrap: no TypeRegistry provided; "
+                "CastOp insertion will be a no-op. "
+                "Pass TypeRegistry* to the constructor to enable.");
             return;
+        }
         auto dyn_id = type_reg_->lookup_type("Any");
         for (auto& func : module.functions) {
             for (auto& block : func.blocks) {
