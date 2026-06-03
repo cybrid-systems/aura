@@ -47,10 +47,34 @@ class ModelConfig:
 #   LLM_PRIMARY=deepseek-v4-flash  (for coarse)
 #   LLM_SECONDARY=grok-4.3         (for fine/type/ffi)
 #   LLM_CHEAP=minimax-m2.7         (for putt/edsl)
+# Default endpoint per model prefix (used when LLM_BASE_URL is unset).
+# Mirrors `tests/mutation_loop.py:known_endpoints`; minimax added here.
+_MODEL_ENDPOINTS = {
+    "deepseek":  "https://api.deepseek.com/v1",
+    "grok":      "https://api.x.ai/v1",
+    "minimax":   "https://api.minimax.chat/v1",
+    "openai":    "https://api.openai.com/v1",
+    "anthropic": "https://api.anthropic.com/v1",
+    "google":    "https://generativelanguage.googleapis.com/v1beta",
+}
+
+def _default_url_for_model(model_id):
+    """Pick a default base_url based on model name prefix.
+    Falls back to deepseek (the original hard-coded default) when prefix
+    is unrecognized.  Caller should add `/chat/completions` path."""
+    if not model_id:
+        return "https://api.deepseek.com/v1"
+    m = model_id.lower()
+    # Try the longest prefix first
+    for prefix in sorted(_MODEL_ENDPOINTS, key=len, reverse=True):
+        if m.startswith(prefix):
+            return _MODEL_ENDPOINTS[prefix]
+    return "https://api.deepseek.com/v1"
+
 def _parse_model_cfg(name_key, model_key, url_key, key_name):
     model = os.environ.get(model_key, "")
     key = os.environ.get(name_key, "")
-    url = os.environ.get(url_key, "")
+    url = os.environ.get(url_key, "") or _default_url_for_model(model)
     if not model or not key:
         return None
     return ModelConfig(key_name, model, key, url)
@@ -473,12 +497,19 @@ def llm_complete(model, base_url, key, messages, retries=3):
                 {"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
             )
             r = h.getresponse()
-            d = json.loads(r.read())
+            raw = r.read()  # capture body once before parsing
             h.close()
+            try:
+                d = json.loads(raw)
+            except Exception:
+                d = {}
             content = d.get("choices", [{}])[0].get("message", {}).get("content", "")
             # Use reasoning_details if content is empty and reasoning_split is active
             if not content:
                 content = d.get("choices", [{}])[0].get("message", {}).get("reasoning_details", "")
+            # Debug: see what the API actually returned
+            if not content and os.environ.get("LLM_DEBUG"):
+                print(f"  [LLM debug] status={r.status} model={model} body[:600]={raw[:600]!r}", file=sys.stderr)
             if content:
                 return content
         except Exception as e:
