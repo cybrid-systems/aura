@@ -262,6 +262,11 @@ export struct NodeView {
     SymId sym_id = INVALID_SYM;
     std::uint32_t line = 0;
     std::uint32_t col = 0;
+    // Issue #73 Phase 2: per-view TypeId cache. 0 = DYNAMIC/unknown.
+    // Populated by FlatAST::get (from SoA column) and MappedCache::get
+    // (from cache column), so callers reading a NodeView don't have to
+    // look up the SoA column separately.
+    std::uint32_t type_id = 0;
     std::span<const NodeId> children;
     std::span<const SymId> params;
     std::span<const NodeId> param_annotations; // annotation node IDs, may be NULL_NODE
@@ -769,6 +774,10 @@ private:
             .sym_id = sym_id_[id],
             .line = id < line_.size() ? line_[id] : 0,
             .col = id < col_.size() ? col_[id] : 0,
+            // Issue #73 Phase 2: populate type_id on the view so
+            // callers can read it without a separate flat.type_id()
+            // lookup. Same value as flat.type_id(id).
+            .type_id = id < type_id_.size() ? type_id_[id] : 0u,
             .children = std::span(child_data_.data() + child_begin_[id], child_count_[id]),
             .params = std::span(param_data_.data() + param_begin_[id], param_count_[id]),
             .param_annotations = std::span(param_annot_data_.data() + param_begin_[id], param_count_[id]),

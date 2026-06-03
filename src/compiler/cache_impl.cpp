@@ -80,6 +80,7 @@ bool write_cache(const std::string& path, const FlatAST& flat, const StringPool&
     std::vector<SymId> param_data;
     std::vector<std::uint32_t> lines(n, 0);
     std::vector<std::uint32_t> cols(n, 0);
+    std::vector<std::uint32_t> type_ids(n, 0);  // Issue #73 Phase 2
 
     for (NodeId id = 0; id < n; ++id) {
         auto v = flat.get(id);
@@ -88,6 +89,8 @@ bool write_cache(const std::string& path, const FlatAST& flat, const StringPool&
         sym_ids[id] = stbl.remapped[id]; // remapped index
         lines[id] = v.line;
         cols[id] = v.col;
+        type_ids[id] = flat.type_id(id);  // Issue #73: persist TypeId so it
+                                         // survives cache load
 
         child_begins[id] = static_cast<std::uint32_t>(child_data.size());
         child_counts[id] = static_cast<std::uint32_t>(v.children.size());
@@ -123,6 +126,9 @@ bool write_cache(const std::string& path, const FlatAST& flat, const StringPool&
     std::uint64_t li_off = off;
     off += pad64(n * 4);
     std::uint64_t co_off = off;
+    off += pad64(n * 4);
+    // Issue #73 Phase 2: type_ids column. 0 = unknown/DYNAMIC.
+    std::uint64_t ti_off = off;
     off += pad64(n * 4);
 
     // ── String table layout (v3+ with offset array) ────────────
@@ -184,6 +190,9 @@ bool write_cache(const std::string& path, const FlatAST& flat, const StringPool&
     f.write((const char*)lines.data(), n * 4);
     f.seekp(co_off);
     f.write((const char*)cols.data(), n * 4);
+    // Issue #73 Phase 2: write type_ids column.
+    f.seekp(ti_off);
+    f.write((const char*)type_ids.data(), n * 4);
 
     // ── Write string table (v3: num_strings + offsets + data) ──
     f.seekp(str_off);
@@ -247,6 +256,7 @@ bool write_cache(const std::string& path, const FlatAST& flat, const StringPool&
 //   [8]: param_data  (total_params * 4)
 //   [9]: lines       (n * 4)
 //  [10]: cols        (n * 4)
+//  [11]: type_ids    (n * 4)   // Issue #73 Phase 2: 0 = DYNAMIC/unknown
 
 void setup_pointers(MappedCache& cache) {
     auto n = cache.num_nodes_;
@@ -280,6 +290,18 @@ void setup_pointers(MappedCache& cache) {
 
     cache.lines_ = reinterpret_cast<const std::uint32_t*>(nd + next_pad(n * 4));
     cache.cols_ = reinterpret_cast<const std::uint32_t*>(nd + next_pad(n * 4));
+    // Issue #73 Phase 2: read type_ids column. If old cache file is
+    // missing the column (size < 4*n), type_ids_ stays nullptr and
+    // flat.type_id() returns 0 — graceful forward-compat.
+    std::uint64_t consumed = pos;
+    if (consumed + n * 4 <= static_cast<std::uint64_t>(cache.file_size_ -
+            cache.header_->node_offset)) {
+        cache.type_ids_ = reinterpret_cast<const std::uint32_t*>(nd + next_pad(n * 4));
+    } else {
+        // Skip past the expected slot without consuming — leaves pos
+        // for any future column additions.
+        next_pad(n * 4);
+    }
 }
 
 MappedCache::MappedCache(MappedCache&& other) noexcept
@@ -340,6 +362,10 @@ NodeView MappedCache::get(NodeId id) const {
         .sym_id = sym_ids_[id],
         .line = id < num_nodes_ ? lines_[id] : 0,
         .col = id < num_nodes_ ? cols_[id] : 0,
+        // Issue #73 Phase 2: surface TypeId on the NodeView so callers
+        // can read it directly. Old cache files (no type_ids_ column)
+        // get 0 here, which matches flat.type_id()'s DYNAMIC default.
+        .type_id = type_ids_ ? type_ids_[id] : 0u,
         .children = std::span(child_data_ + child_begins_[id], child_counts_[id]),
         .params = std::span(param_data_ + param_begins_[id], param_counts_[id]),
         .marker = markers_ ? static_cast<SyntaxMarker>(markers_[id]) : SyntaxMarker::User,
