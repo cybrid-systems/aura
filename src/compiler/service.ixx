@@ -1274,27 +1274,51 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             // env_count = number of captured free variables
             std::uint32_t env_count = static_cast<std::uint32_t>(ir_fn.free_vars.size());
 
-            // Check JIT cache
+            // Check JIT cache (shared lock for read, unique for write).
             aura::jit::ScalarFn fn_ptr = nullptr;
             bool is_top_level = (ir_fn.name == "__top__");
+            bool need_compile = true;
             if (!is_top_level) {
-                auto cache_it = jit_cache_.find(ir_fn.name);
-                if (cache_it != jit_cache_.end()) {
-                    // Hot recompilation: if profiler now has stable shape for this
-                    // function but cache entry was compiled without shape_map,
-                    // evict and recompile with shape specialization.
-                    auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
-                    if (!cache_it->second.has_shape_map &&
-                        shape_profiler_.is_stable(fn_key)) {
+                {
+                    std::shared_lock cache_read(jit_cache_mtx_);
+                    auto cache_it = jit_cache_.find(ir_fn.name);
+                    if (cache_it != jit_cache_.end()) {
+                        // Hot recompilation: if profiler now has stable shape for this
+                        // function but cache entry was compiled without shape_map,
+                        // evict and recompile with shape specialization.
+                        auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
+                        if (!cache_it->second.has_shape_map &&
+                            shape_profiler_.is_stable(fn_key)) {
+                            // Drop shared lock; take unique for erase.
+                        } else {
+                            fn_ptr = cache_it->second.fn_ptr;
+                            need_compile = false;
+                        }
+                    }
+                }
+                if (need_compile && fn_ptr == nullptr && !is_top_level) {
+                    // Re-probe under unique lock for the hot-recompile path.
+                    std::unique_lock cache_write(jit_cache_mtx_);
+                    auto cache_it = jit_cache_.find(ir_fn.name);
+                    if (cache_it != jit_cache_.end() &&
+                        !cache_it->second.has_shape_map &&
+                        shape_profiler_.is_stable(
+                            shape::make_fn_key(session_id_, ir_fn.name))) {
                         std::fprintf(stderr, "spec: hot-recompile '%s' (shape now stable)\n",
                                     ir_fn.name.c_str());
                         jit_cache_.erase(cache_it);
                     } else {
-                        fn_ptr = cache_it->second.fn_ptr;
+                        // Either not present, or no hot-recompile needed.
+                        // Set fn_ptr to whatever's there (might be a cached entry
+                        // with shape already).
+                        if (cache_it != jit_cache_.end()) {
+                            fn_ptr = cache_it->second.fn_ptr;
+                            need_compile = false;
+                        }
                     }
                 }
             }
-            if (!fn_ptr) {
+            if (need_compile) {
                 auto* precomp_escape = escape_pass.get_map(ir_fn.id);
                 auto precomp_size = escape_pass.get_map_size(ir_fn.id);
                 FlatFnBuilder builder(ir_fn, precomp_escape, precomp_size);
@@ -1308,6 +1332,7 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                 }
                     // Cache compiled function (skip __top__ — IR varies per eval)
                 if (ir_fn.name != "__top__") {
+                    std::unique_lock cache_write(jit_cache_mtx_);
                     jit_cache_[ir_fn.name] = {fn_ptr, ir_fn.local_count, ir_fn.arg_count, env_count, had_shape};
                 }
             }
@@ -1867,7 +1892,10 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             ir_cache_.erase(fname);
             ir_cache_bridge_.erase(fname);
             ir_cache_strings_.erase(fname);
-            jit_cache_.erase(fname);
+            {
+                std::unique_lock cache_write(jit_cache_mtx_);
+                jit_cache_.erase(fname);
+            }
             function_sources_.erase(fname);
             // Clean dep_graph
             auto dit = dep_graph_.find(fname);
@@ -2341,7 +2369,10 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             // Clear stale JIT cache entries — the inlined __lambda__ function
             // from the previous definition is cached by name and won't be
             // evicted by invalidate_function (which erases by fn name, not lambda)
-            jit_cache_.erase("__lambda__");
+            {
+                std::unique_lock cache_write(jit_cache_mtx_);
+                jit_cache_.erase("__lambda__");
+            }
             invalidate_function(name_str);
             mark_module_dirty(name_str);
         }
@@ -3005,9 +3036,12 @@ private:
             }
         }
         // Invalidate JIT cache for affected functions
-        jit_cache_.erase(name);
-        for (auto& dep_name : dependents)
-            jit_cache_.erase(dep_name);
+        {
+            std::unique_lock cache_write(jit_cache_mtx_);
+            jit_cache_.erase(name);
+            for (auto& dep_name : dependents)
+                jit_cache_.erase(dep_name);
+        }
 
         // Clean up the original function's dep info
         auto it = dep_graph_.find(name);
@@ -3124,6 +3158,13 @@ private:
         bool has_shape_map = false;  // true if compiled with shape_map
     };
     std::unordered_map<std::string, JitCachedFn> jit_cache_;
+    // Issue #59 Iter 2: shared_mutex for jit_cache_. Read-heavy access
+    // pattern (most lookups just probe the cache), so multiple readers
+    // can hold the shared lock concurrently. Writers take the unique
+    // lock for `erase` and `[]` insert. Held briefly per call (a
+    // map lookup/insert is sub-microsecond), so contention is
+    // negligible in the common case.
+    mutable std::shared_mutex jit_cache_mtx_;
 
     // Try to execute an IRModule via LLVM JIT
     // Returns EvalResult on success, nullopt on failure (falls back to IR interpreter)
@@ -3142,19 +3183,36 @@ private:
         for (auto& ir_fn : ir_mod.functions) {
             std::uint32_t env_count = static_cast<std::uint32_t>(ir_fn.free_vars.size());
 
-            // Check JIT cache
+            // Check JIT cache (shared lock for read, unique for write).
             aura::jit::ScalarFn fn_ptr = nullptr;
-            auto cache_it = jit_cache_.find(ir_fn.name);
-            if (cache_it != jit_cache_.end()) {
-                // Hot recompilation (same as exec_jit)
-                auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
-                if (!cache_it->second.has_shape_map &&
-                    shape_profiler_.is_stable(fn_key)) {
+            bool need_compile = true;
+            {
+                std::shared_lock cache_read(jit_cache_mtx_);
+                auto cache_it = jit_cache_.find(ir_fn.name);
+                if (cache_it != jit_cache_.end()) {
+                    auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
+                    if (!cache_it->second.has_shape_map &&
+                        shape_profiler_.is_stable(fn_key)) {
+                        // hot-recompile path: needs unique lock
+                    } else {
+                        fn_ptr = cache_it->second.fn_ptr;
+                        need_compile = false;
+                    }
+                }
+            }
+            if (need_compile && fn_ptr == nullptr) {
+                std::unique_lock cache_write(jit_cache_mtx_);
+                auto cache_it = jit_cache_.find(ir_fn.name);
+                if (cache_it != jit_cache_.end() &&
+                    !cache_it->second.has_shape_map &&
+                    shape_profiler_.is_stable(
+                        shape::make_fn_key(session_id_, ir_fn.name))) {
                     std::fprintf(stderr, "spec: hot-recompile '%s' (try_jit)\n",
                                 ir_fn.name.c_str());
                     jit_cache_.erase(cache_it);
-                } else {
+                } else if (cache_it != jit_cache_.end()) {
                     fn_ptr = cache_it->second.fn_ptr;
+                    need_compile = false;
                 }
             }
             if (!fn_ptr) {
@@ -3222,13 +3280,18 @@ private:
                     flat_fn.escape_map = escape_storage.data();
 
                 // Skip if already cached (prevents duplicate JIT symbols)
-                if (ir_fn.name != "__top__" && jit_cache_.count(ir_fn.name)) {
-                    fn_ptr = jit_cache_[ir_fn.name].fn_ptr;
-                } else {
+                {
+                    std::shared_lock cache_read(jit_cache_mtx_);
+                    if (ir_fn.name != "__top__" && jit_cache_.count(ir_fn.name)) {
+                        fn_ptr = jit_cache_[ir_fn.name].fn_ptr;
+                    }
+                }
+                if (!fn_ptr) {
                     fn_ptr = jit_.compile(flat_fn);
                     if (!fn_ptr)
                         return std::nullopt;
                     if (ir_fn.name != "__top__") {
+                        std::unique_lock cache_write(jit_cache_mtx_);
                         jit_cache_[ir_fn.name] = {fn_ptr, ir_fn.local_count, ir_fn.arg_count, env_count,
                                                   final_shape_map != nullptr};
                     }
