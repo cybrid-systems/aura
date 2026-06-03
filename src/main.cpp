@@ -1799,6 +1799,12 @@ int main(int argc, char* argv[]) {
             input.c_str(), out_path.c_str(),
             (const void*)flat_fn_array.data(),
             static_cast<unsigned int>(flat_fn_array.size()));
+        // Issue #62 Iter 1: AOT counters
+        if (compiled) {
+            cs.metrics().aot_emits.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            cs.metrics().aot_fallbacks.fetch_add(1, std::memory_order_relaxed);
+        }
 
         // ── Step 4: Fallback → shell wrapper ────────────────────
         if (!compiled) {

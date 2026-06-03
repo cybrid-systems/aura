@@ -2,6 +2,7 @@ module;
 #include <cstdint>
 #include "aura_jit.h"
 #include "runtime_shared.h"
+#include "observability_metrics.h"
 #include <atomic>
 #include "messaging_bridge.h"
 #include <unistd.h>
@@ -812,6 +813,8 @@ public:
             ir_interp.set_escape_maps(last_escape_maps_);
         if (strict_mode_)
             ir_interp.set_strict_mode(true);
+        // Issue #62 Iter 1: attach metrics for hot-path counters.
+        ir_interp.set_metrics(&metrics_);
 
         try {
 
@@ -1029,6 +1032,8 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             ir_interp.set_escape_maps(last_escape_maps_);
         if (strict_mode_)
             ir_interp.set_strict_mode(true);
+        // Issue #62 Iter 1: attach metrics for hot-path counters.
+        ir_interp.set_metrics(&metrics_);
 
         // Set IR closure bridge — enables tree-walker primitives (map/filter/foldl)
         // to call IR-produced closures.
@@ -1355,11 +1360,18 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                 }
                 fn_ptr = jit_.compile(builder.flat_fn);
                 if (!fn_ptr) {
+                    // Issue #62 Iter 1: count compile misses
+                    metrics_.jit_compile_misses.fetch_add(
+                        1, std::memory_order_relaxed);
                     return std::unexpected(aura::diag::Diagnostic{
                         aura::diag::ErrorKind::InternalError,
                         std::string("JIT compilation failed for function '") + ir_fn.name + "'"});
                 }
-                    // Cache compiled function (skip __top__ — IR varies per eval)
+                // Success counter
+                metrics_.jit_compilations.fetch_add(
+                    1, std::memory_order_relaxed);
+
+                // Cache compiled function (skip __top__ — IR varies per eval)
                 if (ir_fn.name != "__top__") {
                     std::unique_lock cache_write(jit_cache_mtx_);
                     auto [it, _ins] = jit_cache_.try_emplace(ir_fn.name);
@@ -2044,6 +2056,8 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         ir_interp.set_strategy(strategy_);
         if (strict_mode_)
             ir_interp.set_strict_mode(true);
+        // Issue #62 Iter 1: attach metrics for hot-path counters.
+        ir_interp.set_metrics(&metrics_);
         auto result = ir_interp.execute();
 
         last_cells_ = ir_interp.list_cells();
@@ -2419,6 +2433,11 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
 
     ast::ASTArena& arena() { return arena_; }
     Evaluator& evaluator() { return evaluator_; }
+
+    // Issue #62 Iter 1: observability counters accessor.
+    // Surfaced via --evo-explain (Iter 3) and AuraQuery (Iter 4).
+    CompilerMetrics& metrics() { return metrics_; }
+    const CompilerMetrics& metrics() const { return metrics_; }
     void set_workspace_tree(void* wt) { evaluator_.set_workspace_tree(wt); }
 
     // Return current number of cached define functions
@@ -3078,8 +3097,11 @@ private:
         {
             std::unique_lock cache_write(jit_cache_mtx_);
             jit_cache_.erase(name);
-            for (auto& dep_name : dependents)
+            metrics_.jit_cache_evictions.fetch_add(1, std::memory_order_relaxed);
+            for (auto& dep_name : dependents) {
                 jit_cache_.erase(dep_name);
+                metrics_.jit_cache_evictions.fetch_add(1, std::memory_order_relaxed);
+            }
         }
 
         // Clean up the original function's dep info
@@ -3358,8 +3380,13 @@ private:
                 }
                 if (!fn_ptr) {
                     fn_ptr = jit_.compile(flat_fn);
-                    if (!fn_ptr)
+                    if (!fn_ptr) {
+                        metrics_.jit_compile_misses.fetch_add(
+                            1, std::memory_order_relaxed);
                         return std::nullopt;
+                    }
+                    metrics_.jit_compilations.fetch_add(
+                        1, std::memory_order_relaxed);
                     if (ir_fn.name != "__top__") {
                         std::unique_lock cache_write(jit_cache_mtx_);
                         auto [it, _ins] = jit_cache_.try_emplace(ir_fn.name);
@@ -3587,6 +3614,10 @@ private:
 
     // ── Shape profiler (Phase 1, #53) ─────────────────────────
     shape::ShapeProfiler shape_profiler_;
+    // Issue #62 Iter 1: observability counters. Thread-safe
+    // (atomics). Surfaced via `metrics()` accessor for --evo-explain
+    // and AuraQuery (:deopt-count, :arena, etc.).
+    CompilerMetrics metrics_;
     // ── Speculative JIT controller (Phase 2, #53) ──────────────
     shape::SpecJITController spec_jit_{jit_};
 
