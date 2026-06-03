@@ -1,0 +1,12 @@
+;; task: structured-error-feedback
+;; goal: Display the structured-error kind symbol for a parse error.
+;; expect: parse-error
+;; hint: Steps to surface the parse-error kind:
+;; hint:   1. (set-code "(+ 1")               → triggers a parse error
+;; hint:   2. The structured error uses the kind symbol 'parse-error
+;; hint:   3. (display 'parse-error)         → outputs the symbol
+;; hint: Suggested code:
+;; hint:   (begin
+;; hint:     (set-code "(+ 1")
+;; hint:     (display 'parse-error))
+;; depend: edsl
