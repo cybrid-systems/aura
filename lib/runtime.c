@@ -471,6 +471,79 @@ const char* aura_string_ref(int64_t str_id) {
 }
 
 // ═══════════════════════════════════════════════════════════
+// Type coercion (CastOp) — mirrors aura_jit_runtime.cpp:497
+// Called by AOT-compiled lambdas when the IR's TypeSpecializationWrap
+// pass inserts a CastOp instruction (e.g. (- n 1) inside a stdlib
+// function body that's been inlined via (import "std/...")).
+// type_tag: 0=Int, 1=String, 2=Bool, 3=Dynamic/Any, 4=Float
+// Must match the IR interpreter's CastOp cases exactly.
+// ═══════════════════════════════════════════════════════════
+// Forward decls: these are defined further down in this file but
+// we call them from the CastOp implementation below.
+extern double aura_float_ref(int64_t val);
+extern int64_t aura_alloc_float(double d);
+
+int64_t aura_cast_op(int64_t val, int64_t type_tag) {
+    int is_bool   = (val == 3 || val == 7);
+    int is_string = (val <= (int64_t)-9000000000000000000LL);
+    int is_fixnum = ((val & 1) == 0 && val > (int64_t)-10000000000000000LL);
+    int is_float  = (val <= (int64_t)-10000000000000000LL &&
+                     val > (int64_t)-9000000000000000000LL);
+
+    switch (type_tag) {
+        case 0: { // Coerce to Int
+            if (is_fixnum) return val;
+            if (is_bool)   return (val == 7) ? 2 : 0;
+            if (is_string) {
+                const char* s = aura_string_ref(val);
+                if (s && *s) return (int64_t)atoll(s) << 1;
+            }
+            if (is_float) {
+                // Delegate to aura_float_ref (same TU) to round-trip
+                // the float, then convert to int.
+                double d = aura_float_ref(val);
+                return (int64_t)d << 1;
+            }
+            return 0;
+        }
+        case 1: { // Coerce to String
+            if (is_string) return val;
+            char buf[64];
+            if (is_fixnum)
+                snprintf(buf, sizeof(buf), "%lld", (long long)(val >> 1));
+            else if (is_bool)
+                snprintf(buf, sizeof(buf), "%s", (val == 7) ? "#t" : "#f");
+            else if (is_float) {
+                double d = aura_float_ref(val);
+                snprintf(buf, sizeof(buf), "%g", d);
+            } else
+                return val;
+            return aura_alloc_string(buf);
+        }
+        case 2: { // Coerce to Bool
+            return (val == 3) ? 3 : 7;
+        }
+        case 4: { // Coerce to Float
+            if (is_float) return val;
+            if (is_fixnum) {
+                // Allocate the float in the pool and return the
+                // biased index. Uses aura_alloc_float (same TU).
+                return aura_alloc_float((double)(val >> 1));
+            }
+            if (is_string) {
+                const char* s = aura_string_ref(val);
+                if (s && *s) return aura_alloc_float(atof(s));
+            }
+            if (is_bool)
+                return aura_alloc_float((val == 7) ? 1.0 : 0.0);
+            return val;
+        }
+        default: // Dynamic / unknown: pass through
+            return val;
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
 // Primitive dispatch table (for primitives used as closures)
 // ═══════════════════════════════════════════════════════════
 // When OpPrimitive (AOT mode) stores a negative sentinel -(slot+1),
