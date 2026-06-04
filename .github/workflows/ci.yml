@@ -25,3 +25,55 @@ jobs:
 
     - name: Regression
       run: python3 build.py test regression
+
+  # Issue #67 follow-up: ASAN job catches heap leaks that the regular
+  # test suite misses. Builds with -fsanitize=address and runs
+  # tests/multi_session_leak_test.aura which loads 50 modules with
+  # (gc-module ...) between iterations and asserts memory growth
+  # stays under 1MB. ASAN additionally reports any leak at
+  # process exit (even if the functional test passes).
+  memory:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/cybrid-systems/dev:v1.0.1
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Configure ASAN build
+      # Mirror the local dev environment's build_asan configuration:
+      # -DCMAKE_BUILD_TYPE=Debug and CXXFLAGS=-fsanitize=address.
+      run: |
+        mkdir -p build_asan
+        cd build_asan
+        cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer" -G Ninja ..
+        echo "✓ ASAN configure OK"
+
+    - name: Build with ASAN
+      run: |
+        cd build_asan
+        cmake --build . --target aura
+        echo "✓ ASAN build OK"
+
+    - name: Multi-session leak test
+      run: |
+        ASAN_OPTIONS=detect_leaks=1:abort_on_error=0:print_stacktrace=1 \
+          timeout 120 ./build_asan/aura < tests/multi_session_leak_test.aura \
+          2>&1 | tee /tmp/asan-multi-session.log
+        # The functional test must pass (assertion on growth threshold).
+        if ! grep -q "✅ PASS" /tmp/asan-multi-session.log; then
+          echo "::error::multi-session leak test FAILED"
+          cat /tmp/asan-multi-session.log
+          exit 1
+        fi
+        # ASAN leak report is informational only — surfaced in the log
+        # for visibility but doesn't fail the build (tracked separately).
+        echo "::notice::ASAN leak report (informational):"
+        if grep -q "Direct leak" /tmp/asan-multi-session.log; then
+          echo "Direct leaks detected (bytes):"
+          grep "Direct leak of" /tmp/asan-multi-session.log | head -10
+          echo ""
+          echo "See /tmp/asan-multi-session.log for full stack traces."
+        else
+          echo "No direct leaks detected ✓"
+        fi
