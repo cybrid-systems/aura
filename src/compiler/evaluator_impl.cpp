@@ -10868,10 +10868,11 @@ Evaluator::Evaluator() {
     // - fixer-fn:     (lambda (code error goal) → new-code-string, optional)
     // - max-attempts: int (optional, default 3)
     primitives_.add("intend", [this](const auto& a) -> EvalValue {
-        // Mark task context so closure bodies are allocated in temp_arena_
-        bool saved_context = in_task_context_;
-        in_task_context_ = true;
-        auto restore = [&] { in_task_context_ = saved_context; };
+        // Mark task context so closure bodies are allocated in temp_arena_.
+        // Issue #68: depth counter (was bool) for nested intend support.
+        int saved_depth = in_task_context_;
+        in_task_context_ = saved_depth + 1;
+        auto restore = [&] { in_task_context_ = saved_depth; };
 
         if (a.size() < 3)
             { restore(); return make_void(); }

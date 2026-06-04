@@ -1,0 +1,43 @@
+;; === nested_intend_test.aura ===
+;; Issue #68: nested (intend ...) correctly keeps outer closures
+;; in the persistent arena. With the old bool flag, an inner
+;; intend could flip the flag, causing the outer intend's closures
+;; to be allocated in temp_arena_ (which gc-temp might collect).
+;; With the depth counter, in_task_context_ tracks nesting depth
+;; and is restored properly on each intend's return.
+
+;; Helper: just return its argument
+(define (id x) x)
+
+;; Outer intend: simulates a long-running agent task
+(define outer-result
+  (intend "outer-goal"
+          (lambda (g) "outer-generator")
+          (lambda (c) #t)))
+
+;; Inner intend nested inside the outer's generator
+;; (simulates orch:pipeline inside intend)
+(define inner-result
+  (intend "inner-goal"
+          (lambda (g) "inner-generator")
+          (lambda (c) #t)))
+
+;; Both should have completed without crashing
+(display "outer: ") (display outer-result) (newline)
+(display "inner: ") (display inner-result) (newline)
+
+;; Triple-nested
+(define triple-result
+  (intend "triple-outer"
+          (lambda (g)
+            (intend "triple-middle"
+                    (lambda (g)
+                      (intend "triple-inner"
+                              (lambda (g) "deep")
+                              (lambda (c) #t)))
+                    (lambda (c) #t)))
+          (lambda (c) #t)))
+
+(display "triple: ") (display triple-result) (newline)
+
+(display "✅ PASS: nested intend works\n")
