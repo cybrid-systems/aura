@@ -75,10 +75,13 @@ target_compile_options(aura PRIVATE -Wall -Wextra -Wpedantic
     -Wno-misleading-indentation -Wno-parentheses
 )
 
-# C++26 Contracts — GCC 16 has __cpp_contracts but not [[pre:]]/[[post:]] attribute syntax yet.
-# Enable when GCC 17+ / clang 20+ support it:
-#   target_compile_options(aura PRIVATE -fcontracts -fcontract-build-mode=on)
-# Until then, AURA_CONTRACT_PRE / AURA_CONTRACT_POST expand to assert().
+# C++26 Contracts — use the native trailing `pre`/`post` function specifiers
+# and the `contract_assert()` statement. GCC 16.1 supports all three (and the
+# <contracts> header + handle_contract_violation hook in
+# src/core/contract_handler.cpp). The function-level attribute syntax
+# `[[pre: expr]]` / `[[post: expr]]` is not yet parsed by GCC 16.1 — trailing
+# syntax works on every compiler that supports -fcontracts.
+target_compile_options(aura PRIVATE -fcontracts)
 
 # LLVM JIT (optional, skipped if not found)
 find_package(LLVM QUIET CONFIG)
@@ -224,6 +227,24 @@ target_compile_options(test_concurrent PRIVATE -Wall -Wextra -Wpedantic
     -Wno-parentheses)
 target_link_libraries(test_concurrent PRIVATE pthread)
 add_test(NAME concurrent_basic COMMAND ./test_concurrent)
+
+# ── C++26 contracts test ─────────────────────────────────
+# Verifies that the C++26 `pre`/`post`/`contract_assert` machinery is
+# actually enforced at runtime. Two phases:
+#   1. test_contracts holds — pre-condition holds, no violation (exit 0)
+#   2. test_contracts fires — pre-condition violated, handler fires (exit 42)
+add_executable(test_contracts tests/test_contracts.cpp)
+set_source_files_properties(tests/test_contracts.cpp PROPERTIES COMPILE_FLAGS "-include contracts")
+target_compile_options(test_contracts PRIVATE -fcontracts)
+add_test(NAME contracts_holds
+         COMMAND test_contracts holds)
+add_test(NAME contracts_fires
+         COMMAND test_contracts fires)
+# `fires` is expected to exit with non-zero (handler _Exits 42).
+# Mark success when the violation handler message is printed.
+set_tests_properties(contracts_fires PROPERTIES
+    PASS_REGULAR_EXPRESSION "test_handler: contract violation"
+    FAIL_REGULAR_EXPRESSION "FAIL:")
 
 # Link JIT for test_ir when LLVM is available (service.ixx references JIT types)
 if(LLVM_FOUND)

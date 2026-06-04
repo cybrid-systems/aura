@@ -10,7 +10,7 @@ module;
 #include <netinet/in.h>
 #include "runtime_shared.h"
 #include "git_ctx.h"
-#include "core/contracts.h"
+#include <contracts>
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <poll.h>
@@ -13189,12 +13189,10 @@ bool Evaluator::gc_module(const std::string& path) {
 }
 
 Env* Evaluator::copy_env(const Env& e, ast::ASTArena* target) {
-    // Issue #83: pre-condition — the target arena (or main arena_)
-    // must be available. copy_env is called from eval_flat for every
-    // function/closure call, so any violation here indicates a setup
-    // bug in CompilerService (workspace_flat_ not initialized).
-    AURA_CONTRACT_PRE(target != nullptr || arena_ != nullptr);
-
+    // arena_ is private; can't appear in interface contract (in .ixx).
+    // The interface pre is `pre (target != nullptr)`; we additionally
+    // assert arena_ here so both pre-conditions fire at runtime.
+    contract_assert(arena_ != nullptr);
     auto* ar = target ? target : arena_;
     return ar ? ar->create<Env>(e) : nullptr;
 }
