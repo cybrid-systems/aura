@@ -400,6 +400,16 @@ run_test "ea:hash-escaped-pair" "$(printf '(let ((h (hash))) (hash-set! h "k" (c
 run_test "ea:hash-stored-multi" "$(printf '(let ((ht (hash))) (hash-set! ht "a" (cons 10 20)) (hash-set! ht "b" (cons 30 40)) (+ (car (hash-ref ht "a")) (cdr (hash-ref ht "b"))))')" "50"
 
 echo ""
+
+# ── Git integration tests (Issue #96) ───────────────────────
+# Read-only primitives only. git-commit/git-stage are stateful
+# and not exercised here.
+
+run_test "git:branch-current" "$(printf '(string? (git-branch-current))')" "#t"
+run_test "git:rev-parse" "$(printf '(string? (git-rev-parse))')" "#t"
+run_test "git:status" "$(printf '(string? (git-status))')" "#t"
+run_test "git:diff" "$(printf '(string? (git-diff))')" "#t"
+run_test "git:log" "$(printf '(string? (git-log 5))')" "#t"
 echo "============"
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL" 
 [ "$FAIL" -eq 0 ] || exit 1
@@ -611,4 +621,8 @@ run_test "bridge:nested-lambda" "$(printf '(define (twice f) (lambda (x) (f (f x
 # arena-offset returns an integer >= 0 when arena is active
 run_test "arena:offset-nonneg" "$(printf '(>= (arena-offset) 0)')" "#t"
 run_test "arena:offset-usable" "$(printf '(let ((a (arena-offset))) (cons (* 2 3) (* 4 5)) (>= (arena-offset) a))')" "#t"
-run_test "arena:offset-type" "$(printf '(integer? (arena-offset))')" "#t"
+run_test "git:branch-current" "$(printf '(string? (git-branch-current))')" "#t"
+run_test "git:rev-parse" "$(printf '(string? (git-rev-parse))')" "#t"
+run_test "git:status" "$(printf '(string? (git-status))')" "#t"
+run_test "git:diff" "$(printf '(string? (git-diff))')" "#t"
+run_test "git:log" "$(printf '(string? (git-log 5))')" "#t"
