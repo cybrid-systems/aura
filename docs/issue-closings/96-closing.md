@@ -158,3 +158,31 @@ replace-fn / rollback, 211/211 tests pass) landed. Action 3
 
 Or keep it OPEN and link to this closing file as a status update
 comment.
+
+
+## Follow-up: String EvalValue corruption bug
+
+While implementing Action 2, a separate bug was discovered and documented
+(see `tests/cons_corruption_repro.aura` and the `bug:string-corruption-r4`
+regression test in `tests/run-tests.sh`).
+
+**Symptom**: After the sequence
+```
+r1 = with-snapshot "t1" (lambda () 42)
+r2 = with-snapshot "t2" (lambda () (error "boom"))   ; triggers ast:restore
+r3 = with-snapshot "t3" (lambda () 'fail)            ; triggers ast:restore
+r4 = with-snapshot "t4" (lambda () "hello")
+```
+the value of `r4` is corrupted. Its string "hello" has its low-6 type-tag
+bits changed from STRING_BIAS (0b111111) to RefKeyword (0b101101), making
+it look like a fake RefKeyword with out-of-range index (e.g.,
+`:147605376151711743`).
+
+**Reproduction**:
+- `tests/cons_corruption_repro.aura` — standalone repro
+- `tests/run-tests.sh` line 433-437 — `bug:string-corruption-r4` regression
+  test (asserts CURRENT buggy output to keep the bug reproducible)
+
+**Status**: Documented, regression test in place. Actual fix pending —
+not blocking the safe-refactor work (which uses `list` instead of `cons` for
+status values to avoid the corruption path).
