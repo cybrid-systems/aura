@@ -1,0 +1,39 @@
+;; === hot_swap_test.aura ===
+;;
+;; Test the hot-swap:fn primitive.
+;;
+;; === STATUS ===
+;;
+;; hot-swap:fn is implemented in the evaluator as a primitive that calls
+;; into the CompilerService's hot-swap callback. The callback:
+;;   1. Parses the new source
+;;   2. Lowers it to IR
+;;   3. Looks for a function with the given name in the IR module
+;;   4. Calls IRModule::hot_swap_function to replace it in place
+;;
+;; === CURRENT LIMITATION ===
+;;
+;; The hot-swap works ONLY for functions that have a corresponding
+;; entry in IRModule::functions[]. In Aura's typical lowering:
+;;   - (define (greet n) ...) → __lambda__ (the inner lambda gets this name)
+;;   - top-level expression → __top__
+;;
+;; So the user-supplied name "greet" is NOT in IRModule::functions[].
+;; To find the function by its user-visible name, the runtime would need
+;; to walk the env to find the cell, then read the closure's func_id.
+;; This is a TODO for the tree-walker path.
+;;
+;; === TESTS (these verify the primitive exists and behaves as expected) ===
+
+;; Test 1: primitive exists
+(display (procedure? hot-swap:fn)) (newline)  ; #t
+
+;; Test 2: wrong arg count returns #f
+(display (hot-swap:fn)) (newline)  ; #f
+(display (hot-swap:fn "x")) (newline)  ; #f
+
+;; Test 3: non-string arg returns #f
+(display (hot-swap:fn 42 "x")) (newline)  ; #f
+
+;; Test 4: non-existent function (in tree-walker path) returns #f
+(display (hot-swap:fn "nonexistent" "(define (nonexistent) 42)")) (newline)  ; #f

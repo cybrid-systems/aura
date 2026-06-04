@@ -312,6 +312,68 @@ public:
             [this](const std::string& content, const std::string& path) {
                 cache_module(content, path);
             });
+
+        // Issue #97 Action 1: hot-swap callback. Allows (hot-swap:fn "name" "new-src")
+        // primitive to replace a function's body while keeping its id.
+        evaluator_.set_hot_swap_fn(
+            [this](const std::string& name, const std::string& new_source) {
+                return hot_swap_function_impl(name, new_source);
+            });
+    }
+
+    // ── Hot-swap implementation (Issue #97 Action 1) ───────────
+    // Parse the new source as a single function definition, lower to IR,
+    // and replace the existing function (same name) in the current module
+    // while preserving its id. Returns true on success.
+    bool hot_swap_function_impl(const std::string& name, const std::string& new_source) {
+        // Currently only supports the IR-execution path (JIT/AOT).
+        // For the tree-walker path, function defs live in the workspace's
+        // FlatAST, which requires a different hot-swap path (TODO).
+        if (!last_ir_mod_ || last_ir_mod_->functions.empty())
+            return false;
+
+        // Find existing function by name
+        std::uint32_t existing_id = 0xFFFFFFFF;
+        for (std::uint32_t i = 0; i < last_ir_mod_->functions.size(); ++i) {
+            if (last_ir_mod_->functions[i].name == name) {
+                existing_id = i;
+                break;
+            }
+        }
+        if (existing_id == 0xFFFFFFFF)
+            return false;
+
+        // Parse the new source in the temp arena (avoids clobbering workspace)
+        auto alloc = temp_arena_.allocator();
+        auto* new_pool = temp_arena_.create<aura::ast::StringPool>(alloc);
+        auto* new_flat = temp_arena_.create<aura::ast::FlatAST>(alloc);
+        auto pr = aura::parser::parse_to_flat(new_source, *new_flat, *new_pool);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE)
+            return false;
+
+        // Lower to IR using temp_arena_ — the resulting IRFunction shares
+        // no memory with the workspace pool, so it can be moved into the
+        // module's existing functions[] without aliasing issues.
+        aura::ir::IRModule new_mod = aura::compiler::lower_to_ir(
+            *new_flat, *new_pool, temp_arena_,
+            &evaluator_.primitives(), &type_registry_);
+        if (new_mod.functions.empty())
+            return false;
+
+        // The lowered module has at least one function. Use the first one
+        // (or, if multiple, the one with matching name).
+        std::uint32_t new_id = 0;
+        for (std::uint32_t i = 0; i < new_mod.functions.size(); ++i) {
+            if (new_mod.functions[i].name == name) {
+                new_id = i;
+                break;
+            }
+        }
+        if (new_id >= new_mod.functions.size() || new_mod.functions[new_id].name != name)
+            return false;
+
+        // Hot-swap: replace in last_ir_mod_ at existing_id, preserving the id
+        return last_ir_mod_->hot_swap_function(existing_id, std::move(new_mod.functions[new_id]));
     }
 
     // ── Inter-agent messaging (P0) ──────────────────────────

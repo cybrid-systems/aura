@@ -8138,6 +8138,35 @@ Evaluator::Evaluator() {
     });
 
     // ═══════════════════════════════════════════════════════════════
+    // Issue #97 Action 1: Hot-swap primitive
+    // ═══════════════════════════════════════════════════════════════
+    // (hot-swap:fn "name" "new-source") → #t / #f
+    // Replaces the body of an existing function while keeping its id.
+    // Closures referencing the function will use the new code on next call.
+    // Requires the CompilerService to have set a hot-swap callback.
+    primitives_.add("hot-swap:fn", [this](const auto& a) -> EvalValue {
+        if (a.size() != 2 || !is_string(a[0]) || !is_string(a[1]))
+            return make_bool(false);
+        auto ni = as_string_idx(a[0]);
+        auto si = as_string_idx(a[1]);
+        if (ni >= string_heap_.size() || si >= string_heap_.size())
+            return make_bool(false);
+        if (!hot_swap_fn_) {
+            // No callback set — hot-swap not available in this context
+            return make_bool(false);
+        }
+        const std::string& name = string_heap_[ni];
+        const std::string& new_source = string_heap_[si];
+        bool ok = false;
+        try {
+            ok = hot_swap_fn_(name, new_source);
+        } catch (...) {
+            ok = false;
+        }
+        return make_bool(ok);
+    });
+
+    // ═══════════════════════════════════════════════════════════════
     // P11: AST Summary & Compile Status
     // ═══════════════════════════════════════════════════════════════
 

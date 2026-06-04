@@ -104,6 +104,12 @@ public:
     ~Evaluator();
     void set_arena(ast::ASTArena* a) { arena_ = a; }
     void set_temp_arena(ast::ASTArena* a) { temp_arena_ = a; }
+    // Hot-swap callback (Issue #97 Action 1). Set by CompilerService
+    // to enable the (hot-swap:fn "name" "new-source") primitive.
+    // Returns true on success.
+    using HotSwapFn = std::function<bool(const std::string& name,
+                                        const std::string& new_source)>;
+    void set_hot_swap_fn(HotSwapFn fn) { hot_swap_fn_ = std::move(fn); }
     // Per-module arena group: load_module_file allocates each module's
     // StringPool/FlatAST/mod_env in a dedicated arena so the whole module
     // can be freed in one shot via reset_module(path).
@@ -304,9 +310,14 @@ private:
     std::function<std::optional<std::string>(int)>* msg_recv_fn_ = nullptr;
     std::function<std::string()>* msg_id_fn_ = nullptr;
     std::string session_id_;  // from CompilerService (for my-id)
+
+
     // ── Snapshot storage (ast:snapshot / ast:restore) ───────────
     std::vector<std::string> snapshot_sources_;  // source code per snapshot
     std::vector<std::string> snapshot_names_;    // optional names
+
+    // Hot-swap callback storage (Issue #97 Action 1)
+    HotSwapFn hot_swap_fn_;
 
     // ── Panic auto-rollback (Issue #39) ─────────────────────────
     bool panic_auto_rollback_ = false;
