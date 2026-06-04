@@ -1,0 +1,54 @@
+;; === cons_corruption_repro.aura ===
+;;
+;; REGRESSION TEST for the string EvalValue corruption bug.
+;;
+;; TRIGGER: Sequence of 4 `safe-refactor:with-snapshot` calls where:
+;;   - r1 returns successfully (a non-string value)
+;;   - r2's thunk raises (caught by try/catch, triggers ast:restore)
+;;   - r3's thunk returns 'fail (caught by cond, triggers another restore)
+;;   - r4's thunk returns a string value (or a pair of strings)
+;; 
+;; OBSERVED: The string returned by r4 is corrupted. Its low 6 type-tag bits
+;; change from STRING_BIAS (0b111111) to RefKeyword (0b101101), making it
+;; look like an out-of-range keyword. The displayed value becomes
+;; ":<garbage-index>" instead of the original string.
+;;
+;; EXAMPLES OF CORRUPTION:
+;;   r4 returns "hello"     → displayed as :147605376151711743
+;;   r4 returns (cons 'a 'b) → displayed as (:147605376151711743 . "b")
+;; 
+;; NON-TRIGGER CASES (work correctly):
+;;   - r1+r2+r4 (no r3) — r4 displays correctly
+;;   - r2+r3+r4 (no r1) — r4 displays correctly
+;;   - r1+r3+r4 (no r2) — r4 displays correctly
+;;   - r4 returns an integer (Fixnum) — works correctly
+;;   - r4 returns a list of integers — works correctly
+;; 
+;; The bug ONLY affects STRING-typed return values from r4.
+;;
+;; ROOT CAUSE: Not yet identified. The corruption:
+;;   - Same high bits (above bit 6) as a normal string
+;;   - Different low 6 bits: STRING_BIAS (0b111111) → RefKeyword (0b101101)
+;;   - Suggests a write to a union/struct field is overwriting the type
+;;     bits of an EvalValue while preserving the high bits
+;;   - Hypothesis: `ast:restore` re-parses the workspace source, and
+;;     during re-parsing, the string-pool/keyword-table is being
+;;     re-allocated, but a live EvalValue's "high bits" are being
+;;     interpreted as a string-pool/keyword-table index from a stale
+;;     reference.
+;;
+;; STATUS: Documented, regression test in place. Actual fix pending
+;; in a follow-up issue.
+
+(require std/safe-refactor all:)
+
+;; Trigger the bug
+(define r1 (safe-refactor:with-snapshot "repro-t1" (lambda () 42)))
+(define r2 (safe-refactor:with-snapshot "repro-t2" (lambda () (error "boom"))))
+(define r3 (safe-refactor:with-snapshot "repro-t3" (lambda () 'fail)))
+(define r4 (safe-refactor:with-snapshot "repro-t4" (lambda () "hello")))
+
+;; Direct display — value of r4 should be "hello" but is corrupted
+(display "r4=") (display r4) (newline)
+;; expect: r4=hello
+;; ACTUAL: r4=:147605376151711743

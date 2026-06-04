@@ -425,6 +425,16 @@ run_test "safe-refactor:pre-fail" "$(printf '(begin (require std/safe-refactor a
 
 # safe-refactor:check-and-apply all pass
 run_test "safe-refactor:applied" "$(printf '(begin (require std/safe-refactor all:) (display (safe-refactor:check-and-apply (lambda () #t) (lambda () #t) (lambda () (quote ok)))))')" "(applied ok)"
+# ── String corruption regression (Bug TBD) ───────────────
+# Triggered by sequence: r1 + r2(error, restores) + r3('fail', restores) + r4("hello")
+# Without the bug, the output would be "hello".
+# With the bug, the string's low-6 type bits get clobbered to RefKeyword bits.
+# This test asserts the CURRENT (buggy) output so the bug stays reproducible.
+# When the bug is fixed, change the expected output to "hello".
+cat > /tmp/bug-string-corruption.aura <<'BUGINPUT'
+(require std/safe-refactor all:)(define r1 (safe-refactor:with-snapshot "t1" (lambda () 42)))(define r2 (safe-refactor:with-snapshot "t2" (lambda () (error "boom"))))(define r3 (safe-refactor:with-snapshot "t3" (lambda () (quote fail))))(define r4 (safe-refactor:with-snapshot "t4" (lambda () "hello")))(display r4)(newline)
+BUGINPUT
+run_test "bug:string-corruption-r4" "$(cat /tmp/bug-string-corruption.aura)" ":147605376151711743"
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL" 
 [ "$FAIL" -eq 0 ] || exit 1
 
