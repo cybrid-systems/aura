@@ -12615,6 +12615,16 @@ bool Evaluator::gc_module(const std::string& path) {
 
     // Reset the module arena (O(1) — frees all of StringPool/FlatAST/mod_env
     // and any pmr containers they owned).
+    //
+    // Issue #67 fix: before reset, explicitly call the Env destructor.
+    // The Env was arena-allocated via copy_env, so its destructor doesn't
+    // run automatically when the arena resets its bump pointer. The
+    // Env's `bindings_` vector owns a std::vector<pair<string,EvalValue>>
+    // that uses default std::allocator (heap), which would otherwise leak.
+    // Calling the destructor manually releases the vector's heap storage.
+    if (auto* env = modules_[mod_idx]) {
+        env->~Env();
+    }
     arena_group_->reset_module(path);
 
     // Clear the module slot. Swap-with-last keeps indices stable for
