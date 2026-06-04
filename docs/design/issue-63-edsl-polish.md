@@ -107,15 +107,56 @@ a pull-style primitive instead, because:
   - Skip fence blocks that don't contain `(` (intro/outro
     paragraphs were being captured as code).
 
-### Phase 3 — task 4 (E4 auto-tune)
+### Phase 3 — task 4 (E4 auto-tune `max-attempts`) ✅ DONE
 
-**Cost**: 1-2 weeks (implement E4 framework)
-**Value**: high but overlaps #80-#84
-**Defer**: until Evo-KV track starts.
+**Status**: completed 2026-06-04. Final cost: ~1 day (vs 1-2 weeks
+original estimate — most primitives already existed, just needed
+field extension and the `evolve-strategy` runtime).
+
+**What landed**:
+- ✅ `StrategyDef` struct gained 5 tunable fields:
+  `max_attempts` (1..20, default 3), `temperature` (0.0..1.0,
+  default 0.3), `sys_prompt_template` (free-form), `evolution`
+  (generation counter), `parent` (parent strategy name).
+- ✅ `intend` now reads `max_attempts` from the strategy when
+  `:strategy name` keyword arg is given, overriding the
+  positional int arg. Format:
+  `(intend goal gen ver [fixer] [max-attempts] :strategy name)`.
+- ✅ `define-strategy` / `register-strategy!` accept the new
+  keyword args (`:max-attempts`, `:temperature`, `:sys-prompt-template`).
+- ✅ `strategy-field` / `strategy-set-field!` / `strategy-inspect`
+  extended to read/write the new fields. `strategy-set-field!`
+  rejects out-of-range values (1..20 for max-attempts, 0..1 for
+  temperature) and read-only fields (name/evolution/parent).
+- ✅ `evolve-strategy` primitive implemented. Consumes
+  `intend-analytics` output, applies heuristics from
+  `e4_evolvable_strategies.md §3`, returns a new strategy name
+  (e.g. `"adaptive-v2"`). Old strategy preserved.
+- ✅ Benchmark task `tests/tasks/edsl/auto-tune-max-attempts.aura`:
+  LLM must call `evolve-strategy` on a strategy with low
+  success-rate + low attempts, verify the returned strategy
+  has a higher `max-attempts` (expect: 4 when starting from 2).
+
+**Heuristics implemented in `evolve-strategy`**:
+- `success-rate < 0.5` AND `avg-attempts = max-attempts` →
+  bump `max-attempts` by 2 (cap 20)
+- `success-rate > 0.9` AND `avg-attempts < 1.5` →
+  lower `max-attempts` by 1 (floor 1)
+- Top-errors `unbound-variable` ≥ 2 → append
+  `"Do NOT use undefined variables."` to `sys-prompt-template`
+- Top-errors `type-mismatch` ≥ 2 → append
+  `"Use (check x : Type) before operations."`
+- Top-errors `div-zero` ≥ 2 → append
+  `"Guard division with (if (= d 0) ...)."`
+- Top-errors `syntax-error` ≥ 2 → append
+  `"Check parentheses carefully."`
+
+**Verified**: 201/201 bash regression tests pass. The
+`auto-tune-max-attempts.aura` task produces the expected `4` when
+run end-to-end.
 
 ## Out of scope (defer)
 
-- Phase 3 (E4 auto-tune, above)
 - Updating `docs/benchmark.md` to add "EDSL Polish" subsection
   (defer; not in core task list) — task count updated to 148
 

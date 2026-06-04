@@ -1,0 +1,25 @@
+;; task: auto-tune-max-attempts
+;; goal: Use evolve-strategy to auto-tune a strategy's max-attempts.
+;;       Steps:
+;;         1. Define a strategy "tiny" with :max-attempts 2.
+;;         2. Run (intend "test-goal" (lambda (g) "") (lambda (c) "fail")
+;;              :strategy "tiny") — this will record a failed run.
+;;         3. Call (evolve-strategy "tiny") and capture the new name.
+;;         4. Read (strategy-field new-name "max-attempts") — should be > 2.
+;;         5. Display the new max-attempts as a number.
+;; expect: 4
+;; hint: After evolve-strategy runs, the new strategy's max-attempts
+;;       will be the old + 2 (capped at 20) because success-rate < 0.5
+;;       AND avg-attempts = old max-attempts.
+;; hint: Use (define new-name (evolve-strategy "tiny")) to capture
+;;       the new strategy name returned as a string.
+;; hint: (strategy-field new-name "max-attempts") returns an integer.
+;; hint: The full sequence:
+;; hint:   (define-strategy "tiny" "(dummy)" :max-attempts 2)
+;; hint:   (intend "goal"
+;; hint:          (lambda (g) "")
+;; hint:          (lambda (c) "fail")
+;; hint:          :strategy "tiny")
+;; hint:   (define new (evolve-strategy "tiny"))
+;; hint:   (display (strategy-field new "max-attempts"))
+;; depend: edsl
