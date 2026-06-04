@@ -3231,15 +3231,6 @@ private:
 
 
 public:
-    // Issue #67: explicit dtor to free persistent state in owned
-    // current_ast_ (its std::vector members like value_cache_,
-    // mutation_log_ leak on process exit otherwise). The Evaluator
-    // dtor already handles modules_/closures_/cells_ cleanup.
-    ~CompilerService() {
-        if (current_ast_) {
-            current_ast_->free_persistent_state();
-        }
-    }
     // Track names defined via value define (tree-walker path) so subsequent
     // expressions referencing them fall back to tree-walker instead of IR.
     std::unordered_set<std::string> user_bindings_;

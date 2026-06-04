@@ -384,34 +384,18 @@ private:
     // Used by Evaluator::eval_flat for incremental evaluation (Issue #32b).
     // Indexed by NodeId. Zero = not cached. Stored at module level (not arena)
     // because the evaluator outlives individual arena scopes.
-    std::vector<std::int64_t> value_cache_;
-    std::vector<MutationRecord> mutation_log_;
-    std::vector<std::uint32_t> node_first_mutation_;
+    // Issue #67: pmr::vector (was std::vector) — uses the same
+    // polymorphic_allocator as the rest of the FlatAST's SoA storage.
+    // When the FlatAST is destroyed, the pmr vectors' heap buffers
+    // are released along with the rest of the arena's memory.
+    // This eliminates the need for free_persistent_state() at process
+    // exit.
+    std::pmr::vector<std::int64_t> value_cache_;
+    std::pmr::vector<MutationRecord> mutation_log_;
+    std::pmr::vector<std::uint32_t> node_first_mutation_;
     std::uint64_t next_mutation_id_ = 1;
     std::uint16_t generation_ = 1;
     std::pmr::vector<std::uint16_t> node_gen_;
-
-public:
-    // Issue #67: free the persistent std::vector members' heap allocations.
-    // These are intentionally not in the arena (they outlive arena scopes),
-    // but when the FlatAST itself is destroyed (e.g. workspace_flat_ at
-    // process exit), their heap is leaked. Call this before destroying
-    // the containing FlatAST.
-    //
-    // Note: these vectors are kept as std::vector (not pmr::vector) for
-    // ABI stability — they hold persistent module-level state that must
-    // outlive individual arena scopes. Their heap allocations would
-    // otherwise leak when the FlatAST itself is destroyed.
-    void free_persistent_state() {
-        // shrink_to_fit forces deallocation; clear alone doesn't free
-        // the backing buffer.
-        value_cache_.clear();
-        value_cache_.shrink_to_fit();
-        mutation_log_.clear();
-        mutation_log_.shrink_to_fit();
-        node_first_mutation_.clear();
-        node_first_mutation_.shrink_to_fit();
-    }
 
 private:
 
@@ -443,7 +427,10 @@ private:
         , col_(alloc)
         , type_id_(alloc)
         , error_kind_(alloc)
-        , node_gen_(alloc) {}
+        , node_gen_(alloc)
+        , value_cache_(alloc)
+        , mutation_log_(alloc)
+        , node_first_mutation_(alloc) {}
 
     // ── Builders ───────────────────────────────────────────────
 
@@ -1065,8 +1052,8 @@ private:
 
     // Get mutation history for a specific node (0 == no history)
     // Get mutation history for a specific node (filters from log, O(n) in log size)
-    std::vector<MutationRecord> mutation_history(NodeId node) const {
-        std::vector<MutationRecord> result;
+    std::pmr::vector<MutationRecord> mutation_history(NodeId node) const {
+        std::pmr::vector<MutationRecord> result;
         for (auto& rec : mutation_log_) {
             if (rec.target_node == node)
                 result.push_back(rec);
@@ -1079,8 +1066,8 @@ private:
     std::uint64_t next_mutation_id() const { return next_mutation_id_; }
 
     // Get all mutation records (unfiltered).
-    const std::vector<MutationRecord>& all_mutations() const { return mutation_log_; }
-    std::vector<MutationRecord>& all_mutations() { return mutation_log_; }
+    const std::pmr::vector<MutationRecord>& all_mutations() const { return mutation_log_; }
+    std::pmr::vector<MutationRecord>& all_mutations() { return mutation_log_; }
 
     // Rollback a mutation by ID. Returns true if successful.
     // Current FlatAST generation. Incremented on rollback to invalidate stale NodeIds.
