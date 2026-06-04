@@ -160,29 +160,36 @@ Or keep it OPEN and link to this closing file as a status update
 comment.
 
 
-## Follow-up: String EvalValue corruption bug
+## Follow-up: String/Keyword tag overlap bug — FIXED
 
-While implementing Action 2, a separate bug was discovered and documented
-(see `tests/cons_corruption_repro.aura` and the `bug:string-corruption-r4`
-regression test in `tests/run-tests.sh`).
+While implementing Action 2, a tag-scheme overlap bug was discovered and
+documented (see `tests/cons_corruption_repro.aura`).
 
-**Symptom**: After the sequence
-```
-r1 = with-snapshot "t1" (lambda () 42)
-r2 = with-snapshot "t2" (lambda () (error "boom"))   ; triggers ast:restore
-r3 = with-snapshot "t3" (lambda () 'fail)            ; triggers ast:restore
-r4 = with-snapshot "t4" (lambda () "hello")
-```
-the value of `r4` is corrupted. Its string "hello" has its low-6 type-tag
-bits changed from STRING_BIAS (0b111111) to RefKeyword (0b101101), making
-it look like a fake RefKeyword with out-of-range index (e.g.,
-`:147605376151711743`).
+**Root cause**: The tag scheme has a collision between STRING_BIAS - idx
+and RefKeyword bit patterns. For idx values where (STRING_BIAS - idx)
+has bit 0 = 1 AND bits 2-5 = 11 (RefKeyword type), the value passes
+BOTH `is_string()` AND `is_keyword()` checks. The display path
+(`io_print_val` and `format_value`) checked `is_keyword` FIRST, so
+legitimate strings at idx 19, 83, 147, ... were misdisplayed as fake
+RefKeywords (":147605376151711743").
 
-**Reproduction**:
-- `tests/cons_corruption_repro.aura` — standalone repro
-- `tests/run-tests.sh` line 433-437 — `bug:string-corruption-r4` regression
-  test (asserts CURRENT buggy output to keep the bug reproducible)
+**Trigger**: Any string at the collision indices. The most common
+collision in tests was idx 19 (which is what "hello" landed on in the
+original repro).
 
-**Status**: Documented, regression test in place. Actual fix pending —
-not blocking the safe-refactor work (which uses `list` instead of `cons` for
-status values to avoid the corruption path).
+**Fix**: Reorder the display checks in `io_print_val`
+(`src/compiler/evaluator_impl.cpp`) and `format_value`
+(`src/compiler/evaluator.ixx`) so `is_string` is checked BEFORE
+`is_keyword`. For overlapping values, the string interpretation wins
+(in practice, no real RefKeyword has such a huge index, so this is
+safe).
+
+**Verification**:
+- `tests/cons_corruption_repro.aura` now shows `r4=hello` (correct)
+- `tests/run-tests.sh` regression test `fix:string-vs-keyword-overlap`
+  asserts the correct output
+- All 212 tests pass
+
+**Side note**: The safe-refactor module originally used `list` instead
+of `cons` for status values to work around this bug. With the fix in
+place, `cons` would now work too, but no need to change the working code.

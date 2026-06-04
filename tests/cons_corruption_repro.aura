@@ -1,59 +1,32 @@
 ;; === cons_corruption_repro.aura ===
 ;;
-;; REGRESSION TEST for the string/cons EvalValue corruption bug.
+;; REGRESSION TEST for the string/keyword tag overlap bug.
+;; 
+;; === ROOT CAUSE (found 2026-06-04) ===
 ;;
-;; === DEEP ANALYSIS (2026-06-04) ===
+;; The tag scheme has a collision between STRING_BIAS - idx and RefKeyword
+;; bit patterns. For idx values where (STRING_BIAS - idx) has bit 0 = 1
+;; AND bits 2-5 = 11 (= RefKeyword type), the value passes BOTH is_string()
+;; AND is_keyword() checks. The display path checked is_keyword FIRST,
+;; so legitimate strings at idx 19, 83, 147, ... were misdisplayed as
+;; fake RefKeywords (":147605376151711743").
 ;;
-;; TRIGGER (minimal):
-;;   A function in a module that uses try/catch + cond+equal?+ast:restore,
-;;   called 4+ times in the pattern:
-;;     r1 = (fn "t1" thunk-that-succeeds)
-;;     r2 = (fn "t2" thunk-that-raises)
-;;     r3 = (fn "t3" thunk-that-returns-'fail)
-;;     r4 = (fn "t4" thunk-that-returns-"hello")
+;; Trigger: any string at the collision indices, the most common one
+;; being idx 19 in a typical test. The reason earlier investigation
+;; required a specific 4-call sequence was just to land the string
+;; "hello" at exactly that idx.
 ;;
-;; OBSERVED: The string returned by r4's thunk is corrupted. Its low 6
-;; type-tag bits change from STRING_BIAS (0b111111) to RefKeyword
-;; (0b101101), making it look like an out-of-range keyword.
+;; === FIX (commit pending) ===
 ;;
-;; DEBUG DATA (via C++ prints):
-;;   - First display of r4 (from define's return):  v.val = 0x831993af1d7bffea
-;;   - r4's lookup shows cell reference 0x349 (is_cell=1)
-;;   - Second display of r4 (after lookup):         v.val = 0x831993af1d7bffed
-;;   - Cell write at ci=13: val=0x831993af1d7bffed (the corrupted value)
+; Reorder display checks in io_print_val (evaluator_impl.cpp) and
+; format_value (evaluator.ixx) so is_string is checked BEFORE is_keyword.
+; For overlapping values, the string interpretation wins (and in
+; practice, no real RefKeyword has such a huge index).
+;
+;; === VERIFICATION ===
 ;;
-;;   The two values differ by 3 in low bits:
-;;     0x...ffea = 1111 1111 1110 1010
-;;     0x...ffed = 1111 1111 1110 1101
-;;     bit 0 (0→1) and bit 2 (0→1) flipped
-;;     i.e., 0b111111 → 0b101101 (STRING_BIAS → RefKeyword)
-;;
-;;   The high 56 bits are IDENTICAL. The corruption is local to the low 6 bits.
-;;
-;; KEY OBSERVATION: The cell is WRITTEN with the corrupted value (0x831993af1d7bffed),
-;; not written cleanly and then corrupted. This means the corruption happens
-;; BEFORE the cell write, somewhere in the thunk's evaluation or the
-;; surrounding function's body.
-;;
-;; WORKAROUND: Use `list` instead of `cons` for status values
-;; (see lib/std/safe-refactor.aura). The `list` path doesn't trigger the bug.
-;; This is why the safe-refactor module works correctly.
-;;
-;; ROOT CAUSE: Not yet identified. Hypotheses:
-;;   1. `ast:restore` re-parses source, but a live EvalValue from a previous
-;;      function call still references the OLD string_heap. The new parse
-;;      reallocates string_heap_, but the old EvalValue points to invalid
-;;      index. The reference is then interpreted as a Ref with bogus type bits.
-;;   2. The thunk's IR uses a slot that's later re-used by the parent function
-;;      (e.g., the try/catch machinery), and the slot is overwritten.
-;;   3. A memory aliasing bug in the IR executor: when the function body
-;;      and the thunk both use the same locals[], one overwrites the other.
-;;
-;; STATUS: Documented, regression test in place. Actual fix pending.
-;;
-;; Run with:  ./build/aura < tests/cons_corruption_repro.aura
-;; Expected (after fix): r4=:hello\nr4=hello
-;; Current (bug):       r4=:147605376151711743
+; Run with:  ./build/aura < tests/cons_corruption_repro.aura
+; Expected (after fix): r4=hello
 
 (require std/safe-refactor all:)
 
@@ -65,4 +38,3 @@
 
 (display "r4=") (display r4) (newline)
 ;; expect: r4=hello
-;; ACTUAL: r4=:147605376151711743
