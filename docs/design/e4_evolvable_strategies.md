@@ -507,3 +507,15 @@ LLM 可以在下一次生成时有意识避免同样的错误模式，与 `evolv
 2. **evolve-strategy 的收敛条件？** 当连续 3 次演化提升 < 5% 时停止
 3. **多意图的并发？** 初期简单顺序执行，以后加 parallel strategy
 4. **history 持久化？** 当前在内存中，重启丢失。E5 加文件/数据库后端
+
+---
+
+## Related: Self-Evolving Agent Patterns
+
+For a complete pattern catalog of self-evolving AI agents
+(combining intend + mutate:rebind + orch:parallel + CaaS + E4),
+see
+[`docs/design/autonomous-self-evolving-agents.md`](autonomous-self-evolving-agents.md).
+Covers capability ladder (levels 1-7), 4 patterns (tool tuning,
+self-repair, capability discovery, multi-agent safety), and a
+comparison vs LangChain / AutoGPT / CrewAI.
