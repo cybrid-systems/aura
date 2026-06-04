@@ -3082,6 +3082,153 @@ void Evaluator::init_pair_primitives() {
         return result;
     });
 
+    // ── Git integration (Issue #96) ─────────────────────────────
+    // All primitives operate in the current working directory.
+    // They return strings (git output) or int (exit code on commit).
+    // For commit, message is required; pass "" to skip (no-op).
+
+    // (git-status) → short status string
+    primitives_.add("git-status", [this](const auto&) -> EvalValue {
+        std::array<char, 4096> buf;
+        std::string result;
+        auto* fp = ::popen("git status --short 2>/dev/null", "r");
+        if (!fp)
+            return make_void();
+        while (::fgets(buf.data(), buf.size(), fp) != nullptr)
+            result += buf.data();
+        ::pclose(fp);
+        if (!result.empty() && result.back() == '\n')
+            result.pop_back();
+        auto sid = string_heap_.size();
+        string_heap_.push_back(std::move(result));
+        return make_string(sid);
+    });
+
+    // (git-diff) → unified diff of unstaged changes
+    // (git-diff "staged") → diff of staged changes
+    primitives_.add("git-diff", [this](const auto& a) -> EvalValue {
+        std::string cmd = "git diff";
+        if (a.size() >= 1 && is_string(a[0])) {
+            auto mi = as_string_idx(a[0]);
+            if (mi < string_heap_.size() &&
+                string_heap_[mi] == "staged") {
+                cmd += " --staged";
+            }
+        }
+        cmd += " 2>/dev/null";
+        std::array<char, 4096> buf;
+        std::string result;
+        auto* fp = ::popen(cmd.c_str(), "r");
+        if (!fp)
+            return make_void();
+        while (::fgets(buf.data(), buf.size(), fp) != nullptr)
+            result += buf.data();
+        ::pclose(fp);
+        auto sid = string_heap_.size();
+        string_heap_.push_back(std::move(result));
+        return make_string(sid);
+    });
+
+    // (git-log n) → last n commits, one-line format
+    //   default n=10
+    primitives_.add("git-log", [this](const auto& a) -> EvalValue {
+        int n = 10;
+        if (a.size() >= 1 && is_int(a[0]))
+            n = static_cast<int>(as_int(a[0]));
+        if (n < 1) n = 1;
+        if (n > 1000) n = 1000;
+        std::string cmd = "git log --oneline -n " +
+                          std::to_string(n) + " 2>/dev/null";
+        std::array<char, 4096> buf;
+        std::string result;
+        auto* fp = ::popen(cmd.c_str(), "r");
+        if (!fp)
+            return make_void();
+        while (::fgets(buf.data(), buf.size(), fp) != nullptr)
+            result += buf.data();
+        ::pclose(fp);
+        if (!result.empty() && result.back() == '\n')
+            result.pop_back();
+        auto sid = string_heap_.size();
+        string_heap_.push_back(std::move(result));
+        return make_string(sid);
+    });
+
+    // (git-commit "message") → exit code (0 = ok)
+    primitives_.add("git-commit", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return make_int(-1);
+        auto mi = as_string_idx(a[0]);
+        if (mi >= string_heap_.size())
+            return make_int(-1);
+        // Escape single quotes for shell: ' -> '\''
+        std::string msg = string_heap_[mi];
+        std::string esc;
+        esc.reserve(msg.size() + 2);
+        esc += '\'';
+        for (char c : msg) {
+            if (c == '\'') esc += "'\\''";
+            else esc += c;
+        }
+        esc += '\'';
+        std::string cmd = "git commit -m " + esc + " 2>/dev/null";
+        return make_int(::system(cmd.c_str()));
+    });
+
+    // (git-branch-current) → current branch name (empty if detached)
+    primitives_.add("git-branch-current", [this](const auto&) -> EvalValue {
+        std::array<char, 256> buf;
+        std::string result;
+        auto* fp = ::popen("git rev-parse --abbrev-ref HEAD 2>/dev/null", "r");
+        if (!fp)
+            return make_void();
+        while (::fgets(buf.data(), buf.size(), fp) != nullptr)
+            result += buf.data();
+        ::pclose(fp);
+        if (!result.empty() && result.back() == '\n')
+            result.pop_back();
+        auto sid = string_heap_.size();
+        string_heap_.push_back(std::move(result));
+        return make_string(sid);
+    });
+
+    // (git-stage "file1" "file2" ...) → exit code
+    primitives_.add("git-stage", [this](const auto& a) -> EvalValue {
+        if (a.empty())
+            return make_int(-1);
+        std::string cmd = "git add";
+        for (const auto& v : a) {
+            if (!is_string(v))
+                return make_int(-1);
+            auto si = as_string_idx(v);
+            if (si >= string_heap_.size())
+                return make_int(-1);
+            // Quote each filename
+            cmd += " '";
+            cmd += string_heap_[si];
+            cmd += "'";
+        }
+        cmd += " 2>/dev/null";
+        return make_int(::system(cmd.c_str()));
+    });
+
+    // (git-rev-parse) → current HEAD sha (short)
+    primitives_.add("git-rev-parse", [this](const auto&) -> EvalValue {
+        std::array<char, 64> buf;
+        std::string result;
+        auto* fp = ::popen("git rev-parse --short HEAD 2>/dev/null", "r");
+        if (!fp)
+            return make_void();
+        while (::fgets(buf.data(), buf.size(), fp) != nullptr)
+            result += buf.data();
+        ::pclose(fp);
+        if (!result.empty() && result.back() == '\n')
+            result.pop_back();
+        auto sid = string_heap_.size();
+        string_heap_.push_back(std::move(result));
+        return make_string(sid);
+    });
+
     // ── Regex ──────────────────────────────────────────────────
     primitives_.add("regex-match?", [this](const auto& a) {
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
