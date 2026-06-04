@@ -229,7 +229,8 @@ private:
     [[nodiscard]] EvalResult eval_data_as_code(const types::EvalValue& data, const Env& env,
                                                aura::ast::FlatAST* flat = nullptr,
                                                aura::ast::StringPool* pool = nullptr);
-    Env* copy_env(const Env& env, ast::ASTArena* target = nullptr);
+    Env* copy_env(const Env& env, ast::ASTArena* target = nullptr)
+        pre (target != nullptr);  // arena_ is private; impl also asserts via contract_assert
     void init_pair_primitives();
     void build_primitive_slots();
     // Load a module file, return module object (or void on failure)
