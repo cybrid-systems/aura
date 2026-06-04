@@ -64,7 +64,12 @@ export struct Closure {
 ```cpp
 // — 新增成员
 ast::ASTArena* temp_arena_ = nullptr;
-bool in_task_context_ = false;
+// Issue #68: depth counter (was bool) for nested intend support.
+// 0 = not in any intend; >0 = inside N nested intends. Each intend
+// saves the current depth, sets it to depth+1, and restores on exit.
+// The allocation rule (line below) still works because 0 is falsy
+// and non-zero is truthy.
+int in_task_context_ = 0;
 ```
 
 #### 2. `evaluator_impl.cpp`
@@ -145,14 +150,18 @@ primitives_.add("gc-temp", [this](const auto&) -> EvalValue {
 **in_task_context_ 设置：**
 
 ```cpp
-// intend 原语入口处（~line 8084）：
+// intend 原语入口处（~line 10872）：
+// Issue #68: depth-counter form, supports nested intend.
+int saved_depth = in_task_context_;
+in_task_context_ = saved_depth + 1;
+auto restore = [&] { in_task_context_ = saved_depth; };
 // ... existing preamble ...
-in_task_context_ = true;
 
 // ... intend body (generator/verifier/fixer 执行) ...
 
-// 退出 intent：
-in_task_context_ = false;
+// 退出 intent（RAII 触发）：
+restore();  // in_task_context_ = saved_depth
+```
 
 // eval-expr 处（~line 3945）：
 // 如果处于 task 上下文，临时 AST 可分配在 temp arena

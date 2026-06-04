@@ -412,7 +412,14 @@ private:
     std::vector<std::vector<types::EvalValue>> vector_heap_;
     std::uint64_t next_id_ = 1;
     ClosureId gc_safe_closure_id_ = 0;
-    bool in_task_context_ = false;
+    // Issue #68: depth counter (was bool) so nested `intend` calls
+    // correctly keep outer closures in the persistent arena. With
+    // bool, an outer intend's closures could be allocated in the
+    // temp arena when an inner intend flipped the flag, then
+    // collected by gc-temp. With a counter, only depth > 0 (i.e.
+    // inside at least one intend) routes to temp arena, and the
+    // outer intend's depth-1 boundary still goes to persistent.
+    int in_task_context_ = 0;
 
     // ── Capability 上下文栈 ─────────────────────────────────────
     // 每层包含当前作用域允许的 effect 名称列表
