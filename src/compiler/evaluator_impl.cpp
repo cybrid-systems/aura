@@ -461,6 +461,21 @@ namespace {
             std::fprintf(stdout, "%s", as_bool(v) ? "#t" : "#f");
             return;
         }
+        // IMPORTANT: Check is_string BEFORE is_keyword (Issue #96 bug fix).
+        // The STRING_BIAS - idx encoding can produce bit patterns that
+        // overlap with RefKeyword (every 64th idx starting at 19).
+        // In practice, no real RefKeyword has such a huge index, so
+        // checking string first resolves the ambiguity correctly.
+        if (is_string(v) && heap) {
+            auto idx = as_string_idx(v);
+            if (idx < heap->size()) {
+                if (quote)
+                    std::fprintf(stdout, "\"%s\"", (*heap)[idx].c_str());
+                else
+                    std::fprintf(stdout, "%s", (*heap)[idx].c_str());
+                return;
+            }
+        }
         if (is_keyword(v)) {
             auto kidx = as_keyword_idx(v);
             if (keywords && kidx < keywords->size()) {
@@ -478,16 +493,6 @@ namespace {
         if (is_int(v)) {
             std::fprintf(stdout, "%ld", (long)as_int(v));
             return;
-        }
-        if (is_string(v) && heap) {
-            auto idx = as_string_idx(v);
-            if (idx < heap->size()) {
-                if (quote)
-                    std::fprintf(stdout, "\"%s\"", (*heap)[idx].c_str());
-                else
-                    std::fprintf(stdout, "%s", (*heap)[idx].c_str());
-                return;
-            }
         }
         if (is_pair(v) && pairs) {
             auto idx = as_pair_idx(v);

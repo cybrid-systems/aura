@@ -434,7 +434,7 @@ run_test "safe-refactor:applied" "$(printf '(begin (require std/safe-refactor al
 cat > /tmp/bug-string-corruption.aura <<'BUGINPUT'
 (require std/safe-refactor all:)(define r1 (safe-refactor:with-snapshot "t1" (lambda () 42)))(define r2 (safe-refactor:with-snapshot "t2" (lambda () (error "boom"))))(define r3 (safe-refactor:with-snapshot "t3" (lambda () (quote fail))))(define r4 (safe-refactor:with-snapshot "t4" (lambda () "hello")))(display r4)(newline)
 BUGINPUT
-run_test "bug:string-corruption-r4" "$(cat /tmp/bug-string-corruption.aura)" ":147605376151711743"
+run_test "fix:string-vs-keyword-overlap" "$(cat /tmp/bug-string-corruption.aura)" "hello"
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL" 
 [ "$FAIL" -eq 0 ] || exit 1
 

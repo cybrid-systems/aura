@@ -462,12 +462,9 @@ export inline std::string format_value(const types::EvalValue& v,
         return std::to_string(types::as_int(v));
     if (types::is_float(v))
         return std::to_string(types::as_float(v));
-    if (types::is_keyword(v)) {
-        auto kidx = types::as_keyword_idx(v);
-        if (keywords && kidx < keywords->size())
-            return (*keywords)[kidx];
-        return ":" + std::to_string(kidx);
-    }
+    // IMPORTANT: Check is_string BEFORE is_keyword (Issue #96 bug fix).
+    // The STRING_BIAS - idx encoding can produce bit patterns that
+    // overlap with RefKeyword (every 64th idx starting at 19).
     if (types::is_string(v)) {
         if (heap) {
             auto idx = types::as_string_idx(v);
@@ -475,6 +472,12 @@ export inline std::string format_value(const types::EvalValue& v,
                 return std::format("\"{}\"", (*heap)[idx]);
         }
         return std::format("<string[{}]>", types::as_string_idx(v));
+    }
+    if (types::is_keyword(v)) {
+        auto kidx = types::as_keyword_idx(v);
+        if (keywords && kidx < keywords->size())
+            return (*keywords)[kidx];
+        return ":" + std::to_string(kidx);
     }
     if (types::is_pair(v) && pairs) {
         auto idx = types::as_pair_idx(v);
