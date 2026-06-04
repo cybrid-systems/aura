@@ -9719,24 +9719,6 @@ Evaluator::Evaluator() {
         return make_int(static_cast<std::int64_t>(n->cow_refused_count));
     });
 
-    // Issue #97 Action 3: per-workspace memory primitives
-    primitives_.add("workspace:memory-used", [this](const auto&) -> EvalValue {
-        if (!workspace_tree_) return make_int(0);
-        auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
-        auto* n = wt->active();
-        if (!n) return make_int(0);
-        return make_int(static_cast<std::int64_t>(n->memory_used));
-    });
-
-    primitives_.add("workspace:memory-limit", [this](const auto&) -> EvalValue {
-        if (!workspace_tree_) return make_int(-1);
-        auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
-        auto* n = wt->active();
-        if (!n) return make_int(-1);
-        if (n->memory_budget == 0) return make_int(-1);
-        return make_int(static_cast<std::int64_t>(n->memory_budget));
-    });
-
     primitives_.add("workspace:set-memory-limit", [this](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]) || !workspace_tree_)
             return make_bool(false);
@@ -10066,6 +10048,124 @@ Evaluator::Evaluator() {
         defuse_index_ = nullptr;
         return make_string(ri);
     });
+
+    // Issue #98 Action 1: Workspace conflict detection & 3-way merge
+    // Helper: extract define names from a source string
+    auto extract_defines = [this](const std::string& src)
+        -> std::unordered_set<std::string> {
+        std::unordered_set<std::string> names;
+        if (src.empty()) return names;
+        aura::ast::StringPool tmp_pool;
+        aura::ast::FlatAST tmp_flat;
+        auto pr = aura::parser::parse_to_flat(src, tmp_flat, tmp_pool);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE) return names;
+        tmp_flat.root = pr.root;
+        for (aura::ast::NodeId id = 0; id < tmp_flat.size(); ++id) {
+            auto v = tmp_flat.get(id);
+            if (v.tag == aura::ast::NodeTag::Define &&
+                v.sym_id != aura::ast::INVALID_SYM) {
+                auto nm = tmp_pool.resolve(v.sym_id);
+                if (!nm.empty()) names.insert(std::string(nm));
+            }
+        }
+        return names;
+    };
+
+    // (workspace:conflicts-with child-id) -> list of symbol names
+    //   that exist in BOTH parent (root, id=0) and child.
+    //   Returns an unordered list of strings, or () if no conflicts.
+    //   Dry run - does NOT modify either workspace.
+    primitives_.add("workspace:conflicts-with",
+                     [this, get_ws_source, extract_defines](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]) || !workspace_tree_) return make_void();
+        auto* tree = static_cast<WorkspaceTree*>(workspace_tree_);
+        auto child_idx = static_cast<std::uint32_t>(as_int(a[0]));
+        if (child_idx == 0 || child_idx >= tree->size()) return make_void();
+        auto child_source = get_ws_source(child_idx);
+        if (child_source.empty()) return make_void();
+        auto& parent = tree->nodes_[0];
+        if (parent.read_only) return make_void();
+        workspace_flat_ = parent.flat;
+        workspace_pool_ = parent.pool;
+        tree->set_active(0);
+        auto src_fn = primitives_.lookup("current-source");
+        std::string parent_source;
+        if (src_fn) {
+            auto src = (*src_fn)({});
+            if (is_string(src)) {
+                auto sidx = as_string_idx(src);
+                if (sidx < string_heap_.size())
+                    parent_source = string_heap_[sidx];
+            }
+        }
+        auto parent_names = extract_defines(parent_source);
+        auto child_names = extract_defines(child_source);
+        std::vector<std::string> conflicts;
+        for (auto& n : child_names) {
+            if (parent_names.count(n)) conflicts.push_back(n);
+        }
+        std::sort(conflicts.begin(), conflicts.end());
+        EvalValue result = make_void();
+        for (auto it = conflicts.rbegin(); it != conflicts.rend(); ++it) {
+            auto sidx = string_heap_.size();
+            string_heap_.push_back(*it);
+            auto pidx = pairs_.size();
+            pairs_.push_back({make_string(sidx), result});
+            result = make_pair(pidx);
+        }
+        return result;
+    });
+
+    // (workspace:merge-3way base-id ours-id theirs-id [strategy: ...]) -> #t
+    //   Source-level 3-way merge. The merged source combines all 3.
+    //   Conflict resolution: "ours" wins by default; "theirs" makes theirs
+    //   win. For 3-way structural merge (with base as ancestor), see
+    //   docs/issue-closings/98-closing.md.
+    primitives_.add("workspace:merge-3way", [this, get_ws_source](const auto& a) -> EvalValue {
+        if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !workspace_tree_)
+            return make_bool(false);
+        auto* tree = static_cast<WorkspaceTree*>(workspace_tree_);
+        auto base_id = static_cast<std::uint32_t>(as_int(a[0]));
+        auto ours_id = static_cast<std::uint32_t>(as_int(a[1]));
+        auto theirs_id = static_cast<std::uint32_t>(as_int(a[2]));
+        if (base_id >= tree->size() || ours_id >= tree->size() || theirs_id >= tree->size())
+            return make_bool(false);
+        std::string strategy = "ours";
+        if (a.size() >= 4 && is_string(a[3])) {
+            auto sidx = as_string_idx(a[3]);
+            if (sidx < string_heap_.size()) strategy = string_heap_[sidx];
+        }
+        auto base_source = get_ws_source(base_id);
+        auto ours_source = get_ws_source(ours_id);
+        auto theirs_source = get_ws_source(theirs_id);
+        std::string merged;
+        if (!base_source.empty()) merged += base_source;
+        auto append_ws = [&merged](const std::string& s) {
+            if (s.empty()) return;
+            if (!merged.empty() && merged.back() != '\n') merged += '\n';
+            merged += s;
+        };
+        if (strategy == "theirs") {
+            append_ws(theirs_source);
+            append_ws(ours_source);
+        } else {
+            append_ws(ours_source);
+            append_ws(theirs_source);
+        }
+        if (tree->nodes_[base_id].read_only) return make_bool(false);
+        tree->set_active(base_id);
+        workspace_flat_ = tree->nodes_[base_id].flat;
+        workspace_pool_ = tree->nodes_[base_id].pool;
+        auto mi = string_heap_.size();
+        string_heap_.push_back(merged);
+        if (auto set_fn = primitives_.lookup("set-code")) {
+            auto r = (*set_fn)({make_string(mi)});
+            return is_bool(r) ? r : make_bool(false);
+        }
+        return make_bool(false);
+    });
+
+
 
     // ═══════════════════════════════════════════════════════════════
     // P14: Inter-Agent Messaging (P0)

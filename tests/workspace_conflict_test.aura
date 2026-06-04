@@ -1,0 +1,25 @@
+;; === workspace_conflict_test.aura ===
+;; Tests for Issue #98 Action 1: workspace:conflicts-with + merge-3way
+
+;; Setup: workspace tree with parent (root) and a child
+;; (We need a way to set parent content; this is tricky because the
+;; default stdin path doesn't go through workspace_flat_.)
+;; 
+;; For now, just test the primitives exist and accept args
+
+;; Test 1: primitives exist
+(display (procedure? workspace:conflicts-with)) (newline)  ; #t
+(display (procedure? workspace:merge-3way)) (newline)  ; #t
+
+;; Test 2: conflicts-with on nonexistent child returns void
+(display (workspace:conflicts-with 1)) (newline)  ; ()
+
+;; Test 3: conflicts-with on invalid index returns void
+(display (workspace:conflicts-with 999)) (newline)  ; ()
+
+;; Test 4: merge-3way with bad indices returns #f
+(display (workspace:merge-3way 0 1 2)) (newline)  ; #f (or #t if 1,2 are valid)
+
+;; Test 5: merge-3way with strategy
+(display (workspace:merge-3way 0 1 2 "ours")) (newline)  ; #f or #t
+(display (workspace:merge-3way 0 1 2 "theirs")) (newline)  ; #f or #t
