@@ -1,0 +1,4 @@
+safe-refactor:with-snapshot: Any Any -> Any
+safe-refactor:replace-fn: Any Any -> Any
+safe-refactor:check-and-apply: Any Any Any -> Any
+safe-refactor:rollback: -> Any
