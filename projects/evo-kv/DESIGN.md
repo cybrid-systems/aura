@@ -212,3 +212,12 @@ projects/evo-kv/
 - 用 `(intend "optimize kv-get" strategy: refactor)` 代替手写 mutate
 - colony:search 自动探索有效变体
 - 进化策略本身可进化
+
+---
+
+## Related Documentation
+
+- [`docs/design/self-evolving-infrastructure.md`](../../docs/design/self-evolving-infrastructure.md) — broader patterns for self-evolving infrastructure beyond KV (caches, queues, schedulers, etc.). Issue #85.
+- [`docs/design/double-arena.md`](../../docs/design/double-arena.md) — memory model backing the hot-swap safety
+- [`docs/design/e4_evolvable_strategies.md`](../../docs/design/e4_evolvable_strategies.md) — E4 auto-tune heuristics
+- [`docs/benchmark.md`](../../docs/benchmark.md) — model + benchmark for evolve-strategy validation

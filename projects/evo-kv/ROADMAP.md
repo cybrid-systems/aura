@@ -71,3 +71,11 @@ Grok（我）                    Aura 运行时              你
   ├─ push                                            ←─┤─ 审查
   └─ 下一轮 ───────────────────────────────────────→ 确认
 ```
+
+---
+
+## Related: Broader Self-Evolving Infrastructure
+
+For patterns applicable to caches, message queues, schedulers,
+and other infrastructure components (not just KV stores), see
+[`docs/design/self-evolving-infrastructure.md`](../../docs/design/self-evolving-infrastructure.md).
