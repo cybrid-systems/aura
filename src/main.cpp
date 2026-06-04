@@ -1556,27 +1556,166 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        // ── Resolve import/require: prepend module source ───────────
+        // ── Resolve import/require: prepend module source (recursive) ──
         // Replace (import "std/name") / (require "std/name") with the
         // module's source code so defines are processed inline by eval_ir.
-        // This bypasses cache_module's conservative FnCheck which rejects
-        // named-let and local lambda bindings.
+        // Recursively inline any nested requires too, so the prepended
+        // block is self-contained and doesn't re-execute requires at
+        // runtime (which would re-load modules, leak module arenas, and
+        // can segfault the IR pipeline on CI).
         {
             static const std::string std_root = "lib/std/";
+
+            // Find the matching close paren starting from an open paren,
+            // respecting string literals and nested parens.
+            auto find_matching_close = [](const std::string& s, std::size_t open_paren) {
+                std::size_t i = open_paren;
+                int depth = 0;
+                bool in_str = false;
+                while (i < s.size()) {
+                    char c = s[i];
+                    if (in_str) {
+                        if (c == '\\' && i + 1 < s.size()) { i += 2; continue; }
+                        if (c == '"') in_str = false;
+                    } else {
+                        if (c == '"') in_str = true;
+                        else if (c == '(') depth++;
+                        else if (c == ')') {
+                            depth--;
+                            if (depth == 0) return i + 1;
+                        }
+                    }
+                    i++;
+                }
+                return std::string::npos;
+            };
+
+            // Strip (export ...) — finds the first '(' matching its ')'.
+            auto strip_export = [&](std::string& s) {
+                auto p = s.find("(export");
+                if (p == std::string::npos) return;
+                auto end = find_matching_close(s, p);
+                if (end == std::string::npos) return;
+                s.erase(p, end - p);
+            };
+
+            // Resolve "std/name" or sym-like-name to a file path.
+            auto resolve_path = [&](const std::string& name) -> std::string {
+                if (name.starts_with("std/"))
+                    return std_root + name.substr(4) + ".aura";
+                return name + ".aura";
+            };
+
+            // Recursively inline a module file. Replaces nested
+            // (require X) / (import "X") forms with the inlined source
+            // of X (depth-first, cycle-safe via `visited`).
+            std::set<std::string> visited;
+            std::function<std::string(const std::string&)> inline_module;
+            inline_module = [&](const std::string& path) -> std::string {
+                if (visited.count(path)) return "";
+                visited.insert(path);
+                std::ifstream mf(path);
+                if (!mf) {
+                    std::println(std::cerr, "warning: cannot open module '{}'", path);
+                    return "";
+                }
+                std::string src((std::istreambuf_iterator<char>(mf)),
+                                 std::istreambuf_iterator<char>());
+                strip_export(src);
+                std::string out;
+                std::size_t pos = 0;
+                while (pos < src.size()) {
+                    // Skip whitespace and comments at the top level
+                    while (pos < src.size() &&
+                           (src[pos] == ' ' || src[pos] == '\n' ||
+                            src[pos] == '\t' || src[pos] == '\r' ||
+                            src[pos] == ';')) {
+                        if (src[pos] == ';') {
+                            // line comment
+                            while (pos < src.size() && src[pos] != '\n') pos++;
+                        } else pos++;
+                    }
+                    if (pos >= src.size() || src[pos] != '(') {
+                        if (pos < src.size()) out += src[pos++];
+                        else break;
+                        continue;
+                    }
+                    std::size_t form_start = pos;
+                    std::size_t form_end = find_matching_close(src, pos);
+                    if (form_end == std::string::npos) {
+                        out += src.substr(pos);
+                        break;
+                    }
+                    std::string form = src.substr(form_start, form_end - form_start);
+                    // Inspect the form's head
+                    std::string head;
+                    std::size_t h = form_start + 1;
+                    while (h < form_end &&
+                           (src[h] == ' ' || src[h] == '\n' ||
+                            src[h] == '\t' || src[h] == '\r'))
+                        h++;
+                    while (h < form_end && src[h] != ' ' && src[h] != '\n' &&
+                           src[h] != '\t' && src[h] != '\r' && src[h] != ')')
+                        head += src[h++];
+                    if (head == "require" || head == "import" || head == "use") {
+                        // Extract first arg (a symbol or string)
+                        while (h < form_end &&
+                               (src[h] == ' ' || src[h] == '\n' ||
+                                src[h] == '\t' || src[h] == '\r'))
+                            h++;
+                        std::string arg;
+                        bool in_str = false;
+                        while (h < form_end) {
+                            char c = src[h];
+                            if (in_str) {
+                                arg += c;
+                                if (c == '"') in_str = false;
+                            } else if (c == '"') {
+                                arg += c;
+                                in_str = true;
+                            } else if (c == ' ' || c == '\n' || c == '\t' ||
+                                       c == '\r' || c == ')') {
+                                break;
+                            } else {
+                                arg += c;
+                            }
+                            h++;
+                        }
+                        // Strip surrounding quotes if present
+                        if (arg.size() >= 2 && arg.front() == '"' && arg.back() == '"')
+                            arg = arg.substr(1, arg.size() - 2);
+                        if (!arg.empty()) {
+                            std::string nested = resolve_path(arg);
+                            out += inline_module(nested);
+                            out += '\n';
+                        }
+                        // Skip the original form in src (don't copy it to out)
+                    } else {
+                        out += form;
+                        out += '\n';
+                    }
+                    pos = form_end;
+                }
+                return out;
+            };
+
+            // Process the user input: for each top-level (import "X") or
+            // (require "X"), inline the module and replace the form.
             std::string resolved;
             std::size_t pos = 0;
             while (pos < input.size()) {
-                // Look for (import "...") or (require "...")
                 auto imp = input.find("(import \"", pos);
                 auto req = input.find("(require \"", pos);
-                auto found = (imp < req) ? imp : req;
-                if (found == std::string::npos ||
-                    (imp == std::string::npos && req == std::string::npos)) {
+                std::size_t found;
+                bool has_imp = (imp != std::string::npos);
+                bool has_req = (req != std::string::npos);
+                if (!has_imp && !has_req) {
                     resolved += input.substr(pos);
                     break;
                 }
+                if (has_imp && (!has_req || imp < req)) found = imp;
+                else found = req;
                 resolved += input.substr(pos, found - pos);
-                // Find the closing quote and paren
                 auto quote_start = input.find('"', found);
                 auto quote_end = input.find('"', quote_start + 1);
                 if (quote_start == std::string::npos || quote_end == std::string::npos) {
@@ -1584,33 +1723,16 @@ int main(int argc, char* argv[]) {
                     break;
                 }
                 auto module_name = input.substr(quote_start + 1, quote_end - quote_start - 1);
-                // Map: "std/algorithm" → "lib/std/algorithm.aura"
-                std::string module_path;
-                if (module_name.starts_with("std/"))
-                    module_path = std_root + module_name.substr(4) + ".aura";
-                else
-                    module_path = module_name + ".aura";
-                // Read and prepend module source
-                std::ifstream mf(module_path);
-                if (mf) {
-                    std::string mod_src((std::istreambuf_iterator<char>(mf)),
-                                         std::istreambuf_iterator<char>());
-                    // Remove (export ...) line — not needed for inline compilation
-                    auto exp = mod_src.find("(export");
-                    if (exp != std::string::npos) {
-                        auto exp_end = mod_src.find(')', exp);
-                        if (exp_end != std::string::npos)
-                            mod_src = mod_src.substr(0, exp) + mod_src.substr(exp_end + 1);
-                    }
-                    resolved += mod_src;
-                    resolved += '\n';
-                } else {
-                    std::println(std::cerr, "warning: cannot open module '{}'", module_path);
+                auto close_paren = input.find(')', quote_end);
+                if (close_paren == std::string::npos) {
+                    resolved += input.substr(found);
+                    break;
                 }
-                pos = quote_end + 1;
-                auto close_paren = input.find(')', pos);
-                if (close_paren != std::string::npos)
-                    pos = close_paren + 1;
+                std::string module_path = resolve_path(module_name);
+                visited.clear();
+                resolved += inline_module(module_path);
+                resolved += '\n';
+                pos = close_paren + 1;
             }
             input = resolved;
         }
