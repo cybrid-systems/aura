@@ -10882,12 +10882,48 @@ Evaluator::Evaluator() {
         auto gen_cid = types::as_closure_id(a[1]); // generator
         auto ver_cid = types::as_closure_id(a[2]); // verifier
 
-        // Optional fixer_fn
-        bool has_fixer = a.size() >= 4 && types::is_closure(a[3]);
-        auto fix_cid = has_fixer ? types::as_closure_id(a[3]) : std::uint64_t{0};
-
-        // Optional max_attempts
+        // Issue #63 Phase 3: optional strategy-name (string) as the
+        // 3rd-or-4th positional arg. When present, use the strategy's
+        // `max_attempts` (overriding the 4th-or-5th positional int).
+        // Format: (intend goal gen ver [fixer] [max-attempts]
+        //                 :strategy name)  ← keyword form preferred
+        std::string strategy_name = "default";
         int max_attempts = 3;
+        bool has_fixer = false;
+        std::uint64_t fix_cid = 0;
+        // Walk remaining positional args; support both (fixer [max])
+        // and (fixer max :strategy name) orderings by looking for the
+        // :strategy keyword.
+        std::size_t i = 3;
+        if (i < a.size() && types::is_closure(a[i])) {
+            has_fixer = true;
+            fix_cid = types::as_closure_id(a[i]);
+            ++i;
+        }
+        if (i < a.size() && types::is_int(a[i])) {
+            max_attempts = static_cast<int>(types::as_int(a[i]));
+            ++i;
+        }
+        for (; i + 1 < a.size(); i += 2) {
+            std::string k;
+            if (types::is_string(a[i])) {
+                k = string_heap_[types::as_string_idx(a[i])];
+            } else if (types::is_keyword(a[i])) {
+                auto kidx = types::as_keyword_idx(a[i]);
+                if (kidx < keyword_table_.size())
+                    k = keyword_table_[kidx];
+            } else continue;
+            if (k == ":strategy" && types::is_string(a[i+1])) {
+                strategy_name = string_heap_[types::as_string_idx(a[i+1])];
+                // Look up the strategy's max_attempts (overrides int arg)
+                for (auto& s : strategies_) {
+                    if (s.name == strategy_name) {
+                        max_attempts = s.max_attempts;
+                        break;
+                    }
+                }
+            }
+        }
         if ((has_fixer && a.size() >= 5 && types::is_int(a[4])) ||
             (!has_fixer && a.size() >= 4 && types::is_int(a[3]))) {
             auto idx = has_fixer ? 4 : 3;
@@ -11000,7 +11036,7 @@ Evaluator::Evaluator() {
                     std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
                 IntendRecord rec;
                 rec.record_id = next_record_id_++;
-                rec.strategy_name = "default";
+                rec.strategy_name = strategy_name;
                 rec.task_desc = goal;
                 rec.success = true;
                 rec.attempts = attempt;
@@ -11030,7 +11066,7 @@ Evaluator::Evaluator() {
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
         IntendRecord rec;
         rec.record_id = next_record_id_++;
-        rec.strategy_name = "default";
+        rec.strategy_name = strategy_name;
         rec.task_desc = goal;
         rec.success = false;
         rec.attempts = max_attempts;
@@ -11212,18 +11248,54 @@ Evaluator::Evaluator() {
 
 
     // ── define-strategy — 定义策略 ──────────────────────────
+    // Issue #63 Phase 3: accept optional keyword args
+    //   :max-attempts <int>     (1..20, default 3)
+    //   :temperature <float>   (0.0..1.0, default 0.3)
+    //   :sys-prompt-template <str>
     primitives_.add("define-strategy", [this](const auto& a) -> EvalValue {
         if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
             return make_bool(false);
         auto name = string_heap_[types::as_string_idx(a[0])];
         auto body = string_heap_[types::as_string_idx(a[1])];
+        // Optional keyword args (pairs from index 2)
+        int new_max = 3;
+        double new_temp = 0.3;
+        std::string new_spt;
+        for (std::size_t i = 2; i + 1 < a.size(); i += 2) {
+            // Issue #63 Phase 3: keywords come in as a separate EvalValue
+            // type, not strings. Resolve both.
+            std::string k;
+            if (types::is_string(a[i])) {
+                k = string_heap_[types::as_string_idx(a[i])];
+            } else if (types::is_keyword(a[i])) {
+                auto kidx = types::as_keyword_idx(a[i]);
+                if (kidx < keyword_table_.size())
+                    k = keyword_table_[kidx];
+            } else {
+                continue;
+            }
+            if (k == ":max-attempts" && types::is_int(a[i+1])) {
+                int v = static_cast<int>(types::as_int(a[i+1]));
+                if (v >= 1 && v <= 20) new_max = v;
+            } else if (k == ":temperature" && (types::is_int(a[i+1]) || types::is_float(a[i+1]))) {
+                double v = types::is_float(a[i+1])
+                    ? types::as_float(a[i+1])
+                    : static_cast<double>(types::as_int(a[i+1]));
+                if (v >= 0.0 && v <= 1.0) new_temp = v;
+            } else if (k == ":sys-prompt-template" && types::is_string(a[i+1])) {
+                new_spt = string_heap_[types::as_string_idx(a[i+1])];
+            }
+        }
         for (auto& s : strategies_) {
             if (s.name == name) {
                 s.body = body;
+                s.max_attempts = new_max;
+                s.temperature = new_temp;
+                s.sys_prompt_template = new_spt;
                 return make_bool(true);
             }
         }
-        strategies_.push_back({name, body});
+        strategies_.push_back({name, body, new_max, new_temp, new_spt, 0, ""});
         return make_bool(true);
     });
     // ── register-strategy! — 注册/更新策略 ──────────────
@@ -11238,57 +11310,270 @@ Evaluator::Evaluator() {
                 return make_bool(true);
             }
         }
-        strategies_.push_back({name, body});
+        strategies_.push_back({name, body, 3, 0.3, "", 0, ""});
         return make_bool(true);
     });
     // ── strategy-field — 读取策略字段 ──────────────────────
+    // Issue #63 Phase 3: support tunable fields beyond 'body'.
     primitives_.add("strategy-field", [this](const auto& a) -> EvalValue {
         if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
             return make_void();
         auto name = string_heap_[types::as_string_idx(a[0])];
         auto field = string_heap_[types::as_string_idx(a[1])];
         for (auto& s : strategies_) {
-            if (s.name == name && field == "body") {
+            if (s.name != name) continue;
+            if (field == "body") {
                 auto sid = string_heap_.size();
                 string_heap_.push_back(s.body);
+                return types::make_string(sid);
+            }
+            if (field == "max-attempts") {
+                return types::make_int(s.max_attempts);
+            }
+            if (field == "temperature") {
+                return types::make_float(s.temperature);
+            }
+            if (field == "sys-prompt-template") {
+                auto sid = string_heap_.size();
+                string_heap_.push_back(s.sys_prompt_template);
+                return types::make_string(sid);
+            }
+            if (field == "evolution") {
+                return types::make_int(s.evolution);
+            }
+            if (field == "parent") {
+                auto sid = string_heap_.size();
+                string_heap_.push_back(s.parent);
                 return types::make_string(sid);
             }
         }
         return make_void();
     });
     // ── strategy-set-field! — 修改策略字段（白名单）───────────
+    // Whitelist + range checks per e4_evolvable_strategies.md §1.
     primitives_.add("strategy-set-field!", [this](const auto& a) -> EvalValue {
         if (a.size() < 3 || !types::is_string(a[0]) || !types::is_string(a[1]))
             return make_bool(false);
         auto field = string_heap_[types::as_string_idx(a[1])];
-        if (field != "body" || !types::is_string(a[2]))
-            return make_bool(false);
         auto name = string_heap_[types::as_string_idx(a[0])];
-        auto new_body = string_heap_[types::as_string_idx(a[2])];
         for (auto& s : strategies_) {
-            if (s.name == name) {
-                s.body = new_body;
+            if (s.name != name) continue;
+            if (field == "body" && types::is_string(a[2])) {
+                s.body = string_heap_[types::as_string_idx(a[2])];
                 return make_bool(true);
             }
+            if (field == "max-attempts" && types::is_int(a[2])) {
+                int v = static_cast<int>(types::as_int(a[2]));
+                if (v < 1 || v > 20) return make_bool(false);
+                s.max_attempts = v;
+                return make_bool(true);
+            }
+            if (field == "temperature" &&
+                (types::is_int(a[2]) || types::is_float(a[2]))) {
+                double v = types::is_float(a[2])
+                    ? types::as_float(a[2])
+                    : static_cast<double>(types::as_int(a[2]));
+                if (v < 0.0 || v > 1.0) return make_bool(false);
+                s.temperature = v;
+                return make_bool(true);
+            }
+            if (field == "sys-prompt-template" && types::is_string(a[2])) {
+                s.sys_prompt_template = string_heap_[types::as_string_idx(a[2])];
+                return make_bool(true);
+            }
+            // name / evolution / parent are read-only
+            return make_bool(false);
         }
         return make_bool(false);
     });
     // ── strategy-inspect — 一键检视 ────────────────────────
+    // Issue #63 Phase 3: show all tunable fields + read-only metadata.
     primitives_.add("strategy-inspect", [this](const auto& a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0]))
             return make_void();
         auto name = string_heap_[types::as_string_idx(a[0])];
         for (auto& s : strategies_) {
             if (s.name == name) {
-                std::string result = "#(strategy-inspect name:\"";
-                result += s.name + "\" body:\"";
-                result += s.body + "\")";
+                std::string result = "#(strategy-inspect";
+                result += " name:\"" + s.name + "\"";
+                result += " body:\"" + s.body + "\"";
+                result += " max-attempts:" + std::to_string(s.max_attempts);
+                result += " temperature:" + std::to_string(s.temperature);
+                result += " evolution:" + std::to_string(s.evolution);
+                result += " parent:\"" + s.parent + "\"";
+                result += ")";
                 auto sid = string_heap_.size();
                 string_heap_.push_back(result);
                 return types::make_string(sid);
             }
         }
         return make_void();
+    });
+
+    // ── evolve-strategy — 基于 intend-analytics 自动调优策略 ────
+    // Issue #63 Phase 3. Was registered in type_checker_impl.cpp but
+    // never implemented as a runtime primitive. Implements the
+    // heuristics from e4_evolvable_strategies.md §3:
+    //
+    //   - success-rate < 50% AND avg-attempts = max-attempts
+    //       → ↑ max-attempts (add 2, capped at 20)
+    //   - success-rate > 90% AND avg-attempts < 1.5
+    //       → ↓ max-attempts (sub 1, floored at 1)
+    //   - top-error is "unbound-variable" (≥ 2 occurrences)
+    //       → sys-prompt-template += "Do NOT use undefined variables.\n"
+    //   - top-error is "type-mismatch" (≥ 2 occurrences)
+    //       → sys-prompt-template += "Use (check x : Type) before ops.\n"
+    //   - top-error is "syntax-error" (≥ 2 occurrences)
+    //       → sys-prompt-template += "Check parentheses carefully.\n"
+    //
+    // Returns the new strategy name (e.g. "adaptive-v2"). The original
+    // strategy is left untouched (E4 §3 "保留旧版本 + 探索/利用平衡").
+    //
+    // Args:
+    //   (evolve-strategy <strategy-name>)
+    //   (evolve-strategy <strategy-name> <analytics-string>)
+    primitives_.add("evolve-strategy", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !types::is_string(a[0]))
+            return make_void();
+        auto name = string_heap_[types::as_string_idx(a[0])];
+
+        // Find the source strategy
+        const StrategyDef* src = nullptr;
+        for (auto& s : strategies_) {
+            if (s.name == name) { src = &s; break; }
+        }
+        if (!src) return make_void();
+
+        // Get analytics: either passed as 2nd arg, or call
+        // intend-analytics ourselves on this strategy.
+        std::string analytics;
+        if (a.size() >= 2 && types::is_string(a[1])) {
+            analytics = string_heap_[types::as_string_idx(a[1])];
+        } else {
+            auto prim = primitives_.lookup("intend-analytics");
+            if (prim) {
+                auto sid = string_heap_.size();
+                string_heap_.push_back(name);
+                auto res = (*prim)({types::make_string(sid)});
+                if (types::is_string(res))
+                    analytics = string_heap_[types::as_string_idx(res)];
+            }
+        }
+
+        // Parse key fields out of the analytics s-expression.
+        // Format: #(analytics total-runs:N success-rate:X avg-attempts:Y
+        //          total-llm-calls:N avg-duration-ms:N top-errors:( k:n ...)
+        //          by-task:( ... ))
+        auto find_after = [](const std::string& s, const std::string& key)
+            -> std::string {
+            auto p = s.find(key);
+            if (p == std::string::npos) return {};
+            p += key.size();
+            // skip ':' and spaces
+            while (p < s.size() && (s[p] == ':' || s[p] == ' ')) ++p;
+            auto end = p;
+            while (end < s.size() && s[end] != ' ' && s[end] != ')') ++end;
+            return s.substr(p, end - p);
+        };
+        double success_rate = 0.0;
+        double avg_attempts = 0.0;
+        try {
+            auto sr = find_after(analytics, "success-rate");
+            if (!sr.empty()) success_rate = std::stod(sr);
+            auto aa = find_after(analytics, "avg-attempts");
+            if (!aa.empty()) avg_attempts = std::stod(aa);
+        } catch (...) { /* malformed → keep defaults */ }
+
+        // Parse top-errors: walk "(k1:n1 k2:n2 ...)" inside top-errors:(...)
+        std::map<std::string, int> top_errors;
+        auto te_pos = analytics.find("top-errors:(");
+        if (te_pos != std::string::npos) {
+            auto te_end = analytics.find(")", te_pos);
+            if (te_end != std::string::npos) {
+                auto te = analytics.substr(te_pos, te_end - te_pos);
+                std::size_t i = 0;
+                while (i < te.size()) {
+                    // find pattern "k:n"
+                    while (i < te.size() && (te[i] == ' ' || te[i] == '(')) ++i;
+                    auto kstart = i;
+                    while (i < te.size() && te[i] != ':') ++i;
+                    if (i >= te.size()) break;
+                    auto k = te.substr(kstart, i - kstart);
+                    ++i; // skip ':'
+                    auto nstart = i;
+                    while (i < te.size() && te[i] != ' ' && te[i] != ')') ++i;
+                    try { top_errors[k] = std::stoi(te.substr(nstart, i - nstart)); }
+                    catch (...) {}
+                }
+            }
+        }
+
+        // Build new strategy (preserve old, copy with bumped fields)
+        StrategyDef evolved;
+        evolved.name = src->name + "-v" + std::to_string(src->evolution + 1);
+        evolved.body = src->body;
+        evolved.max_attempts = src->max_attempts;
+        evolved.temperature = src->temperature;
+        evolved.sys_prompt_template = src->sys_prompt_template;
+        evolved.evolution = src->evolution + 1;
+        evolved.parent = src->name;
+
+        std::string reason;
+        if (success_rate < 0.5 && avg_attempts >= static_cast<double>(src->max_attempts)) {
+            int bumped = std::min(20, src->max_attempts + 2);
+            evolved.max_attempts = bumped;
+            reason = "success-rate " + std::to_string(success_rate).substr(0,4)
+                   + " < 0.5 with avg-attempts=" + std::to_string((int)avg_attempts)
+                   + " = max-attempts; bumped " + std::to_string(src->max_attempts)
+                   + " → " + std::to_string(bumped);
+        } else if (success_rate > 0.9 && avg_attempts < 1.5) {
+            int lowered = std::max(1, src->max_attempts - 1);
+            evolved.max_attempts = lowered;
+            reason = "success-rate > 0.9 with avg-attempts < 1.5; lowered "
+                   + std::to_string(src->max_attempts) + " → "
+                   + std::to_string(lowered);
+        }
+
+        // Add sys-prompt-template hints based on top errors
+        auto append_hint = [&](const std::string& key, const std::string& hint) {
+            auto it = top_errors.find(key);
+            if (it != top_errors.end() && it->second >= 2) {
+                evolved.sys_prompt_template += hint;
+                if (!reason.empty()) reason += "; ";
+                reason += "appended hint for " + key;
+            }
+        };
+        append_hint("unbound-variable",
+                    "\nDo NOT use undefined variables.");
+        append_hint("type-mismatch",
+                    "\nUse (check x : Type) before operations.");
+        append_hint("div-zero",
+                    "\nGuard division with (if (= d 0) ...).");
+        append_hint("syntax-error",
+                    "\nCheck parentheses carefully.");
+
+        if (reason.empty())
+            reason = "no heuristics matched; clone unchanged";
+
+        timeline_.push_back("evolve:" + evolved.name + " from " + src->name
+                          + " (" + reason + ")");
+
+        // Insert into strategies_ (avoid name collision: bump suffix)
+        std::string final_name = evolved.name;
+        for (int bump = 2; ; ++bump) {
+            bool taken = false;
+            for (auto& s : strategies_) {
+                if (s.name == final_name) { taken = true; break; }
+            }
+            if (!taken) break;
+            final_name = evolved.name + "-" + std::to_string(bump);
+        }
+        evolved.name = final_name;
+        strategies_.push_back(evolved);
+
+        auto sid = string_heap_.size();
+        string_heap_.push_back(evolved.name);
+        return types::make_string(sid);
     });
 
     // ── coverage-report — 编译器路径覆盖率 ──────────────────

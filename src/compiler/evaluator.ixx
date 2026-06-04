@@ -253,9 +253,17 @@ private:
     std::vector<void*> opaque_heap_;             // opaque pointers (indexed by OpaqueRef)
     std::unique_ptr<std::unordered_set<std::string>> current_export_set_;
     // ── Strategy storage (E2) ──────────────────────────────────
+    // Issue #63 Phase 3: extend with tunable fields.
+    // `max_attempts_set`/`temperature_set` distinguish "not specified"
+    // (-1 sentinel) from "explicitly 0" (also possible after evolve).
     struct StrategyDef {
         std::string name;
         std::string body; // strategy body as S-expression string
+        int max_attempts = 3;        // tunable: 1..20
+        double temperature = 0.3;    // tunable: 0.0..1.0
+        std::string sys_prompt_template; // tunable: free-form
+        int evolution = 0;           // generation counter
+        std::string parent;         // parent strategy name
     };
     std::vector<StrategyDef> strategies_;
     // ── Intend history (E4 Phase 1) ────────────────────────────

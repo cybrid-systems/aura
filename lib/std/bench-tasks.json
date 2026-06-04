@@ -701,7 +701,7 @@
       "Opening bracket -> push its CODE onto stack for matching later",
       "Closing bracket -> check if (car stack) matches the corresponding opening code",
       "e.g., for ) (41): (and (pair? stack) (= (car stack) 40)) means match",
-      "At end, must return (null? stack) \u2014 empty stack means balanced",
+      "At end, must return (null? stack) — empty stack means balanced",
       "(display (valid-parens? \"({[]})\"))"
     ]
   ],
@@ -825,7 +825,7 @@
   ],
   [
     "type-coercion-chain",
-    "Chain of type coercions \u2014 string concatenation with mixed types",
+    "Chain of type coercions — string concatenation with mixed types",
     [
       "42"
     ],
@@ -855,7 +855,7 @@
   ],
   [
     "type-grad-multi-boundary",
-    "Multiple gradual type boundaries \u2014 mixing typed and untyped values",
+    "Multiple gradual type boundaries — mixing typed and untyped values",
     [
       "42"
     ],
@@ -897,7 +897,7 @@
   ],
   [
     "type-let-poly-hof",
-    "Let-polymorphism with higher-order functions \u2014 compose and apply",
+    "Let-polymorphism with higher-order functions — compose and apply",
     [
       "42"
     ],
@@ -915,7 +915,7 @@
   ],
   [
     "type-linear-hof",
-    "Linear ownership with higher-order functions \u2014 move linear value through lambda",
+    "Linear ownership with higher-order functions — move linear value through lambda",
     [
       "42"
     ],
@@ -948,7 +948,7 @@
   ],
   [
     "type-occ-cond",
-    "Use cond with occurrence typing \u2014 (string? ...) and (number? ...) in cond clauses",
+    "Use cond with occurrence typing — (string? ...) and (number? ...) in cond clauses",
     [
       "number"
     ],
@@ -957,7 +957,7 @@
   ],
   [
     "type-occ-deep",
-    "Deeply nested occurrence typing \u2014 multiple levels of if with type predicates",
+    "Deeply nested occurrence typing — multiple levels of if with type predicates",
     [
       "6"
     ],
@@ -966,7 +966,7 @@
   ],
   [
     "type-occ-match",
-    "Match on ADT with occurrence typing \u2014 narrow per constructor",
+    "Match on ADT with occurrence typing — narrow per constructor",
     [
       "30"
     ],
@@ -1058,7 +1058,7 @@
     "",
     [
       "--- Working strlen FFI ---",
-      "(c-func -1 \"strlen\" \"(String) -> Int\" \"hello\")  \u2192 returns 5",
+      "(c-func -1 \"strlen\" \"(String) -> Int\" \"hello\")  → returns 5",
       "Full: (display (c-func -1 \"strlen\" \"(String) -> Int\" \"hello\"))",
       "Use -1 for RTLD_DEFAULT (load from any loaded library)",
       "Strlen from libc: always available via RTLD_DEFAULT"
@@ -1077,7 +1077,7 @@
       "(tcp-connect \"httpbin.org\" 80) -> socket fd (integer)",
       "(tcp-send fd \"GET / HTTP/1.0\\r\\nHost: httpbin.org\\r\\n\\r\\n\")",
       "(tcp-recv fd) returns HTTP response string (head + body)",
-      "HTTP response starts with \"HTTP/1.1 200 OK\" \u2014 display the full response",
+      "HTTP response starts with \"HTTP/1.1 200 OK\" — display the full response",
       "Use (display (tcp-recv socket)) to show the raw result"
     ]
   ],
@@ -1190,7 +1190,7 @@
   ],
   [
     "m4-borrow-chain",
-    "Borrow across scopes \u2014 borrow, scope ends, then move",
+    "Borrow across scopes — borrow, scope ends, then move",
     [
       "42"
     ],
@@ -1338,6 +1338,21 @@
     ]
   ],
   [
+    "auto-tune-max-attempts",
+    "Use evolve-strategy to auto-tune a strategy max-attempts based on intend history",
+    [
+      "4"
+    ],
+    "",
+    [
+      "--- Auto-tune max-attempts ---",
+      "(define-strategy \"tiny\" \"(dummy)\" :max-attempts 2)",
+      "(intend \"test-goal\" (lambda (g) \"\") (lambda (c) \"fail\") :strategy \"tiny\")",
+      "(define new (evolve-strategy \"tiny\"))",
+      "(display (strategy-field new \"max-attempts\"))"
+    ]
+  ],
+  [
     "edsl-find-pattern",
     "Use set-code to load code, then query the AST using query:node-type",
     [
@@ -1416,7 +1431,7 @@
   ],
   [
     "edsl-mutation-rollback",
-    "EDSL mutation with rollback \u2014 apply mutation, then query to verify",
+    "EDSL mutation with rollback — apply mutation, then query to verify",
     [
       "20"
     ],

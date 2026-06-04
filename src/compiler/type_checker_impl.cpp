@@ -990,7 +990,13 @@ void InferenceEngine::init_primitive_env() {
     register_primitive("list->stack", {Dyn}, Dyn);
 
     // std/evolve
-    register_primitive("evolve-strategy", {String}, Void);
+    // Issue #63 Phase 3: evolve-strategy now returns the new strategy name (String).
+    register_primitive("evolve-strategy", {String}, String);
+    register_primitive("define-strategy", {String, String}, Bool);
+    register_primitive("register-strategy!", {String, String}, Bool);
+    register_primitive("strategy-field", {String, String}, Dyn);
+    register_primitive("strategy-set-field!", {String, String, Dyn}, Bool);
+    register_primitive("strategy-inspect", {String}, String);
 
     // ── Capability primitives ──
     register_primitive("with-capability", {String, Dyn}, Dyn);
@@ -1860,7 +1866,10 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
             is_variadic =
                 (cname == "and" || cname == "or" || cname == "list" || cname == "vector" ||
                  cname == "hash" || cname == "+" || cname == "-" || cname == "*" || cname == "/" ||
-                 cname == "=" || cname == "<" || cname == ">" || cname == "<=" || cname == ">=");
+                 cname == "=" || cname == "<" || cname == ">" || cname == "<=" || cname == ">=" ||
+                 // Issue #63 Phase 3: strategy primitives take optional
+                 // :key value keyword args, so are variadic.
+                 cname == "define-strategy" || cname == "evolve-strategy");
         }
         if (num_args != ft.args.size() && !ft.args.empty() && !is_variadic) {
             auto msg = std::string("call '") + std::string(pool.resolve(callee_v.sym_id)) +
