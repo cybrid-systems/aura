@@ -6696,6 +6696,12 @@ struct WorkspaceNode {
     bool read_only = false;
     bool has_own_flat = false;
     bool is_root = false;
+    // Issue #97 Action 3: per-workspace memory budget (bytes)
+    // 0 = unlimited (default). When set, COW refuses to clone if the
+    // resulting memory would exceed the budget.
+    std::size_t memory_used = 0;
+    std::size_t memory_budget = 0;
+    std::uint64_t cow_refused_count = 0;
 };
 
 struct WorkspaceTree {
@@ -6713,7 +6719,6 @@ struct WorkspaceTree {
     // Ensure the workspace has its own flat (COW trigger)
     // If the workspace doesn't have its own flat, clone from parent.
     bool ensure_local_flat(std::uint32_t idx) {
-        if (idx >= nodes_.size()) return false;
         auto& n = nodes_[idx];
         if (n.is_root) return true;  // root always has own flat
         if (n.read_only) return false;  // read-only, cannot create local copy
@@ -6721,16 +6726,30 @@ struct WorkspaceTree {
 
         // COW: clone from parent's flat
         if (n.parent_flat_) {
+            // Issue #97 Action 3: estimate memory cost of the clone
+            // and refuse if it would exceed the budget.
+            std::size_t parent_bytes = 0;
+            if (n.parent_pool_) {
+                parent_bytes += n.parent_pool_->data_size();
+            }
+            if (n.parent_flat_) {
+                parent_bytes += n.parent_flat_->size() * 64;  // rough per-node
+            }
+            if (n.memory_budget > 0 &&
+                (n.memory_used + parent_bytes) > n.memory_budget) {
+                ++n.cow_refused_count;
+                return false;  // budget exceeded, COW rejected
+            }
             auto* new_flat = new aura::ast::FlatAST();
             auto* new_pool = new aura::ast::StringPool();
-            // Clone via re-parsing the parent's current source
-            // For now, use a shallow copy approach
-            *new_flat = *n.parent_flat_;  // copy all SoA vectors
+            // Clone via shallow copy (vectors copy their data)
+            *new_flat = *n.parent_flat_;
             *new_pool = *n.parent_pool_;
             n.flat = new_flat;
             n.pool = new_pool;
             n.has_own_flat = true;
             n.generation = 1;
+            n.memory_used = parent_bytes;
             return true;
         }
         return false;
@@ -9566,6 +9585,48 @@ Evaluator::Evaluator() {
             result = make_pair(cons_pair);
         }
         return result;
+    });
+
+    // Issue #97 Action 3: per-workspace memory primitives
+    // (workspace:memory-used) → bytes used by current workspace
+    primitives_.add("workspace:memory-used", [this](const auto&) -> EvalValue {
+        if (!workspace_tree_) return make_int(0);
+        auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
+        auto* n = wt->active();
+        if (!n) return make_int(0);
+        return make_int(static_cast<std::int64_t>(n->memory_used));
+    });
+
+    // (workspace:memory-limit) → current limit (or -1 if unlimited)
+    primitives_.add("workspace:memory-limit", [this](const auto&) -> EvalValue {
+        if (!workspace_tree_) return make_int(-1);
+        auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
+        auto* n = wt->active();
+        if (!n) return make_int(-1);
+        if (n->memory_budget == 0) return make_int(-1);
+        return make_int(static_cast<std::int64_t>(n->memory_budget));
+    });
+
+    // (workspace:set-memory-limit bytes) → #t/#f. 0 = unlimited.
+    primitives_.add("workspace:set-memory-limit", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]) || !workspace_tree_)
+            return make_bool(false);
+        auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
+        auto* n = wt->active();
+        if (!n) return make_bool(false);
+        auto bytes = as_int(a[0]);
+        if (bytes < 0) return make_bool(false);
+        n->memory_budget = static_cast<std::size_t>(bytes);
+        return make_bool(true);
+    });
+
+    // (workspace:cow-refused-count) → COW refusals for this workspace
+    primitives_.add("workspace:cow-refused-count", [this](const auto&) -> EvalValue {
+        if (!workspace_tree_) return make_int(0);
+        auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
+        auto* n = wt->active();
+        if (!n) return make_int(0);
+        return make_int(static_cast<std::int64_t>(n->cow_refused_count));
     });
 
     // (workspace:delete id) → #t
