@@ -319,6 +319,17 @@ private:
     // Hot-swap callback storage (Issue #97 Action 1)
     HotSwapFn hot_swap_fn_;
 
+    // ── Auto-evolve state (Issue #97 Action 2) ──────────────
+    // Background loop state for (auto-evolve-loop ...).
+    // The two Aura callbacks (detect-fn, fix-fn) are stored as closure IDs
+    // and invoked via apply_closure.
+    bool auto_evolve_running_ = false;
+    double auto_evolve_interval_ = 1.0;  // seconds between cycles
+    std::uint64_t auto_evolve_detect_closure_ = 0;  // 0 = unset
+    std::uint64_t auto_evolve_fix_closure_ = 0;
+    std::uint64_t auto_evolve_cycle_count_ = 0;
+    std::uint64_t auto_evolve_total_fixed_ = 0;
+
     // ── Panic auto-rollback (Issue #39) ─────────────────────────
     bool panic_auto_rollback_ = false;
     std::string panic_safe_source_;  // last known good source code

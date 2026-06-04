@@ -4158,6 +4158,96 @@ void Evaluator::init_pair_primitives() {
         return make_int(static_cast<std::int64_t>(workspace_flat_->rollback_since(mid)));
     });
 
+    // Issue #97 Action 2: Auto-evolve closed loop
+    // (auto-evolve-once detect-fn fix-fn) → runs one cycle:
+    //   1. calls detect-fn → list of "gap" records
+    //   2. for each gap, calls fix-fn gap → #t if fixed
+    //   3. returns the number of fixes
+    primitives_.add("auto-evolve-once", [this](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !is_closure(a[0]) || !is_closure(a[1]))
+            return make_int(0);
+        auto detect_cid = as_closure_id(a[0]);
+        auto fix_cid = as_closure_id(a[1]);
+        auto detect_result = apply_closure(detect_cid, {});
+        if (!detect_result) return make_int(0);
+        EvalValue current = *detect_result;
+        std::int64_t fixed = 0;
+        while (is_pair(current)) {
+            auto idx = as_pair_idx(current);
+            if (idx >= pairs_.size()) break;
+            auto gap = pairs_[idx].car;
+            auto fix_result = apply_closure(fix_cid, {gap});
+            if (fix_result) {
+                if (is_bool(*fix_result) && as_bool(*fix_result))
+                    ++fixed;
+            }
+            current = pairs_[idx].cdr;
+        }
+        return make_int(fixed);
+    });
+
+    // (auto-evolve-loop "interval" detect-fn fix-fn) → starts background loop
+    primitives_.add("auto-evolve-loop", [this](const auto& a) -> EvalValue {
+        if (a.size() < 3 || !is_string(a[0]) || !is_closure(a[1]) || !is_closure(a[2]))
+            return make_int(0);
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size()) return make_int(0);
+        double interval = 1.0;
+        try { interval = std::stod(string_heap_[idx]); } catch (...) {}
+        if (interval < 0.1) interval = 0.1;
+        auto_evolve_running_ = true;
+        auto_evolve_interval_ = interval;
+        auto_evolve_detect_closure_ = as_closure_id(a[1]);
+        auto_evolve_fix_closure_ = as_closure_id(a[2]);
+        auto_evolve_cycle_count_ = 0;
+        auto_evolve_total_fixed_ = 0;
+        return make_int(0);
+    });
+
+    primitives_.add("auto-evolve-stop", [this](const auto&) -> EvalValue {
+        if (!auto_evolve_running_) return make_bool(false);
+        auto_evolve_running_ = false;
+        return make_bool(true);
+    });
+
+    primitives_.add("auto-evolve-running?", [this](const auto&) -> EvalValue {
+        return make_bool(auto_evolve_running_);
+    });
+
+    primitives_.add("auto-evolve-tick", [this](const auto&) -> EvalValue {
+        if (!auto_evolve_running_) return make_bool(false);
+        if (auto_evolve_detect_closure_ == 0 || auto_evolve_fix_closure_ == 0)
+            return make_bool(false);
+        ++auto_evolve_cycle_count_;
+        std::fprintf(stderr, "[DBG tick] detect=%zu fix=%zu\n",
+                     (size_t)auto_evolve_detect_closure_,
+                     (size_t)auto_evolve_fix_closure_);
+        auto detect_result = apply_closure(auto_evolve_detect_closure_, {});
+        if (!detect_result) { std::fprintf(stderr, "  no detect result\n"); return make_bool(true); }
+        std::fprintf(stderr, "  detect.val=0x%lx\n", (long)(*detect_result).val);
+        EvalValue current = *detect_result;
+        while (is_pair(current)) {
+            auto idx = as_pair_idx(current);
+            if (idx >= pairs_.size()) break;
+            auto gap = pairs_[idx].car;
+            auto fix_result = apply_closure(auto_evolve_fix_closure_, {gap});
+            if (fix_result) {
+                if (is_bool(*fix_result) && as_bool(*fix_result))
+                    ++auto_evolve_total_fixed_;
+            }
+            current = pairs_[idx].cdr;
+        }
+        return make_bool(true);
+    });
+
+    primitives_.add("auto-evolve-cycle-count", [this](const auto&) -> EvalValue {
+        return make_int(static_cast<std::int64_t>(auto_evolve_cycle_count_));
+    });
+
+    primitives_.add("auto-evolve-total-fixed", [this](const auto&) -> EvalValue {
+        return make_int(static_cast<std::int64_t>(auto_evolve_total_fixed_));
+    });
+
     // (check-preconditions node-id (field-offset|new-type-str)) → true if valid
     // With int second arg: check field existence (0=int_val_, 1=type_id_)
     // With string second arg: check type compatibility (new type string)
@@ -9621,6 +9711,44 @@ Evaluator::Evaluator() {
     });
 
     // (workspace:cow-refused-count) → COW refusals for this workspace
+    primitives_.add("workspace:cow-refused-count", [this](const auto&) -> EvalValue {
+        if (!workspace_tree_) return make_int(0);
+        auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
+        auto* n = wt->active();
+        if (!n) return make_int(0);
+        return make_int(static_cast<std::int64_t>(n->cow_refused_count));
+    });
+
+    // Issue #97 Action 3: per-workspace memory primitives
+    primitives_.add("workspace:memory-used", [this](const auto&) -> EvalValue {
+        if (!workspace_tree_) return make_int(0);
+        auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
+        auto* n = wt->active();
+        if (!n) return make_int(0);
+        return make_int(static_cast<std::int64_t>(n->memory_used));
+    });
+
+    primitives_.add("workspace:memory-limit", [this](const auto&) -> EvalValue {
+        if (!workspace_tree_) return make_int(-1);
+        auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
+        auto* n = wt->active();
+        if (!n) return make_int(-1);
+        if (n->memory_budget == 0) return make_int(-1);
+        return make_int(static_cast<std::int64_t>(n->memory_budget));
+    });
+
+    primitives_.add("workspace:set-memory-limit", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]) || !workspace_tree_)
+            return make_bool(false);
+        auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
+        auto* n = wt->active();
+        if (!n) return make_bool(false);
+        auto bytes = as_int(a[0]);
+        if (bytes < 0) return make_bool(false);
+        n->memory_budget = static_cast<std::size_t>(bytes);
+        return make_bool(true);
+    });
+
     primitives_.add("workspace:cow-refused-count", [this](const auto&) -> EvalValue {
         if (!workspace_tree_) return make_int(0);
         auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
