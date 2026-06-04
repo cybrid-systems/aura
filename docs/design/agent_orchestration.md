@@ -277,3 +277,15 @@ fiber_results_[fid] = result_ptr;
 - [ ] `orch:parallel` 用真实 fiber 并行执行
 - [ ] `(fiber:spawn (lambda () (+ 1 2)))` + `(fiber:join fid)` → 3
 - [ ] 并行管线测试覆盖串行/并行/空列表
+
+---
+
+## Related: Self-Evolving Agent Patterns
+
+For patterns of building **long-running** AI agents that **evolve
+their own logic** at the code level (beyond prompt-level evolution),
+see
+[`docs/design/autonomous-self-evolving-agents.md`](autonomous-self-evolving-agents.md).
+Covers the capability ladder (prompts → tool calling → strategy
+swap → strategy evolution), 4 patterns with Aura-level code
+skeletons, and safety mechanisms.
