@@ -158,7 +158,9 @@ run end-to-end.
 ## Out of scope (defer)
 
 - Updating `docs/benchmark.md` to add "EDSL Polish" subsection
-  (defer; not in core task list) — task count updated to 148
+  (defer; not in core task list) — task count updated to 149 (auto-tune-max-attempts added in Phase 3)
+  — *2026-06-04: benchmark.md updated with M3 run (118/139, 85%), but
+   EDSL Polish subsection still deferred.*
 
 ## Phase 1+2 acceptance
 
@@ -168,7 +170,7 @@ run end-to-end.
 - ✅ All use existing or new EDSL primitives (no new compiler
   flag, just the `workspace-state` primitive)
 - ✅ `minimax-m3` model routing works via env var
-- ✅ Existing tasks still load (no regressions; 148 total)
+- ✅ Existing tasks still load (no regressions; 149 total)
 - ✅ Design documented, deferred work (Phase 3) clearly scoped
 - ✅ Verified `workspace-state` primitive output:
   ```
