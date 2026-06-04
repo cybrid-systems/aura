@@ -54,6 +54,7 @@ target_sources(aura PRIVATE
     src/serve/serve_async.cpp
     src/exec/execution_adapter.cpp
     src/exec/combinators.cpp
+    src/compiler/git_ctx.cpp
     src/main.cpp)
 
 set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts")
@@ -92,6 +93,16 @@ if(LLVM_FOUND)
     target_compile_definitions(aura PRIVATE AURA_HAVE_LLVM=1)
 else()
     message(STATUS "LLVM JIT: disabled (not found)")
+endif()
+
+# libgit2 for in-process Git operations (faster + safer than popen)
+find_package(libgit2 QUIET)
+if(libgit2_FOUND)
+    message(STATUS "libgit2: ${libgit2_VERSION} (in-process Git)")
+    target_link_libraries(aura PRIVATE libgit2::libgit2package)
+    target_compile_definitions(aura PRIVATE AURA_HAVE_LIBGIT2=1)
+else()
+    message(STATUS "libgit2: disabled (not found, using popen fallback)")
 endif()
 
 target_link_libraries(aura PRIVATE stdc++ stdc++exp)

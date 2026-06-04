@@ -9,6 +9,7 @@ module;
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include "runtime_shared.h"
+#include "git_ctx.h"
 #include "core/contracts.h"
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -3088,110 +3089,145 @@ void Evaluator::init_pair_primitives() {
     });
 
     // ── Git integration (Issue #96) ─────────────────────────────
-    // All primitives operate in the current working directory.
-    // They return strings (git output) or int (exit code on commit).
-    // For commit, message is required; pass "" to skip (no-op).
+    // Backed by libgit2 (in-process) when available, with popen fallback
+    // for systems without libgit2. Much faster than fork+exec per call,
+    // and avoids shell escape issues for commit messages and paths.
 
-    // (git-status) → short status string
+    // (git-status) → short status string (like "git status --short")
     primitives_.add("git-status", [this](const auto&) -> EvalValue {
-        std::array<char, 4096> buf;
         std::string result;
-        auto* fp = ::popen("git status --short 2>/dev/null", "r");
-        if (!fp)
-            return make_void();
-        while (::fgets(buf.data(), buf.size(), fp) != nullptr)
-            result += buf.data();
-        ::pclose(fp);
-        if (!result.empty() && result.back() == '\n')
-            result.pop_back();
+#ifdef AURA_HAVE_LIBGIT2
+        thread_local GitContext ctx;
+        if (ctx.is_open()) {
+            result = ctx.status_short();
+        }
+#endif
+        if (result.empty()) {
+            // Fallback: popen
+            std::array<char, 4096> buf;
+            auto* fp = ::popen("git status --short 2>/dev/null", "r");
+            if (!fp) return make_void();
+            while (::fgets(buf.data(), buf.size(), fp) != nullptr)
+                result += buf.data();
+            ::pclose(fp);
+            if (!result.empty() && result.back() == '\n') result.pop_back();
+        }
         auto sid = string_heap_.size();
         string_heap_.push_back(std::move(result));
         return make_string(sid);
     });
 
-    // (git-diff) → unified diff of unstaged changes
-    // (git-diff "staged") → diff of staged changes
+    // (git-diff ["staged"]) → unified diff
     primitives_.add("git-diff", [this](const auto& a) -> EvalValue {
-        std::string cmd = "git diff";
+        bool staged = false;
         if (a.size() >= 1 && is_string(a[0])) {
             auto mi = as_string_idx(a[0]);
-            if (mi < string_heap_.size() &&
-                string_heap_[mi] == "staged") {
-                cmd += " --staged";
+            if (mi < string_heap_.size() && string_heap_[mi] == "staged") {
+                staged = true;
             }
         }
-        cmd += " 2>/dev/null";
-        std::array<char, 4096> buf;
         std::string result;
-        auto* fp = ::popen(cmd.c_str(), "r");
-        if (!fp)
-            return make_void();
-        while (::fgets(buf.data(), buf.size(), fp) != nullptr)
-            result += buf.data();
-        ::pclose(fp);
+#ifdef AURA_HAVE_LIBGIT2
+        thread_local GitContext ctx;
+        if (ctx.is_open()) {
+            result = ctx.diff(staged);
+        }
+#endif
+        if (result.empty()) {
+            // Fallback: popen
+            std::string cmd = staged ? "git diff --staged 2>/dev/null"
+                                     : "git diff 2>/dev/null";
+            std::array<char, 4096> buf;
+            auto* fp = ::popen(cmd.c_str(), "r");
+            if (!fp) return make_void();
+            while (::fgets(buf.data(), buf.size(), fp) != nullptr)
+                result += buf.data();
+            ::pclose(fp);
+        }
         auto sid = string_heap_.size();
         string_heap_.push_back(std::move(result));
         return make_string(sid);
     });
 
-    // (git-log n) → last n commits, one-line format
-    //   default n=10
+    // (git-log n) → last n commits, one-line format (n=1..1000, default 10)
     primitives_.add("git-log", [this](const auto& a) -> EvalValue {
         int n = 10;
         if (a.size() >= 1 && is_int(a[0]))
             n = static_cast<int>(as_int(a[0]));
         if (n < 1) n = 1;
         if (n > 1000) n = 1000;
-        std::string cmd = "git log --oneline -n " +
-                          std::to_string(n) + " 2>/dev/null";
-        std::array<char, 4096> buf;
         std::string result;
-        auto* fp = ::popen(cmd.c_str(), "r");
-        if (!fp)
-            return make_void();
-        while (::fgets(buf.data(), buf.size(), fp) != nullptr)
-            result += buf.data();
-        ::pclose(fp);
-        if (!result.empty() && result.back() == '\n')
-            result.pop_back();
+#ifdef AURA_HAVE_LIBGIT2
+        thread_local GitContext ctx;
+        if (ctx.is_open()) {
+            result = ctx.log_oneline(n);
+        }
+#endif
+        if (result.empty()) {
+            // Fallback: popen
+            std::string cmd = "git log --oneline -n " + std::to_string(n) + " 2>/dev/null";
+            std::array<char, 4096> buf;
+            auto* fp = ::popen(cmd.c_str(), "r");
+            if (!fp) return make_void();
+            while (::fgets(buf.data(), buf.size(), fp) != nullptr)
+                result += buf.data();
+            ::pclose(fp);
+            if (!result.empty() && result.back() == '\n') result.pop_back();
+        }
         auto sid = string_heap_.size();
         string_heap_.push_back(std::move(result));
         return make_string(sid);
     });
 
-    // (git-commit "message") → exit code (0 = ok)
+    // (git-commit "message") → exit code (0 = ok, no shell escape needed)
     primitives_.add("git-commit", [this](const auto& a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_int(-1);
         auto mi = as_string_idx(a[0]);
         if (mi >= string_heap_.size())
             return make_int(-1);
-        // Escape single quotes for shell: ' -> '\''
-        std::string msg = string_heap_[mi];
-        std::string esc;
-        esc.reserve(msg.size() + 2);
-        esc += '\'';
-        for (char c : msg) {
-            if (c == '\'') esc += "'\\''";
-            else esc += c;
+        const std::string& msg = string_heap_[mi];
+        int rc = -1;
+#ifdef AURA_HAVE_LIBGIT2
+        thread_local GitContext ctx;
+        if (ctx.is_open()) {
+            rc = ctx.commit(msg);
+        } else
+#endif
+        {
+            // Fallback: popen with single-quote escaping
+            std::string esc;
+            esc.reserve(msg.size() + 2);
+            esc += '\'';
+            for (char c : msg) {
+                if (c == '\'') esc += "'\\\''";
+                else esc += c;
+            }
+            esc += '\'';
+            std::string cmd = "git commit -m " + esc + " 2>/dev/null";
+            rc = ::system(cmd.c_str());
         }
-        esc += '\'';
-        std::string cmd = "git commit -m " + esc + " 2>/dev/null";
-        return make_int(::system(cmd.c_str()));
+        return make_int(rc);
     });
 
     // (git-branch-current) → current branch name (empty if detached)
     primitives_.add("git-branch-current", [this](const auto&) -> EvalValue {
-        std::array<char, 256> buf;
         std::string result;
-        auto* fp = ::popen("git rev-parse --abbrev-ref HEAD 2>/dev/null", "r");
-        if (!fp)
-            return make_void();
-        while (::fgets(buf.data(), buf.size(), fp) != nullptr)
-            result += buf.data();
-        ::pclose(fp);
-        if (!result.empty() && result.back() == '\n')
-            result.pop_back();
+#ifdef AURA_HAVE_LIBGIT2
+        thread_local GitContext ctx;
+        if (ctx.is_open()) {
+            result = ctx.branch_current();
+        }
+#endif
+        if (result.empty()) {
+            std::array<char, 256> buf;
+            auto* fp = ::popen("git rev-parse --abbrev-ref HEAD 2>/dev/null", "r");
+            if (!fp) return make_void();
+            while (::fgets(buf.data(), buf.size(), fp) != nullptr)
+                result += buf.data();
+            ::pclose(fp);
+            if (!result.empty() && result.back() == '\n') result.pop_back();
+        }
         auto sid = string_heap_.size();
         string_heap_.push_back(std::move(result));
         return make_string(sid);
@@ -3199,36 +3235,56 @@ void Evaluator::init_pair_primitives() {
 
     // (git-stage "file1" "file2" ...) → exit code
     primitives_.add("git-stage", [this](const auto& a) -> EvalValue {
-        if (a.empty())
-            return make_int(-1);
-        std::string cmd = "git add";
+        if (a.empty()) return make_int(-1);
+        int rc = -1;
+#ifdef AURA_HAVE_LIBGIT2
+        std::vector<std::string> paths;
         for (const auto& v : a) {
-            if (!is_string(v))
-                return make_int(-1);
+            if (!is_string(v)) return make_int(-1);
             auto si = as_string_idx(v);
-            if (si >= string_heap_.size())
-                return make_int(-1);
-            // Quote each filename
-            cmd += " '";
-            cmd += string_heap_[si];
-            cmd += "'";
+            if (si >= string_heap_.size()) return make_int(-1);
+            paths.push_back(string_heap_[si]);
         }
-        cmd += " 2>/dev/null";
-        return make_int(::system(cmd.c_str()));
+        thread_local GitContext ctx;
+        if (ctx.is_open()) {
+            rc = ctx.stage(paths);
+        } else
+#endif
+        {
+            // Fallback: popen with single-quote escaping (safe for libgit2 path)
+            std::string cmd = "git add";
+            for (const auto& v : a) {
+                if (!is_string(v)) return make_int(-1);
+                auto si = as_string_idx(v);
+                if (si >= string_heap_.size()) return make_int(-1);
+                cmd += " \'";
+                cmd += string_heap_[si];
+                cmd += "\'";
+            }
+            cmd += " 2>/dev/null";
+            rc = ::system(cmd.c_str());
+        }
+        return make_int(rc);
     });
 
-    // (git-rev-parse) → current HEAD sha (short)
+    // (git-rev-parse) → current HEAD sha (short, 7 chars)
     primitives_.add("git-rev-parse", [this](const auto&) -> EvalValue {
-        std::array<char, 64> buf;
         std::string result;
-        auto* fp = ::popen("git rev-parse --short HEAD 2>/dev/null", "r");
-        if (!fp)
-            return make_void();
-        while (::fgets(buf.data(), buf.size(), fp) != nullptr)
-            result += buf.data();
-        ::pclose(fp);
-        if (!result.empty() && result.back() == '\n')
-            result.pop_back();
+#ifdef AURA_HAVE_LIBGIT2
+        thread_local GitContext ctx;
+        if (ctx.is_open()) {
+            result = ctx.rev_parse_short();
+        }
+#endif
+        if (result.empty()) {
+            std::array<char, 64> buf;
+            auto* fp = ::popen("git rev-parse --short HEAD 2>/dev/null", "r");
+            if (!fp) return make_void();
+            while (::fgets(buf.data(), buf.size(), fp) != nullptr)
+                result += buf.data();
+            ::pclose(fp);
+            if (!result.empty() && result.back() == '\n') result.pop_back();
+        }
         auto sid = string_heap_.size();
         string_heap_.push_back(std::move(result));
         return make_string(sid);
