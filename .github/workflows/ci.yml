@@ -13,21 +13,9 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/cybrid-systems/dev:v1.0.1
-      # Run the container as the non-root `dev` user (UID 1000) so
-      # CI matches the local dev environment. The checkout step
-      # happens before this user is honored, so we chown the
-      # workspace afterwards to make it writable.
-      options: --user 1000:1000
 
     steps:
     - uses: actions/checkout@v4
-
-    - name: Fix workspace ownership
-      # GitHub-hosted runners mount the workspace as the host UID
-      # (1001 on ubuntu-latest), which is different from the
-      # container's `dev` UID (1000). Re-own it so subsequent
-      # steps can write build artifacts.
-      run: sudo chown -R dev:dev "$GITHUB_WORKSPACE" 2>/dev/null || chown -R 1000:1000 "$GITHUB_WORKSPACE" || true
 
     - name: Build & Core Tests
       run: python3 build.py check
