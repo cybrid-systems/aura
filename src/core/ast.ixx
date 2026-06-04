@@ -391,6 +391,30 @@ private:
     std::uint16_t generation_ = 1;
     std::pmr::vector<std::uint16_t> node_gen_;
 
+public:
+    // Issue #67: free the persistent std::vector members' heap allocations.
+    // These are intentionally not in the arena (they outlive arena scopes),
+    // but when the FlatAST itself is destroyed (e.g. workspace_flat_ at
+    // process exit), their heap is leaked. Call this before destroying
+    // the containing FlatAST.
+    //
+    // Note: these vectors are kept as std::vector (not pmr::vector) for
+    // ABI stability — they hold persistent module-level state that must
+    // outlive individual arena scopes. Their heap allocations would
+    // otherwise leak when the FlatAST itself is destroyed.
+    void free_persistent_state() {
+        // shrink_to_fit forces deallocation; clear alone doesn't free
+        // the backing buffer.
+        value_cache_.clear();
+        value_cache_.shrink_to_fit();
+        mutation_log_.clear();
+        mutation_log_.shrink_to_fit();
+        node_first_mutation_.clear();
+        node_first_mutation_.shrink_to_fit();
+    }
+
+private:
+
     public:
 
     // Low-level raw node creation (for advanced mutation).
