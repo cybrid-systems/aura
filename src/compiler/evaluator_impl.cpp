@@ -15979,4 +15979,39 @@ bool Evaluator::restore_panic_checkpoint() {
     return ok;
 }
 
+
+// Issue #67: explicit destructor. Walks modules_ and runs each env's
+// destructor before the per-module arenas (held by ArenaGroup unique_ptr)
+// are released. The Env was arena-allocated via copy_env, so its
+// destructor wouldn't run automatically when the arena resets its bump
+// pointer — leaving bindings_' heap allocation orphaned. The arena
+// is freed AFTER this dtor runs (member destruction reverse order), so
+// it's safe to use the arena-allocated env memory during dtor.
+Evaluator::~Evaluator() {
+    // Issue #67: walk every arena-allocated Env and run its destructor
+    // so the std::vector<pair<string,EvalValue>> bindings_' heap
+    // allocation is freed. The Env objects live in per-module arenas
+    // (held by arena_group_, a unique_ptr<ArenaGroup>) that the
+    // member-destruction sequence will free AFTER this dtor runs.
+    for (Env* env : modules_) {
+        if (env) env->~Env();
+    }
+    modules_.clear();
+    module_cache_.clear();
+    module_arena_ptrs_.clear();
+    module_names_.clear();
+    closures_.clear();
+    // cells_ / pairs_ / error_values_ / opaque_heap_ hold raw values;
+    // their destructors run automatically (vectors of trivially-constructible
+    // types don't need explicit cleanup).
+    cells_.clear();
+    pairs_.clear();
+    error_values_.clear();
+    opaque_heap_.clear();
+    string_heap_.clear();
+    // strategies_/intend_records_/intend_history_/timeline_ are std::vector
+    // of trivially-destructible structs; clear() releases their heap.
+    strategies_.clear();
+}
+
 } // namespace aura::compiler

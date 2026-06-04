@@ -97,6 +97,11 @@ export using EvalResult = std::expected<types::EvalValue, aura::diag::Diagnostic
 export class Evaluator {
 public:
     Evaluator();
+    // Issue #67: destructor walks modules_ and runs each env's
+    // destructor to free their std::vector bindings_ heap allocations.
+    // Without this, arena-allocated Envs leak at process exit (the
+    // arena's bump-allocator doesn't run destructors).
+    ~Evaluator();
     void set_arena(ast::ASTArena* a) { arena_ = a; }
     void set_temp_arena(ast::ASTArena* a) { temp_arena_ = a; }
     // Per-module arena group: load_module_file allocates each module's
