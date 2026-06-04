@@ -410,7 +410,21 @@ run_test "git:rev-parse" "$(printf '(string? (git-rev-parse))')" "#t"
 run_test "git:status" "$(printf '(string? (git-status))')" "#t"
 run_test "git:diff" "$(printf '(string? (git-diff))')" "#t"
 run_test "git:log" "$(printf '(string? (git-log 5))')" "#t"
-echo "============"
+
+# safe-refactor module loads cleanly
+run_test "safe-refactor:loaded" "$(printf '(begin (require std/safe-refactor all:) #t)')" "#t"
+
+# safe-refactor:with-snapshot returns thunk result on success
+run_test "safe-refactor:success" "$(printf '(begin (require std/safe-refactor all:) (display (safe-refactor:with-snapshot "t" (lambda () 42))))')" "42"
+
+# safe-refactor:with-snapshot returns rolled-back on error
+run_test "safe-refactor:rollback" "$(printf '(begin (require std/safe-refactor all:) (display (safe-refactor:with-snapshot "t" (lambda () (error "x")))))')" "(rolled-back error-raised)"
+
+# safe-refactor:check-and-apply pre-verify fails
+run_test "safe-refactor:pre-fail" "$(printf '(begin (require std/safe-refactor all:) (display (safe-refactor:check-and-apply (lambda () #f) (lambda () #t) (lambda () 1))))')" "(rejected pre-verify-failed)"
+
+# safe-refactor:check-and-apply all pass
+run_test "safe-refactor:applied" "$(printf '(begin (require std/safe-refactor all:) (display (safe-refactor:check-and-apply (lambda () #t) (lambda () #t) (lambda () (quote ok)))))')" "(applied ok)"
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL" 
 [ "$FAIL" -eq 0 ] || exit 1
 
@@ -626,3 +640,4 @@ run_test "git:rev-parse" "$(printf '(string? (git-rev-parse))')" "#t"
 run_test "git:status" "$(printf '(string? (git-status))')" "#t"
 run_test "git:diff" "$(printf '(string? (git-diff))')" "#t"
 run_test "git:log" "$(printf '(string? (git-log 5))')" "#t"
+

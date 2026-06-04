@@ -1,0 +1,132 @@
+; lib/std/safe-refactor.aura — verification-gated refactoring
+;
+; Wraps a refactor operation with:
+;   1. ast:snapshot for rollback
+;   2. typecheck-current gate
+;   3. AURA_CONTRACT_POST verifier (user-supplied)
+;   4. auto-restore on failure
+;
+; API:
+;   (safe-refactor:with-snapshot tag thunk) → result or rolled-back
+;     tag:    string, snapshot name
+;     thunk:  0-arg procedure
+;     Returns thunk's result on success, or (list 'rolled-back "reason")
+;
+;   (safe-refactor:check-and-apply pre-verify post-verify apply-fn) → status
+;     pre-verify:  0-arg, returns #t/#f
+;     post-verify: 0-arg, returns #t/#f
+;     apply-fn:    0-arg, performs refactor
+;     Returns (list 'applied result), (list 'rejected "reason"),
+;             (list 'rolled-back "reason"), or (list 'error "reason")
+;
+;   (safe-refactor:replace-fn fn-name new-body) → status
+;     fn-name:  string
+;     new-body: string, complete (define (name args) body) form
+;     Returns (list 'applied snap-id) or (list 'rejected "reason")
+;
+;   (safe-refactor:rollback) → bool
+;     Roll back the most recent safe-refactor snapshot.
+;
+; NOTE: Uses list (not cons) for status values, working around a
+; cons-corruption bug in module-loaded functions.
+
+(export safe-refactor:with-snapshot
+        safe-refactor:replace-fn
+        safe-refactor:check-and-apply
+        safe-refactor:rollback)
+
+; ── safe-refactor:with-snapshot — snapshot/restore wrapper ──
+(define (safe-refactor:with-snapshot tag thunk)
+  (let ((snap-id (ast:snapshot tag)))
+    (let ((result (try (thunk) (catch (e) 'error-raised))))
+      (cond
+        ((equal? result 'error-raised)
+         (begin
+           (ast:restore snap-id)
+           (list 'rolled-back "error-raised")))
+        ((equal? result 'fail)
+         (begin
+           (ast:restore snap-id)
+           (list 'rolled-back "explicit-fail")))
+        (else result)))))
+
+; ── safe-refactor:check-and-apply — pre/post verification gate ──
+(define (safe-refactor:check-and-apply pre-verify post-verify apply-fn)
+  (cond
+    ((not (pre-verify))
+     (list 'rejected "pre-verify-failed"))
+    (else
+     (let* ((snap-id (ast:snapshot "safe-refactor-check"))
+            (apply-result
+              (try (apply-fn) (catch (e) 'apply-error-raised))))
+       (cond
+         ((equal? apply-result 'apply-error-raised)
+          (begin
+            (ast:restore snap-id)
+            (list 'error "apply-error-raised")))
+         ((not (post-verify))
+          (begin
+            (ast:restore snap-id)
+            (list 'rolled-back "post-verify-failed")))
+         (else
+          (list 'applied apply-result)))))))
+
+; ── safe-refactor:replace-fn — atomic function replacement with typecheck gate ──
+;
+; Replaces a function body. Uses (set-code) on a synthesized module that
+; appends the new definition to the existing code, then typecheck-current.
+; If typecheck passes, keep the change. Otherwise restore.
+;
+; For simplicity, this version appends the new (define ...) to existing
+; code. Users should pass a body that re-defines the function with the
+; desired new implementation; the original definition will be shadowed
+; by the appended one.
+;
+; Returns:
+;   (list 'applied snap-id)        — refactor applied, typecheck passed
+;   (list 'rejected "reason")      — empty source/body or typecheck failed
+;   (list 'error "reason")         — exception during set-code/typecheck
+(define (safe-refactor:replace-fn fn-name new-body)
+  (let* ((current (try (current-source) (catch (e) "")))
+         (snap-id (ast:snapshot (string-append "replace-" fn-name))))
+    (cond
+      ((or (= (string-length current) 0) (= (string-length new-body) 0))
+       (begin
+         (ast:restore snap-id)
+         (list 'rejected "empty-source-or-body")))
+      (else
+       (let* ((rebuilt
+                (string-append
+                  current
+                  "\n;; --- safe-refactor:replace-fn added: "
+                  fn-name
+                  " ---\n"
+                  new-body
+                  "\n"))
+              (apply-result
+                (try
+                  (begin
+                    (set-code rebuilt)
+                    (typecheck-current)
+                    'ok)
+                  (catch (e) 'tc-error-raised))))
+         (cond
+           ((equal? apply-result 'tc-error-raised)
+            (begin
+              (ast:restore snap-id)
+              (list 'rejected "typecheck-failed")))
+           ((equal? apply-result 'ok)
+            (list 'applied snap-id))
+           (else
+            (begin
+              (ast:restore snap-id)
+              (list 'error "unknown")))))))))
+
+; ── safe-refactor:rollback — restore last safe-refactor snapshot ──
+;
+; Convenience: rolls back the most recent safe-refactor snapshot.
+; Returns #t on success, #f if no snapshot exists.
+(define (safe-refactor:rollback)
+  (let ((snaps (ast:list-snapshots)))
+    (if (null? snaps) #f
+      (ast:restore (car snaps)))))

@@ -1,16 +1,14 @@
 # Issue #96 — Enterprise Large Codebase Autonomous Evolution Agent
 
-## Status: ⚠️ PARTIAL — Proposed Action #1 LANDED, #2-#3 ARE FOLLOW-UPS
+## Status: ⚠️ PARTIAL — Actions 1 & 2 LANDED, Action 3 is follow-up
 
 Issue #96 is a market-insight / product-roadmap issue
 ("Top Insight 1"). Its three proposed actions are at
 different states of completion.
 
-## Action 1: Git integration primitives — ✅ LANDED
+## Action 1: Git integration primitives — ✅ LANDED (commit a425797)
 
-Six new primitives in `src/compiler/evaluator_impl.cpp`
-(lines 3093-3233 area, in the `// ── Git integration (Issue
-#96) ──` block):
+Seven new primitives in `src/compiler/evaluator_impl.cpp`:
 
 | Primitive | Args | Returns | Description |
 |---|---|---|---|
@@ -22,128 +20,141 @@ Six new primitives in `src/compiler/evaluator_impl.cpp`
 | `git-stage` | file1 file2 ... | int | `git add`, exit code |
 | `git-rev-parse` | — | string | current HEAD short SHA |
 
-**Why these are deliberately minimal**: they expose the
-"do one thing" primitives the orchestrator can compose
-(query status → decide → stage → commit → verify). Higher-
-level wrappers like `(git-commit-all "msg")` or
-`(git-pr-draft)` are *not* included — those need design
-decisions (PR body, reviewers, base branch, etc.) that
-are project-specific and should be implemented as
-**user-side Aura code** on top of the primitives.
+5 read-only tests; 206/206 pass.
 
-**Build**: passes (201 + 5 new git tests = 206/206 pass).
+## Action 2: Safe-refactor wrapper primitives — ✅ LANDED (this commit)
 
-**Demo**: `tests/git_integration_demo.aura` shows the
-primitives in action.
+New stdlib module `lib/std/safe-refactor.aura` with **4 functions**:
 
-## Action 2: Enhance safe-refactor with pre/post conditions — ⚠️ PARTIAL
+### `safe-refactor:with-snapshot`
+```aura
+(safe-refactor:with-snapshot tag thunk)
+;; → thunk result on success
+;; → (list 'rolled-back "reason") on error or explicit fail
+```
+Wraps work in a snapshot; auto-restores on raise or `'fail` return.
 
-The infrastructure is in place:
+### `safe-refactor:check-and-apply`
+```aura
+(safe-refactor:check-and-apply pre-verify post-verify apply-fn)
+;; → (list 'applied result)        on success
+;; → (list 'rejected "reason")     if pre-verify fails
+;; → (list 'rolled-back "reason")  if post-verify fails
+;; → (list 'error "reason")        on exception
+```
+Pre/post verification gate. Apply only if pre-verify passes; rollback
+if post-verify fails.
 
-- `AURA_CONTRACT` (added in #83) provides `pre:` / `post:`
-  predicates
-- `mutate:refactor/extract` exists in the evaluator
-- `mutate:extract-function` exists in the evaluator
-- `typecheck-current` is the pre-check
-- The agent loop pattern (`intend` → contract verify → commit)
-  is documented in `code_evolution_pipeline.md`
+### `safe-refactor:replace-fn`
+```aura
+(safe-refactor:replace-fn fn-name new-body)
+;; → (list 'applied snap-id)   on typecheck pass
+;; → (list 'rejected "reason") on typecheck fail
+```
+Atomically replaces a function body. Snapshots, appends new definition,
+runs `typecheck-current`, restores on failure.
 
-What's **missing**: a specific `safe-refactor` wrapper
-primitive that *automatically* wires up:
+### `safe-refactor:rollback`
+```aura
+(safe-refactor:rollback)
+;; → #t on success, #f if no snapshots
+```
+Rolls back the most recent safe-refactor snapshot.
 
-1. Snapshot the affected code
-2. Run the proposed refactor
-3. Evaluate `AURA_CONTRACT_POST` on the result
-4. Compare typecheck output before/after
-5. If equal (or stricter) and contracts pass, hot-swap
-6. Otherwise restore snapshot
+5 new tests in `tests/run-tests.sh` (lines 415-427):
+- `safe-refactor:loaded` — module imports cleanly
+- `safe-refactor:success` — returns thunk result
+- `safe-refactor:rollback` — restores on error
+- `safe-refactor:pre-fail` — rejects when pre-verify fails
+- `safe-refactor:applied` — applies when all verifications pass
 
-This is **the orchestrator glue** between primitives. It
-can be implemented in ~50 lines of Aura on top of
-existing primitives, but it's a follow-up.
+**Total: 211/211 tests pass** (was 206; +5 safe-refactor tests).
+
+### AURA_CONTRACT integration
+
+The post-verify hook in `safe-refactor:check-and-apply` is the
+intended seam for `AURA_CONTRACT_POST`:
 
 ```aura
-;; Skeleton (not yet committed):
-(define (safe-refactor target-fn new-body)
-  (let* ((snap (ast:snapshot (string-append "pre-" target-fn)))
-         (before (typecheck-current))
-         (ok? (begin
-                (mutate:rebind target-fn new-body)
-                (typecheck-current)
-                (and (post:contract-passed? target-fn)
-                     (= (compute-coverage target-fn)
-                        (compute-coverage target-fn))))))
-    (if ok?
-        snap
-        (begin (ast:restore snap) #f))))
+(define (post:sort-returns-sorted lst)
+  (define sorted (sort-fn lst))
+  (equal? sorted (sort (copy lst))))
+
+(safe-refactor:check-and-apply
+  (lambda () #t)                                    ; pre-verify
+  (lambda () (post:sort-returns-sorted '(3 1 2)))   ; post-verify via contract
+  (lambda ()
+    (mutate:rebind 'sort-fn '(lambda (x) ...))))
 ```
+
+This is the safe-refactor wrapper's primary use case.
 
 ## Action 3: Build E2E demo for 100k+ LOC codebase — ❌ NOT STARTED
 
 This is a **multi-week effort** requiring:
 
-- A large open-source Aura codebase to refactor against
-  (Aura itself is ~50k LOC, so even self-refactoring is
-  not 100k)
-- A benchmark task suite (Jira-ticket style) with expected
-  outcomes
-- Performance metrics (latency, PR throughput, regression
-  rate)
+- A large open-source Aura codebase (Aura itself is ~50k LOC; not
+  yet 100k)
+- A benchmark task suite (Jira-ticket style) with expected outcomes
+- Performance metrics (latency, PR throughput, regression rate)
 - A demo runbook / video
 
-This is **a research-grade deliverable**, not a single-PR
-fix. The right path is to:
+**Closest existing artifact**: the EDSL benchmark (148 tasks, 85%
+pass rate) exercises `mutate:*` / `query:*` / `intend` /
+`synthesize:*` on Aura's own modules. See `docs/benchmark.md`.
 
-1. Land Action 1 (✅ done in this commit)
-2. Build Action 2 in a follow-up PR
-3. Use Aura's own codebase as the 100k-LOC target — at
-   current growth rate, it'll be 100k LOC in ~6 months
+**Right path**:
+1. Land Action 1 (✅ done in `a425797`)
+2. Build Action 2 (✅ done in this commit)
+3. Use Aura's own codebase as the 100k-LOC target — at current
+   growth rate, it'll be 100k LOC in ~6 months
 4. Run the demo on Aura itself as a self-hosting benchmark
 
-The EDSL benchmark (148 tasks, 85% pass rate) is the
-**closest existing artifact** to a "100k LOC demo" —
-it exercises `mutate:*` / `query:*` / `intend` /
-`synthesize:*` on Aura's own modules. See
-`docs/benchmark.md`.
+## Implementation notes
 
-## Why this isn't a "done" closing
+### Use `list` not `cons` (workaround)
 
-The issue is **OPEN** and the three proposed actions are
-at three different states. Rather than mark the issue
-closed, the right action is to:
+The safe-refactor functions return `(list 'tag "reason")` rather
+than `(cons 'tag "reason")`. This works around an apparent
+**cons-corruption bug in module-loaded functions**: when a function
+defined in a `lib/std/*.aura` module returns a cons cell, the cons
+sometimes has its `car` or `cdr` corrupted to a large integer
+(observed: `147605376151711743`). The same function works
+correctly when defined inline in the calling script, and works
+correctly when using `list` instead of `cons`.
 
-1. **Land the git primitives** (done in this commit)
-2. **Open a follow-up issue** for Action 2 (safe-refactor
-   wrapper) — ~1 day of work
-3. **Track Action 3** in the agent-evolution roadmap —
-   ~multi-week
+This is a real Aura bug worth tracking. Workaround in place;
+functionality is correct.
 
-The git primitives unblock the most common need (let the
-agent commit its own work). The safe-refactor wrapper is
-a thin layer. The 100k LOC demo is a research effort.
+### Why these specific primitives
+
+- `with-snapshot` and `check-and-apply` are the **atomic** primitives
+  the agent can build higher-level workflows on.
+- `replace-fn` provides a specific common case (function replacement)
+  but the agent should mostly use `check-and-apply` for custom
+  verification.
+- All four compose with existing `mutate:rebind` / `set-code` /
+  `typecheck-current` / `ast:snapshot` primitives.
 
 ## Reference
 
-- `src/compiler/evaluator_impl.cpp` — git primitive
-  implementations
-- `tests/run-tests.sh` — 5 new git tests (lines 404-413)
-- `tests/git_integration_demo.aura` — usage demo
-- `docs/design/code_evolution_pipeline.md` — the agent
-  loop pattern these primitives slot into
+- `lib/std/safe-refactor.aura` — module (4 functions, ~150 lines)
+- `lib/std/safe-refactor.aura-type` — type signatures
+- `tests/safe_refactor_test.aura` — standalone test (8 cases)
+- `tests/run-tests.sh` lines 415-427 — 5 runner tests
+- `docs/design/code_evolution_pipeline.md` — agent loop pattern
 
 ## How to close on GitHub
 
-If you accept Action 1 as sufficient:
+If you accept Actions 1 & 2 as sufficient for now:
 
 ```bash
-gh issue close 96 -c "Action 1 (git primitives) landed:
-git-status / git-diff / git-log / git-commit / git-stage /
-git-branch-current / git-rev-parse in evaluator_impl.cpp +
-206/206 tests pass. Action 2 (safe-refactor wrapper) and
-Action 3 (100k LOC demo) are follow-up issues; the EDSL
-benchmark (148 tasks, 85% pass) is the closest existing
-artifact to Action 3."
+gh issue close 96 -c "Actions 1 (git primitives) and 2 (safe-
+refactor stdlib module with with-snapshot / check-and-apply /
+replace-fn / rollback, 211/211 tests pass) landed. Action 3
+(100k+ LOC E2E demo) is a multi-week follow-up; EDSL benchmark
+(148 tasks, 85% pass) is the closest existing artifact."
 ```
 
-Or keep it OPEN and link to this closing file as a status
-update comment.
+Or keep it OPEN and link to this closing file as a status update
+comment.
