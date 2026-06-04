@@ -61,19 +61,28 @@ similar) is what makes the "agent research team" concept tangible.
 It would showcase the multi-agent + intent-routing + workspace-merge
 features in a real domain.
 
-## Suggested Implementation Order
+## Implementation Status
 
-1. **Conflict detection primitive** (~2 hours)
-   - `(workspace:conflicts-with child-id)` → list of conflicting symbols
-   - Quick win, makes merge safer
-2. **3-way merge primitive** (~3 hours)
-   - `(workspace:merge-3way base-id ours-id theirs-id [strategy: ...])` → #t
-3. **Role registration + dispatcher** (~6 hours)
-   - `(role:register role-name strategy-name [capability ...])` → #t
-   - `(intend goal strategy: "auto" [preferred-roles: ...])` dispatches
-4. **BioTech demo** (~10+ hours)
-   - Compound demo: protein structure prediction, drug-target interaction,
-     etc. Showcases all 3 above features in a domain context.
+### Action 1: Conflict resolution primitives — ✅ LANDED
+
+Implemented in commit [next]:
+
+**`(workspace:conflicts-with child-id)`** — returns a list of symbol
+names that exist in BOTH parent (root) and child. This is a "dry run"
+that does NOT modify either workspace. Useful for agents to detect
+potential conflicts before merging.
+
+**`(workspace:merge-3way base-id ours-id theirs-id [strategy: ...])`** —
+source-level 3-way merge. The merged source combines all 3 inputs.
+Conflict resolution: `ours` (default) or `theirs` strategy.
+
+Both primitives share a helper lambda `extract_defines` that parses
+a source string and returns the set of `(define ...)` names.
+
+### Remaining actions
+
+- **Action 2: Role registration + dispatcher** (~6 hours)
+- **Action 3: BioTech demo** (~10+ hours)
 
 ## How to Close on GitHub
 
