@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #if defined(__linux__) && !defined(__APPLE__)
 #include <execinfo.h>
+#include <dlfcn.h>
 #endif
 #include "serve/serve_async.h"
 #include "serve/scheduler.h"
@@ -263,29 +264,46 @@ int main(int argc, char* argv[]) {
         }
         if (n > 0) (void)!::write(2, hdr, n);
 
-        // Print up to 32 frames. backtrace_symbols needs malloc; with
-        // sigaltstack this is safe (we have SIGSTKSZ bytes of alt-stack
-        // room) but malloc isn't async-signal-safe in principle. In
-        // practice glibc handles this fine for small allocations.
+        // Print up to 32 frames. We use dladdr(3) directly (async-signal-
+        // safe per POSIX) instead of backtrace_symbols(3) (which malloc()s
+        // a string array). dladdr also gives us dli_fname + dli_sname for
+        // each frame. Requires -rdynamic at link time to see internal
+        // symbols; otherwise only public dynamic symbols are visible.
         constexpr int kMaxFrames = 32;
         void* frames[kMaxFrames];
         int nframes = ::backtrace(frames, kMaxFrames);
-        char** syms = ::backtrace_symbols(frames, nframes);
-        if (syms) {
-            (void)!::write(2, "Backtrace:\n", 11);
-            for (int i = 0; i < nframes && i < 8; ++i) {
-                char line[512];
-                int ln = std::snprintf(line, sizeof(line), "  %2d: %s\n", i, syms[i]);
-                if (ln > 0) (void)!::write(2, line, ln);
+        (void)!::write(2, "Backtrace:\n", 11);
+        for (int i = 0; i < nframes && i < 8; ++i) {
+            char line[512];
+            int ln = 0;
+            Dl_info dlinfo;
+            if (::dladdr(frames[i], &dlinfo) && dlinfo.dli_sname) {
+                // Offset = addr - dli_saddr (function start)
+                std::ptrdiff_t off = static_cast<char*>(frames[i]) -
+                                     static_cast<const char*>(dlinfo.dli_saddr);
+                ln = std::snprintf(line, sizeof(line),
+                    "  %2d: %s+%td (%s)\n",
+                    i, dlinfo.dli_sname, off,
+                    dlinfo.dli_fname ? dlinfo.dli_fname : "?");
+            } else {
+                ln = std::snprintf(line, sizeof(line),
+                    "  %2d: [%p] (no symbol; -rdynamic missing?)\n",
+                    i, frames[i]);
             }
-            if (nframes > 8) {
-                char more[64];
-                int mn = std::snprintf(more, sizeof(more), "  ... %d more frames\n", nframes - 8);
-                if (mn > 0) (void)!::write(2, more, mn);
-            }
-            std::free(syms);
-        } else {
-            (void)!::write(2, "(backtrace_symbols failed)\n", 27);
+            if (ln > 0) (void)!::write(2, line, ln);
+        }
+        if (nframes > 8) {
+            char more[64];
+            int mn = std::snprintf(more, sizeof(more), "  ... %d more frames\n", nframes - 8);
+            if (mn > 0) (void)!::write(2, more, mn);
+        }
+        // Also write all frame addresses in hex so they can be resolved
+        // post-mortem with `addr2line -e aura -f -C <addr>`.
+        (void)!::write(2, "Raw frames (addr2line -e aura -f -C ...):\n", 43);
+        for (int i = 0; i < nframes && i < 16; ++i) {
+            char ra[80];
+            int rn = std::snprintf(ra, sizeof(ra), "  %p\n", frames[i]);
+            if (rn > 0) (void)!::write(2, ra, rn);
         }
         (void)!::write(2, "=== END CRASH ===\n", 18);
         // Re-raise with default handler so the shell sees the signal

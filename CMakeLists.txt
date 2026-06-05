@@ -94,6 +94,13 @@ if(LLVM_FOUND)
     set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
     target_link_libraries(aura PRIVATE ${llvm_libs})
     target_compile_definitions(aura PRIVATE AURA_HAVE_LLVM=1)
+    # -rdynamic: export all symbols (not just public ABI) so that the
+    # crash handler in src/main.cpp can resolve internal function names
+    # via backtrace_symbols(3) / dladdr(3). Without this, only the
+    # handful of public dynamic symbols are visible and we get just
+    # hex addresses, not source locations. Cost: ~5-10% binary size,
+    # worth it for a Debug build with crash diagnostics.
+    target_link_options(aura PRIVATE -rdynamic)
 else()
     message(STATUS "LLVM JIT: disabled (not found)")
 endif()
