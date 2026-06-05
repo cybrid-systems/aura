@@ -152,6 +152,20 @@ public:
     void set_type_registry(void* reg) { type_registry_ = reg; }
     void set_compiler_service(void* svc) { compiler_service_ = svc; }
     void set_session_id(const std::string& id) { session_id_ = id; }
+    // Phase 2: EDSL IR cache V2 hooks (set by CompilerService on init)
+    void set_mark_define_dirty_fn(std::function<void(const std::string&)> fn) {
+        mark_define_dirty_fn_ = std::move(fn);
+    }
+    void set_mark_all_defines_dirty_fn(std::function<void()> fn) {
+        mark_all_defines_dirty_fn_ = std::move(fn);
+    }
+    // After (set-code ...) parses a new workspace, walk its top-level defines
+    // and pre-populate the v2 cache. Source-hash based, so unchanged defines
+    // hit the cache and skip the lowering work.
+    std::function<void()> pre_cache_workspace_defines_fn_ = nullptr;
+    void set_pre_cache_workspace_defines_fn(std::function<void()> fn) {
+        pre_cache_workspace_defines_fn_ = std::move(fn);
+    }
 
     // Mutation typecheck error state (P2 #34)
     const std::string& last_mutate_error() const { return last_mutate_error_; }
@@ -390,6 +404,14 @@ private:
     // 用 std::function 而非函数指针，避免不完整类型问题。
     std::function<std::vector<aura::ast::NodeId>(void*, aura::ast::SymId)>
         dep_caller_fn_ = nullptr;
+
+    // ── EDSL IR cache V2 (Phase 2) hooks ─────────────────────────────
+    // Function pointers set by CompilerService on init. Avoids
+    // evaluator_impl.cpp needing to import CompilerService (circular).
+    // mark_define_dirty_fn_(name)         → mark a single define's IR dirty
+    // mark_all_defines_dirty_fn_()       → mark all cached defines dirty
+    std::function<void(const std::string&)> mark_define_dirty_fn_ = nullptr;
+    std::function<void()> mark_all_defines_dirty_fn_ = nullptr;
 
     // ── 模块类型签名（#8 跨模块类型检查） ──────────────────────
     // (declare-type "name" "param-types" "ret-type") 存储的签名，

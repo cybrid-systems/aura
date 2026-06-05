@@ -246,6 +246,15 @@ set_tests_properties(contracts_fires PROPERTIES
     PASS_REGULAR_EXPRESSION "test_handler: contract violation"
     FAIL_REGULAR_EXPRESSION "FAIL:")
 
+
+# ── EDSL IR cache V2 test (Phase 2) ───────────────────────
+# Verifies the FNV-1a source-hash function used by ir_cache_v2_.
+# Full integration is covered by tests/edsl_ir_cache_test.aura
+# (see tests/run-tests.sh).
+add_executable(test_ir_cache_v2 tests/test_ir_cache_v2.cpp)
+add_test(NAME ir_cache_v2_fnv1a
+         COMMAND test_ir_cache_v2)
+
 # Link JIT for test_ir when LLVM is available (service.ixx references JIT types)
 if(LLVM_FOUND)
     target_sources(test_ir PRIVATE src/compiler/aura_jit.cpp src/compiler/aura_jit_runtime.cpp)
