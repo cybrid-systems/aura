@@ -732,6 +732,18 @@ run_test_jit "edsl-ir-cache:jit-value-producing" \
 run_test "edsl-ir-cache:jit-matches-regular"  \
     "$(printf '(set-code \"(define (sq x) (* x x)) (sq 7)\") (eval-current)')" \
     '49'
+
+# Follow-up 3: populate_ir_cache_v2_from_workspace runs by default (with
+# bind_in_env=false to avoid top_env pollution). The v2 cache is
+# populated immediately after set-code, so (ir-cache-v2:dirty? "f")
+# returns #f. The cached IR is used on subsequent (eval-current).
+run_test "edsl-ir-cache:v2-populated-by-default" \
+    "$(printf '(set-code \"(define (f x) (* x x))\") (ir-cache-v2:dirty? \"f\")')" \
+    '#f'
+# Second set-code with same source is a cache hit (no re-lower).
+run_test "edsl-ir-cache:v2-cache-hit" \
+    "$(printf '(set-code \"(define (f x) (* x x))\") (eval-current) (set-code \"(define (f x) (* x x))\") (eval-current) (display (f 7))')" \
+    '49'
 # Same input via :jit should give the same numeric result.
 # (Note: no env sync back, so :jit's return value is the JIT's last
 # expression value of the re-eval, not the workspace's bound env.)
