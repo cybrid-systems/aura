@@ -261,12 +261,14 @@ public:
             [this]() { this->mark_all_defines_dirty(); });
         // Phase 2: pre-populate v2 IR cache from workspace defines.
         // Called from (set-code ...) primitive after a successful parse.
-        // Plan A: hook now calls the lightweight populate_dep_graph
-        // (no cache_define side effects). The previous pre_cache_workspace_defines
-        // (which called cache_define → eval_flat → polluted top_env) is renamed
-        // populate_ir_cache_v2_from_workspace and is opt-in only.
-        evaluator_.set_pre_cache_workspace_defines_fn(
-            [this]() { this->populate_dep_graph_from_workspace(); });
+        // Plan A + Follow-up 3: hook now calls BOTH the lightweight
+        // populate_dep_graph (no side effects) AND the heavy
+        // populate_ir_cache_v2 (which uses bind_in_env=false to skip the
+        // env pollution that broke tests in early Phase 3).
+        evaluator_.set_pre_cache_workspace_defines_fn([this]() {
+            this->populate_dep_graph_from_workspace();
+            this->populate_ir_cache_v2_from_workspace();
+        });
         // Phase 3 debugging: expose is_define_dirty + get_dependents.
         evaluator_.set_is_define_dirty_fn(
             [this](const std::string& name) -> bool {
@@ -2250,7 +2252,10 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             auto pr = aura::parser::parse_to_flat(canonical, *tmp_flat, *tmp_pool);
             if (!pr.success || pr.root == aura::ast::NULL_NODE) continue;
             tmp_flat->root = pr.root;
-            cache_define(canonical, *tmp_flat, *tmp_pool, pr.root, name);
+            // Pass bind_in_env=false: don't pollute the workspace's env
+            // by calling eval_flat. The define is bound later by
+            // eval-current which uses its own env.
+            cache_define(canonical, *tmp_flat, *tmp_pool, pr.root, name, /*bind_in_env=*/false);
             auto& entry = ir_cache_v2_[name];
             entry.source = canonical;
             entry.source_hash = hash;
@@ -2654,7 +2659,8 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
     // Returns tree-walker result (or void for success).
     EvalResult cache_define(std::string_view source, aura::ast::FlatAST& flat,
                             aura::ast::StringPool& pool, aura::ast::NodeId expanded_root,
-                            const std::string& name_str) {
+                            const std::string& name_str,
+                            bool bind_in_env = true) {
         bool is_redefine = ir_cache_.count(name_str) > 0;
 
         // === Level 2: Type check via TypeCheckWrap pass ===
@@ -2803,8 +2809,16 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             mark_module_dirty(name_str);
         }
 
-        // Eval tree-walker for persistent runtime bindings
-        return evaluator_.eval_flat(flat, pool, expanded_root, evaluator_.top_env());
+        // Eval tree-walker for persistent runtime bindings.
+        // Skip when bind_in_env=false (populate_ir_cache_v2_from_workspace
+        // pre-populates the v2 cache without polluting the env; the define
+        // gets bound later by eval-current which uses its own env).
+        if (bind_in_env) {
+            return evaluator_.eval_flat(flat, pool, expanded_root, evaluator_.top_env());
+        }
+        // bind_in_env=false: skip the env binding. Caller (e.g.
+        // populate_ir_cache_v2_from_workspace) just wants the IR cached.
+        return EvalResult(types::make_void());
     }
 
     // ---- Accessors ---------------------------------------------------
