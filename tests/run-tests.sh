@@ -150,6 +150,15 @@ run_test "edsl:find"         "$(printf '(set-code \"(define (f x) (+ x 1))\") (q
 run_test "edsl:node-type"    "$(printf '(set-code \"(define (f x) (+ x 1))\") (query:node-type \"Define\")')" "(5)"
 
 echo ""
+echo "=== Dual Workspace Tests (Phase 1) ==="
+# Phase 1 split workspace_flat_ (EDSL persistent) from current_flat_ (per-eval).
+# (current-source) default reads current_flat_; :workspace reads workspace_flat_.
+run_test "dws:default-stdin"          "$(printf '(current-source)')"                                          '"(current-source)"'
+run_test "dws:workspace-no-setcode"   "$(printf '(current-source :workspace)')"                              '<string[0]>'
+run_test "dws:default-after-setcode"  "$(printf '(set-code \"(define foo 42)\") (current-source)')"           '"(current-source)"'
+run_test "dws:workspace-after-setcode" "$(printf '(set-code \"(define foo 42)\") (current-source :workspace)')" '"(define foo 42)"'
+
+echo ""
 echo "=== Module Tests ==="
 
 run_test "module:use"       "$(printf '(module? (use \"std/list\"))')" "#t"
