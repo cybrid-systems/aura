@@ -11110,10 +11110,24 @@ Evaluator::Evaluator() {
         if (pop_size > 50) pop_size = 50;
         if (generations < 1) generations = 1;
 
-        // Get baseline source
+        // Get baseline source — use :workspace to read the user's set-code'd
+        // script (the function to optimize), NOT the per-eval source (which
+        // would be the surrounding synthesize:optimize call itself, causing
+        // mutations to recursive-call this primitive → stack overflow).
+        // Same root cause as colony-no-fns (commit 6d88544).
         auto src_fn = primitives_.lookup("current-source");
         if (!src_fn) return make_void();
-        auto cs_result = (*src_fn)({});
+        // Intern :workspace keyword (lookup or add to keyword_table_).
+        std::uint64_t ws_kw = 0;
+        bool ws_found = false;
+        for (; ws_kw < keyword_table_.size(); ++ws_kw) {
+            if (keyword_table_[ws_kw] == ":workspace") { ws_found = true; break; }
+        }
+        if (!ws_found) {
+            ws_kw = keyword_table_.size();
+            keyword_table_.push_back(":workspace");
+        }
+        auto cs_result = (*src_fn)({types::make_keyword(ws_kw)});
         if (!is_string(cs_result)) return make_void();
         auto cs_idx = as_string_idx(cs_result);
         if (cs_idx >= string_heap_.size()) return make_void();
@@ -11328,9 +11342,20 @@ Evaluator::Evaluator() {
                                             if (ti < string_heap_.size() &&
                                                 string_heap_[ti].find("error") == std::string::npos) {
                                                 // Successful crossover: get the new source
+                                                // (use :workspace to read user's set-code'd script,
+                                                // not the per-eval source = the surrounding call)
                                                 auto src_fn = primitives_.lookup("current-source");
                                                 if (src_fn) {
-                                                    auto src = (*src_fn)({});
+                                                    std::uint64_t ws_kw = 0;
+                                                    bool ws_found = false;
+                                                    for (; ws_kw < keyword_table_.size(); ++ws_kw) {
+                                                        if (keyword_table_[ws_kw] == ":workspace") { ws_found = true; break; }
+                                                    }
+                                                    if (!ws_found) {
+                                                        ws_kw = keyword_table_.size();
+                                                        keyword_table_.push_back(":workspace");
+                                                    }
+                                                    auto src = (*src_fn)({types::make_keyword(ws_kw)});
                                                     if (is_string(src)) {
                                                         auto si = as_string_idx(src);
                                                         if (si < string_heap_.size())
