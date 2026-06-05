@@ -17,6 +17,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Install pexpect for CI
+      run: |
+        pip install --break-system-packages pexpect
+        python3 -c "import pexpect; print('✅ pexpect installed for', pexpect.__file__)"
+
     - name: Build & Core Tests
       run: python3 build.py check
 
