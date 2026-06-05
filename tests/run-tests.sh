@@ -463,8 +463,10 @@ run_emit_test() {
     local input="$2"
     local expected="$3"
     local bin_path="/tmp/aura_emit_${name}"
+    local err_path="/tmp/aura_emit_${name}.err"
     local result
-    printf '%s' "$input" | timeout 10 "$AURA" --emit-binary "$bin_path" 2>/dev/null >/dev/null
+    # Capture stderr to a file so we can show it on failure (don't pollute test output).
+    printf '%s' "$input" | timeout 10 "$AURA" --emit-binary "$bin_path" 2>"$err_path" >/dev/null
     if [ -x "$bin_path" ]; then
         result=$("$bin_path" 2>&1 | tr -d '\n')
         if [ "$result" = "$expected" ]; then
@@ -474,11 +476,19 @@ run_emit_test() {
             red "$name"
             echo "       expected: $expected"
             echo "       got:      $result"
+            if [ -s "$err_path" ]; then
+                echo "       stderr:   $(head -1 "$err_path")"
+            fi
             FAIL=$((FAIL + 1))
         fi
         rm -f "$bin_path" "${bin_path}.o" "${bin_path}.tmp.aura" "${bin_path}.runtime.o" "${bin_path}.ir" 2>/dev/null
     else
         red "$name (no binary)"
+        # Surface AOT error for debugging in CI.
+        if [ -s "$err_path" ]; then
+            echo "       aot_err:  $(head -3 "$err_path" | tr '\n' ' ')"
+        fi
+        rm -f "$err_path"
         FAIL=$((FAIL + 1))
     fi
 }
