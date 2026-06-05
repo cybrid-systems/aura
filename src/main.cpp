@@ -7,6 +7,9 @@
 #include <unistd.h>
 #include <signal.h>
 #include <stdlib.h>
+#if defined(__linux__) && !defined(__APPLE__)
+#include <execinfo.h>
+#endif
 #include "serve/serve_async.h"
 #include "serve/scheduler.h"
 
@@ -212,6 +215,53 @@ static std::unordered_map<std::string, std::string> parse_json_command(std::stri
 }
 
 int main(int argc, char* argv[]) {
+    // ── Crash handler: print backtrace on fatal signal ────────────
+    // CI's --emit-binary path has been hitting 2 segfaults that don't
+    // reproduce locally. This handler flushes a backtrace to stderr
+    // before re-raising, so run-tests.sh's stderr capture (3ddf924)
+    // will surface the failing instruction/frame. Skipped on macOS
+    // (no execinfo.h); on Linux we use backtrace(3) from <execinfo.h>.
+#if defined(__linux__) && !defined(__APPLE__)
+    static auto crash_handler = +[](int sig) {
+        // Use raw write(2) — stdio may be in undefined state.
+        const char* name =
+            sig == SIGSEGV ? "SIGSEGV" :
+            sig == SIGABRT ? "SIGABRT" :
+            sig == SIGBUS  ? "SIGBUS"  :
+            sig == SIGFPE  ? "SIGFPE"  : "SIGNAL";
+        char hdr[128];
+        int n = std::snprintf(hdr, sizeof(hdr),
+            "\n=== AURA CRASH: %s (signal %d) ===\n", name, sig);
+        if (n > 0) (void)!::write(2, hdr, n);
+
+        // Print up to 32 frames
+        constexpr int kMaxFrames = 32;
+        void* frames[kMaxFrames];
+        int nframes = ::backtrace(frames, kMaxFrames);
+        char** syms = ::backtrace_symbols(frames, nframes);
+        if (syms) {
+            (void)!::write(2, "Backtrace:\n", 11);
+            for (int i = 0; i < nframes; ++i) {
+                char line[512];
+                int ln = std::snprintf(line, sizeof(line), "  %2d: %s\n", i, syms[i]);
+                if (ln > 0) (void)!::write(2, line, ln);
+            }
+            std::free(syms);
+        } else {
+            (void)!::write(2, "(backtrace_symbols failed)\n", 27);
+        }
+        (void)!::write(2, "=== END CRASH ===\n", 18);
+        // Re-raise with default handler so the shell sees the signal
+        // and core-dump machinery (ulimit -c) still kicks in.
+        std::signal(sig, SIG_DFL);
+        ::raise(sig);
+    };
+    std::signal(SIGSEGV, crash_handler);
+    std::signal(SIGABRT, crash_handler);
+    std::signal(SIGBUS,  crash_handler);
+    std::signal(SIGFPE,  crash_handler);
+#endif
+
     // ── Parse common flags ───────────────────────────────
     int num_workers = 0;
     int arg_start = 1;
