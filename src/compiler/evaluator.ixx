@@ -120,8 +120,8 @@ public:
     bool gc_module(const std::string& path);
     // Set current FlatAST/Pool for mutation primitives
     void set_flat_pool(ast::FlatAST* f, ast::StringPool* p) {
-        current_flat_ = f;
-        current_pool_ = p;
+        mutate_target_flat_ = f;
+        mutate_target_pool_ = p;
     }
     [[nodiscard]] EvalResult eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                        aura::ast::NodeId id, const Env& env);
@@ -183,6 +183,27 @@ public:
 
     // Set/get a shared workspace tree (for cross-session workspace sharing in serve mode).
     void set_workspace_tree(void* wt) { workspace_tree_ = wt; }
+    // Set the AST/pool that source-reading primitives (current-source,
+    // workspace:conflicts-with, etc.) operate on. Called by CompilerService
+    // at the start of each eval so primitives see the current script's AST.
+    // Distinct from set_workspace_flat: workspace_flat_ is the persistent
+    // EDSL workspace (set via (set-code ...)), this is the per-eval
+    // source-being-evaluated.
+    void set_workspace_flat(ast::FlatAST* f) { workspace_flat_ = f; }
+    void set_workspace_pool(ast::StringPool* p) { workspace_pool_ = p; }
+    ast::FlatAST* workspace_flat() const { return workspace_flat_; }
+    ast::StringPool* workspace_pool() const { return workspace_pool_; }
+
+    // Set the AST/pool that source-reading primitives (current-source) read
+    // by default. The "per-eval current source" pointer. Set by
+    // CompilerService::eval / eval_ir / exec_jit right after parsing the
+    // script, before any user code runs. See docs/design/dual-workspace-incremental-ir.md
+    // for the dual-workspace rationale.
+    void set_current_flat(ast::FlatAST* f) { current_flat_ = f; }
+    void set_current_pool(ast::StringPool* p) { current_pool_ = p; }
+    ast::FlatAST* current_flat() const { return current_flat_; }
+    ast::StringPool* current_pool() const { return current_pool_; }
+
     void* workspace_tree() const { return workspace_tree_; }
     // Update the shared tree's root node to point to this evaluator's workspace.
     void update_shared_tree_root();
@@ -245,10 +266,12 @@ private:
     // hand each module its own arena without depending on a caller setting
     // it up. Lives for the Evaluator's whole lifetime.
     std::unique_ptr<ast::ArenaGroup> arena_group_;
-    ast::FlatAST* current_flat_ = nullptr;
-    ast::StringPool* current_pool_ = nullptr;
-    ast::FlatAST* workspace_flat_ = nullptr;
+    ast::FlatAST* mutate_target_flat_ = nullptr;     // for mutate:* primitives (set via set_flat_pool or eval_flat)
+    ast::StringPool* mutate_target_pool_ = nullptr;
+    ast::FlatAST* workspace_flat_ = nullptr;         // EDSL persistent workspace (set via (set-code ...))
     ast::StringPool* workspace_pool_ = nullptr;
+    ast::FlatAST* current_flat_ = nullptr;           // per-eval source-being-evaluated (set by CompilerService eval paths)
+    ast::StringPool* current_pool_ = nullptr;
     void* type_registry_ = nullptr; // points to aura::core::TypeRegistry
     std::unordered_map<ClosureId, Closure> closures_;
     ClosureBridgeFn closure_bridge_;

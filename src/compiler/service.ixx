@@ -664,9 +664,16 @@ public:
                 std::println(std::cerr, "parse warning: {}", e.format());
         }
         flat_ptr->root = pr.root;
-        // Store for mutation targeting
+        // Store for mutation targeting (CompilerService's tracking, used by last_flat/last_pool)
         current_ast_ = flat_ptr;
         current_pool_ = pool_ptr;
+        // Dual-workspace (Phase 1): make this flat/pool visible to
+        // source-reading primitives (current-source default, etc.) and
+        // also to mutate:* primitives. Set BEFORE any user code runs.
+        // See docs/design/dual-workspace-incremental-ir.md
+        evaluator_.set_flat_pool(flat_ptr, pool_ptr);
+        evaluator_.set_current_flat(flat_ptr);
+        evaluator_.set_current_pool(pool_ptr);
 
         // Pre-expand all macros in this expression
         auto expanded_root = aura::compiler::macro_expand_all(*flat_ptr, *pool_ptr, flat_ptr->root);
@@ -979,6 +986,10 @@ public:
         // Store for mutation targeting
         current_ast_ = flat_ptr;
         current_pool_ = pool_ptr;
+        // Dual-workspace (Phase 1): propagate to Evaluator.
+        evaluator_.set_flat_pool(flat_ptr, pool_ptr);
+        evaluator_.set_current_flat(flat_ptr);
+        evaluator_.set_current_pool(pool_ptr);
 
         // IR pipeline doesn't support macros — fall back to tree-walker evaluator
         for (aura::ast::NodeId id = 0; id < flat_ptr->size(); ++id) {
@@ -1174,6 +1185,10 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         flat_ptr->root = pr.root;
         current_ast_ = flat_ptr;
         current_pool_ = pool_ptr;
+        // Dual-workspace (Phase 1): propagate to Evaluator.
+        evaluator_.set_flat_pool(flat_ptr, pool_ptr);
+        evaluator_.set_current_flat(flat_ptr);
+        evaluator_.set_current_pool(pool_ptr);
 
         // Issue #73 Phase 5: run typecheck before lowering so the
         // FlatAST's type_id column is populated. Without this, the
