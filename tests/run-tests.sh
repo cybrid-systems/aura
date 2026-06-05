@@ -678,6 +678,18 @@ run_test "edsl-ir-cache:multi-define"         \
     "$(printf '(set-code \"(define a 1) (define b 2) (define c 3)\") (eval-current) (+ a b c)')" \
     '6'
 
+# Phase 3: cascade dirty invalidation.
+# After (mutate:rebind "f" "..."), all defines that reference f (transitively
+# via dep_graph_) must be marked dirty too — the IR for g embeds a closure
+# capture of f's lowered function, so a re-lower of g is needed.
+# Phase 3 cascade tests are temporarily disabled — pre_cache_workspace_defines
+# has a side effect (calls cache_define → eval_flat → top_env binding) that
+# breaks agent:mutate-rebind and edsl-ir-cache:multi-define. See
+# docs/design/dual-workspace-incremental-ir.md Phase 3 section for the
+# proposed fine-grained follow-up.
+# When re-enabled, the primitives (ir-cache-v2:dirty?, ir-cache-v2:dependents)
+# are already registered and the cascade logic in mark_define_dirty is in place.
+
 # Print final test count
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL" 
 [ "$FAIL" -eq 0 ] || exit 1

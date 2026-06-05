@@ -166,6 +166,17 @@ public:
     void set_pre_cache_workspace_defines_fn(std::function<void()> fn) {
         pre_cache_workspace_defines_fn_ = std::move(fn);
     }
+    // Phase 3: read cache entry from outside the module.
+    using IsDefineDirtyFn = bool(const std::string&);
+    std::function<IsDefineDirtyFn> is_define_dirty_fn_ = nullptr;
+    void set_is_define_dirty_fn(std::function<IsDefineDirtyFn> fn) {
+        is_define_dirty_fn_ = std::move(fn);
+    }
+    using GetDependentsFn = std::vector<std::string>(const std::string&);
+    std::function<GetDependentsFn> get_dependents_fn_ = nullptr;
+    void set_get_dependents_fn(std::function<GetDependentsFn> fn) {
+        get_dependents_fn_ = std::move(fn);
+    }
 
     // Mutation typecheck error state (P2 #34)
     const std::string& last_mutate_error() const { return last_mutate_error_; }
