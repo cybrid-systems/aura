@@ -4404,6 +4404,39 @@ void Evaluator::init_pair_primitives() {
         return make_bool(true);
     });
 
+    // (ir-cache-v2:dirty? name) — #t if the named define's IR cache entry is
+    // marked dirty.
+    primitives_.add("ir-cache-v2:dirty?", [this, mev](const auto& a) -> EvalValue {
+        if (a.size() < 1 || !is_string(a[0]))
+            return mev("bad-arg", "usage: (ir-cache-v2:dirty? name)");
+        if (!is_define_dirty_fn_) return make_bool(false);
+        auto name_idx = as_string_idx(a[0]);
+        if (name_idx >= string_heap_.size()) return make_bool(false);
+        auto name = string_heap_[name_idx];
+        return make_bool(is_define_dirty_fn_(name));
+    });
+
+    // (ir-cache-v2:dependents name) — list of defines that reference this one.
+    primitives_.add("ir-cache-v2:dependents", [this, mev](const auto& a) -> EvalValue {
+        if (a.size() < 1 || !is_string(a[0]))
+            return mev("bad-arg", "usage: (ir-cache-v2:dependents name)");
+        if (!get_dependents_fn_) return make_void();
+        auto name_idx = as_string_idx(a[0]);
+        if (name_idx >= string_heap_.size()) return make_void();
+        auto name = string_heap_[name_idx];
+        auto names = get_dependents_fn_(name);
+        EvalValue list = make_void();
+        for (auto it = names.rbegin(); it != names.rend(); ++it) {
+            auto sid = string_heap_.size();
+            string_heap_.push_back(*it);
+            auto head = make_string(sid);
+            auto pid = pairs_.size();
+            pairs_.push_back({head, list});
+            list = make_pair(pid);
+        }
+        return list;
+    });
+
     // (current-source) — Return the current workspace AST as source code string
     // Implemented inline to avoid circular dependency with lowering module.
     // (eval code) — Parse and evaluate a string of Aura code

@@ -2061,10 +2061,35 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
 
     // Mark a single define dirty. Called by mutate:rebind, mutate:set-body, etc.
     // When dirty is set, the next (eval-current) will re-lower the define.
+    //
+    // Phase 3: also cascade via dep_graph_[name].called_by (BFS) so all
+    // transitively dependent defines are marked dirty too. A mutation to
+    // f must re-lower every g that references f (the IR for g embeds a
+    // closure capture of f's lowered function). When pre_cache_workspace_defines
+    // is enabled (Phase 3 full), the depends_on scan populates dep_graph_.
     void mark_define_dirty(const std::string& name) {
         auto it = ir_cache_v2_.find(name);
         if (it != ir_cache_v2_.end()) {
             it->second.dirty = true;
+        }
+        // Cascade: BFS over called_by
+        std::vector<std::string> queue;
+        std::unordered_set<std::string> visited;
+        queue.push_back(name);
+        visited.insert(name);
+        while (!queue.empty()) {
+            auto cur = queue.back();
+            queue.pop_back();
+            auto dit = dep_graph_.find(cur);
+            if (dit == dep_graph_.end()) continue;
+            for (auto& dependent : dit->second.called_by) {
+                if (!visited.insert(dependent).second) continue;
+                auto cit = ir_cache_v2_.find(dependent);
+                if (cit != ir_cache_v2_.end()) {
+                    cit->second.dirty = true;
+                }
+                queue.push_back(dependent);
+            }
         }
     }
 
