@@ -682,13 +682,18 @@ run_test "edsl-ir-cache:multi-define"         \
 # After (mutate:rebind "f" "..."), all defines that reference f (transitively
 # via dep_graph_) must be marked dirty too — the IR for g embeds a closure
 # capture of f's lowered function, so a re-lower of g is needed.
-# Phase 3 cascade tests are temporarily disabled — pre_cache_workspace_defines
-# has a side effect (calls cache_define → eval_flat → top_env binding) that
-# breaks agent:mutate-rebind and edsl-ir-cache:multi-define. See
-# docs/design/dual-workspace-incremental-ir.md Phase 3 section for the
-# proposed fine-grained follow-up.
-# When re-enabled, the primitives (ir-cache-v2:dirty?, ir-cache-v2:dependents)
-# are already registered and the cascade logic in mark_define_dirty is in place.
+# Phase 3 cascade tests (Plan A follow-up — split pre_cache into
+# populate_dep_graph + populate_ir_cache_v2; only the lightweight dep_graph
+# version runs by default, so no cache_define side effects).
+run_test "edsl-ir-cache:cascade-after-setcode"  \
+    "$(printf '(set-code \"(define f (lambda (x) (* x 2))) (define g (lambda (x) (f x)))\") (ir-cache-v2:dirty? \"g\")')" \
+    '#f'
+run_test "edsl-ir-cache:cascade-after-mutate"   \
+    "$(printf '(set-code \"(define f (lambda (x) (* x 2))) (define g (lambda (x) (f x)))\") (mutate:rebind \"f\" \"(lambda (x) (* x 3))\") (ir-cache-v2:dirty? \"g\")')" \
+    '#t'
+run_test "edsl-ir-cache:cascade-not-on-strangers" \
+    "$(printf '(set-code \"(define f (lambda (x) (* x 2))) (define g (lambda (x) (* x 2)))\") (mutate:rebind \"f\" \"(lambda (x) (* x 3))\") (ir-cache-v2:dirty? \"g\")')" \
+    '#f'  # g does not reference f, so cascade should not mark g dirty
 
 # Print final test count
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL" 

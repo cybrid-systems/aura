@@ -261,10 +261,25 @@ public:
             [this]() { this->mark_all_defines_dirty(); });
         // Phase 2: pre-populate v2 IR cache from workspace defines.
         // Called from (set-code ...) primitive after a successful parse.
+        // Plan A: hook now calls the lightweight populate_dep_graph
+        // (no cache_define side effects). The previous pre_cache_workspace_defines
+        // (which called cache_define → eval_flat → polluted top_env) is renamed
+        // populate_ir_cache_v2_from_workspace and is opt-in only.
         evaluator_.set_pre_cache_workspace_defines_fn(
-            [this]() { this->pre_cache_workspace_defines(); });
-        evaluator_.set_pre_cache_workspace_defines_fn(
-            [this]() { this->mark_all_defines_dirty(); });
+            [this]() { this->populate_dep_graph_from_workspace(); });
+        // Phase 3 debugging: expose is_define_dirty + get_dependents.
+        evaluator_.set_is_define_dirty_fn(
+            [this](const std::string& name) -> bool {
+                const auto* entry = this->get_define_v2(name);
+                if (!entry) return false;
+                return entry->dirty;
+            });
+        evaluator_.set_get_dependents_fn(
+            [this](const std::string& name) -> std::vector<std::string> {
+                auto it = dep_graph_.find(name);
+                if (it == dep_graph_.end()) return {};
+                return it->second.called_by;
+            });
         aura::messaging::g_current_compiler_service = this;
         // Setup messaging bridge (avoids circular module dependency)
         aura::messaging::g_messaging_bridge.send =
@@ -2072,14 +2087,16 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         if (it != ir_cache_v2_.end()) {
             it->second.dirty = true;
         }
-        // Cascade: BFS over called_by
-        std::vector<std::string> queue;
+        // Cascade: BFS over called_by. Use std::queue (FIFO) for proper BFS
+        // ordering — vector-as-stack is technically DFS, which is fine for
+        // correctness but std::queue is more idiomatic and self-documenting.
+        std::queue<std::string> bfs;
         std::unordered_set<std::string> visited;
-        queue.push_back(name);
+        bfs.push(name);
         visited.insert(name);
-        while (!queue.empty()) {
-            auto cur = queue.back();
-            queue.pop_back();
+        while (!bfs.empty()) {
+            auto cur = bfs.front();
+            bfs.pop();
             auto dit = dep_graph_.find(cur);
             if (dit == dep_graph_.end()) continue;
             for (auto& dependent : dit->second.called_by) {
@@ -2088,7 +2105,7 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                 if (cit != ir_cache_v2_.end()) {
                     cit->second.dirty = true;
                 }
-                queue.push_back(dependent);
+                bfs.push(dependent);
             }
         }
     }
@@ -2108,45 +2125,113 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
     //   - if hash differs OR dirty OR not in cache → re-lower and store
     // Called by (set-code ...) via the pre_cache_workspace_defines_fn_ hook
     // in Evaluator, after the new flat is parsed.
-    void pre_cache_workspace_defines() {
+    // Plan A (Phase 3 follow-up): split the pre-existing
+    // pre_cache_workspace_defines into two functions to avoid the
+    // cache_define side effect (which calls eval_flat on top_env and
+    // pollutes the env).
+    //
+    // The lightweight populate_dep_graph_from_workspace walks the
+    // workspace, finds free variable references, and records caller→callee
+    // edges in dep_graph_. NO cache_define, NO eval_flat, NO pollution.
+    // Called automatically from (set-code ...).
+    //
+    // The heavy populate_ir_cache_v2_from_workspace actually does the IR
+    // lowering via cache_define. Opt-in only; not called by default to
+    // avoid the side-effect issue. Future work.
+    void populate_dep_graph_from_workspace() {
         auto* ws_flat = evaluator_.workspace_flat();
         auto* ws_pool = evaluator_.workspace_pool();
         if (!ws_flat || !ws_pool) return;
-        // For each top-level Define node, call cache_define which will
-        // internally check ir_cache_ and store in both old ir_cache_ and
-        // new ir_cache_v2_ (via the side-effect in cache_define body).
-        // For Phase 2 minimal: just iterate top-level defines and call
-        // cache_define for each.
         for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
             auto v = ws_flat->get(id);
             if (v.tag != aura::ast::NodeTag::Define) continue;
             if (v.sym_id == aura::ast::INVALID_SYM) continue;
             auto name = std::string(ws_pool->resolve(v.sym_id));
-            // Skip __repl__ and other internal entries
             if (name.empty() || name[0] == '_') continue;
-            // Build canonical source (unparse) for the define body
+            if (v.children.empty()) continue;
+            // Build canonical source + hash for the v2 entry (lightweight —
+            // just unparse, no cache_define, no eval_flat side effects).
+            auto child_id = v.child(0);
+            std::string body_src = unparse_node(*ws_flat, *ws_pool, child_id, 0);
+            std::string canonical = "(define " + name + " " + body_src + ")";
+            auto hash = fnv1a_64(canonical);
+            // Walk the define body to find Variable references that resolve
+            // to other defines in the workspace. Record caller→callee in
+            // dep_graph_ for cascade dirty invalidation.
+            std::vector<aura::ast::NodeId> stack;
+            stack.push_back(child_id);
+            std::unordered_set<std::string> seen;
+            while (!stack.empty()) {
+                auto nid = stack.back();
+                stack.pop_back();
+                if (nid >= ws_flat->size()) continue;
+                auto nv = ws_flat->get(nid);
+                if (nv.tag == aura::ast::NodeTag::Variable && nv.sym_id != aura::ast::INVALID_SYM) {
+                    auto vname = std::string(ws_pool->resolve(nv.sym_id));
+                    if (!vname.empty() && vname != name && seen.insert(vname).second) {
+                        // Check if vname is a sibling define in this workspace
+                        bool sibling = false;
+                        for (aura::ast::NodeId sid = 0; sid < ws_flat->size(); ++sid) {
+                            auto sv = ws_flat->get(sid);
+                            if (sv.tag == aura::ast::NodeTag::Define && sv.sym_id != aura::ast::INVALID_SYM) {
+                                auto sname = std::string(ws_pool->resolve(sv.sym_id));
+                                if (sname == vname) { sibling = true; break; }
+                            }
+                        }
+                        if (sibling) {
+                            record_dependency(name, vname);
+                        }
+                    }
+                }
+                for (auto c : nv.children) stack.push_back(c);
+            }
+            // Create/update the v2 entry (lightweight — no cache_define).
+            // Only create if not already present OR if the hash changed.
+            // (We don't overwrite an existing entry's depends_on, which was
+            // computed last time and is still valid if the source hash matches.)
+            auto& entry = ir_cache_v2_[name];
+            if (entry.source_hash != hash) {
+                entry.source = canonical;
+                entry.source_hash = hash;
+                entry.irs.clear();
+                entry.bridges.clear();
+                entry.strings.clear();
+                entry.dirty = false;  // freshly parsed, not dirty
+            }
+        }
+    }
+
+    // Heavy (opt-in) populate of the v2 IR cache. Calls cache_define for
+    // each top-level define, which has side effects (eval_flat on top_env).
+    // NOT called by default. Future work: re-enable when the side-effect
+    // issue is resolved.
+    void populate_ir_cache_v2_from_workspace() {
+        auto* ws_flat = evaluator_.workspace_flat();
+        auto* ws_pool = evaluator_.workspace_pool();
+        if (!ws_flat || !ws_pool) return;
+        for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
+            auto v = ws_flat->get(id);
+            if (v.tag != aura::ast::NodeTag::Define) continue;
+            if (v.sym_id == aura::ast::INVALID_SYM) continue;
+            auto name = std::string(ws_pool->resolve(v.sym_id));
+            if (name.empty() || name[0] == '_') continue;
             if (v.children.empty()) continue;
             auto child_id = v.child(0);
             std::string body_src = unparse_node(*ws_flat, *ws_pool, child_id, 0);
             std::string canonical = "(define " + name + " " + body_src + ")";
             auto hash = fnv1a_64(canonical);
-            // Skip if already cached with same hash
             auto it = ir_cache_v2_.find(name);
             if (it != ir_cache_v2_.end() && !it->second.dirty &&
                 it->second.source_hash == hash) {
                 continue;
             }
-            // Build a temp flat with just this define to lower it
-            // (we re-parse to get a clean AST for cache_define)
             auto alloc = arena_.allocator();
             auto* tmp_pool = arena_.create<aura::ast::StringPool>(alloc);
             auto* tmp_flat = arena_.create<aura::ast::FlatAST>(alloc);
             auto pr = aura::parser::parse_to_flat(canonical, *tmp_flat, *tmp_pool);
             if (!pr.success || pr.root == aura::ast::NULL_NODE) continue;
             tmp_flat->root = pr.root;
-            // Lower to IR via existing cache_define (populates old ir_cache_)
             cache_define(canonical, *tmp_flat, *tmp_pool, pr.root, name);
-            // Also store in v2 cache (cache_define doesn't do this)
             auto& entry = ir_cache_v2_[name];
             entry.source = canonical;
             entry.source_hash = hash;
@@ -2154,7 +2239,7 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         }
     }
 
-    // Clear the whole EDSL IR cache. Called by --reset-arena / gc.
+        // Clear the whole EDSL IR cache. Called by --reset-arena / gc.
     void clear_define_cache_v2() {
         ir_cache_v2_.clear();
     }
