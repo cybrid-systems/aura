@@ -4722,7 +4722,29 @@ void Evaluator::init_pair_primitives() {
     });
 
     // (eval-current) — Evaluate the current workspace AST
-    primitives_.add("eval-current", [this, mev](const auto&) {
+    primitives_.add("eval-current", [this, mev](const auto& a) -> EvalValue {
+        // Phase 4: (eval-current :jit) — compile-and-run via the IR/JIT
+        // pipeline. Falls back to tree-walker if the hook isn't installed
+        // (e.g. unit tests without a CompilerService) or if the JIT
+        // compile fails.
+        if (a.size() == 1 && types::is_keyword(a[0])) {
+            auto kidx = types::as_keyword_idx(a[0]);
+            if (kidx < keyword_table_.size() && keyword_table_[kidx] == ":jit") {
+                if (try_jit_fn_ && get_workspace_source_fn_) {
+                    // Re-eval the workspace via the IR/JIT pipeline.
+                    // The result is the workspace's last-expression value
+                    // (no env sync back to the original workspace yet).
+                    std::string src = get_workspace_source_fn_();
+                    if (!src.empty()) {
+                        auto jit_result = try_jit_fn_(src);
+                        if (jit_result) return *jit_result;
+                        // JIT failed — fall through to tree-walker
+                    }
+                }
+                // No service wired, or workspace empty, or JIT failed —
+                // fall through to tree-walker
+            }
+        }
         coverage_counters_[2]++;
         // If set-code failed on the last call, propagate the diagnostic immediately
         if (!last_set_code_error_kind_.empty()) {

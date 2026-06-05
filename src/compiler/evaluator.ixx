@@ -177,6 +177,23 @@ public:
     void set_get_dependents_fn(std::function<GetDependentsFn> fn) {
         get_dependents_fn_ = std::move(fn);
     }
+    // Phase 4: get the workspace source by unparsing workspace_flat_.
+    // Used by (eval-current :jit) to pass a proper source string to
+    // the JIT pipeline. Returns empty if no workspace is set.
+    using GetWorkspaceSourceFn = std::string();
+    std::function<GetWorkspaceSourceFn> get_workspace_source_fn_ = nullptr;
+    void set_get_workspace_source_fn(std::function<GetWorkspaceSourceFn> fn) {
+        get_workspace_source_fn_ = std::move(fn);
+    }
+    // Phase 4: JIT-execute an Aura source string and return the result.
+    // Used by (eval-current :jit) to compile-and-run the workspace.
+    // Returns nullopt if the service didn't install a hook (e.g. unit-test
+    // Evaluator without a CompilerService).
+    using TryJitFn = std::optional<aura::compiler::types::EvalValue>(const std::string&);
+    std::function<TryJitFn> try_jit_fn_ = nullptr;
+    void set_try_jit_fn(std::function<TryJitFn> fn) {
+        try_jit_fn_ = std::move(fn);
+    }
 
     // Mutation typecheck error state (P2 #34)
     const std::string& last_mutate_error() const { return last_mutate_error_; }

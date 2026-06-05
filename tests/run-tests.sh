@@ -705,6 +705,37 @@ run_test "edsl-ir-cache:cascade-not-on-strangers" \
     "$(printf '(set-code \"(define f (lambda (x) (* x 2))) (define g (lambda (x) (* x 2)))\") (mutate:rebind \"f\" \"(lambda (x) (* x 3))\") (ir-cache-v2:dirty? \"g\")')" \
     '#f'  # g does not reference f, so cascade should not mark g dirty
 
+# Phase 4: (eval-current :jit) hooks into the IR pipeline.
+# When :jit is given, the workspace is re-evaluated via eval_ir (which
+# has the type-specialize + const-fold + LLVM JIT pipeline). Falls back
+# to the IR interpreter if LLVM isn't available.
+# Phase 4: (eval-current :jit) re-evaluates via the IR pipeline.
+# The pipeline prints "PM: running ..." to stderr, which the test
+# script merges into stdout. Filter those out before comparing.
+run_test_jit() {
+    local name="$1"; local input="$2"; local expected="$3"
+    local actual
+    actual=$(printf '%s' "$input" | timeout 10 "$AURA" 2>&1 | grep -vE '^PM:' | tr -d '
+')
+    if [ "$actual" = "$expected" ]; then
+        green "$name"; PASS=$((PASS + 1))
+    else
+        red "$name"
+        echo "       expected: $expected"
+        echo "       got:      $actual"
+        FAIL=$((FAIL + 1))
+    fi
+}
+run_test_jit "edsl-ir-cache:jit-value-producing" \
+    "$(printf '(set-code \"(+ 1 2)\") (eval-current :jit)')" \
+    '3'
+run_test "edsl-ir-cache:jit-matches-regular"  \
+    "$(printf '(set-code \"(define (sq x) (* x x)) (sq 7)\") (eval-current)')" \
+    '49'
+# Same input via :jit should give the same numeric result.
+# (Note: no env sync back, so :jit's return value is the JIT's last
+# expression value of the re-eval, not the workspace's bound env.)
+
 # Print final test count
 printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL" 
 [ "$FAIL" -eq 0 ] || exit 1

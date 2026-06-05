@@ -280,6 +280,25 @@ public:
                 if (it == dep_graph_.end()) return {};
                 return it->second.called_by;
             });
+        // Phase 4: hook for (eval-current :jit). Re-runs the workspace
+        // through eval_ir (which has the JIT pipeline) and returns the
+        // result. Falls back to the IR interpreter if LLVM isn't available
+        // or the JIT compile fails.
+        evaluator_.set_try_jit_fn(
+            [this](const std::string& source) -> std::optional<types::EvalValue> {
+                auto result = this->eval_ir(source);
+                if (!result) return std::nullopt;
+                return *result;
+            });
+        // Phase 4: get workspace source via unparse_node (the proper
+        // way to serialize a workspace FlatAST back to a string).
+        evaluator_.set_get_workspace_source_fn(
+            [this]() -> std::string {
+                auto* ws_flat = evaluator_.workspace_flat();
+                auto* ws_pool = evaluator_.workspace_pool();
+                if (!ws_flat || !ws_pool) return "";
+                return unparse_node(*ws_flat, *ws_pool, ws_flat->root, 0);
+            });
         aura::messaging::g_current_compiler_service = this;
         // Setup messaging bridge (avoids circular module dependency)
         aura::messaging::g_messaging_bridge.send =
