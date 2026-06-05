@@ -221,30 +221,67 @@ int main(int argc, char* argv[]) {
     // before re-raising, so run-tests.sh's stderr capture (3ddf924)
     // will surface the failing instruction/frame. Skipped on macOS
     // (no execinfo.h); on Linux we use backtrace(3) from <execinfo.h>.
+    //
+    // CRITICAL: install an alternate signal stack (sigaltstack) so the
+    // handler itself doesn't crash when the main stack is exhausted
+    // (synthesize:optimize infinite recursion → stack overflow → SIGSEGV).
+    // Without this, the handler would run on the main stack and re-fault
+    // before backtrace() can capture frames, yielding only the header
+    // line and "Backtrace:" with zero frame data.
 #if defined(__linux__) && !defined(__APPLE__)
-    static auto crash_handler = +[](int sig) {
+    static char alt_stack[65536];  // 64K alt stack (SIGSTKSZ is system-dependent)
+    // Note: alt_stack must outlive the process; static-storage is fine.
+    {
+        stack_t ss{};
+        ss.ss_sp = alt_stack;
+        ss.ss_size = sizeof(alt_stack);
+        ss.ss_flags = 0;
+        if (::sigaltstack(&ss, nullptr) != 0) {
+            (void)!::write(2, "aura: sigaltstack failed\n", 24);
+        }
+    }
+
+    static auto crash_handler = +[](int sig, siginfo_t* info, void* /*ucontext*/) {
         // Use raw write(2) — stdio may be in undefined state.
         const char* name =
             sig == SIGSEGV ? "SIGSEGV" :
             sig == SIGABRT ? "SIGABRT" :
             sig == SIGBUS  ? "SIGBUS"  :
             sig == SIGFPE  ? "SIGFPE"  : "SIGNAL";
-        char hdr[128];
-        int n = std::snprintf(hdr, sizeof(hdr),
-            "\n=== AURA CRASH: %s (signal %d) ===\n", name, sig);
+        // Print the address that triggered the fault, when available. For
+        // SIGSEGV, si_addr is the faulting address. For SIGABRT, code tells
+        // us why. These are async-signal-safe to read from siginfo_t.
+        char hdr[256];
+        int n = 0;
+        if (info) {
+            n = std::snprintf(hdr, sizeof(hdr),
+                "\n=== AURA CRASH: %s (signal %d) si_addr=%p si_code=%d ===\n",
+                name, sig, info->si_addr, info->si_code);
+        } else {
+            n = std::snprintf(hdr, sizeof(hdr),
+                "\n=== AURA CRASH: %s (signal %d) ===\n", name, sig);
+        }
         if (n > 0) (void)!::write(2, hdr, n);
 
-        // Print up to 32 frames
+        // Print up to 32 frames. backtrace_symbols needs malloc; with
+        // sigaltstack this is safe (we have SIGSTKSZ bytes of alt-stack
+        // room) but malloc isn't async-signal-safe in principle. In
+        // practice glibc handles this fine for small allocations.
         constexpr int kMaxFrames = 32;
         void* frames[kMaxFrames];
         int nframes = ::backtrace(frames, kMaxFrames);
         char** syms = ::backtrace_symbols(frames, nframes);
         if (syms) {
             (void)!::write(2, "Backtrace:\n", 11);
-            for (int i = 0; i < nframes; ++i) {
+            for (int i = 0; i < nframes && i < 8; ++i) {
                 char line[512];
                 int ln = std::snprintf(line, sizeof(line), "  %2d: %s\n", i, syms[i]);
                 if (ln > 0) (void)!::write(2, line, ln);
+            }
+            if (nframes > 8) {
+                char more[64];
+                int mn = std::snprintf(more, sizeof(more), "  ... %d more frames\n", nframes - 8);
+                if (mn > 0) (void)!::write(2, more, mn);
             }
             std::free(syms);
         } else {
@@ -253,13 +290,20 @@ int main(int argc, char* argv[]) {
         (void)!::write(2, "=== END CRASH ===\n", 18);
         // Re-raise with default handler so the shell sees the signal
         // and core-dump machinery (ulimit -c) still kicks in.
-        std::signal(sig, SIG_DFL);
+        struct sigaction dfl{};
+        dfl.sa_handler = SIG_DFL;
+        ::sigaction(sig, &dfl, nullptr);
         ::raise(sig);
     };
-    std::signal(SIGSEGV, crash_handler);
-    std::signal(SIGABRT, crash_handler);
-    std::signal(SIGBUS,  crash_handler);
-    std::signal(SIGFPE,  crash_handler);
+
+    struct sigaction sa{};
+    sa.sa_sigaction = crash_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_SIGINFO | SA_ONSTACK;  // SA_ONSTACK → use alt stack
+    ::sigaction(SIGSEGV, &sa, nullptr);
+    ::sigaction(SIGABRT, &sa, nullptr);
+    ::sigaction(SIGBUS,  &sa, nullptr);
+    ::sigaction(SIGFPE,  &sa, nullptr);
 #endif
 
     // ── Parse common flags ───────────────────────────────
