@@ -4394,6 +4394,13 @@ void Evaluator::init_pair_primitives() {
         update_shared_tree_root();
         // Invalidate def-use index (new workspace)
         defuse_index_ = nullptr;
+        // Phase 2: a fresh workspace means every cached define is potentially
+        // changed. Mark all dirty so the next (eval-current) re-evaluates.
+        if (mark_all_defines_dirty_fn_) mark_all_defines_dirty_fn_();
+        // Pre-populate the v2 IR cache from the new workspace's defines.
+        // For unchanged defines, this is a cache hit (skip lowering).
+        // For new/changed defines, this lowers them once and stores the result.
+        if (pre_cache_workspace_defines_fn_) pre_cache_workspace_defines_fn_();
         return make_bool(true);
     });
 
@@ -5119,6 +5126,10 @@ void Evaluator::init_pair_primitives() {
 
         // Record affected sym for incremental DefUseIndex update
         defuse_affected_syms_.insert(name);
+
+        // Phase 2: mark this define's IR cache entry dirty so the next
+        // (eval-current) re-lowers it.
+        if (mark_define_dirty_fn_) mark_define_dirty_fn_(name);
 
         // ── Auto-typecheck: 验证变异后的代码类型正确 ────────
         // 立即运行 typecheck-current，如果类型错误则记录到 last_mutate_error。

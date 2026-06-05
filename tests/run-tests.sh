@@ -444,8 +444,6 @@ cat > /tmp/bug-string-corruption.aura <<'BUGINPUT'
 (require std/safe-refactor all:)(define r1 (safe-refactor:with-snapshot "t1" (lambda () 42)))(define r2 (safe-refactor:with-snapshot "t2" (lambda () (error "boom"))))(define r3 (safe-refactor:with-snapshot "t3" (lambda () (quote fail))))(define r4 (safe-refactor:with-snapshot "t4" (lambda () "hello")))(display r4)(newline)
 BUGINPUT
 run_test "fix:string-vs-keyword-overlap" "$(cat /tmp/bug-string-corruption.aura)" "hello"
-printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL" 
-[ "$FAIL" -eq 0 ] || exit 1
 
 echo ""
 
@@ -660,3 +658,26 @@ run_test "git:status" "$(printf '(string? (git-status))')" "#t"
 run_test "git:diff" "$(printf '(string? (git-diff))')" "#t"
 run_test "git:log" "$(printf '(string? (git-log 5))')" "#t"
 
+
+echo ""
+echo "=== EDSL IR Cache V2 Tests (Phase 2) ==="
+# Phase 2: set-code populates the v2 IR cache via pre_cache_workspace_defines.
+# These tests verify the behavior, not the internal cache state.
+# (The ctest test_ir_cache_v2 verifies the FNV-1a hash function.)
+
+run_test "edsl-ir-cache:set-code-populates"  \
+    "$(printf '(set-code \"(define my-fn (lambda (x) (* x x)))\") (length (query:find \"my-fn\"))')" \
+    '1'
+run_test "edsl-ir-cache:eval-current-binds"  \
+    "$(printf '(set-code \"(define f (lambda (x) (+ x 1)))\") (eval-current) (f 5)')" \
+    '6'
+run_test "edsl-ir-cache:resetcode-rebinds"  \
+    "$(printf '(set-code \"(define f (lambda (x) (* x 2)))\") (eval-current) (f 5)')" \
+    '10'
+run_test "edsl-ir-cache:multi-define"         \
+    "$(printf '(set-code \"(define a 1) (define b 2) (define c 3)\") (eval-current) (+ a b c)')" \
+    '6'
+
+# Print final test count
+printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL" 
+[ "$FAIL" -eq 0 ] || exit 1

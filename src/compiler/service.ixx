@@ -252,6 +252,19 @@ public:
         evaluator_.set_type_registry(&type_registry_);
         evaluator_.set_compiler_service(this);
         evaluator_.set_session_id(session_id_);
+        // Phase 2: EDSL IR cache V2 hooks. Let evaluator_impl.cpp mark
+        // cached defines dirty via these std::function pointers, without
+        // needing to import CompilerService (which would be circular).
+        evaluator_.set_mark_define_dirty_fn(
+            [this](const std::string& name) { this->mark_define_dirty(name); });
+        evaluator_.set_mark_all_defines_dirty_fn(
+            [this]() { this->mark_all_defines_dirty(); });
+        // Phase 2: pre-populate v2 IR cache from workspace defines.
+        // Called from (set-code ...) primitive after a successful parse.
+        evaluator_.set_pre_cache_workspace_defines_fn(
+            [this]() { this->pre_cache_workspace_defines(); });
+        evaluator_.set_pre_cache_workspace_defines_fn(
+            [this]() { this->mark_all_defines_dirty(); });
         aura::messaging::g_current_compiler_service = this;
         // Setup messaging bridge (avoids circular module dependency)
         aura::messaging::g_messaging_bridge.send =
@@ -1990,6 +2003,164 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         return EvalResult(types::make_void());
     }
 
+    // ── EDSL IR cache (Phase 2) ──
+    // Per-define IR cache for the (set-code ...) → (eval-current) pipeline.
+    // Unlike ir_cache_ above (which is keyed by the script-level entry name),
+    // this is keyed by the individual define NAME inside the workspace AST.
+    // The dirty flag is set by mutate:rebind / mutate:set-body / etc. on the
+    // workspace, so eval-current only re-lowers what changed.
+    //
+    // Source is the canonical unparsed form (stable across minor whitespace
+    // changes), and source_hash is FNV-1a of that string. Cache hits when
+    // source_hash matches AND dirty is false.
+    struct IRCacheEntry {
+        std::string source;                                            // canonical (unparsed) form
+        std::size_t source_hash = 0;                                   // FNV-1a of source
+        std::vector<aura::ir::IRFunction> irs;                         // lowered IR functions
+        std::vector<aura::ir::ClosureBridgeData> bridges;              // parallel to irs
+        std::vector<std::string> strings;                              // parallel string pool
+        bool dirty = true;                                             // needs re-lower
+        std::size_t mutation_count = 0;                                // snapshot at lower time
+    };
+    std::unordered_map<std::string, IRCacheEntry> ir_cache_v2_;
+
+    // ── EDSL IR cache V2 (Phase 2) public API ──
+    // Called from evaluator_impl.cpp's (eval-current) primitive.
+    // See docs/design/dual-workspace-incremental-ir.md for the design.
+
+    // Look up a define in the cache. Returns:
+    //   0 = hit, source matches, not dirty → reuse cached IR
+    //   1 = source changed OR dirty → needs re-lower
+    //   2 = not in cache → first time
+    // If entry exists but is dirty, the caller should re-lower and call
+    // store_define_v2 to update the entry.
+    int lookup_define_v2(const std::string& name, std::size_t source_hash) {
+        auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end()) return 2;
+        if (it->second.dirty) return 1;
+        if (it->second.source_hash != source_hash) return 1;
+        return 0;  // hit
+    }
+
+    // Store (or replace) a define's IR cache entry. Called after re-lower.
+    // Also recomputes the source_hash from the canonical unparse.
+    void store_define_v2(const std::string& name, std::string source,
+                          std::vector<aura::ir::IRFunction> irs,
+                          std::vector<aura::ir::ClosureBridgeData> bridges,
+                          std::vector<std::string> strings) {
+        auto hash = fnv1a_64(source);
+        auto& entry = ir_cache_v2_[name];
+        entry.source = std::move(source);
+        entry.source_hash = hash;
+        entry.irs = std::move(irs);
+        entry.bridges = std::move(bridges);
+        entry.strings = std::move(strings);
+        entry.dirty = false;
+        entry.mutation_count = 0;
+    }
+
+    // Mark a single define dirty. Called by mutate:rebind, mutate:set-body, etc.
+    // When dirty is set, the next (eval-current) will re-lower the define.
+    void mark_define_dirty(const std::string& name) {
+        auto it = ir_cache_v2_.find(name);
+        if (it != ir_cache_v2_.end()) {
+            it->second.dirty = true;
+        }
+    }
+
+    // Mark all defines dirty. Called when (set-code ...) re-parses the whole
+    // workspace (which can change any define's body).
+    void mark_all_defines_dirty() {
+        for (auto& [_, entry] : ir_cache_v2_) {
+            entry.dirty = true;
+        }
+    }
+
+    // Phase 2: walk workspace_flat_'s top-level defines and pre-populate
+    // the v2 IR cache. For each define, compute canonical source (unparsed),
+    // hash it, and:
+    //   - if hash matches and not dirty → skip (cache hit)
+    //   - if hash differs OR dirty OR not in cache → re-lower and store
+    // Called by (set-code ...) via the pre_cache_workspace_defines_fn_ hook
+    // in Evaluator, after the new flat is parsed.
+    void pre_cache_workspace_defines() {
+        auto* ws_flat = evaluator_.workspace_flat();
+        auto* ws_pool = evaluator_.workspace_pool();
+        if (!ws_flat || !ws_pool) return;
+        // For each top-level Define node, call cache_define which will
+        // internally check ir_cache_ and store in both old ir_cache_ and
+        // new ir_cache_v2_ (via the side-effect in cache_define body).
+        // For Phase 2 minimal: just iterate top-level defines and call
+        // cache_define for each.
+        for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
+            auto v = ws_flat->get(id);
+            if (v.tag != aura::ast::NodeTag::Define) continue;
+            if (v.sym_id == aura::ast::INVALID_SYM) continue;
+            auto name = std::string(ws_pool->resolve(v.sym_id));
+            // Skip __repl__ and other internal entries
+            if (name.empty() || name[0] == '_') continue;
+            // Build canonical source (unparse) for the define body
+            if (v.children.empty()) continue;
+            auto child_id = v.child(0);
+            std::string body_src = unparse_node(*ws_flat, *ws_pool, child_id, 0);
+            std::string canonical = "(define " + name + " " + body_src + ")";
+            auto hash = fnv1a_64(canonical);
+            // Skip if already cached with same hash
+            auto it = ir_cache_v2_.find(name);
+            if (it != ir_cache_v2_.end() && !it->second.dirty &&
+                it->second.source_hash == hash) {
+                continue;
+            }
+            // Build a temp flat with just this define to lower it
+            // (we re-parse to get a clean AST for cache_define)
+            auto alloc = arena_.allocator();
+            auto* tmp_pool = arena_.create<aura::ast::StringPool>(alloc);
+            auto* tmp_flat = arena_.create<aura::ast::FlatAST>(alloc);
+            auto pr = aura::parser::parse_to_flat(canonical, *tmp_flat, *tmp_pool);
+            if (!pr.success || pr.root == aura::ast::NULL_NODE) continue;
+            tmp_flat->root = pr.root;
+            // Lower to IR via existing cache_define (populates old ir_cache_)
+            cache_define(canonical, *tmp_flat, *tmp_pool, pr.root, name);
+            // Also store in v2 cache (cache_define doesn't do this)
+            auto& entry = ir_cache_v2_[name];
+            entry.source = canonical;
+            entry.source_hash = hash;
+            entry.dirty = false;
+        }
+    }
+
+    // Clear the whole EDSL IR cache. Called by --reset-arena / gc.
+    void clear_define_cache_v2() {
+        ir_cache_v2_.clear();
+    }
+
+    // Get cached IR for a define (returns nullptr if not cached).
+    // Used by (eval-current) to assemble the IRModule.
+    const IRCacheEntry* get_define_v2(const std::string& name) const {
+        auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end()) return nullptr;
+        return &it->second;
+    }
+
+    // Get all cached defines' names (for the (eval-current) full-lower fallback).
+    std::vector<std::string> list_cached_defines_v2() const {
+        std::vector<std::string> out;
+        out.reserve(ir_cache_v2_.size());
+        for (auto& [name, _] : ir_cache_v2_) out.push_back(name);
+        return out;
+    }
+
+    // FNV-1a 64-bit hash, for stable source canonicalization.
+    // Public so caller-side debugging can compute the same hash.
+    static std::size_t fnv1a_64(const std::string& s) {
+        std::uint64_t h = 0xcbf29ce484222325ULL;
+        for (unsigned char c : s) {
+            h ^= c;
+            h *= 0x100000001b3ULL;
+        }
+        return static_cast<std::size_t>(h);
+    }
+
     // Unload a module: reset its arena and remove cached defines.
     // Does NOT remove evaluator env bindings (they persist for the session).
     void unload_module(const std::string& name) {
@@ -3097,6 +3268,7 @@ private:
 
     // Source code for each cached function, used for re-lowering on dependency changes.
     std::unordered_map<std::string, std::string> function_sources_;
+
 
     // Dependency tracking for incremental compilation.
     // DepEntry.calls = functions this one calls; DepEntry.called_by = functions that call this one.
