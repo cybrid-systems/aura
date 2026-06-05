@@ -12,7 +12,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.1
+      image: ghcr.io/cybrid-systems/dev:v1.0.2
 
     steps:
     - uses: actions/checkout@v4
