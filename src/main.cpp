@@ -242,69 +242,92 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    static auto crash_handler = +[](int sig, siginfo_t* info, void* /*ucontext*/) {
+    static auto crash_handler = +[](int sig, siginfo_t* info, void* ucontext) {
         // Use raw write(2) — stdio may be in undefined state.
         const char* name =
             sig == SIGSEGV ? "SIGSEGV" :
             sig == SIGABRT ? "SIGABRT" :
             sig == SIGBUS  ? "SIGBUS"  :
             sig == SIGFPE  ? "SIGFPE"  : "SIGNAL";
-        // Print the address that triggered the fault, when available. For
-        // SIGSEGV, si_addr is the faulting address. For SIGABRT, code tells
-        // us why. These are async-signal-safe to read from siginfo_t.
-        char hdr[256];
+        // 1) Read the faulting instruction pointer directly from the kernel-
+        //    provided ucontext. This is the most useful single piece of
+        //    info: `addr2line -e aura -f -C <IP>` gives function + line.
+        //    We deliberately do NOT call backtrace(3) here because it walks
+        //    the (corrupt) frame pointer chain on the main stack, which can
+        //    re-fault inside the handler and prevent any output. (We've seen
+        //    this exact failure mode: handler writes header + "Backtrace:"
+        //    then dies with no frames visible.)
+        void* ip = nullptr;
+        void* sp = nullptr;
+        if (ucontext) {
+#if defined(__x86_64__)
+            // Linux x86_64: gregs[REG_RIP] is the saved instruction pointer,
+            // gregs[REG_RSP] is the saved stack pointer. These indices are
+            // part of the stable Linux x86_64 ucontext ABI (see gregs(3) /
+            // sys/ucontext.h). This is the only path CI hits; the aarch64
+            // branch is for local dev (its mcontext_t is opaque, so we
+            // skip the IP extraction rather than chase kernel ABI).
+            auto* mctx = &static_cast<ucontext_t*>(ucontext)->uc_mcontext;
+            ip = reinterpret_cast<void*>(mctx->gregs[REG_RIP]);
+            sp = reinterpret_cast<void*>(mctx->gregs[REG_RSP]);
+#endif
+        }
+
+        // 2) Header: name, signal#, si_addr (the data address being accessed),
+        //    si_code (SEGV_MAPERR=1, etc.), plus IP and SP from ucontext.
+        char hdr[512];
         int n = 0;
         if (info) {
             n = std::snprintf(hdr, sizeof(hdr),
-                "\n=== AURA CRASH: %s (signal %d) si_addr=%p si_code=%d ===\n",
-                name, sig, info->si_addr, info->si_code);
+                "\n=== AURA CRASH: %s (signal %d) si_addr=%p si_code=%d ip=%p sp=%p ===\n",
+                name, sig, info->si_addr, info->si_code, ip, sp);
         } else {
             n = std::snprintf(hdr, sizeof(hdr),
-                "\n=== AURA CRASH: %s (signal %d) ===\n", name, sig);
+                "\n=== AURA CRASH: %s (signal %d) ip=%p sp=%p ===\n",
+                name, sig, ip, sp);
         }
         if (n > 0) (void)!::write(2, hdr, n);
 
-        // Print up to 32 frames. We use dladdr(3) directly (async-signal-
-        // safe per POSIX) instead of backtrace_symbols(3) (which malloc()s
-        // a string array). dladdr also gives us dli_fname + dli_sname for
-        // each frame. Requires -rdynamic at link time to see internal
-        // symbols; otherwise only public dynamic symbols are visible.
-        constexpr int kMaxFrames = 32;
-        void* frames[kMaxFrames];
-        int nframes = ::backtrace(frames, kMaxFrames);
-        (void)!::write(2, "Backtrace:\n", 11);
-        for (int i = 0; i < nframes && i < 8; ++i) {
-            char line[512];
-            int ln = 0;
+        // 3) Symbol-resolve the faulting IP (and si_addr) with dladdr.
+        //    dladdr is async-signal-safe (POSIX) and works on the alt stack.
+        //    Requires -rdynamic to see internal symbols; otherwise we still
+        //    get dli_fname (the module that contains the address).
+        if (ip) {
             Dl_info dlinfo;
-            if (::dladdr(frames[i], &dlinfo) && dlinfo.dli_sname) {
-                // Offset = addr - dli_saddr (function start)
-                std::ptrdiff_t off = static_cast<char*>(frames[i]) -
+            char line[512];
+            int ln;
+            if (::dladdr(ip, &dlinfo) && dlinfo.dli_sname) {
+                std::ptrdiff_t off = static_cast<char*>(ip) -
                                      static_cast<const char*>(dlinfo.dli_saddr);
                 ln = std::snprintf(line, sizeof(line),
-                    "  %2d: %s+%td (%s)\n",
-                    i, dlinfo.dli_sname, off,
+                    "Faulting IP: %s+%td in %s\n",
+                    dlinfo.dli_sname, off,
                     dlinfo.dli_fname ? dlinfo.dli_fname : "?");
             } else {
                 ln = std::snprintf(line, sizeof(line),
-                    "  %2d: [%p] (no symbol; -rdynamic missing?)\n",
-                    i, frames[i]);
+                    "Faulting IP: %p (no symbol; -rdynamic missing or stripped)\n", ip);
             }
             if (ln > 0) (void)!::write(2, line, ln);
         }
-        if (nframes > 8) {
-            char more[64];
-            int mn = std::snprintf(more, sizeof(more), "  ... %d more frames\n", nframes - 8);
-            if (mn > 0) (void)!::write(2, more, mn);
+        if (info && info->si_addr) {
+            Dl_info dlinfo;
+            char line[512];
+            int ln;
+            void* bad = info->si_addr;
+            if (::dladdr(bad, &dlinfo) && dlinfo.dli_sname) {
+                std::ptrdiff_t off = static_cast<char*>(bad) -
+                                     static_cast<const char*>(dlinfo.dli_saddr);
+                ln = std::snprintf(line, sizeof(line),
+                    "si_addr in: %s+%td in %s\n",
+                    dlinfo.dli_sname, off,
+                    dlinfo.dli_fname ? dlinfo.dli_fname : "?");
+            } else {
+                ln = std::snprintf(line, sizeof(line),
+                    "si_addr %p is outside any loaded module (use-after-free or uninit ptr?)\n", bad);
+            }
+            if (ln > 0) (void)!::write(2, line, ln);
         }
-        // Also write all frame addresses in hex so they can be resolved
-        // post-mortem with `addr2line -e aura -f -C <addr>`.
-        (void)!::write(2, "Raw frames (addr2line -e aura -f -C ...):\n", 43);
-        for (int i = 0; i < nframes && i < 16; ++i) {
-            char ra[80];
-            int rn = std::snprintf(ra, sizeof(ra), "  %p\n", frames[i]);
-            if (rn > 0) (void)!::write(2, ra, rn);
-        }
+        (void)!::write(2, "Resolve with: addr2line -e aura -f -C <ip> <si_addr>\n", 56);
         (void)!::write(2, "=== END CRASH ===\n", 18);
         // Re-raise with default handler so the shell sees the signal
         // and core-dump machinery (ulimit -c) still kicks in.
