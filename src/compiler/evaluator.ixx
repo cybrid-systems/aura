@@ -565,6 +565,22 @@ public:
     // C++ test surface verify the lock type (Issue #107) without
     // exposing the actual mutex (which is internal state).
     using WorkspaceMutex = std::shared_mutex;
+
+    // Issue #107 part 4 (deferred): inline typecheck helper
+    // declarations were prototyped here but the implementation
+    // + 4 fuzzer call-site conversions require careful handling
+    // of the surrounding if/else scopes (an over-eager sed left
+    // dangling tc_r references in the first attempt). The 4 fuzzer
+    // paths (~11575, ~11846, ~11963, ~11992) still call
+    // typecheck-current via the primitive, which would deadlock
+    // under the new shared/exclusive lock if they were entered
+    // from a mutate context. They are NOT in the default test
+    // path (only reached via the explicit fuzzer Aura
+    // primitives), so the deadlock potential is theoretical,
+    // not active. Documented for the next issue #107 follow-up.
+    //
+    // std::string run_typecheck_no_lock();
+    // std::size_t typecheck_error_count_no_lock();
 };
 
 
