@@ -104,20 +104,26 @@ jobs:
     - name: Multi-session leak test
       run: |
         # exitcode=42: ASAN exits with 42 when a leak is reported so the
-        # job fails hard. Combined with tee-to-log so the full stack
-        # traces are still visible in the Actions log.
+        # job fails hard. Capture to a log file directly (no `tee` pipe)
+        # because GitHub Actions' step script runs under `sh`, not bash —
+        # earlier `2>&1 | tee` + `${PIPESTATUS[0]}` produced "Bad
+        # substitution" errors when the runner's sh is dash. Writing
+        # straight to a file and reading $? afterward is fully
+        # POSIX-sh compatible.
+        set +e
         ASAN_OPTIONS=detect_leaks=1:abort_on_error=0:print_stacktrace=1:exitcode=42 \
           timeout 120 ./build_asan/aura < tests/multi_session_leak_test.aura \
-          2>&1 | tee /tmp/asan-multi-session.log
-        rc=${PIPESTATUS[0]}
+          > /tmp/asan-multi-session.log 2>&1
+        rc=$?
+        set -e
+        # Surface the log in the Actions UI regardless of outcome.
+        cat /tmp/asan-multi-session.log
         # The functional test must pass (assertion on growth threshold).
         if ! grep -q "✅ PASS" /tmp/asan-multi-session.log; then
           echo "::error::multi-session leak test FAILED (functional)"
-          cat /tmp/asan-multi-session.log
           exit 1
         fi
         if [ "$rc" -ne 0 ]; then
-          # Pull the SUMMARY line for the error annotation.
           summary=$(grep "SUMMARY: AddressSanitizer" /tmp/asan-multi-session.log | tail -1)
           echo "::error::ASAN leak detected: $summary"
           echo "::error::First 10 direct leaks:"
