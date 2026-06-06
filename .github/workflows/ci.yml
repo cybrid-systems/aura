@@ -95,6 +95,12 @@ jobs:
         name: asan-binaries
         path: build_asan
 
+    # upload-artifact@v4 / download-artifact@v4 round-trip through a
+    # zip stream that does NOT preserve the unix +x bit. The binaries
+    # come back as 0644 and the next step dies with EACCES / exit 126.
+    - name: Restore executable bit
+      run: chmod +x build_asan/aura build_asan/test_ir
+
     - name: Multi-session leak test
       run: |
         ASAN_OPTIONS=detect_leaks=1:abort_on_error=0:print_stacktrace=1 \
@@ -147,6 +153,9 @@ jobs:
       with:
         name: asan-binaries
         path: build_asan
+
+    - name: Restore executable bit
+      run: chmod +x build_asan/aura build_asan/test_ir
 
     - name: Run unit tests (test_ir) under ASAN
       # test_ir lives in build_asan/, not build/ (build.py test unit
