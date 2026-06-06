@@ -103,26 +103,28 @@ jobs:
 
     - name: Multi-session leak test
       run: |
-        ASAN_OPTIONS=detect_leaks=1:abort_on_error=0:print_stacktrace=1 \
+        # exitcode=42: ASAN exits with 42 when a leak is reported so the
+        # job fails hard. Combined with tee-to-log so the full stack
+        # traces are still visible in the Actions log.
+        ASAN_OPTIONS=detect_leaks=1:abort_on_error=0:print_stacktrace=1:exitcode=42 \
           timeout 120 ./build_asan/aura < tests/multi_session_leak_test.aura \
           2>&1 | tee /tmp/asan-multi-session.log
+        rc=${PIPESTATUS[0]}
         # The functional test must pass (assertion on growth threshold).
         if ! grep -q "✅ PASS" /tmp/asan-multi-session.log; then
-          echo "::error::multi-session leak test FAILED"
+          echo "::error::multi-session leak test FAILED (functional)"
           cat /tmp/asan-multi-session.log
           exit 1
         fi
-        # ASAN leak report is informational only — surfaced in the log
-        # for visibility but doesn't fail the build (tracked separately).
-        echo "::notice::ASAN leak report (informational):"
-        if grep -q "Direct leak" /tmp/asan-multi-session.log; then
-          echo "Direct leaks detected (bytes):"
+        if [ "$rc" -ne 0 ]; then
+          # Pull the SUMMARY line for the error annotation.
+          summary=$(grep "SUMMARY: AddressSanitizer" /tmp/asan-multi-session.log | tail -1)
+          echo "::error::ASAN leak detected: $summary"
+          echo "::error::First 10 direct leaks:"
           grep "Direct leak of" /tmp/asan-multi-session.log | head -10
-          echo ""
-          echo "See /tmp/asan-multi-session.log for full stack traces."
-        else
-          echo "No direct leaks detected ✓"
+          exit 1
         fi
+        echo "✓ No ASAN leaks detected"
 
   # ASAN-full: run the bash test suite + unit tests under
   # AddressSanitizer. Catches heap-use-after-free / heap-buffer-overflow
