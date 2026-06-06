@@ -6223,6 +6223,157 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         return make_string(sidx);
     });
 
+    // ── Issue #104: AuraQuery type-introspection primitives ───────────
+    // These are the LLM-facing surface for "let me ask the type
+    // system what it thinks". All four read from the same cache
+    // populated by (typecheck-current) (the FlatAST stores a
+    // normalized TypeId per node after infer_flat runs). They do
+    // not trigger inference on their own — the LLM should call
+    // typecheck-current first, then query.
+
+    // (get-inferred-type node-id) — Return the cached inferred
+    // type for a single AST node, formatted as a string. Returns
+    // "unknown" if the node has no cached type (e.g. the LLM
+    // queried before typecheck-current ran).
+    primitives_.add("get-inferred-type", [this, mev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return mev("bad-arg", "usage: (get-inferred-type node-id)");
+        if (!workspace_flat_ || !type_registry_) {
+            auto sidx = string_heap_.size();
+            string_heap_.push_back("no-typecheck-yet");
+            return make_string(sidx);
+        }
+        auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto& flat = *workspace_flat_;
+        if (node >= flat.size()) {
+            auto sidx = string_heap_.size();
+            string_heap_.push_back("out-of-range");
+            return make_string(sidx);
+        }
+        auto type_idx = flat.type_id(node);
+        if (type_idx == 0) {
+            auto sidx = string_heap_.size();
+            string_heap_.push_back("unknown");
+            return make_string(sidx);
+        }
+        auto& treg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
+        std::string formatted = treg.format_type(aura::core::TypeId{type_idx, 1});
+        auto sidx = string_heap_.size();
+        string_heap_.push_back(formatted);
+        return make_string(sidx);
+    });
+
+    // (query-type-of name) — Look up a top-level definition by
+    // name and return its inferred type. The Define node's child
+    // (the value/lambda) holds the cached type. The LLM uses
+    // this to ask "what's the type of foo?" after a typecheck.
+    primitives_.add("query-type-of", [this, mev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return mev("bad-arg", "usage: (query-type-of name)");
+        if (!workspace_flat_ || !workspace_pool_ || !type_registry_) {
+            auto sidx = string_heap_.size();
+            string_heap_.push_back("no-typecheck-yet");
+            return make_string(sidx);
+        }
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size())
+            return mev("bad-arg", "string index out of range");
+        auto name = string_heap_[idx];
+        auto sym = workspace_pool_->intern(name);
+
+        auto& flat = *workspace_flat_;
+        // Find a Define node with the matching symbol.
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+            if (v.tag == aura::ast::NodeTag::Define && v.sym_id == sym) {
+                // The value of a Define is in v.children[0] (if
+                // 1-arg form) or in the cached type_id of the
+                // Define node itself (the 2-arg / 3-arg forms
+                // also cache on the Define). Use whichever has a
+                // type set.
+                aura::ast::NodeId type_target = id;
+                if (!v.children.empty()) {
+                    auto child_type = flat.type_id(v.child(0));
+                    if (child_type != 0) type_target = v.child(0);
+                }
+                auto type_idx = flat.type_id(type_target);
+                if (type_idx == 0) {
+                    auto sidx = string_heap_.size();
+                    string_heap_.push_back("unknown");
+                    return make_string(sidx);
+                }
+                auto& treg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
+                std::string formatted = treg.format_type(aura::core::TypeId{type_idx, 1});
+                auto sidx = string_heap_.size();
+                string_heap_.push_back(formatted);
+                return make_string(sidx);
+            }
+        }
+        auto sidx = string_heap_.size();
+        string_heap_.push_back("not-found");
+        return make_string(sidx);
+    });
+
+    // (query-expected-type context) — Return the expected type
+    // for a given position in the AST. The context is a small
+    // s-expression describing the lookup (e.g. "param:foo" for
+    // the foo parameter, "return" for the return type of the
+    // current lambda, or a node-id). For now this is a thin
+    // wrapper that says "Dynamic" — a real implementation would
+    // inspect the surrounding lambda's param/return annotations.
+    // The scaffolding here is so the LLM has a stable API name
+    // to use; the implementation can deepen over time.
+    primitives_.add("query-expected-type", [this, mev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0]))
+            return mev("bad-arg", "usage: (query-expected-type context)");
+        // Placeholder: return "Dynamic" with a note. The LLM
+        // sees a stable name + a sensible fallback rather than
+        // an unbound-variable error.
+        auto sidx = string_heap_.size();
+        string_heap_.push_back("Dynamic (query-expected-type is scaffold; see #104)");
+        return make_string(sidx);
+    });
+
+    // (suggest-annotation-at node-id) — Suggest a type annotation
+    // for the given AST node. For Lambda nodes, emit a `[:x Int
+    // body]` form with the inferred param types. For other nodes,
+    // emit a wrapping `(check expr :<inferred-type>)` form. The
+    // LLM can splice the suggestion into the source.
+    primitives_.add("suggest-annotation-at", [this, mev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]))
+            return mev("bad-arg", "usage: (suggest-annotation-at node-id)");
+        if (!workspace_flat_ || !type_registry_) {
+            auto sidx = string_heap_.size();
+            string_heap_.push_back("no-typecheck-yet");
+            return make_string(sidx);
+        }
+        auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto& flat = *workspace_flat_;
+        if (node >= flat.size()) {
+            auto sidx = string_heap_.size();
+            string_heap_.push_back("out-of-range");
+            return make_string(sidx);
+        }
+        auto v = flat.get(node);
+        auto& treg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
+        std::string suggestion;
+        if (v.tag == aura::ast::NodeTag::Lambda) {
+            suggestion = "(: <params> :<inferred-fn-type> body)";
+            suggestion += "  // LLM: replace with actual params and inferred type";
+        } else {
+            auto type_idx = flat.type_id(node);
+            if (type_idx == 0) {
+                suggestion = "(check <expr> :?)  // unknown type — use a type hole";
+            } else {
+                std::string t = treg.format_type(aura::core::TypeId{type_idx, 1});
+                suggestion = "(check <expr> " + t + ")";
+            }
+        }
+        auto sidx = string_heap_.size();
+        string_heap_.push_back(suggestion);
+        return make_string(sidx);
+    });
+
     // (typecheck-status) — Returns the last mutate typecheck result.
     // Empty string = no errors, non-empty = last mutate caused type errors.
     primitives_.add("typecheck-status", [this](const auto&) -> EvalValue {

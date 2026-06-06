@@ -1,0 +1,73 @@
+;; ── tests/suite/aura_query_introspect.aura ─────────────────
+;;
+;; Issue #104: AuraQuery type-introspection. Four new primitives
+;; expose the type-checker's inference to the LLM. The LLM calls
+;; typecheck-current first to populate the per-node type cache,
+;; then queries individual nodes / definitions.
+
+;; Each block does a (set-code ...) to set the workspace, then
+;; runs (typecheck-current) implicitly via (display
+;; (typecheck-current)) (which actually triggers it). Then we
+;; call the new primitives and display the results.
+
+;; ── 1. get-inferred-type for a known node. ─
+(set-code "
+(define (id x) x)
+(define (inc x) (+ x 1))
+")
+(display (typecheck-current))
+(newline)
+;; Find the define node id. We expect a few Define nodes; we
+;; can probe with (query:node) and (query:node-type) but for
+;; the test we just check that (get-inferred-type 0) returns
+;; something other than "unknown" / "out-of-range".
+(display (get-inferred-type 0))
+(newline)
+
+;; ── 2. query-type-of for a named definition. ─
+;; id should be inferred as (x -> x) (or some equivalent
+;; polymorphic form).
+(display (query-type-of "id"))
+(newline)
+
+;; inc should be inferred as (x -> Int) with x being some
+;; fresh type variable. The exact rendering depends on the
+;; type-formatting conventions, but it should be a function
+;; type with a non-void return.
+(display (query-type-of "inc"))
+(newline)
+
+;; ── 3. query-type-of for a non-existent name returns "not-found". ─
+(display (query-type-of "this-function-does-not-exist"))
+(newline)
+
+;; ── 4. suggest-annotation-at returns an annotation string. ─
+;; The format depends on the node type. For a Lambda node, it
+;; suggests a (: ...) form. For other nodes, a (check ...) form.
+;; Both should be non-empty strings.
+(display (suggest-annotation-at 0))
+(newline)
+
+;; ── 5. query-expected-type is a scaffold (returns "Dynamic" with
+;; a hint to see #104). The name exists and is stable; the
+;; implementation can deepen over time. ─
+(display (query-expected-type "return"))
+(newline)
+
+;; ── 6. Edge case: querying before any typecheck-current was run
+;; gives "no-typecheck-yet" for each primitive. ─
+;; (In this test file we already ran typecheck-current above, so
+;; we instead simulate the "after reset" case by changing the
+;; workspace. The new workspace is empty, but typecheck-current
+;; may not have run on it yet — we skip this sub-test to keep
+;; the test deterministic.)
+
+;; ── 7. suggest-annotation-at on a fresh Lambda gives a (: ...)
+;; form. After (set-code "(lambda (x) (* x 2))") and a
+;; typecheck-current, node 0 is the Lambda and the suggestion
+;; should mention ":".
+(set-code "(lambda (x) (* x 2))")
+(display (typecheck-current))
+(newline)
+(display (suggest-annotation-at 0))
+(newline)
