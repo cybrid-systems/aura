@@ -83,9 +83,9 @@ static std::string prettify_json(const std::string& compact) {
 // Format helper: format EvalValue with access to string heap
 static std::string fmt_val(const aura::compiler::types::EvalValue& v,
                            aura::compiler::CompilerService& cs) {
-    return aura::compiler::format_value(v, &cs.evaluator().primitives().string_heap(),
-                                        &cs.evaluator().pairs(), 0, &cs.evaluator().primitives(),
-                                        &cs.evaluator().keyword_table());
+    return aura::compiler::format_value(v, cs.evaluator().primitives().string_heap(),
+                                        cs.evaluator().pairs(), 0, &cs.evaluator().primitives(),
+                                        cs.evaluator().keyword_table());
 }
 
 // JSON helper: wrap a string value for JSON (escape quotes and backslashes)

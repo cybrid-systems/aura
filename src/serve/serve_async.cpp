@@ -86,9 +86,9 @@ using aura::compiler::types::is_closure;
 
 static std::string fmt_val(const EvalValue& v,
                             aura::compiler::CompilerService& cs) {
-    return aura::compiler::format_value(v, &cs.evaluator().primitives().string_heap(),
-                                         &cs.evaluator().pairs(), 0, &cs.evaluator().primitives(),
-                                         &cs.evaluator().keyword_table());
+    return aura::compiler::format_value(v, cs.evaluator().primitives().string_heap(),
+                                         cs.evaluator().pairs(), 0, &cs.evaluator().primitives(),
+                                         cs.evaluator().keyword_table());
 }
 
 // ── run_serve_async ─────────────────────────────────────
@@ -141,10 +141,9 @@ void run_serve_async(int num_workers) {
             auto r = svc->exec_with_cache(code);
             if (r) {
                 result = aura::compiler::format_value(
-                    *r, &svc->evaluator().primitives().string_heap(),
-                    &svc->evaluator().pairs(), 0,
-                    &svc->evaluator().primitives(),
-                    &svc->evaluator().keyword_table());
+                    *r, svc->evaluator().primitives().string_heap(),
+                    svc->evaluator().pairs(), 0, &svc->evaluator().primitives(),
+                    svc->evaluator().keyword_table());
             } else {
                 result = "[error] " + r.error().format();
             }

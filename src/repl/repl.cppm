@@ -63,9 +63,9 @@ public:
                 std::fflush(stderr);
             } else if (!aura::compiler::types::is_void(*r)) {
                 auto val = aura::compiler::format_value(
-                    *r, &cs_.evaluator().primitives().string_heap(),
-                    &cs_.evaluator().pairs(), 0, &cs_.evaluator().primitives(),
-                    &cs_.evaluator().keyword_table());
+                    *r, cs_.evaluator().primitives().string_heap(),
+                    cs_.evaluator().pairs(), 0, &cs_.evaluator().primitives(),
+                    cs_.evaluator().keyword_table());
                 std::fprintf(stdout, "%s\n", val.c_str());
                 std::fflush(stdout);
             }
