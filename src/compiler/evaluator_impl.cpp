@@ -11571,20 +11571,15 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
                 continue;
             }
 
-            // Try typecheck
-            auto tc_fn = primitives_.lookup("typecheck-current");
-            if (tc_fn) {
-                auto tc_r = (*tc_fn)({});
-                if (is_string(tc_r)) {
-                    auto ti = as_string_idx(tc_r);
-                    if (ti < string_heap_.size()) {
-                        std::string msg = string_heap_[ti];
-                        if (msg.find("error") != std::string::npos ||
-                            msg.find("unbound") != std::string::npos) {
-                            last_error = msg;
-                            continue;
-                        }
-                    }
+            // Try typecheck (Issue #107 part 4: inline, no lock).
+            // Going through the typecheck-current primitive would
+            // re-enter workspace_mtx_ and deadlock.
+            {
+                std::string msg = run_typecheck_no_lock();
+                if (msg.find("error") != std::string::npos ||
+                    msg.find("unbound") != std::string::npos) {
+                    last_error = msg;
+                    continue;
                 }
             }
 
@@ -11843,7 +11838,6 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
                                 auto sr = (*sc_fn)({make_string(vi)});
                                 if (is_bool(sr) && as_bool(sr)) {
                                     // Find LiteralInt nodes and swap value with other variant
-                                    auto tc_fn = primitives_.lookup("typecheck-current");
                                     for (aura::ast::NodeId nid = 0;
                                          nid < (workspace_flat_ ? workspace_flat_->size() : 0);
                                          ++nid) {
@@ -11869,13 +11863,10 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
                                         }
                                     }
 
-                                    // Typecheck after crossover
-                                    if (tc_fn) {
-                                        auto tc_r = (*tc_fn)({});
-                                        if (is_string(tc_r)) {
-                                            auto ti = as_string_idx(tc_r);
-                                            if (ti < string_heap_.size() &&
-                                                string_heap_[ti].find("error") == std::string::npos) {
+                                    // Typecheck after crossover (Issue #107 part 4: inline)
+                                    if (true) {
+                                        auto tc_r = run_typecheck_no_lock_bool();
+                                        if (tc_r) {
                                                 // Successful crossover: get the new source
                                                 // (use :workspace to read user's set-code'd script,
                                                 // not the per-eval source = the surrounding call)
@@ -11901,7 +11892,6 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
                                         }
                                     }
                                 }
-                            }
 
                             workspace_flat_ = saved_f;
                             workspace_pool_ = saved_p;
@@ -11959,17 +11949,10 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
                         auto sc_r = (*sc_fn)({make_string(vi)});
 
                         if (is_bool(sc_r) && as_bool(sc_r)) {
-                            bool valid = true;
-                            auto tc_fn = primitives_.lookup("typecheck-current");
-                            if (tc_fn) {
-                                auto tc_r = (*tc_fn)({});
-                                if (is_string(tc_r)) {
-                                    auto ti = as_string_idx(tc_r);
-                                    if (ti < string_heap_.size() &&
-                                        string_heap_[ti].find("error") != std::string::npos)
-                                        valid = false;
-                                }
-                            }
+                            // Issue #107 part 4: inline typecheck (no lock).
+                            // Going through the primitive would re-enter
+                            // workspace_mtx_ and deadlock.
+                            bool valid = run_typecheck_no_lock_bool();
                             if (valid) {
                                 f = compute_fitness(variant);
                                 evaluated = true;
@@ -11989,17 +11972,10 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
                     auto sc_r = (*sc_fn)({make_string(vi)});
                     if (!is_bool(sc_r) || !as_bool(sc_r)) continue;
 
-                    auto tc_fn = primitives_.lookup("typecheck-current");
-                    bool valid = true;
-                    if (tc_fn) {
-                        auto tc_r = (*tc_fn)({});
-                        if (is_string(tc_r)) {
-                            auto ti = as_string_idx(tc_r);
-                            if (ti < string_heap_.size() &&
-                                string_heap_[ti].find("error") != std::string::npos)
-                                valid = false;
-                        }
-                    }
+                    // Issue #107 part 4: inline typecheck (no lock).
+                    // Going through the primitive would re-enter
+                    // workspace_mtx_ and deadlock.
+                    bool valid = run_typecheck_no_lock_bool();
                     if (!valid) continue;
                     f = compute_fitness(variant);
                     // Restore
@@ -17202,6 +17178,73 @@ Evaluator::~Evaluator() {
     // strategies_/intend_records_/intend_history_/timeline_ are std::vector
     // of trivially-destructible structs; clear() releases their heap.
     strategies_.clear();
+}
+
+// Issue #107 part 4: inline typecheck helpers. Caller MUST hold
+// workspace_mtx_ (shared or unique). The two helpers share the
+// same infer_flat + diag-drain pattern; they differ only in
+// return type — string for sites that need the error message,
+// bool for sites that only need pass/fail. Both are members
+// of Evaluator (so they can access the privates below).
+std::string Evaluator::run_typecheck_no_lock() {
+    if (!workspace_flat_ || !workspace_pool_)
+        return std::string("no workspace");
+    if (!type_registry_) {
+        type_registry_ = new aura::core::TypeRegistry();
+    }
+    auto& treg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
+    aura::compiler::TypeChecker tc(treg);
+    if (!declared_type_sigs_.empty()) {
+        std::unordered_map<std::string, std::string> sig_map;
+        std::unordered_map<std::string, std::string> mod_src_map;
+        for (auto& [name, decl] : declared_type_sigs_) {
+            sig_map[name] = decl.type_str;
+            if (!decl.module_file.empty())
+                mod_src_map[name] = decl.module_file;
+        }
+        tc.inject_type_sigs(sig_map, mod_src_map);
+    }
+    aura::diag::DiagnosticCollector diag;
+    auto result = tc.infer_flat(*workspace_flat_, *workspace_pool_,
+                                 workspace_flat_->root, diag);
+    workspace_flat_->clear_all_dirty();
+    std::string out = "type: " + treg.format_type(result) + "\n";
+    auto all_diags = diag.diagnostics();
+    if (all_diags.empty()) {
+        out += "no errors\n";
+    } else {
+        out += "diagnostics:\n";
+        for (auto& d : all_diags) {
+            out += "  [" + std::to_string(static_cast<int>(d.kind)) + "] " + d.format() + "\n";
+        }
+    }
+    return out;
+}
+
+bool Evaluator::run_typecheck_no_lock_bool() {
+    // Same as the string version but returns pass/fail directly
+    // without formatting. Cheaper for hot fuzzer loops.
+    if (!workspace_flat_ || !workspace_pool_) return true;
+    if (!type_registry_) {
+        type_registry_ = new aura::core::TypeRegistry();
+    }
+    auto& treg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
+    aura::compiler::TypeChecker tc(treg);
+    if (!declared_type_sigs_.empty()) {
+        std::unordered_map<std::string, std::string> sig_map;
+        std::unordered_map<std::string, std::string> mod_src_map;
+        for (auto& [name, decl] : declared_type_sigs_) {
+            sig_map[name] = decl.type_str;
+            if (!decl.module_file.empty())
+                mod_src_map[name] = decl.module_file;
+        }
+        tc.inject_type_sigs(sig_map, mod_src_map);
+    }
+    aura::diag::DiagnosticCollector diag;
+    tc.infer_flat(*workspace_flat_, *workspace_pool_,
+                  workspace_flat_->root, diag);
+    workspace_flat_->clear_all_dirty();
+    return diag.diagnostics().empty();
 }
 
 
