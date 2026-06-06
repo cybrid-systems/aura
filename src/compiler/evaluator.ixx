@@ -543,10 +543,10 @@ private:
 
 // Pair-aware value formatting (recursively prints lists)
 export inline std::string format_value(const types::EvalValue& v,
-                                       const std::vector<std::string>* heap,
-                                       const std::vector<Pair>* pairs, int depth = 0,
+                                       std::span<const std::string> heap,
+                                       std::span<const Pair> pairs, int depth = 0,
                                        const Primitives* primitives = nullptr,
-                                       const std::vector<std::string>* keywords = nullptr) {
+                                       std::span<const std::string> keywords = {}) {
     const int max_depth = 64;
     if (depth > max_depth)
         return "...";
@@ -562,22 +562,22 @@ export inline std::string format_value(const types::EvalValue& v,
     // The STRING_BIAS - idx encoding can produce bit patterns that
     // overlap with RefKeyword (every 64th idx starting at 19).
     if (types::is_string(v)) {
-        if (heap) {
+        if (!heap.empty()) {
             auto idx = types::as_string_idx(v);
-            if (idx < heap->size())
-                return std::format("\"{}\"", (*heap)[idx]);
+            if (idx < heap.size())
+                return std::format("\"{}\"", heap[idx]);
         }
         return std::format("<string[{}]>", types::as_string_idx(v));
     }
     if (types::is_keyword(v)) {
         auto kidx = types::as_keyword_idx(v);
-        if (keywords && kidx < keywords->size())
-            return (*keywords)[kidx];
+        if (!keywords.empty() && kidx < keywords.size())
+            return keywords[kidx];
         return ":" + std::to_string(kidx);
     }
-    if (types::is_pair(v) && pairs) {
+    if (types::is_pair(v) && !pairs.empty()) {
         auto idx = types::as_pair_idx(v);
-        if (idx >= pairs->size())
+        if (idx >= pairs.size())
             return std::format("<pair[{}]>", idx);
 
         // Walk the cdr chain to collect all elements
@@ -586,12 +586,12 @@ export inline std::string format_value(const types::EvalValue& v,
 
         while (types::is_pair(current)) {
             auto cidx = types::as_pair_idx(current);
-            if (cidx >= pairs->size()) {
+            if (cidx >= pairs.size()) {
                 break;
             }
             elements.push_back(
-                format_value((*pairs)[cidx].car, heap, pairs, depth + 1, primitives, keywords));
-            current = (*pairs)[cidx].cdr;
+                format_value(pairs[cidx].car, heap, pairs, depth + 1, primitives, keywords));
+            current = pairs[cidx].cdr;
             if (elements.size() > 256) {
                 elements.push_back("...");
                 break;

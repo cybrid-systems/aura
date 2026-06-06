@@ -171,20 +171,20 @@ std::optional<EvalValue> Env::lookup_binding(const std::string& n) const {
 
 // ── Helper: coerce EvalValue to int (string → int parsing) ────
 namespace {
-    static std::int64_t coerce_to_int(const EvalValue& v, const std::vector<std::string>* heap) {
+    static std::int64_t coerce_to_int(const EvalValue& v, std::span<const std::string> heap) {
         if (is_int(v))
             return as_int(v);
         if (is_float(v))
             return static_cast<std::int64_t>(as_float(v)); // truncate
-        if (is_string(v) && heap) {
+        if (is_string(v) && !heap.empty()) {
             auto idx = as_string_idx(v);
-            if (idx < heap->size()) {
+            if (idx < heap.size()) {
                 try {
-                    return static_cast<std::int64_t>(std::stoll((*heap)[idx]));
+                    return static_cast<std::int64_t>(std::stoll(heap[idx]));
                 } catch (...) {
                     std::println(std::cerr,
                                  "error: type mismatch — expected Int, got String '{}'",
-                                 (*heap)[idx]);
+                                 heap[idx]);
                     return 0;
                 }
             }
@@ -195,7 +195,7 @@ namespace {
     }
 
     [[maybe_unused]] static double coerce_to_double(const EvalValue& v,
-                                                    const std::vector<std::string>* heap) {
+                                                    std::span<const std::string> heap) {
         if (is_float(v))
             return as_float(v);
         return static_cast<double>(coerce_to_int(v, heap));
@@ -220,12 +220,12 @@ Primitives::Primitives() {
             double r = 0.0;
             for (auto& v : a)
                 r +=
-                    is_float(v) ? as_float(v) : static_cast<double>(coerce_to_int(v, string_heap_));
+                    is_float(v) ? as_float(v) : static_cast<double>(coerce_to_int(v, *string_heap_));
             return make_float(r);
         }
         std::int64_t r = 0;
         for (auto& v : a)
-            r += coerce_to_int(v, string_heap_);
+            r += coerce_to_int(v, *string_heap_);
         return make_int(r);
     };
     // (-) → 0, (- x) → -x, (- x y ...) → x - y - z - ...
@@ -239,7 +239,7 @@ Primitives::Primitives() {
                 break;
             }
         auto to_f = [this](const EvalValue& v) {
-            return is_float(v) ? as_float(v) : static_cast<double>(coerce_to_int(v, string_heap_));
+            return is_float(v) ? as_float(v) : static_cast<double>(coerce_to_int(v, *string_heap_));
         };
         if (any_f) {
             if (a.size() == 1)
@@ -250,10 +250,10 @@ Primitives::Primitives() {
             return make_float(r);
         }
         if (a.size() == 1)
-            return make_int(-coerce_to_int(a[0], string_heap_));
-        std::int64_t r = coerce_to_int(a[0], string_heap_);
+            return make_int(-coerce_to_int(a[0], *string_heap_));
+        std::int64_t r = coerce_to_int(a[0], *string_heap_);
         for (std::size_t i = 1; i < a.size(); ++i)
-            r -= coerce_to_int(a[i], string_heap_);
+            r -= coerce_to_int(a[i], *string_heap_);
         return make_int(r);
     };
     // (*) → 1, (* x) → x, (* x y ...) → product; float if any arg is float
@@ -270,12 +270,12 @@ Primitives::Primitives() {
             double r = 1.0;
             for (auto& v : a)
                 r *=
-                    is_float(v) ? as_float(v) : static_cast<double>(coerce_to_int(v, string_heap_));
+                    is_float(v) ? as_float(v) : static_cast<double>(coerce_to_int(v, *string_heap_));
             return make_float(r);
         }
         std::int64_t r = 1;
         for (auto& v : a)
-            r *= coerce_to_int(v, string_heap_);
+            r *= coerce_to_int(v, *string_heap_);
         return make_int(r);
     };
     // (/) → 1, (/ x) → 1.0/x (float reciprocal), (/ x y ...) → x / y / z / ...
@@ -283,7 +283,7 @@ Primitives::Primitives() {
         if (a.empty())
             return make_int(1);
         auto to_f = [this](const EvalValue& v) {
-            return is_float(v) ? as_float(v) : static_cast<double>(coerce_to_int(v, string_heap_));
+            return is_float(v) ? as_float(v) : static_cast<double>(coerce_to_int(v, *string_heap_));
         };
         if (a.size() == 1) {
             double x = to_f(a[0]);
@@ -303,9 +303,9 @@ Primitives::Primitives() {
             }
             return make_float(r);
         }
-        std::int64_t r = coerce_to_int(a[0], string_heap_);
+        std::int64_t r = coerce_to_int(a[0], *string_heap_);
         for (std::size_t i = 1; i < a.size(); ++i) {
-            auto d = coerce_to_int(a[i], string_heap_);
+            auto d = coerce_to_int(a[i], *string_heap_);
             r = (d == 0) ? 0 : (r / d);
         }
         return make_int(r);
@@ -314,7 +314,7 @@ Primitives::Primitives() {
         if (a.size() < 2)
             return make_bool(true);
         auto to_f = [this](const EvalValue& v) -> double {
-            return is_float(v) ? as_float(v) : static_cast<double>(coerce_to_int(v, string_heap_));
+            return is_float(v) ? as_float(v) : static_cast<double>(coerce_to_int(v, *string_heap_));
         };
         bool any_f = false;
         for (auto& v : a)
@@ -329,7 +329,7 @@ Primitives::Primitives() {
             return make_bool(true);
         }
         for (std::size_t i = 1; i < a.size(); ++i)
-            if (!fn_int(coerce_to_int(a[i - 1], string_heap_), coerce_to_int(a[i], string_heap_)))
+            if (!fn_int(coerce_to_int(a[i - 1], *string_heap_), coerce_to_int(a[i], *string_heap_)))
                 return make_bool(false);
         return make_bool(true);
     };
@@ -447,9 +447,9 @@ namespace {
         return "<unknown>";
     }
 
-    static void io_print_val(const EvalValue& v, const std::vector<std::string>* heap,
-                             const std::vector<Pair>* pairs, bool quote, int depth = 0,
-                             const std::vector<std::string>* keywords = nullptr) {
+    static void io_print_val(const EvalValue& v, std::span<const std::string> heap,
+                             std::span<const Pair> pairs, bool quote, int depth = 0,
+                             std::span<const std::string> keywords = {}) {
         if (depth > 64) {
             std::fprintf(stdout, "...");
             return;
@@ -467,20 +467,20 @@ namespace {
         // overlap with RefKeyword (every 64th idx starting at 19).
         // In practice, no real RefKeyword has such a huge index, so
         // checking string first resolves the ambiguity correctly.
-        if (is_string(v) && heap) {
+        if (is_string(v) && !heap.empty()) {
             auto idx = as_string_idx(v);
-            if (idx < heap->size()) {
+            if (idx < heap.size()) {
                 if (quote)
-                    std::fprintf(stdout, "\"%s\"", (*heap)[idx].c_str());
+                    std::fprintf(stdout, "\"%s\"", heap[idx].c_str());
                 else
-                    std::fprintf(stdout, "%s", (*heap)[idx].c_str());
+                    std::fprintf(stdout, "%s", heap[idx].c_str());
                 return;
             }
         }
         if (is_keyword(v)) {
             auto kidx = as_keyword_idx(v);
-            if (keywords && kidx < keywords->size()) {
-                auto kname = (*keywords)[kidx];
+            if (!keywords.empty() && kidx < keywords.size()) {
+                auto kname = keywords[kidx];
                 std::fprintf(stdout, "%s", kname.c_str());
             } else {
                 std::fprintf(stdout, ":%zu", (size_t)kidx);
@@ -495,24 +495,24 @@ namespace {
             std::fprintf(stdout, "%ld", (long)as_int(v));
             return;
         }
-        if (is_pair(v) && pairs) {
+        if (is_pair(v) && !pairs.empty()) {
             auto idx = as_pair_idx(v);
-            if (idx >= pairs->size()) {
+            if (idx >= pairs.size()) {
                 std::fprintf(stdout, "<pair[%zu]>", (size_t)idx);
                 return;
             }
             // Check if it's a proper list (cdr chain ends in void or int 0 sentinel)
-            auto cdr = (*pairs)[idx].cdr;
+            auto cdr = pairs[idx].cdr;
             if (is_end_of_list(cdr) && !quote) {
                 // Single-element list: (x)
                 std::fprintf(stdout, "(");
-                io_print_val((*pairs)[idx].car, heap, pairs, quote, depth + 1, keywords);
+                io_print_val(pairs[idx].car, heap, pairs, quote, depth + 1, keywords);
                 std::fprintf(stdout, ")");
                 return;
             }
             // Walk the chain to see if it's a proper list
             std::vector<EvalValue> elements;
-            elements.push_back((*pairs)[idx].car);
+            elements.push_back(pairs[idx].car);
             auto next = cdr;
             bool proper = true;
             while (!is_end_of_list(next)) {
@@ -521,12 +521,12 @@ namespace {
                     break;
                 }
                 auto nidx = as_pair_idx(next);
-                if (nidx >= pairs->size()) {
+                if (nidx >= pairs.size()) {
                     proper = false;
                     break;
                 }
-                elements.push_back((*pairs)[nidx].car);
-                next = (*pairs)[nidx].cdr;
+                elements.push_back(pairs[nidx].car);
+                next = pairs[nidx].cdr;
             }
             std::fprintf(stdout, "(");
             for (std::size_t i = 0; i < elements.size(); ++i) {
@@ -2370,14 +2370,14 @@ void Evaluator::init_pair_primitives() {
     primitives_.add("display", [this](const auto& a) {
         if (a.empty())
             return make_void();
-        io_print_val(a[0], &string_heap_, &pairs_, false, 0, &keyword_table_);
+io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         std::fflush(stdout);
         return make_void();
     });
     primitives_.add("write", [this](const auto& a) -> EvalValue {
         if (a.empty())
             return make_void();
-        io_print_val(a[0], &string_heap_, &pairs_, true, 0, &keyword_table_);
+        io_print_val(a[0], string_heap_, pairs_, true, 0, keyword_table_);
         std::fflush(stdout);
         return make_void();
     });
@@ -3583,7 +3583,7 @@ void Evaluator::init_pair_primitives() {
     primitives_.add("modulo", [this](const auto& a) {
         if (a.size() < 2)
             return make_int(0);
-        auto divisor = coerce_to_int(a[1], &string_heap_);
+        auto divisor = coerce_to_int(a[1], string_heap_);
         if (divisor == 0) {
             do {
                 auto __e_sidx = string_heap_.size();
@@ -3593,7 +3593,7 @@ void Evaluator::init_pair_primitives() {
                 return make_error(__e_eidx);
             } while (0);
         }
-        auto n = coerce_to_int(a[0], &string_heap_);
+        auto n = coerce_to_int(a[0], string_heap_);
         auto r = n % divisor;
         if (r < 0)
             r += (divisor > 0 ? divisor : -divisor);
@@ -3602,7 +3602,7 @@ void Evaluator::init_pair_primitives() {
     primitives_.add("mod", [this](const auto& a) {
         if (a.size() < 2)
             return make_int(0);
-        auto divisor = coerce_to_int(a[1], &string_heap_);
+        auto divisor = coerce_to_int(a[1], string_heap_);
         if (divisor == 0) {
             do {
                 auto __e_sidx = string_heap_.size();
@@ -3612,7 +3612,7 @@ void Evaluator::init_pair_primitives() {
                 return make_error(__e_eidx);
             } while (0);
         }
-        auto n = coerce_to_int(a[0], &string_heap_);
+        auto n = coerce_to_int(a[0], string_heap_);
         auto r = n % divisor;
         if (r < 0)
             r += (divisor > 0 ? divisor : -divisor);
@@ -3622,7 +3622,7 @@ void Evaluator::init_pair_primitives() {
     primitives_.add("quotient", [this](const auto& a) {
         if (a.size() < 2)
             return make_int(0);
-        auto divisor = coerce_to_int(a[1], &string_heap_);
+        auto divisor = coerce_to_int(a[1], string_heap_);
         if (divisor == 0) {
             do {
                 auto __e_sidx = string_heap_.size();
@@ -3632,13 +3632,13 @@ void Evaluator::init_pair_primitives() {
                 return make_error(__e_eidx);
             } while (0);
         }
-        return make_int(coerce_to_int(a[0], &string_heap_) / divisor);
+        return make_int(coerce_to_int(a[0], string_heap_) / divisor);
     });
     // remainder: (remainder n m) → remainder with sign of dividend
     primitives_.add("remainder", [this](const auto& a) {
         if (a.size() < 2)
             return make_int(0);
-        auto divisor = coerce_to_int(a[1], &string_heap_);
+        auto divisor = coerce_to_int(a[1], string_heap_);
         if (divisor == 0) {
             do {
                 auto __e_sidx = string_heap_.size();
@@ -3648,7 +3648,7 @@ void Evaluator::init_pair_primitives() {
                 return make_error(__e_eidx);
             } while (0);
         }
-        return make_int(coerce_to_int(a[0], &string_heap_) % divisor);
+        return make_int(coerce_to_int(a[0], string_heap_) % divisor);
     });
     // abs: (abs n) → absolute value
     primitives_.add("abs", [this](const auto& a) {
@@ -3656,14 +3656,14 @@ void Evaluator::init_pair_primitives() {
             return make_int(0);
         if (is_float(a[0]))
             return make_float(std::abs(as_float(a[0])));
-        auto n = coerce_to_int(a[0], &string_heap_);
+        auto n = coerce_to_int(a[0], string_heap_);
         return make_int(n < 0 ? -n : n);
     });
     // gcd: (gcd a b ...) → greatest common divisor (variadic)
     primitives_.add("gcd", [this](const auto& a) {
         if (a.empty())
             return make_int(0);
-        auto to_int = [this](const EvalValue& v) { return coerce_to_int(v, &string_heap_); };
+        auto to_int = [this](const EvalValue& v) { return coerce_to_int(v, string_heap_); };
         auto r = to_int(a[0]);
         auto abs_gcd = [](std::int64_t x, std::int64_t y) -> std::int64_t {
             x = x < 0 ? -x : x;
@@ -3683,7 +3683,7 @@ void Evaluator::init_pair_primitives() {
     primitives_.add("lcm", [this](const auto& a) {
         if (a.empty())
             return make_int(1);
-        auto to_int = [this](const EvalValue& v) { return coerce_to_int(v, &string_heap_); };
+        auto to_int = [this](const EvalValue& v) { return coerce_to_int(v, string_heap_); };
         auto r = to_int(a[0]);
         auto gcd = [](std::int64_t x, std::int64_t y) -> std::int64_t {
             x = x < 0 ? -x : x;
@@ -3719,16 +3719,16 @@ void Evaluator::init_pair_primitives() {
         if (any_f) {
             auto to_f = [this](const EvalValue& v) {
                 return is_float(v) ? as_float(v)
-                                   : static_cast<double>(coerce_to_int(v, &string_heap_));
+                                   : static_cast<double>(coerce_to_int(v, string_heap_));
             };
             double r = to_f(a[0]);
             for (std::size_t i = 1; i < a.size(); ++i)
                 r = std::min(r, to_f(a[i]));
             return make_float(r);
         }
-        std::int64_t r = coerce_to_int(a[0], &string_heap_);
+        std::int64_t r = coerce_to_int(a[0], string_heap_);
         for (std::size_t i = 1; i < a.size(); ++i)
-            r = std::min(r, coerce_to_int(a[i], &string_heap_));
+            r = std::min(r, coerce_to_int(a[i], string_heap_));
         return make_int(r);
     });
     // max: (max a b ...) → maximum (variadic)
@@ -3744,16 +3744,16 @@ void Evaluator::init_pair_primitives() {
         if (any_f) {
             auto to_f = [this](const EvalValue& v) {
                 return is_float(v) ? as_float(v)
-                                   : static_cast<double>(coerce_to_int(v, &string_heap_));
+                                   : static_cast<double>(coerce_to_int(v, string_heap_));
             };
             double r = to_f(a[0]);
             for (std::size_t i = 1; i < a.size(); ++i)
                 r = std::max(r, to_f(a[i]));
             return make_float(r);
         }
-        std::int64_t r = coerce_to_int(a[0], &string_heap_);
+        std::int64_t r = coerce_to_int(a[0], string_heap_);
         for (std::size_t i = 1; i < a.size(); ++i)
-            r = std::max(r, coerce_to_int(a[i], &string_heap_));
+            r = std::max(r, coerce_to_int(a[i], string_heap_));
         return make_int(r);
     });
 
@@ -4987,7 +4987,7 @@ void Evaluator::init_pair_primitives() {
         auto& ev = *this;
         auto& cs = ev;
         auto formatted = aura::compiler::format_value(
-            result, &ev.string_heap_, &ev.pairs_, 0, &ev.primitives_, &ev.keyword_table());
+            result, ev.string_heap_, ev.pairs_, 0, &ev.primitives_, ev.keyword_table());
         auto ris = string_heap_.size();
         string_heap_.push_back(std::move(formatted));
         return make_string(ris);
