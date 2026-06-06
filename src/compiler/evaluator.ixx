@@ -136,14 +136,14 @@ public:
 
     // IR closure bridge: called when a closure id is not in closures_.
     using ClosureBridgeFn = std::function<std::optional<EvalValue>(
-        ClosureId closure_id, const std::vector<EvalValue>& args)>;
+        ClosureId closure_id, std::span<const EvalValue> args)>;
 
     // Set the IR closure bridge for cross-evaluator closure calls
     void set_closure_bridge(ClosureBridgeFn bridge) { closure_bridge_ = std::move(bridge); }
 
     // Look up a closure and apply it with given args.
     // Tries closures_ first, then IR bridge.
-    std::optional<EvalValue> apply_closure(ClosureId cid, const std::vector<EvalValue>& args);
+    std::optional<EvalValue> apply_closure(ClosureId cid, std::span<const EvalValue> args);
 
     // Module loaded callback: called after a module file is successfully loaded.
     using ModuleLoadedFn = std::function<void(const std::string& source, const std::string& path)>;
