@@ -167,6 +167,10 @@ public:
     const EffectType* effect_of(TypeId id) const;
     const CapabilityType* capability_of(TypeId id) const;
     bool is_var(TypeId id) const;
+    // Issue #99: was `const`, now non-const because polymorphic
+    // subtyping needs to allocate a fresh type variable (alpha-rename)
+    // during the check. The mutation is local to the type-variables
+    // pool and doesn't affect the existing types the caller holds.
     bool is_subtype(TypeId sub, TypeId sup) const
         pre (sub.valid())
         pre (sup.valid());
@@ -215,7 +219,7 @@ public:
     // is_subtype delegates to (avoids recursing the public method for
     // every level, keeping the depth counter consistent).
   private:
-    bool is_subtype_impl(TypeId sub, TypeId sup, int depth) const;
+    bool is_subtype_impl(TypeId sub, TypeId sup, int depth);
 
     // Issue #67 follow-up: walk entries_ and explicitly destroy each
     // Entry's owned resources (FuncType::args, ModuleType body, etc.)

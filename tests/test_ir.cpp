@@ -1396,6 +1396,103 @@ int main() {
             }
         }
 
+        // ── 2b. Issue #99: is_subtype FORALL handling ─────────────
+        // The previous stub returned false for every FORALL pair.
+        // Verify the real rule: ∀α.S <: ∀β.T iff S[α := γ] <: T
+        // (α-rename of sub's binder, then structural subtyping).
+        // Plus cross-tag (sub FORALL, sup non-FORALL) and gradual
+        // (sup is Dynamic, handled at the top of is_subtype_impl).
+        {
+            TypeRegistry treg;
+
+            // Reflexivity: (∀α.α → α) <: (∀α.α → α)
+            {
+                auto a1 = treg.make_var("a");
+                auto a2 = treg.make_var("a");
+                auto sub = treg.register_forall(a1, treg.register_func({a1}, a1));
+                auto sup = treg.register_forall(a2, treg.register_func({a2}, a2));
+                if (treg.is_subtype(sub, sup)) {
+                    ++ts_passed;
+                    std::println("TS OK: (∀α.α → α) <: (∀α.α → α) reflexive");
+                } else {
+                    std::println(std::cerr, "TS FAIL: FORALL reflexivity");
+                    ++ts_failed;
+                }
+            }
+
+            // More-polymorphic is subtype:
+            //   (∀α.Int → Int) <: (∀α.α → α)
+            // The instantiated body of sub is (γ → γ) with γ fresh.
+            // Checking (γ → γ) <: (α → α): arg contravariant
+            // α <: γ (true — type var is deferred) and return
+            // covariant γ <: α (true). So overall true.
+            {
+                auto a = treg.make_var("a");
+                auto int_t = treg.int_type();
+                auto sub = treg.register_forall(a, treg.register_func({int_t}, int_t));
+                auto sup = treg.register_forall(a, treg.register_func({a}, a));
+                if (treg.is_subtype(sub, sup)) {
+                    ++ts_passed;
+                    std::println("TS OK: (∀α.Int → Int) <: (∀α.α → α) more-polymorphic");
+                } else {
+                    std::println(std::cerr, "TS FAIL: (∀α.Int → Int) should be subtype of (∀α.α → α)");
+                    ++ts_failed;
+                }
+            }
+
+            // Cross-tag rejection: (∀α.α → α) NOT <: (Int → Int).
+            // A polymorphic function is not a concrete (Int → Int)
+            // without explicit instantiation — the consumer of
+            // (Int → Int) cannot pick a concrete arg.
+            {
+                auto a = treg.make_var("a");
+                auto int_t = treg.int_type();
+                auto sub = treg.register_forall(a, treg.register_func({a}, a));
+                auto sup = treg.register_func({int_t}, int_t);
+                if (!treg.is_subtype(sub, sup)) {
+                    ++ts_passed;
+                    std::println("TS OK: (∀α.α → α) NOT <: (Int → Int) cross-tag");
+                } else {
+                    std::println(std::cerr, "TS FAIL: (∀α.α → α) should NOT be subtype of (Int → Int)");
+                    ++ts_failed;
+                }
+            }
+
+            // Gradual: (∀α.α → α) <: Any — Any is the top, handled
+            // at the top of is_subtype_impl before tag dispatch.
+            {
+                auto a = treg.make_var("a");
+                auto sub = treg.register_forall(a, treg.register_func({a}, a));
+                if (treg.is_subtype(sub, treg.dynamic_type())) {
+                    ++ts_passed;
+                    std::println("TS OK: (∀α.α → α) <: Any gradual");
+                } else {
+                    std::println(std::cerr, "TS FAIL: (∀α.α → α) should be subtype of Any");
+                    ++ts_failed;
+                }
+            }
+
+            // Nested FORALL: (∀α.∀β.α → β) <: (∀α.∀β.α → β)
+            // Curried polymorphism — the bodies themselves are
+            // FORALLs. Recursion on the FORALL case must handle
+            // this without losing binders.
+            {
+                auto a = treg.make_var("a");
+                auto b = treg.make_var("b");
+                // inner: ∀β.(α → β)
+                auto inner = treg.register_forall(b, treg.register_func({a}, b));
+                // outer: ∀α.inner
+                auto forall = treg.register_forall(a, inner);
+                if (treg.is_subtype(forall, forall)) {
+                    ++ts_passed;
+                    std::println("TS OK: (∀α.∀β.α → β) reflexive (nested FORALL)");
+                } else {
+                    std::println(std::cerr, "TS FAIL: nested FORALL reflexivity");
+                    ++ts_failed;
+                }
+            }
+        }
+
         // ── 3. Occurrence typing — all predicates ──────────────
         {
             TypeRegistry treg;
