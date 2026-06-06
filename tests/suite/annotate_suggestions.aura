@@ -1,0 +1,74 @@
+;; ── tests/suite/annotate_suggestions.aura ─────────────────
+;;
+;; Issue #105: "Infer & Suggest Annotations" pass. The
+;; `query-annotate-functions` primitive walks the FlatAST
+;; after typecheck-current has populated per-node type caches.
+;; For every top-level Define whose value is a Lambda AND
+;; whose inferred function type is "high confidence" (no
+;; Dynamic, no fresh or named type variables), it produces a
+;; suggested annotated signature.
+;;
+;; Result is a list of (name line suggestion) triples — the
+;; LLM can iterate with map / filter and apply each one.
+
+;; ── 1. No-arg function with concrete return type. ─
+;; (define (always-42) 42) has inferred type ( -> Int) — no
+;; args, concrete return. The suggestion should be emitted.
+(set-code "
+(define (always-42) 42)
+")
+(display (typecheck-current))
+(newline)
+(display (query-annotate-functions))
+(newline)
+
+;; ── 2. Polymorphic function — NO suggestion. ─
+;; id has inferred type (x -> x) where the param is a named
+;; type var. Even though it's "useful" code, there's no
+;; concrete annotation to write. The pass should skip it.
+(set-code "
+(define (id x) x)
+")
+(display (typecheck-current))
+(newline)
+(display (query-annotate-functions))
+(newline)
+
+;; ── 3. Multiple defines, mixed confidence. ─
+;; only the no-arg one should be in the result; the others
+;; have fresh type vars from the param/arg inference.
+(set-code "
+(define (const-int) 42)
+(define (wrap-int x) x)
+(define (other) 0)
+")
+(display (typecheck-current))
+(newline)
+(display (query-annotate-functions))
+(newline)
+
+;; ── 4. Public filter — skip leading-underscore names. ─
+;; The Aura convention for "public" is no leading underscore.
+;; (The `_private` form would normally be a single-underscore
+;; wildcard, but for the test we use a multi-char name with a
+;; leading underscore which the existing matcher treats as
+;; private.)
+(set-code "
+(define (public-fn) 42)
+(define (_private-fn) 0)
+")
+(display (typecheck-current))
+(newline)
+(display (query-annotate-functions))
+(newline)
+(display "---public filter---")
+(newline)
+(display (query-annotate-functions "public"))
+(newline)
+
+;; ── 5. No workspace — graceful fallback. ─
+;; If typecheck-current hasn't run, the primitive reports
+;; "no-typecheck-yet" instead of crashing. We exercise that
+;; path by querying before any set-code (so the workspace is
+;; empty / uninitialized).
+EOF

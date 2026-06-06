@@ -6374,6 +6374,170 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         return make_string(sidx);
     });
 
+    // ── Issue #105: "Infer & Suggest Annotations" pass ──────────────────
+    // (query-annotate-functions [filter])
+    //
+    // Issue #105 pass. Walks the FlatAST after a typecheck-current
+    // has populated per-node type caches. For every top-level
+    // Define whose value is a Lambda AND whose inferred function
+    // type is "high confidence" (concrete — no Dynamic, no fresh
+    // type variables), produces a suggested annotated signature
+    // of the form:
+    //
+    //   (define (foo [x : Int] [y : String]) ...body)
+    //
+    // The body is left as "..." because the LLM is expected to
+    // splice the suggested signature into the original source
+    // (using the returned original-line number to locate the
+    // Define). We return a list of (name . line . suggested-string)
+    // triples — the LLM can iterate and apply each one.
+    //
+    // High-confidence = the function type's args and return are
+    // NOT Dynamic (index 0) and NOT fresh type variables (rendered
+    // with a leading "__t" or similar by the type formatter).
+    // A function with `__t0` in its arg list is low-confidence
+    // and skipped.
+    //
+    // Filter: optional. "all" (default) processes every top-level
+    // Define. "public" processes only the ones with no underscores
+    // in the name (the Aura convention for "public" is no leading
+    // underscore, matching the existing private-underscore
+    // convention). The filter is LLM-facing; we keep it simple.
+    primitives_.add("query-annotate-functions", [this, mev](const auto& a) -> EvalValue {
+        if (!workspace_flat_ || !workspace_pool_ || !type_registry_) {
+            return mev("no-typecheck-yet",
+                       "call (typecheck-current) before query-annotate-functions");
+        }
+        // Filter: default "all"
+        std::string filter = "all";
+        if (!a.empty() && is_string(a[0])) {
+            auto idx = as_string_idx(a[0]);
+            if (idx < string_heap_.size()) filter = string_heap_[idx];
+        }
+
+        auto& flat = *workspace_flat_;
+        auto& treg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
+
+        // High-confidence gate: walk the function type's args and
+        // return and reject any that is a TYPE_VAR (fresh or named)
+        // or DYNAMIC. A function whose arg or return is a type
+        // variable is polymorphic — there's no concrete annotation
+        // to write. A function whose arg or return is Dynamic has
+        // a hole somewhere in the inference; suggesting an
+        // annotation would be a guess. We want concrete types only.
+        std::function<bool(aura::core::TypeId)> arg_or_ret_is_open;
+        arg_or_ret_is_open = [&](aura::core::TypeId t) -> bool {
+            if (!t.valid()) return true;
+            if (treg.is_var(t) || t == treg.dynamic_type()) return true;
+            if (auto* f = treg.func_of(t)) {
+                if (arg_or_ret_is_open(f->ret)) return true;
+                for (auto a : f->args)
+                    if (arg_or_ret_is_open(a)) return true;
+            }
+            return false;
+        };
+        auto is_high_conf = [&](aura::core::TypeId func_tid) -> bool {
+            if (!func_tid.valid()) return false;
+            if (arg_or_ret_is_open(func_tid)) return false;
+            return true;
+        };
+
+        // Build a list of (name, line, suggestion) pairs as a
+        // proper list. The Aura-side caller iterates with
+        // map/filter/etc.
+        EvalValue result = make_void();
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            auto v = flat.get(id);
+            if (v.tag != aura::ast::NodeTag::Define) continue;
+            // The value is in v.children[0] (1-arg form) or the
+            // cached type_id of the Define itself. Use whichever
+            // is a Lambda with a cached function type.
+            aura::ast::NodeId value_id = v.children.empty()
+                ? aura::ast::NULL_NODE
+                : v.child(0);
+            if (value_id == aura::ast::NULL_NODE) continue;
+            auto vv = flat.get(value_id);
+            if (vv.tag != aura::ast::NodeTag::Lambda) continue;
+
+            // Get the function's cached type. Prefer the value's
+            // cached type (more specific), fall back to the Define.
+            aura::core::TypeId func_tid{0, 1};
+            auto val_type_idx = flat.type_id(value_id);
+            if (val_type_idx != 0) {
+                func_tid = aura::core::TypeId{val_type_idx, 1};
+            } else {
+                auto def_type_idx = flat.type_id(id);
+                if (def_type_idx != 0) func_tid = aura::core::TypeId{def_type_idx, 1};
+            }
+            if (!is_high_conf(func_tid)) continue;
+
+            // Get the function structure
+            auto* ft = treg.func_of(func_tid);
+            if (!ft) continue;
+
+            // Get the function name
+            std::string fname = std::string(workspace_pool_->resolve(v.sym_id));
+            // Filter: "public" skips names with leading underscores
+            if (filter == "public" && !fname.empty() && fname[0] == '_')
+                continue;
+            // Skip if the function already has param annotations
+            // (no need to suggest). Check the first param's annot.
+            bool already_annotated = false;
+            for (auto annot_id : vv.param_annotations) {
+                if (annot_id != aura::ast::NULL_NODE) {
+                    already_annotated = true;
+                    break;
+                }
+            }
+            if (already_annotated) continue;
+
+            // Build the suggested signature:
+            //   (define (fname [p1 : T1] [p2 : T2]) ...body)
+            // For now, body is "..." — the LLM splices this in
+            // alongside the original body source.
+            std::string sugg = "(define (" + fname;
+            // params are stored as SymId spans; resolve each name
+            // to its string for the suggestion.
+            std::size_t n_params = vv.params.size();
+            std::size_t n_args = ft->args.size();
+            std::size_t count = std::min(n_params, n_args);
+            for (std::size_t i = 0; i < count; ++i) {
+                auto pname = std::string(workspace_pool_->resolve(vv.params[i]));
+                std::string ptype = treg.format_type(ft->args[i]);
+                sugg += " [" + pname + " : " + ptype + "]";
+            }
+            sugg += ") ...body)  ;; #105 suggestion for '" + fname + "' (line ";
+            sugg += std::to_string(v.line) + ")";
+            if (n_params != n_args) {
+                sugg += "  ;; WARNING: param/arg arity mismatch (";
+                sugg += std::to_string(n_params) + " vs ";
+                sugg += std::to_string(n_args) + ")";
+            }
+
+            // Push this entry as a triple: (name-line . suggestion)
+            // We'll build a flat list of cons cells.
+            auto fname_sidx = string_heap_.size();
+            string_heap_.push_back(fname);
+            auto fname_v = make_string(fname_sidx);
+            auto line_sidx = string_heap_.size();
+            string_heap_.push_back(std::to_string(v.line));
+            auto line_v = make_string(line_sidx);
+            auto sugg_sidx = string_heap_.size();
+            string_heap_.push_back(sugg);
+            auto sugg_v = make_string(sugg_sidx);
+
+            // cons: (sugg . (line . (name . ())))
+            auto pid1 = pairs_.size();
+            pairs_.push_back({line_v, sugg_v});
+            auto pid0 = pairs_.size();
+            pairs_.push_back({fname_v, make_pair(pid1)});
+            auto head_pid = pairs_.size();
+            pairs_.push_back({make_pair(pid0), result});
+            result = make_pair(head_pid);
+        }
+        return result;
+    });
+
     // (typecheck-status) — Returns the last mutate typecheck result.
     // Empty string = no errors, non-empty = last mutate caused type errors.
     primitives_.add("typecheck-status", [this](const auto&) -> EvalValue {
