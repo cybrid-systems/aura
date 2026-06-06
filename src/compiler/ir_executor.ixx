@@ -134,13 +134,13 @@ private:
 
     // Execute a specific function with given args (backward compat wrapper)
     EvalResult execute_function(const aura::ir::IRFunction& func,
-                                const std::vector<EvalValue>& args);
+                                std::span<const EvalValue> args);
 
     // Step through instructions. Returns RunResult:
     //   - EvalResult on Return/error
     //   - PendingCall on Call/Apply (outer loop will push new frame and continue)
     RunResult run_function(const aura::ir::IRFunction& func, std::vector<EvalValue>& locals,
-                           const std::vector<EvalValue>& args);
+                           std::span<const EvalValue> args);
 
     // Build a snapshot from runtime closure data
     ClosureSnapshot make_snapshot(std::uint64_t id, const IRClosure& closure) const;
