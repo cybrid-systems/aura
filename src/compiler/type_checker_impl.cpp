@@ -1207,9 +1207,31 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id) {
     cs_.clear();
     auto result = synthesize_flat(flat, pool, id, flat.get(id));
     if (!cs_.solve()) {
-        diag_.report(Diagnostic(ErrorKind::TypeError, "type constraint solving failed", cur_loc_)
-                         .with_blame(BlameInfo{BlameParty::Implicit, "", "compile"})
-                         .with_suggestion("check for type mismatches in function arguments, return values, or recursive bindings"));
+        // Issue #103: LLM-friendly error recovery. When the
+        // constraint solver fails AND we're not in strict mode AND
+        // permissive mode is on, don't fail the whole inference —
+        // log a Warning (not TypeError) and degrade the result to
+        // Dynamic. The caller can still see the warning in the
+        // diagnostic collector and decide what to do. In strict
+        // mode, or when permissive is explicitly disabled, we keep
+        // the old behavior (TypeError, no degradation).
+        if (strict_ || !permissive_) {
+            diag_.report(Diagnostic(ErrorKind::TypeError, "type constraint solving failed", cur_loc_)
+                             .with_blame(BlameInfo{BlameParty::Implicit, "", "compile"})
+                             .with_suggestion("check for type mismatches in function arguments, return values, or recursive bindings"));
+        } else {
+            // Non-strict + permissive: emit a warning with a
+            // suggestion, then fall through to the degraded Dynamic
+            // return below. The LLM gets a chance to see the warning
+            // while still having the program type-check.
+            diag_.report(Diagnostic(ErrorKind::Warning,
+                                   "type constraint solving failed \u2014 degrading result to Dynamic",
+                                   cur_loc_)
+                             .with_blame(BlameInfo{BlameParty::Implicit, "", "compile"})
+                             .with_suggestion("check for type mismatches in function arguments, return values, or recursive bindings; "
+                                              "or set strict mode (set-strict) to surface this as a TypeError"));
+            result = reg_.dynamic_type();
+        }
     }
     auto normalized = cs_.normalize(result);
     // Update the root's cached type with the final resolved type after solving.

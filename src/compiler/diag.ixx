@@ -23,6 +23,11 @@ export enum class ErrorKind : std::uint8_t {
     OutOfMemory,
     // Informational (not an error)
     Note,
+    // Issue #103: Warning — the inference degrades to Dynamic
+    // (or otherwise produces a sound-but-loose result). Not a
+    // hard error; the program type-checks but the result type
+    // is wider than the user expected.
+    Warning,
 };
 
 // ── Blame Info (design §6.3) ────────────────────────────────────
