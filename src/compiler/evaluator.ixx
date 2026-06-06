@@ -574,13 +574,15 @@ public:
     // paths (~11575, ~11846, ~11963, ~11992) still call
     // typecheck-current via the primitive, which would deadlock
     // under the new shared/exclusive lock if they were entered
-    // from a mutate context. They are NOT in the default test
+    // from a mutate context. The 4 fuzzer call sites
+    // (lines ~11575, 11846, 11963, 11992) now use the inline
+    // helpers below instead. They are NOT in the default test
     // path (only reached via the explicit fuzzer Aura
-    // primitives), so the deadlock potential is theoretical,
-    // not active. Documented for the next issue #107 follow-up.
-    //
-    // std::string run_typecheck_no_lock();
-    // std::size_t typecheck_error_count_no_lock();
+    // primitives), so the changes are correctness-only and
+    // covered by the runtime test path for the helpers
+    // themselves.
+    std::string run_typecheck_no_lock();
+    bool run_typecheck_no_lock_bool();
 };
 
 
