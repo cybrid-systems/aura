@@ -1,0 +1,43 @@
+;; ── tests/suite/type_hole.aura ──────────────────────────────
+;;
+;; Issue #102: LLM-friendly type hole support. The LLM can use
+;; `_` or `:?` in any type-annotation position to say "infer
+;; this from context" without having to commit to a concrete
+;; type name. The type checker skips the lookup and lets the
+;; expression's inferred type be the result.
+;;
+;; Each test does one (set-code ...) followed by a
+;; (typecheck-current) display. We assert the output starts
+;; with "type:" (well-typed).
+
+(set-code "(check 42 :?)")
+(display (typecheck-current))
+(newline)
+
+(set-code "(check \"hello\" :?)")
+(display (typecheck-current))
+(newline)
+
+(set-code "(check 42 _)")
+(display (typecheck-current))
+(newline)
+
+(set-code "(check #t _)")
+(display (typecheck-current))
+(newline)
+
+(set-code "((lambda (x :?) (+ x 1)) 41)")
+(display (typecheck-current))
+(newline)
+
+(set-code "((lambda (x _) (+ x 1)) 41)")
+(display (typecheck-current))
+(newline)
+
+(set-code "((lambda (f :?) (f 42)) (lambda (x) (+ x 1)))")
+(display (typecheck-current))
+(newline)
+
+(set-code "(: x :? 42)")
+(display (typecheck-current))
+(newline)

@@ -24,6 +24,22 @@ static std::size_t edit_distance(std::string_view a, std::string_view b) {
     return prev[n];
 }
 
+// Issue #102: Type hole detection. The two sentinels we accept
+// in a TypeAnnotation's sym_id position: `_` and `:?`. Both are
+// LLM-friendly ways to say "infer this type from context". Returns
+// true if the type name is one of the sentinels, false otherwise.
+// `_` is a single ASCII underscore; `:?` is a colon followed by a
+// question mark. Both intern to distinct SymIds; the detection is
+// by string content, not by SymId identity, because the parser
+// interns the literal token text directly.
+static bool is_type_hole(std::string_view type_name) {
+    if (type_name.size() == 1 && type_name[0] == '_')
+        return true;
+    if (type_name.size() == 2 && type_name[0] == ':' && type_name[1] == '?')
+        return true;
+    return false;
+}
+
 static std::string closest_match(std::string_view name,
                                   const std::vector<std::string>& candidates,
                                   std::size_t max_dist = 3) {
@@ -1999,12 +2015,18 @@ TypeId InferenceEngine::synthesize_flat_lambda(FlatAST& flat, StringPool& pool, 
                 // Compound type: (: s (List :T)) — type_expr_id = child(1)
                 auto type_name = pool.resolve(annot_v.sym_id);
                 if (!type_name.empty()) {
-                    // Simple type name: try registry then env
-                    param_type = reg_.lookup_type(std::string(type_name));
-                    if (!param_type.valid()) {
-                        auto env_ty = env_.lookup(std::string(type_name));
-                        if (env_ty.valid())
-                            param_type = env_ty;
+                    // Issue #102: Type hole in lambda param. Same
+                    // semantics as the top-level annotation hole —
+                    // skip the lookup, fall through to fresh_var.
+                    // The param's type will be inferred from the body.
+                    if (!is_type_hole(type_name)) {
+                        // Simple type name: try registry then env
+                        param_type = reg_.lookup_type(std::string(type_name));
+                        if (!param_type.valid()) {
+                            auto env_ty = env_.lookup(std::string(type_name));
+                            if (env_ty.valid())
+                                param_type = env_ty;
+                        }
                     }
                 } // compound type annotations (List :T) fall through to fresh_var
             }
@@ -2314,6 +2336,17 @@ TypeId InferenceEngine::synthesize_flat_annotation(FlatAST& flat, StringPool& po
 
     auto type_name = pool.resolve(v.sym_id);
     if (!type_name.empty()) {
+        // Issue #102: Type hole. The LLM-friendly way to say "infer
+        // this" — `(check x :?)` or `(check x _)`. The type checker
+        // does NOT look the type up, does NOT report "unknown type",
+        // and does NOT constrain the inner expression. Whatever
+        // type the inner expression synthesizes to is the type.
+        // This is the gradual-typing analogue of a hole in Idris /
+        // Agda — the goal is to make the AI's first try pass without
+        // it having to commit to a type name.
+        if (is_type_hole(type_name)) {
+            return inner_type;
+        }
         auto expected = reg_.lookup_type(std::string(type_name));
         if (!expected.valid()) {
             diag_.report(
