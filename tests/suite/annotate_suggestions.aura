@@ -65,10 +65,3 @@
 (newline)
 (display (query-annotate-functions "public"))
 (newline)
-
-;; ── 5. No workspace — graceful fallback. ─
-;; If typecheck-current hasn't run, the primitive reports
-;; "no-typecheck-yet" instead of crashing. We exercise that
-;; path by querying before any set-code (so the workspace is
-;; empty / uninitialized).
-EOF
