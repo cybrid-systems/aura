@@ -208,9 +208,21 @@ int64_t aura_pair_cdr_unchecked(int64_t pair_val) {
 void aura_drop_pair(int64_t pair_val) {
     uint64_t id = (uint64_t)(pair_val >> 2);
     if (id >= pair_count || !pairs[id].live) return;
-    pairs[id].live = false;
+    // Issue #106: recursively drop the car and cdr if they're
+    // pairs. The pair heap is the only heap with low-bit tagging
+    // that lets us detect the type from the value alone (cells /
+    // closures are raw int64_t IDs without tag bits, so the
+    // caller has to dispatch aura_drop_cell / aura_drop_closure
+    // explicitly via the lowering path; we don't try to detect
+    // them here). Nested pair drops must be done FIRST to avoid
+    // an inconsistent state if a recursive drop itself fails.
+    int64_t car = pairs[id].car;
+    int64_t cdr = pairs[id].cdr;
+    pairs[id].live = false;  // mark self dead before recursing
     if (pair_free_count < FREE_LIST_CAP)
         pair_free_list[pair_free_count++] = (int64_t)id;
+    if (IS_PAIR(car)) aura_drop_pair(car);
+    if (IS_PAIR(cdr)) aura_drop_pair(cdr);
 }
 
 // ═══════════════════════════════════════════════════════════

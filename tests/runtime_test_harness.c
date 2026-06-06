@@ -138,6 +138,43 @@ TEST(test_pair_oob) {
     PASS();
 }
 
+// Issue #106: recursive drop. A pair whose car or cdr is itself
+// a pair should, when dropped, also drop the nested pair. We
+// verify by keeping the inner id, dropping the outer, and
+// checking that reads of the inner return 0 (dead). Without
+// the recursion the inner would still report its car/cdr.
+TEST(test_pair_nested_drop) {
+    int64_t inner = aura_alloc_pair(10, 20);
+    int64_t outer = aura_alloc_pair(inner, 99);
+    aura_drop_pair(outer);
+    // The inner pair should be dead now (recursive drop).
+    CHECK(aura_pair_car(inner) == 0, "inner car after outer drop");
+    CHECK(aura_pair_cdr(inner) == 0, "inner cdr after outer drop");
+    PASS();
+}
+
+TEST(test_pair_doubly_nested_drop) {
+    int64_t leaf = aura_alloc_pair(1, 2);
+    int64_t mid = aura_alloc_pair(leaf, 3);
+    int64_t top = aura_alloc_pair(mid, 4);
+    aura_drop_pair(top);
+    CHECK(aura_pair_car(leaf) == 0, "leaf dead");
+    CHECK(aura_pair_car(mid) == 0, "mid dead");
+    CHECK(aura_pair_car(top) == 0, "top dead");
+    PASS();
+}
+
+TEST(test_pair_drop_fixes_non_pair) {
+    // Outer has fixnum car and cdr — drop should be a no-op
+    // for the car/cdr (no recursion needed). We just check
+    // the outer is dead.
+    int64_t p = aura_alloc_pair(42, 100);
+    aura_drop_pair(p);
+    CHECK(aura_pair_car(p) == 0, "car after drop");
+    CHECK(aura_pair_cdr(p) == 0, "cdr after drop");
+    PASS();
+}
+
 TEST(test_pair_large_count) {
     // Allocate and drop many pairs in sequence
     for (int i = 0; i < 10000; i++) {
@@ -330,6 +367,9 @@ static test_fn tests[] = {
     test_pair_drop_reuse,
     test_pair_double_drop,
     test_pair_oob,
+    test_pair_nested_drop,
+    test_pair_doubly_nested_drop,
+    test_pair_drop_fixes_non_pair,
     test_pair_large_count,
     // Cell
     test_cell_basic,
