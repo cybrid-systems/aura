@@ -106,7 +106,7 @@ EvalResult IRInterpreter::execute() {
 }
 
 EvalResult IRInterpreter::execute_function(const IRFunction& func,
-                                           const std::vector<EvalValue>& args) {
+                                           std::span<const EvalValue> args) {
     auto local_count = func.local_count + std::max(std::size_t(64), args.size());
     std::vector<EvalValue> locals(local_count, make_void());
     auto result = run_function(func, locals, args);
@@ -117,7 +117,7 @@ EvalResult IRInterpreter::execute_function(const IRFunction& func,
 
 IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                                      std::vector<EvalValue>& locals,
-                                                     const std::vector<EvalValue>& args) {
+                                                     std::span<const EvalValue> args) {
     if (func.blocks.empty())
         return std::unexpected(Diagnostic{ErrorKind::IRNoReturn, "empty function"}.with_suggestion(
             "the function body is empty"));

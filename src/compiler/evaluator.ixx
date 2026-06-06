@@ -55,7 +55,7 @@ public:
     std::optional<std::uint64_t> lookup_cell_index(const std::string& n) const;
     const Env* parent() const { return parent_; }
     std::vector<std::pair<std::string, types::EvalValue>>& bindings() { return bindings_; }
-    const std::vector<std::pair<std::string, types::EvalValue>>& bindings() const {
+    std::span<const std::pair<std::string, types::EvalValue>> bindings() const {
         return bindings_;
     }
 

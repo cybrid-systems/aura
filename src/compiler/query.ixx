@@ -317,7 +317,7 @@ public:
     ReplaceTemplate parse_replace(std::string_view sexpr);
 
     // Generate patches: for each matched node, produce replacement
-    std::vector<aura::ast::Patch> generate_patches(const std::vector<aura::ast::NodeId>& matches,
+    std::vector<aura::ast::Patch> generate_patches(std::span<const aura::ast::NodeId> matches,
                                                    const ReplaceTemplate& replacement);
 
     // Apply query + replace in one step
@@ -461,7 +461,7 @@ inline aura::ast::NodeId TransformEngine::build_node(const ReplaceTemplate& tmpl
 }
 
 inline std::vector<aura::ast::Patch>
-TransformEngine::generate_patches(const std::vector<aura::ast::NodeId>& matches,
+TransformEngine::generate_patches(std::span<const aura::ast::NodeId> matches,
                                   const ReplaceTemplate& replacement) {
     std::vector<aura::ast::Patch> patches;
     for (auto mid : matches) {

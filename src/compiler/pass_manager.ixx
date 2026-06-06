@@ -44,7 +44,7 @@ public:
 
     bool has_error() const { return false; }
     std::string_view name() const { return "compute-kind"; }
-    const std::vector<ComputeKindResult>& results() const { return results_; }
+    std::span<const ComputeKindResult> results() const { return results_; }
 
 private:
     std::vector<ComputeKindResult> results_;
@@ -217,7 +217,7 @@ public:
     std::string_view name() const { return "type-check"; }
 
     // Access stored diagnostics from last check_before_lowering call
-    const std::vector<aura::diag::Diagnostic>& diagnostics() const { return last_diags_; }
+    std::span<const aura::diag::Diagnostic> diagnostics() const { return last_diags_; }
 
 private:
     std::vector<aura::diag::Diagnostic> last_diags_;
