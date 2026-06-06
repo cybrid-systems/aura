@@ -127,15 +127,21 @@ jobs:
         echo "✓ ASAN build OK"
 
     - name: Run unit tests (test_ir) under ASAN
+      # test_ir lives in build_asan/, not build/ (build.py test unit
+      # looks for build/test_ir). Run the ASAN binary directly with
+      # the same env we use for the build job.
       env:
         ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1:print_stacktrace=1:halt_on_error=1"
       run: |
-        python3 build.py test unit
+        ./build_asan/test_ir
         echo "✓ unit tests clean under ASAN"
 
     - name: Run emit-binary suite (bash) under ASAN
+      # build.py test bash hardcodes AURA=./build/aura internally, so
+      # the wrapper env var doesn't propagate. Invoke run-tests.sh
+      # directly with AURA pointing at the ASAN binary instead.
       env:
         ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1:print_stacktrace=1:halt_on_error=1"
       run: |
-        AURA=$(pwd)/build_asan/aura python3 build.py test bash
+        AURA=$(pwd)/build_asan/aura bash tests/run-tests.sh
         echo "✓ emit-binary suite clean under ASAN"
