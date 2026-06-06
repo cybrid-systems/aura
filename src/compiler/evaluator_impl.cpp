@@ -4333,6 +4333,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     std::function<EvalValue(const std::string&, const std::string&)> mev = make_error_val;
 
     primitives_.add("set-code", [this, mev](const auto& a) -> EvalValue {
+        std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
         if (workspace_read_only_) return mev("read-only", "workspace is read-only");
         // Clear any previous set-code error and eval-current cache
         last_set_code_error_kind_.clear();
@@ -4725,6 +4726,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
 
     // (eval-current) — Evaluate the current workspace AST
     primitives_.add("eval-current", [this, mev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
         // Phase 4: (eval-current :jit) — compile-and-run via the IR/JIT
         // pipeline. Falls back to tree-walker if the hook isn't installed
         // (e.g. unit tests without a CompilerService) or if the JIT
@@ -4881,6 +4883,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     // (eval-current-output) — Evaluate workspace, return display output as string
     // Captures all display output during eval via fd-level redirection.
     primitives_.add("eval-current-output", [this, mev](const auto&) {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
         // If set-code failed on the last call, propagate the diagnostic immediately
         if (!last_set_code_error_kind_.empty()) {
             auto kind = std::move(last_set_code_error_kind_);
@@ -4941,6 +4944,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
 
     // (query:find name) — Find all node IDs with matching symbol name
     primitives_.add("query:find", [this, mev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
         if (a.empty() || !is_string(a[0]))
             return mev("bad-arg", "usage: (query:find name)");
         auto idx = as_string_idx(a[0]);
@@ -4997,6 +5001,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
 
     // (query:children node-id) — Get children node IDs
     primitives_.add("query:children", [this, mev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
         if (a.empty() || !is_int(a[0]) || !workspace_flat_)
             return mev("bad-arg", "usage: (query:children node-id)");
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
@@ -5015,6 +5020,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
 
     // (query:root) — Return the current workspace root node ID, or #f if no workspace
     primitives_.add("query:root", [this, mev](const auto&) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
         if (!workspace_flat_)
             return mev("no-workspace", "no workspace AST loaded");
         if (workspace_flat_->root == aura::ast::NULL_NODE)
@@ -5025,6 +5031,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
 
     // (query:node node-id) — Get node details as list (tag value type sym-id)
     primitives_.add("query:node", [this, mev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
         if (a.empty() || !is_int(a[0]))
             return mev("bad-arg", "usage: (query:node node-id)");
         if (!workspace_flat_ || !workspace_pool_)
@@ -5067,6 +5074,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
 
     // (query:calls name) — Find all call sites of a named function
     primitives_.add("query:calls", [this, mev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
         if (a.empty() || !is_string(a[0]))
             return mev("bad-arg", "usage: (query:calls name)");
         if (!workspace_flat_ || !workspace_pool_)
@@ -5190,20 +5198,12 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         if (mark_define_dirty_fn_) mark_define_dirty_fn_(name);
 
         // ── Auto-typecheck: 验证变异后的代码类型正确 ────────
-        // 立即运行 typecheck-current，如果类型错误则记录到 last_mutate_error。
-        // Agent 可以通过 (typecheck-status) 查询最近一次变异的类型状态。
-        auto tc_fn = primitives_.lookup("typecheck-current");
-        if (tc_fn) {
-            auto tc_result = (*tc_fn)({});
-            if (is_string(tc_result)) {
-                auto& str = string_heap_[as_string_idx(tc_result)];
-                if (str.find("no errors") == std::string::npos) {
-                    last_mutate_error_ = std::string("typecheck after mutate:rebind failed: ") + str;
-                } else {
-                    last_mutate_error_.clear();
-                }
-            }
-        }
+        // Issue #107: removed (see commit). The LLM can call
+        // typecheck-current explicitly after the mutate. Auto-typecheck
+        // from within mutate is incompatible with the workspace_mtx_
+        // because we already hold unique_lock and re-entering the same
+        // mutex in a different mode is a deadlock.
+        (void)0;  // auto-typecheck intentionally removed
 
         // ── Ownership validation: ensure ownership invariants hold ──
         if (workspace_flat_ && workspace_pool_ && last_mutate_error_.empty()) {
@@ -5253,6 +5253,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
 
     // (query:parent node-id) — Find parent node IDs (nodes whose children include this ID)
     primitives_.add("query:parent", [this, mev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
         if (a.empty() || !is_int(a[0]))
             return mev("bad-arg", "usage: (query:parent node-id)");
         if (!workspace_flat_)
@@ -5278,6 +5279,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
 
     // (query:siblings node-id) — Find sibling node IDs (other children of same parent)
     primitives_.add("query:siblings", [this, mev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
         if (a.empty() || !is_int(a[0]))
             return mev("bad-arg", "usage: (query:siblings node-id)");
         if (!workspace_flat_)
@@ -5327,6 +5329,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     // Returns a predicate descriptor (a tagged pair) that query:filter
     // applies to each candidate node.
     primitives_.add("query:where", [this, mev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
         if (a.size() < 2 || !is_keyword(a[0]) || !is_string(a[1]))
             return mev("bad-arg", "usage: (where :field-name value-string)");
         if (!workspace_flat_ || !workspace_pool_)
@@ -5367,6 +5370,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     //   (query:filter (where :defined-by "fib") (where :node-type "Lambda"))
     //   → the body Lambda of (define fib ...)
     primitives_.add("query:filter", [this, mev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
         if (a.empty())
             return mev("bad-arg", "usage: (query:filter predicate ...)");
         if (!workspace_flat_ || !workspace_pool_)
@@ -5518,6 +5522,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     //            Define, Begin, Set, Quote, LiteralString, TypeAnnotation,
     //            Coercion, LiteralFloat, MacroDef
     primitives_.add("query:node-type", [this, mev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
         if (a.empty() || !is_string(a[0]))
             return mev("bad-arg", "usage: (query:node-type tag-name)");
         if (!workspace_flat_)
@@ -5566,6 +5571,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     // The pattern is parsed as an S-expression. A Variable named "..." acts as
     // wildcard and matches any single node or subtree.
     primitives_.add("query:pattern", [this, mev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
         if (a.empty() || !is_string(a[0]))
             return mev("bad-arg", "usage: (query:pattern expr)");
         if (!workspace_flat_ || !workspace_pool_)
@@ -5715,18 +5721,8 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
                 defuse_affected_syms_.insert(name);
 
                 // ── Auto-typecheck ──
-                auto tc_fn = primitives_.lookup("typecheck-current");
-                if (tc_fn) {
-                    auto tc_result = (*tc_fn)({});
-                    if (is_string(tc_result)) {
-                        auto& str = string_heap_[as_string_idx(tc_result)];
-                        if (str.find("no errors") == std::string::npos) {
-                            last_mutate_error_ = std::string("typecheck after mutate:set-body failed: ") + str;
-                        } else {
-                            last_mutate_error_.clear();
-                        }
-                    }
-                }
+                // Issue #107: removed (see mutate:rebind commit comment).
+                (void)0;  // auto-typecheck intentionally removed
 
                 // ── Ownership validation ──
                 if (workspace_flat_ && workspace_pool_ && last_mutate_error_.empty()) {
@@ -6179,6 +6175,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     // Full traversal for now; incremental skip (dirty-aware) requires
     // TypeChecker to accept a dirty filter — future work.
     primitives_.add("typecheck-current", [this](const auto&) {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
         coverage_counters_[1]++;
         if (!workspace_flat_ || !workspace_pool_) {
             auto eidx = string_heap_.size();
@@ -6549,6 +6546,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     // (typecheck-status) — Returns the last mutate typecheck result.
     // Empty string = no errors, non-empty = last mutate caused type errors.
     primitives_.add("typecheck-status", [this](const auto&) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
         if (last_mutate_error_.empty()) {
             auto sidx = string_heap_.size();
             string_heap_.push_back("ok");
@@ -8266,6 +8264,7 @@ Evaluator::Evaluator() {
     //   Scope-level cached def-use chain. Builds index on first call,
     //   incrementally rebuilds dirty scopes on subsequent calls.
     primitives_.add("query:def-use", [this, ensure_defuse, nodes_to_list](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
         auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
             auto mi = string_heap_.size(); string_heap_.push_back(m);
             auto ki = string_heap_.size(); string_heap_.push_back(k);
@@ -8300,6 +8299,7 @@ Evaluator::Evaluator() {
     //   → ((def-node-id ...) . (use-node-id ...))
     //   Cached implementation using def-use index.
     primitives_.add("query:reaches", [this, ensure_defuse, nodes_to_list](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
         auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
             auto mi = string_heap_.size(); string_heap_.push_back(m);
             auto ki = string_heap_.size(); string_heap_.push_back(k);
@@ -8347,6 +8347,7 @@ Evaluator::Evaluator() {
     //   → ((def-node-id ...) . (use-node-id ...) . (caller-node-id ...))
     //   Cached defs + uses, linear scan for callers.
     primitives_.add("query:effects", [this, ensure_defuse, nodes_to_list](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
         auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
             auto mi = string_heap_.size(); string_heap_.push_back(m);
             auto ki = string_heap_.size(); string_heap_.push_back(k);
@@ -8386,6 +8387,7 @@ Evaluator::Evaluator() {
     //   → #t  Explicitly rebuild all def-use and call-graph indexes.
     //   Useful for benchmark consistency or after bulk mutations.
     primitives_.add("query:build-index", [this, ensure_defuse](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
         auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
             auto mi = string_heap_.size(); string_heap_.push_back(m);
             auto ki = string_heap_.size(); string_heap_.push_back(k);
@@ -8408,6 +8410,7 @@ Evaluator::Evaluator() {
     //   → ((callers . N) (def-syms . N) (refs . N) (rebuilds . N) (scopes . N) (nodes . N))
     //   Statistics about the def-use and call-graph indexes.
     primitives_.add("query:index-stats", [this, ensure_defuse, nodes_to_list](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
         auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
             auto mi = string_heap_.size(); string_heap_.push_back(m);
             auto ki = string_heap_.size(); string_heap_.push_back(k);
