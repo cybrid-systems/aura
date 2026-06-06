@@ -15,6 +15,26 @@ TypeRegistry::TypeRegistry() {
     register_type(TypeTag::HASH, "Hash");
 }
 
+// Issue #67 follow-up: TypeEntryArena bump-allocates Entry objects via
+// placement-new on raw bytes. Its default destructor only frees the
+// chunk storage; it does NOT call ~Entry() on the live entries.
+// Each Entry owns std::string name + 10 std::optional<...> members
+// (FuncType::args, ModuleType body, VariantType alts, RecordType
+// fields, EffectType arg, etc.) whose std::vector children allocate
+// on the default heap. Without this explicit dtor, every register_*
+// call leaks those inner vectors when the registry (or its arena
+// after compact()) is destroyed.
+TypeRegistry::~TypeRegistry() {
+    destroy_all_entries();
+}
+
+void TypeRegistry::destroy_all_entries() noexcept {
+    for (Entry* e : entries_) {
+        arena_.destroy<Entry>(e);
+    }
+    entries_.clear();
+}
+
 TypeId TypeRegistry::register_type(TypeTag tag, std::string name) {
     // Dedup: same tag + same name returns the existing TypeId.
     for (std::uint32_t i = 0; i < entries_.size(); ++i) {
@@ -799,10 +819,12 @@ std::uint32_t TypeRegistry::compact() {
     // Bump generation FIRST so any in-flight TypeId registrations
     // that race with us get a stale generation and can be detected.
     ++next_generation_;
-    // Clear all entries. shrink_to_fit() to actually release memory
-    // (the std::optional members can leave residual capacity even
-    // after clear()).
-    entries_.clear();
+    // Explicitly destroy each Entry's owned resources (FuncType::args,
+    // ModuleType body, etc.) BEFORE the arena's bytes are reclaimed.
+    // TypeEntryArena only does raw byte deallocation, not ~T(), so
+    // walking entries_ here is required to avoid leaking every
+    // std::vector child of every std::optional<...> member.
+    destroy_all_entries();
     entries_.shrink_to_fit();
     // Reset the entry arena so all the old Entry storage is released.
     // (The index→pointer map is what gets reused; the pointed-to

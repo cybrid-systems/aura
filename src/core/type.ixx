@@ -135,6 +135,7 @@ export struct CapabilityType {
 export class TypeRegistry {
 public:
     TypeRegistry();
+    ~TypeRegistry();
 
     // ── 注册 ──
     TypeId register_type(TypeTag tag, std::string name);
@@ -215,6 +216,16 @@ public:
     // every level, keeping the depth counter consistent).
   private:
     bool is_subtype_impl(TypeId sub, TypeId sup, int depth) const;
+
+    // Issue #67 follow-up: walk entries_ and explicitly destroy each
+    // Entry's owned resources (FuncType::args, ModuleType body, etc.)
+    // before letting the arena's raw bytes be freed. TypeEntryArena
+    // uses placement-new on raw bytes, so its destructor only frees
+    // the storage — it does not call ~Entry(), which means every
+    // Entry's std::optional<...> members (and their std::vector
+    // children) leak unless we destroy them here. compact() and
+    // ~TypeRegistry() both invoke this.
+    void destroy_all_entries() noexcept;
 
     // TypeId interning: type_equals compares two TypeIds by structural
     // content (not raw id). type_hash produces a stable hash for the
