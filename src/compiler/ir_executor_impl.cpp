@@ -561,6 +561,14 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                 slot->car = locals[ops[1]].val;
                                 slot->cdr = locals[ops[2]].val;
                                 g_pair_slots[idx] = slot;
+                                // Track heap allocation for process-exit
+                                // cleanup (see g_owned_pair_slots_ in
+                                // aura_jit_runtime.cpp). Without this,
+                                // ASAN reports the slots as direct leaks
+                                // at process exit since the static
+                                // g_pair_slots vector only stores raw
+                                // pointers, not ownership.
+                                g_owned_pair_slots_.push_back(slot);
                             }
                         }
                     } else {

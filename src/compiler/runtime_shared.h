@@ -29,6 +29,11 @@ extern __thread TLarena g_tl_arena;
 // Stores pointers to pairs allocated on arena (non-escaping) or heap (escaping).
 // Evaluator's car/cdr primitives check this as fallback.
 extern std::vector<PairSlot*> g_pair_slots;
+// Heap-owned pair slots (subset of g_pair_slots allocated via malloc).
+// Process-exit cleanup frees them; see PairSlotCleanup in
+// aura_jit_runtime.cpp. Without this, escape-analyzed pairs that fall
+// back to heap allocation leak silently.
+extern std::vector<PairSlot*> g_owned_pair_slots_;
 
 // ── Flags ──
 extern bool g_use_arena;
