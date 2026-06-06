@@ -3775,5 +3775,58 @@ int main() {
         if (own_failed > 0) return 1;
     }
 
+    // ── 2g. Issue #106 sub-task 4: AOT pair? precedence regression ─
+    // The generated C code in src/main.cpp's --emit-binary
+    // pipeline used to have a precedence bug:
+    //     (c>0&&(((a[0]&3)==1))||a[0]<0)
+    // which due to C precedence parses as
+    //     (c>0 && ((a[0]&3)==1)) || (a[0]<0)
+    // When c==0 the right branch reads a[0] from an
+    // uninitialized arg slot. The fix put the OR inside the AND
+    // and dropped the stale `a[0]<0` clause.
+    //
+    // We can't easily test the generated C code from the test
+    // binary (it goes through --emit-binary + llc + link), but
+    // we CAN verify the source string in src/main.cpp doesn't
+    // contain the buggy pattern. This is a smoke test against
+    // regression of the precedence fix.
+    //
+    // We look specifically for the GENERATED pattern (a return
+    // statement with `a[0]<0` inside a non-comment line), so
+    // that the documentation comment in src/main.cpp that
+    // quotes the old buggy expression for context does NOT
+    // trigger a false positive.
+    {
+        std::ifstream src("/home/dev/code/aura/src/main.cpp");
+        std::stringstream buf; buf << src.rdbuf();
+        std::string s = buf.str();
+        std::size_t pos = 0;
+        int found = 0;
+        while ((pos = s.find('\n', pos)) != std::string::npos) {
+            ++pos;
+            // Read the next line; skip if it's a comment.
+            std::size_t eol = s.find('\n', pos);
+            if (eol == std::string::npos) break;
+            std::string line = s.substr(pos, eol - pos);
+            if (line.find("//") != std::string::npos) { pos = eol + 1; continue; }
+            // Look for the exact generated pattern: a return
+            // statement with `a[0]<0` in a non-comment line.
+            if (line.find("return") != std::string::npos &&
+                line.find("a[0]<0") != std::string::npos) {
+                ++found;
+            }
+            pos = eol + 1;
+        }
+        if (found == 0) {
+            ++ts_passed;
+            std::println("AOT OK: no generated return statement contains stale `a[0]<0` (Issue #106)");
+        } else {
+            ++ts_failed;
+            std::println(std::cerr,
+                "AOT FAIL: {} generated return statement(s) contain stale `a[0]<0` clause",
+                found);
+        }
+    }
+
     return (failed + ck_failed + arity_failed + mp_failed + pm_failed + cf_failed + dce_failed + gg_failed + ts_failed + flat_failed) > 0 ? 1 : 0;
 }
