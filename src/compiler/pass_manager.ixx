@@ -278,15 +278,19 @@ public:
                             auto cast_slot = func.local_count++;
                             aura::ir::IRInstruction cast_instr;
                             cast_instr.opcode = aura::ir::IROpcode::CastOp;
+                            // Snapshot ops[2] before insert: insert may reallocate
+                            // block.instructions, invalidating `instr` / `ops`.
+                            auto ops2_snapshot = ops[2];
                             cast_instr.operands = std::array<std::uint32_t, 4>{
-                                cast_slot, ops[2], type_tag_for_coercion(aura::core::TypeId{t1, 1}),
-                                0u};
+                                cast_slot, ops2_snapshot,
+                                type_tag_for_coercion(aura::core::TypeId{t1, 1}), 0u};
                             cast_instr.type_id = t1;
                             block.instructions.insert(block.instructions.begin() +
                                                           static_cast<std::ptrdiff_t>(i),
                                                       cast_instr);
                             ++i;
-                            ops[2] = cast_slot;
+                            // After insert, original instruction is at index i — update by index.
+                            block.instructions[i].operands[2] = cast_slot;
                         }
                         ++i;
                         continue;
@@ -306,14 +310,17 @@ public:
                             aura::ir::IRInstruction cast_instr;
                             cast_instr.opcode = aura::ir::IROpcode::CastOp;
                             auto cast_tag = type_tag_for_coercion(aura::core::TypeId{ret_type, 1});
+                            // Snapshot ops[0] before insert (insert may reallocate instructions).
+                            auto ops0_snapshot = ops[0];
                             cast_instr.operands =
-                                std::array<std::uint32_t, 4>{cast_slot, ops[0], cast_tag, 0u};
+                                std::array<std::uint32_t, 4>{cast_slot, ops0_snapshot, cast_tag, 0u};
                             cast_instr.type_id = ret_type;
                             block.instructions.insert(block.instructions.begin() +
                                                           static_cast<std::ptrdiff_t>(i),
                                                       cast_instr);
                             ++i;
-                            ops[0] = cast_slot;
+                            // After insert, original Return is at index i — update by index.
+                            block.instructions[i].operands[0] = cast_slot;
                         }
                         ++i;
                         continue;
@@ -348,8 +355,11 @@ public:
                                             auto cast_slot = func.local_count++;
                                             aura::ir::IRInstruction cast_instr;
                                             cast_instr.opcode = aura::ir::IROpcode::CastOp;
+                                            // Snapshot loc.operands[1] before insert
+                                            // (insert may reallocate blk.instructions).
+                                            auto loc_ops1 = loc.operands[1];
                                             cast_instr.operands = std::array<std::uint32_t, 4>{
-                                                cast_slot, loc.operands[1],
+                                                cast_slot, loc_ops1,
                                                 type_tag_for_coercion(
                                                     aura::core::TypeId{if_result_type, 1}),
                                                 0u};
@@ -358,7 +368,8 @@ public:
                                                 blk.instructions.begin() +
                                                     static_cast<std::ptrdiff_t>(j),
                                                 cast_instr);
-                                            loc.operands[1] = cast_slot;
+                                            // After insert, `loc` shifted to j+1 — update by index.
+                                            blk.instructions[j + 1].operands[1] = cast_slot;
                                         }
                                         break;
                                     }

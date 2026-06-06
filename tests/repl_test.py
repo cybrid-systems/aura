@@ -65,7 +65,7 @@ def test_error_handling():
     child = spawn_repl()
     child.expect(r"> ")
     child.sendline("(undefined-variable)")
-    child.expect(r"error: unbound variable")
+    child.expect(r"unbound variable: undefined-variable")
     child.expect(r"> ")  # REPL still alive
     child.sendline("(+ 1 2)")
     child.expect(r"3")
