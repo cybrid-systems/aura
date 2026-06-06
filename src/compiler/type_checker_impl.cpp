@@ -1907,13 +1907,12 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
                 }
                 subst[mt->type_param_vars[i].index] = arg_type;
             }
-            // Substitute type vars in member types using TypeRegistry::substitute
-            // Snapshot members first: reg_.substitute() / register_module() may
-            // reallocate the TypeRegistry's entries_ buffer, invalidating mt.
-            auto members_snapshot = mt->members;
+            // Substitute type vars in member types using TypeRegistry::substitute.
+            // `mt` stays valid across reg_.substitute() / register_module() because
+            // TypeEntryArena chunks don't reallocate on push_back.
             std::vector<std::pair<std::string, TypeId>> new_members;
-            new_members.reserve(members_snapshot.size());
-            for (auto& [mname, mtype] : members_snapshot)
+            new_members.reserve(mt->members.size());
+            for (auto& [mname, mtype] : mt->members)
                 new_members.push_back({mname, reg_.substitute(mtype, subst)});
             ModuleType result_mt{std::move(new_members)};
             return reg_.register_module(std::move(result_mt));
