@@ -366,10 +366,14 @@ TypeId TypeRegistry::instantiate(TypeId forall_id, std::function<TypeId()> fresh
     auto* ft = forall_of(forall_id);
     if (!ft)
         return forall_id;
+    // Snapshot ft members before fresh_var() — it can register types and reallocate
+    // entries_, which would invalidate ft (it's a pointer into entries_).
+    TypeId var_snapshot = ft->var;
+    TypeId body_snapshot = ft->body;
     // Build substitution map: bound var → fresh var, then delegate to substitute()
     std::unordered_map<std::uint32_t, TypeId> subst;
-    subst[ft->var.index] = fresh_var();
-    return substitute(ft->body, subst);
+    subst[var_snapshot.index] = fresh_var();
+    return substitute(body_snapshot, subst);
 }
 
 TypeId TypeRegistry::instantiate_forall(TypeId forall_id,
@@ -381,13 +385,19 @@ TypeId TypeRegistry::instantiate_forall(TypeId forall_id,
         // continue with a fresh type variable for the residual
         // bound var. This keeps the returned type fully instantiated
         // (no free vars), so any monomorphic consumer stays sound.
+        // Snapshot ft->var and ft->body before any call that may
+        // reallocate entries_ (make_var, substitute). LHS/RHS of the
+        // assignment are unsequenced per C++17, so ft must not be
+        // touched across a potentially-reallocating call.
+        TypeId var_snapshot = ft->var;
+        TypeId body_snapshot = ft->body;
         std::unordered_map<std::uint32_t, TypeId> subst;
         if (arg_idx < args.size()) {
-            subst[ft->var.index] = args[arg_idx++];
+            subst[var_snapshot.index] = args[arg_idx++];
         } else {
-            subst[ft->var.index] = make_var("");  // fresh, unnamed
+            subst[var_snapshot.index] = make_var("");  // fresh, unnamed
         }
-        result = substitute(ft->body, subst);
+        result = substitute(body_snapshot, subst);
     }
     return result;
 }
@@ -551,13 +561,23 @@ TypeId TypeRegistry::substitute(TypeId ty,
     switch (tag_of(ty)) {
     case TypeTag::FUNC: {
         auto* f = func_of(ty);
+        if (!f) return ty;
+        // Snapshot before recursion: substitute() / register_func() can reallocate
+        // entries_, which would invalidate f.
+        std::vector<TypeId> args_snapshot = f->args;
+        TypeId ret_snapshot = f->ret;
         std::vector<TypeId> new_args;
-        for (auto& a : f->args)
+        new_args.reserve(args_snapshot.size());
+        for (auto& a : args_snapshot)
             new_args.push_back(substitute(a, subst));
-        return register_func(std::move(new_args), substitute(f->ret, subst));
+        return register_func(std::move(new_args), substitute(ret_snapshot, subst));
     }
     case TypeTag::FORALL: {
         auto* ft = forall_of(ty);
+        if (!ft) return ty;
+        // Snapshot before recursion: register_forall() can reallocate entries_.
+        TypeId var_snapshot = ft->var;
+        TypeId body_snapshot = ft->body;
         // Issue #77: capture avoidance. The bound var inside the
         // body is a fresh variable (in the HM sense) that happens
         // to share an index with whatever was outer. Shadow it by
@@ -565,28 +585,45 @@ TypeId TypeRegistry::substitute(TypeId ty,
         // var in the body that coincidentally shares the index
         // doesn't get captured by an outer subst entry.
         auto inner_subst = subst;
-        inner_subst.erase(ft->var.index);
-        return register_forall(ft->var, substitute(ft->body, inner_subst));
+        inner_subst.erase(var_snapshot.index);
+        return register_forall(var_snapshot, substitute(body_snapshot, inner_subst));
     }
     case TypeTag::LINEAR: {
         auto* lt = linear_of(ty);
-        return register_linear(substitute(lt->inner, subst));
+        if (!lt) return ty;
+        // Snapshot before recursion: register_linear() can reallocate entries_.
+        TypeId inner_snapshot = lt->inner;
+        return register_linear(substitute(inner_snapshot, subst));
     }
     case TypeTag::MODULE: {
         auto* mt = module_of(ty);
+        if (!mt) return ty;
+        // Snapshot before recursion: any substitute() / register_module() may
+        // reallocate entries_, invalidating mt.
+        auto members_snapshot = mt->members;
+        auto type_params_snapshot = mt->type_params;
+        auto type_param_vars_snapshot = mt->type_param_vars;
         ModuleType new_mt;
-        for (auto& [n, t] : mt->members)
+        new_mt.members.reserve(members_snapshot.size());
+        for (auto& [n, t] : members_snapshot)
             new_mt.members.push_back({n, substitute(t, subst)});
-        new_mt.type_params = mt->type_params;
-        for (auto& v : mt->type_param_vars)
+        new_mt.type_params = std::move(type_params_snapshot);
+        new_mt.type_param_vars.reserve(type_param_vars_snapshot.size());
+        for (auto& v : type_param_vars_snapshot)
             new_mt.type_param_vars.push_back(substitute(v, subst));
         return register_module(std::move(new_mt));
     }
     case TypeTag::VARIANT: {
         auto* vt = variant_of(ty);
+        if (!vt) return ty;
+        // Snapshot before recursion: substitute() / register_variant() may
+        // reallocate entries_, invalidating vt.
+        auto variants_snapshot = vt->variants;
         VariantType new_vt;
-        for (auto& [name, args] : vt->variants) {
+        new_vt.variants.reserve(variants_snapshot.size());
+        for (auto& [name, args] : variants_snapshot) {
             std::vector<TypeId> new_args;
+            new_args.reserve(args.size());
             for (auto& a : args)
                 new_args.push_back(substitute(a, subst));
             new_vt.variants.push_back({name, std::move(new_args)});
@@ -595,8 +632,13 @@ TypeId TypeRegistry::substitute(TypeId ty,
     }
     case TypeTag::RECORD: {
         auto* rt = record_of(ty);
+        if (!rt) return ty;
+        // Snapshot before recursion: substitute() / register_record() may
+        // reallocate entries_, invalidating rt.
+        auto fields_snapshot = rt->fields;
         RecordType new_rt;
-        for (auto& [name, type] : rt->fields)
+        new_rt.fields.reserve(fields_snapshot.size());
+        for (auto& [name, type] : fields_snapshot)
             new_rt.fields.push_back({name, substitute(type, subst)});
         return register_record(std::move(new_rt));
     }
