@@ -11,6 +11,7 @@ set_property(TARGET aura PROPERTY CXX_MODULE_STD ON)
 
 target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
+    src/core/type_arena.ixx
     src/core/type.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
@@ -167,6 +168,7 @@ add_executable(test_ir tests/test_ir.cpp)
 set_property(TARGET test_ir PROPERTY CXX_MODULE_STD ON)
 target_sources(test_ir PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
+    src/core/type_arena.ixx
     src/core/type.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx

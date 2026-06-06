@@ -36,6 +36,7 @@ module;
 export module aura.core.type;
 
 import std;
+import aura.core.type_arena;
 
 namespace aura::core {
 
@@ -245,7 +246,8 @@ private:
         std::optional<VariantType> variant;
         std::optional<RecordType> record;
     };
-    std::vector<Entry> entries_;
+    std::vector<Entry*> entries_;   // index → stable pointer into arena_
+    TypeEntryArena arena_;           // bump-allocates Entry objects
     std::unordered_map<std::string, TypeId> name_to_id_;
     uint32_t next_generation_ = 1;
 };

@@ -18,7 +18,7 @@ TypeRegistry::TypeRegistry() {
 TypeId TypeRegistry::register_type(TypeTag tag, std::string name) {
     // Dedup: same tag + same name returns the existing TypeId.
     for (std::uint32_t i = 0; i < entries_.size(); ++i) {
-        if (entries_[i].tag == tag && entries_[i].name == name) {
+        if (entries_[i]->tag == tag && entries_[i]->name == name) {
             return TypeId{i, next_generation_};
         }
     }
@@ -26,8 +26,8 @@ TypeId TypeRegistry::register_type(TypeTag tag, std::string name) {
         .index = static_cast<std::uint32_t>(entries_.size()),
         .generation = next_generation_,
     };
-    entries_.push_back(Entry{tag, std::move(name), std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt});
-    name_to_id_[entries_.back().name] = id;
+    entries_.push_back(arena_.allocate(Entry{tag, std::move(name), std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt}));
+    name_to_id_[entries_.back()->name] = id;
     return id;
 }
 
@@ -37,8 +37,8 @@ TypeId TypeRegistry::register_func(std::vector<TypeId> args, TypeId ret) {
     // (e.g. user named it via register_func_named); we keep the
     // first registration's name to preserve identity.
     for (std::uint32_t i = 0; i < entries_.size(); ++i) {
-        if (entries_[i].tag != TypeTag::FUNC || !entries_[i].func) continue;
-        const auto& f = *entries_[i].func;
+        if (entries_[i]->tag != TypeTag::FUNC || !entries_[i]->func) continue;
+        const auto& f = *entries_[i]->func;
         if (f.args.size() != args.size()) continue;
         if (!(f.ret == ret) && !type_equals(f.ret, ret)) continue;
         bool match = true;
@@ -55,12 +55,12 @@ TypeId TypeRegistry::register_func(std::vector<TypeId> args, TypeId ret) {
     auto ft = FuncType{std::move(args), ret};
     auto tag = TypeTag::FUNC;
     std::string tmp_name = "(" + std::to_string(ft.args.size()) + "->)";
-    entries_.push_back(Entry{tag, tmp_name, std::move(ft), std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt});
+    entries_.push_back(arena_.allocate(Entry{tag, tmp_name, std::move(ft), std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt}));
     std::string name = "(";
-    for (auto& a : entries_.back().func->args)
+    for (auto& a : entries_.back()->func->args)
         name += std::string(name_of(a)) + " ";
     name += std::string("-> ") + std::string(name_of(ret)) + ")";
-    entries_.back().name = name;
+    entries_.back()->name = name;
     return id;
 }
 
@@ -70,7 +70,7 @@ TypeId TypeRegistry::register_func_named(std::vector<TypeId> args, TypeId ret, s
     // still update the name so the user's chosen name takes effect.
     auto id = register_func(std::move(args), ret);
     if (id.valid() && id.index < entries_.size()) {
-        entries_[id.index].name = std::move(name);
+        entries_[id.index]->name = std::move(name);
     }
     return id;
 }
@@ -78,8 +78,8 @@ TypeId TypeRegistry::register_func_named(std::vector<TypeId> args, TypeId ret, s
 TypeId TypeRegistry::register_linear(TypeId inner) {
     // Dedup: same inner returns the existing TypeId.
     for (std::uint32_t i = 0; i < entries_.size(); ++i) {
-        if (entries_[i].tag != TypeTag::LINEAR || !entries_[i].linear) continue;
-        const auto& l = *entries_[i].linear;
+        if (entries_[i]->tag != TypeTag::LINEAR || !entries_[i]->linear) continue;
+        const auto& l = *entries_[i]->linear;
         if (l.inner == inner || type_equals(l.inner, inner)) {
             return TypeId{i, next_generation_};
         }
@@ -89,18 +89,18 @@ TypeId TypeRegistry::register_linear(TypeId inner) {
         .generation = next_generation_,
     };
     std::string linear_name = "(Linear " + std::string(name_of(inner)) + ")";
-    entries_.push_back(Entry{TypeTag::LINEAR, std::move(linear_name), std::nullopt, std::nullopt,
+    entries_.push_back(arena_.allocate(Entry{TypeTag::LINEAR, std::move(linear_name), std::nullopt, std::nullopt,
                              LinearType{inner}, std::nullopt, std::nullopt, std::nullopt,
-                             std::nullopt, std::nullopt, std::nullopt});
-    name_to_id_[entries_.back().name] = id;
+                             std::nullopt, std::nullopt, std::nullopt}));
+    name_to_id_[entries_.back()->name] = id;
     return id;
 }
 
 TypeId TypeRegistry::register_module(ModuleType mt) {
     // Dedup: same member list (in order) returns the existing TypeId.
     for (std::uint32_t i = 0; i < entries_.size(); ++i) {
-        if (entries_[i].tag != TypeTag::MODULE || !entries_[i].module_type) continue;
-        const auto& m = *entries_[i].module_type;
+        if (entries_[i]->tag != TypeTag::MODULE || !entries_[i]->module_type) continue;
+        const auto& m = *entries_[i]->module_type;
         if (m.members.size() != mt.members.size()) continue;
         bool match = true;
         for (std::size_t j = 0; j < m.members.size(); ++j) {
@@ -120,17 +120,17 @@ TypeId TypeRegistry::register_module(ModuleType mt) {
         name += n + ": " + std::string(name_of(t));
     }
     name += "}";
-    entries_.push_back(Entry{TypeTag::MODULE, std::move(name), std::nullopt, std::nullopt,
+    entries_.push_back(arena_.allocate(Entry{TypeTag::MODULE, std::move(name), std::nullopt, std::nullopt,
                              std::nullopt, std::move(mt), std::nullopt, std::nullopt,
-                             std::nullopt, std::nullopt, std::nullopt});
+                             std::nullopt, std::nullopt, std::nullopt}));
     return id;
 }
 
 TypeId TypeRegistry::register_variant(VariantType vt) {
     // Dedup: same constructor list (in order) returns the existing TypeId.
     for (std::uint32_t i = 0; i < entries_.size(); ++i) {
-        if (entries_[i].tag != TypeTag::VARIANT || !entries_[i].variant) continue;
-        const auto& v = *entries_[i].variant;
+        if (entries_[i]->tag != TypeTag::VARIANT || !entries_[i]->variant) continue;
+        const auto& v = *entries_[i]->variant;
         if (v.variants.size() != vt.variants.size()) continue;
         bool match = true;
         for (std::size_t j = 0; j < v.variants.size(); ++j) {
@@ -160,17 +160,17 @@ TypeId TypeRegistry::register_variant(VariantType vt) {
         name += ")";
     }
     name += "}";
-    entries_.push_back(Entry{TypeTag::VARIANT, std::move(name), std::nullopt, std::nullopt,
+    entries_.push_back(arena_.allocate(Entry{TypeTag::VARIANT, std::move(name), std::nullopt, std::nullopt,
                              std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt,
-                             std::move(vt), std::nullopt});
+                             std::move(vt), std::nullopt}));
     return id;
 }
 
 TypeId TypeRegistry::register_record(RecordType rt) {
     // Dedup: same field list (in order) returns the existing TypeId.
     for (std::uint32_t i = 0; i < entries_.size(); ++i) {
-        if (entries_[i].tag != TypeTag::RECORD || !entries_[i].record) continue;
-        const auto& r = *entries_[i].record;
+        if (entries_[i]->tag != TypeTag::RECORD || !entries_[i]->record) continue;
+        const auto& r = *entries_[i]->record;
         if (r.fields.size() != rt.fields.size()) continue;
         bool match = true;
         for (std::size_t j = 0; j < r.fields.size(); ++j) {
@@ -190,35 +190,35 @@ TypeId TypeRegistry::register_record(RecordType rt) {
         name += n + ": " + std::string(name_of(t));
     }
     name += "}";
-    entries_.push_back(Entry{TypeTag::RECORD, std::move(name), std::nullopt, std::nullopt,
+    entries_.push_back(arena_.allocate(Entry{TypeTag::RECORD, std::move(name), std::nullopt, std::nullopt,
                              std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt,
-                             std::nullopt, std::move(rt)});
+                             std::nullopt, std::move(rt)}));
     return id;
 }
 
 const VariantType* TypeRegistry::variant_of(TypeId id) const {
-    if (id.index < entries_.size() && entries_[id.index].variant)
-        return &*entries_[id.index].variant;
+    if (id.index < entries_.size() && entries_[id.index]->variant)
+        return &*entries_[id.index]->variant;
     return nullptr;
 }
 
 const RecordType* TypeRegistry::record_of(TypeId id) const {
-    if (id.index < entries_.size() && entries_[id.index].record)
-        return &*entries_[id.index].record;
+    if (id.index < entries_.size() && entries_[id.index]->record)
+        return &*entries_[id.index]->record;
     return nullptr;
 }
 
 const ModuleType* TypeRegistry::module_of(TypeId id) const {
-    if (id.index < entries_.size() && entries_[id.index].module_type)
-        return &*entries_[id.index].module_type;
+    if (id.index < entries_.size() && entries_[id.index]->module_type)
+        return &*entries_[id.index]->module_type;
     return nullptr;
 }
 
 TypeId TypeRegistry::register_effect(std::string name, TypeId arg) {
     // Dedup: same name + same arg returns the existing TypeId.
     for (std::uint32_t i = 0; i < entries_.size(); ++i) {
-        if (entries_[i].tag != TypeTag::EFFECT || !entries_[i].effect) continue;
-        const auto& e = *entries_[i].effect;
+        if (entries_[i]->tag != TypeTag::EFFECT || !entries_[i]->effect) continue;
+        const auto& e = *entries_[i]->effect;
         if (e.name != name) continue;
         if (e.arg == arg || type_equals(e.arg, arg)) {
             return TypeId{i, next_generation_};
@@ -229,10 +229,10 @@ TypeId TypeRegistry::register_effect(std::string name, TypeId arg) {
         .generation = next_generation_,
     };
     auto eff_name = std::string("!") + name;
-    entries_.push_back(Entry{TypeTag::EFFECT, std::move(eff_name), std::nullopt, std::nullopt,
+    entries_.push_back(arena_.allocate(Entry{TypeTag::EFFECT, std::move(eff_name), std::nullopt, std::nullopt,
                              std::nullopt, std::nullopt, std::nullopt,
                              EffectType{std::move(name), arg},
-                             std::nullopt, std::nullopt, std::nullopt});
+                             std::nullopt, std::nullopt, std::nullopt}));
     return id;
 }
 
@@ -240,8 +240,8 @@ TypeId TypeRegistry::register_capability(std::vector<std::string> effects, bool 
     // Dedup: same effect set (order-independent) + same unrestricted
     // returns the existing TypeId.
     for (std::uint32_t i = 0; i < entries_.size(); ++i) {
-        if (entries_[i].tag != TypeTag::CAPABILITY || !entries_[i].capability) continue;
-        const auto& c = *entries_[i].capability;
+        if (entries_[i]->tag != TypeTag::CAPABILITY || !entries_[i]->capability) continue;
+        const auto& c = *entries_[i]->capability;
         if (c.is_unrestricted != unrestricted) continue;
         if (c.effects.size() != effects.size()) continue;
         // Set equality (order-independent).
@@ -269,22 +269,22 @@ TypeId TypeRegistry::register_capability(std::vector<std::string> effects, bool 
     name += "}";
     if (unrestricted)
         name = "Capability{*}";
-    entries_.push_back(Entry{TypeTag::CAPABILITY, std::move(name), std::nullopt, std::nullopt,
+    entries_.push_back(arena_.allocate(Entry{TypeTag::CAPABILITY, std::move(name), std::nullopt, std::nullopt,
                              std::nullopt, std::nullopt, std::nullopt, std::nullopt,
                              CapabilityType{std::move(effects), unrestricted},
-                             std::nullopt, std::nullopt});
+                             std::nullopt, std::nullopt}));
     return id;
 }
 
 const CapabilityType* TypeRegistry::capability_of(TypeId id) const {
-    if (id.index < entries_.size() && entries_[id.index].capability)
-        return &*entries_[id.index].capability;
+    if (id.index < entries_.size() && entries_[id.index]->capability)
+        return &*entries_[id.index]->capability;
     return nullptr;
 }
 
 const EffectType* TypeRegistry::effect_of(TypeId id) const {
-    if (id.index < entries_.size() && entries_[id.index].effect)
-        return &*entries_[id.index].effect;
+    if (id.index < entries_.size() && entries_[id.index]->effect)
+        return &*entries_[id.index]->effect;
     return nullptr;
 }
 
@@ -294,8 +294,8 @@ TypeId TypeRegistry::register_forall(TypeId var, TypeId body) {
     // equal bodies but different vars collapse — correct per
     // structural-identity semantics.)
     for (std::uint32_t i = 0; i < entries_.size(); ++i) {
-        if (entries_[i].tag != TypeTag::FORALL || !entries_[i].forall) continue;
-        const auto& f = *entries_[i].forall;
+        if (entries_[i]->tag != TypeTag::FORALL || !entries_[i]->forall) continue;
+        const auto& f = *entries_[i]->forall;
         if (f.var.index != var.index) continue;
         if (f.body == body || type_equals(f.body, body)) {
             return TypeId{i, next_generation_};
@@ -309,9 +309,9 @@ TypeId TypeRegistry::register_forall(TypeId var, TypeId body) {
     auto name_body = name_of(body);
     std::string forall_name =
         std::string("∀") + std::string(name_var) + ". " + std::string(name_body);
-    entries_.push_back(Entry{TypeTag::FORALL, std::move(forall_name), std::nullopt,
+    entries_.push_back(arena_.allocate(Entry{TypeTag::FORALL, std::move(forall_name), std::nullopt,
                              ForallType{var, body}, std::nullopt, std::nullopt,
-                             std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt});
+                             std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt}));
     return id;
 }
 
@@ -322,58 +322,56 @@ TypeId TypeRegistry::make_var(std::string name) {
         .index = static_cast<std::uint32_t>(entries_.size()),
         .generation = next_generation_,
     };
-    entries_.push_back(Entry{TypeTag::TYPE_VAR, std::move(name), std::nullopt, std::nullopt,
+    entries_.push_back(arena_.allocate(Entry{TypeTag::TYPE_VAR, std::move(name), std::nullopt, std::nullopt,
                              std::nullopt, std::nullopt, std::nullopt, std::nullopt,
-                             std::nullopt, std::nullopt, std::nullopt});
+                             std::nullopt, std::nullopt, std::nullopt}));
     return id;
 }
 
 TypeTag TypeRegistry::tag_of(TypeId id) const {
     if (id.index < entries_.size())
-        return entries_[id.index].tag;
+        return entries_[id.index]->tag;
     return TypeTag::DYNAMIC;
 }
 
 std::string_view TypeRegistry::name_of(TypeId id) const {
     if (id.index < entries_.size())
-        return entries_[id.index].name;
+        return entries_[id.index]->name;
     return "<invalid>";
 }
 
 const LinearType* TypeRegistry::linear_of(TypeId id) const {
-    if (id.index < entries_.size() && entries_[id.index].linear)
-        return &*entries_[id.index].linear;
+    if (id.index < entries_.size() && entries_[id.index]->linear)
+        return &*entries_[id.index]->linear;
     return nullptr;
 }
 
 const ForallType* TypeRegistry::forall_of(TypeId id) const {
-    if (id.index < entries_.size() && entries_[id.index].forall)
-        return &*entries_[id.index].forall;
+    if (id.index < entries_.size() && entries_[id.index]->forall)
+        return &*entries_[id.index]->forall;
     return nullptr;
 }
 
 const FuncType* TypeRegistry::func_of(TypeId id) const {
-    if (id.index < entries_.size() && entries_[id.index].func)
-        return &*entries_[id.index].func;
+    if (id.index < entries_.size() && entries_[id.index]->func)
+        return &*entries_[id.index]->func;
     return nullptr;
 }
 
 bool TypeRegistry::is_var(TypeId id) const {
-    return id.index < entries_.size() && entries_[id.index].tag == TypeTag::TYPE_VAR;
+    return id.index < entries_.size() && entries_[id.index]->tag == TypeTag::TYPE_VAR;
 }
 
 TypeId TypeRegistry::instantiate(TypeId forall_id, std::function<TypeId()> fresh_var) {
     auto* ft = forall_of(forall_id);
     if (!ft)
         return forall_id;
-    // Snapshot ft members before fresh_var() — it can register types and reallocate
-    // entries_, which would invalidate ft (it's a pointer into entries_).
-    TypeId var_snapshot = ft->var;
-    TypeId body_snapshot = ft->body;
     // Build substitution map: bound var → fresh var, then delegate to substitute()
+    // `ft` stays valid across fresh_var() / substitute() — TypeEntryArena
+    // chunks are not reallocated by register_*().
     std::unordered_map<std::uint32_t, TypeId> subst;
-    subst[var_snapshot.index] = fresh_var();
-    return substitute(body_snapshot, subst);
+    subst[ft->var.index] = fresh_var();
+    return substitute(ft->body, subst);
 }
 
 TypeId TypeRegistry::instantiate_forall(TypeId forall_id,
@@ -385,19 +383,15 @@ TypeId TypeRegistry::instantiate_forall(TypeId forall_id,
         // continue with a fresh type variable for the residual
         // bound var. This keeps the returned type fully instantiated
         // (no free vars), so any monomorphic consumer stays sound.
-        // Snapshot ft->var and ft->body before any call that may
-        // reallocate entries_ (make_var, substitute). LHS/RHS of the
-        // assignment are unsequenced per C++17, so ft must not be
-        // touched across a potentially-reallocating call.
-        TypeId var_snapshot = ft->var;
-        TypeId body_snapshot = ft->body;
+        // `ft` stays valid across make_var() / substitute() because
+        // TypeEntryArena chunks don't reallocate.
         std::unordered_map<std::uint32_t, TypeId> subst;
         if (arg_idx < args.size()) {
-            subst[var_snapshot.index] = args[arg_idx++];
+            subst[ft->var.index] = args[arg_idx++];
         } else {
-            subst[var_snapshot.index] = make_var("");  // fresh, unnamed
+            subst[ft->var.index] = make_var("");  // fresh, unnamed
         }
-        result = substitute(body_snapshot, subst);
+        result = substitute(ft->body, subst);
     }
     return result;
 }
@@ -558,26 +552,24 @@ TypeId TypeRegistry::substitute(TypeId ty,
     if (it != subst.end())
         return it->second;
 
+    // Pointers returned by *_of() are stable across register_*() calls
+    // (TypeEntryArena chunks don't realloc, only the index→pointer
+    // vector does). So we can read the structure directly without
+    // snapshotting, even when the recursive substitute() / register_*()
+    // calls below grow the arena.
     switch (tag_of(ty)) {
     case TypeTag::FUNC: {
         auto* f = func_of(ty);
         if (!f) return ty;
-        // Snapshot before recursion: substitute() / register_func() can reallocate
-        // entries_, which would invalidate f.
-        std::vector<TypeId> args_snapshot = f->args;
-        TypeId ret_snapshot = f->ret;
         std::vector<TypeId> new_args;
-        new_args.reserve(args_snapshot.size());
-        for (auto& a : args_snapshot)
+        new_args.reserve(f->args.size());
+        for (auto& a : f->args)
             new_args.push_back(substitute(a, subst));
-        return register_func(std::move(new_args), substitute(ret_snapshot, subst));
+        return register_func(std::move(new_args), substitute(f->ret, subst));
     }
     case TypeTag::FORALL: {
         auto* ft = forall_of(ty);
         if (!ft) return ty;
-        // Snapshot before recursion: register_forall() can reallocate entries_.
-        TypeId var_snapshot = ft->var;
-        TypeId body_snapshot = ft->body;
         // Issue #77: capture avoidance. The bound var inside the
         // body is a fresh variable (in the HM sense) that happens
         // to share an index with whatever was outer. Shadow it by
@@ -585,43 +577,33 @@ TypeId TypeRegistry::substitute(TypeId ty,
         // var in the body that coincidentally shares the index
         // doesn't get captured by an outer subst entry.
         auto inner_subst = subst;
-        inner_subst.erase(var_snapshot.index);
-        return register_forall(var_snapshot, substitute(body_snapshot, inner_subst));
+        inner_subst.erase(ft->var.index);
+        return register_forall(ft->var, substitute(ft->body, inner_subst));
     }
     case TypeTag::LINEAR: {
         auto* lt = linear_of(ty);
         if (!lt) return ty;
-        // Snapshot before recursion: register_linear() can reallocate entries_.
-        TypeId inner_snapshot = lt->inner;
-        return register_linear(substitute(inner_snapshot, subst));
+        return register_linear(substitute(lt->inner, subst));
     }
     case TypeTag::MODULE: {
         auto* mt = module_of(ty);
         if (!mt) return ty;
-        // Snapshot before recursion: any substitute() / register_module() may
-        // reallocate entries_, invalidating mt.
-        auto members_snapshot = mt->members;
-        auto type_params_snapshot = mt->type_params;
-        auto type_param_vars_snapshot = mt->type_param_vars;
         ModuleType new_mt;
-        new_mt.members.reserve(members_snapshot.size());
-        for (auto& [n, t] : members_snapshot)
+        new_mt.members.reserve(mt->members.size());
+        for (auto& [n, t] : mt->members)
             new_mt.members.push_back({n, substitute(t, subst)});
-        new_mt.type_params = std::move(type_params_snapshot);
-        new_mt.type_param_vars.reserve(type_param_vars_snapshot.size());
-        for (auto& v : type_param_vars_snapshot)
+        new_mt.type_params = mt->type_params;
+        new_mt.type_param_vars.reserve(mt->type_param_vars.size());
+        for (auto& v : mt->type_param_vars)
             new_mt.type_param_vars.push_back(substitute(v, subst));
         return register_module(std::move(new_mt));
     }
     case TypeTag::VARIANT: {
         auto* vt = variant_of(ty);
         if (!vt) return ty;
-        // Snapshot before recursion: substitute() / register_variant() may
-        // reallocate entries_, invalidating vt.
-        auto variants_snapshot = vt->variants;
         VariantType new_vt;
-        new_vt.variants.reserve(variants_snapshot.size());
-        for (auto& [name, args] : variants_snapshot) {
+        new_vt.variants.reserve(vt->variants.size());
+        for (auto& [name, args] : vt->variants) {
             std::vector<TypeId> new_args;
             new_args.reserve(args.size());
             for (auto& a : args)
@@ -633,12 +615,9 @@ TypeId TypeRegistry::substitute(TypeId ty,
     case TypeTag::RECORD: {
         auto* rt = record_of(ty);
         if (!rt) return ty;
-        // Snapshot before recursion: substitute() / register_record() may
-        // reallocate entries_, invalidating rt.
-        auto fields_snapshot = rt->fields;
         RecordType new_rt;
-        new_rt.fields.reserve(fields_snapshot.size());
-        for (auto& [name, type] : fields_snapshot)
+        new_rt.fields.reserve(rt->fields.size());
+        for (auto& [name, type] : rt->fields)
             new_rt.fields.push_back({name, substitute(type, subst)});
         return register_record(std::move(new_rt));
     }
@@ -666,7 +645,7 @@ std::vector<TypeId> TypeRegistry::free_vars(TypeId id) const {
             stack.push_back(ft->body);
             continue;
         }
-        if (entries_[cur.index].tag == TypeTag::TYPE_VAR) {
+        if (entries_[cur.index]->tag == TypeTag::TYPE_VAR) {
             if (!bound.contains(cur.index))
                 result.push_back(cur); // preserve exact TypeId with generation
             continue;
@@ -797,14 +776,14 @@ std::string TypeRegistry::format_type(TypeId id) const {
 void TypeRegistry::register_adt_constructors(TypeId type_id,
                                               std::vector<std::string> constructors) {
     if (type_id.valid() && type_id.index < entries_.size()) {
-        entries_[type_id.index].adt_constructors = std::move(constructors);
+        entries_[type_id.index]->adt_constructors = std::move(constructors);
     }
 }
 
 const std::vector<std::string>* TypeRegistry::get_adt_constructors(TypeId type_id) const {
     if (type_id.valid() && type_id.index < entries_.size() &&
-        entries_[type_id.index].adt_constructors.has_value()) {
-        return &(*entries_[type_id.index].adt_constructors);
+        entries_[type_id.index]->adt_constructors.has_value()) {
+        return &(*entries_[type_id.index]->adt_constructors);
     }
     return nullptr;
 }
@@ -825,6 +804,10 @@ std::uint32_t TypeRegistry::compact() {
     // after clear()).
     entries_.clear();
     entries_.shrink_to_fit();
+    // Reset the entry arena so all the old Entry storage is released.
+    // (The index→pointer map is what gets reused; the pointed-to
+    // Entries themselves lived in arena_ chunks.)
+    arena_.reset();
     name_to_id_.clear();
     name_to_id_.rehash(0);  // rehash to smallest bucket count
     // Re-register the 9 predefined types so the basic lookups work.

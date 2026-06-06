@@ -116,6 +116,110 @@ std::string check_compute_kind(const std::string& input) {
     return summary;
 }
 
+// ── TypeRegistry stable-storage regression tests ─────────────────
+//
+// Background: commit 334c7d2 fixed a heap-use-after-free in
+// TypeRegistry::instantiate_forall / substitute where std::vector<Entry>
+// reallocated during a recursive call, invalidating raw pointers
+// obtained via *_of(). The fix introduced TypeEntryArena (chunk-based
+// bump allocator) which keeps Entry* stable across push_back.
+//
+// These tests would have crashed (or tripped ASAN) under the old
+// std::vector<Entry> design. They pre-fill the registry with enough
+// entries to force the arena to grow past several chunk boundaries,
+// then exercise the previously-failing patterns (instantiate_forall,
+// substitute). The pointers obtained from forall_of() etc. must
+// remain valid for the duration of the call.
+//
+bool test_type_registry_stable_storage() {
+    using aura::core::TypeId;
+    using aura::core::TypeRegistry;
+    using aura::core::TypeTag;
+    using aura::core::ModuleType;
+
+    TypeRegistry reg;
+
+    // ── Pre-fill: force several arena chunk reallocations ──
+    // (TypeEntryArena chunks double up to 256 KB, so 4096 small
+    // entries trigger 5-6 chunk boundaries.)
+    constexpr int kPrefill = 4096;
+    for (int i = 0; i < kPrefill; ++i) {
+        reg.make_var("prefill_" + std::to_string(i));
+    }
+
+    auto int_id = reg.lookup_type("Int");
+    if (!int_id.valid()) {
+        std::println(std::cerr, "STABLE FAIL: Int type not found after prefill");
+        return false;
+    }
+
+    // ── 1. instantiate_forall with fresh-var branch (the original crash) ──
+    // Build: ∀a. (a, Int) -> Int  and instantiate with {Int}
+    auto var_a = reg.make_var("a");
+    auto body1 = reg.register_func({var_a, int_id}, int_id);
+    auto forall1 = reg.register_forall(var_a, body1);
+    auto inst1 = reg.instantiate_forall(forall1, {int_id});
+    if (!inst1.valid()) {
+        std::println(std::cerr, "STABLE FAIL: instantiate_forall returned invalid");
+        return false;
+    }
+
+    // ── 2. substitute on a FUNC type that has a type-var arg ──
+    // The recursive substitute() pushes new FUNC entries; the pointer
+    // to the original FUNC's args must stay valid through those pushes.
+    auto f_id = reg.register_func({var_a}, int_id);
+    std::unordered_map<std::uint32_t, TypeId> subst;
+    subst[var_a.index] = int_id;
+    auto sub = reg.substitute(f_id, subst);
+    if (!sub.valid()) {
+        std::println(std::cerr, "STABLE FAIL: substitute returned invalid");
+        return false;
+    }
+
+    // ── 3. substitute on a MODULE type with mixed members ──
+    // The module's members contain type vars; substitute must
+    // recurse through register_module() without invalidating the
+    // pointer it obtained via module_of().
+    ModuleType mt;
+    mt.members.push_back({"x", var_a});
+    mt.members.push_back({"y", int_id});
+    mt.members.push_back({"z", var_a});
+    auto mod_id = reg.register_module(std::move(mt));
+    auto sub_mod = reg.substitute(mod_id, subst);
+    if (!sub_mod.valid()) {
+        std::println(std::cerr, "STABLE FAIL: substitute on module returned invalid");
+        return false;
+    }
+
+    // ── 4. compact() must release arena storage ──
+    std::uint32_t reclaimed = reg.compact();
+    if (reclaimed == 0) {
+        std::println(std::cerr, "STABLE FAIL: compact() reclaimed 0 entries");
+        return false;
+    }
+    // After compact, Int still resolves (predefined types re-registered
+    // with a bumped generation). We just check that lookup works and
+    // returns a valid, in-range TypeId — the generation matches whatever
+    // the new Int got on re-registration.
+    auto int_after = reg.lookup_type("Int");
+    if (!int_after.valid() || int_after.index != 1) {
+        std::println(std::cerr, "STABLE FAIL: Int not resolvable after compact");
+        return false;
+    }
+
+    // ── 5. post-compact instantiate_forall still works ──
+    auto var_b = reg.make_var("b");
+    auto body2 = reg.register_func({var_b, int_id}, int_id);
+    auto forall2 = reg.register_forall(var_b, body2);
+    auto inst2 = reg.instantiate_forall(forall2, {int_id});
+    if (!inst2.valid()) {
+        std::println(std::cerr, "STABLE FAIL: instantiate_forall failed after compact");
+        return false;
+    }
+
+    return true;
+}
+
 // ── Quote test ─────────────────────────────────────────────────
 bool test_quote() {
     aura::ast::ASTArena arena(4096);
@@ -646,6 +750,10 @@ int main() {
 
     if (test_arena_group()) { std::println("ARENA OK: group"); ++mp_passed; }
     else { std::println(std::cerr, "ARENA FAIL: group"); ++mp_failed; }
+
+    // TypeEntryArena regression: must not UAF across reallocations.
+    if (test_type_registry_stable_storage()) { std::println("STABLE OK: type-registry"); ++mp_passed; }
+    else { std::println(std::cerr, "STABLE FAIL: type-registry"); ++mp_failed; }
 
     // Demo: print stats from a real compilation
     {
