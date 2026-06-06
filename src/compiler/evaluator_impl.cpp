@@ -4006,6 +4006,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     // Replaces the value of a node. The type of new-value must match the
     // target node: int → LiteralInt, float → LiteralFloat, string → Variable/LiteralString.
     primitives_.add("mutate:replace-value", [this](std::span<const EvalValue> a) -> EvalValue {
+        std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
         auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
             auto mi = string_heap_.size(); string_heap_.push_back(m);
             auto ki = string_heap_.size(); string_heap_.push_back(k);
@@ -4086,6 +4087,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
 
     // (mutate:record-patch node-id op-name summary)
     primitives_.add("mutate:record-patch", [this](std::span<const EvalValue> a) -> EvalValue {
+        std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
         auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
             auto mi = string_heap_.size(); string_heap_.push_back(m);
             auto ki = string_heap_.size(); string_heap_.push_back(k);
@@ -5097,6 +5099,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     // on other nodes are preserved.
     primitives_.add("mutate:rebind", [this, mev](const auto& a) -> EvalValue {
         if (workspace_read_only_) return mev("read-only", "workspace is read-only");
+        std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
             !workspace_pool_)
             return mev("bad-arg", "usage: (mutate:rebind name new-code-string [summary])");
@@ -5645,6 +5648,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     // Parses new body INTO the workspace FlatAST so all node IDs are valid.
     primitives_.add("mutate:set-body", [this, mev](const auto& a) -> EvalValue {
         if (workspace_read_only_) return mev("read-only", "workspace is read-only");
+        std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
             !workspace_pool_)
             return mev("bad-arg", "usage: (mutate:set-body name new-body-code [summary])");
@@ -5770,6 +5774,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     // The node entry remains in the FlatAST but is disconnected from the tree.
     // The tree walker in eval_flat skips NULL_NODE children.
     primitives_.add("mutate:remove-node", [this, mev](const auto& a) -> EvalValue {
+        std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
         defuse_version_++;
         aura::messaging::g_fiber_yield_mutation_boundary
                 ? aura::messaging::g_fiber_yield_mutation_boundary()
@@ -5806,6 +5811,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     // Position 0 = first child, child_count = append at end.
     // Parses code-string INTO workspace, preserving all existing nodes/IDs.
     primitives_.add("mutate:insert-child", [this, mev](const auto& a) -> EvalValue {
+        std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
         defuse_version_++;
         aura::messaging::g_fiber_yield_mutation_boundary
                 ? aura::messaging::g_fiber_yield_mutation_boundary()
@@ -5854,6 +5860,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     // (mutate:tweak-literal node-id delta "summary") — Tweak a LiteralInt by delta
     // Reads current value, adds delta, writes back. Simpler than read+replace-value.
     primitives_.add("mutate:tweak-literal", [this, mev](const auto& a) -> EvalValue {
+        std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
         defuse_version_++;
         aura::messaging::g_fiber_yield_mutation_boundary
                 ? aura::messaging::g_fiber_yield_mutation_boundary()
@@ -5902,6 +5909,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     //     (mutate:replace-pattern "(... (+ ... ...))" "...")
     //       → strips outer call, keeps only the first child
     primitives_.add("mutate:replace-pattern", [this, mev](const auto& a) -> EvalValue {
+        std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
         using namespace aura::ast;
         defuse_version_++;
         aura::messaging::g_fiber_yield_mutation_boundary
@@ -9064,6 +9072,7 @@ Evaluator::Evaluator() {
     //   Parses and inserts multiple child expressions at the given position.
     //   code-strings can be multiple arguments (variadic).
     primitives_.add("mutate:splice", [this](std::span<const EvalValue> a) -> EvalValue {
+        std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
         auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
             auto mi = string_heap_.size(); string_heap_.push_back(m);
             auto ki = string_heap_.size(); string_heap_.push_back(k);
@@ -9155,6 +9164,7 @@ Evaluator::Evaluator() {
     //     (mutate:wrap 3 "(let ((x _)) x)" "bind x")
     //       → wraps in let binding
     primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue {
+        std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
         auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
             auto mi = string_heap_.size(); string_heap_.push_back(m);
             auto ki = string_heap_.size(); string_heap_.push_back(k);
