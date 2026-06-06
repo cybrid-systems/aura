@@ -941,7 +941,7 @@ public:
             // to call IR-produced closures.
             evaluator_.set_closure_bridge([this,
                                            &ir_interp, &ir_mod](aura::compiler::ClosureId cid,
-                                                       const std::vector<types::EvalValue>& args)
+                                                       std::span<const types::EvalValue> args)
                                               -> std::optional<types::EvalValue> {
                 auto snap = ir_interp.inspect_closure(cid);
                 if (!snap)
@@ -1162,7 +1162,7 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         // to call IR-produced closures.
         evaluator_.set_closure_bridge([this,
                                        &ir_interp](aura::compiler::ClosureId cid,
-                                                   const std::vector<types::EvalValue>& args)
+                                                   std::span<const types::EvalValue> args)
                                           -> std::optional<types::EvalValue> {
             auto snap = ir_interp.inspect_closure(cid);
             if (!snap)

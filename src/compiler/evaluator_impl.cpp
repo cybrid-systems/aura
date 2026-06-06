@@ -99,7 +99,7 @@ using namespace types;
     return prev[n];
 }
 
-static std::string closest_match(std::string_view name, const std::vector<std::string>& candidates,
+static std::string closest_match(std::string_view name, std::span<const std::string> candidates,
                                  std::size_t max_dist = 3) {
     std::string best;
     std::size_t best_dist = max_dist + 1;
@@ -390,8 +390,8 @@ namespace {
         return is_void(v) || (is_int(v) && as_int(v) == 0);
     }
     // Format a value to string (same formatting as io_print_val but returns string)
-    static std::string fmt_val_to_string(const EvalValue& v, const std::vector<std::string>& heap,
-                                         const std::vector<Pair>& pairs, bool quote,
+    static std::string fmt_val_to_string(const EvalValue& v, std::span<const std::string> heap,
+                                         std::span<const Pair> pairs, bool quote,
                                          int depth = 0) {
         std::string out;
         auto app = [&](const auto&... args) { (out += ... += args); };
@@ -7928,7 +7928,7 @@ Evaluator::Evaluator() {
     };
 
     // Helper: build Aura result list from NodeIds
-    auto nodes_to_list = [this](const std::vector<DefUseIndex::NodeId>& nodes) -> EvalValue {
+    auto nodes_to_list = [this](std::span<const DefUseIndex::NodeId> nodes) -> EvalValue {
         EvalValue list = make_void();
         for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
             auto pid = pairs_.size();
@@ -8376,7 +8376,7 @@ Evaluator::Evaluator() {
     // ═══════════════════════════════════════════════════════════════
 
     // Helper: build Aura list from vector of strings
-    auto str_list_to_pairs = [this](const std::vector<std::string>& items) -> EvalValue {
+    auto str_list_to_pairs = [this](std::span<const std::string> items) -> EvalValue {
         EvalValue list = make_void();
         for (auto it = items.rbegin(); it != items.rend(); ++it) {
             auto idx = string_heap_.size();
@@ -11614,7 +11614,7 @@ Evaluator::Evaluator() {
 
         // Call a closure, return string result
         auto call_fn = [&](std::uint64_t cid,
-                           const std::vector<types::EvalValue>& args) -> std::string {
+                           std::span<const types::EvalValue> args) -> std::string {
             auto opt = apply_closure(cid, args);
             if (!opt)
                 return {};
@@ -12568,7 +12568,7 @@ Evaluator::Evaluator() {
 
         // Build a small Swiss-table hash. Inline copy of the (hash ...) primitive
         // pattern. Capacity 8 is enough for the 5-field hashes below.
-        auto build_hash = [&](const std::vector<std::pair<std::string, EvalValue>>& kv) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(8);
             if (!ht) return make_void();
             auto meta = ht->metadata();
@@ -13368,7 +13368,7 @@ EvalValue Evaluator::build_policy_hash(const MemoryPolicy& p) {
 
 // apply_closure — looks up closures_, foreign functions, or IR bridge
 std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid,
-                                                  const std::vector<EvalValue>& args) {
+                                                  std::span<const EvalValue> args) {
     // Check for foreign function closure (cid < g_ffi_funcs.size())
     if (cid < g_ffi_funcs.size()) {
         auto fidx = cid;
