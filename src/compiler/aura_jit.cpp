@@ -731,7 +731,21 @@ struct LLVMBuilder {
             case 44: /* IROpcode::BorrowOp */
             case 45: /* IROpcode::MutBorrowOp */
             case 47: /* IROpcode::RefCountOp */ {
-                store(inst.ops[0], load(inst.ops[1]));
+                // Issue #106: source invalidation. After a
+                // MoveOp the source slot is zeroed so a later
+                // DropOp on the source is a no-op (the runtime's
+                // drop helpers all bounds-check or check the
+                // IS_PAIR low-bit tag, and 0 fails both). For
+                // BorrowOp / MutBorrowOp / RefCountOp / LinearWrap
+                // the source remains valid, so we keep the simple
+                // store/load for those. MoveOp is split out below.
+                if (inst.opcode == 43 /* MoveOp */) {
+                    auto val = load(inst.ops[1]);
+                    store(inst.ops[0], val);
+                    store(inst.ops[1], c64(0));  // source invalidated
+                } else {
+                    store(inst.ops[0], load(inst.ops[1]));
+                }
                 return true;
             }
             case 46: /* IROpcode::DropOp */ {

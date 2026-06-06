@@ -867,6 +867,16 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 case IROpcode::MoveOp: {
                     // Move ownership: decrement source refcount, pass value through
                     // Runtime check: double-move detection
+                    // Issue #106: source invalidation. After a move,
+                    // the source slot is zeroed so a subsequent
+                    // DropOp on the source becomes a no-op (the
+                    // runtime's drop pair/cell/closure helpers all
+                    // bounds-check or check the IS_PAIR low-bit tag,
+                    // and 0 fails both checks). For linear values
+                    // the linear_heap_ entry is already erased /
+                    // ref-count-decremented above; clearing the
+                    // local slot makes the no-double-drop invariant
+                    // explicit in the IR.
                     auto val = locals[ops[1]];
                     if (types::is_linear(val)) {
                         auto lin_id = types::as_linear_id(val);
@@ -891,6 +901,9 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     } else {
                         locals[ops[0]] = val;
                     }
+                    // Source slot is now invalid — clear it so a
+                    // later DropOp on this slot is a no-op.
+                    locals[ops[1]] = types::make_int(0);
                     break;
                 }
                 case IROpcode::BorrowOp: {
