@@ -82,3 +82,60 @@ jobs:
         else
           echo "No direct leaks detected ✓"
         fi
+
+
+  # ASAN-full: run the bash test suite + unit tests under
+  # AddressSanitizer. Catches heap-use-after-free / heap-buffer-overflow
+  # / stack-buffer-overflow that the regular build misses.
+  #
+  # Why this job exists: commit 334c7d2 fixed a UAF in TypeRegistry's
+  # std::vector<Entry> storage, and c8ee203 replaced the storage with
+  # a stable-address TypeEntryArena. The bash suite's emit:range /
+  # emit:factorial tests were the original trigger. Running the same
+  # tests under ASAN guarantees that any future UAF in the type
+  # registry (or anywhere else) gets caught before merging, not just
+  # when a CI machine happens to have the right memory layout.
+  #
+  # LeakSanitizer is disabled: there are pre-existing leaks (tracked
+  # separately) and we only want UAFs here. halt_on_error=1 fails
+  # fast on the first error.
+  asan-tests:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/cybrid-systems/dev:v1.0.2
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install pexpect for CI
+      run: |
+        pip install --break-system-packages pexpect
+
+    - name: Configure ASAN build
+      run: |
+        mkdir -p build_asan
+        cd build_asan
+        cmake -DCMAKE_BUILD_TYPE=Debug \
+              -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer" \
+              -G Ninja ..
+        echo "✓ ASAN configure OK"
+
+    - name: Build with ASAN
+      run: |
+        cd build_asan
+        cmake --build . --target aura test_ir
+        echo "✓ ASAN build OK"
+
+    - name: Run unit tests (test_ir) under ASAN
+      env:
+        ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1:print_stacktrace=1:halt_on_error=1"
+      run: |
+        python3 build.py test unit
+        echo "✓ unit tests clean under ASAN"
+
+    - name: Run emit-binary suite (bash) under ASAN
+      env:
+        ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1:print_stacktrace=1:halt_on_error=1"
+      run: |
+        AURA=$(pwd)/build_asan/aura python3 build.py test bash
+        echo "✓ emit-binary suite clean under ASAN"
