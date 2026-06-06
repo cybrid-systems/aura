@@ -31,34 +31,69 @@ jobs:
     - name: Regression
       run: python3 build.py test regression
 
-  # Issue #67 follow-up: ASAN job catches heap leaks that the regular
-  # test suite misses. Builds with -fsanitize=address and runs
-  # tests/multi_session_leak_test.aura which loads 50 modules with
-  # (gc-module ...) between iterations and asserts memory growth
-  # stays under 1MB. ASAN additionally reports any leak at
-  # process exit (even if the functional test passes).
-  memory:
+  # Shared ASAN build. Both downstream jobs (memory + asan-tests)
+  # need the same ASAN-instrumented binaries (aura + test_ir) — without
+  # this shared step, each would re-run the cmake + ninja pass
+  # (~3-5 min on a CI runner, dominated by aura's C++ module graph).
+  #
+  # Binaries are uploaded as artifacts so the test jobs run them in
+  # the standard path (./build_asan/aura, ./build_asan/test_ir) and
+  # don't need to know they're coming from a download.
+  asan-build:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.1
+      image: ghcr.io/cybrid-systems/dev:v1.0.2
 
     steps:
     - uses: actions/checkout@v4
 
+    - name: Install pexpect for CI
+      run: pip install --break-system-packages pexpect
+
     - name: Configure ASAN build
-      # Mirror the local dev environment's build_asan configuration:
-      # -DCMAKE_BUILD_TYPE=Debug and CXXFLAGS=-fsanitize=address.
       run: |
         mkdir -p build_asan
         cd build_asan
-        cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer" -G Ninja ..
+        cmake -DCMAKE_BUILD_TYPE=Debug \
+              -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer" \
+              -G Ninja ..
         echo "✓ ASAN configure OK"
 
     - name: Build with ASAN
       run: |
         cd build_asan
-        cmake --build . --target aura
+        cmake --build . --target aura test_ir
         echo "✓ ASAN build OK"
+
+    - name: Upload ASAN binaries
+      uses: actions/upload-artifact@v4
+      with:
+        name: asan-binaries
+        path: |
+          build_asan/aura
+          build_asan/test_ir
+        if-no-files-found: error
+        retention-days: 1
+
+  # Issue #67 follow-up: ASAN leak tracking. Runs the multi-session
+  # leak test which loads 50 modules and asserts memory growth stays
+  # under 1MB. ASAN additionally reports any leak at process exit
+  # (even if the functional test passes) — surfaced in the log via
+  # ::notice:: for visibility but doesn't fail the build.
+  memory:
+    needs: [asan-build]
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/cybrid-systems/dev:v1.0.2
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Download ASAN binaries
+      uses: actions/download-artifact@v4
+      with:
+        name: asan-binaries
+        path: build_asan
 
     - name: Multi-session leak test
       run: |
@@ -83,7 +118,6 @@ jobs:
           echo "No direct leaks detected ✓"
         fi
 
-
   # ASAN-full: run the bash test suite + unit tests under
   # AddressSanitizer. Catches heap-use-after-free / heap-buffer-overflow
   # / stack-buffer-overflow that the regular build misses.
@@ -100,6 +134,7 @@ jobs:
   # separately) and we only want UAFs here. halt_on_error=1 fails
   # fast on the first error.
   asan-tests:
+    needs: [asan-build]
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/cybrid-systems/dev:v1.0.2
@@ -107,24 +142,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install pexpect for CI
-      run: |
-        pip install --break-system-packages pexpect
-
-    - name: Configure ASAN build
-      run: |
-        mkdir -p build_asan
-        cd build_asan
-        cmake -DCMAKE_BUILD_TYPE=Debug \
-              -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer" \
-              -G Ninja ..
-        echo "✓ ASAN configure OK"
-
-    - name: Build with ASAN
-      run: |
-        cd build_asan
-        cmake --build . --target aura test_ir
-        echo "✓ ASAN build OK"
+    - name: Download ASAN binaries
+      uses: actions/download-artifact@v4
+      with:
+        name: asan-binaries
+        path: build_asan
 
     - name: Run unit tests (test_ir) under ASAN
       # test_ir lives in build_asan/, not build/ (build.py test unit
