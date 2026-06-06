@@ -10424,10 +10424,25 @@ Evaluator::Evaluator() {
     });
 
     // Shared result map for fiber:spawn ↔ fiber:join communication.
-    // fiber:spawn stores a shared_ptr<optional<EvalValue>> keyed by fiber ID.
-    // The fiber closure writes its result into the pointer; fiber:join reads it.
-    static std::unordered_map<int64_t, std::shared_ptr<std::optional<EvalValue>>>
-        s_fiber_results;
+    // #109 5b: each entry carries a `ready` flag protected by
+    // s_fiber_results_mtx_, plus a process-wide condition variable
+    // s_fiber_results_cv_. The flag is the happens-before edge: the
+    // worker writes the result, takes the lock, sets ready=true, and
+    // notifies. The waiter observes ready=true (under the same lock)
+    // and only then reads the value. In stdin mode the waiter calls
+    // s_fiber_results_cv_.wait() and the OS thread blocks until
+    // notify — no busy poll, no 1ms sleep. In serve-async mode the
+    // waiter is a fiber in a user-space scheduler; cv.wait would
+    // park the whole scheduler thread, so we keep the yield+check
+    // pattern there. Switching serve-async to a proper eventfd
+    // wakeup is a scheduler-internal change (#109 follow-up).
+    struct FiberResult {
+        std::shared_ptr<std::optional<EvalValue>> value;
+        bool ready = false;
+    };
+    static std::unordered_map<int64_t, FiberResult> s_fiber_results;
+    static std::mutex s_fiber_results_mtx_;
+    static std::condition_variable s_fiber_results_cv_;
 
     // (fiber:spawn fn) — Spawn a fiber (async)
     // fn is a closure taking no arguments.
@@ -10441,8 +10456,22 @@ Evaluator::Evaluator() {
         int64_t fid = 0;
         // In serve-async mode: use g_fiber_spawn to create a real fiber
         if (aura::messaging::g_fiber_spawn) {
-            fid = aura::messaging::g_fiber_spawn([this, cid, result_ptr]() {
+            // #109 5b: must define complete_fiber AFTER fid is assigned
+            // because the lambda captures fid by value. Earlier drafts
+            // captured fid=0 and then reassigned fid, leaving the
+            // worker writing to s_fiber_results[0] while the joiner
+            // waited on s_fiber_results[<real fid>]. Same pattern below
+            // for the std::thread fallback — define the lambda where
+            // fid is in scope as a local.
+            fid = aura::messaging::g_fiber_spawn([this, cid, result_ptr, fid]() {
                 *result_ptr = apply_closure(cid, {});
+                {
+                    std::lock_guard<std::mutex> lock(s_fiber_results_mtx_);
+                    auto it = s_fiber_results.find(fid);
+                    if (it != s_fiber_results.end())
+                        it->second.ready = true;
+                }
+                s_fiber_results_cv_.notify_all();
             });
         }
         // Fallback (stdin mode): use std::thread
@@ -10450,14 +10479,28 @@ Evaluator::Evaluator() {
             // Thread counter for unique fiber IDs (negative = thread-based)
             static std::atomic<int64_t> thread_fiber_id{0};
             fid = -(++thread_fiber_id); // unique negative ID
-            s_fiber_results[fid] = result_ptr;
-            std::thread([this, cid, result_ptr, fid]() {
+            // Same lambda — defined inline so fid is captured at the
+            // final assigned value.
+            auto thread_body = [this, cid, result_ptr, fid]() {
                 *result_ptr = apply_closure(cid, {});
-            }).detach();
+                {
+                    std::lock_guard<std::mutex> lock(s_fiber_results_mtx_);
+                    auto it = s_fiber_results.find(fid);
+                    if (it != s_fiber_results.end())
+                        it->second.ready = true;
+                }
+                s_fiber_results_cv_.notify_all();
+            };
+            {
+                std::lock_guard<std::mutex> lock(s_fiber_results_mtx_);
+                s_fiber_results[fid] = FiberResult{result_ptr, false};
+            }
+            std::thread(thread_body).detach();
             return make_int(fid);
         }
         if (fid > 0) {
-            s_fiber_results[fid] = std::move(result_ptr);
+            std::lock_guard<std::mutex> lock(s_fiber_results_mtx_);
+            s_fiber_results[fid] = FiberResult{std::move(result_ptr), false};
             return make_int(fid);
         }
         return make_bool(false);
@@ -10523,31 +10566,57 @@ Evaluator::Evaluator() {
     });
 
     // (fiber:join fiber-id) — Wait for a fiber to complete and return its result
-    // Uses s_fiber_results (shared with fiber:spawn). Works in both serve
-    // and stdin modes (thread-based fibers spin-wait with small sleep).
+    // #109 5b: real blocking in stdin mode via std::condition_variable
+    // (OS thread blocks, wakes on notify — no busy poll, no 1ms sleep,
+    // no 200s CPU burn). In serve-async mode the waiter is a fiber in
+    // a user-space scheduler; cv.wait would park the whole scheduler
+    // thread, so we keep the yield+check pattern there. Both paths
+    // share the same s_fiber_results entry / ready flag.
     primitives_.add("fiber:join", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
         auto fid = static_cast<int64_t>(as_int(a[0]));
-        for (int iter = 0; iter < 200000; ++iter) {
+
+        auto is_ready = [fid] {
             auto it = s_fiber_results.find(fid);
-            if (it != s_fiber_results.end()) {
-                auto& result_ptr = it->second;
-                if (result_ptr && result_ptr->has_value()) {
-                    auto result = std::move(**result_ptr);
-                    s_fiber_results.erase(it);
-                    return result;
+            return it != s_fiber_results.end() && it->second.ready;
+        };
+
+        if (aura::messaging::g_fiber_yield) {
+            // Serve-async: yield to scheduler; check on each resume.
+            // The 200s ceiling matches the previous busy-poll version.
+            for (int iter = 0; iter < 200000; ++iter) {
+                {
+                    std::lock_guard<std::mutex> lock(s_fiber_results_mtx_);
+                    if (is_ready())
+                        break;
                 }
-            }
-            // In serve mode: yield to fiber scheduler
-            if (aura::messaging::g_fiber_yield) {
                 aura::messaging::g_fiber_yield();
-            } else {
-                // In stdin mode: sleep briefly so the thread can make progress
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
+        } else {
+            // Stdin mode: real blocking wait on the cv. 200s ceiling
+            // via wait_for (returns false on timeout, true on notify).
+            std::unique_lock<std::mutex> lock(s_fiber_results_mtx_);
+            s_fiber_results_cv_.wait_for(
+                lock, std::chrono::seconds(200), is_ready);
         }
-        return make_void();
+
+        // Result is ready (or timed out). Fetch and return.
+        std::shared_ptr<std::optional<EvalValue>> result_ptr;
+        {
+            std::lock_guard<std::mutex> lock(s_fiber_results_mtx_);
+            auto it = s_fiber_results.find(fid);
+            if (it == s_fiber_results.end())
+                return make_void();
+            if (!it->second.ready || !it->second.value ||
+                !it->second.value->has_value()) {
+                s_fiber_results.erase(it);
+                return make_void();
+            }
+            result_ptr = std::move(it->second.value);
+            s_fiber_results.erase(it);
+        }
+        return std::move(**result_ptr);
     });
 
     // ── orch:metrics — scheduler metrics (Issue #32) ─────────────
