@@ -73,6 +73,25 @@ bool g_use_arena = true;
 // ── Shared pair storage (must be outside extern "C" for C++ type) ──
 std::vector<PairSlot*> g_pair_slots;
 
+// Heap-owned pair slots (subset of g_pair_slots allocated via malloc).
+// Tracked separately so process exit / session reset can free them
+// without touching the arena-allocated ones (which TL arena owns).
+// Pre-#131: these leaked silently. The static destructor below runs
+// at process exit and frees every entry, satisfying ASAN.
+std::vector<PairSlot*> g_owned_pair_slots_;
+
+namespace {
+struct PairSlotCleanup {
+    ~PairSlotCleanup() {
+        for (auto* p : g_owned_pair_slots_) {
+            std::free(p);
+        }
+        g_owned_pair_slots_.clear();
+    }
+};
+[[maybe_unused]] PairSlotCleanup g_pair_slot_cleanup;
+} // namespace
+
 // ── FlatHashTable index space (Phase 4c) ──
 std::vector<FlatHashTable*> g_hash_tables;
 
@@ -360,6 +379,7 @@ int64_t aura_alloc_pair(int64_t car, int64_t cdr) {
     slot->cdr = cdr;
     int64_t id = static_cast<int64_t>(g_pair_slots.size());
     g_pair_slots.push_back(slot);
+    g_owned_pair_slots_.push_back(slot);
     return (id << 2) | 1;
 }
 
