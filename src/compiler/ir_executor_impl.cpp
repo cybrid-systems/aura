@@ -213,8 +213,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 case IROpcode::ConstString: {
                     // Store string in both heaps: primitives (for primitives) and local (for
                     // coercion)
-                    auto& prim_heap =
-                        const_cast<std::vector<std::string>&>(primitives_.string_heap());
+                    auto& prim_heap = primitives_.string_heap();
                     auto prim_idx = prim_heap.size();
                     if (ops[1] < module_.string_pool.size()) {
                         prim_heap.push_back(module_.string_pool[ops[1]]);

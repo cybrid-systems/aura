@@ -19,7 +19,7 @@ public:
         ordered_names_.push_back(name);
     }
     void set_string_heap(std::vector<std::string>* h) { string_heap_ = h; }
-    const std::vector<std::string>& string_heap() const { return *string_heap_; }
+    std::span<const std::string> string_heap() const { return *string_heap_; }
     std::vector<std::string>& string_heap() { return *string_heap_; }
     // Slot-based lookup for primitive values
     const std::string& name_for_slot(std::size_t slot) const { return ordered_names_[slot]; }
