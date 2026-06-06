@@ -8588,6 +8588,82 @@ Evaluator::Evaluator() {
         return make_int(static_cast<std::int64_t>(id));
     });
 
+// ── Issue #107 part 3: AST versioning protocol primitive ──────────
+// (ast:version) — return a snapshot of the AST's current versioning
+// state under the workspace_mtx_ (shared lock).
+//
+// The protocol surface returned is:
+//   (defuse-version . (dirty-define-name ...) . (all-define-name ...))
+//   e.g.   (5 . ("f" "g") . ("f" "g" "h"))
+//
+// defuse-version is a monotonic counter incremented by every
+// mutate:* primitive. Caches (DefUseIndex, IR cache v2, JIT
+// symbol table) use it to detect staleness: a cache entry
+// recorded under version N is invalid once version > N.
+//
+// dirty-define-name is the list of top-level defines whose IR
+// cache entry is currently marked dirty (i.e., needs re-lower
+// on next eval-current :jit).
+//
+// all-define-name is the list of all top-level defines in the
+// workspace. The LLM can diff against the previous call's
+// list to detect new / removed defines.
+//
+// This primitive is the LLM-facing surface for the
+// incremental-cache invalidation protocol. A concurrent
+// mutate that mutates between defuse-version read and
+// dirty-list read would be racy in a non-locked
+// implementation; the shared_lock makes the read atomic.
+primitives_.add("ast:version", [this](const auto&) -> EvalValue {
+    std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
+    if (!workspace_flat_ || !workspace_pool_)
+        return make_void();
+
+    // Walk the workspace's top-level defines, collecting
+    // names + dirty state. The walk is O(N) in the workspace
+    // size; acceptable for occasional LLM version queries.
+    std::vector<std::string> all_names;
+    std::vector<std::string> dirty_names;
+    auto& flat = *workspace_flat_;
+    for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+        auto v = flat.get(id);
+        if (v.tag != aura::ast::NodeTag::Define) continue;
+        auto name_str = std::string(workspace_pool_->resolve(v.sym_id));
+        if (name_str.empty()) continue;
+        all_names.push_back(name_str);
+        if (is_define_dirty_fn_ && is_define_dirty_fn_(name_str))
+            dirty_names.push_back(name_str);
+    }
+
+    // Build the result list:
+    //   (defuse-version . (dirty ...) . (all ...))
+    auto& ev = *this;
+    (void)ev;
+    auto str_idx = [&](const std::string& s) -> EvalValue {
+        auto idx = string_heap_.size();
+        string_heap_.push_back(s);
+        return make_string(idx);
+    };
+    // Build (all ...) and (dirty ...) lists as nested pairs.
+    auto list_of = [&](const std::vector<std::string>& v) -> EvalValue {
+        EvalValue r = make_void();
+        for (auto it = v.rbegin(); it != v.rend(); ++it) {
+            auto pid = pairs_.size();
+            pairs_.push_back({str_idx(*it), r});
+            r = make_pair(pid);
+        }
+        return r;
+    };
+    auto dirty_list = list_of(dirty_names);
+    auto all_list = list_of(all_names);
+    // Pack: (defuse-version . (dirty ...) . (all ...))
+    auto v_pid = pairs_.size();
+    pairs_.push_back({make_int(static_cast<std::int64_t>(defuse_version_)), dirty_list});
+    auto v_pair = make_pair(v_pid);
+    auto final_pid = pairs_.size();
+    pairs_.push_back({v_pair, all_list});
+    return make_pair(final_pid);
+});
     // (ast:list-snapshots)
     //   → ((id "name") ...)  list of (snapshot-id . name) pairs
     primitives_.add("ast:list-snapshots", [this](const auto&) -> EvalValue {
@@ -17065,5 +17141,6 @@ Evaluator::~Evaluator() {
     // of trivially-destructible structs; clear() releases their heap.
     strategies_.clear();
 }
+
 
 } // namespace aura::compiler
