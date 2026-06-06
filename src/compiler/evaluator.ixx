@@ -131,8 +131,10 @@ public:
     Env& top_env() { return top_; }
     const std::vector<types::EvalValue>& cells() const { return cells_; }
     std::vector<types::EvalValue>& cells() { return cells_; }
-    const std::vector<Pair>& pairs() const { return pairs_; }
-    const std::vector<std::string>& keyword_table() const { return keyword_table_; }
+    std::span<const Pair> pairs() const { return pairs_; }
+    std::vector<Pair>& pairs() { return pairs_; }
+    std::span<const std::string> keyword_table() const { return keyword_table_; }
+    std::vector<std::string>& keyword_table() { return keyword_table_; }
 
     // IR closure bridge: called when a closure id is not in closures_.
     using ClosureBridgeFn = std::function<std::optional<EvalValue>(
