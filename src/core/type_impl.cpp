@@ -420,10 +420,10 @@ TypeId TypeRegistry::instantiate_forall(TypeId forall_id,
 // for the full design. The public is_subtype delegates to the depth-limited
 // helper so the public API stays clean.
 bool TypeRegistry::is_subtype(TypeId sub, TypeId sup) const {
-    return is_subtype_impl(sub, sup, 0);
+    return const_cast<TypeRegistry*>(this)->is_subtype_impl(sub, sup, 0);
 }
 
-bool TypeRegistry::is_subtype_impl(TypeId sub, TypeId sup, int depth) const {
+bool TypeRegistry::is_subtype_impl(TypeId sub, TypeId sup, int depth) {
     // Safety net: pathological types could cycle if someone interns them
     // (shouldn't happen, but bounded recursion keeps us safe).
     if (depth > 64) return false;
@@ -527,9 +527,37 @@ bool TypeRegistry::is_subtype_impl(TypeId sub, TypeId sup, int depth) const {
             return true;
         }
         case TypeTag::FORALL: {
-            // Forall subtyping requires alpha-renaming + substitution.
-            // Out of scope for the initial fix (see design doc).
-            return false;
+            // Issue #99: polymorphic subtyping (TAPL §26).
+            //
+            // ∀α. S <: ∀β. T  iff  S[α := γ] <: T
+            // where γ is a fresh type variable that does not occur in
+            // either body. The intuition: the consumer of ∀α.S may pass
+            // any type for α; the producer of ∀β.T demands any type
+            // for β. ∀α.S is "more polymorphic" — it works for every
+            // choice of α — so it's a subtype of every instantiation
+            // of the universal.
+            //
+            // Both sub and sup must be FORALL here. Cross-tag cases:
+            //   - sub is FORALL, sup is not (e.g. sup=Int) → false.
+            //     A polymorphic value is not a monomorphic one without
+            //     explicit instantiation; the consumer of Int can't
+            //     accept a ∀α.α→α and pick a concrete arg.
+            //   - sub is non-FORALL, sup is FORALL → already rejected
+            //     by the sub_tag != sup_tag check above.
+            //   - Either is Dynamic → handled at the top of impl
+            //     (sup == dynamic_type() → true; sub == dynamic_type() → false).
+            auto* sub_forall = forall_of(sub);
+            auto* sup_forall = forall_of(sup);
+            if (!sub_forall || !sup_forall) return false;
+            // Instantiate sub's body: replace α with a fresh unnamed
+            // var γ. `instantiate` does alpha-renaming with capture
+            // avoidance (nested FORALLs in sub's body preserve their
+            // own binders via the subst-erase dance in substitute()).
+            TypeId sub_inst = instantiate(sub, [this]() { return make_var(""); });
+            // Now check: instantiated sub-body <: sup-body. The bodies
+            // may themselves be FORALLs (curried polymorphism) —
+            // recurse and let this same case handle them.
+            return is_subtype_impl(sub_inst, sup_forall->body, depth + 1);
         }
         case TypeTag::CAPABILITY: {
             // Cap{e1,e2,...} <: Cap{e1',e2',...} iff sup's effects are a
