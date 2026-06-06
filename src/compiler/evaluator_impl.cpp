@@ -207,7 +207,7 @@ namespace {
 Primitives::Primitives() {
     // ── Variadic arithmetic ────────────────────────────────────────
     // (+) → 0, (+ x) → x, (+ x y ...) → sum; float if any arg is float
-    table_["+"] = [this](auto& a) {
+    table_["+"] = [this](std::span<const EvalValue> a) {
         if (a.empty())
             return make_int(0);
         bool any_f = false;
@@ -229,7 +229,7 @@ Primitives::Primitives() {
         return make_int(r);
     };
     // (-) → 0, (- x) → -x, (- x y ...) → x - y - z - ...
-    table_["-"] = [this](auto& a) {
+    table_["-"] = [this](std::span<const EvalValue> a) {
         if (a.empty())
             return make_int(0);
         bool any_f = false;
@@ -257,7 +257,7 @@ Primitives::Primitives() {
         return make_int(r);
     };
     // (*) → 1, (* x) → x, (* x y ...) → product; float if any arg is float
-    table_["*"] = [this](auto& a) {
+    table_["*"] = [this](std::span<const EvalValue> a) {
         if (a.empty())
             return make_int(1);
         bool any_f = false;
@@ -279,7 +279,7 @@ Primitives::Primitives() {
         return make_int(r);
     };
     // (/) → 1, (/ x) → 1.0/x (float reciprocal), (/ x y ...) → x / y / z / ...
-    table_["/"] = [this](auto& a) {
+    table_["/"] = [this](std::span<const EvalValue> a) {
         if (a.empty())
             return make_int(1);
         auto to_f = [this](const EvalValue& v) {
@@ -333,42 +333,42 @@ Primitives::Primitives() {
                 return make_bool(false);
         return make_bool(true);
     };
-    table_["="] = [chain_cmp](auto& a) {
+    table_["="] = [chain_cmp](std::span<const EvalValue> a) {
         return chain_cmp(
             a, [](auto x, auto y) { return x == y; }, [](auto x, auto y) { return x == y; });
     };
-    table_["<"] = [chain_cmp](auto& a) {
+    table_["<"] = [chain_cmp](std::span<const EvalValue> a) {
         return chain_cmp(
             a, [](auto x, auto y) { return x < y; }, [](auto x, auto y) { return x < y; });
     };
-    table_[">"] = [chain_cmp](auto& a) {
+    table_[">"] = [chain_cmp](std::span<const EvalValue> a) {
         return chain_cmp(
             a, [](auto x, auto y) { return x > y; }, [](auto x, auto y) { return x > y; });
     };
-    table_["<="] = [chain_cmp](auto& a) {
+    table_["<="] = [chain_cmp](std::span<const EvalValue> a) {
         return chain_cmp(
             a, [](auto x, auto y) { return x <= y; }, [](auto x, auto y) { return x <= y; });
     };
-    table_[">="] = [chain_cmp](auto& a) {
+    table_[">="] = [chain_cmp](std::span<const EvalValue> a) {
         return chain_cmp(
             a, [](auto x, auto y) { return x >= y; }, [](auto x, auto y) { return x >= y; });
     };
     // Ghuloum Step 9: booleans
-    table_["not"] = [](auto& a) { return make_bool(a.empty() || !is_truthy(a[0])); };
-    table_["and"] = [](auto& a) {
+    table_["not"] = [](std::span<const EvalValue> a) { return make_bool(a.empty() || !is_truthy(a[0])); };
+    table_["and"] = [](std::span<const EvalValue> a) {
         for (std::size_t i = 0; i + 1 < a.size(); ++i)
             if (!is_truthy(a[i]))
                 return a[i];
         return a.empty() ? make_int(1) : a.back();
     };
-    table_["or"] = [](auto& a) {
+    table_["or"] = [](std::span<const EvalValue> a) {
         for (std::size_t i = 0; i + 1 < a.size(); ++i)
             if (is_truthy(a[i]))
                 return a[i];
         return a.empty() ? make_int(0) : a.back();
     };
-    table_["eq?"] = [](auto& a) { return make_bool(a.size() >= 2 && a[0] == a[1]); };
-    table_["current-time"] = [](auto& a) {
+    table_["eq?"] = [](std::span<const EvalValue> a) { return make_bool(a.size() >= 2 && a[0] == a[1]); };
+    table_["current-time"] = [](std::span<const EvalValue> a) {
         (void)a;
         return make_int(static_cast<std::int64_t>(::time(nullptr)));
     };
@@ -660,13 +660,13 @@ void Evaluator::init_pair_primitives() {
         return make_int(c);
     });
     // ── String operations ─────────────────────────────────────────
-    primitives_.add("string-copy", [this](const auto& a) {
+    primitives_.add("string-copy", [this](std::span<const EvalValue> a) {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
         // Strings are immutable-like; just return the same reference
         return a[0];
     });
-    primitives_.add("string-fill!", [this](const auto& a) {
+    primitives_.add("string-fill!", [this](std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1]))
             return make_void();
         auto idx = as_string_idx(a[0]);
@@ -676,7 +676,7 @@ void Evaluator::init_pair_primitives() {
         std::fill(string_heap_[idx].begin(), string_heap_[idx].end(), fill_char);
         return make_void();
     });
-    primitives_.add("string->list", [this](const auto& a) {
+    primitives_.add("string->list", [this](std::span<const EvalValue> a) {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
         auto idx = as_string_idx(a[0]);
@@ -692,7 +692,7 @@ void Evaluator::init_pair_primitives() {
         }
         return result;
     });
-    primitives_.add("list->string", [this](const auto& a) {
+    primitives_.add("list->string", [this](std::span<const EvalValue> a) {
         if (a.empty())
             return make_bool(false);
         auto v = a[0];
@@ -715,7 +715,7 @@ void Evaluator::init_pair_primitives() {
         string_heap_.push_back(result);
         return make_string(sidx);
     });
-    primitives_.add("string-join", [this](const auto& a) {
+    primitives_.add("string-join", [this](std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_string(a[1]))
             return make_bool(false);
         auto delim_idx = as_string_idx(a[1]);
@@ -747,12 +747,12 @@ void Evaluator::init_pair_primitives() {
     });
 
     // ── Pair / List / String primitives ─────────────────────────
-    primitives_.add("cons", [this](const auto& a) {
+    primitives_.add("cons", [this](std::span<const EvalValue> a) {
         auto id = pairs_.size();
         pairs_.push_back({a[0], a[1]});
         return make_pair(id);
     });
-    primitives_.add("car", [this](const auto& a) {
+    primitives_.add("car", [this](std::span<const EvalValue> a) {
         if (a.empty() || !is_pair(a[0])) {
             do {
                 auto __e_sidx = string_heap_.size();
@@ -770,7 +770,7 @@ void Evaluator::init_pair_primitives() {
             return types::EvalValue{g_pair_slots[id]->car};
         return make_int(0);
     });
-    primitives_.add("cdr", [this](const auto& a) {
+    primitives_.add("cdr", [this](std::span<const EvalValue> a) {
         if (a.empty() || !is_pair(a[0])) {
             do {
                 auto __e_sidx = string_heap_.size();
@@ -795,7 +795,7 @@ void Evaluator::init_pair_primitives() {
     });
 
     // ── Cadr / Caddr shorthands ────────────────────────────────────
-    primitives_.add("caar", [this](const auto& a) -> EvalValue {
+    primitives_.add("caar", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_pair(a[0]))
             return make_void();
         auto idx = as_pair_idx(a[0]);
@@ -806,7 +806,7 @@ void Evaluator::init_pair_primitives() {
             return make_void();
         return pairs_[as_pair_idx(c)].car;
     });
-    primitives_.add("cadr", [this](const auto& a) -> EvalValue {
+    primitives_.add("cadr", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_pair(a[0]))
             return make_void();
         auto idx = as_pair_idx(a[0]);
@@ -817,7 +817,7 @@ void Evaluator::init_pair_primitives() {
             return make_void();
         return pairs_[as_pair_idx(c)].car;
     });
-    primitives_.add("cdar", [this](const auto& a) -> EvalValue {
+    primitives_.add("cdar", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_pair(a[0]))
             return make_void();
         auto idx = as_pair_idx(a[0]);
@@ -828,7 +828,7 @@ void Evaluator::init_pair_primitives() {
             return make_void();
         return pairs_[as_pair_idx(c)].cdr;
     });
-    primitives_.add("cddr", [this](const auto& a) -> EvalValue {
+    primitives_.add("cddr", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_pair(a[0]))
             return make_void();
         auto idx = as_pair_idx(a[0]);
@@ -839,7 +839,7 @@ void Evaluator::init_pair_primitives() {
             return make_void();
         return pairs_[as_pair_idx(c)].cdr;
     });
-    primitives_.add("caaar", [this](const auto& a) -> EvalValue {
+    primitives_.add("caaar", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_pair(a[0]))
             return make_void();
         auto idx = as_pair_idx(a[0]);
@@ -853,7 +853,7 @@ void Evaluator::init_pair_primitives() {
             return make_void();
         return pairs_[as_pair_idx(d)].car;
     });
-    primitives_.add("caadr", [this](const auto& a) -> EvalValue {
+    primitives_.add("caadr", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_pair(a[0]))
             return make_void();
         auto idx = as_pair_idx(a[0]);
@@ -867,7 +867,7 @@ void Evaluator::init_pair_primitives() {
             return make_void();
         return pairs_[as_pair_idx(d)].car;
     });
-    primitives_.add("cadar", [this](const auto& a) -> EvalValue {
+    primitives_.add("cadar", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_pair(a[0]))
             return make_void();
         auto idx = as_pair_idx(a[0]);
@@ -881,7 +881,7 @@ void Evaluator::init_pair_primitives() {
             return make_void();
         return pairs_[as_pair_idx(d)].car;
     });
-    primitives_.add("caddr", [this](const auto& a) -> EvalValue {
+    primitives_.add("caddr", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_pair(a[0]))
             return make_void();
         auto idx = as_pair_idx(a[0]);
@@ -895,7 +895,7 @@ void Evaluator::init_pair_primitives() {
             return make_void();
         return pairs_[as_pair_idx(d)].car;
     });
-    primitives_.add("cdaar", [this](const auto& a) -> EvalValue {
+    primitives_.add("cdaar", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_pair(a[0]))
             return make_void();
         auto idx = as_pair_idx(a[0]);
@@ -909,7 +909,7 @@ void Evaluator::init_pair_primitives() {
             return make_void();
         return pairs_[as_pair_idx(d)].cdr;
     });
-    primitives_.add("cdadr", [this](const auto& a) -> EvalValue {
+    primitives_.add("cdadr", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_pair(a[0]))
             return make_void();
         auto idx = as_pair_idx(a[0]);
@@ -923,7 +923,7 @@ void Evaluator::init_pair_primitives() {
             return make_void();
         return pairs_[as_pair_idx(d)].cdr;
     });
-    primitives_.add("cddar", [this](const auto& a) -> EvalValue {
+    primitives_.add("cddar", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_pair(a[0]))
             return make_void();
         auto idx = as_pair_idx(a[0]);
@@ -937,7 +937,7 @@ void Evaluator::init_pair_primitives() {
             return make_void();
         return pairs_[as_pair_idx(d)].cdr;
     });
-    primitives_.add("cdddr", [this](const auto& a) -> EvalValue {
+    primitives_.add("cdddr", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_pair(a[0]))
             return make_void();
         auto idx = as_pair_idx(a[0]);
@@ -953,7 +953,7 @@ void Evaluator::init_pair_primitives() {
     });
 
     // ── Mutable pair operations ───────────────────────────────────
-    primitives_.add("set-car!", [this](const auto& a) -> EvalValue {
+    primitives_.add("set-car!", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !is_pair(a[0]))
             return make_void();
         auto idx = as_pair_idx(a[0]);
@@ -964,7 +964,7 @@ void Evaluator::init_pair_primitives() {
         }
         return make_void();
     });
-    primitives_.add("set-cdr!", [this](const auto& a) -> EvalValue {
+    primitives_.add("set-cdr!", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !is_pair(a[0]))
             return make_void();
         auto idx = as_pair_idx(a[0]);
@@ -976,7 +976,7 @@ void Evaluator::init_pair_primitives() {
         return make_void();
     });
 
-    primitives_.add("string?", [this](const auto& a) {
+    primitives_.add("string?", [this](std::span<const EvalValue> a) {
         if (a.empty())
             return make_bool(false);
         return make_bool(is_string(a[0]));
@@ -986,7 +986,7 @@ void Evaluator::init_pair_primitives() {
     // Supports: Int, Float, String, Bool, Void→null, Pair→array, Hash→obj
     // json-encode: convert Aura value to JSON string
     // (json-encode value) → string
-    primitives_.add("json-encode", [this](const auto& a) -> EvalValue {
+    primitives_.add("json-encode", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty()) {
             auto sid = string_heap_.size();
             string_heap_.push_back("null");
@@ -1094,7 +1094,7 @@ void Evaluator::init_pair_primitives() {
     });
     // json-get-string: extract string value of a JSON field
     // (json-get-string json-str field-name) → string
-    primitives_.add("json-get-string", [this](const auto& a) -> EvalValue {
+    primitives_.add("json-get-string", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
             return make_void();
         auto json = string_heap_[types::as_string_idx(a[0])];
@@ -1137,7 +1137,7 @@ void Evaluator::init_pair_primitives() {
 
     // json-parse: parse JSON string into Aura value
     // (json-parse json-str) → value (Int/Float/String/Bool/Void/List/Hash)
-    primitives_.add("json-parse", [this](const auto& a) -> EvalValue {
+    primitives_.add("json-parse", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0]))
             return make_void();
         auto json_str = string_heap_[types::as_string_idx(a[0])];
@@ -1366,7 +1366,7 @@ void Evaluator::init_pair_primitives() {
         return parse_value();
     });
 
-    primitives_.add("string-append", [this](const auto& a) {
+    primitives_.add("string-append", [this](std::span<const EvalValue> a) {
         std::string result;
         for (auto& v : a) {
             if (is_string(v)) {
@@ -1381,7 +1381,7 @@ void Evaluator::init_pair_primitives() {
         string_heap_.push_back(std::move(result));
         return make_string(id);
     });
-    primitives_.add("string-length", [this](const auto& a) {
+    primitives_.add("string-length", [this](std::span<const EvalValue> a) {
         if (a.empty())
             return make_int(0);
         std::size_t len = 0;
@@ -1393,7 +1393,7 @@ void Evaluator::init_pair_primitives() {
         }
         return make_int(static_cast<std::int64_t>(len));
     });
-    primitives_.add("string-ref", [this](const auto& a) {
+    primitives_.add("string-ref", [this](std::span<const EvalValue> a) {
         if (a.size() < 2) {
             auto __i = string_heap_.size();
             string_heap_.push_back("string-ref: too few args");
@@ -1421,7 +1421,7 @@ void Evaluator::init_pair_primitives() {
             return make_int(static_cast<std::int64_t>(static_cast<unsigned char>(s[pos])));
         return make_int(0);
     });
-    primitives_.add("substring", [this](const auto& a) {
+    primitives_.add("substring", [this](std::span<const EvalValue> a) {
         if (a.size() < 3)
             return make_int(0);
         std::string s_buf;
@@ -1453,7 +1453,7 @@ void Evaluator::init_pair_primitives() {
         string_heap_.push_back(std::move(sub));
         return make_string(nid);
     });
-    primitives_.add("string=?", [this](const auto& a) {
+    primitives_.add("string=?", [this](std::span<const EvalValue> a) {
         if (a.size() < 2)
             return make_bool(false);
         auto to_str = [this](const EvalValue& v) -> std::string {
@@ -1467,7 +1467,7 @@ void Evaluator::init_pair_primitives() {
         };
         return make_bool(to_str(a[0]) == to_str(a[1]));
     });
-    primitives_.add("string<?", [this](const auto& a) {
+    primitives_.add("string<?", [this](std::span<const EvalValue> a) {
         if (a.size() < 2)
             return make_bool(false);
         auto to_str = [this](const EvalValue& v) -> std::string {
@@ -1481,7 +1481,7 @@ void Evaluator::init_pair_primitives() {
         };
         return make_bool(to_str(a[0]) < to_str(a[1]));
     });
-    primitives_.add("string->number", [this](const auto& a) {
+    primitives_.add("string->number", [this](std::span<const EvalValue> a) {
         if (a.size() < 1 || a.size() > 2)
             return make_int(0);
         auto to_str = [this](const EvalValue& v) -> std::string {
@@ -1502,7 +1502,7 @@ void Evaluator::init_pair_primitives() {
         }
     });
 
-    primitives_.add("string-index", [this](const auto& a) {
+    primitives_.add("string-index", [this](std::span<const EvalValue> a) {
         if (a.size() < 2)
             return make_int(-1);
         auto haystack = (is_string(a[0]) && as_string_idx(a[0]) < string_heap_.size())
@@ -1515,7 +1515,7 @@ void Evaluator::init_pair_primitives() {
         return make_int(pos != std::string::npos ? static_cast<std::int64_t>(pos) : -1);
     });
 
-    primitives_.add("number->string", [this](const auto& a) {
+    primitives_.add("number->string", [this](std::span<const EvalValue> a) {
         if (a.empty())
             return make_int(0);
         std::string s;
@@ -1540,7 +1540,7 @@ void Evaluator::init_pair_primitives() {
         string_heap_.push_back(std::move(s));
         return make_string(id);
     });
-    primitives_.add("string->number", [this](const auto& a) {
+    primitives_.add("string->number", [this](std::span<const EvalValue> a) {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
         auto i = as_string_idx(a[0]);
@@ -1571,7 +1571,7 @@ void Evaluator::init_pair_primitives() {
         }
         return make_bool(false);
     });
-    primitives_.add("list", [this](const auto& a) {
+    primitives_.add("list", [this](std::span<const EvalValue> a) {
         // Build proper list (pair chain ending with void)
         EvalValue result = make_void();
         for (auto it = a.rbegin(); it != a.rend(); ++it) {
@@ -1581,7 +1581,7 @@ void Evaluator::init_pair_primitives() {
         }
         return result;
     });
-    primitives_.add("list?", [this](const auto& a) {
+    primitives_.add("list?", [this](std::span<const EvalValue> a) {
         if (a.empty())
             return make_bool(true);
         auto v = a[0];
@@ -1598,7 +1598,7 @@ void Evaluator::init_pair_primitives() {
     primitives_.add("null?", [](const auto& a) {
         return make_bool(!a.empty() && (is_void(a[0]) || (is_int(a[0]) && as_int(a[0]) == 0)));
     });
-    primitives_.add("length", [this](const auto& a) {
+    primitives_.add("length", [this](std::span<const EvalValue> a) {
         if (a.empty())
             return make_int(0);
         auto v = a[0];
@@ -1614,7 +1614,7 @@ void Evaluator::init_pair_primitives() {
         }
         return make_int(n);
     });
-    primitives_.add("list-ref", [this](const auto& a) {
+    primitives_.add("list-ref", [this](std::span<const EvalValue> a) {
         if (a.size() < 2) {
             auto __s = string_heap_.size();
             string_heap_.push_back("list-ref: too few args");
@@ -1650,7 +1650,7 @@ void Evaluator::init_pair_primitives() {
     });
     // (member val list) — Find val in list using content equality (equal?)
     // Returns the tail of the list starting with val, or #f if not found
-    primitives_.add("member", [this](const auto& a) {
+    primitives_.add("member", [this](std::span<const EvalValue> a) {
         if (a.size() < 2)
             return make_int(0);
         auto& val = a[0];
@@ -1679,7 +1679,7 @@ void Evaluator::init_pair_primitives() {
         return make_int(0);
     });
     // (append list ...) — Variadic: concatenate all provided lists
-    primitives_.add("append", [this](const auto& a) {
+    primitives_.add("append", [this](std::span<const EvalValue> a) {
         if (a.empty())
             return make_void();
         if (a.size() < 2)
@@ -1726,7 +1726,7 @@ void Evaluator::init_pair_primitives() {
         }
         return result;
     });
-    primitives_.add("reverse", [this](const auto& a) {
+    primitives_.add("reverse", [this](std::span<const EvalValue> a) {
         if (a.empty())
             return make_int(0);
         auto v = a[0];
@@ -1744,7 +1744,7 @@ void Evaluator::init_pair_primitives() {
         }
         return result;
     });
-    primitives_.add("map", [this](const auto& a) {
+    primitives_.add("map", [this](std::span<const EvalValue> a) {
         // (map func list) — apply func to each element, collect results
         if (a.size() < 2 || is_void(a[1]))
             return make_void();
@@ -1801,7 +1801,7 @@ void Evaluator::init_pair_primitives() {
 
         return result;
     });
-    primitives_.add("filter", [this](const auto& a) {
+    primitives_.add("filter", [this](std::span<const EvalValue> a) {
         // (filter pred list) — keep elements where pred returns truthy
         if (a.size() < 2 || is_void(a[1]))
             return make_void();
@@ -1860,13 +1860,13 @@ void Evaluator::init_pair_primitives() {
     });
 
     // ── Vector primitives ─────────────────────────────────────────
-    primitives_.add("vector", [this](const auto& a) {
+    primitives_.add("vector", [this](std::span<const EvalValue> a) {
         std::vector<EvalValue> elems(a.begin(), a.end());
         auto idx = vector_heap_.size();
         vector_heap_.push_back(std::move(elems));
         return make_vector(idx);
     });
-    primitives_.add("vector-ref", [this](const auto& a) {
+    primitives_.add("vector-ref", [this](std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_vector(a[0])) {
             auto __s = string_heap_.size();
             string_heap_.push_back("vector-ref: not a vector");
@@ -1885,7 +1885,7 @@ void Evaluator::init_pair_primitives() {
         }
         return vector_heap_[idx][pos];
     });
-    primitives_.add("vector-set!", [this](const auto& a) {
+    primitives_.add("vector-set!", [this](std::span<const EvalValue> a) {
         if (a.size() < 3 || !is_vector(a[0])) {
             auto __s = string_heap_.size();
             string_heap_.push_back("vector-set!: not a vector");
@@ -1905,7 +1905,7 @@ void Evaluator::init_pair_primitives() {
         vector_heap_[idx][pos] = a[2];
         return make_void();
     });
-    primitives_.add("vector-length", [this](const auto& a) {
+    primitives_.add("vector-length", [this](std::span<const EvalValue> a) {
         if (a.empty() || !is_vector(a[0]))
             return make_int(0);
         auto idx = as_vector_idx(a[0]);
@@ -1913,12 +1913,12 @@ void Evaluator::init_pair_primitives() {
             return make_int(0);
         return make_int(static_cast<std::int64_t>(vector_heap_[idx].size()));
     });
-    primitives_.add("vector?", [this](const auto& a) {
+    primitives_.add("vector?", [this](std::span<const EvalValue> a) {
         if (a.empty())
             return make_bool(false);
         return make_bool(is_vector(a[0]));
     });
-    primitives_.add("make-vector", [this](const auto& a) {
+    primitives_.add("make-vector", [this](std::span<const EvalValue> a) {
         auto n = a.empty() ? 0 : static_cast<std::size_t>(as_int(a[0]));
         EvalValue init = a.size() > 1 ? a[1] : make_void();
         std::vector<EvalValue> elems(n, init);
@@ -1926,7 +1926,7 @@ void Evaluator::init_pair_primitives() {
         vector_heap_.push_back(std::move(elems));
         return make_vector(idx);
     });
-    primitives_.add("list->vector", [this](const auto& a) {
+    primitives_.add("list->vector", [this](std::span<const EvalValue> a) {
         std::vector<EvalValue> elems;
         if (!a.empty()) {
             auto v = a[0];
@@ -1942,7 +1942,7 @@ void Evaluator::init_pair_primitives() {
         vector_heap_.push_back(std::move(elems));
         return make_vector(idx);
     });
-    primitives_.add("vector->list", [this](const auto& a) {
+    primitives_.add("vector->list", [this](std::span<const EvalValue> a) {
         if (a.empty() || !is_vector(a[0]))
             return make_void();
         auto idx = as_vector_idx(a[0]);
@@ -1958,7 +1958,7 @@ void Evaluator::init_pair_primitives() {
     });
 
     // ── Hash table (Swiss table) primitives ──────────────────────
-    primitives_.add("hash", [this](const auto& a) {
+    primitives_.add("hash", [this](std::span<const EvalValue> a) {
         auto sh = &string_heap_;
         auto* ht = FlatHashTable::create(8);
         if (!ht) return make_void();
@@ -1999,7 +1999,7 @@ void Evaluator::init_pair_primitives() {
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
     });
-    primitives_.add("hash-ref", [this](const auto& a) {
+    primitives_.add("hash-ref", [this](std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_hash(a[0]))
             return make_void();
         auto hidx = as_hash_idx(a[0]);
@@ -2029,7 +2029,7 @@ void Evaluator::init_pair_primitives() {
     });
 
     // (hash-has-key? hash key) — Check if key exists in hash
-    primitives_.add("hash-has-key?", [this](const auto& a) {
+    primitives_.add("hash-has-key?", [this](std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_hash(a[0]))
             return make_bool(false);
         auto hidx = as_hash_idx(a[0]);
@@ -2057,7 +2057,7 @@ void Evaluator::init_pair_primitives() {
         return make_bool(false);
     });
 
-    primitives_.add("hash-set!", [this](const auto& a) {
+    primitives_.add("hash-set!", [this](std::span<const EvalValue> a) {
         if (a.size() < 3 || !is_hash(a[0]))
             return make_void();
         auto hidx = as_hash_idx(a[0]);
@@ -2109,7 +2109,7 @@ void Evaluator::init_pair_primitives() {
         }
         return make_void();
     });
-    primitives_.add("hash-length", [this](const auto& a) {
+    primitives_.add("hash-length", [this](std::span<const EvalValue> a) {
         if (a.empty() || !is_hash(a[0]))
             return make_int(0);
         auto hidx = as_hash_idx(a[0]);
@@ -2117,7 +2117,7 @@ void Evaluator::init_pair_primitives() {
             return make_int(0);
         return make_int(static_cast<std::int64_t>(g_hash_tables[hidx]->size));
     });
-    primitives_.add("hash-keys", [this](const auto& a) {
+    primitives_.add("hash-keys", [this](std::span<const EvalValue> a) {
         if (a.empty() || !is_hash(a[0]))
             return make_void();
         auto hidx = as_hash_idx(a[0]);
@@ -2136,7 +2136,7 @@ void Evaluator::init_pair_primitives() {
         }
         return result;
     });
-    primitives_.add("hash-values", [this](const auto& a) {
+    primitives_.add("hash-values", [this](std::span<const EvalValue> a) {
         if (a.empty() || !is_hash(a[0]))
             return make_void();
         auto hidx = as_hash_idx(a[0]);
@@ -2155,12 +2155,12 @@ void Evaluator::init_pair_primitives() {
         }
         return result;
     });
-    primitives_.add("hash?", [this](const auto& a) {
+    primitives_.add("hash?", [this](std::span<const EvalValue> a) {
         if (a.empty())
             return make_bool(false);
         return make_bool(is_hash(a[0]));
     });
-    primitives_.add("hash-remove!", [this](const auto& a) {
+    primitives_.add("hash-remove!", [this](std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_hash(a[0]))
             return make_void();
         auto hidx = as_hash_idx(a[0]);
@@ -2239,12 +2239,12 @@ void Evaluator::init_pair_primitives() {
         return make_int(val_type == expected ? 1 : 0);
     });
 
-    primitives_.add("keyword?", [this](const auto& a) {
+    primitives_.add("keyword?", [this](std::span<const EvalValue> a) {
         // Guard against encoding collision: strings can accidentally pass is_keyword()
         return make_bool(a.size() >= 1 && is_keyword(a[0]) && !is_string(a[0]));
     });
 
-    primitives_.add("keyword->string", [this](const auto& a) {
+    primitives_.add("keyword->string", [this](std::span<const EvalValue> a) {
         if (a.size() < 1 || !is_keyword(a[0]))
             return make_void();
         auto kidx = as_keyword_idx(a[0]);
@@ -2258,7 +2258,7 @@ void Evaluator::init_pair_primitives() {
         return make_string(sid);
     });
 
-    primitives_.add("equal?", [this](const auto& a) {
+    primitives_.add("equal?", [this](std::span<const EvalValue> a) {
         if (a.size() < 2)
             return make_bool(true);
 
@@ -2321,7 +2321,7 @@ void Evaluator::init_pair_primitives() {
         string_heap_.push_back(name);
         return make_string(sid);
     });
-    primitives_.add("symbol-append", [this](const auto& a) -> EvalValue {
+    primitives_.add("symbol-append", [this](std::span<const EvalValue> a) -> EvalValue {
         std::string result;
         for (auto& v : a) {
             if (is_string(v)) {
@@ -2338,7 +2338,7 @@ void Evaluator::init_pair_primitives() {
     });
 
     // (apply fn list) — call fn with list elements as individual args
-    primitives_.add("apply", [this](const auto& a) -> EvalValue {
+    primitives_.add("apply", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2)
             return make_void();
         auto& fn = a[0];
@@ -2367,14 +2367,14 @@ void Evaluator::init_pair_primitives() {
         return make_void();
     });
 
-    primitives_.add("display", [this](const auto& a) {
+    primitives_.add("display", [this](std::span<const EvalValue> a) {
         if (a.empty())
             return make_void();
 io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         std::fflush(stdout);
         return make_void();
     });
-    primitives_.add("write", [this](const auto& a) -> EvalValue {
+    primitives_.add("write", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty())
             return make_void();
         io_print_val(a[0], string_heap_, pairs_, true, 0, keyword_table_);
@@ -2388,7 +2388,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     });
     // (format template args...) — Simple string formatting (SRFI-28 subset)
     // ~a  display arg    ~s  write arg    ~%  newline    ~~  literal ~
-    primitives_.add("format", [this](const auto& a) -> EvalValue {
+    primitives_.add("format", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
         auto tidx = as_string_idx(a[0]);
@@ -2435,7 +2435,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         return make_string(sidx);
     });
     // (error msg) — Create an error value (no longer throws C++ exception)
-    primitives_.add("error", [this](const auto& a) -> EvalValue {
+    primitives_.add("error", [this](std::span<const EvalValue> a) -> EvalValue {
         // Ensure error_values_[0] always exists for default errors
         if (error_values_.empty())
             error_values_.push_back(make_void());
@@ -2448,7 +2448,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     });
 
     // (assert expr msg) — Assertion, returns error on failure
-    primitives_.add("assert", [this](const auto& a) -> EvalValue {
+    primitives_.add("assert", [this](std::span<const EvalValue> a) -> EvalValue {
         if (!a.empty() && is_truthy(a[0]))
             return make_int(1);
         // Assertion failed — return error
@@ -2461,7 +2461,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     });
 
     // (raise val) — Create an error with arbitrary cause value
-    primitives_.add("raise", [this](const auto& a) -> EvalValue {
+    primitives_.add("raise", [this](std::span<const EvalValue> a) -> EvalValue {
         auto cause = a.empty() ? make_void() : a[0];
         auto eidx = error_values_.size();
         error_values_.push_back(cause);
@@ -2469,7 +2469,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     });
 
     // (error? val) — Type predicate for error values
-    primitives_.add("error?", [this](const auto& a) -> EvalValue {
+    primitives_.add("error?", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty())
             return make_bool(false);
         // Guard against encoding collision: strings can accidentally pass is_error()
@@ -2478,7 +2478,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
 
 
     // (check expr) — Test assertion, returns #t or error on failure
-    primitives_.add("check", [this](const auto& a) -> EvalValue {
+    primitives_.add("check", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty())
             return make_error(0);
         if (is_truthy(a[0]))
@@ -2490,7 +2490,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     });
 
     // (check= expected actual) — Test equality, returns #t or error
-    primitives_.add("check=", [this](const auto& a) -> EvalValue {
+    primitives_.add("check=", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2)
             return make_bool(false);
         if (types::is_void(a[0]) && types::is_void(a[1]))
@@ -2526,7 +2526,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     // Returns #t if any expected keyword is found in output.
     // Guards against false positives from error messages that happen to
     // contain expected keywords (uses word-boundary for short keys in error output).
-    primitives_.add("check-success", [this](const auto& a) -> EvalValue {
+    primitives_.add("check-success", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !is_string(a[0]) || !is_pair(a[1]))
             return make_bool(false);
         // Get normalized output (strip quotes)
@@ -2610,7 +2610,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     // (diagnose error-string) — Analyze structured error and return fix strategy
     // Returns a pair ("root-cause" "target" "fix-type" "fix-data" "message")
     // or #f if no diagnosis available.
-    primitives_.add("diagnose", [this](const auto& a) -> EvalValue {
+    primitives_.add("diagnose", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
         auto idx = as_string_idx(a[0]);
@@ -2726,7 +2726,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
 
     // (apply-fix code-string diagnose-result) — Apply pre-built fix from diagnosis
     // Returns fixed code, or original code if no auto-fix applies.
-    primitives_.add("apply-fix", [this](const auto& a) -> EvalValue {
+    primitives_.add("apply-fix", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !is_string(a[0]) || !is_pair(a[1]))
             return make_bool(false);
         auto code_idx = as_string_idx(a[0]);
@@ -2930,7 +2930,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         return make_string(id);
     });
 
-    primitives_.add("write-file", [this](const auto& a) {
+    primitives_.add("write-file", [this](std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_string(a[0]))
             return make_void();
         auto idx = as_string_idx(a[0]);
@@ -2979,7 +2979,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         return result;
     });
 
-    primitives_.add("file-exists?", [this](const auto& a) {
+    primitives_.add("file-exists?", [this](std::span<const EvalValue> a) {
         if (a.empty() || !is_string(a[0]))
             return make_int(0);
         auto idx = as_string_idx(a[0]);
@@ -3009,7 +3009,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         return make_int(1);
     });
 
-    primitives_.add("file-delete", [this](const auto& a) {
+    primitives_.add("file-delete", [this](std::span<const EvalValue> a) {
         if (a.empty() || !is_string(a[0]))
             return make_int(0);
         auto idx = as_string_idx(a[0]);
@@ -3031,7 +3031,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     });
 
     // ── Shell / Process ────────────────────────────────────────
-    primitives_.add("shell", [this](const auto& a) -> EvalValue {
+    primitives_.add("shell", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_int(-1);
         auto idx = as_string_idx(a[0]);
@@ -3040,7 +3040,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         return make_int(::system(string_heap_[idx].c_str()));
     });
 
-    primitives_.add("command-output", [this](const auto& a) -> EvalValue {
+    primitives_.add("command-output", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_void();
         auto idx = as_string_idx(a[0]);
@@ -3062,7 +3062,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         return make_string(sid);
     });
 
-    primitives_.add("directory-list", [this](const auto& a) {
+    primitives_.add("directory-list", [this](std::span<const EvalValue> a) {
         if (a.empty() || !is_string(a[0]))
             return make_void();
         auto idx = as_string_idx(a[0]);
@@ -3118,7 +3118,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     });
 
     // (git-diff ["staged"]) → unified diff
-    primitives_.add("git-diff", [this](const auto& a) -> EvalValue {
+    primitives_.add("git-diff", [this](std::span<const EvalValue> a) -> EvalValue {
         bool staged = false;
         if (a.size() >= 1 && is_string(a[0])) {
             auto mi = as_string_idx(a[0]);
@@ -3150,7 +3150,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     });
 
     // (git-log n) → last n commits, one-line format (n=1..1000, default 10)
-    primitives_.add("git-log", [this](const auto& a) -> EvalValue {
+    primitives_.add("git-log", [this](std::span<const EvalValue> a) -> EvalValue {
         int n = 10;
         if (a.size() >= 1 && is_int(a[0]))
             n = static_cast<int>(as_int(a[0]));
@@ -3180,7 +3180,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     });
 
     // (git-commit "message") → exit code (0 = ok, no shell escape needed)
-    primitives_.add("git-commit", [this](const auto& a) -> EvalValue {
+    primitives_.add("git-commit", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_int(-1);
         auto mi = as_string_idx(a[0]);
@@ -3234,7 +3234,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     });
 
     // (git-stage "file1" "file2" ...) → exit code
-    primitives_.add("git-stage", [this](const auto& a) -> EvalValue {
+    primitives_.add("git-stage", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty()) return make_int(-1);
         int rc = -1;
 #ifdef AURA_HAVE_LIBGIT2
@@ -3291,7 +3291,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     });
 
     // ── Regex ──────────────────────────────────────────────────
-    primitives_.add("regex-match?", [this](const auto& a) {
+    primitives_.add("regex-match?", [this](std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
             return make_int(0);
         auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
@@ -3305,7 +3305,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         }
     });
 
-    primitives_.add("regex-find", [this](const auto& a) {
+    primitives_.add("regex-find", [this](std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
             return make_void();
         auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
@@ -3324,7 +3324,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         return make_void();
     });
 
-    primitives_.add("regex-replace", [this](const auto& a) {
+    primitives_.add("regex-replace", [this](std::span<const EvalValue> a) {
         if (a.size() < 3 || !is_string(a[0]) || !is_string(a[1]) || !is_string(a[2]))
             return make_void();
         auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]), ri = as_string_idx(a[2]);
@@ -3341,7 +3341,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         }
     });
 
-    primitives_.add("regex-split", [this](const auto& a) {
+    primitives_.add("regex-split", [this](std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
             return make_void();
         auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
@@ -3465,7 +3465,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
                     [](const auto& a) { return make_bool(!a.empty() && is_module(a[0])); });
 
     // (module-get mod name) — Get a binding from a module by symbol name
-    primitives_.add("module-get", [this](const auto& a) {
+    primitives_.add("module-get", [this](std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_module(a[0]) || !is_string(a[1]))
             return make_void();
         auto mod_idx = as_module_idx(a[0]);
@@ -3477,7 +3477,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     });
 
     // (module-keys mod) — List all exported binding names from a module
-    primitives_.add("module-keys", [this](const auto& a) {
+    primitives_.add("module-keys", [this](std::span<const EvalValue> a) {
         if (a.empty() || !is_module(a[0]))
             return make_void();
         auto mod_idx = as_module_idx(a[0]);
@@ -3496,7 +3496,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     });
 
     // (use path) — Load module, return module object (no env injection)
-    primitives_.add("use", [this](const auto& a) {
+    primitives_.add("use", [this](std::span<const EvalValue> a) {
         if (a.empty() || !is_string(a[0]))
             return make_void();
         auto idx = as_string_idx(a[0]);
@@ -3505,7 +3505,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         return load_module_file(string_heap_[idx]);
     });
 
-    primitives_.add("load-module", [this](const auto& a) {
+    primitives_.add("load-module", [this](std::span<const EvalValue> a) {
         if (a.empty() || !is_string(a[0]))
             return make_void();
         auto idx = as_string_idx(a[0]);
@@ -3517,7 +3517,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     // (while pred body) — Iterative loop with zero C++ stack growth.
     // pred: closure returning bool (#t to continue, #f to stop).
     // body: closure — evaluated each iteration.
-    primitives_.add("while", [this](const auto& a) -> EvalValue {
+    primitives_.add("while", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !types::is_closure(a[0]) || !types::is_closure(a[1]))
             return make_void();
         auto pred_cid = types::as_closure_id(a[0]);
@@ -3534,7 +3534,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         return make_void();
     });
 
-    primitives_.add("import", [this](const auto& a) {
+    primitives_.add("import", [this](std::span<const EvalValue> a) {
         if (a.empty() || !is_string(a[0]))
             return make_void();
         auto idx = as_string_idx(a[0]);
@@ -3580,7 +3580,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         }
         return make_bool(true);
     });
-    primitives_.add("modulo", [this](const auto& a) {
+    primitives_.add("modulo", [this](std::span<const EvalValue> a) {
         if (a.size() < 2)
             return make_int(0);
         auto divisor = coerce_to_int(a[1], string_heap_);
@@ -3599,7 +3599,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
             r += (divisor > 0 ? divisor : -divisor);
         return make_int(r);
     });
-    primitives_.add("mod", [this](const auto& a) {
+    primitives_.add("mod", [this](std::span<const EvalValue> a) {
         if (a.size() < 2)
             return make_int(0);
         auto divisor = coerce_to_int(a[1], string_heap_);
@@ -3619,7 +3619,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         return make_int(r);
     });
     // quotient: (quotient n m) → integer division truncating toward zero
-    primitives_.add("quotient", [this](const auto& a) {
+    primitives_.add("quotient", [this](std::span<const EvalValue> a) {
         if (a.size() < 2)
             return make_int(0);
         auto divisor = coerce_to_int(a[1], string_heap_);
@@ -3635,7 +3635,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         return make_int(coerce_to_int(a[0], string_heap_) / divisor);
     });
     // remainder: (remainder n m) → remainder with sign of dividend
-    primitives_.add("remainder", [this](const auto& a) {
+    primitives_.add("remainder", [this](std::span<const EvalValue> a) {
         if (a.size() < 2)
             return make_int(0);
         auto divisor = coerce_to_int(a[1], string_heap_);
@@ -3651,7 +3651,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         return make_int(coerce_to_int(a[0], string_heap_) % divisor);
     });
     // abs: (abs n) → absolute value
-    primitives_.add("abs", [this](const auto& a) {
+    primitives_.add("abs", [this](std::span<const EvalValue> a) {
         if (a.empty())
             return make_int(0);
         if (is_float(a[0]))
@@ -3660,7 +3660,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         return make_int(n < 0 ? -n : n);
     });
     // gcd: (gcd a b ...) → greatest common divisor (variadic)
-    primitives_.add("gcd", [this](const auto& a) {
+    primitives_.add("gcd", [this](std::span<const EvalValue> a) {
         if (a.empty())
             return make_int(0);
         auto to_int = [this](const EvalValue& v) { return coerce_to_int(v, string_heap_); };
@@ -3680,7 +3680,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         return make_int(r);
     });
     // lcm: (lcm a b ...) → least common multiple (variadic)
-    primitives_.add("lcm", [this](const auto& a) {
+    primitives_.add("lcm", [this](std::span<const EvalValue> a) {
         if (a.empty())
             return make_int(1);
         auto to_int = [this](const EvalValue& v) { return coerce_to_int(v, string_heap_); };
@@ -3707,7 +3707,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         return make_int(r);
     });
     // min: (min a b ...) → minimum (variadic)
-    primitives_.add("min", [this](const auto& a) {
+    primitives_.add("min", [this](std::span<const EvalValue> a) {
         if (a.empty())
             return make_int(0);
         bool any_f = false;
@@ -3732,7 +3732,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         return make_int(r);
     });
     // max: (max a b ...) → maximum (variadic)
-    primitives_.add("max", [this](const auto& a) {
+    primitives_.add("max", [this](std::span<const EvalValue> a) {
         if (a.empty())
             return make_int(0);
         bool any_f = false;
@@ -3778,7 +3778,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         return a[0];
     });
     // string->list: (string->list s) → list of char codes
-    primitives_.add("string->list", [this](const auto& a) {
+    primitives_.add("string->list", [this](std::span<const EvalValue> a) {
         if (a.empty())
             return make_void();
         std::string s;
@@ -3799,7 +3799,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         return result;
     });
     // list->string: (list->string lst) → string from char codes
-    primitives_.add("list->string", [this](const auto& a) {
+    primitives_.add("list->string", [this](std::span<const EvalValue> a) {
         if (a.empty() || !is_pair(a[0]) && !is_void(a[0]))
             return make_int(0);
         std::string result;
@@ -3836,7 +3836,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     });
 
     // ── List utility primitives ────────────────────────────────────
-    primitives_.add("take", [this](const auto& a) {
+    primitives_.add("take", [this](std::span<const EvalValue> a) {
         if (a.size() < 2)
             return make_void();
         auto n = static_cast<std::size_t>(as_int(a[0]));
@@ -3871,7 +3871,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         }
         return final;
     });
-    primitives_.add("drop", [this](const auto& a) {
+    primitives_.add("drop", [this](std::span<const EvalValue> a) {
         if (a.size() < 2)
             return make_void();
         auto n = static_cast<std::size_t>(as_int(a[0]));
@@ -3888,7 +3888,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         }
         return v;
     });
-    primitives_.add("foldl", [this](const auto& a) {
+    primitives_.add("foldl", [this](std::span<const EvalValue> a) {
         if (a.size() < 3)
             return make_void();
         auto f = a[0];
@@ -3944,7 +3944,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     // ── Typed mutation operators ──────────────────────────────────
 
     // (mutate:replace-type node-id new-type-str)
-    primitives_.add("mutate:replace-type", [this](const auto& a) -> EvalValue {
+    primitives_.add("mutate:replace-type", [this](std::span<const EvalValue> a) -> EvalValue {
         // Yield at mutation boundary (Issue #31) — safe point before/after mutation.
         if (aura::messaging::g_fiber_yield_mutation_boundary)
             aura::messaging::g_fiber_yield_mutation_boundary();
@@ -4005,7 +4005,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     // (mutate:replace-value node-id new-value summary)
     // Replaces the value of a node. The type of new-value must match the
     // target node: int → LiteralInt, float → LiteralFloat, string → Variable/LiteralString.
-    primitives_.add("mutate:replace-value", [this](const auto& a) -> EvalValue {
+    primitives_.add("mutate:replace-value", [this](std::span<const EvalValue> a) -> EvalValue {
         auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
             auto mi = string_heap_.size(); string_heap_.push_back(m);
             auto ki = string_heap_.size(); string_heap_.push_back(k);
@@ -4085,7 +4085,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     });
 
     // (mutate:record-patch node-id op-name summary)
-    primitives_.add("mutate:record-patch", [this](const auto& a) -> EvalValue {
+    primitives_.add("mutate:record-patch", [this](std::span<const EvalValue> a) -> EvalValue {
         auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
             auto mi = string_heap_.size(); string_heap_.push_back(m);
             auto ki = string_heap_.size(); string_heap_.push_back(k);
@@ -4123,7 +4123,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     });
 
     // (mutation-history node-id) → list of summary strings
-    primitives_.add("mutation-history", [this](const auto& a) {
+    primitives_.add("mutation-history", [this](std::span<const EvalValue> a) {
         if (a.empty() || !is_int(a[0]) || !workspace_flat_)
             return make_int(0);
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
@@ -4143,7 +4143,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     });
 
     // (rollback mutation-id) → true if successful
-    primitives_.add("rollback", [this](const auto& a) {
+    primitives_.add("rollback", [this](std::span<const EvalValue> a) {
         if (a.empty() || !is_int(a[0]) || !workspace_flat_)
             return make_bool(false);
         auto mid = static_cast<std::uint64_t>(as_int(a[0]));
@@ -4151,7 +4151,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     });
 
     // (rollback-since mutation-id) → count of rolled-back mutations
-    primitives_.add("rollback-since", [this](const auto& a) {
+    primitives_.add("rollback-since", [this](std::span<const EvalValue> a) {
         if (a.empty() || !is_int(a[0]) || !workspace_flat_)
             return make_int(0);
         auto mid = static_cast<std::uint64_t>(as_int(a[0]));
@@ -4163,7 +4163,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     //   1. calls detect-fn → list of "gap" records
     //   2. for each gap, calls fix-fn gap → #t if fixed
     //   3. returns the number of fixes
-    primitives_.add("auto-evolve-once", [this](const auto& a) -> EvalValue {
+    primitives_.add("auto-evolve-once", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !is_closure(a[0]) || !is_closure(a[1]))
             return make_int(0);
         auto detect_cid = as_closure_id(a[0]);
@@ -4187,7 +4187,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     });
 
     // (auto-evolve-loop "interval" detect-fn fix-fn) → starts background loop
-    primitives_.add("auto-evolve-loop", [this](const auto& a) -> EvalValue {
+    primitives_.add("auto-evolve-loop", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 3 || !is_string(a[0]) || !is_closure(a[1]) || !is_closure(a[2]))
             return make_int(0);
         auto idx = as_string_idx(a[0]);
@@ -4251,7 +4251,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     // (check-preconditions node-id (field-offset|new-type-str)) → true if valid
     // With int second arg: check field existence (0=int_val_, 1=type_id_)
     // With string second arg: check type compatibility (new type string)
-    primitives_.add("check-preconditions", [this](const auto& a) {
+    primitives_.add("check-preconditions", [this](std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_int(a[0]) || !workspace_flat_)
             return make_bool(false);
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
@@ -4440,7 +4440,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     // (current-source) — Return the current workspace AST as source code string
     // Implemented inline to avoid circular dependency with lowering module.
     // (eval code) — Parse and evaluate a string of Aura code
-    primitives_.add("eval", [this](const auto& a) -> EvalValue {
+    primitives_.add("eval", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0]))
             return make_void();
         auto code = string_heap_[types::as_string_idx(a[0])];
@@ -4514,7 +4514,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
 
     // (eval-expr value) — Evaluate any Aura value (not just strings)
     // Useful for evaluating stored expressions (e.g., from pipeline steps)
-    primitives_.add("eval-expr", [this](const auto& a) -> EvalValue {
+    primitives_.add("eval-expr", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty())
             return make_void();
         // Convert the value to a FlatAST and evaluate.
@@ -4535,7 +4535,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         return make_void();
     });
 
-    primitives_.add("current-source", [this](const auto& a) -> EvalValue {
+    primitives_.add("current-source", [this](std::span<const EvalValue> a) -> EvalValue {
         // Dual-workspace (Phase 1): default reads the per-eval current source
         // (the AST being evaluated right now), set by CompilerService::eval /
         // eval_ir / exec_jit. Optional :workspace keyword reads the persistent
@@ -4966,7 +4966,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     // In serve-async mode, the eval runs on a background thread and the
     // calling fiber yields until the result is ready.
     // In stdin mode, falls back to synchronous eval (same as (eval code)).
-    primitives_.add("eval:async", [this](const auto& a) -> EvalValue {
+    primitives_.add("eval:async", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_void();
         auto& code = string_heap_[as_string_idx(a[0])];
@@ -6239,7 +6239,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     // (auto-rollback-on-panic [#t|#f]) — Get/set auto-rollback on panic flag
     // When enabled, runtime error triggers automatic rollback to last safe
     // checkpoint. Returns previous value.
-    primitives_.add("auto-rollback-on-panic", [this](const auto& a) -> EvalValue {
+    primitives_.add("auto-rollback-on-panic", [this](std::span<const EvalValue> a) -> EvalValue {
         bool old = panic_auto_rollback_;
         if (!a.empty() && types::is_bool(a[0]))
             panic_auto_rollback_ = types::as_bool(a[0]);
@@ -7074,7 +7074,7 @@ Evaluator::Evaluator() {
     init_pair_primitives();
 
     // ── C FFI primitives ────────────────────────────────
-    primitives_.add("c-load", [this](const auto& a) -> EvalValue {
+    primitives_.add("c-load", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0]))
             return make_int(0);
         auto path = string_heap_[types::as_string_idx(a[0])];
@@ -7207,7 +7207,7 @@ Evaluator::Evaluator() {
     });
 
     // ── Opaque pointer primitives ────────────────────────────
-    primitives_.add("c-opaque", [this](const auto& a) -> EvalValue {
+    primitives_.add("c-opaque", [this](std::span<const EvalValue> a) -> EvalValue {
         // Create an opaque pointer from an integer address
         // (c-opaque <ptr-as-int>)
         coverage_counters_[8]++;
@@ -7219,11 +7219,11 @@ Evaluator::Evaluator() {
         return types::make_opaque(idx);
     });
 
-    primitives_.add("c-opaque?", [this](const auto& a) -> EvalValue {
+    primitives_.add("c-opaque?", [this](std::span<const EvalValue> a) -> EvalValue {
         return types::make_bool(!a.empty() && types::is_opaque(a[0]));
     });
 
-    primitives_.add("c-opaque->int", [this](const auto& a) -> EvalValue {
+    primitives_.add("c-opaque->int", [this](std::span<const EvalValue> a) -> EvalValue {
         // Extract the raw pointer address from an opaque value as Int
         if (a.empty() || !types::is_opaque(a[0]))
             return make_int(0);
@@ -7233,7 +7233,7 @@ Evaluator::Evaluator() {
         return make_int(reinterpret_cast<std::int64_t>(opaque_heap_[idx]));
     });
 
-    primitives_.add("c-alloc", [this](const auto& a) -> EvalValue {
+    primitives_.add("c-alloc", [this](std::span<const EvalValue> a) -> EvalValue {
         // Allocate a block of memory and return as opaque
         // (c-alloc <size-bytes>)
         if (a.empty() || !types::is_int(a[0]))
@@ -7247,7 +7247,7 @@ Evaluator::Evaluator() {
         return types::make_opaque(idx);
     });
 
-    primitives_.add("c-free", [this](const auto& a) -> EvalValue {
+    primitives_.add("c-free", [this](std::span<const EvalValue> a) -> EvalValue {
         // Free memory allocated by c-alloc
         // (c-free <opaque>)
         if (a.empty() || !types::is_opaque(a[0]))
@@ -7261,7 +7261,7 @@ Evaluator::Evaluator() {
     });
 
     // ── Struct support (opaque-backed struct) ─────────────────
-    primitives_.add("c-struct-size", [this](const auto& a) -> EvalValue {
+    primitives_.add("c-struct-size", [this](std::span<const EvalValue> a) -> EvalValue {
         // Return the total size of a struct given field sizes.
         // (c-struct-size field-size...)
         std::size_t total = 0;
@@ -7272,7 +7272,7 @@ Evaluator::Evaluator() {
         return make_int(static_cast<std::int64_t>(total));
     });
 
-    primitives_.add("c-struct-set!", [this](const auto& a) -> EvalValue {
+    primitives_.add("c-struct-set!", [this](std::span<const EvalValue> a) -> EvalValue {
         // Write a value into a struct at byte offset.
         // (c-struct-set! <opaque> <offset-bytes> <value>)
         if (a.size() < 3 || !types::is_opaque(a[0]) || !types::is_int(a[1]))
@@ -7298,7 +7298,7 @@ Evaluator::Evaluator() {
         return make_void();
     });
 
-    primitives_.add("c-struct-ref", [this](const auto& a) -> EvalValue {
+    primitives_.add("c-struct-ref", [this](std::span<const EvalValue> a) -> EvalValue {
         // Read a value from a struct at byte offset with type.
         // (c-struct-ref <opaque> <offset-bytes> <type>)
         // type: 0=Int, 1=Float, 2=void*(Opaque)
@@ -7332,7 +7332,7 @@ Evaluator::Evaluator() {
     build_primitive_slots();
 
     // ── Environment + HTTP primitives ────────────────────────
-    primitives_.add("getenv", [this](const auto& a) -> EvalValue {
+    primitives_.add("getenv", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0]))
             return make_void();
         auto name = string_heap_[types::as_string_idx(a[0])];
@@ -7345,7 +7345,7 @@ Evaluator::Evaluator() {
     });
 
     // ── HTTP primitives (via curl CLI) ─────────────────────
-    primitives_.add("http-get", [this](const auto& a) -> EvalValue {
+    primitives_.add("http-get", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0]))
             return make_void();
         auto url = string_heap_[types::as_string_idx(a[0])];
@@ -7365,7 +7365,7 @@ Evaluator::Evaluator() {
         return types::make_string(sidx);
     });
 
-    primitives_.add("http-post", [this](const auto& a) -> EvalValue {
+    primitives_.add("http-post", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
             return make_void();
 
@@ -7465,7 +7465,7 @@ Evaluator::Evaluator() {
         return types::make_string(sidx);
     });
     // ── TCP socket primitives ────────────────────────────────
-    primitives_.add("tcp-connect", [this](const auto& a) -> EvalValue {
+    primitives_.add("tcp-connect", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !types::is_string(a[0]) || !types::is_int(a[1]))
             return make_void();
         auto host = string_heap_[types::as_string_idx(a[0])];
@@ -7518,7 +7518,7 @@ Evaluator::Evaluator() {
         return types::make_int(static_cast<std::int64_t>(fd));
     });
 
-    primitives_.add("tcp-send", [this](const auto& a) -> EvalValue {
+    primitives_.add("tcp-send", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !types::is_int(a[0]) || !types::is_string(a[1]))
             return make_int(-1);
         auto fd = static_cast<int>(types::as_int(a[0]));
@@ -7530,7 +7530,7 @@ Evaluator::Evaluator() {
         return types::make_int(static_cast<std::int64_t>(sent));
     });
 
-    primitives_.add("tcp-recv", [this](const auto& a) -> EvalValue {
+    primitives_.add("tcp-recv", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_int(a[0]))
             return make_void();
         auto fd = static_cast<int>(types::as_int(a[0]));
@@ -7551,7 +7551,7 @@ Evaluator::Evaluator() {
     // (declare-type name "param-types..." "ret-type") — 声明函数类型签名
     // 示例: (declare-type add "Int Int" "Int") → add: (Int, Int) -> Int
     // 这些签名在 typecheck-current 时注入到类型环境中。
-    primitives_.add("declare-type", [this](const auto& a) -> EvalValue {
+    primitives_.add("declare-type", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 3 || !is_string(a[0]) || !is_string(a[1]) || !is_string(a[2]))
             return make_bool(false);
         auto name_idx = as_string_idx(a[0]);
@@ -7571,7 +7571,7 @@ Evaluator::Evaluator() {
     // 解析模块文件，对其中每个 export 的函数进行类型推断，
     // 生成同名的 .aura-type 签名文件。
     // 示例: (generate-type-sigs "helper.aura") → helper.aura-type
-    primitives_.add("generate-type-sigs", [this](const auto& a) -> EvalValue {
+    primitives_.add("generate-type-sigs", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
         auto idx = as_string_idx(a[0]);
@@ -7706,7 +7706,7 @@ Evaluator::Evaluator() {
     // 加载模块，对其每个 define 的函数进行类型推断，
     // 然后与 .aura-type 中的声明签名进行比对。
     // 输出不一致的诊断结果（不修改文件）。
-    primitives_.add("check-module-signature", [this](const auto& a) -> EvalValue {
+    primitives_.add("check-module-signature", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
         auto idx = as_string_idx(a[0]);
@@ -7859,7 +7859,7 @@ Evaluator::Evaluator() {
         return make_bool(matched > 0 || (mismatched == 0 && missing == 0));
     });
 
-    primitives_.add("tcp-close", [this](const auto& a) -> EvalValue {
+    primitives_.add("tcp-close", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_int(a[0]))
             return make_void();
         ::close(static_cast<int>(types::as_int(a[0])));
@@ -8232,7 +8232,7 @@ Evaluator::Evaluator() {
     //   → integer snapshot ID (or -1 on failure)
     //   Stores current workspace source code as a named checkpoint.
     //   Names are optional; unnamed snapshots get auto-generated names.
-    primitives_.add("ast:snapshot", [this](const auto& a) -> EvalValue {
+    primitives_.add("ast:snapshot", [this](std::span<const EvalValue> a) -> EvalValue {
         if (!workspace_flat_ || !workspace_pool_)
             return make_int(-1);
 
@@ -8286,7 +8286,7 @@ Evaluator::Evaluator() {
     //   → true on success
     //   Replaces current workspace with a previously snapshotted state.
     //   Caches (def-use, incremental compile state) are invalidated.
-    primitives_.add("ast:restore", [this](const auto& a) -> EvalValue {
+    primitives_.add("ast:restore", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
         auto id = static_cast<std::size_t>(as_int(a[0]));
@@ -8349,7 +8349,7 @@ Evaluator::Evaluator() {
     // Replaces the body of an existing function while keeping its id.
     // Closures referencing the function will use the new code on next call.
     // Requires the CompilerService to have set a hot-swap callback.
-    primitives_.add("hot-swap:fn", [this](const auto& a) -> EvalValue {
+    primitives_.add("hot-swap:fn", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() != 2 || !is_string(a[0]) || !is_string(a[1]))
             return make_bool(false);
         auto ni = as_string_idx(a[0]);
@@ -8748,7 +8748,7 @@ Evaluator::Evaluator() {
     //   → list of inserted node IDs
     //   Parses and inserts multiple child expressions at the given position.
     //   code-strings can be multiple arguments (variadic).
-    primitives_.add("mutate:splice", [this](const auto& a) -> EvalValue {
+    primitives_.add("mutate:splice", [this](std::span<const EvalValue> a) -> EvalValue {
         auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
             auto mi = string_heap_.size(); string_heap_.push_back(m);
             auto ki = string_heap_.size(); string_heap_.push_back(k);
@@ -8839,7 +8839,7 @@ Evaluator::Evaluator() {
     //       → replaces node 5 with (display <original-node-5>)
     //     (mutate:wrap 3 "(let ((x _)) x)" "bind x")
     //       → wraps in let binding
-    primitives_.add("mutate:wrap", [this](const auto& a) -> EvalValue {
+    primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue {
         auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
             auto mi = string_heap_.size(); string_heap_.push_back(m);
             auto ki = string_heap_.size(); string_heap_.push_back(k);
@@ -8955,7 +8955,7 @@ Evaluator::Evaluator() {
     //   Extracts the subtree rooted at node-id into a new top-level define,
     //   replacing the original node with a call to the new function.
     //   Free variables in the extracted expression become parameters.
-    primitives_.add("mutate:refactor/extract", [this](const auto& a) -> EvalValue {
+    primitives_.add("mutate:refactor/extract", [this](std::span<const EvalValue> a) -> EvalValue {
         auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
             auto mi = string_heap_.size(); string_heap_.push_back(m);
             auto ki = string_heap_.size(); string_heap_.push_back(k);
@@ -9253,7 +9253,7 @@ Evaluator::Evaluator() {
     //   → #t/#f
     //   Moves a node (and its subtree) from its current position to
     //   a new parent at the specified child index.
-    primitives_.add("mutate:move-node", [this](const auto& a) -> EvalValue {
+    primitives_.add("mutate:move-node", [this](std::span<const EvalValue> a) -> EvalValue {
         using namespace aura::ast;
         auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
             auto mi = string_heap_.size(); string_heap_.push_back(m);
@@ -9452,7 +9452,7 @@ Evaluator::Evaluator() {
     //   with the body of the called function, substituting arguments for
     //   formal parameters. Only works for directly defined named functions
     //   and inline lambdas with matching arity.
-    primitives_.add("mutate:inline-call", [this](const auto& a) -> EvalValue {
+    primitives_.add("mutate:inline-call", [this](std::span<const EvalValue> a) -> EvalValue {
         using aura::ast::NodeId;
         using aura::ast::NodeTag;
         using aura::ast::SymId;
@@ -9699,7 +9699,7 @@ Evaluator::Evaluator() {
     // ═══════════════════════════════════════════════════════════════
 
     // (workspace:create name) → workspace ID (COW, no clone until mutate)
-    primitives_.add("workspace:create", [this](const auto& a) -> EvalValue {
+    primitives_.add("workspace:create", [this](std::span<const EvalValue> a) -> EvalValue {
         // Ensure tree exists
         if (!workspace_tree_) {
             auto* wtt = new WorkspaceTree();
@@ -9724,7 +9724,7 @@ Evaluator::Evaluator() {
     });
 
     // (workspace:switch id) → #t
-    primitives_.add("workspace:switch", [this](const auto& a) -> EvalValue {
+    primitives_.add("workspace:switch", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]) || !workspace_tree_)
             return make_bool(false);
         auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
@@ -9794,7 +9794,7 @@ Evaluator::Evaluator() {
     });
 
     // (workspace:set-memory-limit bytes) → #t/#f. 0 = unlimited.
-    primitives_.add("workspace:set-memory-limit", [this](const auto& a) -> EvalValue {
+    primitives_.add("workspace:set-memory-limit", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]) || !workspace_tree_)
             return make_bool(false);
         auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
@@ -9815,7 +9815,7 @@ Evaluator::Evaluator() {
         return make_int(static_cast<std::int64_t>(n->cow_refused_count));
     });
 
-    primitives_.add("workspace:set-memory-limit", [this](const auto& a) -> EvalValue {
+    primitives_.add("workspace:set-memory-limit", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]) || !workspace_tree_)
             return make_bool(false);
         auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
@@ -9836,7 +9836,7 @@ Evaluator::Evaluator() {
     });
 
     // (workspace:delete id) → #t
-    primitives_.add("workspace:delete", [this](const auto& a) -> EvalValue {
+    primitives_.add("workspace:delete", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]) || !workspace_tree_)
             return make_bool(false);
         auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
@@ -9850,7 +9850,7 @@ Evaluator::Evaluator() {
 
     // (workspace:lock id [read-only?])
     //   → #t on success. Sets/clears read-only flag.
-    primitives_.add("workspace:lock", [this](const auto& a) -> EvalValue {
+    primitives_.add("workspace:lock", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]) || !workspace_tree_)
             return make_bool(false);
         auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
@@ -9870,7 +9870,7 @@ Evaluator::Evaluator() {
 
     // (workspace:can-write? [id])
     //   → #t if workspace allows mutations
-    primitives_.add("workspace:can-write?", [this](const auto& a) -> EvalValue {
+    primitives_.add("workspace:can-write?", [this](std::span<const EvalValue> a) -> EvalValue {
         if (!workspace_tree_) return make_bool(true);
         auto* __tw2 = static_cast<WorkspaceTree*>(workspace_tree_);
         std::uint32_t idx = __tw2->active_idx();
@@ -10016,7 +10016,7 @@ Evaluator::Evaluator() {
     // (workspace:discard id)
     //   → #t on success
     //   Discards a child workspace's local changes, resetting to parent state.
-    primitives_.add("workspace:discard", [this](const auto& a) -> EvalValue {
+    primitives_.add("workspace:discard", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]) || !workspace_tree_)
             return make_bool(false);
         auto* tree = static_cast<WorkspaceTree*>(workspace_tree_);
@@ -10274,7 +10274,7 @@ Evaluator::Evaluator() {
     // my-id: uses compiler_service_ + g_session_id (per-service identity)
 
     // (send target-id message) → #t on success
-    primitives_.add("send", [this](const auto& a) -> EvalValue {
+    primitives_.add("send", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !is_string(a[0]))
             return make_bool(false);
         auto& bridge = aura::messaging::g_messaging_bridge;
@@ -10301,7 +10301,7 @@ Evaluator::Evaluator() {
     // (broadcast message) — Send a message to ALL registered sessions (P2)
     // Uses g_session_list to enumerate sessions and bridge.send for each.
     // Returns number of messages sent (0 if no sessions or no service).
-    primitives_.add("broadcast", [this](const auto& a) -> EvalValue {
+    primitives_.add("broadcast", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty())
             return make_int(0);
         auto& bridge = aura::messaging::g_messaging_bridge;
@@ -10337,7 +10337,7 @@ Evaluator::Evaluator() {
     //            #f if no messaging service available.
     //   Uses evaluator's stored compiler_service_ (not global) for safety.
     //   Global g_current_compiler_service may dangle after service destruction.
-    primitives_.add("recv", [this](const auto& a) -> EvalValue {
+    primitives_.add("recv", [this](std::span<const EvalValue> a) -> EvalValue {
         auto svc = compiler_service_;
         if (!svc || !aura::messaging::g_mailbox_read)
             return make_bool(false);
@@ -10382,7 +10382,7 @@ Evaluator::Evaluator() {
 
     // (reply msg) → #t on success (sends to last message's sender)
     // Supports non-string values via JSON encoding.
-    primitives_.add("reply", [this](const auto& a) -> EvalValue {
+    primitives_.add("reply", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty()) return make_bool(false);
         auto svc = aura::messaging::g_current_compiler_service;
         if (!svc || !aura::messaging::g_mailbox_last_sender)
@@ -10407,7 +10407,7 @@ Evaluator::Evaluator() {
     });
 
     // (session-active? id) → #t if session exists
-    primitives_.add("session-active?", [this](const auto& a) -> EvalValue {
+    primitives_.add("session-active?", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]) || !aura::messaging::g_session_exists)
             return make_bool(false);
         auto id = string_heap_[as_string_idx(a[0])];
@@ -10433,7 +10433,7 @@ Evaluator::Evaluator() {
     // fn is a closure taking no arguments.
     // Returns non-zero fiber ID on success, #f on failure.
     // Result is retrievable via (fiber:join fid).
-    primitives_.add("fiber:spawn", [this](const auto& a) -> EvalValue {
+    primitives_.add("fiber:spawn", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_closure(a[0]))
             return make_bool(false);
         auto cid = as_closure_id(a[0]);
@@ -10474,7 +10474,7 @@ Evaluator::Evaluator() {
 
     // (session:create name) — Create a new isolated session (serve mode only)
     // Returns #t on success, #f in stdin mode or if name already exists
-    primitives_.add("session:create", [this](const auto& a) -> EvalValue {
+    primitives_.add("session:create", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
         auto& name = string_heap_[as_string_idx(a[0])];
@@ -10492,7 +10492,7 @@ Evaluator::Evaluator() {
     // In serve mode: creates a full cross-session agent via g_session_create.
     // In stdin mode: creates a lightweight in-process agent with a mailbox.
     // Returns the agent name on success, or error on failure.
-    primitives_.add("_agent:spawn", [this](const auto& a) -> EvalValue {
+    primitives_.add("_agent:spawn", [this](std::span<const EvalValue> a) -> EvalValue {
         auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
             auto mi = string_heap_.size(); string_heap_.push_back(m);
             auto ki = string_heap_.size(); string_heap_.push_back(k);
@@ -10525,7 +10525,7 @@ Evaluator::Evaluator() {
     // (fiber:join fiber-id) — Wait for a fiber to complete and return its result
     // Uses s_fiber_results (shared with fiber:spawn). Works in both serve
     // and stdin modes (thread-based fibers spin-wait with small sleep).
-    primitives_.add("fiber:join", [this](const auto& a) -> EvalValue {
+    primitives_.add("fiber:join", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
         auto fid = static_cast<int64_t>(as_int(a[0]));
@@ -10572,7 +10572,7 @@ Evaluator::Evaluator() {
     // run on that worker (won't be stolen). Returns #t on success, #f
     // when not in serve-async mode or invalid worker ID.
     // worker-id: 0..N-1 where N = number of workers.
-    primitives_.add("scheduler:pin", [this](const auto& a) -> EvalValue {
+    primitives_.add("scheduler:pin", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
         auto wid = static_cast<int>(as_int(a[0]));
@@ -10600,7 +10600,7 @@ Evaluator::Evaluator() {
     // Returns the result on success (may block caller until done).
     // In serve/fiber mode: yields fiber, pool thread wakes it.
     // In stdin mode: uses std::async, blocks synchronously.
-    primitives_.add("thread_pool:enqueue", [this](const auto& a) -> EvalValue {
+    primitives_.add("thread_pool:enqueue", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_closure(a[0]))
             return make_bool(false);
         auto cid = as_closure_id(a[0]);
@@ -10634,7 +10634,7 @@ Evaluator::Evaluator() {
     // (channel:create [buffer-size]) — Create a new channel
     // Returns channel-id (fixnum) or error.
     // buffer-size defaults to 0 (rendezvous/synchronous).
-    primitives_.add("channel:create", [this](const auto& a) -> EvalValue {
+    primitives_.add("channel:create", [this](std::span<const EvalValue> a) -> EvalValue {
         std::size_t buf = 0;
         if (!a.empty() && is_int(a[0])) {
             auto v = as_int(a[0]);
@@ -10652,7 +10652,7 @@ Evaluator::Evaluator() {
     // (channel:send channel-id msg) — Send a message to a channel
     // Returns #t on success, #f if channel does not exist.
     // Blocks if buffer full (buffered) or waiting for recv (rendezvous).
-    primitives_.add("channel:send", [this](const auto& a) -> EvalValue {
+    primitives_.add("channel:send", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]))
             return make_bool(false);
         auto ch_id = static_cast<std::size_t>(as_int(a[0]));
@@ -10675,7 +10675,7 @@ Evaluator::Evaluator() {
     // (channel:recv channel-id) — Receive a message from a channel
     // Returns the message string, or empty string if channel closed.
     // Blocks until a message is available.
-    primitives_.add("channel:recv", [this](const auto& a) -> EvalValue {
+    primitives_.add("channel:recv", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_string(0);
         auto ch_id = static_cast<std::size_t>(as_int(a[0]));
@@ -10697,7 +10697,7 @@ Evaluator::Evaluator() {
 
     // (channel:try-recv channel-id) — Non-blocking receive
     // Returns message string if available, or empty string if no message.
-    primitives_.add("channel:try-recv", [this](const auto& a) -> EvalValue {
+    primitives_.add("channel:try-recv", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_string(0);
         auto ch_id = static_cast<std::size_t>(as_int(a[0]));
@@ -10716,7 +10716,7 @@ Evaluator::Evaluator() {
 
     // (channel:close channel-id) — Close a channel
     // Wakes all waiters; subsequent recv returns empty string.
-    primitives_.add("channel:close", [this](const auto& a) -> EvalValue {
+    primitives_.add("channel:close", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
         auto ch_id = static_cast<std::size_t>(as_int(a[0]));
@@ -10758,7 +10758,7 @@ Evaluator::Evaluator() {
     static std::vector<std::vector<std::string>> g_template_params;  // params per template
 
     // (synthesize:register-template name pattern param-names...)
-    primitives_.add("synthesize:register-template", [this](const auto& a) -> EvalValue {
+    primitives_.add("synthesize:register-template", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 3 || !is_string(a[0]) || !is_string(a[1]))
             return make_bool(false);
         auto name_idx = as_string_idx(a[0]);
@@ -10802,7 +10802,7 @@ Evaluator::Evaluator() {
     });
 
     // (synthesize:fill template-name arg-values...)
-    primitives_.add("synthesize:fill", [this](const auto& a) -> EvalValue {
+    primitives_.add("synthesize:fill", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_void();
         auto name_idx = as_string_idx(a[0]);
@@ -10888,7 +10888,7 @@ Evaluator::Evaluator() {
 
     // (synthesize:define name sig [key :val ...])
     //   Generates a function using LLM.
-    primitives_.add("synthesize:define", [this](const auto& a) -> EvalValue {
+    primitives_.add("synthesize:define", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
             return make_void();
         auto name_idx = as_string_idx(a[0]);
@@ -11077,7 +11077,7 @@ Evaluator::Evaluator() {
     //   Default fitness: runs function with synthetic test inputs
     //   (correctness = 90% weight, code length = 10% tiebreaker).
     //   Creates variants, evaluates fitness, returns best.
-    primitives_.add("synthesize:optimize", [this](const auto& a) -> EvalValue {
+    primitives_.add("synthesize:optimize", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_void();
         auto name_idx = as_string_idx(a[0]);
@@ -11515,7 +11515,7 @@ Evaluator::Evaluator() {
     // - verifier-fn:  (lambda (code) → "#t" for pass, else error-string)
     // - fixer-fn:     (lambda (code error goal) → new-code-string, optional)
     // - max-attempts: int (optional, default 3)
-    primitives_.add("intend", [this](const auto& a) -> EvalValue {
+    primitives_.add("intend", [this](std::span<const EvalValue> a) -> EvalValue {
         // Mark task context so closure bodies are allocated in temp_arena_.
         // Issue #68: depth counter (was bool) for nested intend support.
         int saved_depth = in_task_context_;
@@ -11803,7 +11803,7 @@ Evaluator::Evaluator() {
     });
 
     // ── intend-analytics — 聚合 intend 历史数据 ────────────────
-    primitives_.add("intend-analytics", [this](const auto& a) -> EvalValue {
+    primitives_.add("intend-analytics", [this](std::span<const EvalValue> a) -> EvalValue {
         std::string filter_strategy;
         std::string filter_field;
         std::string filter_value;
@@ -11901,7 +11901,7 @@ Evaluator::Evaluator() {
     //   :max-attempts <int>     (1..20, default 3)
     //   :temperature <float>   (0.0..1.0, default 0.3)
     //   :sys-prompt-template <str>
-    primitives_.add("define-strategy", [this](const auto& a) -> EvalValue {
+    primitives_.add("define-strategy", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
             return make_bool(false);
         auto name = string_heap_[types::as_string_idx(a[0])];
@@ -11948,7 +11948,7 @@ Evaluator::Evaluator() {
         return make_bool(true);
     });
     // ── register-strategy! — 注册/更新策略 ──────────────
-    primitives_.add("register-strategy!", [this](const auto& a) -> EvalValue {
+    primitives_.add("register-strategy!", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
             return make_bool(false);
         auto name = string_heap_[types::as_string_idx(a[0])];
@@ -11964,7 +11964,7 @@ Evaluator::Evaluator() {
     });
     // ── strategy-field — 读取策略字段 ──────────────────────
     // Issue #63 Phase 3: support tunable fields beyond 'body'.
-    primitives_.add("strategy-field", [this](const auto& a) -> EvalValue {
+    primitives_.add("strategy-field", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
             return make_void();
         auto name = string_heap_[types::as_string_idx(a[0])];
@@ -12000,7 +12000,7 @@ Evaluator::Evaluator() {
     });
     // ── strategy-set-field! — 修改策略字段（白名单）───────────
     // Whitelist + range checks per e4_evolvable_strategies.md §1.
-    primitives_.add("strategy-set-field!", [this](const auto& a) -> EvalValue {
+    primitives_.add("strategy-set-field!", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 3 || !types::is_string(a[0]) || !types::is_string(a[1]))
             return make_bool(false);
         auto field = string_heap_[types::as_string_idx(a[1])];
@@ -12037,7 +12037,7 @@ Evaluator::Evaluator() {
     });
     // ── strategy-inspect — 一键检视 ────────────────────────
     // Issue #63 Phase 3: show all tunable fields + read-only metadata.
-    primitives_.add("strategy-inspect", [this](const auto& a) -> EvalValue {
+    primitives_.add("strategy-inspect", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0]))
             return make_void();
         auto name = string_heap_[types::as_string_idx(a[0])];
@@ -12081,7 +12081,7 @@ Evaluator::Evaluator() {
     // Args:
     //   (evolve-strategy <strategy-name>)
     //   (evolve-strategy <strategy-name> <analytics-string>)
-    primitives_.add("evolve-strategy", [this](const auto& a) -> EvalValue {
+    primitives_.add("evolve-strategy", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0]))
             return make_void();
         auto name = string_heap_[types::as_string_idx(a[0])];
@@ -12423,7 +12423,7 @@ Evaluator::Evaluator() {
     // #f if the path wasn't loaded. The path must match exactly what was
     // passed to (import) / (require) — for stdlib modules loaded via
     // AURA_PATH, this is the resolved absolute path.
-    primitives_.add("gc-module", [this](const auto& a) -> EvalValue {
+    primitives_.add("gc-module", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0]))
             return types::make_bool(false);
         auto sidx = types::as_string_idx(a[0]);
@@ -12788,7 +12788,7 @@ Evaluator::Evaluator() {
     //   "recent-gc-temp-window": int (>= 1)   ; default 100
     // Returns the previous policy as a hash. Pass #f to disable
     // auto-governance (resets to defaults).
-    primitives_.add("set-memory-policy", [this](const auto& a) -> EvalValue {
+    primitives_.add("set-memory-policy", [this](std::span<const EvalValue> a) -> EvalValue {
         // Snapshot the current policy to return as "previous".
         auto prev = memory_policy_;
         // Reset to defaults first; then apply overrides from the hash.
@@ -12859,7 +12859,7 @@ Evaluator::Evaluator() {
 
     // ── Capability primitives (with-capability / capability? / check-capability) ──
 
-    primitives_.add("with-capability", [this](const auto& a) -> EvalValue {
+    primitives_.add("with-capability", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0])) {
             auto es = string_heap_.size();
             string_heap_.push_back("with-capability: first argument must be a string or list of strings");
@@ -12920,7 +12920,7 @@ Evaluator::Evaluator() {
         return types::make_bool(false);
     });
 
-    primitives_.add("check-capability", [this](const auto& a) -> EvalValue {
+    primitives_.add("check-capability", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0])) {
             auto es = string_heap_.size();
             string_heap_.push_back("check-capability: first argument must be a string");

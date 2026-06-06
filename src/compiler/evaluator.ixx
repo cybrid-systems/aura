@@ -7,7 +7,7 @@ import aura.compiler.value;
 namespace aura::compiler {
 
 using EvalValue = types::EvalValue;
-using PrimFn = std::function<EvalValue(const std::vector<EvalValue>&)>;
+using PrimFn = std::function<EvalValue(std::span<const EvalValue>)>;
 
 export class Primitives {
 public:
