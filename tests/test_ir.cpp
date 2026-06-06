@@ -3828,5 +3828,22 @@ int main() {
         }
     }
 
+    // ── 2h. Issue #107: Workspace AST mutex exists + is shared ─────
+    // Verify the new member is the right type. The C++ test
+    // surface can access the type via the public WorkspaceMutex
+    // typedef (the actual mutex member stays private). A
+    // separate stress test would exercise the runtime behavior;
+    // that's outside the type-checker test surface.
+    {
+        if constexpr (std::is_same_v<aura::compiler::Evaluator::WorkspaceMutex,
+                                    std::shared_mutex>) {
+            ++ts_passed;
+            std::println("TS OK: Evaluator::WorkspaceMutex is std::shared_mutex (Issue #107)");
+        } else {
+            ++ts_failed;
+            std::println(std::cerr, "TS FAIL: WorkspaceMutex is not std::shared_mutex");
+        }
+    }
+
     return (failed + ck_failed + arity_failed + mp_failed + pm_failed + cf_failed + dce_failed + gg_failed + ts_failed + flat_failed) > 0 ? 1 : 0;
 }

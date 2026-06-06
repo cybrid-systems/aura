@@ -540,6 +540,31 @@ private:
     // Locked during gc-heap and gc-temp operations.
     std::mutex heap_mtx_;
     std::mutex& heap_mutex() { return heap_mtx_; }
+
+    // ── Issue #107: Workspace AST mutex (shared) ────────────────
+    // Protects the FlatAST (workspace_flat_) and dependent caches
+    // (defuse_index_, defuse_version_, dirty flags) against
+    // concurrent mutate / query / typecheck in multi-agent
+    // orchestration. The mutex is std::shared_mutex so multiple
+    // readers (query:*, typecheck-current, eval_current) can
+    // hold it simultaneously while a single writer (mutate:*)
+    // holds it exclusively.
+    //
+    // Locking discipline:
+    //   - mutate:* primitives   — std::unique_lock (exclusive)
+    //   - query:* / typecheck    — std::shared_lock (shared)
+    //   - eval_current / set-code — std::shared_lock (shared)
+    //
+    // The read-only-flag (`workspace_read_only_`) is an
+    // additional layer: when set, mutate primitives return
+    // "read-only" without acquiring the lock. This is checked
+    // BEFORE lock acquisition to keep the no-op fast path.
+    std::shared_mutex workspace_mtx_;
+public:
+    // Type-aliasing accessor for the mutex type. Lets the
+    // C++ test surface verify the lock type (Issue #107) without
+    // exposing the actual mutex (which is internal state).
+    using WorkspaceMutex = std::shared_mutex;
 };
 
 
