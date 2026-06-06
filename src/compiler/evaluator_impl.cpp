@@ -13262,18 +13262,10 @@ bool Evaluator::gc_module(const std::string& path) {
         }
     }
 
-    // Reset the module arena (O(1) — frees all of StringPool/FlatAST/mod_env
-    // and any pmr containers they owned).
-    //
-    // Issue #67 fix: before reset, explicitly call the Env destructor.
-    // The Env was arena-allocated via copy_env, so its destructor doesn't
-    // run automatically when the arena resets its bump pointer. The
-    // Env's `bindings_` vector owns a std::vector<pair<string,EvalValue>>
-    // that uses default std::allocator (heap), which would otherwise leak.
-    // Calling the destructor manually releases the vector's heap storage.
-    if (auto* env = modules_[mod_idx]) {
-        env->~Env();
-    }
+    // Reset the module arena. ASTArena v4 (#131) now runs ~Env() on
+    // every arena-allocated object as part of reset(), so we no
+    // longer need to call env->~Env() manually here — that was the
+    // pre-#131 band-aid and would now double-destroy.
     arena_group_->reset_module(path);
 
     // Clear the module slot. Swap-with-last keeps indices stable for
@@ -16633,22 +16625,17 @@ bool Evaluator::restore_panic_checkpoint() {
 }
 
 
-// Issue #67: explicit destructor. Walks modules_ and runs each env's
-// destructor before the per-module arenas (held by ArenaGroup unique_ptr)
-// are released. The Env was arena-allocated via copy_env, so its
-// destructor wouldn't run automatically when the arena resets its bump
-// pointer — leaving bindings_' heap allocation orphaned. The arena
-// is freed AFTER this dtor runs (member destruction reverse order), so
-// it's safe to use the arena-allocated env memory during dtor.
+// Issue #67 / #131 follow-up: arena-allocated Env destruction.
+//
+// Pre-#131 the arena didn't run ~Env() automatically, so the original
+// loop manually called env->~Env() to free bindings_' heap
+// allocation. ASTArena v4 (this commit) adds type-erased destructor
+// tracking, so the arena itself runs ~Env() at ~ASTArena() time.
+// The manual loop would double-destroy, so it's gone — the arena
+// owns the lifecycle now. The module_arena_ptrs_ map is also dropped
+// from the manual cleanup since arena_group_ will free them as a
+// member after this dtor returns.
 Evaluator::~Evaluator() {
-    // Issue #67: walk every arena-allocated Env and run its destructor
-    // so the std::vector<pair<string,EvalValue>> bindings_' heap
-    // allocation is freed. The Env objects live in per-module arenas
-    // (held by arena_group_, a unique_ptr<ArenaGroup>) that the
-    // member-destruction sequence will free AFTER this dtor runs.
-    for (Env* env : modules_) {
-        if (env) env->~Env();
-    }
     modules_.clear();
     module_cache_.clear();
     module_arena_ptrs_.clear();

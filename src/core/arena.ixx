@@ -109,6 +109,14 @@ private:
 // v1: single pmr monotonic_buffer_resource
 // v2: ArenaStats + ArenaGroup
 // v3: SmallObjectPool for objects <= 64 bytes (3 tiers: 16/32/64)
+// v4: Dtor tracking (issue #67 / #131 follow-up) — every create<T>
+//     call records a type-erased destructor thunk; reset() and
+//     ~ASTArena() invoke them in reverse construction order before
+//     bulk-freeing the chunks. Without this, pmr containers inside
+//     arena-allocated T (e.g. FlatAST's 18+ pmr vectors, StringPool's
+//     buf_/hash_tbl_) leak their monotonic_buffer_resource fallback
+//     chunks (new_delete_resource) because monotonic_buffer_resource's
+//     deallocate is a no-op, and the T's own destructor never runs.
 //
 // Allocation path:
 //   create<T>() → sizeof(T) <= 64 → SmallObjectPool
@@ -120,27 +128,55 @@ public:
         : buffer_(initial_size)
         , resource_(buffer_.data(), buffer_.size(), std::pmr::new_delete_resource()) {}
 
-    // Allocate and construct an object of type T
+    ~ASTArena() {
+        // Call all registered destructors in reverse construction
+        // order so each T's owned resources (pmr vector fallback
+        // chunks, heap-allocated children) are released BEFORE the
+        // arena's underlying bytes are freed.
+        run_destructors();
+    }
+
+    // Allocate and construct an object of type T. The arena records
+    // a type-erased destructor thunk so reset() and ~ASTArena can
+    // destroy the object properly even though placement-new was used
+    // on raw bytes.
     template <typename T, typename... Args> [[nodiscard]] T* create(Args&&... args)
         post (r: r != nullptr)
     {
         void* raw = allocate_raw(sizeof(T), alignof(T));
         ++stats_.allocation_count;
         auto* result = std::construct_at(static_cast<T*>(raw), std::forward<Args>(args)...);
+        dtors_.push_back({result, +[](void* p) { static_cast<T*>(p)->~T(); }});
         return result;
     }
 
-    // Destroy a single object (rarely needed — reset() bulk-frees)
+    // Destroy a single object: call its destructor AND unregister the
+    // entry so the bulk-dtor pass at reset/~ASTArena doesn't double-
+    // destroy. If `ptr` wasn't tracked (caller's responsibility) the
+    // dtor still runs as a best-effort fallback.
     template <typename T> void destroy(T* ptr) {
-        if (ptr)
-            std::destroy_at(ptr);
+        if (!ptr) return;
+        for (auto it = dtors_.begin(); it != dtors_.end(); ++it) {
+            if (it->ptr == ptr) {
+                ptr->~T();
+                dtors_.erase(it);
+                return;
+            }
+        }
+        // Not tracked (e.g. allocated by an upstream helper, or
+        // ownership already moved). Best-effort dtor call.
+        ptr->~T();
     }
 
-    // Release all allocated memory in one shot
+    // Release all allocated memory in one shot. Destructors run in
+    // reverse construction order, then the underlying pmr buffer is
+    // released (which frees in-buffer allocations) and the small-
+    // object pool bump pointers are reset.
     void reset()
         post (used() == 0)
         post (stats_.allocation_count == 0)
     {
+        run_destructors();
         small_pool_.reset();
         resource_.release();
         stats_.used = 0;
@@ -172,7 +208,28 @@ public:
         return buffer_.size() + small_pool_.capacity();
     }
 
+    // Number of live tracked objects (for tests / diagnostics)
+    [[nodiscard]] std::size_t live_count() const noexcept { return dtors_.size(); }
+
 private:
+    // Type-erased destructor pair. The thunk is bound at the create<T>
+    // call site to call ~T() on the specific type, so a single
+    // vector<DtorEntry> can host heterogeneous Ts.
+    struct DtorEntry {
+        void* ptr;
+        void (*dtor)(void*);
+    };
+
+    void run_destructors() noexcept {
+        // Reverse order: last-constructed destroyed first, matching
+        // LIFO stack discipline and the C++ standard library's
+        // destroy(deallocate, alloc, ...) semantics.
+        for (auto it = dtors_.rbegin(); it != dtors_.rend(); ++it) {
+            it->dtor(it->ptr);
+        }
+        dtors_.clear();
+    }
+
     void* allocate_raw(std::size_t size, std::size_t alignment)
         pre (size > 0)
         pre (alignment > 0 && (alignment & (alignment - 1)) == 0)
@@ -196,6 +253,7 @@ private:
     std::pmr::monotonic_buffer_resource resource_;
     SmallObjectPool small_pool_;
     ArenaStats stats_;
+    std::vector<DtorEntry> dtors_;
 };
 
 // ── ArenaGroup — multi-arena manager ─────────────────────────────
