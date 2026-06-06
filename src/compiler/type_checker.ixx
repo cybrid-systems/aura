@@ -239,6 +239,17 @@ public:
     // explicit name → TypeId map takes effect.
     void bind_declared_sigs();
 
+    // Issue #100: expose is_coercible for unit tests. The compile-time
+    // C++ tests in tests/test_ir.cpp construct an InferenceEngine
+    // directly and call is_coercible on synthetic types (Record /
+    // Variant / ADT width matching). Marking it public keeps the
+    // production callers (TypeChecker::check_flat) using it as a
+    // private member; only the test surface sees it. Adding "public"
+    // here doesn't widen the type-checker module's external API — it
+    // only relaxes the class's access modifier inside the module.
+public:
+    bool is_coercible(aura::core::TypeId from, aura::core::TypeId to);
+
 private:
     // FlatAST per-node-type inference
     aura::core::TypeId synthesize_flat(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
@@ -273,9 +284,6 @@ private:
                                  std::vector<aura::core::TypeId> param_types,
                                  aura::core::TypeId ret_type,
                                  std::vector<aura::core::TypeId> type_vars);
-
-    // Check if two types are coercible (gradual L6.6)
-    bool is_coercible(aura::core::TypeId from, aura::core::TypeId to);
 };
 
 // ── TypeChecker — Public API ─────────────────────────────

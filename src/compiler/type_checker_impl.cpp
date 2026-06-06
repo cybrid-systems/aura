@@ -576,6 +576,60 @@ bool InferenceEngine::is_coercible(TypeId from, TypeId to) {
     if ((from_tag == TypeTag::FLOAT && to_tag == TypeTag::BOOL) ||
         (from_tag == TypeTag::BOOL && to_tag == TypeTag::FLOAT))
         return true;
+    // Issue #100: structural coercion for Record / Variant / ADT.
+    //
+    // Record width matching: Record{...} coercible to Record{...} if
+    // every field in `to` exists in `from` (same name) and the
+    // matching field's type is coercible. The "from has more fields"
+    // case is OK — extra fields are simply dropped at the runtime
+    // cast boundary (CastOp strips them).
+    //
+    // Variant width matching: Variant{...} coercible to Variant{...}
+    // if every constructor in `from` exists in `to` (same name) and
+    // the matching constructor's argument types are pairwise
+    // coercible. "From has fewer ctors" is OK — extra ctors in `to`
+    // are simply never produced.
+    //
+    // ADTs are registered as Variants via the register_adt_constructors
+    // path (TypeRegistry::register_adt_constructors), so the Variant
+    // rule transparently covers them — no separate ADT case needed.
+    if (from_tag == TypeTag::RECORD && to_tag == TypeTag::RECORD) {
+        auto* fr = reg_.record_of(from);
+        auto* tr = reg_.record_of(to);
+        if (!fr || !tr) return false;
+        for (auto& [name, to_field_ty] : tr->fields) {
+            bool found = false;
+            for (auto& [n2, from_field_ty] : fr->fields) {
+                if (n2 == name) {
+                    if (!is_coercible(from_field_ty, to_field_ty)) return false;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) return false;
+        }
+        return true;
+    }
+    if (from_tag == TypeTag::VARIANT && to_tag == TypeTag::VARIANT) {
+        auto* fv = reg_.variant_of(from);
+        auto* tv = reg_.variant_of(to);
+        if (!fv || !tv) return false;
+        for (auto& [name, from_args] : fv->variants) {
+            bool found = false;
+            for (auto& [n2, to_args] : tv->variants) {
+                if (n2 == name) {
+                    if (from_args.size() != to_args.size()) return false;
+                    for (std::size_t i = 0; i < from_args.size(); ++i) {
+                        if (!is_coercible(from_args[i], to_args[i])) return false;
+                    }
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) return false;
+        }
+        return true;
+    }
     return false;
 }
 
