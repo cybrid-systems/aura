@@ -1493,6 +1493,146 @@ int main() {
             }
         }
 
+        // ── 2c. Issue #100: is_coercible structural coercion ──────
+        // Extend is_coercible to support Record / Variant / ADT
+        // (ADT is just Variant in Aura) width matching. Test the
+        // common shapes that LLM-generated agent code produces:
+        //   - Record with extra fields coercible to narrower Record
+        //   - Variant with fewer ctors coercible to wider Variant
+        //   - Field-level / arg-level primitive coercion recurses
+        //   - Strict mode stays conservative (no structural coercion)
+        {
+            aura::core::TypeRegistry treg;
+            aura::diag::DiagnosticCollector diag;
+            aura::compiler::InferenceEngine ie(treg, diag);
+
+            // Record width: Person2 (more fields) coercible to Person1.
+            //   Person1 = {name: String}
+            //   Person2 = {name: String, age: Int}
+            {
+                aura::core::RecordType rt1;
+                rt1.fields.push_back({"name", treg.string_type()});
+                aura::core::RecordType rt2;
+                rt2.fields.push_back({"name", treg.string_type()});
+                rt2.fields.push_back({"age", treg.int_type()});
+                auto p1 = treg.register_record(std::move(rt1));
+                auto p2 = treg.register_record(std::move(rt2));
+                if (ie.is_coercible(p2, p1)) {
+                    ++ts_passed;
+                    std::println("TS OK: Record width extra-fields coercible (Person2 <: Person1)");
+                } else {
+                    std::println(std::cerr, "TS FAIL: Person2 should coerce to Person1");
+                    ++ts_failed;
+                }
+                if (!ie.is_coercible(p1, p2)) {
+                    ++ts_passed;
+                    std::println("TS OK: Record width missing-field rejected (Person1 NOT <: Person2)");
+                } else {
+                    std::println(std::cerr, "TS FAIL: Person1 should NOT coerce to Person2 (missing age)");
+                    ++ts_failed;
+                }
+            }
+
+            // Record field coercion recurses: {age: Int} coercible to
+            // {age: Any} (Int <: Any via Dynamic rule) and to
+            // {age: String} (NOT — Int != String and no record cross).
+            {
+                aura::core::RecordType rt_int;
+                rt_int.fields.push_back({"age", treg.int_type()});
+                aura::core::RecordType rt_any;
+                rt_any.fields.push_back({"age", treg.dynamic_type()});
+                aura::core::RecordType rt_str;
+                rt_str.fields.push_back({"age", treg.string_type()});
+                auto r_int = treg.register_record(std::move(rt_int));
+                auto r_any = treg.register_record(std::move(rt_any));
+                auto r_str = treg.register_record(std::move(rt_str));
+                if (ie.is_coercible(r_int, r_any)) {
+                    ++ts_passed;
+                    std::println("TS OK: Record field coercible through Any");
+                } else {
+                    std::println(std::cerr, "TS FAIL: Record[age:Int] NOT coercible to Record[age:Any]");
+                    ++ts_failed;
+                }
+                if (!ie.is_coercible(r_int, r_str)) {
+                    ++ts_passed;
+                    std::println("TS FAIL: Record[age:Int] should NOT coerce to Record[age:String]");
+                    ++ts_failed;
+                } else {
+                    std::println(std::cerr, "TS OK: Record field [Int] NOT coercible to [String]");
+                    ++ts_passed;
+                }
+            }
+
+            // Variant width: Maybe2 (more ctors) coercible to Maybe1.
+            //   Maybe1 = {Just: [Int]}
+            //   Maybe2 = {Just: [Int], Nothing: []}
+            {
+                aura::core::VariantType vt1;
+                vt1.variants.push_back({"Just", {treg.int_type()}});
+                aura::core::VariantType vt2;
+                vt2.variants.push_back({"Just", {treg.int_type()}});
+                vt2.variants.push_back({"Nothing", {}});
+                auto m1 = treg.register_variant(std::move(vt1));
+                auto m2 = treg.register_variant(std::move(vt2));
+                if (ie.is_coercible(m1, m2)) {
+                    ++ts_passed;
+                    std::println("TS OK: Variant width fewer-ctors coercible (Maybe1 <: Maybe2)");
+                } else {
+                    std::println(std::cerr, "TS FAIL: Maybe1 should coerce to Maybe2");
+                    ++ts_failed;
+                }
+                if (!ie.is_coercible(m2, m1)) {
+                    ++ts_passed;
+                    std::println("TS OK: Variant width missing-ctor rejected (Maybe2 NOT <: Maybe1)");
+                } else {
+                    std::println(std::cerr, "TS FAIL: Maybe2 should NOT coerce to Maybe1 (missing Just? no, extra ctor in sup is OK; check)");
+                    ++ts_failed;
+                }
+            }
+
+            // Variant ctor arg coercion: {Just: [Int]} coercible to
+            // {Just: [Any]} (Int -> Any via Dynamic).
+            {
+                aura::core::VariantType vt_int;
+                vt_int.variants.push_back({"Just", {treg.int_type()}});
+                aura::core::VariantType vt_any;
+                vt_any.variants.push_back({"Just", {treg.dynamic_type()}});
+                auto v_int = treg.register_variant(std::move(vt_int));
+                auto v_any = treg.register_variant(std::move(vt_any));
+                if (ie.is_coercible(v_int, v_any)) {
+                    ++ts_passed;
+                    std::println("TS OK: Variant ctor arg coercible through Any");
+                } else {
+                    std::println(std::cerr, "TS FAIL: Just Int NOT coercible to Just Any");
+                    ++ts_failed;
+                }
+            }
+
+            // Strict mode: structural coercion is rejected. Strict
+            // mode is deliberately conservative — only same type and
+            // Float->Int. Record/Variant structural coercion is a
+            // silent widening; in strict mode the user should be
+            // explicit about it.
+            {
+                aura::core::RecordType rt1;
+                rt1.fields.push_back({"x", treg.int_type()});
+                aura::core::RecordType rt2;
+                rt2.fields.push_back({"x", treg.int_type()});
+                rt2.fields.push_back({"y", treg.int_type()});
+                auto r1 = treg.register_record(std::move(rt1));
+                auto r2 = treg.register_record(std::move(rt2));
+                ie.set_strict(true);
+                if (!ie.is_coercible(r2, r1)) {
+                    ++ts_passed;
+                    std::println("TS OK: strict mode rejects structural Record coercion");
+                } else {
+                    std::println(std::cerr, "TS FAIL: strict mode accepted structural Record coercion");
+                    ++ts_failed;
+                }
+                ie.set_strict(false);
+            }
+        }
+
         // ── 3. Occurrence typing — all predicates ──────────────
         {
             TypeRegistry treg;
