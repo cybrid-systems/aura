@@ -194,11 +194,27 @@ export class InferenceEngine {
     // TypeChecker::infer_flat.
     bool strict_ = false;
 
+    // Issue #103: permissive (LLM-friendly) mode. When true and
+    // strict_ is false, inference errors degrade gracefully — the
+    // constraint solver reports a Warning (not TypeError) and the
+    // synthesized type falls back to Dynamic instead of aborting.
+    // Goal: the LLM's first try at a function passes typecheck
+    // (with caveats) rather than being blocked by a strict failure.
+    // Strict mode wins: in strict mode, this flag has no effect
+    // and errors are still TypeError.
+    bool permissive_ = true;
+
     // ADT constructors are looked up via TypeRegistry::get_adt_constructors()
 public:
     // Issue #79: set strict mode. Called by TypeChecker::infer_flat
     // before delegating to the engine.
     void set_strict(bool s) { strict_ = s; }
+
+    // Issue #103: set permissive mode. Default is true. Set to
+    // false to opt into the old behavior (error on constraint
+    // solve failure, even in non-strict mode). Strict mode
+    // (set_strict(true)) always wins — strict+permissive = strict.
+    void set_permissive(bool p) { permissive_ = p; }
 public:
     // declared_modules: name → module_path, 用于跨模块错误定位
     std::unordered_map<std::string, std::string> declared_modules_;

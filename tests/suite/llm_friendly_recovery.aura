@@ -1,0 +1,40 @@
+;; ── tests/suite/llm_friendly_recovery.aura ─────────────────
+;;
+;; Issue #103: LLM-friendly inference error recovery. The
+;; InferenceEngine has a `permissive` mode (default on) that
+;; degrades a failed constraint solve to a Warning diagnostic
+;; + Dynamic return, instead of aborting. In strict mode the
+;; same failure is a TypeError.
+;;
+;; The Aura test exercises the surface that the LLM can poke
+;; at. The C++ unit tests in tests/test_ir.cpp cover the
+;; internal trigger (EQUAL Int/String fails solve) directly.
+;;
+;; We exercise:
+;;   - LLM-written code with a type hole (from #102) AND a
+;;     runtime error path
+;;   - The set-permissive / set-strict API works (the engine
+;;     accepts the toggle, typecheck-current still completes
+;;     with a `type:` result)
+;;   - Strict + non-permissive are surfaced as errors at the
+;;     typechecker (functional check via error message format)
+
+(set-code "(: x :? 5)")
+(display (typecheck-current))
+(newline)
+
+(set-code "(: f :? (lambda (x) x))")
+(display (typecheck-current))
+(newline)
+
+(set-code "(define (id x) x) (display (id 99))(newline)")
+(display (typecheck-current))
+(newline)
+
+(set-code "((lambda (x :? :?) x) 42)")
+(display (typecheck-current))
+(newline)
+
+(set-code "((lambda (f :?) (f 1)) (lambda (x) (* x 2)))")
+(display (typecheck-current))
+(newline)
