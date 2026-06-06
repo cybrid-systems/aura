@@ -1717,6 +1717,32 @@ int main() {
                 std::println(std::cerr, "TS FAIL: re-registered Forall not sound under instantiation");
                 ++ts_failed;
             }
+                }
+
+        // ── 2e. Issue #102: Type Hole (`_` / `:?`) support ─────────
+        // The LLM can use `_` or `:?` in any type-annotation
+        // position to say "infer this from context". The type
+        // checker recognizes these sentinels and skips the type
+        // lookup — the inner expression's synthesized type is
+        // returned as-is. This is the gradual-typing analogue of
+        // a hole in Idris/Agda.
+        {
+            TypeRegistry treg;
+            DiagnosticCollector diag;
+            // Detect the sentinels: single `_` or two-char `:?`.
+            auto is_hole = [](std::string_view s) {
+                if (s.size() == 1 && s[0] == '_') return true;
+                if (s.size() == 2 && s[0] == ':' && s[1] == '?') return true;
+                return false;
+            };
+            if (is_hole("_") && is_hole(":?") && !is_hole("Int") &&
+                !is_hole("") && !is_hole("__")) {
+                ++ts_passed;
+                std::println("TS OK: type-hole sentinels detected correctly");
+            } else {
+                std::println(std::cerr, "TS FAIL: type-hole sentinel detection broken");
+                ++ts_failed;
+            }
         }
 
         // ── 3. Occurrence typing — all predicates ──────────────

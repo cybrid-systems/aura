@@ -486,8 +486,30 @@ NodeId FlatParser::parse_lambda() {
             auto t = lexer_->consume();
             if (t.kind != TokenKind::Identifier)
                 return NULL_NODE;
-            params.push_back(pool_.intern(std::string(t.text)));
-            annots.push_back(NULL_NODE);
+            // Issue #102: shorthand form (x :?) or (x _) for
+            // type-hole param. Consume the param name, then look
+            // ahead: if the next token is `:?` or `_` (which the
+            // lexer reads as a single Identifier token), build a
+            // TypeAnnotation wrapping a Variable node for x, with
+            // the type-hole name as the sym_id. Falls back to the
+            // plain-param path if the next token is anything else
+            // (regular `x` followed by `y` → two params).
+            auto next = lexer_->peek();
+            if (next.kind == TokenKind::Identifier &&
+                (next.text == ":?" || next.text == "_")) {
+                auto hole_text = std::string(next.text);
+                lexer_->consume(); // :? or _
+                auto var_node = flat_.add_variable(
+                    pool_.intern(std::string(t.text)));
+                auto hole_sym = pool_.intern(hole_text);
+                auto annot_node = flat_.add_type_annotation(hole_sym, var_node);
+                flat_.set_loc(annot_node, tok.line, tok.column);
+                params.push_back(pool_.intern(std::string(t.text)));
+                annots.push_back(annot_node);
+            } else {
+                params.push_back(pool_.intern(std::string(t.text)));
+                annots.push_back(NULL_NODE);
+            }
         }
     }
     lexer_->consume(); // ')'
@@ -1347,21 +1369,48 @@ NodeId FlatParser::parse_check() {
         return NULL_NODE;
     }
 
-    // Verify this is truly (check ... : Type), not (check x) as function call
-    if (lexer_->peek().kind == TokenKind::Identifier && lexer_->peek().text == ":") {
-        lexer_->consume(); // ':'
-        auto type_tok = lexer_->peek();
-        if (type_tok.kind == TokenKind::Identifier) {
-            // Consume the type name
-            auto type_sym = pool_.intern(type_tok.text);
-            lexer_->consume(); // TypeName
-            if (lexer_->peek().kind == TokenKind::RParen)
-                lexer_->consume();
-            auto id = flat_.add_type_annotation(type_sym, expr);
-            flat_.set_loc(id, tok.line, tok.column);
-            return id;
+    // Verify this is truly (check ... : Type), not (check x) as function call.
+    // Issue #102: also accept `:?` and `_` as the type hole sentinels
+    // directly, without requiring the `:` separator. The lexer treats
+    // `:?` and `_` as identifier tokens, so the type name is the
+    // token text itself. This lets LLM-generated code use either
+    // `(check x :?)` or `(check x _)` interchangeably.
+    if (lexer_->peek().kind == TokenKind::Identifier &&
+        (lexer_->peek().text == ":" || lexer_->peek().text == ":?" ||
+         lexer_->peek().text == "_")) {
+        auto type_text = std::string(lexer_->peek().text);
+        if (type_text == ":") {
+            lexer_->consume(); // ':'
+            // Now read the actual type name token.
+            auto type_tok = lexer_->peek();
+            if (type_tok.kind == TokenKind::Identifier) {
+                type_text = std::string(type_tok.text);
+                lexer_->consume(); // TypeName
+            }
+        } else {
+            lexer_->consume(); // the `:?` or `_` token itself
         }
-        // Token after : is not an identifier — treat check as function call
+        if (lexer_->peek().kind == TokenKind::RParen)
+            lexer_->consume();
+        auto type_sym = pool_.intern(type_text);
+        auto id = flat_.add_type_annotation(type_sym, expr);
+        flat_.set_loc(id, tok.line, tok.column);
+        return id;
+    }
+    // Token after `check` and the expr is something else — also
+    // accept the type hole directly when the next token after the
+    // expr is `:?` or `_`. The `:` separator was the historical
+    // form; the hole-only form is the LLM-friendly form.
+    if (lexer_->peek().kind == TokenKind::Identifier &&
+        (lexer_->peek().text == ":?" || lexer_->peek().text == "_")) {
+        auto type_text = std::string(lexer_->peek().text);
+        lexer_->consume(); // the `:?` or `_` token
+        if (lexer_->peek().kind == TokenKind::RParen)
+            lexer_->consume();
+        auto type_sym = pool_.intern(type_text);
+        auto id = flat_.add_type_annotation(type_sym, expr);
+        flat_.set_loc(id, tok.line, tok.column);
+        return id;
     }
 
     // Not a valid type annotation — treat (check ...) as regular function call
