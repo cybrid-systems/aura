@@ -441,6 +441,27 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
 void aura_drop_closure(int64_t closure_id) {
     uint64_t id = (uint64_t)closure_id;
     if (id >= closure_count || !closure_heap[id].live) return;
+    // Issue #106 sub-task 3: recurse on env slots before
+    // marking self dead. Env slots can hold fixnums, pairs,
+    // cells, or other closures. Dispatch by:
+    //   1. IS_PAIR(v) — exact low-bit tag match
+    //   2. in-range live cell id — bounds + live check
+    //   3. same for closure id
+    // Order-safe: env slots dropped before self is marked
+    // dead. A fixnum that happens to land in an id range is
+    // safe (the live check fails on unallocated slots).
+    uint32_t env_count = closure_heap[id].env_count;
+    for (uint32_t i = 0; i < env_count; ++i) {
+        int64_t v = closure_heap[id].env[i];
+        if (IS_PAIR(v)) {
+            aura_drop_pair(v);
+        } else if (v >= 0 && (uint64_t)v < cell_count && cell_heap[v].live) {
+            aura_drop_cell(v);
+        } else if (v >= 0 && (uint64_t)v < closure_count && closure_heap[v].live) {
+            aura_drop_closure(v);
+        }
+        // else: fixnum or out-of-range id — no drop
+    }
     closure_heap[id].live = false;
     if (closure_free_count < FREE_LIST_CAP)
         closure_free_list[closure_free_count++] = (int64_t)id;

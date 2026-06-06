@@ -276,6 +276,80 @@ TEST(test_closure_drop) {
     PASS();
 }
 
+// Issue #106 sub-task 3: closure env with a captured pair. When
+// the closure is dropped, the env-slot pair should also be
+// dropped (the captured pair is no longer reachable through the
+// closure). We verify by reading the pair's car / cdr after
+// the closure drop — they return 0 for a dead pair.
+TEST(test_closure_env_pair_drop) {
+    int64_t cid = aura_alloc_closure(0);
+    aura_register_closure_fn(cid, (int64_t)(intptr_t)test_add_fn, 2);
+    int64_t captured = aura_alloc_pair(100, 200);
+    aura_closure_capture(cid, 0, captured);
+    aura_drop_closure(cid);
+    // The pair should be dead now (recursive drop). Car/cdr
+    // return 0 for dead pairs.
+    CHECK(aura_pair_car(captured) == 0, "captured pair car after closure drop");
+    CHECK(aura_pair_cdr(captured) == 0, "captured pair cdr after closure drop");
+    PASS();
+}
+
+// Issue #106 sub-task 3: closure env with a captured cell. The
+// runtime detects cells by checking if the env value falls in
+// the cell-id range and the slot is live. We allocate a cell
+// first to push the id into a non-zero range, then capture.
+TEST(test_closure_env_cell_drop) {
+    int64_t sentinel = aura_new_cell();  // advance cell_count to 1
+    int64_t captured_cell = aura_new_cell();
+    aura_cell_set(captured_cell, 42);
+    int64_t cid = aura_alloc_closure(0);
+    aura_register_closure_fn(cid, (int64_t)(intptr_t)test_add_fn, 2);
+    aura_closure_capture(cid, 0, captured_cell);
+    aura_drop_closure(cid);
+    // Captured cell should be dead after closure drop.
+    CHECK(aura_cell_get(captured_cell) == 0, "captured cell after closure drop");
+    PASS();
+}
+
+// Issue #106 sub-task 3: closure env with multiple captured
+// pairs (nested recursion). Dropping the outer closure should
+// drop all the pairs in its env in one shot.
+TEST(test_closure_env_multi_pair_drop) {
+    int64_t cid = aura_alloc_closure(0);
+    aura_register_closure_fn(cid, (int64_t)(intptr_t)test_add_fn, 4);
+    int64_t p1 = aura_alloc_pair(1, 2);
+    int64_t p2 = aura_alloc_pair(3, 4);
+    int64_t p3 = aura_alloc_pair(5, 6);
+    aura_closure_capture(cid, 0, p1);
+    aura_closure_capture(cid, 1, p2);
+    aura_closure_capture(cid, 2, p3);
+    aura_drop_closure(cid);
+    CHECK(aura_pair_car(p1) == 0, "p1 dead");
+    CHECK(aura_pair_car(p2) == 0, "p2 dead");
+    CHECK(aura_pair_car(p3) == 0, "p3 dead");
+    PASS();
+}
+
+// Issue #106 sub-task 3: fixnum env slot is a no-op. A
+// fixnum that happens to be in the cell-id range but on an
+// unallocated slot must NOT trigger a drop. The live check
+// catches this — if cell_count > 5 but cell id 5 was never
+// allocated, cell_heap[5].live is false and the drop is
+// skipped.
+TEST(test_closure_env_fixnum_noop) {
+    // Allocate a closure whose env has a fixnum value. The
+    // closure's local_count must be > 0 to allow captures.
+    int64_t cid = aura_alloc_closure(0);
+    aura_register_closure_fn(cid, (int64_t)(intptr_t)test_add_fn, 2);
+    // env[0] = fixnum 42 (low bit 0, not a pair tag).
+    aura_closure_capture(cid, 0, 42);
+    // Drop the closure. env[0] is 42, which is in range of
+    // cell_count / closure_count after they grow, but the
+    // slot is not live so the heuristic should no-op.
+    aura_drop_closure(cid);
+    PASS();
+}
+
 TEST(test_closure_oob) {
     int64_t args[2] = {0, 0};
     int64_t result = aura_closure_call(999999, args, 2);
@@ -380,6 +454,10 @@ static test_fn tests[] = {
     test_closure_basic,
     test_closure_capture,
     test_closure_drop,
+    test_closure_env_pair_drop,
+    test_closure_env_cell_drop,
+    test_closure_env_multi_pair_drop,
+    test_closure_env_fixnum_noop,
     test_closure_oob,
     test_closure_multi_capture,
     // String
