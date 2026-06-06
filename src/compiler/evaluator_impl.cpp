@@ -5197,13 +5197,43 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         // (eval-current) re-lowers it.
         if (mark_define_dirty_fn_) mark_define_dirty_fn_(name);
 
-        // ── Auto-typecheck: 验证变异后的代码类型正确 ────────
-        // Issue #107: removed (see commit). The LLM can call
-        // typecheck-current explicitly after the mutate. Auto-typecheck
-        // from within mutate is incompatible with the workspace_mtx_
-        // because we already hold unique_lock and re-entering the same
-        // mutex in a different mode is a deadlock.
-        (void)0;  // auto-typecheck intentionally removed
+        // ── Auto-typecheck (Issue #107 part 3.5) ────────────
+        // Run the typecheck inline WITHOUT going through the
+        // typecheck-current primitive dispatch. Going through the
+        // primitive would re-acquire workspace_mtx_ in shared mode
+        // and deadlock (we already hold unique_lock from the
+        // mutate). The check populates last_mutate_error_ so
+        // (typecheck-status) can surface the result.
+        if (workspace_flat_ && workspace_pool_) {
+            if (!type_registry_) {
+                type_registry_ = new aura::core::TypeRegistry();
+            }
+            auto& treg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
+            aura::compiler::TypeChecker tc(treg);
+            if (!declared_type_sigs_.empty()) {
+                std::unordered_map<std::string, std::string> sig_map;
+                std::unordered_map<std::string, std::string> mod_src_map;
+                for (auto& [name, decl] : declared_type_sigs_) {
+                    sig_map[name] = decl.type_str;
+                    if (!decl.module_file.empty())
+                        mod_src_map[name] = decl.module_file;
+                }
+                tc.inject_type_sigs(sig_map, mod_src_map);
+            }
+            aura::diag::DiagnosticCollector local_diag;
+            tc.infer_flat(*workspace_flat_, *workspace_pool_,
+                          workspace_flat_->root, local_diag);
+            workspace_flat_->clear_all_dirty();
+            auto local_diags = local_diag.diagnostics();
+            if (local_diags.empty()) {
+                last_mutate_error_.clear();
+            } else {
+                std::string err = "typecheck after mutate:rebind failed:";
+                for (auto& d : local_diags)
+                    err += " " + d.format() + ";";
+                last_mutate_error_ = err;
+            }
+        }
 
         // ── Ownership validation: ensure ownership invariants hold ──
         if (workspace_flat_ && workspace_pool_ && last_mutate_error_.empty()) {
@@ -5720,9 +5750,41 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
                 // Record affected sym for incremental DefUseIndex update
                 defuse_affected_syms_.insert(name);
 
-                // ── Auto-typecheck ──
-                // Issue #107: removed (see mutate:rebind commit comment).
-                (void)0;  // auto-typecheck intentionally removed
+                // ── Auto-typecheck (Issue #107 part 3.5) ────────────
+                // Run the typecheck inline WITHOUT going through the
+                // typecheck-current primitive dispatch. Same deadlock
+                // avoidance as mutate:rebind. Populates
+                // last_mutate_error_ so (typecheck-status) works.
+                if (workspace_flat_ && workspace_pool_) {
+                    if (!type_registry_) {
+                        type_registry_ = new aura::core::TypeRegistry();
+                    }
+                    auto& treg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
+                    aura::compiler::TypeChecker tc(treg);
+                    if (!declared_type_sigs_.empty()) {
+                        std::unordered_map<std::string, std::string> sig_map;
+                        std::unordered_map<std::string, std::string> mod_src_map;
+                        for (auto& [name2, decl] : declared_type_sigs_) {
+                            sig_map[name2] = decl.type_str;
+                            if (!decl.module_file.empty())
+                                mod_src_map[name2] = decl.module_file;
+                        }
+                        tc.inject_type_sigs(sig_map, mod_src_map);
+                    }
+                    aura::diag::DiagnosticCollector local_diag;
+                    tc.infer_flat(*workspace_flat_, *workspace_pool_,
+                                  workspace_flat_->root, local_diag);
+                    workspace_flat_->clear_all_dirty();
+                    auto local_diags = local_diag.diagnostics();
+                    if (local_diags.empty()) {
+                        last_mutate_error_.clear();
+                    } else {
+                        std::string err = "typecheck after mutate:set-body failed:";
+                        for (auto& d : local_diags)
+                            err += " " + d.format() + ";";
+                        last_mutate_error_ = err;
+                    }
+                }
 
                 // ── Ownership validation ──
                 if (workspace_flat_ && workspace_pool_ && last_mutate_error_.empty()) {
