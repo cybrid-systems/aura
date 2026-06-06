@@ -14572,12 +14572,27 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
 
         // Recursion depth guard: friendly error vs segfault
         // MAX_C_STACK_DEPTH must be low enough to fit in the C++ call stack (~550 frames)
-        static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
+        // ── Recursion depth guard (thread_local) ────────────────────────
+// #109 (P0): the depth counter must be PER THREAD, not per Evaluator.
+// Fiber fallback (std::thread + [this] capture) shares an Evaluator
+// across N OS threads; if each thread increments a shared counter, a
+// modest amount of parallel work trips the MAX_C_STACK_DEPTH=2000 guard
+// even though no single thread is deeply nested. This is what made
+// `tests/suite/concurrent.aura` T7-T10 (orch:parallel 5-way, nested
+// spawn+join) flaky: in one run they'd see the shared counter spike
+// past 2000 and bail with "recursion depth exceeded".
+//
+// The shared eval_depth_ member is still used below for auto-gc-temp
+// sampling and auto-gc cooldown, where "global eval activity" is the
+// intended signal (one thread's deep call can still be enough work
+// to warrant a periodic gc-temp). The two are now decoupled.
+static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
+        thread_local std::size_t t_c_stack_depth = 0;
         struct DepthGuard {
             std::size_t& d;
             ~DepthGuard() { --d; }
-        } _dg{eval_depth_};
-        if (++eval_depth_ > MAX_C_STACK_DEPTH)
+        } _dg{t_c_stack_depth};
+        if (++t_c_stack_depth > MAX_C_STACK_DEPTH)
             return std::unexpected(
                 Diagnostic{ErrorKind::InternalError,
                            std::format("recursion depth exceeded (>{})", MAX_C_STACK_DEPTH)});

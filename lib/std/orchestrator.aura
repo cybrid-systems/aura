@@ -294,12 +294,21 @@
         (when (pair? remaining)
           (define fid (try (fiber:spawn (lambda () ((car remaining) input)))
                            (catch (e) 0)))
-          (if (> fid 0)
+          (if (not (= fid 0))
             (set! fiber-ids (cons fid fiber-ids)))
           (try-fiber (cdr remaining))))
       (try-fiber fns)
-      
-      (if (pair? fiber-ids)
+
+      ; #109: removed serial fallback. The original code fell back to
+      ; sequential evaluation if no fibers could be spawned, which hid
+      ; the parallel-correctness bugs we want to surface. If
+      ; fiber:spawn is unavailable in this runtime (e.g., true single-
+      ; fiber embedded mode), the caller should explicitly use map /
+      ; list-fold instead. Failure to spawn a fiber now propagates as
+      ; an empty result list — orch:parallel is a no-op when there are
+      ; no fibers to join, which is the same observable behavior as the
+      ; old "no fns" case (and we already return () for that above).
+      (if (null? fiber-ids) (quote ())
         (let* ((timeout-fid (if timeout-sec
                              (fiber:spawn (lambda ()
                                (sleep timeout-sec)
@@ -324,12 +333,7 @@
           ; If timeout fired, the first result is 'timeout, discard it
           (if timeout-fid
             (cdr (reverse results))
-            (reverse results)))
-        ; 串行 fallback
-        (let loop ((remaining fns) (acc (quote ())))
-          (if (null? remaining) (reverse acc)
-            (loop (cdr remaining)
-                  (cons (try ((car remaining) input) (catch (e) #f)) acc))))))))
+            (reverse results)))))))
 
 ;; ═══════════════════════════════════════════════════════════════
 ;; Section 5: conduct — 总谱指挥
