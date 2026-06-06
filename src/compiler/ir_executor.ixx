@@ -73,7 +73,14 @@ export struct EvalStrategy {
 
 export class IRInterpreter {
 public:
-    explicit IRInterpreter(const aura::ir::IRModule& mod, const Primitives& prims,
+    // IRInterpreter holds a non-const Primitives& so IROpcode::ConstString
+    // can register string literals into the shared primitives' string heap
+    // (the same one a PrimFn primitive would later look up by index). The
+    // shared heap is the integration point between IR-generated code and
+    // the Primitives dispatch table. ConstString is the only IR opcode
+    // that mutates primitives_; everything else goes through the const
+    // lookup() API.
+    explicit IRInterpreter(const aura::ir::IRModule& mod, Primitives& prims,
                            const aura::core::TypeRegistry* types = nullptr)
         : module_(mod)
         , primitives_(prims)
@@ -147,7 +154,7 @@ private:
     static std::optional<aura::core::TypeTag> value_type_tag(const EvalValue& val);
 
     const aura::ir::IRModule& module_;
-    const Primitives& primitives_;
+    Primitives& primitives_;
     const aura::core::TypeRegistry* type_registry_ = nullptr;
     EvalStrategy strategy_;
     bool strict_mode_ = false;
