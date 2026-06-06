@@ -2010,7 +2010,17 @@ int main(int argc, char* argv[]) {
                 else if (n == "null?")
                     code += "    return (c>=1&&(a[0]==11||a[0]==0))?1:0;\n";
                 else if (n == "pair?")
-                    code += "    return (c>0&&(((a[0]&3)==1)||a[0]<0))?1:0;\n";
+                    // Issue #106 sub-task 4 (audit): the previous
+                    // expression was (c>0&&(((a[0]&3)==1))||a[0]<0)
+                    // which due to C precedence parses as
+                    //   (c>0 && ((a[0]&3)==1)) || (a[0]<0)
+                    // and reads a[0] when c==0 — a read of an
+                    // out-of-range arg slot that can segfault on
+                    // x86_64 emit-binary with certain call sites
+                    // (the old -9000... string sentinel is no
+                    // longer part of the pair tag; we just check
+                    // the low-bit tag like IS_PAIR in the runtime).
+                    code += "    return (c>0 && ((a[0]&3)==1)) ? 1 : 0;\n";
                 else if (n == "cons")
                     code += "    return aura_alloc_pair(c>0?a[0]:0,c>1?a[1]:0);\n";
                 else if (n == "car")
