@@ -170,11 +170,21 @@ void WorkerThread::run() {
                 continue;
             }
 
-            // Resume the fiber — runs until yield() or completion
+            // Resume the fiber — runs until yield() or completion.
+            //
+            // Issue #115: track the "running fiber" count so the
+            // GC coordinator can wait for currently-running
+            // fibers to arrive at the safepoint. Increment
+            // BEFORE resume (in case the GC requests a
+            // safepoint while we're blocked in resume()) and
+            // decrement AFTER (so the count goes back to 0
+            // when the worker is back in its dispatch loop).
+            gc_state_.running_fiber_count.fetch_add(1, std::memory_order_acq_rel);
             if (my_metrics) {
                 my_metrics->fibers_executed.fetch_add(1, std::memory_order_relaxed);
             }
             fiber->resume();
+            gc_state_.running_fiber_count.fetch_sub(1, std::memory_order_acq_rel);
 
             // After resume: fiber either yielded or finished
             if (fiber->is_done()) {
