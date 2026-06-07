@@ -192,10 +192,6 @@ struct LLVMBuilder {
     static constexpr int64_t KWD_FALSE_VAL = 3;
     static constexpr int64_t FLOAT_BIAS_VAL = types::FLOAT_BIAS_VAL;
     llvm::Type* double_ty = llvm::Type::getDoubleTy(ctx);
-    // Issue #114: pre-create the i32 type so the prim_dispatch
-    // FunctionType (which uses i32 for argc) can be constructed
-    // during the runtime-function declaration block.
-    llvm::Type* i32_ty = llvm::Type::getInt32Ty(ctx);
     // String pool for OpConstString (IR module's string pool content)
     const std::vector<std::string>* string_pool = nullptr;
 
@@ -212,15 +208,6 @@ struct LLVMBuilder {
     llvm::Function* fn_pair_car = nullptr;
     llvm::Function* fn_pair_cdr = nullptr;
     llvm::Function* fn_prim_call = nullptr;
-    // Issue #114: a direct call to the prim dispatcher, bypassing
-    // the aura_prim_call wrapper. The wrapper does a function
-    // pointer load + a 3-element array allocation on every call
-    // (~5ns overhead). When the JIT emits a call to
-    // `aura_jit_prim_dispatch` directly, that overhead goes away.
-    // The signature is (slot, int64_t* args, int32_t argc); the
-    // JIT allocates the args array inline in the function's
-    // stack frame.
-    llvm::Function* fn_prim_dispatch_direct = nullptr;
     llvm::Function* fn_display_int = nullptr;
     llvm::Function* fn_display_char = nullptr;
     llvm::Function* fn_newline = nullptr;
@@ -305,14 +292,6 @@ struct LLVMBuilder {
             llvm::Function::Create(llvm::FunctionType::get(i64, {i64, i64, i64, i64}, false),
                                    llvm::Function::ExternalLinkage, "aura_prim_call", mod);
 
-        // Issue #114: direct call to the prim dispatcher, skipping
-        // the aura_prim_call wrapper. Same signature as the C
-        // runtime's `aura_jit_prim_dispatch`. The JIT allocates
-        // the args array inline (stack) and passes the pointer.
-        fn_prim_dispatch_direct =
-            llvm::Function::Create(llvm::FunctionType::get(i64, {i64, ptr_i64, i32_ty}, false),
-                                   llvm::Function::ExternalLinkage, "aura_jit_prim_dispatch", mod);
-
         fn_display_int =
             llvm::Function::Create(llvm::FunctionType::get(void_ty, {i64}, false),
                                    llvm::Function::ExternalLinkage, "aura_display_int", mod);
@@ -391,7 +370,6 @@ struct LLVMBuilder {
     }
     void store(uint32_t slot, llvm::Value* val) { irb->CreateStore(val, llvm_locals[slot]); }
     llvm::Value* c64(int64_t v) { return llvm::ConstantInt::get(llvm::Type::getInt64Ty(ctx), v); }
-    llvm::Value* c32(int32_t v) { return llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), v); }
 
     // Lower one FlatInstruction into the current LLVM IR builder.
     // Contract: inst.opcode must be a valid IROpcode value (< MaxIROpcode);
@@ -912,29 +890,20 @@ struct LLVMBuilder {
                     break;
                 }
 
-                // Slow-path: Issue #114 — direct call to the prim
-                // dispatcher, skipping the aura_prim_call wrapper.
-                // The wrapper does a function-pointer load + 3-element
-                // array allocation on every call (~5ns overhead).
-                // When we call aura_jit_prim_dispatch directly, the
-                // LLVM optimizer can inline the array allocation and
-                // avoid the extra C function frame.
-                //
-                // Emit: alloca [3 x i64]; store a, b, 0; call
-                // aura_jit_prim_dispatch(slot, args_ptr, argc).
+                // Slow-path: call aura_prim_call which is the
+                // dispatcher in BOTH the JIT runtime
+                // (aura_jit_runtime.cpp) and the AOT runtime
+                // (lib/runtime.c). Earlier we tried calling
+                // aura_jit_prim_dispatch directly to skip the
+                // wrapper, but that symbol doesn't exist in the
+                // AOT runtime, so the AOT link fails for any
+                // expression with a slow-path primitive. The
+                // wrapper overhead (~5ns) is minor compared to
+                // the LLVM compile cost for AOT.
                 {
-                    auto i64_ty = llvm::Type::getInt64Ty(ctx);
-                    auto args_arr = irb->CreateAlloca(
-                        llvm::ArrayType::get(i64_ty, 3));
-                    auto args0 = irb->CreateConstGEP2_64(
-                        i64_ty, args_arr, 0, 0);
-                    auto args1 = irb->CreateConstGEP2_64(i64_ty, args_arr, 0, 1);
-                    auto args2 = irb->CreateConstGEP2_64(i64_ty, args_arr, 0, 2);
-                    irb->CreateStore(a1, args0);
-                    irb->CreateStore(a2, args1);
-                    irb->CreateStore(c64(0), args2);
-                    auto call = irb->CreateCall(fn_prim_dispatch_direct,
-                        {c64(prim_id), args_arr, c32(static_cast<int32_t>(arg_count))});
+                    auto call = irb->CreateCall(
+                        fn_prim_call,
+                        {c64(prim_id), a1, a2, c64(arg_count)});
                     store(result_slot, call);
                 }
                 return true;
