@@ -414,6 +414,28 @@ target_link_libraries(test_spec_jit PRIVATE stdc++)
 add_test(NAME test_spec_jit COMMAND test_spec_jit
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
+# ── JIT metrics tests (Issue #114) ─────────────────────
+# Verifies the AuraJIT::Metrics struct (default state, atomic
+# concurrent increments, format() output, edge cases). Doesn't
+# need a full LLVM stack — exercises the counter paths directly.
+add_executable(test_jit_metrics tests/test_jit_metrics.cpp
+    tests/test_jit_metrics_stub.cpp
+    src/compiler/aura_jit.cpp
+    src/compiler/aura_jit_runtime.cpp)
+target_include_directories(test_jit_metrics PRIVATE src)
+set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts")
+target_sources(test_jit_metrics PRIVATE src/core/contract_handler.cpp)
+target_link_libraries(test_jit_metrics PRIVATE stdc++ stdc++exp pthread aura-reflect)
+if(LLVM_FOUND)
+    target_include_directories(test_jit_metrics PRIVATE ${LLVM_INCLUDE_DIRS})
+    target_link_libraries(test_jit_metrics PRIVATE ${llvm_libs})
+    target_compile_definitions(test_jit_metrics PRIVATE AURA_HAVE_LLVM=1)
+endif()
+add_test(NAME jit_metrics COMMAND test_jit_metrics
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
 # ── Speculative JIT runtime tests (Phase 3, #53) ────────────
 add_executable(test_spec_runtime tests/test_spec_runtime.cpp)
 target_include_directories(test_spec_runtime PRIVATE src)

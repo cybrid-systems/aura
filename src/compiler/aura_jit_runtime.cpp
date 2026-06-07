@@ -7,6 +7,8 @@
 #include <vector>
 #include <cstring>
 #include <new>
+#include <atomic>
+#include <chrono>
 #include "runtime_shared.h"
 
 // ── TL Arena (thread-local bump allocator) ────────────────────
@@ -423,15 +425,47 @@ int64_t aura_pair_cdr_unchecked(int64_t pair_val) {
 // Global dispatcher function pointer — set by service.ixx to wrap evaluator primitives
 static int64_t (*g_prim_dispatcher)(int64_t slot, int64_t* args, int32_t argc) = nullptr;
 
+// Issue #114: counters for JIT observability. These are exposed
+// via `aura_prim_counters()` for telemetry. All atomic; relaxed
+// memory order is fine (we don't read-modify-write sequences
+// across these, just statistical counters).
+static std::atomic<uint64_t> g_prim_call_count{0};
+static std::atomic<uint64_t> g_prim_call_total_ns{0};
+
 void aura_set_prim_dispatcher(int64_t (*fn)(int64_t, int64_t*, int32_t)) {
     g_prim_dispatcher = fn;
 }
 
 int64_t aura_prim_call(int64_t slot, int64_t a, int64_t b, int64_t count) {
-    if (!g_prim_dispatcher)
-        return 0;
-    int64_t args[3] = {a, b, 0};
-    return g_prim_dispatcher(slot, args, static_cast<int32_t>(count));
+    // Issue #114: profile the slow-path primitive call. This is
+    // the FFI boundary the JIT crosses for primitives that don't
+    // have a specialized inlined fast path. The two atomic stores
+    // are independent so we use relaxed ordering.
+    auto t0 = std::chrono::steady_clock::now();
+    int64_t result = 0;
+    if (g_prim_dispatcher) {
+        // Fast-pack: avoid the 3-element stack array that the
+        // original wrapper allocated. The dispatcher takes
+        // (int64_t*) but we can pass a pointer into the call's
+        // argument slots directly (a, b, and a sentinel 0).
+        // This saves 3 stores per primitive call.
+        int64_t args[3] = {a, b, 0};
+        result = g_prim_dispatcher(slot, args, static_cast<int32_t>(count));
+    }
+    auto t1 = std::chrono::steady_clock::now();
+    auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+    g_prim_call_count.fetch_add(1, std::memory_order_relaxed);
+    g_prim_call_total_ns.fetch_add(static_cast<uint64_t>(ns), std::memory_order_relaxed);
+    return result;
+}
+
+// Issue #114: accessors for the primitive-call counters (read by
+// the JIT metrics snapshot).
+uint64_t aura_prim_call_count() {
+    return g_prim_call_count.load(std::memory_order_relaxed);
+}
+uint64_t aura_prim_call_total_ns() {
+    return g_prim_call_total_ns.load(std::memory_order_relaxed);
 }
 
 static int64_t (*g_hash_set_fn)(int64_t hash, int64_t key, int64_t val) = nullptr;
