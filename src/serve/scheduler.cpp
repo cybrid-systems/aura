@@ -408,25 +408,54 @@ int Scheduler::request_gc_safepoint() {
 }
 
 bool Scheduler::wait_for_safepoint(int timeout_ms) {
+    // Helper: check if all workers are quiescent (no running
+    // fibers, no fibers arrived at safepoint, no queued fibers).
+    //
+    // Issue #115: also check `running_fiber_count_`. A fiber
+    // currently executing on a worker holds the worker's stack
+    // with live references. If the GC proceeds while a fiber
+    // is running, those stack references are missed during
+    // root collection, leading to use-after-free during sweep.
+    //
+    // The fiber's own `check_gc_safepoint` will increment
+    // `fibers_at_safepoint` when the fiber next yields or
+    // allocates. The running-fiber counter is the worker's
+    // accounting: it's > 0 while the worker is in `resume()`
+    // and the fiber hasn't yielded back yet.
+    auto all_quiescent = [this]() {
+        for (auto& w : workers_) {
+            if (!w) continue;
+            auto& gc = w->gc_state();
+            // Skip workers with no active fibers (empty queue, nothing
+            // pending, no running fiber). These workers are
+            // participating in the safepoint trivially (they have
+            // nothing to wait for).
+            if (w->queue_size() == 0 && w->pending_count() == 0
+                && gc.fibers_at_safepoint.load(std::memory_order_acquire) == 0
+                && gc.running_fiber_count.load(std::memory_order_acquire) == 0) {
+                continue;
+            }
+            // Worker has active state. Wait for the running fiber
+            // (if any) to finish, AND for a fiber to have
+            // arrived at the safepoint. The `running_fiber_count
+            // == 0` check ensures the fiber is no longer
+            // executing; the `fibers_at_safepoint >= 1` check
+            // ensures it arrived at the safepoint.
+            if (gc.running_fiber_count.load(std::memory_order_acquire) > 0) {
+                return false;
+            }
+            if (gc.fibers_at_safepoint.load(std::memory_order_acquire) < 1) {
+                return false;
+            }
+        }
+        return true;
+    };
+
     // Spin for a short time first (fast path)
     constexpr int SPIN_US = 100;
     int elapsed_us = 0;
     while (elapsed_us < SPIN_US * 10) {  // max ~1ms spin
-        bool all_arrived = true;
-        for (auto& w : workers_) {
-            if (!w) continue;
-            auto& gc = w->gc_state();
-            // Skip workers with no active fibers (empty queue, nothing pending)
-            if (w->queue_size() == 0 && w->pending_count() == 0
-                && gc.fibers_at_safepoint.load(std::memory_order_acquire) == 0) {
-                continue;
-            }
-            if (gc.fibers_at_safepoint.load(std::memory_order_acquire) < 1) {
-                all_arrived = false;
-                break;
-            }
-        }
-        if (all_arrived) return true;
+        if (all_quiescent()) return true;
         // Tiny pause to avoid hammering
 #if defined(__x86_64__)
         __builtin_ia32_pause();
@@ -440,20 +469,7 @@ bool Scheduler::wait_for_safepoint(int timeout_ms) {
 
     // After spin fails, fall back to epoll timeout wait
     for (int attempt = 0; attempt < std::max(1, timeout_ms); ++attempt) {
-        bool all_arrived = true;
-        for (auto& w : workers_) {
-            if (!w) continue;
-            auto& gc = w->gc_state();
-            if (w->queue_size() == 0 && w->pending_count() == 0
-                && gc.fibers_at_safepoint.load(std::memory_order_acquire) == 0) {
-                continue;
-            }
-            if (gc.fibers_at_safepoint.load(std::memory_order_acquire) < 1) {
-                all_arrived = false;
-                break;
-            }
-        }
-        if (all_arrived) return true;
+        if (all_quiescent()) return true;
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 

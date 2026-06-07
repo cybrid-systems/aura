@@ -127,6 +127,23 @@ struct WorkerGCState {
     std::atomic<int32_t> fibers_at_safepoint{0};
     std::atomic<int64_t> gc_epoch{0};
 
+    // Issue #115: count of fibers currently executing on this
+    // worker (i.e., the worker is inside fiber->resume() and
+    // hasn't returned yet). A fiber that's actively running
+    // holds the worker's stack with live references to the
+    // heap; the GC must wait for it to either yield or complete
+    // before proceeding, otherwise those stack references would
+    // be missed during root collection.
+    //
+    // The fiber's own `check_gc_safepoint` increments
+    // `fibers_at_safepoint` when it next yields/allocates.
+    // The running-fiber counter is incremented by the worker
+    // just before `fiber->resume()` and decremented after.
+    // `Scheduler::wait_for_safepoint` considers the worker
+    // quiescent only when BOTH counters are zero (or the
+    // worker has no fibers at all).
+    std::atomic<int32_t> running_fiber_count{0};
+
     // Spin-wait until phase returns to None (safepoint resume)
     void wait_for_resume() {
         while (phase.load(std::memory_order_acquire) != GCPhase::None) {

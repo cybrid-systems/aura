@@ -2266,6 +2266,7 @@ bool test_gc_root_no_sources();
 bool test_gc_root_unregister_source();
 bool test_gc_root_large_set();
 bool test_gc_safepoint_long_compute();
+bool test_gc_safepoint_running_fiber();
 
 bool test_gc_sweep_callback_compact();
 bool test_gc_sweep_callback_all_live();
@@ -2367,6 +2368,7 @@ int main() {
     test_gc_root_unregister_source();
     test_gc_root_large_set();
     test_gc_safepoint_long_compute();
+    test_gc_safepoint_running_fiber();
     test_gc_safepoint_spawn_during_gc();
     test_gc_mark_basic();
     test_gc_sweep_dead_count();
@@ -3054,6 +3056,94 @@ bool test_gc_safepoint_long_compute() {
     t.join();
 
     CHECK(sum.load() > 0, "fiber did work between GC cycles");
+    return true;
+}
+
+// ── Test: GC safepoint — running fiber (Issue #115) ───────────
+// Verifies that the GC correctly waits for a fiber that is
+// currently EXECUTING on a worker (i.e., the worker is inside
+// `fiber->resume()` and the fiber has not yet yielded).
+//
+// This is the case the old `wait_for_safepoint` bug missed:
+// a fiber in tight compute that never explicitly calls
+// `check_gc_safepoint` or `yield` will hold the worker's stack
+// with live references. The GC must wait for that fiber to
+// either yield or complete — otherwise those stack references
+// are missed during root collection.
+//
+// Test plan:
+//   1. Spawn a fiber that does heavy compute in a tight loop
+//      WITHOUT calling check_gc_safepoint or yield (the
+//      pathological case the bug-fix targets).
+//   2. From the IO thread, request a safepoint.
+//   3. wait_for_safepoint should NOT return immediately (the
+//      fiber is still running and holds stack references).
+//   4. After the fiber finishes its compute, wait_for_safepoint
+//      should return.
+
+bool test_gc_safepoint_running_fiber() {
+    std::println("\n--- Test: GC safepoint — running fiber (Issue #115) ---");
+
+    aura::serve::Scheduler sched(2);
+    std::atomic<int64_t> progress{0};
+    std::atomic<bool> started{false};
+
+    // Spawn a fiber that runs a tight compute loop. Critical:
+    // this fiber does NOT call check_gc_safepoint() inside the
+    // loop. The only way for the worker to call check is at
+    // yield points. We're testing that the running-fiber count
+    // is what makes the GC wait, not fibers_at_safepoint.
+    sched.spawn([&progress, &started]() {
+        started.store(true, std::memory_order_release);
+        // Heavy compute — ~100ms of work, no yields
+        for (int j = 0; j < 50'000'000; ++j) {
+            progress.fetch_add(j & 0xFF, std::memory_order_relaxed);
+        }
+        // Yield once at the end so the worker can proceed
+        aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+    });
+
+    std::thread t([&sched]() { sched.run(); });
+
+    // Wait for fiber to start running
+    while (!started.load(std::memory_order_acquire))
+        std::this_thread::yield();
+
+    // Give the worker a moment to enter resume() and increment
+    // the running_fiber_count
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+    // Request safepoint
+    sched.request_gc_safepoint();
+
+    // Try to wait with a SHORT timeout. If the bug is present
+    // (wait_for_safepoint returns immediately because no fiber
+    // has incremented fibers_at_safepoint yet), the timeout
+    // will succeed when it shouldn't.
+    //
+    // With the fix: wait_for_safepoint checks running_fiber_count
+    // and won't return until the running fiber finishes its
+    // compute. The 50ms timeout should fail (because the fiber
+    // is still computing), and wait_for_safepoint returns false.
+    bool arrived_early = sched.wait_for_safepoint(50);
+    CHECK(!arrived_early,
+          "wait_for_safepoint must NOT return while a fiber is still running");
+
+    // Now wait long enough for the fiber to finish (50M
+    // iterations of the compute loop should complete in
+    // ~100ms on typical hardware).
+    bool arrived_late = sched.wait_for_safepoint(5000);
+    CHECK(arrived_late,
+          "wait_for_safepoint returns after the running fiber finishes");
+
+    // Resume so the fiber can complete its yield and the
+    // worker can clean up.
+    sched.resume_from_gc();
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    sched.stop();
+    t.join();
+
+    CHECK(progress.load() > 0, "fiber did work between request and resume");
     return true;
 }
 
