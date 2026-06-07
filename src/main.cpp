@@ -973,7 +973,8 @@ int main(int argc, char* argv[]) {
                         std::println("{{\"status\":\"fix\",\"patches\":{}}}", patches);
                         auto mod = aura::compiler::lower_to_ir(flat, pool, cs.arena());
                         aura::compiler::Primitives prims;
-                        aura::compiler::IRInterpreter interp(mod, prims);
+                        aura::compiler::IRContext ctx(prims);
+                        aura::compiler::IRInterpreter interp(mod, ctx);
                         auto fixed = interp.execute();
                         if (fixed) {
                             std::println("{{\"status\":\"fixed\",\"value\":\"{}\"}}",
@@ -1273,7 +1274,8 @@ int main(int argc, char* argv[]) {
         std::println("auto-fix: {} patches applied", patches);
         auto mod = aura::compiler::lower_to_ir(flat, pool, arena);
         aura::compiler::Primitives prims;
-        aura::compiler::IRInterpreter interp(mod, prims);
+        aura::compiler::IRContext ctx(prims);
+                        aura::compiler::IRInterpreter interp(mod, ctx);
         auto eval = interp.execute();
         if (eval)
             std::println("result: {}", aura::compiler::types::format_value(*eval));
@@ -1506,7 +1508,8 @@ int main(int argc, char* argv[]) {
 
             // Execute
             aura::compiler::CompilerService cs_tmp;
-            aura::compiler::IRInterpreter interp(cached_mod, cs_tmp.evaluator().primitives());
+            aura::compiler::IRContext ctx(cs_tmp.evaluator().primitives());
+            aura::compiler::IRInterpreter interp(cached_mod, ctx);
             auto result = interp.execute();
             if (!result) {
                 std::println(std::cerr, "error: {}", result.error().format());

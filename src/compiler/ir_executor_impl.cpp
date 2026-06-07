@@ -213,7 +213,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 case IROpcode::ConstString: {
                     // Store string in both heaps: primitives (for primitives) and local (for
                     // coercion)
-                    auto& prim_heap = primitives_.string_heap();
+                    auto& prim_heap = context_.primitives.string_heap();
                     auto prim_idx = prim_heap.size();
                     if (ops[1] < module_.string_pool.size()) {
                         prim_heap.push_back(module_.string_pool[ops[1]]);
@@ -532,7 +532,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // Allocate pair via evaluator's cons (stores in pairs_ for
                     // format_value/display to find), then also register in
                     // g_pair_slots for arena/heap access by JIT runtime.
-                    auto pfn = primitives_.lookup("cons");
+                    auto pfn = context_.primitives.lookup("cons");
                     if (pfn) {
                         locals[ops[0]] = (*pfn)({locals[ops[1]], locals[ops[2]]});
                         // Also push to shared g_pair_slots so JIT runtime + car/cdr
@@ -576,7 +576,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     break;
                 }
                 case IROpcode::Car: {
-                    auto pfn = primitives_.lookup("car");
+                    auto pfn = context_.primitives.lookup("car");
                     if (pfn)
                         locals[ops[0]] = (*pfn)({locals[ops[1]]});
                     else
@@ -584,7 +584,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     break;
                 }
                 case IROpcode::Cdr: {
-                    auto pfn = primitives_.lookup("cdr");
+                    auto pfn = context_.primitives.lookup("cdr");
                     if (pfn)
                         locals[ops[0]] = (*pfn)({locals[ops[1]]});
                     else
@@ -596,7 +596,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // Raise: result_slot=ops[0], cause_slot=ops[1]
                     // Create an error value by calling the raise primitive
                 case IROpcode::HashRef: {
-                    auto pfn = primitives_.lookup("hash-ref");
+                    auto pfn = context_.primitives.lookup("hash-ref");
                     if (pfn) {
                         auto& hash_val = locals[ops[1]];
                         auto& key_val = locals[ops[2]];
@@ -607,12 +607,12 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     break;
                 }
                 case IROpcode::HashSet: {
-                    auto pfn = primitives_.lookup("hash-set!");
+                    auto pfn = context_.primitives.lookup("hash-set!");
                     if (pfn) {
                         auto& hash_val = locals[ops[1]];
                         auto& pair_val = locals[ops[2]];
-                        auto cfn = primitives_.lookup("car");
-                        auto dfn = primitives_.lookup("cdr");
+                        auto cfn = context_.primitives.lookup("car");
+                        auto dfn = context_.primitives.lookup("cdr");
                         if (cfn && dfn) {
                             auto key = (*cfn)({pair_val});
                             auto val = (*dfn)({pair_val});
@@ -623,7 +623,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     break;
                 }
                 case IROpcode::HashRemove: {
-                    auto pfn = primitives_.lookup("hash-remove!");
+                    auto pfn = context_.primitives.lookup("hash-remove!");
                     if (pfn) {
                         auto& hash_val = locals[ops[1]];
                         auto& key_val = locals[ops[2]];
@@ -635,7 +635,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 }
 
 
-                    auto pfn = primitives_.lookup("raise");
+                    auto pfn = context_.primitives.lookup("raise");
                     if (pfn) {
                         locals[ops[0]] = (*pfn)({locals[ops[1]]});
                     } else {
@@ -663,7 +663,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // Map PrimId to registered primitive name via kPrimNames
                     auto idx = static_cast<std::size_t>(prim_id);
                     if (idx < std::size(kPrimNames)) {
-                        auto pfn = primitives_.lookup(std::string(kPrimNames[idx]));
+                        auto pfn = context_.primitives.lookup(std::string(kPrimNames[idx]));
                         if (pfn)
                             presult = (*pfn)(pargs);
                     }
@@ -709,8 +709,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     } else if (is_primitive(callee_val)) {
                         // Primitive function call — look up and invoke
                         auto slot = as_primitive_slot(callee_val);
-                        auto prim_name = primitives_.name_for_slot(slot);
-                        auto pfn = primitives_.lookup(prim_name);
+                        auto prim_name = context_.primitives.name_for_slot(slot);
+                        auto pfn = context_.primitives.lookup(prim_name);
                         if (pfn) {
                             auto result = (*pfn)(call_args);
                             locals[ops[3]] = result;
@@ -845,8 +845,8 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 case IROpcode::Primitive: {
                     // Load a primitive value by slot index from the Primitives table
                     auto prim_slot = ops[1];
-                    auto prim_name = primitives_.name_for_slot(prim_slot);
-                    auto pfn = primitives_.lookup(prim_name);
+                    auto prim_name = context_.primitives.name_for_slot(prim_slot);
+                    auto pfn = context_.primitives.lookup(prim_name);
                     if (pfn) {
                         locals[ops[0]] = types::make_primitive(prim_slot);
                     } else {
@@ -1057,7 +1057,7 @@ std::optional<aura::core::TypeTag> IRInterpreter::value_type_tag(const EvalValue
 std::optional<aura::diag::Diagnostic> IRInterpreter::check_runtime_type(std::uint32_t type_id,
                                                                         const EvalValue& val,
                                                                         std::string_view context) {
-    if (!strict_mode_ || !type_registry_ || type_id == 0)
+    if (!strict_mode_ || !context_.type_registry || type_id == 0)
         return std::nullopt;
 
     auto runtime_tag = value_type_tag(val);
@@ -1067,7 +1067,7 @@ std::optional<aura::diag::Diagnostic> IRInterpreter::check_runtime_type(std::uin
     auto expected_tid = aura::core::TypeId{type_id, 1};
     if (!expected_tid.valid())
         return std::nullopt;
-    auto expected_tag = type_registry_->tag_of(expected_tid);
+    auto expected_tag = context_.type_registry->tag_of(expected_tid);
 
     if (*runtime_tag == expected_tag)
         return std::nullopt; // match
@@ -1075,7 +1075,7 @@ std::optional<aura::diag::Diagnostic> IRInterpreter::check_runtime_type(std::uin
     return aura::diag::Diagnostic{
         aura::diag::ErrorKind::TypeError,
         std::format("runtime type mismatch in {}: expected {} got value of different type", context,
-                    type_registry_->name_of(expected_tid))};
+                    context_.type_registry->name_of(expected_tid))};
 }
 
 // ── Runtime reflection implementation ─────────────────────────
@@ -1122,9 +1122,9 @@ ClosureSnapshot IRInterpreter::make_snapshot(std::uint64_t id, const IRClosure& 
         for (auto& block : f.blocks) {
             for (auto& instr : block.instructions) {
                 if (instr.opcode == aura::ir::IROpcode::Return && instr.type_id != 0) {
-                    if (type_registry_) {
+                    if (context_.type_registry) {
                         return_type = std::string(
-                            type_registry_->name_of(aura::core::TypeId{instr.type_id, 1}));
+                            context_.type_registry->name_of(aura::core::TypeId{instr.type_id, 1}));
                     } else {
                         return_type = "type:" + std::to_string(instr.type_id);
                     }

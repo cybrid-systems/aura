@@ -925,8 +925,8 @@ public:
         }
 #endif
 
-        aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, evaluator_.primitives(),
-                                                &type_registry_);
+        aura::compiler::IRContext ctx(evaluator_.primitives(), &type_registry_);
+        aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, ctx);
         ir_interp.set_strategy(strategy_);
         if (!last_escape_maps_.empty())
             ir_interp.set_escape_maps(last_escape_maps_);
@@ -1148,8 +1148,8 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         last_ir_mod_ = ir_mod;
         last_escape_maps_ = escape_pass.take_maps();
 
-        aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, evaluator_.primitives(),
-                                                &type_registry_);
+        aura::compiler::IRContext ctx(evaluator_.primitives(), &type_registry_);
+        aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, ctx);
         ir_interp.set_strategy(strategy_);
         if (!last_escape_maps_.empty())
             ir_interp.set_escape_maps(last_escape_maps_);
@@ -2434,8 +2434,8 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                 aura::diag::Diagnostic{aura::diag::ErrorKind::ArityMismatch, "arity check failed"});
         }
 
-        aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, evaluator_.primitives(),
-                                                &type_registry_);
+        aura::compiler::IRContext ctx(evaluator_.primitives(), &type_registry_);
+        aura::compiler::IRInterpreter ir_interp(*last_ir_mod_, ctx);
         ir_interp.set_strategy(strategy_);
         if (strict_mode_)
             ir_interp.set_strict_mode(true);
