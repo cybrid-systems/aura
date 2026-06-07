@@ -1,6 +1,6 @@
 # Issue #114 — Harden JIT concurrent cache safety and hot-swap reliability
 
-## Status: ✅ CLOSED (3 of 4 main sub-tasks shipped; FFI measurement deferred)
+## Status: ✅ CLOSED (3 of 4 main sub-tasks shipped; FFI reverted due to AOT link break — see §3)
 
 Issue #114 was a P0 infrastructure piece. The full work was:
 1. Hardening jit_cache concurrent safety (on top of #59)
@@ -69,22 +69,41 @@ addIRModule + lookup because the ORC JITDylib symbol table isn't
 fully thread-safe across concurrent module insertions in the
 LLVM version used.
 
-### 3. FFI overhead reduction (sub-task 3 — partial)
+### 3. FFI overhead reduction (sub-task 3 — partial, REVERTED)
 
-The slow-path PrimCall (for primitives without an inlined fast
-path) now calls `aura_jit_prim_dispatch` directly instead of
-`aura_prim_call`. The wrapper's frame setup and conditional
-branch are eliminated.
+The original commit (`556f8f4`) changed the slow-path
+PrimCall to call `aura_jit_prim_dispatch` directly to skip
+the `aura_prim_call` wrapper (~5-6ns savings per call).
+This broke the AOT path in two ways:
 
-- **Before**: JIT call → aura_prim_call wrapper → function pointer
-  load → 3-element array allocation → dispatcher call
-- **After**: JIT call (inline alloca + 3 stores) → dispatcher call
+1. `CreateConstGEP2_64(i64_ty, args_arr, 0, 0)` passed the
+   wrong type (element type instead of source pointer type),
+   producing `Invalid indices for GEP pointer type!` during
+   the AOT optimization pass. O2/O3 masked the bug because
+   the optimizer rewrote the GEPs before verification, but
+   O0 (and the debug build) caught it.
+2. `aura_jit_prim_dispatch` is in `service.ixx` (C++20
+   module, linked into the JIT binary via
+   `aura_jit_runtime.cpp`) but NOT in `lib/runtime.c`
+   (the standalone AOT runtime). The AOT link step
+   failed with `undefined reference to aura_jit_prim_dispatch`
+   for any expression hitting a slow-path primitive.
 
-The dispatcher (`aura_jit_prim_dispatch`) is the same as what the
-wrapper would have called. The savings is the wrapper's C function
-frame (~5ns) + 1 conditional branch (~1ns) = ~30% reduction
-on the slow path. The fast-path (inlined prims: Newline, Display,
-Quotient, Remainder, PairP, NullP) is unchanged.
+The fix (`7a29db6`) reverts the slow-path PrimCall to
+call `aura_prim_call` (the 4-arg symbol that exists in
+both runtimes). The wrapper overhead is preserved in both
+JIT and AOT paths. The #114 closing-doc claim of "FFI
+overhead ≥ 30%" is therefore NOT achieved in this commit;
+the FFI optimization is reverted. The per-call timing
+metrics (`aura_prim_call_count` / `aura_prim_call_total_ns`)
+are still in place so a future microbenchmark can measure
+the actual cost and try again with a different approach
+(e.g., inline the dispatcher in the JIT IR without going
+through any C wrapper).
+
+The previously-crashing AOT tests (`string-length`,
+`string=?`, `length`, `list-ref`, `reverse`, `apply`)
+all now pass.
 
 ### 4. Tests (37 total — 23 + 14)
 
@@ -128,12 +147,15 @@ The aura binary still works (`(+ 1 2)` → 3, JIT path active).
   cache invalidation is now lock-protected (shared_mutex); a
   reader mid-swap sees either the old entry or the new one.
   Atomic fn_ptr version table is a future hardening item.
-- [x] **FFI 开销降低 ≥ 30%** — `aura_prim_call` wrapper eliminated
-  on the slow path. Direct call to `aura_jit_prim_dispatch` saves
-  ~5-6ns per primitive call. Measurement of the exact % is
-  deferred to a future microbenchmark infrastructure (the JIT
-  metrics now expose the per-call timing so the benchmark can
-  read the avg via the format() output).
+- [🟡] **FFI 开销降低 ≥ 30%** — original commit 556f8f4
+  attempted this (direct call to `aura_jit_prim_dispatch`,
+  saving ~5-6ns per primitive call) but broke the AOT
+  link step because `aura_jit_prim_dispatch` doesn't exist
+  in `lib/runtime.c`. Reverted in `7a29db6`. The per-call
+  timing metrics (`aura_prim_call_count` /
+  `aura_prim_call_total_ns`) are still in place so a
+  future microbenchmark can measure the actual cost and try
+  again with a different approach.
 
 ## Total #114 work
 
@@ -141,11 +163,11 @@ The aura binary still works (`(+ 1 2)` → 3, JIT path active).
 |----------|--------|--------|
 | 1. JIT cache concurrency (partial) | ✅ | 2c2bae8 |
 | 2. Hot-swap atomicity (lock-protected) | 🟡 partial | 2c2bae8 |
-| 3. FFI overhead (slow-path wrapper eliminated) | ✅ | 556f8f4 |
+| 3. FFI overhead (slow-path wrapper eliminated) | 🟡 reverted | 556f8f4 → 7a29db6 |
 | 4. JIT observability | ✅ | 2c2bae8 |
 | 5. Tests (37 total) | ✅ | 6aedb18 |
 
-3 commits, ~630 lines added, 0 lines of code removed. Work is
-additive: the Metrics struct, the per-function cache, and the
-direct-dispatch function are all new code; the existing API is
-preserved.
+4 commits, ~620 lines added, 0 lines of code removed. Work is
+additive: the Metrics struct and per-function cache are new code;
+the slow-path PrimCall reverted to the pre-#114
+`aura_prim_call` symbol.
