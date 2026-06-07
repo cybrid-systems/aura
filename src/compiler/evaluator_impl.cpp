@@ -153,8 +153,17 @@ thread_local std::size_t g_env_lookup_depth = 0;
 // Session lifetime: the map lives for the process. No
 // (adt:reset-constructors) is provided — not needed for benchmarks
 // and adding it would require touching all test harnesses.
+//
+// (Issue #108 part 4 Phase 2) arity is the declared field count
+// from the (datatype ...) form: e.g. (Leaf T) has arity 1, (Node
+// Tree Tree) has arity 2. The ctor primitive checks arg count
+// at apply time and signals a type error if it doesn't match.
+// arity 0 (zero-arg ctor) is also supported — Phase 1 didn't
+// see any zero-arg ctors in the benchmark, but (None) / (Nil)
+// idioms are common in ADT code.
 struct AdtCtorEntry {
     std::size_t primitive_slot = 0;  // slot in Primitives table
+    std::size_t arity = 0;           // expected field count
 };
 static std::unordered_map<std::string, AdtCtorEntry> g_adt_constructors;
 
@@ -2343,45 +2352,88 @@ void Evaluator::init_pair_primitives() {
             return make_int(0);
         EvalValue cur = a[0];
         std::int64_t count = 0;
-        // Walk the list of ctor names. The list is a chain of
-        // (cons "Name" cdr) pairs ending in ().
+        // Wire format (Phase 2): alist of (name . arity) pairs.
+        //   (("Leaf" . 1) ("Node" . 2) ...)
+        // Each list element is a (name . arity) dotted pair.
+        // The list itself is a chain of cons cells ending in ().
         while (!is_void(cur) && is_pair(cur)) {
-            auto idx = as_pair_idx(cur);
-            if (idx >= pairs_.size())
+            auto list_idx = as_pair_idx(cur);
+            if (list_idx >= pairs_.size())
                 break;
-            auto& p = pairs_[idx];
-            EvalValue name_v = p.car;
-            if (!is_string(name_v))
-                break;
+            auto& list_elt = pairs_[list_idx];
+            EvalValue entry = list_elt.car;
+            if (!is_pair(entry)) {
+                // Malformed entry (not a pair). Skip.
+                cur = list_elt.cdr;
+                continue;
+            }
+            auto entry_idx = as_pair_idx(entry);
+            if (entry_idx >= pairs_.size()) {
+                cur = list_elt.cdr;
+                continue;
+            }
+            auto& entry_pair = pairs_[entry_idx];
+            EvalValue name_v = entry_pair.car;
+            EvalValue arity_v = entry_pair.cdr;
+            if (!is_string(name_v)) {
+                cur = list_elt.cdr;
+                continue;
+            }
             std::string ctor_name = string_heap_[as_string_idx(name_v)];
+            std::size_t arity = 0;
+            if (is_int(arity_v))
+                arity = static_cast<std::size_t>(as_int(arity_v));
 
             // Create the ctor PrimitiveFn: builds (cons "CtorName" (list args...))
-            // We register a new primitive with a unique "adt-ctor:<name>" name.
-            // The closure captures `this` (the Evaluator) implicitly.
+            // The closure captures the ctor name + arity for the
+            // runtime check. (Phase 2.)
             std::string prim_name = "adt-ctor:" + ctor_name;
-            primitives_.add(prim_name, [this, ctor_name](std::span<const EvalValue> args) -> EvalValue {
-                // Build the list of args (right-to-left to preserve order)
-                EvalValue tail = make_void();
-                for (auto it = args.rbegin(); it != args.rend(); ++it) {
+            primitives_.add(prim_name,
+                [this, ctor_name, arity](std::span<const EvalValue> args) -> EvalValue {
+                    // Arity check (Phase 2). If arg count
+                    // doesn't match the declared arity, return a
+                    // tagged error pair. Aura's runtime doesn't
+                    // have a rich error type, so we encode the
+                    // error as a pair with car = "<adt-error>"
+                    // (a string the caller can pattern-match on).
+                    if (args.size() != arity) {
+                        auto name_idx = string_heap_.size();
+                        string_heap_.push_back("<adt-error>");
+                        auto msg_idx = string_heap_.size();
+                        string_heap_.push_back(
+                            "ctor '" + ctor_name + "' arity mismatch: expected " +
+                            std::to_string(arity) + " got " +
+                            std::to_string(args.size()));
+                        // (cons "<adt-error>" (cons msg ()))
+                        auto msg_pair_idx = pairs_.size();
+                        pairs_.push_back({make_string(msg_idx), make_void()});
+                        auto head_pair_idx = pairs_.size();
+                        pairs_.push_back({make_string(name_idx),
+                                          make_pair(msg_pair_idx)});
+                        return make_pair(head_pair_idx);
+                    }
+                    // Build the list of args (right-to-left to preserve order)
+                    EvalValue tail = make_void();
+                    for (auto it = args.rbegin(); it != args.rend(); ++it) {
+                        auto pid = pairs_.size();
+                        pairs_.push_back({*it, tail});
+                        tail = make_pair(pid);
+                    }
+                    // Pre-cons the ctor name string
+                    auto name_idx = string_heap_.size();
+                    string_heap_.push_back(ctor_name);
                     auto pid = pairs_.size();
-                    pairs_.push_back({*it, tail});
-                    tail = make_pair(pid);
-                }
-                // Pre-cons the ctor name string
-                auto name_idx = string_heap_.size();
-                string_heap_.push_back(ctor_name);
-                auto pid = pairs_.size();
-                pairs_.push_back({make_string(name_idx), tail});
-                return make_pair(pid);
-            });
+                    pairs_.push_back({make_string(name_idx), tail});
+                    return make_pair(pid);
+                });
             std::size_t new_slot = primitives_.slot_count() - 1;
 
             // Register in the global map
-            g_adt_constructors[ctor_name] = AdtCtorEntry{new_slot};
+            g_adt_constructors[ctor_name] = AdtCtorEntry{new_slot, arity};
             ++count;
 
-            // Move to next cdr
-            cur = p.cdr;
+            // Move to next list element
+            cur = list_elt.cdr;
         }
         return make_int(count);
     });

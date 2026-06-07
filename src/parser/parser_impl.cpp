@@ -1360,10 +1360,11 @@ NodeId FlatParser::parse_datatype() {
     if (lexer_->peek().kind == TokenKind::RParen)
         lexer_->consume(); // ')'
 
-    // Collect ctor names as a list of string-literal AST nodes.
-    // Each name will be wrapped in a LiteralString at runtime,
-    // but at parse time we hold the sym_id from the pool.
-    std::vector<aura::ast::NodeId> ctor_name_nodes;
+    // Collect ctor names + arities. Phase 2 wire format:
+    // (adt:register-constructors (cons "Ctor1" 1 (cons "Ctor2" 2 ...)))
+    // i.e. each entry is a (cons name arity) pair; the cdr is
+    // the next entry.
+    std::vector<std::pair<aura::ast::NodeId, std::size_t>> ctor_entries;
     while (lexer_->peek().kind == TokenKind::LParen && !lexer_->eof()) {
         lexer_->consume(); // '('
         auto ctor_tok = lexer_->peek();
@@ -1374,33 +1375,53 @@ NodeId FlatParser::parse_datatype() {
         lexer_->consume();
         // Build a LiteralString node holding the ctor name.
         auto ctor_str_sym = pool_.intern(ctor_tok.text);
-        ctor_name_nodes.push_back(flat_.add_literalstring(ctor_str_sym));
+        auto ctor_name_node = flat_.add_literalstring(ctor_str_sym);
 
-        // Skip the field type names (not used at runtime in
-        // Phase 1 — arity checking is left for a later phase).
-        while (lexer_->peek().kind != TokenKind::RParen && !lexer_->eof())
-            lexer_->consume();
+        // Count field type names (arity = number of identifiers
+        // until the closing RParen). Phase 2 doesn't validate
+        // that these are real types, just counts them.
+        std::size_t arity = 0;
+        while (lexer_->peek().kind != TokenKind::RParen && !lexer_->eof()) {
+            // Only count simple identifiers; nested parens (e.g.
+            // parametric types like (List T)) count as one for
+            // arity purposes. Phase 2 keeps it simple.
+            if (lexer_->peek().kind == TokenKind::Identifier) {
+                ++arity;
+                lexer_->consume();
+            } else {
+                // Skip non-identifier tokens (LParen, RParen, etc.)
+                lexer_->consume();
+            }
+        }
         if (lexer_->peek().kind == TokenKind::RParen)
             lexer_->consume();
+
+        ctor_entries.push_back({ctor_name_node, arity});
     }
 
     // Consume final ')'
     if (lexer_->peek().kind == TokenKind::RParen)
         lexer_->consume();
 
-    // Build the list of ctor names as a pair chain (right-to-left
-    // to preserve order). This is the (list "Ctor1" "Ctor2" ...)
-    // argument to adt:register-constructors.
+    // Build the alist of (name . arity) entries as a list of
+    // pairs. Each entry is a single cons cell:
+    //   (cons "Name" arity_int)
+    // and the list itself is a chain of cons cells:
+    //   (cons entry1 (cons entry2 ... ()))
     //
-    // We use a Call node that evaluates to (cons name rest).
-    // The `cons` function is a Variable node in the AST (not a
-    // bare sym_id — add_call wants a NodeId, not a SymId).
+    // We use Call nodes (not raw Pair nodes) because the AST
+    // doesn't expose a "create a Pair" — pair cells are only
+    // produced at eval time by calling `cons`. (add_call wants
+    // a NodeId for the func, not a bare SymId.)
     auto cons_var = flat_.add_variable(pool_.intern("cons"));
     auto nil_lit = flat_.add_literal(0);  // () — empty list
     aura::ast::NodeId name_list = nil_lit;
-    for (auto it = ctor_name_nodes.rbegin(); it != ctor_name_nodes.rend(); ++it) {
-        auto pid = flat_.add_call(cons_var, {*it, name_list});
-        name_list = pid;
+    for (auto it = ctor_entries.rbegin(); it != ctor_entries.rend(); ++it) {
+        // Each entry: (cons "Name" arity)  — a single cons cell
+        auto arity_lit = flat_.add_literal(static_cast<std::int64_t>(it->second));
+        auto entry = flat_.add_call(cons_var, {it->first, arity_lit});
+        // cons the entry onto the running list
+        name_list = flat_.add_call(cons_var, {entry, name_list});
     }
 
     // Build (adt:register-constructors <name_list>)
