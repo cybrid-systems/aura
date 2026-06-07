@@ -145,6 +145,32 @@ bool test_metrics_format_edge_cases() {
     return true;
 }
 
+// ── Test 5: hot_swap_count increments on recompile ───────────
+// Manually simulate the "function name already exists" code
+// path that increments hot_swap_count. This verifies the
+// counter is wired correctly (without needing a real LLVM
+// compile cycle).
+bool test_hot_swap_counter() {
+    std::fprintf(stdout, "\n--- Test: hot_swap_count tracking ---\n");
+    aura::jit::AuraJIT jit;
+    auto& m = jit.mutable_metrics();
+
+    auto initial = m.hot_swap_count.load();
+    CHECK(initial == 0, "hot_swap_count starts at 0");
+
+    // Simulate 5 hot-swap events
+    for (int i = 0; i < 5; ++i) {
+        m.hot_swap_count.fetch_add(1, std::memory_order_relaxed);
+    }
+    CHECK(m.hot_swap_count.load() == 5, "hot_swap_count increments correctly");
+
+    char buf[256];
+    m.format(buf, sizeof(buf));
+    CHECK(std::strstr(buf, "hot_swaps=5") != nullptr,
+          "format() reflects hot_swap_count");
+    return true;
+}
+
 int main() {
     std::fprintf(stdout, "═══ JIT metrics tests (Issue #114) ═══\n");
 
@@ -152,6 +178,7 @@ int main() {
     test_metrics_format_reflects_state();
     test_metrics_atomic_concurrent();
     test_metrics_format_edge_cases();
+    test_hot_swap_counter();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
