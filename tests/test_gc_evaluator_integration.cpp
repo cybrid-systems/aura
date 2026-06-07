@@ -15,6 +15,7 @@
 // surface, the counts are consistent, and the void* API
 // typechecks.
 
+#include "core/gc_hooks.h"
 import std;
 import aura.core;
 import aura.compiler.evaluator;
@@ -118,12 +119,129 @@ bool test_flush_gc_roots_api() {
     return true;
 }
 
+// ── Test 4: compact_sweep void* API is reachable ───────────
+// Same as test_flush_gc_roots_api, but for the sweep method.
+// Verifies the new public method (Issue #113 Phase 3) is
+// exposed on the Evaluator's interface and accepts a void*.
+// We don't call it with nullptr (the impl dereferences).
+
+bool test_compact_sweep_api() {
+    std::println("\n--- Test: compact_sweep API surface ---");
+
+    aura::compiler::Evaluator eval;
+
+    using SweepFn = void* (aura::compiler::Evaluator::*)(void*);
+    SweepFn fp = &aura::compiler::Evaluator::compact_sweep;
+    CHECK(fp != nullptr, "Evaluator::compact_sweep(void*) is reachable");
+
+    return true;
+}
+
+// ── Test 5: compact_sweep with null returns null safely ─────
+// Calling compact_sweep with a nullptr (no mark bits) is
+// guarded — it should return nullptr (no work done), not
+// crash. This is the contract the GC collector relies on
+// when no source registered.
+
+bool test_compact_sweep_null() {
+    std::println("\n--- Test: compact_sweep(null) is safe ---");
+
+    aura::compiler::Evaluator eval;
+    void* r = eval.compact_sweep(nullptr);
+    CHECK(r == nullptr, "compact_sweep(nullptr) returns nullptr");
+
+    return true;
+}
+
+// ── Test 6: arena safepoint hook API is reachable ──────────
+// The arena.ixx's allocate_raw() now calls
+// gc_hooks::safepoint_check() and gc_hooks::record_alloc()
+// on every allocation. Both default to null (no-op), and can
+// be set/cleared at runtime. Verify the hook API is reachable.
+
+bool test_gc_hooks_api() {
+    std::println("\n--- Test: arena GC hooks API surface ---");
+
+    // The hooks live in core/gc_hooks.h, included via the
+    // arena.ixx global fragment. We can poke them directly.
+    auto prev_check = aura::gc_hooks::g_arena_safepoint_check.load();
+    auto prev_record = aura::gc_hooks::g_arena_record_alloc.load();
+
+    // Set and restore.
+    aura::gc_hooks::g_arena_safepoint_check.store(
+        +[](void) { });
+    aura::gc_hooks::g_arena_record_alloc.store(
+        +[](void) { (void)0; });
+
+    CHECK(aura::gc_hooks::g_arena_safepoint_check.load() != nullptr,
+          "g_arena_safepoint_check is settable");
+    CHECK(aura::gc_hooks::g_arena_record_alloc.load() != nullptr,
+          "g_arena_record_alloc is settable");
+
+    aura::gc_hooks::safepoint_check();  // should not crash
+    aura::gc_hooks::record_alloc();    // should not crash
+
+    // Restore previous state.
+    aura::gc_hooks::g_arena_safepoint_check.store(prev_check);
+    aura::gc_hooks::g_arena_record_alloc.store(prev_record);
+
+    return true;
+}
+
+// ── Test 7: arena hooks can be installed + invoked from C++ ─
+// Verify the hook functions are actually called by some C++
+// code. We install a counter hook, run a small number of arena
+// allocations, and verify the counter incremented. This catches
+// bugs like "hook installed but never called" or "hook called
+// but counter wasn't bumped" — issues that a pure API-surface
+// test would miss.
+
+bool test_gc_hooks_actually_invoked() {
+    std::println("\n--- Test: arena hooks actually fire ---");
+
+    // Save and restore the hooks around the test.
+    auto prev_check = aura::gc_hooks::g_arena_safepoint_check.load();
+    auto prev_record = aura::gc_hooks::g_arena_record_alloc.load();
+
+    static std::atomic<int> check_count{0};
+    static std::atomic<int> record_count{0};
+    check_count = 0;
+    record_count = 0;
+    aura::gc_hooks::g_arena_safepoint_check.store(
+        +[]() { check_count.fetch_add(1, std::memory_order_relaxed); });
+    aura::gc_hooks::g_arena_record_alloc.store(
+        +[]() { record_count.fetch_add(1, std::memory_order_relaxed); });
+
+    // Trigger some arena allocations.
+    aura::ast::ASTArena arena(4096);
+    for (int i = 0; i < 50; ++i) {
+        arena.create<int>(i);
+        arena.create<double>(i * 1.5);
+    }
+    arena.reset();
+
+    auto cc = check_count.load();
+    auto rc = record_count.load();
+    CHECK(cc > 0, "safepoint_check hook was called from arena.allocate_raw");
+    CHECK(rc > 0, "record_alloc hook was called from arena.allocate_raw");
+    CHECK(cc == rc, "safepoint_check and record_alloc were called equally often");
+
+    // Restore.
+    aura::gc_hooks::g_arena_safepoint_check.store(prev_check);
+    aura::gc_hooks::g_arena_record_alloc.store(prev_record);
+    return true;
+}
+
 int main() {
     std::println("═══ GC ↔ Evaluator integration tests (Issue #113) ═══\n");
 
     test_gc_root_count_fresh();
     test_gc_root_count_after_eval();
     test_flush_gc_roots_api();
+    test_compact_sweep_api();
+    test_compact_sweep_null();
+    test_gc_hooks_api();
+    test_gc_hooks_actually_invoked();
 
     std::println("\n──────────────────────────────────────");
     std::println("Total: {} passed, {} failed", g_passed, g_failed);

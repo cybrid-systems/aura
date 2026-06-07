@@ -282,6 +282,25 @@ public:
     // pre-GC metrics and for tests that want to verify root set
     // population without allocating the GCRootSet.
     [[nodiscard]] std::size_t gc_root_count() const;
+    // ── GC sweep / compaction (Issue #113 Phase 3) ──────────
+    // After the GC collector has marked live objects, this method
+    // reclaims the unmarked ones. Called from the GC coordinator's
+    // `collect()` during the sweep phase (after the safepoint has
+    // stopped all fibers, so no concurrent mutator can run).
+    //
+    // The opaque `void*` is `aura::serve::GCSweepBuffers*` from
+    // gc_coordinator.h (cast at the call site in evaluator_impl.cpp
+    // to keep the include surface minimal — same pattern as
+    // `flush_gc_roots(void*)` above).
+    //
+    // The opaque `void*` return is `aura::messaging::GCSweepResultMsg*`
+    // (defined in messaging_bridge.h) — a small POD with four
+    // size_t fields. The cast at the call site keeps the
+    // evaluator's public interface free of messaging_bridge
+    // dependencies (messaging_bridge.h is a non-module .h,
+    // which can't be imported into a module interface file).
+    // The caller (serve_async.cpp) extracts the fields.
+    void* compact_sweep(void* sweep_buffers);
 
 
 

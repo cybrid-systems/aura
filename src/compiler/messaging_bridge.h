@@ -148,6 +148,31 @@ extern GCRootFlushFn g_gc_flush_root_set;
 using GCCollectFn = std::function<bool()>;
 extern GCCollectFn g_gc_collect;
 
+// GC sweep result message — the POD that flows from
+// serve_async.cpp's g_gc_sweep callback back to the GC collector.
+// Both the Evaluator's compact_sweep and serve_async.cpp define
+// a local struct with the same layout (verified by static_assert
+// in evaluator_impl.cpp). We use void* in the function signature
+// so the messaging bridge can be a non-module .h and the layout
+// stays an implementation detail.
+
+// GC sweep — set by serve_async.cpp (Issue #113 Phase 3).
+// Called by the GC collector during the sweep phase. The
+// callback should erase unmarked entries from the active
+// Evaluator's vector heaps and return how many were freed.
+//
+// `sweep_buffers_out` is an opaque `aura::serve::GCSweepBuffers*`
+// (cast at the call site to keep the include surface minimal).
+//
+// Return is an opaque `void*` — heap-allocated by the callback
+// (an `aura::messaging::GCSweepResultMsg*` per the layout in
+// evaluator_impl.cpp), owned and `delete`-d by the caller. We
+// use `void*` for the return type so the messaging bridge can
+// be a non-module .h and the layout stays an implementation
+// detail.
+using GCSweepFn = std::function<void*(void* sweep_buffers_out)>;
+extern GCSweepFn g_gc_sweep;
+
 // Evaluator heap mutex — set by evaluator (P2).
 // Protects string_heap_, pairs_, closures_ during GC.
 // nullptr when not in serve-async mode or not initialized.
