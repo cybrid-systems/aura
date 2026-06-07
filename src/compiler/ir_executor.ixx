@@ -71,26 +71,59 @@ export struct EvalStrategy {
     bool verbose_inspect = false;
 };
 
+// (#111) Bundles everything the IR interpreter needs from the
+// surrounding state (Primitives table, TypeRegistry, optional
+// metrics). The interpreter holds a reference to the context;
+// the caller is responsible for keeping the context alive for
+// the interpreter's lifetime. This replaces the previous design
+// where the interpreter held separate `Primitives&` + `TypeRegistry*`
+// fields, which made reference invalidation easy to trigger via
+// the surrounding session/evaluator being modified mid-execution.
+//
+// Future fields (escape_maps, EvalStrategy, etc.) belong in this
+// struct so all IR-runtime state has a single lifetime owner.
+export struct IRContext {
+    Primitives& primitives;                          // non-const: ConstString mutates string_heap
+    const aura::core::TypeRegistry* type_registry = nullptr;
+    CompilerMetrics* metrics = nullptr;
+
+    // References must be bound at construction. The caller passes
+    // the primitives reference; type_registry and metrics are
+    // optional. The IRContext is typically stack-allocated inside
+    // cs.eval(), with lifetime matching the IRInterpreter's.
+    IRContext(Primitives& p, const aura::core::TypeRegistry* t = nullptr,
+              CompilerMetrics* m = nullptr)
+        : primitives(p), type_registry(t), metrics(m) {}
+};
+
 export class IRInterpreter {
 public:
-    // IRInterpreter holds a non-const Primitives& so IROpcode::ConstString
-    // can register string literals into the shared primitives' string heap
-    // (the same one a PrimFn primitive would later look up by index). The
-    // shared heap is the integration point between IR-generated code and
-    // the Primitives dispatch table. ConstString is the only IR opcode
-    // that mutates primitives_; everything else goes through the const
-    // lookup() API.
-    explicit IRInterpreter(const aura::ir::IRModule& mod, Primitives& prims,
-                           const aura::core::TypeRegistry* types = nullptr)
-        : module_(mod)
-        , primitives_(prims)
-        , type_registry_(types) {}
+    // The IR interpreter holds a reference to an IRContext that
+    // bundles all the external state the IR runtime needs. The
+    // caller must keep the context alive for the interpreter's
+    // lifetime (typically: the context is owned by the Evaluator /
+    // CompilerService, and the interpreter is a short-lived local
+    // in cs.eval).
+    //
+    // Backward-compat: the 2/3-arg constructors wrap the legacy
+    // (module, primitives, types) signature by building a transient
+    // IRContext on the stack. The legacy code uses stack-locals so
+    // the context lifetime extends to the interpreter's destruction.
+    // The IR interpreter holds a reference to an IRContext that
+    // bundles all the external state the IR runtime needs. The
+    // caller must keep the context alive for the interpreter's
+    // lifetime (typically: the context is stack-allocated inside
+    // cs.eval, with lifetime matching the IRInterpreter's).
+    explicit IRInterpreter(const aura::ir::IRModule& mod, IRContext& ctx)
+        : module_(mod), context_(ctx) {}
 
     // Issue #62 Iter 1: attach a metrics struct. Optional so the
     // existing test code that constructs IRInterpreter with two args
     // keeps working. When set, hot paths increment counters for
     // --evo-explain and AuraQuery.
-    void set_metrics(CompilerMetrics* m) { metrics_ = m; }
+    void set_metrics(CompilerMetrics* m) {
+        context_.metrics = m;
+    }
 
     // Execute the top-level function and return result
     EvalResult execute();
@@ -154,12 +187,19 @@ private:
     static std::optional<aura::core::TypeTag> value_type_tag(const EvalValue& val);
 
     const aura::ir::IRModule& module_;
-    Primitives& primitives_;
-    const aura::core::TypeRegistry* type_registry_ = nullptr;
+    // (#111) The IR context bundles the external state the interpreter
+    // needs (Primitives, TypeRegistry, metrics). The interpreter
+    // holds a reference; the caller is responsible for the context's
+    // lifetime. `legacy_context_` is the stack-local IRContext built
+    // by the legacy 3-arg constructor, used when the 2-arg
+    // `IRContext&` ctor is not used. `context_` always aliases one
+    // of the two; both are valid for the interpreter's lifetime.
+    IRContext& context_;
     EvalStrategy strategy_;
     bool strict_mode_ = false;
     // Issue #62 Iter 1: optional pointer to the compiler-wide
     // metrics struct. Hot paths check it before incrementing.
+    // Now stored inside IRContext; kept here for ABI compat.
     CompilerMetrics* metrics_ = nullptr;
 
     // Per-instance closure storage

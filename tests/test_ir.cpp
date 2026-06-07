@@ -309,7 +309,8 @@ int main() {
 
         auto ir_mod = aura::compiler::lower_to_ir(flat, pool, arena);
 
-        aura::compiler::IRInterpreter ir_interp(ir_mod, evaluator.primitives());
+        aura::compiler::IRContext ctx(evaluator.primitives());
+        aura::compiler::IRInterpreter ir_interp(ir_mod, ctx);
         auto result = ir_interp.execute();
 
         auto got = result ? aura::compiler::types::format_value(*result) : std::string(result.error().message);
@@ -575,7 +576,8 @@ int main() {
                     has_closure = true;
 
         // Execute original — should be 10
-        aura::compiler::IRInterpreter interp(mod, eval.primitives());
+        { aura::compiler::IRContext ctx(eval.primitives());
+        aura::compiler::IRInterpreter interp(mod, ctx);
         auto r1 = interp.execute();
 
         // Hot-swap: replace lambda body with (* x 3) → expects 15
@@ -597,7 +599,8 @@ int main() {
         bool ok = mod.hot_swap_function(0, std::move(new_fn));
 
         // Re-execute — should be 15
-        aura::compiler::IRInterpreter interp2(mod, eval.primitives());
+        aura::compiler::IRContext ctx2(eval.primitives());
+        aura::compiler::IRInterpreter interp2(mod, ctx2);
         auto r2 = interp2.execute();
 
         if (ok && r1 && aura::compiler::types::is_int(*r1) && aura::compiler::types::as_int(*r1) == 10 && r2 && aura::compiler::types::is_int(*r2) && aura::compiler::types::as_int(*r2) == 15) {
@@ -605,6 +608,7 @@ int main() {
         } else {
             std::println(std::cerr, "HS FAIL: r1={} r2={}",
                          r1 ? aura::compiler::types::format_value(*r1) : std::string("-1"), r2 ? aura::compiler::types::format_value(*r2) : std::string("-1"));
+        }
         }
     }
 
@@ -637,7 +641,8 @@ int main() {
         ck.run(mod);
         cf_pass.run(mod);
 
-        aura::compiler::IRInterpreter interp(mod, evaluator.primitives());
+        aura::compiler::IRContext ctx(evaluator.primitives());
+        aura::compiler::IRInterpreter interp(mod, ctx);
         auto result = interp.execute();
 
         auto got = result ? aura::compiler::types::format_value(*result) : std::string("<error>");
@@ -1955,7 +1960,8 @@ int main() {
                 ts.run(mod);
                 aura::compiler::Evaluator eval;
                 eval.set_arena(&arena);
-                aura::compiler::IRInterpreter ir(mod, eval.primitives());
+                aura::compiler::IRContext ctx(eval.primitives());
+                aura::compiler::IRInterpreter ir(mod, ctx);
                 auto res = ir.execute();
                 if (res) {
                     auto got = aura::compiler::types::format_value(*res);
@@ -2026,7 +2032,8 @@ int main() {
             // Execute and check result
             aura::compiler::Evaluator eval_c;
             eval_c.set_arena(&arena_c);
-            aura::compiler::IRInterpreter ir_c(mod_c, eval_c.primitives(), &treg_c);
+            aura::compiler::IRContext ctx_c(eval_c.primitives(), &treg_c);
+            aura::compiler::IRInterpreter ir_c(mod_c, ctx_c);
             auto res_c = ir_c.execute();
             if (res_c) {
                 auto got_c = aura::compiler::types::format_value(*res_c);
@@ -2071,7 +2078,8 @@ int main() {
                 auto mod = aura::compiler::lower_to_ir(flat, pool, arena, nullptr, &treg);
                 aura::compiler::Evaluator eval;
                 eval.set_arena(&arena);
-                aura::compiler::IRInterpreter ir(mod, eval.primitives(), &treg);
+                aura::compiler::IRContext ctx(eval.primitives(), &treg);
+                aura::compiler::IRInterpreter ir(mod, ctx);
                 auto res = ir.execute();
                 if (res) {
                     auto got = aura::compiler::types::format_value(*res);
@@ -2985,7 +2993,8 @@ int main() {
                 aura::compiler::DeadCoercionEliminationPass dce(&reg2);
                 dce.run(ir_mod2);  // should not crash or corrupt
 
-                aura::compiler::IRInterpreter ir2(ir_mod2, evaluator.primitives());
+                aura::compiler::IRContext ctx2(evaluator.primitives());
+                aura::compiler::IRInterpreter ir2(ir_mod2, ctx2);
                 auto res2 = ir2.execute();
                 if (res2) {
                     auto got = aura::compiler::types::format_value(*res2);
@@ -3105,7 +3114,8 @@ int main() {
                     ++gg_failed; continue;
                 }
                 auto ir_a = aura::compiler::lower_to_ir(flat_a, pool_a, arena_a);
-                aura::compiler::IRInterpreter ir_a_run(ir_a, evaluator.primitives());
+                aura::compiler::IRContext ctx(evaluator.primitives());
+                aura::compiler::IRInterpreter ir_a_run(ir_a, ctx);
                 auto res_a = ir_a_run.execute();
                 if (!res_a) {
                     std::println(std::cerr, "GG FAIL: exec(annotated) failed: {}", res_a.error().format());
@@ -3130,7 +3140,8 @@ int main() {
                     ++gg_failed; continue;
                 }
                 auto ir_e = aura::compiler::lower_to_ir(flat_e, pool_e, arena_e);
-                aura::compiler::IRInterpreter ir_e_run(ir_e, evaluator.primitives());
+                aura::compiler::IRContext ctx(evaluator.primitives());
+                aura::compiler::IRInterpreter ir_e_run(ir_e, ctx);
                 auto res_e = ir_e_run.execute();
                 if (!res_e) {
                     std::println(std::cerr, "GG FAIL: exec(erased) failed: {}", res_e.error().format());
