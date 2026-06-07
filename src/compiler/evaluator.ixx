@@ -381,8 +381,24 @@ private:
 
 
     // ── Snapshot storage (ast:snapshot / ast:restore) ───────────
-    std::vector<std::string> snapshot_sources_;  // source code per snapshot
+    std::vector<std::string> snapshot_sources_;  // source code per snapshot (for ast:diff + source-fallback restore)
     std::vector<std::string> snapshot_names_;    // optional names
+
+    // Direct FlatAST snapshots (Issue #107 part 6). Each entry owns
+    // a deep copy of the workspace's FlatAST and StringPool at the
+    // time of snapshot. ast:restore prefers this over re-parsing
+    // from source — it preserves all metadata (mutation_log_,
+    // type_id_, value_cache_) that a re-parse would lose, and
+    // avoids reparsing the source string. The source is still
+    // stored (snapshot_sources_) for ast:diff and as a fallback
+    // when a direct snapshot is missing (e.g. older snapshots
+    // taken before part 6).
+    struct FlatSnapshot {
+        std::unique_ptr<aura::ast::FlatAST> flat;
+        std::unique_ptr<aura::ast::StringPool> pool;
+        bool has_flat = false;  // true if both flat + pool are valid
+    };
+    std::vector<FlatSnapshot> snapshot_flats_;
 
     // Hot-swap callback storage (Issue #97 Action 1)
     HotSwapFn hot_swap_fn_;

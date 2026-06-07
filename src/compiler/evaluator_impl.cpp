@@ -8745,7 +8745,14 @@ Evaluator::Evaluator() {
     //   → integer snapshot ID (or -1 on failure)
     //   Stores current workspace source code as a named checkpoint.
     //   Names are optional; unnamed snapshots get auto-generated names.
+    //
+    // (#107 part 6) Also stores a direct deep-copy of the workspace's
+    // FlatAST and StringPool. ast:restore prefers the direct copy
+    // (lossless, no reparse) and falls back to the source string
+    // only when the direct copy is missing (e.g. for snapshots
+    // taken before this feature shipped).
     primitives_.add("ast:snapshot", [this](std::span<const EvalValue> a) -> EvalValue {
+        std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
         if (!workspace_flat_ || !workspace_pool_)
             return make_int(-1);
 
@@ -8769,9 +8776,31 @@ Evaluator::Evaluator() {
                 name = string_heap_[name_idx];
         }
 
+        // (#107 part 6) Take a direct deep copy of the workspace's
+        // flat + pool. The snapshot's std::unique_ptr<FlatAST> uses
+        // std::pmr::get_default_resource() (heap); the data is
+        // self-contained and does not alias the workspace. On
+        // restore, we copy-assign back into the workspace pool/flat
+        // (whose pmr vectors use the arena allocator) — the arena
+        // ends up with the restored data, and the snapshot retains
+        // its own heap copy for subsequent restores.
+        FlatSnapshot fs;
+        try {
+            fs.flat = std::make_unique<aura::ast::FlatAST>();
+            fs.pool = std::make_unique<aura::ast::StringPool>();
+            *fs.flat = *workspace_flat_;
+            *fs.pool = *workspace_pool_;
+            fs.has_flat = true;
+        } catch (...) {
+            // OOM during deep copy — store the source anyway so the
+            // snapshot at least exists for diff / fallback restore.
+            fs.has_flat = false;
+        }
+
         auto id = snapshot_sources_.size();
         snapshot_sources_.push_back(source);
         snapshot_names_.push_back(name);
+        snapshot_flats_.push_back(std::move(fs));
         return make_int(static_cast<std::int64_t>(id));
     });
 
@@ -8875,6 +8904,18 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     //   → true on success
     //   Replaces current workspace with a previously snapshotted state.
     //   Caches (def-use, incremental compile state) are invalidated.
+    //
+    // (#107 part 6) Two restore paths:
+    //   1. Direct: copy-assign the snapshot's FlatAST/StringPool into
+    //      the workspace's pool/flat. Lossless (mutation_log_,
+    //      type_id_, value_cache_ all preserved) and fast (no reparse).
+    //   2. Fallback: re-parse the stored source string via set-code.
+    //      Used when the snapshot is older (no direct copy) or the
+    //      direct copy is missing. Loses any metadata that the parser
+    //      doesn't reproduce.
+    // We try the direct path first; on failure (e.g. workspace
+    // pool/flat is null, which shouldn't happen but be defensive)
+    // we fall through to the source path.
     primitives_.add("ast:restore", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
@@ -8882,8 +8923,46 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         if (id >= snapshot_sources_.size())
             return make_bool(false);
 
+        // Clear any previous restore error / eval cache
+        last_set_code_error_kind_.clear();
+        last_set_code_error_msg_.clear();
+        last_eval_current_result_.reset();
+
+        // (#107 part 6) Direct path: copy from snapshot's flat/pool
+        // into the workspace's flat/pool. This is the lossless
+        // restore path — SymIds, mutation_log_, type_id_, value_cache_
+        // are all preserved bit-for-bit.
+        bool did_direct = false;
+        {
+            std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
+            if (workspace_read_only_) return make_bool(false);
+            if (id < snapshot_flats_.size() &&
+                snapshot_flats_[id].has_flat &&
+                snapshot_flats_[id].flat &&
+                snapshot_flats_[id].pool &&
+                workspace_flat_ && workspace_pool_) {
+                try {
+                    *workspace_flat_ = *snapshot_flats_[id].flat;
+                    *workspace_pool_ = *snapshot_flats_[id].pool;
+                    update_shared_tree_root();
+                    // Invalidate caches (same as set-code)
+                    defuse_index_ = nullptr;
+                    defuse_affected_syms_.clear();
+                    if (mark_all_defines_dirty_fn_) mark_all_defines_dirty_fn_();
+                    if (pre_cache_workspace_defines_fn_) pre_cache_workspace_defines_fn_();
+                    did_direct = true;
+                } catch (...) {
+                    // Fall through to source-based restore
+                    did_direct = false;
+                }
+            }
+        }
+        if (did_direct) return make_bool(true);
+
+        // Source-based fallback (existing behavior). Holds its own
+        // unique_lock inside set-code; we must not be holding ours
+        // (we released above by scope).
         auto& source = snapshot_sources_[id];
-        // Re-parse the source into workspace
         auto source_idx = string_heap_.size();
         string_heap_.push_back(source);
 
