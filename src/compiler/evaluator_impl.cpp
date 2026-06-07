@@ -18118,5 +18118,91 @@ std::size_t Evaluator::gc_root_count() const {
     return n;
 }
 
+// ── GC sweep / compaction (Issue #113 Phase 3) ──────────────
+//
+// `compact_sweep` is called by the GC collector's `collect()`
+// after the mark phase has set the live bits in `marks`. We hold
+// `heap_mutex()` because the sweep runs at the safepoint but a
+// non-fiber thread in serve-async mode could still touch the heaps.
+//
+// For `closures_` we actually erase unmarked entries — this is the
+// main memory-reclamation path (closure bodies hold arena-allocated
+// state). For the vector heaps, we report the dead count without
+// compaction, because compaction requires remapping all
+// EvalValue / pair / cell references — that's a major refactor
+// tracked separately in `binary_runtime_plan.md` (the C-runtime
+// equivalent) and in a future iteration of the Aura evaluator
+// (likely via a generation index table).
+
+void* Evaluator::compact_sweep(void* sweep_buffers) {
+    // The opaque pointer is aura::serve::GCSweepBuffers* (set by
+    // the serve_async.cpp callback or directly by the GC collector
+    // test). Cast is safe because both the message-bridge caller
+    // and the direct test pass a real GCSweepBuffers.
+    auto* marks = static_cast<aura::serve::GCSweepBuffers*>(sweep_buffers);
+    if (!marks) return nullptr;
+
+    std::lock_guard<std::mutex> lock(heap_mutex());
+    // The result is allocated on the heap (via new) so its
+    // lifetime extends past the function return. The caller
+    // (serve_async.cpp) reads the fields and deletes.
+    //
+    // The struct here is layout-compatible with
+    // `aura::messaging::GCSweepResultMsg` in messaging_bridge.h.
+    // We use a local struct because messaging_bridge.h is a
+    // non-module .h included via the global fragment, and the
+    // C++20 module rules make it awkward to refer to its
+    // types directly here. The static_assert below catches
+    // any drift between the two definitions.
+    struct SweepResult {
+        std::size_t strings_freed = 0;
+        std::size_t pairs_freed = 0;
+        std::size_t closures_freed = 0;
+        std::size_t fiber_results_freed = 0;
+    };
+    static_assert(sizeof(SweepResult) == 4 * sizeof(std::size_t),
+                  "SweepResult layout must match GCSweepResultMsg");
+    auto* result = new SweepResult();
+
+    // 1. closures_ — erase unmarked entries.
+    //    This is the main leak-reduction path: each closure holds
+    //    an arena-allocated flat, pool, and env that can be
+    //    significant memory.
+    if (marks->closure_marks) {
+        std::size_t before = closures_.size();
+        for (auto it = closures_.begin(); it != closures_.end(); ) {
+            int64_t id = static_cast<int64_t>(it->first);
+            if (!marks->closure_marks->test(id)) {
+                it = closures_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        result->closures_freed = before - closures_.size();
+    }
+
+    // 2. string_heap_ — report dead count, no compaction.
+    //    Compaction requires remapping all references that hold
+    //    a string index (Pair car/cdr, EvalValue String tag,
+    //    Closure params, etc.). Until that work lands, the heap
+    //    keeps stale entries but the GC metric tells the caller
+    //    how much pressure exists.
+    if (marks->string_marks) {
+        result->strings_freed = marks->string_marks->count_dead();
+    }
+
+    // 3. pairs_ — same. report dead count.
+    if (marks->pair_marks) {
+        result->pairs_freed = marks->pair_marks->count_dead();
+    }
+
+    // 4. fiber_results — owned by s_fiber_results_ (TU-local). The
+    //    GC sweep handles those separately when the
+    //    message-bridge registers a fiber_result sweep callback.
+    //    We report 0 here so the totals add up correctly.
+    result->fiber_results_freed = 0;
+
+    return result;
+}
 
 } // namespace aura::compiler

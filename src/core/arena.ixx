@@ -1,5 +1,6 @@
 module;
 #include <contracts>
+#include "core/gc_hooks.h"
 export module aura.core.arena;
 import std;
 
@@ -234,6 +235,22 @@ private:
         pre (size > 0)
         pre (alignment > 0 && (alignment & (alignment - 1)) == 0)
     {
+        // ── GC integration (Issue #113 Phase 4) ──────────
+        // Check the safepoint before allocating. This lets a
+        // compute-heavy fiber that doesn't yield for long
+        // stretches be interrupted by the GC. The check is
+        // an atomic load + branch — ~1 ns in the hot path.
+        // When the GC subsystem is not initialized (stdin mode
+        // or pre-scheduler), g_arena_safepoint_check is null
+        // and this is a no-op.
+        aura::gc_hooks::safepoint_check();
+
+        // ── Alloc accounting (Issue #113 Phase 4) ─────────
+        // Optional: bump the GC's alloc counter so it can
+        // decide when to trigger a collection cycle. No-op
+        // when the collector is not wired up.
+        aura::gc_hooks::record_alloc();
+
         // Try small-object pool first (for objects <= 64 bytes)
         if (size <= SmallObjectPool::kMaxSmallSize) {
             void* ptr = small_pool_.try_allocate(size);

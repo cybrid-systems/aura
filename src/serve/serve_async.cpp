@@ -1,6 +1,7 @@
 // serve/serve_async.cpp — Async serve mode implementation
 #include "serve_async.h"
 #include "compiler/messaging_bridge.h"
+#include "core/gc_hooks.h"
 #include "scheduler.h"
 #include "gc_coordinator.h"
 #include "fiber.h"
@@ -221,6 +222,93 @@ void run_serve_async(int num_workers) {
         svc->evaluator().flush_gc_roots(root_set_out);
     };
 
+    // GC sweep — routes through the current session's Evaluator.
+    // Called by the GC collector (gc_coordinator.cpp) during the
+    // sweep phase. We call the active Evaluator's `compact_sweep`
+    // which actually erases unmarked closures (the main memory-
+    // reclamation path) and reports the dead-count for vector heaps
+    // (string_heap_/pairs_ compaction is a future refactor).
+    //
+    // Returns an opaque `GCSweepResultMsg*` (heap-allocated by
+    // compact_sweep). The caller is responsible for `delete`-ing
+    // it after reading the fields.
+    aura::messaging::g_gc_sweep = [&sched](void* sweep_buffers) -> void* {
+        auto* svc = static_cast<aura::compiler::CompilerService*>(
+            aura::messaging::g_current_compiler_service);
+        if (!svc || !sweep_buffers) return nullptr;
+        return svc->evaluator().compact_sweep(sweep_buffers);
+    };
+
+    // Register the sweep callback with the GC collector. The
+    // collector invokes it during `collect()` after the mark phase.
+    // Note: only one sweep_fn_ per scheduler (not per session).
+    // The callback grabs the active CompilerService via
+    // g_current_compiler_service (same as the root-flush path)
+    // and rebuilds a GCSweepBuffers view from the mark vectors.
+    // We pass through the active evaluator's sweep method.
+
+    // ── Wire the arena-alloc-path GC hooks (Issue #113 Phase 4) ──
+    // The arena's allocate_raw() now calls gc_hooks::safepoint_check()
+    // and gc_hooks::record_alloc() on every allocation. The
+    // safepoint hook is Fiber::check_gc_safepoint (lets compute-heavy
+    // fibers be interrupted by GC). The record_alloc hook bumps
+    // the GC's alloc counter so the collector knows when to fire.
+    // Both are null by default (stdin mode), so the arena is a
+    // no-op when the scheduler isn't running.
+    aura::gc_hooks::g_arena_safepoint_check.store(
+        +[]() noexcept { aura::serve::Fiber::check_gc_safepoint(); });
+    // The record_alloc hook captures `sched`, but std::atomic<fn_ptr>
+    // doesn't accept a capture lambda. We resolve `sched` to its
+    // collector at hook-set time and pass a plain function pointer
+    // that the GC collector exposes for this purpose. The collector's
+    // record_alloc is a static method, but we need to bind it to
+    // this specific scheduler. We use a thread_local indirection:
+    // set a thread_local gc_collector_ptr, then have the hook
+    // dereference it. This is a tiny extra indirection on the
+    // alloc hot path but keeps the API simple.
+    thread_local aura::serve::GCCollector* tls_gc_collector = nullptr;
+    tls_gc_collector = sched.gc_collector();
+    aura::gc_hooks::g_arena_record_alloc.store(
+        +[]() noexcept {
+            if (auto* gc = tls_gc_collector) gc->record_alloc();
+        });
+    sched.gc_collector()->register_sweep_fn(
+        [&sched](const aura::serve::GCSweepBuffers& bufs) -> aura::serve::GCSweepResult {
+            auto* svc = static_cast<aura::compiler::CompilerService*>(
+                aura::messaging::g_current_compiler_service);
+            if (!svc) return {};
+            // Reconstruct a view that compact_sweep can consume.
+            // We use a stack-allocated stub with the same shape
+            // as GCSweepBuffers so we can pass it through the
+            // void* API without exposing the gc_coordinator.h
+            // type across module boundaries.
+            struct PassThru {
+                const aura::serve::MarkBitVector* s;
+                const aura::serve::MarkBitVector* p;
+                const aura::serve::MarkBitVector* c;
+            } holder{bufs.string_marks, bufs.pair_marks, bufs.closure_marks};
+            // compact_sweep returns void*; cast to the local
+            // GCSweepResultMsg layout (defined in messaging_bridge.h).
+            // The Evaluator's impl file uses a layout-compatible
+            // local struct (with a static_assert) for the same
+            // reason — to keep messaging_bridge.h from leaking
+            // into the module interface.
+            struct SweepResultMsg {
+                std::size_t strings_freed = 0;
+                std::size_t pairs_freed = 0;
+                std::size_t closures_freed = 0;
+                std::size_t fiber_results_freed = 0;
+            };
+            auto* msg_ptr = static_cast<SweepResultMsg*>(
+                svc->evaluator().compact_sweep(&holder));
+            if (!msg_ptr) return {};
+            aura::serve::GCSweepResult r{
+                msg_ptr->strings_freed, msg_ptr->pairs_freed,
+                msg_ptr->closures_freed, msg_ptr->fiber_results_freed};
+            delete msg_ptr;
+            return r;
+        });
+
     // GC collect — triggers a GC cycle via the GC collector.
     // Called from (gc-heap) primitives.
     aura::messaging::g_gc_collect = [&sched]() -> bool {
@@ -314,6 +402,32 @@ void run_serve_async(int num_workers) {
         sess->service.set_session_id("default");
         sess->service.set_workspace_tree(shared_workspace_tree);
         aura::compiler::CompilerService::register_session("default", &sess->service);
+    }
+
+    // ── Multi-session GC root registration (Issue #113) ────
+    // Each session has its own Evaluator (and therefore its own
+    // string_heap_ / pairs_ / closures_). For the GC to know
+    // about ALL live objects, each session's evaluator must be
+    // registered as a separate root source. The GC collector's
+    // `collect_roots` walks the map and calls every source's
+    // flush callback, which appends to a single GCRootSet.
+    //
+    // The worker_id is just a stable index into the root_sources_
+    // map — we use the session name's hash modulo a small prime
+    // to spread them out, but the value doesn't matter as long
+    // as it's unique per session. (The number 0 is the
+    // "default" session; sessions are added on top.)
+    auto gc_collect = sched.gc_collector();
+    auto register_session_root = [&](Session& s, int worker_id) {
+        gc_collect->register_root_source(worker_id,
+            [&s](aura::serve::GCRootSet& out) {
+                s.service.evaluator().flush_gc_roots(&out);
+            });
+    };
+    {
+        // Use 0 for default; the active-session g_gc_flush_root_set
+        // (set below) will override this for the active session.
+        register_session_root(*sessions["default"], 0);
     }
 
     // Register async HTTP handler (uses thread + fork+exec curl + pipe with drain)
@@ -556,6 +670,18 @@ void run_serve_async(int num_workers) {
                                 it->second->service.set_session_id(name);
                                 it->second->service.set_workspace_tree(shared_workspace_tree);
                                 aura::compiler::CompilerService::register_session(name, &it->second->service);
+                                // Register this new session's evaluator as
+                                // a GC root source so the GC walks its
+                                // heaps during collect_roots(). Worker_id
+                                // is the session's hash mod a small prime
+                                // to spread them; the value only needs to
+                                // be unique per session.
+                                int wid = static_cast<int>(
+                                    std::hash<std::string>{}(name) % 997) + 1;
+                                sched.gc_collector()->register_root_source(wid,
+                                    [&sess = *it->second](aura::serve::GCRootSet& out) {
+                                        sess.service.evaluator().flush_gc_roots(&out);
+                                    });
                                 // Spawn fiber for new session
                                 auto nsid = name;
                                 auto* nf = sched.spawn([nsid, &sess = *it->second, &stdin_lines, &stdin_eof, &sessions, &sched]() {

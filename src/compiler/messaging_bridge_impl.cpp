@@ -22,6 +22,7 @@ aura::messaging::ResetMetricsFn aura::messaging::g_reset_scheduler_metrics;
 aura::messaging::FiberSetAffinityFn aura::messaging::g_fiber_set_affinity = nullptr;
 aura::messaging::GCRootFlushFn aura::messaging::g_gc_flush_root_set;
 aura::messaging::GCCollectFn aura::messaging::g_gc_collect;
+aura::messaging::GCSweepFn aura::messaging::g_gc_sweep;
 aura::messaging::HeapMutexFn aura::messaging::g_heap_mutex;
 aura::messaging::MailboxCountFn aura::messaging::g_mailbox_count = nullptr;
 aura::messaging::SessionIdFn aura::messaging::g_session_id = nullptr;
