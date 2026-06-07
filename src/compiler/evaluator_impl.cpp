@@ -5192,6 +5192,13 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
 
         // Record affected sym for incremental DefUseIndex update
         defuse_affected_syms_.insert(name);
+        // Per-sym version (Issue #107 part 5): touch the sym in the
+        // index itself so the staleness state is co-located with the
+        // data. Uses the defuse_touch_fn_ callback to avoid a forward
+        // declaration on DefUseIndex (which is defined later in this
+        // translation unit). When defuse_index_ is null, this is a
+        // no-op — next ensure_defuse() will build from scratch.
+        if (defuse_touch_fn_) defuse_touch_fn_(defuse_index_, sym);
 
         // Phase 2: mark this define's IR cache entry dirty so the next
         // (eval-current) re-lowers it.
@@ -5749,6 +5756,11 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
 
                 // Record affected sym for incremental DefUseIndex update
                 defuse_affected_syms_.insert(name);
+                // Per-sym version (Issue #107 part 5): see mutate:rebind
+                // above for rationale. Co-locates staleness with the
+                // data so ensure_defuse() can skip when no syms are
+                // actually stale.
+                if (defuse_touch_fn_) defuse_touch_fn_(defuse_index_, sym);
 
                 // ── Auto-typecheck (Issue #107 part 3.5) ────────────
                 // Run the typecheck inline WITHOUT going through the
@@ -6781,11 +6793,79 @@ struct DefUseIndex {
     bool built_ = false;
     std::size_t flat_size_at_build_ = 0;
 
+    // ── Per-symbol version (Issue #107 part 5) ──────────────────
+    // Tracks which syms have been touched (mutated) since the last
+    // index refresh. Each touch bumps global_version_; after a refresh
+    // (full build or incremental update_callers_for), the affected
+    // syms are removed from stale_syms_. Syms not in stale_syms_ are
+    // guaranteed to have fresh callers_of_ / callee_of_ data.
+    //
+    // Why per-sym and not just one global counter (defuse_version_):
+    // - Granular invalidation: a mutation to sym X only invalidates X.
+    //   Other syms' cached data stays valid; we can skip their re-scan.
+    // - Observability: query:index-stats reports how many syms are
+    //   stale, which is useful for cache-hit rate diagnostics.
+    // - Forward-compatible: future fine-grained refresh paths (refresh
+    //   only stale syms without full flat scan) can use this directly.
+    //
+    // Note: stale_syms_ is a superset of "syms that changed". After
+    // a full build, stale_syms_ is empty. After touch_sym(s), {s} is
+    // added. After update_callers_for(S), all s ∈ S are removed.
+    std::unordered_set<SymId> stale_syms_;
+    std::uint64_t global_version_ = 0;
+
+    // Mark a sym as touched: its callers_of_ / callee_of_ data may
+    // now be stale. Bumps global_version_ so is_sym_stale() returns
+    // true for this sym until mark_sym_fresh() is called.
+    void touch_sym(SymId s) {
+        if (s == INVALID_SYM) return;
+        stale_syms_.insert(s);
+        ++global_version_;
+    }
+
+    // Touch multiple syms at once. Bumps global_version_ once
+    // regardless of |syms| (the bump is a logical "mutation epoch"
+    // marker, not a per-sym counter).
+    void touch_syms(const std::unordered_set<SymId>& syms) {
+        if (syms.empty()) return;
+        for (auto s : syms) {
+            if (s != INVALID_SYM) stale_syms_.insert(s);
+        }
+        ++global_version_;
+    }
+
+    // Check if a sym's data is stale.
+    bool is_sym_stale(SymId s) const {
+        return stale_syms_.count(s) > 0;
+    }
+
+    // Mark a sym as fresh (its callers_of_ / callee_of_ data is
+    // up-to-date with the current flat).
+    void mark_sym_fresh(SymId s) {
+        stale_syms_.erase(s);
+    }
+
+    // Mark a set of syms as fresh.
+    void mark_syms_fresh(const std::unordered_set<SymId>& syms) {
+        for (auto s : syms) stale_syms_.erase(s);
+    }
+
+    // Mark all syms as fresh (called after a full build).
+    void mark_all_fresh() {
+        stale_syms_.clear();
+    }
+
+    // Stats accessors.
+    std::size_t stale_count() const { return stale_syms_.size(); }
+    std::uint64_t current_version() const { return global_version_; }
+
     void destroy() {
         scopes_.clear(); def_syms_.clear(); def_nodes_.clear();
         refs_.clear(); uses_.clear(); sym_scopes_keys_.clear();
         sym_scopes_vals_.clear(); sym_to_range_.clear();
         callers_of_.clear(); callee_of_.clear();
+        stale_syms_.clear();
+        global_version_ = 0;
         flat_ = nullptr; pool_ = nullptr; built_ = false;
     }
 
@@ -6960,6 +7040,11 @@ struct DefUseIndex {
         // Pass 5: build call-graph index (#10)
         // Walk all Call nodes, record callers_of_ and callee_of_
         build_call_graph(flat);
+
+        // All syms are now fresh after a full build. (Issue #107 part 5)
+        // global_version_ is kept monotonic (never reset); staleness
+        // is tracked by stale_syms_ membership, not by version compare.
+        mark_all_fresh();
 
         built_ = true;
     }
@@ -7224,6 +7309,11 @@ struct DefUseIndex {
     // Used after mutations that only modify existing nodes
     // (rebind/set-body/replace-pattern) without adding new nodes.
     // Full flat scan still needed but scope tree + defs/uses preserved.
+    //
+    // After this call, all syms in `affected_syms` have fresh
+    // callers_of_ / callee_of_ data. We mark them as fresh in the
+    // per-sym version tracker (Issue #107 part 5) so subsequent
+    // ensure_defuse() calls don't redundantly re-touch them.
     void update_callers_for(FlatAST& flat, const std::unordered_set<SymId>& affected_syms) {
         if (!built_ || affected_syms.empty())
             return;
@@ -7247,6 +7337,10 @@ struct DefUseIndex {
                 }
             }
         }
+        // Mark refreshed syms as fresh. (Issue #107 part 5)
+        // We erase from stale_syms_ even if they weren't stale before
+        // (idempotent); the data is now up-to-date either way.
+        mark_syms_fresh(affected_syms);
     }
 };
 
@@ -8265,9 +8359,33 @@ Evaluator::Evaluator() {
         return std::move(result.uses);
     };
 
+    // ── Per-sym version touch callback (#107 part 5) ───────────
+    // Registers a callback that mutations can use to mark a sym as
+    // stale in the DefUseIndex. Same forward-decl workaround as
+    // dep_caller_fn_. When defuse_index_ is null (no index yet), the
+    // callback is a no-op; the next ensure_defuse() will build from
+    // scratch anyway.
+    defuse_touch_fn_ = [](void* idx_ptr, aura::ast::SymId sym) {
+        if (!idx_ptr) return;
+        auto* idx = static_cast<DefUseIndex*>(idx_ptr);
+        idx->touch_sym(sym);
+    };
+
     // Helper: get or rebuild the def-use index
     // Tracks defuse_version_ to detect mutations since last build.
     // (#10) Tracks rebuild count and clears affected_syms_ after rebuild.
+    // (#107 part 5) Per-sym version: DefUseIndex itself tracks which
+    // syms are stale (DefUseIndex::stale_syms_). The mutation paths
+    // that report affected_syms (mutate:rebind / set-body) also call
+    // defuse_touch_fn_ to mark the sym stale in the index. The
+    // staleness set is used for observability (query:index-stats)
+    // and for the update_callers_for() path to know which syms need
+    // fresh data. We deliberately do NOT short-circuit ensure_defuse
+    // on staleness: if a mutation reports an affected sym, we must
+    // refresh it, even if the per-sym version wasn't bumped (defense
+    // in depth: the affected_syms_ list is the authoritative source
+    // for "this sym needs re-indexing", and the per-sym version is
+    // a co-located observation).
     auto ensure_defuse = [this]() -> DefUseIndex* {
         if (!workspace_flat_ || !workspace_pool_)
             return nullptr;
@@ -8512,6 +8630,13 @@ Evaluator::Evaluator() {
         push_kv("refs", idx->refs_.size());
         push_kv("callers", idx->callers_of_.size());
         push_kv("rebuilds", (std::int64_t)defuse_rebuild_count_);
+        // (#107 part 5) Per-sym version stats. stale-syms is the
+        // number of syms whose callers_of_/callee_of_ data may be
+        // out-of-date since the last refresh. defuse-version is the
+        // monotonic counter bumped on each touch_sym() call.
+        // stale-syms = 0 means the index is fully consistent.
+        push_kv("stale-syms", (std::int64_t)idx->stale_count());
+        push_kv("defuse-version", (std::int64_t)idx->current_version());
         return stats;
     });
 

@@ -435,6 +435,14 @@ private:
     std::function<std::vector<aura::ast::NodeId>(void*, aura::ast::SymId)>
         dep_caller_fn_ = nullptr;
 
+    // ── DefUseIndex per-sym version touch callback (#107 part 5) ───
+    // 在 mutation 原语中调用，标记某个 sym 在 DefUseIndex 中为 stale。
+    // 注册位置同 dep_caller_fn_，绕开 DefUseIndex 前向声明问题。
+    // 签名: (defuse_index, sym_id) → void
+    // 当 defuse_index_ 为 null 时回调内部应 no-op。
+    std::function<void(void*, aura::ast::SymId)>
+        defuse_touch_fn_ = nullptr;
+
     // ── EDSL IR cache V2 (Phase 2) hooks ─────────────────────────────
     // Function pointers set by CompilerService on init. Avoids
     // evaluator_impl.cpp needing to import CompilerService (circular).
