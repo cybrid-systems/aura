@@ -4560,6 +4560,277 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     };
     std::function<EvalValue(const std::string&, const std::string&)> mev = make_error_val;
 
+// (#110) mutate:query-and-replace - composes (query:where :field value)
+// predicates with replacement. Snapshots flat.size() to avoid
+// re-evaluating after set_child grows the flat.
+primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValue> a) -> EvalValue {
+    std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
+    if (workspace_read_only_) return mev("read-only", "workspace is read-only");
+    if (a.empty()) return mev("bad-arg", "usage: (mutate:query-and-replace <predicates...> <template> [summary])");
+    if (!workspace_flat_ || !workspace_pool_) return mev("no-workspace", "no workspace AST loaded");
+
+    auto& flat = *workspace_flat_;
+    auto& pool = *workspace_pool_;
+
+    if (a.size() < 2 || !is_string(a.back()))
+        return mev("bad-arg", "last arg must be a template string");
+
+    auto template_idx = as_string_idx(a.back());
+    if (template_idx >= string_heap_.size())
+        return mev("bad-arg", "template string index out of range");
+    std::string repl_template = string_heap_[template_idx];
+
+    // The arg just before the template is optionally a summary.
+    std::size_t pred_end = a.size() - 1;
+    std::string summary = "query-and-replace";
+    if (a.size() >= 3 && is_string(a[a.size() - 2])) {
+        auto sidx = as_string_idx(a[a.size() - 2]);
+        if (sidx < string_heap_.size()) {
+            summary = string_heap_[sidx];
+            pred_end = a.size() - 2;
+        }
+    }
+
+    struct Predicate {
+        std::string field;
+        std::string value;
+    };
+    std::vector<Predicate> predicates;
+    for (std::size_t ai = 0; ai < pred_end; ++ai) {
+        if (!is_pair(a[ai]))
+            return mev("bad-arg", "each predicate must be a (query:where ...) pair");
+        auto pair_idx = as_pair_idx(a[ai]);
+        if (pair_idx >= pairs_.size())
+            return mev("bad-arg", "predicate pair index out of range");
+        auto& p = pairs_[pair_idx];
+        if (!is_keyword(p.car) || !is_string(p.cdr))
+            return mev("bad-arg", "malformed predicate");
+        auto kidx = as_keyword_idx(p.car);
+        auto sidx = as_string_idx(p.cdr);
+        if (kidx >= keyword_table_.size() || sidx >= string_heap_.size())
+            return mev("bad-arg", "predicate field/value out of range");
+        predicates.push_back({keyword_table_[kidx], string_heap_[sidx]});
+    }
+    if (predicates.empty())
+        return mev("bad-arg", "at least one predicate required");
+
+    // Collect matches. Snapshot flat.size() so set_child during replacement
+    // (which grows flat) doesn't extend the match scan. (#110 fix: bug
+    // exposed by re-evaluating flat.size() each iteration.)
+    auto end_id = flat.size();
+    std::vector<aura::ast::NodeId> matches;
+    for (aura::ast::NodeId id = 0; id < end_id; ++id) {
+        auto v = flat.get(id);
+        bool match = true;
+        for (auto& p : predicates) {
+            if (p.field == ":node-type" || p.field == ":tag") {
+                bool found = false;
+                for (auto& m : aura::ast::kNodeMeta) {
+                    if (m.name == p.value && m.name != "<gap>") {
+                        if (v.tag == m.tag) found = true;
+                        break;
+                    }
+                }
+                if (!found) { match = false; break; }
+            }
+            else if (p.field == ":callee") {
+                if (v.tag != aura::ast::NodeTag::Call || v.children.empty()) {
+                    match = false; break;
+                }
+                auto callee = flat.get(v.child(0));
+                if (callee.tag != aura::ast::NodeTag::Variable ||
+                    pool.resolve(callee.sym_id) != p.value) {
+                    match = false; break;
+                }
+            }
+            else if (p.field == ":defined-by" || p.field == ":defines") {
+                if (v.tag != aura::ast::NodeTag::Define) { match = false; break; }
+                if (pool.resolve(v.sym_id) != p.value) { match = false; break; }
+            }
+            else if (p.field == ":has-param") {
+                bool found_param = false;
+                for (auto pid : v.params) {
+                    if (pool.resolve(pid) == p.value) {
+                        found_param = true; break;
+                    }
+                }
+                if (!found_param) { match = false; break; }
+            }
+            else if (p.field == ":has-child") {
+                aura::ast::NodeTag child_tag = static_cast<aura::ast::NodeTag>(-1);
+                bool found_tag = false;
+                for (auto& m : aura::ast::kNodeMeta) {
+                    if (m.name == p.value && m.name != "<gap>") {
+                        child_tag = m.tag; found_tag = true; break;
+                    }
+                }
+                if (!found_tag) { match = false; break; }
+                bool has_child = false;
+                for (auto cid : v.children) {
+                    if (cid != aura::ast::NULL_NODE && flat.get(cid).tag == child_tag) {
+                        has_child = true; break;
+                    }
+                }
+                if (!has_child) { match = false; break; }
+            }
+            else {
+                return mev("unknown-field",
+                           std::string("unknown where field: \"") + p.field + "\"");
+            }
+        }
+        if (match) matches.push_back(id);
+    }
+
+    if (matches.empty())
+        return make_bool(false);
+
+    // Source reconstruction
+    std::function<std::string(aura::ast::NodeId)> node_to_source;
+    node_to_source = [&](aura::ast::NodeId id) -> std::string {
+        if (id >= flat.size() || id == aura::ast::NULL_NODE) return "";
+        auto v = flat.get(id);
+        switch (v.tag) {
+            case aura::ast::NodeTag::LiteralInt: return std::to_string(v.int_value);
+            case aura::ast::NodeTag::LiteralFloat: return std::to_string(v.float_value);
+            case aura::ast::NodeTag::LiteralString:
+                return std::string("\"") + std::string(pool.resolve(v.sym_id)) + "\"";
+            case aura::ast::NodeTag::Variable: return std::string(pool.resolve(v.sym_id));
+            case aura::ast::NodeTag::Call: {
+                std::string s = "(";
+                for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
+                    if (ci > 0) s += " ";
+                    s += node_to_source(v.child(ci));
+                }
+                return s + ")";
+            }
+            case aura::ast::NodeTag::Lambda: {
+                std::string s = "(lambda (";
+                for (std::size_t pi = 0; pi < v.params.size(); ++pi) {
+                    if (pi > 0) s += " ";
+                    s += pool.resolve(v.params[pi]);
+                }
+                s += ")";
+                if (!v.children.empty()) s += " " + node_to_source(v.child(0));
+                return s + ")";
+            }
+            case aura::ast::NodeTag::IfExpr: {
+                std::string s = "(if";
+                for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
+                    if (ci < 3) s += " " + node_to_source(v.child(ci));
+                }
+                return s + ")";
+            }
+            case aura::ast::NodeTag::Begin: {
+                std::string s = "(begin";
+                for (auto c : v.children) s += " " + node_to_source(c);
+                return s + ")";
+            }
+            case aura::ast::NodeTag::Define: {
+                std::string s = "(define " + std::string(pool.resolve(v.sym_id));
+                if (!v.children.empty()) {
+                    auto val_node = flat.get(v.child(0));
+                    if (val_node.tag == aura::ast::NodeTag::Lambda) {
+                        s += " (";
+                        for (std::size_t pi = 0; pi < val_node.params.size(); ++pi) {
+                            if (pi > 0) s += " ";
+                            s += pool.resolve(val_node.params[pi]);
+                        }
+                        s += ")";
+                        if (!val_node.children.empty())
+                            s += " " + node_to_source(val_node.child(0));
+                        s += ")";
+                    } else {
+                        s += " " + node_to_source(v.child(0));
+                    }
+                }
+                return s + ")";
+            }
+            default:
+                return std::string("#<node-") + std::to_string(static_cast<int>(v.tag)) + ">";
+        }
+    };
+
+    // Count "..." occurrences
+    std::size_t dot_count = 0;
+    {
+        std::size_t pos = 0;
+        while ((pos = repl_template.find("...", pos)) != std::string::npos) {
+            ++dot_count;
+            pos += 3;
+        }
+    }
+
+    defuse_version_++;
+    if (aura::messaging::g_fiber_yield_mutation_boundary)
+        aura::messaging::g_fiber_yield_mutation_boundary();
+
+    int replaced = 0;
+    for (auto match_id : matches) {
+        std::vector<std::string> capture_sources;
+        capture_sources.push_back(node_to_source(match_id));
+        auto mv = flat.get(match_id);
+        for (auto cid : mv.children) {
+            if (cid != aura::ast::NULL_NODE)
+                capture_sources.push_back(node_to_source(cid));
+            if (capture_sources.size() >= dot_count) break;
+        }
+
+        std::string filled;
+        if (dot_count == 0) {
+            filled = repl_template;
+        } else {
+            std::size_t cap_idx = 0;
+            std::size_t pos = 0;
+            while (pos < repl_template.size()) {
+                auto dot_pos = repl_template.find("...", pos);
+                if (dot_pos == std::string::npos) {
+                    filled += repl_template.substr(pos);
+                    break;
+                }
+                filled += repl_template.substr(pos, dot_pos - pos);
+                if (cap_idx < capture_sources.size()) {
+                    filled += capture_sources[cap_idx++];
+                }
+                pos = dot_pos + 3;
+            }
+        }
+
+        auto repl_pr = aura::parser::parse_to_flat(filled, flat, pool);
+        if (!repl_pr.success || repl_pr.root == aura::ast::NULL_NODE)
+            continue;
+
+        auto parent_id = flat.parent_of(match_id);
+        if (parent_id == aura::ast::NULL_NODE) continue;
+        int child_idx = -1;
+        {
+            auto pv = flat.get(parent_id);
+            for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
+                if (pv.child(ci) == match_id) {
+                    child_idx = static_cast<int>(ci);
+                    break;
+                }
+            }
+        }
+        if (child_idx < 0) continue;
+
+        flat.set_child(parent_id, static_cast<std::uint32_t>(child_idx), repl_pr.root);
+        flat.mark_dirty_upward(repl_pr.root);
+        flat.add_mutation(repl_pr.root, "query-and-replace", "matched", "template", summary);
+        ++replaced;
+    }
+
+    if (replaced == 0)
+        return make_bool(false);
+
+    defuse_index_destroy(&defuse_index_);
+    defuse_affected_syms_.clear();
+    if (mark_all_defines_dirty_fn_) mark_all_defines_dirty_fn_();
+    if (pre_cache_workspace_defines_fn_) pre_cache_workspace_defines_fn_();
+
+    return make_bool(true);
+});
+
+
     primitives_.add("set-code", [this, mev](const auto& a) -> EvalValue {
         std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
         if (workspace_read_only_) return mev("read-only", "workspace is read-only");
