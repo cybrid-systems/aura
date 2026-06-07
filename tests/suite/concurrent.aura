@@ -34,14 +34,19 @@
 ;; ── Test 3: Fiber side effects ───────────────────────
 
 (display "[T3] fiber-side-effects ... ")
-(define xs (list))
-(define t3-a (fiber:spawn (lambda () (set! xs (cons "a" xs)))))
-(define t3-b (fiber:spawn (lambda () (set! xs (cons "b" xs)))))
-(fiber:join t3-a)
-(fiber:join t3-b)
-(define t3-len (length xs))
-(if (and (>= t3-len 2) (<= t3-len 3))
-    (display "PASS\n") (display "FAIL\n"))
+;; Use let for the final length capture: Begin's letrec path
+;; pre-evaluates all define values in phase 2 BEFORE the
+;; (fiber:join ...) expressions in phase 3, so a (define t3-len
+;; (length xs)) would capture xs=() before the fibers run.
+;; let binds at use-site, so the length is read after the joins.
+(let ((xs (list)))
+  (let ((t3-a (fiber:spawn (lambda () (set! xs (cons "a" xs))))))
+    (let ((t3-b (fiber:spawn (lambda () (set! xs (cons "b" xs))))))
+      (fiber:join t3-a)
+      (fiber:join t3-b)
+      (let ((t3-len (length xs)))
+        (if (and (>= t3-len 2) (<= t3-len 3))
+            (display "PASS\n") (display "FAIL\n"))))))
 
 ;; ── Test 4: orch:parallel basic ──────────────────────
 
