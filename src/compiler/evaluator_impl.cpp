@@ -8908,6 +8908,63 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     pairs_.push_back({v_pair, all_list});
     return make_pair(final_pid);
 });
+
+    // (ast:defs)
+    //   → ((name . node-id) ...)  top-level (define ...) entries.
+    //   Each pair is (symbol-name . node-id-of-define). Used by EDSL
+    //   workflows that want to enumerate workspace top-level
+    //   bindings without walking node tags manually.
+    //   (#108 part 2) Added because lib/std/adaptive.aura documents
+    //   (ast:defs) as a core primitive, but it was never wired up.
+    //   EDSL benchmark (edsl-snapshot-multi etc.) hits 'unbound
+    //   variable: ast:defs' otherwise.
+    primitives_.add("ast:defs", [this](const auto&) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
+        if (!workspace_flat_ || !workspace_pool_)
+            return make_void();
+        auto& flat = *workspace_flat_;
+        // Build the (name . node-id) alist in reverse, then return.
+        // Order is workspace order (top-level defines are at the
+        // top of the flat; later defines come later).
+        EvalValue result = make_void();
+        // Walk in reverse so that pushes to the front of the list
+        // produce the same order as the flat.
+        for (std::int64_t id = (std::int64_t)flat.size() - 1; id >= 0; --id) {
+            auto v = flat.get(static_cast<aura::ast::NodeId>(id));
+            if (v.tag != aura::ast::NodeTag::Define) continue;
+            auto name_str = std::string(workspace_pool_->resolve(v.sym_id));
+            if (name_str.empty()) continue;
+            auto name_idx = string_heap_.size();
+            string_heap_.push_back(name_str);
+            // (name . id) pair
+            auto entry_pair = pairs_.size();
+            pairs_.push_back({make_string(name_idx),
+                              make_int(static_cast<std::int64_t>(id))});
+            // cons onto result
+            auto cons_pair = pairs_.size();
+            pairs_.push_back({make_pair(entry_pair), result});
+            result = make_pair(cons_pair);
+        }
+        return result;
+    });
+
+    // (ast:nodes)
+    //   → (node-id ...)  all node IDs in the workspace, in flat order.
+    //   (#108 part 2) Same fix as ast:defs. Documented in
+    //   adaptive.aura but never wired up.
+    primitives_.add("ast:nodes", [this](const auto&) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
+        if (!workspace_flat_)
+            return make_void();
+        auto& flat = *workspace_flat_;
+        EvalValue result = make_void();
+        for (std::int64_t id = (std::int64_t)flat.size() - 1; id >= 0; --id) {
+            auto pid = pairs_.size();
+            pairs_.push_back({make_int(id), result});
+            result = make_pair(pid);
+        }
+        return result;
+    });
     // (ast:list-snapshots)
     //   → ((id "name") ...)  list of (snapshot-id . name) pairs
     primitives_.add("ast:list-snapshots", [this](const auto&) -> EvalValue {
