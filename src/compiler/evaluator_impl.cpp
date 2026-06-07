@@ -2227,6 +2227,64 @@ void Evaluator::init_pair_primitives() {
         return "Unknown";
     };
 
+    // ── M4 linear-type primitives (Issue #108 part 3) ─────────────
+    // lib/std/adaptive.aura documents an M4 linear-type system with
+    // m4-move / m4-borrow / m4-return! / define-linear.
+    // The EDSL benchmark (m4-borrow-chain, type-linear-hof,
+    // type-ownership-linear) hits 'unbound variable: m4-move' etc.
+    //
+    // These stubs are runtime pass-throughs — they don't track
+    // ownership, because the actual linear type system is a much
+    // larger feature (typed mutation env, move-counting,
+    // scope-leak diagnostics). The goal here is just to make the
+    // names exist so the EDSL benchmark can run; solutions that
+    // require real linear-type tracking will continue to fail
+    // until that larger feature lands.
+    //
+    // We don't add a `Linear` primitive here because `Linear` is
+    // already a parser special form (src/parser/parser_impl.cpp
+    // parse_linear) that creates a Linear AST node. The
+    // evaluator handles Linear nodes by evaluating the inner
+    // expression and returning its value. So `(Linear 42)`
+    // already works at the parser/eval level.
+    //
+    // Semantics (pass-through):
+    //   (m4-move x)        → x        (consumes x, returns same value)
+    //   (m4-borrow x)      → x        (non-consuming, returns same value)
+    //   (m4-return! x)     → void     (consumes x, returns nothing)
+    //   (define-linear x v)→ void     (stub: doesn't actually bind x;
+    //                                    real linear defines need
+    //                                    env mutation which is a
+    //                                    much larger feature)
+    //
+    // The unprefixed move/borrow/return! (without m4-) are also
+    // parser special forms (parse_move, parse_borrow) that
+    // create Move/Borrow AST nodes. So both naming styles work
+    // through the parser path; the m4-* primitives here are for
+    // solutions that reach for the documented API.
+    primitives_.add("m4-move", [this](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty()) return make_void();
+        return a[0];
+    });
+    primitives_.add("m4-borrow", [this](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty()) return make_void();
+        return a[0];
+    });
+    primitives_.add("m4-return!", [this](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        return make_void();
+    });
+    primitives_.add("define-linear", [this](std::span<const EvalValue> a) -> EvalValue {
+        // Stub: a real linear define would add a binding to the
+        // current env. As a stub, just return void. Solutions
+        // that rely on define-linear actually binding will
+        // continue to fail (e.g. follow-up 'unbound variable' on
+        // the supposed name), but at least the primitive is
+        // discoverable.
+        (void)a;
+        return make_void();
+    });
+
     primitives_.add("type-of", [this, infer_type_name](const auto& a) -> EvalValue {
         if (a.empty())
             return make_int(0);
