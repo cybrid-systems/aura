@@ -436,6 +436,28 @@ endif()
 add_test(NAME jit_metrics COMMAND test_jit_metrics
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
+# ── JIT concurrent compile stress tests (Issue #114) ─────────
+# Verifies the per-function compile cache and metrics counters
+# under concurrent access. Doesn't need a full LLVM stack —
+# exercises the counter paths directly.
+add_executable(test_jit_concurrent_compile tests/test_jit_concurrent_compile.cpp
+    tests/test_jit_metrics_stub.cpp
+    src/compiler/aura_jit.cpp
+    src/compiler/aura_jit_runtime.cpp)
+target_include_directories(test_jit_concurrent_compile PRIVATE src)
+set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts")
+target_sources(test_jit_concurrent_compile PRIVATE src/core/contract_handler.cpp)
+target_link_libraries(test_jit_concurrent_compile PRIVATE stdc++ stdc++exp pthread aura-reflect)
+if(LLVM_FOUND)
+    target_include_directories(test_jit_concurrent_compile PRIVATE ${LLVM_INCLUDE_DIRS})
+    target_link_libraries(test_jit_concurrent_compile PRIVATE ${llvm_libs})
+    target_compile_definitions(test_jit_concurrent_compile PRIVATE AURA_HAVE_LLVM=1)
+endif()
+add_test(NAME jit_concurrent_compile COMMAND test_jit_concurrent_compile
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
 # ── Speculative JIT runtime tests (Phase 3, #53) ────────────
 add_executable(test_spec_runtime tests/test_spec_runtime.cpp)
 target_include_directories(test_spec_runtime PRIVATE src)
