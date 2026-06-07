@@ -382,6 +382,14 @@ Primitives::Primitives() {
 
 // ── I/O helper for EvalValue ──────────────────────────────────
 struct Pair;
+// Forward declaration for defuse_index_destroy (defined after the
+// DefUseIndex struct body, around line 7360). All 9 callers pass
+// `&defuse_index_` to it — the helper does the actual `delete` and
+// nullifies the slot. Defined as a free function rather than a
+// static member because the call sites live before the struct
+// body is in scope (defuse_index_ is set/reset in set-code and
+// workspace-switching code that comes early in the TU).
+static void defuse_index_destroy(void** slot);
 namespace {
     // Check if value is the end of a list (void is the proper sentinel)
     // Note: int 0 is ALSO used as the empty list sentinel in some contexts,
@@ -4396,7 +4404,9 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         workspace_pool_ = pool_ptr;
         update_shared_tree_root();
         // Invalidate def-use index (new workspace)
-        defuse_index_ = nullptr;
+        // (ASAN fix #107 leak) delete the old index; without this,
+        // each set-code leaks the previous DefUseIndex (~3KB each).
+        defuse_index_destroy(&defuse_index_);
         // Phase 2: a fresh workspace means every cached define is potentially
         // changed. Mark all dirty so the next (eval-current) re-evaluates.
         if (mark_all_defines_dirty_fn_) mark_all_defines_dirty_fn_();
@@ -4497,7 +4507,8 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         workspace_flat_ = flat_ptr;
         workspace_pool_ = pool_ptr;
         update_shared_tree_root();
-        defuse_index_ = nullptr;
+        // (ASAN fix #107 leak) delete the old index; see sibling site above.
+        defuse_index_destroy(&defuse_index_);
 
         // Evaluate the workspace AST
         if (!last_set_code_error_kind_.empty()) {
@@ -7344,6 +7355,23 @@ struct DefUseIndex {
     }
 };
 
+// ── DefUseIndex ownership helper (ASAN fix #107 leak) ───────────
+// Free a DefUseIndex held in a void* slot and null the slot. Defined
+// after the struct body so DefUseIndex's destructor is visible (a
+// forward-declared type's destructor is not, so `delete static_cast
+// <DefUseIndex*>(...)` won't compile from sites before the struct).
+// The function is small and the call sites pass `&defuse_index_`,
+// which is the same idiom as `defuse_touch_fn_` and friends.
+//
+// Note: we can't use std::unique_ptr<DefUseIndex> in the header
+// because DefUseIndex is a TU-local type (defined in evaluator_impl.cpp
+// only). The void* slot + this helper is the PIMPL-shaped equivalent.
+static void defuse_index_destroy(void** slot) {
+    if (!slot || !*slot) return;
+    delete static_cast<DefUseIndex*>(*slot);
+    *slot = nullptr;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // WorkspaceTree — multi-layer workspace isolation
 // ═══════════════════════════════════════════════════════════════
@@ -8946,7 +8974,8 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
                     *workspace_pool_ = *snapshot_flats_[id].pool;
                     update_shared_tree_root();
                     // Invalidate caches (same as set-code)
-                    defuse_index_ = nullptr;
+                    // (ASAN fix #107 leak) delete the old index.
+                    defuse_index_destroy(&defuse_index_);
                     defuse_affected_syms_.clear();
                     if (mark_all_defines_dirty_fn_) mark_all_defines_dirty_fn_();
                     if (pre_cache_workspace_defines_fn_) pre_cache_workspace_defines_fn_();
@@ -10411,7 +10440,8 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
             if (ws) { workspace_flat_ = ws->flat; workspace_pool_ = ws->pool; }
         }
         workspace_read_only_ = ws ? ws->read_only : false;
-        defuse_index_ = nullptr;
+        // (ASAN fix #107 leak) delete the old index.
+        defuse_index_destroy(&defuse_index_);
         return make_bool(true);
     });
 
@@ -10709,7 +10739,8 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
             if (idx == tree->active_idx()) {
                 workspace_flat_ = ws.flat;
                 workspace_pool_ = ws.pool;
-                defuse_index_ = nullptr;
+                // (ASAN fix #107 leak) delete the old index.
+                defuse_index_destroy(&defuse_index_);
             }
         }
         return make_bool(true);
@@ -10811,7 +10842,8 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         // root's WorkspaceNode to point to it).
         tree->set_active(0);
         defuse_version_++;
-        defuse_index_ = nullptr;
+        // (ASAN fix #107 leak) delete the old index.
+        defuse_index_destroy(&defuse_index_);
         return make_string(ri);
     });
 
@@ -12206,7 +12238,8 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         auto sc_fn = primitives_.lookup("set-code");
         if (sc_fn) (*sc_fn)({make_string(bi)});
         defuse_version_++;
-        defuse_index_ = nullptr;
+        // (ASAN fix #107 leak) delete the old index.
+        defuse_index_destroy(&defuse_index_);
 
         auto gs = std::to_string(best_gen);
         auto gi = string_heap_.size();
@@ -13005,7 +13038,8 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         }
 
         // Reset arena (invalidates all arena-allocated state)
-        defuse_index_ = nullptr;
+        // (ASAN fix #107 leak) delete the old index.
+        defuse_index_destroy(&defuse_index_);
         modules_.clear();
         module_cache_.clear();
         current_flat_ = nullptr;
@@ -17366,6 +17400,11 @@ bool Evaluator::restore_panic_checkpoint() {
 // from the manual cleanup since arena_group_ will free them as a
 // member after this dtor returns.
 Evaluator::~Evaluator() {
+    // (ASAN fix #107 leak) free the def-use index. Same root cause
+    // as the 8 reset sites: defuse_index_ is a void* that was
+    // leaked on every reset (and at process exit). The destructor's
+    // no-op cleanup was the final leak in the chain.
+    defuse_index_destroy(&defuse_index_);
     modules_.clear();
     module_cache_.clear();
     module_arena_ptrs_.clear();
