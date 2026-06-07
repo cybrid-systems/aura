@@ -129,6 +129,35 @@ clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
 static constexpr std::size_t MAX_ENV_DEPTH = 1024;
 thread_local std::size_t g_env_lookup_depth = 0;
 
+// ── ADT constructor table (Issue #108 part 4 Phase 1) ───────
+// Global registry of ADT constructor functions, keyed by name.
+// Bypasses Aura's Begin-scoped-define rule: a (datatype ...) form
+// is a single top-level expression, so the parser can only return
+// one root node. If the ctor Defines were emitted inside a Begin,
+// they'd be scoped to the Begin and not visible to subsequent
+// top-level forms (the LLM benchmark's (datatype ...) followed by
+// (match (Leaf 42) ...) pattern).
+//
+// Solution: register each ctor in this global map at parse time.
+// Env::lookup checks the map as a 4th fallback (after local
+// bindings, parent env, primitives). The ctor's behavior is
+// documented: when called with args, it returns
+//   (cons "CtorName" arg1 arg2 ...)
+// which is the format match's compile_pattern already handles.
+//
+// The value side stores the *primitive slot* of the registered
+// ctor in the evaluator's Primitives table. When Env::lookup hits
+// the map, it returns make_primitive(slot), so subsequent apply
+// dispatches to the registered PrimitiveFn.
+//
+// Session lifetime: the map lives for the process. No
+// (adt:reset-constructors) is provided — not needed for benchmarks
+// and adding it would require touching all test harnesses.
+struct AdtCtorEntry {
+    std::size_t primitive_slot = 0;  // slot in Primitives table
+};
+static std::unordered_map<std::string, AdtCtorEntry> g_adt_constructors;
+
 std::optional<EvalValue> Env::lookup(const std::string& n) const {
     if (++g_env_lookup_depth > MAX_ENV_DEPTH) {
         --g_env_lookup_depth;
@@ -157,6 +186,15 @@ std::optional<EvalValue> Env::lookup(const std::string& n) const {
         if (slot != std::numeric_limits<std::size_t>::max()) {
             return make_primitive(slot);
         }
+    }
+    // 4. Fallback: check ADT constructors (Issue #108 part 4 Phase 1).
+    //    Bypasses Begin scoping. Registered via (adt:register-constructors ...)
+    //    from parse_datatype. Returns a primitive ref that, when applied,
+    //    builds (cons "CtorName" arg1 arg2 ...).
+    {
+        auto adt_it = g_adt_constructors.find(n);
+        if (adt_it != g_adt_constructors.end())
+            return make_primitive(adt_it->second.primitive_slot);
     }
     return std::nullopt;
 }
@@ -2282,6 +2320,78 @@ void Evaluator::init_pair_primitives() {
         // the supposed name), but at least the primitive is
         // discoverable.
         (void)a;
+        return make_void();
+    });
+
+    // ── ADT constructor registration (Issue #108 part 4 Phase 1) ───
+    // (adt:register-constructors (list "Ctor1" "Ctor2" ...)) →
+    //   registers each ctor name in g_adt_constructors and returns
+    //   the count of newly registered ctors.
+    //
+    // The registered ctor is a PrimitiveFn that, when called with
+    // args (arg1 arg2 ...), returns (cons "CtorName" (list arg1
+    // arg2 ...)) as a pair chain. The format matches what
+    // match's compile_pattern constructor-pattern code expects.
+    //
+    // Why a primitive (not a parser-internal side effect): the
+    // parser doesn't have direct access to the evaluator's
+    // Primitives table. The parser can only emit AST nodes. So
+    // parse_datatype emits a single call to this primitive; the
+    // eval of that call does the registration as a side effect.
+    primitives_.add("adt:register-constructors", [this](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty())
+            return make_int(0);
+        EvalValue cur = a[0];
+        std::int64_t count = 0;
+        // Walk the list of ctor names. The list is a chain of
+        // (cons "Name" cdr) pairs ending in ().
+        while (!is_void(cur) && is_pair(cur)) {
+            auto idx = as_pair_idx(cur);
+            if (idx >= pairs_.size())
+                break;
+            auto& p = pairs_[idx];
+            EvalValue name_v = p.car;
+            if (!is_string(name_v))
+                break;
+            std::string ctor_name = string_heap_[as_string_idx(name_v)];
+
+            // Create the ctor PrimitiveFn: builds (cons "CtorName" (list args...))
+            // We register a new primitive with a unique "adt-ctor:<name>" name.
+            // The closure captures `this` (the Evaluator) implicitly.
+            std::string prim_name = "adt-ctor:" + ctor_name;
+            primitives_.add(prim_name, [this, ctor_name](std::span<const EvalValue> args) -> EvalValue {
+                // Build the list of args (right-to-left to preserve order)
+                EvalValue tail = make_void();
+                for (auto it = args.rbegin(); it != args.rend(); ++it) {
+                    auto pid = pairs_.size();
+                    pairs_.push_back({*it, tail});
+                    tail = make_pair(pid);
+                }
+                // Pre-cons the ctor name string
+                auto name_idx = string_heap_.size();
+                string_heap_.push_back(ctor_name);
+                auto pid = pairs_.size();
+                pairs_.push_back({make_string(name_idx), tail});
+                return make_pair(pid);
+            });
+            std::size_t new_slot = primitives_.slot_count() - 1;
+
+            // Register in the global map
+            g_adt_constructors[ctor_name] = AdtCtorEntry{new_slot};
+            ++count;
+
+            // Move to next cdr
+            cur = p.cdr;
+        }
+        return make_int(count);
+    });
+
+    // (adt:reset-constructors) — clear the global ctor table.
+    // Not used by benchmarks but useful for tests that need a
+    // clean slate between runs.
+    primitives_.add("adt:reset-constructors", [](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        g_adt_constructors.clear();
         return make_void();
     });
 
