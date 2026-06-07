@@ -200,12 +200,25 @@ void run_serve_async(int num_workers) {
         }
     };
 
-    // GC root flush — temporarily routes through the GC collector.
-    aura::messaging::g_gc_flush_root_set = [&sched](void*) {
-        auto* gc = sched.gc_collector();
-        if (gc) {
-            // Evaluator registered its root source via register_root_source
-        }
+    // GC root flush — routes through the current session's Evaluator.
+    // The g_gc_flush_root_set callback is called by the GC collector
+    // (gc_coordinator.cpp) during the root collection phase. It passes
+    // us a `void*` that is actually a `aura::serve::GCRootSet*`; we
+    // cast it and call the active Evaluator's `flush_gc_roots` to
+    // walk its vector heaps and populate the root set.
+    //
+    // For multi-session setups, each session's Evaluator has its own
+    // vector heaps, so a single flush only captures the active
+    // session. The full multi-session integration would call
+    // GCCollector::register_root_source(worker_id, evaluator.flush_fn)
+    // once per session; that's a future iteration (see #113 closing
+    // doc for the remaining work).
+    aura::messaging::g_gc_flush_root_set = [&sched](void* root_set_out) {
+        auto* svc = static_cast<aura::compiler::CompilerService*>(
+            aura::messaging::g_current_compiler_service);
+        if (!svc) return;
+        if (!root_set_out) return;
+        svc->evaluator().flush_gc_roots(root_set_out);
     };
 
     // GC collect — triggers a GC cycle via the GC collector.

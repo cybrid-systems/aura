@@ -260,6 +260,29 @@ public:
     static void destroy_workspace_tree(void* wt);
     const std::string& session_id() const { return session_id_; }
 
+    // ── GC root registration (Issue #113) ──────────────
+    // Walk the evaluator's vector heaps and populate the GC root set
+    // pointed to by `root_set_out` (an opaque `aura::serve::GCRootSet*`).
+    //
+    // We use `void*` (not the full GCRootSet& reference) to avoid
+    // pulling serve/gc_coordinator.h into every TU that includes
+    // this module interface. The full definition is only needed at
+    // the call site in evaluator_impl.cpp. This is the same
+    // pattern as `defuse_index_destroy` (Issue #107) and the
+    // GCRootFlushFn typedef in messaging_bridge.h.
+    //
+    // Called by the GC collector during the root collection phase
+    // (after the safepoint has stopped all fibers, so no concurrent
+    // mutator can run). Holds `heap_mutex()` so a non-fiber thread
+    // in serve-async mode can't race a concurrent
+    // `string_heap_.push_back` (or similar) with the walk.
+    void flush_gc_roots(void* root_set_out);
+    // Total number of vector-heap entries that would be marked as roots.
+    // Cheap (no allocation, just sizes + map iteration). Useful for
+    // pre-GC metrics and for tests that want to verify root set
+    // population without allocating the GCRootSet.
+    [[nodiscard]] std::size_t gc_root_count() const;
+
 
 
     void set_messaging_callbacks(

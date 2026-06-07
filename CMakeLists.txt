@@ -237,6 +237,73 @@ target_compile_options(test_concurrent PRIVATE -Wall -Wextra -Wpedantic
 target_link_libraries(test_concurrent PRIVATE pthread)
 add_test(NAME concurrent_basic COMMAND ./test_concurrent)
 
+# ── GC ↔ Evaluator integration tests (Issue #113) ─────────
+# Verifies the Evaluator root source registration API surface
+# (flush_gc_roots + gc_root_count). The full GCRootSet + GCCollector
+# interaction is tested in test_concurrent.cpp
+# (`test_gc_safepoint_all_stop` and friends).
+add_executable(test_gc_evaluator_integration tests/test_gc_evaluator_integration.cpp)
+set_property(TARGET test_gc_evaluator_integration PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_gc_evaluator_integration PRIVATE src)
+target_sources(test_gc_evaluator_integration PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
+    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
+    src/core/type_arena.ixx
+    src/core/type.ixx
+    src/parser/lexer.ixx src/parser/parser.ixx
+    src/compiler/evaluator.ixx
+    src/compiler/value.ixx
+    src/compiler/cache.ixx
+    src/compiler/ir.ixx
+    src/compiler/lowering.ixx
+    src/compiler/ir_executor.ixx
+    src/compiler/compute_kind.ixx
+    src/compiler/arity.ixx
+    src/compiler/diag.ixx
+    src/compiler/service.ixx
+    src/compiler/pass_manager.ixx
+    src/compiler/query.ixx
+    src/compiler/type_checker.ixx)
+target_sources(test_gc_evaluator_integration PRIVATE
+    src/serve/fiber.cpp
+    src/serve/worker.cpp
+    src/serve/thread_pool.cpp
+    src/serve/scheduler.cpp
+    src/serve/gc_coordinator.cpp
+    src/exec/execution_adapter.cpp
+    src/exec/combinators.cpp
+    src/core/ast_impl.cpp
+    src/core/type_impl.cpp
+    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
+    src/compiler/value_impl.cpp
+    src/compiler/evaluator_impl.cpp
+    src/compiler/cache_impl.cpp
+    src/compiler/lowering_impl.cpp
+    src/compiler/ir_executor_impl.cpp
+    src/compiler/compute_kind_impl.cpp
+    src/compiler/query_impl.cpp
+    src/compiler/shape_profiler.cpp
+    src/compiler/spec_jit_controller.cpp
+    src/compiler/type_checker_impl.cpp
+    src/compiler/arity_impl.cpp
+    src/compiler/messaging_bridge_impl.cpp
+)
+target_compile_options(test_gc_evaluator_integration PRIVATE -Wall -Wextra -Wpedantic
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
+    -Wno-parentheses)
+target_link_libraries(test_gc_evaluator_integration PRIVATE pthread stdc++ stdc++exp aura-reflect)
+add_test(NAME gc_evaluator_integration COMMAND ./test_gc_evaluator_integration)
+
+# Link JIT for test_gc_evaluator_integration when LLVM is available
+if(LLVM_FOUND)
+    target_sources(test_gc_evaluator_integration PRIVATE src/compiler/aura_jit.cpp src/compiler/aura_jit_runtime.cpp)
+    target_include_directories(test_gc_evaluator_integration PRIVATE ${LLVM_INCLUDE_DIRS})
+    set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+    set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+    target_link_libraries(test_gc_evaluator_integration PRIVATE ${llvm_libs})
+    target_compile_definitions(test_gc_evaluator_integration PRIVATE AURA_HAVE_LLVM=1)
+endif()
+
 # ── C++26 contracts test ─────────────────────────────────
 # Verifies that the C++26 `pre`/`post`/`contract_assert` machinery is
 # actually enforced at runtime. Two phases:
