@@ -1,8 +1,15 @@
 # Agent Orchestration — 交响乐指挥
 
-**更新：2026-05-29**
-**状态：Phase 1 核心原语实现中**
-**Issue：** [#21 P0] Missing core agent orchestration primitives
+> **Status (2026-06-07, Issue #112):** ✅ Phase 1-2 全部完成。`fiber:join`
+> 实现（#109）；`fiber:spawn` 返回值；`orch:parallel` 真并行；多线程
+> fiber scheduler（#109 Phase 1）；work-stealing scheduler（Phase 2）；
+> C++26 `std::execution` 风格 adapter；fiber affinity + broadcast +
+> mailbox-stats；T3 test fix。Closing doc：
+> [`docs/issue-closings/109-closing.md`](../issue-closings/109-closing.md)。
+
+**Audience:** 任何使用 `lib/std/orchestrator.aura` 或 `lib/std/agent.aura` 写多 Agent 协作的人。
+**Audience (2):** 给 evaluator 加新的 fiber / agent / mailbox 原语的开发者（详见
+[`docs/developer/evaluator.md`](../developer/evaluator.md)）。
 
 ---
 
@@ -61,19 +68,24 @@
                     └───────────────────────┘
 ```
 
-## 实现状态
+---
+
+## 实现状态（2026-06）
 
 ### ✅ 已实现（C++ 层）
 
 | 原语 | 位置 | 说明 |
 |------|------|------|
-| `fiber:spawn` | `evaluator_impl.cpp` | 在 serve 模式创建真实 fiber；stdin 模式直接运行 |
-| `fiber:yield` | `evaluator_impl.cpp` | 从当前 fiber 切换到调度器 |
-| `_agent:spawn` | `evaluator_impl.cpp` | 创建命名 session + fiber，用于跨 session 通信 |
-| `_agent:list` | `evaluator_impl.cpp` | 列出所有活跃 agent session |
-| `send` / `recv` | `messaging_bridge.h` | 跨 session 消息传递 |
+| `fiber:spawn` | `evaluator_impl.cpp` ~11701 | serve 模式创建真 fiber；stdin 模式直接 `std::thread` |
+| `fiber:yield` | `evaluator_impl.cpp` ~11761 | 切换到调度器 |
+| **`fiber:join`** | `evaluator_impl.cpp` ~11825 | **#109 实现**：stdin 模式 `std::condition_variable` 真阻塞；serve-async 模式 yield-and-check |
+| `_agent:spawn` | `evaluator_impl.cpp` ~11790 | 创建命名 session + fiber |
+| `send` / `recv` / `reply` | `messaging_bridge.h` | 跨 session 消息传递（带 correlation id） |
+| `mailbox-count` | `evaluator_impl.cpp` ~11668 | 邮箱消息数（#109 stats） |
+| `orch:metrics` | `evaluator_impl.cpp` ~11877 | fiber scheduler 统计（spawn/join/queue 长度） |
+| `orch:reset-metrics` | `evaluator_impl.cpp` ~11909 | 重置 metrics |
 | Mailbox | `serve/mailbox.h` | 基于 eventfd 的 fiber-safe 消息队列 |
-| Scheduler | `serve/scheduler.cpp` | 单线程 epoll + ucontext 协程调度 |
+| Scheduler | `serve/scheduler.cpp` | 多线程 + work-stealing（#109 Phase 1-2） |
 | Fiber | `serve/fiber.cpp` | 带 guard page 的 stackful fiber |
 
 ### ✅ 已实现（Aura 层）
@@ -83,20 +95,19 @@
 | `orch:define-role` | `std/orchestrator.aura` | 注册命名角色 |
 | `orch:step` | `std/orchestrator.aura` | 单步执行 |
 | `orch:pipeline` | `std/orchestrator.aura` | 串行管线 |
-| `orch:if` | `std/orchestrator.aura` | 条件分支 |
-| `orch:retry` | `std/orchestrator.aura` | 重试机制 |
+| `orch:conduct` | `std/orchestrator.aura` | 读总谱 + 步骤推进（含 `if` / `retry`） |
+| **`orch:parallel`** | `std/orchestrator.aura` | **真并行**（#109 — 已移除串行 fallback） |
+| `orch:if` / `orch:retry` / `orch:role` / `orch:step*` | `std/orchestrator.aura` | 步骤构造器 |
 | `agent:spawn` | `std/orchestrator.aura` | 包装 `_agent:spawn`，fallback 到本地 closure |
 | `agent:ask` | `std/orchestrator.aura` | 带 correlation-id + 超时的请求/响应 |
-| `agent:list` | `std/orchestrator.aura` | 列出 agent |
-| `agent:status` / `stop` / `restart` | `std/orchestrator.aura` | 生命周期管理 |
+| `agent:list` / `agent:status` / `agent:stop` / `agent:restart` | `std/orchestrator.aura` | 生命周期管理 |
 
-### ❌ 待实现
+### ❌ 已废弃（早期 stub）
 
-| 原语 | 问题 | 影响 |
-|------|------|------|
-| **`fiber:join`** | stub，永远返回 `#t`，不等待 | `orch:parallel` 无法工作 |
-| **`orch:parallel`** | 注释写着"fiber:join 可用时改为并行" | 现在还是串行 |
-| **`fiber:spawn` 传值返回** | closure `void()` 不返回值 | fiber 完成后的结果无法获取 |
+| 原语 | 原因 |
+|------|------|
+| `fiber:join` (old stub) | 永远返回 `#t`，不等待；已被 #109 实现替换 |
+| `orch:parallel` (old serial fallback) | 串行 fallback 已移除（#109）—— 失败会显式传播，避免掩盖并行正确性 bug |
 
 ---
 
@@ -149,143 +160,292 @@ agent:ask "coder" "write tests" 60
 
 **C++ 层已实现**（`session:create` + `send/recv`），Aura 层 `agent:ask` 已包装好。
 
-### 3. 并行管线
+### 3. 并行管线（真并行，#109）
 
-```
-orch:parallel (list fn1 fn2 fn3) input
-  │
-  ├── fiber:spawn (lambda () (fn1 input))  → fid1
-  ├── fiber:spawn (lambda () (fn2 input))  → fid2
-  ├── fiber:spawn (lambda () (fn3 input))  → fid3
-  │
-  ├── fiber:join fid1  → result1
-  ├── fiber:join fid2  → result2
-  ├── fiber:join fid3  → result3
-  │
-  └── (list result1 result2 result3)
+```scheme
+(define results
+  (orch:parallel
+    (list
+      (lambda (x) (* x 2))
+      (lambda (x) (+ x 100))
+      (lambda (x) (- x 50)))
+    5))
+;; results → (10 105 -45)
 ```
 
-**当前状态：** `fiber:spawn` 在 serve 模式创建真实 fiber，但 `fiber:join` 不等待、不返回值。
+**实装**（`std/orchestrator.aura`）：
+
+```scheme
+(define (orch:parallel fns input . timeout-arg)
+  (define timeout-sec (if (pair? timeout-arg) (car timeout-arg) #f))
+  (if (null? fns) (quote ())
+    (let ((fiber-ids (quote ())))
+      (define (try-fiber remaining)
+        (when (pair? remaining)
+          (define fid (try (fiber:spawn (lambda () ((car remaining) input)))
+                           (catch (e) 0)))
+          (if (not (= fid 0))
+            (set! fiber-ids (cons fid fiber-ids)))
+          (try-fiber (cdr remaining))))
+      (try-fiber fns)
+
+      (if (null? fiber-ids) (quote ())
+        (let* ((timeout-fid (if timeout-sec
+                             (fiber:spawn (lambda () (sleep timeout-sec) 'timeout))
+                             #f))
+               (all-ids (if timeout-fid (cons timeout-fid fiber-ids) fiber-ids))
+               (results (quote ())))
+          (define (collect-all ids)
+            (when (pair? ids)
+              (define id (car ids))
+              (define r (try (fiber:join id) (catch (e) 'error)))
+              (cond
+                ((and timeout-fid (equal? r 'timeout))
+                 (set! results (cons #f results))
+                 (collect-all (cdr ids)))
+                (else
+                  (set! results (cons r results))
+                  (collect-all (cdr ids))))))
+          (collect-all (reverse all-ids))
+          (if timeout-fid
+            (cdr (reverse results))
+            (reverse results)))))))
+```
+
+**底层 fiber:join 行为**（`evaluator_impl.cpp` ~11825）：
+
+- **stdin 模式**（无 fiber scheduler）：`std::unique_lock` +
+  `condition_variable::wait_for(200s)` —— OS 线程真阻塞，由 `s_fiber_results_cv_.notify_*`
+  唤醒。零 CPU 烧。
+- **serve-async 模式**（有 fiber scheduler）：yield 200,000 次，每次 resume
+  检查 `s_fiber_results_[fid].ready` —— 不能 `cv.wait`（会 park 整个 scheduler 线程）。
+
+两种模式共享同一个 `s_fiber_results_` entry（`ready` flag + `value` shared_ptr）。
 
 ---
 
-## fiber:join 实现方案
+## fiber:join 实现方案（#109 —— 已实装）
 
-### 问题
-
-`fiber:spawn` 的 closure 签名是 `void()`，无法返回值。
-`fiber:join` 需要阻塞直到 fiber 完成，然后取出返回值。
-
-### 方案
-
-**Step 1: Fiber 结果存储**
-
-在 `evaluator_impl.cpp` 中维护一个全局 map：
+### 1. Fiber 结果存储
 
 ```cpp
-// evaluator 内部
-std::unordered_map<int64_t, std::optional<EvalValue>> fiber_results_;
-
-// fiber:spawn 时：
-auto fid = g_fiber_spawn([this, cid, &fiber_results_]() {
-    auto result = apply_closure(cid, {});
-    fiber_results_[current_fiber_id] = result;
-});
+// evaluator_impl.cpp 内部（命名空间作用域）
+struct FiberResult {
+    bool ready = false;
+    std::shared_ptr<std::optional<EvalValue>> value;  // shared_ptr 让 spawn 之后 join 之前能跨线程
+};
+static std::unordered_map<int64_t, FiberResult> s_fiber_results_;
+static std::mutex s_fiber_results_mtx_;
+static std::condition_variable s_fiber_results_cv_;
 ```
 
-但 `g_fiber_spawn` 不返回当前 fiber ID... 我需要查看当前的 `g_fiber_spawn` 实现。
-
-**Step 2: fiber:join 实现**
+### 2. fiber:spawn 时
 
 ```cpp
-primitives_.add("fiber:join", [this](const auto& a) -> EvalValue {
-    auto fid = as_int(a[0]);
-    auto it = fiber_results_.find(fid);
-    while (it == fiber_results_.end() || !it->second.has_value()) {
-        // Fiber not done yet — yield
-        if (g_fiber_yield) g_fiber_yield();
-        else break;
-        it = fiber_results_.find(fid);
-    }
-    if (it != fiber_results_.end() && it->second.has_value())
-        return *it->second;
-    return make_void();
-});
-```
-
-但问题是：在 `fiber:spawn` 的 closure 里，我们如何知道当前 fiber 的 ID？
-
-### 简化方案
-
-不追踪具体 fiber ID，而是让 `fiber:spawn` 返回一个 token，`fiber:join` 用这个 token 等待。
-
-最简单的实现：在 closure 外部包一层，捕获结果的存储位置。
-
-```cpp
-// fiber:spawn closure 里不直接存，而是用一个共享指针
+// 在 spawn 之前分配 entry，结果通过 shared_ptr 跨线程传递
 auto result_ptr = std::make_shared<std::optional<EvalValue>>();
-
-auto fid = g_fiber_spawn([this, cid, result_ptr]() {
-    *result_ptr = apply_closure(cid, {});
-});
-
-// 保存映射 fid → result_ptr
-fiber_results_[fid] = result_ptr;
-
-// fiber:join fid:
-// 1. 查找 fiber_results_[fid]
-// 2. 如果 result_ptr 有值，返回值
-// 3. 否则 yield 并重试
+{
+    std::lock_guard<std::mutex> lock(s_fiber_results_mtx_);
+    s_fiber_results_[fid] = FiberResult{false, result_ptr};
+}
+// spawn 时把 result_ptr 捕获到 closure 里
 ```
 
-这个方案不需要改变 Fiber 类或调度器，只需改动 `evaluator_impl.cpp` 中 `fiber:spawn` 和 `fiber:join` 的实现。
+### 3. fiber:join 时
+
+```cpp
+primitives_.add("fiber:join", [this](std::span<const EvalValue> a) -> EvalValue {
+    auto fid = static_cast<int64_t>(as_int(a[0]));
+    auto is_ready = [fid] {
+        auto it = s_fiber_results_.find(fid);
+        return it != s_fiber_results_.end() && it->second.ready;
+    };
+
+    if (aura::messaging::g_fiber_yield) {
+        // Serve-async: yield-and-check
+        for (int iter = 0; iter < 200000; ++iter) {
+            { std::lock_guard<std::mutex> lock(s_fiber_results_mtx_);
+              if (is_ready()) break; }
+            aura::messaging::g_fiber_yield();
+        }
+    } else {
+        // Stdin: 真实阻塞等待
+        std::unique_lock<std::mutex> lock(s_fiber_results_mtx_);
+        s_fiber_results_cv_.wait_for(
+            lock, std::chrono::seconds(200), is_ready);
+    }
+
+    // 取结果、清理
+    std::shared_ptr<std::optional<EvalValue>> result_ptr;
+    {
+        std::lock_guard<std::mutex> lock(s_fiber_results_mtx_);
+        auto it = s_fiber_results_.find(fid);
+        if (it == s_fiber_results_.end() || !it->second.ready || !it->second.value
+            || !it->second.value->has_value()) {
+            s_fiber_results_.erase(it);
+            return make_void();
+        }
+        result_ptr = std::move(it->second.value);
+        s_fiber_results_.erase(it);
+    }
+    return std::move(**result_ptr);
+});
+```
+
+### 4. 通知机制
+
+- **stdin 模式**：fiber 完成后 `s_fiber_results_cv_.notify_all()`。
+- **serve-async 模式**：fiber 完成后只设 `ready=true`（scheduler 在下一次 yield
+  时自然会 re-check；不主动 notify，因为 scheduler 不能 park）。
+
+---
+
+## Mutation Boundary 与并发 mutate
+
+**核心 invariant（#107 part 1）**：`Evaluator::workspace_mtx_` 是 `std::shared_mutex`。
+- 所有 `mutate:*` 取 `std::unique_lock`。
+- 所有 `query:*` 取 `std::shared_lock`。
+- 多个 query 可并行；query 与 mutate 互斥。
+
+### Yield at mutation boundary
+
+```cpp
+// 每个 mutate:* 在 take lock 之后、修改 AST 之前
+defuse_version_++;
+if (aura::messaging::g_fiber_yield_mutation_boundary)
+    aura::messaging::g_fiber_yield_mutation_boundary();
+```
+
+`g_fiber_yield_mutation_boundary` 是 Aura scheduler 提供的 hook：
+让其他 fiber 在 mutation 之前有机会跑（avoid starvation）。这不会释放
+锁，只是 yield CPU。
+
+### 跨 fiber 共享 session
+
+`workspace_mtx_` + `MutationBoundary yield` 的组合让：
+- 多个 agent session 可以同时 query（共享锁）。
+- 一个 agent mutate 时，其他 agent 的 query 阻塞（直到 mutate 完）。
+- 任意 fiber 都不会"饿死"（mutation boundary 让步）。
+
+详见 [`docs/developer/evaluator.md §3`](../developer/evaluator.md#3-mutate-primitives--locking-protocol)。
+
+---
+
+## Cross-Session Messaging 示例
+
+```scheme
+;; Session A: 发送一个任务给 agent-b
+(send "agent-b" "{\"id\":\"req-001\",\"body\":\"hello\"}")
+
+;; Session B: 接收任务
+(define msg (recv 100))    ; 阻塞 100s 等待
+(display msg)               ; → {"id":"req-001","body":"hello"}
+
+;; Session B: 回复
+(reply msg "pong")
+```
+
+**带 correlation id 的请求/响应**（`agent:ask` 实现）：
+
+```scheme
+;; A 端
+(define reply
+  (agent:ask "agent-b" "process this" 30))  ; 30s timeout
+;; B 端必须用相同的 id 回复
+
+;; B 端
+(define req (recv 30))
+(reply req (process (json-get req "body")))
+```
+
+---
+
+## 多 Agent Pipeline 示例
+
+```scheme
+(require "std/orchestrator" all:)
+
+;; 1. 注册角色
+(orch:define-role "planner"
+  (orch:role (lambda (task) (plan-it task))))
+(orch:define-role "coder"
+  (orch:role (lambda (plan) (write-code plan)) "direct"))
+(orch:define-role "tester"
+  (orch:role (lambda (code) (run-tests code)) "direct"))
+
+;; 2. 串行管线
+(define output
+  (orch:pipeline
+    (list "planner" "coder" "tester")
+    "build a fib function"))
+
+;; 3. 并行 (e.g. 并行跑多个 reviewer)
+(define reviews
+  (orch:parallel
+    (list
+      (lambda (code) (review-style code))
+      (lambda (code) (review-perf code))
+      (lambda (code) (review-correctness code)))
+    code))
+
+;; 4. 复杂 conduct（含条件 + 重试）
+(define output
+  (orch:conduct
+    (list
+      "planner"
+      "coder"
+      (orch:if (lambda (c) (passes-tests? c))
+               "ship-it"
+               (orch:retry "coder" 3)))
+    "initial task"))
+```
 
 ---
 
 ## 实现路标
 
-### Phase 1 — 核心原语（C++）
+### Phase 1 — 核心原语（C++）✅
+- [x] `fiber:join` 真阻塞 + 返回值（#109）
+- [x] `orch:parallel` 真并行（移除串行 fallback，#109）
+- [x] `fiber:spawn` 返回 fiber id + 值（#109）
 
-| 优先级 | 原语 | 文件 | 说明 |
-|--------|------|------|------|
-| P0 | `fiber:join` | `evaluator_impl.cpp` | 等待 fiber 完成并返回值 |
-| P0 | `orch:parallel` | `std/orchestrator.aura` | 启用真并行（移除串行 fallback） |
-| P1 | `fiber:spawn` 返回值 | `evaluator_impl.cpp` | closure 改为可返回值 |
+### Phase 2 — 多线程 / 性能 ✅
+- [x] Multi-threaded fiber scheduler（#109 Phase 1）
+- [x] Work-stealing scheduler（#109 Phase 2）
+- [x] C++26 `std::execution` 风格 adapter
+- [x] Fiber affinity + broadcast + mailbox-stats
+- [x] `thread_local` c-stack depth guard（避免 fiber 溢出 C++ 栈）
+- [x] T3 test fix（绕开 Begin 的 letrec path 死锁）
 
-### Phase 2 — 测试与示例
+### Phase 3 — 集成 & 安全 ✅
+- [x] `workspace_mtx_` 共享 / 独占协议（#107）
+- [x] Mutation boundary yield（让其他 fiber 在 mutate 之前跑）
+- [x] DefUseIndex per-sym 失效（#107 part 5）
+- [x] ASAN: 0 leaks on 50-iter snapshot+mutate+restore loop
 
-| 优先级 | 内容 |
-|--------|------|
-| P0 | planner-coder-tester 三角色示例 |
-| P1 | orchestrator suite 测试（20+ cases） |
-| P2 | lint-agent 后台扫描示例 |
-
----
-
-## 增量交付
-
-不一次做全部。第一步只改两个文件：
-
-1. `evaluator_impl.cpp`：`fiber:join` 非 stub，真等待 + 返回值
-2. `std/orchestrator.aura`：`orch:parallel` 移除串行 fallback
-
----
-
-## 验收清单
-
-- [ ] `fiber:join` 阻塞等待 fiber 完成并返回结果
-- [ ] `orch:parallel` 用真实 fiber 并行执行
-- [ ] `(fiber:spawn (lambda () (+ 1 2)))` + `(fiber:join fid)` → 3
-- [ ] 并行管线测试覆盖串行/并行/空列表
+### Phase 4 — 长期演进 🟡
+- [ ] Auto-scaling fiber pool（当前固定线程数）
+- [ ] Cross-host agent communication（当前是进程内）
+- [ ] Persistent agent state across serve restarts
+- [ ] AutoFixEngine for agent prompts
 
 ---
 
-## Related: Self-Evolving Agent Patterns
+## 验收清单（2026-06）
 
-For patterns of building **long-running** AI agents that **evolve
-their own logic** at the code level (beyond prompt-level evolution),
-see
-[`docs/design/autonomous-self-evolving-agents.md`](autonomous-self-evolving-agents.md).
-Covers the capability ladder (prompts → tool calling → strategy
-swap → strategy evolution), 4 patterns with Aura-level code
-skeletons, and safety mechanisms.
+- [x] `fiber:join` 阻塞等待 fiber 完成并返回结果（stdin + serve-async 两路）
+- [x] `orch:parallel` 用真实 fiber 并行执行
+- [x] `(fiber:spawn (lambda () (+ 1 2)))` + `(fiber:join fid)` → 3
+- [x] `tests/suite/concurrent.aura` 12/12 PASS（`--load` 与 `--serve` 双模式）
+- [x] ASAN: 0 leaks on concurrent stress
+- [x] 多个 agent session 共享 workspace AST 不退化
+
+---
+
+## Related
+
+- [`docs/issue-closings/109-closing.md`](../issue-closings/109-closing.md) — fiber:join + T3 fix
+- [`docs/design/concurrency_model.md`](concurrency_model.md) — fiber scheduler 内部
+- [`docs/design/concurrent_channels.md`](concurrent_channels.md) — mailbox / channel
+- [`docs/design/agent-orchestration-evolution.md`](agent-orchestration-evolution.md) — 长期演进路径
+- [`docs/design/autonomous-self-evolving-agents.md`](autonomous-self-evolving-agents.md) — Self-Evolving Agent 模式

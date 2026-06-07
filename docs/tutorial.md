@@ -437,6 +437,153 @@ EDSL API 完整列表：
 
 ---
 
+## 十·五、Self-Modifying Agent 快速上手（Issue #112 Quickstart）
+
+**5 分钟从 query 到 mutate 到 eval。** 这是给 LLM Agent 的最小可用循环。
+不读完整 EDSL 文档也能上手。
+
+### 最小循环
+
+```scheme
+;; 1. 装入代码到工作区
+(set-code "(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))")
+
+;; 2. 模式匹配 — 找所有递归调用
+(define recursive-calls
+  (query:pattern "(fib ...)"))     ; → (3 7) 节点 ID 列表
+
+;; 3. 提取子树为新函数
+(mutate:extract-function
+  (car recursive-calls)
+  "fib-step"
+  "extract fib body")              ; → (define-id . call-id)
+
+;; 4. 重新求值，看效果
+(eval-current)
+(display (fib 10))                 ; → 55  (行为不变)
+
+;; 5. 看工作区当前源码
+(display (current-source))
+;; → (define (fib n) (if (< n 2) n (fib-step (- n 1) (- n 2))))
+;;   (define (fib-step a b) (+ a b))
+```
+
+### 真实场景：bug 修复循环
+
+```scheme
+;; 1. 装入有 bug 的代码
+(set-code "
+  (define (fact n)
+    (if (= n 0)
+      1
+      (* n (fact (- n 1)))))
+")
+
+;; 2. 跑一遍，看输出
+(eval-current)
+(display (fact 5))                ; → 120 ✓
+
+;; 3. 假设你要把递归改成迭代
+;;    先找递归调用
+(define calls (query:calls "fact"))    ; → (5)
+
+;; 4. 用 mutate:rebind 直接换实现
+(mutate:rebind "fact"
+  "(define (fact n)
+     (let loop ((n n) (acc 1))
+       (if (= n 0) acc (loop (- n 1) (* acc n)))))"
+  "fact 改迭代")
+
+;; 5. 验证
+(eval-current)
+(display (fact 10))               ; → 3628800  (迭代版)
+```
+
+### 多 Agent Pipeline（planner + coder + tester）
+
+```scheme
+(require "std/orchestrator" all:)
+
+;; 注册 3 个角色
+(orch:define-role "planner"
+  (orch:role (lambda (task) (string-append "[PLAN] " task))))
+(orch:define-role "coder"
+  (orch:role (lambda (plan) (string-append "[CODE] " plan))))
+(orch:define-role "tester"
+  (orch:role (lambda (code) (string-append "[TEST] " code " ✓"))))
+
+;; 串行管线
+(orch:pipeline
+  (list "planner" "coder" "tester")
+  "build fib")
+;; → "[TEST] [CODE] [PLAN] build fib ✓"
+
+;; 并行 review（3 个 reviewer 同时跑）
+(define reviews
+  (orch:parallel
+    (list
+      (lambda (x) (string-append "style: ok (" x ")"))
+      (lambda (x) (string-append "perf: ok (" x ")"))
+      (lambda (x) (string-append "correct: ok (" x ")")))
+    "code-snippet"))
+;; → ("style: ok (code-snippet)" "perf: ok (code-snippet)" "correct: ok (code-snippet)")
+
+;; 含条件 + 重试的复杂 conduct
+(orch:conduct
+  (list
+    "planner"
+    "coder"
+    (orch:if (lambda (c) (string-contains? c "OK"))
+             "tester"
+             (orch:retry "coder" 3)))   ; 失败重试 3 次
+  "task")
+```
+
+### 安全模式：snapshot → mutate → verify → rollback
+
+```scheme
+(define snap (ast:snapshot "before-refactor"))
+
+(mutate:extract-function 7 "helper" "extract")
+(eval-current)
+
+(define passed? (= 120 (fact 5)))     ; 验证行为不变
+(if (not passed?)
+  (begin
+    (display "regression — rolling back")
+    (ast:restore snap))
+  (display "ok, keep changes"))
+```
+
+**关键 invariant**（`ast:snapshot` 在 #107 part 6 后是 O(1) deep-copy）：
+- SymId 跨 restore 不变（缓存仍命中）
+- `mutation_log_` 跨 restore 保留
+- 失败时返回原状态，**绝不**留下半残 AST
+
+### 跨 Agent 通信
+
+```scheme
+;; Session A: 发送任务
+(send "agent-b" "{\"id\":\"req-001\",\"body\":\"hello\"}")
+
+;; Session B: 接收 + 回复
+(define msg (recv 100))
+(reply msg "pong")
+```
+
+详见 [`docs/design/agent_orchestration.md`](design/agent_orchestration.md)。
+
+### EDSL 完整参考
+
+| 操作 | 推荐文档 |
+|------|----------|
+| Query 原语完整列表 | [`docs/design/query_edsl_design.md §2`](design/query_edsl_design.md) |
+| Mutate 原语完整列表 | [`docs/design/mutate_api.md`](design/mutate_api.md) |
+| Agent 编排完整列表 | [`docs/design/agent_orchestration.md`](design/agent_orchestration.md) |
+| 给 evaluator 加新原语 | [`docs/developer/evaluator.md`](developer/evaluator.md) |
+
+---
+
 ## 十一、错误处理
 
 ```scheme

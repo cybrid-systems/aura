@@ -1,7 +1,9 @@
 # Query + Transform EDSL — 设计文档
 
-为 AI Agent（LLM）设计的 AST 查询和变换语言。
-目标：LLM 通过少量 S-表达式在 Aura AST 上做精确的增量操作。
+> **Status (2026-06-07, Issue #112):** ✅ EDSL 已远超本文档最初规划。`query:where` / `query:filter` 已实装；`DefUseIndex` 已与 mutate 集成；`mutate:query-and-replace`（#110）将 query + replace 组合为单步原子操作。本文档已同步到当前代码状态。
+>
+> **Audience:** AI Agent（LLM）—— 通过少量 S-表达式在 Aura AST 上做精确的增量操作。
+> **Human reader:** 见 [docs/developer/evaluator.md](../developer/evaluator.md) 了解如何给 evaluator 加新原语。
 
 ---
 
@@ -9,12 +11,12 @@
 
 ```
   exec code             ← 临时求值，每次新建 AST（节点 ID 不稳定）
-  
+
   set-code code         ← 锁定 AST 到工作区（节点 ID 稳定）
   query:* ...           ← 在工作区 AST 上导航
   mutate:* ...          ← 修改工作区 AST
   eval-current          ← 执行修改后的工作区 AST
-  
+
   exec code             ← 回到临时求值模式
 ```
 
@@ -22,11 +24,11 @@
 - `exec` 是"读-执行-丢"，适合验证一次性代码
 - `set-code` + `query` + `mutate` + `eval-current` 是"锁定-导航-修改-执行"，适合多轮迭代
 
-工作区内节点 ID 保证跨操作稳定（直到下一次 `set-code` 或 `exec` 重新解析）。
+工作区内节点 ID 保证跨操作稳定（直到下一次 `set-code` 或 `exec` 重新解析）。`query:*` / `mutate:*` 都接受 `NodeId`（int）作为参数。
 
 ---
 
-## 2. Query EDSL
+## 2. Query EDSL —— 现状
 
 ### 2.1 按名称查找
 
@@ -58,6 +60,9 @@
 
 ; 查看相邻兄弟节点
 (query:siblings 5)         → (4 6)
+
+; 工作区根
+(query:root)               → 0
 ```
 
 ### 2.3 按模式搜索
@@ -73,7 +78,62 @@
 ; `...` 是 Ellipsis token，由 lexer 识别三个连续的点号
 ```
 
-### 2.4 输出格式
+### 2.4 谓词 + 过滤（#110 后实装）
+
+```scheme
+; (where :field value) — 构造一个谓词描述子
+;   (where :node-type "Call")
+;   (where :callee "sort")
+;   (where :defined-by "fib")
+;   (where :parent-type "Lambda")
+;   (where :has-type "Int")
+;
+; 返回一个不透明的 tagged pair，query:filter 知道如何求值。
+
+; (query:filter predicate ...) — 组合谓词（AND 语义）
+(query:filter
+  (where :node-type "Call")
+  (where :callee "sort"))     → (8 15)    ; 所有调用 sort 的节点
+
+; 也可以单独使用 where 拿到谓词描述子，配合未来的 query:where-on
+```
+
+### 2.5 DefUseIndex 查询（#107 part 5 + 后续）
+
+```scheme
+; 按符号名查 def → use 链
+(query:def-use "fib")     → ((21) . (23 6 12))   ; (defs . uses)
+
+; 从 def 出发查所有 use 点
+(query:reaches 21)        → ((21) . (23 6 12))
+
+; def → use + callers
+(query:effects "fib")     → ((21) (23 6 12) (25 17 11))
+
+; 索引统计
+(query:index-stats)       → ((stale-syms 0) (defuse-version 7))
+```
+
+`DefUseIndex` 是 workspace AST 之上的派生索引，由 `defuse_affected_syms_`
++ `defuse_touch_fn_` 协议维护（详见 [docs/developer/evaluator.md §4](../developer/evaluator.md#4-defuseindex-touch-protocol)）。
+
+### 2.6 AST 反射（#108 part 2 实装）
+
+```scheme
+; 当前工作区中所有顶层 Define
+(ast:defs)                → (("fib" . 21) ("square" . 35))
+
+; 所有节点 ID（按 flat 顺序）
+(ast:nodes)               → (0 1 2 3 4 5 6 ...)
+
+; 版本号（每次 set-code / mutate +1）
+(ast:version)             → 7
+
+; 节点类型
+(query:type 3)            → "Int"
+```
+
+### 2.7 输出格式
 
 所有 query 返回值为 Aura 列表：
 
@@ -83,11 +143,11 @@
 (query:node 3)             → ("Call" "fib" (4 5 6))
 ```
 
-空结果返回空列表 `()`。
+空结果返回空列表 `()`。错误返回 tagged pair `("error" . ("kind" . "message"))`。
 
 ---
 
-## 3. Transform EDSL
+## 3. Transform EDSL —— 现状
 
 ### 3.1 按函数名替换（稳定）
 
@@ -113,9 +173,12 @@
 
 ; 记录操作（不影响 AST）
 (mutate:record-patch node-id "op-name" "summary")
+
+; 微调字面量（自动推断类型）
+(mutate:tweak-literal node-id delta "summary")    ; n → n+delta
 ```
 
-### 3.3 原子操作
+### 3.3 原子结构操作
 
 ```scheme
 ; 删除节点
@@ -137,19 +200,68 @@
 (mutate:replace-value node-id new-int   "summary")  ; LiteralInt → int
 (mutate:replace-value node-id new-float "summary")  ; LiteralFloat → float
 (mutate:replace-value node-id "new-name" "summary")  ; Variable/LiteralString → string
+
+; 包裹节点（在父节点位置加一层）
+(mutate:wrap node-id wrapper-code "summary")
+; 例: (mutate:wrap 3 "(display _)" "wrap")
+;   把 3 号节点的父位置改成 (display 3-子树)
+
+; 拼接（在指定位置插入新节点）
+(mutate:splice parent-id position child-code... "summary")
+; 例: (mutate:splice 0 1 "(display 1)" "(display 2)" "insert")
+;   向 0 节点的子节点列表 position 1 位置插入多个新节点
 ```
+
+### 3.4 高层重构（2026-Q2 实装）
+
+```scheme
+; 重命名符号（自动遍历所有使用点）
+(mutate:rename-symbol "old-name" "new-name" "summary")
+
+; 提取为函数（自动收集自由变量作参数）
+(mutate:extract-function node-id "func-name" "summary")
+
+; 内联调用（用 body 替换 call site）
+(mutate:inline-call call-node-id "summary")
+
+; 移动子树到新父节点
+(mutate:move-node node-id new-parent-id position "summary")
+```
+
+### 3.5 Query + Replace 组合（#110 —— `mutate:query-and-replace`）
+
+```scheme
+; 把所有调用 (+ ...) 替换为 (y ...)
+(mutate:query-and-replace
+  (query:where :callee "+")
+  "y"
+  "linearize adds")
+
+; 用模板模式 + `...` 占位做局部替换
+(mutate:query-and-replace
+  (query:where :callee "foo")
+  "(bar ...)"
+  "rename foo→bar")
+```
+
+这是把 query 和 replace 组合为单步原子操作的关键原语。详见
+[docs/issue-closings/110-closing.md](../issue-closings/110-closing.md)。
+
+> ⚠️ **使用警示**：写一个 combine（read + write）循环的 mutate 时，**必须**在循环
+> 外 snapshot `end_id = flat.size()`。详见
+> [docs/developer/evaluator.md §1](../developer/evaluator.md#1-the-self-modifying-flat-iteration-rule-issue-111-lesson)。
 
 ---
 
-## 4. CaaS (增量编译) 集成
+## 4. CaaS (增量编译) 集成 —— 现状
 
 ```
   exec code              → parse + lower + execute (全量)
   set-code code          → parse + store AST (不执行)
-  
+
   mutate:rebind ...      → 只标记被修改的节点
   mutate:replace-value   → 只标记被修改的节点
-  
+
   eval-current           → 只重新编译被标记的子树：
                             1. 找到所有被标记的 Define/Let/Expr
                             2. 重新类型检查（仅增量）
@@ -157,17 +269,24 @@
                             4. 清除标记
 ```
 
-当前状态：`CompilerService` 已有 `set_code()` + `eval_current()`。
-缺失：增量 dirtiness 标记 + 增量类型检查。
+**实装状态（2026-06）**：
+- ✅ `CompilerService::set_code()` + `eval_current()` 在 IR V2 cache
+  (`source-hash → ir_module`) 之上工作。`pre_cache_workspace_defines_fn_`
+  在 set-code 后预热所有顶层 define 的 cache。
+- ✅ EDSL V2 dirty 标记：每个 define 在 set-code 后按 source-hash 判定
+  是否脏；`mark_define_dirty_fn_` / `mark_all_defines_dirty_fn_` 在
+  mutate 时被调用。
+- ✅ `eval-current :jit` 走 LLVM ORC JIT 路径（38 opcode → native，~7.55× 加速）。
+- 🟡 **尚未实装**：mutate 之后的"只重新编译被 dirty 的子树"的子树级
+  增量（当前是 source-hash compare 之后全量 re-lower dirty define，
+  对几百行程序 ~1-5ms，全量够用）。
 
-评估：增量编译短期内可以不实现全量。先用 `set-code` + `eval-current` 做全量重新编译
-（对几百行程序足够快）。增量 dirtiness 标记留到有性能需求时再加。
+实际性能：`eval-current` ~1-5ms（几千节点程序）。瓶颈不在 C++，在
+LLM 调用（5-30s 一次）。
 
 ---
 
 ## 5. 类型系统集成
-
-进行 mutate 后，类型系统需要做验证：
 
 ```scheme
 ; 验证当前 AST 类型正确性
@@ -180,15 +299,19 @@
 (mutate:rebind "fib" ...)  → 如果类型不匹配，返回错误
 ```
 
-当前 `CompilerService` 有 `typecheck(input)` 方法但没暴露到 `--serve` 协议。
-需要加一个 `--serve` 命令或 Aura 原语来调用。
-
-简要实现：在 `--serve` 协议中添加 `"cmd":"typecheck"` 命令，
-或在 Aura 中注册 `(typecheck expr)` 原语。
+**实装状态（2026-06）**：
+- ✅ `typecheck-current` 已通过 `Evaluator::run_typecheck_no_lock`
+  实现，从 Aura 端直接调用。
+- ✅ `query:type` 由 `TypeResolutionIndex` 支持（M2.7）。
+- ✅ `mutate:*` 自动验证类型（`mutate:rebind` / `mutate:replace-value`
+  等在 type mismatch 时返回 `("error" . ("type-mismatch" . ...))`）。
+- ✅ `mutate:rebind` / `mutate:set-body` 在类型变化时调用
+  `defuse_affected_syms_.insert(name)` + `defuse_touch_fn_()`，
+  `DefUseIndex` 自动失效。
 
 ---
 
-## 6. 性能估算
+## 6. 性能估算（实装值）
 
 假设 AST 大小 500-5000 节点（典型 Aura 程序）：
 
@@ -198,47 +321,64 @@
 | `query:children N` | O(1) | ~0.1μs |
 | `query:calls "fib"` | O(CallNodes) | ~5μs |
 | `query:pattern "(+ n 1)"` | O(Nodes × PatternDepth) | ~50μs |
-| `mutate:rebind "fib" ...` | O(Find + Rebuild) | ~1μs |
-| `mutate:replace-value` | O(1) + MutationLog | ~0.5μs |
-| `eval-current` | 全量重新编译 | ~1-5ms |
+| `query:filter` (N 谓词) | O(Nodes × N) | ~50-200μs |
+| `query:def-use` (cached) | O(1) | ~1μs |
+| `query:def-use` (rebuild) | O(Nodes × Symbols) | ~100-500μs |
+| `mutate:rebind "fib" ...` | O(Find + Rebuild) | ~1ms（含增量编译）|
+| `mutate:replace-value` | O(1) + MutationLog | ~50μs |
+| `mutate:query-and-replace` | O(Nodes × Predicates) | ~100-500μs |
+| `eval-current` | 全量重编译 + 缓存命中 | ~1-5ms |
 | `typecheck-current` | 全量类型检查 | ~1-5ms |
+| `ast:snapshot` / `ast:restore` | O(flat 深度拷贝) | ~100-500μs |
 
 瓶颈不在 C++，在 LLM 调用（5-30s 一次）。
 
 ---
 
-## 7. 实现优先级
+## 7. 实现优先级（实装状态）
 
 ```
-P0 — 立即（核心 EDSL，LLM 可用）✅
+P0 — 核心 EDSL（LLM 可用）✅
   1. ✅ query:find / query:children / query:node / query:calls 原语
   2. ✅ set-code / eval-current 原语
   3. ✅ mutate:rebind（按函数名替换）
   4. ✅ mutate:replace-value（支持任意节点类型）
 
-P1 — 短期（完整 EDSL）✅
-  5. ✅ query:parent / query:siblings
+P1 — 完整 EDSL ✅
+  5. ✅ query:parent / query:siblings / query:root
   6. ✅ query:pattern（模式匹配搜索）
-  7. ✅ mutate:set-body / mutate:remove-node
+  7. ✅ mutate:set-body / mutate:remove-node / mutate:insert-child
   8. ✅ typecheck-current 原语
-  9. ✅ query:type（M2.7 TypeResolutionIndex）
+  9. ✅ query:type
+ 10. ✅ mutate:wrap / mutate:splice / mutate:tweak-literal
 
-P2 — 中期（增量编译）🟡
-  10. Dirtiness 标记（被 mutate 修改的节点）
-  11. 增量类型检查（只检查被修改的子树）
-  12. 增量求值（只重新执行被修改的函数）
+P2 — 高级 EDSL ✅
+ 11. ✅ query:filter / query:where（组合谓词）
+ 12. ✅ DefUseIndex + query:def-use / query:reaches / query:effects
+ 13. ✅ ast:snapshot / ast:rollback / ast:version（#107 part 3 + 6）
+ 14. ✅ per-sym staleness（#107 part 5）
+ 15. ✅ ast:defs / ast:nodes（#108 part 2）
 
-P3 — 长期 🟡
-  13. query:filter / query:where（组合查询）
-  14. MutationLog 查询和回滚的 Aura 原语
-  15. AutoFixEngine 自动修复规则
+P3 — 高级重构 ✅
+ 16. ✅ mutate:extract-function / mutate:inline-call
+ 17. ✅ mutate:rename-symbol / mutate:move-node
+ 18. ✅ mutate:refactor/extract (alias)
+ 19. ✅ mutate:query-and-replace（#110）
+
+P4 — 增量编译 🟡
+ 20. ✅ EDSL V2 source-hash cache（set-code 后预热）
+ 21. ✅ dirty marking on mutate（mark_define_dirty_fn_）
+ 22. 🟡 子树级增量（当前是 source-hash compare 后 re-lower dirty define）
+ 23. 🟡 增量类型检查（只检查被修改的子树）
+
+P5 — 自动修复 🟡
+ 24. 🟡 AutoFixEngine（rule-based 修复管线）
+ 25. 🟡 MutationLog Aura API
 ```
 
 ---
 
 ## 8. --serve 协议扩展
-
-新增 JSON 命令：
 
 ```json
 // 设置工作区 AST
@@ -255,7 +395,8 @@ P3 — 长期 🟡
 ```
 
 所有 query/mutate 操作都是 Aura 原语，通过现有的 `exec` 命令发送。
-不需要扩展 `--serve` 协议本身——只需要注册新的 Aura 原语。
+Serve 协议本身不变。新增的 `query:where` / `mutate:query-and-replace` 等
+高级原语都通过 `exec` 通道，无需协议升级。
 
 ---
 
@@ -266,4 +407,77 @@ P3 — 长期 🟡
 | Query 原语 vs JSON 命令 | Aura 原语 | 统一复用 --serve 协议，不增加新命令 |
 | 按名查找 vs 节点 ID | 两者都支持 | 名稳定但模糊，ID 精确但可能变 |
 | 工作区 vs 只在 exec | 工作区 | exec 每次新建 AST，query 没有意义 |
-| 全量 eval vs 增量 | 先全量 | 代码量小，全量够快；增量以后加 |
+| 全量 eval vs 增量 | 先全量，再 EDSL V2 缓存 | 代码量小，全量够快；EDSL V2 解决了重复全量 |
+| query:filter 是 AND 还是 OR | AND | 多谓词同时成立 = 精确匹配；OR 太宽泛 |
+| mutate:query-and-replace 是 C++ 还是 Aura | C++ | 性能 + atomicity；Aura 层做 2 步会暴露中间态 |
+| AST 版本号 vs git hash | AST 版本号 | hash 不稳定，version 单调递增即可 |
+| DefUseIndex 全量 vs per-sym | per-sym（#107 part 5） | mutate 后只重 build 受影响的 sym，避免全量 reindex |
+
+---
+
+## 10. Agent 集成模式
+
+### 10.1 基础 query → mutate 循环
+
+```scheme
+;; 1. 设代码
+(set-code "(define (bad-fact n) (* n (bad-fac (- n 1))))")
+
+;; 2. 定位问题
+(define bad-call (car (query:find "bad-fac")))  ; → 5
+
+;; 3. 修复
+(mutate:rebind "bad-fact"
+  "(define (bad-fact n) (if (= n 0) 1 (* n (bad-fact (- n 1)))))"
+  "fix typo")
+
+;; 4. 验证
+(eval-current)
+(display (bad-fact 5))    ; → 120
+```
+
+### 10.2 影响范围分析
+
+```scheme
+(set-code "
+  (define (render-loop xs)
+    (map (lambda (x) (* x 2)) xs))
+  (define (main)
+    (display (render-loop (list 1 2 3))))
+")
+
+; Agent 想知道：改 render-loop 的 body 会影响哪些使用点？
+(query:effects "render-loop")
+; → ((render-loop . def) (main . use) (...))
+
+; Agent 想知道：变量 x 在哪定义、哪使用？
+(query:def-use "x")
+; → ((4) . (5 6))      ; def 在 4，use 在 5 6
+```
+
+### 10.3 安全 mutate（snapshot → mutate → verify → rollback）
+
+```scheme
+(define snap (ast:snapshot "before-try"))
+(mutate:rebind "fib" "(lambda (n) (* n 2))" "linearize")
+
+(if (= 0 (eval-current-output))
+  (begin
+    (display "regression!")
+    (ast:restore snap))   ; 回退到快照
+  (display "ok, keep changes"))
+```
+
+`ast:snapshot` / `ast:restore` 在 #107 part 6 之后是 O(1) deep-copy，
+保存 SymId / mutation_log / type_id / value_cache 的全部状态。
+
+---
+
+## 11. 相关文档
+
+- [docs/developer/evaluator.md](../developer/evaluator.md) — evaluator C++ 实现细节
+- [docs/issue-closings/107-closing.md](../issue-closings/107-closing.md) — workspace mutex + AST versioning
+- [docs/issue-closings/110-closing.md](../issue-closings/110-closing.md) — qar + self-modifying-flat 教训
+- [docs/issue-closings/111-closing.md](../issue-closings/111-closing.md) — self-modifying-flat 审计
+- [docs/design/defuse_analysis.md](defuse_analysis.md) — DefUseIndex 内部设计
+- [docs/tutorial.md §10](../tutorial.md) — EDSL / AI Agent 开发 tutorial
