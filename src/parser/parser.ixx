@@ -57,6 +57,7 @@ private:
     aura::ast::NodeId parse_move();
     aura::ast::NodeId parse_borrow();
     aura::ast::NodeId parse_mut_borrow();
+    aura::ast::NodeId parse_datatype();
     aura::ast::NodeId parse_drop();
     aura::ast::NodeId parse_cast();
     aura::ast::NodeId parse_check();

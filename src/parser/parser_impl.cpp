@@ -356,6 +356,8 @@ NodeId FlatParser::parse_list() {
             return parse_borrow();
         if (kw == "mut-borrow")
             return parse_mut_borrow();
+        if (kw == "datatype")
+            return parse_datatype();
         // Note: 'drop' is intentionally NOT a parser special form.
         // It's a C++ primitive (list drop) defined in evaluator_impl.cpp.
         // The linear-type drop is accessible via a different name if needed.
@@ -1306,6 +1308,107 @@ NodeId FlatParser::parse_mut_borrow() {
     auto id = flat_.add_mut_borrow(inner);
     flat_.set_loc(id, tok.line, tok.column);
     return id;
+}
+
+// (#108 part 4 Phase 1) parse_datatype
+//
+// Syntax: (datatype (Name : TypeParam) (Ctor1 f1 f2 ...) (Ctor2 g1 ...) ...)
+//
+// Emits a single call to the runtime primitive
+// (adt:register-constructors (list "Ctor1" "Ctor2" ...)). The
+// primitive populates the g_adt_constructors table; Env::lookup
+// then falls back to this table, so constructors are visible
+// across top-level forms (bypassing Begin's lexical scope).
+//
+// Why this design: a (datatype ...) form is one top-level
+// expression, so the parser can only return one root node. If
+// we emitted a Begin of Defines (the natural macro expansion),
+// the inner Defines would be scoped to the Begin and invisible
+// to subsequent top-level expressions. The global table +
+// lookup fallback is the only way to make ctor names globally
+// visible from a single parsed form.
+//
+// The : TypeParam declaration is parsed but ignored — Aura's
+// gradual type system doesn't track ADT type parameters.
+NodeId FlatParser::parse_datatype() {
+    auto tok = lexer_->consume(); // 'datatype'
+
+    // Parse spec: (Name : TypeParam)
+    if (lexer_->peek().kind != TokenKind::LParen) {
+        skip_rparen();
+        return NULL_NODE;
+    }
+    lexer_->consume(); // '('
+    auto name_tok = lexer_->peek();
+    if (name_tok.kind != TokenKind::Identifier) {
+        skip_rparen();
+        return NULL_NODE;
+    }
+    lexer_->consume();
+    // Skip the ": TypeParam..." suffix (any number of identifiers
+    // after the colon; Phase 1 ignores them). (Either : a b)
+    // is parsed as spec = (Either) and the ": a b" suffix is
+    // skipped entirely.
+    if (lexer_->peek().kind == TokenKind::Identifier &&
+        lexer_->peek().text == ":") {
+        lexer_->consume(); // ':'
+        // Consume any number of type-param identifiers
+        while (lexer_->peek().kind == TokenKind::Identifier) {
+            lexer_->consume();
+        }
+    }
+    if (lexer_->peek().kind == TokenKind::RParen)
+        lexer_->consume(); // ')'
+
+    // Collect ctor names as a list of string-literal AST nodes.
+    // Each name will be wrapped in a LiteralString at runtime,
+    // but at parse time we hold the sym_id from the pool.
+    std::vector<aura::ast::NodeId> ctor_name_nodes;
+    while (lexer_->peek().kind == TokenKind::LParen && !lexer_->eof()) {
+        lexer_->consume(); // '('
+        auto ctor_tok = lexer_->peek();
+        if (ctor_tok.kind != TokenKind::Identifier) {
+            skip_rparen();
+            return NULL_NODE;
+        }
+        lexer_->consume();
+        // Build a LiteralString node holding the ctor name.
+        auto ctor_str_sym = pool_.intern(ctor_tok.text);
+        ctor_name_nodes.push_back(flat_.add_literalstring(ctor_str_sym));
+
+        // Skip the field type names (not used at runtime in
+        // Phase 1 — arity checking is left for a later phase).
+        while (lexer_->peek().kind != TokenKind::RParen && !lexer_->eof())
+            lexer_->consume();
+        if (lexer_->peek().kind == TokenKind::RParen)
+            lexer_->consume();
+    }
+
+    // Consume final ')'
+    if (lexer_->peek().kind == TokenKind::RParen)
+        lexer_->consume();
+
+    // Build the list of ctor names as a pair chain (right-to-left
+    // to preserve order). This is the (list "Ctor1" "Ctor2" ...)
+    // argument to adt:register-constructors.
+    //
+    // We use a Call node that evaluates to (cons name rest).
+    // The `cons` function is a Variable node in the AST (not a
+    // bare sym_id — add_call wants a NodeId, not a SymId).
+    auto cons_var = flat_.add_variable(pool_.intern("cons"));
+    auto nil_lit = flat_.add_literal(0);  // () — empty list
+    aura::ast::NodeId name_list = nil_lit;
+    for (auto it = ctor_name_nodes.rbegin(); it != ctor_name_nodes.rend(); ++it) {
+        auto pid = flat_.add_call(cons_var, {*it, name_list});
+        name_list = pid;
+    }
+
+    // Build (adt:register-constructors <name_list>)
+    auto prim_sym = pool_.intern("adt:register-constructors");
+    auto prim_var = flat_.add_variable(prim_sym);
+    auto call_id = flat_.add_call(prim_var, {name_list});
+    flat_.set_loc(call_id, tok.line, tok.column);
+    return call_id;
 }
 
 NodeId FlatParser::parse_drop() {
