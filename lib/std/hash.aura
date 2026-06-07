@@ -3,6 +3,7 @@
 (export
   hash-set hash-ref hash-get hash-remove
   hash-keys hash-values hash-length hash->list
+  hash-for-each hash-fold
   hash-merge hash-empty? alist->hash frequencies)
 
 (define (for-each f lst)
@@ -18,6 +19,24 @@
   (hash-ref h k))
 
 (define (hash-remove h k) (hash-remove! h k) h)
+
+;; (#108 part 1) hash-for-each: apply fn(key, value) to every entry
+;; in the hash. Iteration order matches hash-keys (currently
+;; reverse-capacity order, which is stable for a given table).
+;; Returns #t on success. Used by word-freq and similar tasks
+;; that want a Scheme/Racket-style iteration API.
+(define (hash-for-each h fn)
+  (for-each (lambda (k) (fn k (hash-ref h k))) (hash-keys h))
+  #t)
+
+;; (#108 part 1) hash-fold: fold fn(key, value, acc) over entries.
+;; Initial acc is `init`. Returns the final accumulated value.
+;; Useful for building summaries (sum, max, string-concat) over
+;; a hash without an intermediate list.
+(define (hash-fold h fn init)
+  (foldr (lambda (k acc) (fn k (hash-ref h k) acc))
+         init
+         (hash-keys h)))
 
 (define (hash-empty? h) (= (hash-length h) 0))
 
