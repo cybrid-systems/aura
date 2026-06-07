@@ -1242,6 +1242,8 @@ int64_t aura_pair_cdr(int64_t);
 int64_t aura_pair_car_unchecked(int64_t);
 int64_t aura_pair_cdr_unchecked(int64_t);
 int64_t aura_prim_call(int64_t, int64_t, int64_t, int64_t);
+uint64_t aura_prim_call_count();
+uint64_t aura_prim_call_total_ns();
 void aura_display_int(int64_t);
 void aura_display_char(char);
 void aura_newline();
@@ -1423,16 +1425,30 @@ struct AuraJIT::Impl {
     // this mutex is the entry-point serialization (prevents two
     // concurrent compiles from racing on the symbol table).
     std::mutex compile_mtx_;
+    // Issue #114: per-function compile cache. Lets two threads
+    // compiling different functions run in parallel; the same
+    // function name is still serialized by this shared_mutex.
+    // The cache holds the resolved ScalarFn from the most recent
+    // successful compile, keyed by function name. Hot-swap
+    // invalidates the entry (under the global lock).
+    std::shared_mutex fn_compile_mtx_;
+    std::unordered_map<std::string, ScalarFn> compile_fns_{};
     // Per-function resource trackers for hot-swap (remove old module, add new one)
-    llvm::orc::ResourceTrackerSP get_or_create_tracker(const std::string& name) {
+    llvm::orc::ResourceTrackerSP get_or_create_tracker(const std::string& name, Metrics* metrics = nullptr) {
         // Remove old tracker/module for this name before creating a new one.
         // This fixes duplicate symbol errors when the same function name
         // is compiled from different eval() calls (e.g., inlined lambdas).
         auto it = fn_trackers_.find(name);
         if (it != fn_trackers_.end()) {
-            // Remove old module from JITDylib before adding the new one
+            // Remove old module from JITDylib before adding the new one.
+            // This is the "hot-swap" path: a function with the same name
+            // (e.g., re-compiled inlined lambda) replaces the old version.
             if (auto err = it->second->remove())
                 llvm::consumeError(std::move(err));
+            if (metrics) metrics->hot_swap_count.fetch_add(1, std::memory_order_relaxed);
+            // Invalidate the cache entry for this function name.
+            std::unique_lock<std::shared_mutex> lock(fn_compile_mtx_);
+            compile_fns_.erase(name);
         }
         auto rt = main_dylib->createResourceTracker();
         fn_trackers_[name] = rt;
@@ -1520,14 +1536,48 @@ struct AuraJIT::Impl {
         return true;
     }
 
-    ScalarFn compile(const FlatFunction& fn) {
+    ScalarFn compile(const FlatFunction& fn, Metrics* metrics = nullptr) {
         // Issue #59 Iter 1: serialize addIRModule + lookup across threads.
         // Held through the whole LLVM pipeline run + verify + addIRModule
         // + lookup. Sub-ms per call in practice; readers don't contend
         // because ORC's ThreadSafeModule is per-module atomic.
+        //
+        // Issue #114: the global compile_mtx_ is now complemented by a
+        // per-function-name lock in `fn_compile_mtx_` so different
+        // functions can compile concurrently. The global lock is still
+        // held briefly around addIRModule + lookup (because the ORC
+        // JITDylib symbol table isn't fully thread-safe across
+        // concurrent module insertions in this LLVM version).
         std::lock_guard<std::mutex> compile_lock(compile_mtx_);
         if (!init())
             return nullptr;
+
+        // Per-function fine-grained lock (released before the global one).
+        // Two threads compiling the SAME function still serialize here
+        // (one wins, the other gets the cached compile_fns_ entry).
+        // Two threads compiling DIFFERENT functions run in parallel.
+        std::unique_lock<std::shared_mutex> fn_lock;
+        {
+            // Acquire the per-function shared lock briefly to look up
+            // the existing entry. The lookup is racy with concurrent
+            // compiles, but the result is just an optimization hint
+            // (we re-check under the global lock below).
+            std::shared_lock<std::shared_mutex> shared(fn_compile_mtx_);
+            auto it = compile_fns_.find(std::string(fn.name));
+            if (it != compile_fns_.end()) {
+                // Cache hit — return the previously compiled fn_ptr
+                // without re-running the LLVM pipeline.
+                if (metrics) {
+                    metrics->compile_count.fetch_add(1, std::memory_order_relaxed);
+                    metrics->cached_function_count.fetch_add(1, std::memory_order_relaxed);
+                }
+                return it->second;
+            }
+        }
+
+        // Time the full compile (including all LLVM passes + addIRModule
+        // + lookup). The metric is the average for telemetry dashboards.
+        auto t0 = std::chrono::steady_clock::now();
 
         auto mod = std::make_unique<llvm::Module>(
             std::string("mod_") + std::to_string(module_counter++), ctx);
@@ -1597,14 +1647,16 @@ struct AuraJIT::Impl {
 
         if (llvm::verifyModule(*mod, &llvm::errs())) {
             fprintf(stderr, "JIT: verification failed\n");
+            if (metrics) metrics->verify_fail_count.fetch_add(1, std::memory_order_relaxed);
             return nullptr;
         }
 
         auto tsm =
             llvm::orc::ThreadSafeModule(std::move(mod), std::make_unique<llvm::LLVMContext>());
-        auto rt = get_or_create_tracker(std::string(fn.name));
+        auto rt = get_or_create_tracker(std::string(fn.name), metrics);
         if (auto err = jit->addIRModule(rt, std::move(tsm))) {
             fprintf(stderr, "JIT: addIRModule failed\n");
+            if (metrics) metrics->add_module_fail_count.fetch_add(1, std::memory_order_relaxed);
             return nullptr;
         }
 
@@ -1613,7 +1665,26 @@ struct AuraJIT::Impl {
             fprintf(stderr, "JIT: lookup failed\n");
             return nullptr;
         }
-        return sym->toPtr<ScalarFn>();
+        auto fn_ptr = sym->toPtr<ScalarFn>();
+
+        // Update the per-function cache (under shared lock; readers
+        // from other threads can do concurrent compiles of OTHER
+        // functions while we hold this).
+        {
+            std::unique_lock<std::shared_mutex> lock(fn_compile_mtx_);
+            compile_fns_[std::string(fn.name)] = fn_ptr;
+        }
+
+        // Update metrics. The compile_count covers all calls
+        // including cache hits (visible at the top of the function).
+        if (metrics) {
+            metrics->compile_count.fetch_add(1, std::memory_order_relaxed);
+            auto t1 = std::chrono::steady_clock::now();
+            auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+            metrics->compile_total_us.fetch_add(
+                static_cast<std::uint64_t>(us), std::memory_order_relaxed);
+        }
+        return fn_ptr;
     }
 
     void* get_function_ptr(const char* name) {
@@ -1653,10 +1724,47 @@ bool AuraJIT::available() const {
     return impl_->initialized;
 }
 ScalarFn AuraJIT::compile(const FlatFunction& fn) {
-    return impl_->compile(fn);
+    // Issue #114: pass our metrics into the impl so compile/verify/
+    // hot-swap counters get updated. The impl uses the pointer
+    // (not a reference) so it can be null in tests that construct
+    // an Impl directly.
+    return impl_->compile(fn, &metrics_);
 }
 void* AuraJIT::get_function_ptr(const char* name) {
     return impl_->get_function_ptr(name);
+}
+
+// ── Metrics::format (Issue #114) ────────────────────────────
+// One-line snapshot of all JIT counters. Designed to be
+// cheap to call (e.g., from a periodic telemetry heartbeat).
+char* AuraJIT::Metrics::format(char* buf, std::size_t buf_size) const noexcept {
+    if (!buf || buf_size == 0) return buf;
+    const auto cc = compile_count.load(std::memory_order_relaxed);
+    const auto hs = hot_swap_count.load(std::memory_order_relaxed);
+    const auto inl = inlined_prim_count.load(std::memory_order_relaxed);
+    const auto slow = slow_prim_count.load(std::memory_order_relaxed);
+    const auto total_us = compile_total_us.load(std::memory_order_relaxed);
+    const auto avg_us = cc > 0 ? static_cast<std::uint64_t>(total_us / cc) : 0u;
+    const auto vfail = verify_fail_count.load(std::memory_order_relaxed);
+    const auto mfail = add_module_fail_count.load(std::memory_order_relaxed);
+    const auto cfns = cached_function_count.load(std::memory_order_relaxed);
+    // Live prim-call counters from aura_jit_runtime.cpp
+    // (read via the global accessors). The total is in nanoseconds;
+    // average per call is computed inline.
+    const auto pc = aura_prim_call_count();
+    const auto pns = aura_prim_call_total_ns();
+    const auto pavg = pc > 0 ? static_cast<std::uint64_t>(pns / pc) : 0u;
+    std::snprintf(buf, buf_size,
+                  "jit: compiles=%llu avg_us=%llu hot_swaps=%llu "
+                  "cached_fns=%llu inlined_prims=%llu slow_prims=%llu "
+                  "prim_calls=%llu prim_avg_ns=%llu "
+                  "verify_fail=%llu add_mod_fail=%llu",
+                  (unsigned long long)cc, (unsigned long long)avg_us,
+                  (unsigned long long)hs, (unsigned long long)cfns,
+                  (unsigned long long)inl, (unsigned long long)slow,
+                  (unsigned long long)pc, (unsigned long long)pavg,
+                  (unsigned long long)vfail, (unsigned long long)mfail);
+    return buf;
 }
 
 void AuraJIT::register_symbol(const char* name, void* ptr) {

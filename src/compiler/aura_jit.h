@@ -4,6 +4,8 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <atomic>
+#include <cstdio>
 #include <memory>
 #include <functional>
 #include <string>
@@ -108,11 +110,35 @@ public:
     // The pool pointer must remain valid for the lifetime of all compilations.
     void set_string_pool(const std::vector<std::string>* pool);
 
+    // ── JIT metrics (Issue #114) ────────────────
+    // Counters exposed for observability. All atomic; safe to
+    // read from any thread at any time. Cheap (relaxed load).
+    struct Metrics {
+        std::atomic<std::uint64_t> compile_count{0};
+        std::atomic<std::uint64_t> compile_total_us{0};
+        std::atomic<std::uint64_t> hot_swap_count{0};
+        std::atomic<std::uint64_t> verify_fail_count{0};
+        std::atomic<std::uint64_t> add_module_fail_count{0};
+        std::atomic<std::uint64_t> inlined_prim_count{0};   // fast-path
+        std::atomic<std::uint64_t> slow_prim_count{0};     // aura_prim_call path
+        std::atomic<std::uint64_t> cached_function_count{0};
+
+        // Format as a single-line string for telemetry / log output.
+        // Caller-provided buffer; returns the same pointer.
+        char* format(char* buf, std::size_t buf_size) const noexcept;
+    };
+    const Metrics& metrics() const noexcept { return metrics_; }
+    // Non-const accessor for tests + mutation. Production code
+    // should prefer the const overload + the free-form update
+    // methods (compile_count.fetch_add(1, ...), etc.).
+    Metrics& mutable_metrics() noexcept { return metrics_; }
+
     // Hot-swap: replace an already-compiled function with a new version.
     // Removes the old module from the JIT dylib and compiles + links the new one.
     private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
+    mutable Metrics metrics_;
 };
 
 /// Compile a FlatFunction to a native object file via LLVM IR + llc.
