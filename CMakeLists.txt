@@ -664,6 +664,37 @@ target_compile_options(test_issue_128 PRIVATE -Wall -Wextra -Wpedantic
 target_link_libraries(test_issue_128 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_128_verification COMMAND ./test_issue_128)
 
+# Issue #130 verification: cache hit rate metric.
+# Standalone binary that exercises the new
+# TypeChecker::cache_hit_rate() getter.
+add_executable(test_issue_130 tests/test_issue_130.cpp)
+set_property(TARGET test_issue_130 PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_issue_130 PRIVATE src)
+target_sources(test_issue_130 PRIVATE
+    src/serve/fiber.cpp
+    src/serve/worker.cpp
+    src/serve/scheduler.cpp
+    src/serve/gc_coordinator.cpp
+    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
+    src/core/ast_impl.cpp
+    src/core/type_impl.cpp
+    src/compiler/value_impl.cpp
+    src/compiler/type_checker_impl.cpp)
+target_sources(test_issue_130 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
+    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
+    src/core/type_arena.ixx src/core/type.ixx
+    src/parser/lexer.ixx src/parser/parser.ixx
+    src/compiler/diag.ixx src/compiler/value.ixx
+    src/compiler/ir.ixx src/compiler/ir_cache_pure.ixx
+    src/compiler/coercion_map.ixx
+    src/compiler/type_checker.ixx)
+target_compile_options(test_issue_130 PRIVATE -Wall -Wextra -Wpedantic
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
+    -Wno-parentheses)
+target_link_libraries(test_issue_130 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+add_test(NAME issue_130_verification COMMAND ./test_issue_130)
+
 # ── GC ↔ Evaluator integration tests (Issue #113) ─────────
 # Verifies the Evaluator root source registration API surface
 # (flush_gc_roots + gc_root_count). The full GCRootSet + GCCollector

@@ -413,6 +413,20 @@ export struct TypeChecker {
     IncrementalStats stats() const { return stats_; }
     void reset_stats() { stats_ = {}; }
 
+    // Issue #130: cache hit rate (0.0 .. 1.0). Computed
+    // as hits / (hits + misses + stale). Returns 0.0 if
+    // no incremental checks have been done. Useful for
+    // profiling mutation-heavy workloads: a high hit rate
+    // (e.g. >0.7) means the dirty-tracking is working
+    // well; a low hit rate (e.g. <0.3) means most
+    // mutations touch too much of the AST.
+    double cache_hit_rate() const {
+        const auto s = stats_;
+        const std::uint64_t total = s.cache_hits + s.cache_misses + s.stale_cache;
+        if (total == 0) return 0.0;
+        return static_cast<double>(s.cache_hits) / static_cast<double>(total);
+    }
+
     // Issue #116: deferred CoercionNode insertion. infer_flat
     // now collects coercion intent in this map rather than
     // mutating the FlatAST directly. The caller is expected
