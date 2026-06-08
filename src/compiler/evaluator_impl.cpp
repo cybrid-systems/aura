@@ -4032,7 +4032,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     });
     // list->string: (list->string lst) → string from char codes
     primitives_.add("list->string", [this](std::span<const EvalValue> a) {
-        if (a.empty() || !is_pair(a[0]) && !is_void(a[0]))
+        if (a.empty() || (!is_pair(a[0]) && !is_void(a[0])))
             return make_int(0);
         std::string result;
         auto v = a[0];
@@ -8580,6 +8580,7 @@ Evaluator::Evaluator() {
             return make_bool(false);
         declared_type_sigs_[string_heap_[name_idx]] = {
             .type_str = string_heap_[params_idx] + "|" + string_heap_[ret_idx],
+            .module_file = "",
             .resolved = false
         };
         return make_bool(true);
