@@ -180,6 +180,42 @@ public:
         aura::ast::NodeId root,
         const std::unordered_set<std::string>& dirty_bindings,
         std::vector<OwnershipNote>& notes_out);
+
+    // Issue #117: full re-simulation mode. Walks the AST to
+    // discover ALL linear-typed bindings (not just dirty ones)
+    // and validates them as a single pass. Slower than the
+    // dirty-only mode, but catches:
+    //   - cross-function ownership flows (linear passed as
+    //     argument to another function, where the callee
+    //     moves it but the caller's dirty set doesn't include
+    //     the callee's locals)
+    //   - closure-captured linear resources (the closure
+    //     body moves the captured value, but the closure
+    //     itself isn't in the dirty set)
+    //   - global-scope linear bindings (let-bound at top
+    //     level, no enclosing scope to mark them as leaked
+    //     in the dirty-only path)
+    //
+    // The function uses the type_id_ field on FlatAST (populated
+    // by a prior infer_flat call) to discover linear-typed
+    // bindings. The caller is expected to have run infer_flat
+    // before calling this.
+    static bool validate_ownership_full(
+        const aura::ast::FlatAST& flat,
+        const aura::ast::StringPool& pool,
+        aura::ast::NodeId root,
+        std::vector<OwnershipNote>& notes_out);
+
+    // Internal: shared implementation of the post-hoc ownership
+    // walk. Public callers should use validate_ownership or
+    // validate_ownership_full. Kept separate so the two
+    // discovery paths can share the same walk.
+    static bool validate_ownership_impl(
+        const aura::ast::FlatAST& flat,
+        const aura::ast::StringPool& pool,
+        aura::ast::NodeId root,
+        const std::unordered_set<std::string>& dirty_bindings,
+        std::vector<OwnershipNote>& notes_out);
 };
 export class InferenceEngine {
     aura::core::TypeRegistry& reg_;

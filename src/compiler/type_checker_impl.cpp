@@ -392,6 +392,19 @@ bool ConstraintSystem::consistent_unify(TypeId t1, TypeId t2) {
     t1 = find(t1);
     t2 = find(t2);
 
+    // Issue #117: reject Any ~ Linear. Linear resources must
+    // be statically tracked from allocation to consumption;
+    // allowing them to flow through a Dynamic boundary would
+    // silently erase the ownership invariant. The right
+    // escape hatch is an explicit coercion (e.g. (cast x T))
+    // which produces a CastOp at the boundary.
+    if (t1 == reg_.dynamic_type() || t2 == reg_.dynamic_type()) {
+        auto other_id = (t1 == reg_.dynamic_type()) ? t2 : t1;
+        if (reg_.linear_of(other_id) != nullptr) {
+            return false;
+        }
+    }
+
     // Any consistent with everything (sound gradual core)
     if (t1 == reg_.dynamic_type() || t2 == reg_.dynamic_type()) {
         // If one side is Any and the other is a type variable, bind the
@@ -555,6 +568,16 @@ void InferenceEngine::bind_declared_sigs() {
 bool InferenceEngine::is_coercible(TypeId from, TypeId to) {
     if (from == to)
         return true;
+    // Issue #117: reject Linear ~ Dynamic. Linear resources
+    // are statically tracked; allowing them to flow through a
+    // Dynamic boundary (even with a runtime CastOp) would
+    // silently erase the ownership invariant. The user must
+    // be explicit: either the value is linear all the way
+    // through, or the boundary is annotated with a real cast
+    // (not a silent one).
+    if (reg_.linear_of(from) != nullptr || reg_.linear_of(to) != nullptr) {
+        return false;
+    }
     // Dynamic coerce to/from anything (gradual core, always allowed)
     if (from == reg_.dynamic_type() || to == reg_.dynamic_type())
         return true;
@@ -2703,8 +2726,15 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
 //   - Invalid ownership state: any other inconsistency
 //
 // The validation uses a mimimal OwnershipEnv that only tracks bindings
-// in the dirty set. Clean bindings are assumed correct (validated at
-// the last full type-check pass).
+// in the supplied set. Two callers:
+//   - validate_ownership: post-mutation path, the set is the
+//     dirty_bindings (bindings that just changed). Clean
+//     bindings are assumed correct (validated at the last
+//     full type-check pass).
+//   - validate_ownership_full: full re-simulation path, the
+//     set is all linear-typed bindings discovered by walking
+//     the AST. Slower but catches cross-function / closure /
+//     global-scope cases.
 //
 bool OwnershipEnv::validate_ownership(
     const FlatAST& flat,
@@ -2714,7 +2744,64 @@ bool OwnershipEnv::validate_ownership(
     std::vector<OwnershipNote>& notes_out) {
     if (dirty_bindings.empty())
         return true;
+    return validate_ownership_impl(flat, pool, root, dirty_bindings, notes_out);
+}
 
+// Issue #117: full re-simulation mode. Walks the AST to
+// discover ALL linear-typed bindings (not just dirty ones)
+// and validates them as a single pass. Catches cross-function
+// / closure / global-scope ownership flows that the dirty
+// path misses.
+//
+// Linear bindings are discovered by walking the AST: a
+// let-introduced binding is linear if the let value is a
+// `(Linear ...)` node (syntactic check). For type-driven
+// discovery (caller knows the registry), pass the
+// pre-computed set via the dirty-only `validate_ownership`
+// instead — that's the more precise path.
+bool OwnershipEnv::validate_ownership_full(
+    const FlatAST& flat,
+    const StringPool& pool,
+    NodeId root,
+    std::vector<OwnershipNote>& notes_out) {
+    std::unordered_set<std::string> linear_bindings;
+    std::function<void(NodeId)> discover = [&](NodeId id) {
+        if (id == NULL_NODE || id >= flat.size()) return;
+        auto v = flat.get(id);
+        // Pattern 1: (let ((x (Linear e))) ...) — value is a
+        // Linear wrapper node. x is a linear binding.
+        if (v.tag == NodeTag::Let && v.sym_id != INVALID_SYM) {
+            if (!v.children.empty() && v.child(0) != NULL_NODE
+                && flat.get(v.child(0)).tag == NodeTag::Linear) {
+                auto name = std::string(pool.resolve(v.sym_id));
+                if (!name.empty()) linear_bindings.insert(name);
+            }
+        }
+        // Recurse.
+        for (auto c : v.children) discover(c);
+    };
+    discover(root);
+
+    if (linear_bindings.empty()) return true;
+    return validate_ownership_impl(flat, pool, root, linear_bindings, notes_out);
+}
+
+// Shared implementation of the post-hoc ownership walk.
+// The original `validate_ownership` and the new
+// `validate_ownership_full` both call this; the difference is
+// just which set of bindings to track (dirty-only vs. all
+// linear-typed).
+//
+// `dirty_bindings` here is a misnomer inherited from the
+// historical API; in the full-re-simulation path it's really
+// "all linear-typed bindings", and in the post-mutation path
+// it's the dirty set. The walk is identical.
+bool OwnershipEnv::validate_ownership_impl(
+    const FlatAST& flat,
+    const StringPool& pool,
+    NodeId root,
+    const std::unordered_set<std::string>& dirty_bindings,
+    std::vector<OwnershipNote>& notes_out) {
     // Build a temporary ownership environment from scratch, seeded with
     // Owned for all dirty bindings. This gives us a clean starting point
     // to detect violations.
