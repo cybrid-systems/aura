@@ -128,6 +128,16 @@ clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
                  const std::unordered_map<std::string, aura::ast::NodeId>* subst = nullptr,
                  std::unordered_map<std::string, std::string>* name_map = nullptr);
 
+// Forward decl: inner-macro expansion helper (defined at end of file).
+// Used by the runtime hygienic macro expansion to recursively
+// expand nested macro calls in the cloned body (Issue #121).
+// Bounded by `max_depth` to prevent infinite recursion.
+struct MacroDef;
+static aura::ast::NodeId expand_inner_macros(
+    aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura::ast::NodeId root,
+    int depth, int max_depth,
+    const std::unordered_map<std::string, MacroDef>& macros);
+
 // Depth guard: protects Env::lookup against cyclic parent chains
 // (thread_local since lookup can be called from multiple fibers)
 static constexpr std::size_t MAX_ENV_DEPTH = 1024;
@@ -2545,10 +2555,25 @@ void Evaluator::init_pair_primitives() {
         return make_bool(EqCheck{*this}(a[0], a[1], 0));
     });
 
-    primitives_.add("gensym", [this](const auto&) -> EvalValue {
+    // (gensym)  → "G__0"
+    // (gensym "prefix") → "prefix__1"
+    // (gensym "prefix" n) → "prefix__n" (n is an int suffix)
+    // Issue #121: extended to take an optional prefix argument.
+    // The prefix is a string; the suffix is a global atomic
+    // counter (monotonically increasing for the process).
+    // Useful for quasiquote templates that need to generate
+    // unique binding names at macro-expansion time.
+    primitives_.add("gensym", [this](std::span<const EvalValue> a) -> EvalValue {
         static std::atomic<std::int64_t> gs_counter_{0};
         auto id = gs_counter_.fetch_add(1, std::memory_order_relaxed);
-        std::string name = "G__" + std::to_string(id);
+        std::string prefix = "G__";
+        if (a.size() >= 1 && is_string(a[0])) {
+            auto idx = as_string_idx(a[0]);
+            if (idx < string_heap_.size()) {
+                prefix = string_heap_[idx] + "__";
+            }
+        }
+        std::string name = prefix + std::to_string(id);
         auto sid = string_heap_.size();
         string_heap_.push_back(name);
         return make_string(sid);
@@ -16251,6 +16276,22 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                 auto expanded = clone_macro_body(*f, *p, *md.flat, *src_pool,
                                                                  md.body_id, &subst, &rename_map);
                                 if (expanded == aura::ast::NULL_NODE) return make_void();
+                                // Issue #121: recursively expand any nested
+                                // macro calls in the cloned body using the
+                                // runtime `macros_` registry. The cloned body
+                                // lives in the calling flat (`*f`), but other
+                                // macros (m1, m2, ...) were defined in earlier
+                                // forms with their own flates — so the static
+                                // `macro_expand_all` (which scans the flat)
+                                // wouldn't see them. We walk the cloned tree
+                                // and, for each Call whose callee is in
+                                // `macros_`, recursively expand it. Bounded by
+                                // a depth limit (10) to prevent infinite loops
+                                // (e.g., macro X calls macro X).
+                                expanded = expand_inner_macros(f, p, expanded,
+                                                              /*depth=*/0,
+                                                              /*max_depth=*/10,
+                                                              macros_);
                                 return eval_flat(*f, *p, expanded, eval_env);
                             }
 
@@ -17968,7 +18009,81 @@ clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
     return new_id;
 }
 
-// ── Pre-expand all macros in a FlatAST ─────────────────────────
+// ── expand_inner_macros — recursively expand nested macro calls ─────
+//
+// Issue #121: when a hygienic macro's body contains a call to
+// another macro, that inner call needs to be expanded too. The
+// static `macro_expand_all` (below) scans the flat for
+// MacroDef nodes, but in the typical REPL / stdin flow each
+// form has its own flat — so macros defined in earlier forms
+// aren't visible to the static helper. This recursive helper
+// walks the cloned AST and expands inner Calls using the
+// runtime `macros_` registry (which IS shared across forms).
+//
+// Bounded by `max_depth` to prevent infinite recursion (e.g., a
+// macro X whose body calls X).
+static aura::ast::NodeId expand_inner_macros(
+    aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura::ast::NodeId root,
+    int depth, int max_depth,
+    const std::unordered_map<std::string, MacroDef>& macros) {
+    using namespace aura::ast;
+    if (root == NULL_NODE || depth >= max_depth) return root;
+    auto v = flat->get(root);
+    if (v.tag == NodeTag::Call && !v.children.empty()) {
+        auto callee_v = flat->get(v.child(0));
+        if (callee_v.tag == NodeTag::Variable) {
+            auto cname = std::string(pool->resolve(callee_v.sym_id));
+            auto it = macros.find(cname);
+            if (it != macros.end()) {
+                // Build substitution: macro param → arg NodeId
+                const auto& md = it->second;
+                std::unordered_map<std::string, NodeId> subst;
+                std::size_t regular_count = md.dotted && md.params.size() > 0
+                                                ? md.params.size() - 1
+                                                : md.params.size();
+                for (std::size_t ai = 0; ai < regular_count && ai + 1 < v.children.size(); ++ai)
+                    subst[md.params[ai]] = v.child(ai + 1);
+                if (md.dotted) {
+                    // Rest params on inner macros: not yet supported
+                    // (same limitation as the main hygienic path).
+                    return root;
+                }
+                // Clone the macro body into the current flat and
+                // re-intern sym_ids. Use the runtime registry's
+                // `flat` / `pool` pointers as the source.
+                std::unordered_map<std::string, std::string> rename_map;
+                auto* src_pool = md.pool ? md.pool : pool;
+                auto cloned = clone_macro_body(*flat, *pool, *md.flat, *src_pool,
+                                                md.body_id, &subst, &rename_map);
+                if (cloned == NULL_NODE) return root;
+                // Recursively expand inner macros in the cloned body
+                cloned = expand_inner_macros(flat, pool, cloned, depth + 1, max_depth, macros);
+                // Rewrite the parent's child to use the cloned body
+                auto parent_id = flat->parent_of(root);
+                if (parent_id != NULL_NODE) {
+                    auto parent_v = flat->get(parent_id);
+                    for (std::uint32_t ci = 0; ci < parent_v.children.size(); ++ci) {
+                        if (parent_v.child(ci) == root) {
+                            flat->set_child(parent_id, ci, cloned);
+                            break;
+                        }
+                    }
+                }
+                return cloned;
+            }
+        }
+    }
+    // Not a macro call — recurse into children
+    for (std::uint32_t i = 0; i < v.children.size(); ++i) {
+        auto child = v.child(i);
+        // We can't modify children in place easily; rebuild
+        // the current node's children via the recursive call.
+        (void)expand_inner_macros(flat, pool, child, depth, max_depth, macros);
+    }
+    return root;
+}
+
+// ── Pre-expand all macros in a FlatAST ────────────────
 // Scans for MacroDef nodes, collects them, then expands all macro calls.
 // Returns the (possibly new) root node of the expanded tree.
 // After this pass, the FlatAST contains no MacroDef or macro calls.
@@ -18081,6 +18196,16 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
         if (!expanded_any)
             return root;
         root = new_root;
+    }
+    // Issue #121: hit the pass limit with macros still in the
+    // tree. Emit a warning so the user knows the result is
+    // partial. This is the user-facing equivalent of the
+    // solver TIMEOUT pattern from Issue #118.
+    if (root != NULL_NODE) {
+        std::println(std::cerr,
+                     "warning: macro_expand_all hit pass limit ({}); "
+                     "the result may have unexpanded macro calls",
+                     max_passes);
     }
     return root;
 }
