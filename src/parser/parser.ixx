@@ -51,7 +51,7 @@ private:
     aura::ast::NodeId parse_set();
     aura::ast::NodeId parse_quote();
     aura::ast::NodeId parse_cond();
-    aura::ast::NodeId parse_defmacro();
+    aura::ast::NodeId parse_defmacro(bool hygienic = false);
     aura::ast::NodeId parse_match();
     aura::ast::NodeId parse_linear();
     aura::ast::NodeId parse_move();

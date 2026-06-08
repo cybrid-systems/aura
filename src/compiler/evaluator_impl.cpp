@@ -16219,9 +16219,42 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                         auto macro_it = macros_.find(cname);
                         if (macro_it != macros_.end()) {
                             auto& md = macro_it->second;
-                            // Convert AST args to data (NOT evaluate — macros receive syntax)
                             bool is_rest = md.dotted;
 
+                            // Issue #120: hygienic macros use clone_macro_body
+                            // with a name_map (single-eval AST substitution +
+                            // automatic gensym for template-introduced
+                            // bindings). Non-hygienic macros keep the legacy
+                            // double-eval path for backward compatibility.
+                            if (md.hygienic) {
+                                if (is_rest) {
+                                    // Rest params on hygienic macros are
+                                    // not yet supported — fall through to a
+                                    // "no expansion" return.
+                                    return make_void();
+                                }
+                                std::unordered_map<std::string, aura::ast::NodeId> subst;
+                                std::size_t regular_count =
+                                    is_rest ? md.params.size() - 1 : md.params.size();
+                                for (std::size_t i = 0;
+                                     i < regular_count && i + 1 < v.children.size(); ++i)
+                                    subst[md.params[i]] = v.child(i + 1);
+                                // Clone the macro body with substitution +
+                                // name_map. The cloned tree is in the
+                                // *current* FlatAST (we use the target's
+                                // flat = f, source = md.flat). name_map is
+                                // empty initially; clone_macro_body
+                                // populates it as it gensym's
+                                // template-introduced bindings.
+                                std::unordered_map<std::string, std::string> rename_map;
+                                auto* src_pool = md.pool ? md.pool : p;
+                                auto expanded = clone_macro_body(*f, *p, *md.flat, *src_pool,
+                                                                 md.body_id, &subst, &rename_map);
+                                if (expanded == aura::ast::NULL_NODE) return make_void();
+                                return eval_flat(*f, *p, expanded, eval_env);
+                            }
+
+                            // Convert AST args to data (NOT evaluate — macros receive syntax)
                             // Bind regular params first (all but the last)
                             std::size_t regular_count =
                                 is_rest ? md.params.size() - 1 : md.params.size();
@@ -17629,9 +17662,12 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                     }
 
                     // Store macro definition with proper dotted flag
-                    bool is_dotted = (v.int_value != 0);
-                    macros_[std::string(name)] =
-                        MacroDef{std::move(param_names), is_dotted, f, p, body_id};
+                    // Issue #120: dotted is bit 0, hygienic is bit 1 of
+                    // int_val_ (encoded by add_macrodef in parser_impl.cpp).
+                    bool is_dotted = (v.int_value & 1) != 0;
+                    bool is_hygienic = (v.int_value & 2) != 0;
+                    macros_[std::string(name)] = MacroDef{std::move(param_names), is_dotted,
+                                                         is_hygienic, f, p, body_id};
                     return EvalResult(make_void());
                 }
                 case aura::ast::NodeTag::Linear:
@@ -17740,13 +17776,27 @@ clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
         "foldl",
     };
 
-    // Variable substitution: if this variable is a macro param, return the arg clone
+    // Variable substitution: if this variable is a macro param, return the arg clone.
+    //
+    // Issue #120: the arg's NodeId is in the *calling* FlatAST (= target),
+    // not in `source` (the macro definition's FlatAST). The recursive
+    // call to clone_macro_body with body_id=it->second would try to
+    // read it->second from `source`, which is wrong (NodeId indices
+    // are per-FlatAST). The fix: detect this case and return the
+    // arg's NodeId as-is, then recursively clone its children from
+    // `target` (not `source`).
     if (subst && v.tag == NodeTag::Variable && v.sym_id != INVALID_SYM) {
         auto name = std::string(source_pool.resolve(v.sym_id));
         auto it = subst->find(name);
         if (it != subst->end()) {
-            return clone_macro_body(target, target_pool, source, source_pool, it->second, subst,
-                                    name_map);
+            // The arg is already in `target` (it's a normal expression
+            // in the calling code). Return it directly — it's a
+            // valid NodeId in target. If we need to clone it
+            // (because the body references the same arg multiple
+            // times), we'd need to deep-clone from target. For
+            // now, we return the original NodeId; multiple
+            // references in the body share the same node.
+            return it->second;
         }
     }
 
@@ -17771,6 +17821,43 @@ clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
 
     // Rename a binding position for hygiene: gensym if macro-introduced
     static std::uint64_t hyg_ctr = 0;
+    auto rename_binding_pre = [&](SymId sid) -> SymId {
+        if (sid == INVALID_SYM || !name_map)
+            return transplant(sid);
+        auto name = std::string(source_pool.resolve(sid));
+        if ((subst && subst->count(name)) || builtins.count(name))
+            return transplant(sid);
+        auto it = name_map->find(name);
+        if (it != name_map->end())
+            return target_pool.intern(it->second);
+        auto fresh = std::string("__") + name + "_" + std::to_string(hyg_ctr++);
+        (*name_map)[name] = fresh;
+        return target_pool.intern(fresh);
+    };
+
+    // Issue #120: pre-scan the body to populate name_map BEFORE cloning.
+    // The body may reference gensym'd bindings (e.g., `(let ((tmp a)) (set! b tmp))`
+    // — the inner `tmp` Variable reference must see the gensym'd name
+    // when it's cloned). Without the pre-scan, the recursive clone
+    // would process the inner `tmp` (as a Variable reference) before the
+    // let binding is processed (which is what gensym's `tmp`).
+    if (name_map) {
+        std::function<void(NodeId)> pre_scan = [&](NodeId nid) {
+            if (nid == NULL_NODE || nid >= source.size()) return;
+            auto nv = source.get(nid);
+            // If this node is a binding position, gensym its name
+            // (into the name_map) but don't generate any target node.
+            if (nv.tag == NodeTag::Let || nv.tag == NodeTag::LetRec ||
+                nv.tag == NodeTag::Define) {
+                rename_binding_pre(nv.sym_id);
+            } else if (nv.tag == NodeTag::Lambda) {
+                for (auto pid : nv.params) rename_binding_pre(pid);
+            }
+            for (auto c : nv.children) pre_scan(c);
+        };
+        pre_scan(body_id);
+    }
+
     auto rename_binding = [&](SymId sid) -> SymId {
         if (sid == INVALID_SYM || !name_map)
             return transplant(sid);
@@ -17843,8 +17930,24 @@ clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
                 new_id = target.add_begin(child_ids);
             break;
         case NodeTag::Set:
-            if (!child_ids.empty())
-                new_id = target.add_set(transplant(v.sym_id), child_ids[0]);
+            if (!child_ids.empty()) {
+                // Issue #120: if the set! target is a macro param, look
+                // up the arg and use ITS sym_id (resolved from target).
+                // Otherwise the set! would target the macro param
+                // (e.g., "a") which isn't bound in the calling env.
+                SymId set_name_sid = transplant(v.sym_id);
+                if (subst) {
+                    auto set_name = std::string(source_pool.resolve(v.sym_id));
+                    auto sit = subst->find(set_name);
+                    if (sit != subst->end()) {
+                        auto arg_v = target.get(sit->second);
+                        if (arg_v.tag == NodeTag::Variable) {
+                            set_name_sid = arg_v.sym_id;
+                        }
+                    }
+                }
+                new_id = target.add_set(set_name_sid, child_ids[0]);
+            }
             break;
         case NodeTag::Quote:
             if (!child_ids.empty())
@@ -17881,6 +17984,7 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
             std::vector<std::string> params;
             NodeId body_id;
             bool dotted;
+            bool hygienic;  // Issue #120
         };
         std::unordered_map<std::string, MD> local_macros;
         bool has_macro_def = false;
@@ -17895,8 +17999,10 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
                 for (auto pid : v.params)
                     params.push_back(std::string(pool.resolve(pid)));
                 auto body_id = v.children.empty() ? NULL_NODE : v.child(0);
-                bool is_dotted = (v.int_value != 0);
-                local_macros[macro_name] = MD{&flat, &pool, std::move(params), body_id, is_dotted};
+                // Issue #120: dotted is bit 0, hygienic is bit 1
+                bool is_dotted = (v.int_value & 1) != 0;
+                bool is_hygienic = (v.int_value & 2) != 0;
+                local_macros[macro_name] = MD{&flat, &pool, std::move(params), body_id, is_dotted, is_hygienic};
             }
         }
 
