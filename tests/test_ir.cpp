@@ -1273,13 +1273,16 @@ int main() {
                     "TC61 FAIL: round-trip: spec={} gen={}",
                     f.specialized_for, f.generic_id);
             }
-            // GuardShape opcode is in the enum and the value is 50.
+            // GuardShape opcode is in the enum.
+            // Issue #124 added TryBegin + TryEnd opcodes
+            // before GuardShape in the enum, shifting it from
+            // position 50 to position 52.
             aura::ir::IROpcode guard_op = aura::ir::IROpcode::GuardShape;
-            if (static_cast<std::uint32_t>(guard_op) == 50) {
-                ++tc_passed; std::println("TC61 OK: GuardShape opcode value = 50");
+            if (static_cast<std::uint32_t>(guard_op) == 52) {
+                ++tc_passed; std::println("TC61 OK: GuardShape opcode value = 52");
             } else {
                 ++tc_failed; std::println(std::cerr,
-                    "TC61 FAIL: GuardShape opcode value: {}",
+                    "TC61 FAIL: GuardShape opcode value: {} (expected 52)",
                     static_cast<std::uint32_t>(guard_op));
             }
         }
