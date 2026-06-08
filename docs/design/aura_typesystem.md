@@ -1,6 +1,6 @@
 # Aura 类型系统
 
-**状态**: 渐进类型 L6 + T2a-T2e 完整管线，集成到 IR 管线（warnings-only 模式）
+**状态**: 渐进类型 L6 + T2a-T2e + T4 完整管线，集成到 IR 管线（warnings-only 模式）。T4 包括增量类型检查、Let-Poly、ADT 穷尽性检查。
 **源码**: `src/compiler/type_checker_impl.cpp`, `src/core/type_impl.cpp`, `src/compiler/diag.ixx`
 
 ## 1. 架构总览
@@ -86,7 +86,7 @@ eval(expr):
 | CONSISTENT 约束 (渐进一致) | ✅ |
 | Union-Find 求解 | ✅ T2a — multi-pass worklist fixpoint |
 | 函数参数/返回分解 | ✅ |
-| Let-Poly (let多态) | ⚡ `is_poly` 字段存在但未完整使用 |
+| Let-Poly (let多态) | ✅ T4 | `is_poly` 由 `forall_of` 决定，lookup 调用 `instantiate_forall` |
 
 ### 2.5 ADT 类型推断
 
@@ -96,7 +96,7 @@ eval(expr):
 | `match` 模式类型检查 | ✅ T2b | 构造函数模式 + 字段绑定 |
 | 多态构造函数 | ✅ T2b | forall-wrapped 类型变量 |
 | 参数化 ADT | ✅ T2b | `(Option Int)` 等 |
-| 穷尽性检查 | 🟡 | 尚未实现 |
+| 穷尽性检查 | ✅ T4 | `__match_tmp` + `get_adt_constructors` 对比，wildcard 跳过 |
 
 ### 2.6 Blame 结构化
 
@@ -156,11 +156,19 @@ set-code → query → typed-mutate → eval-current → TypeChecker
 
 ## 5. 限制与未实现
 
-### 5.1 增量类型检查（未实装）
+### 5.1 增量类型检查（实装于 synthesize_flat）
 
-- `FlatAST::dirty_` 字段存在（用于 EDSL mutate 的增量编译）
-- TypeChecker 不读 `dirty_`，每次全量检查
-- 类型推断结果不缓存到 `type_id_`
+- ✅ `FlatAST::dirty_` 字段存在并被 `synthesize_flat` 读取
+- ✅ `if (!flat.is_dirty(id))` 跳过路径已实装
+  (`type_checker_impl.cpp:1336`)
+- ✅ 缓存的 `type_id` 在脏路径命中时返回；
+  缓存有效但需重检查时走 `stale_cache` 计数
+- ✅ 统计字段 `cache_hits` / `cache_misses` /
+  `stale_cache` 已从 EngineStats 聚合到 TypeChecker
+  整体统计
+
+**剩余限制**：脏传播仍按单次 mutation 触发；
+多 mutation 串行场景下，可进一步粒化（TODO 跟进）。
 
 ### 5.2 类型信息不流向 IR
 
@@ -168,27 +176,42 @@ set-code → query → typed-mutate → eval-current → TypeChecker
 - lowering 时无法访问完整的推断类型（仅 TypeAnnotation 边界 + call-site 有 CastOp）
 - 无法做基于类型的 IR 优化
 
-### 5.3 Let-Poly 未使用
+### 5.3 Let-Poly（已实装于 TypeEnv::bind + lookup）
 
-- `TypeScheme::is_poly` 字段存在但始终为 false
-- `let` 绑定不做泛化
-- 多态函数类型退化为单一实例化
+- ✅ `Binding::is_poly` 由 `reg_.forall_of(type)` 动态决定
+  (`type_checker_impl.cpp:101`)
+- ✅ `lookup` 检测 `is_poly` 并调用
+  `reg_.instantiate_forall(...)` 泛化
+  (`type_checker_impl.cpp:114-115`)
+- ✅ `infer_flat` 在 `let` / `letrec` 绑定中
+  正确传播 `is_poly` 标志
 
 ### 5.4 模块类型签名
 
 - import/require 绑定的类型大部分是 Dynamic
 - 无类型签名传播机制
 
-### 5.5 ADT 穷尽性检查
+### 5.5 ADT 穷尽性检查（部分实装）
 
-- `match` 模式检查不会警告未覆盖的分支
+- ✅ `__match_tmp` + `get_match_info` 识别 match 表达式
+  (`type_checker_impl.cpp:2318-2319`)
+- ✅ `reg_.get_adt_constructors(subject_type)` 对比分支
+  (`type_checker_impl.cpp:2333`)
+- ✅ 缺失分支以诊断上报，wildcard 跳过
+
+**剩余限制**：当前仅检查
+`__match_tmp` 单层 match；嵌套 match
+在外部 match 亪面后不再独立检查。
 
 ## 6. 未来改进路径
 
-### Level 2: 增量类型检查
+### Level 2: 增量类型检查（已实装，见 5.1）
 
-- 利用 `FlatAST::dirty_` 做脏路径跳过
+- 原始改进路径：利用 `FlatAST::dirty_` 做脏路径跳过
 - 缓存类型推断结果到 `type_id_`
+- 当前状态：实装于 `synthesize_flat`，含
+  `cache_hits` / `cache_misses` / `stale_cache` 统计
+- 进一步：粒化到单节点多 mutation 场景
 
 ### Level 3: 类型信息进入 IR
 
@@ -197,10 +220,19 @@ set-code → query → typed-mutate → eval-current → TypeChecker
 - IRInterpreter 做运行时类型断言（渐进类型）
 - LLVM JIT 利用类型生成更优机器码
 
-### Level 4: Let-Poly 启用
+### Level 4: Let-Poly（已实装，见 5.3）
 
-- 启用 `TypeScheme::is_poly` 做 let 泛化
-- 约束求解器支持类型方案实例化
+- 原始改进路径：启用 `TypeScheme::is_poly` 做 let 泛化
+- 当前状态：实装于 `TypeEnv::bind` + `lookup`，
+  `is_poly` 由 `forall_of` 动态决定
+- 进一步：多 mutation 下的 poly 缓存失效
+
+### Level 5: ADT 穷尽性检查（部分实装，见 5.5）
+
+- 原始改进路径：match 模式未覆盖分支警告
+- 当前状态：`__match_tmp` + `get_adt_constructors`
+  单层检查已实装
+- 进一步：嵌套 match 独立检查
 
 ## 7. 参考文档
 
@@ -209,3 +241,23 @@ set-code → query → typed-mutate → eval-current → TypeChecker
 - `docs/ir_pipeline_design.md` — IR 管线设计
 - `docs/roadmap.md` — 路线图
 - `src/compiler/type_checker_impl.cpp` — 类型检查器实现
+
+## 8. Implementation vs Documentation 同步说明
+
+本节记录了文档与实现的最近同步情况（Issue #129）。
+
+### 8.1 同步项
+
+| 项目 | 文档原状 | 实际实现 | 同步后 |
+|------|----------|----------|--------|
+| 增量类型检查 | 标 "未实装"、每次全量检查 | `synthesize_flat` 已读 `is_dirty` 并返回缓存 `type_id` | 已移入 5.1，标 "实装" |
+| Let-Poly | 标 "未完整使用" | `TypeEnv::bind` + `lookup` 联动 `is_poly` + `instantiate_forall` | 已移入 5.3，标 "实装" |
+| ADT 穷尽性 | 标 "尚未实现" | `__match_tmp` + `get_adt_constructors` 单层检查 | 已移入 5.5，标 "部分实装" |
+
+### 8.2 同步检查清单
+
+提交 PR 之前应验证：
+- 状态表 (2.4 / 2.5) 与 5.x 节描述一致
+- 5.x 节 "剩余限制" 描述具体、未夸大
+- "未来改进路径" (6) 中已实装项目标注 "已实装"
+- 新代码含增量缓存、poly、穷尽性等语义时，同步更新本节
