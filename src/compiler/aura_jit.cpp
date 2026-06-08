@@ -147,7 +147,8 @@ enum Op : uint32_t {
     OpArenaPush = 48,
     OpArenaPop = 49,
     // Issue #61 Iter 3: lazy-deopt guard. Same encoding as
-    // aura::ir::IROpcode::GuardShape (50); we keep the local
+    // aura::ir::IROpcode::GuardShape (now 52 after Issue #124
+    // added TryBegin + TryEnd before it); we keep the local
     // mirror in sync.
     OpGuardShape = 50,
 };
