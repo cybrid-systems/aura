@@ -59,6 +59,20 @@ export enum class IROpcode : std::uint8_t {
     // Error handling
     Raise,   // raise error: result_slot, cause_slot
     IsError, // check if error: result_slot, value_slot
+    // Issue #124: exception-handling opcodes for try/catch blocks.
+    // TryBegin pushes an exception frame onto the runtime
+    // exception stack; Raise unwinds to the nearest matching
+    // TryBegin; TryEnd pops the frame. The interpreter (and
+    // future JIT backend) maintains a stack of active try
+    // regions to make Raise O(1) to find the handler.
+    TryBegin, // start try: handler_block (branch target on Raise)
+    TryEnd,   // end try (pop frame): result_slot
+    // Catch is implicit: the TryBegin's handler_block is the
+    // catch body. We don't have a separate Catch opcode because
+    // the catch is structurally a regular block that starts
+    // with a bound error variable. The handler_block's first
+    // instruction is typically a Local that reads the exception
+    // payload from a runtime slot.
     // Hash operations (inline, avoids PrimCall dispatch)
     HashRef,    // hash-ref: result, hash, key
     HashSet,    // hash-set!: result, hash, key, val
@@ -157,6 +171,9 @@ export constexpr OpcodeInfo kOpcodeInfo[] = {
     // 37-38  Error handling
     {"raise", 2, true},    // Raise: result, cause
     {"is-error", 2, true}, // IsError: result, value
+    // Issue #124: try/catch exception support
+    {"try-begin", 1, false}, // TryBegin: handler_block (no result)
+    {"try-end", 1, true},    // TryEnd: result_slot (pop frame, value)
     // 39-41  Hash operations (inline, avoids PrimCall dispatch)
     {"hash-ref", 3, true},     // HashRef: result, hash, key
     {"hash-set", 3, true},     // HashSet: void, hash, keyval
@@ -174,7 +191,7 @@ export constexpr OpcodeInfo kOpcodeInfo[] = {
     {"guard-shape", 4, true},    // GuardShape: result, arg, expected, generic
 };
 
-static_assert(std::size(kOpcodeInfo) == 51, "kOpcodeInfo must have exactly one entry per IROpcode");
+static_assert(std::size(kOpcodeInfo) == 53, "kOpcodeInfo must have exactly one entry per IROpcode");
 
 // Helper: look up opcode info by IROpcode enum value
 inline const OpcodeInfo* lookup_opcode(IROpcode op) {

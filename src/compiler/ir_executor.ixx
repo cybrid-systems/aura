@@ -43,6 +43,23 @@ struct ExecFrame {
     std::size_t resume_instr = 0;
     bool is_top_level = false;
     std::uint32_t result_slot = 0;
+    // Issue #124: per-frame exception-stack depth marker. The
+    // interpreter's outer exception stack (ex_stack_) is shared
+    // across all call frames; this depth records where this frame
+    // entered (so popping back across a function boundary
+    // unwinds handlers opened in this frame, not outer frames).
+    std::size_t ex_depth_at_entry = 0;
+};
+
+// Issue #124: per-interpreter exception stack. Each TryBegin
+// pushes a frame; Raise looks up the top frame to find the
+// handler block; TryEnd pops the frame. The exception payload
+// (a runtime EvalValue) is stored in `payload` until the
+// handler is invoked.
+struct ExHandler {
+    std::uint32_t handler_block = 0;
+    std::uint32_t result_slot = 0;  // where to store the caught value
+    std::uint32_t payload_slot = 0; // temp slot for the exception payload
 };
 
 // IR interpreter — lowered code execution with closure support
@@ -223,6 +240,12 @@ private:
 
     // Explicit call stack: replaces C++ recursion for closure calls
     std::vector<ExecFrame> call_stack_;
+
+    // Issue #124: exception stack. TryBegin pushes a frame; Raise
+    // unwinds to the top frame's handler_block; TryEnd pops.
+    // Shared across all call frames (the per-frame ex_depth_at_entry
+    // marker handles frame-local scoping on return).
+    std::vector<ExHandler> ex_stack_;
 
     // Per-function escape maps from IR escape analysis.
     // escape_maps_[func_id][slot] = 1 (ESCAPED) or 0 (NON_ESCAPING).

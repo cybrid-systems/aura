@@ -62,7 +62,8 @@ EvalResult IRInterpreter::execute() {
                            .args = {},
                            .resume_instr = 0,
                            .is_top_level = true,
-                           .result_slot = 0});
+                           .result_slot = 0,
+                           .ex_depth_at_entry = ex_stack_.size()});
 
     while (!call_stack_.empty()) {
         auto& frame = call_stack_.back();
@@ -78,7 +79,8 @@ EvalResult IRInterpreter::execute() {
                                    .args = std::move(pc.args),
                                    .resume_instr = 0,
                                    .is_top_level = false,
-                                   .result_slot = pc.result_slot});
+                                   .result_slot = pc.result_slot,
+                                   .ex_depth_at_entry = ex_stack_.size()});
             continue;
         }
 
@@ -593,7 +595,54 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 }
 
                 case IROpcode::Raise: {
-                    // Raise: result_slot=ops[0], cause_slot=ops[1]
+                    // Issue #124: unwinds to the nearest TryBegin. If
+                    // none is active, propagates the error up to
+                    // the runtime (caller will see it as an EvalResult
+                    // error).
+                    if (ex_stack_.empty()) {
+                        return std::unexpected(Diagnostic{
+                            ErrorKind::UncaughtException, "uncaught exception"});
+                    }
+                    auto& top = ex_stack_.back();
+                    // Store the cause in the handler's payload slot,
+                    // then jump to the handler block.
+                    auto cause_slot = (ops.size() > 1) ? ops[1] : 0;
+                    locals[top.payload_slot] = (cause_slot < locals.size())
+                                                    ? locals[cause_slot]
+                                                    : make_void();
+                    // The "result" slot will be filled in by the
+                    // handler's own IsError/Local ops. We just set
+                    // current (the local var in run_function's loop)
+                    // to the handler.
+                    current = top.handler_block;
+                    continue; // restart the dispatch loop in the new block
+                }
+
+                case IROpcode::TryBegin: {
+                    // ops[0] = handler_block
+                    // ops[1] = result_slot (where to store caught value)
+                    // ops[2] = payload_slot (temp slot for the cause)
+                    ExHandler h;
+                    h.handler_block = (ops.size() > 0) ? ops[0] : 0;
+                    h.result_slot    = (ops.size() > 1) ? ops[1] : 0;
+                    h.payload_slot   = (ops.size() > 2) ? ops[2] : 0;
+                    ex_stack_.push_back(h);
+                    break;
+                }
+
+                case IROpcode::TryEnd: {
+                    // Pop the matching TryBegin (if any). The TryEnd
+                    // marks the end of the try body; control flow after
+                    // TryEnd is the "normal" path (i.e., no exception).
+                    if (!ex_stack_.empty()) {
+                        ex_stack_.pop_back();
+                    }
+                    // ops[0] is the result slot (we copy through whatever
+                    // is in the matching slot if any, but for now this
+                    // is mostly a no-op since the try body's result was
+                    // already in a separate slot).
+                    break;
+                }
                     // Create an error value by calling the raise primitive
                 case IROpcode::HashRef: {
                     auto pfn = context_.primitives.lookup("hash-ref");
@@ -628,16 +677,6 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         auto& hash_val = locals[ops[1]];
                         auto& key_val = locals[ops[2]];
                         locals[ops[0]] = (*pfn)({hash_val, key_val});
-                    } else {
-                        locals[ops[0]] = make_void();
-                    }
-                    break;
-                }
-
-
-                    auto pfn = context_.primitives.lookup("raise");
-                    if (pfn) {
-                        locals[ops[0]] = (*pfn)({locals[ops[1]]});
                     } else {
                         locals[ops[0]] = make_void();
                     }
