@@ -2805,6 +2805,16 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                 std::unique_lock cache_write(jit_cache_mtx_);
                 jit_cache_.erase("__lambda__");
             }
+            // Also drop the per-function compile cache inside AuraJIT
+            // (compile_fns_) so the next compile() actually re-runs the
+            // LLVM pipeline. Without this, compile() short-circuits
+            // on a cache hit and returns the old fn_ptr even though we
+            // erased jit_cache_ — and the runtime keeps calling the
+            // stale implementation. The name is "__lambda__" because
+            // the body of a top-level define is lowered as an
+            // anonymous lambda, so every define shares that name in
+            // the JIT's per-function cache.
+            jit_.invalidate("__lambda__");
             invalidate_function(name_str);
             mark_module_dirty(name_str);
         }

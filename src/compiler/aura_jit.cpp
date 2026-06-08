@@ -1797,6 +1797,26 @@ const std::vector<FunctionMeta>& AuraJIT::compiled_functions() const {
     return impl_->compiled_fns_;
 }
 
+void AuraJIT::invalidate(const char* name) {
+    if (!impl_ || !name)
+        return;
+    std::string n(name);
+    // Drop the per-function resource tracker (removes the
+    // module from the JITDylib) AND the per-function compile
+    // cache entry. This matches what get_or_create_tracker()
+    // does on a hot-swap; we're exposing it publicly so the
+    // CompilerService can call it on (re)define without going
+    // through the compile path.
+    auto it = impl_->fn_trackers_.find(n);
+    if (it != impl_->fn_trackers_.end()) {
+        if (auto err = it->second->remove())
+            llvm::consumeError(std::move(err));
+        impl_->fn_trackers_.erase(it);
+    }
+    std::unique_lock<std::shared_mutex> lock(impl_->fn_compile_mtx_);
+    impl_->compile_fns_.erase(n);
+}
+
 // ── Public AOT API ──────────────────────────────────────────────
 
 bool emit_native_object(const FlatFunction& fn, const std::string& out_obj_path,
@@ -1847,6 +1867,7 @@ void* AuraJIT::get_function_ptr(const char*) {
 void AuraJIT::register_symbol(const char*, void*) {}
 void AuraJIT::set_string_pool(const std::vector<std::string>*) {}
 void AuraJIT::register_function(int64_t, ScalarFn, uint32_t, uint32_t, uint32_t) {}
+void AuraJIT::invalidate(const char*) {}
 const std::vector<FunctionMeta>& AuraJIT::compiled_functions() const {
     static std::vector<FunctionMeta> empty;
     return empty;

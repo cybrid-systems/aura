@@ -135,6 +135,13 @@ public:
 
     // Hot-swap: replace an already-compiled function with a new version.
     // Removes the old module from the JIT dylib and compiles + links the new one.
+
+    // Invalidate the per-function compile cache entry (and the
+    // ResourceTracker module) for `name`. Call this from a
+    // redefine path so the next compile() actually re-runs the
+    // LLVM pipeline instead of returning a stale fn_ptr.
+    void invalidate(const char* name);
+
     private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

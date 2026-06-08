@@ -441,7 +441,16 @@ bool Scheduler::wait_for_safepoint(int timeout_ms) {
             // == 0` check ensures the fiber is no longer
             // executing; the `fibers_at_safepoint >= 1` check
             // ensures it arrived at the safepoint.
-            if (gc.running_fiber_count.load(std::memory_order_acquire) > 0) {
+            //
+            // Important: a fiber that has called check_gc_safepoint()
+            // and entered the spin-wait IS at the safepoint, even
+            // though running_fiber_count is still 1 (the fiber
+            // is in resume() spin-waiting, not yielded). So we
+            // only require running_fiber_count == 0 if no fiber
+            // has yet arrived — the "running but not arrived"
+            // case is the one that the Issue #115 fix targets.
+            if (gc.fibers_at_safepoint.load(std::memory_order_acquire) < 1
+                && gc.running_fiber_count.load(std::memory_order_acquire) > 0) {
                 return false;
             }
             if (gc.fibers_at_safepoint.load(std::memory_order_acquire) < 1) {

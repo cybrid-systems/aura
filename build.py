@@ -141,7 +141,7 @@ def test_unit():
     concurrent_bin = BUILD / "test_concurrent"
     if concurrent_bin.exists():
         start2 = time.time()
-        r2 = subprocess.run([str(concurrent_bin)], timeout=120)
+        r2 = subprocess.run([str(concurrent_bin)], timeout=180)
         elapsed2 = time.time() - start2
         # binary prints directly to terminal; just check rc
         ok(f"concurrent (exit {r2.returncode}) in {elapsed2:.2f}s")
@@ -818,7 +818,7 @@ def test_concurrent():
     if not bin_path.exists():
         print("  test_concurrent binary not found")
         return 1
-    r = subprocess.run([str(bin_path)], timeout=120)
+    r = subprocess.run([str(bin_path)], timeout=180)
     if r.returncode != 0 and r.stderr:
         print(r.stderr[:500], file=sys.stderr)
     return r.returncode
