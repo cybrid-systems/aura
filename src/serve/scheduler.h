@@ -76,6 +76,37 @@ public:
     // Check if there are any fibers in Waiting state (on epoll).
     bool has_waiting_fibers() const;
 
+    // Issue #119: proper-blocking fiber:join API. The
+    // joiner fiber is registered against the target fiber's
+    // id. When the target completes (on_fiber_done), all
+    // registered joiners are woken by writing to their eventfds.
+    //
+    // The joiner calls this from inside its own fiber (it has
+    // a current Fiber*). The target may or may not exist yet
+    // (a fiber ID is just an int64_t; the lookup goes through
+    // `fiber_by_id`). If the target is already done, the
+    // joiner is NOT registered — the caller checks via
+    // `fiber_by_id(id)->is_done()` before calling add_joiner.
+    //
+    // Returns true on success, false if the target fiber
+    // cannot be found (caller should treat that as a join
+    // failure).
+    bool add_joiner(std::uint64_t target_fiber_id, Fiber* joiner);
+
+    // Issue #119: remove a previously-registered joiner. Called
+    // by the joiner after it wakes up (regardless of whether
+    // the target completed or the join timed out), to clean
+    // up the map. Idempotent: removing a joiner that wasn't
+    // registered is a no-op.
+    void remove_joiner(std::uint64_t target_fiber_id, Fiber* joiner);
+
+    // Issue #119: lookup a Fiber* by its ID. Returns nullptr
+    // if no such fiber exists (either the fiber has been
+    // destroyed, or the id was never valid). Used by the
+    // evaluator's fiber:join to check if the target is
+    // already done before registering as a joiner.
+    Fiber* fiber_by_id(std::uint64_t fiber_id) const;
+
     // ── Worker management ───────────────────────────
     int num_workers() const { return num_workers_; }
     WorkerThread* worker(int idx);
@@ -127,6 +158,18 @@ private:
     // eventfd → Fiber mapping (protected by mutex)
     std::unordered_map<int, Fiber*> wait_map_;
     mutable std::mutex wait_map_mutex_;
+
+    // Issue #119: joiner map — target fiber ID → set of joiner
+    // fibers. When a target fiber completes, all its joiners
+    // are woken via their eventfds (one write per joiner; the
+    // scheduler writes to each joiner's eventfd, which is also
+    // registered in wait_map_ for epoll).
+    //
+    // Stored as a map from target's uint64_t ID to a vector of
+    // joiner Fiber* pointers. The vector is keyed so the same
+    // joiner can join multiple targets without double-registration.
+    std::unordered_map<std::uint64_t, std::vector<Fiber*>> joiner_map_;
+    mutable std::mutex joiner_map_mutex_;
 
     // Stdin fiber (handles stdin line protocol in serve mode)
     Fiber* stdin_fiber_ = nullptr;

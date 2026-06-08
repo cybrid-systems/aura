@@ -97,6 +97,30 @@ void WorkerThread::notify_fiber_done(Fiber* fiber) {
     }
 }
 
+// Issue #119: per-worker fiber registry. The scheduler's
+// enqueue() registers the fiber here, and the worker's
+// on_fiber_done path (via notify_fiber_done) unregisters it.
+// The registry is the source of truth for fiber_by_id.
+
+void WorkerThread::register_fiber(Fiber* fiber) {
+    if (!fiber) return;
+    std::lock_guard<std::mutex> lock(fiber_registry_mutex_);
+    fiber_registry_[fiber->id()] = fiber;
+}
+
+void WorkerThread::unregister_fiber(Fiber* fiber) {
+    if (!fiber) return;
+    std::lock_guard<std::mutex> lock(fiber_registry_mutex_);
+    fiber_registry_.erase(fiber->id());
+}
+
+Fiber* WorkerThread::fiber_by_id(std::uint64_t fiber_id) const {
+    std::lock_guard<std::mutex> lock(fiber_registry_mutex_);
+    auto it = fiber_registry_.find(fiber_id);
+    if (it == fiber_registry_.end()) return nullptr;
+    return it->second;
+}
+
 // ── try_steal_from — attempt to steal a fiber ─────────
 
 bool WorkerThread::try_steal_from(WorkerThread* victim) {

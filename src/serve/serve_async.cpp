@@ -167,6 +167,17 @@ void run_serve_async(int num_workers) {
         return static_cast<int64_t>(f ? f->id() : 0);
     };
 
+    // Issue #119: register fiber-by-id lookup so the evaluator
+    // can find the Fiber* for a given fiber ID. Used by the
+    // proper-blocking fiber:join path (joiner registers itself
+    // on the target's completion; the lookup is needed first to
+    // check if the target is already done).
+    aura::messaging::g_fiber_lookup = +[](int64_t fid) -> void* {
+        return static_cast<void*>(aura::serve::g_scheduler
+            ? aura::serve::g_scheduler->fiber_by_id(static_cast<std::uint64_t>(fid))
+            : nullptr);
+    };
+
     // Register fiber:yield callback (non-blocking yield, fiber stays Ready)
     aura::messaging::g_fiber_yield = []() {
         if (aura::serve::g_current_fiber) {
@@ -788,6 +799,14 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
     aura::messaging::g_fiber_spawn = [&sched](std::function<void()> fn) -> int64_t {
         auto* f = sched.spawn(std::move(fn));
         return static_cast<int64_t>(f ? f->id() : 0);
+    };
+
+    // Issue #119: register fiber-by-id lookup (see comment in
+    // the main registration above for the rationale).
+    aura::messaging::g_fiber_lookup = +[](int64_t fid) -> void* {
+        return static_cast<void*>(aura::serve::g_scheduler
+            ? aura::serve::g_scheduler->fiber_by_id(static_cast<std::uint64_t>(fid))
+            : nullptr);
     };
 
     // Register fiber:yield callback

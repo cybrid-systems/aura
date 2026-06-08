@@ -1,11 +1,13 @@
 # Agent Orchestration — 交响乐指挥
 
-> **Status (2026-06-07, Issue #112):** ✅ Phase 1-2 全部完成。`fiber:join`
-> 实现（#109）；`fiber:spawn` 返回值；`orch:parallel` 真并行；多线程
+> **Status (2026-06-08, Issue #119):** ✅ Phase 1-3 全部完成。`fiber:join`
+> 实现（#109 初始 + #119 修复 serve-async 模式下的 eventfd 阻塞
+> wakeup）；`fiber:spawn` 返回值；`orch:parallel` 真并行；多线程
 > fiber scheduler（#109 Phase 1）；work-stealing scheduler（Phase 2）；
 > C++26 `std::execution` 风格 adapter；fiber affinity + broadcast +
 > mailbox-stats；T3 test fix。Closing doc：
-> [`docs/issue-closings/109-closing.md`](../issue-closings/109-closing.md)。
+> [`docs/issue-closings/109-closing.md`](../issue-closings/109-closing.md)
+> + [`docs/issue-closings/119-closing.md`](../issue-closings/119-closing.md)。
 
 **Audience:** 任何使用 `lib/std/orchestrator.aura` 或 `lib/std/agent.aura` 写多 Agent 协作的人。
 **Audience (2):** 给 evaluator 加新的 fiber / agent / mailbox 原语的开发者（详见
@@ -78,7 +80,7 @@
 |------|------|------|
 | `fiber:spawn` | `evaluator_impl.cpp` ~11701 | serve 模式创建真 fiber；stdin 模式直接 `std::thread` |
 | `fiber:yield` | `evaluator_impl.cpp` ~11761 | 切换到调度器 |
-| **`fiber:join`** | `evaluator_impl.cpp` ~11825 | **#109 实现**：stdin 模式 `std::condition_variable` 真阻塞；serve-async 模式 yield-and-check |
+| **`fiber:join`** | `evaluator_impl.cpp` ~11841 | **#109 + #119 实现**：stdin 模式 `std::condition_variable` 真阻塞；serve-async 模式 eventfd wakeup（joiner_map_ + g_fiber_lookup）|
 | `_agent:spawn` | `evaluator_impl.cpp` ~11790 | 创建命名 session + fiber |
 | `send` / `recv` / `reply` | `messaging_bridge.h` | 跨 session 消息传递（带 correlation id） |
 | `mailbox-count` | `evaluator_impl.cpp` ~11668 | 邮箱消息数（#109 stats） |
@@ -212,13 +214,20 @@ agent:ask "coder" "write tests" 60
             (reverse results)))))))
 ```
 
-**底层 fiber:join 行为**（`evaluator_impl.cpp` ~11825）：
+**底层 fiber:join 行为**（`evaluator_impl.cpp` ~11841）：
 
 - **stdin 模式**（无 fiber scheduler）：`std::unique_lock` +
   `condition_variable::wait_for(200s)` —— OS 线程真阻塞，由 `s_fiber_results_cv_.notify_*`
   唤醒。零 CPU 烧。
-- **serve-async 模式**（有 fiber scheduler）：yield 200,000 次，每次 resume
-  检查 `s_fiber_results_[fid].ready` —— 不能 `cv.wait`（会 park 整个 scheduler 线程）。
+- **serve-async 模式**（有 fiber scheduler）：Issue #119 修复后的
+  正确阻塞实现 —— joiner fiber 通过 `g_fiber_lookup` 拿到
+  target `Fiber*`，检查 target.is_done()，如果没完成就调
+  `Scheduler::add_joiner(target_id, joiner_fiber)` 注册为
+  joiner，然后 `Fiber::yield(BlockingIO)`。 target 完成后
+  `Scheduler::on_fiber_done` 找到 joiner_map_里所有 joiner
+  的 eventfd 写 1 ，IO thread 的 epoll 检测到写入并 resume
+  joiner fiber。 Joiner 醒来后 `remove_joiner` 清理并取
+  结果。零 spin wait，零 CPU 烧。
 
 两种模式共享同一个 `s_fiber_results_` entry（`ready` flag + `value` shared_ptr）。
 

@@ -148,6 +148,15 @@ public:
     // Thread-safe (uses steal() which is lock-free for stealers).
     Fiber* try_steal() { return local_queue_.steal(); }
 
+    // Issue #119: per-worker fiber registry. Indexed by fiber ID
+    // for O(1) lookup from fiber_by_id. Maintained by enqueue +
+    // notify_fiber_done. Protected by a small mutex because it's
+    // touched from the scheduler's IO thread (lookup) and the
+    // worker's own thread (enqueue + done).
+    void register_fiber(Fiber* fiber);
+    void unregister_fiber(Fiber* fiber);
+    Fiber* fiber_by_id(std::uint64_t fiber_id) const;
+
     // Notify the scheduler about a done fiber (via callback)
     void notify_fiber_done(Fiber* fiber);
 
@@ -199,6 +208,14 @@ private:
 
     // Metrics pointer (set by scheduler, never null during run)
     metrics::WorkerMetrics* worker_metrics_ = nullptr;
+
+    // Issue #119: per-worker fiber registry for fiber:join.
+    // Holds pointers to all fibers this worker currently knows
+    // about (enqueued, running, or recently completed but not
+    // yet removed). Used by fiber_by_id to look up the
+    // joiner-map target. Protected by `fiber_registry_mutex_`.
+    std::unordered_map<std::uint64_t, Fiber*> fiber_registry_;
+    mutable std::mutex fiber_registry_mutex_;
 };
 
 } // namespace aura::serve
