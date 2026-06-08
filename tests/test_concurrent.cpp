@@ -3095,8 +3095,14 @@ bool test_gc_safepoint_running_fiber() {
     // is what makes the GC wait, not fibers_at_safepoint.
     sched.spawn([&progress, &started]() {
         started.store(true, std::memory_order_release);
-        // Heavy compute — ~100ms of work, no yields
-        for (int j = 0; j < 50'000'000; ++j) {
+        // Heavy compute — ~300ms of work on typical hardware,
+        // ~80ms on fast hardware. The 50ms safepoint-wait
+        // timeout below should fail (the fiber is still
+        // computing), so wait_for_safepoint returns false.
+        // Bumped from 50M (issue #115) to 200M to be robust
+        // against fast hardware where 50M iterations could
+        // complete in <50ms, making the assertion flaky.
+        for (int j = 0; j < 200'000'000; ++j) {
             progress.fetch_add(j & 0xFF, std::memory_order_relaxed);
         }
         // Yield once at the end so the worker can proceed
@@ -3125,6 +3131,7 @@ bool test_gc_safepoint_running_fiber() {
     // and won't return until the running fiber finishes its
     // compute. The 50ms timeout should fail (because the fiber
     // is still computing), and wait_for_safepoint returns false.
+    // Robust on fast hardware because the fiber takes ~80ms+.
     bool arrived_early = sched.wait_for_safepoint(50);
     CHECK(!arrived_early,
           "wait_for_safepoint must NOT return while a fiber is still running");
