@@ -1,5 +1,6 @@
 module aura.compiler.lowering;
 import aura.core.ast;
+import aura.compiler.lowering_linear_types;
 import aura.compiler.value;
 
 namespace aura::compiler {
@@ -1221,40 +1222,26 @@ static std::uint32_t lower_flat_expr(
             state.emit_with_type(IROpcode::CastOp, target_type_id, slot, inner, type_tag, blame_loc);
             return slot;
         }
-        case NodeTag::Linear: {
-            // (Linear e): wrap value in linear container
-            auto inner = lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
-            auto slot = state.alloc_local();
-            state.emit(IROpcode::LinearWrap, slot, inner);
-            return slot;
-        }
-        case NodeTag::Move: {
-            // (move e): move ownership
-            auto inner = lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
-            auto slot = state.alloc_local();
-            state.emit(IROpcode::MoveOp, slot, inner);
-            return slot;
-        }
-        case NodeTag::Borrow: {
-            // (& e): immutable borrow
-            auto inner = lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
-            auto slot = state.alloc_local();
-            state.emit(IROpcode::BorrowOp, slot, inner);
-            return slot;
-        }
-        case NodeTag::MutBorrow: {
-            // (&mut e): mutable borrow
-            auto inner = lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
-            auto slot = state.alloc_local();
-            state.emit(IROpcode::MutBorrowOp, slot, inner);
-            return slot;
-        }
+        case NodeTag::Linear:
+        case NodeTag::Move:
+        case NodeTag::Borrow:
+        case NodeTag::MutBorrow:
         case NodeTag::Drop: {
-            // (drop e): explicit destruct
-            auto inner = lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
-            state.emit(IROpcode::DropOp, inner, 0, 0);
+            // Issue #133: linear type lowering extracted to
+            // try_lower_linear_type. The callback
+            // recurses into the inner expression via the
+            // main lower_flat_expr.
+            if (auto slot = try_lower_linear_type(
+                    state, flat, pool, v,
+                    [&](aura::ast::NodeId id) {
+                        return lower_flat_expr(state, flat, pool, id, cache, cache_hits);
+                    })) {
+                return *slot;
+            }
+            // Shouldn't happen for these tags, but fall
+            // through to the default case just in case.
             auto slot = state.alloc_local();
-            state.emit(IROpcode::ConstVoid, slot);
+            state.emit(IROpcode::ConstI64, slot, 0, 0);
             return slot;
         }
         case NodeTag::MacroDef:
