@@ -729,7 +729,14 @@ public:
 
         // Pre-execute top-level require/import/use calls to fill ir_cache_
         // so the remaining expression can go through the IR path without fallback.
-        pre_exec_requires(*flat_ptr, *pool_ptr, expanded_root);
+        // Issue #123: capture the (possibly stripped) root and use it for
+        // the rest of the eval pipeline.
+        expanded_root = pre_exec_requires(*flat_ptr, *pool_ptr, expanded_root);
+        // After pre_exec, root may be NULL_NODE (if the whole program
+        // was a single require). Treat as a no-op.
+        if (expanded_root == aura::ast::NULL_NODE) {
+            return EvalResult(types::make_void());
+        }
 
         // Compile-time AST validation (structural correctness)
         validate_ast(*flat_ptr, *pool_ptr, expanded_root);
@@ -1053,7 +1060,11 @@ public:
 
         // Pre-execute top-level require/import/use calls to fill ir_cache_
         // so cached define functions are available during lowering.
-        pre_exec_requires(*flat_ptr, *pool_ptr, expanded_root);
+        // Issue #123: capture the (possibly stripped) root.
+        expanded_root = pre_exec_requires(*flat_ptr, *pool_ptr, expanded_root);
+        if (expanded_root == aura::ast::NULL_NODE) {
+            return EvalResult(types::make_void());
+        }
 
         // Update root to expanded version
         flat_ptr->root = expanded_root;
@@ -3212,23 +3223,32 @@ private:
             return root;
         auto v = flat.get(root);
 
-        // Top-level standalone require: execute, no body left
+        // Top-level standalone require: execute, no body left.
+        // The caller should detect NULL_NODE and skip the rest
+        // of the evaluation (or treat it as a no-op).
         if (is_require_call(flat, pool, root)) {
             (void)evaluator_.eval_flat(flat, pool, root, evaluator_.top_env());
             return aura::ast::NULL_NODE;
         }
 
-        // (begin ...) — scan children for require calls
+        // (begin ...) — scan children, execute requires, rebuild begin
+        // with only non-require children. If all children were requires,
+        // the stripped begin is empty; we return NULL_NODE.
         if (v.tag == aura::ast::NodeTag::Begin) {
-            bool has_require = false;
+            std::vector<aura::ast::NodeId> non_require_children;
             for (auto c : v.children) {
                 if (is_require_call(flat, pool, c)) {
                     (void)evaluator_.eval_flat(flat, pool, c, evaluator_.top_env());
-                    has_require = true;
+                } else {
+                    non_require_children.push_back(c);
                 }
             }
-            if (!has_require)
+            if ((int)non_require_children.size() == (int)v.children.size())
                 return root; // no require → unchanged
+            if (non_require_children.empty())
+                return aura::ast::NULL_NODE;
+            // Rebuild the begin with only the non-require children
+            return flat.add_begin(non_require_children);
         }
 
         return root;
