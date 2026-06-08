@@ -21,6 +21,10 @@ export enum class ErrorKind : std::uint8_t {
     // Internal
     InternalError,
     OutOfMemory,
+    // Issue #124: uncaught exception (Raise without TryBegin on
+    // the exception stack). Reported by the IR interpreter when
+    // an exception propagates past the top of the call stack.
+    UncaughtException,
     // Informational (not an error)
     Note,
     // Issue #103: Warning — the inference degrades to Dynamic
