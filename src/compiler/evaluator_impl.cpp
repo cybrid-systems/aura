@@ -7391,17 +7391,6 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
     });
 }
 
-// ── C FFI: c-load / c-func ─────────────────────────────────
-// Global FFI state (shared across all evaluator instances)
-// In production, this should be per-evaluator.
-static std::vector<void*> g_ffi_libs;
-struct FFIFunc {
-    void* fn_ptr;
-    std::string name;
-    int ret_type;               // 0=void, 1=Int, 2=Float, 3=String, 4=Opaque
-    std::vector<int> arg_types; // per-arg type tags
-};
-static std::vector<FFIFunc> g_ffi_funcs;
 
 // ── Env::lookup_cell_ptr: returns EvalValue* ──────────────────
 EvalValue* Env::lookup_cell_ptr(const std::string& n, std::vector<EvalValue>* cells) const {
@@ -8291,261 +8280,18 @@ Evaluator::Evaluator() {
     arena_group_ = std::make_unique<aura::ast::ArenaGroup>();
     init_pair_primitives();
 
-    // ── C FFI primitives ────────────────────────────────
-    primitives_.add("c-load", [this](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !types::is_string(a[0]))
-            return make_int(0);
-        auto path = string_heap_[types::as_string_idx(a[0])];
-        void* lib = ::dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
-        if (!lib) {
-            auto err = ::dlerror();
-            auto msg = err ? std::string(err) : "dlopen failed";
-            fprintf(stderr, "c-load: %s\n", msg.c_str());
-            return make_int(0);
-        }
-        auto idx = g_ffi_libs.size();
-        g_ffi_libs.push_back(lib);
-        return make_int(static_cast<std::int64_t>(idx));
-    });
-
-    // Parse type signature string like "(Int Float) -> Float" or "(String) -> Int"
-    auto parse_ffi_sig = [](const std::string& sig, int& ret_type,
-                            std::vector<int>& arg_types, std::string* err_type = nullptr) -> bool {
-        auto arrow = sig.find("->");
-        if (arrow == std::string::npos) {
-            if (err_type) *err_type = "missing '->' in signature";
-            return false;
-        }
-        if (sig.empty() || sig[0] != '(') {
-            if (err_type) *err_type = "signature must start with '('";
-            return false;
-        }
-        auto arg_part = sig.substr(1, arrow - 1);
-        auto ret_part = sig.substr(arrow + 2);
-        auto type_to_int = [](const std::string& tn, std::string* err = nullptr) -> int {
-            auto t = tn;
-            while (!t.empty() && t.front() == ' ')
-                t = t.substr(1);
-            while (!t.empty() && t.back() == ' ')
-                t.pop_back();
-            if (t == "Int")
-                return 1;
-            if (t == "Float")
-                return 2;
-            if (t == "String")
-                return 3;
-            if (t == "Opaque")
-                return 4;
-            if (t == "Void")
-                return 0;
-            if (err) *err = t.empty() ? "empty type" : "unknown type: " + t;
-            return -1;
-        };
-        std::string cur;
-        for (auto c : arg_part) {
-            if (c == ' ' || c == '(' || c == ')') {
-                if (!cur.empty()) {
-                    int at = type_to_int(cur, err_type);
-                    if (at < 0)
-                        return false;
-                    arg_types.push_back(at);
-                    cur.clear();
-                }
-                continue;
-            }
-            cur += c;
-        }
-        if (!cur.empty()) {
-            int at = type_to_int(cur, err_type);
-            if (at < 0)
-                return false;
-            arg_types.push_back(at);
-        }
-        ret_type = type_to_int(ret_part, err_type);
-        if (ret_type < 0)
-            return false;
-        return true;
-    };
-
-    primitives_.add("c-func", [this, &parse_ffi_sig](const auto& a) -> EvalValue {
-        coverage_counters_[8]++;
-        // (c-func lib-id "name" sig-string)  e.g. (c-func 0 "sqrt" "(Float) -> Float")
-        // lib-id -1 uses RTLD_DEFAULT (no c-load needed) — architecture independent.
-        // Or legacy: (c-func lib-id "name" ret-int arg-int...)
-        if (a.size() < 3 || !types::is_int(a[0]) || !types::is_string(a[1])) {
-            fprintf(stdout, "c-func: expected (c-func lib-id \"name\" signature\n");
-            fprintf(stdout, "  signature format: \"(ArgType) -> RetType\"  e.g. \"(String) -> Int\"\n");
-            return make_int(0);
-        }
-        auto raw_lib_id = types::as_int(a[0]);
-        void* lib = RTLD_DEFAULT;
-        if (raw_lib_id >= 0) {
-            auto lib_idx = static_cast<std::size_t>(raw_lib_id);
-            if (lib_idx >= g_ffi_libs.size()) {
-                fprintf(stdout, "c-func: invalid library handle %zu (use -1 for RTLD_DEFAULT)\n", lib_idx);
-                return make_int(0);
-            }
-            lib = g_ffi_libs[lib_idx];
-        }
-        auto name = string_heap_[types::as_string_idx(a[1])];
-        int ret_type = 1;
-        std::vector<int> arg_types;
-        if (types::is_string(a[2])) {
-            auto sig = string_heap_[types::as_string_idx(a[2])];
-            std::string sig_err;
-            if (!parse_ffi_sig(sig, ret_type, arg_types, &sig_err)) {
-                fprintf(stdout, "c-func: invalid signature '%s'\n", sig.c_str());
-                fprintf(stdout, "  reason: %s\n", sig_err.c_str());
-                fprintf(stdout, "  expected: \"(ArgType) -> RetType\"\n");
-                fprintf(stdout, "  valid types: Int, Float, String, Opaque, Void\n");
-                return make_int(0);
-            }
-        } else if (types::is_int(a[2])) {
-            ret_type = static_cast<int>(types::as_int(a[2]));
-            for (std::size_t i = 3; i < a.size(); ++i)
-                if (types::is_int(a[i]))
-                    arg_types.push_back(static_cast<int>(types::as_int(a[i])));
-        } else {
-            fprintf(stdout, "c-func: third arg must be signature string like \"(String) -> Int\"\n");
-            return make_int(0);
-        }
-        auto* fn_ptr = ::dlsym(lib, name.c_str());
-        if (!fn_ptr) {
-            auto* err = ::dlerror();
-            fprintf(stdout, "c-func: symbol '%s' not found in library\n", name.c_str());
-            if (err)
-                fprintf(stdout, "  dlerror: %s\n", err);
-            fprintf(stdout, "  tip: use (c-func -1 \"%s\" \"(String) -> Int\") with RTLD_DEFAULT\n", name.c_str());
-            return make_int(0);
-        }
-        auto fidx = g_ffi_funcs.size();
-        g_ffi_funcs.push_back({fn_ptr, name, ret_type, std::move(arg_types)});
-        auto closure_id = static_cast<std::uint64_t>(fidx) | (1ULL << 63);
-        return types::make_closure(closure_id);
-    });
-
-    // ── Opaque pointer primitives ────────────────────────────
-    primitives_.add("c-opaque", [this](std::span<const EvalValue> a) -> EvalValue {
-        // Create an opaque pointer from an integer address
-        // (c-opaque <ptr-as-int>)
-        coverage_counters_[8]++;
-        if (a.empty() || !types::is_int(a[0]))
-            return make_int(0);
-        auto addr = types::as_int(a[0]);
-        auto idx = opaque_heap_.size();
-        opaque_heap_.push_back(reinterpret_cast<void*>(addr));
-        return types::make_opaque(idx);
-    });
-
-    primitives_.add("c-opaque?", [this](std::span<const EvalValue> a) -> EvalValue {
-        return types::make_bool(!a.empty() && types::is_opaque(a[0]));
-    });
-
-    primitives_.add("c-opaque->int", [this](std::span<const EvalValue> a) -> EvalValue {
-        // Extract the raw pointer address from an opaque value as Int
-        if (a.empty() || !types::is_opaque(a[0]))
-            return make_int(0);
-        auto idx = types::as_opaque_idx(a[0]);
-        if (idx >= opaque_heap_.size())
-            return make_int(0);
-        return make_int(reinterpret_cast<std::int64_t>(opaque_heap_[idx]));
-    });
-
-    primitives_.add("c-alloc", [this](std::span<const EvalValue> a) -> EvalValue {
-        // Allocate a block of memory and return as opaque
-        // (c-alloc <size-bytes>)
-        if (a.empty() || !types::is_int(a[0]))
-            return make_int(0);
-        auto size = static_cast<std::size_t>(types::as_int(a[0]));
-        if (size == 0)
-            return make_int(0);
-        auto* ptr = std::calloc(1, size);
-        auto idx = opaque_heap_.size();
-        opaque_heap_.push_back(ptr);
-        return types::make_opaque(idx);
-    });
-
-    primitives_.add("c-free", [this](std::span<const EvalValue> a) -> EvalValue {
-        // Free memory allocated by c-alloc
-        // (c-free <opaque>)
-        if (a.empty() || !types::is_opaque(a[0]))
-            return make_void();
-        auto idx = types::as_opaque_idx(a[0]);
-        if (idx >= opaque_heap_.size())
-            return make_void();
-        std::free(opaque_heap_[idx]);
-        opaque_heap_[idx] = nullptr;
-        return make_void();
-    });
-
-    // ── Struct support (opaque-backed struct) ─────────────────
-    primitives_.add("c-struct-size", [this](std::span<const EvalValue> a) -> EvalValue {
-        // Return the total size of a struct given field sizes.
-        // (c-struct-size field-size...)
-        std::size_t total = 0;
-        for (auto& arg : a) {
-            if (types::is_int(arg))
-                total += static_cast<std::size_t>(types::as_int(arg));
-        }
-        return make_int(static_cast<std::int64_t>(total));
-    });
-
-    primitives_.add("c-struct-set!", [this](std::span<const EvalValue> a) -> EvalValue {
-        // Write a value into a struct at byte offset.
-        // (c-struct-set! <opaque> <offset-bytes> <value>)
-        if (a.size() < 3 || !types::is_opaque(a[0]) || !types::is_int(a[1]))
-            return make_void();
-        auto oi = types::as_opaque_idx(a[0]);
-        if (oi >= opaque_heap_.size() || !opaque_heap_[oi])
-            return make_void();
-        auto offset = static_cast<std::size_t>(types::as_int(a[1]));
-        auto* base = static_cast<char*>(opaque_heap_[oi]);
-        auto& val = a[2];
-        if (types::is_int(val)) {
-            auto v = types::as_int(val);
-            std::memcpy(base + offset, &v, sizeof(v));
-        } else if (types::is_float(val)) {
-            auto v = types::as_float(val);
-            std::memcpy(base + offset, &v, sizeof(v));
-        } else if (types::is_opaque(val)) {
-            // Store pointer value
-            auto vi = types::as_opaque_idx(val);
-            auto* ptr = vi < opaque_heap_.size() ? opaque_heap_[vi] : nullptr;
-            std::memcpy(base + offset, &ptr, sizeof(ptr));
-        }
-        return make_void();
-    });
-
-    primitives_.add("c-struct-ref", [this](std::span<const EvalValue> a) -> EvalValue {
-        // Read a value from a struct at byte offset with type.
-        // (c-struct-ref <opaque> <offset-bytes> <type>)
-        // type: 0=Int, 1=Float, 2=void*(Opaque)
-        if (a.size() < 3 || !types::is_opaque(a[0]) || !types::is_int(a[1]) ||
-            !types::is_int(a[2]))
-            return make_int(0);
-        auto oi = types::as_opaque_idx(a[0]);
-        if (oi >= opaque_heap_.size() || !opaque_heap_[oi])
-            return make_int(0);
-        auto offset = static_cast<std::size_t>(types::as_int(a[1]));
-        auto type = static_cast<int>(types::as_int(a[2]));
-        auto* base = static_cast<const char*>(opaque_heap_[oi]);
-        if (type == 0) { // Int
-            std::int64_t v = 0;
-            std::memcpy(&v, base + offset, sizeof(v));
-            return make_int(v);
-        } else if (type == 1) { // Float
-            double v = 0;
-            std::memcpy(&v, base + offset, sizeof(v));
-            return types::make_float(v);
-        } else if (type == 2) { // void* → Opaque
-            void* ptr = nullptr;
-            std::memcpy(&ptr, base + offset, sizeof(ptr));
-            auto ni = opaque_heap_.size();
-            opaque_heap_.push_back(ptr);
-            return types::make_opaque(ni);
-        }
-        return make_int(0);
-    });
+    // Issue #131: FFI primitives registered via FFIRuntime
+    // (the previous inline registrations in this ctor were
+    // ~250 lines of monolithic code, now extracted to
+    // ffi_primitives_impl.cpp). The runtime owns the FFI
+    // state (libs, funcs) and is per-evaluator. The
+    // callback breaks the cyclic import between
+    // evaluator.ixx and ffi_primitives.ixx.
+    ffi_runtime_.register_primitives(
+        [this](std::string name, PrimFn fn) {
+            primitives_.add(std::move(name), std::move(fn));
+        },
+        &string_heap_, &opaque_heap_, &coverage_counters_);
 
     build_primitive_slots();
 
@@ -14960,11 +14706,11 @@ EvalValue Evaluator::build_policy_hash(const MemoryPolicy& p) {
 // apply_closure — looks up closures_, foreign functions, or IR bridge
 std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid,
                                                   std::span<const EvalValue> args) {
-    // Check for foreign function closure (cid < g_ffi_funcs.size())
-    if (cid < g_ffi_funcs.size()) {
+    // Check for foreign function closure (cid < ffi_runtime_.func_count())
+    if (cid < ffi_runtime_.func_count()) {
         auto fidx = cid;
-        if (fidx < g_ffi_funcs.size()) {
-            auto& ff = g_ffi_funcs[static_cast<std::size_t>(fidx)];
+        if (fidx < ffi_runtime_.func_count()) {
+            auto& ff = ffi_runtime_.func_at(static_cast<std::size_t>(fidx));
             void* fn_ptr = ff.fn_ptr;
             int ret_type = ff.ret_type;
             auto& arg_types = ff.arg_types;
@@ -16847,7 +16593,7 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                     if (is_closure(*fn)) {
                         auto cid = as_closure_id(*fn);
                         // Check for foreign function (high bit set)
-                        if (cid < g_ffi_funcs.size()) {
+                        if (cid < ffi_runtime_.func_count()) {
                             // Dispatch FFI through apply_closure
                             std::size_t named_count = 0;
                             std::vector<EvalValue> cargs;
