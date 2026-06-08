@@ -492,7 +492,12 @@ bool ConstraintSystem::consistent_subtype(TypeId sub, TypeId sup) {
     return true;
 }
 
-bool ConstraintSystem::solve() {
+// Issue #118: returns SolveResult instead of bool. Distinguishes
+// the three outcomes (SOLVED / CONFLICT / TIMEOUT) so the caller
+// can react appropriately. On TIMEOUT, `unresolved_out` (if
+// non-null) is filled with the constraints that remained on the
+// worklist.
+SolveResult ConstraintSystem::solve(std::vector<Constraint>* unresolved_out) {
     // Worklist: process all constraints, then re-process until fixpoint
     std::vector<std::size_t> worklist;
     for (std::size_t i = 0; i < constraints_.size(); i++)
@@ -510,7 +515,7 @@ bool ConstraintSystem::solve() {
             else
                 ok = consistent_unify(c.lhs, c.rhs);
             if (!ok)
-                return false;
+                return SolveResult::CONFLICT;
             // Re-check remaining constraints if we resolved new variables
         }
         // Re-add constraints whose variables were just resolved
@@ -518,7 +523,23 @@ bool ConstraintSystem::solve() {
         // unless there's a specific need. For completeness, we check if
         // any constraint's variables now resolve differently.
     }
-    return true;
+
+    // Issue #118: distinguish TIMEOUT from SOLVED. Previously the
+    // function returned `true` regardless of whether the worklist
+    // was empty or not, which silently masked partial / under-
+    // constrained programs. The new behavior: if the worklist is
+    // non-empty when the pass limit is reached, return TIMEOUT
+    // and (optionally) report the unresolved constraints to the
+    // caller.
+    if (!worklist.empty()) {
+        if (unresolved_out) {
+            for (auto idx : worklist) {
+                unresolved_out->push_back(constraints_[idx]);
+            }
+        }
+        return SolveResult::TIMEOUT;
+    }
+    return SolveResult::SOLVED;
 }
 
 void ConstraintSystem::clear() {
@@ -1229,7 +1250,31 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id) {
         return reg_.dynamic_type();
     cs_.clear();
     auto result = synthesize_flat(flat, pool, id, flat.get(id));
-    if (!cs_.solve()) {
+    std::vector<Constraint> unresolved;
+    auto solve_status = cs_.solve(&unresolved);
+    if (solve_status != SolveResult::SOLVED) {
+        // Build a human-readable summary of the unresolved
+        // constraints for the diagnostic. The summary is
+        // intentionally short ("T42 ~ T43 (consistent)") to keep
+        // the diagnostic compact; the full constraint list is
+        // available via the diagnostic's structured data.
+        std::string unresolved_str;
+        if (!unresolved.empty()) {
+            unresolved_str = " (";
+            std::size_t max_show = 3;
+            for (std::size_t i = 0; i < unresolved.size() && i < max_show; ++i) {
+                if (i > 0) unresolved_str += ", ";
+                unresolved_str += std::string(unresolved[i].kind == Constraint::EQUAL ? "=" : "~") +
+                                  std::to_string(unresolved[i].lhs.index) + " " +
+                                  (unresolved[i].kind == Constraint::EQUAL ? "=" : "~") + " " +
+                                  std::to_string(unresolved[i].rhs.index);
+            }
+            if (unresolved.size() > max_show) {
+                unresolved_str += ", +" + std::to_string(unresolved.size() - max_show) + " more";
+            }
+            unresolved_str += ")";
+        }
+
         // Issue #103: LLM-friendly error recovery. When the
         // constraint solver fails AND we're not in strict mode AND
         // permissive mode is on, don't fail the whole inference —
@@ -1238,20 +1283,34 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id) {
         // diagnostic collector and decide what to do. In strict
         // mode, or when permissive is explicitly disabled, we keep
         // the old behavior (TypeError, no degradation).
-        if (strict_ || !permissive_) {
-            diag_.report(Diagnostic(ErrorKind::TypeError, "type constraint solving failed", cur_loc_)
-                             .with_blame(BlameInfo{BlameParty::Implicit, "", "compile"})
-                             .with_suggestion("check for type mismatches in function arguments, return values, or recursive bindings"));
-        } else {
-            // Non-strict + permissive: emit a warning with a
-            // suggestion, then fall through to the degraded Dynamic
-            // return below. The LLM gets a chance to see the warning
-            // while still having the program type-check.
-            diag_.report(Diagnostic(ErrorKind::Warning,
-                                   "type constraint solving failed \u2014 degrading result to Dynamic",
-                                   cur_loc_)
+        //
+        // Issue #118: also distinguishes CONFLICT (a hard
+        // unification failure — the program is unsound) from
+        // TIMEOUT (the solver hit the pass limit with
+        // under-constrained types). CONFLICT is always a
+        // TypeError; TIMEOUT is a Warning in permissive mode.
+        bool is_conflict = (solve_status == SolveResult::CONFLICT);
+        if (strict_ || !permissive_ || is_conflict) {
+            const char* kind_str = is_conflict
+                ? "type constraint solving failed (conflict)"
+                : "type constraint solving timed out (under-constrained)";
+            diag_.report(Diagnostic(ErrorKind::TypeError,
+                                   std::string(kind_str) + unresolved_str, cur_loc_)
                              .with_blame(BlameInfo{BlameParty::Implicit, "", "compile"})
                              .with_suggestion("check for type mismatches in function arguments, return values, or recursive bindings; "
+                                              "add explicit type annotations to constrain the inference"));
+        } else {
+            // Non-strict + permissive + TIMEOUT: emit a warning
+            // with the constraint list, then fall through to the
+            // degraded Dynamic return below. The LLM gets a
+            // chance to see the warning while still having the
+            // program type-check.
+            diag_.report(Diagnostic(ErrorKind::Warning,
+                                   std::string("type constraint solving timed out — under-constrained")
+                                       + unresolved_str,
+                                   cur_loc_)
+                             .with_blame(BlameInfo{BlameParty::Implicit, "", "compile"})
+                             .with_suggestion("add explicit type annotations to constrain the inference; "
                                               "or set strict mode (set-strict) to surface this as a TypeError"));
             result = reg_.dynamic_type();
         }
@@ -1307,7 +1366,7 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
             result = reg_.string_type();
             break;
         case Tag::Variable:
-            result = synthesize_flat_var(pool, v);
+            result = synthesize_flat_var(flat, pool, id, v);
             break;
         case Tag::Call:
             result = synthesize_flat_call(flat, pool, v);
@@ -1710,10 +1769,15 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
     return result;
 }
 
-TypeId InferenceEngine::synthesize_flat_var(StringPool& pool, NodeView v) {
+TypeId InferenceEngine::synthesize_flat_var(FlatAST& flat, StringPool& pool, NodeId id, NodeView v) {
     auto name = pool.resolve(v.sym_id);
     if (name.empty()) {
         diag_.report(Diagnostic(ErrorKind::UnboundVariable, "(empty name)", cur_loc_));
+        // Issue #118: tag the node so AuraQuery's `(has-error? N)`
+        // can find it. The empty-name case is a parse error
+        // somewhere upstream; without this tag the error is
+        // invisible to the structured AST queries.
+        flat.set_node_error(id, static_cast<std::uint8_t>(ErrorKind::UnboundVariable));
         return reg_.dynamic_type();
     }
     std::string var_name(name);
@@ -1745,9 +1809,11 @@ TypeId InferenceEngine::synthesize_flat_var(StringPool& pool, NodeView v) {
                 "no member '" + member_name + "' in module " + mod_name, cur_loc_)
                 .with_blame(BlameInfo{BlameParty::Caller, "", "compile"})
                 .with_suggestion(std::move(sugg)));
-            // Issue #79: would tag the node, but synthesize_flat_var doesn't
-            // take a flat reference. The diagnostic carries the source
-            // location, which AuraQuery can match against node positions.
+            // Issue #118: tag the node so the diagnostic is
+            // discoverable via AuraQuery. The previous comment
+            // here noted that tagging was impossible; with the
+            // FlatAST& + NodeId signature change, it now is.
+            flat.set_node_error(id, static_cast<std::uint8_t>(ErrorKind::UnboundVariable));
             return reg_.dynamic_type();
         }
         // Module not found — fall through to normal variable lookup
@@ -1776,6 +1842,11 @@ TypeId InferenceEngine::synthesize_flat_var(StringPool& pool, NodeView v) {
                 ? "did you mean '" + best + "'?"
                 : "");
         diag_.report(std::move(d));
+        // Issue #118: tag the node so AuraQuery `(has-error? N)`
+        // finds the unbound variable. This is the most
+        // user-visible error path in the type checker and
+        // previously had no node tag.
+        flat.set_node_error(id, static_cast<std::uint8_t>(ErrorKind::UnboundVariable));
         return reg_.dynamic_type();
     }
     // M4 ownership: checked explicitly in Move/Borrow/Drop handlers

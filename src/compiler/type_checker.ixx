@@ -38,6 +38,27 @@ export struct Constraint {
     aura::core::TypeId lhs, rhs;
 };
 
+// Issue #118: explicit solve result. The previous `bool solve()`
+// returned `true` even when the worklist wasn't empty after the
+// pass limit was reached (a soundness hole for AI-generated
+// code that produces partial / under-constrained programs).
+// The new return value distinguishes the three outcomes:
+//
+//   SOLVED   — worklist empty; all constraints resolved.
+//   CONFLICT — a constraint failed unification; the inference
+//              result is unsound and the caller should report
+//              a TypeError.
+//   TIMEOUT  — pass limit hit with non-empty worklist; some
+//              constraints remain unresolved. The caller gets
+//              the unresolved list via `unresolved_out` and can
+//              report a Warning (permissive mode) or TypeError
+//              (strict mode) with the constraint list attached.
+export enum class SolveResult : std::uint8_t {
+    SOLVED = 0,
+    CONFLICT = 1,
+    TIMEOUT = 2,
+};
+
 export class ConstraintSystem {
     aura::core::TypeRegistry& reg_;
     std::vector<Constraint> constraints_;
@@ -49,7 +70,13 @@ export class ConstraintSystem {
 public:
     explicit ConstraintSystem(aura::core::TypeRegistry& reg);
     void add(Constraint c);
-    bool solve();
+    // Issue #118: returns SolveResult. If the result is TIMEOUT,
+    // `unresolved_out` (if non-null) is filled with the constraints
+    // that remained on the worklist when the pass limit was
+    // reached. The caller can then attach the list to a
+    // diagnostic so AI agents can see exactly which constraints
+    // are still under-constrained.
+    SolveResult solve(std::vector<Constraint>* unresolved_out = nullptr);
     void clear();
     aura::core::TypeId fresh_var();
     // Issue #79: variant that takes a name hint, so the resulting type var
@@ -319,7 +346,13 @@ private:
     // FlatAST per-node-type inference
     aura::core::TypeId synthesize_flat(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                        aura::ast::NodeId id, aura::ast::NodeView v);
-    aura::core::TypeId synthesize_flat_var(aura::ast::StringPool& pool, aura::ast::NodeView v);
+    // Issue #118: takes FlatAST& + NodeId so diagnostic paths
+    // can call set_node_error() at the offending node. The
+    // previous signature only took NodeView, which made it
+    // impossible to tag the AST node where the error was
+    // detected (AuraQuery's `has-error?` was silently broken
+    // for unbound-variable and module-member lookups).
+    aura::core::TypeId synthesize_flat_var(aura::ast::FlatAST& flat, aura::ast::StringPool& pool, aura::ast::NodeId id, aura::ast::NodeView v);
     aura::core::TypeId synthesize_flat_call(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                             aura::ast::NodeView v);
     aura::core::TypeId synthesize_flat_lambda(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
