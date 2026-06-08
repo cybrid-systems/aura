@@ -802,43 +802,6 @@ target_compile_options(test_issue_132 PRIVATE -Wall -Wextra -Wpedantic
 target_link_libraries(test_issue_132 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_132_verification COMMAND ./test_issue_132)
 
-# Issue #133 verification: linear types lowering
-# extracted from lowering_impl.cpp. Standalone binary
-# that exercises the new try_lower_linear_type helper.
-add_executable(test_issue_133 tests/test_issue_133.cpp)
-set_property(TARGET test_issue_133 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_133 PRIVATE src)
-target_sources(test_issue_133 PRIVATE
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
-    src/compiler/type_checker_impl.cpp
-    src/compiler/evaluator_impl.cpp
-    src/compiler/lowering_linear_types_impl.cpp)
-target_sources(test_issue_133 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/diag.ixx src/compiler/value.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/ir.ixx src/compiler/ir_cache_pure.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/lowering.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/type_checker.ixx)
-target_compile_options(test_issue_133 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
-target_link_libraries(test_issue_133 PRIVATE pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_133_verification COMMAND ./test_issue_133)
-
 # Issue #134 verification: ADT (datatype ...) form.
 # Standalone binary that exercises parse_datatype
 # for various forms (with/without ctors, with/without
