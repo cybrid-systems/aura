@@ -26,6 +26,7 @@ export module aura.compiler.service;
 import std;
 import aura.core;
 import aura.compiler.ir_cache_pure;
+import aura.compiler.ast_walkers;
 import aura.core.type;
 import aura.parser.parser;
 import aura.compiler.evaluator;
@@ -768,21 +769,13 @@ public:
             auto result =
                 evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
             // Track all bound names so subsequent eval calls don't fall
-            // through to the IR pipeline (which silently returns 0 for unknown vars).
-            auto track_names = [&](aura::ast::NodeId nid, auto& self) -> void {
-                if (nid >= flat_ptr->size()) return;
-                auto nv = flat_ptr->get(nid);
-                if (nv.tag == aura::ast::NodeTag::Define)
-                    user_bindings_.insert(std::string(pool_ptr->resolve(nv.sym_id)));
-                if (nv.tag == aura::ast::NodeTag::TypeAnnotation && nv.int_value != 0) {
-                    user_bindings_.insert(
-                        std::string(pool_ptr->resolve(static_cast<aura::ast::SymId>(nv.int_value))));
-                }
-                if (nv.tag == aura::ast::NodeTag::Begin)
-                    for (auto c : nv.children)
-                        self(c, self);
-            };
-            track_names(expanded_root, track_names);
+            // through to the IR pipeline (which silently returns 0 for
+            // unknown vars). Issue #132: extracted to
+            // aura::compiler.collect_user_bindings.
+            for (auto& name : aura::compiler::collect_user_bindings(
+                     *flat_ptr, *pool_ptr, expanded_root)) {
+                user_bindings_.insert(std::move(name));
+            }
             return result;
         }
 
@@ -1876,34 +1869,10 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         // Macro expand
         auto expanded = aura::compiler::macro_expand_all(flat, pool, flat.root);
 
-        // Walk top-level defines
-        struct DefFinder {
-            aura::ast::FlatAST& f;
-            aura::ast::StringPool& p;
-            std::vector<std::pair<std::string, aura::ast::NodeId>> defs;
-            void walk(aura::ast::NodeId id) {
-                if (id == aura::ast::NULL_NODE || id >= f.size())
-                    return;
-                auto v = f.get(id);
-                if (v.tag == aura::ast::NodeTag::Define) {
-                    defs.emplace_back(std::string(p.resolve(v.sym_id)), id);
-                }
-                if (v.tag == aura::ast::NodeTag::Begin) {
-                    for (auto c : v.children)
-                        walk(c);
-                }
-            }
-        };
-
-        DefFinder finder{flat, pool, {}};
-        if (expanded != aura::ast::NULL_NODE) {
-            auto ev = flat.get(expanded);
-            if (ev.tag == aura::ast::NodeTag::Begin)
-                for (auto c : ev.children)
-                    finder.walk(c);
-            else
-                finder.walk(expanded);
-        }
+        // Walk top-level defines. Issue #132: extracted to
+        // aura::compiler.find_top_level_defines (was the
+        // inline DefFinder struct in compile_module).
+        auto finder = aura::compiler::find_top_level_defines(flat, pool, expanded);
 
         // Try disk cache: load cached IR bundles to skip lowering
         auto cache_path = module_cache_path(name, source);
@@ -1911,7 +1880,7 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         bool cache_hit = cached.valid() && cached.has_ir();
         if (cache_hit) {
             auto& all_funcs = cached.ir_functions();
-            for (auto& [fname, node_id] : finder.defs) {
+            for (auto& [fname, node_id] : finder) {
                 if (ir_cache_.count(fname))
                     continue;
                 auto dv = flat.get(node_id);
@@ -1936,7 +1905,7 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             // Reuse the existing cache_define logic by using main arena for
             // the define-specific lowering (lowering doesn't depend on module arena).
             // After caching, the define is available in ir_cache_.
-            for (auto& [fname, node_id] : finder.defs) {
+            for (auto& [fname, node_id] : finder) {
                 // Only cache function defines (Lambda body)
                 auto def_node = flat.get(node_id);
                 if (def_node.children.empty())
@@ -2027,7 +1996,7 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         auto& state = module_states_[name];
         state.dirty = false;
         state.deps.clear();
-        for (auto& [fname, _] : finder.defs) {
+        for (auto& [fname, _] : finder) {
             auto dit = dep_graph_.find(fname);
             if (dit != dep_graph_.end()) {
                 for (auto& callee : dit->second.calls)
@@ -2040,7 +2009,7 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             ensure_cache_dir();
             auto cache_path = module_cache_path(name, source);
             aura::ir::IRModule disk_mod;
-            for (auto& [fname, _] : finder.defs) {
+            for (auto& [fname, _] : finder) {
                 auto it = ir_cache_.find(fname);
                 if (it != ir_cache_.end()) {
                     for (auto& func : it->second)
@@ -2514,40 +2483,13 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         // Macro expand
         auto expanded = aura::compiler::macro_expand_all(flat, pool, flat.root);
 
-        // Walk top-level expressions to find (define ...) forms
-        struct DefineFinder {
-            aura::ast::FlatAST& flat;
-            aura::ast::StringPool& pool;
-            std::vector<std::pair<std::string, aura::ast::NodeId>> found;
-
-            void walk(aura::ast::NodeId id) {
-                if (id == aura::ast::NULL_NODE || id >= flat.size())
-                    return;
-                auto v = flat.get(id);
-                if (v.tag == aura::ast::NodeTag::Define) {
-                    auto name = pool.resolve(v.sym_id);
-                    found.emplace_back(std::string(name), id);
-                }
-                if (v.tag == aura::ast::NodeTag::Begin) {
-                    for (auto c : v.children)
-                        walk(c);
-                }
-            }
-        };
-
-        DefineFinder finder{flat, pool, {}};
-        if (expanded != aura::ast::NULL_NODE) {
-            auto expanded_v = flat.get(expanded);
-            if (expanded_v.tag == aura::ast::NodeTag::Begin) {
-                for (auto c : expanded_v.children)
-                    finder.walk(c);
-            } else {
-                finder.walk(expanded);
-            }
-        }
+        // Walk top-level expressions to find (define ...) forms.
+        // Issue #132: extracted to aura::compiler.find_top_level_defines
+        // (was the inline DefineFinder struct in cache_define).
+        auto finder = aura::compiler::find_top_level_defines(flat, pool, expanded);
 
         // Cache each define (IR only — tree-walker already evaluated the module)
-        for (auto& [name, node_id] : finder.found) {
+        for (auto& [name, node_id] : finder) {
             if (ir_cache_.count(name))
                 continue; // already cached
 
