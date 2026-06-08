@@ -1310,11 +1310,46 @@ static IRModule lower_to_ir_impl(
 // ── lower_to_ir (FlatAST path) — native, no full-tree reconstruct ──
 IRModule lower_to_ir(FlatAST& flat, StringPool& pool, ASTArena& arena, const Primitives* primitives,
                      const aura::core::TypeRegistry* type_reg) {
-    return lower_to_ir_impl(flat, pool, arena, nullptr, nullptr, primitives, type_reg);
+    // Issue #127: delegate to the Result-returning version.
+    // Lowering never reports an error today (it's all
+    // fall-through: silently emits a ConstI64 0 for unknown
+    // refs), so unwrap() is safe. When the lowering path
+    // starts producing diagnostics (e.g., for type-registry
+    // lookups), the unwrap becomes a real error channel.
+    return lower_to_ir_result(flat, pool, arena, primitives, type_reg).value();
 }
 
 // ── lower_to_ir_with_cache ─────────────────────────────────────
 IRModule lower_to_ir_with_cache(
+    FlatAST& flat, StringPool& pool, ASTArena& arena,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache,
+    std::vector<std::string>* cache_hits, const Primitives* primitives,
+    const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge,
+    const std::unordered_map<std::string, std::vector<std::string>>* cache_strings,
+    const std::string* self_name, const aura::core::TypeRegistry* type_reg) {
+    return lower_to_ir_with_cache_result(flat, pool, arena, cache, cache_hits, primitives,
+                                          cache_bridge, cache_strings, self_name, type_reg)
+        .value();
+}
+
+// ── lower_to_ir_result / lower_to_ir_with_cache_result ─────────
+//
+// Issue #127: Result-returning variants. The implementation
+// calls the same private `lower_to_ir_impl` and wraps the
+// result. Today, `lower_to_ir_impl` never fails (it's a
+// fall-through path), so the result is always `Ok`.
+//
+// When the lowering path starts producing real diagnostics
+// (e.g., for unknown primitives, type-registry lookups, or
+// invalid IR shapes), this is the channel through which
+// those errors flow to the caller.
+aura::diag::LowerResult<IRModule> lower_to_ir_result(FlatAST& flat, StringPool& pool, ASTArena& arena,
+                                          const Primitives* primitives,
+                                          const aura::core::TypeRegistry* type_reg) {
+    return lower_to_ir_impl(flat, pool, arena, nullptr, nullptr, primitives, type_reg);
+}
+
+aura::diag::LowerResult<IRModule> lower_to_ir_with_cache_result(
     FlatAST& flat, StringPool& pool, ASTArena& arena,
     const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache,
     std::vector<std::string>* cache_hits, const Primitives* primitives,

@@ -256,6 +256,25 @@ export template <typename T> using Result = std::expected<T, Diagnostic>;
 // Convenience: Result<void> for operations that don't produce a value
 export using VoidResult = Result<void>;
 
+// ── Pipeline-stage Result aliases (Issue #127) ────────────────
+//
+// Each pipeline stage has its own Result<T> alias for
+// readability and to make the stage boundaries explicit at
+// the type level. The aliases are all just
+// `Result<T>` instantiations; they do not introduce new
+// types.
+//
+//   ParseResult<T>    — for the lexer/parser stage
+//   LowerResult<T>    — for the lowering stage
+//   CompileResult<T>  — for the full compile pipeline
+//                       (parse + typecheck + lower + IR)
+//
+// New code should prefer the most specific alias. Legacy
+// code may use `Result<T>` directly, which is equivalent.
+export template <typename T> using ParseResult = Result<T>;
+export template <typename T> using LowerResult = Result<T>;
+export template <typename T> using CompileResult = Result<T>;
+
 // ── DiagnosticCollector — collects diagnostics during compilation ─
 export class DiagnosticCollector {
 public:
