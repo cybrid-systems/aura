@@ -142,7 +142,12 @@ public:
     Primitives& primitives() { return primitives_; }
     const Env& top_env() const { return top_; }
     Env& top_env() { return top_; }
-    const std::vector<types::EvalValue>& cells() const { return cells_; }
+    // Issue #128: span-friendly read-only view of cells.
+    // Replaces `const std::vector<types::EvalValue>&` with
+    // `std::span<const types::EvalValue>` for zero-overhead
+    // call sites that only iterate the cells. Callers that
+    // need to mutate should use the non-const `cells()`.
+    std::span<const types::EvalValue> cells() const { return cells_; }
     std::vector<types::EvalValue>& cells() { return cells_; }
     std::span<const Pair> pairs() const { return pairs_; }
     std::vector<Pair>& pairs() { return pairs_; }

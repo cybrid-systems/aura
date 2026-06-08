@@ -24,4 +24,18 @@ export struct ComputeKindResult {
 // Pure function: analyze which instructions produce Known vs Unknown values
 export ComputeKindResult compute_kind(const aura::ir::IRFunction& func);
 
+// ── Span-based helper (Issue #128) ──────────────────────────
+//
+// For the per-block, per-instruction analysis, callers that
+// already have a span of instructions can skip the block
+// iteration. This is the hot path in incremental IR cache
+// v2: when re-analyzing a single block after a mutation, the
+// caller has the instructions in hand and just needs the
+// kind for each slot.
+//
+// Returns a vector of the same length as `instructions`,
+// one ComputeKind per instruction. Pure: no mutation.
+export std::vector<ComputeKind> compute_kind_instructions(
+    std::span<const aura::ir::IRInstruction> instructions);
+
 } // namespace aura::compiler
