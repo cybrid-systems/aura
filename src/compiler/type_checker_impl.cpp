@@ -1923,15 +1923,16 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
                                      .with_suggestion("consider adding a type annotation (: arg"
                                                       " " + std::string(reg_.format_type(ft.args[i])) +
                                                       ") to make this static"));
-                    // ── Gradual Typing: insert CoercionNode into AST ──
-                    // Wraps the argument expression with a CoercionNode that
-                    // signals the lowering phase to emit a CastOp at runtime.
+                    // ── Gradual Typing: deferred CoercionNode (Issue #116) ──
+                    // Record the intent in the CoercionMap; the actual
+                    // add_coercion + set_loc + set_child happens later in
+                    // `apply_coercion_map` (called by the caller of
+                    // infer_flat). The type checker no longer mutates the
+                    // FlatAST's structural links.
                     auto type_tag = type_tag_for_coercion(ft.args[i], &reg_);
-                    auto coercion_id = flat.add_coercion(
-                        arg_id, type_tag, ft.args[i].index);
-                    // Copy source location from the call node for blame tracking
-                    flat.set_loc(coercion_id, v.line, v.col);
-                    flat.set_child(v.id, static_cast<std::uint32_t>(i + 1), coercion_id);
+                    coercions_.add(v.id, static_cast<std::uint32_t>(i + 1),
+                                   arg_id, type_tag, ft.args[i].index,
+                                   v.line, v.col);
                 } else {
                     auto msg = std::string("argument ") + std::to_string(i) + ": expected " +
                                std::string(reg_.format_type(ft.args[i])) + ", got " +
@@ -1941,12 +1942,11 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
                 }
             } else if (arg_type == reg_.dynamic_type() &&
                        ft.args[i] != reg_.dynamic_type()) {
-                // Dynamic → Static: insert CoercionNode for runtime type check
+                // Dynamic → Static: deferred CoercionNode (Issue #116)
                 auto type_tag = type_tag_for_coercion(ft.args[i], &reg_);
-                auto coercion_id = flat.add_coercion(
-                    arg_id, type_tag, ft.args[i].index);
-                flat.set_loc(coercion_id, v.line, v.col);
-                flat.set_child(v.id, static_cast<std::uint32_t>(i + 1), coercion_id);
+                coercions_.add(v.id, static_cast<std::uint32_t>(i + 1),
+                               arg_id, type_tag, ft.args[i].index,
+                               v.line, v.col);
             }
         }
         std::size_t num_args = v.children.size() > 1 ? v.children.size() - 1 : 0;
@@ -2499,23 +2499,29 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
                 auto msg = "coercion from " + std::string(reg_.format_type(inferred)) + " to " +
                            std::string(reg_.format_type(expected));
                 diag_.report(Diagnostic(ErrorKind::Note, std::move(msg), cur_loc_));
-                // ── Gradual Typing: insert CoercionNode ──
+                // ── Gradual Typing: deferred CoercionNode (Issue #116) ──
                 auto type_tag = type_tag_for_coercion(expected, &reg_);
-                auto coercion_id = flat.add_coercion(
-                    id, type_tag, expected.index);
-                // Copy source location from the expression for blame tracking
                 auto src_v = flat.get(id);
-                flat.set_loc(coercion_id, src_v.line, src_v.col);
-                // Update parent's child reference
                 auto parent_id = flat.parent_of(id);
                 if (parent_id != aura::ast::NULL_NODE) {
                     auto parent_v = flat.get(parent_id);
                     for (std::size_t ci = 0; ci < parent_v.children.size(); ++ci) {
                         if (parent_v.child(static_cast<std::uint32_t>(ci)) == id) {
-                            flat.set_child(parent_id, static_cast<std::uint32_t>(ci), coercion_id);
+                            coercions_.add(parent_id,
+                                           static_cast<std::uint32_t>(ci),
+                                           id, type_tag, expected.index,
+                                           src_v.line, src_v.col);
                             break;
                         }
                     }
+                } else {
+                    // No parent (top-level expression). Record with
+                    // parent_id = NULL_NODE; the apply pass will
+                    // create the CoercionNode but won't rewrite
+                    // any parent slot.
+                    coercions_.add(aura::ast::NULL_NODE, 0,
+                                   id, type_tag, expected.index,
+                                   src_v.line, src_v.col);
                 }
             } else {
                 auto msg = "type mismatch: expected " + std::string(reg_.format_type(expected)) +
@@ -2527,21 +2533,25 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
                    expected != reg_.dynamic_type()) {
             // Dynamic → Static boundary: consistent_unify succeeded because
             // DYNAMIC is consistent with everything, but we need a runtime
-            // check at the boundary. Insert CoercionNode for CastOp emission.
+            // check at the boundary. Deferred CoercionNode (Issue #116).
             auto type_tag = type_tag_for_coercion(expected, &reg_);
-            auto coercion_id = flat.add_coercion(
-                id, type_tag, expected.index);
             auto src_v = flat.get(id);
-            flat.set_loc(coercion_id, src_v.line, src_v.col);
             auto parent_id = flat.parent_of(id);
             if (parent_id != aura::ast::NULL_NODE) {
                 auto parent_v = flat.get(parent_id);
                 for (std::size_t ci = 0; ci < parent_v.children.size(); ++ci) {
                     if (parent_v.child(static_cast<std::uint32_t>(ci)) == id) {
-                        flat.set_child(parent_id, static_cast<std::uint32_t>(ci), coercion_id);
+                        coercions_.add(parent_id,
+                                       static_cast<std::uint32_t>(ci),
+                                       id, type_tag, expected.index,
+                                       src_v.line, src_v.col);
                         break;
                     }
                 }
+            } else {
+                coercions_.add(aura::ast::NULL_NODE, 0,
+                               id, type_tag, expected.index,
+                               src_v.line, src_v.col);
             }
         }
     }
@@ -2556,22 +2566,24 @@ void InferenceEngine::check_flat_call(FlatAST& flat, StringPool& pool, NodeView 
             auto msg = "call return type: coercion from " +
                        std::string(reg_.format_type(inferred)) + " to " +
                        std::string(reg_.format_type(expected));
-            // ── Gradual Typing: wrap the entire call in a CoercionNode ──
+            // ── Gradual Typing: deferred CoercionNode (Issue #116) ──
             auto type_tag = type_tag_for_coercion(expected, &reg_);
-            auto coercion_id = flat.add_coercion(
-                v.id, type_tag, expected.index);
-            // Copy source location from the call node for blame tracking
-            flat.set_loc(coercion_id, v.line, v.col);
-            // Replace v.id's reference in parent with the CoercionNode
             auto parent_id = flat.parent_of(v.id);
             if (parent_id != aura::ast::NULL_NODE) {
                 auto parent_v = flat.get(parent_id);
                 for (std::size_t ci = 0; ci < parent_v.children.size(); ++ci) {
                     if (parent_v.child(static_cast<std::uint32_t>(ci)) == v.id) {
-                        flat.set_child(parent_id, static_cast<std::uint32_t>(ci), coercion_id);
+                        coercions_.add(parent_id,
+                                       static_cast<std::uint32_t>(ci),
+                                       v.id, type_tag, expected.index,
+                                       v.line, v.col);
                         break;
                     }
                 }
+            } else {
+                coercions_.add(aura::ast::NULL_NODE, 0,
+                               v.id, type_tag, expected.index,
+                               v.line, v.col);
             }
         } else {
             auto msg = "call return type mismatch: expected " +
@@ -2673,6 +2685,11 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
     stats_.cache_hits += es.cache_hits;
     stats_.cache_misses += es.cache_misses;
     stats_.stale_cache += es.stale_cache;
+    // Issue #116: capture the engine's deferred coercions so
+    // the caller can apply them after type checking returns.
+    // The engine is short-lived (per infer_flat call) so we
+    // move-out here to avoid an extra copy.
+    last_coercions_ = engine.take_coercions();
     return result;
 }
 

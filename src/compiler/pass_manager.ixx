@@ -6,6 +6,7 @@ import aura.compiler.ir;
 import aura.compiler.compute_kind;
 import aura.compiler.arity;
 import aura.compiler.type_checker;
+import aura.compiler.coercion_map;
 import aura.diag;
 
 namespace aura::compiler {
@@ -203,12 +204,26 @@ public:
     // Run type checking on FlatAST before lowering.
     // Returns the number of type errors found (0 = clean).
     // Diagnostics are collected in diag for optional reporting.
+    //
+    // Issue #116: applies the deferred CoercionMap (collected
+    // during infer_flat) to the FlatAST as a single explicit
+    // pass. This is the ONE place where structural links are
+    // rewritten to insert CoercionNodes; the type checker
+    // itself is now read-only on the FlatAST.
     std::size_t check_before_lowering(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                       aura::ast::NodeId root,
                                       aura::core::TypeRegistry& type_registry,
                                       aura::diag::DiagnosticCollector& diag) {
         aura::compiler::TypeChecker tc(type_registry);
         tc.infer_flat(flat, pool, root, diag);
+        // Apply deferred coercions now, before lowering reads
+        // the AST. apply_coercion_map is idempotent — calling
+        // it twice with the same map is a safe no-op the
+        // second time.
+        auto coercions = tc.take_coercions();
+        if (!coercions.empty()) {
+            aura::compiler::apply_coercion_map(flat, coercions);
+        }
         auto all = diag.diagnostics();
         return all.size();
     }

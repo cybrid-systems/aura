@@ -1715,6 +1715,13 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
 
         auto result = tc.infer_flat(flat, pool, pr.root, diag);
 
+        // Issue #116: the typecheck command doesn't proceed to
+        // IR lowering (it just reports types + diagnostics), so
+        // we don't need to apply the deferred CoercionMap to the
+        // FlatAST. We do consume the map (via take_coercions) so
+        // it doesn't leak across calls.
+        (void)tc.take_coercions();
+
         std::string& out = r.output;
         out += "type: " + type_registry_.format_type(result) + "\n";
 
