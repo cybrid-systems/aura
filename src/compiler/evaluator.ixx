@@ -76,6 +76,15 @@ export struct Pair {
 export struct MacroDef {
     std::vector<std::string> params;
     bool dotted = false;
+    // Issue #120: when true, macro expansion uses clone_macro_body
+    // with a name_map (single-eval AST substitution + automatic
+    // gensym for template-introduced bindings). When false, the
+    // traditional double-eval path is used (body is evaluated
+    // to data, data is re-evaluated as code). Hygenic macros
+    // satisfy Ghuloum Step 16 — macro-introduced bindings
+    // can't be captured by the call-site context, and
+    // call-site bindings can't be captured by the macro.
+    bool hygienic = false;
     ast::FlatAST* flat = nullptr;
     ast::StringPool* pool = nullptr;
     ast::NodeId body_id = ast::NULL_NODE;

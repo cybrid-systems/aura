@@ -643,10 +643,12 @@ private:
     }
 
     [[nodiscard]] NodeId add_macrodef(SymId name, const std::vector<SymId>& params, NodeId body,
-                                      bool dotted = false) {
+                                      bool dotted = false, bool hygienic = false) {
         auto id = add_node(NodeTag::MacroDef);
         sym_id_[id] = name;
-        int_val_[id] = dotted ? 1 : 0; // store dotted flag in unused int_val_
+        // Issue #120: encode dotted in bit 0 and hygienic in bit 1 of
+        // int_val_ (the existing unused slot for MacroDef).
+        int_val_[id] = (hygienic ? 2 : 0) | (dotted ? 1 : 0);
         auto start = static_cast<std::uint32_t>(child_data_.size());
         child_data_.push_back(body);
         child_begin_[id] = start;
@@ -658,6 +660,17 @@ private:
         param_begin_[id] = pstart;
         param_count_[id] = static_cast<std::uint32_t>(params.size());
         return id;
+    }
+
+    // Issue #120: query the hygienic flag on a MacroDef node.
+    // Encoded in bit 1 of int_val_ (dotted is bit 0).
+    bool is_hygienic_macrodef(NodeId id) const {
+        if (id >= int_val_.size()) return false;
+        return (int_val_[id] & 2) != 0;
+    }
+    bool is_dotted_macrodef(NodeId id) const {
+        if (id >= int_val_.size()) return false;
+        return (int_val_[id] & 1) != 0;
     }
 
     [[nodiscard]] NodeId add_quote(NodeId val) {

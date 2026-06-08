@@ -336,6 +336,8 @@ NodeId FlatParser::parse_list() {
             return parse_cond();
         if (kw == "defmacro")
             return parse_defmacro();
+        if (kw == "define-hygienic-macro")
+            return parse_defmacro(/*hygienic=*/true);
         if (kw == "match")
             return parse_match();
         if (kw == "cast")
@@ -1112,7 +1114,7 @@ NodeId FlatParser::parse_cond() {
     return result;
 }
 
-NodeId FlatParser::parse_defmacro() {
+NodeId FlatParser::parse_defmacro(bool hygienic) {
     auto tok = lexer_->consume(); // 'defmacro'
     if (lexer_->consume().kind != TokenKind::LParen) {
         skip_rparen();
@@ -1150,7 +1152,7 @@ NodeId FlatParser::parse_defmacro() {
         return NULL_NODE;
     }
     lexer_->consume(); // ')'
-    auto mid = flat_.add_macrodef(pool_.intern(std::string(name.text)), params, body, dotted);
+    auto mid = flat_.add_macrodef(pool_.intern(std::string(name.text)), params, body, dotted, hygienic);
     flat_.set_loc(mid, tok.line, tok.column);
     return mid;
 }

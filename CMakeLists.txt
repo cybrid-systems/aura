@@ -380,6 +380,37 @@ target_compile_options(test_issue_119 PRIVATE -Wall -Wextra -Wpedantic
 target_link_libraries(test_issue_119 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_119_verification COMMAND ./test_issue_119)
 
+# Issue #120 verification: define-hygienic-macro + clone_macro_body
+# with name_map. Standalone binary so the macro-hygiene tests
+# can run in isolation from the broader test_concurrent / test_ir
+# harnesses.
+add_executable(test_issue_120 tests/test_issue_120.cpp)
+set_property(TARGET test_issue_120 PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_issue_120 PRIVATE src)
+target_sources(test_issue_120 PRIVATE
+    src/serve/fiber.cpp
+    src/serve/worker.cpp
+    src/serve/scheduler.cpp
+    src/serve/gc_coordinator.cpp
+    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
+    src/core/ast_impl.cpp
+    src/core/type_impl.cpp
+    src/compiler/value_impl.cpp
+    src/compiler/type_checker_impl.cpp)
+target_sources(test_issue_120 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
+    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
+    src/core/type_arena.ixx src/core/type.ixx
+    src/compiler/value.ixx src/compiler/diag.ixx
+    src/parser/lexer.ixx src/parser/parser.ixx
+    src/compiler/coercion_map.ixx
+    src/compiler/type_checker.ixx)
+target_compile_options(test_issue_120 PRIVATE -Wall -Wextra -Wpedantic
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
+    -Wno-parentheses)
+target_link_libraries(test_issue_120 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+add_test(NAME issue_120_verification COMMAND ./test_issue_120)
+
 # ── GC ↔ Evaluator integration tests (Issue #113) ─────────
 # Verifies the Evaluator root source registration API surface
 # (flush_gc_roots + gc_root_count). The full GCRootSet + GCCollector
