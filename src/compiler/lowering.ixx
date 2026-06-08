@@ -1,6 +1,7 @@
 export module aura.compiler.lowering;
 import std;
 import aura.core;
+import aura.diag;
 import aura.core.type;
 import aura.compiler.ir;
 import aura.compiler.evaluator;
@@ -125,5 +126,31 @@ export aura::ir::IRModule lower_to_ir_with_cache(
 // FlatAST → S-expression source code (reverse of parse_to_flat)
 export std::string unparse_node(const ast::FlatAST& flat, const ast::StringPool& pool,
                                 ast::NodeId id, int indent = 0);
+
+// ── Result-returning variants (Issue #127) ─────────────────
+//
+// lower_to_ir_result is the modern, error-aware version of
+// lower_to_ir. It returns LowerResult<IRModule> so callers
+// can monadically chain on the error path:
+//
+//   auto r = lower_to_ir_result(flat, pool, arena);
+//   if (!r) return std::unexpected(r.error());
+//
+// For now, lower_to_ir is preserved as a backward-compat
+// wrapper that calls lower_to_ir_result and unwraps. New
+// code should use lower_to_ir_result.
+export aura::diag::LowerResult<aura::ir::IRModule> lower_to_ir_result(
+    ast::FlatAST& flat, ast::StringPool& pool, ast::ASTArena& arena,
+    const Primitives* primitives = nullptr,
+    const aura::core::TypeRegistry* type_reg = nullptr);
+
+export aura::diag::LowerResult<aura::ir::IRModule> lower_to_ir_with_cache_result(
+    ast::FlatAST& flat, ast::StringPool& pool, ast::ASTArena& arena,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache,
+    std::vector<std::string>* cache_hits = nullptr, const Primitives* primitives = nullptr,
+    const std::unordered_map<std::string, std::vector<aura::ir::ClosureBridgeData>>* cache_bridge =
+        nullptr,
+    const std::unordered_map<std::string, std::vector<std::string>>* cache_strings = nullptr,
+    const std::string* self_name = nullptr, const aura::core::TypeRegistry* type_reg = nullptr);
 
 } // namespace aura::compiler

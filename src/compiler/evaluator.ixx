@@ -101,7 +101,11 @@ export struct Closure {
     ast::ASTArena* owner_arena = nullptr;  // arena where flat/pool/env lives
 };
 
-export using EvalResult = std::expected<types::EvalValue, aura::diag::Diagnostic>;
+// Legacy alias — kept for backward compatibility during the
+// P2 transition (Issue #127). New code should prefer
+// `aura::diag::Result<types::EvalValue>`. Both names refer
+// to the same type: `std::expected<types::EvalValue, Diagnostic>`.
+export using EvalResult = aura::diag::Result<types::EvalValue>;
 
 export class Evaluator {
 public:
