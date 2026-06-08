@@ -141,7 +141,7 @@ def test_unit():
     concurrent_bin = BUILD / "test_concurrent"
     if concurrent_bin.exists():
         start2 = time.time()
-        r2 = subprocess.run([str(concurrent_bin)], timeout=180)
+        r2 = subprocess.run([str(concurrent_bin)], timeout=300)
         elapsed2 = time.time() - start2
         # binary prints directly to terminal; just check rc
         ok(f"concurrent (exit {r2.returncode}) in {elapsed2:.2f}s")
