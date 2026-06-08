@@ -117,4 +117,43 @@ ComputeKindResult compute_kind(const IRFunction& func) {
     return result;
 }
 
+// Issue #128: span-based instruction-list helper. For a
+// single block, just compute the per-instruction kind.
+// Pure function: takes a span of instructions, returns a
+// vector of ComputeKind. The first instruction that writes
+// a slot propagates the kind. Unlike the full compute_kind
+// (which uses fixed-point iteration), this version is a
+// single forward pass — suitable for "give me the kind of
+// this block's instructions in isolation" callers (e.g.,
+// the IR cache v2 re-analysis path).
+std::vector<ComputeKind> compute_kind_instructions(
+    std::span<const IRInstruction> instructions) {
+    std::vector<ComputeKind> out;
+    out.reserve(instructions.size());
+    for (const auto& instr : instructions) {
+        // Default: Unknown. Specific opcodes below override.
+        ComputeKind kind = ComputeKind::Unknown;
+        switch (instr.opcode) {
+            case IROpcode::Nop:
+            case IROpcode::Branch:
+            case IROpcode::Jump:
+            case IROpcode::Capture:
+            case IROpcode::CaptureRef:
+            case IROpcode::ConstI64:
+            case IROpcode::ConstF64:
+            case IROpcode::MakeClosure:
+                kind = ComputeKind::Known;
+                break;
+            // Local/Call/Arith depend on the operand kind;
+            // we mark them Unknown in this per-instruction
+            // view (the full compute_kind does fixed-point
+            // resolution).
+            default:
+                break;
+        }
+        out.push_back(kind);
+    }
+    return out;
+}
+
 } // namespace aura::compiler
