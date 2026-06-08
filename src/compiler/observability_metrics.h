@@ -37,6 +37,13 @@ struct CompilerMetrics {
     // ArenaGroup::total_stats() snapshot
     std::atomic<std::uint64_t> arena_bytes_used{0};
     std::atomic<std::uint64_t> arena_bytes_peak{0};
+    // Issue #125: per-module dirty-skip optimization. When a
+    // module is unchanged (clean), reload_module skips the
+    // re-compile. These counters track the skip vs. recompile
+    // decision, exposed via CompilerService::snapshot() for
+    // --evo-explain.
+    std::atomic<std::uint64_t> module_dirty_skips{0};
+    std::atomic<std::uint64_t> module_dirty_recompiles{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()

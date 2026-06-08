@@ -1821,7 +1821,15 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         return it == module_states_.end() || it->second.dirty;
     }
 
-    // Recompile a module only if it's dirty.
+    // Recompile a module only if it's dirty. The dirty-skip
+    // optimization (Issue #125) makes this the primary way to
+    // reload a module: callers should call reload_module()
+    // instead of compile_module() when they just want to
+    // re-evaluate. When the module is clean, this is a no-op
+    // (the metrics counter `module_dirty_skips` is bumped).
+    // When the module is dirty, the full compile_module() path
+    // runs (the metrics counter `module_dirty_recompiles` is
+    // bumped before the call).
     EvalResult reload_module(const std::string& name) {
         auto it = module_states_.find(name);
         if (it == module_states_.end()) {
@@ -1829,9 +1837,11 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                                                           "module not found: " + name});
         }
         if (!it->second.dirty) {
-            // Already up to date
+            // Issue #125: already up to date — skip recompilation
+            metrics_.module_dirty_skips.fetch_add(1, std::memory_order_relaxed);
             return EvalResult(types::make_void());
         }
+        metrics_.module_dirty_recompiles.fetch_add(1, std::memory_order_relaxed);
         return compile_module(name, it->second.source);
     }
 
