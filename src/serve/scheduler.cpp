@@ -115,6 +115,9 @@ Fiber* Scheduler::spawn(Fiber::Func func, size_t stack_size) {
             : next_worker_id();
     }
     workers_[wid]->enqueue(ptr);
+    // Issue #119: register the fiber in the worker's
+    // registry so fiber:join can find the Fiber* by ID.
+    workers_[wid]->register_fiber(ptr);
 
     // Metrics
     if (metrics_on_) {
@@ -150,6 +153,8 @@ Fiber* Scheduler::spawn_with_affinity(Fiber::Func func, int worker_id,
     }
 
     workers_[worker_id]->enqueue(ptr);
+    // Issue #119: register the fiber for fiber:join lookup.
+    workers_[worker_id]->register_fiber(ptr);
 
     if (metrics_on_) {
         metrics_.fibers_spawned.fetch_add(1, std::memory_order_relaxed);
@@ -199,9 +204,90 @@ void Scheduler::on_fiber_done(Fiber* fiber) {
         wait_map_.erase(evfd);
     }
 
+    // Issue #119: remove the fiber from its worker's registry.
+    // We don't know which worker it was on, so scan all. The
+    // per-worker register/unregister uses a small mutex, so
+    // this is cheap. (The fiber is also no longer on any
+    // worker's queue at this point — the worker has
+    // decremented running_fiber_count and the queue push
+    // happens during dispatch.)
+    for (auto& w : workers_) {
+        w->unregister_fiber(fiber);
+    }
+
+    // Issue #119: wake all fibers that joined on this one. The
+    // joiner_map_ entry is cleared after notification so a
+    // future join on the same (now-destroyed) target ID won't
+    // try to wake dead fibers. Joiners are notified by writing
+    // a 1 to their eventfds — the IO thread's epoll will pick
+    // up the write and resume the joiner.
+    std::vector<Fiber*> joiners;
+    {
+        std::lock_guard<std::mutex> lock(joiner_map_mutex_);
+        auto it = joiner_map_.find(fiber->id());
+        if (it != joiner_map_.end()) {
+            joiners = std::move(it->second);
+            joiner_map_.erase(it);
+        }
+    }
+    for (Fiber* joiner : joiners) {
+        if (!joiner) continue;
+        int joiner_evfd = joiner->eventfd();
+        if (joiner_evfd >= 0) {
+            uint64_t one = 1;
+            // Best-effort: ignore short writes. The joiner's
+            // eventfd is non-blocking (EFD_NONBLOCK), so this
+            // write either succeeds or is dropped (already 1).
+            ::write(joiner_evfd, &one, sizeof(one));
+        }
+    }
+
     if (metrics_on_) {
         metrics_.fibers_completed.fetch_add(1, std::memory_order_relaxed);
     }
+}
+
+// Issue #119: add a joiner fiber to a target's wait list.
+// Returns true on success, false if the target fiber can't
+// be found. The target may be in any state except Done —
+// callers should check `fiber_by_id(id)->is_done()` first.
+bool Scheduler::add_joiner(std::uint64_t target_fiber_id, Fiber* joiner) {
+    if (!joiner) return false;
+    Fiber* target = fiber_by_id(target_fiber_id);
+    if (!target) return false;
+    std::lock_guard<std::mutex> lock(joiner_map_mutex_);
+    auto& list = joiner_map_[target_fiber_id];
+    // Idempotent: if the joiner is already in the list, skip.
+    for (auto* f : list) {
+        if (f == joiner) return true;
+    }
+    list.push_back(joiner);
+    return true;
+}
+
+// Issue #119: remove a joiner. Idempotent.
+void Scheduler::remove_joiner(std::uint64_t target_fiber_id, Fiber* joiner) {
+    if (!joiner) return;
+    std::lock_guard<std::mutex> lock(joiner_map_mutex_);
+    auto it = joiner_map_.find(target_fiber_id);
+    if (it == joiner_map_.end()) return;
+    auto& list = it->second;
+    list.erase(std::remove(list.begin(), list.end(), joiner), list.end());
+    if (list.empty()) joiner_map_.erase(it);
+}
+
+// Issue #119: lookup a fiber by ID. Returns nullptr if no
+// such fiber exists. Used by the evaluator's fiber:join to
+// check if the target is done before registering as a joiner.
+Fiber* Scheduler::fiber_by_id(std::uint64_t fiber_id) const {
+    // Linear scan over workers. The number of workers is small
+    // (typically <= 8), so this is fine for now. If joiner-map
+    // traffic becomes a hotspot, switch to a per-worker hashmap.
+    for (auto& w : workers_) {
+        Fiber* f = w->fiber_by_id(fiber_id);
+        if (f) return f;
+    }
+    return nullptr;
 }
 
 // ── has_waiting_fibers — check epoll wait map ─────────

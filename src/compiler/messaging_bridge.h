@@ -42,6 +42,19 @@ extern MessagingBridge g_messaging_bridge;
 using FiberSpawnFn = std::function<int64_t(std::function<void()>)>;
 extern FiberSpawnFn g_fiber_spawn;
 
+// Issue #119: Fiber lookup by ID — set by serve_async.cpp.
+// Returns the Fiber* for a given fiber ID, or nullptr if no
+// such fiber exists. Used by the proper-blocking fiber:join
+// (Issue #119) to check if a target fiber is already done and
+// to register a joiner for the target's completion.
+//
+// Opaque void* return type to keep the bridge header non-module
+// (Fiber is exported from aura::serve, which would create a
+// circular import if the bridge imported it). The actual
+// aura::serve::Fiber* is reinterpret_cast'd at the call site.
+using FiberLookupFn = void* (*)(int64_t fiber_id);
+extern FiberLookupFn g_fiber_lookup;
+
 // Fiber yield — called by (fiber:yield) primitive
 // Does a non-blocking yield (fiber stays Ready, scheduler re-enqueues)
 using FiberYieldFn = void (*)();

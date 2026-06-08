@@ -8,6 +8,7 @@ aura::messaging::MailboxReadFn aura::messaging::g_mailbox_read = nullptr;
 aura::messaging::MailboxSenderFn aura::messaging::g_mailbox_last_sender = nullptr;
 void (*aura::messaging::g_fiber_block)() = nullptr;
 aura::messaging::FiberSpawnFn aura::messaging::g_fiber_spawn = nullptr;
+aura::messaging::FiberLookupFn aura::messaging::g_fiber_lookup = nullptr;
 aura::messaging::FiberYieldFn aura::messaging::g_fiber_yield = nullptr;
 aura::messaging::FiberYieldMutationFn aura::messaging::g_fiber_yield_mutation_boundary = nullptr;
 aura::messaging::FiberJoinFn aura::messaging::g_fiber_join = nullptr;

@@ -64,6 +64,8 @@ constexpr CURLcode CURLE_OK = 0;
 #include <cmath>
 #include "messaging_bridge.h"
 #include "serve/gc_coordinator.h"
+#include "serve/fiber.h"
+#include "serve/scheduler.h"
 module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
@@ -11835,13 +11837,32 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         return merr("no-serve", "agent:spawn requires serve mode or a local handler");
     });
 
-    // (fiber:join fiber-id) — Wait for a fiber to complete and return its result
-    // #109 5b: real blocking in stdin mode via std::condition_variable
-    // (OS thread blocks, wakes on notify — no busy poll, no 1ms sleep,
-    // no 200s CPU burn). In serve-async mode the waiter is a fiber in
-    // a user-space scheduler; cv.wait would park the whole scheduler
-    // thread, so we keep the yield+check pattern there. Both paths
-    // share the same s_fiber_results entry / ready flag.
+    // (fiber:join fiber-id) — Wait for a fiber to complete and return its result.
+    //
+    // Issue #119: replaces the previous 200k-iteration spin-wait
+    // (unreliable for slow fibers / heavily loaded schedulers)
+    // with a proper blocking mechanism. Two paths:
+    //
+    // 1. **stdin mode** (no fiber scheduler): the OS thread
+    //    blocks on s_fiber_results_cv_ via wait_for (200s ceiling
+    //    via wait_for's timeout). Woken by the worker that
+    //    completes the target fiber. Zero CPU burn during the
+    //    wait. (This path was already in #109 5b; preserved.)
+    //
+    // 2. **serve-async mode** (fiber scheduler active): the
+    //    joiner fiber registers itself on the target's
+    //    joiner_map_ via the new g_fiber_lookup +
+    //    Scheduler::add_joiner API. When the target completes,
+    //    Scheduler::on_fiber_done writes a 1 to the joiner's
+    //    eventfd, which is registered with the IO thread's
+    //    epoll — the IO thread resumes the joiner via
+    //    wait_map_ lookup. The joiner yields (yield reason:
+    //    BlockingIO — unstealable), the IO thread picks up
+    //    the eventfd notification, and the joiner is resumed
+    //    in the next dispatch cycle. No spin, no busy poll.
+    //
+    // Both paths share the same s_fiber_results entry / ready
+    // flag, so the result-fetch-and-erase is unchanged.
     primitives_.add("fiber:join", [this](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
@@ -11852,20 +11873,81 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
             return it != s_fiber_results.end() && it->second.ready;
         };
 
-        if (aura::messaging::g_fiber_yield) {
-            // Serve-async: yield to scheduler; check on each resume.
-            // The 200s ceiling matches the previous busy-poll version.
+        if (aura::messaging::g_fiber_yield && aura::messaging::g_fiber_lookup) {
+            // Issue #119: serve-async proper-blocking path.
+            //
+            // 1. Check if the target is already done. If so, skip
+            //    the joiner registration and go straight to
+            //    result fetch.
+            // 2. Register this fiber (the joiner) on the target's
+            //    joiner_map via Scheduler::add_joiner.
+            // 3. Yield with BlockingIO (unstealable) so the
+            //    scheduler parks the joiner. The target's
+            //    on_fiber_done wakes the joiner via eventfd;
+            //    the IO thread's epoll resumes the joiner.
+            // 4. After wakeup, unregister from joiner_map and
+            //    fetch the result.
+            auto* target = static_cast<aura::serve::Fiber*>(
+                aura::messaging::g_fiber_lookup(fid));
+            if (!target) {
+                // Target fiber not found. Fall through to the
+                // stdin-style result-fetch path: if a result
+                // exists, return it; otherwise return void.
+                std::lock_guard<std::mutex> lock(s_fiber_results_mtx_);
+                auto it = s_fiber_results.find(fid);
+                if (it == s_fiber_results.end()) return make_void();
+                if (!it->second.ready) return make_void();
+            } else if (!target->is_done()) {
+                // Target is alive. Register the joiner and
+                // yield. We need to schedule the unregister for
+                // after the wakeup — store the target pointer
+                // in a thread_local so the post-yield cleanup
+                // can find it.
+                thread_local std::uint64_t joiner_target_id = 0;
+                // (Note: thread_local is a per-fiber/thread trick;
+                // a cleaner approach is to pass the target_id as
+                // a stack value via the yield + resume protocol,
+                // but that's invasive. The thread_local works
+                // because the joiner fiber is single-threaded.)
+                if (aura::serve::g_scheduler &&
+                    aura::serve::g_scheduler->add_joiner(
+                        static_cast<std::uint64_t>(fid),
+                        aura::serve::g_current_fiber)) {
+                    joiner_target_id = static_cast<std::uint64_t>(fid);
+                    // Yield with BlockingIO so the scheduler
+                    // doesn't steal this fiber while we wait.
+                    aura::serve::Fiber::yield(aura::serve::YieldReason::BlockingIO);
+                    // After wakeup: the target's on_fiber_done
+                    // already wrote to our eventfd. The
+                    // IO thread's epoll resumed us. The
+                    // result is now in s_fiber_results.
+                    aura::serve::g_scheduler->remove_joiner(
+                        joiner_target_id, aura::serve::g_current_fiber);
+                }
+                // (If add_joiner failed — e.g. target was
+                // destroyed between the lookup and the add —
+                // we fall through to the result fetch below.
+                // The fetch will find no entry and return void,
+                // which is the correct error behavior.)
+            }
+            // else: target is already done. Skip the join — go
+            // straight to the result fetch below.
+        } else if (aura::messaging::g_fiber_yield) {
+            // Fallback: serve-async but no fiber_lookup. Keep
+            // the old 200k spin-wait as a defensive fallback
+            // (should not happen in production; g_fiber_lookup
+            // is always set when g_fiber_yield is set).
             for (int iter = 0; iter < 200000; ++iter) {
                 {
                     std::lock_guard<std::mutex> lock(s_fiber_results_mtx_);
-                    if (is_ready())
-                        break;
+                    if (is_ready()) break;
                 }
                 aura::messaging::g_fiber_yield();
             }
         } else {
-            // Stdin mode: real blocking wait on the cv. 200s ceiling
-            // via wait_for (returns false on timeout, true on notify).
+            // Stdin mode: real blocking wait on the cv. 200s
+            // ceiling via wait_for (returns false on timeout,
+            // true on notify).
             std::unique_lock<std::mutex> lock(s_fiber_results_mtx_);
             s_fiber_results_cv_.wait_for(
                 lock, std::chrono::seconds(200), is_ready);
@@ -11876,8 +11958,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         {
             std::lock_guard<std::mutex> lock(s_fiber_results_mtx_);
             auto it = s_fiber_results.find(fid);
-            if (it == s_fiber_results.end())
-                return make_void();
+            if (it == s_fiber_results.end()) return make_void();
             if (!it->second.ready || !it->second.value ||
                 !it->second.value->has_value()) {
                 s_fiber_results.erase(it);
