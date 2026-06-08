@@ -27,6 +27,7 @@ target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/pass_manager.ixx
     src/compiler/query.ixx
     src/compiler/coercion_map.ixx
+    src/compiler/ir_cache_pure.ixx
     src/compiler/type_checker.ixx
     src/repl/repl.cppm)
 
@@ -185,6 +186,7 @@ target_sources(test_ir PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/pass_manager.ixx
     src/compiler/query.ixx
     src/compiler/coercion_map.ixx
+    src/compiler/ir_cache_pure.ixx
     src/compiler/type_checker.ixx)
 target_sources(test_ir PRIVATE
     src/core/contract_handler.cpp
@@ -280,6 +282,7 @@ target_sources(test_issue_116 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/value.ixx src/compiler/diag.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/coercion_map.ixx
+    src/compiler/ir_cache_pure.ixx
     src/compiler/type_checker.ixx)
 target_compile_options(test_issue_116 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
@@ -311,6 +314,7 @@ target_sources(test_issue_117 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/value.ixx src/compiler/diag.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/coercion_map.ixx
+    src/compiler/ir_cache_pure.ixx
     src/compiler/type_checker.ixx)
 target_compile_options(test_issue_117 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
@@ -342,6 +346,7 @@ target_sources(test_issue_118 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/value.ixx src/compiler/diag.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/coercion_map.ixx
+    src/compiler/ir_cache_pure.ixx
     src/compiler/type_checker.ixx)
 target_compile_options(test_issue_118 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
@@ -372,6 +377,7 @@ target_sources(test_issue_119 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/value.ixx src/compiler/diag.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/coercion_map.ixx
+    src/compiler/ir_cache_pure.ixx
     src/compiler/type_checker.ixx)
 target_compile_options(test_issue_119 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
@@ -403,6 +409,7 @@ target_sources(test_issue_120 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/value.ixx src/compiler/diag.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/coercion_map.ixx
+    src/compiler/ir_cache_pure.ixx
     src/compiler/type_checker.ixx)
 target_compile_options(test_issue_120 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
@@ -433,6 +440,7 @@ target_sources(test_issue_121 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/value.ixx src/compiler/diag.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/coercion_map.ixx
+    src/compiler/ir_cache_pure.ixx
     src/compiler/type_checker.ixx)
 target_compile_options(test_issue_121 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
@@ -463,6 +471,7 @@ target_sources(test_issue_122 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/value.ixx src/compiler/diag.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/coercion_map.ixx
+    src/compiler/ir_cache_pure.ixx
     src/compiler/type_checker.ixx)
 target_compile_options(test_issue_122 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
@@ -493,6 +502,7 @@ target_sources(test_issue_123 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/value.ixx src/compiler/diag.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/coercion_map.ixx
+    src/compiler/ir_cache_pure.ixx
     src/compiler/type_checker.ixx)
 target_compile_options(test_issue_123 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
@@ -523,6 +533,7 @@ target_sources(test_issue_124 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/value.ixx src/compiler/diag.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/coercion_map.ixx
+    src/compiler/ir_cache_pure.ixx
     src/compiler/type_checker.ixx
     src/compiler/ir.ixx)
 target_compile_options(test_issue_124 PRIVATE -Wall -Wextra -Wpedantic
@@ -555,6 +566,7 @@ target_sources(test_issue_125 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/value.ixx src/compiler/diag.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/coercion_map.ixx
+    src/compiler/ir_cache_pure.ixx
     src/compiler/type_checker.ixx)
 target_compile_options(test_issue_125 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
@@ -562,6 +574,28 @@ target_compile_options(test_issue_125 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-parentheses)
 target_link_libraries(test_issue_125 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_125_verification COMMAND ./test_issue_125)
+
+# Issue #126 verification: pure functions extracted from
+# CompilerService and Evaluator. Standalone binary that
+# exercises the new aura.compiler.ir_cache_pure module
+# in isolation from the full CompilerService.
+add_executable(test_issue_126 tests/test_issue_126.cpp)
+set_property(TARGET test_issue_126 PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_issue_126 PRIVATE src)
+target_sources(test_issue_126 PRIVATE
+    src/core/ast_impl.cpp
+    src/core/type_impl.cpp)
+target_sources(test_issue_126 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
+    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
+    src/core/type_arena.ixx src/core/type.ixx
+    src/compiler/diag.ixx
+    src/compiler/ir_cache_pure.ixx)
+target_compile_options(test_issue_126 PRIVATE -Wall -Wextra -Wpedantic
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
+    -Wno-parentheses)
+target_link_libraries(test_issue_126 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+add_test(NAME issue_126_verification COMMAND ./test_issue_126)
 
 # ── GC ↔ Evaluator integration tests (Issue #113) ─────────
 # Verifies the Evaluator root source registration API surface
@@ -589,6 +623,7 @@ target_sources(test_gc_evaluator_integration PUBLIC FILE_SET CXX_MODULES BASE_DI
     src/compiler/pass_manager.ixx
     src/compiler/query.ixx
     src/compiler/coercion_map.ixx
+    src/compiler/ir_cache_pure.ixx
     src/compiler/type_checker.ixx)
 target_sources(test_gc_evaluator_integration PRIVATE
     src/serve/fiber.cpp

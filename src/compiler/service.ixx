@@ -25,6 +25,7 @@ extern "C" const char* aura_jit_pool_string(std::size_t idx);
 export module aura.compiler.service;
 import std;
 import aura.core;
+import aura.compiler.ir_cache_pure;
 import aura.core.type;
 import aura.parser.parser;
 import aura.compiler.evaluator;
@@ -2101,8 +2102,14 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
     int lookup_define_v2(const std::string& name, std::size_t source_hash) {
         auto it = ir_cache_v2_.find(name);
         if (it == ir_cache_v2_.end()) return 2;
-        if (it->second.dirty) return 1;
-        if (it->second.source_hash != source_hash) return 1;
+        // Issue #126: delegate the re-lower decision to the pure
+        // helper should_relower(). The function takes the relevant
+        // fields as values (no this->) so the same logic can be
+        // unit-tested in isolation.
+        if (should_relower(source_hash, it->second.source_hash,
+                           it->second.dirty, it->second.mutation_count,
+                           it->second.mutation_count))
+            return 1;
         return 0;  // hit
     }
 
