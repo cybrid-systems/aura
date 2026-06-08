@@ -28,6 +28,7 @@ target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/query.ixx
     src/compiler/coercion_map.ixx
     src/compiler/ir_cache_pure.ixx
+    src/compiler/lowering_linear_types.ixx
     src/compiler/ast_walkers.ixx
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx
@@ -41,6 +42,7 @@ target_sources(aura PRIVATE
     src/compiler/value_impl.cpp
     src/compiler/evaluator_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
+    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
@@ -190,6 +192,7 @@ target_sources(test_ir PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/query.ixx
     src/compiler/coercion_map.ixx
     src/compiler/ir_cache_pure.ixx
+    src/compiler/lowering_linear_types.ixx
     src/compiler/ast_walkers.ixx
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
@@ -208,6 +211,7 @@ target_sources(test_ir PRIVATE
     src/compiler/value_impl.cpp
     src/compiler/evaluator_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
+    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
@@ -289,6 +293,7 @@ target_sources(test_issue_116 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/coercion_map.ixx
     src/compiler/ir_cache_pure.ixx
+    src/compiler/lowering_linear_types.ixx
     src/compiler/ast_walkers.ixx
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
@@ -323,6 +328,7 @@ target_sources(test_issue_117 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/coercion_map.ixx
     src/compiler/ir_cache_pure.ixx
+    src/compiler/lowering_linear_types.ixx
     src/compiler/ast_walkers.ixx
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
@@ -357,6 +363,7 @@ target_sources(test_issue_118 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/coercion_map.ixx
     src/compiler/ir_cache_pure.ixx
+    src/compiler/lowering_linear_types.ixx
     src/compiler/ast_walkers.ixx
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
@@ -390,6 +397,7 @@ target_sources(test_issue_119 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/coercion_map.ixx
     src/compiler/ir_cache_pure.ixx
+    src/compiler/lowering_linear_types.ixx
     src/compiler/ast_walkers.ixx
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
@@ -424,6 +432,7 @@ target_sources(test_issue_120 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/coercion_map.ixx
     src/compiler/ir_cache_pure.ixx
+    src/compiler/lowering_linear_types.ixx
     src/compiler/ast_walkers.ixx
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
@@ -457,6 +466,7 @@ target_sources(test_issue_121 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/coercion_map.ixx
     src/compiler/ir_cache_pure.ixx
+    src/compiler/lowering_linear_types.ixx
     src/compiler/ast_walkers.ixx
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
@@ -490,6 +500,7 @@ target_sources(test_issue_122 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/coercion_map.ixx
     src/compiler/ir_cache_pure.ixx
+    src/compiler/lowering_linear_types.ixx
     src/compiler/ast_walkers.ixx
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
@@ -523,6 +534,7 @@ target_sources(test_issue_123 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/coercion_map.ixx
     src/compiler/ir_cache_pure.ixx
+    src/compiler/lowering_linear_types.ixx
     src/compiler/ast_walkers.ixx
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
@@ -556,6 +568,7 @@ target_sources(test_issue_124 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/coercion_map.ixx
     src/compiler/ir_cache_pure.ixx
+    src/compiler/lowering_linear_types.ixx
     src/compiler/ast_walkers.ixx
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx
@@ -591,6 +604,7 @@ target_sources(test_issue_125 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/coercion_map.ixx
     src/compiler/ir_cache_pure.ixx
+    src/compiler/lowering_linear_types.ixx
     src/compiler/ast_walkers.ixx
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
@@ -616,6 +630,7 @@ target_sources(test_issue_126 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/type_arena.ixx src/core/type.ixx
     src/compiler/diag.ixx
     src/compiler/ir_cache_pure.ixx
+    src/compiler/lowering_linear_types.ixx
     src/compiler/ast_walkers.ixx
     src/compiler/ffi_primitives.ixx)
 target_compile_options(test_issue_126 PRIVATE -Wall -Wextra -Wpedantic
@@ -649,6 +664,7 @@ target_sources(test_issue_127 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/diag.ixx src/compiler/value.ixx
     src/compiler/ir.ixx src/compiler/ir_cache_pure.ixx
+    src/compiler/lowering_linear_types.ixx
     src/compiler/ast_walkers.ixx
     src/compiler/ffi_primitives.ixx
     src/compiler/coercion_map.ixx
@@ -684,6 +700,7 @@ target_sources(test_issue_128 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/diag.ixx src/compiler/value.ixx
     src/compiler/ir.ixx src/compiler/ir_cache_pure.ixx
+    src/compiler/lowering_linear_types.ixx
     src/compiler/ast_walkers.ixx
     src/compiler/ffi_primitives.ixx
     src/compiler/coercion_map.ixx
@@ -718,6 +735,7 @@ target_sources(test_issue_130 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/diag.ixx src/compiler/value.ixx
     src/compiler/ir.ixx src/compiler/ir_cache_pure.ixx
+    src/compiler/lowering_linear_types.ixx
     src/compiler/ast_walkers.ixx
     src/compiler/ffi_primitives.ixx
     src/compiler/coercion_map.ixx
@@ -751,6 +769,7 @@ target_sources(test_issue_131 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/diag.ixx src/compiler/value.ixx
     src/compiler/ir.ixx src/compiler/ir_cache_pure.ixx
+    src/compiler/lowering_linear_types.ixx
     src/compiler/ast_walkers.ixx
     src/compiler/coercion_map.ixx
     src/compiler/ffi_primitives.ixx
@@ -783,6 +802,76 @@ target_compile_options(test_issue_132 PRIVATE -Wall -Wextra -Wpedantic
 target_link_libraries(test_issue_132 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_132_verification COMMAND ./test_issue_132)
 
+# Issue #133 verification: linear types lowering
+# extracted from lowering_impl.cpp. Standalone binary
+# that exercises the new try_lower_linear_type helper.
+add_executable(test_issue_133 tests/test_issue_133.cpp)
+set_property(TARGET test_issue_133 PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_issue_133 PRIVATE src)
+target_sources(test_issue_133 PRIVATE
+    src/serve/fiber.cpp
+    src/serve/worker.cpp
+    src/serve/scheduler.cpp
+    src/serve/gc_coordinator.cpp
+    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
+    src/core/ast_impl.cpp
+    src/core/type_impl.cpp
+    src/compiler/value_impl.cpp
+    src/compiler/type_checker_impl.cpp
+    src/compiler/evaluator_impl.cpp
+    src/compiler/lowering_linear_types_impl.cpp)
+target_sources(test_issue_133 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
+    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
+    src/core/type_arena.ixx src/core/type.ixx
+    src/parser/lexer.ixx src/parser/parser.ixx
+    src/compiler/diag.ixx src/compiler/value.ixx
+    src/compiler/evaluator.ixx
+    src/compiler/ir.ixx src/compiler/ir_cache_pure.ixx
+    src/compiler/ffi_primitives.ixx
+    src/compiler/coercion_map.ixx
+    src/compiler/lowering.ixx
+    src/compiler/lowering_linear_types.ixx
+    src/compiler/type_checker.ixx)
+target_compile_options(test_issue_133 PRIVATE -Wall -Wextra -Wpedantic
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
+    -Wno-parentheses)
+target_link_libraries(test_issue_133 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+add_test(NAME issue_133_verification COMMAND ./test_issue_133)
+
+# Issue #134 verification: ADT (datatype ...) form.
+# Standalone binary that exercises parse_datatype
+# for various forms (with/without ctors, with/without
+# type params, zero-arity ctors).
+add_executable(test_issue_134 tests/test_issue_134.cpp)
+set_property(TARGET test_issue_134 PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_issue_134 PRIVATE src src/compiler)
+target_sources(test_issue_134 PRIVATE
+    src/serve/fiber.cpp
+    src/serve/worker.cpp
+    src/serve/scheduler.cpp
+    src/serve/gc_coordinator.cpp
+    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
+    src/core/ast_impl.cpp
+    src/core/type_impl.cpp
+    src/compiler/value_impl.cpp
+    src/compiler/type_checker_impl.cpp
+    src/compiler/observability_metrics.h)
+target_sources(test_issue_134 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
+    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
+    src/core/type_arena.ixx src/core/type.ixx
+    src/parser/lexer.ixx src/parser/parser.ixx
+    src/compiler/diag.ixx src/compiler/value.ixx
+    src/compiler/ir.ixx src/compiler/ir_cache_pure.ixx
+    src/compiler/coercion_map.ixx
+    src/compiler/type_checker.ixx)
+target_compile_options(test_issue_134 PRIVATE -Wall -Wextra -Wpedantic
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
+    -Wno-parentheses)
+target_link_libraries(test_issue_134 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+add_test(NAME issue_134_verification COMMAND ./test_issue_134)
+
 # ── GC ↔ Evaluator integration tests (Issue #113) ─────────
 # Verifies the Evaluator root source registration API surface
 # (flush_gc_roots + gc_root_count). The full GCRootSet + GCCollector
@@ -810,6 +899,7 @@ target_sources(test_gc_evaluator_integration PUBLIC FILE_SET CXX_MODULES BASE_DI
     src/compiler/query.ixx
     src/compiler/coercion_map.ixx
     src/compiler/ir_cache_pure.ixx
+    src/compiler/lowering_linear_types.ixx
     src/compiler/ast_walkers.ixx
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
@@ -827,6 +917,7 @@ target_sources(test_gc_evaluator_integration PRIVATE
     src/compiler/value_impl.cpp
     src/compiler/evaluator_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
+    src/compiler/lowering_linear_types_impl.cpp
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp

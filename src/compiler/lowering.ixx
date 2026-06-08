@@ -17,7 +17,14 @@ struct Binding {
 };
 
 // ── LoweringState — all mutable lowering state ────────────────
-struct LoweringState {
+// Issue #133: exported so the new lowering_linear_types
+// module (and future extracted lowering modules) can
+// operate on the same state without re-declaring the
+// shape. The struct holds mutable lowering context:
+// the module being built, the current function/block,
+// local variable counter, region, type-registry /
+// primitives / cache pointers.
+export struct LoweringState {
     ast::ASTArena& arena;
     aura::ir::IRModule module;
     aura::ir::IRFunction* cur_func = nullptr;
