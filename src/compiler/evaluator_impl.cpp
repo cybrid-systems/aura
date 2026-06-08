@@ -2470,6 +2470,181 @@ void Evaluator::init_pair_primitives() {
         return make_string(id);
     });
 
+    // ── reflect-type "name" ──────────────────────────────────────────
+    // Issue #122: runtime reflection. Returns a structured
+    // description of the named type:
+    //   For module types: (list 'module "name" (list (list "member" "Type") ...))
+    //   For record types: (list 'record "name" (list (list "field" "Type") ...))
+    //   For variant types: (list 'variant "name" (list (list "Variant" (list "Type" ...)) ...))
+    //   For linear types:  (list 'linear "name")
+    //   For forall:        (list 'forall "name")
+    //   For func types:    (list 'function "name")
+    //   For scalars:       (list 'scalar "name")
+    // Returns '() (void) if the type is not found.
+    primitives_.add("reflect-type", [this](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_string(a[0])) return make_void();
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size()) return make_void();
+        // Copy `name` to a local std::string. The name is a reference
+        // into string_heap_, and push_back can reallocate the
+        // vector's backing storage, invalidating the reference.
+        // Copying first avoids the use-after-realloc crash.
+        std::string name = string_heap_[idx];
+        auto* treg = static_cast<aura::core::TypeRegistry*>(type_registry_);
+        if (!treg) return make_void();
+        auto ty = treg->lookup_type(name);
+        if (!ty.valid()) return make_void();
+        // Build (list kind name members...)
+        std::vector<EvalValue> out;
+        // kind symbol
+        auto kind_idx = string_heap_.size();
+        std::string kind;
+        switch (treg->tag_of(ty)) {
+            case aura::core::TypeTag::MODULE:  kind = "module"; break;
+            case aura::core::TypeTag::RECORD: kind = "record"; break;
+            case aura::core::TypeTag::VARIANT: kind = "variant"; break;
+            case aura::core::TypeTag::LINEAR: kind = "linear"; break;
+            case aura::core::TypeTag::FORALL: kind = "forall"; break;
+            case aura::core::TypeTag::FUNC:   kind = "function"; break;
+            default: kind = "scalar"; break;
+        }
+        string_heap_.push_back(kind);
+        out.push_back(make_string(kind_idx));
+        // name
+        auto name_idx = string_heap_.size();
+        string_heap_.push_back(name);
+        out.push_back(make_string(name_idx));
+        // members (only for module/record)
+        if (treg->tag_of(ty) == aura::core::TypeTag::MODULE) {
+            auto* mt = treg->module_of(ty);
+            if (mt) {
+                for (auto& [mname, mtype] : mt->members) {
+                    auto mname_idx = string_heap_.size();
+                    string_heap_.push_back(mname);
+                    auto mtype_name = std::string(treg->name_of(mtype));
+                    auto mtype_idx = string_heap_.size();
+                    string_heap_.push_back(mtype_name);
+                    auto pid = pairs_.size();
+                    pairs_.push_back({make_string(mname_idx), make_string(mtype_idx)});
+                    out.push_back(make_pair(pid));
+                }
+            }
+        } else if (treg->tag_of(ty) == aura::core::TypeTag::RECORD) {
+            auto* rt = treg->record_of(ty);
+            if (rt) {
+                for (auto& [fname, ftype] : rt->fields) {
+                    auto fname_idx = string_heap_.size();
+                    string_heap_.push_back(fname);
+                    auto ftype_name = std::string(treg->name_of(ftype));
+                    auto ftype_idx = string_heap_.size();
+                    string_heap_.push_back(ftype_name);
+                    auto pid = pairs_.size();
+                    pairs_.push_back({make_string(fname_idx), make_string(ftype_idx)});
+                    out.push_back(make_pair(pid));
+                }
+            }
+        }
+        // Build the list from out (in reverse because we add via cons)
+        EvalValue lst = make_void();
+        for (auto it = out.rbegin(); it != out.rend(); ++it) {
+            auto pid = pairs_.size();
+            pairs_.push_back({*it, lst});
+            lst = make_pair(pid);
+        }
+        return lst;
+    });
+
+    // ── reflect-members "name" ────────────────────────────────────
+    // Issue #122: list a type's members/fields. Returns a
+    // list of (name . type-name) pairs:
+    //   (list (cons "member1" "Type1") (cons "member2" "Type2") ...)
+    // For module types: members list. For record types: field
+    // list. For other types: '() (void).
+    primitives_.add("reflect-members", [this](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_string(a[0])) return make_void();
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size()) return make_void();
+        std::string name = string_heap_[idx]; // fix: copy, see Issue #122 (push_back can realloc)
+        auto* treg = static_cast<aura::core::TypeRegistry*>(type_registry_);
+        if (!treg) return make_void();
+        auto ty = treg->lookup_type(name);
+        if (!ty.valid()) return make_void();
+        std::vector<std::pair<std::string, std::string>> members;
+        if (treg->tag_of(ty) == aura::core::TypeTag::MODULE) {
+            auto* mt = treg->module_of(ty);
+            if (mt) {
+                for (auto& [mname, mtype] : mt->members) {
+                    members.emplace_back(mname, std::string(treg->name_of(mtype)));
+                }
+            }
+        } else if (treg->tag_of(ty) == aura::core::TypeTag::RECORD) {
+            auto* rt = treg->record_of(ty);
+            if (rt) {
+                for (auto& [fname, ftype] : rt->fields) {
+                    members.emplace_back(fname, std::string(treg->name_of(ftype)));
+                }
+            }
+        } else if (treg->tag_of(ty) == aura::core::TypeTag::VARIANT) {
+            auto* vt = treg->variant_of(ty);
+            if (vt) {
+                for (auto& [vname, ftypes] : vt->variants) {
+                    std::string joined;
+                    for (auto& ft : ftypes) {
+                        if (!joined.empty()) joined += " ";
+                        joined += std::string(treg->name_of(ft));
+                    }
+                    members.emplace_back(vname, joined);
+                }
+            }
+        }
+        // Build the list of (name . type-name) pairs in reverse
+        EvalValue lst = make_void();
+        for (auto it = members.rbegin(); it != members.rend(); ++it) {
+            auto nidx = string_heap_.size();
+            string_heap_.push_back(it->first);
+            auto tidx = string_heap_.size();
+            string_heap_.push_back(it->second);
+            auto pid = pairs_.size();
+            pairs_.push_back({make_string(nidx), make_string(tidx)});
+            auto ppid = pairs_.size();
+            pairs_.push_back({make_pair(pid), lst});
+            lst = make_pair(ppid);
+        }
+        return lst;
+    });
+
+    // ── reflect-module-exports "name" ──────────────────────────
+    // Issue #122: returns the list of exported symbols for a
+    // module. For a module type with members, this is the
+    // same as reflect-members (member names). For non-module
+    // types, returns '().
+    // Use case: AI agents can use this to auto-generate
+    // `require std/xxx all:` symbol tables without having to
+    // read the .aura source file by hand.
+    primitives_.add("reflect-module-exports", [this](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_string(a[0])) return make_void();
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size()) return make_void();
+        std::string name = string_heap_[idx]; // fix: copy, see Issue #122 (push_back can realloc)
+        auto* treg = static_cast<aura::core::TypeRegistry*>(type_registry_);
+        if (!treg) return make_void();
+        auto ty = treg->lookup_type(name);
+        if (!ty.valid()) return make_void();
+        if (treg->tag_of(ty) != aura::core::TypeTag::MODULE) return make_void();
+        auto* mt = treg->module_of(ty);
+        if (!mt) return make_void();
+        // Build a list of exported symbol names in reverse
+        EvalValue lst = make_void();
+        for (auto it = mt->members.rbegin(); it != mt->members.rend(); ++it) {
+            auto nidx = string_heap_.size();
+            string_heap_.push_back(it->first);
+            auto pid = pairs_.size();
+            auto pid2 = pairs_.size(); pairs_.push_back({make_string(nidx), lst}); lst = make_pair(pid2);
+            lst = make_pair(pid);
+        }
+        return lst;
+    });
+
     primitives_.add("type?", [this, infer_type_name](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_string(a[1]))
             return make_int(0);
