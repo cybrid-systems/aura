@@ -1774,7 +1774,7 @@ int main() {
             cs.add(Constraint{Constraint::EQUAL,
                               treg.int_type(),
                               treg.lookup_type("String")});
-            if (cs.solve()) {
+            if (cs.solve() == SolveResult::SOLVED) {
                 std::println(std::cerr,
                              "TS FAIL: Int EQUAL String should not unify");
                 ++ts_failed;
