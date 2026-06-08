@@ -70,6 +70,7 @@ import aura.core.ast;
 import aura.core.type;
 import aura.compiler.value;
 import aura.compiler.type_checker;
+import aura.compiler.coercion_map;
 import aura.diag;
 import aura.parser.parser;
 
@@ -5733,6 +5734,16 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             aura::diag::DiagnosticCollector local_diag;
             tc.infer_flat(*workspace_flat_, *workspace_pool_,
                           workspace_flat_->root, local_diag);
+            // Issue #116: apply deferred coercions so the
+            // upcoming IR generation sees CoercionNodes.
+            // (The mutate:rebind path proceeds to eval, so
+            //  the workspace must be lowering-ready.)
+            {
+                auto cm = tc.take_coercions();
+                if (!cm.empty()) {
+                    aura::compiler::apply_coercion_map(*workspace_flat_, cm);
+                }
+            }
             workspace_flat_->clear_all_dirty();
             auto local_diags = local_diag.diagnostics();
             if (local_diags.empty()) {
@@ -6289,6 +6300,14 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                     aura::diag::DiagnosticCollector local_diag;
                     tc.infer_flat(*workspace_flat_, *workspace_pool_,
                                   workspace_flat_->root, local_diag);
+                    // Issue #116: apply deferred coercions before eval
+                    // (the set-body path proceeds to re-execute the workspace).
+                    {
+                        auto cm = tc.take_coercions();
+                        if (!cm.empty()) {
+                            aura::compiler::apply_coercion_map(*workspace_flat_, cm);
+                        }
+                    }
                     workspace_flat_->clear_all_dirty();
                     auto local_diags = local_diag.diagnostics();
                     if (local_diags.empty()) {
@@ -18016,6 +18035,11 @@ std::string Evaluator::run_typecheck_no_lock() {
 bool Evaluator::run_typecheck_no_lock_bool() {
     // Same as the string version but returns pass/fail directly
     // without formatting. Cheaper for hot fuzzer loops.
+    //
+    // Issue #116: this is called from the fuzzy/evolutionary loop
+    // (compute_fitness), which then `eval`s the workspace. The
+    // workspace must be lowering-ready, so we apply the deferred
+    // CoercionMap before returning.
     if (!workspace_flat_ || !workspace_pool_) return true;
     if (!type_registry_) {
         type_registry_ = new aura::core::TypeRegistry();
@@ -18035,6 +18059,15 @@ bool Evaluator::run_typecheck_no_lock_bool() {
     aura::diag::DiagnosticCollector diag;
     tc.infer_flat(*workspace_flat_, *workspace_pool_,
                   workspace_flat_->root, diag);
+    // Issue #116: apply deferred coercions — the caller (fuzzer
+    // loop) will then `eval` the workspace via compute_fitness,
+    // which needs CoercionNodes present for the IR generator.
+    {
+        auto cm = tc.take_coercions();
+        if (!cm.empty()) {
+            aura::compiler::apply_coercion_map(*workspace_flat_, cm);
+        }
+    }
     workspace_flat_->clear_all_dirty();
     return diag.diagnostics().empty();
 }

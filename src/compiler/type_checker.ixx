@@ -7,6 +7,7 @@ import std;
 import aura.core;
 import aura.core.type;
 import aura.diag;
+import aura.compiler.coercion_map;
 
 namespace aura::compiler {
 
@@ -239,6 +240,18 @@ public:
     InnerStats stats_;
     InnerStats stats() const { return stats_; }
 
+    // Issue #116: defer CoercionNode insertion to a separate
+    // explicit pass. The type checker no longer mutates the
+    // FlatAST's parent→child links; instead it accumulates
+    // coercion intent here, and the caller applies it via
+    // `apply_coercion_map(flat, take_coercions())` once type
+    // checking is done. This preserves `ast:snapshot` /
+    // `ast:rollback` semantics and makes the type checker safe
+    // to call on versioned/shared FlatASTs.
+    CoercionMap coercions_;
+    const CoercionMap& coercions() const { return coercions_; }
+    CoercionMap take_coercions() { return std::move(coercions_); }
+
     InferenceEngine(aura::core::TypeRegistry& reg, aura::diag::DiagnosticCollector& diag);
 
     // FlatAST inference entries
@@ -331,6 +344,33 @@ export struct TypeChecker {
     IncrementalStats stats() const { return stats_; }
     void reset_stats() { stats_ = {}; }
 
+    // Issue #116: deferred CoercionNode insertion. infer_flat
+    // now collects coercion intent in this map rather than
+    // mutating the FlatAST directly. The caller is expected
+    // to apply it via `apply_coercion_map(flat, take_coercions())`
+    // after type checking is done — typically right before
+    // lowering to IR. The map is consumed (moved-out) on take
+    // so subsequent infer_flat calls start from an empty map.
+    const CoercionMap& last_coercions() const { return last_coercions_; }
+    CoercionMap take_coercions() { return std::move(last_coercions_); }
+
+    // Convenience: infer_flat + apply deferred coercions to
+    // the FlatAST in one call. Use this when the caller is
+    // about to lower the AST to IR and needs CoercionNodes
+    // present. For pure type-checking paths (e.g. the
+    // `typecheck` command that just reports types) the plain
+    // `infer_flat` is sufficient and avoids unnecessary work.
+    aura::core::TypeId infer_flat_apply(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                        aura::ast::NodeId node,
+                                        aura::diag::DiagnosticCollector& diag) {
+        auto tid = infer_flat(flat, pool, node, diag);
+        auto cm = take_coercions();
+        if (!cm.empty()) {
+            apply_coercion_map(flat, cm);
+        }
+        return tid;
+    }
+
     // Issue #79: strict type-check mode.
     //
     // When strict == true, `is_coercible` rejects cross-type coercions
@@ -366,6 +406,9 @@ private:
     // rejects cross-type coercions (Int ↔ String, Int ↔ Bool, etc.) and
     // reports them as TypeError instead of silently coercing via Notes.
     bool strict_ = false;
+
+    // Issue #116: see last_coercions() / take_coercions() above.
+    CoercionMap last_coercions_;
 };
 
 } // namespace aura::compiler
