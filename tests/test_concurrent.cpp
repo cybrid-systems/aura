@@ -3580,3 +3580,4 @@ bool test_gc_heap_mutex_hook() {
     aura::messaging::g_heap_mutex = nullptr;
     return true;
 }
+

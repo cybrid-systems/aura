@@ -29,13 +29,25 @@ Scheduler::Scheduler(int num_workers) {
     if (epoll_fd_ == -1)
         throw std::system_error(errno, std::generic_category(), "scheduler epoll_create");
 
-    // Register stdin (fd 0) with edge-triggered mode
+    // Register stdin (fd 0) with edge-triggered mode so the IO
+    // thread can wake when input arrives (REPL / serve-async mode).
+    // This is best-effort: in test environments stdin may be a
+    // socket or a redirected file descriptor that the kernel
+    // refuses to add to epoll with EPERM. We log and continue
+    // rather than abort the scheduler — tests that don't drive
+    // stdin don't care, and crashing here made the test_concurrent
+    // binary flaky in CI sandboxes (Issue #115 follow-up).
     stdin_fd_ = STDIN_FILENO;
     struct epoll_event ee;
     ee.events = EPOLLIN | EPOLLET;
     ee.data.ptr = nullptr;  // nullptr = stdin event
-    if (::epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, stdin_fd_, &ee) == -1)
-        throw std::system_error(errno, std::generic_category(), "scheduler epoll_ctl stdin");
+    if (::epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, stdin_fd_, &ee) == -1) {
+        std::fprintf(stderr,
+            "scheduler: stdin not epollable (errno=%d: %s); "
+            "REPL/serve-async stdin handling disabled for this scheduler\n",
+            errno, std::strerror(errno));
+        stdin_fd_ = -1;  // mark as not registered
+    }
 
     // Also register the scheduler's own wakeup eventfd for fast shutdown
     // (self-wake from stop())
