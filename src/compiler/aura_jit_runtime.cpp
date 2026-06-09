@@ -611,21 +611,10 @@ int64_t aura_cast_op(int64_t val, int64_t type_tag) {
 }
 
 // === Reset runtime state (for session isolation) ===
-void aura_reset_runtime() {
-    g_closure_func_ids.clear();
-    g_closure_envs.clear();
-    g_arena_closure_envs.clear();
-    g_cell_heap.clear();
-    g_pair_slots.clear();
-    std::memset(g_jit_fns, 0, sizeof(g_jit_fns));
-    // Clear closure inline cache
-    for (int i = 0; i < CLOSURE_CACHE_SIZE; ++i)
-        g_closure_cache[i] = {-1, nullptr, 0, 0, 0};
-    // Keep prim table (registered once)
-    // Clear JIT function entries but NOT prim table
-    for (int i = 0; i < 512; ++i)
-        g_jit_fns[i] = {nullptr, 0, 0, 0};
-}
+// Forward declaration — definition is at the bottom of the file
+// because it touches g_string_pool / g_float_pool (which are
+// declared further down).
+void aura_reset_runtime();
 
 // === Display bridge ===
 void aura_display_int(int64_t val) {
@@ -744,6 +733,35 @@ extern "C" int64_t aura_hash_key_eq(int64_t stored_key, int64_t search_key) {
             return g_hash_str_eq_fn(stored_key, search_key);
     }
     return 0;
+}
+
+// === Reset runtime state (for session isolation) ===
+// Issue #136: clears g_string_pool and g_float_pool in addition
+// to the existing clear list. Previously these grew without
+// bound across sessions, leaking memory in long-running
+// processes (serve-async, fuzz, multi-session).
+void aura_reset_runtime() {
+    g_closure_func_ids.clear();
+    g_closure_envs.clear();
+    g_arena_closure_envs.clear();
+    g_cell_heap.clear();
+    g_pair_slots.clear();
+    std::memset(g_jit_fns, 0, sizeof(g_jit_fns));
+    // Issue #136: clear string and float pools. They grow on
+    // every aura_alloc_string / aura_alloc_float call, with no
+    // built-in shrink. For long-running processes (serve-async
+    // sessions, fuzz iterations, multi-session tests) this is
+    // a real memory leak. The pools keep their allocated
+    // capacity for reuse; only the size counters reset.
+    g_string_pool.clear();
+    g_float_pool.clear();
+    // Clear closure inline cache
+    for (int i = 0; i < CLOSURE_CACHE_SIZE; ++i)
+        g_closure_cache[i] = {-1, nullptr, 0, 0, 0};
+    // Keep prim table (registered once)
+    // Clear JIT function entries but NOT prim table
+    for (int i = 0; i < 512; ++i)
+        g_jit_fns[i] = {nullptr, 0, 0, 0};
 }
 
 } // extern "C"

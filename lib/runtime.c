@@ -621,6 +621,31 @@ int64_t aura_alloc_float(double d) {
     return -10000000000000000LL - (int64_t)(float_count - 1);
 }
 
+// Issue #136: Reset string and float pools for session isolation.
+// Called between serve-async sessions / fuzz iterations / multi-session
+// tests. Without this, the pools grow without bound across sessions
+// (string_heap, float_pool are never shrunk once allocated).
+//
+// Note: aura_bump_reset() resets only the bump arena. This function
+// resets the long-lived pools. Callers wanting full session reset
+// should call both.
+void aura_reset_runtime(void) {
+    // Strings: free each strdup'd buffer, then free the heap array
+    if (string_heap) {
+        for (uint64_t i = 0; i < string_count; ++i) {
+            if (string_heap[i]) {
+                free(string_heap[i]);
+                string_heap[i] = NULL;
+            }
+        }
+        string_count = 0;
+        // Keep string_capacity for reuse; do NOT realloc to 0
+        // (avoids the next alloc having to re-grow immediately).
+    }
+    // Floats: just reset count; keep capacity
+    float_count = 0;
+}
+
 void aura_register_primitive_fn(int64_t slot, int64_t fn_ptr) {
     uint64_t s = (uint64_t)slot;
     if (s < MAX_PRIM_SLOTS && fn_ptr != 0) {
