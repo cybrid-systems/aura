@@ -182,6 +182,10 @@ struct AdtCtorEntry {
 static std::unordered_map<std::string, AdtCtorEntry> g_adt_constructors;
 
 std::optional<EvalValue> Env::lookup(const std::string& n) const {
+    // Issue #144: contract check — lookup called with a non-empty name.
+    // An empty name is always a caller bug; the lookup would always
+    // miss but would still incur the depth-counter overhead.
+    contract_assert(!n.empty());
     if (++g_env_lookup_depth > MAX_ENV_DEPTH) {
         --g_env_lookup_depth;
         return std::nullopt;
@@ -224,6 +228,8 @@ std::optional<EvalValue> Env::lookup(const std::string& n) const {
 
 // ── Env::lookup_binding: returns raw binding (cell sentinel as-is) ─
 std::optional<EvalValue> Env::lookup_binding(const std::string& n) const {
+    // Issue #144: contract check — see Env::lookup.
+    contract_assert(!n.empty());
     for (auto it = bindings_.rbegin(); it != bindings_.rend(); ++it)
         if (it->first == n)
             return it->second;
@@ -7790,6 +7796,10 @@ std::optional<std::uint64_t> Env::lookup_cell_index(const std::string& n) const 
 }
 
 std::optional<PrimFn> Primitives::lookup(const std::string& n) const {
+    // Issue #144: contract check — primitive name must be non-empty.
+    // An empty string would still hash-table-lookup and miss, but
+    // the contract catches the caller bug at the boundary.
+    contract_assert(!n.empty());
     auto i = table_.find(n);
     return i != table_.end() ? std::optional(i->second) : std::nullopt;
 }

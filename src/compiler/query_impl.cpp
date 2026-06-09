@@ -190,6 +190,11 @@ QueryExpr QueryEngine::parse(std::string_view sexpr) {
 static constexpr int MAX_MATCH_DEPTH = 64;
 
 bool QueryEngine::match(NodeId id, const QueryExpr& q, int depth) {
+    // Issue #144: contract checks — match must be called with a
+    // valid id and a non-negative depth. The depth is internally
+    // incremented by recursive calls; top-level callers pass 0.
+    contract_assert(depth >= 0);
+    contract_assert(id < index_.ast.size() || id == NULL_NODE);
     if (depth > MAX_MATCH_DEPTH)
         return false;
     if (id >= index_.ast.size())
@@ -305,6 +310,14 @@ void QueryEngine::ensure_sym_index() const {
 }
 
 std::vector<NodeId> QueryEngine::execute(const QueryExpr& q) {
+    // Issue #144: contract check — execute should only be called
+    // with a fully-constructed QueryExpr. The default-constructed
+    // enum value (kind=0, which is the AllNodes variant) is the
+    // only "trivial" kind; anything else would produce garbage
+    // matches. We can't check the discriminant here, so we just
+    // assert that the index has been initialized (size_ > 0 is
+    // a reasonable proxy — a fresh QueryEngine has size 0).
+    contract_assert(index_.ast.size() > 0);
     std::vector<NodeId> r;
 
     // Fast path: simple NodeType query uses TagIndex (O(1) lookup)

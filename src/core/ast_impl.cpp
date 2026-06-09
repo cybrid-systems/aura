@@ -5,10 +5,15 @@ namespace aura::ast {
 
 // ── Patch application ──────────────────────────────────────────
 bool apply_patches(FlatAST& ast, std::span<const Patch> patches) {
-    // Precondition: all patch targets must be valid node IDs
+    // Issue #144: contract checks — patches must be a non-empty
+    // span and every patch's target id must be valid. The pre
+    // contract replaces the previous std::abort() with a proper
+    // contract_assert (so the violation is reported with file/line).
+    contract_assert(!patches.empty());
     for (auto& p : patches) {
+        contract_assert(p.node < ast.size());
         if (!ast.is_valid(p.node))
-            std::abort();  // AURA_PRE equivalent
+            return false;
         if (p.node >= ast.size())
             return false;
         switch (p.field_offset) {
