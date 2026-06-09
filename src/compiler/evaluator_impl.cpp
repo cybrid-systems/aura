@@ -10457,6 +10457,15 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
             }
         }
 
+        // Issue #139: also rename Lambda params. The Lambda's
+        // params live in param_data_ (a separate field from
+        // sym_id_), so the sym_id loop above doesn't see them.
+        for (NodeId id = 0; id < flat.size(); ++id) {
+            if (flat.tag(id) == NodeTag::Lambda) {
+                count += flat.rename_param(id, old_sym, new_sym, nullptr);
+            }
+        }
+
         if (count == 0)
             return merr("not-found", std::string("symbol \"") + old_name + "\" not found in AST");
 
