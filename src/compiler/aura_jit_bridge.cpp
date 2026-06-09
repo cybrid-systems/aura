@@ -2,6 +2,7 @@
 // Routes compilation requests to the LLVM-based emit backend in aura_jit.cpp.
 
 #include "aura_jit.h"
+#include "aot_mangle.h"  // mangle_aot_name (Issue #136)
 
 #include <cstdio>
 #include <string>
@@ -65,57 +66,9 @@ extern "C" int64_t aura_jit_test() {
 //
 // func_ids array: parallel to functions[], holds the IR func_id for each.
 
-// Issue #136: a more thorough name-mangler. The previous version
-// only replaced @ . - space with _, which is incomplete: special
-// chars like ? ! ( ) [ ] < > & * + = / \ | ' " ; , # $ % ^ ~
-// ` all need to be replaced for valid C identifiers. We replace
-// any non-[A-Za-z0-9_] char with `_` and then collapse runs of
-// underscores to a single one. This guarantees a valid C
-// identifier and keeps the names short.
-//
-// Exposed (not static) so tests can verify behavior.
-std::string mangle_aot_name(const std::string& original, std::uint32_t disambiguator) {
-    // Step 1: replace any non-alphanumeric with `_`
-    std::string out;
-    out.reserve(original.size() + 16);
-    for (char c : original) {
-        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-            (c >= '0' && c <= '9') || c == '_') {
-            out.push_back(c);
-        } else {
-            out.push_back('_');
-        }
-    }
-    // Step 2: collapse runs of underscores in the middle, but
-    // preserve leading / trailing underscores (so __top__ stays
-    // __top__, not _top_).
-    std::size_t first_n = 0;
-    while (first_n < out.size() && out[first_n] == '_') ++first_n;
-    std::size_t last_n = out.size();
-    while (last_n > first_n && out[last_n - 1] == '_') --last_n;
-    std::string prefix = out.substr(0, first_n);
-    std::string middle = out.substr(first_n, last_n - first_n);
-    std::string suffix = out.substr(last_n);
-    std::string compact;
-    compact.reserve(middle.size());
-    bool prev_underscore = false;
-    for (char c : middle) {
-        if (c == '_') {
-            if (!prev_underscore) compact.push_back(c);
-            prev_underscore = true;
-        } else {
-            compact.push_back(c);
-            prev_underscore = false;
-        }
-    }
-    // Step 3: append disambiguator (skipped for __top__ which is
-    // the canonical entry point).
-    if (original != "__top__") {
-        compact += "_";
-        compact += std::to_string(disambiguator);
-    }
-    return prefix + compact + suffix;
-}
+// mangle_aot_name is defined in aot_mangle.h (extracted in
+// Issue #136 so tests can verify the behavior without pulling
+// in the full AOT pipeline).
 
 static bool generate_registration_c(const aura::jit::FlatFunction* functions,
                                      const uint32_t* func_ids,
