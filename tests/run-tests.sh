@@ -452,7 +452,7 @@ echo "=== FFI Tests ==="
 # Opaque pointer basics
 run_test "ffi:opaque-bool" "$(printf '(c-opaque? (c-opaque 42))')" "#t"
 run_test "ffi:opaque-int" "$(printf '(c-opaque->int (c-opaque 42))')" "42"
-run_test "ffi:opaque-alloc" "$(printf '(begin (define p (c-alloc 64)) (c-opaque? p))')" "#t"
+run_test "ffi:opaque-alloc" "$(printf '(begin (define p (c-alloc 64)) (c-free p) (c-opaque? p))')" "#t"
 run_test "ffi:opaque-not" "$(printf '(c-opaque? 42)')" "#f"
 run_test "ffi:alloc-free" "$(printf '(begin (define p (c-alloc 1024)) (c-free p) (c-opaque? p))')" "#t"
 
