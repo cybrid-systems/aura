@@ -64,13 +64,23 @@ inline std::string mangle_aot_name(const std::string& original,
             prev_underscore = false;
         }
     }
-    // Step 3: append disambiguator (skipped for __top__ which is
-    // the canonical entry point).
+    std::string result = prefix + compact + suffix;
+    // Step 3: append disambiguator at the very end (NOT in the
+    // middle, after the name part). This is critical for matching
+    // the LLVM-side symbol name, which is constructed as
+    // `fn_name + "_" + std::to_string(my_id)`. Inserting the
+    // disambiguator in the middle (e.g. for `__lambda__` we
+    // would produce `__lambda_0__`) doesn't match the LLVM's
+    // `__lambda___0`. Appending at the end produces the same
+    // string both sides, so the .reg.c reference and the LLVM
+    // object symbol line up. The disambiguator is skipped for
+    // `__top__` (the canonical entry point) to match the LLVM
+    // side's special case.
     if (original != "__top__") {
-        compact += "_";
-        compact += std::to_string(disambiguator);
+        result += "_";
+        result += std::to_string(disambiguator);
     }
-    return prefix + compact + suffix;
+    return result;
 }
 
 }  // namespace aura::compiler
