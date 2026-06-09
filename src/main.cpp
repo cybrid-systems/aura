@@ -37,7 +37,10 @@ import aura.repl;
 extern "C" char* aura_inspect_ir_json(const void* mod, std::size_t* out_size);
 extern "C" bool aura_emit_object_file(const void* mod, const char* path);
 extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
-                                       const void* functions, unsigned int num_functions);
+                                     const void* functions, unsigned int num_functions);
+
+#include <cstdlib>  // atexit
+extern "C" void aura_reset_runtime();  // Issue #137: cleanup at exit
 extern "C" void aura_set_prim_registration(const char* c_code);
 extern "C" void aura_set_string_pool(const char** strings, unsigned int count);
 
@@ -216,6 +219,19 @@ static std::unordered_map<std::string, std::string> parse_json_command(std::stri
 }
 
 int main(int argc, char* argv[]) {
+    // Issue #137: register an atexit handler that frees the
+    // runtime's hash tables. The `hash` primitive in the
+    // evaluator creates these via FlatHashTable::create; they
+    // are normally only freed by (gc-heap). Test scripts that
+    // create a hash and exit without calling gc-heap (e.g. all
+    // 33 hash tests in tests/run-tests.sh) would otherwise
+    // leak them, which LeakSanitizer flags as test failures.
+    // aura_reset_runtime also clears the string/float pools
+    // and JIT caches, so it's the canonical cleanup point.
+    static int dummy = (std::atexit(+[]() { aura_reset_runtime(); }), 0);
+    (void)dummy;
+
+    // ── Crash handler: print backtrace on fatal signal ────────────
     // ── Crash handler: print backtrace on fatal signal ────────────
     // CI's --emit-binary path has been hitting 2 segfaults that don't
     // reproduce locally. This handler flushes a backtrace to stderr

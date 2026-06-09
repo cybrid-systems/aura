@@ -834,6 +834,14 @@ extern "C" int64_t aura_hash_key_eq(int64_t stored_key, int64_t search_key) {
 // to the existing clear list. Previously these grew without
 // bound across sessions, leaking memory in long-running
 // processes (serve-async, fuzz, multi-session).
+// Issue #137: also frees the hash tables in g_hash_tables.
+// These are created by the `hash` primitive in
+// evaluator_impl.cpp and only freed by the (gc-heap)
+// primitive. Test scripts that use `hash` without calling
+// `gc-heap` leak these tables, which LeakSanitizer flags.
+// For long-running processes (serve-async, fuzz) the
+// hash tables would also accumulate. Now they're freed
+// here, so the function is safe to call at process exit.
 void aura_reset_runtime() {
     g_closure_func_ids.clear();
     g_closure_envs.clear();
@@ -849,6 +857,17 @@ void aura_reset_runtime() {
     // capacity for reuse; only the size counters reset.
     g_string_pool.clear();
     g_float_pool.clear();
+    // Issue #137: free hash tables. The `hash` primitive
+    // (evaluator_impl.cpp) creates these via FlatHashTable::create
+    // and stores them in g_hash_tables; they're normally only
+    // freed by the (gc-heap) primitive. Test scripts that
+    // create a hash and exit without calling gc-heap (e.g. all
+    // 33 hash tests in tests/run-tests.sh) leak these tables,
+    // which LeakSanitizer flags as false-positive failures.
+    // Freeing here makes the function safe to call at process
+    // exit (or between serve-async sessions).
+    for (auto* fht : g_hash_tables) FlatHashTable::destroy(fht);
+    g_hash_tables.clear();
     // Clear closure inline cache
     for (int i = 0; i < CLOSURE_CACHE_SIZE; ++i)
         g_closure_cache[i] = {-1, nullptr, 0, 0, 0};
