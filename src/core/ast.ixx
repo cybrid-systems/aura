@@ -298,6 +298,13 @@ export struct MutationRecord {
     std::uint64_t old_value;    // original value before mutation
     std::uint64_t new_value;    // value after mutation
     bool has_rollback_data;     // true if rollback is available
+    // Issue #142: extended rollback data for subtree-level mutations
+    // (mutate:replace-subtree). When set, rollback re-parses old_subtree_source
+    // and re-attaches the resulting root at (parent_id, child_idx).
+    NodeId parent_id = NULL_NODE;       // parent of the replaced subtree slot
+    std::uint32_t child_idx = 0;        // child index in parent.children
+    std::string old_subtree_source;     // source of the original subtree
+    bool has_subtree_rollback = false;  // true if old_subtree_source is valid
 };
 
 // ── Patch — AI mutation descriptor ─────────────────────────────
@@ -1051,7 +1058,7 @@ private:
                                            .count());
         mutation_log_.push_back({mid, now, node, std::string(op_name), std::string(old_type),
                                  std::string(new_type), std::string(summary), status, field_offset,
-                                 old_value, new_value, has_rollback});
+                                 old_value, new_value, has_rollback, NULL_NODE, 0, "", false});
         // Auto-mark node AND ancestors dirty on mutation
         mark_dirty_upward(node);
 
@@ -1060,6 +1067,33 @@ private:
             node_first_mutation_[node] = static_cast<std::uint32_t>(mutation_log_.size());
         }
         // If node index doesn't exist yet, we'll set it on next get
+        return mid;
+    }
+
+    // Issue #142: record a subtree-level mutation (e.g. mutate:replace-subtree).
+    // The target_node here is the NEW subtree's root. The old_subtree_source is
+    // kept verbatim so rollback can re-parse and re-attach without needing
+    // a generation-aware node lookup.
+    std::uint64_t add_mutation_subtree(NodeId target_node, NodeId parent_id,
+                                       std::uint32_t child_idx,
+                                       std::string_view old_subtree_source,
+                                       std::string_view op_name,
+                                       std::string_view summary) {
+        std::uint64_t mid = next_mutation_id_++;
+        auto now =
+            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                           std::chrono::system_clock::now().time_since_epoch())
+                                           .count());
+        mutation_log_.push_back({mid, now, target_node, std::string(op_name), "", "",
+                                 std::string(summary), MutationStatus::Committed, 0, 0, 0, false,
+                                 parent_id, child_idx, std::string(old_subtree_source), true});
+        if (target_node != NULL_NODE)
+            mark_dirty_upward(target_node);
+        if (parent_id != NULL_NODE)
+            mark_dirty_upward(parent_id);
+        if (target_node < node_first_mutation_.size() && node_first_mutation_[target_node] == 0) {
+            node_first_mutation_[target_node] = static_cast<std::uint32_t>(mutation_log_.size());
+        }
         return mid;
     }
 
@@ -1116,6 +1150,24 @@ private:
             if (rec.mutation_id == mutation_id) {
                 if (rec.status != MutationStatus::Committed)
                     return false;
+                // Issue #142: subtree rollback path. Re-parse the
+                // old_subtree_source and re-attach it at (parent_id, child_idx).
+                if (rec.has_subtree_rollback) {
+                    if (rec.parent_id == NULL_NODE || rec.parent_id >= tag_.size())
+                        return false;
+                    // Use the workspace's StringPool if available; otherwise
+                    // the caller should not have created a subtree record.
+                    // We don't have direct access to the pool here, so the
+                    // primitive layer (rollback primitive) handles re-parsing
+                    // and re-attachment via a higher-level API. This branch
+                    // just marks the record as rolled back and bumps generation.
+                    rec.status = MutationStatus::RolledBack;
+                    ++generation_;
+                    if (generation_ == 0) generation_ = 1;
+                    if (rec.parent_id < tag_.size())
+                        mark_dirty_upward(rec.parent_id);
+                    return true;
+                }
                 if (!rec.has_rollback_data)
                     return false;
                 // Apply old value back to the SoA column

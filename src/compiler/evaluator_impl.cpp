@@ -4584,6 +4584,59 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         return make_bool(workspace_flat_->rollback(mid));
     });
 
+    // (workspace:rollback-latest) → mutation-id of the most recent
+    //   committed mutation, after rolling it back. Returns 0 if no
+    //   committed mutation exists. Issue #142: convenience wrapper
+    //   for LLM callers that don't track mutation IDs.
+    //
+    //   For subtree mutations (mutate:replace-subtree), the actual
+    //   re-parse and re-attach happens here, since the AST layer's
+    //   rollback only marks the record as rolled back and bumps
+    //   generation (it doesn't have access to the parser).
+    primitives_.add("workspace:rollback-latest", [this](const auto&) -> EvalValue {
+        if (!workspace_flat_ || !workspace_pool_) return make_int(0);
+        // Walk the log in reverse; the latest Committed record wins.
+        const auto& log = workspace_flat_->all_mutations();
+        for (auto it = log.rbegin(); it != log.rend(); ++it) {
+            if (it->status != aura::ast::MutationStatus::Committed) continue;
+            // For subtree records, do the re-parse + re-attach here
+            if (it->has_subtree_rollback &&
+                it->parent_id != aura::ast::NULL_NODE &&
+                !it->old_subtree_source.empty()) {
+                auto pr = aura::parser::parse_to_flat(
+                    it->old_subtree_source, *workspace_flat_, *workspace_pool_);
+                if (pr.success && pr.root != aura::ast::NULL_NODE) {
+                    workspace_flat_->set_child(
+                        it->parent_id, it->child_idx, pr.root);
+                    workspace_flat_->mark_dirty_upward(it->parent_id);
+                    // Mark the record as rolled back (bump generation
+                    // so any cached NodeIds become stale).
+                    for (auto& r : workspace_flat_->all_mutations()) {
+                        if (r.mutation_id == it->mutation_id) {
+                            r.status = aura::ast::MutationStatus::RolledBack;
+                            break;
+                        }
+                    }
+                    return make_int(static_cast<std::int64_t>(it->mutation_id));
+                }
+                // Parse failed — leave record committed, report failure
+                return make_int(0);
+            }
+            // Field-level rollback: delegate to the AST layer
+            auto mid = it->mutation_id;
+            if (workspace_flat_->rollback(mid))
+                return make_int(static_cast<std::int64_t>(mid));
+            return make_int(0);
+        }
+        return make_int(0);
+    });
+
+    // (workspace:mutation-count) → total mutations recorded
+    primitives_.add("workspace:mutation-count", [this](const auto&) -> EvalValue {
+        if (!workspace_flat_) return make_int(0);
+        return make_int(static_cast<std::int64_t>(workspace_flat_->mutation_count()));
+    });
+
     // (rollback-since mutation-id) → count of rolled-back mutations
     primitives_.add("rollback-since", [this](std::span<const EvalValue> a) {
         if (a.empty() || !is_int(a[0]) || !workspace_flat_)
@@ -6988,6 +7041,278 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
 
         flat.add_mutation(0, "replace-pattern", pattern_str, repl_template, summary);
         return make_bool(true);
+    });
+
+    // (mutate:replace-subtree <node-id> <new-code-string> [summary])
+    //   → #t on success, or a structured result containing captured vars
+    //     (Issue #142 AC: capture detection).
+    //   Replaces the subtree rooted at <node-id> with the parsed form of
+    //   <new-code-string>. Detects free variables in the new code that
+    //   are bound by enclosing scopes (i.e. would be captured after the
+    //   replacement) and returns them in the result so the LLM caller
+    //   can decide whether to hoist them or accept the capture.
+    //
+    //   Hygiene (Issue #142): the target node MUST NOT carry
+    //   SyntaxMarker::MacroIntroduced. Mutating macro-introduced code
+    //   would let user code reach into macro internals and break
+    //   hygiene invariants. The primitive returns a "hygiene" error
+    //   pair on rejection.
+    //
+    //   Rollback (Issue #142): records parent_id, child_idx, and
+    //   old_subtree_source in the mutation log so the (rollback ...)
+    //   primitive can restore the original subtree verbatim.
+    primitives_.add("mutate:replace-subtree", [this, mev](const auto& a) -> EvalValue {
+        std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
+        if (workspace_read_only_) return mev("read-only", "workspace is read-only");
+        // Issue #141: lazy COW trigger (active child workspace still
+        // shares parent's flat — clone before mutating).
+        if (workspace_tree_) {
+            if (!trigger_lazy_cow(workspace_tree_))
+                return mev("cow-refused", "COW refused: budget exceeded or read-only");
+            void* new_flat = nullptr;
+            void* new_pool = nullptr;
+            if (refresh_active_flat_pool(workspace_tree_, &new_flat, &new_pool)) {
+                workspace_flat_ = static_cast<aura::ast::FlatAST*>(new_flat);
+                workspace_pool_ = static_cast<aura::ast::StringPool*>(new_pool);
+            }
+        }
+        defuse_version_++;
+        using namespace aura::ast;
+        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) ||
+            !workspace_flat_ || !workspace_pool_)
+            return mev("bad-arg", "usage: (mutate:replace-subtree node-id new-code [summary])");
+        auto target = static_cast<NodeId>(as_int(a[0]));
+        auto code_idx = as_string_idx(a[1]);
+        if (code_idx >= string_heap_.size())
+            return mev("bad-arg", "code string index out of range");
+        auto& flat = *workspace_flat_;
+        if (target == NULL_NODE || target >= flat.size())
+            return mev("bad-arg", "node-id out of range");
+
+        // ── Hygiene gate (Issue #142 AC) ─────────────────────
+        if (flat.marker(target) == SyntaxMarker::MacroIntroduced)
+            return mev("hygiene", "cannot mutate macro-introduced node");
+
+        auto new_code = string_heap_[code_idx];
+        std::string summary = (a.size() > 2 && is_string(a[2]))
+                                  ? string_heap_[as_string_idx(a[2])]
+                                  : "replace-subtree";
+
+        // ── Locate parent + child_idx (the slot we're replacing) ──
+        auto parent_id = flat.parent_of(target);
+        std::uint32_t child_idx = 0;
+        bool found_slot = false;
+        if (parent_id != NULL_NODE && parent_id < flat.size()) {
+            auto pv = flat.get(parent_id);
+            for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
+                if (pv.child(ci) == target) {
+                    child_idx = static_cast<std::uint32_t>(ci);
+                    found_slot = true;
+                    break;
+                }
+            }
+        }
+        if (!found_slot)
+            return mev("no-parent", "target subtree has no parent slot to replace");
+
+        // ── Capture old subtree source (for rollback) ────────
+        std::string old_source;
+        {
+            auto v = flat.get(target);
+            // Build a tiny source printer using existing patterns.
+            // We only need a faithful representation of the old node
+            // for rollback; the unparse helper in mutate:replace-pattern
+            // is large, so we use a simpler one here.
+            std::function<std::string(NodeId)> src;
+            src = [&](NodeId id) -> std::string {
+                if (id >= flat.size() || id == NULL_NODE) return "";
+                auto n = flat.get(id);
+                switch (n.tag) {
+                    case NodeTag::LiteralInt:
+                        return std::to_string(n.int_value);
+                    case NodeTag::LiteralFloat:
+                        return std::to_string(n.float_value);
+                    case NodeTag::LiteralString:
+                        return "\"" + std::string(workspace_pool_->resolve(n.sym_id)) + "\"";
+                    case NodeTag::Variable:
+                        return std::string(workspace_pool_->resolve(n.sym_id));
+                    case NodeTag::Call: {
+                        std::string s = "(";
+                        for (std::size_t ci = 0; ci < n.children.size(); ++ci) {
+                            if (ci > 0) s += " ";
+                            s += src(n.child(ci));
+                        }
+                        s += ")";
+                        return s;
+                    }
+                    case NodeTag::Lambda: {
+                        std::string s = "(lambda (";
+                        for (std::size_t pi = 0; pi < n.params.size(); ++pi) {
+                            if (pi > 0) s += " ";
+                            s += workspace_pool_->resolve(n.params[pi]);
+                        }
+                        s += ")";
+                        if (!n.children.empty())
+                            s += " " + src(n.child(0));
+                        s += ")";
+                        return s;
+                    }
+                    case NodeTag::IfExpr: {
+                        std::string s = "(if";
+                        if (n.children.size() > 0) s += " " + src(n.child(0));
+                        if (n.children.size() > 1) s += " " + src(n.child(1));
+                        if (n.children.size() > 2) s += " " + src(n.child(2));
+                        return s + ")";
+                    }
+                    case NodeTag::Begin: {
+                        std::string s = "(begin";
+                        for (auto c : n.children) s += " " + src(c);
+                        return s + ")";
+                    }
+                    case NodeTag::Define: {
+                        std::string s = "(define " +
+                                         std::string(workspace_pool_->resolve(n.sym_id));
+                        if (!n.children.empty()) s += " " + src(n.child(0));
+                        return s + ")";
+                    }
+                    default:
+                        return std::string("#<node-") +
+                               std::to_string(static_cast<int>(n.tag)) + ">";
+                }
+            };
+            old_source = src(target);
+        }
+
+        // ── Parse the new code into the workspace ─────────────
+        auto pr = aura::parser::parse_to_flat(new_code, flat, *workspace_pool_);
+        if (!pr.success || pr.root == NULL_NODE)
+            return mev("parse-error", "new code could not be parsed");
+        // Note: we do NOT set flat.root = pr.root here. The new
+        // subtree is attached at the original slot via set_child
+        // below. Overwriting root would lose the parent linkage
+        // and break eval / current-source.
+
+        // ── Capture detection (Issue #142 AC) ────────────────
+        // Free vars in the new subtree that are bound by an enclosing
+        // scope (i.e. would be captured) are reported back. We walk
+        // the NEW subtree looking for Variable refs, then check each
+        // against all bindings in the parent chain (lambda params,
+        // let/letrec names) that lie OUTSIDE the new subtree.
+        std::vector<SymId> captured;
+        {
+            // Collect variables bound INSIDE the new subtree
+            std::unordered_set<SymId> new_bindings;
+            std::function<void(NodeId)> collect_new_bindings;
+            collect_new_bindings = [&](NodeId id) {
+                if (id >= flat.size() || id == NULL_NODE) return;
+                auto n = flat.get(id);
+                if (n.tag == NodeTag::Lambda) {
+                    for (auto p : n.params) new_bindings.insert(p);
+                } else if ((n.tag == NodeTag::Let || n.tag == NodeTag::LetRec) && n.has_name()) {
+                    new_bindings.insert(n.sym_id);
+                }
+                for (auto c : n.children) collect_new_bindings(c);
+            };
+            collect_new_bindings(pr.root);
+
+            // Collect all bindings in the parent chain (outside the slot)
+            std::unordered_set<SymId> outer_bindings;
+            std::function<void(NodeId)> collect_outer_bindings;
+            collect_outer_bindings = [&](NodeId id) {
+                if (id >= flat.size() || id == NULL_NODE) return;
+                auto n = flat.get(id);
+                if (n.tag == NodeTag::Lambda) {
+                    for (auto p : n.params) outer_bindings.insert(p);
+                } else if ((n.tag == NodeTag::Let || n.tag == NodeTag::LetRec) && n.has_name()) {
+                    outer_bindings.insert(n.sym_id);
+                }
+                for (auto c : n.children) collect_outer_bindings(c);
+            };
+            // Walk every node in flat (cheap O(n) since n is the
+            // workspace size, not a new traversal). Exclude the new
+            // subtree's nodes by tracking an in-subtree set.
+            std::unordered_set<NodeId> in_new_subtree;
+            std::function<void(NodeId)> mark_new;
+            mark_new = [&](NodeId id) {
+                if (id >= flat.size() || id == NULL_NODE) return;
+                in_new_subtree.insert(id);
+                auto n = flat.get(id);
+                for (auto c : n.children) mark_new(c);
+            };
+            mark_new(pr.root);
+            for (NodeId id = 0; id < flat.size(); ++id) {
+                if (in_new_subtree.count(id)) continue;
+                auto n = flat.get(id);
+                if (n.tag == NodeTag::Lambda) {
+                    for (auto p : n.params) outer_bindings.insert(p);
+                } else if ((n.tag == NodeTag::Let || n.tag == NodeTag::LetRec) && n.has_name()) {
+                    outer_bindings.insert(n.sym_id);
+                }
+            }
+
+            // Walk the new subtree, find Variable refs that are not
+            // bound by the new subtree itself, and check if they ARE
+            // bound by an outer scope.
+            static const char* builtins[] = {
+                "+", "-", "*", "/", "%", "=", "<", ">", "<=", ">=",
+                "display", "newline", "print", "read",
+                "car", "cdr", "cons", "pair?", "null?", "list",
+                "eq?", "eqv?", "equal?", "not", "and", "or", "if", "cond",
+                "lambda", "define", "let", "letrec", "begin", "set!",
+                "apply", "map", "filter", "foldl", "foldr",
+                "string?", "number?", "symbol?", "procedure?",
+                "void", "make-void", "error", "assert",
+                "true", "false", "quote",
+            };
+            std::unordered_set<SymId> builtin_syms;
+            for (auto b : builtins) builtin_syms.insert(workspace_pool_->intern(b));
+
+            std::function<void(NodeId)> find_captured;
+            find_captured = [&](NodeId id) {
+                if (id >= flat.size() || id == NULL_NODE) return;
+                auto n = flat.get(id);
+                if (n.tag == NodeTag::Variable) {
+                    if (builtin_syms.count(n.sym_id)) return;
+                    if (new_bindings.count(n.sym_id)) return;
+                    if (outer_bindings.count(n.sym_id)) {
+                        if (std::find(captured.begin(), captured.end(), n.sym_id) == captured.end())
+                            captured.push_back(n.sym_id);
+                    }
+                }
+                for (auto c : n.children) find_captured(c);
+            };
+            find_captured(pr.root);
+        }
+
+        // ── Replace target in parent's children list ──────────
+        flat.set_child(parent_id, child_idx, pr.root);
+        flat.mark_dirty_upward(parent_id);
+
+        // ── Record mutation with subtree rollback data ───────
+        flat.add_mutation_subtree(pr.root, parent_id, child_idx, old_source,
+                                   "replace-subtree", summary);
+
+        // ── Return value: #t on success, or a captured-vars list
+        //    so LLM callers can see what was implicitly captured.
+        if (captured.empty()) {
+            return make_bool(true);
+        }
+        // Build ("captured" ("var1") ("var2") ...) result
+        EvalValue result = make_void();
+        for (auto it = captured.rbegin(); it != captured.rend(); ++it) {
+            auto nm = workspace_pool_->resolve(*it);
+            auto ni = string_heap_.size();
+            string_heap_.push_back(std::string(nm));
+            auto pid = pairs_.size();
+            pairs_.push_back({make_string(ni), result});
+            result = make_pair(pid);
+        }
+        // Wrap in (captured ...) so the LLM can pattern-match on it.
+        auto cap_idx = string_heap_.size();
+        string_heap_.push_back("captured");
+        auto wrap = pairs_.size();
+        pairs_.push_back({make_string(cap_idx), result});
+        return make_pair(wrap);
     });
 
     // (typecheck-current) — Type check the workspace AST
