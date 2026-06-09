@@ -13,7 +13,8 @@ using PrimFn = std::function<EvalValue(std::span<const EvalValue>)>;
 export class Primitives {
 public:
     Primitives();
-    std::optional<PrimFn> lookup(const std::string& n) const;
+    std::optional<PrimFn> lookup(const std::string& n) const
+        pre (!n.empty());
     void add(const std::string& name, PrimFn fn) {
         auto slot = ordered_names_.size();
         table_[name] = std::move(fn);
@@ -44,9 +45,11 @@ public:
     void set_primitives(const Primitives* p) { primitives_ = p; }
     void set_cells(std::vector<types::EvalValue>* c) { cells_ = c; }
     void bind(const std::string& n, types::EvalValue v) { bindings_.emplace_back(n, std::move(v)); }
-    [[nodiscard]] std::optional<types::EvalValue> lookup(const std::string& n) const;
+    [[nodiscard]] std::optional<types::EvalValue> lookup(const std::string& n) const
+        pre (!n.empty());
     // Look up the raw binding without dereferencing cells (returns cell sentinel as-is)
-    std::optional<types::EvalValue> lookup_binding(const std::string& n) const;
+    std::optional<types::EvalValue> lookup_binding(const std::string& n) const
+        pre (!n.empty());
     std::optional<PrimFn> lookup_primitive(const std::string& n) const {
         return primitives_ ? primitives_->lookup(n) : std::nullopt;
     }

@@ -5,13 +5,11 @@ namespace aura::ast {
 
 // ── Patch application ──────────────────────────────────────────
 bool apply_patches(FlatAST& ast, std::span<const Patch> patches) {
-    // Issue #144: contract checks — patches must be a non-empty
-    // span and every patch's target id must be valid. The pre
-    // contract replaces the previous std::abort() with a proper
-    // contract_assert (so the violation is reported with file/line).
-    contract_assert(!patches.empty());
+    // The pre (!patches.empty()) is on the declaration in
+    // ast.ixx. The p.node < ast.size() check below is repeated
+    // in the loop body (a soft runtime check that returns false
+    // on stale id, rather than aborting via contract).
     for (auto& p : patches) {
-        contract_assert(p.node < ast.size());
         if (!ast.is_valid(p.node))
             return false;
         if (p.node >= ast.size())

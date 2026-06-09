@@ -817,9 +817,9 @@ private:
     }
 
     // ── Location ──────────────────────────────────────────────
-    void set_loc(NodeId id, std::uint32_t line, std::uint32_t col) {
-        contract_assert(id < line_.size());
-        contract_assert(id < col_.size());
+    void set_loc(NodeId id, std::uint32_t line, std::uint32_t col)
+        pre (id < line_.size())
+        pre (id < col_.size()) {
         line_[id] = line;
         col_[id] = col;
     }
@@ -915,12 +915,12 @@ private:
 
     // ── Marker access ─────────────────────────────────────────
 
-    void set_marker(NodeId id, SyntaxMarker m) {
-        // Issue #144: contract check — markers are a hygiene
-        // signal used by query:pattern and mutate:replace-subtree
-        // (Issue #140, #142). A silent no-op on stale id would
-        // let a macro-introduced node appear user-written.
-        contract_assert(id < marker_.size());
+    void set_marker(NodeId id, SyntaxMarker m)
+        // Issue #144: markers are a hygiene signal used by
+        // query:pattern and mutate:replace-subtree (Issue #140,
+        // #142). A silent no-op on stale id would let a
+        // macro-introduced node appear user-written.
+        pre (id < marker_.size()) {
         marker_[id] = m;
     }
     SyntaxMarker marker(NodeId id) const {
@@ -1246,20 +1246,20 @@ private:
             error_kind_[id] = 0;
     }
 
-    void set_int(NodeId id, std::int64_t val) {
-        // Issue #144: contract check — id must be a valid node.
-        // Without this, a stale NodeId from a previous generation
-        // would silently no-op (the size check below) and the
-        // mutation would vanish without a diagnostic.
-        contract_assert(id < int_val_.size());
+    void set_int(NodeId id, std::int64_t val)
+        // Issue #144: id must be a valid node. Without this,
+        // a stale NodeId from a previous generation would
+        // silently no-op (the size check below) and the mutation
+        // would vanish without a diagnostic.
+        pre (id < int_val_.size()) {
         int_val_[id] = val;
     }
-    void set_float(NodeId id, double val) {
-        contract_assert(id < float_val_.size());
+    void set_float(NodeId id, double val)
+        pre (id < float_val_.size()) {
         float_val_[id] = val;
     }
-    void set_sym(NodeId id, SymId val) {
-        contract_assert(id < sym_id_.size());
+    void set_sym(NodeId id, SymId val)
+        pre (id < sym_id_.size()) {
         sym_id_[id] = val;
     }
 
@@ -1313,7 +1313,8 @@ private:
 };
 
 // ── Patch application ──────────────────────────────────────────
-export bool apply_patches(FlatAST& ast, std::span<const Patch> patches);
+export bool apply_patches(FlatAST& ast, std::span<const Patch> patches)
+    pre (!patches.empty());
 
 // ── Delta fixup (for deserialization) ──────────────────────────
 export void fixup_deltas(FlatAST& ast);
