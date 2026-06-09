@@ -190,7 +190,12 @@ static aura::diag::Diagnostic parse_error_diag(const aura::parser::FlatParseResu
 // ── EscapeAnalysisWrap — IR pass that computes per-function escape info ───
 // Runs after lowering, before JIT codegen. Stores escape maps per function.
 // JIT and IR interpreter read the results to select arena vs heap allocation.
-struct EscapeAnalysisWrap {
+//
+// Issue #143: this was already in the tree but had no test coverage and
+// was not part of pass_manager. This PR keeps the existing implementation
+// (which uses aura::jit::run_escape_analysis on FlatInstruction) and
+// adds tests/test_issue_143.cpp to verify it end-to-end.
+export struct EscapeAnalysisWrap {
     // Per-function escape maps (indexed by IR function id).
     // Each entry: 0=NON_ESCAPING, 1=ESCAPED.
     std::vector<std::vector<std::uint8_t>> maps;
