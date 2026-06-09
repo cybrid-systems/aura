@@ -89,7 +89,7 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
     // and the constructor body).
     std::vector<std::string> mangled_names(num_functions);
     for (unsigned int i = 0; i < num_functions; ++i) {
-        mangled_names[i] = mangle_aot_name(functions[i].name, i);
+        mangled_names[i] = aura::compiler::mangle_aot_name(functions[i].name, i);
     }
     // Issue #136: detect collisions. The new mangler adds a
     // disambiguator to every non-__top__ name, so collisions
