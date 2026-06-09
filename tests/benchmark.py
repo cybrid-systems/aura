@@ -136,6 +136,56 @@ BENCHMARKS = [
     # ── Gradual coercion runtime ─────────────────────────────
     BenchCase("coerce_arith", '(+ 1 "2")', "eval", expected_val=3),
     BenchCase("coerce_str_len", "(string-length 12345)", "eval", expected_val=5),
+    # ── Issue #136: orch:parallel + ADT + multi-agent coverage ──
+    # The original cases are mostly micro-eval. These exercise the
+    # higher-level constructs called out in Issue #136:
+    # "Add realistic workloads: orchestration pipelines, ADT + match,
+    #  synthesis, multi-agent scenarios"
+    #
+    # orch:parallel (3 agents): square, double, add-100
+    BenchCase(
+        "par_orch_3_agents",
+        '(require "std/orchestrator" all:) '
+        '(orch:parallel '
+        '(list (lambda (x) (* x x)) (lambda (x) (* x 2)) (lambda (x) (+ x 100))) 5)',
+        "eval",
+        expected_val=None,  # returns a list; check runs without error
+    ),
+    # orch:parallel (5 agents): 5 different transformations
+    BenchCase(
+        "par_orch_5_agents",
+        '(require "std/orchestrator" all:) '
+        '(orch:parallel '
+        '(list (lambda (x) (+ x 1)) (lambda (x) (+ x 2)) (lambda (x) (+ x 3)) '
+        '(lambda (x) (+ x 4)) (lambda (x) (+ x 5))) 0)',
+        "eval",
+        expected_val=None,
+    ),
+    # ADT: list length recursion (uses pair/cell/match primitives
+    # similar to (datatype ...) form). Recursive function over a
+    # list — exercises the IR's Call/Phi block generation in
+    # addition to pair manipulation.
+    BenchCase(
+        "adt_list_length",
+        '(define (length lst) '
+        '  (if (null? lst) 0 (+ 1 (length (cdr lst))))) '
+        '(length (list 1 2 3 4 5 6 7 8 9 10))',
+        "eval",
+        expected_val=10,
+    ),
+    # Multi-agent: pipeline (each step sees prior result via fiber:join)
+    BenchCase(
+        "multi_agent_pipeline",
+        '(require "std/orchestrator" all:) '
+        '(define (pipeline x) '
+        '  (define r1 (fiber:join (fiber:spawn (lambda () (* x 2))))) '
+        '  (define r2 (fiber:join (fiber:spawn (lambda () (+ r1 1))))) '
+        '  (define r3 (fiber:join (fiber:spawn (lambda () (* r2 3))))) '
+        '  r3) '
+        '(pipeline 10)',
+        "eval",
+        expected_val=None,
+    ),
 ]
 
 # ── Measurement helpers ───────────────────────────────────────
