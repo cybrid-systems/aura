@@ -835,6 +835,81 @@ target_compile_options(test_issue_134 PRIVATE -Wall -Wextra -Wpedantic
 target_link_libraries(test_issue_134 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_134_verification COMMAND ./test_issue_134)
 
+# Issue #135 verification: True parallel multi-agent
+# orchestration (fiber:join + orch:parallel + WorkspaceTree).
+# The umbrella issue's work was completed across earlier
+# sub-issues (#97, #98, #107, #109, #119). This test binary
+# programmatically verifies all 5 acceptance criteria:
+#   1. fiber:spawn + fiber:join returns spawned value
+#   2. orch:parallel runs tasks concurrently (with results
+#      and error isolation)
+#   3. Workspace layering for isolated mutation experiments
+#   4. No regression in fiber / orchestration tests
+#   5. Memory / ASAN sanity (100 fibers + 50 workspaces)
+add_executable(test_issue_135 tests/test_issue_135.cpp)
+set_property(TARGET test_issue_135 PROPERTY CXX_MODULE_STD ON)
+target_sources(test_issue_135 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
+    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
+    src/core/type_arena.ixx
+    src/core/type.ixx
+    src/parser/lexer.ixx src/parser/parser.ixx
+    src/compiler/evaluator.ixx
+    src/compiler/cache.ixx
+    src/compiler/value.ixx
+    src/compiler/ir.ixx
+    src/compiler/lowering.ixx
+    src/compiler/ir_executor.ixx
+    src/compiler/compute_kind.ixx
+    src/compiler/arity.ixx
+    src/compiler/diag.ixx
+    src/compiler/service.ixx
+    src/compiler/pass_manager.ixx
+    src/compiler/query.ixx
+    src/compiler/coercion_map.ixx
+    src/compiler/ir_cache_pure.ixx
+    src/compiler/lowering_linear_types.ixx
+    src/compiler/ast_walkers.ixx
+    src/compiler/ffi_primitives.ixx
+    src/compiler/type_checker.ixx)
+target_sources(test_issue_135 PRIVATE
+    src/serve/fiber.cpp
+    src/serve/worker.cpp
+    src/serve/scheduler.cpp
+    src/serve/gc_coordinator.cpp
+    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
+    src/core/ast_impl.cpp
+    src/core/type_impl.cpp
+    src/compiler/value_impl.cpp
+    src/compiler/evaluator_impl.cpp
+    src/compiler/ffi_primitives_impl.cpp
+    src/compiler/lowering_linear_types_impl.cpp
+    src/compiler/cache_impl.cpp
+    src/compiler/lowering_impl.cpp
+    src/compiler/ir_executor_impl.cpp
+    src/compiler/compute_kind_impl.cpp
+    src/compiler/query_impl.cpp
+    src/compiler/shape_profiler.cpp
+    src/compiler/spec_jit_controller.cpp
+    src/compiler/type_checker_impl.cpp
+    src/compiler/arity_impl.cpp
+    src/compiler/messaging_bridge_impl.cpp
+    src/compiler/aura_jit.cpp
+    src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
+    src/compiler/observability_metrics.h
+    src/compiler/observability_snapshot.h)
+set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+target_include_directories(test_issue_135 PRIVATE ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(test_issue_135 PRIVATE AURA_HAVE_LLVM=1)
+target_link_libraries(test_issue_135 PRIVATE ${llvm_libs})
+target_compile_options(test_issue_135 PRIVATE -Wall -Wextra -Wpedantic
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
+    -Wno-parentheses)
+target_link_libraries(test_issue_135 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+add_test(NAME issue_135_verification COMMAND ./test_issue_135)
+
 # ── GC ↔ Evaluator integration tests (Issue #113) ─────────
 # Verifies the Evaluator root source registration API surface
 # (flush_gc_roots + gc_root_count). The full GCRootSet + GCCollector
