@@ -482,3 +482,75 @@ JIT / AOT codegen 可以 pattern-match 这两种 view type,在编译期知道
 > 骨架,Phase 2 再做"raw pointer 消灭"。这个分法跟 #143 的
 > escape analysis partial close 一样:能 verify+close 的部分
 > 先 ship,scope 太大的 part 单开 sub-issue。
+
+####2.7.6 Phase2.1 — EnvFrame SoA基础设施 (shipped)
+
+延续 Phase1 的 "infrastructure first"模式,Phase2.1 不动现有
+`Env` layout,先把 SoA骨架装好。下一步 (Phase2.2 /2.3) 再做
+migration。
+
+**新增类型** (`evaluator.ixx`):
+
+- `EnvId = std::uint32_t` —4G envs够任何单 evaluator 用一辈子,
+ uint32_t 比 uint64_t缓存密度高。`NULL_ENV_ID = UINT32_MAX`。
+- `EnvFrame` struct — 与 `Env` 数据布局平行,只是 `parent_id_`
+ (`EnvId`)替代了 `parent_` (`Env*`)。`EnvFrame::bind` /
+ `bind_symid` / `lookup_local` / `lookup_local_by_symid` 是
+局部版本(不 walk parent)。
+
+**`Evaluator` 新 API**:
+
+- `std::vector<EnvFrame> env_frames_` — SoA arena。`push_back`
+增长,`reset_env_frames()`一次性清空。
+- `alloc_env_frame(parent_id, primitives) → EnvId` —分配并返回
+ index。O(1) amortized。
+- `env_frame(id) → const EnvFrame&` / `env_frame_mut(id) → EnvFrame&`
+ —索引访问。`pre (!NULL_ENV_ID)`契约。
+- `walk_env_frames<F>(start, f)` —模板,沿 parent chain走,回调
+ 返回 `false` 时早退。**纯 index lookup** — 没有 pointer chase,
+ cache-friendly。
+- `env_depth(start) → std::size_t` — 用 `walk_env_frames`算 chain
+长度。GC profiling /调试用。
+- `lookup_by_symid_chain(start, s) → std::optional<EvalValue>` —
+演示 SoA walk 的实际使用:沿 chain找最近一帧,shadowing语义
+ 对齐 `Env::lookup_by_symid`。
+
+**为什么不直接替换 `Env`?**
+
+`Env` 的 raw pointer现场遍布 `evaluator_impl.cpp` (7838/7862/
+16569/17965/17973/17984 等多处 parent walk + closure env捕获)。
+一刀切替换会让 diff爆炸、回归风险高。Phase2.1 先把骨架立起来,
+Phase2.2 起每个 sub-issue 处理一类 call site (env.parent walks
+→2.2,closure env捕获 →2.3,等等)。**当所有 call site 都迁完,
+把 `Env` 定义整体替换成 `EnvFrame` 就是一行 rename** — 这就是
+为什么现在让两个 struct 数据布局严格平行。
+
+**测试**: `tests/test_issue_145.cpp` Phase2.1 加12 个 test,
+覆盖 NULL语义 /分配 /索引 roundtrip / parent chain walk /
+early exit / depth / shadowing / missing / 无 pool bind / 多分配
+持久性 / reset。
+
+####2.7.7 Phase2.2+路线图 (remaining)
+
+按依赖顺序:
+
+1. **Phase2.2 — `Env::parent()` 调用点迁移**:5 个 parent walk
+ site (`lookup_cell_ptr`、`lookup_cell_index`、`eval_flat`内部、
+ 还有2 个 `eval_env.parent()`链路)改成 `walk_env_frames`。
+之后 `Env::parent_`就可以删掉,只保留 `EnvId`。
+2. **Phase2.3 — `Closure::env` → `EnvId`**: closure捕获的不再
+ 是 `Env*`,而是 `env_id_`索引。`copy_env` / `apply_closure`
+ 都走新路径。
+3. **Phase2.4 — heap vector全部 arena-backed** (`pairs_` /
+ `cells_` / `string_heap_`): `std::vector<T>` → arena storage
+ + `std::span<T>`视图。GC mark阶段不需 copy。
+4. **Phase2.5 — `Env::bindings_` 全 SymId-only**:删 string-keyed
+数组,`lookup(string)`改成 `intern → lookup_by_symid`。依赖
+ Phase2.2 (parent walk 已迁完)。
+5. **Phase2.6 — 全 Env → EnvFrame rename**: 所有 Phase2.x 完成
+ 后,`Env` 类整体替换为 `EnvFrame`,保留 `Env` 作为 deprecated
+ alias 一个 release,然后删除。
+
+> Phase2.1 →2.6预计4-6 个 verify+close cycle,每个200-400 行
+> diff,边界清晰。可以跟 #172 / #173 等 sub-issue 并行,但建议
+>串行(每个 sub-issue都能独立 ship)。

@@ -98,6 +98,67 @@ private:
 
 export using ClosureId = std::uint64_t;
 
+// ═══════════════════════════════════════════════════════════════
+// Issue #145 Phase 2.1 — EnvFrame SoA infrastructure
+// ═══════════════════════════════════════════════════════════════
+//
+// Phase 1 (#145) shipped Closure::params as SymId[] and added
+// EnvView / ClosureView zero-copy span views. Phase 2.1 adds
+// the parallel SoA storage for Env: a `std::vector<EnvFrame>`
+// arena owned by Evaluator, indexed by `EnvId` (uint32_t).
+//
+// Why uint32_t (not uint64_t like ClosureId)? 4G envs is plenty
+// for any single evaluator lifetime. uint32_t halves the index
+// width → better cache density when walking parent chains. If
+// we ever need more, bumping to uint64_t is a one-line change.
+//
+// `NULL_ENV_ID` is UINT32_MAX (== uint32_t max). Off-by-one
+// with `env_frames_.size()` is not possible because the
+// invariant is: `id < env_frames_.size() || id == NULL_ENV_ID`.
+//
+// EnvFrame is structurally identical to Env (data layout
+// parity is the Phase 2.2 migration contract — replacing Env
+// with EnvFrame is a straight rename once we choose to flip
+// the switch). Today Env and EnvFrame coexist: Env stays
+// unchanged, EnvFrame is the new SoA arena. Future Phase 2.x
+// sub-issues migrate call sites from Env to EnvFrame.
+export using EnvId = std::uint32_t;
+export constexpr EnvId NULL_ENV_ID = std::numeric_limits<EnvId>::max();
+
+// EnvFrame — SoA-friendly data layout, parallel to Env.
+// `parent_id_` replaces Env::parent_ (raw Env* pointer) with
+// an index into Evaluator::env_frames_. Walking the parent
+// chain becomes index lookups instead of pointer chases —
+// cache-friendly and GC-safe (indices survive arena compaction
+// if we ever adopt a moving collector).
+export struct EnvFrame {
+    EnvId parent_id = NULL_ENV_ID;
+    const Primitives* primitives_ = nullptr;
+    const aura::ast::StringPool* pool_ = nullptr;
+    std::vector<types::EvalValue>* cells_ = nullptr;
+    std::vector<std::pair<std::string, types::EvalValue>> bindings_;
+    // Phase 1 parity: parallel SymId-keyed store. Same length
+    // and order as bindings_. SymId fast path reads this;
+    // bind_symid mirrors into both when pool_ is set.
+    std::vector<std::pair<aura::ast::SymId, types::EvalValue>> bindings_symid_;
+
+    // Bind by name. Resolves to SymId via pool_ if set, mirrors
+    // to bindings_symid_ so legacy lookup_by_symid still finds
+    // it. If pool_ is null, only the string array is written.
+    void bind(const std::string& n, types::EvalValue v);
+    // Bind by SymId (fast path). Mirrors to bindings_ when
+    // pool_ is set, so legacy lookup(string) in the lambda body
+    // still finds the param.
+    void bind_symid(aura::ast::SymId s, types::EvalValue v);
+    // Local-only lookup (no parent walk). Phase 2.2 will add
+    // walk-aware variants alongside `Evaluator::walk_env_frames`.
+    std::optional<types::EvalValue> lookup_local(
+        const std::string& n) const
+        pre (!n.empty());
+    std::optional<types::EvalValue> lookup_local_by_symid(
+        aura::ast::SymId s) const;
+};
+
 export struct Pair {
     types::EvalValue car;
     types::EvalValue cdr;
@@ -389,6 +450,85 @@ public:
         msg_id_fn_ = id_fn;
     }
 
+    // ═══════════════════════════════════════════════════════════
+    // Issue #145 Phase 2.1 — EnvFrame SoA infrastructure
+    // ═══════════════════════════════════════════════════════════
+    //
+    // `env_frames_` is a `std::vector<EnvFrame>` arena owned by
+    // the Evaluator. New envs are appended (push_back); old envs
+    // can be reclaimed in bulk via `reset_env_frames()`.
+    //
+    // Why not in ASTArena? Env data lives across many modules
+    // and survives (gc-temp) reclamation. A separate
+    // Evaluator-owned vector gives the SoA pattern its own
+    // lifetime without tying it to AST arena grouping.
+    //
+    // Allocate a new EnvFrame and return its EnvId. The frame
+    // is appended to env_frames_; the id is the new size()-1.
+    // Returns NULL_ENV_ID on overflow (>4G envs).
+    EnvId alloc_env_frame(EnvId parent_id = NULL_ENV_ID,
+                          const Primitives* primitives = nullptr);
+    // Look up an EnvFrame by id. UB if id is invalid.
+    const EnvFrame& env_frame(EnvId id) const
+        pre (id != NULL_ENV_ID)
+    {
+        return env_frames_[id];
+    }
+    EnvFrame& env_frame_mut(EnvId id)
+        pre (id != NULL_ENV_ID)
+    {
+        return env_frames_[id];
+    }
+    // Validity check (test-only helper; cheap).
+    [[nodiscard]] bool is_valid_env_id(EnvId id) const {
+        return id != NULL_ENV_ID && id < env_frames_.size();
+    }
+    // Number of live frames.
+    [[nodiscard]] std::size_t env_frames_size() const {
+        return env_frames_.size();
+    }
+    // Walk the parent chain starting from `start`, calling
+    // `f(EnvId, const EnvFrame&)` for each frame including
+    // `start`. Stops when `f` returns false (early exit) or the
+    // chain ends (parent_id == NULL_ENV_ID). Pure index walk —
+    // no pointer chase, no cache-unfriendly hop.
+    template<typename F>
+    void walk_env_frames(EnvId start, F&& f) const
+        pre (start != NULL_ENV_ID)
+    {
+        EnvId cur = start;
+        while (cur != NULL_ENV_ID) {
+            const EnvFrame& fr = env_frames_[cur];
+            if (!std::forward<F>(f)(cur, fr)) return;
+            cur = fr.parent_id;
+        }
+    }
+    // Introspection: number of frames in the parent chain
+    // starting at `start`. Useful for GC profiling and tests.
+    [[nodiscard]] std::size_t env_depth(EnvId start) const
+        pre (start != NULL_ENV_ID)
+    {
+        std::size_t depth = 0;
+        walk_env_frames(start, [&](EnvId, const EnvFrame&) {
+            ++depth;
+            return true;
+        });
+        return depth;
+    }
+    // Look up a SymId across the full parent chain starting
+    // at `start`. Returns the first match (closest frame
+    // wins; shadowing semantics match Env::lookup_by_symid).
+    // Demonstrates the SoA infra: walks via env_frames_ index
+    // lookup, not pointer chase. Future Phase 2.x replaces
+    // Env::lookup_by_symid with this implementation.
+    std::optional<types::EvalValue> lookup_by_symid_chain(
+        EnvId start, aura::ast::SymId s) const
+        pre (start != NULL_ENV_ID);
+    // Bulk reset (testing + GC integration). Clears env_frames_
+    // but does NOT free the modules_ Env* array (those live in
+    // module arenas, lifetime managed separately).
+    void reset_env_frames() { env_frames_.clear(); }
+
 private:
     ClosureId next_id() { return next_id_++; }
     [[nodiscard]] std::size_t alloc_cell(const types::EvalValue& v) {
@@ -446,6 +586,11 @@ private:
     std::unordered_map<std::string, ast::ASTArena*> module_arena_ptrs_; // path → owning arena (for gc_module)
     std::vector<types::EvalValue> cells_;
     std::vector<Pair> pairs_;
+    // Issue #145 Phase 2.1 — SoA arena for Env. Frames are
+    // appended in alloc_env_frame and indexed by EnvId. Frame
+    // data is parallel to Env; parent walks go via parent_id_
+    // (index) instead of Env::parent_ (pointer).
+    std::vector<EnvFrame> env_frames_;
     std::vector<types::EvalValue> error_values_; // error cause values (indexed by ErrorRef)
     std::vector<void*> opaque_heap_;             // opaque pointers (indexed by OpaqueRef)
     // Issue #131: FFI state moved to FFIRuntime instance

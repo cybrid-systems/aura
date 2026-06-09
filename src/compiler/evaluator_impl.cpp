@@ -271,6 +271,114 @@ std::optional<types::EvalValue> Env::lookup_by_symid(aura::ast::SymId s) const {
     return parent_ ? parent_->lookup_by_symid(s) : std::nullopt;
 }
 
+// ═══════════════════════════════════════════════════════════════
+// Issue #145 Phase 2.1 — EnvFrame SoA infrastructure
+// ═══════════════════════════════════════════════════════════════
+//
+// EnvFrame is the SoA counterpart to Env. Same data layout, but
+// `parent_id_` (EnvId, uint32_t) replaces `parent_` (Env*). The
+// methods below are the "local-only" variants — they operate on
+// one frame and do NOT walk the parent chain. Walk-aware access
+// lives on Evaluator (walk_env_frames, lookup_by_symid_chain).
+//
+// Today Env and EnvFrame coexist. Migration is Phase 2.2.
+
+// EnvFrame::bind — parallel to Env::bind (which writes only
+// to bindings_, no mirror). SymId mirroring happens via
+// bind_symid (the fast path). If you need both arrays in sync,
+// bind via SymId + have pool_ set.
+void EnvFrame::bind(const std::string& n, types::EvalValue v) {
+    bindings_.emplace_back(n, v);
+}
+
+// EnvFrame::bind_symid — parallel to Env::bind_symid. Mirrors
+// to bindings_ when pool_ is set so legacy lookup(string)
+// callers still find the param.
+void EnvFrame::bind_symid(aura::ast::SymId s, types::EvalValue v) {
+    bindings_symid_.emplace_back(s, v);
+    if (pool_) {
+        std::string_view sv = pool_->resolve(s);
+        if (!sv.empty())
+            bindings_.emplace_back(std::string(sv), v);
+    }
+}
+
+// EnvFrame::lookup_local — Env::lookup minus parent walk +
+// primitive + ADT fallbacks. Pure frame-local lookup. Use
+// Evaluator::walk_env_frames for chain-aware lookup.
+std::optional<types::EvalValue> EnvFrame::lookup_local(
+    const std::string& n) const {
+    for (auto it = bindings_.rbegin(); it != bindings_.rend(); ++it) {
+        if (it->first == n) {
+            auto& v = it->second;
+            if (is_cell(v) && cells_) {
+                auto idx = as_cell_id(v);
+                if (idx < cells_->size())
+                    return (*cells_)[idx];
+            }
+            return v;
+        }
+    }
+    return std::nullopt;
+}
+
+// EnvFrame::lookup_local_by_symid — Env::lookup_by_symid minus
+// parent walk. Pure frame-local SymId compare.
+std::optional<types::EvalValue> EnvFrame::lookup_local_by_symid(
+    aura::ast::SymId s) const {
+    for (auto it = bindings_symid_.rbegin(); it != bindings_symid_.rend(); ++it) {
+        if (it->first == s) {
+            auto& v = it->second;
+            if (is_cell(v) && cells_) {
+                auto idx = as_cell_id(v);
+                if (idx < cells_->size())
+                    return (*cells_)[idx];
+            }
+            return v;
+        }
+    }
+    return std::nullopt;
+}
+
+// Evaluator::alloc_env_frame — append a new EnvFrame and return
+// its id. The id is the new size()-1 of env_frames_. Returns
+// NULL_ENV_ID on overflow (>4G envs, which is unreachable in
+// practice for a single evaluator lifetime).
+aura::compiler::EnvId Evaluator::alloc_env_frame(
+    EnvId parent_id, const Primitives* primitives) {
+    if (env_frames_.size() >= NULL_ENV_ID) {
+        // 4G envs reached. Return NULL to signal overflow;
+        // callers should treat this as fatal (env allocation
+        // exhausted) — but we keep going rather than abort
+        // to make the failure mode visible.
+        return NULL_ENV_ID;
+    }
+    EnvFrame fr;
+    fr.parent_id = parent_id;
+    fr.primitives_ = primitives;
+    env_frames_.push_back(std::move(fr));
+    return static_cast<EnvId>(env_frames_.size() - 1);
+}
+
+// Evaluator::lookup_by_symid_chain — demonstrate the SoA walk.
+// Walks env_frames_ via index lookup (no pointer chase) and
+// returns the first match (closest frame wins, shadowing
+// semantics match Env::lookup_by_symid). Cell references are
+// dereferenced via the frame's cells_ pointer.
+std::optional<types::EvalValue> Evaluator::lookup_by_symid_chain(
+    EnvId start, aura::ast::SymId s) const {
+    std::optional<types::EvalValue> result;
+    walk_env_frames(start, [&](EnvId, const EnvFrame& fr) {
+        auto v = fr.lookup_local_by_symid(s);
+        if (v.has_value()) {
+            result = std::move(v);
+            return false;  // stop walking — closest frame wins
+        }
+        return true;  // continue walking
+    });
+    return result;
+}
+
 // ── Issue #145: EnvView / ClosureView impls ──────────────────
 //
 // make_env_view: build a zero-copy view over an Env's
