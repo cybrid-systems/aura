@@ -1146,12 +1146,34 @@ NodeId FlatParser::parse_defmacro(bool hygienic) {
         params.push_back(pool_.intern(std::string(p.text)));
     }
     lexer_->consume(); // ')'
+    // Issue #137: macro body may be a multi-form block (e.g. (define ...)
+    // followed by a final expression). The previous parser only collected
+    // the first expression via `parse_expr()` then consumed `)`, silently
+    // dropping the rest of the body. The dropped expressions ended up at
+    // the program top level, where they could reference template-introduced
+    // names (e.g. (helper x) after a local (define (helper v) ...))
+    // and produce a spurious "unbound variable: helper" error.
+    //
+    // Fix: parse_expr() once, then collect any additional body
+    // expressions until the closing `)`. If more than one, wrap them
+    // in a Begin node. This matches the behavior of parse_let /
+    // parse_defun / parse_define.
     auto body = parse_expr();
     if (body == NULL_NODE) {
         skip_rparen();
         return NULL_NODE;
     }
-    lexer_->consume(); // ')'
+    std::vector<NodeId> body_exprs = {body};
+    while (lexer_->peek().kind != TokenKind::RParen && !lexer_->eof()) {
+        auto be = parse_expr();
+        if (be == NULL_NODE)
+            break;
+        body_exprs.push_back(be);
+    }
+    if (lexer_->peek().kind == TokenKind::RParen)
+        lexer_->consume();
+    if (body_exprs.size() > 1)
+        body = flat_.add_begin(body_exprs);
     auto mid = flat_.add_macrodef(pool_.intern(std::string(name.text)), params, body, dotted, hygienic);
     flat_.set_loc(mid, tok.line, tok.column);
     return mid;
