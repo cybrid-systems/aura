@@ -10,7 +10,6 @@
 #include <algorithm>
 #include <unordered_set>
 #include <cstdint>
-#include <contracts>
 
 // We need EvalValue tag helpers. Since value is a C++ module,
 // include the relevant inline functions directly (they're constexpr/header-only style).
@@ -209,11 +208,8 @@ ShapeID ShapeProfiler::FnProfile::compute_dominant() const {
 }
 
 bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
-    // Issue #144: contract check — shape_id must be a valid shape
-    // enum value (not SHAPE_UNKNOWN = 0, which would pollute
-    // the stability heuristic). SHAPE_UNKNOWN is reserved for
-    // "not yet observed" and shouldn't be recorded.
-    contract_assert(shape_id != SHAPE_UNKNOWN);
+    // The pre (shape_id != SHAPE_UNKNOWN) is on the declaration
+    // in shape_profiler.h.
     auto& profile = profiles_[fn];
     auto& history = profile.history;
     std::uint64_t now = ++global_time_;
@@ -274,11 +270,7 @@ ShapeSnapshot ShapeProfiler::current_snapshot(FnKey fn) const {
 }
 
 void ShapeProfiler::invalidate(FnKey fn) {
-    // Issue #144: contract check — invalidate is called after
-    // mutate:* so fn should be a valid function key (>= 0).
-    // 0 is reserved for "no function" (per shape.h: FnKey is
-    // a hash, and the empty-string hash is 0).
-    contract_assert(fn != 0);
+    // The pre (fn != 0) is on the declaration in shape_profiler.h.
     auto it = profiles_.find(fn);
     if (it != profiles_.end()) {
         it->second.history.clear();

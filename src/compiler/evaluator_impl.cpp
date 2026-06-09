@@ -182,10 +182,7 @@ struct AdtCtorEntry {
 static std::unordered_map<std::string, AdtCtorEntry> g_adt_constructors;
 
 std::optional<EvalValue> Env::lookup(const std::string& n) const {
-    // Issue #144: contract check — lookup called with a non-empty name.
-    // An empty name is always a caller bug; the lookup would always
-    // miss but would still incur the depth-counter overhead.
-    contract_assert(!n.empty());
+    // The pre (!n.empty()) is on the declaration in evaluator.ixx.
     if (++g_env_lookup_depth > MAX_ENV_DEPTH) {
         --g_env_lookup_depth;
         return std::nullopt;
@@ -228,8 +225,7 @@ std::optional<EvalValue> Env::lookup(const std::string& n) const {
 
 // ── Env::lookup_binding: returns raw binding (cell sentinel as-is) ─
 std::optional<EvalValue> Env::lookup_binding(const std::string& n) const {
-    // Issue #144: contract check — see Env::lookup.
-    contract_assert(!n.empty());
+    // The pre (!n.empty()) is on the declaration in evaluator.ixx.
     for (auto it = bindings_.rbegin(); it != bindings_.rend(); ++it)
         if (it->first == n)
             return it->second;
@@ -7796,10 +7792,7 @@ std::optional<std::uint64_t> Env::lookup_cell_index(const std::string& n) const 
 }
 
 std::optional<PrimFn> Primitives::lookup(const std::string& n) const {
-    // Issue #144: contract check — primitive name must be non-empty.
-    // An empty string would still hash-table-lookup and miss, but
-    // the contract catches the caller bug at the boundary.
-    contract_assert(!n.empty());
+    // The pre (!n.empty()) is on the declaration in evaluator.ixx.
     auto i = table_.find(n);
     return i != table_.end() ? std::optional(i->second) : std::nullopt;
 }
@@ -15029,9 +15022,11 @@ bool Evaluator::gc_module(const std::string& path) {
 }
 
 Env* Evaluator::copy_env(const Env& e, ast::ASTArena* target) {
-    // arena_ is private; can't appear in interface contract (in .ixx).
-    // The interface pre is `pre (target != nullptr)`; we additionally
-    // assert arena_ here so both pre-conditions fire at runtime.
+    // The pre (target != nullptr) is on the declaration in
+    // evaluator.ixx. arena_ can't appear there (it's private),
+    // so we additionally assert it here. contract_assert is the
+    // right tool for impl-only invariants that can't go on the
+    // interface contract.
     contract_assert(arena_ != nullptr);
     auto* ar = target ? target : arena_;
     return ar ? ar->create<Env>(e) : nullptr;

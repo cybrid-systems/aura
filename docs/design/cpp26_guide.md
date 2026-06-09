@@ -170,68 +170,127 @@ arena.string_pool().intern("fact");  // 返回 SymbolId
 | `ast.ixx` | `std::string name` | `SymbolId name` | P2 |
 | `ir.ixx` | `std::string name` | `SymbolId name` | P2 |
 
-### 2.6 Contracts (C++26 `contract_assert()`)
+### 2.6 Contracts (C++26 `pre` / `post`)
 
-**Status (Issue #144)**: the `[[pre: ...]]` / `[[post: ...]]`
-attribute syntax shown in earlier revisions of this section
-**was REMOVED from the C++26 standard in late 2024 (Tokyo
-meeting)** and is **NOT supported** by GCC 16.1 (the compiler
-Aura targets). What C++26 actually shipped — and what Aura
-uses — is the **function-style `contract_assert(cond)`** from
-the `<contracts>` header.
+**Status (Issue #144)**: C++26 contracts ship in GCC 16.1 in a
+**modified form** from the original P2900 proposal. The actual
+syntax in Aura is the function-local `pre (cond)` / `post
+(cond)` form — **no `[[...]]` brackets, no colons, no
+`<contracts>` header required** for the user code (the
+runtime / handler setup uses it via the build's
+`-include contracts` flag).
 
 ```cpp
-#include <contracts>
-
-void* allocate(std::size_t size, std::size_t alignment) {
-    contract_assert(size > 0);
-    contract_assert(alignment > 0 && (alignment & (alignment - 1)) == 0);
+// Pre / post on a regular function:
+void* allocate(std::size_t size, std::size_t alignment)
+    pre (size > 0)
+    pre (alignment > 0 && (alignment & (alignment - 1)) == 0)
+    post (r: r != nullptr) {       // 'r' refers to the return value
     // ... allocation ...
-    contract_assert(retr != nullptr);  // post-condition
     return retr;
+}
+
+// Pre / post on a member function (mixes cleanly with [[nodiscard]]):
+template <typename T>
+[[nodiscard]] T* allocate(const T& init)
+    post (r: r != nullptr) {
+    // ...
+}
+
+// Post on a member: 'p:' refers to the post-state of member p
+void set(int* x)
+    pre (x != nullptr)
+    post (p: p == x) {
+    p_ = x;
 }
 ```
 
-#### How it works
+**Note:** the older P2900 syntax `[[pre: cond]]` and
+`[[post: cond]]` (with the attribute brackets and colons) is
+**NOT supported** by GCC 16.1. Do not use it in Aura.
+
+#### Why this form (not `[[pre:]]` or `contract_assert()`)?
+
+The C++26 contracts history:
+- **2023-2024 (initial P2900 proposal)**: attribute syntax
+  `[[pre: cond]]` / `[[post: cond]]` was proposed.
+- **March 2024 (Tokyo WG21 meeting)**: the attribute syntax
+  was REMOVED from the proposal because vendor implementers
+  (Clang, MSVC, EDG, GCC) couldn't agree on how to integrate
+  contract violations with their optimization pipelines.
+- **Late 2024 (post-Tokyo)**: P2900 retained the function-local
+  `pre` / `post` form + the `<contracts>` runtime header
+  (`std::contracts::contract_violation`,
+  `handle_contract_violation`).
+- **C++26 publication**: function-local `pre` / `post` is what
+  shipped.
+- **GCC 16.1**: implements the function-local form natively
+  when compiled with `-fcontracts`.
+
+So the function-local `pre (cond)` / `post (r: cond)` form is
+both:
+1. **Portable** across C++26 compilers (where supported)
+2. **More expressive** than `contract_assert()`:
+   - `post (r: r == x)` captures return-value postconditions
+     that `contract_assert` can't
+   - `post (p: p == x)` captures member post-state, which is
+     key for any mutator method
+
+#### What about `contract_assert(cond)`?
+
+The `<contracts>` header (included via Aura's
+`-include contracts` flag) provides the `contract_assert()`
+macro as a **fallback** for cases where `pre` / `post` can't
+be used — most importantly, **checks on private state that
+can't appear in the interface contract**:
+
+```cpp
+Env* Evaluator::copy_env(const Env& e, ast::ASTArena* target)
+    pre (target != nullptr);     // <- on the declaration (evaluator.ixx)
+    // ...
+Env* Evaluator::copy_env(const Env& e, ast::ASTArena* target) {
+    // arena_ is private; can't be on the interface contract.
+    // contract_assert is the right tool for impl-only invariants.
+    contract_assert(arena_ != nullptr);
+    auto* ar = target ? target : arena_;
+    return ar ? ar->create<Env>(e) : nullptr;
+}
+```
+
+**Rule of thumb:** if the condition can go on the function
+declaration, use `pre (cond)`. If it depends on private state,
+use `contract_assert(cond)` in the impl body.
+
+#### How violations flow
+
 - Build with `-fcontracts` (set globally in Aura's CMake).
-- `contract_assert(cond)` expands to a call to the C++26
-  runtime's contract check, which dispatches to
-  `handle_contract_violation(...)` on a failure.
+- On a `pre` / `post` / `contract_assert` failure, the
+  compiler emits a call to
+  `handle_contract_violation(...)` with a
+  `std::contracts::contract_violation` argument.
 - Aura's handler in `src/core/contract_handler.cpp`:
   1. Logs the violation to stderr with full context (kind,
      semantic, file, line, function, comment)
   2. Calls a user-registered hook via
-     `aura_set_contract_violation_hook()` so DiagnosticCollector
-     or observability metrics can capture the violation
+     `aura_set_contract_violation_hook()` so
+     DiagnosticCollector or observability metrics can
+     capture the violation
   3. Aborts (matches the previous hard-fail behavior)
 
-#### Hot paths with `contract_assert` (Issue #144)
-13 contract sites ship in this PR:
+#### Hot paths with contracts (Issue #144)
+13 contract sites ship in this PR (12 `pre`, 1 `contract_assert`):
 - `Env::lookup` / `lookup_binding` — non-empty name
 - `Primitives::lookup` — non-empty name
-- `QueryEngine::match` — valid NodeId, non-negative depth
+- `QueryEngine::match` — non-negative depth
 - `QueryEngine::execute` — index is initialized
 - `FlatAST::set_int` / `set_float` / `set_sym` — valid NodeId
 - `FlatAST::set_marker` — valid NodeId
 - `FlatAST::set_loc` — valid NodeId
-- `apply_patches` — non-empty span, all targets valid
+- `apply_patches` — non-empty span
 - `ShapeProfiler::record_shape` — shape_id != SHAPE_UNKNOWN
 - `ShapeProfiler::invalidate` — FnKey != 0
-- `Evaluator::copy_env` — arena_ != nullptr (pre-existing)
-
-#### Why function-style (not attribute)?
-- The attribute syntax `[[pre: ...]]` was proposed for C++26
-  but the proposal was pulled before publication due to vendor
-  pushback (compiler implementers couldn't agree on how to handle
-  contract violations in optimized builds).
-- The function-style `contract_assert()` was kept in C++26 as
-  the standardized way to express the same checks. It
-  composes with normal control flow (you can put it inside
-  lambdas, conditionals, etc.) and works with any compiler
-  that supports `-fcontracts`.
-- GCC 16.1 (the Aura toolchain) implements the function-style
-  form. The attribute form is implemented as a vendor extension
-  in some other compilers (MSVC, EDG) but is not portable.
+- `Evaluator::copy_env` — arena_ != nullptr (impl-only,
+  uses `contract_assert` because arena_ is private)
 
 #### Performance
 - With `-O3 -fcontracts`, the contract checks are elided in
