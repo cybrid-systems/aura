@@ -5817,6 +5817,18 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
             !workspace_pool_)
             return mev("bad-arg", "usage: (mutate:rebind name new-code-string [summary])");
+        // Issue #141 AC: lazy COW — trigger clone on first mutate, not on switch.
+        if (workspace_tree_) {
+            if (!trigger_lazy_cow(workspace_tree_))
+                return mev("cow-refused", "COW refused: budget exceeded or read-only");
+            // Re-read workspace_flat_/pool_ in case COW created a new local flat.
+            void* new_flat = nullptr;
+            void* new_pool = nullptr;
+            if (refresh_active_flat_pool(workspace_tree_, &new_flat, &new_pool)) {
+                workspace_flat_ = static_cast<aura::ast::FlatAST*>(new_flat);
+                workspace_pool_ = static_cast<aura::ast::StringPool*>(new_pool);
+            }
+        }
         auto name_idx = as_string_idx(a[0]);
         auto code_idx = as_string_idx(a[1]);
         if (name_idx >= string_heap_.size() || code_idx >= string_heap_.size())
@@ -10970,8 +10982,8 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         if (ws) {
             workspace_flat_ = ws->flat;
             workspace_pool_ = ws->pool;
-            if (idx > 0 && !ws->has_own_flat && !ws->read_only)
-                wt->ensure_local_flat(idx);
+            // Issue #141 AC: COW must be lazy (zero-cost until first mutate).
+            // Don't trigger ensure_local_flat on switch — let mutate:* do it.
             ws = wt->active();
             if (ws) { workspace_flat_ = ws->flat; workspace_pool_ = ws->pool; }
         }
@@ -18189,6 +18201,35 @@ void Evaluator::destroy_workspace_tree(void* wt) {
         }
     }
     delete tree;
+}
+
+// Issue #141 AC: lazy COW trigger. Called by mutate:* primitives
+// before they modify workspace_flat_. If the active workspace is a
+// child that still shares parent's flat, clone it now (COW) so the
+// mutation doesn't pollute the parent. No-op for root, already-
+// cloned, or read-only workspaces (those return false).
+bool Evaluator::trigger_lazy_cow(void* wt) {
+    if (!wt) return true;  // no tree yet, nothing to clone
+    auto* tree = static_cast<WorkspaceTree*>(wt);
+    auto idx = tree->active_idx();
+    if (idx == 0 || idx >= tree->size()) return true;  // root, nothing to do
+    auto& node = tree->nodes_[idx];
+    if (node.has_own_flat) return true;  // already cloned
+    if (node.read_only) return false;    // can't clone read-only
+    return tree->ensure_local_flat(idx);
+}
+
+// After trigger_lazy_cow, the active workspace's flat/pool may have
+// been reallocated. Call this to refresh the pointers without
+// exposing the WorkspaceTree type to callers defined before the type.
+bool Evaluator::refresh_active_flat_pool(void* wt, void** out_flat, void** out_pool) {
+    if (!wt) return false;
+    auto* tree = static_cast<WorkspaceTree*>(wt);
+    auto* node = tree->active();
+    if (!node) return false;
+    if (out_flat) *out_flat = node->flat;
+    if (out_pool) *out_pool = node->pool;
+    return true;
 }
 
 // ── Panic auto-rollback (Issue #39) ────────────────────────────

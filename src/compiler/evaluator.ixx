@@ -286,6 +286,19 @@ public:
 
     // Free a workspace tree created by create_workspace_tree().
     static void destroy_workspace_tree(void* wt);
+
+    // Issue #141 AC: lazy COW. Trigger clone for the active child
+    // workspace if it still shares parent's flat. No-op if active is
+    // root, already cloned, or read-only. Returns true on success,
+    // false if read-only or COW refused (budget exceeded).
+    static bool trigger_lazy_cow(void* wt);
+
+    // After trigger_lazy_cow, the active workspace's flat/pool may
+    // have been reallocated. Call this to refresh the pointers.
+    // Sets *out_flat and *out_pool. Returns true if the tree has
+    // a valid active workspace.
+    static bool refresh_active_flat_pool(void* wt, void** out_flat, void** out_pool);
+
     const std::string& session_id() const { return session_id_; }
 
     // ── GC root registration (Issue #113) ──────────────
