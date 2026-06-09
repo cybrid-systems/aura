@@ -232,6 +232,86 @@ std::optional<EvalValue> Env::lookup_binding(const std::string& n) const {
     return parent_ ? parent_->lookup_binding(n) : std::nullopt;
 }
 
+// Issue #145: SymId fast path. Pushes to bindings_symid_
+// (canonical) and mirrors to bindings_ (string form) if
+// pool_ is set. The mirror is needed because the lambda body
+// uses the string-based lookup to find the param (the parser
+// interns names but the body's `lookup(name)` does the
+// string-keyed loop). Without the mirror, lambda params would
+// be invisible to body code.
+void Env::bind_symid(aura::ast::SymId s, types::EvalValue v) {
+    bindings_symid_.emplace_back(s, v);
+    if (pool_) {
+        // Resolve SymId → string once, then write to both
+        // arrays. The string resolve is O(string-length) at
+        // bind time; the int-compare is O(1) at lookup time.
+        // Net: lookup is the hot path, so this is a win.
+        std::string_view sv = pool_->resolve(s);
+        if (!sv.empty())
+            bindings_.emplace_back(std::string(sv), v);
+    }
+}
+
+// Issue #145: SymId-based lookup. Iterates bindings_symid_
+// (which the bind_symid path writes to) with integer compare.
+// Most-recent-binding-wins semantics, matching the string-based
+// lookup's rbegin/rend iteration order.
+std::optional<types::EvalValue> Env::lookup_by_symid(aura::ast::SymId s) const {
+    for (auto it = bindings_symid_.rbegin(); it != bindings_symid_.rend(); ++it) {
+        if (it->first == s) {
+            auto& v = it->second;
+            if (is_cell(v) && cells_) {
+                auto idx = as_cell_id(v);
+                if (idx < cells_->size())
+                    return (*cells_)[idx];
+            }
+            return v;
+        }
+    }
+    return parent_ ? parent_->lookup_by_symid(s) : std::nullopt;
+}
+
+// ── Issue #145: EnvView / ClosureView impls ──────────────────
+//
+// make_env_view: build a zero-copy view over an Env's
+// bindings. The spans stay valid as long as the Env does
+// (no vector reallocation expected — the Env's bindings_
+// grows monotonically within a single eval).
+EnvView make_env_view(const Env& env) {
+    EnvView v;
+    v.string_bindings = env.bindings();
+    // The SymId-keyed array is private; access via a const
+    // accessor friend. We add the accessor below.
+    v.symid_bindings = env.bindings_symid();
+    v.parent = env.parent();
+    return v;
+}
+
+std::optional<EvalValue> EnvView::lookup(const std::string& name) const {
+    for (auto it = string_bindings.rbegin(); it != string_bindings.rend(); ++it)
+        if (it->first == name) return it->second;
+    return parent ? parent->lookup(name) : std::nullopt;
+}
+
+std::optional<EvalValue> EnvView::lookup_by_symid(aura::ast::SymId s) const {
+    for (auto it = symid_bindings.rbegin(); it != symid_bindings.rend(); ++it)
+        if (it->first == s) return it->second;
+    return parent ? parent->lookup_by_symid(s) : std::nullopt;
+}
+
+ClosureView make_closure_view(const Closure& cl) {
+    ClosureView v;
+    v.params = std::span<const aura::ast::SymId>(cl.params.data(), cl.params.size());
+    v.body_id = cl.body_id;
+    v.dotted = cl.dotted;
+    v.flat = cl.flat;
+    v.pool = cl.pool;
+    v.env = cl.env;
+    v.owner_arena = cl.owner_arena;
+    v.name = cl.name;
+    return v;
+}
+
 // ── Helper: coerce EvalValue to int (string → int parsing) ────
 namespace {
     static std::int64_t coerce_to_int(const EvalValue& v, std::span<const std::string> heap) {
@@ -15188,11 +15268,15 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid,
         Env ne(cl.env ? *cl.env : Env());
         ne.set_primitives(&primitives_);
         ne.set_cells(&cells_);
+        // Issue #145: set the pool so bind_symid can mirror
+        // lambda params into the string-keyed bindings_ array
+        // (so body code's lookup(name) still finds them).
+        if (cl.pool) ne.set_pool(cl.pool);
         if (cl.dotted) {
             // Dotted rest param: bind named params, collect rest into list
             std::size_t named_count = cl.params.size() - 1;
             for (std::size_t i = 0; i < named_count && i < args.size(); ++i)
-                ne.bind(cl.params[i], args[i]);
+                ne.bind_symid(cl.params[i], args[i]);  // Issue #145: SymId
             // Collect remaining args into a pair list for the rest param
             types::EvalValue rest = make_void();
             for (std::size_t i = args.size(); i > named_count; --i) {
@@ -15200,10 +15284,10 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid,
                 pairs_.push_back({args[i - 1], rest});
                 rest = make_pair(pid);
             }
-            ne.bind(cl.params.back(), rest);
+            ne.bind_symid(cl.params.back(), rest);
         } else {
             for (std::size_t i = 0; i < cl.params.size() && i < args.size(); ++i)
-                ne.bind(cl.params[i], args[i]);
+                ne.bind_symid(cl.params[i], args[i]);  // Issue #145: SymId
         }
         if (cl.flat) {
             auto r = eval_flat(*cl.flat, *cl.pool, cl.body_id, ne);
@@ -15821,10 +15905,11 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                     clone_macro_body(*cl_flat, *cl_pool, *flat, *pool, body_node, nullptr);
                 cl_flat->root = cloned_body;
                 closures_[cid] = Closure{/*name*/"", /*params*/{}, cl_flat, cl_pool, cloned_body, copied_env, /*dotted*/false, target_arena};
-                // Store param names as strings for the Closure
-                for (auto& ps : param_syms) {
-                    std::string pname(pool->resolve(ps));
-                    closures_[cid].params.push_back(std::move(pname));
+                // Store param SymIds directly (Issue #145: SoA migration).
+                // Interning already happened at the lambda creation site
+                // (param_syms are SymId from pool->intern).
+                for (auto ps : param_syms) {
+                    closures_[cid].params.push_back(ps);
                 }
                 return make_closure(cid);
             }
@@ -15917,8 +16002,8 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         auto* target = (temp_arena_ && in_task_context_) ? temp_arena_ : arena_;
                         auto* copied_env = copy_env(env, target);
                         Closure cl;
-                        for (auto& ps : param_syms) {
-                            cl.params.push_back(std::string(pool->resolve(ps)));
+                        for (auto ps : param_syms) {
+                            cl.params.push_back(ps);  // Issue #145: SymId, not string
                         }
                         cl.name = fn_str;
                         cl.flat = flat;
@@ -16057,8 +16142,10 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                     Env tail_env(cl.env ? *cl.env : top_);
                     tail_env.set_primitives(&primitives_);
                     tail_env.set_cells(&cells_);
+                    // Issue #145: set the pool so bind_symid can mirror
+                    if (cl.pool) tail_env.set_pool(cl.pool);
                     for (std::size_t i = 0; i < cargs.size() && i < cl.params.size(); ++i)
-                        tail_env.bind(cl.params[i], std::move(cargs[i]));
+                        tail_env.bind_symid(cl.params[i], std::move(cargs[i]));
                     if (cl.body_id != aura::ast::NULL_NODE && cl.flat)
                         return eval_flat(*cl.flat, cl.pool ? *cl.pool : *current_pool_, cl.body_id,
                                          tail_env);
@@ -16096,8 +16183,10 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
             Env tail_env(cl.env ? *cl.env : top_);
             tail_env.set_primitives(&primitives_);
             tail_env.set_cells(&cells_);
+            // Issue #145: set the pool so bind_symid can mirror
+            if (cl.pool) tail_env.set_pool(cl.pool);
             for (std::size_t i = 0; i < cargs.size() && i < cl.params.size(); ++i)
-                tail_env.bind(cl.params[i], std::move(cargs[i]));
+                tail_env.bind_symid(cl.params[i], std::move(cargs[i]));
             if (cl.body_id != aura::ast::NULL_NODE && cl.flat)
                 return eval_flat(*cl.flat, cl.pool ? *cl.pool : *current_pool_, cl.body_id,
                                  tail_env);
@@ -17008,8 +17097,10 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                         tail_env.emplace(cl.env ? *cl.env : top_);
                         tail_env->set_primitives(&primitives_);
                         tail_env->set_cells(&cells_);
+                        // Issue #145: set the pool so bind_symid can mirror
+                        if (cl.pool) tail_env->set_pool(cl.pool);
                         for (std::size_t i = 0; i < cargs.size(); ++i) {
-                            tail_env->bind(cl.params[i], std::move(cargs[i]));
+                            tail_env->bind_symid(cl.params[i], std::move(cargs[i]));
                         }
                         // Dotted rest: collect remaining args into a pair list
                         if (cl.dotted && !cl.params.empty()) {
@@ -17024,7 +17115,7 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                 pairs_.push_back({*ar, rest});
                                 rest = make_pair(pid);
                             }
-                            tail_env->bind(cl.params.back(), rest);
+                            tail_env->bind_symid(cl.params.back(), rest);
                         }
                         if (cl.body_id != aura::ast::NULL_NODE)
                             return eval_flat(*cl.flat, cl.pool ? *cl.pool : *p, cl.body_id,
@@ -17331,12 +17422,15 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                     continue; // TCO: branch
                 }
                 case aura::ast::NodeTag::Lambda: {
-                    // Capture params from FlatAST directly
+                    // Capture params from FlatAST directly. Issue #145:
+                    // store as SymId (SoA) — the apply_closure path now
+                    // does integer-compare parameter binding instead of
+                    // string-compare.
                     auto pspan = v.params;
-                    std::vector<std::string> params;
+                    std::vector<aura::ast::SymId> params;
                     params.reserve(pspan.size());
                     for (auto pid : pspan)
-                        params.push_back(std::string(p->resolve(pid)));
+                        params.push_back(pid);
                     bool dotted = v.int_value != 0;
                     auto* target = (temp_arena_ && in_task_context_) ? temp_arena_ : arena_;
                     auto* cap = copy_env(*current_env, target);

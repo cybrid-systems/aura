@@ -357,3 +357,128 @@ Week 3:
 - [Contracts - P2900](https://wg21.link/p2900)
 - [Arena 设计](./aura_memory_pool.md)
 - [CompilerService 设计](./aura_caas.md)
+
+### 2.7 DOD / SoA 深化 (Issue #145)
+
+**目标**:消除 `Env` / `Closure` / heap vectors 里残留的 raw pointer chasing,
+把所有 hot path 上的 attribute 用 index / SpanId 表示。
+
+**Phase 1 (本 PR ship):**
+
+#### 2.7.1 Closure::params — string → SymId (真正的 SoA)
+
+之前的实现:
+```cpp
+struct Closure {
+    std::vector<std::string> params;  // string-keyed,string compare
+    // ...
+};
+```
+
+`apply_closure` 在 hot path 上做 `for (i...) if (cl.params[i] == arg_name)` —— 每帧都是 string compare。
+
+现在的实现:
+```cpp
+struct Closure {
+    std::vector<aura::ast::SymId> params;  // SymId-keyed, int compare
+    // ...
+};
+```
+
+`apply_closure` 改成 `bind_symid(cl.params[i], args[i])` ——
+lambda 创建时已经在 `pool->intern(name)` 拿过 SymId,直接复用,**零额外开销**。
+
+**性能影响**:
+- 典型 5-10 arg closure,每个 arg 的 bind path 从 string compare (≈10 cycles/byte)
+  降到 int compare (1 cycle)。累计 5-10× 单次 closure apply。
+- Benchmark 全套 50 cases,从 0.22s 持平(在 micro-bench 里 closure
+  apply 占比小,需要专门的 micro-bench 才能看到差异;这次 PR
+  不引入 micro-bench,留 Phase 2)。
+
+#### 2.7.2 Env::bind_symid / lookup_by_symid (SymId 快速路径)
+
+```cpp
+class Env {
+    void bind(const std::string& n, EvalValue v) { /* 旧的 string path */ }
+    void bind_symid(SymId s, EvalValue v);   // 新的 SymId 路径
+    void set_pool(const StringPool* p);      // 镜像需要的 pool
+
+    std::optional<EvalValue> lookup(const std::string&) const;     // 旧
+    std::optional<EvalValue> lookup_by_symid(SymId) const;        // 新
+    // ...
+private:
+    const StringPool* pool_ = nullptr;
+    std::vector<pair<string, EvalValue>> bindings_;
+    std::vector<pair<SymId, EvalValue>> bindings_symid_;  // 平行数组
+};
+```
+
+`bind_symid` 写两边(如果 `pool_` 设了,镜像到 `bindings_` 让 legacy
+string-based lookup 也能找到;不设 pool 就是纯 SymId 路径)。
+`lookup_by_symid` 只看 `bindings_symid_`,整数比较。
+
+#### 2.7.3 EnvView / ClosureView (zero-copy span view)
+
+模仿已有的 `NodeView` (`core/ast.ixx`) 模式 —— 非拥有读视图,
+暴露底层存储为 `std::span`,不分配不复制:
+
+```cpp
+struct EnvView {
+    std::span<const pair<string, EvalValue>> string_bindings;
+    std::span<const pair<SymId, EvalValue>>  symid_bindings;  // Issue #145
+    const Env* parent = nullptr;
+    std::optional<EvalValue> lookup(const string& name) const;
+    std::optional<EvalValue> lookup_by_symid(SymId) const;
+    size_t size() const;
+};
+
+struct ClosureView {
+    std::span<const SymId> params;            // 直接 view over Closure::params
+    NodeId body_id = NULL_NODE;
+    bool dotted = false;
+    const FlatAST* flat = nullptr;
+    const StringPool* pool = nullptr;
+    const Env* env = nullptr;
+    const ASTArena* owner_arena = nullptr;
+    string_view name;
+    SymId param_at(size_t i) const;
+    size_t arity() const { return params.size(); }
+};
+
+EnvView make_env_view(const Env& env);
+ClosureView make_closure_view(const Closure& cl);
+```
+
+JIT / AOT codegen 可以 pattern-match 这两种 view type,在编译期知道
+"我拿到的是只读引用" 而非 "任意 Env",这样可以跳过 cell-deref
+分支(cells_ 为空时)。
+
+#### 2.7.4 raw pointer 现状(留给 Phase 2)
+
+`Env::parent_` / `Closure::env` / `Closure::pool` / `Closure::flat`
+这些 raw pointer **没动**。完整 SoA 化(把 `Env*` 改成 `EnvId` =
+`uint32_t` 索引进 `std::vector<EnvFrame>`)涉及 GC 和 mutation 路径
+的更深改动,留给 Phase 2 的 sub-issue(#172 / #173)。
+
+#### 2.7.5 Phase 2 路线图
+
+1. **`EnvFrame` SoA 化** — `std::vector<EnvFrame>` + `EnvId` 替代 raw
+   `Env*` 指针。`copy_env` 改成 index 拷贝。GC 路径从 pointer chase
+   变成 index lookup。
+2. **`Closure` capture 重写** — `closure.env` 改成 `EnvId` (parent 是
+   哪个 env frame),`closure.pool` / `closure.flat` 改成 arena-relative
+   偏移或独立 `ClosureStorage` SoA。
+3. **heap vectors 完全 index-based** — `pair_storage` / `cell_storage` /
+   `string_heap` 都已经有 SoA 数组(分别是 `pairs_` / `cells_` /
+   `string_heap_`),需要的是把它们从 `std::vector<...>` 换成
+   `std::span`-backed arena storage,这样 GC 标记阶段不需要 copy。
+4. **`Env::bindings_` 全转 SymId** — 把 string-keyed 数组彻底
+   删掉,`lookup(string)` 改成 "intern → lookup_by_symid"。这是
+   Phase 1 的逻辑延伸,但影响面广(每个 `Env::bind` 调用点),
+   单独一个 sub-issue。
+
+> **设计哲学**:Phase 1 走的是 "infrastructure first" ——
+> 装好 EnvView / ClosureView / bind_symid / lookup_by_symid 的
+> 骨架,Phase 2 再做"raw pointer 消灭"。这个分法跟 #143 的
+> escape analysis partial close 一样:能 verify+close 的部分
+> 先 ship,scope 太大的 part 单开 sub-issue。
