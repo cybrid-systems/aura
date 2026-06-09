@@ -1214,6 +1214,35 @@ private:
         return INVALID_SYM;
     }
 
+    // Set a param by index. Used by mutate:rename-symbol to rename
+    // Lambda parameters (whose symbols live in param_data_, not
+    // sym_id_). Issue #139.
+    void set_param_at(NodeId id, std::uint32_t idx, SymId val) {
+        if (idx < param_count_[id] + cap_require_count_[id] &&
+            param_begin_[id] + idx < param_data_.size())
+            param_data_[param_begin_[id] + idx] = val;
+    }
+
+    // Issue #139: convenience wrapper that iterates the params of a
+    // Lambda (or any node with params) and replaces any param with
+    // sym_id matching `oldsym` to `newsym`. Returns the count of
+    // replacements. Used by mutate:rename-symbol so the param list
+    // of `(lambda (x) ...)` is updated when the caller renames `x`.
+    template <typename Callback>
+    std::size_t rename_param(NodeId id, SymId oldsym, SymId newsym, Callback next_idx) {
+        if (id >= param_count_.size() || id >= param_begin_.size()) return 0;
+        std::size_t n = 0;
+        for (std::uint32_t i = 0; i < param_count_[id] + cap_require_count_[id]; ++i) {
+            if (param_data_[param_begin_[id] + i] == oldsym) {
+                param_data_[param_begin_[id] + i] = newsym;
+                ++n;
+                if constexpr (!std::is_null_pointer_v<Callback>)
+                    next_idx(i);
+            }
+        }
+        return n;
+    }
+
     // Resolve type names → TypeIds for all TypeAnnotation nodes
     // Requires TypeRegistry for name resolution
     void resolve_type_ids(class aura::core::TypeRegistry& reg, StringPool& pool);
