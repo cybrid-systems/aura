@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <vector>
+#include <unordered_set>
 
 // Helper: convert aura::ir::IRFunction to aura::jit::FlatFunction
 // This bridges between the compiler's IR types and the JIT's FlatFunction.
@@ -63,13 +64,66 @@ extern "C" int64_t aura_jit_test() {
 // so that aura_alloc_closure(func_id) can set the correct function ptr.
 //
 // func_ids array: parallel to functions[], holds the IR func_id for each.
+
+// Issue #136: a more thorough name-mangler. The previous version
+// only replaced @ . - space with _, which is incomplete: special
+// chars like ? ! ( ) [ ] < > & * + = / \ | ' " ; , # $ % ^ ~
+// ` all need to be replaced for valid C identifiers. We replace
+// any non-[A-Za-z0-9_] char with `_` and then collapse runs of
+// underscores to a single one. This guarantees a valid C
+// identifier and keeps the names short.
+//
+// Exposed (not static) so tests can verify behavior.
+std::string mangle_aot_name(const std::string& original, std::uint32_t disambiguator) {
+    // Step 1: replace any non-alphanumeric with `_`
+    std::string out;
+    out.reserve(original.size() + 16);
+    for (char c : original) {
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') || c == '_') {
+            out.push_back(c);
+        } else {
+            out.push_back('_');
+        }
+    }
+    // Step 2: collapse runs of underscores in the middle, but
+    // preserve leading / trailing underscores (so __top__ stays
+    // __top__, not _top_).
+    std::size_t first_n = 0;
+    while (first_n < out.size() && out[first_n] == '_') ++first_n;
+    std::size_t last_n = out.size();
+    while (last_n > first_n && out[last_n - 1] == '_') --last_n;
+    std::string prefix = out.substr(0, first_n);
+    std::string middle = out.substr(first_n, last_n - first_n);
+    std::string suffix = out.substr(last_n);
+    std::string compact;
+    compact.reserve(middle.size());
+    bool prev_underscore = false;
+    for (char c : middle) {
+        if (c == '_') {
+            if (!prev_underscore) compact.push_back(c);
+            prev_underscore = true;
+        } else {
+            compact.push_back(c);
+            prev_underscore = false;
+        }
+    }
+    // Step 3: append disambiguator (skipped for __top__ which is
+    // the canonical entry point).
+    if (original != "__top__") {
+        compact += "_";
+        compact += std::to_string(disambiguator);
+    }
+    return prefix + compact + suffix;
+}
+
 static bool generate_registration_c(const aura::jit::FlatFunction* functions,
                                      const uint32_t* func_ids,
                                      unsigned int num_functions,
                                      const std::string& reg_c_path) {
     FILE* f = std::fopen(reg_c_path.c_str(), "w");
     if (!f) return false;
-    
+
     fprintf(f, "// Auto-generated closure registration for AOT binary\n");
     fprintf(f, "#include <stdint.h>\n");
     fprintf(f, "#include <stddef.h>\n");
@@ -77,32 +131,38 @@ static bool generate_registration_c(const aura::jit::FlatFunction* functions,
     fprintf(f, "// Runtime: register function by func_id for closure dispatch\n");
     fprintf(f, "void aura_register_fn(int64_t func_id, int64_t fn_ptr);\n");
     fprintf(f, "\n");
-    
-    // Generate extern declarations for all compiled functions.
-    // LLVM function names are mangled with a unique counter to avoid
-    // duplicate symbols (e.g. __lambda__ → __lambda___0, __lambda___1).
+
+    // Compute mangled names once (used for both extern decls
+    // and the constructor body).
+    std::vector<std::string> mangled_names(num_functions);
     for (unsigned int i = 0; i < num_functions; ++i) {
-        std::string safe_name(functions[i].name);
-        for (auto& c : safe_name)
-            if (c == '@' || c == '.' || c == '-' || c == ' ') c = '_';
-        bool is_top = (functions[i].name == std::string("__top__"));
-        auto mangled = is_top ? safe_name : (safe_name + "_" + std::to_string(i));
-        fprintf(f, "extern int64_t %s(int64_t*, uint32_t);\n", mangled.c_str());
+        mangled_names[i] = mangle_aot_name(functions[i].name, i);
     }
-    
+    // Issue #136: detect collisions. The new mangler adds a
+    // disambiguator to every non-__top__ name, so collisions
+    // only happen for __top__ (which is unique by construction).
+    // Still, log a warning if a collision is detected (defensive).
+    std::unordered_set<std::string> seen;
+    for (unsigned i = 0; i < num_functions; ++i) {
+        if (!seen.insert(mangled_names[i]).second) {
+            fprintf(stderr, "AOT warning: mangled name collision for '%s' (both %s)\n",
+                    functions[i].name, mangled_names[i].c_str());
+        }
+    }
+
+    // Generate extern declarations
+    for (unsigned int i = 0; i < num_functions; ++i) {
+        fprintf(f, "extern int64_t %s(int64_t*, uint32_t);\n", mangled_names[i].c_str());
+    }
+
     fprintf(f, "\n// Constructor — runs before main()\n");
     fprintf(f, "__attribute__((constructor)) void aura_aot_register_fns(void) {\n");
-    
+
     for (unsigned int i = 0; i < num_functions; ++i) {
-        std::string safe_name(functions[i].name);
-        for (auto& c : safe_name)
-            if (c == '@' || c == '.' || c == '-' || c == ' ') c = '_';
-        bool is_top = (functions[i].name == std::string("__top__"));
-        auto mangled = is_top ? safe_name : (safe_name + "_" + std::to_string(i));
         fprintf(f, "    aura_register_fn(%u, (int64_t)%s);\n",
-                func_ids[i], mangled.c_str());
+                func_ids[i], mangled_names[i].c_str());
     }
-    
+
     fprintf(f, "}\n");
     fclose(f);
     return true;
