@@ -173,6 +173,24 @@ BENCHMARKS = [
         "eval",
         expected_val=10,
     ),
+    # Issue #140: query:pattern EDSL primitive with Ellipsis
+    # support. Verifies the primitive runs on a real workspace and
+    # produces the expected number of matches. Hygiene is verified
+    # by test_issue_140.cpp at the C++ level.
+    BenchCase(
+        "query_pattern_simple",
+        '(set-code "(begin (fib 1) (fib 2) (fib 3) (fib 4) (fib 5))") '
+        '(length (query:pattern "(fib ...)"))',
+        "eval",
+        expected_val=5,
+    ),
+    BenchCase(
+        "query_pattern_with_let",
+        '(set-code "(begin (let ((x 1)) x) (let ((x 2)) x) (let ((x 3)) x))") '
+        '(length (query:pattern "(let ((x ...)) ...)"))',
+        "eval",
+        expected_val=3,
+    ),
     # Multi-agent: pipeline (each step sees prior result via fiber:join)
     BenchCase(
         "multi_agent_pipeline",

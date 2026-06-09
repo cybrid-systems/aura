@@ -6390,8 +6390,18 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         auto& flat = *workspace_flat_;
         EvalValue result = make_void();
 
-        // Walk every node in workspace and try matching at each position
+        // Walk every node in workspace and try matching at each position.
+        // Issue #140: skip nodes with SyntaxMarker::MacroIntroduced
+        // (the matcher's root position is the user-written top-level
+        // code, not the macro-expanded body). Hygiene correctness:
+        // matching a macro-introduced call as if it were user code
+        // would be misleading. The pattern only matches user-written
+        // code by default. Callers who want to include macro nodes
+        // can query the specific macro node or use a different
+        // primitive (out of scope for #140's basic hygiene).
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            if (flat.marker(id) == aura::ast::SyntaxMarker::MacroIntroduced)
+                continue;
             if (match_subtree(id, pr.root)) {
                 auto pid = pairs_.size();
                 pairs_.push_back({make_int(static_cast<std::int64_t>(id)), result});
