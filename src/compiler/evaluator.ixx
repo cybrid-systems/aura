@@ -155,6 +155,15 @@ public:
     std::span<const std::string> keyword_table() const { return keyword_table_; }
     std::vector<std::string>& keyword_table() { return keyword_table_; }
 
+    // Issue #135: read-only access to the string heap for tests
+    // that need to verify string-valued results (e.g. comparing
+    // (current-source :workspace) output against expected text).
+    // The heap is mutated only under the workspace_mtx_ shared
+    // lock; this getter returns a const view that doesn't take
+    // the lock — callers must ensure no concurrent mutation
+    // (the test harness runs single-threaded).
+    std::span<const std::string> string_heap() const { return string_heap_; }
+
     // IR closure bridge: called when a closure id is not in closures_.
     using ClosureBridgeFn = std::function<std::optional<EvalValue>(
         ClosureId closure_id, std::span<const EvalValue> args)>;

@@ -11117,7 +11117,15 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         auto src_fn = primitives_.lookup("current-source");
         std::string source;
         if (src_fn) {
-            auto src = (*src_fn)({});
+            // Issue #135: pass :workspace keyword so current-source
+            // reads the workspace flat (workspace_flat_) rather than
+            // the per-eval current flat (current_flat_). The latter
+            // would return the script being evaluated, not the
+            // workspace's saved source — causing merge/discard/
+            // conflicts-with to operate on the wrong data.
+            std::uint64_t ws_kw = keyword_table_.size();
+            keyword_table_.push_back(":workspace");
+            auto src = (*src_fn)({types::make_keyword(ws_kw)});
             if (is_string(src)) {
                 auto sidx = as_string_idx(src);
                 if (sidx < string_heap_.size())
@@ -11315,7 +11323,11 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         auto src_fn = primitives_.lookup("current-source");
         std::string parent_source;
         if (src_fn) {
-            auto src = (*src_fn)({});
+            // Issue #135: pass :workspace so we read the parent
+            // workspace's saved flat, not the per-eval current flat.
+            std::uint64_t ws_kw = keyword_table_.size();
+            keyword_table_.push_back(":workspace");
+            auto src = (*src_fn)({types::make_keyword(ws_kw)});
             if (is_string(src)) {
                 auto sidx = as_string_idx(src);
                 if (sidx < string_heap_.size())
@@ -11406,7 +11418,11 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         auto src_fn = primitives_.lookup("current-source");
         std::string parent_source;
         if (src_fn) {
-            auto src = (*src_fn)({});
+            // Issue #135: pass :workspace so we read the parent
+            // workspace's saved flat, not the per-eval current flat.
+            std::uint64_t ws_kw = keyword_table_.size();
+            keyword_table_.push_back(":workspace");
+            auto src = (*src_fn)({types::make_keyword(ws_kw)});
             if (is_string(src)) {
                 auto sidx = as_string_idx(src);
                 if (sidx < string_heap_.size())
