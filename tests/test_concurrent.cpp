@@ -39,6 +39,31 @@ static int g_failed = 0;
     } \
 } while(0)
 
+// ── wait_for_atomic: poll an atomic counter until it reaches
+// `expected` or `timeout` elapses. Returns true on success.
+//
+// Why: the previous pattern used a fixed `sleep_for(2000ms)`
+// followed by `CHECK(completed == N, ...)`. Under heavy CPU
+// load (or on slow CI runners), the 2s budget is not always
+// enough — the fiber-spawn overhead + scheduler wakeup can
+// push completion past 2s, causing intermittent flakes.
+//
+// Fix: poll every 10ms with a generous 5s deadline. On timeout
+// we still fail (correctly), but we don't fail spuriously under
+// brief system-load spikes. The CHECK message includes the
+// actual count vs. expected so flakes are diagnosable.
+template<typename T>
+bool wait_for_atomic(const std::atomic<T>& counter, T expected,
+                     std::chrono::milliseconds timeout =
+                         std::chrono::seconds(5)) {
+    auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (counter.load() < expected &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return counter.load() >= expected;
+}
+
 // ── Test 1: Fiber basic lifecycle ─────────────────────
 // Create a fiber, run it, verify it completes
 
@@ -238,11 +263,16 @@ bool test_stress_many_fibers() {
     }
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    // Wait for completion (poll up to 5s) instead of fixed 2s
+    // sleep — under heavy load 2s is not always enough for 200
+    // fibers to complete.
+    wait_for_atomic(completed, N);
     sched.stop();
     t.join();
 
-    CHECK(completed.load() == N, "all " + std::to_string(N) + " fibers completed");
+    CHECK(completed.load() == N,
+          "all " + std::to_string(N) + " fibers completed (got " +
+              std::to_string(completed.load()) + ")");
     return true;
 }
 
@@ -301,11 +331,14 @@ bool test_work_stealing() {
     }
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    wait_for_atomic(completed, NUM_FIBERS);
     sched.stop();
     t.join();
 
-    CHECK(completed.load() == NUM_FIBERS, "all " + std::to_string(NUM_FIBERS) + " fibers completed via work-stealing");
+    CHECK(completed.load() == NUM_FIBERS,
+          "all " + std::to_string(NUM_FIBERS) +
+              " fibers completed via work-stealing (got " +
+              std::to_string(completed.load()) + ")");
     return true;
 }
 
@@ -537,11 +570,17 @@ bool test_stress_1k_fibers() {
     }
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+    // Wait for completion — 1000 fibers on 2 workers with a
+    // 10k-iteration busy loop per fiber can easily exceed the
+    // old fixed 5s budget under load. Poll up to 10s.
+    wait_for_atomic(completed, N, std::chrono::seconds(10));
     sched.stop();
     t.join();
 
-    CHECK(completed.load() == N, "all " + std::to_string(N) + " fibers completed (2 workers)");
+    CHECK(completed.load() == N,
+          "all " + std::to_string(N) +
+              " fibers completed (2 workers, got " +
+              std::to_string(completed.load()) + ")");
     return true;
 }
 
@@ -878,11 +917,13 @@ bool test_rapid_fibers() {
     }
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+    wait_for_atomic(completed, N, std::chrono::seconds(8));
     sched.stop();
     t.join();
 
-    CHECK(completed.load() == N, "all " + std::to_string(N) + " rapid fibers completed");
+    CHECK(completed.load() == N,
+          "all " + std::to_string(N) + " rapid fibers completed (got " +
+              std::to_string(completed.load()) + ")");
     return true;
 }
 
