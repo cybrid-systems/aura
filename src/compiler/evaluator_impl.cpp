@@ -73,10 +73,18 @@ import aura.core.type;
 import aura.compiler.value;
 import aura.compiler.type_checker;
 import aura.compiler.coercion_map;
+import aura.compiler.evaluator_pure;
 import aura.diag;
 import aura.parser.parser;
 
 namespace aura::compiler {
+
+// Issue #146 Phase 3: bring the pure is_truthy into the
+// global namespace so existing call sites that use
+// `is_truthy(x)` (unqualified) keep working. The pure
+// function is the canonical home; types::is_truthy has
+// been removed.
+using aura::compiler::pure::is_truthy;
 
 using types::EvalValue;
 using namespace types;
@@ -2131,12 +2139,12 @@ void Evaluator::init_pair_primitives() {
                 auto prim = primitives_.lookup(primitives_.name_for_slot(slot));
                 if (!prim)
                     return false;
-                return types::is_truthy((*prim)({arg}));
+                return aura::compiler::pure::is_truthy((*prim)({arg}));
             }
             if (is_closure(fn)) {
                 auto cid = as_closure_id(fn);
                 auto result = apply_closure(cid, {arg});
-                return result ? types::is_truthy(*result) : false;
+                return result ? aura::compiler::pure::is_truthy(*result) : false;
             }
             return false;
         };
@@ -16044,7 +16052,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                     auto then_pair = types::as_pair_idx(rest);
                     auto then_val = pairs_[then_pair].car;
                     auto else_rest = pairs_[then_pair].cdr;
-                    if (types::is_truthy(*cond_result)) {
+                    if (aura::compiler::pure::is_truthy(*cond_result)) {
                         auto r = eval_data_as_code(then_val, env, flat, pool);
                         return r;
                     } else {
@@ -16069,7 +16077,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 auto cond_result = eval_data_as_code(cond_val, env, flat, pool);
                 if (!cond_result)
                     return cond_result;
-                if (types::is_truthy(*cond_result)) {
+                if (aura::compiler::pure::is_truthy(*cond_result)) {
                     // Evaluate body expressions sequentially
                     EvalResult last = make_void();
                     while (types::is_pair(body_rest)) {

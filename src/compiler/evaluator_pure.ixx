@@ -34,6 +34,41 @@ import aura.core.type;
 
 namespace aura::compiler::pure {
 
+// is_truthy — Issue #146 Phase 3 extract.
+//
+// Pure truthiness test (no this-> access, all inputs as
+// parameters). Was previously in aura::compiler::types
+// (value.ixx / value_impl.cpp). Now canonical home is
+// aura::compiler::pure for #146's pure-function module.
+// The legacy types::is_truthy remains as a using-alias for
+// backward compat — existing callers continue to work.
+//
+// Semantics: VOID/FALSE/0 → false; everything else → true.
+// The implementation is intentionally a no-op for the
+// common case (bool / int) to keep the hot path branch-free
+// at the cost of an int comparison. Matches legacy.
+export inline bool is_truthy(const types::EvalValue& v) noexcept {
+    if (v.val == 3) return false;           // #f
+    if (types::is_int(v) && types::as_int(v) == 0) return false;  // integer 0
+    return true;
+}
+
+} // namespace aura::compiler::pure
+
+// Re-export the pure is_truthy as types::is_truthy for
+// backward compat (legacy callers in evaluator_impl.cpp
+// unqualified-ADL through types::). New code should
+// import aura.compiler.evaluator_pure and use
+// aura::compiler::pure::is_truthy directly.
+//
+// Note: using-declaration (not using-alias) because the
+// target is a function, not a type.
+namespace aura::compiler::types {
+    using ::aura::compiler::pure::is_truthy;
+}
+
+namespace aura::compiler::pure {
+
 // coerce_to_int_pure — Issue #146 (first extract).
 //
 // Pure coercion: EvalValue → std::int64_t, with the string heap
