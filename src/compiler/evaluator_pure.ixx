@@ -30,6 +30,7 @@ import std;
 import aura.core;
 import aura.diag;
 import aura.compiler.value;
+import aura.core.type;
 
 namespace aura::compiler::pure {
 
@@ -73,6 +74,99 @@ export inline aura::diag::Result<std::int64_t> coerce_to_int_pure(
     if (types::is_bool(v))
         return types::as_bool(v) ? 1 : 0;
     return 0;  // void, pair, closure, etc. — silent 0
+}
+
+// coerce_value_pure — Issue #146 Phase 2 extract.
+//
+// Pure multi-target coercion. Mirrors the legacy `coerce_value`
+// signature (val in-out, heap in-out for INT→STRING / FLOAT→STRING
+// push_back) but returns Result<void> instead of bool — callers
+// can compose monadically (.and_then, .or_else) and the error path
+// carries a Diagnostic explaining the non-coercible case.
+//
+// "Pure" here means no Evaluator member access: all dependencies
+// (val, from, to, heap) are passed in as parameters. Heap mutation
+// for INT→STRING / FLOAT→STRING is allowed (and expected) since
+// heap is a parameter, not Evaluator state. The legacy in-out
+// `coerce_value` in evaluator_impl.cpp becomes a thin wrapper.
+export inline aura::diag::Result<void> coerce_value_pure(
+    types::EvalValue& val,
+    aura::core::TypeTag from,
+    aura::core::TypeTag to,
+    std::pmr::vector<std::string>& heap)
+{
+    using aura::core::TypeTag;
+    if (from == to)
+        return {};
+    if (from == TypeTag::INT && to == TypeTag::FLOAT) {
+        val = types::make_float(static_cast<double>(types::as_int(val)));
+        return {};
+    }
+    if (from == TypeTag::FLOAT && to == TypeTag::INT) {
+        val = types::make_int(static_cast<std::int64_t>(types::as_float(val)));
+        return {};
+    }
+    if (from == TypeTag::INT && to == TypeTag::STRING) {
+        auto s = std::to_string(types::as_int(val));
+        auto id = static_cast<std::uint64_t>(heap.size());
+        heap.push_back(std::move(s));
+        val = types::make_string(id);
+        return {};
+    }
+    if (from == TypeTag::STRING && to == TypeTag::INT) {
+        auto idx = types::as_string_idx(val);
+        if (idx < heap.size()) {
+            try {
+                val = types::make_int(
+                    static_cast<std::int64_t>(std::stoll(heap[static_cast<std::size_t>(idx)])));
+                return {};
+            } catch (const std::exception&) {
+                return std::unexpected(aura::diag::Diagnostic(
+                    aura::diag::ErrorKind::TypeError,
+                    "coerce_value: cannot parse string '" + std::string(heap[static_cast<std::size_t>(idx)])
+                        + "' as integer"));
+            }
+        }
+        return std::unexpected(aura::diag::Diagnostic(
+            aura::diag::ErrorKind::TypeError,
+            "coerce_value: string index out of bounds"));
+    }
+    if (from == TypeTag::INT && to == TypeTag::BOOL) {
+        val = types::make_bool(types::as_int(val) != 0);
+        return {};
+    }
+    if (from == TypeTag::BOOL && to == TypeTag::INT) {
+        val = types::make_int(types::as_bool(val) ? 1 : 0);
+        return {};
+    }
+    if (from == TypeTag::FLOAT && to == TypeTag::STRING) {
+        auto s = std::to_string(types::as_float(val));
+        auto id = static_cast<std::uint64_t>(heap.size());
+        heap.push_back(std::move(s));
+        val = types::make_string(id);
+        return {};
+    }
+    if (from == TypeTag::STRING && to == TypeTag::FLOAT) {
+        auto idx = types::as_string_idx(val);
+        if (idx < heap.size()) {
+            try {
+                val = types::make_float(
+                    std::stod(heap[static_cast<std::size_t>(idx)]));
+                return {};
+            } catch (const std::exception&) {
+                return std::unexpected(aura::diag::Diagnostic(
+                    aura::diag::ErrorKind::TypeError,
+                    "coerce_value: cannot parse string '" + std::string(heap[static_cast<std::size_t>(idx)])
+                        + "' as float"));
+            }
+        }
+        return std::unexpected(aura::diag::Diagnostic(
+            aura::diag::ErrorKind::TypeError,
+            "coerce_value: string index out of bounds"));
+    }
+    return std::unexpected(aura::diag::Diagnostic(
+        aura::diag::ErrorKind::TypeError,
+        "coerce_value: unsupported coercion"));
 }
 
 } // namespace aura::compiler::pure
