@@ -502,6 +502,69 @@ bool test_ffi_marshal_mixed_args() {
     return true;
 }
 
+// ── AC #9: compute_macro_subst_pure (Phase 6) ────────
+
+bool test_macro_subst_basic() {
+    std::println("\n--- Test 9.1: pure::compute_macro_subst basic mapping ---");
+    std::vector<std::string> params{"x", "y", "z"};
+    std::vector<aura::ast::NodeId> call_args{
+        aura::ast::NULL_NODE,  // children[0] = callee (not used here)
+        10, 20, 30              // children[1..] = arg NodeIds
+    };
+    auto subst = aura::compiler::pure::compute_macro_subst_pure(
+        params, call_args, /*dotted=*/false);
+    CHECK(subst.size() == 3, "3 params → 3 subst entries");
+    CHECK(subst["x"] == 10, "x → 10");
+    CHECK(subst["y"] == 20, "y → 20");
+    CHECK(subst["z"] == 30, "z → 30");
+    return true;
+}
+
+bool test_macro_subst_dotted_omits_rest() {
+    std::println("\n--- Test 9.2: pure::compute_macro_subst dotted — rest omitted ---");
+    std::vector<std::string> params{"x", "rest"};  // dotted: last is rest
+    std::vector<aura::ast::NodeId> call_args{
+        aura::ast::NULL_NODE,  // callee
+        100, 200, 300, 400      // 4 args: 1 regular + 3 rest
+    };
+    auto subst = aura::compiler::pure::compute_macro_subst_pure(
+        params, call_args, /*dotted=*/true);
+    CHECK(subst.size() == 1, "dotted: 1 regular subst (rest param excluded)");
+    CHECK(subst.count("x") == 1 && subst["x"] == 100, "x → 100 (first arg)");
+    CHECK(subst.count("rest") == 0, "rest param NOT in subst (caller adds later)");
+    return true;
+}
+
+bool test_macro_subst_empty_params() {
+    std::println("\n--- Test 9.3: pure::compute_macro_subst empty params ---");
+    std::vector<std::string> params;
+    std::vector<aura::ast::NodeId> call_args{
+        aura::ast::NULL_NODE, 1, 2, 3
+    };
+    auto subst = aura::compiler::pure::compute_macro_subst_pure(
+        params, call_args, /*dotted=*/false);
+    CHECK(subst.empty(), "no params → empty subst");
+    return true;
+}
+
+bool test_macro_subst_missing_args() {
+    std::println("\n--- Test 9.4: pure::compute_macro_subst missing args ---");
+    // Macro has 3 params but only 2 args passed — the 3rd
+    // param simply has no entry in the subst map.
+    std::vector<std::string> params{"a", "b", "c"};
+    std::vector<aura::ast::NodeId> call_args{
+        aura::ast::NULL_NODE,  // callee
+        100, 200                // only 2 args (children[1..2])
+    };
+    auto subst = aura::compiler::pure::compute_macro_subst_pure(
+        params, call_args, /*dotted=*/false);
+    CHECK(subst.size() == 2, "only 2 args → 2 subst entries");
+    CHECK(subst["a"] == 100, "a → 100");
+    CHECK(subst["b"] == 200, "b → 200");
+    CHECK(subst.count("c") == 0, "c missing (no arg passed)");
+    return true;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Main
 // ═══════════════════════════════════════════════════════════════
@@ -549,6 +612,12 @@ int main() {
     test_ffi_marshal_string_args();
     test_ffi_marshal_opaque_args();
     test_ffi_marshal_mixed_args();
+
+    std::println("\n── AC #9: compute_macro_subst_pure (Issue #146 Phase 6) ──");
+    test_macro_subst_basic();
+    test_macro_subst_dotted_omits_rest();
+    test_macro_subst_empty_params();
+    test_macro_subst_missing_args();
 
     std::println("\n── AC #5: coerce_value_pure (Issue #146 Phase 2) ──");
     test_coerce_value_pure_identity();
