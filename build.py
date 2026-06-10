@@ -824,6 +824,19 @@ def test_concurrent():
     return r.returncode
 
 
+def test_issue_146():
+    """Run Issue #146 (pure-function extraction) tests."""
+    print(f"{B}═══ Issue #146 Tests (pure-function extraction) ═══{N}")
+    bin_path = BUILD / "test_issue_146"
+    if not bin_path.exists():
+        print("  test_issue_146 binary not found (build first)")
+        return 1
+    r = subprocess.run([str(bin_path)], timeout=60)
+    if r.returncode != 0 and r.stderr:
+        print(r.stderr[:500], file=sys.stderr)
+    return r.returncode
+
+
 def test_p0_regression():
     """Run P0 fix regression tests."""
     print(f"{B}═══ P0 Regression Tests ═══{N}")

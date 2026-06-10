@@ -489,28 +489,17 @@ ClosureView make_closure_view(const Closure& cl) {
 }
 
 // ── Helper: coerce EvalValue to int (string → int parsing) ────
+//
+// Issue #146 Phase 1: thin legacy wrapper around the pure
+// `coerce_to_int_pure` in `aura::compiler::pure`. The 32+ call
+// sites in this file keep the bool+default-style API; new
+// code should call `coerce_to_int_pure` directly and use
+// `Result`'s monadic methods. The wrapper drops the Result
+// error info (and the legacy stderr print is gone — use the
+// pure version for diagnostic access).
 namespace {
     static std::int64_t coerce_to_int(const EvalValue& v, std::span<const std::string> heap) {
-        if (is_int(v))
-            return as_int(v);
-        if (is_float(v))
-            return static_cast<std::int64_t>(as_float(v)); // truncate
-        if (is_string(v) && !heap.empty()) {
-            auto idx = as_string_idx(v);
-            if (idx < heap.size()) {
-                try {
-                    return static_cast<std::int64_t>(std::stoll(heap[idx]));
-                } catch (...) {
-                    std::println(std::cerr,
-                                 "error: type mismatch — expected Int, got String '{}'",
-                                 heap[idx]);
-                    return 0;
-                }
-            }
-        }
-        if (is_bool(v))
-            return as_bool(v) ? 1 : 0;
-        return 0;
+        return aura::compiler::pure::coerce_to_int_pure(v, heap).value_or(0);
     }
 
     [[maybe_unused]] static double coerce_to_double(const EvalValue& v,

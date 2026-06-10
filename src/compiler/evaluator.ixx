@@ -4,6 +4,7 @@ import aura.core;
 import aura.compiler.ffi_primitives;
 import aura.diag;
 import aura.compiler.value;
+import aura.compiler.evaluator_pure;
 
 namespace aura::compiler {
 
