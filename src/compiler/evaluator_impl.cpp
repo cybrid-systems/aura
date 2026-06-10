@@ -507,7 +507,24 @@ ClosureView make_closure_view(const Closure& cl) {
 // pure version for diagnostic access).
 namespace {
     static std::int64_t coerce_to_int(const EvalValue& v, std::span<const std::string> heap) {
-        return aura::compiler::pure::coerce_to_int_pure(v, heap).value_or(0);
+        // Phase 1: thin wrapper around coerce_to_int_pure. On
+        // error path the pure version returns a Diagnostic
+        // describing the unparseable string; we mirror the
+        // pre-Phase-1 stderr print here so the tree-walker
+        // path's error surface matches the IR-executor path's
+        // "error: type mismatch" message (see test_regression
+        // tc-strict-runtime-typed-arg-mismatch).
+        auto r = aura::compiler::pure::coerce_to_int_pure(v, heap);
+        if (r) return *r;
+        if (v.val != 3 && is_string(v) && !heap.empty()) {
+            auto idx = as_string_idx(v);
+            if (idx < heap.size()) {
+                std::println(std::cerr,
+                             "error: type mismatch — expected Int, got String '{}'",
+                             heap[idx]);
+            }
+        }
+        return 0;
     }
 
     [[maybe_unused]] static double coerce_to_double(const EvalValue& v,
