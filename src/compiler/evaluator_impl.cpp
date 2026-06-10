@@ -90,39 +90,18 @@ using types::EvalValue;
 using namespace types;
 
 // ── Edit distance for error suggestions ────────────────────────
+// Issue #146 Phase 4: legacy wrappers around the pure
+// `edit_distance_pure` and `closest_match_pure` in
+// `aura::compiler::pure`. The 2 call sites
+// (L16793, L18208) keep using the old API; new code can
+// call the pure versions directly.
 [[maybe_unused]] static std::size_t edit_distance(std::string_view a, std::string_view b) {
-    auto m = a.size(), n = b.size();
-    if (m == 0)
-        return n;
-    if (n == 0)
-        return m;
-    // Use two-row DP for efficiency
-    std::vector<std::size_t> prev(n + 1), cur(n + 1);
-    for (std::size_t j = 0; j <= n; ++j)
-        prev[j] = j;
-    for (std::size_t i = 1; i <= m; ++i) {
-        cur[0] = i;
-        for (std::size_t j = 1; j <= n; ++j) {
-            auto cost = (a[i - 1] == b[j - 1]) ? 0 : 1;
-            cur[j] = std::min({prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost});
-        }
-        std::swap(prev, cur);
-    }
-    return prev[n];
+    return aura::compiler::pure::edit_distance_pure(a, b);
 }
 
 static std::string closest_match(std::string_view name, std::span<const std::string> candidates,
                                  std::size_t max_dist = 3) {
-    std::string best;
-    std::size_t best_dist = max_dist + 1;
-    for (auto& c : candidates) {
-        auto d = edit_distance(name, c);
-        if (d < best_dist) {
-            best_dist = d;
-            best = c;
-        }
-    }
-    return best;
+    return aura::compiler::pure::closest_match_pure(name, candidates, max_dist);
 }
 
 

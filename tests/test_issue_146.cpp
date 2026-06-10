@@ -344,6 +344,57 @@ bool test_pure_is_truthy_alias_works() {
     return true;
 }
 
+// ── AC #7: closest_match + edit_distance (Phase 4) ────────
+
+bool test_pure_edit_distance_basic() {
+    std::println("\n--- Test 7.1: pure::edit_distance on known pairs ---");
+    CHECK(aura::compiler::pure::edit_distance_pure("", "") == 0,
+          "'' == '' → 0");
+    CHECK(aura::compiler::pure::edit_distance_pure("abc", "abc") == 0,
+          "abc == abc → 0");
+    CHECK(aura::compiler::pure::edit_distance_pure("kitten", "sitting") == 3,
+          "kitten→sitting = 3 (k→s, e→i, insert g)");
+    CHECK(aura::compiler::pure::edit_distance_pure("flaw", "lawn") == 2,
+          "flaw→lawn = 2 (delete f, f→n)");
+    return true;
+}
+
+bool test_pure_edit_distance_empty() {
+    std::println("\n--- Test 7.2: pure::edit_distance on empty inputs ---");
+    CHECK(aura::compiler::pure::edit_distance_pure("", "abc") == 3,
+          "'' vs abc = 3 insertions");
+    CHECK(aura::compiler::pure::edit_distance_pure("abc", "") == 3,
+          "abc vs '' = 3 deletions");
+    return true;
+}
+
+bool test_pure_closest_match_finds_close() {
+    std::println("\n--- Test 7.3: pure::closest_match finds close candidate ---");
+    std::vector<std::string> cands{"define", "display", "lambda", "when"};
+    auto best = aura::compiler::pure::closest_match_pure("defien", cands);
+    CHECK(best == "define", "'defien' → 'define' (distance 1, transposed e/i)");
+    return true;
+}
+
+bool test_pure_closest_match_returns_empty_when_too_far() {
+    std::println("\n--- Test 7.4: pure::closest_match returns empty when no candidate is close ---");
+    std::vector<std::string> cands{"apple", "banana", "cherry"};
+    auto best = aura::compiler::pure::closest_match_pure("xyz", cands);
+    CHECK(best.empty(), "'xyz' too far from all candidates → empty");
+    return true;
+}
+
+bool test_pure_closest_match_respects_max_dist() {
+    std::println("\n--- Test 7.5: pure::closest_match respects custom max_dist ---");
+    std::vector<std::string> cands{"define", "display"};
+    // 'definxx' is distance 2 from 'define' (substitute e→x, n→x)
+    auto best1 = aura::compiler::pure::closest_match_pure("definxx", cands, /*max_dist=*/1);
+    CHECK(best1.empty(), "max_dist=1 excludes 'definxx' (distance 2) → empty");
+    auto best2 = aura::compiler::pure::closest_match_pure("definxx", cands, /*max_dist=*/3);
+    CHECK(best2 == "define", "max_dist=3 includes 'definxx' → 'define'");
+    return true;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Main
 // ═══════════════════════════════════════════════════════════════
@@ -377,6 +428,13 @@ int main() {
     test_pure_is_truthy_void();
     test_pure_is_truthy_string();
     test_pure_is_truthy_alias_works();
+
+    std::println("\n── AC #7: closest_match + edit_distance (Issue #146 Phase 4) ──");
+    test_pure_edit_distance_basic();
+    test_pure_edit_distance_empty();
+    test_pure_closest_match_finds_close();
+    test_pure_closest_match_returns_empty_when_too_far();
+    test_pure_closest_match_respects_max_dist();
 
     std::println("\n── AC #5: coerce_value_pure (Issue #146 Phase 2) ──");
     test_coerce_value_pure_identity();
