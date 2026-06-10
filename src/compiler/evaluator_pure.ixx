@@ -103,6 +103,95 @@ export inline std::string closest_match_pure(
     return best;
 }
 
+// ── FFIRuntime marshalling (Issue #146 Phase 5 extract) ────────
+//
+// The FFI closure-dispatch path in Evaluator::apply_closure
+// needs to marshal EvalValue args into the raw C ABI
+// (i64 / f64 / char* / void*) that foreign functions expect.
+// The marshalling logic is a mechanical transformation
+// that has no Evaluator state access — all dependencies
+// (args, arg_types, string_heap, opaque_heap) are
+// parameters. Pulling it into a pure function makes it
+// unit-testable in isolation (no Evaluator plumbing) and
+// unblocks monadic composition for new FFI call sites.
+
+// Tagged arg type codes — match the int constants used
+// elsewhere in FFIRuntime for the arg_types array.
+//   1 = Int, 2 = Float, 3 = String, 4 = Opaque
+struct FFIMarshalled {
+    std::array<std::int64_t, 6> i_vals{};     // raw i64 registers
+    std::array<double, 6> d_vals{};          // raw f64 registers
+    std::array<const char*, 6> s_vals{};     // char* registers (point into str_bufs)
+    std::vector<std::string> str_bufs;  // owns string contents
+    bool any_float = false;
+};
+
+// ffi_marshal_args_pure — marshals up to 6 EvalValue args
+// into the raw C ABI for a foreign-function call. The
+// `str_bufs` field on the result owns the underlying
+// string memory for `s_vals` pointers; the caller must
+// keep the result alive for the duration of the FFI call.
+//
+// arg_type codes: 1 = Int (default if missing), 2 = Float,
+// 3 = String (looks up idx in string_heap, copies into
+// str_bufs for lifetime), 4 = Opaque (looks up idx in
+// opaque_heap, treats the void* as i64).
+//
+// All inputs are read-only spans. No `this` access.
+export inline FFIMarshalled ffi_marshal_args_pure(
+    std::span<const types::EvalValue> args,
+    std::span<const int> arg_types,
+    std::span<const std::string> string_heap,
+    std::span<void* const> opaque_heap)
+{
+    FFIMarshalled out{};
+    constexpr std::size_t kMaxArgs = 6;
+    for (std::size_t i = 0; i < args.size() && i < kMaxArgs; ++i) {
+        int atype = (i < arg_types.size()) ? arg_types[i] : 1;  // default Int
+        const auto& a = args[i];
+        if (atype == 2) {  // Float
+            if (types::is_float(a)) {
+                out.d_vals[i] = types::as_float(a);
+            } else if (types::is_int(a)) {
+                out.d_vals[i] = static_cast<double>(types::as_int(a));
+            }
+            out.i_vals[i] = static_cast<std::int64_t>(out.d_vals[i]);
+            out.any_float = true;
+        } else if (atype == 3) {  // String → char*
+            if (types::is_string(a)) {
+                auto idx = types::as_string_idx(a);
+                if (idx < string_heap.size()) {
+                    out.str_bufs.push_back(string_heap[idx]);
+                    out.s_vals[i] = out.str_bufs.back().c_str();
+                    out.i_vals[i] = reinterpret_cast<std::int64_t>(out.s_vals[i]);
+                    out.d_vals[i] = 0.0;
+                }
+            }
+        } else if (atype == 4) {  // Opaque (void*)
+            if (types::is_opaque(a)) {
+                auto oi = types::as_opaque_idx(a);
+                out.i_vals[i] = oi < opaque_heap.size()
+                    ? reinterpret_cast<std::int64_t>(opaque_heap[oi])
+                    : 0;
+            } else if (types::is_int(a)) {
+                out.i_vals[i] = types::as_int(a);
+            } else {
+                out.i_vals[i] = 0;
+            }
+            out.d_vals[i] = 0.0;
+        } else {  // Int (default for atype 1 or unknown)
+            if (types::is_int(a)) {
+                out.i_vals[i] = types::as_int(a);
+            } else if (types::is_float(a)) {
+                out.i_vals[i] = static_cast<std::int64_t>(types::as_float(a));
+                out.any_float = true;
+            }
+            out.d_vals[i] = static_cast<double>(out.i_vals[i]);
+        }
+    }
+    return out;
+}
+
 } // namespace aura::compiler::pure
 
 // Re-export the pure is_truthy as types::is_truthy for
