@@ -360,6 +360,72 @@ aura::compiler::EnvId Evaluator::alloc_env_frame(
     return static_cast<EnvId>(env_frames_.size() - 1);
 }
 
+// Evaluator::alloc_env_frame_from_env — Issue #145 Phase 2.3.
+// Mirror an Env's parallel binding arrays into a new frame in
+// env_frames_. The new frame's parent_id defaults to
+// e.parent_id() (preserving the captured env's parent-chain
+// position in the SoA arena); callers can override with an
+// explicit parent_id if they want to re-parent the frame.
+//
+// Only bindings_ + bindings_symid_ are mirrored — primitives_,
+// pool_, cells_ are NOT, because in the closure-application
+// hot path these get re-set on the materialized Env copy
+// (see apply_closure). Mirroring them here would be wasted
+// work and would risk divergence if the captured env pointed
+// at cells_ that get reallocated.
+aura::compiler::EnvId Evaluator::alloc_env_frame_from_env(
+    const Env& e, EnvId parent_id) {
+    EnvId pid = (parent_id != NULL_ENV_ID) ? parent_id : e.parent_id();
+    EnvId id = alloc_env_frame(pid);
+    if (id == NULL_ENV_ID) return NULL_ENV_ID;
+    EnvFrame& fr = env_frames_[id];
+    // e is `const`, so .bindings()/.bindings_symid() return
+    // std::span (const overload). Use assign from iterators
+    // to copy into the frame's vector storage.
+    auto bs = e.bindings();
+    fr.bindings_.assign(bs.begin(), bs.end());
+    auto bss = e.bindings_symid();
+    fr.bindings_symid_.assign(bss.begin(), bss.end());
+    return id;
+}
+
+// Evaluator::materialize_call_env — Issue #145 Phase 2.3.
+// Build a fresh Env for evaluating a closure body. When the
+// closure's captured env is registered in env_frames_
+// (cl.env_id ≠ NULL_ENV_ID), rebuild the call env from the
+// frame's bindings and wire the SoA walk (owner_ +
+// parent_id_) so lookup_cell_ptr / lookup_cell_index route
+// parent lookups through walk_env_frames instead of pointer
+// chase. Otherwise fall back to copying the legacy `cl.env`
+// raw pointer — this preserves correct behavior for any
+// stack-allocated local-eval closures that have not yet been
+// registered in the SoA arena.
+//
+// primitives_/cells_/pool_ are NOT set here — they are
+// runtime support pointers that the caller wires after
+// materialization (apply_closure sets them inline; TCO tail
+// call sites set them via tail_env.set_*). Keeping them out
+// of this helper makes the helper usable from any code path
+// that has a closure but might not need a fully wired env.
+Env Evaluator::materialize_call_env(const Closure& cl) {
+    Env ne;
+    if (cl.env_id != NULL_ENV_ID) {
+        const EnvFrame& fr = env_frame(cl.env_id);
+        // Env::bindings_ + bindings_symid_ are private; route
+        // through public mut accessors (added in Phase 2.3 for
+        // the SoA materialize path).
+        ne.bindings() = fr.bindings_;
+        ne.bindings_symid_mut() = fr.bindings_symid_;
+        if (fr.parent_id != NULL_ENV_ID) {
+            ne.set_owner(this);
+            ne.set_parent_id(fr.parent_id);
+        }
+    } else {
+        ne = cl.env ? *cl.env : Env();
+    }
+    return ne;
+}
+
 // Evaluator::lookup_by_symid_chain — demonstrate the SoA walk.
 // Walks env_frames_ via index lookup (no pointer chase) and
 // returns the first match (closest frame wins, shadowing
@@ -415,6 +481,8 @@ ClosureView make_closure_view(const Closure& cl) {
     v.flat = cl.flat;
     v.pool = cl.pool;
     v.env = cl.env;
+    // Issue #145 Phase 2.3 — mirror the SoA capture index.
+    v.env_id = cl.env_id;
     v.owner_arena = cl.owner_arena;
     v.name = cl.name;
     return v;
@@ -15439,7 +15507,10 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid,
     auto it = closures_.find(cid);
     if (it != closures_.end()) {
         auto& cl = it->second;
-        Env ne(cl.env ? *cl.env : Env());
+        // Issue #145 Phase 2.3 — materialize the call env from
+        // the SoA arena (env_frames_[cl.env_id]) when registered,
+        // otherwise fall back to the legacy `cl.env` pointer copy.
+        Env ne = materialize_call_env(cl);
         ne.set_primitives(&primitives_);
         ne.set_cells(&cells_);
         // Issue #145: set the pool so bind_symid can mirror
@@ -16078,7 +16149,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 auto cloned_body =
                     clone_macro_body(*cl_flat, *cl_pool, *flat, *pool, body_node, nullptr);
                 cl_flat->root = cloned_body;
-                closures_[cid] = Closure{/*name*/"", /*params*/{}, cl_flat, cl_pool, cloned_body, copied_env, /*dotted*/false, target_arena};
+                closures_[cid] = Closure{/*name*/"", /*params*/{}, cl_flat, cl_pool, cloned_body, copied_env, /*env_id*/NULL_ENV_ID, /*dotted*/false, target_arena};
                 // Store param SymIds directly (Issue #145: SoA migration).
                 // Interning already happened at the lambda creation site
                 // (param_syms are SymId from pool->intern).
@@ -16184,6 +16255,15 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         cl.pool = pool;
                         cl.body_id = body_node;
                         cl.env = copied_env;
+                        // Issue #145 Phase 2.3 — also register the
+                        // captured env in env_frames_ so apply_closure
+                        // can materialize the call env from the SoA
+                        // arena (index lookup, GC-safe) instead of
+                        // copying through the raw `cl.env` pointer.
+                        // Falls back to NULL_ENV_ID on overflow
+                        // (>4G envs) — callers treat as soft fail
+                        // and continue using the legacy pointer.
+                        cl.env_id = alloc_env_frame_from_env(*copied_env);
                         cl.owner_arena = target;
                         closures_[cid] = std::move(cl);
 
@@ -16313,7 +16393,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         current = pairs_[arg_pair].cdr;
                     }
                     // Create tail env and apply
-                    Env tail_env(cl.env ? *cl.env : top_);
+                    Env tail_env = materialize_call_env(cl);
                     tail_env.set_primitives(&primitives_);
                     tail_env.set_cells(&cells_);
                     // Issue #145: set the pool so bind_symid can mirror
@@ -16354,7 +16434,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 cargs.push_back(*arg_val);
                 current = pairs_[arg_pair].cdr;
             }
-            Env tail_env(cl.env ? *cl.env : top_);
+            Env tail_env = materialize_call_env(cl);
             tail_env.set_primitives(&primitives_);
             tail_env.set_cells(&cells_);
             // Issue #145: set the pool so bind_symid can mirror
@@ -17268,7 +17348,7 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                 return ar;
                             cargs.push_back(*ar);
                         }
-                        tail_env.emplace(cl.env ? *cl.env : top_);
+                        tail_env = materialize_call_env(cl);
                         tail_env->set_primitives(&primitives_);
                         tail_env->set_cells(&cells_);
                         // Issue #145: set the pool so bind_symid can mirror
@@ -17611,7 +17691,7 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                     auto cid = next_id();
                     auto body_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
                     // This closure reuses f/p from caller (not arena-allocated), Env is in target
-                    closures_[cid] = Closure{/*name*/"", std::move(params), f, p, body_id, cap, dotted, target};
+                    closures_[cid] = Closure{/*name*/"", std::move(params), f, p, body_id, cap, /*env_id*/NULL_ENV_ID, dotted, target};
                     // Do NOT cache closure values — the closure captures the current env and a
                     // cached closure would reuse the same env on subsequent evaluations (wrong
                     // when the same Lambda node is evaluated with different captured variables).
