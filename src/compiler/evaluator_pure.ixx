@@ -53,6 +53,56 @@ export inline bool is_truthy(const types::EvalValue& v) noexcept {
     return true;
 }
 
+// edit_distance_pure — Issue #146 Phase 4 extract.
+//
+// Pure Levenshtein distance (insertion/deletion/substitution
+// counts, all weight 1). Two-row DP for O(m+n) memory
+// (instead of the O(m*n) full table). No Evaluator state
+// access; all inputs are string_view spans.
+export inline std::size_t edit_distance_pure(std::string_view a, std::string_view b) {
+    auto m = a.size();
+    auto n = b.size();
+    if (m == 0) return n;
+    if (n == 0) return m;
+    // Two-row DP — swap prev/cur each iteration.
+    std::vector<std::size_t> prev(n + 1);
+    std::vector<std::size_t> cur(n + 1);
+    for (std::size_t j = 0; j <= n; ++j) prev[j] = j;
+    for (std::size_t i = 1; i <= m; ++i) {
+        cur[0] = i;
+        for (std::size_t j = 1; j <= n; ++j) {
+            auto cost = (a[i - 1] == b[j - 1]) ? 0 : 1;
+            cur[j] = std::min({prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost});
+        }
+        std::swap(prev, cur);
+    }
+    return prev[n];
+}
+
+// closest_match_pure — Issue #146 Phase 4 extract.
+//
+// Pure "did you mean X?" helper. Finds the candidate in
+// `candidates` with the smallest edit distance to `name`.
+// Returns the best match if its distance is within `max_dist`
+// (default 3), or empty string if no candidate is close
+// enough. The empty-string sentinel matches the legacy
+// "no match" convention.
+export inline std::string closest_match_pure(
+    std::string_view name,
+    std::span<const std::string> candidates,
+    std::size_t max_dist = 3) {
+    std::string best;
+    std::size_t best_dist = max_dist + 1;
+    for (auto& c : candidates) {
+        auto d = edit_distance_pure(name, c);
+        if (d < best_dist) {
+            best_dist = d;
+            best = c;
+        }
+    }
+    return best;
+}
+
 } // namespace aura::compiler::pure
 
 // Re-export the pure is_truthy as types::is_truthy for
