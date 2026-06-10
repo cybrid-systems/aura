@@ -192,6 +192,46 @@ export inline FFIMarshalled ffi_marshal_args_pure(
     return out;
 }
 
+// ── Macro expansion (Issue #146 Phase 6 sub-extract) ────────
+//
+// `macro_expand_all` is a 500+ line stateful function — too
+// large to extract as a single pure function in one PR. We
+// start with the small, self-contained helpers used by
+// the inner-macro recursion (Issue #121). Future PRs can
+// extract more pieces as confidence grows.
+
+// compute_macro_subst_pure — builds the substitution map
+// (param name → arg NodeId) for a single macro-call site.
+// Given the macro's parameter list and the call's child
+// NodeIds (children[1..] of the Call node), produce the
+// param→arg mapping for the regular (non-dotted) parameters.
+// Dotted-rest-param handling is left to the caller because
+// it requires allocating a new pair-list in the FlatAST
+// (stateful — not pure).
+//
+// Returns the substitution map for regular params. For
+// dotted macros, the caller is expected to extend this
+// map with the rest-param binding (a synthesized pair
+// list) after this returns.
+export inline std::unordered_map<std::string, aura::ast::NodeId>
+compute_macro_subst_pure(
+    const std::vector<std::string>& params,
+    const std::vector<aura::ast::NodeId>& call_args,
+    bool dotted)
+{
+    using aura::ast::NodeId;
+    std::unordered_map<std::string, NodeId> subst;
+    std::size_t regular_count = dotted && params.size() > 0
+                                    ? params.size() - 1
+                                    : params.size();
+    for (std::size_t ai = 0;
+         ai < regular_count && ai + 1 < call_args.size();
+         ++ai) {
+        subst[params[ai]] = call_args[ai + 1];
+    }
+    return subst;
+}
+
 } // namespace aura::compiler::pure
 
 // Re-export the pure is_truthy as types::is_truthy for
