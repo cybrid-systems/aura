@@ -395,6 +395,113 @@ bool test_pure_closest_match_respects_max_dist() {
     return true;
 }
 
+// ── AC #8: ffi_marshal_args_pure (Phase 5) ────────
+
+bool test_ffi_marshal_int_args() {
+    std::println("\n--- Test 8.1: pure::ffi_marshal_args on int args ---");
+    std::vector<aura::compiler::types::EvalValue> args{
+        aura::compiler::types::make_int(10),
+        aura::compiler::types::make_int(20),
+    };
+    std::vector<int> arg_types{1, 1};  // 1 = Int
+    std::vector<std::string> string_heap;
+    std::vector<void*> opaque_heap;
+    auto m = aura::compiler::pure::ffi_marshal_args_pure(
+        args, arg_types,
+        std::span<const std::string>(string_heap.data(), string_heap.size()),
+        std::span<void* const>(opaque_heap.data(), opaque_heap.size()));
+    CHECK(!m.any_float, "int args → any_float = false");
+    CHECK(m.i_vals[0] == 10, "i_vals[0] = 10");
+    CHECK(m.i_vals[1] == 20, "i_vals[1] = 20");
+    CHECK(m.str_bufs.empty(), "int args → str_bufs empty");
+    return true;
+}
+
+bool test_ffi_marshal_float_args() {
+    std::println("\n--- Test 8.2: pure::ffi_marshal_args on float args ---");
+    std::vector<aura::compiler::types::EvalValue> args{
+        aura::compiler::types::make_float(1.5),
+        aura::compiler::types::make_float(2.5),
+    };
+    std::vector<int> arg_types{2, 2};  // 2 = Float
+    std::vector<std::string> string_heap;
+    std::vector<void*> opaque_heap;
+    auto m = aura::compiler::pure::ffi_marshal_args_pure(
+        args, arg_types,
+        std::span<const std::string>(string_heap.data(), string_heap.size()),
+        std::span<void* const>(opaque_heap.data(), opaque_heap.size()));
+    CHECK(m.any_float, "float args → any_float = true");
+    CHECK(m.d_vals[0] == 1.5, "d_vals[0] = 1.5");
+    CHECK(m.d_vals[1] == 2.5, "d_vals[1] = 2.5");
+    CHECK(m.i_vals[0] == 1, "i_vals[0] = bit-cast of 1.5 → 1");
+    return true;
+}
+
+bool test_ffi_marshal_string_args() {
+    std::println("\n--- Test 8.3: pure::ffi_marshal_args on string args ---");
+    std::vector<aura::compiler::types::EvalValue> args{
+        aura::compiler::types::make_string(0),
+        aura::compiler::types::make_string(1),
+    };
+    std::vector<int> arg_types{3, 3};  // 3 = String
+    std::vector<std::string> string_heap{"hello", "world"};
+    std::vector<void*> opaque_heap;
+    auto m = aura::compiler::pure::ffi_marshal_args_pure(
+        args, arg_types,
+        std::span<const std::string>(string_heap.data(), string_heap.size()),
+        std::span<void* const>(opaque_heap.data(), opaque_heap.size()));
+    CHECK(!m.any_float, "string args → any_float = false");
+    CHECK(m.str_bufs.size() == 2, "str_bufs.size() = 2");
+    CHECK(m.s_vals[0] != nullptr, "s_vals[0] non-null");
+    CHECK(m.str_bufs[0] == "hello", "str_bufs[0] = 'hello'");
+    CHECK(m.str_bufs[1] == "world", "str_bufs[1] = 'world'");
+    CHECK(m.i_vals[0] != 0, "i_vals[0] = char* address (non-zero)");
+    return true;
+}
+
+bool test_ffi_marshal_opaque_args() {
+    std::println("\n--- Test 8.4: pure::ffi_marshal_args on opaque args ---");
+    int dummy_a = 0, dummy_b = 0;
+    std::vector<aura::compiler::types::EvalValue> args{
+        aura::compiler::types::make_opaque(0),
+        aura::compiler::types::make_opaque(1),
+    };
+    std::vector<int> arg_types{4, 4};  // 4 = Opaque
+    std::vector<std::string> string_heap;
+    std::vector<void*> opaque_heap{&dummy_a, &dummy_b};
+    auto m = aura::compiler::pure::ffi_marshal_args_pure(
+        args, arg_types,
+        std::span<const std::string>(string_heap.data(), string_heap.size()),
+        std::span<void* const>(opaque_heap.data(), opaque_heap.size()));
+    CHECK(!m.any_float, "opaque args → any_float = false");
+    CHECK(m.i_vals[0] == reinterpret_cast<std::int64_t>(&dummy_a),
+          "i_vals[0] = address of dummy_a");
+    CHECK(m.i_vals[1] == reinterpret_cast<std::int64_t>(&dummy_b),
+          "i_vals[1] = address of dummy_b");
+    return true;
+}
+
+bool test_ffi_marshal_mixed_args() {
+    std::println("\n--- Test 8.5: pure::ffi_marshal_args on mixed args ---");
+    std::vector<aura::compiler::types::EvalValue> args{
+        aura::compiler::types::make_int(42),
+        aura::compiler::types::make_float(3.14),
+        aura::compiler::types::make_string(0),
+    };
+    std::vector<int> arg_types{1, 2, 3};  // Int, Float, String
+    std::vector<std::string> string_heap{"hi"};
+    std::vector<void*> opaque_heap;
+    auto m = aura::compiler::pure::ffi_marshal_args_pure(
+        args, arg_types,
+        std::span<const std::string>(string_heap.data(), string_heap.size()),
+        std::span<void* const>(opaque_heap.data(), opaque_heap.size()));
+    CHECK(m.any_float, "mixed args → any_float = true (because of Float)");
+    CHECK(m.i_vals[0] == 42, "i_vals[0] = 42 (int)");
+    CHECK(m.d_vals[1] == 3.14, "d_vals[1] = 3.14 (float)");
+    CHECK(m.str_bufs[0] == "hi", "str_bufs[0] = 'hi' (string)");
+    return true;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Main
 // ═══════════════════════════════════════════════════════════════
@@ -435,6 +542,13 @@ int main() {
     test_pure_closest_match_finds_close();
     test_pure_closest_match_returns_empty_when_too_far();
     test_pure_closest_match_respects_max_dist();
+
+    std::println("\n── AC #8: ffi_marshal_args_pure (Issue #146 Phase 5) ──");
+    test_ffi_marshal_int_args();
+    test_ffi_marshal_float_args();
+    test_ffi_marshal_string_args();
+    test_ffi_marshal_opaque_args();
+    test_ffi_marshal_mixed_args();
 
     std::println("\n── AC #5: coerce_value_pure (Issue #146 Phase 2) ──");
     test_coerce_value_pure_identity();

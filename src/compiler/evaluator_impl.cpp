@@ -15407,59 +15407,30 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid,
             int ret_type = ff.ret_type;
             auto& arg_types = ff.arg_types;
 
-            // Marshalling: dispatch based on type info
-            std::int64_t i6[6] = {0, 0, 0, 0, 0, 0};
-            double d6[6] = {0, 0, 0, 0, 0, 0};
-            const char* s6[6] = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
-            std::vector<std::string> str_bufs; // keep strings alive
-            bool any_float = false;
-
-            for (std::size_t i = 0; i < args.size() && i < 6; ++i) {
-                int atype = (i < arg_types.size()) ? arg_types[i] : 1; // default Int
-                if (atype == 2) {                                      // Float
-                    if (types::is_float(args[i]))
-                        d6[i] = types::as_float(args[i]);
-                    else if (types::is_int(args[i]))
-                        d6[i] = static_cast<double>(types::as_int(args[i]));
-                    i6[i] = static_cast<std::int64_t>(d6[i]);
-                    any_float = true;
-                } else if (atype == 3) { // String → char*
-                    if (types::is_string(args[i])) {
-                        auto idx = types::as_string_idx(args[i]);
-                        if (idx < string_heap_.size()) {
-                            str_bufs.push_back(string_heap_[idx]);
-                            s6[i] = str_bufs.back().c_str();
-                            i6[i] = reinterpret_cast<std::int64_t>(s6[i]);
-                            d6[i] = 0.0;
-                        }
-                    }
-                } else if (atype == 4) { // Opaque (void*)
-                    if (types::is_opaque(args[i])) {
-                        auto oi = types::as_opaque_idx(args[i]);
-                        i6[i] = oi < opaque_heap_.size()
-                                    ? reinterpret_cast<std::int64_t>(opaque_heap_[oi])
-                                    : 0;
-                    } else if (types::is_int(args[i])) {
-                        i6[i] = types::as_int(args[i]);
-                    } else {
-                        i6[i] = 0;
-                    }
-                    d6[i] = 0.0;
-                } else { // Int (default)
-                    if (types::is_int(args[i]))
-                        i6[i] = types::as_int(args[i]);
-                    else if (types::is_float(args[i])) {
-                        i6[i] = static_cast<std::int64_t>(types::as_float(args[i]));
-                        any_float = true;
-                    }
-                    d6[i] = static_cast<double>(i6[i]);
-                }
-            }
+            // Issue #146 Phase 5: FFI marshalling is now a pure
+            // function (aura::compiler::pure::ffi_marshal_args_pure)
+            // that takes all dependencies as spans. The legacy
+            // stateful loop above has been replaced with a single
+            // call to the pure version; the FFI dispatch (calling
+            // the function pointer below) stays in this function
+            // because it depends on the per-FFI function pointer
+            // from ffi_runtime_.
+            std::span<const std::string> string_heap_view(
+                string_heap_.data(), string_heap_.size());
+            std::span<void* const> opaque_heap_view(
+                opaque_heap_.data(), opaque_heap_.size());
+            auto marshalled = aura::compiler::pure::ffi_marshal_args_pure(
+                args, arg_types, string_heap_view, opaque_heap_view);
+            const auto& i6 = marshalled.i_vals;
+            const auto& d6 = marshalled.d_vals;
+            // s6 and str_bufs are not used directly (we only
+            // need the void*; s_vals already points into str_bufs
+            // for lifetime).
 
             std::int64_t result_i = 0;
             double result_f = 0.0;
 
-            if (any_float) {
+            if (marshalled.any_float) {
                 auto f_fn =
                     reinterpret_cast<double (*)(double, double, double, double, double, double)>(
                         fn_ptr);
