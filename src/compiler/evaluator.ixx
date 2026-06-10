@@ -20,9 +20,9 @@ public:
         table_[name] = std::move(fn);
         ordered_names_.push_back(name);
     }
-    void set_string_heap(std::vector<std::string>* h) { string_heap_ = h; }
+    void set_string_heap(std::pmr::vector<std::string>* h) { string_heap_ = h; }
     std::span<const std::string> string_heap() const { return *string_heap_; }
-    std::vector<std::string>& string_heap() { return *string_heap_; }
+    std::pmr::vector<std::string>& string_heap() { return *string_heap_; }
     // Slot-based lookup for primitive values
     const std::string& name_for_slot(std::size_t slot) const { return ordered_names_[slot]; }
     std::size_t slot_for_name(const std::string& name) const;
@@ -30,7 +30,12 @@ public:
 
 private:
     std::unordered_map<std::string, PrimFn> table_;
-    std::vector<std::string>* string_heap_ = nullptr;
+    // Issue #145 Phase 2.4: pmr-backed to match Evaluator's
+    // string_heap_ arena allocation. Vector metadata lives in
+    // the same monotonic arena as the underlying EvalValue /
+    // Pair storage; std::string char buffers still heap-allocate
+    // (Phase 2.4.1 will move string contents inline).
+    std::pmr::vector<std::string>* string_heap_ = nullptr;
     std::vector<std::string> ordered_names_;
 };
 
@@ -56,7 +61,7 @@ public:
     Env& operator=(const Env&) = default;
     void set_parent(const Env* p) { parent_ = p; }
     void set_primitives(const Primitives* p) { primitives_ = p; }
-    void set_cells(std::vector<types::EvalValue>* c) { cells_ = c; }
+    void set_cells(std::pmr::vector<types::EvalValue>* c) { cells_ = c; }
     // Issue #145 Phase 2.2 — SoA walk infrastructure.
     //
     // `owner_` is a back-pointer to the owning Evaluator, used
@@ -126,7 +131,7 @@ private:
     const Env* parent_ = nullptr;
     const Primitives* primitives_ = nullptr;
     const aura::ast::StringPool* pool_ = nullptr;  // Issue #145
-    std::vector<types::EvalValue>* cells_ = nullptr;
+    std::pmr::vector<types::EvalValue>* cells_ = nullptr;
     std::vector<std::pair<std::string, types::EvalValue>> bindings_;
     // Issue #145: parallel SymId-keyed store. Both arrays
     // share the same length and order. lookup_by_symid reads
@@ -180,7 +185,7 @@ export struct EnvFrame {
     EnvId parent_id = NULL_ENV_ID;
     const Primitives* primitives_ = nullptr;
     const aura::ast::StringPool* pool_ = nullptr;
-    std::vector<types::EvalValue>* cells_ = nullptr;
+    std::pmr::vector<types::EvalValue>* cells_ = nullptr;
     std::vector<std::pair<std::string, types::EvalValue>> bindings_;
     // Phase 1 parity: parallel SymId-keyed store. Same length
     // and order as bindings_. SymId fast path reads this;
@@ -303,10 +308,14 @@ public:
     // `std::span<const types::EvalValue>` for zero-overhead
     // call sites that only iterate the cells. Callers that
     // need to mutate should use the non-const `cells()`.
+    // Issue #145 Phase 2.4: cells_ is std::pmr::vector backed
+    // by runtime_resource_ (monotonic arena). Pmr API is a
+    // drop-in for std::vector at the call site; iteration /
+    // size / push_back / clear all unchanged.
     std::span<const types::EvalValue> cells() const { return cells_; }
-    std::vector<types::EvalValue>& cells() { return cells_; }
+    std::pmr::vector<types::EvalValue>& cells() { return cells_; }
     std::span<const Pair> pairs() const { return pairs_; }
-    std::vector<Pair>& pairs() { return pairs_; }
+    std::pmr::vector<Pair>& pairs() { return pairs_; }
     std::span<const std::string> keyword_table() const { return keyword_table_; }
     std::vector<std::string>& keyword_table() { return keyword_table_; }
 
@@ -318,6 +327,9 @@ public:
     // the lock — callers must ensure no concurrent mutation
     // (the test harness runs single-threaded).
     std::span<const std::string> string_heap() const { return string_heap_; }
+    // Phase 2.4: mut accessor returns pmr::vector reference
+    // (matches the underlying storage type).
+    std::pmr::vector<std::string>& string_heap_mut() { return string_heap_; }
 
     // IR closure bridge: called when a closure id is not in closures_.
     using ClosureBridgeFn = std::function<std::optional<EvalValue>(
@@ -668,8 +680,22 @@ private:
     std::unordered_set<std::string> loading_stack_;               // circular dep detection
     std::vector<std::string> module_names_;                       // display names for modules
     std::unordered_map<std::string, ast::ASTArena*> module_arena_ptrs_; // path → owning arena (for gc_module)
-    std::vector<types::EvalValue> cells_;
-    std::vector<Pair> pairs_;
+    // Issue #145 Phase 2.4 — runtime arena for high-churn
+    // heap vectors. monotonic_buffer_resource bump-allocates
+    // chunks; deallocate() is a no-op (monotonic semantics).
+    // Sized to fit typical eval sessions (~1M cells/pairs +
+    // ~10k strings) without falling back to upstream
+    // (new_delete_resource). The buffer is freed wholesale at
+    // Evaluator destruction (after the pmr vectors are
+    // cleared, which runs ~string on each stored string).
+    //
+    // Declared BEFORE cells_/pairs_/string_heap_ so the
+    // pmr::vector members can take its address in their
+    // initializer (member init order matches declaration
+    // order).
+    std::pmr::monotonic_buffer_resource runtime_resource_;
+    std::pmr::vector<types::EvalValue> cells_{&runtime_resource_};
+    std::pmr::vector<Pair> pairs_{&runtime_resource_};
     // Issue #145 Phase 2.1 — SoA arena for Env. Frames are
     // appended in alloc_env_frame and indexed by EnvId. Frame
     // data is parallel to Env; parent walks go via parent_id_
@@ -844,7 +870,12 @@ private:
 
     // ── Timeline for intend (E2, backward compat) ───────────────
     std::vector<std::string> timeline_; //
-    std::vector<std::string> string_heap_;
+    // Issue #145 Phase 2.4 — pmr-backed (matches cells_/pairs_
+    // backing). Vector metadata lives in runtime_resource_;
+    // std::string char buffers still heap-allocate per string
+    // (Phase 2.4.1 / Phase 2.5 will inline string contents
+    // into the arena).
+    std::pmr::vector<std::string> string_heap_{&runtime_resource_};
     // Short string cache: ≤6 byte strings are deduplicated via this hash
     // (avoids redundant string_heap_ pushes and enables faster equal?)
     std::unordered_map<std::string, types::EvalValue> short_str_cache_;
