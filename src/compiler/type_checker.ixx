@@ -511,7 +511,7 @@ private:
 //   - Warnings if the check produced any notes. The mode-based
 //     decision (warn vs block) is the caller's responsibility — this
 //     function does not see InvariantCheckMode by design (kept pure).
-aura::ast::InvariantStatus post_mutation_invariant_check(
+export aura::ast::InvariantStatus post_mutation_invariant_check(
     aura::ast::FlatAST& flat,
     const aura::ast::StringPool& pool,
     aura::core::TypeRegistry& reg,

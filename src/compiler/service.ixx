@@ -3112,7 +3112,60 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             shape_profiler_.reset();
 
             tx.commit();
-            return {mid, true, ""};
+
+            // Issue #147: post-mutation invariant check. Runs only
+            // if invariant_check_mode_ is not Disabled. Iterates
+            // every MutationRecord added during this transaction
+            // (id > tx.snapshot_id) and runs
+            // post_mutation_invariant_check on each. The aggregated
+            // notes populate MutationResult::invariant_diagnostics;
+            // the worst per-record status is the result's status.
+            //
+            // Mode behavior:
+            //   Disabled     — skip entirely, status stays NotChecked.
+            //   WarningsOnly — surface diagnostics, do NOT block
+            //                  (success stays true).
+            //   Strict       — any per-record Warnings status
+            //                  promotes to MutationResult success=
+            //                  false with the first diagnostic's
+            //                  message promoted to .error.
+            MutationResult res;
+            res.mutation_id = mid;
+            res.success = true;
+
+            if (invariant_check_mode_ == InvariantCheckMode::Disabled) {
+                res.invariant_status = aura::ast::InvariantStatus::NotChecked;
+                return res;
+            }
+
+            std::vector<aura::compiler::OwnershipNote> all_notes;
+            aura::ast::InvariantStatus worst = aura::ast::InvariantStatus::Ok;
+            auto& log = current_ast_->all_mutations();
+            for (auto& rec : log) {
+                if (rec.mutation_id <= tx.snapshot_id) continue;
+                if (rec.mutation_id == 0) continue;  // skip sentinel
+                std::vector<aura::compiler::OwnershipNote> notes;
+                auto st = post_mutation_invariant_check(*current_ast_, *current_pool_,
+                                                        type_registry_, rec, notes);
+                rec.invariant_status = st;
+                if (st == aura::ast::InvariantStatus::Warnings) {
+                    worst = aura::ast::InvariantStatus::Warnings;
+                    for (auto& n : notes) all_notes.push_back(std::move(n));
+                }
+            }
+            res.invariant_status = worst;
+            res.invariant_diagnostics = std::move(all_notes);
+
+            if (invariant_check_mode_ == InvariantCheckMode::Strict
+                && worst == aura::ast::InvariantStatus::Warnings) {
+                res.success = false;
+                if (!res.invariant_diagnostics.empty()) {
+                    res.error = res.invariant_diagnostics.front().message;
+                } else {
+                    res.error = "post-mutation invariant check reported violations";
+                }
+            }
+            return res;
         }
         // If mutation returned 0/false, it indicates failure — transaction auto-rollbacks
         return {0, false, "mutation returned zero (failed)"};
