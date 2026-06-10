@@ -494,4 +494,28 @@ private:
     CoercionMap last_coercions_;
 };
 
+// Issue #147: post-mutation invariant check. Walks the dirty subtree
+// implied by a single MutationRecord (descendants of target_node plus
+// the dirty ancestors via mark_dirty_upward), re-validates linear
+// ownership on dirty bindings, and emits a note for each occurrence
+// narrowing live in the dirty scope (so the caller can warn or block
+// under Strict mode).
+//
+// `reg` is the persistent TypeRegistry from CompilerService; the
+// analyze_predicate_flat call inside needs it to look up refinement
+// types. notes_out is appended to (not cleared) so callers can chain
+// multiple checks. Returns:
+//   - NotChecked if MutationRecord is malformed (NULL_NODE etc.) and
+//     no useful work could be done.
+//   - Ok if the check ran and produced zero notes.
+//   - Warnings if the check produced any notes. The mode-based
+//     decision (warn vs block) is the caller's responsibility — this
+//     function does not see InvariantCheckMode by design (kept pure).
+aura::ast::InvariantStatus post_mutation_invariant_check(
+    aura::ast::FlatAST& flat,
+    const aura::ast::StringPool& pool,
+    aura::core::TypeRegistry& reg,
+    const aura::ast::MutationRecord& rec,
+    std::vector<OwnershipNote>& notes_out);
+
 } // namespace aura::compiler
