@@ -107,6 +107,51 @@ static std::string json_escape(std::string_view s) {
     return out;
 }
 
+// Issue #147: stringify InvariantStatus enum for JSON output.
+static std::string invariant_status_to_string(aura::ast::InvariantStatus st) {
+    switch (st) {
+        case aura::ast::InvariantStatus::Ok:         return "Ok";
+        case aura::ast::InvariantStatus::Warnings:   return "Warnings";
+        case aura::ast::InvariantStatus::Violations: return "Violations";
+        case aura::ast::InvariantStatus::NotChecked:
+        default:                                      return "NotChecked";
+    }
+}
+
+// Issue #147: serialize the diagnostics vector as a JSON array. Each
+// entry is {"node":N,"kind":"...","message":"..."}. Returns "[]" when
+// the vector is empty so callers can always concat the result.
+static std::string invariant_diagnostics_to_json(
+    const std::vector<aura::compiler::OwnershipNote>& notes) {
+    if (notes.empty()) return "[]";
+    std::string out = "[";
+    bool first = true;
+    for (auto& n : notes) {
+        if (!first) out += ",";
+        first = false;
+        out += std::format(R"({{"node":{},"kind":"{}","message":"{}"}})",
+                           n.node, json_escape(n.kind), json_escape(n.message));
+    }
+    out += "]";
+    return out;
+}
+
+// Issue #147: print a typed-mutate JSON response with invariant
+// diagnostics. Used by both --serve and --serve-async handlers so
+// the protocol stays in sync.
+static void print_typed_mutate_response(
+    const aura::compiler::CompilerService::MutationResult& r) {
+    auto ist = invariant_status_to_string(r.invariant_status);
+    auto diags = invariant_diagnostics_to_json(r.invariant_diagnostics);
+    if (r.success) {
+        std::println(R"({{"status":"ok","mutation_id":{},"invariant_status":"{}","invariant_diagnostics":{}}})",
+                     r.mutation_id, ist, diags);
+    } else {
+        std::println(R"({{"status":"error","msg":"{}","invariant_status":"{}","invariant_diagnostics":{}}})",
+                     json_escape(r.error.empty() ? "mutation failed" : r.error), ist, diags);
+    }
+}
+
 // Minimal JSON parser for --serve protocol messages.
 // Only supports flat objects: {"key":"value","key2":"value2"}
 // Returns an empty map on parse failure.
@@ -668,14 +713,9 @@ int main(int argc, char* argv[]) {
                             sexpr = std::format("({} {} {} \"{}\")", op_name, node, v, s);
                         }
                         auto mut_result = cs.typed_mutate(sexpr);
-                        if (mut_result.success) {
-                            std::println("{{\"status\":\"ok\",\"mutation_id\":{}}}",
-                                         mut_result.mutation_id);
-                        } else {
-                            std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
-                                         json_escape(mut_result.error.empty() ? "mutation failed"
-                                                                              : mut_result.error));
-                        }
+                        // Issue #147: typed-mutate response now
+                        // includes invariant_status + invariant_diagnostics.
+                        print_typed_mutate_response(mut_result);
                     }
                     continue;
                 }
@@ -711,11 +751,13 @@ int main(int argc, char* argv[]) {
                             first = false;
                             std::print("  {{\"id\":{},\"ts\":{},\"node\":{},\"op\":\"{}\","
                                        "\"old_type\":\"{}\",\"new_type\":\"{}\","
-                                       "\"summary\":\"{}\",\"status\":\"{}\"}}",
+                                       "\"summary\":\"{}\",\"status\":\"{}\","
+                                       "\"invariant_status\":\"{}\"}}",
                                        e.mutation_id, e.timestamp_ms, e.target_node,
                                        json_escape(e.operator_name), json_escape(e.old_type),
                                        json_escape(e.new_type), json_escape(e.summary),
-                                       json_escape(e.status));
+                                       json_escape(e.status),
+                                       json_escape(e.invariant_status));
                         }
                         std::println("]}}");
                     }
@@ -902,13 +944,9 @@ int main(int argc, char* argv[]) {
                                 sum_it != cmd.end() ? " \"" + sum_it->second + "\"" : " \"\"", "");
                             // Evaluate mutation against the persistent AST
                             auto mut_result = cs.typed_mutate(sexpr);
-                            if (mut_result.success) {
-                                std::println("{{\"status\":\"ok\",\"mutation_id\":{}}}",
-                                             mut_result.mutation_id);
-                            } else {
-                                std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
-                                             json_escape(mut_result.error));
-                            }
+                            // Issue #147: typed-mutate response now
+                            // includes invariant_status + invariant_diagnostics.
+                            print_typed_mutate_response(mut_result);
                         }
                     } else if (type == "rollback") {
                         // {"cmd": "rollback", "id": 1}
@@ -940,11 +978,13 @@ int main(int argc, char* argv[]) {
                                 first = false;
                                 std::print("  {{\"id\":{},\"ts\":{},\"node\":{},\"op\":\"{}\","
                                            "\"old_type\":\"{}\",\"new_type\":\"{}\","
-                                           "\"summary\":\"{}\",\"status\":\"{}\"}}",
+                                           "\"summary\":\"{}\",\"status\":\"{}\","
+                                           "\"invariant_status\":\"{}\"}}",
                                            e.mutation_id, e.timestamp_ms, e.target_node,
                                            json_escape(e.operator_name), json_escape(e.old_type),
                                            json_escape(e.new_type), json_escape(e.summary),
-                                           json_escape(e.status));
+                                           json_escape(e.status),
+                                           json_escape(e.invariant_status));
                             }
                             std::println("]}}");
                         }
