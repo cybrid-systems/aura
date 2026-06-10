@@ -224,24 +224,29 @@ bool test_env_id_null_semantics() {
     aura::compiler::Evaluator ev;
     CHECK(!ev.is_valid_env_id(NULL_ENV_ID),
           "is_valid_env_id(NULL_ENV_ID) returns false");
-    CHECK(!ev.is_valid_env_id(0),
-          "is_valid_env_id(0) returns false on fresh evaluator (no frames yet)");
-    CHECK(ev.env_frames_size() == 0,
-          "fresh evaluator has zero env frames");
+    // Phase 2.2: Evaluator constructor pre-registers top_ env
+    // in env_frames_ (so SoA walk path is always exercisable
+    // for the root scope). Fresh Evaluator now has 1 frame.
+    CHECK(ev.is_valid_env_id(0),
+          "is_valid_env_id(0) returns true on fresh evaluator (top_ pre-registered)");
+    CHECK(ev.env_frames_size() == 1,
+          "fresh evaluator has 1 frame (top_)");
     return true;
 }
 
 bool test_alloc_env_frame_returns_valid_id() {
     std::println("\n--- Test 7.2: alloc_env_frame returns valid id ---");
     aura::compiler::Evaluator ev;
+    // Phase 2.2: top_ pre-registered, so first alloc gets id=1
+    // (id 0 is already taken by top_).
     auto id = ev.alloc_env_frame();
     CHECK(id != aura::compiler::NULL_ENV_ID, "alloc returns non-null id");
     CHECK(ev.is_valid_env_id(id), "is_valid_env_id(id) returns true");
-    CHECK(ev.env_frames_size() == 1, "env_frames_size() == 1 after first alloc");
-    auto id2 = ev.alloc_env_frame(id, nullptr);  // child of first
+    CHECK(ev.env_frames_size() == 2, "env_frames_size() == 2 after first alloc (top_ + new)");
+    auto id2 = ev.alloc_env_frame(id, nullptr);  // child of id
     CHECK(id2 != aura::compiler::NULL_ENV_ID, "second alloc returns non-null id");
     CHECK(id2 != id, "second id != first id");
-    CHECK(ev.env_frames_size() == 2, "env_frames_size() == 2 after second alloc");
+    CHECK(ev.env_frames_size() == 3, "env_frames_size() == 3 after second alloc");
     return true;
 }
 
@@ -386,7 +391,9 @@ bool test_env_frames_survive_multiple_alloc() {
         CHECK(ev.is_valid_env_id(id), "each alloc returns valid id");
         ids.push_back(id);
     }
-    CHECK(ev.env_frames_size() == N, "env_frames_size() == N after N allocs");
+    // Phase 2.2: top_ pre-registered, so total = 1 (top_) + N.
+    CHECK(ev.env_frames_size() == N + 1,
+          "env_frames_size() == N+1 after N allocs (top_ pre-registered)");
     // Spot-check: every id is still valid and distinct.
     for (std::size_t i = 0; i < N; ++i) {
         CHECK(ev.is_valid_env_id(ids[i]),
@@ -402,7 +409,7 @@ bool test_reset_env_frames_clears_state() {
     std::println("\n--- Test 7.12: reset_env_frames clears the arena ---");
     aura::compiler::Evaluator ev;
     auto id = ev.alloc_env_frame();
-    CHECK(ev.env_frames_size() == 1, "size == 1 before reset");
+    CHECK(ev.env_frames_size() == 2, "size == 2 before reset (top_ + alloc'd)");
     ev.reset_env_frames();
     CHECK(ev.env_frames_size() == 0, "size == 0 after reset");
     CHECK(!ev.is_valid_env_id(id), "old id is no longer valid");

@@ -7930,9 +7930,16 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
 
 
 // ── Env::lookup_cell_ptr: returns EvalValue* ──────────────────
+//
+// Issue #145 Phase 2.2: parent walk migrates to
+// walk_env_frames when owner_ + parent_id_ are set (SoA path).
+// Legacy Env* walk preserved as fallback for stack-allocated
+// Envs that aren't registered in env_frames_ (local eval scopes
+// before Phase 2.6 ships the rename).
 EvalValue* Env::lookup_cell_ptr(const std::string& n, std::vector<EvalValue>* cells) const {
     if (!cells)
         return nullptr;
+    // 1. Local bindings (no walk needed)
     for (auto& b : bindings_) {
         if (b.first == n) {
             if (is_cell(b.second)) {
@@ -7943,6 +7950,32 @@ EvalValue* Env::lookup_cell_ptr(const std::string& n, std::vector<EvalValue>* ce
             return nullptr;
         }
     }
+    // 2. Walk parent chain — prefer SoA walk via env_frames_
+    //    when owner_ + parent_id_ are both set. Canonical path
+    //    for registered Envs (top_, modules_, arena-allocated
+    //    envs). Cache-friendly index lookup replaces pointer
+    //    chase; shadowing semantics preserved (closest frame
+    //    wins, walk_env_frames stops at first match).
+    if (owner_ && parent_id_ != NULL_ENV_ID) {
+        EvalValue* result = nullptr;
+        owner_->walk_env_frames(parent_id_,
+            [&](EnvId, const EnvFrame& f) {
+                for (auto& b : f.bindings_) {
+                    if (b.first == n) {
+                        if (is_cell(b.second)) {
+                            auto ci = as_cell_id(b.second);
+                            if (ci < cells->size())
+                                result = &(*cells)[ci];
+                        }
+                        return false;  // stop walking
+                    }
+                }
+                return true;
+            });
+        return result;
+    }
+    // 3. Legacy pointer walk (preserved for unregistered Envs).
+    //    Same shadowing semantics: closest frame wins.
     for (auto* p = parent_; p; p = p->parent_) {
         for (auto& b : p->bindings_) {
             if (b.first == n) {
@@ -7959,7 +7992,12 @@ EvalValue* Env::lookup_cell_ptr(const std::string& n, std::vector<EvalValue>* ce
 }
 
 // ── Env::lookup_cell_index: returns uint64_t (stable) ─────────────
+//
+// Issue #145 Phase 2.2: same dual-path pattern as
+// lookup_cell_ptr. SoA walk via env_frames_ when registered,
+// legacy pointer walk otherwise.
 std::optional<std::uint64_t> Env::lookup_cell_index(const std::string& n) const {
+    // 1. Local bindings
     for (auto& b : bindings_) {
         if (b.first == n) {
             if (is_cell(b.second))
@@ -7967,6 +8005,23 @@ std::optional<std::uint64_t> Env::lookup_cell_index(const std::string& n) const 
             return std::nullopt;
         }
     }
+    // 2. SoA walk via env_frames_ when registered
+    if (owner_ && parent_id_ != NULL_ENV_ID) {
+        std::optional<std::uint64_t> result;
+        owner_->walk_env_frames(parent_id_,
+            [&](EnvId, const EnvFrame& f) {
+                for (auto& b : f.bindings_) {
+                    if (b.first == n) {
+                        if (is_cell(b.second))
+                            result = as_cell_id(b.second);
+                        return false;
+                    }
+                }
+                return true;
+            });
+        return result;
+    }
+    // 3. Legacy pointer walk
     for (auto* p = parent_; p; p = p->parent_) {
         for (auto& b : p->bindings_) {
             if (b.first == n) {
@@ -8814,6 +8869,17 @@ Evaluator::Evaluator() {
 
     top_.set_primitives(&primitives_);
     top_.set_cells(&cells_);
+    // Issue #145 Phase 2.2: register top_ env with this
+    // Evaluator's env_frames_ SoA arena. The frame's bindings_
+    // stay in top_ itself (we don't copy into env_frames_) —
+    // we only need a parent_id_ index so Env::lookup_cell_ptr
+    // can route its parent walk through walk_env_frames when
+    // a deeper chain exists. top_ has no parent, so the frame's
+    // parent_id = NULL_ENV_ID. For modules_ envs, see copy_env
+    // / load_module_file where they're arena-allocated.
+    top_.set_owner(this);
+    top_.set_parent_id(alloc_env_frame(
+        NULL_ENV_ID /* no parent */, &primitives_));
     primitives_.set_string_heap(&string_heap_);
     arena_group_ = std::make_unique<aura::ast::ArenaGroup>();
     init_pair_primitives();
