@@ -3009,6 +3009,12 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         std::string new_type;
         std::string summary;
         std::string status; // "Committed" or "RolledBack"
+        // Issue #147: per-record invariant check status. Stringified
+        // to one of "NotChecked" | "Ok" | "Warnings" | "Violations"
+        // so JSON consumers don't need to know the enum's numeric
+        // encoding. Default "NotChecked" for records that pre-date
+        // the post-mutation check or were never run.
+        std::string invariant_status;
     };
 
     // RAII transaction guard for mutation operations.
@@ -3180,10 +3186,21 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         auto hist = (node == aura::ast::NULL_NODE) ? current_ast_->all_mutations()
                                                    : current_ast_->mutation_history(node);
         for (auto& rec : hist) {
+            // Issue #147: stringify the per-record invariant_status enum
+            // so the JSON response is human-readable.
+            const char* ist = "NotChecked";
+            switch (rec.invariant_status) {
+                case aura::ast::InvariantStatus::Ok:         ist = "Ok"; break;
+                case aura::ast::InvariantStatus::Warnings:   ist = "Warnings"; break;
+                case aura::ast::InvariantStatus::Violations: ist = "Violations"; break;
+                case aura::ast::InvariantStatus::NotChecked:
+                default:                                     ist = "NotChecked"; break;
+            }
             result.push_back(
                 {rec.mutation_id, rec.timestamp_ms, rec.target_node, rec.operator_name,
                  rec.old_type_str, rec.new_type_str, rec.summary,
-                 rec.status == aura::ast::MutationStatus::Committed ? "Committed" : "RolledBack"});
+                 rec.status == aura::ast::MutationStatus::Committed ? "Committed" : "RolledBack",
+                 ist});
         }
         return result;
     }
