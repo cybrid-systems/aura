@@ -16562,7 +16562,7 @@ static std::string type_tag_name(aura::core::TypeTag tag) {
 }
 
 static bool coerce_value(types::EvalValue& val, aura::core::TypeTag from, aura::core::TypeTag to,
-                         std::vector<std::string>& heap) {
+                         std::pmr::vector<std::string>& heap) {
     if (from == to)
         return true;
     if (from == aura::core::TypeTag::INT && to == aura::core::TypeTag::FLOAT) {
@@ -17246,7 +17246,7 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                         Env catch_env(&eval_env);
                                         catch_env.set_primitives(&primitives_);
                                         catch_env.set_cells(
-                                            const_cast<std::vector<EvalValue>*>(&cells_));
+                                            const_cast<std::pmr::vector<EvalValue>*>(&cells_));
                                         if (!var_name.empty() && result) {
                                             catch_env.bind(var_name, *result);
                                         }

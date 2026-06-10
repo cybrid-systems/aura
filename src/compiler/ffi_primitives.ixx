@@ -114,7 +114,7 @@ public:
     // coverage array; nullable for tests.
     void register_primitives(
         RegisterFn add_primitive,
-        std::vector<std::string>* string_heap,
+        std::pmr::vector<std::string>* string_heap,
         std::vector<void*>* opaque_heap,
         std::array<std::uint64_t, 16>* coverage_counters = nullptr);
 

@@ -38,7 +38,7 @@ using namespace aura::compiler::types;
 
 void FFIRuntime::register_primitives(
     RegisterFn add,
-    std::vector<std::string>* string_heap,
+    std::pmr::vector<std::string>* string_heap,
     std::vector<void*>* opaque_heap,
     std::array<std::uint64_t, 16>* coverage_counters) {
     auto* sh = string_heap;
