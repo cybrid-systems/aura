@@ -15,6 +15,7 @@ target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/type.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
+    src/compiler/evaluator_pure.ixx
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -133,6 +134,7 @@ target_link_libraries(aura PRIVATE stdc++ stdc++exp)
 add_library(aura-reflect STATIC
     src/reflect/cache_reflect.cpp
     src/compiler/ir_reflect_serialize.cpp
+    src/compiler/ir_reflect_serialize.cpp
     src/compiler/observability_json.cpp
 )
 target_include_directories(aura-reflect PUBLIC ${CMAKE_SOURCE_DIR}/src)
@@ -179,6 +181,7 @@ target_sources(test_ir PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/type.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
+    src/compiler/evaluator_pure.ixx
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -854,6 +857,7 @@ target_sources(test_issue_135 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/type.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
+    src/compiler/evaluator_pure.ixx
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -947,6 +951,7 @@ target_sources(test_issue_137 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/type.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
+    src/compiler/evaluator_pure.ixx
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -1023,6 +1028,7 @@ target_sources(test_issue_138 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/type.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
+    src/compiler/evaluator_pure.ixx
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -1093,6 +1099,7 @@ target_sources(test_issue_139 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/type.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
+    src/compiler/evaluator_pure.ixx
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -1163,6 +1170,7 @@ target_sources(test_issue_140 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/type.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
+    src/compiler/evaluator_pure.ixx
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -1232,6 +1240,7 @@ target_sources(test_issue_141 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/type.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
+    src/compiler/evaluator_pure.ixx
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -1302,6 +1311,7 @@ target_sources(test_issue_142 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/type.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
+    src/compiler/evaluator_pure.ixx
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -1372,6 +1382,7 @@ target_sources(test_gc_evaluator_integration PUBLIC FILE_SET CXX_MODULES BASE_DI
     src/core/type.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
+    src/compiler/evaluator_pure.ixx
     src/compiler/value.ixx
     src/compiler/cache.ixx
     src/compiler/ir.ixx
@@ -1616,6 +1627,7 @@ target_sources(test_issue_143 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/type.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
+    src/compiler/evaluator_pure.ixx
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -1684,6 +1696,7 @@ target_sources(test_issue_144 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/type.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
+    src/compiler/evaluator_pure.ixx
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -1746,6 +1759,74 @@ add_test(NAME issue_144_verification COMMAND ./test_issue_144)
 # types + bind_symid/lookup_by_symid fast path. Full issue is
 # 2-3 weeks; this PR ships the highest-impact slice.
 add_executable(test_issue_145 tests/test_issue_145.cpp)
+
+# Issue #146 verification: pure-function + monadic Result
+# extraction for Evaluator core. Tests the first extract
+# (coerce_to_int_pure) and its compatibility with the legacy
+# coerce_to_int wrapper. Full issue is 2 weeks of work; this
+# PR ships the first slice of the 6-8 target functions.
+add_executable(test_issue_146 tests/test_issue_146.cpp)
+set_property(TARGET test_issue_146 PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_issue_146 PRIVATE src src/compiler)
+target_sources(test_issue_146 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
+    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
+    src/core/type_arena.ixx
+    src/core/type.ixx
+    src/parser/lexer.ixx src/parser/parser.ixx
+    src/compiler/evaluator.ixx
+    src/compiler/evaluator_pure.ixx
+    src/compiler/cache.ixx
+    src/compiler/value.ixx
+    src/compiler/ir.ixx
+    src/compiler/lowering.ixx
+    src/compiler/ir_executor.ixx
+    src/compiler/compute_kind.ixx
+    src/compiler/arity.ixx
+    src/compiler/diag.ixx
+    src/compiler/service.ixx
+    src/compiler/pass_manager.ixx
+    src/compiler/query.ixx
+    src/compiler/coercion_map.ixx
+    src/compiler/ir_cache_pure.ixx
+    src/compiler/lowering_linear_types.ixx
+    src/compiler/ast_walkers.ixx
+    src/compiler/ffi_primitives.ixx
+    src/compiler/type_checker.ixx)
+target_compile_definitions(test_issue_146 PRIVATE AURA_HAVE_LLVM=1)
+target_sources(test_issue_146 PRIVATE
+    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
+    src/core/ast_impl.cpp
+    src/core/type_impl.cpp
+    src/compiler/value_impl.cpp
+    src/compiler/evaluator_impl.cpp
+    src/compiler/cache_impl.cpp
+    src/compiler/lowering_impl.cpp
+    src/compiler/ir_executor_impl.cpp
+    src/compiler/compute_kind_impl.cpp
+    src/compiler/query_impl.cpp
+    src/compiler/type_checker_impl.cpp
+    src/compiler/arity_impl.cpp
+    src/compiler/messaging_bridge_impl.cpp
+    src/compiler/ffi_primitives_impl.cpp
+    src/compiler/lowering_linear_types_impl.cpp
+    src/compiler/aura_jit.cpp
+    src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
+    src/compiler/spec_jit_controller.cpp
+    src/compiler/shape_profiler.cpp
+    src/serve/fiber.cpp
+    src/serve/worker.cpp
+    src/serve/scheduler.cpp
+    src/serve/gc_coordinator.cpp)
+# Issue #146: aura_jit.cpp uses LLVM and pimpl over an Impl
+# forward declaration. Needs -fno-rtti to match the aura binary
+# configuration (test_issue_145 also relies on this).
+set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+target_link_libraries(test_issue_146 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+target_include_directories(test_issue_146 PRIVATE ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(test_issue_146 PRIVATE AURA_HAVE_LLVM=1)
+target_link_libraries(test_issue_146 PRIVATE ${llvm_libs})
 set_property(TARGET test_issue_145 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_145 PRIVATE src src/compiler)
 target_sources(test_issue_145 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
@@ -1754,6 +1835,7 @@ target_sources(test_issue_145 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/type.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
+    src/compiler/evaluator_pure.ixx
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
