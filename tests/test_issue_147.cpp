@@ -233,24 +233,23 @@ void test_per_record_invariant_status_queryable() {
     // record should have invariant_status populated.
     auto mr = do_rebind(cs, "a", "2", "bump-a");
     CHECK(mr.success, "rebind mutation succeeds");
-    // Pre-existing infrastructure note: query_mutation_log reads
-    // from current_ast_, but typed_mutate's mutation primitives
-    // add their records to workspace_flat_. The two are distinct
-    // FlatASTs (current_ast_ is the typed_mutate path; workspace
-    // is the eval-on-workspace path). query_mutation_log therefore
-    // returns 0 entries in the typed_mutate flow. The records DO
-    // exist on the workspace, and that's what we check here.
-    auto ws_flat = cs.workspace_flat();
-    CHECK(ws_flat != nullptr, "workspace_flat is accessible via service");
-    if (ws_flat) {
-        auto& log = ws_flat->all_mutations();
-        CHECK(!log.empty(), "workspace mutation log has at least one entry after rebind");
-        if (!log.empty()) {
-            auto& last = log.back();
-            CHECK_EQ(static_cast<int>(last.invariant_status),
-                     static_cast<int>(ast::InvariantStatus::Ok),
-                     "most recent workspace entry has invariant_status == Ok");
-        }
+    // Post #147 follow-up: query_mutation_log now reads from
+    // workspace_flat_ (where typed_mutate's mutation primitives
+    // actually append records), so the public API matches the
+    // underlying state. This is the path external --serve
+    // protocol consumers hit.
+    auto entries = cs.query_mutation_log();
+    CHECK(!entries.empty(),
+          "query_mutation_log returns the records added by typed_mutate");
+    if (!entries.empty()) {
+        auto& last = entries.back();
+        // The record was committed (rebind succeeded) and the
+        // post-mutation check ran (WarningsOnly mode) and found
+        // nothing to flag, so invariant_status should be "Ok".
+        CHECK_EQ(last.status, std::string("Committed"),
+                 "most recent log entry is Committed");
+        CHECK_EQ(last.invariant_status, std::string("Ok"),
+                 "most recent log entry has invariant_status == Ok");
     }
 }
 

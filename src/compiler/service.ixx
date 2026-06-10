@@ -3208,13 +3208,25 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
     }
 
     // Query mutation log for a specific node (or all nodes if NULL_NODE).
+    //
+    // Issue #147 follow-up: mutation primitives (mutate:rebind,
+    // mutate:replace-type, ...) append MutationRecord entries to
+    // workspace_flat_ — NOT current_ast_. The pre-#147 implementation
+    // read from current_ast_, so callers saw an empty log even after
+    // a successful typed_mutate. Now we read from workspace_flat_
+    // first (the canonical source for typed_mutate records), with a
+    // fallback to current_ast_ for backward compatibility with
+    // tests that manually add records to the C++ set_code AST.
     std::vector<MutationLogEntry>
     query_mutation_log(aura::ast::NodeId node = aura::ast::NULL_NODE) const {
         std::vector<MutationLogEntry> result;
-        if (!current_ast_)
+        const auto* source = evaluator_.workspace_flat();
+        if (!source)
+            source = current_ast_;
+        if (!source)
             return result;
-        auto hist = (node == aura::ast::NULL_NODE) ? current_ast_->all_mutations()
-                                                   : current_ast_->mutation_history(node);
+        auto hist = (node == aura::ast::NULL_NODE) ? source->all_mutations()
+                                                   : source->mutation_history(node);
         for (auto& rec : hist) {
             // Issue #147: stringify the per-record invariant_status enum
             // so the JSON response is human-readable.
