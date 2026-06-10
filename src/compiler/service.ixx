@@ -250,6 +250,24 @@ export struct EscapeAnalysisWrap {
 // For multi-module scenarios, use module_arena() to get an isolated
 // arena that can be independently reset.
 //
+
+// Issue #147: post-mutation invariant check mode. Controls how
+// `typed_mutate` reacts to OwnershipNotes emitted by
+// `post_mutation_invariant_check`:
+//   - Disabled      — check is not run (status stays NotChecked).
+//   - WarningsOnly  — check runs, notes are surfaced via
+//                     MutationResult::invariant_diagnostics, but
+//                     execution is NOT blocked. Default.
+//   - Strict        — check runs, any note (use-after-move,
+//                     double-borrow, leaked-linear, invalidated
+//                     occurrence narrowing) causes typed_mutate
+//                     to return success=false with the diagnostic.
+export enum class InvariantCheckMode : std::uint8_t {
+    Disabled = 0,
+    WarningsOnly = 1,
+    Strict = 2,
+};
+
 export class CompilerService {
 public:
     CompilerService()
@@ -2956,7 +2974,30 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         std::uint64_t mutation_id;
         bool success;
         std::string error;
+        // Issue #147: post-mutation invariant check result.
+        // invariant_status mirrors the per-record status on
+        // MutationRecord.invariant_status (set after check runs).
+        // invariant_diagnostics is empty when status==Ok or
+        // NotChecked. In WarningsOnly mode, non-empty diagnostics
+        // do NOT block success. In Strict mode, any non-empty
+        // diagnostics turn success=false with the first diagnostic
+        // promoted to .error.
+        aura::ast::InvariantStatus invariant_status = aura::ast::InvariantStatus::NotChecked;
+        std::vector<aura::compiler::OwnershipNote> invariant_diagnostics;
     };
+
+    // Issue #147: configure post-mutation invariant check mode.
+    // - Disabled: check is skipped (status stays NotChecked, no
+    //   diagnostics emitted). Useful for tight loops where the
+    //   check would dominate runtime.
+    // - WarningsOnly (default): check runs, notes surfaced via
+    //   MutationResult::invariant_diagnostics, success is not
+    //   affected.
+    // - Strict: any note causes typed_mutate to return
+    //   success=false with the first note's message promoted to
+    //   MutationResult::error.
+    void set_invariant_check_mode(InvariantCheckMode m) { invariant_check_mode_ = m; }
+    InvariantCheckMode invariant_check_mode() const { return invariant_check_mode_; }
 
     // Mutation log entry (for JSON serialization).
     struct MutationLogEntry {
@@ -3621,6 +3662,13 @@ private:
     // Persistent AST for mutation workflows (set_code / typed_mutate).
     aura::ast::FlatAST* current_ast_ = nullptr;
     aura::ast::StringPool* current_pool_ = nullptr;
+
+    // Issue #147: post-mutation invariant check mode. Default
+    // WarningsOnly so existing call sites see diagnostics but
+    // are not blocked. Can be promoted to Strict via
+    // set_invariant_check_mode() when soundness enforcement is
+    // desired (e.g. in CI runs or --strict CLI flag).
+    InvariantCheckMode invariant_check_mode_ = InvariantCheckMode::WarningsOnly;
 
 
 public:
