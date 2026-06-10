@@ -284,6 +284,23 @@ export enum class MutationStatus : std::uint8_t {
     RolledBack,
 };
 
+// Issue #147: post-mutation invariant check status.
+//   NotChecked  — check has not yet been run (default after add_mutation_*).
+//   Ok          — check ran, no warnings or violations found.
+//   Warnings    — check ran, OwnershipNotes emitted under WarningsOnly mode
+//                 (does not block execution).
+//   Violations  — check ran, OwnershipNotes emitted under Strict mode
+//                 (typed_mutate returns failure with diagnostics).
+//
+// Diagnostics themselves are surfaced via MutationResult in service.ixx
+// (to keep this struct serializable without depending on type_checker.ixx).
+export enum class InvariantStatus : std::uint8_t {
+    NotChecked = 0,
+    Ok = 1,
+    Warnings = 2,
+    Violations = 3,
+};
+
 export struct MutationRecord {
     std::uint64_t mutation_id;
     std::uint64_t timestamp_ms;
@@ -305,6 +322,10 @@ export struct MutationRecord {
     std::uint32_t child_idx = 0;        // child index in parent.children
     std::string old_subtree_source;     // source of the original subtree
     bool has_subtree_rollback = false;  // true if old_subtree_source is valid
+    // Issue #147: post-mutation invariant check status. Default NotChecked
+    // so audit log records the actual state of the check, not a
+    // synthetic "always-OK" claim.
+    InvariantStatus invariant_status = InvariantStatus::NotChecked;
 };
 
 // ── Patch — AI mutation descriptor ─────────────────────────────
