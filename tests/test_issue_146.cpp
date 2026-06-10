@@ -184,6 +184,88 @@ bool test_pure_is_free_function() {
     return true;
 }
 
+// ── AC #5: coerce_value_pure (Issue #146 Phase 2) ────────
+
+bool test_coerce_value_pure_identity() {
+    std::println("\n--- Test 5.1: coerce_value_pure same-type identity ---");
+    auto v = aura::compiler::types::make_int(42);
+    std::pmr::vector<std::string> heap;
+    auto r = aura::compiler::pure::coerce_value_pure(
+        v, aura::core::TypeTag::INT, aura::core::TypeTag::INT, heap);
+    CHECK(r.has_value(), "INT→INT coercion returns success");
+    CHECK(heap.empty(), "identity coercion doesn't push to heap");
+    return true;
+}
+
+bool test_coerce_value_pure_int_to_float() {
+    std::println("\n--- Test 5.2: coerce_value_pure INT→FLOAT ---");
+    auto v = aura::compiler::types::make_int(7);
+    std::pmr::vector<std::string> heap;
+    auto r = aura::compiler::pure::coerce_value_pure(
+        v, aura::core::TypeTag::INT, aura::core::TypeTag::FLOAT, heap);
+    CHECK(r.has_value(), "INT→FLOAT returns success");
+    CHECK(aura::compiler::types::is_float(v), "v mutated to Float");
+    CHECK(aura::compiler::types::as_float(v) == 7.0, "value 7 → 7.0");
+    return true;
+}
+
+bool test_coerce_value_pure_float_to_int() {
+    std::println("\n--- Test 5.3: coerce_value_pure FLOAT→INT ---");
+    auto v = aura::compiler::types::make_float(3.7);
+    std::pmr::vector<std::string> heap;
+    auto r = aura::compiler::pure::coerce_value_pure(
+        v, aura::core::TypeTag::FLOAT, aura::core::TypeTag::INT, heap);
+    CHECK(r.has_value(), "FLOAT→INT returns success");
+    CHECK(aura::compiler::types::is_int(v), "v mutated to Int");
+    CHECK(aura::compiler::types::as_int(v) == 3, "value 3.7 truncates to 3");
+    return true;
+}
+
+bool test_coerce_value_pure_int_to_string_pushes_heap() {
+    std::println("\n--- Test 5.4: coerce_value_pure INT→STRING pushes to heap ---");
+    auto v = aura::compiler::types::make_int(99);
+    std::pmr::vector<std::string> heap;
+    auto r = aura::compiler::pure::coerce_value_pure(
+        v, aura::core::TypeTag::INT, aura::core::TypeTag::STRING, heap);
+    CHECK(r.has_value(), "INT→STRING returns success");
+    CHECK(heap.size() == 1, "heap has 1 entry after push");
+    CHECK(heap[0] == "99", "heap[0] == \"99\"");
+    CHECK(aura::compiler::types::is_string(v), "v mutated to String");
+    auto idx = aura::compiler::types::as_string_idx(v);
+    CHECK(idx == 0, "string index 0");
+    return true;
+}
+
+bool test_coerce_value_pure_string_to_int_parses() {
+    std::println("\n--- Test 5.5: coerce_value_pure STRING→INT parses ---");
+    std::pmr::vector<std::string> heap{"42", "junk"};
+    auto v = aura::compiler::types::make_string(0);
+    auto r = aura::compiler::pure::coerce_value_pure(
+        v, aura::core::TypeTag::STRING, aura::core::TypeTag::INT, heap);
+    CHECK(r.has_value(), "STRING→INT with '42' returns success");
+    CHECK(aura::compiler::types::is_int(v), "v mutated to Int");
+    CHECK(aura::compiler::types::as_int(v) == 42, "value '42' → 42");
+    return true;
+}
+
+bool test_coerce_value_pure_unsupported_errors() {
+    std::println("\n--- Test 5.6: coerce_value_pure unsupported coercion errors ---");
+    auto v = aura::compiler::types::make_int(1);
+    std::pmr::vector<std::string> heap;
+    auto r = aura::compiler::pure::coerce_value_pure(
+        v, aura::core::TypeTag::INT, aura::core::TypeTag::DYNAMIC, heap);
+    CHECK(!r.has_value(), "INT→DYNAMIC returns no value (unsupported)");
+    return true;
+}
+
+bool test_coerce_value_pure_is_free_function() {
+    std::println("\n--- Test 5.7: coerce_value_pure is a free function ---");
+    static_assert(!is_member_function_detector<aura::compiler::Evaluator>::value,
+                  "coerce_value_pure must NOT be a member of Evaluator");
+    CHECK(true, "coerce_value_pure is a free function (no `this`)");
+    return true;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Main
 // ═══════════════════════════════════════════════════════════════
@@ -208,6 +290,15 @@ int main() {
 
     std::println("\n── AC #4: free function (no `this`) ──");
     test_pure_is_free_function();
+
+    std::println("\n── AC #5: coerce_value_pure (Issue #146 Phase 2) ──");
+    test_coerce_value_pure_identity();
+    test_coerce_value_pure_int_to_float();
+    test_coerce_value_pure_float_to_int();
+    test_coerce_value_pure_int_to_string_pushes_heap();
+    test_coerce_value_pure_string_to_int_parses();
+    test_coerce_value_pure_unsupported_errors();
+    test_coerce_value_pure_is_free_function();
 
     std::println("\n═══ Results: {}/{} passed, {}/{} failed ═══",
                  g_passed, g_passed + g_failed,

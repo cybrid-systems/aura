@@ -16550,62 +16550,15 @@ static std::string type_tag_name(aura::core::TypeTag tag) {
     }
 }
 
+// Issue #146 Phase 2: thin legacy wrapper around the pure
+// `coerce_value_pure` in `aura::compiler::pure`. Mirrors the
+// legacy bool API; the underlying Result<void> is discarded.
+// The 1 existing call site (L18281) keeps using the bool
+// interface; new code can use `coerce_value_pure` directly
+// for monadic composition.
 static bool coerce_value(types::EvalValue& val, aura::core::TypeTag from, aura::core::TypeTag to,
                          std::pmr::vector<std::string>& heap) {
-    if (from == to)
-        return true;
-    if (from == aura::core::TypeTag::INT && to == aura::core::TypeTag::FLOAT) {
-        val = types::make_float(static_cast<double>(types::as_int(val)));
-        return true;
-    }
-    if (from == aura::core::TypeTag::FLOAT && to == aura::core::TypeTag::INT) {
-        val = types::make_int(static_cast<std::int64_t>(types::as_float(val)));
-        return true;
-    }
-    if (from == aura::core::TypeTag::INT && to == aura::core::TypeTag::STRING) {
-        auto s = std::to_string(types::as_int(val));
-        auto id = static_cast<std::uint64_t>(heap.size());
-        heap.push_back(std::move(s));
-        val = types::make_string(id);
-        return true;
-    }
-    if (from == aura::core::TypeTag::STRING && to == aura::core::TypeTag::INT) {
-        auto idx = types::as_string_idx(val);
-        if (idx < heap.size()) {
-            try {
-                val = types::make_int(
-                    static_cast<std::int64_t>(std::stoll(heap[static_cast<std::size_t>(idx)])));
-                return true;
-            } catch (...) {
-            }
-        }
-    }
-    if (from == aura::core::TypeTag::INT && to == aura::core::TypeTag::BOOL) {
-        val = types::make_bool(types::as_int(val) != 0);
-        return true;
-    }
-    if (from == aura::core::TypeTag::BOOL && to == aura::core::TypeTag::INT) {
-        val = types::make_int(types::as_bool(val) ? 1 : 0);
-        return true;
-    }
-    if (from == aura::core::TypeTag::FLOAT && to == aura::core::TypeTag::STRING) {
-        auto s = std::to_string(types::as_float(val));
-        auto id = static_cast<std::uint64_t>(heap.size());
-        heap.push_back(std::move(s));
-        val = types::make_string(id);
-        return true;
-    }
-    if (from == aura::core::TypeTag::STRING && to == aura::core::TypeTag::FLOAT) {
-        auto idx = types::as_string_idx(val);
-        if (idx < heap.size()) {
-            try {
-                val = types::make_float(std::stod(heap[static_cast<std::size_t>(idx)]));
-                return true;
-            } catch (...) {
-            }
-        }
-    }
-    return false; // non-coercible
+    return aura::compiler::pure::coerce_value_pure(val, from, to, heap).has_value();
 }
 
 // ── Phase 4: FlatAST tree-walker evaluator (EvalValue) ───────
