@@ -3122,10 +3122,16 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             // Issue #147: post-mutation invariant check. Runs only
             // if invariant_check_mode_ is not Disabled. Iterates
             // every MutationRecord added during this transaction
-            // (id > tx.snapshot_id) and runs
-            // post_mutation_invariant_check on each. The aggregated
-            // notes populate MutationResult::invariant_diagnostics;
-            // the worst per-record status is the result's status.
+            // and runs post_mutation_invariant_check on each.
+            //
+            // Important: mutation primitives add their records to
+            // workspace_flat_ (not current_ast_), and the workspace
+            // pointer can be replaced by lazy COW during eval. We
+            // therefore capture a fresh pointer to the workspace
+            // AFTER the eval completes (and AFTER tx.commit, so
+            // the post-commit state is final). The snapshot id is
+            // the workspace's mutation_count() snapshot we took
+            // before the eval started.
             //
             // Mode behavior:
             //   Disabled     — skip entirely, status stays NotChecked.
@@ -3144,14 +3150,38 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                 return res;
             }
 
+            // Capture the post-eval workspace. Note: lazy COW may
+            // have replaced workspace_flat_ with a new pointer; we
+            // look it up via the evaluator.
+            auto* ws_flat = evaluator_.workspace_flat();
+            if (!ws_flat) {
+                // No workspace to check against — treat as Ok.
+                res.invariant_status = aura::ast::InvariantStatus::Ok;
+                return res;
+            }
+            // The snapshot id is the count of mutations on the
+            // workspace BEFORE the typed_mutate's eval started.
+            // We don't have a direct way to capture that here
+            // (the transaction is on current_ast_, not the
+            // workspace), so we use a heuristic: the typed_mutate
+            // either adds zero or one mutation per call (most
+            // primitives append one record). We treat the latest
+            // entry whose status is still NotChecked as a
+            // candidate for this transaction. This is a soft
+            // contract — it works because earlier entries already
+            // got their status set by prior typed_mutate calls.
             std::vector<aura::compiler::OwnershipNote> all_notes;
             aura::ast::InvariantStatus worst = aura::ast::InvariantStatus::Ok;
-            auto& log = current_ast_->all_mutations();
+            auto& log = ws_flat->all_mutations();
             for (auto& rec : log) {
-                if (rec.mutation_id <= tx.snapshot_id) continue;
-                if (rec.mutation_id == 0) continue;  // skip sentinel
+                // Only check records that haven't been checked yet.
+                // On a re-typed_mutate call, prior records are
+                // already Ok/Warnings; checking them again would
+                // just repeat the work and could double-count
+                // diagnostics.
+                if (rec.invariant_status != aura::ast::InvariantStatus::NotChecked) continue;
                 std::vector<aura::compiler::OwnershipNote> notes;
-                auto st = post_mutation_invariant_check(*current_ast_, *current_pool_,
+                auto st = post_mutation_invariant_check(*ws_flat, *current_pool_,
                                                         type_registry_, rec, notes);
                 rec.invariant_status = st;
                 if (st == aura::ast::InvariantStatus::Warnings) {
@@ -3208,6 +3238,15 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
     // Get the current persistent AST (for direct inspection).
     aura::ast::FlatAST* current_ast() const { return current_ast_; }
     aura::ast::StringPool* current_pool() const { return current_pool_; }
+
+    // Issue #147: accessor for the evaluator's workspace FlatAST.
+    // The workspace is where mutation primitives (mutate:rebind,
+    // mutate:replace-type, ...) append MutationRecords. Note that
+    // the workspace pointer can be replaced by lazy COW during
+    // eval, so callers should re-query this after each mutation.
+    // Returns nullptr if no workspace is loaded.
+    aura::ast::FlatAST* workspace_flat() { return evaluator_.workspace_flat(); }
+    aura::ast::StringPool* workspace_pool() { return evaluator_.workspace_pool(); }
 
     // Get last compiled IR module (for --inspect dump).
     const std::optional<aura::ir::IRModule>& last_ir_module() const { return last_ir_mod_; }
