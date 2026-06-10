@@ -4,6 +4,11 @@ module;
 module aura.compiler.ir_executor;
 import std;
 import aura.compiler.value;
+import aura.compiler.evaluator_pure;
+// Issue #146 Phase 3: bring the pure is_truthy into the
+// global namespace so existing call sites that use
+// `is_truthy(x)` (unqualified) keep working.
+using aura::compiler::pure::is_truthy;
 
 // Shared runtime pair allocation (defined in aura_jit_runtime.cpp)
 extern "C" std::int64_t aura_alloc_pair_arena(std::int64_t car, std::int64_t cdr);

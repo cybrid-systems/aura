@@ -8,6 +8,12 @@
 // knowledge of C++26 modules). Those constants are intentionally NOT
 // `export`ed from this module — they are implementation details of
 // the tagged-value encoding.
+
+// Re-export is_truthy from aura::compiler::evaluator_pure for
+// the legacy types::is_truthy callers in evaluator_impl.cpp.
+// (Issue #146 Phase 3: is_truthy moved to the pure module.)
+// export import aura.compiler.evaluator_pure;  // REMOVED: caused
+// circular import (evaluator_pure → value → evaluator_pure).
 //
 // What's EXPORTED from this module:
 //   * EvalValue struct and its operator== / operator<=>
@@ -239,8 +245,15 @@ export inline std::uint64_t as_keyword_idx(const EvalValue& v) noexcept {
     return ref_index(v.val);
 }
 
-// ── Truthiness ─────────────────────────────────────────
-export bool is_truthy(const EvalValue& v) noexcept;
+// ── Truthiness (moved to aura::compiler.evaluator_pure, Issue #146) ─────
+//
+// `is_truthy` is now defined in aura.compiler.evaluator_pure
+// (the pure-function module). Callers that previously used
+// `types::is_truthy` should use `aura::compiler::pure::is_truthy`
+// (import aura.compiler.evaluator_pure). Legacy callers in
+// evaluator_impl.cpp use a `using` declaration at the top of
+// the file to keep the unqualified `is_truthy` call sites
+// working without code churn.
 
 // ── Formatting (debug/error output) ────────────────────
 export inline std::string format_value(const EvalValue& v) {
