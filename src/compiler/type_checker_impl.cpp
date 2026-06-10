@@ -3090,4 +3090,158 @@ bool OwnershipEnv::validate_ownership_impl(
     return all_pass;
 }
 
+// ═══════════════════════════════════════════════════════════
+// Issue #147: post-mutation invariant check.
+//
+// A typed mutation (mutate:replace-type, mutate:wrap, ...) changes a
+// subtree in the workspace FlatAST. Downstream, two soundness risks
+// need re-validation:
+//
+//   1. Linear ownership: a binding x introduced as (let ((x (Linear e))) ...)
+//      is in Owned state at introduction. If the mutation reorders
+//      or removes the use of x, the linear state may now be wrong
+//      (leaked-linear or use-after-move). validate_ownership is the
+//      single source of truth for that walk.
+//
+//   2. Occurrence narrowing: an (if (number? x) ...else...) condition
+//      produces a refined type for x in the then-branch. The refinement
+//      was derived from the pre-mutation type. If x was just mutated
+//      to a different type, the refinement is now stale — code in the
+//      then-branch is typechecked under a claim that no longer holds.
+//
+// Phase 2 implements the dirty-subtree walk and emits OwnershipNotes
+// for both classes. Phase 3 (typed_mutate integration) decides whether
+// to block execution based on InvariantCheckMode.
+//
+
+namespace {
+
+// Collect all descendant NodeIds rooted at `id` (including `id` itself).
+// Walks via FlatAST::get(id).children. O(size of subtree).
+static void collect_descendants(const FlatAST& flat, NodeId id, std::vector<NodeId>& out) {
+    if (id == NULL_NODE || id >= flat.size()) return;
+    out.push_back(id);
+    auto v = flat.get(id);
+    for (auto c : v.children) {
+        if (c != NULL_NODE)
+            collect_descendants(flat, c, out);
+    }
+}
+
+// Walk `nodes` and collect names of any (let ((x (Linear e))) ...)
+// binding discovered. These are the bindings whose linear state may
+// have been altered by the mutation, so validate_ownership must
+// re-check them.
+static void discover_linear_bindings(const FlatAST& flat, const StringPool& pool,
+                                     const std::vector<NodeId>& nodes,
+                                     std::unordered_set<std::string>& out) {
+    for (auto id : nodes) {
+        if (id == NULL_NODE || id >= flat.size()) continue;
+        auto v = flat.get(id);
+        if (v.tag != NodeTag::Let || v.sym_id == INVALID_SYM) continue;
+        if (v.children.empty() || v.child(0) == NULL_NODE) continue;
+        if (flat.get(v.child(0)).tag != NodeTag::Linear) continue;
+        auto name = std::string(pool.resolve(v.sym_id));
+        if (!name.empty()) out.insert(name);
+    }
+}
+
+// Walk `nodes` looking for IfExpr expressions whose predicate yields
+// a non-empty occurrence narrowing. For each such occurrence context,
+// emit an OwnershipNote tagged "invalidated-occurrence-narrowing" so
+// the caller can warn or block under Strict mode. We do NOT attempt
+// to re-evaluate the predicate's truth value — that would require
+// running the program. Instead we flag the *context* as suspect,
+// which is the sound conservative signal.
+//
+// Note: FlatAST expresses match via let + constructor patterns +
+// MatchInfo metadata (no NodeTag::Match). Occurrence narrowing on
+// pattern bindings is exercised at typecheck time, so a post-
+// mutation re-typecheck would catch it. For Phase 2 we only flag
+// IfExpr predicates; a full re-typecheck integration can be added
+// later if the dirty pattern-bindings case shows up empirically.
+static void find_occurrence_contexts(const FlatAST& flat, const StringPool& pool,
+                                     TypeRegistry& reg, const std::vector<NodeId>& nodes,
+                                     std::vector<OwnershipNote>& notes_out) {
+    for (auto id : nodes) {
+        if (id == NULL_NODE || id >= flat.size()) continue;
+        auto v = flat.get(id);
+        if (v.tag != NodeTag::IfExpr) continue;
+        if (v.children.empty()) continue;
+        NodeId cond_id = v.child(0);
+        if (cond_id == NULL_NODE) continue;
+        // analyze_predicate_flat is file-static in this TU; we are
+        // inside aura::compiler, so the call resolves.
+        auto occ = analyze_predicate_flat(flat, pool, cond_id, reg);
+        if (!occ) continue;
+        OwnershipNote note;
+        note.node = id;
+        note.kind = "invalidated-occurrence-narrowing";
+        note.message = "occurrence narrowing on '" + occ->var_name +
+                       "' in dirty scope may be invalidated by mutation";
+        notes_out.push_back(std::move(note));
+    }
+}
+
+} // anonymous namespace
+
+aura::ast::InvariantStatus post_mutation_invariant_check(
+    aura::ast::FlatAST& flat,
+    const StringPool& pool,
+    TypeRegistry& reg,
+    const aura::ast::MutationRecord& rec,
+    std::vector<OwnershipNote>& notes_out) {
+    // Pick a root to walk. For target_node mutations we use the
+    // target subtree plus the dirty-upward chain (mark_dirty_upward
+    // marked every ancestor of target_node). For subtree-level
+    // mutations (replace-subtree) the target_node is the new root
+    // but the relevant context is the parent's slot, so we walk
+    // from parent_id when it is set.
+    NodeId walk_root = NULL_NODE;
+    if (rec.parent_id != NULL_NODE)
+        walk_root = rec.parent_id;
+    else if (rec.target_node != NULL_NODE)
+        walk_root = rec.target_node;
+
+    if (walk_root == NULL_NODE || walk_root >= flat.size()) {
+        return aura::ast::InvariantStatus::NotChecked;
+    }
+
+    // Build the dirty node set: descendants of walk_root + ancestors
+    // of rec.target_node. The ancestor walk uses FlatAST::parent_of
+    // (public) for safe access.
+    std::vector<NodeId> dirty_nodes;
+    collect_descendants(flat, walk_root, dirty_nodes);
+    if (rec.target_node != NULL_NODE && rec.target_node < flat.size()) {
+        NodeId cur = rec.target_node;
+        std::size_t safety = 0;
+        while (cur != NULL_NODE && cur < flat.size() && safety++ < flat.size()) {
+            if (std::find(dirty_nodes.begin(), dirty_nodes.end(), cur) == dirty_nodes.end())
+                dirty_nodes.push_back(cur);
+            cur = flat.parent_of(cur);
+        }
+    }
+
+    if (dirty_nodes.empty()) {
+        return aura::ast::InvariantStatus::NotChecked;
+    }
+
+    // ── Ownership re-validation on dirty linear bindings ─────────
+    std::unordered_set<std::string> linear_bindings;
+    discover_linear_bindings(flat, pool, dirty_nodes, linear_bindings);
+    if (!linear_bindings.empty() && flat.root != NULL_NODE && flat.root < flat.size()) {
+        // The static function takes (flat, pool, root, dirty_bindings, notes).
+        // It walks the AST rooted at `root` and tracks state of every
+        // name in `dirty_bindings`. Notes are appended to notes_out.
+        OwnershipEnv::validate_ownership(flat, pool, flat.root, linear_bindings, notes_out);
+    }
+
+    // ── Occurrence-narrowing re-check on dirty nodes ─────────────
+    find_occurrence_contexts(flat, pool, reg, dirty_nodes, notes_out);
+
+    if (notes_out.empty())
+        return aura::ast::InvariantStatus::Ok;
+    return aura::ast::InvariantStatus::Warnings;
+}
+
 } // namespace aura::compiler
