@@ -34,16 +34,48 @@ private:
     std::vector<std::string> ordered_names_;
 };
 
+// Forward declaration: Evaluator is defined below.
+// Required so Env can hold an Evaluator* back-pointer for
+// Phase 2.2 SoA-walk migration (Issue #145).
+export class Evaluator;
+
+// EnvId — uint32_t index into Evaluator::env_frames_ arena.
+// Full SoA documentation in §2.7.5 / §2.7.6 of
+// docs/design/cpp26_guide.md. Declared here (above Env) so
+// Env can hold an EnvId parent_id_ field. Issue #145 Phase 2.1.
+export using EnvId = std::uint32_t;
+export constexpr EnvId NULL_ENV_ID = std::numeric_limits<EnvId>::max();
+
 export class Env final {
 public:
     Env() = default;
     explicit Env(const Env* p)
-        : parent_(p) {}
+        : parent_(p), owner_(p ? p->owner_ : nullptr),
+          parent_id_(p ? p->parent_id_ : NULL_ENV_ID) {}
     Env(const Env&) = default;
     Env& operator=(const Env&) = default;
     void set_parent(const Env* p) { parent_ = p; }
     void set_primitives(const Primitives* p) { primitives_ = p; }
     void set_cells(std::vector<types::EvalValue>* c) { cells_ = c; }
+    // Issue #145 Phase 2.2 — SoA walk infrastructure.
+    //
+    // `owner_` is a back-pointer to the owning Evaluator, used
+    // by walk-aware methods (lookup_cell_ptr, lookup_cell_index)
+    // to traverse the parent chain via env_frames_ index lookup
+    // instead of raw pointer chase. Set when an Env is registered
+    // with an Evaluator (top_, modules_ arena envs).
+    //
+    // `parent_id_` mirrors `parent_`: when set, it indexes the
+    // parent frame in `owner_->env_frames_()`. When NULL_ENV_ID
+    // (the default), the legacy `parent_` pointer walk is used.
+    // Both representations coexist during the Phase 2.2.x
+    // transition; once all walk sites are migrated and the
+    // legacy pointer is dead, `parent_` will be deleted (Phase
+    // 2.6 — the rename).
+    void set_owner(Evaluator* e) { owner_ = e; }
+    [[nodiscard]] Evaluator* owner() const { return owner_; }
+    void set_parent_id(EnvId id) { parent_id_ = id; }
+    [[nodiscard]] EnvId parent_id() const { return parent_id_; }
     void bind(const std::string& n, types::EvalValue v) { bindings_.emplace_back(n, std::move(v)); }
     // Issue #145: SymId fast path. The apply_closure loop hits
     // this once per parameter per call — replacing the old
@@ -94,6 +126,14 @@ private:
     // bindings_symid_ (integer compare). bind_symid writes to
     // both (and resolves SymId→string via pool_ to mirror).
     std::vector<std::pair<aura::ast::SymId, types::EvalValue>> bindings_symid_;
+    // Issue #145 Phase 2.2: SoA walk infrastructure.
+    // `owner_` is the Evaluator that owns the env_frames_ arena
+    // used for parent-chain walk. `parent_id_` is the index of
+    // this Env's parent frame in that arena (NULL_ENV_ID =
+    // no parent or legacy pointer walk). Set when the Env is
+    // registered with an Evaluator (top_, modules_).
+    Evaluator* owner_ = nullptr;
+    EnvId parent_id_ = NULL_ENV_ID;
 };
 
 export using ClosureId = std::uint64_t;
@@ -122,8 +162,6 @@ export using ClosureId = std::uint64_t;
 // the switch). Today Env and EnvFrame coexist: Env stays
 // unchanged, EnvFrame is the new SoA arena. Future Phase 2.x
 // sub-issues migrate call sites from Env to EnvFrame.
-export using EnvId = std::uint32_t;
-export constexpr EnvId NULL_ENV_ID = std::numeric_limits<EnvId>::max();
 
 // EnvFrame — SoA-friendly data layout, parallel to Env.
 // `parent_id_` replaces Env::parent_ (raw Env* pointer) with
