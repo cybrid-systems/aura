@@ -98,6 +98,19 @@ static_assert(PrimPairP == 42, "PrimId drift: aura_jit.cpp vs ir.ixx");
 static_assert(PrimNullP == 43, "PrimId drift: aura_jit.cpp vs ir.ixx");
 
 // Opcode enum values (must match ir.ixx IROpcode)
+//
+// Issue #157 — workspace_mtx_ bypass via JIT L2 specialization
+// The following opcodes generate code paths that call runtime bridges
+// (aura_alloc_pair_*, aura_pair_*_unchecked, aura_alloc_closure_*,
+// aura_closure_capture, aura_hash_*) which currently do NOT acquire
+// Evaluator::workspace_mtx_ or check defuse_version_. The high-level
+// evaluator primitives DO acquire the lock + yield, so concurrent
+// mutate + JIT execution races on shared heap structures.
+//
+// See docs/design/notes/issue-157-jit-workspace-invariant.md for the
+// full inventory and phased fix plan. Phase 0 (this commit) adds the
+// telemetry counter and bypass markers; Phase 1 wraps P1 sites with
+// lock acquire/release and adds version checks at L2 entry points.
 enum Op : uint32_t {
     OpConstI64 = 1,
     OpConstF64 = 2,
@@ -758,6 +771,11 @@ struct LLVMBuilder {
             }
 
             // Pairs
+            // Issue #157: OpMakePair calls aura_alloc_pair (heap) or
+            // aura_alloc_pair_arena (TL arena). Both push to g_pair_slots
+            // without acquiring workspace_mtx_. Phase 1 will wrap both
+            // runtime bridges with aura_lock_workspace_write. This comment
+            // is a navigation aid for the Phase 1 patch.
             case OpMakePair: {
                 auto car = load(inst.ops[1]);
                 auto cdr = load(inst.ops[2]);
@@ -806,6 +824,13 @@ struct LLVMBuilder {
                 return true;
             }
             case OpCar: {
+                // Issue #157 Phase 1 (HIGHEST PRIORITY): L2 SHAPE_PAIR
+                // calls aura_pair_car_unchecked which has no bounds check,
+                // no lock, no version check. See inventory in
+                // docs/design/notes/issue-157-jit-workspace-invariant.md
+                // §2.7. Phase 1 fix: capture defuse_version_ at lowering,
+                // emit version check at L2 entry, fall through to
+                // aura_pair_car (slow path) on mismatch.
                 auto pair_val = load(inst.ops[1]);
                 // L2 specialization: if the result is known Pair, call unchecked variant
                 bool spec_pair = (inst_shape(inst) == SHAPE_PAIR);
@@ -815,6 +840,7 @@ struct LLVMBuilder {
                 return true;
             }
             case OpCdr: {
+                // Issue #157 Phase 1 (HIGHEST PRIORITY): same as OpCar.
                 auto pair_val = load(inst.ops[1]);
                 // L2 specialization: if the result is known Pair, call unchecked variant
                 bool spec_pair = (inst_shape(inst) == SHAPE_PAIR);

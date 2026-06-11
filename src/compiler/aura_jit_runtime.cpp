@@ -1,5 +1,28 @@
 // aura_jit_runtime.cpp — JIT runtime functions for closure/cell/pair/prim ops
 // These are compiled as regular C++ and registered in the ORC JIT as symbols.
+//
+// ═══════════════════════════════════════════════════════════════════════════
+// Issue #157 — workspace_mtx_ bypass in JIT runtime bridges
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The functions in this file are called from JIT-compiled code (aura_jit.cpp)
+// and operate on shared heap structures (g_pair_slots, g_hash_tables,
+// g_owned_pair_slots_, g_prim_dispatcher, etc.) WITHOUT acquiring
+// Evaluator::workspace_mtx_ or checking defuse_version_. The high-level
+// evaluator primitives (mutate:*, set-code, eval-current) DO acquire the
+// lock + yield, but the JIT bypasses the protocol when calling these
+// runtime bridges from specialized L2 paths (OpCar/OpCdr/OpMakePair with
+// SHAPE_PAIR) or from inlined hash ops (OpHashRef/OpHashSet).
+//
+// This file uses `// Issue #157:` markers on every bypass site. The full
+// inventory + phased fix plan lives in
+//   docs/design/notes/issue-157-jit-workspace-invariant.md
+// Phase 0 (this commit): inventory + telemetry counter, no behavior change.
+// Phase 1+: wrap each site with workspace_mtx_ acquire/release or add
+// defuse_version_ checks.
+//
+// ═══════════════════════════════════════════════════════════════════════════
+
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -69,6 +92,25 @@ void tl_arena_pop(TLarena* arena) {
 
 // ── Arena flag ──
 bool g_use_arena = true;
+
+// ── Issue #157 Phase 0: bypass telemetry ──
+// Counts every entry into a runtime bridge that currently bypasses
+// workspace_mtx_ + defuse_version_. Single-threaded execution should
+// see steady non-zero growth (proves bridges are being called). Multi-
+// fiber stress with locks wrapped (Phase 1+) should see additional
+// lock-acquire counters but bypass count remains 1:1 with bridge calls
+// (locks are taken, not bypassed). Exposed via aura_bypass_count() for
+// future jit:metrics observability (#157 AC: "jit:metrics can report
+// mutation protocol violations avoided").
+static std::atomic<uint64_t> g_workspace_mtx_bypass_count{0};
+
+extern "C" uint64_t aura_bypass_count() {
+    return g_workspace_mtx_bypass_count.load(std::memory_order_relaxed);
+}
+
+extern "C" void aura_bypass_count_reset() {
+    g_workspace_mtx_bypass_count.store(0, std::memory_order_relaxed);
+}
 
 // ── Forward declarations ──
 
@@ -228,6 +270,10 @@ struct ClosureCacheEntry {
 static ClosureCacheEntry g_closure_cache[CLOSURE_CACHE_SIZE] = {{-1, nullptr, 0, 0, 0}};
 
 int64_t aura_alloc_closure(int64_t func_id) {
+    // Issue #157 Phase 2: wrap with aura_lock_workspace_write.
+    // push_back on g_closure_func_ids + g_closure_envs is the
+    // same race as aura_alloc_pair.
+    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
     int64_t id = static_cast<int64_t>(g_closure_func_ids.size());
     g_closure_func_ids.push_back(func_id);
     g_closure_envs.emplace_back();
@@ -235,6 +281,8 @@ int64_t aura_alloc_closure(int64_t func_id) {
 }
 
 int64_t aura_alloc_closure_arena(int64_t func_id) {
+    // Issue #157 Phase 2: wrap with aura_lock_workspace_write.
+    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
     int64_t id = static_cast<int64_t>(g_closure_func_ids.size());
     g_closure_func_ids.push_back(func_id);
     g_closure_envs.emplace_back();  // still push heap env as fallback
@@ -243,6 +291,11 @@ int64_t aura_alloc_closure_arena(int64_t func_id) {
 }
 
 void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
+    // Issue #157 Phase 2: wrap with aura_lock_workspace_write.
+    // The capture writes to g_closure_envs[cid] (a std::vector
+    // of vector) — write to inner vector and resize races with
+    // other fibers' captures.
+    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
     if (closure_id < 0)
         return;
     size_t cid = static_cast<size_t>(closure_id);
@@ -289,11 +342,18 @@ static JitFnEntry g_jit_fns[512] = {{nullptr, 0, 0, 0}};
 
 void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t), int32_t local_count,
                       int32_t arg_count, int32_t env_count) {
+    // Issue #157 Phase 2: wrap with aura_lock_workspace_write.
+    // Function registry mutation — must be exclusive vs readers in
+    // aura_closure_call.
+    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
     if (func_id >= 0 && func_id < 512)
         g_jit_fns[func_id] = {fn, local_count, arg_count, env_count};
 }
 
 int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
+    // Issue #157 Phase 2: wrap with aura_lock_workspace_read.
+    // Reads g_closure_cache, g_closure_func_ids, g_closure_envs.
+    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
     if (closure_id < 0 || static_cast<size_t>(closure_id) >= g_closure_func_ids.size())
         return closure_id; /* match IRInterpreter: return callee_val for non-callable */
 
@@ -402,18 +462,24 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
 static std::vector<int64_t> g_cell_heap;
 
 int64_t aura_new_cell() {
+    // Issue #157 Phase 2: wrap with aura_lock_workspace_write.
+    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
     int64_t id = static_cast<int64_t>(g_cell_heap.size());
     g_cell_heap.push_back(0);
     return id;
 }
 
 int64_t aura_cell_get(int64_t cell_id) {
+    // Issue #157 Phase 2: wrap with aura_lock_workspace_read.
+    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
     if (cell_id >= 0 && static_cast<size_t>(cell_id) < g_cell_heap.size())
         return g_cell_heap[static_cast<size_t>(cell_id)];
     return 0;
 }
 
 void aura_cell_set(int64_t cell_id, int64_t val) {
+    // Issue #157 Phase 2: wrap with aura_lock_workspace_write.
+    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
     if (cell_id >= 0 && static_cast<size_t>(cell_id) < g_cell_heap.size())
         g_cell_heap[static_cast<size_t>(cell_id)] = val;
 }
@@ -424,6 +490,11 @@ void aura_cell_set(int64_t cell_id, int64_t val) {
 // ESCAPED: PairSlot allocated from global heap
 
 int64_t aura_alloc_pair(int64_t car, int64_t cdr) {
+    // Issue #157 Phase 1: wrap with aura_lock_workspace_write +
+    // aura_unlock_workspace_write. push_back on g_pair_slots is
+    // not thread-safe with concurrent push_back from another
+    // fiber's JIT code or with mutate:foo that holds the lock.
+    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
     auto* slot = (PairSlot*)malloc(sizeof(PairSlot));
     slot->car = car;
     slot->cdr = cdr;
@@ -434,6 +505,10 @@ int64_t aura_alloc_pair(int64_t car, int64_t cdr) {
 }
 
 int64_t aura_pair_car(int64_t pair_val) {
+    // Issue #157 Phase 1: wrap with aura_lock_workspace_read +
+    // aura_unlock_workspace_read. Read of g_pair_slots[id]->car
+    // races with concurrent push_back / free.
+    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
     uint64_t id = static_cast<uint64_t>(pair_val >> 2);
     if (id < g_pair_slots.size() && g_pair_slots[id])
         return g_pair_slots[id]->car;
@@ -441,6 +516,9 @@ int64_t aura_pair_car(int64_t pair_val) {
 }
 
 int64_t aura_pair_cdr(int64_t pair_val) {
+    // Issue #157 Phase 1: wrap with aura_lock_workspace_read +
+    // aura_unlock_workspace_read. Same as aura_pair_car.
+    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
     uint64_t id = static_cast<uint64_t>(pair_val >> 2);
     if (id < g_pair_slots.size() && g_pair_slots[id])
         return g_pair_slots[id]->cdr;
@@ -450,6 +528,11 @@ int64_t aura_pair_cdr(int64_t pair_val) {
 // Arena-based pair allocation (for NON_ESCAPING pairs, Phase 2)
 // Allocates PairSlot from TL arena instead of global heap.
 int64_t aura_alloc_pair_arena(int64_t car, int64_t cdr) {
+    // Issue #157 Phase 1: wrap with aura_lock_workspace_write +
+    // aura_unlock_workspace_write. push_back on g_pair_slots is
+    // the same race as aura_alloc_pair; the arena alloc is just
+    // a different backing store.
+    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
     auto* slot = (PairSlot*)tl_arena_alloc(&g_tl_arena, sizeof(PairSlot), alignof(PairSlot));
     slot->car = car;
     slot->cdr = cdr;
@@ -460,11 +543,30 @@ int64_t aura_alloc_pair_arena(int64_t car, int64_t cdr) {
 
 // L2 specialization: unchecked pair access (skips bounds check)
 int64_t aura_pair_car_unchecked(int64_t pair_val) {
+    // Issue #157 Phase 1 (HIGHEST PRIORITY): used by L2 SHAPE_PAIR
+    // specialization in aura_jit.cpp OpCar (line 812). No bounds
+    // check, no lock, no version check. Three layers of risk:
+    //   1. Race with concurrent push_back (id out of range)
+    //   2. Race with concurrent mutate:foo that reallocates the
+    //      vector
+    //   3. Stale shape after redefine — the shape analyzer
+    //      claimed SHAPE_PAIR but a mutation may have replaced
+    //      the underlying value with a non-pair.
+    // Phase 1 fix: replace with version-checked variant
+    //   if (aura_check_defuse_version(captured_version_)) {
+    //       return g_pair_slots[id]->car;  // optimistic
+    //   } else {
+    //       return aura_pair_car(pair_val);  // slow path
+    //   }
+    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
     uint64_t id = static_cast<uint64_t>(pair_val >> 2);
     return g_pair_slots[id]->car;
 }
 
 int64_t aura_pair_cdr_unchecked(int64_t pair_val) {
+    // Issue #157 Phase 1 (HIGHEST PRIORITY): same as
+    // aura_pair_car_unchecked above.
+    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
     uint64_t id = static_cast<uint64_t>(pair_val >> 2);
     return g_pair_slots[id]->cdr;
 }
@@ -481,14 +583,25 @@ static std::atomic<uint64_t> g_prim_call_count{0};
 static std::atomic<uint64_t> g_prim_call_total_ns{0};
 
 void aura_set_prim_dispatcher(int64_t (*fn)(int64_t, int64_t*, int32_t)) {
+    // Issue #157 Phase 1: g_prim_dispatcher must be std::atomic<void*>
+    // (or std::atomic<int64_t(*)(...)>) with release-store semantics.
+    // Current non-atomic write races with aura_prim_call's read.
+    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
     g_prim_dispatcher = fn;
 }
 
 int64_t aura_prim_call(int64_t slot, int64_t a, int64_t b, int64_t count) {
+    // Issue #157 Phase 1: g_prim_dispatcher must be atomic with
+    // acquire-load. Current non-atomic read races with the writer
+    // (aura_set_prim_dispatcher, called from service.ixx on every
+    // CompilerService init). The read can observe a half-written
+    // pointer on weakly-ordered architectures.
+    //
     // Issue #114: profile the slow-path primitive call. This is
     // the FFI boundary the JIT crosses for primitives that don't
     // have a specialized inlined fast path. The two atomic stores
     // are independent so we use relaxed ordering.
+    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
     auto t0 = std::chrono::steady_clock::now();
     int64_t result = 0;
     if (g_prim_dispatcher) {
@@ -518,11 +631,26 @@ uint64_t aura_prim_call_total_ns() {
 
 static int64_t (*g_hash_set_fn)(int64_t hash, int64_t key, int64_t val) = nullptr;
 
+// Issue #157 Phase 2: hash runtime (aura_hash_ref / aura_hash_set /
+// aura_hash_remove + aura_hash_get_flat_table + FlatHashTable::rebuild)
+// reads/writes g_hash_tables[hidx] and the FlatHashTable internals
+// (metadata, keys, values arrays) without any locking. The hash set
+// also writes to a flat region that can be rebuilt (resize) at any
+// time. JIT inlined OpHashRef/OpHashSet/OpHashRemove (aura_jit.cpp:949+)
+// reads the same regions via GEP from the FlatHashTable pointer. Two
+// concurrent read+rebuild can produce torn reads.
+//
+// Phase 2 fix: wrap with aura_lock_workspace_read / aura_lock_workspace_write
+// (set: write; ref/remove: read; rebuild: write). Telemetry already in
+// place via g_workspace_mtx_bypass_count.
+
 // Hash-ref: (hash-ref hash key) → value or void
 
 
 
 int64_t aura_hash_ref(int64_t hash_val, int64_t key_val) {
+    // Issue #157 Phase 2: wrap with aura_lock_workspace_read.
+    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
     auto hidx = static_cast<std::size_t>(static_cast<uint64_t>(hash_val) >> 6);
     if (hidx < g_hash_tables.size() && g_hash_tables[hidx]) {
         auto* ht = g_hash_tables[hidx];
@@ -549,6 +677,8 @@ extern "C" void aura_set_hash_str_convert_callback(int64_t (*fn)(int64_t)) {
     g_hash_str_convert_fn = fn;
 }
 int64_t aura_hash_set(int64_t hash_val, int64_t pair_val) {
+    // Issue #157 Phase 2: wrap with aura_lock_workspace_write.
+    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
     uint64_t id = static_cast<uint64_t>(pair_val >> 2);
     if (id < g_pair_slots.size() && g_pair_slots[id]) {
         int64_t key = g_pair_slots[id]->car;
@@ -606,6 +736,8 @@ int64_t aura_hash_set(int64_t hash_val, int64_t pair_val) {
 }
 
 int64_t aura_hash_remove(int64_t hash_val, int64_t key_val) {
+    // Issue #157 Phase 2: wrap with aura_lock_workspace_write.
+    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
     auto hidx = static_cast<std::size_t>(static_cast<uint64_t>(hash_val) >> 6);
     if (hidx < g_hash_tables.size() && g_hash_tables[hidx]) {
         auto* ht = g_hash_tables[hidx];
