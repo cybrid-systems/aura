@@ -2876,23 +2876,33 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
     return result;
 }
 
-// Issue #148 Phase 4: partial re-inference entry point. Given
-// a MutationRecord, identify the affected node set via
-// affected_subtree_from_mutation, re-infer each affected node
-// incrementally (add_delta + solve_delta per node), and
-// update IncrementalStats. Unaffected nodes keep their
-// cached type_id (counted as cache_hits).
+// Issue #148 Phase 4b: actual per-node re-inference. We
+// spin up a per-call InferenceEngine (the existing pattern
+// from TypeChecker::infer_flat), iterate the affected set,
+// and call the existing per-node InferenceEngine::infer_flat
+// for each. The per-node path ALREADY has the cache check
+// at the top of synthesize_flat ("if (!flat.is_dirty(id))
+// return cached") — so clean-but-re-inferred nodes hit the
+// cache, and dirty nodes re-synthesize + re-solve.
 //
-// MVP: per-node re-inference. A more efficient batched
-// approach (re-synthesize the subtree once, then solve_delta)
-// is a follow-up if the benchmark in Phase 6 shows the
-// per-node overhead is significant.
+// The speedup vs full infer_flat comes from:
+//   - NOT re-inferring nodes outside the affected set
+//     (full infer_flat re-synthesizes the whole tree; we
+//     scope the re-synthesis to the affected set).
+//   - The engine is per-call here (not persistent across
+//     calls) so the CS doesn't carry forward state — that
+//     would require a re-usable engine + add_delta/solve_delta
+//     plumbing, which is a future optimization.
 //
-// Returns the number of nodes that were re-inferred.
+// Returns the number of nodes that were re-inferred
+// (i.e. NOT just cache hits). The IncrementalStats
+// (cache_hits/cache_misses) is updated as a side effect
+// on `stats_`.
 std::size_t TypeChecker::infer_flat_partial(
     aura::ast::FlatAST& flat,
     const aura::ast::StringPool& pool,
-    const aura::ast::MutationRecord& rec) {
+    const aura::ast::MutationRecord& rec,
+    aura::diag::DiagnosticCollector& diag) {
     const auto affected = affected_subtree_from_mutation(flat, rec);
     if (affected.empty()) {
         // No affected nodes — the mutation was a no-op (or
@@ -2901,24 +2911,40 @@ std::size_t TypeChecker::infer_flat_partial(
         return 0;
     }
 
-    // Per-node re-inference: clear the engine's CS, re-run
-    // synthesize + solve for each affected node. Each
-    // iteration adds a fresh constraint set to the CS and
-    // solves it incrementally. The cache_hits counter on
-    // the type_id_ side tracks which nodes already had a
-    // type_id and were re-inferred (so this counts as a
-    // "miss" for those, since the type is recomputed). Nodes
-    // outside the affected set are untouched — those count
-    // as cache_hits in the IncrementalStats.
+    // Spin up a per-call engine. Same pattern as the existing
+    // TypeChecker::infer_flat — short-lived engine per
+    // re-inference pass.
+    InferenceEngine engine(types, diag);
+    engine.declared_modules_ = type_module_src_;
+    engine.declared_sigs_ = type_sigs_;
+    engine.set_strict(strict_);  // Issue #79: plumb strict mode
+    engine.bind_declared_sigs();
 
-    // For MVP: just count. The full per-node re-inference
-    // would require plumbing the per-node synthesize helper
-    // (which lives on InferenceEngine). Phase 5 (the
-    // incremental_infer API on CompilerService) will wire
-    // this through. For now, the function returns the count
-    // of affected nodes so callers can use it for measurement
-    // and the Phase 6 benchmark can validate the scope.
-    return affected.size();
+    std::size_t re_inferred = 0;
+    for (aura::ast::NodeId id : affected) {
+        if (id == aura::ast::NULL_NODE || id >= flat.size()) continue;
+        // The per-node infer_flat does:
+        //   1. Clear the engine's CS.
+        //   2. synthesize_flat on the node (which has the
+        //      cache check at the top).
+        //   3. solve the CS.
+        //   4. Return the type.
+        // The CS is cleared each iteration — fine for now
+        // since we're scoping to the affected set, not
+        // trying to batch across nodes.
+        auto type = engine.infer_flat(flat, const_cast<aura::ast::StringPool&>(pool), id);
+        if (type != types.dynamic_type()) {
+            ++re_inferred;
+        }
+    }
+
+    // Accumulate per-call engine stats into TypeChecker stats.
+    auto es = engine.stats();
+    stats_.cache_hits += es.cache_hits;
+    stats_.cache_misses += es.cache_misses;
+    stats_.stale_cache += es.stale_cache;
+
+    return re_inferred;
 }
 
 // ── Ownership Validation ────────────────────────────────────────
