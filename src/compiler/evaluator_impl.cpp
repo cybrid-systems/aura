@@ -16418,8 +16418,12 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
             return (*prim)(args);
         }
 
-        // Look up in environment
-        auto env_val = env.lookup(fn_name);
+        // Look up in environment. Phase 2.5.0: route through
+        // lookup_by_intern (SymId-first). canonical_pool() is
+        // the long-lived workspace pool; env.pool_ is the
+        // fallback for closures that captured a non-canonical
+        // pool. Observable behavior matches env.lookup(name).
+        auto env_val = env.lookup_by_intern(fn_name, canonical_pool());
         if (env_val) {
             auto fn_val = *env_val;
             // Dereference cells — needed when lookup returned cell sentinel (cells_ not set on env)
