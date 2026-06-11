@@ -111,6 +111,32 @@ OpHashRef inline IR scan (`aura_jit.cpp` ~1067) also wrapped:
   `aura_deopt_inc()` × 3 / read / reset / read). 5 new
   assertions. Test count: 23/23 (was 18/18).
 
+### Phase 4 (commit 642698b) — memory model & workspace locking protocol doc
+
+- New: `docs/design/core/memory_model.md` (363 lines) — a
+  single-page formalization of the workspace_mtx_ +
+  defuse_version_ memory model. Consolidates the protocol
+  that was previously implicit across typed_mutation.md §6,
+  mutate_api.md §6, developer/evaluator.md §3, and the
+  #157 design note.
+  - §0 Implementation Status (per #156 §0 template):
+    14-component C++ Core Layer table.
+  - §1 Core invariant.
+  - §2 The three layers (trusted writers / trusted readers
+    / untrusted JIT).
+  - §3 The protocol formally (mutate / query / JIT bridge /
+    JIT inline IR / inline IR fastpath exception).
+  - §4 When you don't need a lock.
+  - §5–7 Checklists for adding a new runtime bridge,
+    mutate primitive, or query primitive.
+  - §8 Observability (jit:metrics counters + interpretation).
+  - §9–11 Why this doc exists / References / Versioning.
+- Cross-link updates: `docs/README.md` (core count
+  6 → 7 + new entry), `docs/developer/evaluator.md` §3,
+  `docs/design/core/typed_mutation.md` §6.3,
+  `docs/design/core/mutate_api.md` §6,
+  `docs/design/notes/issue-157-jit-workspace-invariant.md`.
+
 ## Effect
 
 Every bypass site from the #157 P0 inventory (19 sites) now either:
@@ -154,11 +180,15 @@ The closure / cell / hash test paths exercise the wrapped sites.
 
 ## Follow-ups (deferred — separate issues if needed)
 
-1. Phase 3 — OpGuardShape partial-frame deopt (the guard is
-   already wired but the deopt target needs a full frame —
-   ties to #61 follow-up).
-2. Phase 4 — `service.ixx` registry mutation (`ir_cache_`
-   invalidation may persist briefly) — ties to #115.
+1. Phase 3 — OpGuardShape full deopt frame (per design doc
+   §3.6). The OpGuardShape JIT handler exists but the
+   lowering never emits GuardShape; `specialized_for` is
+   defined but never set. Shipping the full deopt frame
+   is 1-2 days of design + implementation (lowering emit +
+   generic trampoline + interpreter re-entry). Defer to
+   its own issue with proper scoping.
+2. Epoch/RCU lock-free read path (per design doc Phase 5).
+   Long-term, optional.
 
 ## Architectural note
 
@@ -168,20 +198,20 @@ detector; consider deleting if no bypasses get added in the
 next phase. Phase 5's `jit:metrics` command makes this
 observable to ops.
 
-## Why ship Phase 0/1/1b/1c/2/5 and not 0-5
+## Why ship Phase 0/1/1b/1c/2/4/5 and not 0-5
 
 Per the issue's phasing (P1-P5), the P1+P2 sites are the
 **highest-risk 80%** of the invariant violation. Phase 1b's
 version-check fastpath adds the perf optimization that makes
 the lock acquisition overhead acceptable for single-threaded
 execution. Phase 5 (jit:metrics) is the observability layer
-that lets ops see the P0 fix is working in production. Phase 3
-(OpGuardShape deopt target) and Phase 4 (registry mutation)
-are correctness deep-cuts that are correct in the common case
-but have edge cases that need careful design (tied to
-#61 follow-up and #115 respectively). Both are well-scoped
-follow-up issues.
+that lets ops see the P0 fix is working in production.
+Phase 4 (memory model doc) is the consolidation artifact that
+makes the protocol maintainable going forward. Phase 3
+(OpGuardShape full deopt frame) is a substantial design
+exercise (lowering emit + generic trampoline + interpreter
+re-entry) that needs its own scoped issue.
 
-Closing with Phase 0/1/1b/1c/2/5 shipped puts the P0 soundness
-fix + observability in main and unblocks the multi-fiber serve
-use case.
+Closing with Phase 0/1/1b/1c/2/4/5 shipped puts the P0
+soundness fix + observability + memory model doc in main
+and unblocks the multi-fiber serve use case.
