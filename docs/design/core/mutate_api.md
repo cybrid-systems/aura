@@ -47,6 +47,13 @@
 
 **AI Agent 读者请注意**：mutate 家族已非常成熟。写自修改 Agent 时优先使用 `mutate:rebind` / `mutate:query-and-replace` / `mutate:extract-function` + `ast:snapshot` / `rollback` 组合。所有操作默认原子 + 可回滚 + 并发安全（workspace_mtx_ + MutationBoundary）。无需自己处理锁或 patch。
 
+### Code References（实现位置）
+- 主要原语注册：`src/compiler/evaluator_impl.cpp`（~L4710 开始 mutate 系列，具体如 `mutate:rebind` ~L6200, `mutate:query-and-replace` ~L5154, `mutate:extract-function` ~L11319 等）。
+- 回滚/事务：`add_mutation_with_rollback`、`mutation_log_` 在 FlatAST 和 Evaluator 中。
+- 并发边界：`MutationBoundary` + `g_fiber_yield_mutation_boundary`（fiber scheduler 集成）。
+- 类型化 mutate：`CompilerService::typed_mutate` 在 `service.ixx`；与 type_checker 联动。
+- 详见 `src/core/ast.ixx` 的 MutationRecord。开发者见 `docs/developer/evaluator.md`。
+
 ---
 
 ## 1. 原子性与回滚
