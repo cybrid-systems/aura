@@ -171,6 +171,45 @@ bool test_hot_swap_counter() {
     return true;
 }
 
+// ── Test 6: Issue #157 Phase 5 — runtime telemetry extern accessors ──
+// The jit:metrics --serve command (main.cpp) wraps these extern "C"
+// accessors. Verify they link, return uint64_t, and that
+// aura_counters_reset() actually clears the counters.
+extern "C" std::uint64_t aura_bypass_count();
+extern "C" std::uint64_t aura_unchecked_fastpath_count();
+extern "C" std::uint64_t aura_deopt_count();
+extern "C" void aura_deopt_inc();
+extern "C" void aura_counters_reset();
+
+bool test_phase5_runtime_accessors() {
+    std::fprintf(stdout, "\n--- Test: Phase 5 runtime telemetry accessors ---\n");
+    // Reset and read baseline.
+    aura_counters_reset();
+    auto bypass0 = aura_bypass_count();
+    auto fast0 = aura_unchecked_fastpath_count();
+    auto deopt0 = aura_deopt_count();
+    CHECK(bypass0 == 0, "aura_bypass_count() == 0 after reset");
+    CHECK(fast0 == 0, "aura_unchecked_fastpath_count() == 0 after reset");
+    CHECK(deopt0 == 0, "aura_deopt_count() == 0 after reset");
+
+    // Bump deopt manually (in-LLVM-callable side). The fastpath /
+    // bypass counters can't be bumped without going through the
+    // SHAPE_PAIR fastpath / the runtime bridge entries, so we
+    // only exercise aura_deopt_inc() here.
+    aura_deopt_inc();
+    aura_deopt_inc();
+    aura_deopt_inc();
+    auto deopt1 = aura_deopt_count();
+    CHECK(deopt1 == 3, "aura_deopt_count() reflects 3 aura_deopt_inc() calls");
+
+    // Reset clears the deopt counter (and would clear fast/bypass
+    // had we bumped them).
+    aura_counters_reset();
+    auto deopt2 = aura_deopt_count();
+    CHECK(deopt2 == 0, "aura_counters_reset() clears deopt_count");
+    return true;
+}
+
 int main() {
     std::fprintf(stdout, "═══ JIT metrics tests (Issue #114) ═══\n");
 
@@ -179,6 +218,7 @@ int main() {
     test_metrics_atomic_concurrent();
     test_metrics_format_edge_cases();
     test_hot_swap_counter();
+    test_phase5_runtime_accessors();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
