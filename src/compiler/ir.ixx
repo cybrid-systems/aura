@@ -105,6 +105,41 @@ export struct IRInstruction {
     // (OpAdd etc.) and for L2 layout specialization
     // (OpPairAlloc, OpVectorRef, etc.).
     std::uint32_t shape_id = 0;
+
+    // Issue #149 Phase 1: rich type metadata for specialization,
+    // monomorphization, and GuardShape precision. All three
+    // fields are 0/unknown by default — populated by the
+    // lowering pass (Phase 2) when the inferred type carries
+    // the corresponding information. Consumers (the
+    // TypeSpecializationWrap pass, GuardShape, JIT) check
+    // the field before using it; a 0 value is always "no
+    // info, fall back to existing behavior".
+    //
+    // linear_ownership_state: 0=untracked, 1=Owned, 2=Borrowed,
+    // 3=MutBorrowed, 4=Moved. Set on values that are linear-
+    // typed (per the M4 Linear typing from OwnershipEnv).
+    // Consumers: TypeSpecializationWrap elides MoveOp on
+    // owned values; GuardShape treats a value known to be
+    // linear-typed as non-Dynamic for the purposes of the
+    // dynamic-check fast path.
+    std::uint8_t linear_ownership_state = 0;
+    // adt_variant_id: 0 = not an ADT or unknown variant.
+    // Non-zero: the discriminant of the specific ADT variant
+    // this instruction produces (OpCons) or expects (OpCar/
+    // OpCdr matching). Set by the ADT-specialization pass
+    // (Phase 3) when the variant is statically known.
+    // Consumers: TypeSpecializationWrap can replace a generic
+    // ADT call with a variant-specific block when this is set.
+    std::uint32_t adt_variant_id = 0;
+    // narrow_evidence: 0 = no narrowing evidence (use default
+    // type). Non-zero: a bitmask of narrowing predicates that
+    // have been applied to produce this value's type
+    // (1 = number?, 2 = string?, 4 = list?, etc.). Set when
+    // occurrence-narrowing has been applied in the if-then
+    // branch. Consumers: TypeSpecializationWrap can skip
+    // generic type-checks for predicates in the evidence
+    // mask; the JIT can use precise unboxed representations.
+    std::uint32_t narrow_evidence = 0;
 };
 
 // ── Opcode metadata table ─────────────────────────────────────
