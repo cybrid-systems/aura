@@ -495,7 +495,8 @@ export struct TypeChecker {
     std::size_t infer_flat_partial(
         aura::ast::FlatAST& flat,
         const aura::ast::StringPool& pool,
-        const aura::ast::MutationRecord& rec);
+        const aura::ast::MutationRecord& rec,
+        aura::diag::DiagnosticCollector& diag);
 
     // Issue #116: deferred CoercionNode insertion. infer_flat
     // now collects coercion intent in this map rather than
