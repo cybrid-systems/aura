@@ -289,6 +289,25 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
     if (functions && num_functions > 0) {
         auto* flat_fns = static_cast<const aura::jit::FlatFunction*>(functions);
 
+        // Issue #151 Phase 2: filter FlatFunction[] by region
+        // before passing to the AOT pipeline. Evolution-
+        // regioned functions (region=2) are dynamic — they
+        // mutate their own or others' definitions, so the
+        // AOT path's persistent cache would be invalidated
+        // too often. The JIT path is the right tier for
+        // them. Build a filtered std::vector<FlatFunction>
+        // (the AOT pipeline takes a contiguous array, not a
+        // vector; the data is small enough to copy in place).
+        // Performance (1) and Default (0) go through AOT;
+        // Evolution (2) is excluded.
+        std::vector<aura::jit::FlatFunction> aot_fns;
+        aot_fns.reserve(num_functions);
+        for (unsigned int i = 0; i < num_functions; ++i) {
+            if (flat_fns[i].region != 2 /*Evolution*/) {
+                aot_fns.push_back(flat_fns[i]);
+            }
+        }
+
         // Find runtime.c path (contains main(), closures, cells, pairs, I/O)
         std::string runtime_dir;
         {
@@ -313,43 +332,20 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
             }
         }
 
-        bool ok = aot_flat_functions_to_binary(flat_fns, num_functions,
+        bool ok = aot_flat_functions_to_binary(aot_fns.data(), static_cast<unsigned int>(aot_fns.size()),
                                                 std::string(out_path),
                                                 runtime_c);
         if (ok) {
-            // Issue #151 Phase 1: tier dispatch log. The AOT
-            // path's persistent cache is appropriate for
-            // Performance-regioned functions (stable, hot,
-            // benefits from O3); Evolution-regioned functions
-            // (dynamic, self-modifying) would invalidate the
-            // cache too often and are better served by the
-            // JIT path. Today the AOT emission emits ALL
-            // functions regardless of region; the Evolution
-            // ones will be re-emitted on each compilation
-            // round-trip (not ideal but not broken). The
-            // actual AOT-skip-for-Evolution wiring is the
-            // Phase 2 follow-up. This log line is the
-            // observability for the tier decision — users
-            // can see which functions are going down the AOT
-            // path vs the JIT path (by absence from this log).
-            {
-                std::size_t aot_count = 0;
-                std::size_t jit_count = 0;
-                for (unsigned int i = 0; i < num_functions; ++i) {
-                    // FlatFunction::region: 0=Default, 1=Performance, 2=Evolution.
-                    // tier_for_region maps Performance -> AOT (0),
-                    // Evolution / Default -> JIT (1) per
-                    // #151 Phase 0's prep.
-                    switch (flat_fns[i].region) {
-                        case 1 /*Performance*/: ++aot_count; break;
-                        default:                ++jit_count; break;
-                    }
-                }
-                std::fprintf(stderr,
-                    "AOT tier dispatch: %zu function(s) Performance (AOT), "
-                    "%zu function(s) Default/Evolution (JIT)\n",
-                    aot_count, jit_count);
-            }
+            // Issue #151 Phase 2: report the tier-dispatch
+            // result. aot_fns.size() is what was AOT-emitted
+            // (Performance + Default). num_functions is the
+            // total (including the Evolution functions that
+            // were filtered out and will go through the JIT
+            // path).
+            std::fprintf(stderr,
+                "AOT tier dispatch: %zu function(s) AOT-emitted, "
+                "%zu function(s) skipped (Evolution -> JIT)\n",
+                aot_fns.size(), num_functions - aot_fns.size());
             return true;
         }
 
