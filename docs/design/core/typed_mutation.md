@@ -480,7 +480,7 @@ bool ensure_local_flat(std::uint32_t idx) {
 5. **mark_dirty_upward**（让 value_cache 失效）
 6. **fiber yield at mutation boundary**（让其他 fiber 跑）
 
-详细代码模式见 [`docs/developer/evaluator.md §3`](../developer/evaluator.md#3-mutate-primitives--locking-protocol)。
+详细代码模式见 [`docs/developer/evaluator.md §3`](../developer/evaluator.md#3-mutate-primitives--locking-protocol)。完整的内存模型（包含 JIT runtime bridges 和 inline IR 的锁协议）见 [`docs/design/core/memory_model.md`](memory_model.md)（#157 Phase 4）。
 
 ---
 

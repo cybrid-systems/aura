@@ -24,7 +24,7 @@
 
 分四层：
 
-- **`design/core/`**（6 篇） — 新贡献者 on-ramp，高价值活文档
+- **`design/core/`**（7 篇） — 新贡献者 on-ramp，高价值活文档
 - **`design/compilation/`**（2 篇） — IR / JIT
 - **`design/runtime/`**（2 篇） — async serve / FFI
 - **`design/history/`** — 归档（`notes/` + `closings/`）。新人可跳过，详见各子目录 README。
@@ -48,6 +48,7 @@
 | [query_edsl](design/core/query_edsl.md) | 查询 EDSL |
 | [typed_mutation](design/core/typed_mutation.md) | 类型化变更 |
 | [workspace_layering](design/core/workspace_layering.md) | Workspace 分层 / COW / lock |
+| [memory_model](design/core/memory_model.md) | 内存模型 + 锁协议（#157 Phase 4） |
 
 ### 编译 (`design/compilation/`)
 
