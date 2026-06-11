@@ -3333,4 +3333,52 @@ aura::ast::InvariantStatus post_mutation_invariant_check(
     return aura::ast::InvariantStatus::Warnings;
 }
 
+// Issue #148 Phase 3: identify the affected node set for a
+// mutation. Walks the FlatAST similarly to
+// post_mutation_invariant_check but returns the NodeId set
+// instead of running invariant checks. Used by
+// InferenceEngine::infer_flat in Phase 4 to scope partial
+// re-inference.
+//
+// Walk strategy:
+//   1. Pick walk_root = rec.parent_id (subtree-level mutation)
+//      or rec.target_node (typed mutation on existing node).
+//   2. collect_descendants(walk_root) — the entire dirty subtree.
+//   3. Climb from rec.target_node via FlatAST::parent_of to add
+//      the dirty-upward ancestor chain. Safety-bounded by
+//      flat.size() to defend against parent_ cycles.
+//
+// Returns empty vector if walk_root is NULL/out-of-range so the
+// caller can fall back to a full infer_flat.
+std::vector<aura::ast::NodeId>
+affected_subtree_from_mutation(
+    const aura::ast::FlatAST& flat,
+    const aura::ast::MutationRecord& rec) {
+    using namespace aura::ast;
+
+    NodeId walk_root = NULL_NODE;
+    if (rec.parent_id != NULL_NODE)
+        walk_root = rec.parent_id;
+    else if (rec.target_node != NULL_NODE)
+        walk_root = rec.target_node;
+
+    if (walk_root == NULL_NODE || walk_root >= flat.size())
+        return {};
+
+    std::vector<NodeId> affected;
+    // Descendants of walk_root
+    collect_descendants(flat, walk_root, affected);
+    // Ancestors of rec.target_node (dirty-upward chain)
+    if (rec.target_node != NULL_NODE && rec.target_node < flat.size()) {
+        NodeId cur = rec.target_node;
+        std::size_t safety = 0;
+        while (cur != NULL_NODE && cur < flat.size() && safety++ < flat.size()) {
+            if (std::find(affected.begin(), affected.end(), cur) == affected.end())
+                affected.push_back(cur);
+            cur = flat.parent_of(cur);
+        }
+    }
+    return affected;
+}
+
 } // namespace aura::compiler
