@@ -9,6 +9,46 @@
 
 ---
 
+## 0. Implementation Status (2026-06-11, Issue #156)
+
+**重要**：本文档描述的 12+ 个 mutate 原语 + 原子性/回滚/ panic checkpoint / 与 workspace/DefUse 集成 **全部实装**。`mutate:query-and-replace` 等高级组合也已落地。准确分两层：
+
+### C++ Core Layer (`src/compiler/evaluator_impl.cpp` / `service.ixx` / `src/core/ast.ixx`)
+
+| 组件 | 实装 | 备注 |
+|------|------|------|
+| 12+ `mutate:*` 原语（replace-value/type, rebind, set-body, splice, wrap, remove/insert/move, tweak, record-patch, rename-symbol, extract-function, inline-call, replace-pattern, query-and-replace） | ✓ | 详见 §2 |
+| 原子性（`workspace_mtx_` unique_lock） | ✓ (#107 part 1) | 失败自动回滚 |
+| `add_mutation_with_rollback` + `mutation_log_` | ✓ | 每个 mutate 产生可回滚记录 |
+| `ast:rollback` / `ast:restore` / `ast:snapshot` | ✓ | 深拷贝 + mutation tombstone |
+| Panic checkpoint（save/restore_panic_checkpoint） | ✓ | 跨多 mutate 的安全网 |
+| `MutationRecord` + provenance 审计 | ✓ | 与 typed_mutation 共享 |
+| `DefUseIndex` per-sym 失效 + `MutationBoundary` yield | ✓ | 并发安全（#107 + #109） |
+| 与 `WorkspaceTree` COW + memory budget 集成 | ✓ | 见 workspace_layering.md |
+| `mutate:query-and-replace` (qar) | ✓ (#110) | query + 模板替换原子操作 |
+| `CompilerService::typed_mutate` + invariant 检查 | ✓ | #147 + serve 协议支持 |
+| `query_mutation_log` / `rollback_mutation` | ✓ | Serve 协议 + Aura 反射 |
+
+### Aura Layer
+
+| 接口 | 实装 | 备注 |
+|------|------|------|
+| 直接 `mutate:*` 原语（rebind, replace-*, extract-function 等） | ✓ | 推荐用于 Agent 自修改 |
+| `std/workspace.aura` (ws:merge-symbols 等 workaround) | 🟡 | 部分仍为文本级 merge 辅助 |
+| `--serve` / `--serve-async` `mutate` + `typed-mutate` + `mutation-log` + `rollback` 命令 | ✓ | Agent 主入口，带 invariant_status |
+| `ast:snapshot` / `ast:restore` / `rollback` | ✓ | 版本化自演化循环核心 |
+
+### 已实现 vs 计划
+
+- ✅ **核心 mutate 体系 + 并发安全 + 审计** 全部实装（#112 + #107~#110 + #175 等）
+- ✅ **与 query / workspace / typed mutation / fiber scheduler 深度集成**
+- 🟡 **Aura 层高级 helper**：std/refactor、std/workspace 部分仍较薄，推荐直接用原语 + --serve 协议
+- 🔴 **长期**：跨模块 Capability Effects 检查、精确 Aura 端 revert-by-id（目前靠 ast:diff + 手动）
+
+**AI Agent 读者请注意**：mutate 家族已非常成熟。写自修改 Agent 时优先使用 `mutate:rebind` / `mutate:query-and-replace` / `mutate:extract-function` + `ast:snapshot` / `rollback` 组合。所有操作默认原子 + 可回滚 + 并发安全（workspace_mtx_ + MutationBoundary）。无需自己处理锁或 patch。
+
+---
+
 ## 1. 原子性与回滚
 
 每个 `mutate:*` 原语都是**原子的**：
