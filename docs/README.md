@@ -14,10 +14,31 @@
 
 设计文档分三层：
 
-- **`design/core/`** — 高价值核心设计 (~6 篇) ，作为新贡献者的 on-ramp
-- **`design/compilation/`** — 编译相关 (IR / JIT) (~2 篇)
-- **`design/runtime/`** — 运行时相关 (async serve / FFI) (~2 篇)
+- **`design/core/`** — 高价值核心设计 (6 篇) ，作为新贡献者的 on-ramp
+- **`design/compilation/`** — 编译相关 (IR / JIT) (2 篇)
+- **`design/runtime/`** — 运行时相关 (async serve / FFI) (2 篇)
 - **`design/notes/`** — 归档的设计探索 / 单一议题 follow-up (~80+ 篇) — 仍有参考价值但不是 on-ramp 必读
+
+### 进程规则：§0 Implementation Status 必须存在
+
+**所有 `design/core/`、`design/compilation/`、`design/runtime/` 下的核心设计文档必须包含 `## 0. Implementation Status` 章节**（按 Issue #156 引入）。
+
+该章节作为 **AI Agent 读者与新贡献者的"实现状态权威来源"**，要求：
+
+1. **C++ Core Layer 表**：列出文档描述的所有 C++ 组件（primitive / class / pass / op），用 `✓` 标记已实装、`✗` 标记未做、`🟡` 标记部分实装 / 设计中、`△` 标记仅 API stub。标注实装源码位置（`src/...` 文件 + 行号或 `~L` 近似行号）。
+2. **Aura Layer 表**：列出文档涉及的 Aura 端 helper / form / 原语，同样用 `✓` / `✗` / `🟡` / `△` 标注。
+3. **未来工作 / 当前缺口**：列出未实装项 + 阻碍实现的依赖。
+4. **AI Agent 读者请注意**：明确告诉 AI 读者本文档作为设计意图保留，但实装代码状态以 §0 + 文档内其它 "实现状态" 章节为准。
+
+§0 章节应在文档开头的"标题 + 状态块"之后、第一个 `## 1. ...` 章节之前插入。**新加 `design/core|compilation|runtime/` 文档时必须同时建 §0**；修改现有文档时若新增/删除/重命名原语，需同步更新 §0 的两个表。
+
+参考实现：
+- `design/core/query_edsl.md` §0（#154 引入，原型）
+- `design/core/mutate_api.md` §6（#155 引入，并发与安全状态）
+- 8 篇 `design/{core,compilation,runtime}/` 下的 §0（#156 批量补全）
+
+详细背景见 Issue #156 关闭评论 + 关闭 doc（如已写）。
+
 
 ### 核心 (`design/core/`)
 

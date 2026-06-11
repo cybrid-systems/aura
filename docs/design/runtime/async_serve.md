@@ -4,6 +4,50 @@
 
 ---
 
+## 0. Implementation Status (2026-06-11, Issue #156)
+
+**重要**：本文档的 **Phase 1-3 (fiber + scheduler + 集成) 已实装**（#109 + #119 + `agent_orchestration.md` 描述的 fiber 体系）。文档原版以设计稿撰写，本节补充实装状态。
+
+### C++ Core Layer (`src/serve/fiber.cpp` / `src/serve/scheduler.cpp` / `src/serve/mailbox.h` / `src/compiler/evaluator_impl.cpp`)
+
+| 组件 | 实装 | 备注 |
+|------|------|------|
+| `Fiber` (ucontext + mmap stack + guard page) | ✓ | `src/serve/fiber.cpp`；默认 2MB/纤程；guard page 触发 SIGSEGV 早期发现栈溢出 |
+| `Fiber::resume` / `Fiber::yield` (swapcontext) | ✓ | 切换成本 ~50-100ns |
+| `Scheduler` (epoll 事件循环 + ready queue + wait map) | ✓ | `src/serve/scheduler.cpp`；`epoll_wait` 阻塞，per-session eventfd 唤醒 |
+| 多线程 fiber scheduler | ✓ (#109 Phase 1) | 多 thread pool |
+| Work-stealing scheduler | ✓ (#109 Phase 2) | 跨线程 work 偷取 |
+| C++26 `std::execution` 风格 adapter | ✓ | 适配器层 |
+| `Mailbox` (fiber-safe 队列) | ✓ | `src/serve/mailbox.h`；push + 唤醒目标 fiber |
+| `Session` (per-agent 连接 + eventfd) | ✓ | session 注册表 + std::shared_ptr 跨线程 |
+| `recv` 5 行 yield 改造 | ✓ | `evaluator_impl.cpp`；mailbox 空时 yield 让调度器切走 |
+| `send` 触发 eventfd 唤醒 | ✓ | 目标 fiber 状态 `Waiting` 时 `write(f->eventfd, 1)` |
+| `--serve-async` flag (`main.cpp`) | ✓ | 现有 `--serve` 不变；新增分支 |
+| `AURA_SERVE_ASYNC` 条件编译 | ✓ | 编译宏开关 |
+| `recv` 跨平台 (macOS kqueue) | 🟡 | 当前 epoll 是 Linux 路径；macOS / Windows path 通过 `g_fiber_yield` hook fallback |
+| 异常传播 (fiber throw → scheduler catch) | △ (基础) | 当前在 `main.cpp` --serve-async 路径捕获 |
+| 优雅退出 (`Scheduler::stop`) | ✓ | 设 `running_ = false`，fiber 自然 Done |
+
+### Aura Layer (`lib/std/agent.aura` / `lib/std/orchestrator.aura`)
+
+| Helper | 实装 | 备注 |
+|--------|------|------|
+| `agent:spawn` | ✓ | 包装 `_agent:spawn` (C++ primitive) |
+| `send` / `recv` / `reply` | ✓ | `lib/std/agent.aura` 包装 C++ 桥 |
+| 跨 session JSON 协议 (`{"cmd":"session-send",...}`) | ✓ | `--serve-async` 模式 |
+| `agent:list` / `agent:status` / `agent:stop` / `agent:restart` | ✓ | 生命周期管理 |
+
+### 文档与实装的差异
+
+- ✅ **已实装**：`Fiber` / `Scheduler` / `Mailbox` / `Session` / `recv` yield / `send` 唤醒 / `--serve-async` 入口
+- 🟡 **文档原版以设计稿撰写**（Phase 1-3 的"~0.5d/0.5d/0.5d" 估算）：实装实际是 #109 + #119 两条 issue 累计 work，包含多线程 + work-stealing + `fiber:join` 真阻塞 + 跨 platform fiber 适配
+- 🔴 **未做**：cross-host agent communication（进程内 only）；persistent agent state across serve restarts（需外部存储）
+
+**AI Agent 读者请注意**：本文档是设计意图的权威来源。C++ 层的 `fiber:*` 原语 + `agent:spawn`/`send`/`recv` 全部实装；agent orchestration 高级接口 (`orch:parallel`, `agent:ask`) 见 `agent_orchestration.md` 而非本文档。
+
+---
+
+
 ## 1. 为什么需要异步
 
 当前 `--serve` 模式：

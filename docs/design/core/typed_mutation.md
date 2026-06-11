@@ -13,6 +13,62 @@
 >
 > 本文档已同步到当前实现状态。
 
+---
+
+## 0. Implementation Status (2026-06-11, Issue #156)
+
+**重要**：本文档的 **三周计划 (#112) + #107-#110 全部实装**。完整原语 + 协议 + 集成 + 事务 + 审计。准确分两层：
+
+### C++ Core Layer (`src/compiler/evaluator.ixx` / `evaluator_impl.cpp` / `service.ixx` / `src/core/ast.ixx`)
+
+| 组件 | 实装 | 备注 |
+|------|------|------|
+| `MutationRecord` (mutation_id / timestamp / operator / old/new type / status) | ✓ | `src/core/ast.ixx`；flat `mutation_log_` 追加 |
+| `MutationLog` + `node_first_mutation_` 索引 | ✓ | `FlatAST` 新增字段；不可变（只追加，不删除）|
+| `TypedMutationOp` (6 个原语 + check_preconditions + create_patches + apply + record) | ✓ | 详见 §3.3 |
+| `check_mutation` 类型兼容性 | ✓ | 5 条规则 + 6 个 `MutationErrorKind` |
+| `workspace_mtx_` 共享/独占协议 | ✓ (#107 part 1) | mutate unique / query shared |
+| `ast:version` primitive | ✓ (#107 part 3) | monotonic counter |
+| `DefUseIndex` + per-sym 失效 (`stale_syms_`) | ✓ (#107 part 5) | `touch_sym` / `mark_sym_fresh` / `current_version` |
+| `WorkspaceTree` + COW + per-workspace memory budget | ✓ (#107 part 6) | `ensure_local_flat` + `cow_refused_count` |
+| Direct FlatAST snapshot/restore (深拷贝) | ✓ (#107 part 6) | `FlatSnapshot` 保留 SymId / mutation_log / type_id / value_cache |
+| `ast:defs` / `ast:nodes` 反射 | ✓ (#108 part 2) | 暴露给 Aura 端 |
+| `mutate:query-and-replace` (qar) | ✓ (#110) | query + replace 组合原语 |
+| `mutate:replace-type` / `replace-children` / `refine-constraint` / `insert-child` / `delete-child` / `swap-nodes` / `wrap-node` | ✓ | §3.3 列出 7 个原语 |
+| `CompilerService::typed_mutate` / `query_mutation` / `query_mutation_log` | ✓ | `service.ixx`；query_mutation_log 读 workspace_flat_（#175 修复）|
+| `rollback_mutation` / `rollback_all_since` | ✓ | Tombstone 保留 `RolledBack` 标记，不删记录 |
+| `MutationBoundary yield` (fiber 让步) | ✓ | `g_fiber_yield_mutation_boundary` hook；不让任何 fiber 饿死 |
+| Provenance 查询 (`(query (provenance-of node-id))`) | ✓ | §3.5 Week 3 |
+| `query:def-use` / `query:reaches` / `query:effects` / `query:index-stats` | ✓ | §6.1 Query API |
+| Capability Effects 跨模块变异检查 | 🔴 (P5 §5) | 设计中，未实装 |
+| 增量热更新健全性 (EDSL V2 cache) | 🔴 (P5) | 设计中 |
+| Versioned Types | 🔴 (P5) | 设计中 |
+| MutationLog Aura 端精确 revert-by-id | 🟡 (Open §8.3) | `ast:diff 0` 已能结构化 diff；精确 revert-by-id 还没暴露 |
+
+### Aura Layer (无独立 `typed_mutation.aura` —— 全部走 `query:*` / `mutate:*` / `--serve` 协议)
+
+| 接口 | 实装 | 备注 |
+|------|------|------|
+| `query:*` (12 原语) | ✓ | `lib/std/query.aura` 3 helper（filter/uncalled/callers-of） + C++ 内部 11 原语 |
+| `mutate:*` (12 原语) | ✓ | `lib/std/workspace.aura` 包含 workspace 管理 + mutate C++ primitives |
+| `ast:snapshot` / `ast:restore` | ✓ | 深拷贝路径 |
+| `ast:version` / `ast:defs` / `ast:nodes` | ✓ | 反射 |
+| `ws:create` / `ws:switch` / `ws:lock` / `ws:merge` | ✓ | 详见 `workspace_layering.md` |
+| `--serve` 协议 `typed-mutate` / `mutation-log` / `rollback` 命令 | ✓ | §4.3 JSON 协议 |
+| `query:type` | ✓ | `query:type` 查 AST 节点推断类型 |
+| `query:provenance-of` | ✓ | §3.5 |
+
+### 已实现 vs 计划
+
+- ✅ **三周计划 + #107-#110 全部实装**（#112 + #107 + #108 + #109 + #110 + #175 修复）
+- 🟡 **P5 进行中**：Capability Effects / 增量热更新 / Versioned Types
+- 🔴 **未做**：精确 revert-by-id Aura 端
+
+**AI Agent 读者请注意**：完整 mutate 体系已实装并通过 ASAN 0 leaks 验证。AI Agent 写代码时**不需要**直接构造 `Patch` —— 用 7 个 `mutate:*` 原语或 `mutate:query-and-replace` (qar) 即可获得类型安全 + 事务 + 审计。`workspace_mtx_` + `MutationBoundary yield` 已在 evaluator 内部处理并发 Agent 共享，无需在 Aura 代码里加锁。
+
+---
+
+
 ## 1. 背景
 
 | 组件 | 能力 | 限制 |

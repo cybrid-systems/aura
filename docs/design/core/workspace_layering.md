@@ -4,6 +4,53 @@
 **Design Author**: Ani
 **Driver**: 多 Agent 协作 + 安全沙箱 + 分支实验（EDSL Roadmap W5-6）
 
+---
+
+## 0. Implementation Status (2026-06-11, Issue #156)
+
+**重要**：本文档的 **P0 已实装**（独立子 workspace + 切换 + 列表 + 删除 + read-only stub），P1/P2 仍为设计稿。准确分两层：
+
+### C++ Core Layer (`src/compiler/evaluator.ixx` / `evaluator_impl.cpp`)
+
+| 组件 | 实装 | 备注 |
+|------|------|------|
+| `WorkspaceTree` 数据结构 | ✓ | `evaluator_impl.cpp` ~7865，SoA + COW + per-workspace memory budget |
+| `WorkspaceNode` (parent/children/read_only/transient/has_local) | ✓ | 完整字段，COW 触发逻辑同 §3.1 |
+| `create_child` + `delete_child` + `is_read_only` | ✓ | P0 实现 |
+| `set_active` + `resolve_flat` / `resolve_pool` | ✓ | 切换时同步 `workspace_flat_` / `workspace_pool_` 指针 |
+| `ensure_local_flat` (COW 触发) | ✓ | 含 `memory_budget` 检查 + `cow_refused_count` 统计（#97 Action 3）|
+| COW 深度克隆（FlatAST + StringPool）| ✓ | `std::vector` 元素深拷贝 + pool copy |
+| 跨层 NodeId 分配 | ✗ (设计) | §8 Open Issue 1 — 当前依赖 whole-clone 兼容，mutate 后子层 NodeId 不再对应父层 |
+| StringPool 一致性（不同 pool 的 intern 结果）| ✗ (设计) | §8 Open Issue 2 — 查询需用名字而非 SymId |
+| 跨 workspace 读写锁 | ✗ (设计) | §8 Open Issue 3 — 当前单线程，多 Agent 共享需 reader-writer lock |
+| `merge` 三路合并 | ✗ (设计) | §7 P2 — 当前只有文本级 `merge` |
+
+### Aura Layer (`lib/std/workspace.aura`)
+
+| Helper | 实装 | 备注 |
+|--------|------|------|
+| `workspace:create` | ✓ | P0 — 创建子 workspace (COW) |
+| `workspace:switch` | ✓ | P0 — 切换 active 层 |
+| `workspace:delete` | ✓ | P0 — 删除子层 |
+| `workspace:list` | ✓ | P0 — 列出所有层 |
+| `workspace:current` | ✓ | P0 — 返回 active id |
+| `workspace:lock` | ✓ (read-only) | P1 — 标记 active 层 read-only；mutate 入口检查返回 false |
+| `workspace:can-write?` | ✓ | P1 — 权限查询 |
+| `workspace:sync-from` | ✗ (设计) | P2 — 选择性拉取符号 |
+| `workspace:discard` | ✗ (设计) | P2 — 丢弃变更不合并 |
+| `workspace:merge` | △ (仅文本级) | P0/P2 文档 P1 mutation_log 三路合并未做 |
+
+### Future Work
+
+- **跨 workspace 内存预算**（`memory_budget`）：已实装 per-workspace 跟踪 + `cow_refused_count` 统计；全局 GC / 自动 scale-out 未做
+- **跨 host workspace 同步**：当前是进程内，跨 host 需序列化 mutation_log + 增量同步协议
+- **三路合并**：当前是简单文本级 `merge`，P1 的 mutation_log 三路合并未实现
+
+**AI Agent 读者请注意**：本文档是设计意图的权威来源。P0 实装代码见 `evaluator_impl.cpp` 的 `WorkspaceTree` / `WorkspaceNode` 章节；P1/P2 部分（如 `workspace:sync-from` / 三路合并）尚未实装，写代码前查实装状态。
+
+---
+
+
 ## 1. Problem
 
 当前 `Evaluator` 持有单个 `workspace_flat_`，所有 Agent 共享同一块 AST：

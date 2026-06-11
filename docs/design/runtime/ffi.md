@@ -2,7 +2,39 @@
 
 **状态**: ✅ 已实现 (`5b8d496`)
 
-## 用户 API
+---
+
+## 0. Implementation Status (2026-06-11, Issue #156)
+
+**重要**：本文档的 **用户 API + 层 1/3 已实装**，**层 2 (JIT Symbol Registration) 仅 API stub 存在，未与 ORC JIT 集成**。准确分三层：
+
+### C++ Core Layer (`src/compiler/evaluator_impl.cpp` / `src/compiler/aura_jit_impl.cpp`)
+
+| 组件 | 实装 | 备注 |
+|------|------|------|
+| `c-load` (dlopen) | ✓ | `evaluator_impl.cpp`，`g_ffi_libs` 全局表 |
+| `c-func` (dlsym + 签名) | ✓ | `g_ffi_funcs` 表 + `FFIFunc{fn_ptr, name, ret, arg_types}` |
+| `apply_closure` FFI 调度（`cid & (1ULL<<63)` 高位检测）| ✓ | 树遍历 + IR interpreter 两条路径都走 `apply_closure` → marshal → C call |
+| Marshalling (Int / Float / String / Opaque / Void) | ✓ | 类型标签 0-4，String 复制到临时 0-terminated buffer |
+| `--safe` 模式禁用 `c-load` | ✗ (设计) | 文档 §"安全性" 提到计划，未实装 |
+| `AuraJIT::register_symbol` | △ (API stub) | `src/compiler/aura_jit.h` 头文件存在；`c-func` 没有调用它，JIT 编译代码实际仍走 C++ bridge（~50ns 开销） |
+
+### Aura Layer (`lib/std/ffi.aura` 或类似)
+
+| Helper | 实装 | 备注 |
+|--------|------|------|
+| 用户 API：`c-load` / `c-func` / 应用 | ✓ | 与 C++ 同名 primitive，直接调用 |
+
+### 已实现 vs 计划
+
+- ✅ **已实装**：`c-load` / `c-func` / marshalling / eval_flat 集成 / IR interpreter 集成
+- 🟡 **API stub，集成未做**：`AuraJIT::register_symbol` 头文件存在；ORC JIT 编译代码仍走 C++ bridge 路径（~50ns），不是文档 §"执行路径" 提到的 ~1ns native `call [fn]`
+- 🔴 **未实装**：`--safe` 模式禁用 `c-load` / 扩展新类型只需在 marshalling switch 加 case（仅文档描述）
+
+**AI Agent 读者请注意**：本文档作为设计意图保留。FFI 用户 API 完全可用；JIT 路径的 `register_symbol` 只是 stub，零开销 FFI 仍需等 ORC JIT 实装。
+
+---
+
 
 ```scheme
 (define lib (c-load "libm.so.6"))

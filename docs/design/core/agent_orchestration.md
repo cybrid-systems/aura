@@ -9,6 +9,48 @@
 > [`docs/issue-closings/109-closing.md`](../issue-closings/109-closing.md)
 > + [`docs/issue-closings/119-closing.md`](../issue-closings/119-closing.md)。
 
+---
+
+## 0. Implementation Status (2026-06-11, Issue #156)
+
+**重要**：本文档的 **Phase 1-3 全部实装**（#109 + #119 + #107 part 1/5/6 + #108 part 2 + #110）；Phase 4 是长期演进项。准确分两层（完整原语 + 实现表见下文"实现状态（2026-06）"）：
+
+### C++ Core Layer (TL;DR — 完整表见后文)
+
+| 原语 / 组件 | 实装 | 备注 |
+|------|------|------|
+| `fiber:spawn` / `fiber:yield` / `fiber:join` | ✓ | #109 + #119：stdin 模式 `condition_variable` 真阻塞；serve-async 模式 eventfd wakeup |
+| `_agent:spawn` / `send` / `recv` / `reply` | ✓ | 跨 session 消息传递（带 correlation id）|
+| `mailbox-count` / `orch:metrics` / `orch:reset-metrics` | ✓ | #109 stats |
+| `workspace_mtx_` 共享/独占协议 | ✓ (#107 part 1) | mutate unique / query shared |
+| `MutationBoundary yield` | ✓ | 不让任何 fiber 饿死 |
+| DefUseIndex per-sym 失效 | ✓ (#107 part 5) | `defuse_affected_syms_` + `defuse_touch_fn_` |
+| Direct FlatAST snapshot/restore (深拷贝) | ✓ (#107 part 6) | 保留 SymId / mutation_log / type_id |
+| Mailbox / Scheduler / Fiber | ✓ | `serve/mailbox.h` / `serve/scheduler.cpp` / `serve/fiber.cpp` |
+| Cross-host agent communication | 🔴 (Phase 4) | 当前是进程内 only |
+| Persistent agent state across serve restarts | 🔴 (Phase 4) | 需外部存储 |
+| Auto-scaling fiber pool | 🔴 (Phase 4) | 当前固定线程数 |
+| AutoFixEngine for agent prompts | 🔴 (Phase 4) | 设计中 |
+
+### Aura Layer (TL;DR — 完整表见后文)
+
+| Helper | 实装 | 备注 |
+|--------|------|------|
+| `orch:define-role` / `orch:step` / `orch:pipeline` / `orch:conduct` | ✓ | `std/orchestrator.aura` |
+| `orch:parallel` (真并行) | ✓ | #109 — 串行 fallback 已移除 |
+| `orch:if` / `orch:retry` / `orch:role` / `orch:step*` | ✓ | 步骤构造器 |
+| `agent:spawn` / `agent:ask` / `agent:list` / `agent:status` / `agent:stop` / `agent:restart` | ✓ | 生命周期 + correlation-id 请求/响应 |
+
+### 已实现 vs 计划
+
+- ✅ **Phase 1-3 全部实装**（多线程 + work-stealing + 真阻塞 + mailbox-stats + 共享/独占协议 + DefUseIndex + 深拷贝 snapshot）
+- ✅ **验收**：`tests/suite/concurrent.aura` 12/12 PASS（`--load` 与 `--serve` 双模式）；ASAN 0 leaks on concurrent stress
+- 🔴 **Phase 4 长期演进**：auto-scaling / cross-host / persistent state / AutoFixEngine
+
+**AI Agent 读者请注意**：完整 agent orchestration 体系已实装。AI Agent 写多 Agent 协作代码时**不需要**手动管 fiber / mailbox / 锁 —— 用 `orch:parallel` / `orch:conduct` / `agent:ask` / `agent:spawn` 即可。跨 session 通信（serve 模式）用 `agent:ask` 自动包 correlation-id + timeout。
+
+---
+
 **Audience:** 任何使用 `lib/std/orchestrator.aura` 或 `lib/std/agent.aura` 写多 Agent 协作的人。
 **Audience (2):** 给 evaluator 加新的 fiber / agent / mailbox 原语的开发者（详见
 [`docs/developer/evaluator.md`](../developer/evaluator.md)）。
