@@ -437,6 +437,18 @@ private:
     }
 
     std::vector<MatchClauseInfo> match_info_;
+    // Issue #150 Phase 1: region annotation side-tables.
+    // region_by_sym_ is keyed by the define's SymId (the
+    // function's bound name). region_by_lambda_id_ is keyed by
+    // the lambda's NodeId (for anonymous lambdas that don't
+    // have a bound name). Both are populated by the parser
+    // (evaluator_impl.cpp) when it sees
+    // (performance-region ...) / (evolution-region ...) wrappers.
+    // Lowering reads them via get_function_region_for_sym /
+    // get_function_region_for_lambda to set
+    // IRFunction::region accordingly.
+    std::pmr::unordered_map<SymId, std::uint8_t> region_by_sym_;
+    std::pmr::unordered_map<NodeId, std::uint8_t> region_by_lambda_id_;
     explicit FlatAST(std::pmr::polymorphic_allocator<std::byte> alloc = {})
         : tag_(alloc)
         , int_val_(alloc)
@@ -582,6 +594,47 @@ private:
         child_count_[id] = 1;
         link_children(id);
         return id;
+    }
+
+    // Issue #150 Phase 1: region annotation side-table.
+    // Maps either a define's name (SymId) or a lambda's
+    // NodeId (for anonymous lambdas) to the user's
+    // performance-region / evolution-region hint. The
+    // lowering pass (FlatFnBuilder in lowering_impl.cpp)
+    // reads this table to set IRFunction::region on the
+    // corresponding IRFunction. The side-table is keyed by
+    // either a SymId (for defines) or a NodeId (for anonymous
+    // lambdas) — we use two parallel maps to keep the
+    // namespaces separate.
+    //
+    // The parser populates this via set_function_region(sym, r)
+    // for a define, and set_function_region(node_id, r) for a
+    // lambda. The lowering pass queries via
+    // get_function_region_for_sym(sym) and
+    // get_function_region_for_lambda(node_id) — both return
+    // std::optional<std::uint8_t>; nullopt means no annotation.
+    void set_function_region(SymId name, std::uint8_t region) {
+        region_by_sym_[name] = region;
+    }
+    // Overload tag: pass a 0 literal to disambiguate. We
+    // use a sentinel parameter (an unused int) so the two
+    // overloads don't collide on the same uint32_t underlying
+    // type. Callers use set_function_region_sym and
+    // set_function_region_lambda explicitly.
+    void set_function_region_lambda(NodeId lambda_id, std::uint8_t region) {
+        region_by_lambda_id_[lambda_id] = region;
+    }
+    [[nodiscard]] std::optional<std::uint8_t>
+    get_function_region_for_sym(SymId name) const {
+        auto it = region_by_sym_.find(name);
+        if (it == region_by_sym_.end()) return std::nullopt;
+        return it->second;
+    }
+    [[nodiscard]] std::optional<std::uint8_t>
+    get_function_region_for_lambda(NodeId lambda_id) const {
+        auto it = region_by_lambda_id_.find(lambda_id);
+        if (it == region_by_lambda_id_.end()) return std::nullopt;
+        return it->second;
     }
 
     [[nodiscard]] NodeId add_define_type(SymId name, std::span<const SymId> params,

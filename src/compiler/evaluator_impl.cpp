@@ -16030,6 +16030,55 @@ ast::NodeId Evaluator::data_to_flat(const types::EvalValue& data, aura::ast::Fla
                 return ast::NULL_NODE;
             }
 
+            // Issue #150 Phase 1: performance-region / evolution-region
+            // wrappers. The forms are:
+            //   (performance-region (define f ...))
+            //   (performance-region (lambda (x) ...))
+            //   (evolution-region (define g ...))
+            //   (evolution-region (lambda (x) ...))
+            // The wrapper is transparent — the inner form is
+            // processed normally — but it records a side-table
+            // mapping the resulting function's name to the
+            // specified region. The lowering pass (FlatFnBuilder
+            // in lowering_impl.cpp) reads this side-table to set
+            // IRFunction::region accordingly.
+            //
+            // If the inner form is not a define/lambda, the
+            // wrapper is silently a no-op (the inner form is
+            // processed; the region tag is discarded). This
+            // matches the user's mental model: "annotate this
+            // form with a region hint" — the hint is only useful
+            // for define/lambda; for other forms it's ignored.
+            if (fn_name == "performance-region" || fn_name == "evolution-region") {
+                if (is_pair(cdr_data)) {
+                    auto rp = as_pair_idx(cdr_data);
+                    auto inner_node = data_to_flat(pairs_[rp].car, flat, pool, depth + 1);
+                    if (inner_node == ast::NULL_NODE)
+                        return ast::NULL_NODE;
+                    // The inner form should be a Define or Lambda.
+                    // If it's a Define, get the name and record
+                    // (name -> region) in the side-table.
+                    if (flat.get(inner_node).tag == ast::NodeTag::Define) {
+                        auto sym = flat.get(inner_node).sym_id;
+                        if (sym != ast::INVALID_SYM) {
+                            auto region = (fn_name == "performance-region")
+                                              ? std::uint8_t{1} /*Performance*/
+                                              : std::uint8_t{2} /*Evolution*/;
+                            flat.set_function_region(sym, region);
+                        }
+                    } else if (flat.get(inner_node).tag == ast::NodeTag::Lambda) {
+                        // Lambdas are anonymous — use the
+                        // overload-tagged setter for lambdas.
+                        auto region = (fn_name == "performance-region")
+                                          ? std::uint8_t{1} /*Performance*/
+                                          : std::uint8_t{2} /*Evolution*/;
+                        flat.set_function_region_lambda(inner_node, region);
+                    }
+                    return inner_node;
+                }
+                return ast::NULL_NODE;
+            }
+
             // Set!: (set! name value)
             if (fn_name == "set!") {
                 if (is_pair(cdr_data)) {
