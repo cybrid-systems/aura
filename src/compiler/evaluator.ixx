@@ -444,6 +444,26 @@ public:
     ast::FlatAST* current_flat() const { return current_flat_; }
     ast::StringPool* current_pool() const { return current_pool_; }
 
+    // Issue #145 follow-up / Phase 2.5.0 prep: canonical pool accessor.
+    // For now, the canonical pool is the workspace pool — it is the
+    // pool where almost all `intern()` calls already route (39 sites
+    // in evaluator_impl.cpp, vs. ~5 in pat_pool / tmp_pool / local
+    // scratch pools). The pool unification refactor (Phase 2.5.0 in
+    // docs/design/cpp26_guide.md §2.7.7) will:
+    //
+    //   1. Route every new `intern()` call through this accessor
+    //      instead of the named pool_ members.
+    //   2. Migrate the few pat_pool / tmp_pool scratch pools to
+    //      use the canonical pool (or extract the names they
+    //      intern into a separate "interning-once" set).
+    //   3. Eventually demote the other pool_ members to nullable
+    //      legacy fields (or remove them) once the migration
+    //      completes.
+    //
+    // Returns nullptr when no workspace is loaded (callers must
+    // check — that's the same contract as `workspace_pool()`).
+    ast::StringPool* canonical_pool() const { return workspace_pool_; }
+
     void* workspace_tree() const { return workspace_tree_; }
     // Update the shared tree's root node to point to this evaluator's workspace.
     void update_shared_tree_root();
