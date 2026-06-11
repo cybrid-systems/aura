@@ -84,6 +84,26 @@ export class ConstraintSystem {
 public:
     explicit ConstraintSystem(aura::core::TypeRegistry& reg);
     void add(Constraint c);
+    // Issue #148: incremental constraint management. add_delta
+    // appends a new constraint AND marks it dirty. solve_delta
+    // re-solves only the dirty subset (constraints added since
+    // the last solve). No dependency tracking yet — unification
+    // can still touch other constraints' variables, but the
+    // resulting unifications are persistent in the Union-Find
+    // so downstream consumers see the correct bindings. For
+    // larger delta sets (mutation touching N type ids), the
+    // AC's ≥60% reduction comes from skipping the (M-N) clean
+    // constraints in the worklist scan.
+    //
+    // Edge case: a delta that introduces a NEW unification
+    // that conflicts with an existing clean constraint's
+    // bindings will NOT be caught by solve_delta alone — the
+    // clean constraint is not re-checked. Callers that need
+    // full correctness across deltas should follow up with a
+    // solve() pass. The benchmark in Phase 6 will measure
+    // when this matters; until then, solve_delta is a best-
+    // effort optimization.
+    void add_delta(Constraint c);
     // Issue #118: returns SolveResult. If the result is TIMEOUT,
     // `unresolved_out` (if non-null) is filled with the constraints
     // that remained on the worklist when the pass limit was
@@ -91,6 +111,22 @@ public:
     // diagnostic so AI agents can see exactly which constraints
     // are still under-constrained.
     SolveResult solve(std::vector<Constraint>* unresolved_out = nullptr);
+    // Issue #148: incremental solve — iterate only the dirty
+    // subset. Returns SolveResult::SOLVED if all dirty
+    // constraints unify cleanly, SolveResult::CONFLICT on
+    // any unification failure, SolveResult::TIMEOUT if the
+    // pass limit is hit before fixpoint.
+    SolveResult solve_delta(std::vector<Constraint>* unresolved_out = nullptr);
+    // O(1) "is the constraint set dirty?". True iff
+    // add_delta has been called since the last clear or solve.
+    bool is_dirty() const { return dirty_count_ > 0; }
+    // O(n) clear of dirty flags without removing constraints.
+    // Useful when a full solve() has run and we want to reset
+    // the delta tracking without losing constraint state.
+    void mark_clean() {
+        std::fill(constraint_dirty_.begin(), constraint_dirty_.end(), false);
+        dirty_count_ = 0;
+    }
     void clear();
     aura::core::TypeId fresh_var();
     // Issue #79: variant that takes a name hint, so the resulting type var
