@@ -49,6 +49,14 @@
 
 **AI Agent 读者请注意**：本文档作为设计意图保留。但实装代码状态以本文档为准。**Aura 代码**只能使用 `lib/std/query.aura` 中实装的 helper；**C++ 代码**可以直接调用 `evaluator.ixx` 中所有 11 个原语。
 
+### Code References（实现位置）
+- 主要注册：`src/compiler/evaluator_impl.cpp` 
+  - `query:find` ~L6036, `query:where` ~L6483, `query:pattern` ~L6725, `query:def-use` ~L9696 等。
+  - QueryEngine 类在 `src/compiler/query.ixx` / `query_impl.cpp`（支持 where 谓词、pattern matching、DefUseIndex）。
+- 与 mutate 集成：`mutate:query-and-replace` ~L5154。
+- 增量/CaaS：与 `CompilerService` cache 和 dirty 标记集成（见 §4）。
+- 开发者扩展：`docs/developer/evaluator.md`。
+
 ---
 
 ## 1. 核心模型：工作区

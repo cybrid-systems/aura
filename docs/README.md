@@ -1,10 +1,12 @@
 # Aura 文档
 
 > **推荐阅读路径（按受众）**
-> - **AI Agent / LLM 写手**：先读 [tutorial.md](tutorial.md) 快速上手 → [api-reference.md](api-reference.md) 查原语 → 各 `design/core/` 的 **## 0. Implementation Status** 表格（当前实装真相）。
+> - **AI Agent / LLM 写手**：先读 [tutorial.md](tutorial.md) 快速上手 → **[api-reference.md](api-reference.md)**（中央 Primitives Surface，带设计/代码/std/测试交叉引用） → 各 `design/core/` 的 **## 0. Implementation Status** 表格（当前实装真相）。
 > - **想理解自修改核心**：`design/core/query_edsl.md` + `mutate_api.md` + `workspace_layering.md` + `typed_mutation.md`。
 > - **想做 Agent 编排**：`design/core/agent_orchestration.md` + `std/orchestrator.aura` + `projects/evo-kv/` 示例。
 > - **想贡献核心**：`docs/developer/evaluator.md` + 对应 core 设计 + `projects/GAPS.md`。
+
+**文档分离**：`tutorial.md` + `api-reference.md`（含 std/） 作为 User Guide/Surface；`design/core/` 等作为 Design & Extension 参考。减少重复，通过交叉链接（见 api-ref 的 EDSL Surface 表）。
 
 ## 概况
 
