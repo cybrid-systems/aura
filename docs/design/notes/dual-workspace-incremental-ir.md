@@ -1,5 +1,7 @@
 # Dual Workspace + Incremental IR for EDSL
 
+> **注意（历史文档）**：本文档记录了 workspace 分层与 IR 增量编译的早期联合设计。当前 Workspace P0（COW、lock、per-workspace budget）已在 `design/core/workspace_layering.md` 完整实装；IR 增量已集成到 `eval()`（见 `design/compilation/ir_pipeline.md`）。许多早期方案已被简化或演进。
+
 > **Status:** 设计中
 > **基于:** Aura commit `99c5455` (C++26 contracts 已合并)
 > **关联:** Issue #98 Action 1 (workspaces), Issue #32b (incremental eval)
