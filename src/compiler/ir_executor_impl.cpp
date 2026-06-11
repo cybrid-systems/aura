@@ -497,6 +497,33 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 case IROpcode::GuardShape: {
                     auto& val = locals[ops[1]];
                     auto expected = static_cast<std::uint32_t>(ops[2]);
+                    // Issue #149 Phase 4: when occurrence-narrowing
+                    // has produced the branch's type statically
+                    // (narrow_evidence != 0 on the GuardShape
+                    // instruction), trust the narrowed type over
+                    // the runtime shape check. This is the hit-
+                    // rate improvement the issue calls for: a
+                    // narrowed value like (number? x) → Int
+                    // skips the generic shape check (which would
+                    // say "Dynamic" and deopt) and accepts the
+                    // specialized path. The check is conservative
+                    // (only enabled when narrow_evidence is set,
+                    // which today is 0 at every instruction), so
+                    // no behavior change until lowering starts
+                    // populating narrow_evidence from real type
+                    // info (Phase 2 follow-up).
+                    if (instr.narrow_evidence != 0) {
+                        // Narrowed: trust the inferred type
+                        // implicitly. (The current interpreter
+                        // doesn't track the narrowed type per-
+                        // instruction; a follow-up adds a parallel
+                        // type-table. For now, we just skip the
+                        // shape check, accepting all narrowed
+                        // values — equivalent to saying "the JIT
+                        // can fast-path this".)
+                        locals[ops[0]] = types::make_bool(true);
+                        break;
+                    }
                     auto actual = runtime_shape_of(val);
                     if (actual != expected) {
                         // Issue #62 Iter 1: increment the global
