@@ -7,6 +7,50 @@
 
 ---
 
+## 0. Implementation Status (2026-06-11, Issue #154)
+
+**重要**：本文档描述的 query 能力 **高于实际 Aura 表层实装**。准确分两层：
+
+### C++ Core Layer (`src/compiler/evaluator_impl.cpp`)
+
+| 原语 | 实装 | 备注 |
+|------|------|------|
+| `query:find` | ✓ | 按名称找节点（Define/Variable 等） |
+| `query:node-type` | ✓ | 按 NodeTag 过滤节点 |
+| `query:children` | ✓ | 节点的子节点 ID 列表 |
+| `query:parent` | ✓ | 节点的父节点 ID |
+| `query:siblings` | ✓ | 同父节点的兄弟节点 |
+| `query:root` | ✓ | 工作区根节点 ID |
+| `query:node` | ✓ | 节点详情（标签 + 子节点） |
+| `query:calls` | ✓ | 引用了某名称的所有节点 |
+| `query:where` | ✓ | 构造谓词描述子（:node-type / :callee / :defined-by / :parent-type / :has-type） |
+| `query:filter` | ✓ | 按谓词过滤节点 ID 列表（AND 语义） |
+| `query:pattern` | ✓ | S-表达式模式匹配（含 `...` 通配符） |
+| `query:def-use` | ✓ | def-use 路径查询（C++ 内部使用，DefUseIndex） |
+
+全部 11 个原语在 C++ 层 **实装**。可以直接从 Aura 通过 `evaluator` 内部接口调用。
+
+### Aura Helper Layer (`lib/std/query.aura`)
+
+| 原语 | 实装 | 备注 |
+|------|------|------|
+| `query:filter` | ✓ | 简单列表过滤（基于 lambda 谓词，AND 不支持多谓词组合） |
+| `query:uncalled` | ✓ | 找出所有未被调用的 Define |
+| `query:callers-of` | ✓ | 找出所有调用某名称的节点 ID |
+| `query:find` / `query:calls` / `query:node-type` / `query:pattern` / `query:where` | ✗ | **Aura 层未包装**——需要直接调用 C++ 内部接口 |
+
+`lib/std/query.aura` 只有 **3 个 helper**（filter、uncalled、callers-of）。文档中演示的其它原语需要通过 C++ 内部接口调用（AI Agent 可以但 Aura 代码不行）。
+
+### Rich EDSL Querying 的未来工作
+
+- 完整的 `(query:where :field value)` 谓词 DSL 仍可扩展（更多谓词类型）
+- 高级模式匹配（嵌套 `...`、guard 表达式）—— `query:pattern` 当前只支持扁平 `...`
+- 全功能 DefUse 查询的 Aura 表面 —— C++ 内部有完整的 DefUseIndex，Aura 表面只暴露了 `refers-to?` helper
+
+**AI Agent 读者请注意**：本文档作为设计意图保留。但实装代码状态以本文档为准。**Aura 代码**只能使用 `lib/std/query.aura` 中实装的 helper；**C++ 代码**可以直接调用 `evaluator.ixx` 中所有 11 个原语。
+
+---
+
 ## 1. 核心模型：工作区
 
 ```
