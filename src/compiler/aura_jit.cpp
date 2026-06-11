@@ -242,6 +242,10 @@ struct LLVMBuilder {
     // L2 specialization: unchecked pair access (skips tag check)
     llvm::Function* fn_pair_car_unchecked = nullptr;
     llvm::Function* fn_pair_cdr_unchecked = nullptr;
+    // Issue #157 Phase 1b: defuse_version_ accessor (runtime
+    // function that reads the current Evaluator::defuse_version_
+    // via the g_lock_hooks.get_version callback).
+    llvm::Function* fn_get_defuse_version = nullptr;
     // Hash operations (inline dispatch, avoids PrimCall overhead)
     llvm::Function* fn_hash_ref = nullptr;
     llvm::Function* fn_hash_set = nullptr;
@@ -301,6 +305,15 @@ struct LLVMBuilder {
 
         fn_pair_cdr_unchecked = llvm::Function::Create(llvm::FunctionType::get(i64, {i64}, false),
                                              llvm::Function::ExternalLinkage, "aura_pair_cdr_unchecked", mod);
+
+        // Issue #157 Phase 1b: declare the defuse_version_ accessor
+        // for the L2 version check. The runtime function is
+        // extern "C" uint64_t aura_get_defuse_version() (defined in
+        // aura_jit_runtime.cpp). The JIT emits calls to it at function
+        // entry (capture expected_version) and at each L2 SHAPE_PAIR
+        // use (check current version, deopt to slow path on mismatch).
+        fn_get_defuse_version = llvm::Function::Create(llvm::FunctionType::get(i64, false),
+                                             llvm::Function::ExternalLinkage, "aura_get_defuse_version", mod);
 
         fn_prim_call =
             llvm::Function::Create(llvm::FunctionType::get(i64, {i64, i64, i64, i64}, false),
@@ -824,29 +837,91 @@ struct LLVMBuilder {
                 return true;
             }
             case OpCar: {
-                // Issue #157 Phase 1 (HIGHEST PRIORITY): L2 SHAPE_PAIR
-                // calls aura_pair_car_unchecked which has no bounds check,
-                // no lock, no version check. See inventory in
-                // docs/design/notes/issue-157-jit-workspace-invariant.md
-                // §2.7. Phase 1 fix: capture defuse_version_ at lowering,
-                // emit version check at L2 entry, fall through to
-                // aura_pair_car (slow path) on mismatch.
+                // Issue #157 Phase 1b: L2 SHAPE_PAIR version check + deopt.
+                //
+                // Single-threaded code takes the fast path
+                // (aura_pair_car_unchecked, no bounds, no lock) — the
+                // version check passes because no concurrent mutate has
+                // changed defuse_version_ since function entry.
+                //
+                // Multi-threaded code with concurrent mutate triggers a
+                // deopt to the slow path (aura_pair_car, with bounds +
+                // lock from Phase 1) on the next L2 use after the
+                // mutate invalidates the captured version.
+                //
+                // The 3-block structure (fast / slow / done) is the same
+                // pattern as OpHashRef's null/live/loop/check/cmp/next/
+                // found/miss/done — see aura_jit.cpp:998+ for reference.
                 auto pair_val = load(inst.ops[1]);
-                // L2 specialization: if the result is known Pair, call unchecked variant
                 bool spec_pair = (inst_shape(inst) == SHAPE_PAIR);
-                auto car_fn = spec_pair ? fn_pair_car_unchecked : fn_pair_car;
-                auto call = irb->CreateCall(car_fn, {pair_val});
-                store(inst.ops[0], call);
+                if (spec_pair) {
+                    auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+                    auto* cur = irb->CreateCall(fn_get_defuse_version, {});
+                    auto* expected = irb->CreateLoad(i64_ty, llvm_locals[fn.local_count]);
+                    auto* match = irb->CreateICmpEQ(cur, expected);
+                    auto* entry_bb = irb->GetInsertBlock();
+                    auto* parent_func = entry_bb->getParent();
+                    auto* bb_fast = llvm::BasicBlock::Create(ctx, "car_fast", parent_func);
+                    auto* bb_slow = llvm::BasicBlock::Create(ctx, "car_slow", parent_func);
+                    auto* bb_done = llvm::BasicBlock::Create(ctx, "car_done", parent_func);
+                    irb->CreateCondBr(match, bb_fast, bb_slow);
+
+                    // Fast path: no bounds check, no lock
+                    irb->SetInsertPoint(bb_fast);
+                    auto* fast_result = irb->CreateCall(fn_pair_car_unchecked, {pair_val});
+                    irb->CreateBr(bb_done);
+
+                    // Slow path: bounds check + lock (Phase 1)
+                    irb->SetInsertPoint(bb_slow);
+                    auto* slow_result = irb->CreateCall(fn_pair_car, {pair_val});
+                    irb->CreateBr(bb_done);
+
+                    // Merge
+                    irb->SetInsertPoint(bb_done);
+                    auto* phi = irb->CreatePHI(i64_ty, 2, "car_result");
+                    phi->addIncoming(fast_result, bb_fast);
+                    phi->addIncoming(slow_result, bb_slow);
+                    store(inst.ops[0], phi);
+                } else {
+                    // Non-L2 path: always take the slow path (with bounds + lock)
+                    auto call = irb->CreateCall(fn_pair_car, {pair_val});
+                    store(inst.ops[0], call);
+                }
                 return true;
             }
             case OpCdr: {
-                // Issue #157 Phase 1 (HIGHEST PRIORITY): same as OpCar.
+                // Issue #157 Phase 1b: same as OpCar but for cdr.
                 auto pair_val = load(inst.ops[1]);
-                // L2 specialization: if the result is known Pair, call unchecked variant
                 bool spec_pair = (inst_shape(inst) == SHAPE_PAIR);
-                auto cdr_fn = spec_pair ? fn_pair_cdr_unchecked : fn_pair_cdr;
-                auto call = irb->CreateCall(cdr_fn, {pair_val});
-                store(inst.ops[0], call);
+                if (spec_pair) {
+                    auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+                    auto* cur = irb->CreateCall(fn_get_defuse_version, {});
+                    auto* expected = irb->CreateLoad(i64_ty, llvm_locals[fn.local_count]);
+                    auto* match = irb->CreateICmpEQ(cur, expected);
+                    auto* entry_bb = irb->GetInsertBlock();
+                    auto* parent_func = entry_bb->getParent();
+                    auto* bb_fast = llvm::BasicBlock::Create(ctx, "cdr_fast", parent_func);
+                    auto* bb_slow = llvm::BasicBlock::Create(ctx, "cdr_slow", parent_func);
+                    auto* bb_done = llvm::BasicBlock::Create(ctx, "cdr_done", parent_func);
+                    irb->CreateCondBr(match, bb_fast, bb_slow);
+
+                    irb->SetInsertPoint(bb_fast);
+                    auto* fast_result = irb->CreateCall(fn_pair_cdr_unchecked, {pair_val});
+                    irb->CreateBr(bb_done);
+
+                    irb->SetInsertPoint(bb_slow);
+                    auto* slow_result = irb->CreateCall(fn_pair_cdr, {pair_val});
+                    irb->CreateBr(bb_done);
+
+                    irb->SetInsertPoint(bb_done);
+                    auto* phi = irb->CreatePHI(i64_ty, 2, "cdr_result");
+                    phi->addIncoming(fast_result, bb_fast);
+                    phi->addIncoming(slow_result, bb_slow);
+                    store(inst.ops[0], phi);
+                } else {
+                    auto call = irb->CreateCall(fn_pair_cdr, {pair_val});
+                    store(inst.ops[0], call);
+                }
                 return true;
             }
 
@@ -1281,6 +1356,8 @@ int64_t aura_pair_car(int64_t);
 int64_t aura_pair_cdr(int64_t);
 int64_t aura_pair_car_unchecked(int64_t);
 int64_t aura_pair_cdr_unchecked(int64_t);
+// Issue #157 Phase 1b: defuse_version_ accessor for L2 version check.
+uint64_t aura_get_defuse_version();
 int64_t aura_prim_call(int64_t, int64_t, int64_t, int64_t);
 uint64_t aura_prim_call_count();
 uint64_t aura_prim_call_total_ns();
@@ -1651,6 +1728,20 @@ struct AuraJIT::Impl {
         builder.irb->SetInsertPoint(builder.block_map[fn.entry_block]);
         for (uint32_t i = 0; i < fn.local_count; ++i)
             builder.llvm_locals.push_back(builder.irb->CreateAlloca(llvm::Type::getInt64Ty(ctx)));
+
+        // Issue #157 Phase 1b: reserve an extra local slot (at index
+        // fn.local_count) for the captured defuse_version_. At function
+        // entry we call aura_get_defuse_version() and store the result
+        // here; at each L2 SHAPE_PAIR use we compare the current
+        // version against this captured value. On mismatch, deopt to
+        // the slow path (aura_pair_car / aura_pair_cdr with bounds +
+        // lock). On match, take the fast path (aura_pair_car_unchecked
+        // / aura_pair_cdr_unchecked, no bounds, no lock).
+        builder.llvm_locals.push_back(builder.irb->CreateAlloca(llvm::Type::getInt64Ty(ctx)));
+        {
+            auto* ver = builder.irb->CreateCall(builder.fn_get_defuse_version, {});
+            builder.irb->CreateStore(ver, builder.llvm_locals[fn.local_count]);
+        }
 
         // Lower each block
         for (uint32_t bi = 0; bi < fn.num_blocks; ++bi) {
