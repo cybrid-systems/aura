@@ -21,3 +21,5 @@ Notable files:
 - Various `issue-*-*.md` files — Deep dives into specific problems that were later resolved
 
 New readers (human or AI) are encouraged to start with the core documents rather than browsing this archive.
+
+**For contributors**: Follow the rules in `docs/README.md` "Living Documentation Practices" and the parent `design/history/README.md`. Only add new files here for truly speculative/unresolved explorations. Prefer updating core/ §0 tables + api-reference.md + (if needed) a closing note.

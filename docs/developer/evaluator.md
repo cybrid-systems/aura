@@ -99,6 +99,44 @@ Add the `end_id` snapshot. It costs one local register and never
 changes correct-program behavior. The cost of omitting it is an
 infinite loop, which is much worse.
 
+## 5. Documenting your changes (Living Docs)
+
+This is a **living project**. When you add, modify, or remove a primitive (especially EDSL-related ones like query:*, mutate:*, workspace:*, ast:*), you **must** keep the documentation in sync.
+
+### Mandatory updates checklist
+1. **Update the relevant design doc's §0 Implementation Status table**:
+   - Add the primitive to the C++ Core Layer table (with ✓ / source location in evaluator_impl.cpp).
+   - Update Aura Layer if there's a std/ wrapper.
+   - Refresh the date and "AI Agent 读者请注意" if behavior changes.
+   - Example files: `design/core/query_edsl.md`, `mutate_api.md`, `workspace_layering.md`, `typed_mutation.md`.
+
+2. **Update api-reference.md (the central Primitives Surface)**:
+   - Add to the built-in lists under "代码自修改 (EDSL)" or "Workspace".
+   - Update the "EDSL Primitives Surface" subsection with the new code location (e.g. `primitives_.add("foo:bar", ...)` in evaluator_impl.cpp ~Lxxxx).
+   - Add or update the corresponding row in the std/ EDSL table if a helper is provided.
+
+3. **Update cross-references**:
+   - In the design doc, add a "Code References" subsection (or extend existing) pointing to exact lines in `evaluator_impl.cpp`, `query.ixx`, `service.ixx`, etc.
+   - If it affects Agent usage or examples, touch `tutorial.md` status notes.
+
+4. **For new speculative work**:
+   - Do **not** create new files in `design/history/notes/` unless it is a truly unresolved exploration.
+   - Route most work through a closing note + update to the core design §0.
+   - See `design/history/README.md` and `design/history/notes/README.md` for rules.
+
+5. **Status banners & dates**:
+   - Keep the top-level `> **Status (日期, Issue #):**` or `## 0. Implementation Status` fresh.
+   - Update the date on any meaningful change.
+
+### Why this matters
+- AI Agents (via --serve) rely on accurate "what works now" information.
+- Human contributors need to find the authoritative spec + implementation mapping quickly.
+- The §0 tables + api-ref Surface are the single source of truth after the Phase 1–3 cleanup.
+
+Failing to update docs is equivalent to leaving a bug in the self-modification surface.
+
+See the full "Living Documentation Practices" section in `docs/README.md` for the complete rules.
+
 ---
 
 ## 2. Adding a new primitive

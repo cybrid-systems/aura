@@ -29,8 +29,11 @@
 - **`design/runtime/`** — 运行时相关 (async serve / FFI) (2 篇)
 - **`design/history/`** — 归档与历史（`notes/` + `closings/`）。包含 issue follow-up、推测设计等。新人可跳过；详见 history/ 下的 READMEs。
 
-### 进程规则：§0 Implementation Status 必须存在
+### Living Documentation Practices（活文档维护实践）
 
+文档必须与代码保持同步，尤其是 EDSL 自修改核心（query/mutate/workspace/ast）。以下是强制实践：
+
+#### 1. §0 Implementation Status 必须存在
 **所有 `design/core/`、`design/compilation/`、`design/runtime/` 下的核心设计文档必须包含 `## 0. Implementation Status` 章节**（按 Issue #156 引入）。
 
 该章节作为 **AI Agent 读者与新贡献者的"实现状态权威来源"**，要求：
@@ -44,10 +47,38 @@
 
 参考实现：
 - `design/core/query_edsl.md` §0（#154 引入，原型）
-- `design/core/mutate_api.md` §6（#155 引入，并发与安全状态）
+- `design/core/mutate_api.md` §0（Phase 1 补全）
 - 8 篇 `design/{core,compilation,runtime}/` 下的 §0（#156 批量补全）
 
-详细背景见 Issue #156 关闭评论 + 关闭 doc（如已写）。
+#### 2. 新增/修改原语时的强制更新
+当添加、修改或移除 primitive（尤其是 EDSL 相关）时，必须同步更新：
+- `docs/api-reference.md`（Primitives Surface 表 + 代码位置 + std 包装）。
+- 对应 `design/core/` 文档的 §0 Implementation Status 表（更新日期、实装标记、源码位置）。
+- 如果影响 Agent 用法，更新 `tutorial.md` 示例或状态提示。
+- 在 `src/compiler/evaluator_impl.cpp`（或相关）附近添加简要注释，引用设计文档。
+
+示例：添加 `foo:bar` primitive 后，立即更新 query_edsl 或 mutate_api 的 §0 表，并刷新 api-ref 中的 EDSL Surface 引用。
+
+#### 3. 归档内容路由规则（notes/ & closings/）
+- **仅在以下情况才新增到 `design/history/notes/`**：真正未解决的 speculative 设计探索、早期 pipeline 研究、或与当前 core/ 无直接映射的愿景文档。
+- 大多数 issue 工作 → 走 closing（`design/history/closings/`）+ 更新对应 core/ 文档的 §0 表。
+- 永远不要在 notes/ 中重复 core/ 已实装的内容；如果需要历史上下文，加 "Superseded by: design/core/xxx.md §0" 指针。
+- 新 contributions 到 history/ 时，必须在该目录的 README 中更新索引或关键文档列表。
+
+#### 4. 状态横幅与日期
+- 所有核心文档顶部或 §0 使用明确的 Status / Implementation Status（含日期 + Issue #）。
+- 每次实质性变更后更新日期（如 "2026-06-11, Issue #156"）。
+- 使用现有模式：`> **Status (日期, Issue #):** ✅ ...` 或 `## 0. Implementation Status`。
+
+#### 5. 其他实践
+- **api-reference.md 是中央真相**：任何原语变化必须先反映在这里（带交叉链接）。
+- **减少重复**：User Guide（tutorial + api-ref）聚焦“怎么用 + 当前状态”；Design（core/）聚焦“为什么 + 架构 + 实现细节”。用交叉链接连接两者。
+- **历史文件**：新 notes/ 仅限真正探索性内容；否则优先更新 core/ 或添加 closing。
+- **定期维护**：重大 PR 后，review 相关设计文档的 §0 是否过时。
+
+这些规则确保文档对 AI Agent（清晰的“现在能用什么”）和人类开发者（架构 + 扩展点）都保持有用和准确。
+
+详细背景见 Issue #156 关闭评论 + 相关 closing docs。
 
 
 ### 核心 (`design/core/`)

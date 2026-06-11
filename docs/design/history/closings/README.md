@@ -16,3 +16,10 @@ These are valuable for understanding the rationale and lessons from past work, b
 - For active gaps, see `projects/GAPS.md`
 
 Example: Issues around EDSL, workspace layering, concurrency, and mutation were heavily documented here and have largely been realized in the core specifications.
+
+**For contributors**: When resolving issues, prefer:
+1. Updating the matching `../core/*.md` §0 table (with current implementation status and code pointers).
+2. Updating `docs/api-reference.md`.
+3. Adding a concise closing note here.
+
+See the full Living Documentation Practices in `docs/README.md` and `design/history/README.md`. Do not duplicate implemented content here.
