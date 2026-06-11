@@ -10,24 +10,43 @@
 | [基准](benchmark.md) | EDSL benchmark 数据 |
 | [哲学](philosophy.md) | Aura 的设计思想 |
 
-## 设计文档 (design/)
+## 设计文档 (`design/`)
 
-| 领域 | 文档 |
+设计文档分三层：
+
+- **`design/core/`** — 高价值核心设计 (~6 篇) ，作为新贡献者的 on-ramp
+- **`design/compilation/`** — 编译相关 (IR / JIT) (~2 篇)
+- **`design/runtime/`** — 运行时相关 (async serve / FFI) (~2 篇)
+- **`design/notes/`** — 归档的设计探索 / 单一议题 follow-up (~80+ 篇) — 仍有参考价值但不是 on-ramp 必读
+
+### 核心 (`design/core/`)
+
+| 文档 | 内容 |
 |------|------|
-| **语言** | [语法规格](design/aura_language_spec.md)、[语言规划](design/aura_language_plan.md)、[C++26 指南](design/cpp26_guide.md) |
-| **类型系统** | [类型系统设计](design/aura_typesystem.md)、[形式化](design/aura_typesystem_formal.md) |
-| **ORM 管线** | [IR 管线](design/ir_pipeline_design.md)、[IR import](design/ir_import.md) |
-| **LLVM JIT** | [JIT 设计](design/llvm_jit.md)、[二进制运行时](design/binary_runtime_plan.md)、[binary drop/heap](design/binary_drop_heap.md) |
-| **EDSL & AST** | [查询 EDSL](design/query_edsl_design.md)、[变更 API](design/mutate_api.md)、[类型化变异](design/typed_mutation_design.md)、[AST 验证](design/ast_validate.md) |
-| **Agent 编排** | [Agent 编排](design/agent_orchestration.md)、[意图编排](design/intent_orchestration.md)、[Inter-Agent 通信](design/inter_agent_messaging.md) |
-| **分析 & 控制** | [def-use 分析](design/defuse_analysis.md)、[蚁群控制器](design/ant_colony_controller.md)、[PID 自适应](design/adaptive_intend_pid.md)、[蚁群架构](design/ant_architecture.md) |
-| **Workspace** | [Workspace 分层](design/workspace_layering.md)、[双 Arena](design/double-arena.md)、[值编码](design/value_encoding.md) |
-| **合成** | [合成策略](design/synthesize_strategies.md)、[管线策略](design/pipeline_strategy.md)、[合成管线 v2](design/synthesize-pipeline-v2.md)、[错误处理](design/error_handling.md) |
-| **模块 & 宏** | [模块命名空间](design/module_namespace_design.md)、[Functor 模块](design/functor_modules.md)、[卫生宏](design/hygienic_macros.md)、[macro v2](design/macro_system_v2.md) |
-| **C FFI** | [FFI 设计](design/ffi_c.md)、[运行时 C 测试](design/runtime_c_tests.md) |
-| **LLM 集成** | [LLM stdlib](design/llm_stdlib.md)、[Fuzz 测试](design/llm_fuzz_testing.md)、[CaaS 集成](design/caas_integration.md) |
-| **Serve** | [Async serve](design/async_serve_design.md) |
-| **其他** | [编译期反射](design/compile_time_reflection.md)、[规范系统](design/rule_normalize.md)、[格式化器](design/formatter_design.md)、[测试框架](design/testing_framework_design.md)、[可演化策略](design/e4_evolvable_strategies.md)、[capability/functor 集成](design/capability_functor_integration.md)、[核迭代标准](design/kernel_iteration_standard.md) |
+| [agent_orchestration](design/core/agent_orchestration.md) | Agent 编排模型、意图、inter-agent 通信 |
+| [mutate_api](design/core/mutate_api.md) | 动态变更 / 自演化 API |
+| [typesystem](design/core/typesystem.md) | 类型系统设计 + 形式化 |
+| [query_edsl](design/core/query_edsl.md) | 查询 EDSL（只读 AST 访问） |
+| [typed_mutation](design/core/typed_mutation.md) | 类型化变更的形式 |
+| [workspace_layering](design/core/workspace_layering.md) | Workspace 分层 / COW / lock |
+
+### 编译 (`design/compilation/`)
+
+| 文档 | 内容 |
+|------|------|
+| [ir_pipeline](design/compilation/ir_pipeline.md) | IR 管线设计 |
+| [jit](design/compilation/jit.md) | LLVM ORC JIT 设计 |
+
+### 运行时 (`design/runtime/`)
+
+| 文档 | 内容 |
+|------|------|
+| [async_serve](design/runtime/async_serve.md) | Fiber / scheduler / 多 session serve 模式 |
+| [ffi](design/runtime/ffi.md) | C FFI 设计与绑定 |
+
+### 归档 (`design/notes/`) — 按需查阅
+
+包含所有 issue follow-up 、speculative research、单一议题的设计探索、之前版本的管线设计等 (~80+ 篇)。新贡献者可以**跳过**这个目录；它主要供历史参考。`git log -- docs/design/notes/<file>` 仍可追溯每个文件的来历。
 
 ## 构建
 
