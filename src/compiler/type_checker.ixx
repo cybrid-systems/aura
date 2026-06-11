@@ -67,6 +67,20 @@ export class ConstraintSystem {
     std::vector<aura::core::TypeId> binding_; // binding[rep] = concrete type for var rep
     uint64_t fresh_counter_ = 0;
     uint64_t first_free_var_ = 0; // first var index that belongs to this CS
+
+    // Issue #148 prep: dirty-constraint set for incremental
+    // solving. add_delta / remove_delta / solve_delta (Phase 2
+    // of the issue) will read+write this set. The set stores
+    // constraint indices into `constraints_` — when a delta is
+    // added, only the new constraints are touched; the
+    // existing constraints are reused.
+    //
+    // Why std::vector<bool> instead of std::set: cache-locality
+    // matters for solve loops that scan all constraints. The
+    // vector<bool> is checked once per solve iteration; a set
+    // would have pointer-chasing on every check.
+    std::vector<bool> constraint_dirty_;
+    std::size_t dirty_count_ = 0;  // O(1) "is anything dirty?"
 public:
     explicit ConstraintSystem(aura::core::TypeRegistry& reg);
     void add(Constraint c);
