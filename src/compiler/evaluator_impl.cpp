@@ -6642,6 +6642,14 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         if (idx >= string_heap_.size())
             return mev("bad-arg", "pattern string index out of range");
 
+        // Phase 2.5.0: pat_pool stays separate from canonical_pool.
+        // Patterns parse into a fresh FlatAST + pool per call (temp_arena_
+        // reclaims at gc-temp). The wildcard "..." sym is intern'd in
+        // pat_pool so pat_node.sym_id comparisons work — sharing the
+        // canonical pool would mix pattern-specific garbage into the long-
+        // lived workspace, and the pattern's sym_ids would clash with
+        // workspace sym_ids (different ASTs, same pool). Documented
+        // exception to the canonical-pool migration — see commit 14682c5.
         // Parse pattern string into its own FlatAST (separate from workspace).
         // Use temp_arena_ so (gc-temp) reclaims it per call.
         auto alloc = temp_arena_->allocator();
@@ -7046,6 +7054,10 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                                   ? string_heap_[as_string_idx(a[2])]
                                   : "replace-pattern";
 
+        // Phase 2.5.0: pat_pool stays separate from canonical_pool.
+        // Same rationale as the query:pattern site above — pattern AST
+        // is parsed fresh per call (temp_arena_ reclaims) and the
+        // wildcard "..." sym lives in pat_pool for in-pattern comparison.
         // Parse pattern into separate FlatAST.
         // Use temp_arena_ so (gc-temp) reclaims it per call.
         auto alloc = temp_arena_->allocator();
@@ -11823,6 +11835,12 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         auto source = get_ws_source(src_id);
         if (source.empty()) return make_bool(false);
 
+        // Phase 2.5.0: tmp_pool stays separate from canonical_pool.
+        // Source is parsed fresh for a one-off conflict-detection walk
+        // and discarded. The sym used to find the define node is intern'd
+        // in tmp_pool because the lookup is local to tmp_flat — we don't
+        // want conflict-detection intern'd names polluting the long-lived
+        // workspace pool (which already has 39+ intentional interns).
         // Parse the source into a temp flat, find the define for sym_name
         aura::ast::StringPool tmp_pool;
         aura::ast::FlatAST tmp_flat;
@@ -12046,6 +12064,13 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     });
 
     // Issue #98 Action 1: Workspace conflict detection & 3-way merge
+    // Phase 2.5.0: tmp_pool stays separate from canonical_pool.
+    // Helper parses a source string and extracts define names as
+    // std::string. The intern'd names are discarded after extraction
+    // — they serve only as the parser's local symbol table, not as
+    // bindings. Routing through canonical_pool would permanently
+    // grow the workspace pool with names that have no semantic
+    // value to the long-lived workspace.
     // Helper: extract define names from a source string
     auto extract_defines = [this](const std::string& src)
         -> std::unordered_set<std::string> {
