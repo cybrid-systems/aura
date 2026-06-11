@@ -142,6 +142,28 @@ ConstraintSystem::ConstraintSystem(TypeRegistry& reg)
 
 void ConstraintSystem::add(Constraint c) {
     constraints_.push_back(std::move(c));
+    // Issue #148: keep constraint_dirty_ in sync with constraints_.
+    // New constraints added via plain add() are NOT marked dirty
+    // (they're committed to the full-solve path). add_delta() is
+    // the entry point for incremental callers.
+    if (constraint_dirty_.size() < constraints_.size())
+        constraint_dirty_.resize(constraints_.size(), false);
+}
+
+// Issue #148: incremental constraint add. Same as add() but
+// marks the new constraint dirty so solve_delta can pick it
+// up. The dirty flag is append-only (no tombstoning); the
+// constraint is simply excluded from subsequent solve()
+// scans once mark_clean() or clear() is called.
+void ConstraintSystem::add_delta(Constraint c) {
+    const auto new_idx = constraints_.size();
+    constraints_.push_back(std::move(c));
+    if (constraint_dirty_.size() <= new_idx)
+        constraint_dirty_.resize(new_idx + 1, false);
+    if (!constraint_dirty_[new_idx]) {
+        constraint_dirty_[new_idx] = true;
+        ++dirty_count_;
+    }
 }
 
 TypeId ConstraintSystem::fresh_var() {
@@ -542,11 +564,78 @@ SolveResult ConstraintSystem::solve(std::vector<Constraint>* unresolved_out) {
     return SolveResult::SOLVED;
 }
 
+// Issue #148: incremental solve. Iterates only the dirty
+// subset of constraints_ (those added via add_delta since the
+// last mark_clean / clear). No dependency tracking: a delta
+// that introduces a new unification that conflicts with an
+// existing clean constraint's bindings will NOT be caught —
+// callers that need full correctness should follow up with
+// a solve() pass. The AC's ≥60% reduction target is the
+// best-case speedup when deltas are small relative to the
+// total constraint set; the benchmark in Phase 6 will
+// measure real-world numbers.
+SolveResult ConstraintSystem::solve_delta(std::vector<Constraint>* unresolved_out) {
+    if (dirty_count_ == 0) return SolveResult::SOLVED;
+
+    // Build the delta worklist from constraint_dirty_.
+    std::vector<std::size_t> worklist;
+    worklist.reserve(dirty_count_);
+    for (std::size_t i = 0; i < constraint_dirty_.size(); ++i) {
+        if (constraint_dirty_[i]) {
+            worklist.push_back(i);
+        }
+    }
+
+    // Process the delta worklist. Same pass-limit heuristic as
+    // solve() — the delta set is small, so 10 passes is enough
+    // for fixpoint in practice. If a delta is large enough to
+    // need more, the caller can re-invoke solve() for a full pass.
+    std::size_t max_passes = 10;
+    while (!worklist.empty() && max_passes-- > 0) {
+        auto current = std::move(worklist);
+        worklist.clear();
+        for (auto idx : current) {
+            // Skip indices that are out of range (defensive: a
+            // stale dirty bit for a constraint that was later
+            // removed — shouldn't happen with add-only deltas
+            // but the check is cheap).
+            if (idx >= constraints_.size()) continue;
+            auto& c = constraints_[idx];
+            bool ok;
+            if (c.kind == Constraint::EQUAL)
+                ok = unify(c.lhs, c.rhs);
+            else
+                ok = consistent_unify(c.lhs, c.rhs);
+            if (!ok)
+                return SolveResult::CONFLICT;
+        }
+    }
+
+    // Mark all currently-dirty constraints as clean (the
+    // delta is committed). New add_delta calls after this
+    // point will re-mark their indices dirty.
+    mark_clean();
+
+    if (!worklist.empty()) {
+        if (unresolved_out) {
+            for (auto idx : worklist) {
+                if (idx < constraints_.size())
+                    unresolved_out->push_back(constraints_[idx]);
+            }
+        }
+        return SolveResult::TIMEOUT;
+    }
+    return SolveResult::SOLVED;
+}
+
 void ConstraintSystem::clear() {
     constraints_.clear();
     parent_.assign(parent_.size(), -1);
     rank_.assign(rank_.size(), 0);
     binding_.assign(binding_.size(), TypeId{});
+    // Issue #148: reset delta tracking.
+    constraint_dirty_.clear();
+    dirty_count_ = 0;
     fresh_counter_ = 0;
     first_free_var_ = 0;
 } // ═══════════════════════════════════════════════════════════
