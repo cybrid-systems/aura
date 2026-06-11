@@ -368,6 +368,8 @@ ASAN: 0 leaks on 50-iter snapshot+mutate+restore loop。
 
 本节记录 **2026-06 实装** 的 C++ 并发与安全机制——供理解源码或写新 mutate primitive 的开发者参考。
 
+> **完整内存模型**（含 JIT runtime bridges + inline IR 的锁协议 + L2 SHAPE_PAIR version-check fastpath）见 [`docs/design/core/memory_model.md`](memory_model.md)（#157 Phase 4）。
+
 ### 6.1 `std::shared_mutex workspace_mtx_` 读写锁
 
 `evaluator.ixx` 维护一个 `std::shared_mutex workspace_mtx_` 保护 `workspace_flat_` 及其依赖缓存（`defuse_index_`、`defuse_version_`、dirty flags）。锁的获取策略：

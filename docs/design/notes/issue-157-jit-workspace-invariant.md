@@ -2,8 +2,9 @@
 
 **Issue**: [#157](https://github.com/cybrid-systems/aura/issues/157)
 **Labels**: bug, P0, jit, concurrency, runtime
-**Status**: 🟡 IN PROGRESS (Phase 0 — inventory + scaffold)
+**Status**: 🟢 SHIPPED (Phase 0/1/1b/1c/2/5 — close-out comment at `docs/issue-closings/157-close-comment.md`)
 **Related**: #61 (deopt-guards), #107 (snapshot/restore), #115 (stale fn_ptr), #119 (proper join)
+**Memory model**: see [`../core/memory_model.md`](../core/memory_model.md) (Phase 4 — the single-page formalization of the protocol)
 
 ---
 

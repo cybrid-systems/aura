@@ -238,6 +238,12 @@ with no useful backtrace.
 
 ## 3. Mutate primitives — locking protocol
 
+> **The full memory model is documented in
+> [`docs/design/core/memory_model.md`](../design/core/memory_model.md)
+> (Issue #157 Phase 4).** This section is the C++ maintainer's
+> quick-reference; read the full doc for the JIT-layer protocol
+> and the version-check fastpath exception.
+
 `workspace_mtx_` is a `std::shared_mutex` (line 586 of
 `evaluator.ixx`). The convention:
 
