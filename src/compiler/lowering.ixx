@@ -84,6 +84,38 @@ export struct LoweringState {
         }
     }
 
+    // Issue #149 Phase 2: emit with rich type metadata. Sets
+    // type_id, linear_ownership_state, adt_variant_id, and
+    // narrow_evidence on the last instruction in one call.
+    // All four parameters default to 0 (= unknown / not set),
+    // so callers that don't have the info just call
+    // emit() / emit_with_type() as before. When Phase 3
+    // (ADT/linear specialization) starts populating these,
+    // the relevant emit sites will switch to this helper.
+    //
+    // Use:
+    //   - linear_state: 0=untracked, 1=Owned, 2=Borrowed,
+    //     3=MutBorrowed, 4=Moved (M4 Linear typing).
+    //   - adt_variant: 0=not ADT, non-zero=discriminant
+    //     (Phase 3 will populate from type info).
+    //   - narrow_evidence: 0=no narrowing, non-zero=bitmask
+    //     of applied narrowing predicates.
+    void emit_with_metadata(aura::ir::IROpcode op,
+                            std::uint32_t tid,
+                            std::uint8_t linear_state,
+                            std::uint32_t adt_variant,
+                            std::uint32_t narrow_evidence,
+                            std::uint32_t op0, std::uint32_t op1 = 0,
+                            std::uint32_t op2 = 0, std::uint32_t op3 = 0) {
+        emit_with_type(op, tid, op0, op1, op2, op3);
+        if (cur_func && cur_block < cur_func->blocks.size()) {
+            auto& last = cur_func->blocks[cur_block].instructions.back();
+            last.linear_ownership_state = linear_state;
+            last.adt_variant_id = adt_variant;
+            last.narrow_evidence = narrow_evidence;
+        }
+    }
+
     void emit(aura::ir::IROpcode op, std::uint32_t op0, std::uint32_t op1 = 0,
               std::uint32_t op2 = 0, std::uint32_t op3 = 0) {
         if (!cur_func || cur_block >= cur_func->blocks.size())
