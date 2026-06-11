@@ -637,6 +637,52 @@ private:
         return it->second;
     }
 
+    // Issue #150 Phase 3: mutation impact analysis helper.
+    // Given a SymId (the name that was mutated), find all
+    // Define nodes whose value subtree references that
+    // sym. Returns the list of Define node IDs whose
+    // functions are potentially affected by a
+    // mutate:rebind on the given name.
+    //
+    // Conservative MVP: direct reference only. A function
+    // that calls another function which uses the mutated
+    // name is NOT flagged (transitive analysis is a
+    // follow-up). This is a safe underestimate: a function
+    // that DOES directly reference the mutated sym is
+    // flagged, and the caller of such a function MAY also
+    // need invalidation but isn't flagged. The follow-up
+    // (Phase 3b) would walk the call graph from these
+    // results to find the transitive set.
+    [[nodiscard]] std::pmr::vector<aura::ast::NodeId>
+    defines_referencing_sym(SymId sym) const {
+        std::pmr::vector<aura::ast::NodeId> result(
+            std::pmr::polymorphic_allocator<aura::ast::NodeId>{});
+        for (aura::ast::NodeId i = 0; i < size(); ++i) {
+            if (i >= size()) break;
+            auto v = get(i);
+            if (v.tag != aura::ast::NodeTag::Define) continue;
+            if (v.sym_id == sym) continue;  // the mutated Define itself
+            if (v.children.empty()) continue;
+            if (subtree_uses_sym(v.child(0), sym)) {
+                result.push_back(i);
+            }
+        }
+        return result;
+    }
+
+    // Recursive helper: does the subtree rooted at `root`
+    // contain a Variable node whose sym_id == `sym`?
+    bool subtree_uses_sym(aura::ast::NodeId root, SymId sym) const {
+        if (root == aura::ast::NULL_NODE || root >= size()) return false;
+        auto v = get(root);
+        if (v.tag == aura::ast::NodeTag::Variable && v.sym_id == sym)
+            return true;
+        for (auto c : v.children) {
+            if (subtree_uses_sym(c, sym)) return true;
+        }
+        return false;
+    }
+
     [[nodiscard]] NodeId add_define_type(SymId name, std::span<const SymId> params,
                                          std::span<const NodeId> ctors) {
         auto id = add_node(NodeTag::DefineType);
