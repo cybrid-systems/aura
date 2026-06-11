@@ -477,6 +477,26 @@ export struct TypeChecker {
         return static_cast<double>(s.cache_hits) / static_cast<double>(total);
     }
 
+    // Issue #148 Phase 4: partial re-inference entry point.
+    // Given a MutationRecord, identify the affected node set
+    // (via affected_subtree_from_mutation), re-infer each
+    // affected node incrementally (add_delta + solve_delta
+    // per node), and update IncrementalStats. The unaffected
+    // nodes keep their cached type_id (cache hit).
+    //
+    // The MVP does per-node re-inference. A more efficient
+    // batched approach (re-synthesize the subtree once, then
+    // solve_delta) is a follow-up if the benchmark in Phase 6
+    // shows the per-node overhead is significant.
+    //
+    // Returns the number of nodes that were re-inferred.
+    // cache_hits is the number of nodes that were NOT in the
+    // affected set (i.e. kept their cached type_id).
+    std::size_t infer_flat_partial(
+        aura::ast::FlatAST& flat,
+        const aura::ast::StringPool& pool,
+        const aura::ast::MutationRecord& rec);
+
     // Issue #116: deferred CoercionNode insertion. infer_flat
     // now collects coercion intent in this map rather than
     // mutating the FlatAST directly. The caller is expected

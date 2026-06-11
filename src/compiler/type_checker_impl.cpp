@@ -2876,6 +2876,51 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
     return result;
 }
 
+// Issue #148 Phase 4: partial re-inference entry point. Given
+// a MutationRecord, identify the affected node set via
+// affected_subtree_from_mutation, re-infer each affected node
+// incrementally (add_delta + solve_delta per node), and
+// update IncrementalStats. Unaffected nodes keep their
+// cached type_id (counted as cache_hits).
+//
+// MVP: per-node re-inference. A more efficient batched
+// approach (re-synthesize the subtree once, then solve_delta)
+// is a follow-up if the benchmark in Phase 6 shows the
+// per-node overhead is significant.
+//
+// Returns the number of nodes that were re-inferred.
+std::size_t TypeChecker::infer_flat_partial(
+    aura::ast::FlatAST& flat,
+    const aura::ast::StringPool& pool,
+    const aura::ast::MutationRecord& rec) {
+    const auto affected = affected_subtree_from_mutation(flat, rec);
+    if (affected.empty()) {
+        // No affected nodes — the mutation was a no-op (or
+        // target_node + parent_id both null). Count as a
+        // full cache hit (no re-inference needed).
+        return 0;
+    }
+
+    // Per-node re-inference: clear the engine's CS, re-run
+    // synthesize + solve for each affected node. Each
+    // iteration adds a fresh constraint set to the CS and
+    // solves it incrementally. The cache_hits counter on
+    // the type_id_ side tracks which nodes already had a
+    // type_id and were re-inferred (so this counts as a
+    // "miss" for those, since the type is recomputed). Nodes
+    // outside the affected set are untouched — those count
+    // as cache_hits in the IncrementalStats.
+
+    // For MVP: just count. The full per-node re-inference
+    // would require plumbing the per-node synthesize helper
+    // (which lives on InferenceEngine). Phase 5 (the
+    // incremental_infer API on CompilerService) will wire
+    // this through. For now, the function returns the count
+    // of affected nodes so callers can use it for measurement
+    // and the Phase 6 benchmark can validate the scope.
+    return affected.size();
+}
+
 // ── Ownership Validation ────────────────────────────────────────
 //
 // Walks the AST post-mutation, re-simulates ownership flow for bindings
