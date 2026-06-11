@@ -3,6 +3,51 @@
 **状态**: 渐进类型 L6 + T2a-T2e + T4 完整管线，集成到 IR 管线（warnings-only 模式）。T4 包括增量类型检查、Let-Poly、ADT 穷尽性检查。
 **源码**: `src/compiler/type_checker_impl.cpp`, `src/core/type_impl.cpp`, `src/compiler/diag.ixx`
 
+---
+
+## 0. Implementation Status (2026-06-11, Issue #156)
+
+**重要**：本文档的 **核心规则 / 渐进类型 / Occurrence Typing / 约束求解 / ADT / Blame / Value Restriction / DeadCoercionEliminationPass 全部实装**。T4（增量 / Let-Poly / 穷尽性）在 `synthesize_flat` 路径实装。准确分两层：
+
+### C++ Core Layer (`src/compiler/type_checker_impl.cpp` / `src/core/type_impl.cpp` / `src/compiler/diag.ixx`)
+
+| 模块 | 实装 | 备注 |
+|------|------|------|
+| `TypeChecker::infer_flat` / `check_flat` / `analyze_predicate_flat` | ✓ | 对外 API |
+| `InferenceEngine::synthesize_flat` / `check_flat` / `is_coercible` | ✓ | bi-directional + AND/OR 谓词组合 |
+| `TypeEnv` (作用域 + 类型绑定) | ✓ | 含 `is_poly` 动态决定（Let-Poly）|
+| `ConstraintSystem` (Union-Find + multi-pass worklist) | ✓ | T2a — EQUAL / CONSISTENT 约束 |
+| `TypeRegistry` (核心类型 + ADT 构造函数注册) | ✓ | T2b — 跨调用重建（~1ms 可接受）|
+| `OwnershipEnv` (线性所有权) | ✓ | M4 — 编译期跟踪 |
+| 渐进类型（Dynamic + consistent_unify）| ✓ | `?` 与任意类型匹配 |
+| Coercion (is_coercible + add_coercion + CastOp 插入) | ✓ | IR/JIT CastOp 扩展 type_tag 覆盖 Int/Float/Bool/String |
+| Occurrence Typing 谓词分析 (`number?`/`string?`/`pair?`/`symbol?`/`float?`/`boolean?`) | ✓ | `analyze_predicate_flat` + AND/OR 组合 |
+| 增量类型检查 (dirty skip via `FlatAST::is_dirty(id)`) | ✓ (T4) | `synthesize_flat` 路径实装，含 `cache_hits`/`cache_misses`/`stale_cache` 统计 |
+| Let-Poly (`is_poly` + `instantiate_forall`) | ✓ (T4) | `TypeEnv::bind` + `lookup` 联动 |
+| ADT 穷尽性检查 (`__match_tmp` + `get_adt_constructors`) | △ (T4, partial) | 单层 match 已实装；嵌套 match 独立检查未做（§5.5）|
+| Blame 结构化 (BlameParty + BlameInfo + Consistent-subtype) | ✓ (T2c) | 含 Coercion marker pass |
+| Value Restriction (syntactic_value) | ✓ | 防止非值 let 泛化 |
+| `DeadCoercionEliminationPass` | ✓ (T2e) | IR 级 pass + Gradual Guarantee 10+ 测试 |
+| 多 mutation 串行场景下的粒化增量 | 🟡 (§5.1) | 当前按单次 mutation 触发；可进一步粒化 |
+| 类型信息流入 IR (除 CastOp 外) | 🔴 (§5.2) | `infer_flat` 返回 TypeId 在 `eval()` 里被忽略；类型驱动 IR 优化未做 |
+| 嵌套 match 独立穷尽性检查 | 🔴 (§5.5) | 单层 match 实装；嵌套 case 未做 |
+| 模块类型签名传播 | 🔴 (§5.4) | import/require 绑定大部分是 Dynamic |
+
+### Aura Layer
+
+类型系统是 **C++ 内部管线**，通过 `eval()` 隐式触发。Aura 端有 `query:type` 原语查询 AST 节点的推断类型（`TypeResolutionIndex`, M2.7），**没有**用户可调的类型注解 / 谓词原语。
+
+### 已实现 vs 计划
+
+- ✅ **实装**：T2a-T2e（约束求解 / 渐进类型 / Blame / Coercion marker / Dead Coercion 消除）+ T4（增量 / Let-Poly / 穷尽性单层）
+- 🟡 **部分实装**：ADT 穷尽性（嵌套 match 待做）
+- 🔴 **未做**：类型信息流入 IR（除 CastOp）；模块类型签名；嵌套 match 独立检查
+
+**AI Agent 读者请注意**：类型检查是 **warnings-only** 模式（不阻塞执行）。AI Agent 修改代码后可调用 `query:type` 查询推断类型；`eval()` 触发类型检查但不阻止执行；写 Aura 代码时不要依赖类型检查的硬失败。
+
+---
+
+
 ## 1. 架构总览
 
 ```

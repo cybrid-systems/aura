@@ -4,6 +4,45 @@
 
 ---
 
+## 0. Implementation Status (2026-06-11, Issue #156)
+
+**重要**：本文档的 **Phase 1-5 全部实装**（✅ 全部完成 ✅）；M1-M4 里程碑全部命中（fib-20 7.55x 加速）。准确分两层：
+
+### C++ Core Layer (`src/compiler/aura_jit.ixx` / `aura_jit_impl.cpp` / `ir.ixx` / `service.ixx`)
+
+| 组件 | 实装 | 备注 |
+|------|------|------|
+| `AuraJIT` (LLJIT + ThreadSafeContext + ExecutionSession) | ✓ | Phase 1 |
+| `compile_function` 入口 (LLVM FunctionType + alloca locals) | ✓ | Phase 2 |
+| 算术 / 比较 / 控制流 (38 opcode) | ✓ | Phase 2 — `Builder.CreateAdd/Sub/Mul/SDiv` + ICmp |
+| 闭包 + Cell (捕获修复 / 递归闭包 / MakePair/Car/Cdr) | ✓ | Phase 3 |
+| `PrimCall` 运行时 bridge | ✓ | Phase 4 — 调用 C++ primitive bridge |
+| 运行时符号注册 (`add_runtime_symbols`) | ✓ | Phase 4 — `aura_jit_primitive_call` / `_alloc_pair` / `_alloc_string` / `_make_closure` / `_cell_new` / `_error` |
+| `display` / `eval` 集成 | ✓ | Phase 4 |
+| `--jit` flag (`service.ixx` `jit_mode_`) | ✓ | Phase 4 |
+| LLVM `-O2` PassBuilder | ✓ | Phase 5 |
+| 增量 cache (per-function `ir_cache_` + `invalidate_function`) | ✓ | Phase 5 |
+| `CastOp` JIT 化 | ✓ | Phase 5 — IR CastOp 编译到 LLVM IR |
+| `hot_swap_function` (incremental) | ✓ | Phase 5 — 依赖变化时重编译 |
+| AOT 路径 (JITFunction → .o → 链接) | 🟡 (设计) | §"AOT 路径" 描述，但未实装 |
+| 跨 host 共享 JIT cache | 🔴 | 未实装 |
+
+### Aura Layer (无 EDSL 包装)
+
+JIT 是 **C++ 内部优化**，通过 `--jit` 编译 flag 启用。Aura 代码本身不感知 JIT / IR Interpreter 的差异。
+
+### 已实现 vs 计划
+
+- ✅ **Phase 1-5 全部完成**（AuraJIT / 算术 / 闭包 / 运行时 / 优化）
+- ✅ **M1-M4 全部命中**：`(+ 1 2)` → 3、factorial(20) → 2432902008176640000、integ 测试全过、fib-20 7.55x 加速
+- 🟡 **设计稿未实装**：AOT 路径
+- 🔴 **未做**：跨 host 共享 JIT cache
+
+**AI Agent 读者请注意**：本文档作为设计意图 + 实装说明保留。`--jit` 编译 flag 在 `python3 build.py` 调用时启用；Aura 代码本身不感知 JIT / IR Interpreter 差异，不要假设某条 IR 指令在 Aura 层有对应原语。
+
+---
+
+
 ## 架构概览
 
 ```

@@ -3,7 +3,51 @@
 **Status**: Implemented (2026-05-17)
 **Design Author**: Anqi Yu + Ani
 
-## Overview
+---
+
+## 0. Implementation Status (2026-06-11, Issue #156)
+
+**重要**：本文档的 **IR 管线全部实装 + 集成到 `eval()`**；剩余的 fallback（module system / EDSL / special forms）是有意保留。准确分两层：
+
+### C++ Core Layer (`src/compiler/ir.ixx` / `lowering.ixx` / `lowering_impl.cpp` / `ir_executor.ixx` / `ir_executor_impl.cpp` / `pass_manager.ixx` / `service.ixx` / `evaluator.ixx` / `evaluator_impl.cpp`)
+
+| 组件 | 实装 | 备注 |
+|------|------|------|
+| `IROpcode` 扩展 (`Primitive` / `ConstBool` / `ConstVoid`) | ✓ | `ir.ixx` |
+| Primitives-aware lowering (`LoweringState.primitives_`) | ✓ | `lowering_impl.cpp` Variable handler — 100+ 原语全部可走 IR |
+| Bool semantics (`make_bool` for Eq/Lt/And/Or/Not) | ✓ | `ir_executor_impl.cpp` + `pass_manager.ixx`（constant folding 用 `replace_bool`）|
+| Chained comparisons (pairwise AND) | ✓ | `lowering_impl.cpp`；`(= 5 5 5)` 不再错成 `(= (= 5 5) 5)` |
+| Closure bridge (`IRClosure` ↔ `Closure`) | ✓ | 3-part：lowering 存 bridge data → MakeClosure 复制 → `apply_closure` callback |
+| Pair/Quote lowering (cons chain) | ✓ | `lowering_impl.cpp`；`'(1 2 3)` 不再触发 fallback |
+| Bool literal (`#t`/`#f` → `ConstBool` via `SyntaxMarker::BoolLiteral`) | ✓ | `lowering_impl.cpp`；常量化保留 bool 类型 |
+| `DeadCoercionEliminationPass` | ✓ | 消除冗余 CastOp（T2e 实装）|
+| `eval()` 统一入口 + `needs_tree_walker_fallback()` | ✓ | `service.ixx`；scan-based fallback（避免 silent 错结果）|
+| `define` IR cache (`ir_cache_` + 依赖追踪) | ✓ | `service.ixx`；增量 recompilation 兼容 |
+| Module system (`import`/`use`/`require`) | ✗ (intentional fallback) | env-binding side effects IR can't replicate |
+| EDSL (`query:*`/`mutate:*`/`set-code`) | ✗ (intentional fallback) | mutation log + persistent AST |
+| Special forms (`try`/`catch`/`when`/`unless`/`cond`/`export`) | ✗ (intentional fallback) | Not IR primitives yet |
+| Native Pair IR ops (`MakePair`/`Car`/`Cdr`) | 🟡 (Future Step 3) | 当前走 `cons` call chain；可后续替换为 native ops |
+| Per-module dirty skip optimization | 🟡 (Future Step 4) | 当前 per-IRFunction dirty 粒度 |
+| IR-level module loading (eliminate module fallback) | 🔴 (Future Step 5) | `import` 仍走 fallback |
+| `try`/`catch` IR 支持 | 🔴 (Future Step 6) | 异常 opcodes 未实装 |
+| LLVM JIT 后端 | 🟡 (separate doc) | `compilation/jit.md` — 实装于 jit.md 的 Phase 1-5 |
+| AOT 编译 | 🔴 (Future Step 8) | 设计稿未启动 |
+| Self-hosting bootstrap | 🔴 (Future Step 9) | 长期 |
+
+### Aura Layer (无 EDSL 包装)
+
+`ir_pipeline` 是 **C++ 内部优化**，无 Aura 表面调用。原语 `eval` 内部自动选 IR 或 tree-walker。
+
+### 已实现 vs 计划
+
+- ✅ **已实装**：上述 ✓ 项；IR 是 `eval()` 默认路径，tree-walker 作 fallback
+- 🟡 **未来 1-2 个 step**：native pair ops / per-module dirty skip / module loading
+- 🔴 **长期**：self-hosting bootstrap
+
+**AI Agent 读者请注意**：本文档作为设计意图保留。IR 管线在 `eval()` 内部自动启用，AI Agent 写 Aura 代码时**不需要**选 IR / tree-walker；不要在 Aura 代码里假设某条 IR 指令是稳定的 IR 接口。
+
+---
+
 
 Aura has two execution engines:
 1. **Tree-walker evaluator** (`eval_flat`) — interprets FlatAST directly; handles all language features
