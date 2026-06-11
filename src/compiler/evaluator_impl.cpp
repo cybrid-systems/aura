@@ -11856,6 +11856,25 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         return make_bool(true);
     });
 
+    // (workspace:unlock id) — the natural companion to
+    // workspace:lock; sets read_only=false on the
+    // workspace. The lock primitive already accepts
+    // (workspace:lock id #f) to set read_only=false, but
+    // having an explicit unlock primitive makes the
+    // agent-orchestration code more readable.
+    primitives_.add("workspace:unlock", [this](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]) || !workspace_tree_)
+            return make_bool(false);
+        auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
+        auto idx = static_cast<std::uint32_t>(as_int(a[0]));
+        if (idx >= wt->size())
+            return make_bool(false);
+        wt->set_read_only(idx, false);
+        if (idx == wt->active_idx())
+            workspace_read_only_ = false;
+        return make_bool(true);
+    });
+
     // (workspace:can-write? [id])
     //   → #t if workspace allows mutations
     primitives_.add("workspace:can-write?", [this](std::span<const EvalValue> a) -> EvalValue {
