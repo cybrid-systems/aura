@@ -126,6 +126,16 @@ extern "C" void aura_bypass_count_reset() {
 static std::atomic<uint64_t> g_workspace_unchecked_fastpath_count{0};
 static std::atomic<uint64_t> g_workspace_deopt_count{0};
 
+// Issue #157 Phase 1c: in-LLVM-callable deopt counter. The JIT
+// emits a call to this at the start of every deopt basic block
+// (bb_slow in OpCar/OpCdr SHAPE_PAIR lowering) so the deopt
+// counter is incremented on the hot path. The external accessor
+// `aura_deopt_count()` reads g_workspace_deopt_count for
+// telemetry; this is the write side that the JIT calls into.
+extern "C" void aura_deopt_inc() {
+    g_workspace_deopt_count.fetch_add(1, std::memory_order_relaxed);
+}
+
 extern "C" uint64_t aura_unchecked_fastpath_count() {
     return g_workspace_unchecked_fastpath_count.load(std::memory_order_relaxed);
 }
