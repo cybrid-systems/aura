@@ -113,6 +113,34 @@ extern "C" void aura_bypass_count_reset() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Issue #157 Phase 1b: version-check fastpath telemetry.
+//
+// The JIT emits, at each L2 SHAPE_PAIR use site, a defuse_version_
+// check + deopt branch: on version match, the unchecked (no-lock)
+// path is taken; on mismatch, the slow (with-lock) path. This counter
+// tracks how many L2 uses took the fast path (vs the slow path
+// exposed via aura_deopt_count). In single-threaded code, this should
+// dominate; in multi-fiber with concurrent mutate, the deopt count
+// should be non-zero.
+//
+static std::atomic<uint64_t> g_workspace_unchecked_fastpath_count{0};
+static std::atomic<uint64_t> g_workspace_deopt_count{0};
+
+extern "C" uint64_t aura_unchecked_fastpath_count() {
+    return g_workspace_unchecked_fastpath_count.load(std::memory_order_relaxed);
+}
+
+extern "C" uint64_t aura_deopt_count() {
+    return g_workspace_deopt_count.load(std::memory_order_relaxed);
+}
+
+extern "C" void aura_counters_reset() {
+    g_workspace_mtx_bypass_count.store(0, std::memory_order_relaxed);
+    g_workspace_unchecked_fastpath_count.store(0, std::memory_order_relaxed);
+    g_workspace_deopt_count.store(0, std::memory_order_relaxed);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Issue #157 Phase 1: Lock hooks for the JIT runtime
 // ═══════════════════════════════════════════════════════════════════════════
 //
@@ -629,33 +657,34 @@ int64_t aura_alloc_pair_arena(int64_t car, int64_t cdr) {
 
 // L2 specialization: unchecked pair access (skips bounds check)
 //
-// Issue #157 Phase 1: NOW takes the read lock. The "unchecked"
-// suffix refers to the bounds check (skipped because L2 SHAPE_PAIR
-// shape analysis says the value is always a pair), NOT to the
-// concurrency protocol. With the read lock, this path is safe
-// for concurrent readers (multiple fibers can read at once) but
-// blocks while a writer holds the lock.
+// Issue #157 Phase 1b: NO LOCK. The "unchecked" suffix now means
+// both "no bounds check" AND "no lock" — the function is a true
+// raw read of g_pair_slots[id]->car, relying on the caller (the
+// JIT lowering) to have done a defuse_version_ check at L2 entry.
+// The version check guarantees that no other fiber has mutated
+// the workspace since the function started, so the read is safe
+// even without a lock. On version mismatch, the JIT emits a
+// deopt branch to aura_pair_car (with bounds check + lock).
 //
-// Phase 1b (deferred): add a version check at L2 entry; on
-// mismatch, deopt to aura_pair_car (slow path with bounds check).
-// The version check is a fine-grained optimization that avoids
-// the lock cost in single-threaded cases; for Phase 1 we take
-// the lock unconditionally to be conservative.
+// In single-threaded execution (the common case), the version
+// check passes, the unchecked path is taken, and the lock cost
+// is avoided. In multi-threaded execution with concurrent
+// mutate, the version check fails (on the next L2 use after the
+// mutate), the deopt path is taken, and the lock is acquired
+// for the slow path.
+//
+// The shape check (SHAPE_PAIR) is still required — the
+// pair_val must be a valid pair reference, not a fixnum/void.
 int64_t aura_pair_car_unchecked(int64_t pair_val) {
-    aura_lock_workspace_read();
+    g_workspace_unchecked_fastpath_count.fetch_add(1, std::memory_order_relaxed);
     uint64_t id = static_cast<uint64_t>(pair_val >> 2);
-    int64_t result = g_pair_slots[id]->car;
-    aura_unlock_workspace_read();
-    return result;
+    return g_pair_slots[id]->car;
 }
 
 int64_t aura_pair_cdr_unchecked(int64_t pair_val) {
-    // Issue #157 Phase 1: read lock, same as aura_pair_car_unchecked.
-    aura_lock_workspace_read();
+    g_workspace_unchecked_fastpath_count.fetch_add(1, std::memory_order_relaxed);
     uint64_t id = static_cast<uint64_t>(pair_val >> 2);
-    int64_t result = g_pair_slots[id]->cdr;
-    aura_unlock_workspace_read();
-    return result;
+    return g_pair_slots[id]->cdr;
 }
 
 // === Primitive call bridge ===
