@@ -1765,6 +1765,35 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         return r;
     }
 
+    // Issue #148 Phase 5: incremental type inference API.
+    // Given a MutationRecord (typically obtained from
+    // query_mutation_log()), re-infer the affected subtree
+    // of the current AST via the partial-reinference path
+    // (TypeChecker::infer_flat_partial). Returns the number
+    // of nodes that were re-inferred (cache hits don't
+    // count). The full infer path is still available via
+    // typecheck() — use this when the caller has a specific
+    // MutationRecord and wants to skip re-inferring the
+    // untouched subtrees.
+    //
+    // Requires a current AST and pool (set via set_code or
+    // the typed_mutate path's (set-code ...) primitive). If
+    // either is null, returns 0 (no work to do).
+    //
+    // The returned stats_ counter is updated as a side effect
+    // (cache_hits / cache_misses / stale_cache), accessible
+    // via the underlying TypeChecker (not exposed at the
+    // CompilerService level yet — Phase 5b).
+    std::size_t incremental_infer(
+        const aura::ast::MutationRecord& rec) {
+        if (!current_ast_ || !current_pool_) return 0;
+        aura::compiler::TypeChecker tc(type_registry_);
+        aura::diag::DiagnosticCollector diag;
+        tc.set_strict(true);  // match the typecheck() default
+        return tc.infer_flat_partial(
+            *current_ast_, *current_pool_, rec, diag);
+    }
+
     // ---- Multi-module arena support ----------------------------------
 
     // ---- Multi-module compilation (ArenaGroup) ----------------------
