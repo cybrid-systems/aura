@@ -1208,6 +1208,16 @@ export struct EnvView {
     [[nodiscard]] std::optional<types::EvalValue> lookup_by_symid(
         aura::ast::SymId s) const;
 
+    // Issue #145 follow-up / Phase 2.5.0: SymId-first lookup
+    // helper that takes a name string + pool. Same role as
+    // Env::lookup_by_intern but for EnvView (which has no
+    // pool_ field — the pool is always passed in). Used by
+    // the parent-walk migration in Phase 2.5.0 commit 8.
+    std::optional<types::EvalValue>
+    lookup_by_intern(const std::string& n,
+                     const aura::ast::StringPool* pool) const
+        pre (!n.empty());
+
     // Number of local bindings (excludes parent).
     [[nodiscard]] std::size_t size() const {
         return string_bindings.size();

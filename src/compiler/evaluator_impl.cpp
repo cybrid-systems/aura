@@ -514,6 +514,28 @@ std::optional<EvalValue> EnvView::lookup(const std::string& name) const {
     return parent ? parent->lookup(name) : std::nullopt;
 }
 
+std::optional<EvalValue>
+EnvView::lookup_by_intern(const std::string& n,
+                          const aura::ast::StringPool* pool) const {
+    // Mirror Env::lookup_by_intern: intern via the resolved
+    // pool, route through lookup_by_symid, return local
+    // symid_bindings lookup if not found, then fall through
+    // to the parent walk. EnvView has no primitive/ADT
+    // fallbacks (those live on Env, not EnvView), so the
+    // behavior matches EnvView::lookup for the "name not
+    // found" case: nullopt.
+    if (!pool) return std::nullopt;  // EnvView: no fallback pool
+    // const_cast is safe — intern() is logically idempotent
+    // (already-interned names are no-ops) and EnvView callers
+    // pass a non-const pool pointer (canonical_pool() or
+    // closure-captured). The function is logically const
+    // (no observable EnvView state change).
+    auto sym = const_cast<aura::ast::StringPool*>(pool)->intern(n);
+    for (auto it = symid_bindings.rbegin(); it != symid_bindings.rend(); ++it)
+        if (it->first == sym) return it->second;
+    return parent ? parent->lookup_by_intern(n, pool) : std::nullopt;
+}
+
 std::optional<EvalValue> EnvView::lookup_by_symid(aura::ast::SymId s) const {
     for (auto it = symid_bindings.rbegin(); it != symid_bindings.rend(); ++it)
         if (it->first == s) return it->second;
