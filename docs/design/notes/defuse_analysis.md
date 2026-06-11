@@ -1,5 +1,7 @@
 # Scope-Level Def-Use Chain — Design
 
+> **注意（历史文档）**：本文档是 DefUseIndex 的早期设计探索（2026-05）。当前 C++ 层已完整实现（`query:def-use` 等 11 个 query 原语 + per-sym 失效），Aura 表面通过 `std/query.aura` 提供部分 helper。详见 `design/core/query_edsl.md` §0（Implementation Status）和 `developer/evaluator.md` §4。
+
 **Status**: Design (2026-05-25)
 **Design Author**: Ani
 **Driver**: `query:def-use`, `query:reaches`, `query:effects`（EDSL Roadmap W1-2）

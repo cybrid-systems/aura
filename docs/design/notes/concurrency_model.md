@@ -1,5 +1,7 @@
 # Aura 并发模型设计
 
+> **注意（历史文档）**：本文档记录了 fiber scheduler + 并发原语的早期设计（2026-05）。当前已全部实装（#109 + #119）：多线程 work-stealing scheduler、fiber:spawn/join/yield、per-session eventfd、MutationBoundary yield 等。完整现状见 `design/core/agent_orchestration.md` §0（Implementation Status）和 `design/runtime/async_serve.md`。
+
 **Status**: Design Proposal
 **Author**: Ani
 **Date**: 2026-05-29

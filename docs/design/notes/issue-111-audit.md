@@ -1,5 +1,7 @@
 # Issue #111 — Audit of self-modifying-flat loops
 
+> **注意（历史文档）**：本文档记录了 2026 年初对 self-modifying-flat 迭代 bug 的系统审计（Issue #111）。核心教训（snapshot `flat.size()`）已被固化到 `design/core/query_edsl.md`、`mutate_api.md` 以及 `developer/evaluator.md` 的 §1 铁律中。当前实现已通过 fuzz + ASAN 验证。
+
 ## Status: ✅ COMPLETE — no additional fixes needed
 
 The qar crash fix in `d25f066` revealed a class of bug:
