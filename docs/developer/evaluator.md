@@ -1,141 +1,143 @@
-# Aura Evaluator — Developer Guide
+# Aura Evaluator 运行时核心开发者指南
 
-**Status:** Living document. Add patterns as they're discovered; keep examples
-under 30 LOC where possible.
+**状态**：Living document（持续更新）。发现新模式就补充，例子尽量控制在 30 行以内。
 
-**Audience:** Anyone touching `src/compiler/evaluator_impl.cpp` or
-`src/compiler/evaluator.ixx` — adding a primitive, fixing a cache
-invalidation bug, or wiring a new thread-safety boundary.
+**目标读者**：任何需要直接修改 `src/compiler/evaluator_impl.cpp` 或 `evaluator.ixx` 的人 —— 包括添加新 primitive、修复缓存失效、处理线程安全边界、接新调度 hook 等。
 
-**Origin:** Created for Issue #112 as the explicit follow-up to the
-self-modifying-flat audit (#111). The audit's last paragraph was:
+**为什么有这篇文档**：
+Issue #111（self-modifying-flat 审计）之后发现：在 FlatAST 自修改 + 并发 + 多 session 的环境下写运行时代码极其危险。审计报告最后一段明确要求：
 
-> This should be documented in the developer guide for the
-> evaluator (in `docs/developer/evaluator.md` or similar — to be
-> created).
+> This should be documented in the developer guide for the evaluator.
 
-This is that document.
+于是有了本指南。
 
 ---
 
-## 0. Mental model
+## 这是什么？为什么叫 Evaluator？
 
-The Aura evaluator walks a **FlatAST** (a flat `std::pmr::vector<Node>`
-indexed by `NodeId`) paired with a `StringPool`. The tree-walking
-interpreter (`eval_flat` at line ~15857) is the reference implementation;
-the IR interpreter (`IRInterpreter` in `ir_executor_impl.cpp`) is a
-downstream consumer that must observe the same observable behavior.
+在传统 Lisp 里，“evaluator” 就是负责执行代码的核心（`eval` 函数）。
 
-Everything in this file is about making primitives correct under
-this model. There are three invariants you cannot violate:
+在 Aura 里，`Evaluator` 类（定义在 `evaluator.ixx`，主要实现在 `evaluator_impl.cpp`）是**整个运行时的中枢**：
 
-1. **Flat can grow during evaluation.** `parse_to_flat`, `set_child`,
-   `add_mutation`, `add_node` all append to the same `FlatAST` that
-   the primitive may be iterating.
-2. **A query may run concurrent with a mutate.** Multiple agents,
-   fibers, and the `--serve` REPL all share the same `Evaluator`
-   instance. The `workspace_mtx_` shared/exclusive lock is the
-   boundary.
-3. **A change to one node invalidates the def-use index for the
-   symbols it defines or uses.** The `defuse_touch_fn_` /
-   `defuse_affected_syms_` protocol is the boundary.
+- 它持有当前 workspace 的 FlatAST + StringPool。
+- 它管理所有内置原语表（`Primitives`），几乎所有语言扩展（包括 query:*、mutate:*、workspace:*、ast:* 等 EDSL 原语）都是通过 `primitives_.add(...)` 注册到这里的。
+- 它负责真正的执行入口 `eval_flat`（树遍历解释器）。
+- 它还维护了自修改所需的所有复杂不变式：workspace 锁、defuse 失效、mutation boundary yield、快照/回滚、增量脏标记等。
 
-If you're adding a new primitive and unsure which invariants apply,
-assume all three and read §2–§4 below.
+**一句话总结**：
+Evaluator 不是普通的解释器，而是“让代码拥有自我意识”这个哲学在 C++ 层的具体承载者。它把自修改、并发安全、版本化 workspace 这些极高风险的能力集中管理起来。
+
+普通 Aura 程序员（包括 LLM Agent）几乎不需要关心这里。他们通过 EDSL 和 stdlib 编程就够了。只有当你要**扩展运行时本身**（加新内置、修 evaluator 内部 bug、加新并发机制）时，才需要读这篇文档。
 
 ---
 
-## 1. The self-modifying-flat iteration rule (Issue #111 lesson)
+**Audience（精确范围）**：
+- 直接动 `evaluator_impl.cpp` / `evaluator.ixx` 的人
+- 需要理解 FlatAST 自修改安全规则的人
+- 想加新 primitive 并且想一次写对的人
 
-**This is the #1 footgun.** A `for (...; id < flat.size(); ++id)`
-loop reads `flat.size()` on every iteration. If the loop body (or
-anything the loop body calls transitively) modifies the flat, the
-condition re-evaluates to `true` for the newly-appended indices and
-the loop runs forever or until OOM.
+**不适合的人**：
+- 只想用 Aura 写程序的人 → 去看 `tutorial.md` + `api-reference.md` + `design/core/`
+- 只想理解高层设计的人 → 去看 `design/core/` 各文档的 `## 0. Implementation Status`
 
-**The audit in `docs/design/issue-111-audit.md` covered 22 such
-loops in `evaluator_impl.cpp`. The `qar` primitive in `d25f066`
-was the only one that triggered the bug. The fix is one line.**
+---
 
-### Rule: snapshot `flat.size()` before the loop
+**写作原则**（本指南自己遵守）：
+- 保持 Living document 性质
+- 优先讲“不变式”和“为什么”，而不是“怎么实现某个功能”
+- 例子短小，重点突出 footgun
+- 所有新 primitive 相关改动，都必须同步更新本指南 + 对应 design/core/ 的 §0 状态表 + api-reference.md
+
+以下内容就是围绕上面这些原则展开的。
+
+---
+
+## 0. Mental Model（核心模型）
+
+Aura 的 Evaluator 操作的是一个 **FlatAST**（平坦的 `std::pmr::vector<Node>`，用 `NodeId` 索引）加上一个配套的 `StringPool`。
+
+- 树遍历解释器 `eval_flat`（目前在 `evaluator_impl.cpp` 大约 15857 行附近）是参考实现，所有语义必须以它为准。
+- IR 解释器（`IRInterpreter`）和 JIT 都是下游消费者，必须观察到完全一致的行为。
+
+**本指南的所有内容，都是为了让 primitive 在这个模型下能正确、安全地工作。**
+
+### 三个不可违反的不变式（Invariants）
+
+1. **Flat 在求值过程中可以增长**  
+   `parse_to_flat`、`set_child`、`add_mutation`、`add_node` 等操作都会往同一个 FlatAST 里追加节点。而 primitive 自己可能正在遍历这个 flat。
+
+2. **query 和 mutate 可以并发发生**  
+   多个 agent、多个 fiber、REPL、--serve 都可能共享同一个 Evaluator 实例。`workspace_mtx_` 的 shared/exclusive 锁是唯一边界。
+
+3. **修改一个节点会让它定义/使用的符号的 def-use 信息失效**  
+   必须通过 `defuse_touch_fn_` / `defuse_affected_syms_` 协议通知 DefUseIndex，否则后续查询会拿到陈旧结果。
+
+**经验法则**：如果你要加一个新 primitive，又不确定要遵守哪几条，就**全部遵守**，然后仔细阅读后面章节。
+
+---
+
+## 1. 自修改 Flat 迭代铁律（Issue #111 的血泪教训）
+
+**这是目前最大的 footgun。**
 
 ```cpp
-// ❌ WRONG — will hang or OOM if the body can grow the flat
-for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-    if (matches_predicate(flat, id)) {
-        // ... or any call that transitively calls parse_to_flat / set_child
-    }
-}
-
-// ✅ RIGHT — terminate after the original nodes
-const auto end_id = flat.size();
-for (aura::ast::NodeId id = 0; id < end_id; ++id) {
-    if (matches_predicate(flat, id)) {
-        // safe to call flat-mutating operations here
-    }
-}
+for (aura::ast::NodeId id = 0; id < flat.size(); ++id) { ... }
 ```
 
-### When the rule applies
+只要循环体（或它调用的任何函数）可能往同一个 flat 里追加节点，`flat.size()` 每次都会变大，循环就可能永远跑不完，甚至 OOM。
 
-Apply it whenever **all three** are true:
+Issue #111 审计了 `evaluator_impl.cpp` 里的 22 个类似循环。只有 `mutate:query-and-replace` 真正触发了 bug，但所有人都差点中招。
 
-1. The loop iterates over a `FlatAST` (workspace flat OR a local
-   flat that another part of your code might append to).
-2. The loop condition re-reads `.size()` each iteration.
-3. The loop body, or anything reachable from it, may append to
-   that same flat via `parse_to_flat`, `set_child`, `add_mutation`,
-   `add_node`, `mark_dirty_upward` (which can schedule a rebuild),
-   or `string_heap_.push_back` on a `pmr::vector<string>` whose
-   allocator backs the flat (the original `qar` failure mode).
+### 铁律：迭代前先 snapshot 大小
 
-If any of (1)–(3) is false, the original `id < flat.size()` form
-is fine. Most read-only `query:*` loops are safe (see the audit
-table for the 22 confirmed-safe cases).
+```cpp
+// 错误示范
+for (aura::ast::NodeId id = 0; id < flat.size(); ++id) { ... }
 
-### When in doubt
+// 正确做法
+const auto end_id = flat.size();
+for (aura::ast::NodeId id = 0; id < end_id; ++id) { ... }
+```
 
-Add the `end_id` snapshot. It costs one local register and never
-changes correct-program behavior. The cost of omitting it is an
-infinite loop, which is much worse.
+### 什么时候必须遵守？
 
-## 5. Documenting your changes (Living Docs)
+同时满足以下三条就必须 snapshot：
 
-This is a **living project**. When you add, modify, or remove a primitive (especially EDSL-related ones like query:*, mutate:*, workspace:*, ast:*), you **must** keep the documentation in sync.
+1. 正在遍历一个 FlatAST（无论是 workspace 的还是局部的）。
+2. 循环条件每次都会重新读 `.size()`。
+3. 循环体或其可达代码可能通过 `parse_to_flat`、`set_child`、`add_mutation`、`add_node`、`mark_dirty_upward` 等往同一个 flat 追加内容。
 
-### Mandatory updates checklist
-1. **Update the relevant design doc's §0 Implementation Status table**:
-   - Add the primitive to the C++ Core Layer table (with ✓ / source location in evaluator_impl.cpp).
-   - Update Aura Layer if there's a std/ wrapper.
-   - Refresh the date and "AI Agent 读者请注意" if behavior changes.
-   - Example files: `design/core/query_edsl.md`, `mutate_api.md`, `workspace_layering.md`, `typed_mutation.md`.
+如果以上任意一条不满足，原写法通常是安全的。大部分只读的 `query:*` 循环都是安全的（审计表里有 22 个确认安全的案例）。
 
-2. **Update api-reference.md (the central Primitives Surface)**:
-   - Add to the built-in lists under "代码自修改 (EDSL)" or "Workspace".
-   - Update the "EDSL Primitives Surface" subsection with the new code location (e.g. `primitives_.add("foo:bar", ...)` in evaluator_impl.cpp ~Lxxxx).
-   - Add or update the corresponding row in the std/ EDSL table if a helper is provided.
+**经验**：拿不准就直接 snapshot。少一个局部变量而已，省掉一个永远跑不完的循环，划算多了。
 
-3. **Update cross-references**:
-   - In the design doc, add a "Code References" subsection (or extend existing) pointing to exact lines in `evaluator_impl.cpp`, `query.ixx`, `service.ixx`, etc.
-   - If it affects Agent usage or examples, touch `tutorial.md` status notes.
+## 5. 改动必须同步的文档（Living Docs 要求）
 
-4. **For new speculative work**:
-   - Do **not** create new files in `design/history/notes/` unless it is a truly unresolved exploration.
-   - Route most work through a closing note + update to the core design §0.
-   - See `design/history/README.md` and `design/history/notes/README.md` for rules.
+这是一个活的项目。任何对 primitive 的增删改（尤其是 EDSL 相关的 query/mutate/workspace/ast），**都必须**同步更新文档。
 
-5. **Status banners & dates**:
-   - Keep the top-level `> **Status (日期, Issue #):**` or `## 0. Implementation Status` fresh.
-   - Update the date on any meaningful change.
+### 强制同步清单
+1. 更新对应 `design/core/` 文档的 `## 0. Implementation Status` 表格
+   - 在 C++ Core Layer 表里加上新 primitive + evaluator_impl.cpp 位置
+   - 如果有 std/ wrapper，也更新 Aura Layer 表
+   - 更新日期和 “AI Agent 读者请注意” 段落
 
-### Why this matters
-- AI Agents (via --serve) rely on accurate "what works now" information.
-- Human contributors need to find the authoritative spec + implementation mapping quickly.
-- The §0 tables + api-ref Surface are the single source of truth after the Phase 1–3 cleanup.
+2. 更新 `docs/api-reference.md`（中央 Primitives Surface）
+   - 在 EDSL / Workspace 列表里加上
+   - 在 “EDSL Primitives Surface” 小节里写清楚代码位置
 
-Failing to update docs is equivalent to leaving a bug in the self-modification surface.
+3. 在设计文档里加 “Code References” 小节
+   - 指向 `evaluator_impl.cpp`、`query.ixx`、`service.ixx` 等具体位置
 
-See the full "Living Documentation Practices" section in `docs/README.md` for the complete rules.
+4.  speculative 探索不要乱建 notes/
+   - 绝大部分工作应该走 core/ §0 更新 + closing
+   - 只有真正未解决的愿景级设计才放 history/notes/
+
+5. 保持状态横幅和日期新鲜
+   - 每次有实质性行为变化都要更新日期
+
+不更新文档就等于给自修改系统留下一个“隐形 bug”。AI Agent 依赖这些文档来判断“现在能用什么”。
+
+完整规则见 `docs/README.md` 的 Living Documentation Practices 章节。
 
 ---
 
