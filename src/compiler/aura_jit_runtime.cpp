@@ -302,10 +302,17 @@ static inline uint64_t probe_slot(uint64_t h, uint64_t i, uint64_t cap) {
 }
 
 extern "C" const FlatHashTable* aura_hash_get_flat_table(int64_t hash_val) {
+    // Issue #157 Phase 2: read lock — reads g_hash_tables[hidx].
+    // The pointer is only safe to dereference while the lock is
+    // held; the JIT OpHashRef inline IR (aura_jit.cpp:~1080+)
+    // holds the read lock around the entire inline scan.
+    aura_lock_workspace_read();
+    const FlatHashTable* ht = nullptr;
     auto hidx = static_cast<std::size_t>(static_cast<uint64_t>(hash_val) >> 6);
-    if (hidx >= g_hash_tables.size())
-        return nullptr;
-    return g_hash_tables[hidx];
+    if (hidx < g_hash_tables.size())
+        ht = g_hash_tables[hidx];
+    aura_unlock_workspace_read();
+    return ht;
 }
 
 // ── FlatHashTable allocation ──
@@ -390,43 +397,53 @@ struct ClosureCacheEntry {
 static ClosureCacheEntry g_closure_cache[CLOSURE_CACHE_SIZE] = {{-1, nullptr, 0, 0, 0}};
 
 int64_t aura_alloc_closure(int64_t func_id) {
-    // Issue #157 Phase 2: wrap with aura_lock_workspace_write.
-    // push_back on g_closure_func_ids + g_closure_envs is the
-    // same race as aura_alloc_pair.
-    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
+    // Issue #157 Phase 2: write lock — push_back on
+    // g_closure_func_ids + g_closure_envs is the same race as
+    // aura_alloc_pair. The lock makes push_back exclusive vs
+    // other alloc / capture / call paths.
+    aura_lock_workspace_write();
     int64_t id = static_cast<int64_t>(g_closure_func_ids.size());
     g_closure_func_ids.push_back(func_id);
     g_closure_envs.emplace_back();
+    aura_unlock_workspace_write();
     return id;
 }
 
 int64_t aura_alloc_closure_arena(int64_t func_id) {
-    // Issue #157 Phase 2: wrap with aura_lock_workspace_write.
-    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
+    // Issue #157 Phase 2: write lock — same as aura_alloc_closure,
+    // plus the arena pointer array also gets a new entry.
+    aura_lock_workspace_write();
     int64_t id = static_cast<int64_t>(g_closure_func_ids.size());
     g_closure_func_ids.push_back(func_id);
     g_closure_envs.emplace_back();  // still push heap env as fallback
     g_arena_closure_envs.push_back(nullptr);  // arena ptr, set by later captures
+    aura_unlock_workspace_write();
     return id;
 }
 
 void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
-    // Issue #157 Phase 2: wrap with aura_lock_workspace_write.
-    // The capture writes to g_closure_envs[cid] (a std::vector
-    // of vector) — write to inner vector and resize races with
-    // other fibers' captures.
-    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
-    if (closure_id < 0)
+    // Issue #157 Phase 2: write lock — capture writes to
+    // g_closure_envs[cid] (a std::vector of vector) or
+    // g_arena_closure_envs[cid] (arena pointer). Write to
+    // inner vector / arena slot races with other fibers'
+    // captures and with aura_closure_call readers.
+    aura_lock_workspace_write();
+    if (closure_id < 0) {
+        aura_unlock_workspace_write();
         return;
+    }
     size_t cid = static_cast<size_t>(closure_id);
-    if (cid >= g_closure_envs.size())
+    if (cid >= g_closure_envs.size()) {
+        aura_unlock_workspace_write();
         return;
+    }
     // Arena env path: allocate from TL arena on first capture
     if (cid < g_arena_closure_envs.size()) {
         int64_t*& arena_ptr = g_arena_closure_envs[cid];
         if (arena_ptr) {
             // Env already allocated on arena — write directly
             arena_ptr[static_cast<size_t>(idx)] = val;
+            aura_unlock_workspace_write();
             return;
         }
         // First capture for this arena closure: allocate env from arena
@@ -439,6 +456,7 @@ void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
                 arena_env[i] = 0;
             arena_env[static_cast<size_t>(idx)] = val;
             arena_ptr = arena_env;
+            aura_unlock_workspace_write();
             return;
         }
     }
@@ -447,6 +465,7 @@ void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
     if (static_cast<size_t>(idx) >= env.size())
         env.resize(static_cast<size_t>(idx) + 1);
     env[static_cast<size_t>(idx)] = val;
+    aura_unlock_workspace_write();
 }
 
 
@@ -462,20 +481,30 @@ static JitFnEntry g_jit_fns[512] = {{nullptr, 0, 0, 0}};
 
 void aura_register_fn(int64_t func_id, int64_t (*fn)(int64_t*, uint32_t), int32_t local_count,
                       int32_t arg_count, int32_t env_count) {
-    // Issue #157 Phase 2: wrap with aura_lock_workspace_write.
-    // Function registry mutation — must be exclusive vs readers in
-    // aura_closure_call.
-    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
+    // Issue #157 Phase 2: write lock — function registry mutation
+    // must be exclusive vs readers in aura_closure_call (which
+    // dereferences g_jit_fns[func_id]).
+    aura_lock_workspace_write();
     if (func_id >= 0 && func_id < 512)
         g_jit_fns[func_id] = {fn, local_count, arg_count, env_count};
+    aura_unlock_workspace_write();
 }
 
 int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
-    // Issue #157 Phase 2: wrap with aura_lock_workspace_read.
-    // Reads g_closure_cache, g_closure_func_ids, g_closure_envs.
-    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
-    if (closure_id < 0 || static_cast<size_t>(closure_id) >= g_closure_func_ids.size())
+    // Issue #157 Phase 2: read lock — reads g_closure_cache,
+    // g_closure_func_ids, g_closure_envs, g_arena_closure_envs,
+    // g_jit_fns. The lock makes the cache hit + slow path
+    // read-consistent. The g_closure_cache slot update at the
+    // end of the slow path races benignly with another fiber
+    // (worst case: a stale cache slot, corrected on the next
+    // slow-path call). The fn() call itself is invoked under
+    // the read lock — this is conservative (write lock would
+    // be unnecessary) but allows multiple concurrent calls.
+    aura_lock_workspace_read();
+    if (closure_id < 0 || static_cast<size_t>(closure_id) >= g_closure_func_ids.size()) {
+        aura_unlock_workspace_read();
         return closure_id; /* match IRInterpreter: return callee_val for non-callable */
+    }
 
     // ── Inline cache check ──
     int cache_idx = static_cast<int>(closure_id % CLOSURE_CACHE_SIZE);
@@ -515,14 +544,18 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
             for (int32_t i = 0; i < nargs; ++i)
                 locals[env_count + i] = args[i];
 
-            return ce.fn(locals, static_cast<uint32_t>(argc));
+            int64_t fast_result = ce.fn(locals, static_cast<uint32_t>(argc));
+            aura_unlock_workspace_read();
+            return fast_result;
         }
     }
 
     // ── Slow path: full dispatch + cache update ──
     int64_t func_id = g_closure_func_ids[static_cast<size_t>(closure_id)];
-    if (func_id < 0 || func_id >= 512 || !g_jit_fns[func_id].fn)
+    if (func_id < 0 || func_id >= 512 || !g_jit_fns[func_id].fn) {
+        aura_unlock_workspace_read();
         return 0;
+    }
 
     auto& entry = g_jit_fns[func_id];
     size_t slow_cid = static_cast<size_t>(closure_id);
@@ -575,6 +608,7 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
     g_closure_cache[cache_idx].arg_count = entry.arg_count;
     g_closure_cache[cache_idx].env_count = static_cast<int32_t>(env_count_check);
 
+    aura_unlock_workspace_read();
     return result;
 }
 
@@ -582,26 +616,33 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
 static std::vector<int64_t> g_cell_heap;
 
 int64_t aura_new_cell() {
-    // Issue #157 Phase 2: wrap with aura_lock_workspace_write.
-    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
+    // Issue #157 Phase 2: write lock — push_back on g_cell_heap
+    // is the same race as aura_alloc_pair.
+    aura_lock_workspace_write();
     int64_t id = static_cast<int64_t>(g_cell_heap.size());
     g_cell_heap.push_back(0);
+    aura_unlock_workspace_write();
     return id;
 }
 
 int64_t aura_cell_get(int64_t cell_id) {
-    // Issue #157 Phase 2: wrap with aura_lock_workspace_read.
-    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
+    // Issue #157 Phase 2: read lock — read g_cell_heap[id]. A
+    // concurrent aura_cell_set / aura_new_cell would race without
+    // the lock (vector resize, slot mutation).
+    aura_lock_workspace_read();
+    int64_t result = 0;
     if (cell_id >= 0 && static_cast<size_t>(cell_id) < g_cell_heap.size())
-        return g_cell_heap[static_cast<size_t>(cell_id)];
-    return 0;
+        result = g_cell_heap[static_cast<size_t>(cell_id)];
+    aura_unlock_workspace_read();
+    return result;
 }
 
 void aura_cell_set(int64_t cell_id, int64_t val) {
-    // Issue #157 Phase 2: wrap with aura_lock_workspace_write.
-    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
+    // Issue #157 Phase 2: write lock — write g_cell_heap[id].
+    aura_lock_workspace_write();
     if (cell_id >= 0 && static_cast<size_t>(cell_id) < g_cell_heap.size())
         g_cell_heap[static_cast<size_t>(cell_id)] = val;
+    aura_unlock_workspace_write();
 }
 
 // === Pair runtime (unified PairSlot pointer-based storage) ===
@@ -782,8 +823,12 @@ static int64_t (*g_hash_set_fn)(int64_t hash, int64_t key, int64_t val) = nullpt
 
 
 int64_t aura_hash_ref(int64_t hash_val, int64_t key_val) {
-    // Issue #157 Phase 2: wrap with aura_lock_workspace_read.
-    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
+    // Issue #157 Phase 2: read lock — read g_hash_tables[hidx]
+    // and the FlatHashTable internals (metadata, keys, values
+    // arrays). A concurrent aura_hash_set / aura_hash_remove /
+    // FlatHashTable::rebuild would race without the lock.
+    aura_lock_workspace_read();
+    int64_t result = 11; // void sentinel (not found)
     auto hidx = static_cast<std::size_t>(static_cast<uint64_t>(hash_val) >> 6);
     if (hidx < g_hash_tables.size() && g_hash_tables[hidx]) {
         auto* ht = g_hash_tables[hidx];
@@ -795,14 +840,16 @@ int64_t aura_hash_ref(int64_t hash_val, int64_t key_val) {
         for (uint64_t i = 0; i < cap; ++i) {
             uint64_t slot = probe_slot(h, i, cap);
             uint8_t m = meta[slot];
-            if (m == HASH_EMPTY) return 11; // not found, void sentinel
+            if (m == HASH_EMPTY) break; // not found, void sentinel
             if (m == HASH_OCCUPIED && keys[slot] == key_val) {
-                return vals[slot];
+                result = vals[slot];
+                break;
             }
             // HASH_TOMBSTONE: keep probing
         }
     }
-    return 11; // void sentinel
+    aura_unlock_workspace_read();
+    return result;
 }
 
 static int64_t (*g_hash_str_convert_fn)(int64_t) = nullptr;
@@ -810,8 +857,11 @@ extern "C" void aura_set_hash_str_convert_callback(int64_t (*fn)(int64_t)) {
     g_hash_str_convert_fn = fn;
 }
 int64_t aura_hash_set(int64_t hash_val, int64_t pair_val) {
-    // Issue #157 Phase 2: wrap with aura_lock_workspace_write.
-    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
+    // Issue #157 Phase 2: write lock — writes g_hash_tables[hidx]
+    // and the FlatHashTable internals (resize via rebuild,
+    // metadata, keys, values mutations). Must be exclusive vs
+    // concurrent aura_hash_ref / aura_hash_remove.
+    aura_lock_workspace_write();
     uint64_t id = static_cast<uint64_t>(pair_val >> 2);
     if (id < g_pair_slots.size() && g_pair_slots[id]) {
         int64_t key = g_pair_slots[id]->car;
@@ -844,6 +894,7 @@ int64_t aura_hash_set(int64_t hash_val, int64_t pair_val) {
                 if (m == HASH_OCCUPIED) {
                     if (keys[slot] == key) {
                         vals[slot] = val;
+                        aura_unlock_workspace_write();
                         return 0;  // updated existing
                     }
                 } else if (m == HASH_TOMBSTONE) {
@@ -856,6 +907,7 @@ int64_t aura_hash_set(int64_t hash_val, int64_t pair_val) {
                     keys[use_slot] = key;
                     vals[use_slot] = val;
                     ++ht->size;
+                    aura_unlock_workspace_write();
                     return 0;
                 }
             }
@@ -865,12 +917,15 @@ int64_t aura_hash_set(int64_t hash_val, int64_t pair_val) {
             // silently rather than corrupt the table.
         }
     }
+    aura_unlock_workspace_write();
     return 0;
 }
 
 int64_t aura_hash_remove(int64_t hash_val, int64_t key_val) {
-    // Issue #157 Phase 2: wrap with aura_lock_workspace_write.
-    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
+    // Issue #157 Phase 2: write lock — writes the FlatHashTable
+    // metadata (slot -> HASH_TOMBSTONE) and decrements size.
+    aura_lock_workspace_write();
+    int64_t result = 0; // not found
     auto hidx = static_cast<std::size_t>(static_cast<uint64_t>(hash_val) >> 6);
     if (hidx < g_hash_tables.size() && g_hash_tables[hidx]) {
         auto* ht = g_hash_tables[hidx];
@@ -881,7 +936,7 @@ int64_t aura_hash_remove(int64_t hash_val, int64_t key_val) {
         for (uint64_t i = 0; i < cap; ++i) {
             uint64_t slot = probe_slot(h, i, cap);
             uint8_t m = meta[slot];
-            if (m == HASH_EMPTY) return 0; // not found
+            if (m == HASH_EMPTY) break; // not found
             if (m == HASH_OCCUPIED && keys[slot] == key_val) {
                 // Mark as tombstone. A subsequent insert can fill
                 // this slot (reusing the deleted entry's probe
@@ -889,12 +944,14 @@ int64_t aura_hash_remove(int64_t hash_val, int64_t key_val) {
                 // a tombstone until rebuild.
                 meta[slot] = HASH_TOMBSTONE;
                 --ht->size;
-                return 1;
+                result = 1;
+                break;
             }
             // HASH_TOMBSTONE: keep probing
         }
     }
-    return 0;
+    aura_unlock_workspace_write();
+    return result;
 }
 // ── Forward declarations (defined below, same extern "C" block) ──
 int64_t aura_alloc_float(double d);

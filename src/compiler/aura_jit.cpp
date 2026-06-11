@@ -260,6 +260,17 @@ struct LLVMBuilder {
     // Hash table direct accessor (Phase 4c): returns FlatHashTable*, then GEP
     llvm::Function* fn_hash_get_flat_table = nullptr;
     llvm::Function* fn_hash_key_eq = nullptr;
+    // Issue #157 Phase 2b: workspace read/write lock primitives
+    // (declared from the runtime hooks table; no-op when no
+    // CompilerService is registered). OpHashRef's inline IR scan
+    // uses fn_lock_workspace_read / fn_unlock_workspace_read to
+    // bracket the entire scan so that aura_hash_set /
+    // aura_hash_remove / FlatHashTable::rebuild cannot tear the
+    // FlatHashTable pointer or its internals.
+    llvm::Function* fn_lock_workspace_read = nullptr;
+    llvm::Function* fn_unlock_workspace_read = nullptr;
+    llvm::Function* fn_lock_workspace_write = nullptr;
+    llvm::Function* fn_unlock_workspace_write = nullptr;
 
     void declare_runtime() {
         auto i64 = llvm::Type::getInt64Ty(ctx);
@@ -395,6 +406,26 @@ struct LLVMBuilder {
                 llvm::Function::Create(llvm::FunctionType::get(i64, {i64, i64}, false),
                                         llvm::Function::ExternalLinkage, "aura_hash_key_eq", mod);
         }
+
+        // Issue #157 Phase 2b: workspace lock/unlock declarations for
+        // OpHashRef inline IR scan. The inline scan must hold the read
+        // lock for its entire duration so that aura_hash_set /
+        // aura_hash_remove / FlatHashTable::rebuild cannot tear the
+        // FlatHashTable pointer or its metadata / keys / values arrays.
+        // Acquired before fn_hash_get_flat_table, released in done_bb
+        // (the only block that exits the inline IR region).
+        fn_lock_workspace_read =
+            llvm::Function::Create(llvm::FunctionType::get(void_ty, false),
+                                   llvm::Function::ExternalLinkage, "aura_lock_workspace_read", mod);
+        fn_unlock_workspace_read =
+            llvm::Function::Create(llvm::FunctionType::get(void_ty, false),
+                                   llvm::Function::ExternalLinkage, "aura_unlock_workspace_read", mod);
+        fn_lock_workspace_write =
+            llvm::Function::Create(llvm::FunctionType::get(void_ty, false),
+                                   llvm::Function::ExternalLinkage, "aura_lock_workspace_write", mod);
+        fn_unlock_workspace_write =
+            llvm::Function::Create(llvm::FunctionType::get(void_ty, false),
+                                   llvm::Function::ExternalLinkage, "aura_unlock_workspace_write", mod);
 
         // Closure registration (JIT linking)
         fn_register_closure =
@@ -1083,6 +1114,14 @@ struct LLVMBuilder {
                 auto i8_ptr   = llvm::PointerType::getUnqual(i8_ty);
                 auto i64_ptr  = llvm::PointerType::getUnqual(i64_ty);
 
+                // Issue #157 Phase 2b: acquire read lock before
+                // fn_hash_get_flat_table. Held across the entire
+                // inline IR scan (live_bb through done_bb), released
+                // in done_bb. This makes the FlatHashTable pointer
+                // fetch + the GEPs + loads safe vs concurrent
+                // aura_hash_set / aura_hash_remove / rebuild.
+                irb->CreateCall(fn_lock_workspace_read, {});
+
                 // Call aura_hash_get_flat_table — returns i8* (FlatHashTable*)
                 auto ht_ptr = irb->CreateCall(fn_hash_get_flat_table, {hash_val});
 
@@ -1183,6 +1222,12 @@ struct LLVMBuilder {
                 phi_result->addIncoming(c64(11), miss_bb);  // void sentinel
                 phi_result->addIncoming(c64(11), null_bb);   // null case returns void
                 store(result_slot, phi_result);
+                // Issue #157 Phase 2b: release read lock after the
+                // result is stored. done_bb is the sole exit for the
+                // inline IR region (null_bb branches here, miss_bb
+                // branches here, found_bb branches here, the loop
+                // backedge stays within the lock).
+                irb->CreateCall(fn_unlock_workspace_read, {});
                 return true;
             }
             case OpHashSet: {
