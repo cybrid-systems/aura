@@ -316,8 +316,42 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
         bool ok = aot_flat_functions_to_binary(flat_fns, num_functions,
                                                 std::string(out_path),
                                                 runtime_c);
-        if (ok)
+        if (ok) {
+            // Issue #151 Phase 1: tier dispatch log. The AOT
+            // path's persistent cache is appropriate for
+            // Performance-regioned functions (stable, hot,
+            // benefits from O3); Evolution-regioned functions
+            // (dynamic, self-modifying) would invalidate the
+            // cache too often and are better served by the
+            // JIT path. Today the AOT emission emits ALL
+            // functions regardless of region; the Evolution
+            // ones will be re-emitted on each compilation
+            // round-trip (not ideal but not broken). The
+            // actual AOT-skip-for-Evolution wiring is the
+            // Phase 2 follow-up. This log line is the
+            // observability for the tier decision — users
+            // can see which functions are going down the AOT
+            // path vs the JIT path (by absence from this log).
+            {
+                std::size_t aot_count = 0;
+                std::size_t jit_count = 0;
+                for (unsigned int i = 0; i < num_functions; ++i) {
+                    // FlatFunction::region: 0=Default, 1=Performance, 2=Evolution.
+                    // tier_for_region maps Performance -> AOT (0),
+                    // Evolution / Default -> JIT (1) per
+                    // #151 Phase 0's prep.
+                    switch (flat_fns[i].region) {
+                        case 1 /*Performance*/: ++aot_count; break;
+                        default:                ++jit_count; break;
+                    }
+                }
+                std::fprintf(stderr,
+                    "AOT tier dispatch: %zu function(s) Performance (AOT), "
+                    "%zu function(s) Default/Evolution (JIT)\n",
+                    aot_count, jit_count);
+            }
             return true;
+        }
 
         fprintf(stderr, "AOT: LLVM pipeline failed, falling back to shell wrapper\n");
         // Issue #62 Iter 2: structured JSON log of the AOT fallback
