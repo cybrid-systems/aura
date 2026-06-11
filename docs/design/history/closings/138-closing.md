@@ -114,7 +114,7 @@ speedup and document the ratio.
 ```
  CMakeLists.txt                       | +98 (test_issue_138 registration)
  tests/test_issue_138.cpp            | NEW (14 tests, ~400 LOC)
- docs/issue-closings/138-closing.md   | NEW
+ docs/design/history/closings/138-closing.md   | NEW
 ```
 
 ---
@@ -149,8 +149,8 @@ being used, no errors, no stale entries) rather than a hard
 - `docs/design/dual-workspace-incremental-ir.md` — design doc
 - `docs/design/core/typed_mutation.md` — mutation design
 - `docs/design/core/query_edsl.md` — query EDSL design
-- `docs/issue-closings/72-closing.md` — incremental typecheck
+- `docs/design/history/closings/72-closing.md` — incremental typecheck
   cache (where cache_hits / cache_misses / stale_cache was added)
-- `docs/issue-closings/97-closing.md` — WorkspaceTree (long-lived
+- `docs/design/history/closings/97-closing.md` — WorkspaceTree (long-lived
   workspace state, mutate target)
-- `docs/issue-closings/98-closing.md` — merge / discard / multi-workspace
+- `docs/design/history/closings/98-closing.md` — merge / discard / multi-workspace

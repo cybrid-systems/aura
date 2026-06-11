@@ -133,7 +133,7 @@ issues for #137 to track:
  src/parser/parser_impl.cpp  | +20 -1 (multi-form body collection)
  tests/test_issue_137.cpp   | NEW (24 tests, 7 categories)
  CMakeLists.txt            | +57 (test_issue_137 registration)
- docs/issue-closings/137-closing.md | NEW
+ docs/design/history/closings/137-closing.md | NEW
 ```
 
 3 files modified, 1 file added.
@@ -183,9 +183,9 @@ overloading #137.
 
 ## Related
 
-- `docs/issue-closings/120-closing.md` — initial hygienic macro
+- `docs/design/history/closings/120-closing.md` — initial hygienic macro
   implementation (define-hygienic-macro + clone_macro_body
   with name_map)
-- `docs/issue-closings/121-closing.md` — nested macro expansion
+- `docs/design/history/closings/121-closing.md` — nested macro expansion
   (expand_inner_macros)
 - `docs/design/hygienic_macros.md` — original design doc

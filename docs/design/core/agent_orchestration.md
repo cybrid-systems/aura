@@ -6,8 +6,8 @@
 > fiber scheduler（#109 Phase 1）；work-stealing scheduler（Phase 2）；
 > C++26 `std::execution` 风格 adapter；fiber affinity + broadcast +
 > mailbox-stats；T3 test fix。Closing doc：
-> [`docs/issue-closings/109-closing.md`](../issue-closings/109-closing.md)
-> + [`docs/issue-closings/119-closing.md`](../issue-closings/119-closing.md)。
+> [`docs/design/history/closings/109-closing.md`](../history/closings/109-closing.md)
+> + [`docs/design/history/closings/119-closing.md`](../history/closings/119-closing.md)。
 
 ---
 
@@ -495,7 +495,7 @@ if (aura::messaging::g_fiber_yield_mutation_boundary)
 
 ## Related
 
-- [`docs/issue-closings/109-closing.md`](../issue-closings/109-closing.md) — fiber:join + T3 fix
+- [`docs/design/history/closings/109-closing.md`](../history/closings/109-closing.md) — fiber:join + T3 fix
 - [`docs/design/concurrency_model.md`](concurrency_model.md) — fiber scheduler 内部
 - [`docs/design/concurrent_channels.md`](concurrent_channels.md) — mailbox / channel
 - [`docs/design/agent-orchestration-evolution.md`](agent-orchestration-evolution.md) — 长期演进路径

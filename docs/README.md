@@ -25,7 +25,7 @@
 - **`design/core/`** — 高价值核心设计 (6 篇) ，作为新贡献者的 on-ramp
 - **`design/compilation/`** — 编译相关 (IR / JIT) (2 篇)
 - **`design/runtime/`** — 运行时相关 (async serve / FFI) (2 篇)
-- **`design/notes/`** — 归档的设计探索 / 单一议题 follow-up (~80+ 篇) — 仍有参考价值但不是 on-ramp 必读
+- **`design/history/`** — 归档与历史（`notes/` + `closings/`）。包含 issue follow-up、推测设计等。新人可跳过；详见 history/ 下的 READMEs。
 
 ### 进程规则：§0 Implementation Status 必须存在
 
@@ -73,9 +73,12 @@
 | [async_serve](design/runtime/async_serve.md) | Fiber / scheduler / 多 session serve 模式 |
 | [ffi](design/runtime/ffi.md) | C FFI 设计与绑定 |
 
-### 归档 (`design/notes/`) — 按需查阅
+### 归档与历史 (`design/history/`) — 按需查阅
 
-包含所有 issue follow-up 、speculative research、单一议题的设计探索、之前版本的管线设计等 (~80+ 篇)。新贡献者可以**跳过**这个目录；它主要供历史参考。`git log -- docs/design/notes/<file>` 仍可追溯每个文件的来历。
+- `design/history/notes/`（原 `design/notes/`）：归档的设计探索、推测性研究、单一议题 follow-up 和早期管线设计（~80+ 篇）。新贡献者可以**跳过**；主要供历史参考。详见该目录下的 README。
+- `design/history/closings/`（原 `docs/issue-closings/`）：issue 关闭总结和事后分析。已迁移到 design/ 下统一管理。详见该目录下的 README。
+
+新贡献者应优先阅读 `design/core/` 的 Implementation Status 章节。历史文档可通过 `git log` 追溯。许多概念已在 core/ 中实现或演进。
 
 **注意**：所有 `design/core/`、`design/compilation/`、`design/runtime/` 下的文档**必须**包含 `## 0. Implementation Status` 章节（C++ Core Layer + Aura Layer 表格 + AI Agent 读者注意事项），详见上文“进程规则”。
 

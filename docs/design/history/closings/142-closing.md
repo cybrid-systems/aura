@@ -105,7 +105,7 @@ track mutation IDs themselves.
 
 15/15 verification tests pass.
 
-### 5. `docs/issue-closings/142-closing.md` — this doc.
+### 5. `docs/design/history/closings/142-closing.md` — this doc.
 
 ---
 
@@ -177,7 +177,7 @@ track mutation IDs themselves.
   `workspace:rollback-latest`, `workspace:mutation-count`
   primitives
 - `tests/test_issue_142.cpp` — 15-test verification binary (NEW)
-- `docs/issue-closings/142-closing.md` — this doc (NEW)
+- `docs/design/history/closings/142-closing.md` — this doc (NEW)
 
 ---
 

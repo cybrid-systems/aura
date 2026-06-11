@@ -289,7 +289,7 @@
 ```
 
 这是把 query 和 replace 组合为单步原子操作的关键原语。详见
-[docs/issue-closings/110-closing.md](../issue-closings/110-closing.md)。
+[docs/design/history/closings/110-closing.md](../history/closings/110-closing.md)。
 
 > ⚠️ **使用警示**：写一个 combine（read + write）循环的 mutate 时，**必须**在循环
 > 外 snapshot `end_id = flat.size()`。详见
@@ -520,8 +520,8 @@ Serve 协议本身不变。新增的 `query:where` / `mutate:query-and-replace` 
 ## 11. 相关文档
 
 - [docs/developer/evaluator.md](../developer/evaluator.md) — evaluator C++ 实现细节
-- [docs/issue-closings/107-closing.md](../issue-closings/107-closing.md) — workspace mutex + AST versioning
-- [docs/issue-closings/110-closing.md](../issue-closings/110-closing.md) — qar + self-modifying-flat 教训
-- [docs/issue-closings/111-closing.md](../issue-closings/111-closing.md) — self-modifying-flat 审计
+- [docs/design/history/closings/107-closing.md](../history/closings/107-closing.md) — workspace mutex + AST versioning
+- [docs/design/history/closings/110-closing.md](../history/closings/110-closing.md) — qar + self-modifying-flat 教训
+- [docs/design/history/closings/111-closing.md](../history/closings/111-closing.md) — self-modifying-flat 审计
 - [docs/design/defuse_analysis.md](defuse_analysis.md) — DefUseIndex 内部设计
 - [docs/tutorial.md §10](../tutorial.md) — EDSL / AI Agent 开发 tutorial

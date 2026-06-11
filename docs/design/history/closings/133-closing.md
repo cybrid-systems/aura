@@ -141,7 +141,7 @@ drop: ()
 
 ## Files in this PR
 
-- `docs/issue-closings/133-closing.md` (new, this file)
+- `docs/design/history/closings/133-closing.md` (new, this file)
 
 No source files modified. The closing commit for this issue
 documents the partial state and the rationale for not pursuing
@@ -151,8 +151,8 @@ the remaining sub-extractions at this time.
 
 - `docs/design/core/typed_mutation.md` — mutation/rollback design
 - `docs/design/ast_validate.md` — FlatAST validation
-- `docs/issue-closings/132-closing.md` — earlier AST walkers
+- `docs/design/history/closings/132-closing.md` — earlier AST walkers
   extraction (related to ast.ixx boundary)
-- `docs/issue-closings/131-closing.md` — FFI primitives extraction
+- `docs/design/history/closings/131-closing.md` — FFI primitives extraction
   (earlier refactor in the same series)
 - `cpp26_guide.md` — DOD / SoA / Concepts guidance
