@@ -331,6 +331,36 @@ export enum class Region : std::uint8_t {
     Evolution = 2,
 };
 
+// Issue #150 P0 — Static/Dynamic Region Analysis. The
+// Region enum above is the data model; today the
+// FlatFunction::region field (set by the parser / IR
+// builder) is mostly 0 (Default) because no caller
+// explicitly sets it. Issue #150 Phase 1 (lightweight
+// annotations) would wire:
+//   (performance-region (define (hot-compute ...) ...))
+//   (evolution-region (define (self-modify ...) ...))
+// Aura forms that the parser recognizes and sets the
+// corresponding Region value on the FlatFunction / IRFunction.
+//
+// Full 3-phase roadmap (estimated 4-6 commits, like #148
+// and #149):
+//   Phase 1: explicit Aura forms (performance-region /
+//     evolution-region) + parser / lowering support to
+//     set FlatFunction::region accordingly.
+//   Phase 2: automatic inference pass — walk the call
+//     graph, detect mutate:* / eval-current / ast:* calls,
+//     and set region on functions that escape mutation.
+//     Functions only called from performance regions
+//     inherit Performance.
+//   Phase 3: mutation impact analysis — detect which
+//     functions are affected by a specific mutate:rebind
+//     and only invalidate/recompile those (not global cache).
+//
+// Today ships Phase 0 (prep): the enum + a 28-line design
+// comment. The existing Region field is preserved (Default
+// is the current behavior for everything not annotated).
+// No behavior change.
+
 export struct IRFunction {
     std::uint32_t id = 0;
     std::string name;
