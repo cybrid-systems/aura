@@ -31,7 +31,7 @@
 
 ### 代码自修改 (EDSL)
 
-> **实现状态提示**（2026-06）：C++ 层 query/mutate/ast/workspace 原语基本完整（详见 `design/core/query_edsl.md` §0、`mutate_api.md`、`workspace_layering.md`、`typed_mutation.md`）。Aura std/ 层提供部分 helper（例如 `std/query.aura` 只包了少数组合查询）。**完整可靠表面以 `design/core/` 下的 Implementation Status 表格为准**。Serve 协议（`--serve` / `--serve-async`）支持大部分 EDSL 操作 + typed mutate + invariant 诊断。
+> **实现状态提示**（最新）：C++ 层 EDSL 原语（query/mutate/ast/workspace）基本完整，详见各 `design/core/*` 的 `## 0. Implementation Status`。Aura std/ 层主要是便利 helper（例如 `std/query.aura` 只包少数组合）。**以 design/core/ §0 表格 + 本页 “EDSL Primitives Surface” 为准**。Serve 协议（`--serve` / `--serve-async`）是 Agent 使用 EDSL 的主要方式，支持 typed-mutate、mutation-log 等。
 
 **代码加载**
 `set-code` `current-source` `eval-current` `eval-current-output`
@@ -156,7 +156,7 @@
 | `std/verify` | `verify-output` | 测试相关 |
 | `std/heal` | `heal` | 自愈相关 |
 
-**注意**：std/ 包装是便利层；核心能力通过直接 EDSL 原语或 --serve 协议暴露。完整状态见上文 "EDSL Primitives Surface"。
+**注意**：std/ 包装是便利层；核心 EDSL 能力通过直接原语或 --serve 协议暴露（推荐用于复杂 Agent 循环）。完整状态见上文 "EDSL Primitives Surface" 及 `design/core/` §0。
 
 ### LLM & Agent
 | 模块 | 导出 |

@@ -6,14 +6,11 @@
 
 ## 起源
 
-大多数编程语言是为人类设计的。  
-语法优化可读性，编译器优化可预测性，工具链优化开发者体验。
+大多数编程语言是为人类设计的（优化可读性、可预测性、开发者体验）。
 
-Aura 问了一个不同的问题：  
-**如果使用者不是人类，而是 AI，语言应该长什么样？**
+Aura 问了一个不同的问题：**如果使用者是 AI，语言应该长什么样？**
 
-答案不是"让 AI 写代码"。  
-而是让语言本身成为 AI 可以理解、操作、进化的**活的系统**。
+答案不是“让 AI 写代码”，而是让语言本身成为 AI 可以理解、操作、进化的**活的系统**。
 
 ---
 
@@ -80,7 +77,6 @@ LLM → 方向性代码 → 编译 → 测量距离 → fine/putt?
 
 ## 延伸阅读
 
-- [docs/design/notes/ant_colony_controller.md](design/notes/ant_colony_controller.md) — 蚁群控制器设计
-- [docs/design/notes/ant_architecture.md](design/notes/ant_architecture.md) — 解耦架构
-- [docs/design/notes/adaptive_intend_pid.md](design/notes/adaptive_intend_pid.md) — PID 控制
-- [docs/design/notes/aura_language_spec.md](design/notes/aura_language_spec.md) — 语法规格
+- 蚁群 / PID / 控制论相关：`design/notes/` 下的 ant_*、adaptive_intend_pid 等（历史探索，当前状态见 `design/core/agent_orchestration.md` §0 和 roadmap）。
+- 语言规格：`design/notes/aura_language_spec.md`（历史），当前以 `design/core/` + 代码为准。
+- 完整设计演进见 Git 历史和 `design/history/`。
