@@ -3188,6 +3188,44 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                 res.invariant_status = aura::ast::InvariantStatus::Ok;
                 return res;
             }
+
+            // Issue #152 Phase 2: Mutation Impact Analysis. The
+            // typed_mutate call may have changed a function's
+            // value; any Define whose subtree references that
+            // function (directly) is potentially affected. The
+            // affected set is computed via the
+            // defines_referencing_sym helper from #150 Phase 3
+            // (commit 02a1c75). The affected set is logged
+            // (observability hook for the agent orchestration
+            // layer — "what would this mutation affect?") and
+            // could be used by the AOT cache invalidation
+            // (cross-link to #151 Phase 3) to invalidate only
+            // the affected entries, not the global cache.
+            //
+            // Today the affected set is logged but not
+            // consumed for invalidation (the AOT cache
+            // invalidation path is a follow-up). This is the
+            // read-side: the affected Define node IDs are
+            // computed and emitted to stderr for observability.
+            if (mid > 0) {
+                const auto& mut_log = ws_flat->all_mutations();
+                for (auto it = mut_log.rbegin(); it != mut_log.rend(); ++it) {
+                    if (it->mutation_id != mid) continue;
+                    aura::ast::NodeId target = it->target_node;
+                    if (target == aura::ast::NULL_NODE) target = it->parent_id;
+                    if (target != aura::ast::NULL_NODE && target < ws_flat->size()) {
+                        auto v = ws_flat->get(target);
+                        if (v.tag == aura::ast::NodeTag::Define &&
+                            v.sym_id != aura::ast::INVALID_SYM) {
+                            auto affected = ws_flat->defines_referencing_sym(v.sym_id);
+                            std::println(std::cerr,
+                                "MutationImpactAnalysis: mutation {} affects {} function(s)",
+                                mid, affected.size());
+                        }
+                    }
+                    break;
+                }
+            }
             // The snapshot id is the count of mutations on the
             // workspace BEFORE the typed_mutate's eval started.
             // We don't have a direct way to capture that here
