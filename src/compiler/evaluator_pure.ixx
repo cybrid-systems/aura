@@ -383,4 +383,63 @@ export inline aura::diag::Result<void> coerce_value_pure(
         "coerce_value: unsupported coercion"));
 }
 
+// arithmetic_sum_pure — Issue #146 (7th extract).
+//
+// Pure variadic sum: (+) → 0, (+ x) → x, (+ x y ...) → sum.
+// Promotes to float if any arg is float; otherwise stays int.
+// Returns the result as a fresh EvalValue (make_int or make_float).
+//
+// `diag` is an optional diagnostics sink. When non-null, the
+// function writes the legacy \"type mismatch\" line to *diag on
+// any arg whose coercion to int fails (matches pre-extract
+// stateful behavior — regression tests
+// tc-strict-runtime-typed-arg-mismatch and
+// tc-type-var-name-from-param depend on this). When null
+// (default), no diagnostics are emitted. The function remains
+// pure modulo the sink: every dependency (args, heap, diag
+// stream) is passed in, no `this` or Evaluator member access.
+export inline types::EvalValue
+arithmetic_sum_pure(
+    std::span<const types::EvalValue> args,
+    std::span<const std::string> string_heap,
+    std::ostream* diag = nullptr)
+{
+    auto coerce_one = [&](const types::EvalValue& v) -> std::int64_t {
+        auto r = coerce_to_int_pure(v, string_heap);
+        if (r) return *r;
+        // Coercion failed. If the failing value is a String and
+        // a diag sink is provided, mirror the pre-Phase-1 stderr
+        // line so callers that previously relied on the
+        // stateful coerce_to_int wrapper's stderr emission
+        // (e.g. the `+` primitive in evaluator_impl.cpp) keep
+        // working.
+        if (diag && types::is_string(v) && !string_heap.empty()) {
+            auto idx = types::as_string_idx(v);
+            if (idx < string_heap.size()) {
+                *diag << "error: type mismatch — expected Int, got String '"
+                       << string_heap[idx] << "'\n";
+            }
+        }
+        return 0;
+    };
+    if (args.empty())
+        return types::make_int(0);
+    bool any_f = false;
+    for (const auto& v : args) {
+        if (types::is_float(v)) { any_f = true; break; }
+    }
+    if (any_f) {
+        double r = 0.0;
+        for (const auto& v : args)
+            r += types::is_float(v)
+                     ? types::as_float(v)
+                     : static_cast<double>(coerce_one(v));
+        return types::make_float(r);
+    }
+    std::int64_t r = 0;
+    for (const auto& v : args)
+        r += coerce_one(v);
+    return types::make_int(r);
+}
+
 } // namespace aura::compiler::pure
