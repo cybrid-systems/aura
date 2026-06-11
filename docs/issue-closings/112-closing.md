@@ -30,7 +30,7 @@ Created as the explicit follow-up to the #111 audit. Covers:
 - **§11**: Pre-merge pitfalls checklist (11 items)
 - **§12-§14**: Testing, file map, related docs
 
-### 2. `docs/design/query_edsl_design.md` — updated
+### 2. `docs/design/query_edsl_design.md` (now `design/core/query_edsl.md`) — updated
 
 - Marked all P0-P3 priorities as ✅ shipped (P0-P2 全部完成, P3 重构原语
   也完成)
@@ -43,7 +43,7 @@ Created as the explicit follow-up to the #111 audit. Covers:
 - Performance table now has measured values, not estimates
 - Added §11 "Related docs" cross-references
 
-### 3. `docs/design/agent_orchestration.md` — **major update**
+### 3. `docs/design/agent_orchestration.md` (now `design/core/agent_orchestration.md`) — **major update**
 
 The doc claimed `fiber:join` was still a stub and `orch:parallel` had a
 serial fallback. Both are wrong after #109. Updated:
@@ -59,7 +59,7 @@ serial fallback. Both are wrong after #109. Updated:
   reviews + conduct with if/retry
 - Updated implementation roadmap (Phase 1-3 done, Phase 4 future)
 
-### 4. `docs/design/mutate_api.md` — **major update**
+### 4. `docs/design/mutate_api.md` (now `design/core/mutate_api.md`) — **major update**
 
 Expanded from 100 lines / 5 primitives to ~250 lines / 12 primitives:
 
@@ -71,7 +71,7 @@ Expanded from 100 lines / 5 primitives to ~250 lines / 12 primitives:
 - Added "测试覆盖" section with fuzzer list
 - Added "Future Work" section
 
-### 5. `docs/design/typed_mutation_design.md` — **major update**
+### 5. `docs/design/typed_mutation_design.md` (now `design/core/typed_mutation.md`) — **major update**
 
 The doc didn't mention `DefUseIndex` or `WorkspaceTree COW` at all. The
 #112 sub-task 5 specifically asked to sync these. Added:
@@ -127,11 +127,11 @@ Added:
 
 | Sub-task | Doc | What |
 |----------|-----|------|
-| 1 | `query_edsl_design.md` | Updated implementation status, added query:where/query:filter, added Agent integration patterns |
-| 2 | `agent_orchestration.md` | Marked Phase 1-2 done, added fiber:join impl, added Mutation Boundary section, added multi-agent examples |
-| 3 | `mutate_api.md` | Expanded to 12 primitives, added atomicity/rollback, added mutate protocol overview |
+| 1 | `query_edsl_design.md` (now core/query_edsl.md) | Updated implementation status, added query:where/query:filter, added Agent integration patterns |
+| 2 | `agent_orchestration.md` (now core/agent_orchestration.md) | Marked Phase 1-2 done, added fiber:join impl, added Mutation Boundary section, added multi-agent examples |
+| 3 | `mutate_api.md` (now core/mutate_api.md) | Expanded to 12 primitives, added atomicity/rollback, added mutate protocol overview |
 | 4 | `tutorial.md` + `README.md` | Added 5-min quickstart sections |
-| 5 | `typed_mutation_design.md` | Added DefUseIndex + WorkspaceTree COW + Direct Snapshot sections |
+| 5 | `typed_mutation_design.md` (now core/typed_mutation.md) | Added DefUseIndex + WorkspaceTree COW + Direct Snapshot sections |
 | + | `developer/evaluator.md` | **NEW** — evaluator dev guide (the #111 follow-up) |
 
 7 doc files updated/created. 0 code changes. Future sessions add

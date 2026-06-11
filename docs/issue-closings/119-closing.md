@@ -68,7 +68,7 @@ them mid-wait.
   main serve-async path and the bench path.
 
 ### 3. Documentation sync
-   (`docs/design/agent_orchestration.md`)
+   (`docs/design/core/agent_orchestration.md`)
 
 - Status header updated to reflect #119's Phase 1-3 completion.
 - `fiber:join` row in the implementation table updated with

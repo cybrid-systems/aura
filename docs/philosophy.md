@@ -80,7 +80,7 @@ LLM → 方向性代码 → 编译 → 测量距离 → fine/putt?
 
 ## 延伸阅读
 
-- [docs/design/ant_colony_controller.md](design/ant_colony_controller.md) — 蚁群控制器设计
-- [docs/design/ant_architecture.md](design/ant_architecture.md) — 解耦架构
-- [docs/design/adaptive_intend_pid.md](design/adaptive_intend_pid.md) — PID 控制
-- [docs/design/aura_language_spec.md](design/aura_language_spec.md) — 语法规格
+- [docs/design/notes/ant_colony_controller.md](design/notes/ant_colony_controller.md) — 蚁群控制器设计
+- [docs/design/notes/ant_architecture.md](design/notes/ant_architecture.md) — 解耦架构
+- [docs/design/notes/adaptive_intend_pid.md](design/notes/adaptive_intend_pid.md) — PID 控制
+- [docs/design/notes/aura_language_spec.md](design/notes/aura_language_spec.md) — 语法规格

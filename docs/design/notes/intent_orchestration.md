@@ -412,7 +412,7 @@ iteration 2:
 
 ## 相关文档
 
-- [Query + Transform EDSL](query_edsl_design.md) — 底层 AST 操作原语
+- [Query + Transform EDSL](query_edsl.md) — 底层 AST 操作原语
 - [FlatAST 设计](ast_validate.md) — AST 数据结构
 - [edsl_benchmark.py](../../tests/edsl_benchmark.py) — 评测框架
 - [roadmap.md](../roadmap.md) — 项目路线图

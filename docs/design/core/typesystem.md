@@ -281,9 +281,9 @@ set-code → query → typed-mutate → eval-current → TypeChecker
 
 ## 7. 参考文档
 
-- `docs/aura_typesystem_formal.md` — 形式类型规则（设计参考）
-- `docs/typed_mutation_design.md` — 带类型检查的 EDSL 变异
-- `docs/ir_pipeline_design.md` — IR 管线设计
+- `docs/design/notes/aura_typesystem_formal.md` — 形式类型规则（设计参考）
+- `docs/design/core/typed_mutation.md` — 带类型检查的 EDSL 变异
+- `docs/design/compilation/ir_pipeline.md` — IR 管线设计
 - `docs/roadmap.md` — 路线图
 - `src/compiler/type_checker_impl.cpp` — 类型检查器实现
 

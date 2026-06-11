@@ -95,7 +95,7 @@ useful because:
   mutations in sequence may invalidate more than
   necessary. A future issue.
 - **The other design docs** (`aura_typesystem_formal.md`,
-  `typed_mutation_design.md`, `ir_pipeline_design.md`)
+  `typed_mutation_design.md` (now core/typed_mutation.md), `ir_pipeline_design.md` (now compilation/ir_pipeline.md))
   may have similar drift. They are not in scope for
   this issue.
 
@@ -124,7 +124,7 @@ useful because:
 ## What (if anything) is still open
 
 - Sync the other design docs (aura_typesystem_formal.md,
-  typed_mutation_design.md, ir_pipeline_design.md) to
+  typed_mutation_design.md (now core/), ir_pipeline_design.md (now compilation/) ) to
   match the current implementation. These may have
   similar drift.
 - Add a CI step that runs a "doc claims vs code"

@@ -34,9 +34,9 @@ echo '(+ 1 2)' | ./build/aura   # → 3
 
 完整 Quickstart（含 Agent 编排 + snapshot/rollback）见
 [`docs/tutorial.md §10.5`](docs/tutorial.md)。
-所有原语的完整 API 见 [`docs/design/query_edsl_design.md`](docs/design/query_edsl_design.md) /
-[`docs/design/mutate_api.md`](docs/design/mutate_api.md) /
-[`docs/design/agent_orchestration.md`](docs/design/agent_orchestration.md)。
+所有原语的完整 API 见 [`docs/design/core/query_edsl.md`](docs/design/core/query_edsl.md) /
+[`docs/design/core/mutate_api.md`](docs/design/core/mutate_api.md) /
+[`docs/design/core/agent_orchestration.md`](docs/design/core/agent_orchestration.md)。
 
 ---
 

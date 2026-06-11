@@ -125,7 +125,7 @@ struct-of-arrays layout. Hot-swap.
 - `unify_cell_heap.md` + `double-arena.md` — `pmr` vector with
   arena resource lets us resize during layout migration without
   heap fragmentation
-- `typed_mutation_design.md` — typed re-layout must preserve
+- `typed_mutation_design.md` (now `design/core/typed_mutation.md`) — typed re-layout must preserve
   type identity, so the rest of the program can keep its
   `vector<Record>` view
 - `value_encoding.md` — encoding choice (`short-string` for

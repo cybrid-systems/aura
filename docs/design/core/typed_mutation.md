@@ -623,4 +623,4 @@ OOM 时 `ast:snapshot` 把 source string 也存一份（`has_flat=false`）；
 - [`docs/issue-closings/111-closing.md`](../issue-closings/111-closing.md) — self-modifying-flat 审计
 - [`docs/developer/evaluator.md`](../developer/evaluator.md) — evaluator 开发者指南（C++ 实装细节）
 - [`docs/design/defuse_analysis.md`](defuse_analysis.md) — DefUseIndex 内部数据布局
-- [`docs/design/query_edsl_design.md`](query_edsl_design.md) — Query + Transform EDSL 全貌
+- [`docs/design/core/query_edsl.md`](query_edsl.md) — Query + Transform EDSL 全貌
