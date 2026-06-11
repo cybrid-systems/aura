@@ -393,7 +393,20 @@ public:
                     // branch values match that type.
                     if (instr.opcode == aura::ir::IROpcode::Branch) {
                         auto if_result_type = instr.type_id;
-                        if (if_result_type != 0 && if_result_type != dyn_id.index) {
+                        // Issue #149 Phase 3: when occurrence-narrowing has
+                        // already produced the branch's type, the per-branch
+                        // type check is redundant. The narrow_evidence
+                        // bitmask tells us which narrowing predicates have
+                        // been applied; a non-zero value means the
+                        // narrowed type is statically known. The
+                        // guard (if_result_type != 0 && != dyn_id) is
+                        // still needed — a Branch without a concrete
+                        // result type (e.g. an if-conditional used as a
+                        // statement) shouldn't be type-checked.
+                        bool narrowed_type_known =
+                            (instr.narrow_evidence != 0);
+                        if (!narrowed_type_known &&
+                            if_result_type != 0 && if_result_type != dyn_id.index) {
                             auto then_blk = ops[1];
                             auto else_blk = ops[2];
                             auto check_and_cast = [&](std::uint32_t blk_id) {
