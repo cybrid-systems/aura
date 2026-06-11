@@ -331,6 +331,39 @@ export enum class Region : std::uint8_t {
     Evolution = 2,
 };
 
+// Issue #151 P0 — Tiered Compilation Strategy. The tier
+// chosen for an IRFunction determines the codegen path.
+// Today's AOT / JIT / Interpreter all live in separate
+// compilation units (aura_jit.cpp, aura_jit_bridge.cpp,
+// ir_executor_impl.cpp); the dispatch decision is the
+// follow-up. This enum + tier_for_region is the
+// classification scheme that the dispatch will consult.
+export enum class CompilationTier : std::uint8_t {
+    AOT = 0,           // ahead-of-time: persistent cache, O3
+    JIT = 1,           // just-in-time: ORC, full shape guards
+    Interpreter = 2,   // IR interpreter: dynamic fallback
+};
+
+// Issue #151: map Region -> CompilationTier. The mapping
+// is the heart of the tiered strategy:
+//   - Performance: AOT (stable, hot, benefits most from
+//     O3 + persistent cache; GuardShape deopts minimized)
+//   - Evolution:   JIT (full shape guards, easier
+//     invalidation on mutation; the AOT path's persistent
+//     cache would be invalidated too often for evolving code)
+//   - Default:     JIT (balanced — the existing default path)
+//
+// Returns the tier for a given region. Callers consult
+// this when deciding the codegen path for a function.
+export constexpr CompilationTier tier_for_region(Region r) {
+    switch (r) {
+        case Region::Performance: return CompilationTier::AOT;
+        case Region::Evolution:   return CompilationTier::JIT;
+        case Region::Default:
+        default:                   return CompilationTier::JIT;
+    }
+}
+
 // Issue #150 P0 — Static/Dynamic Region Analysis. The
 // Region enum above is the data model; today the
 // FlatFunction::region field (set by the parser / IR
