@@ -147,8 +147,8 @@ being used, no errors, no stale entries) rather than a hard
 ## Related
 
 - `docs/design/dual-workspace-incremental-ir.md` — design doc
-- `docs/design/typed_mutation_design.md` — mutation design
-- `docs/design/query_edsl_design.md` — query EDSL design
+- `docs/design/core/typed_mutation.md` — mutation design
+- `docs/design/core/query_edsl.md` — query EDSL design
 - `docs/issue-closings/72-closing.md` — incremental typecheck
   cache (where cache_hits / cache_misses / stale_cache was added)
 - `docs/issue-closings/97-closing.md` — WorkspaceTree (long-lived

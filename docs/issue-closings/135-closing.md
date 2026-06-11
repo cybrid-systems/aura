@@ -246,5 +246,5 @@ as new issues when the use case arises.
   / concurrent test flakiness
 - `docs/issue-closings/119-closing.md` — Complete fiber:join +
   enable true orch:parallel
-- `docs/design/agent_orchestration.md` — overall design
-- `docs/design/workspace_layering.md` — WorkspaceTree design
+- `docs/design/core/agent_orchestration.md` — overall design
+- `docs/design/core/workspace_layering.md` — WorkspaceTree design

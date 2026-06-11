@@ -155,9 +155,9 @@ closing.
 
 ## Related
 
-- `docs/design/mutate_api.md` — mutate primitive reference
-- `docs/design/synthesize_strategies.md` — strategy framework
-- `docs/design/e4_evolvable_strategies.md` — evolvable strategies
-- `docs/design/typed_mutation_design.md` — typed mutation model
+- `docs/design/core/mutate_api.md` — mutate primitive reference
+- `docs/design/notes/synthesize_strategies.md` — strategy framework
+- `docs/design/notes/e4_evolvable_strategies.md` — evolvable strategies
+- `docs/design/core/typed_mutation.md` — typed mutation model
 - `docs/issue-closings/120-closing.md` — initial hygienic macro work
   (related: rename hygiene is a mutation-time concern)

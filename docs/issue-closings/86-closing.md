@@ -21,7 +21,7 @@ their own logic at the code level. Done:
 - **`docs/design/e4_evolvable_strategies.md`**: appended a "Related"
   section linking to the new agents doc.
 
-- **`docs/design/agent_orchestration.md`**: appended a "Related"
+- **`docs/design/core/agent_orchestration.md`**: appended a "Related"
   section linking to the new agents doc.
 
 ### ❌ Still open (per the issue's broader spirit)

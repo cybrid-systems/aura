@@ -148,7 +148,7 @@ a closing PR.
 
 ## Related
 
-- `docs/design/query_edsl_design.md` — EDSL design doc
+- `docs/design/core/query_edsl.md` — EDSL design doc
 - `docs/design/hygienic_macros.md` — macro hygiene design
 - `docs/issue-closings/120-closing.md` — initial hygienic macro
   implementation

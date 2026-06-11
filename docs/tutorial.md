@@ -571,16 +571,18 @@ EDSL API 完整列表：
 (reply msg "pong")
 ```
 
-详见 [`docs/design/agent_orchestration.md`](design/agent_orchestration.md)。
+详见 [`docs/design/core/agent_orchestration.md`](design/core/agent_orchestration.md)。
 
 ### EDSL 完整参考
 
 | 操作 | 推荐文档 |
 |------|----------|
-| Query 原语完整列表 | [`docs/design/query_edsl_design.md §2`](design/query_edsl_design.md) |
-| Mutate 原语完整列表 | [`docs/design/mutate_api.md`](design/mutate_api.md) |
-| Agent 编排完整列表 | [`docs/design/agent_orchestration.md`](design/agent_orchestration.md) |
+| Query 原语完整列表 | [`docs/design/core/query_edsl.md §2`](design/core/query_edsl.md) |
+| Mutate 原语完整列表 | [`docs/design/core/mutate_api.md`](design/core/mutate_api.md) |
+| Agent 编排完整列表 | [`docs/design/core/agent_orchestration.md`](design/core/agent_orchestration.md) |
 | 给 evaluator 加新原语 | [`docs/developer/evaluator.md`](developer/evaluator.md) |
+
+> **当前实装状态**：详见各 `design/core/` 文档的 `## 0. Implementation Status` 章节。Query 丰富谓词（where/pattern 等）在 C++ 层已实现，Aura 代码主要通过基础 query:* + std/query 辅助函数使用；高级用法推荐直接通过 evaluator 内部或 --serve 协议。Workspace COW P0 已可用，更高层的 merge/sync 部分仍为设计或 workaround。参考 `design/core/query_edsl.md` 和 `workspace_layering.md`。
 
 ---
 
@@ -663,7 +665,7 @@ build_adaptive_feedback() → correction → LLM 再生成
 
 ---
 
-**下一步:** `docs/roadmap.md` · `docs/design/aura_language_spec.md` · `docs/design/ffi_c.md` · `python3 tests/edsl_benchmark.py --tasks fibonacci`
+**下一步:** `docs/roadmap.md` · `docs/design/notes/aura_language_spec.md` · `docs/design/runtime/ffi.md` · `python3 tests/edsl_benchmark.py --tasks fibonacci`
 
 ## 多 Agent 编排（交响乐指挥模式）
 

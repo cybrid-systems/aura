@@ -149,7 +149,7 @@ the remaining sub-extractions at this time.
 
 ## Related
 
-- `docs/design/typed_mutation_design.md` — mutation/rollback design
+- `docs/design/core/typed_mutation.md` — mutation/rollback design
 - `docs/design/ast_validate.md` — FlatAST validation
 - `docs/issue-closings/132-closing.md` — earlier AST walkers
   extraction (related to ast.ixx boundary)
