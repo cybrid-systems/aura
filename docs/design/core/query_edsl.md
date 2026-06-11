@@ -57,6 +57,8 @@
 - 增量/CaaS：与 `CompilerService` cache 和 dirty 标记集成（见 §4）。
 - 开发者扩展：`docs/developer/evaluator.md`。
 
+（注：JIT 加速比会随具体 workload 和优化迭代变化，最新实测以对应 benchmark 和 §0 表格为准。）
+
 ---
 
 ## 1. 核心模型：工作区
