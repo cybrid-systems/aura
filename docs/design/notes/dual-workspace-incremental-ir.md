@@ -351,8 +351,8 @@ Phase 1 实施时, `set_workspace_flat` 跟之前"覆盖到底被谁覆盖"的 d
 
 - `docs/design/code_evolution_pipeline.md` — EDSL 总览
 - `docs/design/compile_time_reflection.md` — query:* / mutate:* 起源
-- `docs/issue-closings/83-closing.md` — C++26 contracts (pre/post, 跟 EDSL 无关但同时间)
-- `docs/issue-closings/98-closing.md` — workspaces (EDSL 工作区管理)
+- `docs/design/history/closings/83-closing.md` — C++26 contracts (pre/post, 跟 EDSL 无关但同时间)
+- `docs/design/history/closings/98-closing.md` — workspaces (EDSL 工作区管理)
 
 ## 9. 实施 checklist
 

@@ -83,7 +83,7 @@ exposed. Suggested order:
 ## How to Close on GitHub
 
 ```bash
-gh issue close 97 -c "See docs/issue-closings/97-closing.md for analysis
+gh issue close 97 -c "See docs/design/history/closings/97-closing.md for analysis
 of the 3 proposed actions. AOT is complete; secure hot-patch needs
 the hot-swap primitive exposed. Auto-fix is one-shot; closed-loop
 log-to-mutate is demoed in evo-kv/evo-kv-auto.aura but needs to be

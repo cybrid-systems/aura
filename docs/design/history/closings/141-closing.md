@@ -223,4 +223,4 @@ All implemented in `src/compiler/evaluator_impl.cpp` at lines
 - `src/compiler/evaluator_impl.cpp` — implement helpers, fix lazy
   COW in `workspace:switch`, add COW trigger in `mutate:rebind`
 - `tests/test_issue_141.cpp` — 22-test verification binary (NEW)
-- `docs/issue-closings/141-closing.md` — this doc (NEW)
+- `docs/design/history/closings/141-closing.md` — this doc (NEW)

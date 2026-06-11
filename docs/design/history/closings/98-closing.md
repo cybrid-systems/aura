@@ -87,7 +87,7 @@ a source string and returns the set of `(define ...)` names.
 ## How to Close on GitHub
 
 ```bash
-gh issue close 98 -c "See docs/issue-closings/98-closing.md for the 3
+gh issue close 98 -c "See docs/design/history/closings/98-closing.md for the 3
 proposed actions. workspace:merge exists but only with 'last-writer
 wins' conflict resolution. intend primitive exists but role-based
 routing is design-only. No BioTech demo. All three are follow-up

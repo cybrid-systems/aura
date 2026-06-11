@@ -301,10 +301,10 @@ a clear map of acceptance criteria → implementation.
 
 ## Related
 
-- `docs/issue-closings/135-closing.md` — prior umbrella issue
+- `docs/design/history/closings/135-closing.md` — prior umbrella issue
   (parallel orchestration). Provides the multi-agent
   primitives exercised by the new benchmarks.
-- `docs/issue-closings/97-closing.md` — WorkspaceTree (provides
+- `docs/design/history/closings/97-closing.md` — WorkspaceTree (provides
   the C runtime's free-list + bump allocator).
 - `docs/design/llvm_jit.md` — JIT architecture
 - `docs/benchmark.md` — Benchmark suite documentation

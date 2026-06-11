@@ -86,7 +86,7 @@ ratio depends on host and pattern shape.
  src/compiler/evaluator_impl.cpp     | +9 (SyntaxMarker filter in query:pattern)
  tests/test_issue_140.cpp            | NEW (14 tests, ~400 LOC)
  tests/benchmark.py                   | +24 (2 new query:pattern benchmarks)
- docs/issue-closings/140-closing.md   | NEW
+ docs/design/history/closings/140-closing.md   | NEW
 ```
 
 5 files changed, 1 file added, 2 files modified.
@@ -150,7 +150,7 @@ a closing PR.
 
 - `docs/design/core/query_edsl.md` — EDSL design doc
 - `docs/design/hygienic_macros.md` — macro hygiene design
-- `docs/issue-closings/120-closing.md` — initial hygienic macro
+- `docs/design/history/closings/120-closing.md` — initial hygienic macro
   implementation
-- `docs/issue-closings/139-closing.md` — structural refactor
+- `docs/design/history/closings/139-closing.md` — structural refactor
   operators (related EDSL primitives)

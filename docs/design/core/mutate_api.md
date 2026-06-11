@@ -248,7 +248,7 @@ DefineModule、Let、LetRec、Set、MacroDef。
 ```
 
 **实装位置：** `evaluator_impl.cpp` ~4566（Issue #110）
-**Closing doc：** [`docs/issue-closings/110-closing.md`](../issue-closings/110-closing.md)
+**Closing doc：** [`docs/design/history/closings/110-closing.md`](../history/closings/110-closing.md)
 
 > ⚠️ **使用警示**：在写一个 combine（read + write）循环的 mutate 时，
 > **必须**在循环外 snapshot `end_id = flat.size()`。详见

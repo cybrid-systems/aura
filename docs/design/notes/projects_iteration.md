@@ -1,5 +1,7 @@
 # Project-Driven Core Iteration — 设计文档
 
+> **注意（历史文档）**：本文档描述了项目驱动迭代的原始理念。当前状态和活跃项目见主 [roadmap.md](../roadmap.md)、[projects/README.md](../../projects/README.md) 和 `projects/GAPS.md`。核心设计演进请参考 `../core/` 下的 Implementation Status 章节。
+
 > **核心理念：** 不凭空设计功能。写真实项目 → 暴露核心短板 → 修复核心 → 写更难的项目。
 > 每写一个 `projects/` 下的 demo，至少发现并修复 3-5 个 Aura 核心问题。
 

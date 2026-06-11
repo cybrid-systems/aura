@@ -108,7 +108,7 @@ Coverage includes:
  src/core/ast.ixx                    | +30 (set_param_at + rename_param)
  src/compiler/evaluator_impl.cpp     | +9 (Lambda param rename loop)
  tests/test_issue_139.cpp            | NEW (13 tests, ~450 LOC)
- docs/issue-closings/139-closing.md   | NEW
+ docs/design/history/closings/139-closing.md   | NEW
 ```
 
 5 files changed, 1 file added, 1 file modified.
@@ -159,5 +159,5 @@ closing.
 - `docs/design/notes/synthesize_strategies.md` — strategy framework
 - `docs/design/notes/e4_evolvable_strategies.md` — evolvable strategies
 - `docs/design/core/typed_mutation.md` — typed mutation model
-- `docs/issue-closings/120-closing.md` — initial hygienic macro work
+- `docs/design/history/closings/120-closing.md` — initial hygienic macro work
   (related: rename hygiene is a mutation-time concern)

@@ -209,7 +209,7 @@ the tests:
 - `CMakeLists.txt` — add `test_issue_143` target + escape analysis
   wiring
 - `tests/test_issue_143.cpp` — 21-test verification binary (NEW)
-- `docs/issue-closings/143-closing.md` — this doc (NEW)
+- `docs/design/history/closings/143-closing.md` — this doc (NEW)
 - `src/compiler/escape_analysis.h` — DELETED (was a dead stub)
 
 ---

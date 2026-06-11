@@ -79,7 +79,7 @@ them mid-wait.
   new serve-async path (joiner map + eventfd wakeup) instead
   of the old yield-and-check.
 - Closing-doc references updated to include
-  `docs/issue-closings/119-closing.md`.
+  `docs/design/history/closings/119-closing.md`.
 
 ### 4. Regression tests
    (`tests/test_issue_119.cpp`, 6/6 passed)

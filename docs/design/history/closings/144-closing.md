@@ -167,7 +167,7 @@ overhead; the contract sites are a few cycles per call.
 - `tests/test_issue_144.cpp` — 12 verification tests (NEW)
 - `CMakeLists.txt` — `test_issue_144` target
 - `docs/design/cpp26_guide.md` — § 2.6 rewritten
-- `docs/issue-closings/144-closing.md` — this doc (NEW)
+- `docs/design/history/closings/144-closing.md` — this doc (NEW)
 
 ---
 

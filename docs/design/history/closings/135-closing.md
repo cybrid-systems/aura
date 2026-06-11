@@ -158,7 +158,7 @@ workspace state. The new test binary exposes the correct behavior.
 
 ```
  CMakeLists.txt                                  | +47 (test_issue_135 registration)
- docs/issue-closings/135-closing.md              | NEW
+ docs/design/history/closings/135-closing.md              | NEW
  src/compiler/evaluator.ixx                      | +10 (string_heap() public getter)
  src/compiler/evaluator_impl.cpp                 | +9 (3 callsites: get_ws_source, workspace:merge parent read, workspace:conflicts-with parent read)
  tests/test_issue_135.cpp                        | NEW, 51/51
@@ -236,15 +236,15 @@ as new issues when the use case arises.
 
 ## Related
 
-- `docs/issue-closings/97-closing.md` — Long-Lifecycle Self-Adaptive
+- `docs/design/history/closings/97-closing.md` — Long-Lifecycle Self-Adaptive
   Production Systems (WorkspaceTree action)
-- `docs/issue-closings/98-closing.md` — Multi-Agent Research &
+- `docs/design/history/closings/98-closing.md` — Multi-Agent Research &
   Complex Project Collaboration (workspace:merge-3way action)
-- `docs/issue-closings/107-closing.md` — JIT cache thread-safety
+- `docs/design/history/closings/107-closing.md` — JIT cache thread-safety
   (workspace_mtx_, ASAN)
-- `docs/issue-closings/109-closing.md` — fiber:join / orch:parallel
+- `docs/design/history/closings/109-closing.md` — fiber:join / orch:parallel
   / concurrent test flakiness
-- `docs/issue-closings/119-closing.md` — Complete fiber:join +
+- `docs/design/history/closings/119-closing.md` — Complete fiber:join +
   enable true orch:parallel
 - `docs/design/core/agent_orchestration.md` — overall design
 - `docs/design/core/workspace_layering.md` — WorkspaceTree design
