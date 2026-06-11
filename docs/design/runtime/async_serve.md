@@ -389,33 +389,11 @@ scheduler resume fiber-A:
 
 ---
 
-## 8. 实现路径
+## 实现路径与当前状态
 
-### Phase 1（~0.5d）：Fiber 框架
+实际实现路径为 #109（fiber scheduler）+ #119（serve-async 集成 + fiber:join + 跨 session），累计工作量远超最初 0.5d 估算。已包含多线程、work-stealing、eventfd 唤醒、跨平台 fallback 等。
 
-```
-src/serve/fiber.h/.cpp     — Fiber 类（ucontext + mmap stack + eventfd）
-src/serve/scheduler.h/.cpp — Scheduler 类（epoll + ready queue + wait map）
-src/serve/mailbox.h/.cpp   — Mailbox + Session
-```
-
-**最小 demo：** 1 个 main fiber + 2-3 session fiber，模拟 recv yield + eventfd 唤醒，验证 deep recursion 不会爆栈。
-
-### Phase 2（~0.5d）：Serve 集成
-
-```
-main.cpp        — 新增 --serve-async，接 session manager + scheduler
-evaluator_impl  — recv 加 yield（条件编译）
-service.ixx     — 邮箱回调适配 fiber mailbox
-```
-
-### Phase 3（~0.5d）：测试
-
-- 单 agent 同步 exec
-- 双 agent send/recv 通信
-- 多 agent 并发 eval
-- 超时行为
-- 优雅退出
+当前状态详见本 §0 表格。测试覆盖包括 `tests/suite/concurrent.aura` 和 `--serve-async` 相关 fuzz。
 
 ---
 

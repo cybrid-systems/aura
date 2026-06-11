@@ -44,7 +44,7 @@
 - 🟡 **未来 1-2 个 step**：native pair ops / per-module dirty skip / module loading
 - 🔴 **长期**：self-hosting bootstrap
 
-**AI Agent 读者请注意**：本文档作为设计意图保留。IR 管线在 `eval()` 内部自动启用，AI Agent 写 Aura 代码时**不需要**选 IR / tree-walker；不要在 Aura 代码里假设某条 IR 指令是稳定的 IR 接口。
+**AI Agent 读者请注意**：IR 管线在 `eval()` 内部自动选择（tree-walker 仅 fallback）。Agent 写代码时无需关心 IR vs 树遍历差异。完整 EDSL 能力仍通过原语或 `--serve` 协议使用；详见 `design/core/query_edsl.md` 和 `mutate_api.md` 的 §0 状态表。
 
 ---
 
@@ -203,13 +203,13 @@ These are intentional — they need evaluator state that the IR doesn't provide:
 
 ## Future Steps
 
-| Step | Description | Priority |
-|------|-------------|----------|
-| 3 | Native Pair IR ops (MakePair, Car, Cdr) instead of `cons` calls | 🟡 |
+| Step | Description | Status |
+|------|-------------|--------|
+| 3 | Native Pair IR ops (MakePair, Car, Cdr) | 🟡 |
 | 4 | Per-module dirty skip optimization | 🟡 |
-| 5 | IR-level `import`/module loading (eliminate module fallback) | 🔴 |
-| 6 | `try`/`catch` IR support (exception opcodes) | 🔴 |
-| 7 | LLVM JIT backend (IR → LLVM IR) | 🔴 |
+| 5 | IR-level module loading | 🔴 |
+| 6 | `try`/`catch` IR support | 🔴 |
+| 7 | LLVM JIT backend | 已移至 `compilation/jit.md`（Phase 1-5 实装） |
 | 8 | AOT compilation | 🔴 |
 | 9 | Self-hosting bootstrap | 🔴 |
 
