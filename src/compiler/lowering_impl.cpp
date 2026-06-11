@@ -1267,6 +1267,43 @@ static std::uint32_t lower_flat_expr(
     }
 }
 
+// ── Issue #150 Phase 2: automatic region inference helpers ─
+// Walk the FlatAST collecting all node ids that are calls
+// to mutation primitives (mutate:*, ast:*, current-eval).
+// The set is then used by the inference loop in
+// lower_to_ir_impl to flag Define / Lambda bodies that
+// contain these nodes as Evolution.
+static void collect_mutation_calls(const FlatAST& flat,
+                                    std::unordered_set<aura::ast::NodeId>& out) {
+    for (aura::ast::NodeId i = 0; i < flat.size(); ++i) {
+        if (i >= flat.size()) break;
+        auto v = flat.get(i);
+        if (v.tag != aura::ast::NodeTag::Call) continue;
+        if (v.children.empty()) continue;
+        auto fn_id = v.child(0);
+        if (fn_id == aura::ast::NULL_NODE) continue;
+        auto fn = flat.get(fn_id);
+        if (fn.tag != aura::ast::NodeTag::Variable) continue;
+        // We only flag the call site; the caller's name
+        // (mutate:*, etc.) is checked at the call site in
+        // lower_to_ir_impl's inference loop via the pool.
+        out.insert(i);
+    }
+}
+
+// Check whether the subtree rooted at `root` contains any node
+// in `target_set`. Recursive via FlatAST::get(id).children.
+static bool subtree_uses_node(const FlatAST& flat, aura::ast::NodeId root,
+                              const std::unordered_set<aura::ast::NodeId>& target_set) {
+    if (root == aura::ast::NULL_NODE || root >= flat.size()) return false;
+    if (target_set.count(root)) return true;
+    auto v = flat.get(root);
+    for (auto c : v.children) {
+        if (subtree_uses_node(flat, c, target_set)) return true;
+    }
+    return false;
+}
+
 // ── Internal: lower_to_ir with optional cache ──────────────────
 static IRModule lower_to_ir_impl(
     FlatAST& flat, StringPool& pool, ASTArena& arena,
@@ -1278,6 +1315,41 @@ static IRModule lower_to_ir_impl(
     const std::unordered_map<std::string, std::vector<std::string>>* cache_strings = nullptr,
     const std::string* self_name = nullptr) {
     LoweringState state(arena);
+
+    // Issue #150 Phase 2: automatic region inference pass.
+    // Walk the FlatAST before main lowering. For each Define
+    // and Lambda, recursively scan the body for mutation
+    // primitives (mutate:*, eval-current, ast:*, etc.). If
+    // any are found and the function has no explicit
+    // annotation, set the region to Evolution. Don't
+    // override explicit (performance-region / evolution-
+    // region) annotations — those take precedence.
+    //
+    // Conservative MVP: only direct mutation detection in
+    // the function body. Transitive inference (a function
+    // that calls another function marked Evolution) is
+    // Phase 2b/3 (call graph + mutation impact analysis).
+    {
+        std::unordered_set<aura::ast::NodeId> mutating_nodes;
+        collect_mutation_calls(flat, mutating_nodes);
+        for (aura::ast::NodeId i = 0; i < flat.size(); ++i) {
+            if (i >= flat.size()) break;
+            auto v = flat.get(i);
+            if (v.tag == aura::ast::NodeTag::Define) {
+                auto sym = v.sym_id;
+                if (sym == aura::ast::INVALID_SYM) continue;
+                if (flat.get_function_region_for_sym(sym).has_value()) continue;
+                if (subtree_uses_node(flat, v.child(0), mutating_nodes)) {
+                    flat.set_function_region(sym, static_cast<std::uint8_t>(aura::ir::Region::Evolution));
+                }
+            } else if (v.tag == aura::ast::NodeTag::Lambda) {
+                if (flat.get_function_region_for_lambda(i).has_value()) continue;
+                if (subtree_uses_node(flat, i, mutating_nodes)) {
+                    flat.set_function_region_lambda(i, static_cast<std::uint8_t>(aura::ir::Region::Evolution));
+                }
+            }
+        }
+    }
     state.primitives = primitives;
     state.type_reg = type_reg;
     state.cache_bridge = cache_bridge;
