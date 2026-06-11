@@ -3343,6 +3343,58 @@ static void find_occurrence_contexts(const FlatAST& flat, const StringPool& pool
     }
 }
 
+// Issue #147 follow-up (Phase 2): extend the post-mutation
+// invariant check to also flag match patterns in the dirty
+// scope. The original #147 implementation only walked IfExpr
+// predicates (the `find_occurrence_contexts` helper above);
+// match patterns — stored as MatchClauseInfo on the FlatAST —
+// were documented as a known limitation. This helper closes
+// that gap: for each node in the dirty subtree that has
+// MatchClauseInfo attached, emit an "invalidated-match-pattern"
+// OwnershipNote. The conservative interpretation: any
+// mutation in the dirty scope may have changed a constructor
+// signature or a pattern binding in a way the typechecker's
+// static exhaustiveness check would not have caught (the
+// check runs at typecheck time, not at mutation time).
+//
+// Note: MatchClauseInfo doesn't directly tell us which
+// constructors the pattern references — it stores
+// used_constructors (SymId) and candidate_constructors
+// (SymId). The conservative emission (one note per match
+// clause in the dirty scope) is the right MVP: a false
+// positive is just a warning, a false negative would silently
+// break the match. Mode behavior (Disabled / WarningsOnly /
+// Strict) is the caller's responsibility — the helper just
+// emits notes.
+static void find_match_pattern_contexts(
+    const FlatAST& flat, const std::vector<NodeId>& nodes,
+    std::vector<OwnershipNote>& notes_out) {
+    for (auto id : nodes) {
+        if (id == NULL_NODE || id >= flat.size()) continue;
+        // Check if this node has MatchClauseInfo attached. The
+        // helper is on the FlatAST (per-node, indexed by
+        // NodeId). The presence of match_info indicates a
+        // match expression (subject + arms) was lowered at
+        // this node.
+        if (!flat.has_match_info(id)) continue;
+        const auto* mi = flat.get_match_info(id);
+        if (!mi) continue;
+        // Conservative: emit a note for every match clause in
+        // the dirty scope. The note's `kind` distinguishes
+        // match-pattern warnings from occurrence-narrowing
+        // warnings so callers can filter if they want.
+        OwnershipNote note;
+        note.node = id;
+        note.kind = "invalidated-match-pattern";
+        note.message = "match pattern in dirty scope may be invalidated "
+                       "by mutation (used " +
+                       std::to_string(mi->used_constructors.size()) +
+                       " constructors, has_wildcard=" +
+                       (mi->has_wildcard ? "true" : "false") + ")";
+        notes_out.push_back(std::move(note));
+    }
+}
+
 } // anonymous namespace
 
 aura::ast::InvariantStatus post_mutation_invariant_check(
@@ -3398,6 +3450,16 @@ aura::ast::InvariantStatus post_mutation_invariant_check(
 
     // ── Occurrence-narrowing re-check on dirty nodes ─────────────
     find_occurrence_contexts(flat, pool, reg, dirty_nodes, notes_out);
+
+    // ── Match-pattern re-check on dirty nodes ────────────────
+    // Issue #147 follow-up (Phase 2): also flag match
+    // expressions in the dirty scope. Same conservative
+    // interpretation: a mutation may have changed a
+    // constructor signature or pattern binding. The check
+    // is independent of the linear-ownership and IfExpr
+    // checks — it walks the same dirty_nodes vector and
+    // adds notes for any MatchClauseInfo-attached node.
+    find_match_pattern_contexts(flat, dirty_nodes, notes_out);
 
     if (notes_out.empty())
         return aura::ast::InvariantStatus::Ok;
