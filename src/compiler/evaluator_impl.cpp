@@ -12735,6 +12735,34 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         }
         return std::move(**result_ptr);
     });
+    // ── Issue #152 P0 Phase 3 — Orchestration Integration ─
+    // The orch:* primitives (orch:parallel, orch:pipeline,
+    // orch:define-role, orch:conduct, orch:metrics,
+    // orch:reset-metrics, etc.) are the agent-spawning
+    // surface. The existing orch:metrics / orch:reset-metrics
+    // are observability primitives. The orchestraction
+    // primitives (parallel / pipeline / conduct) need to
+    // naturally respect workspace boundaries (Issue #152
+    // AC: "orch:* and agent spawning naturally respect
+    // workspace boundaries").
+    //
+    // Today's behavior: orch:parallel etc. are NOT
+    // registered as primitives. The test suite
+    // `tests/suite/concurrent.aura` references them in
+    // comments and tests, but the bindings don't exist —
+    // the tests would fail. The full implementation is
+    // the follow-up (uses when_all_sender / let_value_sender
+    // from src/exec/combinators.h; capture active
+    // workspace at spawn time; re-install in each child
+    // fiber so the spawned agent's mutations land in
+    // the correct workspace).
+    //
+    // This commit ships the SCAFFOLD: orch:parallel /
+    // orch:pipeline / orch:conduct are NOT YET
+    // registered — the test suite's T4-T6 tests
+    // would still fail. The real implementation is the
+    // follow-up.
+
 
     // ── orch:metrics — scheduler metrics (Issue #32) ─────────────
     // (orch:metrics) → Returns a JSON string with scheduler counters.
