@@ -540,6 +540,56 @@ public:
     // a valid active workspace.
     static bool refresh_active_flat_pool(void* wt, void** out_flat, void** out_pool);
 
+    // ── Issue #152 P0 — Control Plane Isolation (Phase 0 prep) ─
+    // The above primitives (create_workspace_tree, set /
+    // get workspace_tree, trigger_lazy_cow, refresh_active_flat_pool)
+    // are the foundation. The 3-issue #152 work builds on top:
+    //
+    // Phase 1 (Finish WorkspaceTree, ~3-4 commits):
+    //   - workspace:create Aura form (parse + add to
+    //     primitives table; the WorkspaceTree* is returned
+    //     to the caller as an opaque handle).
+    //   - workspace:switch (atomic — COW parent's flat if
+    //     the target is read-only, then set as active).
+    //   - workspace:lock (read-only flag on a workspace
+    //     node; writes fail with a diagnostic).
+    //   - workspace:merge (child -> parent, diff-based;
+    //     only the changed subtrees are copied).
+    //   - workspace:discard (free a transient workspace,
+    //     optionally promote child to root if it was the
+    //     last reference).
+    //   - transient/experimental workspace support (COW
+    //     on write; the lazy COW from #141 is the
+    //     building block).
+    //
+    // Phase 2 (Mutation Impact Analysis, ~2-3 commits):
+    //   - Cross-link to #150 Phase 3's defines_referencing_sym
+    //     helper (commit 02a1c75). The query is already
+    //     there; the wiring into typed_mutate's invalidation
+    //     path is the consumer.
+    //   - Per-mutation affected-set: when a mutate:rebind
+    //     is requested, call defines_referencing_sym to
+    //     find the affected Defines, then invalidate only
+    //     those AOT cache entries (cross-link to #151
+    //     Phase 3's region-aware cache invalidation).
+    //   - "What would this mutation affect?" query
+    //     primitive for the agent orchestration layer.
+    //
+    // Phase 3 (Orchestration Integration, ~2 commits):
+    //   - orch:* primitives + agent spawning respect
+    //     workspace boundaries (an agent spawned in
+    //     workspace W sees only W's mutations).
+    //   - Examples: safe experimentation in a transient
+    //     workspace, merge-or-discard workflow for
+    //     code evolution.
+    //
+    // Today's behavior: unchanged. The prep commit is a
+    // design-doc anchor so the actual phases have a
+    // shared roadmap; no code changes outside this
+    // comment. The 3 phases will follow the same
+    // conservative-MVP + read-side-first pattern as #148,
+    // #149, #150, #151.
+
     const std::string& session_id() const { return session_id_; }
 
     // ── GC root registration (Issue #113) ──────────────
