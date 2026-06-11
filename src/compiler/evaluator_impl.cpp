@@ -16816,12 +16816,15 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                     // "no expansion" return.
                                     return make_void();
                                 }
-                                std::unordered_map<std::string, aura::ast::NodeId> subst;
-                                std::size_t regular_count =
-                                    is_rest ? md.params.size() - 1 : md.params.size();
-                                for (std::size_t i = 0;
-                                     i < regular_count && i + 1 < v.children.size(); ++i)
-                                    subst[md.params[i]] = v.child(i + 1);
+                                // Issue #146 follow-up: build the subst
+                                // map via the pure helper. Local
+                                // materialization of v.children into a
+                                // vector (one alloc per macro call) keeps
+                                // the call site short.
+                                std::vector<aura::ast::NodeId> call_args(
+                                    v.children.begin(), v.children.end());
+                                auto subst = aura::compiler::pure::compute_macro_subst_pure(
+                                    md.params, call_args, /*dotted=*/false);
                                 // Clone the macro body with substitution +
                                 // name_map. The cloned tree is in the
                                 // *current* FlatAST (we use the target's
@@ -18598,14 +18601,18 @@ static aura::ast::NodeId expand_inner_macros(
             auto cname = std::string(pool->resolve(callee_v.sym_id));
             auto it = macros.find(cname);
             if (it != macros.end()) {
-                // Build substitution: macro param → arg NodeId
+                // Build substitution: macro param → arg NodeId.
+                // Issue #146 follow-up: route through the pure helper
+                // so the substitution logic lives in evaluator_pure.ixx
+                // (single source of truth) and the legacy inline loop
+                // goes away. v.children is materialized into a vector
+                // (one alloc per macro call) for the pure helper's
+                // vector-typed call_args parameter.
                 const auto& md = it->second;
-                std::unordered_map<std::string, NodeId> subst;
-                std::size_t regular_count = md.dotted && md.params.size() > 0
-                                                ? md.params.size() - 1
-                                                : md.params.size();
-                for (std::size_t ai = 0; ai < regular_count && ai + 1 < v.children.size(); ++ai)
-                    subst[md.params[ai]] = v.child(ai + 1);
+                std::vector<aura::ast::NodeId> call_args(
+                    v.children.begin(), v.children.end());
+                auto subst = aura::compiler::pure::compute_macro_subst_pure(
+                    md.params, call_args, md.dotted);
                 if (md.dotted) {
                     // Rest params on inner macros: not yet supported
                     // (same limitation as the main hygienic path).
@@ -18699,16 +18706,22 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
                     auto cname = std::string(pool.resolve(callee_v.sym_id));
                     auto it = local_macros.find(cname);
                     if (it != local_macros.end()) {
-                        // Build substitution: macro param → arg expression
+                        // Build substitution: macro param → arg expression.
+                        // Issue #146 follow-up: route through the pure
+                        // helper. Rest-param handling stays here because
+                        // it requires FlatAST mutation (allocating a
+                        // pair-list) — that's stateful, not pure.
                         auto& md = it->second;
-                        std::unordered_map<std::string, aura::ast::NodeId> subst;
+                        std::vector<aura::ast::NodeId> call_args(
+                            v.children.begin(), v.children.end());
+                        auto subst = aura::compiler::pure::compute_macro_subst_pure(
+                            md.params, call_args, md.dotted);
+                        // Rest param: collect remaining args as a quoted list.
+                        // We need regular_count locally to know where the
+                        // rest args start; recompute it (cheap).
                         std::size_t regular_count = md.dotted && md.params.size() > 0
                                                         ? md.params.size() - 1
                                                         : md.params.size();
-                        for (std::size_t ai = 0; ai < regular_count && ai + 1 < v.children.size();
-                             ++ai)
-                            subst[md.params[ai]] = v.child(ai + 1);
-                        // Rest param: collect remaining args as a quoted list
                         if (md.dotted && !md.params.empty() &&
                             regular_count + 1 < v.children.size()) {
                             auto& rest_name = md.params.back();
