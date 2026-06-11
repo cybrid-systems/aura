@@ -43,7 +43,7 @@
 - 🟡 **文档原版以设计稿撰写**（Phase 1-3 的"~0.5d/0.5d/0.5d" 估算）：实装实际是 #109 + #119 两条 issue 累计 work，包含多线程 + work-stealing + `fiber:join` 真阻塞 + 跨 platform fiber 适配
 - 🔴 **未做**：cross-host agent communication（进程内 only）；persistent agent state across serve restarts（需外部存储）
 
-**AI Agent 读者请注意**：本文档是设计意图的权威来源。C++ 层的 `fiber:*` 原语 + `agent:spawn`/`send`/`recv` 全部实装；agent orchestration 高级接口 (`orch:parallel`, `agent:ask`) 见 `agent_orchestration.md` 而非本文档。
+**AI Agent 读者请注意**：C++ 层 fiber/scheduler/send/recv 已全部实装（#109 + #119）。高级 Agent 编排请使用 `std/orchestrator.aura` + `agent:ask` / `orch:*`（见 `design/core/agent_orchestration.md` §0）。Serve 协议是当前 LLM Agent 自演化的主要驱动方式（与 EDSL + typed mutation 结合）。
 
 ---
 
