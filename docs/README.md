@@ -1,14 +1,22 @@
 # Aura 文档
 
+> **推荐阅读路径（按受众）**
+> - **AI Agent / LLM 写手**：先读 [tutorial.md](tutorial.md) 快速上手 → [api-reference.md](api-reference.md) 查原语 → 各 `design/core/` 的 **## 0. Implementation Status** 表格（当前实装真相）。
+> - **想理解自修改核心**：`design/core/query_edsl.md` + `mutate_api.md` + `workspace_layering.md` + `typed_mutation.md`。
+> - **想做 Agent 编排**：`design/core/agent_orchestration.md` + `std/orchestrator.aura` + `projects/evo-kv/` 示例。
+> - **想贡献核心**：`docs/developer/evaluator.md` + 对应 core 设计 + `projects/GAPS.md`。
+
 ## 概况
 
 | 文档 | 说明 |
 |------|------|
-| [教程](tutorial.md) | 上手实践，从零开始 |
-| [API 参考](api-reference.md) | 所有原语参考 |
-| [路线图](roadmap.md) | 发展方向 |
+| [教程](tutorial.md) | 上手实践，从零开始（含当前实装状态标注） |
+| [API 参考](api-reference.md) | 所有原语参考（附实现状态提示） |
+| [路线图](roadmap.md) | 发展方向 + 当前项目驱动迭代现状 |
 | [基准](benchmark.md) | EDSL benchmark 数据 |
 | [哲学](philosophy.md) | Aura 的设计思想 |
+
+**项目驱动迭代**：当前主要通过 `projects/evo-kv/`（自演化 KV）等真实项目暴露 gap、修复核心。详情见 [projects/README.md](../projects/README.md) 和 `projects/GAPS.md`。
 
 ## 设计文档 (`design/`)
 
@@ -68,6 +76,8 @@
 ### 归档 (`design/notes/`) — 按需查阅
 
 包含所有 issue follow-up 、speculative research、单一议题的设计探索、之前版本的管线设计等 (~80+ 篇)。新贡献者可以**跳过**这个目录；它主要供历史参考。`git log -- docs/design/notes/<file>` 仍可追溯每个文件的来历。
+
+**注意**：所有 `design/core/`、`design/compilation/`、`design/runtime/` 下的文档**必须**包含 `## 0. Implementation Status` 章节（C++ Core Layer + Aura Layer 表格 + AI Agent 读者注意事项），详见上文“进程规则”。
 
 ## 构建
 

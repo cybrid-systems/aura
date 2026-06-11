@@ -30,6 +30,8 @@ Aura 的语法像 Scheme，但它的灵魂不是。
 
 ## 一、基础
 
+> **当前实装状态提示**：本教程聚焦今天可以稳定使用的表面。高级 query（where / pattern 丰富谓词）、部分 workspace 高层操作、AOT 等细节请以对应 `design/core/` 文档的 **## 0. Implementation Status** 表格为准（已全部更新至 2026-06）。
+
 ### 算术与比较
 ```scheme
 (+ 1 2 3 4)          ;; → 10  多参数
@@ -668,6 +670,8 @@ build_adaptive_feedback() → correction → LLM 再生成
 **下一步:** `docs/roadmap.md` · `docs/design/notes/aura_language_spec.md` · `docs/design/runtime/ffi.md` · `python3 tests/edsl_benchmark.py --tasks fibonacci`
 
 ## 多 Agent 编排（交响乐指挥模式）
+
+**推荐阅读**：先看 [`design/core/agent_orchestration.md`](design/core/agent_orchestration.md) 的 Implementation Status，再结合 `std/orchestrator.aura` 和 `projects/evo-kv/` 示例。
 
 Agent 编排框架将代码进化过程视为一场交响乐演奏：
 

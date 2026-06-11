@@ -31,7 +31,7 @@
 
 ### 代码自修改 (EDSL)
 
-> **实现状态提示**（2026-06）：C++ 层 query/mutate/ast/workspace 原语基本完整（详见 `design/core/query_edsl.md` §0、`mutate_api.md`、`workspace_layering.md`、`typed_mutation.md`）。Aura std/ 层提供部分 helper（例如 `std/query.aura` 只包了少数组合查询）。完整可靠表面以 `design/core/` 下的 Implementation Status 表格为准。Serve 协议（`--serve` / `--serve-async`）支持大部分 EDSL 操作。
+> **实现状态提示**（2026-06）：C++ 层 query/mutate/ast/workspace 原语基本完整（详见 `design/core/query_edsl.md` §0、`mutate_api.md`、`workspace_layering.md`、`typed_mutation.md`）。Aura std/ 层提供部分 helper（例如 `std/query.aura` 只包了少数组合查询）。**完整可靠表面以 `design/core/` 下的 Implementation Status 表格为准**。Serve 协议（`--serve` / `--serve-async`）支持大部分 EDSL 操作 + typed mutate + invariant 诊断。
 
 **代码加载**
 `set-code` `current-source` `eval-current` `eval-current-output`
@@ -46,18 +46,27 @@
 `ast:snapshot` `ast:restore` `ast:list-snapshots` `ast:diff` `ast:summary` `mutation-count` `mutation-history` `rollback rollback-since`
 
 **Workspace**
-`workspace:create` `workspace:delete` `workspace:switch` `workspace:current` `workspace:list` `workspace:lock` `workspace:discard` `workspace:merge` `workspace:can-write?` `workspace:sync-from`
+`workspace:create` `workspace:delete` `workspace:switch` `workspace:current` `workspace:list` `workspace:lock` `workspace:unlock` `workspace:discard` `workspace:merge` `workspace:can-write?` `workspace:sync-from` `workspace:memory-used` `workspace:memory-limit` 等
+
+完整 Workspace P0（COW 分层、read-only、memory budget）+ 更高层状态见 [`design/core/workspace_layering.md`](design/core/workspace_layering.md)。
 
 ### Agent 编排
 
-**Agent**
-`_agent:spawn` `_agent:list` `_agent`
+**注意**：高层 `agent:*`（spawn/ask/list/status/stop/restart）和 `orch:*`（define-role / pipeline / conduct / parallel / if / retry）主要由 `std/orchestrator.aura` 提供（纯 Aura 层，零 C++ 依赖）。底层 fiber / mailbox / send/recv 由 C++ 实现。
+
+**Agent（高层推荐）**
+`agent:spawn` `agent:ask` `agent:list` `agent:status` `agent:stop` `agent:restart`
+
+**底层 / 内部**
+`_agent:spawn` `_agent:list` `_agent`（通常不直接使用）
 
 **Fiber**
 `fiber:spawn` `fiber:join` `fiber:yield`
 
 **Session**
 `session:create` `session-active?` `send` `recv` `reply` `my-id` `mailbox-count`
+
+完整编排模型与当前实装状态见 [`design/core/agent_orchestration.md`](design/core/agent_orchestration.md) 的 Implementation Status 表格。
 
 ### 合成
 `synthesize:register-template` `synthesize:fill` `synthesize:list-templates` `synthesize:define` `synthesize:optimize`
