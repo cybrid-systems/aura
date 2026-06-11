@@ -18,9 +18,9 @@ This directory contains historical design documents, explorations, and issue clo
 - Many ideas here have been implemented, evolved, or superseded. Cross-reference with the corresponding `core/` document's §0 table.
 - For project-driven iteration history, see also `projects/GAPS.md`, `projects/README.md`, and the main [roadmap.md](../roadmap.md).
 
-Key historical documents of note (with current pointers where relevant):
-- `notes/projects_iteration.md` — Original project-driven methodology. Current status in main roadmap and `projects/`.
-- Various `notes/issue-*-*.md` and `closings/*-closing.md` — Follow-ups for specific issues. Many gaps have been closed in the core docs.
+Key historical documents of note (with current pointers):
+- `notes/projects_iteration.md` — Foundational project-driven iteration (see current `roadmap.md` and `projects/` for evolution).
+- `notes/issue-*-*.md` and `closings/*-closing.md` — Deep dives and post-mortems. Cross-reference the corresponding `core/` §0 table for what was actually implemented.
 
 If you are looking for the evolution of a particular feature (e.g. EDSL, workspace, concurrency), start in the relevant `core/` doc and use git blame/log on the historical files only for deep context.
 
