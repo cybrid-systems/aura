@@ -568,4 +568,27 @@ export aura::ast::InvariantStatus post_mutation_invariant_check(
     const aura::ast::MutationRecord& rec,
     std::vector<OwnershipNote>& notes_out);
 
+// Issue #148 Phase 3: identify the affected node set for a mutation.
+// Returns NodeIds in the dirty subtree (descendants of the mutated
+// target) + the dirty-upward chain (ancestors marked by
+// mark_dirty_upward). Used by InferenceEngine::infer_flat in Phase 4
+// to scope partial re-inference to just the affected nodes — skipping
+// untouched subtrees that would re-infer the same types.
+//
+// Walk strategy (matches post_mutation_invariant_check):
+//   1. Pick walk_root = parent_id (subtree-level mutation) or
+//      target_node (typed mutation on existing node).
+//   2. collect_descendants(walk_root) — the entire dirty subtree.
+//   3. Climb from rec.target_node via FlatAST::parent_of (public
+//      accessor) to add the dirty-upward ancestor chain.
+//   4. Safety-bounded ancestor walk to defend against parent_
+//      cycles in malformed FlatASTs.
+//
+// Returns an empty vector if walk_root is NULL or out-of-range
+// (the caller can then fall back to a full infer_flat).
+export std::vector<aura::ast::NodeId>
+affected_subtree_from_mutation(
+    const aura::ast::FlatAST& flat,
+    const aura::ast::MutationRecord& rec);
+
 } // namespace aura::compiler
