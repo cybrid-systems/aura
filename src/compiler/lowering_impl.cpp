@@ -873,6 +873,19 @@ static std::uint32_t lower_flat_expr(
             func.arg_count = static_cast<std::uint32_t>(param_names.size());
             func.variadic = (v.int_value != 0);
             func.region = state.region;
+            // Issue #150 Phase 1b: if the user wrapped this
+            // lambda in a (performance-region ...) or
+            // (evolution-region ...) Aura form, the parser
+            // recorded the region in the FlatAST's
+            // region_by_lambda_id_ side-table. Look it up and
+            // override the IRFunction's region. This is the
+            // write-side that makes the annotation take effect:
+            // without this lookup, the parser-side hint
+            // (Phase 1) is just data in a side-table that
+            // nothing consumes.
+            if (auto opt_r = flat.get_function_region_for_lambda(id)) {
+                func.region = static_cast<aura::ir::Region>(*opt_r);
+            }
 
             // Save parent state
             auto* saved_func = state.cur_func;
