@@ -131,6 +131,17 @@ public:
 private:
     const Env* parent_ = nullptr;
     const Primitives* primitives_ = nullptr;
+    // Issue #145: nullable legacy pool. Most envs built after
+    // the canonical-pool migration leave this nullptr and rely
+    // on Evaluator::canonical_pool() for symbol resolution.
+    // The field is preserved (1) for backward compat with envs
+    // built before the migration (their bindings were intern'd
+    // in a different pool), and (2) for envs that intentionally
+    // captured a non-canonical pool. Use
+    // Evaluator::pool_or_canonical(pool_) at lookup sites to
+    // get the right pool with the right fallback. Phase 2.5
+    // drop (the original goal) removes this field after the
+    // migration completes; see cpp26_guide.md §2.7.7.
     const aura::ast::StringPool* pool_ = nullptr;  // Issue #145
     std::pmr::vector<types::EvalValue>* cells_ = nullptr;
     std::vector<std::pair<std::string, types::EvalValue>> bindings_;
@@ -242,6 +253,16 @@ export struct Closure {
     // a measurable 3-5x speedup on the lookup loop.
     std::vector<aura::ast::SymId> params;
     ast::FlatAST* flat = nullptr;
+    // Issue #145 follow-up / Phase 2.5.0: nullable legacy. Most
+    // closures built after the canonical-pool migration set this
+    // to nullptr and rely on Evaluator::canonical_pool() for
+    // symbol resolution. The field is preserved (1) for
+    // backward compat with closures built before the migration
+    // (their params were intern'd in a different pool), and
+    // (2) for closures that were intentionally captured in a
+    // non-canonical pool (e.g. pattern-matching interning).
+    // Use Evaluator::pool_or_canonical(pool) at lookup sites
+    // to get the right pool with the right fallback.
     ast::StringPool* pool = nullptr;
     ast::NodeId body_id = ast::NULL_NODE;
     const Env* env = nullptr;
@@ -463,6 +484,20 @@ public:
     // Returns nullptr when no workspace is loaded (callers must
     // check — that's the same contract as `workspace_pool()`).
     ast::StringPool* canonical_pool() const { return workspace_pool_; }
+
+    // Issue #145 follow-up / Phase 2.5.0: helper for the demote-
+    // to-legacy pool migration. Closure::pool and Env::pool_ are
+    // nullable legacy fields — for closures/envis built after
+    // the canonical-pool migration, the field is nullptr and the
+    // helper falls through to canonical_pool. Legacy call sites
+    // (closures built before the migration) still pass through
+    // their captured pool for backward compat.
+    //
+    // Returns nullptr only when BOTH the legacy pool and the
+    // canonical pool are unavailable (no workspace loaded).
+    ast::StringPool* pool_or_canonical(ast::StringPool* legacy) const {
+        return legacy ? legacy : canonical_pool();
+    }
 
     void* workspace_tree() const { return workspace_tree_; }
     // Update the shared tree's root node to point to this evaluator's workspace.
