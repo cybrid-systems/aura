@@ -34,7 +34,7 @@ Aura 的语法像 Scheme，但灵魂完全不同：**让代码成为可被 Agent
 | Serve 协议     | 强大 JSON 多 session | —                         | **AI Agent 主入口** (`--serve-async`) |
 | 增量执行       | 优秀 (source-hash + dirty) | —                         | `set-code` + `eval-current` |
 
-**AI Agent 读者请注意**：高级 query（where/pattern）和完整 typed mutation 推荐通过 `--serve` / `--serve-async` JSON 协议使用。Aura 代码里直接用基础原语 + `std/` helper 即可。完整矩阵见各 `design/core/*` 的 `## 0. Implementation Status`。
+**AI Agent 读者请注意**：高级 query（where/pattern）和 typed mutation 推荐通过 `--serve` / `--serve-async` JSON 协议使用（这是目前最成熟的 Agent 入口）。Aura 代码直接用基础原语 + std/ helper 即可。完整状态见 `design/core/*` §0 表格。
 
 ---
 

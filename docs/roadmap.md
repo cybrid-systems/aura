@@ -8,7 +8,7 @@ Aura 是一个自修改 Lisp 运行时，核心能力包括：
 - 自修改 EDSL（`query:*` 11+ 原语 + `mutate:*` 12+ 原语 + `ast:*` snapshot/restore/rollback + `workspace:*` P0 COW 分层）让 AI Agent 在运行时**精确读写和版本化管理自身代码**。
 - 原子 mutate + rollback + panic checkpoint + typed mutation + `mutate:query-and-replace`。
 - Agent 编排层：`std/orchestrator` + `std/agent` 提供 `orch:conduct` / `orch:pipeline` / `orch:parallel`（真并行）等；fiber scheduler（多线程 + work-stealing）+ mailbox + 跨 session 通信。
-- LLVM ORC JIT 后端（Phase 1-5 全部完成：38 opcode、闭包、prim bridge、增量 cache、hot-swap、O2；~7.55× 加速）；AOT 路径处于设计阶段。
+- LLVM ORC JIT 后端（Phase 1-5 全部完成：38 opcode、闭包、prim bridge、增量 cache、hot-swap、O2）；AOT 路径处于设计阶段。
 - 标准库覆盖 50+ 模块（含 query/refactor/workspace、evolve、orchestrator、llm、synthesize 等）。
 - `--serve` / `--serve-async` JSON 协议（支持 session、typed-mutate、mutation-log、rollback 等），适合 LLM Agent 驱动的自演化循环。
 - EDSL Benchmark：145+ 任务，Grok/MiniMax-M3 达到 83-85% 通过率。

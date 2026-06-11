@@ -1,8 +1,10 @@
 # EDSL Benchmark
 
-149 个 LLM 代码生成任务，覆盖基础语法、标准库、类型系统、C FFI、EDSL、Workspace、ADT、functor、所有权、合成管线。
+**目标**：测试 Aura 作为“AI 驱动自演化系统”的实际能力 —— LLM 只给方向，Aura 提供精确 EDSL 变异 + 测量 + 闭环反馈。
 
-自适应迭代修正（intend 模式，最多 3 次重试）。无 ant colony 辅助。
+149 个任务，覆盖语法、stdlib、类型、FFI、EDSL 自修改、Workspace、ADT、functor、所有权、合成等。
+
+使用 intend 风格自适应迭代（最多 3 次重试），体现控制论闭环哲学。
 
 ## 最新结果 (2026-06-04)
 
