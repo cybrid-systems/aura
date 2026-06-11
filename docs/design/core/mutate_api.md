@@ -317,7 +317,77 @@ ASAN: 0 leaks on 50-iter snapshot+mutate+restore loop。
 
 ---
 
-## 6. 实现细节（#11 时代遗留）
+## 6. Current Concurrency & Safety Implementation (C++ Layer, Issue #155)
+
+本节记录 **2026-06 实装** 的 C++ 并发与安全机制——供理解源码或写新 mutate primitive 的开发者参考。
+
+### 6.1 `std::shared_mutex workspace_mtx_` 读写锁
+
+`evaluator.ixx` 维护一个 `std::shared_mutex workspace_mtx_` 保护 `workspace_flat_` 及其依赖缓存（`defuse_index_`、`defuse_version_`、dirty flags）。锁的获取策略：
+
+| 调用者 | 锁类型 | 说明 |
+|------|------|------|
+| `mutate:*` primitives | `std::unique_lock` (exclusive) | 独占访问 |
+| `query:*` / typecheck | `std::shared_lock` (shared) | 多读者并发 |
+| `eval_current` / `set-code` | `std::shared_lock` (shared) | 读访问 |
+
+多个 agent 同时查询时（`shared_lock`），只有一个 mutate 可以独占访问。锁与 [`Issue #107`](https://github.com/cybrid-systems/aura/issues/107) 的多 agent 编排同时实装。
+
+### 6.2 `defuse_version_` 与 `defuse_affected_syms_` 增量缓存失效
+
+每次成功的 mutate 都会：
+
+1. 递增 `defuse_version_`（单调递增计数器）
+2. 插入被影响符号到 `defuse_affected_syms_` 集合
+
+下游缓存（如 `defuse_index_`）查询 `defuse_version_` 来判断是否需要重新计算。一个查询看到 `defuse_version_` 大于上次缓存的版本，便知道有 mutate 发生过。
+
+### 6.3 `workspace_read_only_` 快速路径
+
+`bool workspace_read_only_` 是一个轻量级标志（非锁），在 mutate primitive 的最早期检查（lock 还未获取）。如果为 `true`，primitive 直接返回 `("error" . ("kind" . "read-only"))`，不获取锁。这是个 **优化**——真正的独占保护仍靠 `workspace_mtx_` 的 unique_lock。
+
+设置 `workspace_read_only_` 的 Aura 形式：`(workspace:lock id)`（详见 [`workspace_layering.md`](workspace_layering.md)）。
+
+### 6.4 Panic checkpoint / auto-rollback
+
+`Evaluator::save_panic_checkpoint` / `restore_panic_checkpoint` / `commit_panic_checkpoint` 三个方法维护一个 panic-safe 栈（`std::stack<...> panic_safe_source_`）。机制：
+
+```
+(save-panic-checkpoint)   ; 压入栈底 (panicking 目标代码源)
+(mutate:rename-symbol ...)  ; 多个 mutate 可以全成功或全回退
+(mutate:extract-function ...)
+; 上面任何一个 panic / 抛异常，unwind 到这个点
+(restore-panic-checkpoint)  ; 出错时回退 (Aura 侧使用 try-catch)
+; 成功时
+(commit-panic-checkpoint)   ; 清栈底 (表示成功提交)
+```
+
+底层走 `std::stack` + Aura 层的 `try-catch` 配合。详见 `src/compiler/evaluator.ixx` ~L448。
+
+### 6.5 Fiber yield at mutation boundaries
+
+每次 `mutate:*` 原语的关键操作点之前，会调用：
+
+```cpp
+aura::messaging::g_fiber_yield_mutation_boundary
+    ? aura::messaging::g_fiber_yield_mutation_boundary()
+    : (void)0;
+```
+
+这是 [Issue #31](https://github.com/cybrid-systems/aura/issues/31) 的多 fiber 安全点：让其他 fiber 在 mutate 边界 yield，给其他 agent 任务让出调度机会。检查 `g_fiber_yield_mutation_boundary` 是否非 nullptr 避免单线程环境（不在 serve 模式下）下的开销。
+
+### 6.6 C++ ↔ Aura 表面分账
+
+| 层 | 提供了什么 |
+|---|------|
+| **C++ core**（`evaluator_impl.cpp`） | 12 个 `mutate:*` 原语 + concurrency + rollback + checkpoint |
+| **Aura helper**（`lib/std/workspace.aura`） | `workspace:create` / `switch` / `lock` / `unlock` / `merge` / `discard` / `current` / `list` 等高层包装（不是 `mutate:`，是 workspace 管理） |
+
+`lib/std/mutate.aura`（如果存在）只是部分高阶包装（如 `mutate:rename-symbol` 的 Aura 友好形式）。所有低阶原语都必须从 C++ 内部调用。
+
+---
+
+## 7. 实现细节（#11 时代遗留）
 
 - `FlatAST` 新增 `add_raw_node()` 和 `parent_of()` 公共 API
 - 修复 `add_lambda` / `add_call` 漏掉的 `link_children` 调用
@@ -326,7 +396,7 @@ ASAN: 0 leaks on 50-iter snapshot+mutate+restore loop。
 
 ---
 
-## 7. Future Work
+## 8. Future Work
 
 - 🟡 **增量类型检查**：mutate 后只类型检查 dirty 子树（当前是全量 ~1-5ms，足够）
 - 🟡 **mutation log Aura API**：暴露给 Aura 端做复杂回滚
