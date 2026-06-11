@@ -246,6 +246,39 @@ private:
 //   3. Annotate instructions with inferred result types from operands
 //
 // Relies on type_ids being propagated from FlatAST via lowering.
+//
+// Issue #149 P1 — rich type propagation for specialization,
+// monomorphization, and GuardShape precision. Today the pass
+// only uses type_id's type_tag (the simple TypeRegistry tag
+// for primitives). Richer type info from InferenceEngine
+// (ADT variant discriminants, linear-type move/borrow
+// semantics, occurrence-narrowed precise types, polymorphic
+// instantiations) is ignored.
+//
+// Full 5-deliverable roadmap (estimated 4-6 commits, like
+// Phase 2.5.0 and #148):
+//   Phase 1: extend IRInstruction with rich type metadata
+//     (linear_ownership_state, adt_variant_id, narrow_evidence).
+//   Phase 2: type attachment logic in lowering_impl.cpp at
+//     key points (annotations, call sites, match arms).
+//   Phase 3: extend THIS pass to cover linear types and common
+//     ADTs (insert MoveOp elision for linear uses, replace
+//     generic ADT call with variant-specific block when
+//     variant is statically known).
+//   Phase 4: update GuardShape to use the new type info (the
+//     existing GuardShape is shape_id-only; add a
+//     type_id-conditional path for higher hit rate).
+//   Phase 5: tests + benchmark. AC: improved GuardShape hit
+//     rate, preserved gradual typing semantics, measurable
+//     perf improvement.
+//
+// Today ships Phase 0 (prep + scaffold): a long-form design
+// comment and a small concrete improvement — respect
+// IRFunction::specialized_for (already exists in ir.ixx
+// line 315) so the pass skips already-specialized functions.
+// This prevents the pass from re-specializing a function that
+// was specialized for a particular shape, which would lose
+// the specialization's optimization.
 export class TypeSpecializationWrap {
 public:
     explicit TypeSpecializationWrap(const aura::core::TypeRegistry* reg = nullptr)
@@ -268,6 +301,18 @@ public:
         }
         auto dyn_id = type_reg_->lookup_type("Any");
         for (auto& func : module.functions) {
+            // Issue #149: skip already-specialized functions.
+            // specialized_for != 0 means the function was
+            // monomorphized for a particular shape/type — re-running
+            // the specialization pass on it would either be a no-op
+            // (if the existing types still match) or worse, lose the
+            // original specialization's optimization by re-inserting
+            // generic dispatch. We track but don't modify these.
+            // The 0 == no specialization (generic version) is the only
+            // case where the pass does its full work.
+            if (func.specialized_for != 0) {
+                continue;
+            }
             for (auto& block : func.blocks) {
                 std::size_t i = 0;
                 while (i < block.instructions.size()) {
