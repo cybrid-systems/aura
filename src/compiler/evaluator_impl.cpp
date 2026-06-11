@@ -5954,7 +5954,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             return mev("no-workspace", "no workspace AST loaded");
         auto& flat = *workspace_flat_;
         auto name = string_heap_[idx];
-        auto sym = workspace_pool_->intern(name);
+        // Phase 2.5.0: route via canonical_pool() (== workspace_pool, explicit).
+        auto sym = canonical_pool()->intern(name);
         EvalValue result = make_void();
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             auto v = flat.get(id);
@@ -6084,7 +6085,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             return mev("bad-arg", "name string index out of range");
         auto& flat = *workspace_flat_;
         auto name = string_heap_[idx];
-        auto sym = workspace_pool_->intern(name);
+        // Phase 2.5.0: route via canonical_pool() (== workspace_pool, explicit).
+        auto sym = canonical_pool()->intern(name);
         EvalValue result = make_void();
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             auto v = flat.get(id);
@@ -6129,7 +6131,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             return mev("bad-arg", "string index out of range");
         auto& flat = *workspace_flat_;
         auto name = string_heap_[name_idx];
-        auto sym = workspace_pool_->intern(name);
+        // Phase 2.5.0: route via canonical_pool() (== workspace_pool, explicit).
+        auto sym = canonical_pool()->intern(name);
 
         // ── 安全点：保存当前状态作为 panic checkpoint ────────
         // 如果 auto-rollback-on-panic 开启且后续失败，自动恢复到此状态
@@ -6733,7 +6736,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             return mev("bad-arg", "string index out of range");
         auto& flat = *workspace_flat_;
         auto name = string_heap_[name_idx];
-        auto sym = workspace_pool_->intern(name);
+        // Phase 2.5.0: route via canonical_pool() (== workspace_pool, explicit).
+        auto sym = canonical_pool()->intern(name);
 
         // ── 安全点：保存当前状态作为 panic checkpoint ────────
         bool had_checkpoint = save_panic_checkpoint();
@@ -7670,7 +7674,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         if (idx >= string_heap_.size())
             return mev("bad-arg", "string index out of range");
         auto name = string_heap_[idx];
-        auto sym = workspace_pool_->intern(name);
+        // Phase 2.5.0: route via canonical_pool() (== workspace_pool, explicit).
+        auto sym = canonical_pool()->intern(name);
 
         auto& flat = *workspace_flat_;
         // Find a Define node with the matching symbol.
