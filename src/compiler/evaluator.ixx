@@ -100,6 +100,24 @@ public:
     std::optional<types::EvalValue> lookup_by_symid(aura::ast::SymId s) const;
     [[nodiscard]] std::optional<types::EvalValue> lookup(const std::string& n) const
         pre (!n.empty());
+    // Issue #145 follow-up / Phase 2.5.0: SymId-first lookup that
+    // takes a name string. Interns via the given pool (canonical
+    // pool in the post-migration path), then routes through
+    // lookup_by_symid. This is the migration scaffold for the
+    // Phase 2.5 drop of bindings_ — callers that have a string
+    // name but want the SymId fast path can use this helper
+    // instead of interning the name themselves. The intern cost
+    // is paid once per call; for hot lookups, callers should
+    // intern the name once outside the loop.
+    //
+    // The `pool` parameter is the legacy pool (closure-captured,
+    // env-captured). Pass canonical_pool() for new code; the
+    // helper routes through pool_or_canonical semantics for
+    // backward compat with pre-migration captures.
+    std::optional<types::EvalValue>
+    lookup_by_intern(const std::string& n,
+                     const aura::ast::StringPool* pool) const
+        pre (!n.empty());
     // Look up the raw binding without dereferencing cells (returns cell sentinel as-is)
     std::optional<types::EvalValue> lookup_binding(const std::string& n) const
         pre (!n.empty());

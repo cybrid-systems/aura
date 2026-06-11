@@ -258,6 +258,66 @@ std::optional<types::EvalValue> Env::lookup_by_symid(aura::ast::SymId s) const {
     return parent_ ? parent_->lookup_by_symid(s) : std::nullopt;
 }
 
+// Issue #145 follow-up / Phase 2.5.0: lookup_by_intern — the
+// SymId-first migration scaffold for the eventual bindings_
+// drop. Takes a name string, interns via the given pool
+// (legacy closure-captured / env-captured pool for backward
+// compat; canonical_pool() for new code), then routes through
+// lookup_by_symid. The primitive + ADT-constructor fallbacks
+// mirror Env::lookup's behavior (step 3 + 4) so callers that
+// switch to this helper get the same observable result as
+// lookup(name) when no binding is found.
+//
+// Note: this is a SCOPED migration tool, not a permanent API.
+// When Phase 2.5 ships the actual drop of bindings_, the
+// helper either goes away (callers intern once + use
+// lookup_by_symid directly) or stays as a thin convenience
+// wrapper. The 6 current Env::lookup(name) call sites
+// (apply_closure parent walk, EnvView parent walk, module
+// lookup, fn_name lookup, eval-time lookup, capture lookup)
+// will migrate one per Phase 2.5.0 commit.
+std::optional<types::EvalValue>
+Env::lookup_by_intern(const std::string& n,
+                      const aura::ast::StringPool* pool) const {
+    // Resolve which pool to use: legacy passed-in pool if
+    // non-null, else fall back to the env's own pool_ (set
+    // via set_pool for closures that captured a non-canonical
+    // pool), else nullptr. The lookup_by_symid call below
+    // will then route through whichever pool is appropriate.
+    // Note: use_pool is non-const because intern() mutates the
+    // pool. const_cast is safe here because the env holds the
+    // pool by non-const pointer (pool_) or by the caller's
+    // pointer (legacy). The lookup_by_intern method itself is
+    // logically const (no observable env state change beyond
+    // the pool's intern side effect, which is idempotent for
+    // already-interned names).
+    aura::ast::StringPool* use_pool =
+        const_cast<aura::ast::StringPool*>(pool ? pool : pool_);
+    if (!use_pool) {
+        // No pool available — can't intern. Fall through to
+        // the legacy string-based lookup as a last resort.
+        return lookup(n);
+    }
+    auto sym = use_pool->intern(n);
+    auto found = lookup_by_symid(sym);
+    if (found) return found;
+    // Fallbacks mirror Env::lookup's primitive + ADT paths.
+    // These are not SymId-specific — the slot_for_name lookup
+    // uses the string name directly.
+    if (primitives_) {
+        auto slot = primitives_->slot_for_name(n);
+        if (slot != std::numeric_limits<std::size_t>::max()) {
+            return make_primitive(slot);
+        }
+    }
+    {
+        auto adt_it = g_adt_constructors.find(n);
+        if (adt_it != g_adt_constructors.end())
+            return make_primitive(adt_it->second.primitive_slot);
+    }
+    return std::nullopt;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Issue #145 Phase 2.1 — EnvFrame SoA infrastructure
 // ═══════════════════════════════════════════════════════════════
