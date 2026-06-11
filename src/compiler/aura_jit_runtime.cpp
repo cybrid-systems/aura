@@ -112,6 +112,88 @@ extern "C" void aura_bypass_count_reset() {
     g_workspace_mtx_bypass_count.store(0, std::memory_order_relaxed);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Issue #157 Phase 1: Lock hooks for the JIT runtime
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Pattern: a function-pointer table set by CompilerService::register_jit_primitives
+// (parallel to g_prim_dispatcher). The hooks let global C functions (aura_alloc_pair,
+// aura_pair_car, etc.) participate in the Evaluator's workspace_mtx_ + defuse_version_
+// protocol WITHOUT exposing the mutex as a global. service.ixx binds the hooks
+// to Evaluator methods; if the hooks are unbound (no CompilerService), the bridge
+// functions are no-ops (single-threaded default).
+
+namespace {
+struct LockHooks {
+    void (*lock_read)(void*);       // shared_lock acquire
+    void (*unlock_read)(void*);     // shared_lock release
+    void (*lock_write)(void*);      // unique_lock acquire
+    void (*unlock_write)(void*);    // unique_lock release
+    std::uint64_t (*get_version)(void*);  // current defuse_version_
+    void (*yield_boundary)(void*);  // g_fiber_yield_mutation_boundary hook
+    void* user_data;                // typically the Evaluator*
+};
+static LockHooks g_lock_hooks = {
+    nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr
+};
+} // namespace
+
+extern "C" void aura_set_lock_hooks(
+    void (*lock_read)(void*), void (*unlock_read)(void*),
+    void (*lock_write)(void*), void (*unlock_write)(void*),
+    std::uint64_t (*get_version)(void*),
+    void (*yield_boundary)(void*),
+    void* user_data) {
+    g_lock_hooks.lock_read = lock_read;
+    g_lock_hooks.unlock_read = unlock_read;
+    g_lock_hooks.lock_write = lock_write;
+    g_lock_hooks.unlock_write = unlock_write;
+    g_lock_hooks.get_version = get_version;
+    g_lock_hooks.yield_boundary = yield_boundary;
+    g_lock_hooks.user_data = user_data;
+}
+
+// Bridge wrappers — these are what runtime functions (aura_alloc_pair,
+// aura_pair_car, etc.) call to participate in the locking protocol.
+// They are NO-OPs when hooks are unbound (single-threaded default).
+//
+// Note: aura_workspace_locked_read/write (counter mirror of bypass_count)
+// is also exposed for future jit:metrics "mutation protocol violations
+// avoided" reporting (#157 AC). For Phase 1 we don't increment it on the
+// lock-acquire path; that's deferred to Phase 1b when the JIT lowering
+// starts emitting explicit lock acquire/release calls.
+
+extern "C" void aura_lock_workspace_read() {
+    if (g_lock_hooks.lock_read)
+        g_lock_hooks.lock_read(g_lock_hooks.user_data);
+}
+
+extern "C" void aura_unlock_workspace_read() {
+    if (g_lock_hooks.unlock_read)
+        g_lock_hooks.unlock_read(g_lock_hooks.user_data);
+}
+
+extern "C" void aura_lock_workspace_write() {
+    if (g_lock_hooks.lock_write)
+        g_lock_hooks.lock_write(g_lock_hooks.user_data);
+}
+
+extern "C" void aura_unlock_workspace_write() {
+    if (g_lock_hooks.unlock_write)
+        g_lock_hooks.unlock_write(g_lock_hooks.user_data);
+}
+
+extern "C" std::uint64_t aura_get_defuse_version() {
+    if (g_lock_hooks.get_version)
+        return g_lock_hooks.get_version(g_lock_hooks.user_data);
+    return 0;
+}
+
+extern "C" void aura_yield_mutation_boundary() {
+    if (g_lock_hooks.yield_boundary)
+        g_lock_hooks.yield_boundary(g_lock_hooks.user_data);
+}
+
 // ── Forward declarations ──
 
 // ── Shared pair storage (must be outside extern "C" for C++ type) ──
@@ -490,85 +572,90 @@ void aura_cell_set(int64_t cell_id, int64_t val) {
 // ESCAPED: PairSlot allocated from global heap
 
 int64_t aura_alloc_pair(int64_t car, int64_t cdr) {
-    // Issue #157 Phase 1: wrap with aura_lock_workspace_write +
-    // aura_unlock_workspace_write. push_back on g_pair_slots is
-    // not thread-safe with concurrent push_back from another
-    // fiber's JIT code or with mutate:foo that holds the lock.
-    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
+    // Issue #157 Phase 1: write lock — push_back on g_pair_slots +
+    // g_owned_pair_slots_ is a write, must be exclusive vs readers
+    // and other writers. Released in Phase 1 as a no-op when no
+    // CompilerService is registered (single-threaded default).
+    aura_lock_workspace_write();
     auto* slot = (PairSlot*)malloc(sizeof(PairSlot));
     slot->car = car;
     slot->cdr = cdr;
     int64_t id = static_cast<int64_t>(g_pair_slots.size());
     g_pair_slots.push_back(slot);
     g_owned_pair_slots_.push_back(slot);
+    aura_unlock_workspace_write();
     return (id << 2) | 1;
 }
 
 int64_t aura_pair_car(int64_t pair_val) {
-    // Issue #157 Phase 1: wrap with aura_lock_workspace_read +
-    // aura_unlock_workspace_read. Read of g_pair_slots[id]->car
-    // races with concurrent push_back / free.
-    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
+    // Issue #157 Phase 1: read lock — g_pair_slots[id]->car is a
+    // read; shared_lock lets multiple concurrent readers proceed
+    // but blocks while a writer holds the lock.
+    aura_lock_workspace_read();
     uint64_t id = static_cast<uint64_t>(pair_val >> 2);
+    int64_t result = 0;
     if (id < g_pair_slots.size() && g_pair_slots[id])
-        return g_pair_slots[id]->car;
-    return 0;
+        result = g_pair_slots[id]->car;
+    aura_unlock_workspace_read();
+    return result;
 }
 
 int64_t aura_pair_cdr(int64_t pair_val) {
-    // Issue #157 Phase 1: wrap with aura_lock_workspace_read +
-    // aura_unlock_workspace_read. Same as aura_pair_car.
-    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
+    // Issue #157 Phase 1: read lock, same as aura_pair_car.
+    aura_lock_workspace_read();
     uint64_t id = static_cast<uint64_t>(pair_val >> 2);
+    int64_t result = 0;
     if (id < g_pair_slots.size() && g_pair_slots[id])
-        return g_pair_slots[id]->cdr;
-    return 0;
+        result = g_pair_slots[id]->cdr;
+    aura_unlock_workspace_read();
+    return result;
 }
 
 // Arena-based pair allocation (for NON_ESCAPING pairs, Phase 2)
 // Allocates PairSlot from TL arena instead of global heap.
 int64_t aura_alloc_pair_arena(int64_t car, int64_t cdr) {
-    // Issue #157 Phase 1: wrap with aura_lock_workspace_write +
-    // aura_unlock_workspace_write. push_back on g_pair_slots is
-    // the same race as aura_alloc_pair; the arena alloc is just
+    // Issue #157 Phase 1: write lock — push_back on g_pair_slots
+    // is the same race as aura_alloc_pair; the arena alloc is just
     // a different backing store.
-    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
+    aura_lock_workspace_write();
     auto* slot = (PairSlot*)tl_arena_alloc(&g_tl_arena, sizeof(PairSlot), alignof(PairSlot));
     slot->car = car;
     slot->cdr = cdr;
     int64_t id = static_cast<int64_t>(g_pair_slots.size());
     g_pair_slots.push_back(slot);
+    aura_unlock_workspace_write();
     return (id << 2) | 1;
 }
 
 // L2 specialization: unchecked pair access (skips bounds check)
+//
+// Issue #157 Phase 1: NOW takes the read lock. The "unchecked"
+// suffix refers to the bounds check (skipped because L2 SHAPE_PAIR
+// shape analysis says the value is always a pair), NOT to the
+// concurrency protocol. With the read lock, this path is safe
+// for concurrent readers (multiple fibers can read at once) but
+// blocks while a writer holds the lock.
+//
+// Phase 1b (deferred): add a version check at L2 entry; on
+// mismatch, deopt to aura_pair_car (slow path with bounds check).
+// The version check is a fine-grained optimization that avoids
+// the lock cost in single-threaded cases; for Phase 1 we take
+// the lock unconditionally to be conservative.
 int64_t aura_pair_car_unchecked(int64_t pair_val) {
-    // Issue #157 Phase 1 (HIGHEST PRIORITY): used by L2 SHAPE_PAIR
-    // specialization in aura_jit.cpp OpCar (line 812). No bounds
-    // check, no lock, no version check. Three layers of risk:
-    //   1. Race with concurrent push_back (id out of range)
-    //   2. Race with concurrent mutate:foo that reallocates the
-    //      vector
-    //   3. Stale shape after redefine — the shape analyzer
-    //      claimed SHAPE_PAIR but a mutation may have replaced
-    //      the underlying value with a non-pair.
-    // Phase 1 fix: replace with version-checked variant
-    //   if (aura_check_defuse_version(captured_version_)) {
-    //       return g_pair_slots[id]->car;  // optimistic
-    //   } else {
-    //       return aura_pair_car(pair_val);  // slow path
-    //   }
-    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
+    aura_lock_workspace_read();
     uint64_t id = static_cast<uint64_t>(pair_val >> 2);
-    return g_pair_slots[id]->car;
+    int64_t result = g_pair_slots[id]->car;
+    aura_unlock_workspace_read();
+    return result;
 }
 
 int64_t aura_pair_cdr_unchecked(int64_t pair_val) {
-    // Issue #157 Phase 1 (HIGHEST PRIORITY): same as
-    // aura_pair_car_unchecked above.
-    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
+    // Issue #157 Phase 1: read lock, same as aura_pair_car_unchecked.
+    aura_lock_workspace_read();
     uint64_t id = static_cast<uint64_t>(pair_val >> 2);
-    return g_pair_slots[id]->cdr;
+    int64_t result = g_pair_slots[id]->cdr;
+    aura_unlock_workspace_read();
+    return result;
 }
 
 // === Primitive call bridge ===
@@ -583,25 +670,31 @@ static std::atomic<uint64_t> g_prim_call_count{0};
 static std::atomic<uint64_t> g_prim_call_total_ns{0};
 
 void aura_set_prim_dispatcher(int64_t (*fn)(int64_t, int64_t*, int32_t)) {
-    // Issue #157 Phase 1: g_prim_dispatcher must be std::atomic<void*>
-    // (or std::atomic<int64_t(*)(...)>) with release-store semantics.
-    // Current non-atomic write races with aura_prim_call's read.
-    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
+    // Issue #157 Phase 1: write lock — g_prim_dispatcher is a
+    // function pointer that aura_prim_call reads concurrently.
+    // The non-atomic write races with the read on weakly-ordered
+    // architectures. The write lock ensures the read in
+    // aura_prim_call sees either the old or new pointer, never
+    // a half-written one. (Future optimization: make
+    // g_prim_dispatcher std::atomic<void*> with release/acquire
+    // and skip the lock.)
+    aura_lock_workspace_write();
     g_prim_dispatcher = fn;
+    aura_unlock_workspace_write();
 }
 
 int64_t aura_prim_call(int64_t slot, int64_t a, int64_t b, int64_t count) {
-    // Issue #157 Phase 1: g_prim_dispatcher must be atomic with
-    // acquire-load. Current non-atomic read races with the writer
-    // (aura_set_prim_dispatcher, called from service.ixx on every
-    // CompilerService init). The read can observe a half-written
-    // pointer on weakly-ordered architectures.
+    // Issue #157 Phase 1: read lock — read of g_prim_dispatcher
+    // races with aura_set_prim_dispatcher. The dispatcher function
+    // itself is the FFI boundary into the evaluator (where the
+    // mutating primitives re-acquire the lock); the read lock here
+    // ensures the pointer load is exclusive vs the writer.
     //
     // Issue #114: profile the slow-path primitive call. This is
     // the FFI boundary the JIT crosses for primitives that don't
     // have a specialized inlined fast path. The two atomic stores
     // are independent so we use relaxed ordering.
-    g_workspace_mtx_bypass_count.fetch_add(1, std::memory_order_relaxed);
+    aura_lock_workspace_read();
     auto t0 = std::chrono::steady_clock::now();
     int64_t result = 0;
     if (g_prim_dispatcher) {
@@ -617,6 +710,7 @@ int64_t aura_prim_call(int64_t slot, int64_t a, int64_t b, int64_t count) {
     auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
     g_prim_call_count.fetch_add(1, std::memory_order_relaxed);
     g_prim_call_total_ns.fetch_add(static_cast<uint64_t>(ns), std::memory_order_relaxed);
+    aura_unlock_workspace_read();
     return result;
 }
 

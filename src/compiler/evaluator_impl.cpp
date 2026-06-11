@@ -19366,4 +19366,18 @@ void* Evaluator::compact_sweep(void* sweep_buffers) {
     return result;
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+// Issue #157 Phase 1: yield_mutation_boundary implementation.
+//
+// The lock + version accessors are public inline methods on Evaluator
+// (in evaluator.ixx), but yield_mutation_boundary must be defined here
+// in the .cpp (not the .ixx) because the extern function pointer
+// g_fiber_yield_mutation_boundary lives in messaging_bridge.h, a
+// non-module header that the module interface cannot include.
+//
+void Evaluator::yield_mutation_boundary() {
+    if (aura::messaging::g_fiber_yield_mutation_boundary)
+        aura::messaging::g_fiber_yield_mutation_boundary();
+}
+
 } // namespace aura::compiler
