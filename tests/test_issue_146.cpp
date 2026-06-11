@@ -566,6 +566,86 @@ bool test_macro_subst_missing_args() {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// AC #10: arithmetic_sum_pure (Issue #146 7th extract)
+// ═══════════════════════════════════════════════════════════════
+
+bool test_arithmetic_sum_no_args() {
+    std::println("\n--- Test 10.1: pure::arithmetic_sum_pure no args → 0 ---");
+    std::vector<aura::compiler::types::EvalValue> args{};
+    std::vector<std::string> heap{};
+    auto r = aura::compiler::pure::arithmetic_sum_pure(args, heap);
+    CHECK(aura::compiler::types::is_int(r), "no args → int result");
+    CHECK(aura::compiler::types::as_int(r) == 0, "no args → 0");
+    return true;
+}
+
+bool test_arithmetic_sum_int_args() {
+    std::println("\n--- Test 10.2: pure::arithmetic_sum_pure int args → int sum ---");
+    using namespace aura::compiler;
+    std::vector<types::EvalValue> args{
+        types::make_int(1), types::make_int(2), types::make_int(3)};
+    std::vector<std::string> heap{};
+    auto r = aura::compiler::pure::arithmetic_sum_pure(args, heap);
+    CHECK(types::is_int(r), "all int → int result");
+    CHECK(types::as_int(r) == 6, "1+2+3=6");
+    return true;
+}
+
+bool test_arithmetic_sum_float_promotion() {
+    std::println("\n--- Test 10.3: pure::arithmetic_sum_pure float promotion ---");
+    using namespace aura::compiler;
+    std::vector<types::EvalValue> args{
+        types::make_int(1), types::make_float(2.5), types::make_int(3)};
+    std::vector<std::string> heap{};
+    auto r = aura::compiler::pure::arithmetic_sum_pure(args, heap);
+    CHECK(types::is_float(r), "any float arg → float result");
+    CHECK(types::as_float(r) == 6.5, "1+2.5+3=6.5");
+    return true;
+}
+
+bool test_arithmetic_sum_diag_sink_emits_on_bad_coercion() {
+    std::println("\n--- Test 10.4: pure::arithmetic_sum_pure diag sink ---");
+    using namespace aura::compiler;
+    // (+) where one arg is a non-numeric String. The pure
+    // function silently returns 0 for that arg, but if a
+    // diag sink is provided it should receive the legacy
+    // "type mismatch" line.
+    std::vector<std::string> heap{"hello"};  // heap[0] = "hello"
+    std::vector<types::EvalValue> args{
+        types::make_int(1),
+        types::make_string(0),  // "hello" — unparseable as int
+        types::make_int(2)};
+    std::ostringstream sink;
+    auto r = aura::compiler::pure::arithmetic_sum_pure(args, heap, &sink);
+    CHECK(types::is_int(r), "result is int");
+    CHECK(types::as_int(r) == 3, "1+0+2=3 (silent coercion of \"hello\")");
+    auto out = sink.str();
+    CHECK(!out.empty(), "diag sink received output");
+    CHECK(out.find("type mismatch") != std::string::npos,
+          "diag output contains 'type mismatch'");
+    CHECK(out.find("hello") != std::string::npos,
+          "diag output contains the unparseable string 'hello'");
+    return true;
+}
+
+bool test_arithmetic_sum_no_diag_by_default() {
+    std::println("\n--- Test 10.5: pure::arithmetic_sum_pure no diag (default) ---");
+    using namespace aura::compiler;
+    // Same setup as 10.4 but no diag sink — must not crash,
+    // must not allocate any global stream, must produce the
+    // same result.
+    std::vector<std::string> heap{"hello"};
+    std::vector<types::EvalValue> args{
+        types::make_int(1),
+        types::make_string(0),
+        types::make_int(2)};
+    auto r = aura::compiler::pure::arithmetic_sum_pure(args, heap);
+    CHECK(types::is_int(r), "no-diag result is int");
+    CHECK(types::as_int(r) == 3, "no-diag: 1+0+2=3 (same as with-diag)");
+    return true;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // Main
 // ═══════════════════════════════════════════════════════════════
 
@@ -618,6 +698,13 @@ int main() {
     test_macro_subst_dotted_omits_rest();
     test_macro_subst_empty_params();
     test_macro_subst_missing_args();
+
+    std::println("\n── AC #10: arithmetic_sum_pure (Issue #146 7th extract) ──");
+    test_arithmetic_sum_no_args();
+    test_arithmetic_sum_int_args();
+    test_arithmetic_sum_float_promotion();
+    test_arithmetic_sum_diag_sink_emits_on_bad_coercion();
+    test_arithmetic_sum_no_diag_by_default();
 
     std::println("\n── AC #5: coerce_value_pure (Issue #146 Phase 2) ──");
     test_coerce_value_pure_identity();

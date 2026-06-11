@@ -519,26 +519,16 @@ namespace {
 Primitives::Primitives() {
     // ── Variadic arithmetic ────────────────────────────────────────
     // (+) → 0, (+ x) → x, (+ x y ...) → sum; float if any arg is float
+    // Issue #146 (7th extract): the body is now a 1-line
+    // forwarder to aura::compiler::pure::arithmetic_sum_pure.
+    // The diag sink is std::cerr to preserve the legacy "type
+    // mismatch" stderr emission that the stateful coerce_to_int
+    // wrapper used to provide — regression tests
+    // tc-strict-runtime-typed-arg-mismatch and
+    // tc-type-var-name-from-param depend on this.
     table_["+"] = [this](std::span<const EvalValue> a) {
-        if (a.empty())
-            return make_int(0);
-        bool any_f = false;
-        for (auto& v : a)
-            if (is_float(v)) {
-                any_f = true;
-                break;
-            }
-        if (any_f) {
-            double r = 0.0;
-            for (auto& v : a)
-                r +=
-                    is_float(v) ? as_float(v) : static_cast<double>(coerce_to_int(v, *string_heap_));
-            return make_float(r);
-        }
-        std::int64_t r = 0;
-        for (auto& v : a)
-            r += coerce_to_int(v, *string_heap_);
-        return make_int(r);
+        std::span<const std::string> heap(string_heap_->data(), string_heap_->size());
+        return aura::compiler::pure::arithmetic_sum_pure(a, heap, &std::cerr);
     };
     // (-) → 0, (- x) → -x, (- x y ...) → x - y - z - ...
     table_["-"] = [this](std::span<const EvalValue> a) {
