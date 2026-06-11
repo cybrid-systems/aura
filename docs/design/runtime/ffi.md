@@ -31,7 +31,7 @@
 - 🟡 **API stub，集成未做**：`AuraJIT::register_symbol` 头文件存在；ORC JIT 编译代码仍走 C++ bridge 路径（~50ns），不是文档 §"执行路径" 提到的 ~1ns native `call [fn]`
 - 🔴 **未实装**：`--safe` 模式禁用 `c-load` / 扩展新类型只需在 marshalling switch 加 case（仅文档描述）
 
-**AI Agent 读者请注意**：本文档作为设计意图保留。FFI 用户 API 完全可用；JIT 路径的 `register_symbol` 只是 stub，零开销 FFI 仍需等 ORC JIT 实装。
+**AI Agent 读者请注意**：用户 API（`c-load` / `c-func` / 调用）已完全可用，可直接在 EDSL 或 `--serve` 协议中使用。JIT 零开销路径（`register_symbol`）仍为 stub，当前仍走 ~50ns C++ bridge。详见 `design/core/mutate_api.md` 和 `developer/evaluator.md` 关于 primitive 注册的说明。
 
 ---
 

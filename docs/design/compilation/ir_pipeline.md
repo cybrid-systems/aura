@@ -1,13 +1,13 @@
 # IR Pipeline Design
 
-**Status**: Implemented (2026-05-17)
+**Status**: Implemented (2026-06)
 **Design Author**: Anqi Yu + Ani
 
 ---
 
 ## 0. Implementation Status (2026-06-11, Issue #156)
 
-**重要**：本文档的 **IR 管线全部实装 + 集成到 `eval()`**；剩余的 fallback（module system / EDSL / special forms）是有意保留。准确分两层：
+**重要**：本文档的 **IR 管线已全部实装并成为 `eval()` 默认路径**（tree-walker 仅作 fallback）。模块系统、EDSL 原语、特殊形式等有意保留 fallback。准确分两层：
 
 ### C++ Core Layer (`src/compiler/ir.ixx` / `lowering.ixx` / `lowering_impl.cpp` / `ir_executor.ixx` / `ir_executor_impl.cpp` / `pass_manager.ixx` / `service.ixx` / `evaluator.ixx` / `evaluator_impl.cpp`)
 
