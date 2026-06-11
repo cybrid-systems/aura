@@ -8,23 +8,33 @@ Aura 不是给人类写的语言——是给 AI 写的。
 ```bash
 cmake -B build && cmake --build build --target aura -j
 echo '(+ 1 2 3)' | ./build/aura          # → 6
-echo '(display 42)' | ./build/aura  # → 42
-echo '(display (list 1 2 3))' | ./build/aura  # → (1 2 3)
 ```
 
 ---
 
 ### 这一设计的背后
 
-Aura 的语法像 Scheme，但它的灵魂不是。
-大多数语言为可读性优化——Aura 为 AI 的可操作性优化。
+Aura 的语法像 Scheme，但灵魂完全不同：**让代码成为可被 Agent 直接读写进化的活系统**。
 
-具体来说：
-- **EDSL**: 代码不是写出来的，是自己长出来的（`set-code` → `mutate` → `eval-current`）
-- **控制论修复**: 不是一次写对，而是测量距离、局部搜索、逐步逼近
-- **Scheme 兼容**: LLM 写 `(first x)` 或 `(char=? c #\()` 自然通过
+核心理念（来自 philosophy）：
+- **代码即记忆**：AST 不是编译器黑盒，而是 Agent 的可查询、可原子变异的自我意识。
+- **着力即差**：不限制 LLM 自然表达。prompt 只说“你是 Aura”，语言自己处理。
+- **控制论闭环**：AI 给方向，Aura 负责本地精确搜索与变异（信息素 + PID 风格）。
 
-先学会常规用法，再深入 AI 驱动开发。
+---
+
+## 当前能力矩阵（2026-06 实装状态）
+
+| 领域           | C++ 层成熟度          | Aura 表面 (std/)          | 推荐用法                  |
+|----------------|-----------------------|---------------------------|---------------------------|
+| 查询 (query)   | 完整 (11+ 原语 + where/pattern/DefUse) | 基础 helper + 内部调用   | 直接用 C++ 原语或 serve 协议 |
+| 变异 (mutate)  | 12+ 原语 + 原子回滚 + typed | mutate:rebind + 部分     | 优先 `mutate:rebind` + `ast:snapshot` |
+| Workspace      | P0 完整 (COW, lock, memory budget) | 基础 + 部分 workaround   | `workspace:create/switch/lock` |
+| Agent 编排     | fiber + scheduler 完整 | 高层 `std/orchestrator`  | `agent:spawn/ask` + `orch:*` |
+| Serve 协议     | 强大 JSON 多 session | —                         | **AI Agent 主入口** (`--serve-async`) |
+| 增量执行       | 优秀 (source-hash + dirty) | —                         | `set-code` + `eval-current` |
+
+**AI Agent 读者请注意**：高级 query（where/pattern）和完整 typed mutation 推荐通过 `--serve` / `--serve-async` JSON 协议使用。Aura 代码里直接用基础原语 + `std/` helper 即可。完整矩阵见各 `design/core/*` 的 `## 0. Implementation Status`。
 
 ---
 
@@ -575,16 +585,17 @@ EDSL API 完整列表：
 
 详见 [`docs/design/core/agent_orchestration.md`](design/core/agent_orchestration.md)。
 
-### EDSL 完整参考
+### EDSL 完整参考（当前实装）
 
-| 操作 | 推荐文档 |
-|------|----------|
-| Query 原语完整列表 | [`docs/design/core/query_edsl.md §2`](design/core/query_edsl.md) |
-| Mutate 原语完整列表 | [`docs/design/core/mutate_api.md`](design/core/mutate_api.md) |
-| Agent 编排完整列表 | [`docs/design/core/agent_orchestration.md`](design/core/agent_orchestration.md) |
-| 给 evaluator 加新原语 | [`docs/developer/evaluator.md`](developer/evaluator.md) |
+推荐直接阅读对应 `design/core/` 文档的 `## 0. Implementation Status`（最准确的 C++ vs Aura 表面区分）：
 
-> **当前实装状态**：详见各 `design/core/` 文档的 `## 0. Implementation Status` 章节。Query 丰富谓词（where/pattern 等）在 C++ 层已实现，Aura 代码主要通过基础 query:* + std/query 辅助函数使用；高级用法推荐直接通过 evaluator 内部或 --serve 协议。Workspace COW P0 已可用，更高层的 merge/sync 部分仍为设计或 workaround。参考 `design/core/query_edsl.md` 和 `workspace_layering.md`。
+- Query：[`design/core/query_edsl.md`](design/core/query_edsl.md)
+- Mutate + 回滚 + typed：[`design/core/mutate_api.md`](design/core/mutate_api.md) + [`typed_mutation.md`](design/core/typed_mutation.md)
+- Workspace 分层 COW：[`design/core/workspace_layering.md`](design/core/workspace_layering.md)
+- Agent 编排 + fiber：[`design/core/agent_orchestration.md`](design/core/agent_orchestration.md)
+- 开发者加原语：[`docs/developer/evaluator.md`](developer/evaluator.md)
+
+**Serve 协议是 AI Agent 的最佳入口**（JSON 命令，支持 typed-mutate、mutation-log、session、多 fiber 并行）。见下文 “Serve for Agents” 章节。
 
 ---
 
@@ -665,61 +676,4 @@ build_adaptive_feedback() → correction → LLM 再生成
 
 详情 → [docs/benchmark.md](docs/benchmark.md) · [docs/roadmap.md](docs/roadmap.md)
 
----
-
-**下一步:** `docs/roadmap.md` · `docs/design/notes/aura_language_spec.md` · `docs/design/runtime/ffi.md` · `python3 tests/edsl_benchmark.py --tasks fibonacci`
-
-## 多 Agent 编排（交响乐指挥模式）
-
-**推荐阅读**：先看 [`design/core/agent_orchestration.md`](design/core/agent_orchestration.md) 的 Implementation Status，再结合 `std/orchestrator.aura` 和 `projects/evo-kv/` 示例。
-
-Agent 编排框架将代码进化过程视为一场交响乐演奏：
-
-```
-指挥（orch:conduct） → 总谱 → 乐手们各司其职
-```
-
-### 基础用法
-
-```scheme
-(require "std/orchestrator" all:)
-(require "std/string" all:)
-
-;; 聘用乐手
-(agent:spawn "planner"
-  (lambda (task) (string-append "PLAN: " task)))
-(agent:spawn "coder"
-  (lambda (plan) (string-append "CODE: (" plan ")")))
-(agent:spawn "tester"
-  (lambda (code) (string-append "TEST: " code " => PASS")))
-
-;; 指挥给提示
-(agent:ask "planner" "fib" 30)    → "PLAN: fib"
-
-;; 完整管线
-(orch:pipeline (list "planner" "coder" "tester") "fib")
-    → "TEST: CODE: (PLAN: fib) => PASS"
-
-;; 并行执行
-(orch:parallel
-  (list (lambda (x) (+ x 1)) (lambda (x) (* x 2)))
-  5)  → (6 15)
-```
-
-### 生命周期管理
-
-```scheme
-(agent:spawn "w" (lambda (x) (string-append "w:" x)))
-(agent:status "w")           → "running"
-(agent:stop "w")             → "stopped"
-(agent:restart "w" (lambda (x) (string-append "v2:" x)))
-(agent:ask "w" "task")       → "v2:task"
-```
-
-### AST 可视化
-
-```scheme
-(require "std/ast-viz" all:)
-(ast:to-dot)  → digraph AST { Node0 [label="Define\nadd",fillcolor="#fccde5"]; ... }
-(mutation:trace)  → "Total mutations: 1"
-```
+Aura 的核心承诺：**告诉它“你是 Aura”**，剩下的让代码自己进化。
