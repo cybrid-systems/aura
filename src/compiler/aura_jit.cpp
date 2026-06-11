@@ -246,6 +246,13 @@ struct LLVMBuilder {
     // function that reads the current Evaluator::defuse_version_
     // via the g_lock_hooks.get_version callback).
     llvm::Function* fn_get_defuse_version = nullptr;
+    // Issue #157 Phase 1c: in-LLVM-callable deopt counter. The
+    // JIT emits a call to this at the start of every deopt basic
+    // block (bb_slow in OpCar/OpCdr SHAPE_PAIR lowering) so the
+    // g_workspace_deopt_count is incremented on the hot path.
+    // Runtime definition: extern "C" void aura_deopt_inc() in
+    // aura_jit_runtime.cpp.
+    llvm::Function* fn_deopt_inc = nullptr;
     // Hash operations (inline dispatch, avoids PrimCall overhead)
     llvm::Function* fn_hash_ref = nullptr;
     llvm::Function* fn_hash_set = nullptr;
@@ -314,6 +321,9 @@ struct LLVMBuilder {
         // use (check current version, deopt to slow path on mismatch).
         fn_get_defuse_version = llvm::Function::Create(llvm::FunctionType::get(i64, false),
                                              llvm::Function::ExternalLinkage, "aura_get_defuse_version", mod);
+
+        fn_deopt_inc = llvm::Function::Create(llvm::FunctionType::get(void_ty, false),
+                                              llvm::Function::ExternalLinkage, "aura_deopt_inc", mod);
 
         fn_prim_call =
             llvm::Function::Create(llvm::FunctionType::get(i64, {i64, i64, i64, i64}, false),
@@ -873,6 +883,11 @@ struct LLVMBuilder {
 
                     // Slow path: bounds check + lock (Phase 1)
                     irb->SetInsertPoint(bb_slow);
+                    // Issue #157 Phase 1c: bump the deopt counter
+                    // before taking the slow path so observability
+                    // tools see the deopt event. ~1ns relaxed atomic
+                    // increment, negligible compared to the lock.
+                    irb->CreateCall(fn_deopt_inc, {});
                     auto* slow_result = irb->CreateCall(fn_pair_car, {pair_val});
                     irb->CreateBr(bb_done);
 
@@ -910,6 +925,8 @@ struct LLVMBuilder {
                     irb->CreateBr(bb_done);
 
                     irb->SetInsertPoint(bb_slow);
+                    // Issue #157 Phase 1c: bump the deopt counter.
+                    irb->CreateCall(fn_deopt_inc, {});
                     auto* slow_result = irb->CreateCall(fn_pair_cdr, {pair_val});
                     irb->CreateBr(bb_done);
 
