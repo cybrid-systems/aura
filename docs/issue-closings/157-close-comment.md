@@ -1,4 +1,4 @@
-# Issue #157 — close-out comment (drafted 2026-06-11)
+# Issue #157 — close-out comment (drafted 2026-06-11, updated 2026-06-12)
 
 ## Summary
 
@@ -95,6 +95,22 @@ OpHashRef inline IR scan (`aura_jit.cpp` ~1067) also wrapped:
   to the runtime `aura_hash_set` / `aura_hash_remove` functions
   which now self-lock — no inline-IR change needed for those.
 
+### Phase 5 (commit 95aaf46) — `jit:metrics` --serve command
+
+- `src/main.cpp` — new JSON command: `{"cmd":"jit:metrics"}`
+  reports the runtime telemetry counters
+  (`bypass_count` / `unchecked_fastpath_count` / `deopt_count`).
+  Optional `{"reset": true}` to read + reset in one call
+  (response shows pre-reset values).
+- Smoke-tested: after `--serve` exec calls that touch
+  `cons` / `cell` / `hash` runtime bridges,
+  `bypass_count` stays at 0 (regression detector working as
+  designed).
+- `tests/test_jit_metrics.cpp` — `test_phase5_runtime_accessors`
+  exercises the extern accessors directly (reset / read /
+  `aura_deopt_inc()` × 3 / read / reset / read). 5 new
+  assertions. Test count: 23/23 (was 18/18).
+
 ## Effect
 
 Every bypass site from the #157 P0 inventory (19 sites) now either:
@@ -106,6 +122,16 @@ Multi-fiber serve is safe under concurrent `typed_mutate`. The
 (no more `fetch_add` calls); `aura_bypass_count()` reports 0 in
 steady state. The counter stays as a regression detector — if a
 future change adds a new bypass site, the counter will tick.
+
+`jit:metrics` exposes the telemetry to ops dashboards:
+- `bypass_count == 0` is the steady-state goal (any new bypass
+  site in a future change ticks it; ops can alert on non-zero).
+- `unchecked_fastpath_count` + `deopt_count` together show how
+  often the L2 SHAPE_PAIR version-check fastpath holds under
+  multi-fiber serve with concurrent mutate. Single-threaded
+  serve: `deopt_count` stays at 0. Multi-fiber with concurrent
+  mutate: `deopt_count` ticks on every version-mismatch and
+  the slow path takes over for the rest of the function.
 
 ## Cost
 
@@ -121,6 +147,7 @@ when no `CompilerService` is registered).
 - 33/33 runtime-c
 - 35/35 suite
 - 148/148 integration
+- test_jit_metrics 23/23 (was 18/18)
 - unit all green
 
 The closure / cell / hash test paths exercise the wrapped sites.
@@ -132,29 +159,29 @@ The closure / cell / hash test paths exercise the wrapped sites.
    ties to #61 follow-up).
 2. Phase 4 — `service.ixx` registry mutation (`ir_cache_`
    invalidation may persist briefly) — ties to #115.
-3. Phase 5 — `jit:metrics` `--serve` command exposing
-   `bypass_count` / `unchecked_fastpath_count` / `deopt_count`
-   + a reset. ~half-day.
 
 ## Architectural note
 
 The `g_workspace_mtx_bypass_count` counter has 0 write sites
 after Phase 2 — it's dead telemetry. Keep as a regression
 detector; consider deleting if no bypasses get added in the
-next phase.
+next phase. Phase 5's `jit:metrics` command makes this
+observable to ops.
 
-## Why ship Phase 0/1/1b/1c/2 and not all of 0-5
+## Why ship Phase 0/1/1b/1c/2/5 and not 0-5
 
 Per the issue's phasing (P1-P5), the P1+P2 sites are the
 **highest-risk 80%** of the invariant violation. Phase 1b's
 version-check fastpath adds the perf optimization that makes
 the lock acquisition overhead acceptable for single-threaded
-execution. Phase 3 (OpGuardShape deopt target) and Phase 4
-(registry mutation) are follow-ups that are correct in the
-common case but have edge cases that need careful design.
-Phase 5 (jit:metrics) is pure observability — the data is
-already in the runtime, it just needs an `--serve` command
-to expose it.
+execution. Phase 5 (jit:metrics) is the observability layer
+that lets ops see the P0 fix is working in production. Phase 3
+(OpGuardShape deopt target) and Phase 4 (registry mutation)
+are correctness deep-cuts that are correct in the common case
+but have edge cases that need careful design (tied to
+#61 follow-up and #115 respectively). Both are well-scoped
+follow-up issues.
 
-Closing with Phase 0/1/1b/1c/2 shipped puts the P0 soundness
-fix in main and unblocks the multi-fiber serve use case.
+Closing with Phase 0/1/1b/1c/2/5 shipped puts the P0 soundness
+fix + observability in main and unblocks the multi-fiber serve
+use case.
