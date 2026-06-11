@@ -44,6 +44,18 @@ extern "C" void aura_reset_runtime();  // Issue #137: cleanup at exit
 extern "C" void aura_set_prim_registration(const char* c_code);
 extern "C" void aura_set_string_pool(const char** strings, unsigned int count);
 
+// Issue #157 Phase 5: jit:metrics --serve command accessors.
+// Exposes the runtime telemetry counters (bypass_count /
+// unchecked_fastpath_count / deopt_count) to ops dashboards.
+// After Phase 2, bypass_count stays at 0 in steady state and
+// acts as a regression detector. unchecked_fastpath_count and
+// deopt_count together show how often concurrent mutate defeats
+// the L2 fastpath (multi-fiber serve).
+extern "C" std::uint64_t aura_bypass_count();
+extern "C" std::uint64_t aura_unchecked_fastpath_count();
+extern "C" std::uint64_t aura_deopt_count();
+extern "C" void aura_counters_reset();
+
 
 
 // JSON pretty-printer (no external dependencies, safe for module TU)
@@ -761,6 +773,33 @@ int main(int argc, char* argv[]) {
                         }
                         std::println("]}}");
                     }
+                    continue;
+                }
+
+                // Issue #157 Phase 5: jit:metrics --serve command.
+                // Reports the runtime telemetry counters (bypass_count
+                // / unchecked_fastpath_count / deopt_count). After
+                // Phase 2, bypass_count stays at 0 in steady state
+                // and acts as a regression detector — if a future
+                // change adds a new bypass site, the counter will
+                // tick and ops dashboards can flag it. Pass
+                // {"reset": true} to read + reset in one call (the
+                // response shows the pre-reset values).
+                if (type == "jit:metrics") {
+                    auto reset_it = cmd.find("reset");
+                    bool do_reset = (reset_it != cmd.end() &&
+                                    (reset_it->second == "true" || reset_it->second == "1"));
+                    auto bypass = aura_bypass_count();
+                    auto fastpath = aura_unchecked_fastpath_count();
+                    auto deopt = aura_deopt_count();
+                    if (do_reset) {
+                        aura_counters_reset();
+                    }
+                    std::println(
+                        "{{\"status\":\"ok\",\"metrics\":{{\"bypass_count\":{},"
+                        "\"unchecked_fastpath_count\":{},\"deopt_count\":{}}},"
+                        "\"reset\":{}}}",
+                        bypass, fastpath, deopt, do_reset ? "true" : "false");
                     continue;
                 }
 
