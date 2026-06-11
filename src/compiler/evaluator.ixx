@@ -1090,6 +1090,47 @@ private:
     // BEFORE lock acquisition to keep the no-op fast path.
     std::shared_mutex workspace_mtx_;
 public:
+    // Issue #157 Phase 1: lock hooks for the JIT runtime bridges
+    // (aura_lock_workspace_read/write + aura_unlock_workspace_read/write
+    // in aura_jit_runtime.cpp). These are public thin wrappers that
+    // service.ixx's register_jit_primitives() binds to a global
+    // LockHooks struct so the JIT code can participate in the
+    // workspace_mtx_ + defuse_version_ protocol. Without these, the
+    // JIT-specialized L2 paths (OpCar/OpCdr SHAPE_PAIR) and runtime
+    // bridges (aura_alloc_pair, aura_pair_car, aura_prim_call) bypass
+    // the protocol and race with mutate:foo.
+    //
+    // The hook pattern is the same as g_prim_dispatcher: a function
+    // pointer table that service.ixx sets on CompilerService init.
+    // This keeps workspace_mtx_ private to Evaluator (no global mutex)
+    // while still letting global C functions participate in locking.
+    void lock_workspace_shared()   { workspace_mtx_.lock_shared(); }
+    void unlock_workspace_shared() { workspace_mtx_.unlock_shared(); }
+    void lock_workspace_unique()   { workspace_mtx_.lock(); }
+    void unlock_workspace_unique() { workspace_mtx_.unlock(); }
+
+    // Issue #157 Phase 1: defuse_version_ accessor for the JIT
+    // version check (aura_get_defuse_version in aura_jit_runtime.cpp).
+    // Phase 1b (deferred to follow-up) will use this in the L2
+    // SHAPE_PAIR paths to do a version check at entry; on mismatch,
+    // deopt to the slow path. For Phase 1 we just expose the accessor.
+    std::uint64_t get_defuse_version() const { return defuse_version_; }
+
+    // Issue #157 Phase 1: yield-mutation-boundary hook for the JIT.
+    // High-level mutate primitives call g_fiber_yield_mutation_boundary
+    // (extern function pointer defined in messaging_bridge_impl.cpp)
+    // after taking the write lock + defuse_version_++; the JIT runtime
+    // bridges can do the same via this hook to keep the multi-agent
+    // scheduler fair.
+    //
+    // Forward-declared here (rather than including messaging_bridge.h)
+    // because evaluator.ixx is a module interface and the bridge
+    // header is a non-module .h — including a non-module header in
+    // a module interface causes "declaration in module implementation
+    // unit" errors. The actual implementation is in evaluator_impl.cpp
+    // which DOES include messaging_bridge.h.
+    void yield_mutation_boundary();
+
     // Type-aliasing accessor for the mutex type. Lets the
     // C++ test surface verify the lock type (Issue #107) without
     // exposing the actual mutex (which is internal state).

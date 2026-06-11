@@ -19,6 +19,18 @@ extern "C" const char* aura_jit_string_content(std::int64_t val);
 extern "C" void aura_set_prim_dispatcher(std::int64_t (*fn)(std::int64_t, std::int64_t*,
                                                             std::int32_t));
 
+// Issue #157 Phase 1: lock hooks binding. Sets the global LockHooks
+// table in aura_jit_runtime.cpp so the runtime bridges
+// (aura_alloc_pair, aura_pair_car, aura_prim_call, etc.) can
+// participate in Evaluator::workspace_mtx_ + defuse_version_
+// without exposing the mutex as a global.
+extern "C" void aura_set_lock_hooks(
+    void (*lock_read)(void*), void (*unlock_read)(void*),
+    void (*lock_write)(void*), void (*unlock_write)(void*),
+    std::uint64_t (*get_version)(void*),
+    void (*yield_boundary)(void*),
+    void* user_data);
+
 extern "C" std::size_t aura_jit_pool_size();
 extern "C" const char* aura_jit_pool_string(std::size_t idx);
 
@@ -4247,6 +4259,27 @@ public:
     void register_jit_primitives() {
         // Set the global primitives pointer for the JIT dispatcher
         g_jit_prim_ctx.store(&evaluator_.primitives(), std::memory_order_release);
+
+        // Issue #157 Phase 1: bind the lock hooks. Pattern matches
+        // the g_prim_dispatcher pattern above — the runtime bridges
+        // (aura_alloc_pair, aura_pair_car, aura_prim_call, etc.) call
+        // into the evaluator's lock + version methods via this hook
+        // table. Without these hooks, the bridges are no-ops
+        // (single-threaded default) and the bypass is unsafe.
+        //
+        // The hooks are bound ONCE per CompilerService. Multi-eval
+        // setups would need to rebind (deferred — not currently
+        // supported, but the hook table is per-process global so
+        // switching evaluators mid-flight needs care).
+        aura_set_lock_hooks(
+            [](void* e) { static_cast<aura::compiler::Evaluator*>(e)->lock_workspace_shared(); },
+            [](void* e) { static_cast<aura::compiler::Evaluator*>(e)->unlock_workspace_shared(); },
+            [](void* e) { static_cast<aura::compiler::Evaluator*>(e)->lock_workspace_unique(); },
+            [](void* e) { static_cast<aura::compiler::Evaluator*>(e)->unlock_workspace_unique(); },
+            [](void* e) -> std::uint64_t { return static_cast<aura::compiler::Evaluator*>(e)->get_defuse_version(); },
+            [](void* e) { static_cast<aura::compiler::Evaluator*>(e)->yield_mutation_boundary(); },
+            static_cast<void*>(&evaluator_)
+        );
 
 // Register the dispatcher with JIT runtime
 #ifdef AURA_HAVE_LLVM
