@@ -4197,7 +4197,14 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     primitives_.add("module?",
                     [](const auto& a) { return make_bool(!a.empty() && is_module(a[0])); });
 
-    // (module-get mod name) — Get a binding from a module by symbol name
+    // (module-get mod name) — Get a binding from a module by symbol name.
+    // Phase 2.5.0 commit 6: route through lookup_by_intern
+    // (SymId-first) with canonical_pool() so the intern happens
+    // against the long-lived workspace pool. The env's own
+    // pool_ (set via set_pool for closures that captured a non-
+    // canonical pool) is the fallback — see Env::lookup_by_intern
+    // for the full resolution chain. Observable behavior
+    // matches Env::lookup(name) when no binding is found.
     primitives_.add("module-get", [this](std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_module(a[0]) || !is_string(a[1]))
             return make_void();
@@ -4205,7 +4212,8 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         auto name_idx = as_string_idx(a[1]);
         if (mod_idx >= modules_.size() || name_idx >= string_heap_.size())
             return make_void();
-        auto result = modules_[mod_idx]->lookup(string_heap_[name_idx]);
+        auto result = modules_[mod_idx]->lookup_by_intern(
+            string_heap_[name_idx], canonical_pool());
         return result ? *result : make_void();
     });
 
