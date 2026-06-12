@@ -1,4 +1,4 @@
-# Issue #158 — OpGuardShape full deopt frame (Issue #61 follow-up)
+# Issue #183 — OpGuardShape full deopt frame (Issue #61 follow-up)
 
 **Title (proposed)**: `feat(jit): full deopt frame for OpGuardShape — entry-guard to generic trampoline`
 
