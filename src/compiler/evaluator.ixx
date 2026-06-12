@@ -933,6 +933,12 @@ private:
     // full re-evaluation when nothing has changed.
     std::optional<types::EvalValue> last_eval_current_result_;
 
+    // ── Incremental typecheck cache (Issue #159 Phase 5) ──────
+    // Caches the last typecheck-current result string. Used to skip the
+    // full traversal when the workspace is clean (no dirty nodes).
+    // Cleared on any mutation (via the dirty flag check).
+    std::optional<std::string> last_typecheck_result_;
+
     // ── Def-Use Analysis (P1) ───────────────────────────────────
     void* defuse_index_ = nullptr;
     std::uint64_t defuse_version_ = 0;  // incremented on each mutation
