@@ -143,6 +143,8 @@
 | **`orch:parallel`** | `std/orchestrator.aura` | **真并行**（#109 — 已移除串行 fallback） |
 | `orch:if` / `orch:retry` / `orch:role` / `orch:step*` | `std/orchestrator.aura` | 步骤构造器 |
 | `agent:spawn` | `std/orchestrator.aura` | 包装 `_agent:spawn`，fallback 到本地 closure |
+
+（Refactor 3.1 note）_agent:spawn 内部 merr 已清理到集中 make_merr (post 3.1)。详见 evaluator.md §3.2。
 | `agent:ask` | `std/orchestrator.aura` | 带 correlation-id + 超时的请求/响应 |
 | `agent:list` / `agent:status` / `agent:stop` / `agent:restart` | `std/orchestrator.aura` | 生命周期管理 |
 
