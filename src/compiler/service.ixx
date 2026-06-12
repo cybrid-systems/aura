@@ -280,6 +280,29 @@ export enum class InvariantCheckMode : std::uint8_t {
     Strict = 2,
 };
 
+// Issue #169 Phase 1: incremental-strictness config flag.
+// Three modes:
+//   - Conservative: invalidate MORE than strictly necessary
+//     (the safest, slowest path; minimal precision needed)
+//   - Balanced:     default; use the existing forward BFS on
+//                   dep_graph_ (no behavior change vs pre-#169)
+//   - Aggressive:   invalidate LESS; trust the new precise
+//                   impact analysis (Goals 1-2 of #169). The
+//                   Aggressive path will only become available
+//                   once those goals land.
+//
+// This flag is currently read by the future Goals 1-4
+// implementations. In Balanced mode (the default), behavior
+// is identical to pre-#169. Conservative mode invalidates MORE
+// (a strictness bump for users who want maximum safety).
+// Aggressive mode currently behaves the same as Balanced
+// until Goals 1-2 land; the enum value is reserved.
+export enum class IncrementalStrictness : std::uint8_t {
+    Conservative = 0,
+    Balanced     = 1,
+    Aggressive   = 2,
+};
+
 export class CompilerService {
 public:
     CompilerService()
@@ -3081,6 +3104,19 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
     void set_invariant_check_mode(InvariantCheckMode m) { invariant_check_mode_ = m; }
     InvariantCheckMode invariant_check_mode() const { return invariant_check_mode_; }
 
+    // Issue #169: incremental-strictness setter/getter.
+    // See the IncrementalStrictness enum above for semantics.
+    // The default is Balanced (existing behavior). Future
+    // Goals 1-4 of #169 will read this flag to decide between
+    // safe over-invalidation (Conservative) and precise
+    // minimal invalidation (Aggressive).
+    void set_incremental_strictness(IncrementalStrictness s) {
+        incremental_strictness_ = s;
+    }
+    IncrementalStrictness incremental_strictness() const {
+        return incremental_strictness_;
+    }
+
     // Mutation log entry (for JSON serialization).
     struct MutationLogEntry {
         std::uint64_t mutation_id;
@@ -3950,6 +3986,13 @@ private:
     // set_invariant_check_mode() when soundness enforcement is
     // desired (e.g. in CI runs or --strict CLI flag).
     InvariantCheckMode invariant_check_mode_ = InvariantCheckMode::WarningsOnly;
+
+    // Issue #169: incremental-strictness mode. Default Balanced
+    // (= existing behavior). Future Goals 1-4 will read this
+    // flag to decide between safe over-invalidation and
+    // precise minimal invalidation. The field is private to
+    // preserve the invariant; access via set/get above.
+    IncrementalStrictness incremental_strictness_ = IncrementalStrictness::Balanced;
 
 
 public:
