@@ -11107,23 +11107,17 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     //   Uses def-use index for finding all references.
     primitives_.add("mutate:rename-symbol", [this, ensure_defuse](const auto& a) -> EvalValue {
         using namespace aura::ast;
-        auto merr = [&](const std::string& k, const std::string& m) -> EvalValue {
-            auto mi = string_heap_.size(); string_heap_.push_back(m);
-            auto ki = string_heap_.size(); string_heap_.push_back(k);
-            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
-            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
-            return kp;
-        };
+        // (post 3.1 follow-on) local merr removed; use make_merr
         defuse_version_++;
         if (workspace_read_only_)
-            return merr("read-only", "workspace is read-only");
+            return make_merr("read-only", "workspace is read-only");
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) ||
             !workspace_flat_ || !workspace_pool_)
-            return merr("bad-arg", "usage: (mutate:rename-symbol old-name new-name)");
+            return make_merr("bad-arg", "usage: (mutate:rename-symbol old-name new-name)");
         auto old_name_idx = as_string_idx(a[0]);
         auto new_name_idx = as_string_idx(a[1]);
         if (old_name_idx >= string_heap_.size() || new_name_idx >= string_heap_.size())
-            return merr("bad-arg", "string index out of range");
+            return make_merr("bad-arg", "string index out of range");
         auto& flat = *workspace_flat_;
         auto old_name = string_heap_[old_name_idx];
         auto new_name = string_heap_[new_name_idx];
@@ -11161,7 +11155,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         }
 
         if (count == 0)
-            return merr("not-found", std::string("symbol \"") + old_name + "\" not found in AST");
+            return make_merr("not-found", std::string("symbol \"") + old_name + "\" not found in AST");
 
         flat.add_mutation(0, "rename-symbol", old_name, new_name, summary);
         return make_bool(true);
