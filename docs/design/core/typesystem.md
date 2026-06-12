@@ -18,6 +18,8 @@
 | `TypeEnv` (作用域 + 类型绑定) | ✓ | 含 `is_poly` 动态决定（Let-Poly）|
 | `ConstraintSystem` (Union-Find + multi-pass worklist) | ✓ | T2a — EQUAL / CONSISTENT 约束 |
 | `TypeRegistry` (核心类型 + ADT 构造函数注册) | ✓ | T2b — 跨调用重建（~1ms 可接受）|
+
+（Refactor 2.3/3.2 note）ADT 构造函数注册状态已从 evaluator_impl 全局移至 adt_runtime_ (FFI 模式提取完成); 旧 g_adt 已移除。详见 adt_runtime 模块 + evaluator.md File map。merr 消除 (3.1) 也与 error 返回相关代码同步。
 | `OwnershipEnv` (线性所有权) | ✓ | M4 — 编译期跟踪 |
 | 渐进类型（Dynamic + consistent_unify）| ✓ | `?` 与任意类型匹配 |
 | Coercion (is_coercible + add_coercion + CastOp 插入) | ✓ | IR/JIT CastOp 扩展 type_tag 覆盖 Int/Float/Bool/String |
