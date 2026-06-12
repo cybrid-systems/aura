@@ -96,7 +96,8 @@ void run_pipeline(IRModule& mod, Passes&... passes) {
 | 位置 | 当前 | 目标 | 优先级 |
 |------|------|------|--------|
 | `pass_manager.ixx` | ~~IRPass 虚基类~~ ✅ Pass concept | Pass concept + fold pipeline | P0 |
-| `service.ixx` | 手动 pass 注册 | `run_pipeline(module, ck, ar, cf)` | P1 |
+| `service.ixx` | ~~手动 pass 注册~~ ✅ `run_pipeline` 3 sites | `run_pipeline(module, ck, ar, cf)` (3 locations) | P1 |
+| `pass_manager.ixx` | (new) ✅ `AnalysisPass` concept + `run_analysis_pipeline` | Issue #163 | P1 |
 | `type_checker.ixx` | class ConstraintSystem | concept `TypeConstraint` + template solver (Issue #162 Phase 1 ✅, Phase 3 ⏳) | P1 |
 | `type_checker.ixx` | class InferenceEngine | concept `InferenceRule` + template engine (Issue #162 Phase 2 ✅, full migration Phase 3 ⏳) | P2 |
 
