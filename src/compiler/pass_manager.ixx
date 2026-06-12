@@ -1,6 +1,7 @@
 export module aura.compiler.pass_manager;
 import std;
 import aura.core;
+import aura.compiler.ir;
 import aura.core.type;
 import aura.compiler.ir;
 import aura.compiler.compute_kind;
@@ -680,6 +681,262 @@ public:
 
 private:
     const aura::core::TypeRegistry* type_reg_ = nullptr;
+    std::size_t eliminated_ = 0;
+};
+
+// Issue #160: Dead Code Elimination (DCE) Pass.
+//
+// Removes pure-compute instructions whose result is never
+// used by any other instruction in the same block. This
+// includes:
+//   - Constants (const-i64, const-f64, const-bool,
+//     const-string, const-void) whose result slot is
+//     unused.
+//   - Pure arithmetic (add, sub, mul, div, eq, lt, gt,
+//     le, ge, and, or, not) whose result slot is unused.
+//   - Local / Arg whose result slot is unused.
+//   - Cast whose result slot is unused (already covered
+//     partially by DeadCoercionEliminationPass; this one
+//     handles the general case).
+//   - Car / Cdr whose result slot is unused (pure reads).
+//
+// Conservative: only DCE ops that have no side effects and
+// produce a result. Side-effecting ops (Call, Branch, Jump,
+// Return, CellSet, Raise, HashSet, ArenaPush, etc.) are
+// always preserved.
+//
+// Cost: O(N) per block (single pass to build use-set, single
+// pass to remove dead). Negligible compared to the O(N) eval.
+export class DCEPass {
+public:
+    void run(aura::ir::IRModule& module) {
+        eliminated_ = 0;
+        for (auto& func : module.functions) {
+            for (auto& block : func.blocks) {
+                run_on_block(block);
+            }
+        }
+    }
+
+    bool has_error() const { return false; }
+    std::string_view name() const { return "dce"; }
+    std::size_t eliminated_count() const { return eliminated_; }
+
+private:
+    // True if the opcode has a result slot in operands[0].
+    // (Inline of the module-internal kOpcodeInfo lookup.)
+    // Only the pure-compute ops have has_result_slot=true.
+    static bool has_result_slot_local(aura::ir::IROpcode op) {
+        switch (op) {
+            case aura::ir::IROpcode::ConstI64:
+            case aura::ir::IROpcode::ConstF64:
+            case aura::ir::IROpcode::ConstString:
+            case aura::ir::IROpcode::ConstBool:
+            case aura::ir::IROpcode::ConstVoid:
+            case aura::ir::IROpcode::Local:
+            case aura::ir::IROpcode::Arg:
+            case aura::ir::IROpcode::Add:
+            case aura::ir::IROpcode::Sub:
+            case aura::ir::IROpcode::Mul:
+            case aura::ir::IROpcode::Div:
+            case aura::ir::IROpcode::Eq:
+            case aura::ir::IROpcode::Lt:
+            case aura::ir::IROpcode::Gt:
+            case aura::ir::IROpcode::Le:
+            case aura::ir::IROpcode::Ge:
+            case aura::ir::IROpcode::And:
+            case aura::ir::IROpcode::Or:
+            case aura::ir::IROpcode::Not:
+            case aura::ir::IROpcode::CastOp:
+            case aura::ir::IROpcode::Car:
+            case aura::ir::IROpcode::Cdr:
+            // Other ops with has_result_slot=true per kOpcodeInfo:
+            case aura::ir::IROpcode::MakeClosure:
+            case aura::ir::IROpcode::NewCell:
+            case aura::ir::IROpcode::PrimCall:
+            case aura::ir::IROpcode::Primitive:
+            case aura::ir::IROpcode::MakePair:
+            case aura::ir::IROpcode::Raise:
+            case aura::ir::IROpcode::IsError:
+            case aura::ir::IROpcode::TryEnd:
+            case aura::ir::IROpcode::HashRef:
+            case aura::ir::IROpcode::HashSet:
+            case aura::ir::IROpcode::HashRemove:
+            case aura::ir::IROpcode::LinearWrap:
+            case aura::ir::IROpcode::MoveOp:
+            case aura::ir::IROpcode::BorrowOp:
+            case aura::ir::IROpcode::MutBorrowOp:
+            case aura::ir::IROpcode::RefCountOp:
+            case aura::ir::IROpcode::ArenaPush:
+            case aura::ir::IROpcode::GuardShape:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    // Returns the number of meaningful operands for the
+    // opcode (per kOpcodeInfo in ir.ixx). Operands beyond
+    // this count are padding and should be ignored (they
+    // contain uninitialized values that may be 0, which is
+    // indistinguishable from a real slot reference).
+    static std::uint32_t operand_count_local(aura::ir::IROpcode op) {
+        switch (op) {
+            case aura::ir::IROpcode::Nop: return 0;
+            case aura::ir::IROpcode::ConstI64: return 1;
+            case aura::ir::IROpcode::ConstF64: return 1;
+            case aura::ir::IROpcode::Local: return 2;
+            case aura::ir::IROpcode::Arg: return 2;
+            case aura::ir::IROpcode::Add:
+            case aura::ir::IROpcode::Sub:
+            case aura::ir::IROpcode::Mul:
+            case aura::ir::IROpcode::Div:
+            case aura::ir::IROpcode::Eq:
+            case aura::ir::IROpcode::Lt:
+            case aura::ir::IROpcode::Gt:
+            case aura::ir::IROpcode::Le:
+            case aura::ir::IROpcode::Ge:
+            case aura::ir::IROpcode::And:
+            case aura::ir::IROpcode::Or: return 3;
+            case aura::ir::IROpcode::Not: return 2;
+            case aura::ir::IROpcode::Branch: return 3;
+            case aura::ir::IROpcode::Jump: return 1;
+            case aura::ir::IROpcode::Call: return 4;  // callee, args, count, result
+            case aura::ir::IROpcode::Return: return 1;
+            case aura::ir::IROpcode::MakeClosure: return 3;
+            case aura::ir::IROpcode::Capture: return 3;
+            case aura::ir::IROpcode::CaptureRef: return 3;
+            case aura::ir::IROpcode::Apply: return 4;
+            case aura::ir::IROpcode::NewCell: return 1;
+            case aura::ir::IROpcode::CellSet: return 2;
+            case aura::ir::IROpcode::CellGet: return 2;
+            case aura::ir::IROpcode::CastOp: return 3;
+            case aura::ir::IROpcode::ConstString: return 2;
+            case aura::ir::IROpcode::PrimCall: return 3;
+            case aura::ir::IROpcode::Primitive: return 2;
+            case aura::ir::IROpcode::ConstBool: return 2;
+            case aura::ir::IROpcode::ConstVoid: return 1;
+            case aura::ir::IROpcode::MakePair: return 3;
+            case aura::ir::IROpcode::Car: return 2;
+            case aura::ir::IROpcode::Cdr: return 2;
+            case aura::ir::IROpcode::Raise: return 2;
+            case aura::ir::IROpcode::IsError: return 2;
+            case aura::ir::IROpcode::TryBegin: return 1;
+            case aura::ir::IROpcode::TryEnd: return 2;
+            case aura::ir::IROpcode::HashRef: return 3;
+            case aura::ir::IROpcode::HashSet: return 3;
+            case aura::ir::IROpcode::HashRemove: return 3;
+            case aura::ir::IROpcode::LinearWrap: return 2;
+            case aura::ir::IROpcode::MoveOp: return 2;
+            case aura::ir::IROpcode::BorrowOp: return 2;
+            case aura::ir::IROpcode::MutBorrowOp: return 2;
+            case aura::ir::IROpcode::DropOp: return 1;
+            case aura::ir::IROpcode::RefCountOp: return 3;
+            case aura::ir::IROpcode::ArenaPush: return 2;
+            case aura::ir::IROpcode::ArenaPop: return 1;
+            case aura::ir::IROpcode::GuardShape: return 4;
+            default: return 4;  // conservative: assume full operand count
+        }
+    }
+
+    // True if the opcode is a pure-compute op whose result
+    // can be safely DCE'd if unused. The set is conservative:
+    // anything that might have a side effect is excluded.
+    static bool is_pure(aura::ir::IROpcode op) {
+        switch (op) {
+            // Constants
+            case aura::ir::IROpcode::ConstI64:
+            case aura::ir::IROpcode::ConstF64:
+            case aura::ir::IROpcode::ConstString:
+            case aura::ir::IROpcode::ConstBool:
+            case aura::ir::IROpcode::ConstVoid:
+            // Locals / args
+            case aura::ir::IROpcode::Local:
+            case aura::ir::IROpcode::Arg:
+            // Pure arithmetic
+            case aura::ir::IROpcode::Add:
+            case aura::ir::IROpcode::Sub:
+            case aura::ir::IROpcode::Mul:
+            case aura::ir::IROpcode::Div:
+            case aura::ir::IROpcode::Eq:
+            case aura::ir::IROpcode::Lt:
+            case aura::ir::IROpcode::Gt:
+            case aura::ir::IROpcode::Le:
+            case aura::ir::IROpcode::Ge:
+            case aura::ir::IROpcode::And:
+            case aura::ir::IROpcode::Or:
+            case aura::ir::IROpcode::Not:
+            // Coercion (the result might be queried for type
+            // but is otherwise side-effect free).
+            case aura::ir::IROpcode::CastOp:
+            // Pure pair reads
+            case aura::ir::IROpcode::Car:
+            case aura::ir::IROpcode::Cdr:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    void run_on_block(aura::ir::BasicBlock& block) {
+        // Pass 1: collect the set of operand indices that are
+        // referenced by any later instruction. A pure op's
+        // result is dead iff its result slot is not in this set.
+        //
+        // We use a bitset of size N (number of instructions in
+        // this block). Slot index = the operand value when it's
+        // a local slot (which is just an index into the same
+        // block.instructions vector).
+        //
+        // For has_result_slot ops (the pure ops we care about),
+        // operands[0] is the RESULT slot (a write, not a read)
+        // — we skip it. For side-effecting ops, operands[0] is
+        // an input (callee, target, value) — we count it. The
+        // Call opcode is the exception: operands[0] is callee
+        // (input), operands[3] is the result slot (a write).
+        //
+        // We also stop counting at `operand_count` to avoid
+        // treating uninitialized operand values (which are 0)
+        // as references to slot 0. operand_count is the number
+        // of MEANINGFUL operands (per kOpcodeInfo in ir.ixx).
+        const std::size_t n = block.instructions.size();
+        if (n == 0) return;
+        std::vector<bool> used(n, false);
+        for (const auto& instr : block.instructions) {
+            auto op_count = operand_count_local(instr.opcode);
+            for (std::uint32_t k = 0; k < op_count; ++k) {
+                auto op = instr.operands[k];
+                // Skip the result slot of has_result_slot ops.
+                if (k == 0 && has_result_slot_local(instr.opcode)) continue;
+                // Call's result slot is operands[3], not [0].
+                if (k == 3 && instr.opcode == aura::ir::IROpcode::Call) continue;
+                if (op < n) {
+                    used[op] = true;
+                }
+            }
+        }
+
+        // Pass 2: mark dead pure ops whose result slot is
+        // unused. Replace with Nop (preserves indices).
+        for (std::size_t i = 0; i < n; ++i) {
+            const auto& instr = block.instructions[i];
+            if (!is_pure(instr.opcode)) continue;
+            if (!has_result_slot_local(instr.opcode)) continue;
+            auto result_slot = instr.operands[0];
+            if (result_slot < n && !used[result_slot]) {
+                // Dead pure compute — replace with Nop. (We
+                // don't shrink the vector because operand
+                // references in other instructions are
+                // indices, and shifting them would require
+                // remapping. Nop is the standard pattern.)
+                block.instructions[i] = aura::ir::IRInstruction{
+                    .opcode = aura::ir::IROpcode::Nop,
+                };
+                ++eliminated_;
+            }
+        }
+    }
+
     std::size_t eliminated_ = 0;
 };
 
