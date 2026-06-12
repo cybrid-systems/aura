@@ -806,7 +806,7 @@ target_compile_options(test_error_merr PRIVATE -Wall -Wextra -Wpedantic
 target_link_libraries(test_error_merr PRIVATE pthread)
 add_test(NAME error_merr_verification COMMAND ./test_error_merr)
 
-# Second pilot (Step 1.2) — Primitives / init_pair sanity (harness pattern repeat).
+# Second pilot (Step 1.2 / 3.2) — Primitives / init_pair sanity, now using common issue_test_harness.hpp (dedup progress).
 add_executable(test_primitives_init tests/test_primitives_init.cpp)
 set_property(TARGET test_primitives_init PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_primitives_init PRIVATE src)
