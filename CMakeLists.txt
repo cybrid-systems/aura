@@ -788,45 +788,33 @@ target_compile_options(test_issue_131 PRIVATE -Wall -Wextra -Wpedantic
 target_link_libraries(test_issue_131 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_131_verification COMMAND ./test_issue_131)
 
-# ── CMake pilot for refactor Step 1.1 / 3.2 (test harness dedup) ─────────────────────
+# Phase 2 pilot (post-5.2 per roadmap): aura_add_issue_test helper for dedup.
+# Captures the repeated 6-line boilerplate used by the 3 harness pilots
+# (1.1-1.3 / 3.2). Later steps will generalize it for the full 40+ test_issue_*.
+function(aura_add_issue_test NAME)
+    add_executable(${NAME} tests/${NAME}.cpp)
+    set_property(TARGET ${NAME} PROPERTY CXX_MODULE_STD ON)
+    target_include_directories(${NAME} PRIVATE src)
+    target_compile_options(${NAME} PRIVATE -Wall -Wextra -Wpedantic
+        -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+        -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
+        -Wno-parentheses)
+    target_link_libraries(${NAME} PRIVATE pthread)
+    add_test(NAME ${NAME}_verification COMMAND ./${NAME})
+endfunction()
+
+# ── CMake pilots (Step 1.1/1.2/1.3 / 3.2) now via aura_add_issue_test (Phase 2 dedup) ──
 # test_error_merr.cpp — exercises make_merr (centralized in 0.1+) via
-# Evaluator construction + error paths (mutate bad-arg etc.).
-# Standalone binary so it can run in isolation.
-# Modeled exactly on the test_issue_131 block structure. Now uses issue_test_harness.hpp (dedup).
+# Evaluator construction + error paths. Now deduped via helper.
 # (Note: adt_runtime extraction (FFI pattern) complete; sources included in relevant targets per 3.2 hygiene)
-add_executable(test_error_merr tests/test_error_merr.cpp)
-set_property(TARGET test_error_merr PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_error_merr PRIVATE src)
-# Minimal for this first pilot (harness demo only; heavier ones will use fuller lists or support lib).
-# The make_merr is exercised in the main test suite (test_ir etc.).
-target_compile_options(test_error_merr PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
-target_link_libraries(test_error_merr PRIVATE pthread)
-add_test(NAME error_merr_verification COMMAND ./test_error_merr)
+aura_add_issue_test(test_error_merr)
+# Minimal pilot (harness demo); make_merr also covered in test_ir.
 
-# Second pilot (Step 1.2 / 3.2) — Primitives / init_pair sanity, now using common issue_test_harness.hpp (dedup progress).
-add_executable(test_primitives_init tests/test_primitives_init.cpp)
-set_property(TARGET test_primitives_init PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_primitives_init PRIVATE src)
-target_compile_options(test_primitives_init PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
-target_link_libraries(test_primitives_init PRIVATE pthread)
-add_test(NAME primitives_init_verification COMMAND ./test_primitives_init)
+# Second pilot (Step 1.2 / 3.2) — Primitives / init_pair sanity (deduped).
+aura_add_issue_test(test_primitives_init)
 
-# Third pilot (Step 1.3 / 3.2) — smallest harness demo, now using common issue_test_harness.hpp (dedup progress).
-add_executable(test_harness_pilot tests/test_harness_pilot.cpp)
-set_property(TARGET test_harness_pilot PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_harness_pilot PRIVATE src)
-target_compile_options(test_harness_pilot PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
-target_link_libraries(test_harness_pilot PRIVATE pthread)
-add_test(NAME harness_pilot_verification COMMAND ./test_harness_pilot)
+# Third pilot (Step 1.3 / 3.2) — harness demo (deduped).
+aura_add_issue_test(test_harness_pilot)
 
 # Issue #132 verification: AST walker helpers extracted
 # from CompilerService. Standalone binary that exercises
