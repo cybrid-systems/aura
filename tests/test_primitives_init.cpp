@@ -19,14 +19,5 @@ int main() {
     bool ok = true;
     ok &= test_primitives_init_smoke();
 
-    std::println("\n--- Results ---");
-    std::println("  PASSED: {}", g_passed);
-    std::println("  FAILED: {}", g_failed);
-
-    if (g_failed > 0) {
-        std::println("  OVERALL: FAIL");
-        return 1;
-    }
-    std::println("  OVERALL: PASS");
-    return 0;
+    return run_pilot_tests();
 }
