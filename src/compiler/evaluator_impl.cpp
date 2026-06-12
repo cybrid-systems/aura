@@ -19705,4 +19705,194 @@ void Evaluator::yield_mutation_boundary() {
         aura::messaging::g_fiber_yield_mutation_boundary();
 }
 
+// Issue #165 Phase 1B: post-mutation macro re-expansion.
+//
+// Walks the mutation's affected subtree and re-expands any
+// macro call sites it finds. This fixes the bug where
+// EDSL mutations (mutate:rebind, mutate:set-body, etc.)
+// leave stale macro expansions — the macro's gensym'd
+// bindings may not be re-generated, and the call site
+// may pick up caller's bindings that should have been
+// hygiene-isolated.
+//
+// Algorithm (incremental — only on affected subtrees, not
+// the full AST):
+//   1. Compute the affected subtree using the same
+//      walk pattern as affected_subtree_from_mutation
+//      (Issue #148): descendants of target_node/parent_id
+//      + dirty-upward ancestors.
+//   2. For each node in the affected set, check if it's:
+//        (a) A MacroDef — the macro body was mutated. Find
+//            every Call site whose callee is this macro and
+//            re-expand them.
+//        (b) A Call whose callee is a known macro — the
+//            call site context was mutated. Re-expand it.
+//   3. For each call site, build a substitution (param →
+//      arg), call clone_macro_body with fresh gensym (or
+//      without, for non-hygienic macros), then run
+//      expand_inner_macros on the result to handle nested
+//      macros.
+//   4. Set SyntaxMarker::MacroIntroduced on the new
+//      expansion so the post-expansion tree is properly
+//      marked for downstream consumers (type checker, IR
+//      lowering, mutation operators).
+//
+// Returns the number of call sites re-expanded. The
+// function is safe to call on any mutation record —
+// bails on malformed input (NULL_NODE, out-of-range,
+// empty macros_ registry).
+std::size_t Evaluator::post_mutation_macro_reexpand(
+    aura::ast::FlatAST& flat,
+    aura::ast::StringPool& pool,
+    const aura::ast::MutationRecord& rec) {
+    using namespace aura::ast;
+
+    std::size_t re_expanded = 0;
+    if (rec.target_node == NULL_NODE && rec.parent_id == NULL_NODE)
+        return 0;
+    if (macros_.empty())
+        return 0;  // no macros registered, nothing to do
+
+    // Collect affected node IDs: descendants of target_node
+    // + parent_id + dirty-upward chain. This is a conservative
+    // set — we may visit nodes that aren't actually affected
+    // by the macro, but the re-expansion is idempotent
+    // (re-expanding an already-expanded call site is a no-op
+    // in effect, just reuses the same gensym).
+    std::vector<NodeId> affected;
+    auto add_subtree = [&](NodeId root_id) {
+        if (root_id == NULL_NODE || root_id >= flat.size()) return;
+        affected.push_back(root_id);
+        // BFS for descendants
+        std::vector<NodeId> frontier{root_id};
+        while (!frontier.empty()) {
+            std::vector<NodeId> next;
+            for (auto n : frontier) {
+                auto v = flat.get(n);
+                for (auto c : v.children) {
+                    if (c != NULL_NODE && c < flat.size()) {
+                        affected.push_back(c);
+                        next.push_back(c);
+                    }
+                }
+            }
+            frontier = std::move(next);
+        }
+    };
+    add_subtree(rec.target_node);
+    add_subtree(rec.parent_id);
+
+    // Climb parent_of chain for dirty-upward ancestors.
+    // Safety-bounded to defend against cycles in malformed
+    // FlatASTs.
+    NodeId climb = rec.target_node;
+    for (int i = 0; i < 256 && climb != NULL_NODE && climb < flat.size(); ++i) {
+        if (auto p = flat.parent_of(climb); p != NULL_NODE && p < flat.size()) {
+            affected.push_back(p);
+            climb = p;
+        } else {
+            break;
+        }
+    }
+
+    // Walk the affected set, find Call nodes whose callee is
+    // a registered macro, and re-expand them.
+    for (auto id : affected) {
+        if (id == NULL_NODE || id >= flat.size()) continue;
+        auto v = flat.get(id);
+        if (v.tag != NodeTag::Call || v.children.empty()) continue;
+
+        auto callee_id = v.child(0);
+        if (callee_id == NULL_NODE || callee_id >= flat.size()) continue;
+        auto callee_v = flat.get(callee_id);
+        if (!callee_v.has_name()) continue;
+        auto callee_name = pool.resolve(callee_v.sym_id);
+
+        // Is the callee a registered macro?
+        auto macro_it = macros_.find(std::string(callee_name));
+        if (macro_it == macros_.end()) continue;
+
+        const auto& md = macro_it->second;
+
+        // Build substitution: macro param names → call arg node IDs
+        std::vector<aura::ast::NodeId> call_args;
+        for (std::size_t i = 1; i < v.children.size(); ++i) {
+            call_args.push_back(v.child(i));
+        }
+        auto subst_view = std::span<const aura::ast::NodeId>(call_args);
+
+        // Compute substitution: param string → call arg node id.
+        // For each param name, find the corresponding call arg
+        // by position. If params has dotted-rest, the last param
+        // binds to a list of remaining args.
+        std::unordered_map<std::string, aura::ast::NodeId> subst_map;
+        std::unordered_map<std::string, std::string> rename_map;
+        for (std::size_t i = 0; i < md.params.size() && i < call_args.size(); ++i) {
+            subst_map[md.params[i]] = call_args[i];
+        }
+        // Handle dotted-rest param (the last param absorbs remaining args)
+        if (md.dotted && !md.params.empty() && call_args.size() >= md.params.size()) {
+            // Build a proper-list from the remaining args by
+            // consing them with add_pair. Build right-to-left
+            // so we get (a . (b . (c . nil))).
+            std::size_t first_rest_idx = md.params.size() - 1;
+            aura::ast::NodeId list_end = aura::ast::NULL_NODE;
+            for (std::size_t k = call_args.size(); k > first_rest_idx; --k) {
+                std::size_t i = k - 1;
+                list_end = flat.add_pair(call_args[i], list_end);
+            }
+            subst_map[md.params.back()] = list_end;
+        }
+
+        // Clone the macro body into the calling flat with
+        // substitution + (for hygienic) name rename map.
+        // For non-hygienic macros, the name_map is empty (no
+        // gensym) and the params bind to call-site names (legacy
+        // defmacro behavior).
+        auto* src_pool = md.pool ? md.pool : &pool;
+        auto* src_flat = md.flat ? md.flat : &flat;
+        auto expanded = clone_macro_body(flat, pool, *src_flat, *src_pool,
+                                         md.body_id, &subst_map, &rename_map);
+        if (expanded == NULL_NODE) continue;
+
+        // Recursively expand any nested macro calls in the
+        // cloned body. Bounded by depth=10 to prevent infinite
+        // loops (a macro that expands to itself).
+        expanded = expand_inner_macros(&flat, &pool, expanded, 0, 10, macros_);
+
+        // Set SyntaxMarker::MacroIntroduced on the new
+        // expansion. This is the key fix: the marker tells
+        // downstream consumers (type checker, IR lowering,
+        // mutation operators) that this code is macro-
+        // generated and should be re-validated on every
+        // mutation.
+        flat.set_marker(expanded, SyntaxMarker::MacroIntroduced);
+
+        // Mark all descendants of the expansion as
+        // MacroIntroduced too (the marker is on the root,
+        // but the tree walk in post_mutation_invariant_check
+        // and the type checker's #149 narrow_evidence path
+        // look at every node).
+        std::vector<NodeId> mark_frontier;
+        mark_frontier.push_back(expanded);
+        while (!mark_frontier.empty()) {
+            std::vector<NodeId> next;
+            for (auto n : mark_frontier) {
+                flat.set_marker(n, SyntaxMarker::MacroIntroduced);
+                auto v = flat.get(n);
+                for (auto c : v.children) {
+                    if (c != NULL_NODE && c < flat.size()) {
+                        next.push_back(c);
+                    }
+                }
+            }
+            mark_frontier = std::move(next);
+        }
+
+        ++re_expanded;
+    }
+
+    return re_expanded;
+}
+
 } // namespace aura::compiler
