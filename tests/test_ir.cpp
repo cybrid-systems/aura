@@ -507,7 +507,7 @@ int main() {
                      sr_passed, sr_failed, sr_passed + sr_failed);
     }
 
-    // ── Phase 4: FlatParser tests ───────────────────────────
+    // ── Phase 4: parse_to_flat tests (Issue #161 Phase 2) ───────────
     {
         aura::ast::ASTArena arena;
         auto alloc = arena.allocator();

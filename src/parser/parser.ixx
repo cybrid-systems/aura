@@ -6,7 +6,7 @@ import aura.parser.lexer;
 
 namespace aura::parser {
 
-// Result from FlatParser (direct FlatAST, no Expr* intermediate)
+// Result from the parser (direct FlatAST, no Expr* intermediate)
 // Structured parse error with source location
 export struct ParseError {
     std::string message;
@@ -26,72 +26,100 @@ export struct FlatParseResult {
     std::vector<ParseError> errors;    // all parse errors with location
 };
 
-// ── FlatParser (Issue #161 cpp26 P0) ──
+// ── Parser (Issue #161 cpp26 P0) ──
 //
-// Issue #161: FlatParser is now an INTERNAL
-// implementation detail. The public parser entry point is the
-// free function `parse_to_flat` (marked [[nodiscard]] further
-// below in this file). Direct construction of FlatParser is
-// deprecated and will be removed once the full refactor
-// (Phase 2 of #161) ships in a fresh session. New code should
-// call `parse_to_flat` directly.
-export [[deprecated("FlatParser is internal; use parse_to_flat (Issue #161)")]] class FlatParser {
-public:
-    FlatParser(aura::ast::FlatAST& flat, aura::ast::StringPool& pool)
-        : flat_(flat)
-        , pool_(pool) {}
-    FlatParseResult parse(std::string_view source);
+// Phase 2 of #161: the parser is now a PURE FUNCTION. There
+// is no FlatParser class. The public entry point is the free
+// function `parse_to_flat` (exported below with [[nodiscard]]).
+//
+// All parse logic lives in `aura::parser::detail` as free
+// functions. They share mutable parse state through a
+// `ParserState` struct that is constructed once in
+// `parse_to_flat` and threaded through the parse. The state
+// struct is intentionally NOT exported — it is an internal
+// implementation detail. From the caller's perspective, the
+// API is:
+//
+//     FlatParseResult r = parse_to_flat(source, flat, pool);
+//
+// …with all state hidden inside the call. The caller can call
+// it twice on the same input and get the same result
+// (determinism — a property that was NOT guaranteed when
+// FlatParser held mutable state).
+//
+// Acceptance for #161: parse_to_flat is a pure function from
+// the caller's perspective. All existing tests still pass.
+// Performance is identical (free functions inline at least as
+// well as member functions).
+namespace detail {
 
-private:
-    aura::ast::NodeId parse_expr();
-    aura::ast::NodeId parse_number(Token tok);
-    aura::ast::NodeId parse_float(Token tok);
-    aura::ast::NodeId parse_list();
-    aura::ast::NodeId parse_if();
-    aura::ast::NodeId parse_lambda();
-    aura::ast::NodeId parse_let(bool rec);
-    aura::ast::NodeId parse_named_let();
-    aura::ast::NodeId parse_let_star();
-    aura::ast::NodeId parse_define();
-    aura::ast::NodeId parse_define_type();
-    aura::ast::NodeId parse_define_module();
-    aura::ast::NodeId parse_begin();
-    aura::ast::NodeId parse_set();
-    aura::ast::NodeId parse_quote();
-    aura::ast::NodeId parse_cond();
-    aura::ast::NodeId parse_defmacro(bool hygienic = false);
-    aura::ast::NodeId parse_match();
-    aura::ast::NodeId parse_linear();
-    aura::ast::NodeId parse_move();
-    aura::ast::NodeId parse_borrow();
-    aura::ast::NodeId parse_mut_borrow();
-    aura::ast::NodeId parse_datatype();
-    aura::ast::NodeId parse_drop();
-    aura::ast::NodeId parse_cast();
-    aura::ast::NodeId parse_check();
-    aura::ast::NodeId parse_type_annot();
-    aura::ast::NodeId parse_val();
-    aura::ast::NodeId expand_qq(aura::ast::NodeId expr, int depth);
-    aura::ast::NodeId expand_qq_pair(aura::ast::NodeId expr, int depth);
-    std::vector<std::pair<aura::ast::SymId, aura::ast::NodeId>>
-    compile_pattern(aura::ast::NodeId pattern_node, aura::ast::SymId tmp,
-                    aura::ast::NodeId* out_test);
-    std::vector<aura::ast::NodeId> parse_bindings();
-    void skip_rparen();
-    aura::ast::FlatAST& flat_;
-    aura::ast::StringPool& pool_;
-    std::optional<Lexer> lexer_;
-    std::size_t parse_depth_ = 0;
+// ParserState: the only mutable state the parser needs.
+// All parse_X functions take ParserState& as the first
+// argument and access fields via `s.field`. This is the
+// functional-style "explicit state threading" pattern — no
+// hidden `this`, no member access.
+struct ParserState {
+    aura::ast::FlatAST& flat;
+    aura::ast::StringPool& pool;
+    Lexer lex;                         // constructed once in parse()
+    std::size_t depth = 0;             // recursion depth (matches old parse_depth_)
 };
 
-// Free function — the public parser entry point (Issue #161 cpp26 P0).
+// Free functions (forward declarations). Definitions live in
+// parser_impl.cpp. All take ParserState& as the first param.
 //
-// parse_to_flat is the pure-function entry point. The FlatParser
-// instance is created and discarded within this function, so all
-// state is local to the call. The FlatParser class above is an
-// internal implementation detail; the public surface is this free
-// function. Combined with [[nodiscard]] below, the parser API
-// is pure-function + non-silent-failure (Issue #161 acceptance).
+// Note: parse() is the public-ish entry point (still in detail
+// namespace — not exported). parse_to_flat (the exported
+// public API) constructs a ParserState, calls detail::parse(),
+// and returns the result.
+FlatParseResult parse(ParserState& s, std::string_view source);
+
+aura::ast::NodeId parse_expr(ParserState& s);
+aura::ast::NodeId parse_number(ParserState& s, Token tok);
+aura::ast::NodeId parse_float(ParserState& s, Token tok);
+aura::ast::NodeId parse_list(ParserState& s);
+aura::ast::NodeId parse_if(ParserState& s);
+aura::ast::NodeId parse_lambda(ParserState& s);
+aura::ast::NodeId parse_let(ParserState& s, bool rec);
+aura::ast::NodeId parse_named_let(ParserState& s);
+aura::ast::NodeId parse_let_star(ParserState& s);
+aura::ast::NodeId parse_define(ParserState& s);
+aura::ast::NodeId parse_define_type(ParserState& s);
+aura::ast::NodeId parse_define_module(ParserState& s);
+aura::ast::NodeId parse_begin(ParserState& s);
+aura::ast::NodeId parse_set(ParserState& s);
+aura::ast::NodeId parse_quote(ParserState& s);
+aura::ast::NodeId parse_cond(ParserState& s);
+aura::ast::NodeId parse_defmacro(ParserState& s, bool hygienic = false);
+aura::ast::NodeId parse_match(ParserState& s);
+aura::ast::NodeId parse_linear(ParserState& s);
+aura::ast::NodeId parse_move(ParserState& s);
+aura::ast::NodeId parse_borrow(ParserState& s);
+aura::ast::NodeId parse_mut_borrow(ParserState& s);
+aura::ast::NodeId parse_datatype(ParserState& s);
+aura::ast::NodeId parse_drop(ParserState& s);
+aura::ast::NodeId parse_cast(ParserState& s);
+aura::ast::NodeId parse_check(ParserState& s);
+aura::ast::NodeId parse_type_annot(ParserState& s);
+aura::ast::NodeId parse_val(ParserState& s);
+aura::ast::NodeId expand_qq(ParserState& s, aura::ast::NodeId expr, int depth);
+aura::ast::NodeId expand_qq_pair(ParserState& s, aura::ast::NodeId expr, int depth);
+std::vector<std::pair<aura::ast::SymId, aura::ast::NodeId>>
+compile_pattern(ParserState& s, aura::ast::NodeId pattern_node, aura::ast::SymId tmp,
+                aura::ast::NodeId* out_test);
+void skip_rparen(ParserState& s);
+
+} // namespace detail
+
+// ── Public API (Issue #161 cpp26 P0) ──
+//
+// parse_to_flat is THE parser entry point. It is a pure
+// function: given (source, flat, pool), it returns a
+// FlatParseResult. All mutable state is internal to the
+// call (constructed as a stack-allocated detail::ParserState
+// and discarded on return). Calling it twice on the same input
+// yields identical results — the determinism property that
+// the [[deprecated]] FlatParser class could not guarantee.
 export [[nodiscard]] FlatParseResult parse_to_flat(std::string_view source, aura::ast::FlatAST& flat,
                                      aura::ast::StringPool& pool);
 
