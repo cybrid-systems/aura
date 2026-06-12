@@ -3344,6 +3344,104 @@ int main() {
         if (ea_failed > 0) return 1;
     }
 
+    // ── Issue #160: Linear Ownership Pass (validation) ──
+    // The pass is a no-op when no linear ops are in the IR
+    // (current state of lowering). It sets up the validation
+    // infrastructure for when MoveOp/BorrowOp start being
+    // emitted. We test that:
+    //  1. No linear ops → no warnings
+    //  2. A single MoveOp doesn't trigger a warning
+    //  3. A use-after-move (two MoveOps on the same slot)
+    //     triggers a warning
+    int lo_passed = 0, lo_failed = 0;
+    {
+        // Test 1: no linear ops → no warnings
+        {
+            aura::ir::IRModule mod;
+            mod.functions.push_back(aura::ir::IRFunction{
+                .name = "test", .local_count = 10
+            });
+            auto& func = mod.functions.back();
+            func.blocks.push_back({0});
+            auto& block = func.blocks.back();
+            block.instructions = {
+                {aura::ir::IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},
+                {aura::ir::IROpcode::Return,   {0, 0, 0, 0}, 0, 0},
+            };
+            aura::compiler::LinearOwnershipPass lo;
+            lo.run(mod);
+            if (lo.use_after_move_count() == 0) {
+                ++lo_passed;
+                std::println("Linear OK: no linear ops → no warnings");
+            } else {
+                ++lo_failed;
+                std::println(std::cerr, "Linear FAIL: unexpected {} warnings",
+                             lo.use_after_move_count());
+            }
+        }
+
+        // Test 2: single MoveOp → no warning (just a normal move)
+        {
+            aura::ir::IRModule mod;
+            mod.functions.push_back(aura::ir::IRFunction{
+                .name = "test", .local_count = 10
+            });
+            auto& func = mod.functions.back();
+            func.blocks.push_back({0});
+            auto& block = func.blocks.back();
+            // ConstI64 → MoveOp(slot1 = slot0) → Return(slot1)
+            // Single move, no double-move, no warning.
+            block.instructions = {
+                {aura::ir::IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},
+                {aura::ir::IROpcode::MoveOp,   {1, 0, 0, 0}, 0, 1},
+                {aura::ir::IROpcode::Return,   {1, 0, 0, 0}, 0, 0},
+            };
+            aura::compiler::LinearOwnershipPass lo;
+            lo.run(mod);
+            if (lo.use_after_move_count() == 0) {
+                ++lo_passed;
+                std::println("Linear OK: single MoveOp → no warning");
+            } else {
+                ++lo_failed;
+                std::println(std::cerr, "Linear FAIL: single MoveOp triggered {} warnings",
+                             lo.use_after_move_count());
+            }
+        }
+
+        // Test 3: double-move (slot moved twice) → use-after-move warning
+        {
+            aura::ir::IRModule mod;
+            mod.functions.push_back(aura::ir::IRFunction{
+                .name = "test", .local_count = 10
+            });
+            auto& func = mod.functions.back();
+            func.blocks.push_back({0});
+            auto& block = func.blocks.back();
+            // ConstI64 → MoveOp(slot1 = slot0) → MoveOp(slot2 = slot0)
+            // slot0 is moved twice → use-after-move.
+            block.instructions = {
+                {aura::ir::IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},
+                {aura::ir::IROpcode::MoveOp,   {1, 0, 0, 0}, 0, 1},
+                {aura::ir::IROpcode::MoveOp,   {2, 0, 0, 0}, 0, 1},
+                {aura::ir::IROpcode::Return,   {2, 0, 0, 0}, 0, 0},
+            };
+            aura::compiler::LinearOwnershipPass lo;
+            lo.run(mod);
+            if (lo.use_after_move_count() == 1) {
+                ++lo_passed;
+                std::println("Linear OK: double-move detected (1 warning)");
+            } else {
+                ++lo_failed;
+                std::println(std::cerr, "Linear FAIL: expected 1 warning, got {}",
+                             lo.use_after_move_count());
+            }
+        }
+
+        std::println("Linear ownership (Issue #160): {}/{}/{} passed/failed/total",
+                     lo_passed, lo_failed, lo_passed + lo_failed);
+        if (lo_failed > 0) return 1;
+    }
+
     // ── Iter 8: Gradual Guarantee tests ────────────────────────
     {
 
