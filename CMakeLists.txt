@@ -788,11 +788,11 @@ target_compile_options(test_issue_131 PRIVATE -Wall -Wextra -Wpedantic
 target_link_libraries(test_issue_131 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_131_verification COMMAND ./test_issue_131)
 
-# ── CMake pilot for refactor Step 1.1 (test harness dedup) ─────────────────────
+# ── CMake pilot for refactor Step 1.1 / 3.2 (test harness dedup) ─────────────────────
 # test_error_merr.cpp — exercises make_merr (centralized in 0.1+) via
 # Evaluator construction + error paths (mutate bad-arg etc.).
 # Standalone binary so it can run in isolation.
-# Modeled exactly on the test_issue_131 block structure.
+# Modeled exactly on the test_issue_131 block structure. Now uses issue_test_harness.hpp (dedup).
 # (Note: adt_runtime extraction (FFI pattern) complete; sources included in relevant targets per 3.2 hygiene)
 add_executable(test_error_merr tests/test_error_merr.cpp)
 set_property(TARGET test_error_merr PROPERTY CXX_MODULE_STD ON)
