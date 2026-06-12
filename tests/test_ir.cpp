@@ -3442,6 +3442,107 @@ int main() {
         if (lo_failed > 0) return 1;
     }
 
+    // ── Issue #160: Type Propagation Pass (sub-item #4 partial) ──
+    // The pass propagates type_id through pure-compute ops whose
+    // result type_id wasn't set by lowering. We test that:
+    //  1. Local propagation: result.type_id ← source.type_id
+    //  2. Already-set type_id is preserved (idempotent)
+    //  3. Binary op with two same-type operands propagates
+    int tp_passed = 0, tp_failed = 0;
+    {
+        // Test 1: Local propagates type_id from source
+        {
+            aura::ir::IRModule mod;
+            mod.functions.push_back(aura::ir::IRFunction{
+                .name = "test", .local_count = 10
+            });
+            auto& func = mod.functions.back();
+            func.blocks.push_back({0});
+            auto& block = func.blocks.back();
+            // ConstI64 slot0 = 42 (type_id=1, Int)
+            // Local slot1 = slot0 (no type_id set, should propagate)
+            // Return slot1
+            block.instructions = {
+                {aura::ir::IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},   // slot0, type_id=1
+                {aura::ir::IROpcode::Local,    {1, 0, 0, 0}, 0, 0},    // slot1, no type_id
+                {aura::ir::IROpcode::Return,   {1, 0, 0, 0}, 0, 0},
+            };
+            aura::compiler::TypePropagationPass tp;
+            tp.run(mod);
+            if (tp.propagated_count() == 1 && block.instructions[1].type_id == 1) {
+                ++tp_passed;
+                std::println("TypeProp OK: Local propagated type_id from source");
+            } else {
+                ++tp_failed;
+                std::println(std::cerr, "TypeProp FAIL: Local type_id={} (expected 1), count={}",
+                             block.instructions[1].type_id, tp.propagated_count());
+            }
+        }
+
+        // Test 2: already-set type_id is preserved (no-op)
+        {
+            aura::ir::IRModule mod;
+            mod.functions.push_back(aura::ir::IRFunction{
+                .name = "test", .local_count = 10
+            });
+            auto& func = mod.functions.back();
+            func.blocks.push_back({0});
+            auto& block = func.blocks.back();
+            // ConstI64 with type_id=1 (Int). Local with type_id=1
+            // (already set). Pass should be a no-op.
+            block.instructions = {
+                {aura::ir::IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},
+                {aura::ir::IROpcode::Local,    {1, 0, 0, 0}, 0, 1},  // already set
+                {aura::ir::IROpcode::Return,   {1, 0, 0, 0}, 0, 0},
+            };
+            aura::compiler::TypePropagationPass tp;
+            tp.run(mod);
+            if (tp.propagated_count() == 0) {
+                ++tp_passed;
+                std::println("TypeProp OK: idempotent (no-op for already-set)");
+            } else {
+                ++tp_failed;
+                std::println(std::cerr, "TypeProp FAIL: expected 0 propagations, got {}",
+                             tp.propagated_count());
+            }
+        }
+
+        // Test 3: binary op with two same-type operands propagates
+        {
+            aura::ir::IRModule mod;
+            mod.functions.push_back(aura::ir::IRFunction{
+                .name = "test", .local_count = 10
+            });
+            auto& func = mod.functions.back();
+            func.blocks.push_back({0});
+            auto& block = func.blocks.back();
+            // ConstI64 slot0=1 (type_id=1, Int)
+            // ConstI64 slot1=2 (type_id=1, Int)
+            // Add slot2 = slot0 + slot1 (no type_id set)
+            // Return slot2
+            block.instructions = {
+                {aura::ir::IROpcode::ConstI64, {0, 1, 0, 0}, 0, 1},
+                {aura::ir::IROpcode::ConstI64, {1, 2, 0, 0}, 0, 1},
+                {aura::ir::IROpcode::Add,       {2, 0, 1, 0}, 0, 0},  // no type_id
+                {aura::ir::IROpcode::Return,   {2, 0, 0, 0}, 0, 0},
+            };
+            aura::compiler::TypePropagationPass tp;
+            tp.run(mod);
+            if (tp.propagated_count() == 1 && block.instructions[2].type_id == 1) {
+                ++tp_passed;
+                std::println("TypeProp OK: Add propagated Int from both operands");
+            } else {
+                ++tp_failed;
+                std::println(std::cerr, "TypeProp FAIL: Add type_id={} (expected 1), count={}",
+                             block.instructions[2].type_id, tp.propagated_count());
+            }
+        }
+
+        std::println("Type propagation (Issue #160): {}/{}/{} passed/failed/total",
+                     tp_passed, tp_failed, tp_passed + tp_failed);
+        if (tp_failed > 0) return 1;
+    }
+
     // ── Iter 8: Gradual Guarantee tests ────────────────────────
     {
 

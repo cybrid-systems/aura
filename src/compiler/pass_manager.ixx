@@ -722,10 +722,10 @@ public:
     std::string_view name() const { return "dce"; }
     std::size_t eliminated_count() const { return eliminated_; }
 
-private:
+public:
+    // Public wrapper for use by other passes (e.g.,
+    // LinearOwnershipPass, TypePropagationPass).
     // True if the opcode has a result slot in operands[0].
-    // (Inline of the module-internal kOpcodeInfo lookup.)
-    // Only the pure-compute ops have has_result_slot=true.
     static bool has_result_slot_local(aura::ir::IROpcode op) {
         switch (op) {
             case aura::ir::IROpcode::ConstI64:
@@ -1242,6 +1242,139 @@ private:
     }
 
     std::size_t use_after_move_count_ = 0;
+};
+
+// Issue #160: Type Propagation Pass (sub-item #4 partial).
+//
+// Walks the IR and propagates type_id through pure-compute
+// ops whose result type_id wasn't set by lowering. This
+// makes the type_id metadata more accurate for downstream
+// consumers (JIT type-specialization, GuardShape decisions,
+// CastOp decisions).
+//
+// Algorithm (2-pass per block):
+//   Pass 1: build slot_type_id map. For each instruction,
+//     if type_id != 0, record slot[result] = type_id.
+//   Pass 2: for each instruction with type_id == 0 in
+//     should_propagate ops, look up the source slot's
+//     type_id from the map and set it.
+//
+// Specifically:
+//   - Local(result, src): result.type_id = src's slot type_id
+//   - Add/Sub/Mul/Div/And/Or: if both operands have the
+//     same type_id, result.type_id = that
+//   - Not: result.type_id = src's slot type_id
+//   - Car/Cdr: result.type_id = pair (whatever the source
+//     pair's type_id is, if any)
+//
+// Cost: O(N) per block. Idempotent.
+export class TypePropagationPass {
+public:
+    void run(aura::ir::IRModule& module) {
+        propagated_count_ = 0;
+        for (auto& func : module.functions) {
+            for (auto& block : func.blocks) {
+                run_on_block(block);
+            }
+        }
+    }
+
+    bool has_error() const { return false; }
+    std::string_view name() const { return "type-propagation"; }
+    std::size_t propagated_count() const { return propagated_count_; }
+
+private:
+    static bool should_propagate(aura::ir::IROpcode op) {
+        switch (op) {
+            case aura::ir::IROpcode::Local:
+            case aura::ir::IROpcode::Add:
+            case aura::ir::IROpcode::Sub:
+            case aura::ir::IROpcode::Mul:
+            case aura::ir::IROpcode::Div:
+            case aura::ir::IROpcode::And:
+            case aura::ir::IROpcode::Or:
+            case aura::ir::IROpcode::Not:
+            case aura::ir::IROpcode::Car:
+            case aura::ir::IROpcode::Cdr:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    void run_on_block(aura::ir::BasicBlock& block) {
+        // Pass 1: build slot -> type_id map from instructions
+        // that already have type_id set (constants, etc.).
+        // The map's key is the result slot; the value is the
+        // type_id. We use a flat vector indexed by slot number
+        // (assumes slots are dense, which is the convention
+        // for Aura's IR).
+        const std::size_t n = block.instructions.size();
+        if (n == 0) return;
+        // Find max slot referenced in the block.
+        std::uint32_t max_slot = 0;
+        for (const auto& instr : block.instructions) {
+            for (std::uint32_t k = 0; k < 4; ++k) {
+                if (instr.operands[k] > max_slot)
+                    max_slot = instr.operands[k];
+            }
+        }
+        if (max_slot == 0) return;
+        // Allocate slot_type_id sized to max_slot + 1.
+        std::vector<std::uint32_t> slot_type_id(max_slot + 1, 0);
+        for (const auto& instr : block.instructions) {
+            if (!DCEPass::has_result_slot_local(instr.opcode)) continue;
+            if (instr.type_id != 0) {
+                auto slot = instr.operands[0];
+                if (slot <= max_slot) {
+                    slot_type_id[slot] = instr.type_id;
+                }
+            }
+        }
+
+        // Pass 2: propagate to instructions with type_id == 0.
+        for (auto& instr : block.instructions) {
+            if (!should_propagate(instr.opcode)) continue;
+            if (instr.type_id != 0) continue;  // already set
+            if (!DCEPass::has_result_slot_local(instr.opcode)) continue;
+            std::uint32_t inferred = 0;
+            switch (instr.opcode) {
+                case aura::ir::IROpcode::Local:
+                case aura::ir::IROpcode::Not:
+                case aura::ir::IROpcode::Car:
+                case aura::ir::IROpcode::Cdr:
+                    // Single source operand.
+                    if (instr.operands[1] <= max_slot) {
+                        inferred = slot_type_id[instr.operands[1]];
+                    }
+                    break;
+                case aura::ir::IROpcode::Add:
+                case aura::ir::IROpcode::Sub:
+                case aura::ir::IROpcode::Mul:
+                case aura::ir::IROpcode::Div:
+                case aura::ir::IROpcode::And:
+                case aura::ir::IROpcode::Or: {
+                    // Two source operands. If both have the same
+                    // type_id, propagate. If they differ, leave 0
+                    // (downstream pass handles mixed-type ops).
+                    auto t1 = (instr.operands[1] <= max_slot)
+                                   ? slot_type_id[instr.operands[1]] : 0u;
+                    auto t2 = (instr.operands[2] <= max_slot)
+                                   ? slot_type_id[instr.operands[2]] : 0u;
+                    if (t1 != 0 && t1 == t2) inferred = t1;
+                    break;
+                }
+                default:
+                    break;
+            }
+            if (inferred != 0) {
+                instr.type_id = inferred;
+                ++propagated_count_;
+            }
+        }
+    }
+
+    std::size_t propagated_count_ = 0;
 };
 
 } // namespace aura::compiler
