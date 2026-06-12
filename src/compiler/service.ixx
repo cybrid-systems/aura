@@ -1467,16 +1467,35 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                     std::shared_lock cache_read(jit_cache_mtx_);
                     auto cache_it = jit_cache_.find(ir_fn.name);
                     if (cache_it != jit_cache_.end()) {
-                        // Hot recompilation: if profiler now has stable shape for this
-                        // function but cache entry was compiled without shape_map,
-                        // evict and recompile with shape specialization.
-                        auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
-                        if (!cache_it->second.has_shape_map &&
-                            shape_profiler_.is_stable(fn_key)) {
-                            // Drop shared lock; take unique for erase.
+                        // Issue #166 Phase 1: epoch check. If the
+                        // entry's last_seen_epoch_ doesn't match the
+                        // current mutation_epoch_, the entry is stale
+                        // (some mutation happened since this entry was
+                        // cached, even if invalidate_function didn't
+                        // explicitly target this function name — could
+                        // be a transitive invalidation the dep_graph
+                        // missed, or a mutation in a different function
+                        // that the JIT code implicitly depends on).
+                        // Treat as a cache miss and force re-compile.
+                        auto current_epoch = mutation_epoch_.load(std::memory_order_relaxed);
+                        if (cache_it->second.last_seen_epoch_ != current_epoch) {
+                            // Skip the cached entry — fall through to
+                            // the compile path below. Don't erase here
+                            // (we hold only the shared lock); the
+                            // insert path will overwrite with a fresh
+                            // entry that has the new epoch.
                         } else {
-                            fn_ptr = cache_it->second.fn_ptr.load(std::memory_order_acquire);
-                            need_compile = false;
+                            // Hot recompilation: if profiler now has stable shape for this
+                            // function but cache entry was compiled without shape_map,
+                            // evict and recompile with shape specialization.
+                            auto fn_key = shape::make_fn_key(session_id_, ir_fn.name);
+                            if (!cache_it->second.has_shape_map &&
+                                shape_profiler_.is_stable(fn_key)) {
+                                // Drop shared lock; take unique for erase.
+                            } else {
+                                fn_ptr = cache_it->second.fn_ptr.load(std::memory_order_acquire);
+                                need_compile = false;
+                            }
                         }
                     }
                 }
@@ -1541,6 +1560,11 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                     std::unique_lock cache_write(jit_cache_mtx_);
                     auto [it, _ins] = jit_cache_.try_emplace(ir_fn.name);
                     it->second.fn_ptr.store(fn_ptr, std::memory_order_release);
+                    // Issue #166: stamp the entry with the current
+                    // epoch. On the next access, if the epoch has
+                    // changed, the entry is treated as stale.
+                    it->second.last_seen_epoch_ =
+                        mutation_epoch_.load(std::memory_order_relaxed);
                     it->second.local_count = ir_fn.local_count;
                     it->second.arg_count = ir_fn.arg_count;
                     it->second.env_count = env_count;
@@ -2117,6 +2141,15 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         std::vector<std::string> strings;                              // parallel string pool
         bool dirty = true;                                             // needs re-lower
         std::size_t mutation_count = 0;                                // snapshot at lower time
+        // Issue #166: epoch snapshot at lower time. On every
+        // mutation, mutation_epoch_ is incremented atomically.
+        // On next access, if the entry's epoch doesn't match
+        // the current epoch, it's stale and needs re-lower.
+        // The cost is one uint64 compare per cache lookup
+        // (~1ns); the benefit is a single global "is anything
+        // stale?" check that complements the per-function
+        // invalidate_function BFS in dep_graph_.
+        std::uint64_t last_seen_epoch_ = 0;
     };
     std::unordered_map<std::string, IRCacheEntry> ir_cache_v2_;
 
@@ -3736,6 +3769,17 @@ private:
     // Instead of removing from cache, re-lowers each dependent with the current cache
     // so they stay resolvable in the IR pipeline with updated dependencies.
     void invalidate_function(const std::string& name) {
+        // Issue #166 Phase 1: bump the global mutation epoch FIRST,
+        // before any other work. This ensures that any cache entry
+        // being concurrently checked by another fiber will see a
+        // newer epoch than its last_seen_epoch_ and treat itself
+        // as stale. The increment is atomic with relaxed ordering
+        // (we don't need a happens-before relationship with the
+        // subsequent dep_graph_ walk; the dep_graph_ walk is
+        // protected by mutate_mtx_ which the cache checkers don't
+        // hold).
+        mutation_epoch_.fetch_add(1, std::memory_order_relaxed);
+
         // Issue #59 Iter 3: acquire the Mutation Lock in exclusive mode.
         // A mutate:* that triggers this must drain any in-flight compile
         // before erasing the cache entry, otherwise another fiber could
@@ -3917,6 +3961,13 @@ public:
         // and falls through to recompile. The erase path stores
         // nullptr first, then optionally frees the original.
         std::atomic<aura::jit::ScalarFn> fn_ptr{nullptr};
+        // Issue #166: epoch snapshot at compile time. Same as
+        // IRCacheEntry::last_seen_epoch_ — used by the global
+        // epoch check (mutation_epoch_) to detect stale JIT code
+        // that wasn't explicitly invalidated by name (e.g., a
+        // mutation in a different function that transitively
+        // affects this one's compiled native code).
+        std::uint64_t last_seen_epoch_ = 0;
         std::uint32_t local_count = 0;
         std::uint32_t arg_count = 0;
         std::uint32_t env_count = 0;
@@ -3930,6 +3981,20 @@ public:
     // map lookup/insert is sub-microsecond), so contention is
     // negligible in the common case.
     mutable std::shared_mutex jit_cache_mtx_;
+
+    // Issue #166 Phase 1: global mutation epoch. Incremented
+    // atomically on every mutation (in invalidate_function /
+    // typed_mutate). Checked by every cache access (IR + JIT)
+    // to detect stale entries that weren't explicitly invalidated
+    // by name. Single process-wide counter, monotonic.
+    //
+    // Pattern:
+    //   - mutation: mutation_epoch_.fetch_add(1, relaxed);
+    //   - ir_cache lookup: if entry.last_seen_epoch_ != current,
+    //                       treat as stale (re-lower)
+    //   - jit_cache lookup: if entry.last_seen_epoch_ != current,
+    //                        treat as stale (re-compile)
+    std::atomic<std::uint64_t> mutation_epoch_{0};
 
     // Issue #59 Iter 3: Mutation Lock. A mutate:* operation (which
     // mutates a function body and calls invalidate_function) holds
