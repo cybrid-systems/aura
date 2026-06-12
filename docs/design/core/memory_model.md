@@ -19,6 +19,8 @@ is for the maintainer who adds a new C++ primitive or JIT bridge.
 
 **重要**：本文档记录了 **正式实装** 的内存模型。Issue #107（workspace_mtx_ + defuse_version_）和 Issue #157（Phase 0/1/1b/1c/2/5）已全部完成；future work 见 §10 版本说明。
 
+（Refactor 3.1/5.1 note）merr 消除完成（3.1）；ADT 提取（2.3）。evaluator_impl 精简中。详见 developer/evaluator.md 和 roadmap。
+
 ### C++ Core Layer (`src/compiler/evaluator.ixx` / `evaluator_impl.cpp` / `service.ixx`)
 
 | 组件 | 实装 | 备注 |
