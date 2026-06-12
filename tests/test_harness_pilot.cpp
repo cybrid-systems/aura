@@ -7,9 +7,7 @@
 #include "issue_test_harness.hpp"  // 3.2 dedup pilot (common CHECK + globals)
 
 int main() {
-    std::println("═══ test_harness_pilot (Step 1.3) ═══\n");
-    CHECK(2 + 2 == 4, "smallest pilot harness works");
-    std::println("\n  PASSED: {}", g_passed);
-    std::println("  FAILED: {}", g_failed);
-    return g_failed > 0 ? 1 : 0;
+    std::println("═══ test_harness_pilot (Step 1.3 / 3.2 dedup) ═══\n");
+    CHECK(2 + 2 == 4, "smallest pilot harness works (via header + run_pilot_tests)");
+    return run_pilot_tests();
 }
