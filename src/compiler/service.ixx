@@ -3268,6 +3268,35 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             res.invariant_status = worst;
             res.invariant_diagnostics = std::move(all_notes);
 
+            // Issue #165 Phase 1B: post-mutation macro re-expansion.
+            // For every MutationRecord we just processed, walk
+            // its affected subtree and re-expand any macro call
+            // sites. This fixes the bug where EDSL mutations
+            // (mutate:rebind, mutate:set-body) leave stale macro
+            // expansions — the macro's gensym'd bindings may not
+            // be re-generated, and the call site may pick up
+            // caller's bindings that should have been hygiene-
+            // isolated. Mirrors the post_mutation_invariant_check
+            // pattern above (Issue #147).
+            //
+            // The function is safe on any mutation record — it
+            // bails on malformed input (NULL_NODE, out-of-range,
+            // empty macros_ registry). The re-expanded count is
+            // logged for observability.
+            if (mid > 0) {
+                for (auto& rec : log) {
+                    if (rec.mutation_id != mid) continue;
+                    auto re_expanded = evaluator_.post_mutation_macro_reexpand(
+                        *ws_flat, *current_pool_, rec);
+                    if (re_expanded > 0) {
+                        std::println(std::cerr,
+                            "MacroReexpand: mutation {} re-expanded {} call site(s)",
+                            mid, re_expanded);
+                    }
+                    break;  // one record per typed_mutate
+                }
+            }
+
             if (invariant_check_mode_ == InvariantCheckMode::Strict
                 && worst == aura::ast::InvariantStatus::Warnings) {
                 res.success = false;

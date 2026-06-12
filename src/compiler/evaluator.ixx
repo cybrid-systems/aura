@@ -1143,6 +1143,30 @@ public:
     // which DOES include messaging_bridge.h.
     void yield_mutation_boundary();
 
+    // Issue #165 Phase 1B: post-mutation macro re-expansion.
+    // Walks the affected subtree of a mutation record looking
+    // for MacroDef nodes (the macro's body was mutated) or
+    // Call nodes whose callee resolves to a registered macro
+    // (the call site's context was mutated). Re-expands them
+    // via clone_macro_body + expand_inner_macros with fresh
+    // gensym for hygiene, and sets SyntaxMarker::MacroIntroduced
+    // on the new expansion so downstream consumers know the
+    // code is macro-introduced.
+    //
+    // Returns the number of call sites re-expanded. Zero is
+    // a valid result (the mutation didn't touch any macro-
+    // related state). The function is safe to call on any
+    // mutation record — it does its own precondition checks
+    // and bails on malformed input.
+    //
+    // The pattern mirrors post_mutation_invariant_check
+    // (Issue #147) — pure function, no service state, the
+    // caller (typed_mutate) invokes it after tx.commit.
+    std::size_t post_mutation_macro_reexpand(
+        aura::ast::FlatAST& flat,
+        aura::ast::StringPool& pool,
+        const aura::ast::MutationRecord& rec);
+
     // Type-aliasing accessor for the mutex type. Lets the
     // C++ test surface verify the lock type (Issue #107) without
     // exposing the actual mutex (which is internal state).
