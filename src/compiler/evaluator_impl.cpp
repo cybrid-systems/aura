@@ -9677,20 +9677,14 @@ Evaluator::Evaluator() {
     //   incrementally rebuilds dirty scopes on subsequent calls.
     primitives_.add("query:def-use", [this, ensure_defuse, nodes_to_list](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
-        auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
-            auto mi = string_heap_.size(); string_heap_.push_back(m);
-            auto ki = string_heap_.size(); string_heap_.push_back(k);
-            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
-            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
-            return kp;
-        };
+        // (Step 3.1 start) local merr removed; use make_merr (query cluster)
         if (a.empty() || !is_string(a[0]))
-            return merr("bad-arg", "usage: (query:def-use sym-name)");
+            return make_merr("bad-arg", "usage: (query:def-use sym-name)");
         if (!workspace_flat_ || !workspace_pool_)
-            return merr("no-workspace", "no workspace AST loaded");
+            return make_merr("no-workspace", "no workspace AST loaded");
         auto sym_idx = as_string_idx(a[0]);
         if (sym_idx >= string_heap_.size())
-            return merr("bad-arg", "symbol name string index out of range");
+            return make_merr("bad-arg", "symbol name string index out of range");
         auto target_name = string_heap_[sym_idx];
         auto target_sym = workspace_pool_->intern(target_name);
 
