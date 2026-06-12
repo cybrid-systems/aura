@@ -30,7 +30,7 @@
 
 全部 11 个原语在 C++ 层 **实装**。可以直接从 Aura 通过 `evaluator` 内部接口调用。
 
-（Refactor 3.1 note, 2026-06-12）内部 `merr` lambda 清理进行中（query 集群优先）：query:def-use 已迁移到 `make_merr`；reaches 刚完成。提升代码质量，无行为改变。详见 evaluator.md §3.2 + evaluator_impl.cpp。
+（Refactor 3.1 note, 2026-06-12）内部 `merr` lambda 清理完成（query 集群 + 多个 mutate 站点）：所有本地 `auto merr` 已迁移到集中 `make_merr`。代码质量提升，无行为改变。详见 developer/evaluator.md §3.2。
 
 ### Aura Helper Layer (`lib/std/query.aura`)
 

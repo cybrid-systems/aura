@@ -793,7 +793,7 @@ add_test(NAME issue_131_verification COMMAND ./test_issue_131)
 # Evaluator construction + error paths (mutate bad-arg etc.).
 # Standalone binary so it can run in isolation.
 # Modeled exactly on the test_issue_131 block structure.
-# (Note: adt_runtime pilot extraction in 2.x will add adt_runtime.ixx/_impl to fuller lists)
+# (Note: adt_runtime extraction (FFI pattern) complete; sources included in relevant targets per 3.2 hygiene)
 add_executable(test_error_merr tests/test_error_merr.cpp)
 set_property(TARGET test_error_merr PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_error_merr PRIVATE src)
