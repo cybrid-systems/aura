@@ -817,7 +817,7 @@ target_compile_options(test_primitives_init PRIVATE -Wall -Wextra -Wpedantic
 target_link_libraries(test_primitives_init PRIVATE pthread)
 add_test(NAME primitives_init_verification COMMAND ./test_primitives_init)
 
-# Third pilot (Step 1.3) — smallest harness demo (completes 1.1-1.3 set).
+# Third pilot (Step 1.3 / 3.2) — smallest harness demo, now using common issue_test_harness.hpp (dedup progress).
 add_executable(test_harness_pilot tests/test_harness_pilot.cpp)
 set_property(TARGET test_harness_pilot PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_harness_pilot PRIVATE src)
