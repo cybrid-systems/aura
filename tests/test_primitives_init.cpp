@@ -1,26 +1,10 @@
-// test_primitives_init.cpp — Second CMake pilot (Step 1.2).
+// test_primitives_init.cpp — Second CMake pilot (Step 1.2 / 3.2 dedup).
 //
 // Smoke test for Primitives::Primitives() and Evaluator init paths
 // (the make_merr member etc. are now part of normal initialization).
-// Demonstrates repeated harness + CMake pattern.
+// Demonstrates repeated harness + CMake pattern. Now uses common header.
 
-#include <cstdio>
-#include <cstdlib>
-#include <print>
-#include <string>
-
-static int g_passed = 0;
-static int g_failed = 0;
-
-#define CHECK(cond, msg) do { \
-    if (!(cond)) { \
-        std::println("  FAIL: {} (line {})", msg, __LINE__); \
-        ++g_failed; \
-    } else { \
-        std::println("  PASS: {}", msg); \
-        ++g_passed; \
-    } \
-} while(0)
+#include "issue_test_harness.hpp"  // 3.2 dedup pilot (common CHECK + globals)
 
 bool test_primitives_init_smoke() {
     std::println("\n--- Test: primitives / init smoke (pilot for 1.2) ---");

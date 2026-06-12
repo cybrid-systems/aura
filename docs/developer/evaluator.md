@@ -595,6 +595,8 @@ Before merging a new primitive, walk this list:
 For a new primitive `foo`, the minimum coverage is in
 `tests/suite/core.aura` (or a dedicated file):
 
+**3.2 pilot dedup note**: Common harness header (`tests/issue_test_harness.hpp`) introduced; the 3 CMake pilots now use `#include` to shrink boilerplate. Full adoption/thinning in later dedup steps. See pilots + roadmap 3.2.
+
 ```scheme
 ; happy path
 (display (foo 42))            ; expect 84
