@@ -38,6 +38,11 @@ static std::uint32_t runtime_shape_of(const EvalValue& v) {
     if (is_float(v)) return 2;  // SHAPE_FLOAT
     if (is_string(v)) return 4; // SHAPE_STRING
     if (is_pair(v))  return 10; // SHAPE_PAIR
+    // Issue #160 sub-item #5: distinguish Closure and Vector
+    // shapes for GuardShape precision. A specialized function
+    // that takes a closure should not be confused with one
+    // that takes a pair.
+    if (is_closure(v)) return 13;  // SHAPE_CLOSURE
     return 0;                  // SHAPE_DYNAMIC (default)
 }
 
