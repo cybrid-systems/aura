@@ -12494,18 +12494,12 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     // In stdin mode: creates a lightweight in-process agent with a mailbox.
     // Returns the agent name on success, or error on failure.
     primitives_.add("_agent:spawn", [this](std::span<const EvalValue> a) -> EvalValue {
-        auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
-            auto mi = string_heap_.size(); string_heap_.push_back(m);
-            auto ki = string_heap_.size(); string_heap_.push_back(k);
-            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
-            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
-            return kp;
-        };
+        // (post 3.1 follow-on) local merr removed; use make_merr
         if (a.empty() || !is_string(a[0]))
-            return merr("bad-arg", "usage: (agent:spawn name)");
+            return make_merr("bad-arg", "usage: (agent:spawn name)");
         auto& name = string_heap_[as_string_idx(a[0])];
         if (name.empty())
-            return merr("bad-arg", "agent name must not be empty");
+            return make_merr("bad-arg", "agent name must not be empty");
         
         // Try serve-mode first (full session isolation)
         if (aura::messaging::g_session_create && *aura::messaging::g_session_create) {
@@ -12514,13 +12508,13 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
                 string_heap_.push_back(name);
                 return make_string(sidx);
             }
-            return merr("create-failed", std::string("could not create session \"") + name + "\"");
+            return make_merr("create-failed", std::string("could not create session \"") + name + "\"");
         }
         
         // Stdin/pipe mode: lightweight in-process agent via Aura-level *agents* registry
         // The Aura-level agent:spawn wraps this C++ primitive and falls back to
         // the *agents* registry when g_session_create is unavailable.
-        return merr("no-serve", "agent:spawn requires serve mode or a local handler");
+        return make_merr("no-serve", "agent:spawn requires serve mode or a local handler");
     });
 
     // (fiber:join fiber-id) — Wait for a fiber to complete and return its result.
