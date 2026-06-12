@@ -637,7 +637,7 @@ it before the regression lands.
 | File | What lives here |
 |------|-----------------|
 | `src/compiler/evaluator.ixx` | Evaluator class declaration, `workspace_mtx_`, callback hook setters |
-| `src/compiler/evaluator_impl.cpp` | (being reduced via extractions) `init_pair_primitives`, `eval_flat`, query/mutate/ast/workspace primitives, ... (ADT moved to adt_runtime in Step 2.x pilot) |
+| `src/compiler/evaluator_impl.cpp` | (being reduced via extractions) `init_pair_primitives`, `eval_flat`, query/mutate/ast/workspace primitives, ... (ADT moved to adt_runtime; all local merr lambdas centralized to make_merr in 0.1+3.1) |
 | `src/compiler/adt_runtime.ixx` | AdtRuntime class + register_primitives (FFI pattern extraction complete); replaces old global g_adt_constructors |
 | `src/compiler/adt_runtime_impl.cpp` | Impl for register + find_ctor (FFI pattern; extraction complete) |
 | `src/compiler/value.ixx` | `EvalValue` POD + `make_*` / `is_*` / `as_*` helpers |
