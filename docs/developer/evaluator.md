@@ -571,7 +571,7 @@ Before merging a new primitive, walk this list:
       `defuse_touch_fn_(...)` if set
 - [ ] **§2.5 arg validation**: `a.size()` + `is_*` checks before
       any `as_*` or index access
-- [x] **§2.4 / §3.2 error returns**: centralized `make_merr(k, m)` COMPLETE (all original local lambdas eliminated; last definition in inline-call removed). See make_merr in evaluator_impl.cpp + 0.1/3.1 steps.
+- [x] **§2.4 / §3.2 error returns**: centralized `make_merr(k, m)` 100% COMPLETE (all ~14-15 original local lambdas eliminated across query+mutate; final one in extract-function removed). See make_merr in evaluator_impl.cpp + 0.1+3.1 steps. No more auto merr lambdas.
 - [ ] **§5 closure vs primitive**: correct constructor for the
       use case
 - [ ] **§3.3 read-only fast path**: if a mutate primitive, checks
