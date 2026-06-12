@@ -1450,6 +1450,26 @@ target_compile_options(test_issue_166 PRIVATE -Wall -Wextra -Wpedantic
 target_link_libraries(test_issue_166 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_166_verification COMMAND ./test_issue_166)
 
+# Issue #167 verification: IR layer SoA/DOD migration
+# (Phase 1: scaffold). Verifies the basic IRModuleV2 +
+# IRInstructionView API. The new module is parallel to
+# existing ir.ixx — no consumer changes.
+add_executable(test_issue_167 tests/test_issue_167.cpp)
+set_property(TARGET test_issue_167 PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_issue_167 PRIVATE src src/compiler)
+target_sources(test_issue_167 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
+    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
+    src/core/type_arena.ixx
+    src/core/type.ixx
+    src/compiler/ir.ixx
+    src/compiler/ir_soa.ixx)
+target_compile_options(test_issue_167 PRIVATE -Wall -Wextra -Wpedantic
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
+    -Wno-parentheses)
+target_link_libraries(test_issue_167 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+add_test(NAME issue_167_verification COMMAND ./test_issue_167)
+
 # Issue #159 Phase 4: incremental compilation benchmark
 # harness. Measures eval_current latency across 4 scenarios
 # × N workspace sizes, outputs JSON to tests/bench_results/.
