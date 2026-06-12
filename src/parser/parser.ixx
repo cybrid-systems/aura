@@ -34,7 +34,7 @@ export struct FlatParseResult {
 // below in this file). Direct construction of FlatParser is
 // deprecated and will be removed once the full refactor
 // (Phase 2 of #161) ships in a fresh session. New code should
-// call `parse_to_flat` directamente.
+// call `parse_to_flat` directly.
 export [[deprecated("FlatParser is internal; use parse_to_flat (Issue #161)")]] class FlatParser {
 public:
     FlatParser(aura::ast::FlatAST& flat, aura::ast::StringPool& pool)
