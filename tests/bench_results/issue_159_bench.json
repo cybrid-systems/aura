@@ -1,0 +1,42 @@
+{
+  "timestamp_ms": 482834842,
+  "issue": 159,
+  "phase": 4,
+  "description": "Incremental compilation benchmark — eval_current latency under 4 scenarios × N workspace sizes",
+  "scenarios": {
+    "A": "full eval (cold cache)",
+    "B": "cache hit (no mutation)",
+    "C": "Phase 2 reuse (mutate early define; last form clean)",
+    "D": "full re-eval (mutate last form; cache invalidated)"
+  },
+  "results": [
+    {
+      "n_defines": 10,
+      "A_us": 11.417,
+      "B_us": 10.958,
+      "C_us": 10.959,
+      "D_us": 11.792
+    },
+    {
+      "n_defines": 50,
+      "A_us": 14.167,
+      "B_us": 13.583,
+      "C_us": 13.75,
+      "D_us": 14.167
+    },
+    {
+      "n_defines": 100,
+      "A_us": 17.375,
+      "B_us": 18.917,
+      "C_us": 19.125,
+      "D_us": 24.167
+    },
+    {
+      "n_defines": 500,
+      "A_us": 48.75,
+      "B_us": 48.667,
+      "C_us": 48.75,
+      "D_us": 48.958
+    }
+  ]
+}
