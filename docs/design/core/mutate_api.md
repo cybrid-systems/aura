@@ -18,6 +18,7 @@
 ADT extraction (Step 2.3 + 3.2 hygiene): state moved to adt_runtime_ (exact FFI pattern); old global g_adt + registration block removed. Lookups/ctor reg now per-Evaluator via runtime. CMake comments normalized, pilot notes updated. See adt_runtime.{ixx,impl.cpp}, evaluator.md File map, CMakeLists.txt.
 
 merr + ADT phases: small-step complete per approved roadmap.
+（Phase 2 pilot note）CMake 3-pilot dedup via `aura_add_issue_test` helper started (post-5.2); see developer/evaluator.md §12 + CMakeLists near pilots.
 
 ### C++ Core Layer (`src/compiler/evaluator_impl.cpp` / `service.ixx` / `src/core/ast.ixx`)
 
