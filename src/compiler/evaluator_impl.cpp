@@ -5857,8 +5857,29 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         // The root is marked dirty by mark_dirty_upward() on any mutation.
         // clear_cached_value is called in mark_dirty(), so we know the cache
         // is stale when dirty flags are set.
-        if (!workspace_flat_->is_dirty(expanded) && last_eval_current_result_) {
-            return *last_eval_current_result_;
+        //
+        // Issue #159 Phase 2: instead of checking the root, check
+        // the LAST form's subtree. The last form is what produces
+        // the eval_current result; if its subtree is clean, the
+        // cached result is still valid even if other parts of the
+        // tree (e.g., earlier defines) are dirty. Win: mutating
+        // `(define a 1)` doesn't invalidate the cache when the
+        // result comes from a later form.
+        {
+            using aura::ast::NodeId;
+            // Find the last top-level form. For a flat workspace
+            // (root has children), it's the last child. For a
+            // single-form workspace, it's the root itself.
+            NodeId last_form = expanded;
+            auto root_v = workspace_flat_->get(expanded);
+            if (!root_v.children.empty()) {
+                last_form = root_v.child(root_v.children.size() - 1);
+            }
+            if (last_form != aura::ast::NULL_NODE &&
+                !workspace_flat_->has_dirty_subtree(last_form) &&
+                last_eval_current_result_) {
+                return *last_eval_current_result_;
+            }
         }
 
         auto result = eval_flat(*workspace_flat_, *workspace_pool_, expanded, top_);
