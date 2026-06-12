@@ -10882,7 +10882,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     //   replacing the original node with a call to the new function.
     //   Free variables in the extracted expression become parameters.
     primitives_.add("mutate:refactor/extract", [this](std::span<const EvalValue> a) -> EvalValue {
-        // (post 3.1 follow-on) local merr removed; use make_merr
+        // local merr removed; now centralized make_merr (phase complete)
         defuse_version_++;
         if (workspace_read_only_) return make_merr("read-only", "workspace is read-only");
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) ||
@@ -11117,7 +11117,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     //   Uses def-use index for finding all references.
     primitives_.add("mutate:rename-symbol", [this, ensure_defuse](const auto& a) -> EvalValue {
         using namespace aura::ast;
-        // (post 3.1 follow-on) local merr removed; use make_merr
+        // local merr removed; now centralized make_merr (phase complete)
         defuse_version_++;
         if (workspace_read_only_)
             return make_merr("read-only", "workspace is read-only");
@@ -11178,7 +11178,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     //   a new parent at the specified child index.
     primitives_.add("mutate:move-node", [this](std::span<const EvalValue> a) -> EvalValue {
         using namespace aura::ast;
-        // (post 3.1 follow-on) local merr removed; use make_merr
+        // local merr removed; now centralized make_merr (phase complete)
         defuse_version_++;
         if (workspace_read_only_)
             return make_merr("read-only", "workspace is read-only");
@@ -12492,7 +12492,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     // In stdin mode: creates a lightweight in-process agent with a mailbox.
     // Returns the agent name on success, or error on failure.
     primitives_.add("_agent:spawn", [this](std::span<const EvalValue> a) -> EvalValue {
-        // (post 3.1 follow-on) local merr removed; use make_merr
+        // local merr removed; now centralized make_merr (phase complete)
         if (a.empty() || !is_string(a[0]))
             return make_merr("bad-arg", "usage: (agent:spawn name)");
         auto& name = string_heap_[as_string_idx(a[0])];
