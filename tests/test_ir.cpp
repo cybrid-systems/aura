@@ -3543,6 +3543,70 @@ int main() {
         if (tp_failed > 0) return 1;
     }
 
+    // ── Issue #160: Inline Expansion Pass (sub-item #6 minimal) ──
+    // Tests the is_trivial_inlinable() helper that recognizes
+    // single-block constant-returning callees. The full inliner
+    // is deferred (requires function-name resolution from Call
+    // operands, which the lowering doesn't currently emit).
+    int inl_passed = 0, inl_failed = 0;
+    {
+        // Test 1: single-block const-returning function is
+        // recognized as inlinable
+        {
+            aura::ir::IRModule mod;
+            mod.functions.push_back(aura::ir::IRFunction{
+                .name = "k42", .local_count = 2
+            });
+            auto& func = mod.functions.back();
+            func.blocks.push_back({0});
+            auto& block = func.blocks.back();
+            // ConstI64 → Return
+            block.instructions = {
+                {aura::ir::IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},
+                {aura::ir::IROpcode::Return,   {0, 0, 0, 0}, 0, 0},
+            };
+            if (aura::compiler::InlinePass::is_trivial_inlinable_for_test(func)) {
+                ++inl_passed;
+                std::println("Inline OK: single-block const-return recognized");
+            } else {
+                ++inl_failed;
+                std::println(std::cerr, "Inline FAIL: helper should return true for const-return");
+            }
+        }
+
+        // Test 2: multi-block function is NOT recognized
+        {
+            aura::ir::IRModule mod;
+            mod.functions.push_back(aura::ir::IRFunction{
+                .name = "multi", .local_count = 5
+            });
+            auto& func = mod.functions.back();
+            func.blocks.push_back({0});
+            func.blocks.push_back({1});
+            auto& b0 = func.blocks[0];
+            auto& b1 = func.blocks[1];
+            b0.instructions = {
+                {aura::ir::IROpcode::ConstI64, {0, 1, 0, 0}, 0, 1},
+                {aura::ir::IROpcode::Branch,   {0, 0, 1, 0}, 0, 0},
+            };
+            b1.instructions = {
+                {aura::ir::IROpcode::ConstI64, {1, 2, 0, 0}, 0, 1},
+                {aura::ir::IROpcode::Return,   {1, 0, 0, 0}, 0, 0},
+            };
+            if (!aura::compiler::InlinePass::is_trivial_inlinable_for_test(func)) {
+                ++inl_passed;
+                std::println("Inline OK: multi-block function NOT recognized");
+            } else {
+                ++inl_failed;
+                std::println(std::cerr, "Inline FAIL: multi-block should return false");
+            }
+        }
+
+        std::println("Inline (Issue #160): {}/{}/{} passed/failed/total",
+                     inl_passed, inl_failed, inl_passed + inl_failed);
+        if (inl_failed > 0) return 1;
+    }
+
     // ── Iter 8: Gradual Guarantee tests ────────────────────────
     {
 
