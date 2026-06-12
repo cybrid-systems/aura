@@ -2,6 +2,7 @@ export module aura.compiler.evaluator;
 import std;
 import aura.core;
 import aura.compiler.ffi_primitives;
+import aura.compiler.adt_runtime;  // Step 2.3 wiring (exact FFI pattern)
 import aura.diag;
 import aura.compiler.value;
 import aura.compiler.evaluator_pure;
@@ -837,6 +838,8 @@ private:
     // Issue #131: FFI state moved to FFIRuntime instance
     // (formerly file-scope statics in evaluator_impl.cpp).
     FFIRuntime ffi_runtime_;
+    // Step 2.3: ADT state moved to AdtRuntime (exact same pattern).
+    AdtRuntime adt_runtime_;
     std::unique_ptr<std::unordered_set<std::string>> current_export_set_;
     // ── Strategy storage (E2) ──────────────────────────────────
     // Issue #63 Phase 3: extend with tunable fields.

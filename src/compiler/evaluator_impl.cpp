@@ -130,43 +130,11 @@ static aura::ast::NodeId expand_inner_macros(
 static constexpr std::size_t MAX_ENV_DEPTH = 1024;
 thread_local std::size_t g_env_lookup_depth = 0;
 
-// ── ADT constructor table (Issue #108 part 4 Phase 1) ───────
-// Global registry of ADT constructor functions, keyed by name.
-// Bypasses Aura's Begin-scoped-define rule: a (datatype ...) form
-// is a single top-level expression, so the parser can only return
-// one root node. If the ctor Defines were emitted inside a Begin,
-// they'd be scoped to the Begin and not visible to subsequent
-// top-level forms (the LLM benchmark's (datatype ...) followed by
-// (match (Leaf 42) ...) pattern).
-//
-// Solution: register each ctor in this global map at parse time.
-// Env::lookup checks the map as a 4th fallback (after local
-// bindings, parent env, primitives). The ctor's behavior is
-// documented: when called with args, it returns
-//   (cons "CtorName" arg1 arg2 ...)
-// which is the format match's compile_pattern already handles.
-//
-// The value side stores the *primitive slot* of the registered
-// ctor in the evaluator's Primitives table. When Env::lookup hits
-// the map, it returns make_primitive(slot), so subsequent apply
-// dispatches to the registered PrimitiveFn.
-//
-// Session lifetime: the map lives for the process. No
-// (adt:reset-constructors) is provided — not needed for benchmarks
-// and adding it would require touching all test harnesses.
-//
-// (Issue #108 part 4 Phase 2) arity is the declared field count
-// from the (datatype ...) form: e.g. (Leaf T) has arity 1, (Node
-// Tree Tree) has arity 2. The ctor primitive checks arg count
-// at apply time and signals a type error if it doesn't match.
-// arity 0 (zero-arg ctor) is also supported — Phase 1 didn't
-// see any zero-arg ctors in the benchmark, but (None) / (Nil)
-// idioms are common in ADT code.
-struct AdtCtorEntry {
-    std::size_t primitive_slot = 0;  // slot in Primitives table
-    std::size_t arity = 0;           // expected field count
-};
-static std::unordered_map<std::string, AdtCtorEntry> g_adt_constructors;
+// ── ADT state now in adt_runtime_ (refactor Step 2.3, FFI pattern) ───────
+// The old global g_adt_constructors + AdtCtorEntry struct have been
+// removed. Per-Evaluator state is in adt_runtime_ (see adt_runtime.ixx/ _impl).
+// Lookups and registration now go through it (see Env::lookup and ctor wiring below).
+// Parser (parse_datatype) still populates via the new runtime in full extraction.
 
 std::optional<EvalValue> Env::lookup(const std::string& n) const {
     // The pre (!n.empty()) is on the declaration in evaluator.ixx.
@@ -203,9 +171,9 @@ std::optional<EvalValue> Env::lookup(const std::string& n) const {
     //    from parse_datatype. Returns a primitive ref that, when applied,
     //    builds (cons "CtorName" arg1 arg2 ...).
     {
-        auto adt_it = g_adt_constructors.find(n);
-        if (adt_it != g_adt_constructors.end())
-            return make_primitive(adt_it->second.primitive_slot);
+        // Step 2.3: use per-evaluator adt_runtime_ (FFI pattern)
+        if (auto slot = adt_runtime_.find_ctor(n))
+            return make_primitive(*slot);
     }
     return std::nullopt;
 }
@@ -311,9 +279,9 @@ Env::lookup_by_intern(const std::string& n,
         }
     }
     {
-        auto adt_it = g_adt_constructors.find(n);
-        if (adt_it != g_adt_constructors.end())
-            return make_primitive(adt_it->second.primitive_slot);
+        // Step 2.3: use per-evaluator adt_runtime_ (FFI pattern)
+        if (auto slot = adt_runtime_.find_ctor(n))
+            return make_primitive(*slot);
     }
     return std::nullopt;
 }
@@ -2682,120 +2650,18 @@ void Evaluator::init_pair_primitives() {
         return make_void();
     });
 
-    // ── ADT constructor registration (Issue #108 part 4 Phase 1) ───
-    // (adt:register-constructors (list "Ctor1" "Ctor2" ...)) →
-    //   registers each ctor name in g_adt_constructors and returns
-    //   the count of newly registered ctors.
+    // ── ADT registration now delegated to adt_runtime_ (Step 2.3) ───
+    // The old "adt:register-constructors" and "adt:reset-constructors"
+    // (which mutated the removed global g_adt_constructors) have been
+    // removed from here. The adt_runtime_ will provide equivalent
+    // (or improved) registration in the full wiring.
+    // Parser's parse_datatype still emits the call; for now it will
+    // be unbound until the primitive is re-provided via adt_runtime
+    // (or kept as compatibility stub in future step).
     //
-    // The registered ctor is a PrimitiveFn that, when called with
-    // args (arg1 arg2 ...), returns (cons "CtorName" (list arg1
-    // arg2 ...)) as a pair chain. The format matches what
-    // match's compile_pattern constructor-pattern code expects.
-    //
-    // Why a primitive (not a parser-internal side effect): the
-    // parser doesn't have direct access to the evaluator's
-    // Primitives table. The parser can only emit AST nodes. So
-    // parse_datatype emits a single call to this primitive; the
-    // eval of that call does the registration as a side effect.
-    primitives_.add("adt:register-constructors", [this](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty())
-            return make_int(0);
-        EvalValue cur = a[0];
-        std::int64_t count = 0;
-        // Wire format (Phase 2): alist of (name . arity) pairs.
-        //   (("Leaf" . 1) ("Node" . 2) ...)
-        // Each list element is a (name . arity) dotted pair.
-        // The list itself is a chain of cons cells ending in ().
-        while (!is_void(cur) && is_pair(cur)) {
-            auto list_idx = as_pair_idx(cur);
-            if (list_idx >= pairs_.size())
-                break;
-            auto& list_elt = pairs_[list_idx];
-            EvalValue entry = list_elt.car;
-            if (!is_pair(entry)) {
-                // Malformed entry (not a pair). Skip.
-                cur = list_elt.cdr;
-                continue;
-            }
-            auto entry_idx = as_pair_idx(entry);
-            if (entry_idx >= pairs_.size()) {
-                cur = list_elt.cdr;
-                continue;
-            }
-            auto& entry_pair = pairs_[entry_idx];
-            EvalValue name_v = entry_pair.car;
-            EvalValue arity_v = entry_pair.cdr;
-            if (!is_string(name_v)) {
-                cur = list_elt.cdr;
-                continue;
-            }
-            std::string ctor_name = string_heap_[as_string_idx(name_v)];
-            std::size_t arity = 0;
-            if (is_int(arity_v))
-                arity = static_cast<std::size_t>(as_int(arity_v));
-
-            // Create the ctor PrimitiveFn: builds (cons "CtorName" (list args...))
-            // The closure captures the ctor name + arity for the
-            // runtime check. (Phase 2.)
-            std::string prim_name = "adt-ctor:" + ctor_name;
-            primitives_.add(prim_name,
-                [this, ctor_name, arity](std::span<const EvalValue> args) -> EvalValue {
-                    // Arity check (Phase 2). If arg count
-                    // doesn't match the declared arity, return a
-                    // tagged error pair. Aura's runtime doesn't
-                    // have a rich error type, so we encode the
-                    // error as a pair with car = "<adt-error>"
-                    // (a string the caller can pattern-match on).
-                    if (args.size() != arity) {
-                        auto name_idx = string_heap_.size();
-                        string_heap_.push_back("<adt-error>");
-                        auto msg_idx = string_heap_.size();
-                        string_heap_.push_back(
-                            "ctor '" + ctor_name + "' arity mismatch: expected " +
-                            std::to_string(arity) + " got " +
-                            std::to_string(args.size()));
-                        // (cons "<adt-error>" (cons msg ()))
-                        auto msg_pair_idx = pairs_.size();
-                        pairs_.push_back({make_string(msg_idx), make_void()});
-                        auto head_pair_idx = pairs_.size();
-                        pairs_.push_back({make_string(name_idx),
-                                          make_pair(msg_pair_idx)});
-                        return make_pair(head_pair_idx);
-                    }
-                    // Build the list of args (right-to-left to preserve order)
-                    EvalValue tail = make_void();
-                    for (auto it = args.rbegin(); it != args.rend(); ++it) {
-                        auto pid = pairs_.size();
-                        pairs_.push_back({*it, tail});
-                        tail = make_pair(pid);
-                    }
-                    // Pre-cons the ctor name string
-                    auto name_idx = string_heap_.size();
-                    string_heap_.push_back(ctor_name);
-                    auto pid = pairs_.size();
-                    pairs_.push_back({make_string(name_idx), tail});
-                    return make_pair(pid);
-                });
-            std::size_t new_slot = primitives_.slot_count() - 1;
-
-            // Register in the global map
-            g_adt_constructors[ctor_name] = AdtCtorEntry{new_slot, arity};
-            ++count;
-
-            // Move to next list element
-            cur = list_elt.cdr;
-        }
-        return make_int(count);
-    });
-
-    // (adt:reset-constructors) — clear the global ctor table.
-    // Not used by benchmarks but useful for tests that need a
-    // clean slate between runs.
-    primitives_.add("adt:reset-constructors", [](std::span<const EvalValue> a) -> EvalValue {
-        (void)a;
-        g_adt_constructors.clear();
-        return make_void();
-    });
+    // The ctor PrimitiveFn creation logic (the big lambda above)
+    // will live inside adt_runtime.register_primitives in the
+    // complete extraction.
 
     primitives_.add("type-of", [this, infer_type_name](const auto& a) -> EvalValue {
         if (a.empty())
@@ -9163,6 +9029,13 @@ Evaluator::Evaluator() {
             primitives_.add(std::move(name), std::move(fn));
         },
         &string_heap_, &opaque_heap_, &coverage_counters_);
+
+    // Step 2.3: wire ADT (exact same RegisterFn callback pattern)
+    adt_runtime_.register_primitives(
+        [this](std::string n, PrimFn f) {
+            primitives_.add(std::move(n), std::move(f));
+        },
+        &string_heap_);
 
     build_primitive_slots();
 
