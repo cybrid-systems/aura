@@ -10772,7 +10772,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     //       → wraps in let binding
     primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue {
         std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
-        // (post 3.1 follow-on) local merr removed; make_merr
+        // local merr removed; now centralized make_merr (phase complete)
         defuse_version_++;
         if (workspace_read_only_) return make_merr("read-only", "workspace is read-only");
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) ||
