@@ -922,11 +922,9 @@ namespace {
     }
 } // namespace
 
-// Centralized make_merr (refactor Step 0.1).
-// Replaces all the duplicated local `auto merr = [this](const std::string& k, const std::string& m)`
-// lambdas that appeared in mutate:* (and some query) primitives.
-// See declaration in evaluator.ixx (private: section ~752 block) and
-// docs/developer/evaluator.md §3.2. The body is exactly the previous lambda body.
+// Centralized make_merr (refactor Step 0.1, 3.1 query cluster in progress).
+// Replaces duplicated local `auto merr = ...` lambdas (orig ~14-15 in mutate + query).
+// See evaluator.ixx private decl, docs/developer/evaluator.md §3.2, and query_edsl.md §0.
 EvalValue Evaluator::make_merr(const std::string& k, const std::string& m) {
     auto mi = string_heap_.size(); string_heap_.push_back(m);
     auto ki = string_heap_.size(); string_heap_.push_back(k);
@@ -9706,21 +9704,15 @@ Evaluator::Evaluator() {
     //   Cached implementation using def-use index.
     primitives_.add("query:reaches", [this, ensure_defuse, nodes_to_list](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
-        auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
-            auto mi = string_heap_.size(); string_heap_.push_back(m);
-            auto ki = string_heap_.size(); string_heap_.push_back(k);
-            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
-            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
-            return kp;
-        };
+        // (Step 3.1 continuation) local merr removed; using centralized make_merr
         if (a.empty() || !is_int(a[0]))
-            return merr("bad-arg", "usage: (query:reaches node-id)");
+            return make_merr("bad-arg", "usage: (query:reaches node-id)");
         if (!workspace_flat_ || !workspace_pool_)
-            return merr("no-workspace", "no workspace AST loaded");
+            return make_merr("no-workspace", "no workspace AST loaded");
         auto target = static_cast<DefUseIndex::NodeId>(as_int(a[0]));
         auto& flat = *workspace_flat_;
         if (target >= flat.size())
-            return merr("out-of-range", "node ID " + std::to_string(target) + " >= flat size " + std::to_string(flat.size()));
+            return make_merr("out-of-range", "node ID " + std::to_string(target) + " >= flat size " + std::to_string(flat.size()));
 
         auto v = flat.get(target);
         DefUseIndex::SymId defined_sym = aura::ast::INVALID_SYM;
@@ -9731,14 +9723,14 @@ Evaluator::Evaluator() {
                 defined_sym = v.sym_id;
                 break;
             default:
-                return merr("type-error", "node " + std::to_string(target) + " is not a definition node");
+                return make_merr("type-error", "node " + std::to_string(target) + " is not a definition node");
         }
         if (defined_sym == aura::ast::INVALID_SYM)
-            return merr("internal", "definition node has invalid symbol id");
+            return make_merr("internal", "definition node has invalid symbol id");
 
         auto idx = ensure_defuse();
         if (!idx)
-            return merr("internal", "failed to build def-use index");
+            return make_merr("internal", "failed to build def-use index");
 
         auto result = idx->query_def_use(defined_sym);
         auto def_list = nodes_to_list(result.defs);

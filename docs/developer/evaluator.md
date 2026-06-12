@@ -311,7 +311,7 @@ See:
 - Definition: `evaluator_impl.cpp` (near `Primitives::Primitives()` / before `init_pair_primitives`).
 - Call sites migrated starting in Step 0.2 (first the `mutate:replace-type` site that was the canonical example in older versions of this guide).
 
-This consolidation was explicitly called out as a "future cleanup" before the refactor. Step 0.1 did the pure addition; later 0.x steps remove the remaining local copies.
+This consolidation was explicitly called out as a "future cleanup" before the refactor. Step 0.1 did the pure addition; 0.x/3.1 steps progressively remove the remaining local copies (query cluster ongoing).
 
 ### 3.3 The read-only fast path
 
@@ -571,7 +571,7 @@ Before merging a new primitive, walk this list:
       `defuse_touch_fn_(...)` if set
 - [ ] **§2.5 arg validation**: `a.size()` + `is_*` checks before
       any `as_*` or index access
-- [ ] **§2.4 / §3.2 error returns**: use the centralized `make_merr(k, m)` (or the tagged-pair convention for mutate errors) — the old local `merr` lambdas have been consolidated (Step 0.1+). Query cluster started in 3.1 (def-use etc.).
+- [ ] **§2.4 / §3.2 error returns**: use the centralized `make_merr(k, m)` — old local `merr` lambdas being removed (0.1+; query:reaches done in 3.1 continuation).
 - [ ] **§5 closure vs primitive**: correct constructor for the
       use case
 - [ ] **§3.3 read-only fast path**: if a mutate primitive, checks
