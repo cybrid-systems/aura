@@ -840,6 +840,15 @@ private:
     FFIRuntime ffi_runtime_;
     // Step 2.3: ADT state moved to AdtRuntime (exact same pattern).
     AdtRuntime adt_runtime_;
+public:
+    // Step 2.3 follow-up: expose AdtRuntime to Env (which holds
+    // a back-pointer via owner_). Env::lookup needs to check
+    // the ADT constructor table as a fallback after primitives
+    // and parent lookups. The field stays private to preserve
+    // encapsulation; the accessor returns a const reference
+    // so Env can only read.
+    const AdtRuntime& adt_runtime() const { return adt_runtime_; }
+private:
     std::unique_ptr<std::unordered_set<std::string>> current_export_set_;
     // ── Strategy storage (E2) ──────────────────────────────────
     // Issue #63 Phase 3: extend with tunable fields.

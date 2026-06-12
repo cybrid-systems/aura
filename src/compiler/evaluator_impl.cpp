@@ -171,9 +171,14 @@ std::optional<EvalValue> Env::lookup(const std::string& n) const {
     //    from parse_datatype. Returns a primitive ref that, when applied,
     //    builds (cons "CtorName" arg1 arg2 ...).
     {
-        // Step 2.3: use per-evaluator adt_runtime_ (FFI pattern)
-        if (auto slot = adt_runtime_.find_ctor(n))
-            return make_primitive(*slot);
+        // Step 2.3: use per-evaluator adt_runtime_ (FFI pattern).
+        // adt_runtime_ lives on the Evaluator, not on Env; access
+        // via the owner_ back-pointer (Issue #145 Phase 2.2 set
+        // the owner_ on every Env registered with the Evaluator).
+        if (owner_) {
+            if (auto slot = owner_->adt_runtime().find_ctor(n))
+                return make_primitive(*slot);
+        }
     }
     return std::nullopt;
 }
@@ -279,9 +284,14 @@ Env::lookup_by_intern(const std::string& n,
         }
     }
     {
-        // Step 2.3: use per-evaluator adt_runtime_ (FFI pattern)
-        if (auto slot = adt_runtime_.find_ctor(n))
-            return make_primitive(*slot);
+        // Step 2.3: use per-evaluator adt_runtime_ (FFI pattern).
+        // adt_runtime_ lives on the Evaluator, not on Env; access
+        // via the owner_ back-pointer (see Env::lookup fix above
+        // for the same pattern).
+        if (owner_) {
+            if (auto slot = owner_->adt_runtime().find_ctor(n))
+                return make_primitive(*slot);
+        }
     }
     return std::nullopt;
 }
@@ -9688,7 +9698,7 @@ Evaluator::Evaluator() {
 
         auto idx = ensure_defuse();
         if (!idx)
-            return merr("internal", "failed to build def-use index");
+            return make_merr("internal", "failed to build def-use index");
 
         auto result = idx->query_def_use(target_sym);
         auto def_list = nodes_to_list(result.defs);
@@ -10894,7 +10904,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         // Get the source code of the target node (for parsing)
         auto src_fn = primitives_.lookup("current-source");
         if (!src_fn)
-            return merr("internal", "current-source primitive not found");
+            return make_merr("internal", "current-source primitive not found");
 
         // Build (define (new-name) <extracted-expr>)
         // First find the lambda params by analyzing free variables...
@@ -11185,14 +11195,14 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
             return make_merr("out-of-range", "node or parent ID out of range");
 
         if (node == new_parent)
-            return merr("cycle", "cannot move node to itself");
+            return make_merr("cycle", "cannot move node to itself");
 
         // Check if new_parent is a descendant of node (would create cycle)
         {
             auto p = flat.parent_of(new_parent);
             while (p != NULL_NODE) {
                 if (p == node)
-                    return merr("cycle", "new parent is a descendant of moved node");
+                    return make_merr("cycle", "new parent is a descendant of moved node");
                 auto next = flat.parent_of(p);
                 if (next == p) break;
                 p = next;
@@ -11201,7 +11211,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
 
         auto cur_parent = flat.parent_of(node);
         if (cur_parent == NULL_NODE)
-            return merr("no-parent", "node has no parent (possibly the root)");
+            return make_merr("no-parent", "node has no parent (possibly the root)");
 
         int cur_idx = -1;
         auto cpv = flat.get(cur_parent);
@@ -11212,7 +11222,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
             }
         }
         if (cur_idx < 0)
-            return merr("inconsistency", "node not found in parent's children list");
+            return make_merr("inconsistency", "node not found in parent's children list");
 
         std::string summary = (a.size() > 3 && is_string(a[3]))
                                   ? string_heap_[as_string_idx(a[3])]
@@ -11247,17 +11257,17 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         };
         defuse_version_++;
         if (workspace_read_only_)
-            return merr("read-only", "workspace is read-only");
+            return make_merr("read-only", "workspace is read-only");
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) ||
             !workspace_flat_ || !workspace_pool_)
-            return merr("bad-arg", "usage: (mutate:extract-function node-id name)");
+            return make_merr("bad-arg", "usage: (mutate:extract-function node-id name)");
         auto node = static_cast<NodeId>(as_int(a[0]));
         auto name_idx = as_string_idx(a[1]);
         if (name_idx >= string_heap_.size())
-            return merr("bad-arg", "name string index out of range");
+            return make_merr("bad-arg", "name string index out of range");
         auto& flat = *workspace_flat_;
         if (node >= flat.size())
-            return merr("out-of-range", std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
+            return make_merr("out-of-range", std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
 
         auto new_name = string_heap_[name_idx];
         std::string summary = (a.size() > 2 && is_string(a[2]))
@@ -11267,7 +11277,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         // Find parent of target node using parent_ vector
         auto parent_of_target = flat.parent_of(node);
         if (parent_of_target == NULL_NODE)
-            return merr("no-parent", "extracted node has no parent");
+            return make_merr("no-parent", "extracted node has no parent");
 
         // Find child index in parent
         int child_idx_in_parent = -1;
@@ -11279,7 +11289,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
             }
         }
         if (child_idx_in_parent < 0)
-            return merr("inconsistency", "node not found in parent's children list");
+            return make_merr("inconsistency", "node not found in parent's children list");
 
         // Collect free variables in the extracted subtree
         // Filter out common built-in symbols
@@ -11373,17 +11383,17 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         };
         defuse_version_++;
         if (workspace_read_only_)
-            return merr("read-only", "workspace is read-only");
+            return make_merr("read-only", "workspace is read-only");
         if (a.empty() || !is_int(a[0]) || !workspace_flat_ || !workspace_pool_)
-            return merr("bad-arg", "usage: (mutate:inline-call call-node-id)");
+            return make_merr("bad-arg", "usage: (mutate:inline-call call-node-id)");
         auto call_id = static_cast<NodeId>(as_int(a[0]));
         auto& flat = *workspace_flat_;
         if (call_id >= flat.size())
-            return merr("out-of-range", "call node ID out of range");
+            return make_merr("out-of-range", "call node ID out of range");
 
         auto cv = flat.get(call_id);
         if (cv.tag != NodeTag::Call || cv.children.empty())
-            return merr("type-error", "node " + std::to_string(call_id) + " is not a call node");
+            return make_merr("type-error", "node " + std::to_string(call_id) + " is not a call node");
 
         std::string summary = (a.size() > 1 && is_string(a[1]))
                                   ? string_heap_[as_string_idx(a[1])]
@@ -11409,30 +11419,30 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
                 }
             }
             if (func_body_node == NULL_NODE)
-                return merr("inline-error", "function definition not found for inlining");
+                return make_merr("inline-error", "function definition not found for inlining");
             auto bn = flat.get(func_body_node);
             if (bn.tag == NodeTag::Lambda) {
                 formal_params.assign(bn.params.begin(), bn.params.end());
                 if (bn.children.empty())
-                    return merr("inline-error", "function body has no children to inline");
+                    return make_merr("inline-error", "function body has no children to inline");
                 func_body_node = bn.child(0); // actual body expression
             } else {
                 // Not a lambda — can't inline
-                return merr("inline-error", "inline-call failed");
+                return make_merr("inline-error", "inline-call failed");
             }
         } else if (fv.tag == NodeTag::Lambda) {
             // Inline lambda directly at call site
             formal_params.assign(fv.params.begin(), fv.params.end());
             if (fv.children.empty())
-                return merr("inline-error", "function body has no children to inline");
+                return make_merr("inline-error", "function body has no children to inline");
             func_body_node = fv.child(0);
             is_closure_call = true;
         } else {
-            return merr("inline-error", "inline-call failed");
+            return make_merr("inline-error", "inline-call failed");
         }
 
         if (func_body_node == NULL_NODE)
-            return merr("inline-error", "function definition not found for inlining");
+            return make_merr("inline-error", "function definition not found for inlining");
 
         // Get actual arguments (children after the function node)
         std::vector<NodeId> actual_args;
@@ -11441,12 +11451,12 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
 
         // Parameter count must match
         if (formal_params.size() != actual_args.size())
-            return merr("inline-error", "parameter count mismatch in inlining");
+            return make_merr("inline-error", "parameter count mismatch in inlining");
 
         // Find parent of the call node
         auto call_parent = flat.parent_of(call_id);
         if (call_parent == NULL_NODE)
-            return merr("inline-error", "call node has no parent");
+            return make_merr("inline-error", "call node has no parent");
 
         // Find call index in its parent
         int call_idx_in_parent = -1;
@@ -11460,7 +11470,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
             }
         }
         if (call_idx_in_parent < 0)
-            return merr("inline-error", "call node not found in parent's children");
+            return make_merr("inline-error", "call node not found in parent's children");
 
         // Simple inline: replace the call with the body, substituting
         // Variable nodes for params with the actual argument nodes.
@@ -11592,7 +11602,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         // Replace the call with the cloned body root
         auto cloned_body = old_to_new[func_body_node];
         if (cloned_body == aura::ast::NULL_NODE)
-            return merr("inline-error", "function definition not found for inlining");
+            return make_merr("inline-error", "function definition not found for inlining");
         flat.set_child(call_parent, static_cast<std::uint32_t>(call_idx_in_parent), cloned_body);
         workspace_flat_->mark_dirty_upward(call_parent);
 
