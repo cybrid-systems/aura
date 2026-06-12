@@ -1164,10 +1164,9 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         std::println(std::cerr, "PM: running {}->{}->{}->{}", ts.name(), ck.name(), ar.name(),
                      cf.name());
 
-        ts.run(ir_mod);
-        ck.run(ir_mod);
-        ar.run(ir_mod);
-        cf.run(ir_mod);
+        // Issue #163: use run_pipeline (Pass concept fold) instead of
+        // individual *.run() calls. Short-circuits on has_error().
+        aura::compiler::run_pipeline(ir_mod, ts, ck, ar, cf);
 
         if (ar.has_error()) {
             for (auto& d : ar.result().diagnostics) {
@@ -1315,10 +1314,9 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             aura::compiler::ComputeKindWrap ck;
             aura::compiler::ArityWrap ar;
             aura::compiler::ConstantFoldingWrap cf;
-            ts.run(ir_mod);
-            ck.run(ir_mod);
-            ar.run(ir_mod);
-            cf.run(ir_mod);
+            // Issue #163: run_pipeline (Pass concept fold) replaces
+            // the 4 individual *.run() calls.
+            aura::compiler::run_pipeline(ir_mod, ts, ck, ar, cf);
         }
 
         // ── Run escape analysis pass ───────────────────────
@@ -2492,10 +2490,9 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         ComputeKindWrap ck;
         ArityWrap ar;
         ConstantFoldingWrap cf;
-        ts.run(*last_ir_mod_);
-        ck.run(*last_ir_mod_);
-        ar.run(*last_ir_mod_);
-        cf.run(*last_ir_mod_);
+        // Issue #163: run_pipeline (Pass concept fold) replaces
+        // the 4 individual *.run() calls.
+        aura::compiler::run_pipeline(*last_ir_mod_, ts, ck, ar, cf);
 
         if (ar.has_error()) {
             return std::unexpected(

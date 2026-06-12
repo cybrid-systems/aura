@@ -19,6 +19,51 @@ concept Pass = requires(P& p, aura::ir::IRModule& m) {
     { p.has_error() } -> std::convertible_to<bool>;
 };
 
+// ── AnalysisPass concept (Issue #163) — narrower than Pass ────
+//
+// A read-only analysis pass — annotates the IR with metadata
+// without semantic side effects. The narrower contract
+// (vs the full `Pass`) is just: it also exposes a `name()`
+// returning a string view. The `name()` requirement lets us:
+//   - Auto-log which passes ran (via name())
+//   - Distinguish passes by name in diagnostic output
+//   - Compose a pass registry indexed by name
+//
+// The read-only-on-IRModule property is NOT enforced at
+// compile time (would need contracts / a richer type system).
+// Passes that satisfy AnalysisPass SHOULD NOT mutate the IR
+// in observable ways, but we trust the author here.
+//
+// Currently, EscapeAnalysisPass, TypePropagationPass, and
+// LinearOwnershipPass satisfy the AnalysisPass contract.
+// The Pass concept still works for them too (AnalysisPass
+// is a subset of Pass — the extra `name()` requirement is
+// additive).
+export template <typename A>
+concept AnalysisPass = requires(A& a, aura::ir::IRModule& m) {
+    { a.run(m) } -> std::same_as<void>;
+    { a.has_error() } -> std::convertible_to<bool>;
+    { a.name() } -> std::convertible_to<std::string_view>;
+};
+
+// ── run_analysis_pipeline — fold over analysis passes ────────────
+//
+// Same fold semantics as run_pipeline, but constrained to
+// AnalysisPass types. Useful for separating analysis
+// (read-only) from transform (mutating) passes in the
+// pipeline — analysis runs first, transforms after, but
+// the type system enforces the separation.
+export template <AnalysisPass... Passes>
+bool run_analysis_pipeline(aura::ir::IRModule& mod, Passes&... passes) {
+    return (run_analysis_one(mod, passes) && ...);
+}
+
+export template <AnalysisPass P>
+bool run_analysis_one(aura::ir::IRModule& mod, P& pass) {
+    pass.run(mod);
+    return !pass.has_error();
+}
+
 // ── run_pipeline — fold over passes with short-circuit ──────────
 export template <Pass... Passes> bool run_pipeline(aura::ir::IRModule& mod, Passes&... passes) {
     return (run_one(mod, passes) && ...);
@@ -502,7 +547,7 @@ private:
     std::size_t removed_count_ = 0;
 };
 
-// ── CoercionMarkerPass — mark nodes needing coercion ──────────
+// ── mark_coercions — mark nodes needing coercion (Issue #163) ───
 // Operates on FlatAST after type-checking, before lowering.
 // Uses type_id slots to detect boundary mismatches and marks
 // the source expression for coercion insertion during lowering.
@@ -520,6 +565,14 @@ private:
 // The actual CoercionNode AST nodes are created at parse time;
 // this pass identifies WHERE in the AST they should be added
 // by returning a vector of (source_node, target_type) pairs.
+//
+// Issue #163: this was previously a class CoercionMarkerPass
+// holding 3 member refs + 1 markers_ vector, with a `run()`
+// method. Converted to a pure free function (mark_coercions)
+// for #163's "reduce stateful classes" AC. The class added
+// no state between calls — every invocation was independent.
+// The free function takes the same inputs as parameters and
+// returns the result directly.
 export struct CoercionMarker {
     aura::ast::NodeId source_node; // expression producing the value
     std::uint32_t target_type_id;  // type it needs to become
@@ -528,80 +581,45 @@ export struct CoercionMarker {
     std::uint32_t child_index;     // which child position
 };
 
-export class CoercionMarkerPass {
-    aura::core::TypeRegistry& reg_;
-    aura::ast::FlatAST& flat_;
-    aura::ast::StringPool& pool_;
+// Helper: does a coercion need to be inserted between actual
+// and expected type ids? Static→dynamic is erasure (no
+// coercion needed). Dynamic→static or ground→ground needs
+// a CoercionNode.
+namespace detail_pass {
+inline bool needs_coercion_impl(const aura::core::TypeRegistry& reg,
+                                 std::uint32_t actual_id,
+                                 std::uint32_t expected_id) {
+    if (actual_id == expected_id || actual_id == 0 || expected_id == 0)
+        return false;
+    auto actual = aura::core::TypeId{actual_id, 1};
+    auto expected = aura::core::TypeId{expected_id, 1};
+    if (actual == expected)
+        return false;
+    // static→dynamic: erasure
+    if (actual != reg.dynamic_type() && expected == reg.dynamic_type())
+        return false;
+    return true; // dynamic→static or ground→ground
+}
 
-public:
-    CoercionMarkerPass(aura::core::TypeRegistry& reg, aura::ast::FlatAST& flat,
-                       aura::ast::StringPool& pool)
-        : reg_(reg)
-        , flat_(flat)
-        , pool_(pool) {}
-
-    // Run the pass. Collects all nodes needing coercion.
-    std::vector<CoercionMarker> run(aura::ast::NodeId root) {
-        markers_.clear();
-        if (root == aura::ast::NULL_NODE || root >= flat_.size())
-            return {};
-        visit_node(root);
-        return std::move(markers_);
+inline void visit_for_coercion(const aura::core::TypeRegistry& reg,
+                                const aura::ast::FlatAST& flat,
+                                aura::ast::NodeId id,
+                                std::vector<CoercionMarker>& out) {
+    auto v = flat.get(id);
+    // Post-order: children first
+    for (auto child_id : v.children) {
+        if (child_id != aura::ast::NULL_NODE)
+            visit_for_coercion(reg, flat, child_id, out);
     }
 
-    bool has_error() const { return false; }
-    std::string_view name() const { return "coercion-mark"; }
-
-private:
-    std::vector<CoercionMarker> markers_;
-
-    bool needs_coercion(std::uint32_t actual_id, std::uint32_t expected_id) {
-        if (actual_id == expected_id || actual_id == 0 || expected_id == 0)
-            return false;
-        auto actual = aura::core::TypeId{actual_id, 1};
-        auto expected = aura::core::TypeId{expected_id, 1};
-        if (actual == expected)
-            return false;
-        // static→dynamic: erasure
-        if (actual != reg_.dynamic_type() && expected == reg_.dynamic_type())
-            return false;
-        return true; // dynamic→static or ground→ground
-    }
-
-    void visit_node(aura::ast::NodeId id) {
-        auto v = flat_.get(id);
-        // Post-order: children first
-        for (auto child_id : v.children) {
-            if (child_id != aura::ast::NULL_NODE)
-                visit_node(child_id);
-        }
-
-        switch (v.tag) {
-            case aura::ast::NodeTag::Call:
-                visit_call(id);
-                break;
-            case aura::ast::NodeTag::TypeAnnotation:
-                visit_annotation(id);
-                break;
-            default:
-                break;
-        }
-    }
-
-    void visit_call(aura::ast::NodeId id) {
-        // Currently handled by TypeSpecializationWrap at IR level.
-        // FlatAST-level call arg coercion is future work.
-    }
-
-    void visit_annotation(aura::ast::NodeId id) {
-        auto v = flat_.get(id);
+    if (v.tag == aura::ast::NodeTag::TypeAnnotation) {
         if (v.children.empty())
             return;
         auto inner_id = v.child(0);
-        auto inner_type = flat_.type_id(inner_id);
-        auto ann_type = flat_.type_id(id);
-        if (needs_coercion(inner_type, ann_type)) {
-            markers_.push_back(CoercionMarker{
+        auto inner_type = flat.type_id(inner_id);
+        auto ann_type = flat.type_id(id);
+        if (needs_coercion_impl(reg, inner_type, ann_type)) {
+            out.push_back(CoercionMarker{
                 .source_node = inner_id,
                 .target_type_id = ann_type,
                 .context = aura::ast::NodeTag::TypeAnnotation,
@@ -610,7 +628,25 @@ private:
             });
         }
     }
-};
+    // Call arg coercion: future work (handled at IR level by
+    // TypeSpecializationWrap for now).
+}
+} // namespace detail_pass
+
+// Free function: replaces the old class CoercionMarkerPass.
+// All inputs are passed explicitly (no member state). The
+// return value is the collected coercion markers.
+export std::vector<CoercionMarker> mark_coercions(aura::core::TypeRegistry& reg,
+                                                   aura::ast::FlatAST& flat,
+                                                   aura::ast::StringPool& pool,
+                                                   aura::ast::NodeId root) {
+    (void)pool;  // pool not used by current logic (kept for future)
+    std::vector<CoercionMarker> markers;
+    if (root == aura::ast::NULL_NODE || root >= flat.size())
+        return markers;
+    detail_pass::visit_for_coercion(reg, flat, root, markers);
+    return markers;
+}
 
 // ── DeadCoercionEliminationPass — remove redundant CastOp ─────
 // IR-level pass. Removes CastOp instructions where:
