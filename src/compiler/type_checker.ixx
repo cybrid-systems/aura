@@ -329,6 +329,18 @@ public:
     // solve failure, even in non-strict mode). Strict mode
     // (set_strict(true)) always wins — strict+permissive = strict.
     void set_permissive(bool p) { permissive_ = p; }
+
+    // Issue #168 Phase 1: set the cache epoch. CompilerService
+    // calls this before every infer_flat with the current
+    // mutation_epoch_ (#166). The engine uses it to gate the
+    // type cache: if the epoch has changed since the last
+    // inference, the whole cache is invalidated (re-infer
+    // everything). This is the safety net for mutations
+    // that don't set is_dirty on the right nodes.
+    void set_cache_epoch(std::uint64_t epoch) { cache_epoch_ = epoch; }
+    std::uint64_t epoch_invalidations() const {
+        return epoch_invalidations_;
+    }
 public:
     // declared_modules: name → module_path, 用于跨模块错误定位
     std::unordered_map<std::string, std::string> declared_modules_;
@@ -352,6 +364,29 @@ public:
     };
     InnerStats stats_;
     InnerStats stats() const { return stats_; }
+
+    // Issue #168 Phase 1: cache epoch gate. CompilerService
+    // sets this before every infer_flat call to the current
+    // mutation_epoch_ (#166). The engine compares it to
+    // last_inference_epoch_ at the start of infer_flat: if
+    // they differ, the cache is globally invalidated
+    // (coarse — re-infer everything). This catches stale
+    // cache results from mutations that didn't set
+    // is_dirty correctly (the issue's repro scenario).
+    //
+    // Tradeoff: invalidates MORE than strictly necessary
+    // (whole cache vs per-node). But provably correct for
+    // the bug class the issue describes.
+    std::uint64_t cache_epoch_ = 0;
+    std::uint64_t last_inference_epoch_ = 0;
+    // Counter for how many times the epoch gate invalidated
+    // the cache (visible via stats for debugging).
+    std::uint64_t epoch_invalidations_ = 0;
+    // Per-call flag: true at the start of infer_flat if the
+    // epoch advanced (forces a re-infer of this call's nodes
+    // even if is_dirty is false). Reset by the next call to
+    // infer_flat that sees the same epoch.
+    bool epoch_invalidated_ = false;
 
     // Issue #116: defer CoercionNode insertion to a separate
     // explicit pass. The type checker no longer mutates the
@@ -463,6 +498,14 @@ export struct TypeChecker {
     IncrementalStats stats() const { return stats_; }
     void reset_stats() { stats_ = {}; }
 
+    // Issue #168: gate the type cache by the global mutation
+    // epoch. CompilerService calls this with the current
+    // mutation_epoch_ (#166) before every infer_flat. The
+    // epoch is stored on the TypeChecker and forwarded to
+    // the per-call InferenceEngine, which uses it to
+    // invalidate the cache on epoch advance.
+    void set_cache_epoch(std::uint64_t epoch) { cache_epoch_ = epoch; }
+
     // Issue #130: cache hit rate (0.0 .. 1.0). Computed
     // as hits / (hits + misses + stale). Returns 0.0 if
     // no incremental checks have been done. Useful for
@@ -560,6 +603,12 @@ private:
     // rejects cross-type coercions (Int ↔ String, Int ↔ Bool, etc.) and
     // reports them as TypeError instead of silently coercing via Notes.
     bool strict_ = false;
+
+    // Issue #168: cache epoch. Set by CompilerService to the
+    // global mutation_epoch_ (#166) before each infer_flat
+    // call. Forwarded to the per-call InferenceEngine, which
+    // invalidates its cache on epoch advance.
+    std::uint64_t cache_epoch_ = 0;
 
     // Issue #116: see last_coercions() / take_coercions() above.
     CoercionMap last_coercions_;

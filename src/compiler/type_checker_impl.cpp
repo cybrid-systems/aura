@@ -1337,6 +1337,21 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
 TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id) {
     if (id == NULL_NODE || id >= flat.size())
         return reg_.dynamic_type();
+
+    // Issue #168 Phase 1: epoch gate. If the cache epoch has
+    // advanced since the last inference (i.e., a mutation
+    // happened that the type system might not have observed
+    // via is_dirty propagation), invalidate the cache globally
+    // for this call. We can't easily clear cached types on
+    // every node (would need a FlatAST-wide walk to mark
+    // dirty, which is expensive), so we gate the cache check
+    // on epoch_invalidated_ — a single bool, set per-call.
+    if (cache_epoch_ != last_inference_epoch_) {
+        epoch_invalidated_ = true;
+        last_inference_epoch_ = cache_epoch_;
+        ++epoch_invalidations_;
+    }
+
     cs_.clear();
     auto result = synthesize_flat(flat, pool, id, flat.get(id));
     std::vector<Constraint> unresolved;
@@ -1422,7 +1437,7 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
     // so clean nodes' cached types remain valid.
     // Skip TYPE_VAR cache entries — they are stale pre-solve type variables
     // that were cached before constraint solving resolved them.
-    if (!flat.is_dirty(id)) {
+    if (!flat.is_dirty(id) && !epoch_invalidated_) {
         auto cached = flat.type_id(id);
         if (cached > 0 && cached < reg_.size()) {
             auto tid = TypeId{cached, 1};
@@ -2861,6 +2876,7 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
     engine.declared_modules_ = type_module_src_;
     engine.declared_sigs_ = type_sigs_;
     engine.set_strict(strict_);  // Issue #79: plumb strict mode
+    engine.set_cache_epoch(cache_epoch_);  // Issue #168
     engine.bind_declared_sigs();
     auto result = engine.infer_flat(flat, pool, node);
     // Accumulate stats for the TypeChecker (Issue #72).
@@ -2918,6 +2934,7 @@ std::size_t TypeChecker::infer_flat_partial(
     engine.declared_modules_ = type_module_src_;
     engine.declared_sigs_ = type_sigs_;
     engine.set_strict(strict_);  // Issue #79: plumb strict mode
+    engine.set_cache_epoch(cache_epoch_);  // Issue #168
     engine.bind_declared_sigs();
 
     std::size_t re_inferred = 0;
