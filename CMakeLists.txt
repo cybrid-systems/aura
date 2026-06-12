@@ -784,6 +784,45 @@ target_compile_options(test_issue_131 PRIVATE -Wall -Wextra -Wpedantic
 target_link_libraries(test_issue_131 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_131_verification COMMAND ./test_issue_131)
 
+# ── CMake pilot for refactor Step 1.1 (test harness dedup) ─────────────────────
+# test_error_merr.cpp — exercises make_merr (centralized in 0.1+) via
+# Evaluator construction + error paths (mutate bad-arg etc.).
+# Standalone binary so it can run in isolation.
+# Modeled exactly on the test_issue_131 block structure.
+add_executable(test_error_merr tests/test_error_merr.cpp)
+set_property(TARGET test_error_merr PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_error_merr PRIVATE src)
+# Minimal for this first pilot (harness demo only; heavier ones will use fuller lists or support lib).
+# The make_merr is exercised in the main test suite (test_ir etc.).
+target_compile_options(test_error_merr PRIVATE -Wall -Wextra -Wpedantic
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
+    -Wno-parentheses)
+target_link_libraries(test_error_merr PRIVATE pthread)
+add_test(NAME error_merr_verification COMMAND ./test_error_merr)
+
+# Second pilot (Step 1.2) — Primitives / init_pair sanity (harness pattern repeat).
+add_executable(test_primitives_init tests/test_primitives_init.cpp)
+set_property(TARGET test_primitives_init PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_primitives_init PRIVATE src)
+target_compile_options(test_primitives_init PRIVATE -Wall -Wextra -Wpedantic
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
+    -Wno-parentheses)
+target_link_libraries(test_primitives_init PRIVATE pthread)
+add_test(NAME primitives_init_verification COMMAND ./test_primitives_init)
+
+# Third pilot (Step 1.3) — smallest harness demo (completes 1.1-1.3 set).
+add_executable(test_harness_pilot tests/test_harness_pilot.cpp)
+set_property(TARGET test_harness_pilot PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_harness_pilot PRIVATE src)
+target_compile_options(test_harness_pilot PRIVATE -Wall -Wextra -Wpedantic
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
+    -Wno-parentheses)
+target_link_libraries(test_harness_pilot PRIVATE pthread)
+add_test(NAME harness_pilot_verification COMMAND ./test_harness_pilot)
+
 # Issue #132 verification: AST walker helpers extracted
 # from CompilerService. Standalone binary that exercises
 # the new find_top_level_defines and collect_user_bindings
