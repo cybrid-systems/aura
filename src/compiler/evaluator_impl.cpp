@@ -11374,13 +11374,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         using aura::ast::NodeTag;
         using aura::ast::SymId;
         using aura::ast::NULL_NODE;
-        auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
-            auto mi = string_heap_.size(); string_heap_.push_back(m);
-            auto ki = string_heap_.size(); string_heap_.push_back(k);
-            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
-            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
-            return kp;
-        };
+        // local merr removed (last one); all calls now use centralized make_merr
         defuse_version_++;
         if (workspace_read_only_)
             return make_merr("read-only", "workspace is read-only");
