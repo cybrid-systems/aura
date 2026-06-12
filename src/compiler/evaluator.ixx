@@ -942,6 +942,12 @@ private:
     // ── Def-Use Analysis (P1) ───────────────────────────────────
     void* defuse_index_ = nullptr;
     std::uint64_t defuse_version_ = 0;  // incremented on each mutation
+    // Issue #164: per-join defuse_version_ snapshot. Set at the
+    // start of fiber:join's wait, re-checked at wakeup to detect
+    // mutations that happened DURING the join (the "transient
+    // inconsistency" the issue calls out). 0 means "no active
+    // wait" (fast-path or never-wait joins).
+    std::uint64_t defuse_version_at_wait_ = 0;
     // (#10) Track mutation-affected symbols for targeted index rebuild
     // Mutation primitives push affected sym names here; ensure_defuse
     // uses them to avoid full rebuild when only a few symbols changed.

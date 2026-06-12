@@ -1232,6 +1232,80 @@ target_compile_options(test_issue_163 PRIVATE -Wall -Wextra -Wpedantic
 target_link_libraries(test_issue_163 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_163_verification COMMAND ./test_issue_163)
 
+# Issue #164 verification: fiber:join spin-fallback elimination.
+# Verifies (1) basic fiber:join still works, (2) no spin even
+# on already-done target, (3) concurrent mutate:rebind during
+# fiber:join completes correctly (no version mismatch, no
+# timeout), (4) 20 parallel fibers via orch:parallel work,
+# (5) 50 sequential spawn+join complete within reasonable time
+# (proves no CPU burn from the removed spin fallback).
+add_executable(test_issue_164 tests/test_issue_164.cpp)
+set_property(TARGET test_issue_164 PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_issue_164 PRIVATE src src/compiler)
+target_sources(test_issue_164 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
+    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
+    src/core/type_arena.ixx
+    src/core/type.ixx
+    src/parser/lexer.ixx src/parser/parser.ixx
+    src/compiler/diag.ixx
+    src/compiler/coercion_map.ixx
+    src/compiler/type_checker.ixx
+    src/compiler/value.ixx
+    src/compiler/cache.ixx
+    src/compiler/ir.ixx
+    src/compiler/lowering.ixx
+    src/compiler/ir_executor.ixx
+    src/compiler/compute_kind.ixx
+    src/compiler/arity.ixx
+    src/compiler/evaluator.ixx
+    src/compiler/evaluator_pure.ixx
+    src/compiler/pass_manager.ixx
+    src/compiler/query.ixx
+    src/compiler/coercion_map.ixx
+    src/compiler/ir_cache_pure.ixx
+    src/compiler/lowering_linear_types.ixx
+    src/compiler/ast_walkers.ixx
+    src/compiler/ffi_primitives.ixx
+    src/compiler/service.ixx)
+target_sources(test_issue_164 PRIVATE
+    src/serve/fiber.cpp
+    src/serve/worker.cpp
+    src/serve/scheduler.cpp
+    src/serve/gc_coordinator.cpp
+    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
+    src/core/ast_impl.cpp
+    src/core/type_impl.cpp
+    src/compiler/value_impl.cpp
+    src/compiler/evaluator_impl.cpp
+    src/compiler/cache_impl.cpp
+    src/compiler/lowering_impl.cpp
+    src/compiler/ir_executor_impl.cpp
+    src/compiler/compute_kind_impl.cpp
+    src/compiler/query_impl.cpp
+    src/compiler/shape_profiler.cpp
+    src/compiler/spec_jit_controller.cpp
+    src/compiler/type_checker_impl.cpp
+    src/compiler/arity_impl.cpp
+    src/compiler/messaging_bridge_impl.cpp
+    src/compiler/ffi_primitives_impl.cpp
+    src/compiler/lowering_linear_types_impl.cpp
+    src/compiler/aura_jit.cpp
+    src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
+    src/compiler/observability_metrics.h
+    src/compiler/observability_snapshot.h)
+set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+target_include_directories(test_issue_164 PRIVATE ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(test_issue_164 PRIVATE AURA_HAVE_LLVM=1)
+target_link_libraries(test_issue_164 PRIVATE ${llvm_libs})
+target_compile_options(test_issue_164 PRIVATE -Wall -Wextra -Wpedantic
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
+    -Wno-parentheses)
+target_link_libraries(test_issue_164 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+add_test(NAME issue_164_verification COMMAND ./test_issue_164)
+
 # Issue #159 Phase 4: incremental compilation benchmark
 # harness. Measures eval_current latency across 4 scenarios
 # × N workspace sizes, outputs JSON to tests/bench_results/.
