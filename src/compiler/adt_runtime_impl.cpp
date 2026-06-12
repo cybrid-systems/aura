@@ -33,9 +33,11 @@ void AdtRuntime::register_primitives(
     RegisterFn add,
     std::pmr::vector<std::string>* string_heap) {
     // Skeleton: register a placeholder or the hook for datatype ctors.
-    // In full extraction this will contain the old AdtRegister logic + make_primitive for ctors.
-    // For now, just ensure the mechanism works (no-op or minimal).
-    // Future: move g_adt_constructors population here.
+    // Wiring of registration mechanism complete (Step 2.3): Evaluator ctor calls
+    // adt_runtime_.register_primitives with the add-callback (exact FFI pattern).
+    // Parser (parse_datatype) still drives actual ctor population by invoking the
+    // registered adt:* primitive(s); entries end up in the per-instance ctors_ map.
+    // (Full move of population logic into this module is follow-on if needed; see plan 5.2 buffer.)
 
     // Example stub (will be replaced when wiring the real ctors):
     // add("datatype", [this, string_heap](std::span<const EvalValue> a) -> EvalValue { ... });

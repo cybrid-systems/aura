@@ -394,7 +394,7 @@ primitive slot index. Lookup goes through `primitives_->slot_for_name`.
 - A reference to a registered primitive (so it can be passed
   as a value, used in higher-order contexts) → `make_primitive`.
 - A constructor function for an ADT → `make_primitive` (the
-  slot is in the `g_adt_constructors` table, see §7).
+  slot is resolved via `adt_runtime_.find_ctor` (per-Evaluator, FFI pattern), see §7).
 
 The `#62 PrimitiveRef` refactor unified these on the wire, but
 the storage is still different (closures are heavier; primitives
@@ -432,30 +432,40 @@ you need to free mid-flight, take `heap_mutex()` first.
 
 ---
 
-## 7. ADT constructor table
+## 7. ADT constructor table (post-extraction, Step 2.3 / 5.1)
 
-`g_adt_constructors` (line 168) is a `std::unordered_map<string,
-AdtCtorEntry>` that bypasses Aura's normal Begin-scoped-define
-rule. The `(datatype ...)` parser special form registers
-constructors here, so a `(Leaf 42)` call resolves the `Leaf` name
-*globally* even though the `datatype` form is a single top-level
-expression that returns `()`.
+The ADT constructor table (supporting `(datatype ...)` forms that
+must resolve constructors "globally" even from a single top-level
+expression) was extracted in refactor Step 2.3 using the *exact*
+FFI primitives pattern (RegisterFn callback to break cycles,
+per-instance state, registration in Evaluator ctor).
 
-### Why this exists
+**Current state (no more globals):**
+- State lives in `AdtRuntime adt_runtime_;` (member of Evaluator, declared in `evaluator.ixx` parallel to `ffi_runtime_`; see adt_runtime.ixx + _impl.cpp).
+- `AdtRuntime` owns the `unordered_map<string, AdtCtorEntry>` (ctor name → {name, arity, ...}).
+- Registration of adt-related primitives (and ctor slots) is wired in the Evaluator ctor **after** the ffi one:
+  ```cpp
+  adt_runtime_.register_primitives(
+      [this](std::string n, PrimFn f){ primitives_.add(std::move(n), std::move(f)); },
+      &string_heap_);
+  ```
+- Lookups (Env::lookup fallback for constructors) now use:
+  ```cpp
+  if (auto slot = adt_runtime_.find_ctor(n)) return make_primitive(*slot);
+  ```
+- The observable bypass behavior is unchanged: `(Leaf 42)` still resolves even though the defining `(datatype ...)` produced only one root node.
 
-`docs/design/issue-108-datatype-followup.md` documents the two
-failed attempts. The conclusion: Aura's parser returns one root
-node per top-level form, so `(datatype ...)` cannot emit N
-top-level defines. The global ctor table is the workaround.
+`AdtRuntime` provides `register_primitives(RegisterFn, string_heap*)` and `find_ctor(const string&) const` (plus `ctor_count()` for tests). The implementation follows the ffi_primitives.ixx/_impl.cpp skeleton 1:1.
 
-### When to add to it (not "how")
+### Why the bypass still exists (historical)
 
-You generally don't add to it directly. The `parse_datatype` /
-`AdtRegister` path does. But if you're adding a new "global
-primitive-like" feature (e.g. a `register-handler` for some
-event), the ctor table is the model: a global `unordered_map`,
-a typed entry, and a 4th-priority lookup in `Env::lookup` (after
-local, parent, primitives; see line 204).
+`docs/design/issue-108-datatype-followup.md` (and 134-closing, 108-closing) document the two failed attempts at "normal" defines. Conclusion: parser returns one root node per top-level form, so `(datatype ...)` cannot emit N top-level defines. The (now per-Evaluator) ctor table + primitive bridge is the preserved workaround. See also parser_impl.cpp comments for the registration trigger path.
+
+### When / how to extend
+
+Extend inside `adt_runtime.*` (add metadata to AdtCtorEntry, move more parse/registration logic from parser/evaluator_impl into the register_primitives body following the stub). The public surface for callers remains the same (find_ctor + the registered adt:* primitives). Cross-reference: `CMakeLists.txt` (all adt entries annotated "ADT extraction (FFI pattern, hygiene 3.2)"), `docs/design/core/typesystem.md` §0, `mutate_api.md` §0, evaluator.md File map.
+
+( Refactor 2.3/3.2/5.1 note: g_adt_constructors global + AdtCtorEntry struct + old registration block + direct Env lookups removed. All centralized to per-Evaluator adt_runtime_. No behavior change. )
 
 ---
 
@@ -673,6 +683,7 @@ it before the regression lands.
   self-modifying-flat rule, §3 locking, §4 defuse touch, §5
   closures, §6 FFI, §7 ADT, §8 recursion guards, §9 IRContext,
   §10 snapshot/restore.
+- 5.1 (2026-06-12, plan): small living-docs sync — §5/§7 ADT section fully modernized post-extraction (g_adt_constructors → AdtRuntime per-Evaluator + FFI); typed_mutation.md + adt_* comments polished; checklist already marked 100% merr complete; File map accurate.
 
 Future sections to add as discovered:
 
