@@ -1,31 +1,16 @@
 // test_error_merr.cpp — Pilot for centralized make_merr (refactor Step 0.1+)
-// and CMake test harness dedup (Step 1.1).
+// and CMake test harness dedup (Step 1.1 / 3.2).
 //
 // This is a minimal standalone binary demonstrating:
 //   - Exact same CHECK harness pattern as other issue tests (e.g. test_issue_116/131).
 //   - Simple construction smoke (the make_merr member is now part of Evaluator).
 //   - The CMake addition pattern for future pilots (to be turned into common macro).
+//   - Now uses the common issue_test_harness.hpp (small 3.2 dedup pilot).
 //
 // Full exercising of make_merr error paths will be covered by the main test_ir
 // and later pilots / full dedup.
 
-#include <cstdio>
-#include <cstdlib>
-#include <print>
-#include <string>
-
-static int g_passed = 0;
-static int g_failed = 0;
-
-#define CHECK(cond, msg) do { \
-    if (!(cond)) { \
-        std::println("  FAIL: {} (line {})", msg, __LINE__); \
-        ++g_failed; \
-    } else { \
-        std::println("  PASS: {}", msg); \
-        ++g_passed; \
-    } \
-} while(0)
+#include "issue_test_harness.hpp"  // 3.2 dedup pilot (common CHECK + globals)
 
 bool test_harness_smoke() {
     std::println("\n--- Test: harness smoke (pilot for 1.1) ---");
