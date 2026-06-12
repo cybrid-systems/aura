@@ -38,9 +38,13 @@ public:
     // Register the ADT-related primitives/ctors via the callback.
     // Wiring mechanism complete (Step 2.3 FFI pattern); population still triggered
     // from parser side via the registered primitive. Full logic move follow-on.
+    // 5.2 hygiene: signature now matches ffi exactly (string_heap + opaque + coverage counters)
+    // for consistency; last two nullable for tests / partial wiring.
     void register_primitives(
         RegisterFn add_primitive,
-        std::pmr::vector<std::string>* string_heap = nullptr);
+        std::pmr::vector<std::string>* string_heap = nullptr,
+        std::vector<void*>* opaque_heap = nullptr,
+        std::array<std::uint64_t, 16>* coverage_counters = nullptr);
 
     // Lookup a constructor by name (used from Env::lookup etc.).
     std::optional<std::size_t> find_ctor(const std::string& name) const;

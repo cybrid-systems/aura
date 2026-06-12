@@ -9038,12 +9038,13 @@ Evaluator::Evaluator() {
         },
         &string_heap_, &opaque_heap_, &coverage_counters_);
 
-    // Step 2.3: wire ADT (exact same RegisterFn callback pattern)
+    // Step 2.3 + 5.2 hygiene: wire ADT using exact same signature + coverage
+    // counters as ffi_runtime_ (for consistency across extractions; modeled on FFI).
     adt_runtime_.register_primitives(
         [this](std::string n, PrimFn f) {
             primitives_.add(std::move(n), std::move(f));
         },
-        &string_heap_);
+        &string_heap_, &opaque_heap_, &coverage_counters_);
 
     build_primitive_slots();
 

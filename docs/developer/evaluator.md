@@ -684,6 +684,7 @@ it before the regression lands.
   closures, §6 FFI, §7 ADT, §8 recursion guards, §9 IRContext,
   §10 snapshot/restore.
 - 5.1 (2026-06-12, plan): small living-docs sync — §5/§7 ADT section fully modernized post-extraction (g_adt_constructors → AdtRuntime per-Evaluator + FFI); typed_mutation.md + adt_* comments polished; checklist already marked 100% merr complete; File map accurate.
+- 5.2 (2026-06-12, plan): tiny hygiene — adt_runtime_.register_primitives now accepts (and call site passes) the full set of pointers (string_heap + opaque_heap + coverage_counters) exactly as ffi_runtime_ for cross-extraction consistency. No behavior change (params (void)ed in stub). See ctor ~9042 and adt_runtime.ixx.
 
 Future sections to add as discovered:
 
