@@ -19,6 +19,8 @@
 
 **重要**：本文档的 **三周计划 (#112) + #107-#110 全部实装**。完整原语 + 协议 + 集成 + 事务 + 审计。准确分两层：
 
+（Refactor 2.3/3.2/5.1 note）ADT 提取（g_adt_constructors 全局状态已移至 per-Evaluator `adt_runtime_`，FFI 模式）和 `make_merr` 消除已完成（Step 0.1+3.1，全 ~14-15 本地 lambda 清理，最后一个在 extract-function）。evaluator_impl 精简中。详见 developer/evaluator.md §3.2 / §7 和 plan.md。merr + ADT phases small-step complete per approved roadmap.
+
 ### C++ Core Layer (`src/compiler/evaluator.ixx` / `evaluator_impl.cpp` / `service.ixx` / `src/core/ast.ixx`)
 
 | 组件 | 实装 | 备注 |

@@ -36,7 +36,8 @@ public:
     using RegisterFn = std::function<void(std::string, PrimFn)>;
 
     // Register the ADT-related primitives/ctors via the callback.
-    // (In the full wiring step this will move the old parse_datatype / ctor table logic here.)
+    // Wiring mechanism complete (Step 2.3 FFI pattern); population still triggered
+    // from parser side via the registered primitive. Full logic move follow-on.
     void register_primitives(
         RegisterFn add_primitive,
         std::pmr::vector<std::string>* string_heap = nullptr);
