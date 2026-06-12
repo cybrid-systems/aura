@@ -16536,6 +16536,56 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
             return (*prim)(args);
         }
 
+        // Issue #158: macro expansion in eval_data_as_code. The
+        // cons-chain result of a legacy `defmacro` body is
+        // re-evaluated here. If the head of the list is itself a
+        // macro (e.g., the qq-built form `(bar ,x)` in a macro
+        // body where `bar` is also a macro), the system needs to
+        // detect this and trigger the macro path. Before this
+        // fix, eval_data_as_code only checked env + primitives,
+        // so `bar` (which lives in `macros_`, not env) was never
+        // expanded — the cons chain produced the list `(bar <x>)`
+        // but `bar` was just a symbol at re-eval time.
+        if (macros_.count(fn_name)) {
+            auto macro_it = macros_.find(fn_name);
+            auto& md = macro_it->second;
+            bool is_rest = md.dotted;
+            // Rest params on legacy macros via eval_data_as_code
+            // are not yet supported (same limitation as the main
+            // eval_flat path). Fall through to a no-op return if
+            // the macro has a dotted rest param.
+            if (is_rest) {
+                return make_void();
+            }
+            // Collect args (already data — no ast_to_data needed).
+            std::vector<EvalValue> cargs;
+            auto current = cdr_val;
+            while (types::is_pair(current)) {
+                auto arg_pair = types::as_pair_idx(current);
+                cargs.push_back(pairs_[arg_pair].car);
+                current = pairs_[arg_pair].cdr;
+            }
+            // Build tail env with regular params bound.
+            Env tail_env(&env);
+            tail_env.set_primitives(&primitives_);
+            tail_env.set_cells(&cells_);
+            if (md.pool) tail_env.set_pool(md.pool);
+            for (std::size_t i = 0; i < md.params.size() && i < cargs.size(); ++i) {
+                tail_env.bind(md.params[i], std::move(cargs[i]));
+            }
+            // Evaluate macro body (quasiquote-expanded template)
+            // → produces data (a list).
+            auto template_result = eval_flat(*md.flat, md.pool ? *md.pool : *current_pool_,
+                                              md.body_id, tail_env);
+            if (!template_result)
+                return template_result;
+            // Re-evaluate the data as code. The recursive call
+            // here is what enables macro composition: the inner
+            // macro's expansion is re-evaluated, which may itself
+            // contain another macro call.
+            return eval_data_as_code(*template_result, env, flat, pool);
+        }
+
         // Look up in environment. Phase 2.5.0: route through
         // lookup_by_intern (SymId-first). canonical_pool() is
         // the long-lived workspace pool; env.pool_ is the
@@ -17063,7 +17113,25 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                                               /*depth=*/0,
                                                               /*max_depth=*/10,
                                                               macros_);
-                                return eval_flat(*f, *p, expanded, eval_env);
+                                // Evaluate the cloned + inner-expanded
+                                // body. eval_flat returns a runtime
+                                // value (a list for cons-chain qq
+                                // bodies). The list needs to be
+                                // re-evaluated as code so the
+                                // inner macro's result is invoked
+                                // (e.g., `(bar ,x)` returns
+                                // `(* x 2)`, which then evaluates
+                                // as a call to `*`). This mirrors
+                                // the legacy defmacro path's
+                                // eval_data_as_code re-evaluation
+                                // and is what enables macro
+                                // composition in the hygienic
+                                // case (Issue #158).
+                                auto hygienic_result =
+                                    eval_flat(*f, *p, expanded, eval_env);
+                                if (!hygienic_result) return hygienic_result;
+                                return eval_data_as_code(*hygienic_result,
+                                                          eval_env, f, p);
                             }
 
                             // Convert AST args to data (NOT evaluate — macros receive syntax)
@@ -18798,12 +18866,91 @@ clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
 //
 // Bounded by `max_depth` to prevent infinite recursion (e.g., a
 // macro X whose body calls X).
+// Issue #158: helper to unwrap a cons-chain call into a real
+// Call node. The qq expander turns `(bar ,x)` (where `bar` is a
+// macro) into `(cons (quote bar) (cons x (quote ())))`. The
+// macro symbol is buried inside a Quote, not at the call head,
+// so the main macro check below misses it. This helper detects
+// the pattern: a Call to `cons` whose first arg is a Quote of
+// a known macro symbol. It walks the rest of the cons chain to
+// extract the args, then returns a new Call to the macro with
+// those args. Returns NULL_NODE if the pattern doesn't match.
+static aura::ast::NodeId unwrap_cons_chain_to_call(
+    aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura::ast::NodeId root,
+    const std::unordered_map<std::string, MacroDef>& macros) {
+    using namespace aura::ast;
+    if (root == NULL_NODE) return NULL_NODE;
+    auto v = flat->get(root);
+    if (v.tag != NodeTag::Call || v.children.size() != 3) return NULL_NODE;
+    auto callee_v = flat->get(v.child(0));
+    if (callee_v.tag != NodeTag::Variable) return NULL_NODE;
+    auto callee_name = std::string(pool->resolve(callee_v.sym_id));
+    if (callee_name != "cons") return NULL_NODE;
+    // First arg must be (quote <known-macro-sym>)
+    auto arg0_v = flat->get(v.child(1));
+    if (arg0_v.tag != NodeTag::Quote || arg0_v.children.empty()) return NULL_NODE;
+    auto quoted_v = flat->get(arg0_v.child(0));
+    if (quoted_v.tag != NodeTag::Variable) return NULL_NODE;
+    auto quoted_name = std::string(pool->resolve(quoted_v.sym_id));
+    if (macros.find(quoted_name) == macros.end()) return NULL_NODE;
+    // Walk the cdr chain (v.child(2)) to collect arg NodeIds.
+    // Each step: cdr is (cons <arg> <rest>) or (quote ()).
+    std::vector<NodeId> args;
+    NodeId cdr_id = v.child(2);
+    while (cdr_id != NULL_NODE) {
+        auto cdr_v = flat->get(cdr_id);
+        if (cdr_v.tag == NodeTag::Quote) {
+            // (quote ()) — end of list
+            break;
+        }
+        if (cdr_v.tag != NodeTag::Call || cdr_v.children.size() != 3) {
+            // Not a cons cell — bail
+            return NULL_NODE;
+        }
+        auto c_callee = flat->get(cdr_v.child(0));
+        if (c_callee.tag != NodeTag::Variable ||
+            std::string(pool->resolve(c_callee.sym_id)) != "cons") {
+            return NULL_NODE;
+        }
+        // Push the arg (cdr_v.child(1))
+        args.push_back(cdr_v.child(1));
+        cdr_id = cdr_v.child(2);
+    }
+    // Build Call(<quoted_name>, args...)
+    auto macro_var = flat->add_variable(pool->intern(quoted_name));
+    flat->set_marker(macro_var, SyntaxMarker::MacroIntroduced);
+    return flat->add_call(macro_var, args);
+}
+
 static aura::ast::NodeId expand_inner_macros(
     aura::ast::FlatAST* flat, aura::ast::StringPool* pool, aura::ast::NodeId root,
     int depth, int max_depth,
     const std::unordered_map<std::string, MacroDef>& macros) {
     using namespace aura::ast;
     if (root == NULL_NODE || depth >= max_depth) return root;
+    // Issue #158: unwrap qq-built cons chains whose head is a
+    // known macro. Without this, `(bar ,x)` inside a macro body
+    // stays as `(cons (quote bar) ...)` after expand_qq, and the
+    // main macro check below (which expects a Call head matching
+    // a known macro) misses it.
+    if (auto unwrapped = unwrap_cons_chain_to_call(flat, pool, root, macros);
+        unwrapped != NULL_NODE) {
+        // Substitute the unwrapped Call for the original cons chain
+        // at the parent's child slot, then recurse.
+        auto parent_id = flat->parent_of(root);
+        if (parent_id != NULL_NODE) {
+            auto parent_v = flat->get(parent_id);
+            for (std::uint32_t ci = 0; ci < parent_v.children.size(); ++ci) {
+                if (parent_v.child(ci) == root) {
+                    flat->set_child(parent_id, ci, unwrapped);
+                    break;
+                }
+            }
+        }
+        // Recurse into the unwrapped Call (which is now a real
+        // macro call site).
+        return expand_inner_macros(flat, pool, unwrapped, depth, max_depth, macros);
+    }
     auto v = flat->get(root);
     if (v.tag == NodeTag::Call && !v.children.empty()) {
         auto callee_v = flat->get(v.child(0));
