@@ -780,6 +780,13 @@ private:
     types::EvalValue load_module_file(const std::string& path);
     // Resolve a module path (supports AURA_PATH, .aura extension)
     std::string resolve_module_path(const std::string& path) const;
+
+    // Centralized tagged error pair builder ("error" . ("kind" . "message")).
+    // Replaces the ~14 duplicated local `auto merr = [this](...)` lambdas
+    // (see docs/developer/evaluator.md §3.2). Body implemented in evaluator_impl.cpp.
+    // Added in refactor Step 0.1 (pure addition, no call-site changes yet).
+    [[nodiscard]] EvalValue make_merr(const std::string& k, const std::string& m);
+
     Env top_;
     Primitives primitives_;
     ast::ASTArena* arena_ = nullptr;
