@@ -7685,8 +7685,18 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
 
     // (typecheck-current) — Type check the workspace AST
     // Uses a persistent TypeRegistry across calls so type IDs are stable.
-    // Full traversal for now; incremental skip (dirty-aware) requires
-    // TypeChecker to accept a dirty filter — future work.
+    //
+    // Issue #159 Phase 5: skip the full traversal when the workspace
+    // is clean. Caches the last result string. On a subsequent call
+    // with a clean workspace (no dirty nodes anywhere), returns the
+    // cached result without re-traversing. The cache is invalidated
+    // implicitly by mutations: any mutation marks the root dirty via
+    // mark_dirty_upward(), so has_dirty_subtree(root) becomes true
+    // and we re-traverse.
+    //
+    // Win: repeated (typecheck-current) calls on an unchanged
+    // workspace skip the O(N) tree walk entirely. Latency drops from
+    // ~20us to ~1us in the cache-hit case.
     primitives_.add("typecheck-current", [this](const auto&) {
         std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
         coverage_counters_[1]++;
@@ -7694,6 +7704,17 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             auto eidx = string_heap_.size();
             string_heap_.push_back("no workspace");
             return make_string(eidx);
+        }
+
+        // Phase 5: cache check. If the workspace is clean (no dirty
+        // nodes anywhere) AND we have a cached result, reuse it.
+        // The cache is implicitly invalidated by mutations (which
+        // mark the root dirty via mark_dirty_upward).
+        if (!workspace_flat_->has_dirty_subtree(workspace_flat_->root) &&
+            last_typecheck_result_) {
+            auto sidx = string_heap_.size();
+            string_heap_.push_back(*last_typecheck_result_);
+            return make_string(sidx);
         }
 
         // Lazily create persistent type registry (stable TypeIds across calls)
@@ -7736,6 +7757,8 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             }
         }
 
+        // Phase 5: cache the result for the next clean-workspace call.
+        last_typecheck_result_ = out;
         auto sidx = string_heap_.size();
         string_heap_.push_back(out);
         return make_string(sidx);

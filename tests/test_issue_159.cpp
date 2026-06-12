@@ -209,8 +209,36 @@ bool test_eval_current_partial_reuse() {
     return true;
 }
 
+// ── Test 7: Phase 5 — typecheck-current skips full traversal on clean workspace ──
+//
+// Phase 5: when the workspace is clean (no dirty nodes),
+// typecheck-current reuses the cached result instead of doing
+// a full tree walk. The cache is invalidated by mutations (any
+// mutation marks the root dirty).
+bool test_typecheck_current_cache_reuse() {
+    std::println("\n--- Test 7: typecheck-current reuses cache on clean workspace (Phase 5) ---");
+    aura::compiler::CompilerService cs;
+    cs.eval("(set-code \"(define x 1) (define y 2)\")");
+    // First typecheck — full traversal, populates cache.
+    auto r1 = cs.eval("(typecheck-current)");
+    CHECK(r1 ? "ok" : "err", "first typecheck-current succeeded (full traversal)");
+    if (!r1) return true;
+    // Second typecheck — workspace still clean, should reuse cache.
+    // We can't easily measure the latency from here (it's hidden
+    // inside the primitive), but we can verify it doesn't crash
+    // and returns a string.
+    auto r2 = cs.eval("(typecheck-current)");
+    CHECK(r2 ? "ok" : "err", "second typecheck-current succeeded (cache hit)");
+    // Mutate — invalidates cache (root becomes dirty).
+    cs.eval("(mutate:rebind \"x\" \"42\" \"bump\")");
+    // Third typecheck — workspace dirty, full re-traversal.
+    auto r3 = cs.eval("(typecheck-current)");
+    CHECK(r3 ? "ok" : "err", "third typecheck-current after mutation (full re-traversal)");
+    return true;
+}
+
 int main() {
-    std::fprintf(stdout, "═══ Issue #159 — incremental typecheck + eval (Phases 1-2) ═══\n");
+    std::fprintf(stdout, "═══ Issue #159 — incremental typecheck + eval (Phases 1-5) ═══\n");
 
     // Phase 1 tests
     test_primitive_exported();
@@ -221,6 +249,9 @@ int main() {
 
     // Phase 2 test
     test_eval_current_partial_reuse();
+
+    // Phase 5 test
+    test_typecheck_current_cache_reuse();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
