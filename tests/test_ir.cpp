@@ -3093,6 +3093,151 @@ int main() {
         if (dce_failed > 0) return 1;
     }
 
+    // ── Issue #160: General Dead Code Elimination (DCEPass) ──
+    // The DeadCoercionEliminationPass above handles casts
+    // specifically. The new DCEPass is more general: it
+    // removes any pure-compute instruction whose result is
+    // unused (constants, locals, arithmetic, car/cdr, etc.).
+    int dce2_passed = 0, dce2_failed = 0;
+    {
+        // Test 1: dead constant
+        {
+            aura::ir::IRModule mod;
+            mod.functions.push_back(aura::ir::IRFunction{
+                .name = "test", .local_count = 10
+            });
+            auto& func = mod.functions.back();
+            func.blocks.push_back({0});
+            auto& block = func.blocks.back();
+            // ConstI64 → Local (passes to slot1) → Return(slot1)
+            // The ConstI64 (slot0) result is unused. The Local
+            // produces slot1 which IS used.
+            block.instructions = {
+                {aura::ir::IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},
+                {aura::ir::IROpcode::Local,    {1, 99, 0, 0}, 0, 1},  // slot1 = 99 (constant); slot0 not referenced
+                {aura::ir::IROpcode::Return,   {1, 0, 0, 0}, 0, 0},
+            };
+            aura::compiler::DCEPass dce;
+            dce.run(mod);
+            // After DCE: slot0 (ConstI64 result) is unused.
+            // The ConstI64 instruction itself has result slot 0
+            // (referenced by no one) → replaced with Nop.
+            // The Local (slot1, src=99) is still there (slot1 is
+            // used by Return). The ConstI64 should be Nop.
+            bool const_to_nop = false;
+            for (auto& instr : block.instructions) {
+                if (instr.opcode == aura::ir::IROpcode::ConstI64) {
+                    // Original const; should have been replaced
+                    const_to_nop = false;
+                }
+                if (instr.opcode == aura::ir::IROpcode::Nop) {
+                    // At least one Nop exists (the dead const)
+                    const_to_nop = true;
+                }
+            }
+            if (const_to_nop) { ++dce2_passed; std::println("DCE OK: dead const eliminated"); }
+            else { ++dce2_failed; std::println(std::cerr, "DCE FAIL: dead const not removed"); }
+        }
+
+        // Test 2: dead arithmetic
+        {
+            aura::ir::IRModule mod;
+            mod.functions.push_back(aura::ir::IRFunction{
+                .name = "test", .local_count = 10
+            });
+            auto& func = mod.functions.back();
+            func.blocks.push_back({0});
+            auto& block = func.blocks.back();
+            // (let ((a (+ 1 2))) a) — but the (+ 1 2) result IS used.
+            // (let ((a (+ 1 2))) 99) — the (+ 1 2) result is unused.
+            block.instructions = {
+                {aura::ir::IROpcode::ConstI64, {0, 1, 0, 0}, 0, 1},   // slot0 = 1
+                {aura::ir::IROpcode::ConstI64, {1, 2, 0, 0}, 0, 1},   // slot1 = 2
+                {aura::ir::IROpcode::Add,       {2, 0, 1, 0}, 0, 1},   // slot2 = slot0 + slot1
+                {aura::ir::IROpcode::ConstI64, {3, 99, 0, 0}, 0, 1},  // slot3 = 99 (used by Return)
+                {aura::ir::IROpcode::Return,   {3, 0, 0, 0}, 0, 0},   // return slot3
+            };
+            aura::compiler::DCEPass dce;
+            dce.run(mod);
+            // After DCE: slot2 (Add result) is unused. The Add
+            // instruction should be Nop. slot0, slot1 (the args
+            // of Add) are also unreferenced → also Nop.
+            int add_count = 0;
+            for (auto& instr : block.instructions) {
+                if (instr.opcode == aura::ir::IROpcode::Add) ++add_count;
+            }
+            if (add_count == 0) { ++dce2_passed; std::println("DCE OK: dead arithmetic eliminated"); }
+            else { ++dce2_failed; std::println(std::cerr, "DCE FAIL: {} Add(s) remain (expected 0)", add_count); }
+        }
+
+        // Test 3: used result is preserved
+        {
+            aura::ir::IRModule mod;
+            mod.functions.push_back(aura::ir::IRFunction{
+                .name = "test", .local_count = 10
+            });
+            auto& func = mod.functions.back();
+            func.blocks.push_back({0});
+            auto& block = func.blocks.back();
+            // (+ 1 2) → return
+            block.instructions = {
+                {aura::ir::IROpcode::ConstI64, {0, 1, 0, 0}, 0, 1},
+                {aura::ir::IROpcode::ConstI64, {1, 2, 0, 0}, 0, 1},
+                {aura::ir::IROpcode::Add,       {2, 0, 1, 0}, 0, 1},
+                {aura::ir::IROpcode::Return,   {2, 0, 0, 0}, 0, 0},
+            };
+            aura::compiler::DCEPass dce;
+            dce.run(mod);
+            int add_count = 0, const_count = 0;
+            for (auto& instr : block.instructions) {
+                if (instr.opcode == aura::ir::IROpcode::Add) ++add_count;
+                if (instr.opcode == aura::ir::IROpcode::ConstI64) ++const_count;
+            }
+            if (add_count == 1 && const_count == 2) {
+                ++dce2_passed;
+                std::println("DCE OK: used result preserved (no false positives)");
+            } else {
+                ++dce2_failed;
+                std::println(std::cerr, "DCE FAIL: add={} const={} (expected 1, 2)", add_count, const_count);
+            }
+        }
+
+        // Test 4: side-effecting ops are preserved (Call, Return, Branch)
+        {
+            aura::ir::IRModule mod;
+            mod.functions.push_back(aura::ir::IRFunction{
+                .name = "test", .local_count = 10
+            });
+            auto& func = mod.functions.back();
+            func.blocks.push_back({0});
+            auto& block = func.blocks.back();
+            // Even with unused results, side-effecting ops stay.
+            block.instructions = {
+                {aura::ir::IROpcode::ConstI64, {0, 1, 0, 0}, 0, 1},
+                {aura::ir::IROpcode::Call,      {99, 0, 0, 1}, 0, 0},  // Call(99, 0, 0, slot1)
+                {aura::ir::IROpcode::Return,   {1, 0, 0, 0}, 0, 0},   // return slot1
+            };
+            aura::compiler::DCEPass dce;
+            dce.run(mod);
+            int call_count = 0, return_count = 0;
+            for (auto& instr : block.instructions) {
+                if (instr.opcode == aura::ir::IROpcode::Call) ++call_count;
+                if (instr.opcode == aura::ir::IROpcode::Return) ++return_count;
+            }
+            if (call_count == 1 && return_count == 1) {
+                ++dce2_passed;
+                std::println("DCE OK: side-effecting ops preserved (Call, Return)");
+            } else {
+                ++dce2_failed;
+                std::println(std::cerr, "DCE FAIL: call={} return={} (expected 1, 1)", call_count, return_count);
+            }
+        }
+
+        std::println("DCE (Issue #160): {}/{}/{} passed/failed/total",
+                     dce2_passed, dce2_failed, dce2_passed + dce2_failed);
+        if (dce2_failed > 0) return 1;
+    }
+
     // ── Iter 8: Gradual Guarantee tests ────────────────────────
     {
 
