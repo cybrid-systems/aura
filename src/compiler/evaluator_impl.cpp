@@ -10762,25 +10762,19 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     //       → wraps in let binding
     primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue {
         std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
-        auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
-            auto mi = string_heap_.size(); string_heap_.push_back(m);
-            auto ki = string_heap_.size(); string_heap_.push_back(k);
-            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
-            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
-            return kp;
-        };
+        // (post 3.1 follow-on) local merr removed; make_merr
         defuse_version_++;
-        if (workspace_read_only_) return merr("read-only", "workspace is read-only");
+        if (workspace_read_only_) return make_merr("read-only", "workspace is read-only");
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) ||
             !workspace_flat_ || !workspace_pool_)
-            return merr("bad-arg", "usage: (mutate:wrap node-id wrapper-template [summary])");
+            return make_merr("bad-arg", "usage: (mutate:wrap node-id wrapper-template [summary])");
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto tmpl_idx = as_string_idx(a[1]);
         if (tmpl_idx >= string_heap_.size())
-            return merr("bad-arg", "template string index out of range");
+            return make_merr("bad-arg", "template string index out of range");
         auto& flat = *workspace_flat_;
         if (node >= flat.size())
-            return merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
+            return make_merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
 
         std::string summary = (a.size() > 2 && is_string(a[2]))
                                   ? string_heap_[as_string_idx(a[2])]
@@ -10804,13 +10798,13 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         }
 
         if (parent_of_target == aura::ast::NULL_NODE || child_idx_in_parent < 0)
-            return merr("no-parent", "node " + std::to_string(node) + " has no parent in the AST");
+            return make_merr("no-parent", "node " + std::to_string(node) + " has no parent in the AST");
 
         // Replace `_` in the template with a unique variable
         std::string sentinel = "__WRAP_TARGET_" + std::to_string(node) + "__";
         auto sentinel_pos = tmpl.find('_');
         if (sentinel_pos == std::string::npos)
-            return merr("bad-arg", "wrapper-template must contain a '_' placeholder");
+            return make_merr("bad-arg", "wrapper-template must contain a '_' placeholder");
 
         auto parsed_tmpl = tmpl.substr(0, sentinel_pos) + sentinel + tmpl.substr(sentinel_pos + 1);
 
@@ -10828,7 +10822,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
             } else {
                 parse_err = "wrapper template could not be parsed";
             }
-            return merr("parse-error", parse_err);
+            return make_merr("parse-error", parse_err);
         }
 
         // Find the sentinel variable and its parent in the parsed AST
@@ -10860,7 +10854,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         if (sentinel_id == aura::ast::NULL_NODE ||
             sentinel_parent == aura::ast::NULL_NODE ||
             sentinel_child_idx < 0)
-            return merr("internal", "sentinel placeholder not found in parsed wrapper template");
+            return make_merr("internal", "sentinel placeholder not found in parsed wrapper template");
 
         // Replace the sentinel variable in the wrapper with the target node
         flat.set_child(sentinel_parent, static_cast<std::uint32_t>(sentinel_child_idx), node);
@@ -10948,7 +10942,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         }
 
         if (parent_of_target == aura::ast::NULL_NODE || child_idx_in_parent < 0)
-            return merr("no-parent", "node " + std::to_string(node) + " has no parent in the AST");
+            return make_merr("no-parent", "node " + std::to_string(node) + " has no parent in the AST");
 
         // Create the new function definition string
         std::string define_str = "(define (" + new_name + " x) x)";
