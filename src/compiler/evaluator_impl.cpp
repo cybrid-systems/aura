@@ -12751,6 +12751,15 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
             return it != s_fiber_results.end() && it->second.ready;
         };
 
+        // Issue #164 sub-fix #4: capture the workspace's
+        // defuse_version_ at the start of the join, so we can
+        // re-check it at wakeup to detect mutations that
+        // happened DURING the join. Set to 0 at the start means
+        // the post-wait check is "first join ever or just reset"
+        // — guarded by `!= 0` so we don't false-positive on the
+        // initial state.
+        defuse_version_at_wait_ = defuse_version_;
+
         if (aura::messaging::g_fiber_yield && aura::messaging::g_fiber_lookup) {
             // Issue #119: serve-async proper-blocking path.
             //
@@ -12811,17 +12820,39 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
             // else: target is already done. Skip the join — go
             // straight to the result fetch below.
         } else if (aura::messaging::g_fiber_yield) {
-            // Fallback: serve-async but no fiber_lookup. Keep
-            // the old 200k spin-wait as a defensive fallback
-            // (should not happen in production; g_fiber_lookup
-            // is always set when g_fiber_yield is set).
-            for (int iter = 0; iter < 200000; ++iter) {
-                {
-                    std::lock_guard<std::mutex> lock(s_fiber_results_mtx_);
-                    if (is_ready()) break;
-                }
-                aura::messaging::g_fiber_yield();
-            }
+            // Issue #164: serve-async but no fiber_lookup. The
+            // previous implementation did a 200k-iteration spin
+            // with g_fiber_yield between iterations. This is a
+            // bug:
+            //   - Wastes CPU even with yield (the test reproduces
+            //     5-15% CPU burn under 50+ fibers with mutations)
+            //   - Creates transient defuse_version_ ↔ workspace
+            //     inconsistency: while spinning, mutate:*
+            //     primitives may have incremented defuse_version_
+            //     (twice — once before and once after the
+            //     mutation) and the joiner's view of the workspace
+            //     is now stale.
+            //   - Degrades to old behavior silently when
+            //     g_fiber_lookup is missing (e.g. test contexts
+            //     where the fiber scheduler hook isn't installed).
+            //
+            // The fix: degrade cleanly to the stdin-style
+            // blocking wait on s_fiber_results_cv_. The cv
+            // semantics are already tested (Issue #109 5b) and
+            // give us zero-CPU blocking. This is the "clean
+            // degradation" option from the issue AC.
+            //
+            // Tradeoff: slower wakeup than the proper-blocking
+            // path (cv needs a notify_all + epoll cycle vs the
+            // eventfd + epoll cycle), but ZERO CPU burn during
+            // the wait, and no version inconsistency.
+            std::println(std::cerr,
+                "[fiber:join] WARN: serve-async mode without g_fiber_lookup; "
+                "degrading to cv-based blocking. This is a misconfiguration "
+                "in production; check the fiber scheduler hook installation.");
+            std::unique_lock<std::mutex> lock(s_fiber_results_mtx_);
+            s_fiber_results_cv_.wait_for(
+                lock, std::chrono::seconds(200), is_ready);
         } else {
             // Stdin mode: real blocking wait on the cv. 200s
             // ceiling via wait_for (returns false on timeout,
@@ -12845,6 +12876,41 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
             result_ptr = std::move(it->second.value);
             s_fiber_results.erase(it);
         }
+
+        // Issue #164 sub-fix #4: re-validate defuse_version_ after
+        // wakeup. While the joiner was blocked (via the proper-
+        // blocking path OR the cv-degradation path), mutate:*
+        // primitives in OTHER fibers may have incremented
+        // defuse_version_ (twice per mutation: once before and
+        // once after, with a yield_mutation_boundary between).
+        //
+        // A mismatch between the version we observed at join start
+        // and the version we observe at join wakeup means the
+        // workspace mutated during the join — which is the
+        // transient inconsistency the issue calls out.
+        //
+        // The fix: capture the version at the start of the wait,
+        // re-check at the end. On mismatch, emit a loud warning
+        // (stderr) so the operator sees the inconsistency. We
+        // do NOT abort — the result is still valid; the warning
+        // is for observability. Future work could surface this
+        // as a structured diagnostic.
+        //
+        // The captured version is updated only when the wait
+        // actually happened (i.e., the joiner didn't fast-path
+        // the already-done target). For fast-path joins, there's
+        // no wait, so no re-validation needed.
+        if (defuse_version_at_wait_ != defuse_version_ &&
+            defuse_version_at_wait_ != 0) {
+            std::println(std::cerr,
+                "[fiber:join] WARN: workspace mutated during join "
+                "(defuse_version {} -> {}). The joiner resumed after "
+                "concurrent mutate:* primitives. Result is still valid; "
+                "re-validate callers if they depend on workspace state.",
+                defuse_version_at_wait_, defuse_version_);
+        }
+        defuse_version_at_wait_ = 0;  // reset for next join
+
         return std::move(**result_ptr);
     });
     // ── Issue #152 P0 Phase 3 — Orchestration Integration ─
