@@ -638,8 +638,8 @@ it before the regression lands.
 |------|-----------------|
 | `src/compiler/evaluator.ixx` | Evaluator class declaration, `workspace_mtx_`, callback hook setters |
 | `src/compiler/evaluator_impl.cpp` | (being reduced via extractions) `init_pair_primitives`, `eval_flat`, query/mutate/ast/workspace primitives, ... (ADT moved to adt_runtime in Step 2.x pilot) |
-| `src/compiler/adt_runtime.ixx` | (new, Step 2.1 pilot) AdtRuntime class + register_primitives (FFI pattern); replaces old global g_adt_constructors |
-| `src/compiler/adt_runtime_impl.cpp` | (new, Step 2.2) Skeleton impl modeled on ffi_primitives_impl.cpp; register + find_ctor map ops |
+| `src/compiler/adt_runtime.ixx` | AdtRuntime class + register_primitives (FFI pattern extraction complete); replaces old global g_adt_constructors |
+| `src/compiler/adt_runtime_impl.cpp` | Impl for register + find_ctor (FFI pattern; extraction complete) |
 | `src/compiler/value.ixx` | `EvalValue` POD + `make_*` / `is_*` / `as_*` helpers |
 | `src/compiler/ir_executor.ixx` | `IRContext` struct + `IRInterpreter` class declaration |
 | `src/compiler/ir_executor_impl.cpp` | `IRInterpreter::execute`, `run_function` (the actual opcodes) |

@@ -16,7 +16,7 @@ target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # Step 2.3 FFI-pattern extraction
+    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -44,7 +44,7 @@ target_sources(aura PRIVATE
     src/compiler/value_impl.cpp
     src/compiler/evaluator_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # Step 2.3 wiring (FFI pattern extraction)
+    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
@@ -184,7 +184,7 @@ target_sources(test_ir PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # Step 2.3 FFI-pattern extraction (for test_ir isolation)
+    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -217,7 +217,7 @@ target_sources(test_ir PRIVATE
     src/compiler/value_impl.cpp
     src/compiler/evaluator_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # Step 2.3 wiring (FFI pattern extraction)
+    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
@@ -902,7 +902,7 @@ target_sources(test_issue_135 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # Step 2.3 FFI-pattern extraction (for test_ir isolation)
+    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -931,7 +931,7 @@ target_sources(test_issue_135 PRIVATE
     src/compiler/value_impl.cpp
     src/compiler/evaluator_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # Step 2.3 wiring (FFI pattern extraction)
+    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
@@ -998,7 +998,7 @@ target_sources(test_issue_137 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # Step 2.3 FFI-pattern extraction (for test_ir isolation)
+    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -1037,7 +1037,7 @@ target_sources(test_issue_137 PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # Step 2.3 wiring (FFI pattern extraction)
+    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
@@ -1069,7 +1069,7 @@ target_sources(test_issue_158 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # Step 2.3 FFI-pattern extraction (for test_ir isolation)
+    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -1108,7 +1108,7 @@ target_sources(test_issue_158 PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # Step 2.3 wiring (FFI pattern extraction)
+    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
@@ -1140,7 +1140,7 @@ target_sources(test_issue_159 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # Step 2.3 FFI-pattern extraction (for test_ir isolation)
+    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -1179,7 +1179,7 @@ target_sources(test_issue_159 PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # Step 2.3 wiring (FFI pattern extraction)
+    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
@@ -1340,7 +1340,7 @@ target_sources(test_issue_164 PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # Step 2.3 wiring (FFI pattern extraction)
+    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
@@ -1414,7 +1414,7 @@ target_sources(test_issue_165 PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # Step 2.3 wiring (FFI pattern extraction)
+    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
@@ -1486,7 +1486,7 @@ target_sources(test_issue_166 PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # Step 2.3 wiring (FFI pattern extraction)
+    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
@@ -1565,7 +1565,7 @@ target_sources(test_issue_159_bench PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FI
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # Step 2.3 FFI-pattern extraction (for test_ir isolation)
+    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -1604,7 +1604,7 @@ target_sources(test_issue_159_bench PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # Step 2.3 wiring (FFI pattern extraction)
+    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
@@ -1644,7 +1644,7 @@ target_sources(test_issue_138 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # Step 2.3 FFI-pattern extraction (for test_ir isolation)
+    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -1683,7 +1683,7 @@ target_sources(test_issue_138 PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # Step 2.3 wiring (FFI pattern extraction)
+    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
@@ -1717,7 +1717,7 @@ target_sources(test_issue_139 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # Step 2.3 FFI-pattern extraction (for test_ir isolation)
+    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -1756,7 +1756,7 @@ target_sources(test_issue_139 PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # Step 2.3 wiring (FFI pattern extraction)
+    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
@@ -1790,7 +1790,7 @@ target_sources(test_issue_140 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # Step 2.3 FFI-pattern extraction (for test_ir isolation)
+    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -1829,7 +1829,7 @@ target_sources(test_issue_140 PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # Step 2.3 wiring (FFI pattern extraction)
+    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
@@ -1862,7 +1862,7 @@ target_sources(test_issue_141 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # Step 2.3 FFI-pattern extraction (for test_ir isolation)
+    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -1901,7 +1901,7 @@ target_sources(test_issue_141 PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # Step 2.3 wiring (FFI pattern extraction)
+    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
@@ -1935,7 +1935,7 @@ target_sources(test_issue_142 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # Step 2.3 FFI-pattern extraction (for test_ir isolation)
+    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -1974,7 +1974,7 @@ target_sources(test_issue_142 PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # Step 2.3 wiring (FFI pattern extraction)
+    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
@@ -2039,7 +2039,7 @@ target_sources(test_gc_evaluator_integration PRIVATE
     src/compiler/value_impl.cpp
     src/compiler/evaluator_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # Step 2.3 wiring (FFI pattern extraction)
+    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
@@ -2254,7 +2254,7 @@ target_sources(test_issue_143 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # Step 2.3 FFI-pattern extraction (for test_ir isolation)
+    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -2293,7 +2293,7 @@ target_sources(test_issue_143 PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # Step 2.3 wiring (FFI pattern extraction)
+    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
@@ -2325,7 +2325,7 @@ target_sources(test_issue_144 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # Step 2.3 FFI-pattern extraction (for test_ir isolation)
+    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -2358,7 +2358,7 @@ target_sources(test_issue_144 PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # Step 2.3 wiring (FFI pattern extraction)
+    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
     src/core/contract_handler.cpp
     src/compiler/shape_profiler.cpp
@@ -2405,7 +2405,7 @@ target_sources(test_issue_146 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # Step 2.3 FFI-pattern extraction (for test_ir isolation)
+    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -2439,7 +2439,7 @@ target_sources(test_issue_146 PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # Step 2.3 wiring (FFI pattern extraction)
+    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
@@ -2469,7 +2469,7 @@ target_sources(test_issue_147 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # Step 2.3 FFI-pattern extraction (for test_ir isolation)
+    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -2503,7 +2503,7 @@ target_sources(test_issue_147 PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # Step 2.3 wiring (FFI pattern extraction)
+    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
@@ -2530,7 +2530,7 @@ target_sources(test_issue_148 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # Step 2.3 FFI-pattern extraction (for test_ir isolation)
+    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -2564,7 +2564,7 @@ target_sources(test_issue_148 PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # Step 2.3 wiring (FFI pattern extraction)
+    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
@@ -2591,7 +2591,7 @@ target_sources(test_issue_149 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # Step 2.3 FFI-pattern extraction (for test_ir isolation)
+    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -2625,7 +2625,7 @@ target_sources(test_issue_149 PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # Step 2.3 wiring (FFI pattern extraction)
+    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
@@ -2651,7 +2651,7 @@ target_sources(test_issue_145 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # Step 2.3 FFI-pattern extraction (for test_ir isolation)
+    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
     src/compiler/cache.ixx
     src/compiler/value.ixx
     src/compiler/ir.ixx
@@ -2684,7 +2684,7 @@ target_sources(test_issue_145 PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # Step 2.3 wiring (FFI pattern extraction)
+    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
     src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
