@@ -15,6 +15,8 @@
 
 （Refactor small-step note, 2026-06-12）`make_merr` centralized (Evaluator member, Step 0.1); first sites (replace-type, replace-value) migrated (0.2/0.3). Remaining local `merr` lambdas will be cleaned in follow-on small steps. See evaluator.md §3.2 and evaluator_impl.cpp. No behavior change.
 
+ADT extraction (Step 2.3): state moved to adt_runtime_ (FFI pattern); old global + registration block removed from evaluator_impl. Lookups and ctor reg now per-Evaluator. Parser side (parse_datatype) noted for future. See adt_runtime.{ixx,impl.cpp} and evaluator.md File map.
+
 ### C++ Core Layer (`src/compiler/evaluator_impl.cpp` / `service.ixx` / `src/core/ast.ixx`)
 
 | 组件 | 实装 | 备注 |

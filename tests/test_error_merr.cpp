@@ -31,6 +31,7 @@ bool test_harness_smoke() {
     std::println("\n--- Test: harness smoke (pilot for 1.1) ---");
     CHECK(1 == 1, "basic CHECK works");
     CHECK(true, "make_merr centralization (0.1) + wiring (0.2/0.3) linked in main test suite");
+    // Step 2.3: adt_runtime (FFI pattern) wired into Evaluator; old g_adt removed.
     return true;
 }
 
