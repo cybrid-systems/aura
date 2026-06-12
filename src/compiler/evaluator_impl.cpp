@@ -954,6 +954,19 @@ namespace {
     }
 } // namespace
 
+// Centralized make_merr (refactor Step 0.1).
+// Replaces all the duplicated local `auto merr = [this](const std::string& k, const std::string& m)`
+// lambdas that appeared in mutate:* (and some query) primitives.
+// See declaration in evaluator.ixx (private: section ~752 block) and
+// docs/developer/evaluator.md §3.2. The body is exactly the previous lambda body.
+EvalValue Evaluator::make_merr(const std::string& k, const std::string& m) {
+    auto mi = string_heap_.size(); string_heap_.push_back(m);
+    auto ki = string_heap_.size(); string_heap_.push_back(k);
+    auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
+    auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
+    return kp;
+}
+
 void Evaluator::init_pair_primitives() {
     // ── Type predicates ──────────────────────────────────────────
     primitives_.add("integer?", [](const auto& a) {
@@ -4707,30 +4720,25 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     // ── Typed mutation operators ──────────────────────────────────
 
     // (mutate:replace-type node-id new-type-str)
+    // NOTE (refactor Step 0.2): local merr lambda removed; now uses the
+    // centralized Evaluator::make_merr (added in 0.1).
     primitives_.add("mutate:replace-type", [this](std::span<const EvalValue> a) -> EvalValue {
         // Yield at mutation boundary (Issue #31) — safe point before/after mutation.
         if (aura::messaging::g_fiber_yield_mutation_boundary)
             aura::messaging::g_fiber_yield_mutation_boundary();
 
-        auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
-            auto mi = string_heap_.size(); string_heap_.push_back(m);
-            auto ki = string_heap_.size(); string_heap_.push_back(k);
-            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
-            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
-            return kp;
-        };
         defuse_version_++;
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]))
-            return merr("bad-arg", "usage: (mutate:replace-type node-id new-type)");
+            return make_merr("bad-arg", "usage: (mutate:replace-type node-id new-type)");
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto type_idx = as_string_idx(a[1]);
         if (type_idx >= string_heap_.size())
-            return merr("bad-arg", "type string index out of range");
+            return make_merr("bad-arg", "type string index out of range");
         if (!workspace_flat_)
-            return merr("no-workspace", "no workspace AST loaded");
+            return make_merr("no-workspace", "no workspace AST loaded");
         auto& flat = *workspace_flat_;
         if (node >= flat.size())
-            return merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
+            return make_merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
 
         auto old_tid = flat.type_id(node);
         std::string old_type_str = (old_tid > 0) ? "#" + std::to_string(old_tid) : "Any";
@@ -4770,28 +4778,23 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     // target node: int → LiteralInt, float → LiteralFloat, string → Variable/LiteralString.
     primitives_.add("mutate:replace-value", [this](std::span<const EvalValue> a) -> EvalValue {
         std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
-        auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
-            auto mi = string_heap_.size(); string_heap_.push_back(m);
-            auto ki = string_heap_.size(); string_heap_.push_back(k);
-            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
-            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
-            return kp;
-        };
+        // (Step 0.2/0.3) local merr removed; using centralized make_merr
+        // (declared in evaluator.ixx, defined above).
         defuse_version_++;
         aura::messaging::g_fiber_yield_mutation_boundary
                 ? aura::messaging::g_fiber_yield_mutation_boundary()
                 : (void)0;  // safe point before mutation
         if (a.size() < 3 || !is_int(a[0]) || !is_string(a[2]))
-            return merr("bad-arg", "usage: (mutate:replace-value node-id new-value summary)");
+            return make_merr("bad-arg", "usage: (mutate:replace-value node-id new-value summary)");
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto sum_idx = as_string_idx(a[2]);
         if (sum_idx >= string_heap_.size())
-            return merr("bad-arg", "summary string index out of range");
+            return make_merr("bad-arg", "summary string index out of range");
         if (!workspace_flat_)
-            return merr("no-workspace", "no workspace AST loaded");
+            return make_merr("no-workspace", "no workspace AST loaded");
         auto& flat = *workspace_flat_;
         if (node >= flat.size())
-            return merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
+            return make_merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
 
         auto nv = flat.get(node);
         std::uint64_t old_val = 0;
@@ -4799,7 +4802,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         switch (nv.tag) {
             case aura::ast::NodeTag::LiteralInt: {
                 if (!is_int(a[1]))
-                    return merr("type-error", "LiteralInt node requires an integer value");
+                    return make_merr("type-error", "LiteralInt node requires an integer value");
                 auto new_val = static_cast<std::int64_t>(as_int(a[1]));
                 old_val = static_cast<std::uint64_t>(nv.int_value);
                 auto mid = flat.add_mutation_with_rollback(
@@ -4812,7 +4815,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
             }
             case aura::ast::NodeTag::LiteralFloat: {
                 if (!is_float(a[1]))
-                    return merr("type-error", "LiteralFloat node requires a float value");
+                    return make_merr("type-error", "LiteralFloat node requires a float value");
                 // Pack double as uint64 for mutation log
                 double new_val = as_float(a[1]);
                 std::uint64_t new_bits;
@@ -4829,10 +4832,10 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
             case aura::ast::NodeTag::Variable:
             case aura::ast::NodeTag::LiteralString: {
                 if (!is_string(a[1]))
-                    return merr("type-error", "Variable/LiteralString node requires a string value");
+                    return make_merr("type-error", "Variable/LiteralString node requires a string value");
                 auto new_sym_idx = as_string_idx(a[1]);
                 if (new_sym_idx >= string_heap_.size())
-                    return merr("bad-arg", "new value string index out of range");
+                    return make_merr("bad-arg", "new value string index out of range");
                 auto new_name = string_heap_[new_sym_idx];
                 old_val = nv.sym_id;
                 auto new_sym = workspace_pool_->intern(new_name);
@@ -4844,36 +4847,30 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
                 return make_int(static_cast<std::int64_t>(mid));
             }
             default:
-                return merr("type-error", "node tag does not support value replacement: " + std::to_string(static_cast<int>(nv.tag)));
+                return make_merr("type-error", "node tag does not support value replacement: " + std::to_string(static_cast<int>(nv.tag)));
         }
     });
 
     // (mutate:record-patch node-id op-name summary)
     primitives_.add("mutate:record-patch", [this](std::span<const EvalValue> a) -> EvalValue {
         std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
-        auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
-            auto mi = string_heap_.size(); string_heap_.push_back(m);
-            auto ki = string_heap_.size(); string_heap_.push_back(k);
-            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
-            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
-            return kp;
-        };
+        // (Step 0.3 continuation) local merr removed; use centralized make_merr
         defuse_version_++;
         aura::messaging::g_fiber_yield_mutation_boundary
                 ? aura::messaging::g_fiber_yield_mutation_boundary()
                 : (void)0;  // safe point before mutation
         if (a.size() < 3 || !is_int(a[0]) || !is_string(a[1]) || !is_string(a[2]))
-            return merr("bad-arg", "usage: (mutate:record-patch node-id op-name summary)");
+            return make_merr("bad-arg", "usage: (mutate:record-patch node-id op-name summary)");
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto op_idx = as_string_idx(a[1]);
         auto sum_idx = as_string_idx(a[2]);
         if (op_idx >= string_heap_.size() || sum_idx >= string_heap_.size())
-            return merr("bad-arg", "string index out of range");
+            return make_merr("bad-arg", "string index out of range");
         if (!workspace_flat_)
-            return merr("no-workspace", "no workspace AST loaded");
+            return make_merr("no-workspace", "no workspace AST loaded");
         auto& flat = *workspace_flat_;
         if (node >= flat.size())
-            return merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
+            return make_merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
 
         auto mid = flat.add_mutation(node, string_heap_[op_idx], "<runtime>", "<runtime>",
                                      string_heap_[sum_idx]);
@@ -10838,23 +10835,17 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     //   code-strings can be multiple arguments (variadic).
     primitives_.add("mutate:splice", [this](std::span<const EvalValue> a) -> EvalValue {
         std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
-        auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
-            auto mi = string_heap_.size(); string_heap_.push_back(m);
-            auto ki = string_heap_.size(); string_heap_.push_back(k);
-            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
-            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
-            return kp;
-        };
+        // (Step 0.3) local merr removed; centralized make_merr
         defuse_version_++;
-        if (workspace_read_only_) return merr("read-only", "workspace is read-only");
+        if (workspace_read_only_) return make_merr("read-only", "workspace is read-only");
         if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) ||
             !workspace_flat_ || !workspace_pool_)
-            return merr("bad-arg", "usage: (mutate:splice parent-id position code-strings... [summary])");
+            return make_merr("bad-arg", "usage: (mutate:splice parent-id position code-strings... [summary])");
         auto parent = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto pos = static_cast<std::uint32_t>(as_int(a[1]));
         auto& flat = *workspace_flat_;
         if (parent >= flat.size())
-            return merr("out-of-range", "parent node ID " + std::to_string(parent) + " >= flat size " + std::to_string(flat.size()));
+            return make_merr("out-of-range", "parent node ID " + std::to_string(parent) + " >= flat size " + std::to_string(flat.size()));
 
         // Collect all code strings (variadic) before the optional summary
         std::vector<EvalValue> code_args;
@@ -10875,7 +10866,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         }
 
         if (code_args.empty())
-            return merr("bad-arg", "no code strings provided to splice");
+            return make_merr("bad-arg", "no code strings provided to splice");
 
         // Parse each code string and insert
         EvalValue result_list = make_void();

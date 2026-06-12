@@ -291,24 +291,27 @@ primitives_.add("mutate:foo", [this](std::span<const EvalValue> a) -> EvalValue 
 });
 ```
 
-### 3.2 The `merr` helper
+### 3.2 The `make_merr` helper (centralized in refactor Step 0.1)
 
-Every `mutate:*` primitive has the same error-construction boilerplate.
-Define `merr` as a local lambda at the top of the lambda body:
+Every `mutate:*` primitive (and some query sites) needs to return a tagged
+error pair of the shape `("error" . ("kind" . "message"))`.
+
+**Use the centralized member** (added Step 0.1):
 
 ```cpp
-auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
-    auto mi = string_heap_.size(); string_heap_.push_back(m);
-    auto ki = string_heap_.size(); string_heap_.push_back(k);
-    auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
-    auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
-    return kp;
-};
+return make_merr("bad-arg", "usage: ...");
+// or inside a [this]-capturing lambda: return this->make_merr(...) or just make_merr
 ```
 
-This produces the canonical `("error" . ("kind" . "message"))` shape.
-There are ~15 copies in the file; consolidating into a private
-member is a future cleanup.
+The implementation (in `evaluator_impl.cpp`) is exactly the body that used to be
+duplicated as a local `auto merr = [this](...)` lambda in ~14 places.
+
+See:
+- Declaration: `evaluator.ixx` (private section, near other helpers).
+- Definition: `evaluator_impl.cpp` (near `Primitives::Primitives()` / before `init_pair_primitives`).
+- Call sites migrated starting in Step 0.2 (first the `mutate:replace-type` site that was the canonical example in older versions of this guide).
+
+This consolidation was explicitly called out as a "future cleanup" before the refactor. Step 0.1 did the pure addition; later 0.x steps remove the remaining local copies.
 
 ### 3.3 The read-only fast path
 
@@ -568,8 +571,7 @@ Before merging a new primitive, walk this list:
       `defuse_touch_fn_(...)` if set
 - [ ] **§2.5 arg validation**: `a.size()` + `is_*` checks before
       any `as_*` or index access
-- [ ] **§2.4 error returns**: matches the convention (tagged pair
-      for mutate, `#f` for predicate, etc.)
+- [ ] **§2.4 / §3.2 error returns**: use the centralized `make_merr(k, m)` (or the tagged-pair convention for mutate errors) — the old local `merr` lambdas have been consolidated (Step 0.1+).
 - [ ] **§5 closure vs primitive**: correct constructor for the
       use case
 - [ ] **§3.3 read-only fast path**: if a mutate primitive, checks
@@ -635,7 +637,8 @@ it before the regression lands.
 | File | What lives here |
 |------|-----------------|
 | `src/compiler/evaluator.ixx` | Evaluator class declaration, `workspace_mtx_`, callback hook setters |
-| `src/compiler/evaluator_impl.cpp` | 18K lines: `init_pair_primitives`, `eval_flat`, all `query:*`/`mutate:*`/`ast:*`/`workspace:*` primitives, c-FFI, datatype |
+| `src/compiler/evaluator_impl.cpp` | (being reduced via extractions) `init_pair_primitives`, `eval_flat`, query/mutate/ast/workspace primitives, ... (ADT moved to adt_runtime in Step 2.x pilot) |
+| `src/compiler/adt_runtime.ixx` | (new, Step 2.1 pilot) AdtRuntime class + register_primitives (FFI pattern); replaces old global g_adt_constructors |
 | `src/compiler/value.ixx` | `EvalValue` POD + `make_*` / `is_*` / `as_*` helpers |
 | `src/compiler/ir_executor.ixx` | `IRContext` struct + `IRInterpreter` class declaration |
 | `src/compiler/ir_executor_impl.cpp` | `IRInterpreter::execute`, `run_function` (the actual opcodes) |

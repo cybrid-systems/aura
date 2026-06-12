@@ -13,6 +13,8 @@
 
 **重要**：本文档描述的 12+ 个 mutate 原语 + 原子性/回滚/ panic checkpoint / 与 workspace/DefUse 集成 **全部实装**。`mutate:query-and-replace` 等高级组合也已落地。准确分两层：
 
+（Refactor small-step note, 2026-06-12）`make_merr` centralized (Evaluator member, Step 0.1); first sites (replace-type, replace-value) migrated (0.2/0.3). Remaining local `merr` lambdas will be cleaned in follow-on small steps. See evaluator.md §3.2 and evaluator_impl.cpp. No behavior change.
+
 ### C++ Core Layer (`src/compiler/evaluator_impl.cpp` / `service.ixx` / `src/core/ast.ixx`)
 
 | 组件 | 实装 | 备注 |
