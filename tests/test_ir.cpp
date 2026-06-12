@@ -3238,6 +3238,112 @@ int main() {
         if (dce2_failed > 0) return 1;
     }
 
+    // ── Issue #160: Escape Analysis Pass ─────────────
+    // Promotes the existing JIT escape analysis (aura_jit.cpp)
+    // to a proper IR pass that runs in the standard pipeline.
+    // The pass stores the escape_map on IRFunction for downstream
+    // consumers (JIT, arena allocation, future stack promotion).
+    int ea_passed = 0, ea_failed = 0;
+    {
+        // Test 1: non-escaping local stays in escape_map[slot] = 0
+        {
+            aura::ir::IRModule mod;
+            mod.functions.push_back(aura::ir::IRFunction{
+                .name = "test", .local_count = 10
+            });
+            auto& func = mod.functions.back();
+            func.blocks.push_back({0});
+            auto& block = func.blocks.back();
+            // Local(slot0 = src99) — slot0 unused, but its source
+            // is just a literal (not a slot). So slot0 doesn't
+            // escape.
+            block.instructions = {
+                {aura::ir::IROpcode::Local, {0, 99, 0, 0}, 0, 1},
+                {aura::ir::IROpcode::Return, {0, 0, 0, 0}, 0, 0},
+            };
+            aura::compiler::EscapeAnalysisPass ea;
+            ea.run(mod);
+            // slot0 escapes (it's returned).
+            if (func.escape_map.size() == 10 && func.escape_map[0] == 1) {
+                ++ea_passed;
+                std::println("EA OK: returned slot marked escaped");
+            } else {
+                ++ea_failed;
+                std::println(std::cerr, "EA FAIL: escape_map[0]={} (expected 1)",
+                             func.escape_map.size() > 0 ?
+                             (int)func.escape_map[0] : -1);
+            }
+        }
+
+        // Test 2: non-escaping local (just used internally)
+        {
+            aura::ir::IRModule mod;
+            mod.functions.push_back(aura::ir::IRFunction{
+                .name = "test", .local_count = 10
+            });
+            auto& func = mod.functions.back();
+            func.blocks.push_back({0});
+            auto& block = func.blocks.back();
+            // Local(slot0=42) then Local(slot1=slot0) then
+            // Return(slot1). slot0 escapes transitively via slot1.
+            block.instructions = {
+                {aura::ir::IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},
+                {aura::ir::IROpcode::Local,    {1, 0, 0, 0}, 0, 1},  // slot1 = slot0
+                {aura::ir::IROpcode::Return,   {1, 0, 0, 0}, 0, 0},
+            };
+            aura::compiler::EscapeAnalysisPass ea;
+            ea.run(mod);
+            // slot0 escapes (used by slot1 which is returned).
+            // slot1 escapes (returned).
+            if (func.escape_map.size() == 10 &&
+                func.escape_map[0] == 1 && func.escape_map[1] == 1) {
+                ++ea_passed;
+                std::println("EA OK: transitive escape propagated through Local");
+            } else {
+                ++ea_failed;
+                std::println(std::cerr, "EA FAIL: escape_map[0]={} [1]={} (expected 1, 1)",
+                             func.escape_map.size() > 0 ? (int)func.escape_map[0] : -1,
+                             func.escape_map.size() > 1 ? (int)func.escape_map[1] : -1);
+            }
+        }
+
+        // Test 3: unused local doesn't escape
+        {
+            aura::ir::IRModule mod;
+            mod.functions.push_back(aura::ir::IRFunction{
+                .name = "test", .local_count = 10
+            });
+            auto& func = mod.functions.back();
+            func.blocks.push_back({0});
+            auto& block = func.blocks.back();
+            // Local(slot0 = literal) — slot0 not used anywhere
+            // (the Return uses literal 99 directly).
+            block.instructions = {
+                {aura::ir::IROpcode::ConstI64, {0, 1, 0, 0}, 0, 1},
+                {aura::ir::IROpcode::Local,    {1, 99, 0, 0}, 0, 1},  // slot1 = literal 99
+                {aura::ir::IROpcode::Return,   {1, 0, 0, 0}, 0, 0},
+            };
+            aura::compiler::EscapeAnalysisPass ea;
+            ea.run(mod);
+            // slot0 is unused (no one references it). slot1 escapes
+            // (it's returned).
+            if (func.escape_map.size() == 10 &&
+                func.escape_map[0] == 0 && func.escape_map[1] == 1) {
+                ++ea_passed;
+                std::println("EA OK: unused local not marked escaped");
+            } else {
+                ++ea_failed;
+                std::println(std::cerr, "EA FAIL: escape_map[0]={} [1]={} (expected 0, 1)",
+                             func.escape_map.size() > 0 ? (int)func.escape_map[0] : -1,
+                             func.escape_map.size() > 1 ? (int)func.escape_map[1] : -1);
+            }
+        }
+
+        std::println("Escape analysis (Issue #160): {}/{}/{} passed/failed/total",
+                     ea_passed, ea_failed, ea_passed + ea_failed);
+        if (ea_failed > 0) return 1;
+    }
+
     // ── Iter 8: Gradual Guarantee tests ────────────────────────
     {
 

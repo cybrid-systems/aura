@@ -940,4 +940,191 @@ private:
     std::size_t eliminated_ = 0;
 };
 
+// Issue #160: Escape Analysis Pass (full IR promotion).
+//
+// Promotes the existing JIT escape analysis (in aura_jit.cpp
+// as the free function `run_escape_analysis`) to a proper
+// IR pass that runs in the standard pass pipeline. The pass
+// walks each function's IR, builds the escape_map, and
+// stores it on IRFunction::escape_map for downstream
+// consumers (JIT, arena allocation, future stack promotion).
+//
+// Algorithm (mirrors the existing JIT implementation):
+//  1. First pass: mark escape points — instructions where a
+//     value reaches a location that outlives the current scope
+//     (Return, Call args, Capture, CellSet, HashSet, PrimCall
+//     args).
+//  2. Backward propagation: if a result escapes, its operands
+//     (Local source, MakePair car/cdr) escape.
+//
+// Cost: O(N) per function. No transformation — purely an
+// analysis pass that stores metadata for other consumers.
+export class EscapeAnalysisPass {
+public:
+    void run(aura::ir::IRModule& module) {
+        for (auto& func : module.functions) {
+            run_on_function(func);
+        }
+    }
+
+    bool has_error() const { return false; }
+    std::string_view name() const { return "escape-analysis"; }
+
+private:
+    // Returns true if the opcode is a "return" that escapes its
+    // operand value to the caller. Mirrors the escape-point
+    // list in the existing JIT implementation.
+    static bool is_escape_point(aura::ir::IROpcode op) {
+        switch (op) {
+            case aura::ir::IROpcode::Return:
+            case aura::ir::IROpcode::Call:
+            case aura::ir::IROpcode::Apply:
+            case aura::ir::IROpcode::Capture:
+            case aura::ir::IROpcode::CaptureRef:
+            case aura::ir::IROpcode::CellSet:
+            case aura::ir::IROpcode::HashSet:
+            case aura::ir::IROpcode::PrimCall:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    // Mark the operand indices of the given escape-point
+    // instruction as escaped in `escape_map`.
+    void mark_escape_point(
+        const aura::ir::IRInstruction& instr,
+        const aura::ir::BasicBlock& block,
+        std::vector<std::uint8_t>& escape_map) {
+        const std::size_t n = block.instructions.size();
+        const std::size_t local_count = escape_map.size();
+        switch (instr.opcode) {
+            case aura::ir::IROpcode::Return:
+                // Return(value) — value escapes
+                if (instr.operands[0] < local_count)
+                    escape_map[instr.operands[0]] = 1;
+                break;
+            case aura::ir::IROpcode::Call:
+                // Call(callee, arg_base, arg_count, result) — callee + all args
+                if (instr.operands[0] < local_count)
+                    escape_map[instr.operands[0]] = 1;
+                for (std::uint32_t i = 0; i < instr.operands[2]; ++i) {
+                    auto slot = instr.operands[1] + i;
+                    if (slot < local_count)
+                        escape_map[slot] = 1;
+                }
+                break;
+            case aura::ir::IROpcode::Apply:
+                // Apply(closure, arg_count, result) — closure + args
+                if (instr.operands[0] < local_count)
+                    escape_map[instr.operands[0]] = 1;
+                for (std::uint32_t i = 0; i < instr.operands[1]; ++i) {
+                    auto slot = instr.operands[0] + 1 + i;
+                    if (slot < local_count)
+                        escape_map[slot] = 1;
+                }
+                break;
+            case aura::ir::IROpcode::Capture:
+            case aura::ir::IROpcode::CaptureRef:
+                // Capture(closure, env_idx, var) / CaptureRef(closure, env_idx, cell)
+                if (instr.operands[2] < local_count)
+                    escape_map[instr.operands[2]] = 1;
+                break;
+            case aura::ir::IROpcode::CellSet:
+                // CellSet(cell, val) — val escapes into persistent cell
+                if (instr.operands[1] < local_count)
+                    escape_map[instr.operands[1]] = 1;
+                break;
+            case aura::ir::IROpcode::HashSet:
+                // HashSet(result, hash, keyval) — keyval pair escapes
+                if (instr.operands[2] < local_count)
+                    escape_map[instr.operands[2]] = 1;
+                break;
+            case aura::ir::IROpcode::PrimCall:
+                // PrimCall(prim_id, arg_base, arg_count, result) — all args
+                for (std::uint32_t i = 0; i < instr.operands[2]; ++i) {
+                    auto slot = instr.operands[1] + i;
+                    if (slot < local_count)
+                        escape_map[slot] = 1;
+                }
+                break;
+            default:
+                break;
+        }
+    }
+
+    // Backward propagation: if a result escapes, its operands
+    // escape (Local source, MakePair car/cdr).
+    bool propagate_backward(
+        const aura::ir::IRFunction& func,
+        std::vector<std::uint8_t>& escape_map) {
+        const std::size_t local_count = escape_map.size();
+        bool changed = false;
+        for (const auto& block : func.blocks) {
+            for (const auto& instr : block.instructions) {
+                if (!is_escape_point_or_pure_propagator(instr.opcode)) continue;
+                if (instr.operands[0] >= local_count) continue;
+                if (!escape_map[instr.operands[0]]) continue;
+
+                switch (instr.opcode) {
+                    case aura::ir::IROpcode::Local:
+                        // Local(result, src) — src escapes
+                        if (instr.operands[1] < local_count &&
+                            !escape_map[instr.operands[1]]) {
+                            escape_map[instr.operands[1]] = 1;
+                            changed = true;
+                        }
+                        break;
+                    case aura::ir::IROpcode::MakePair:
+                        // MakePair(result, car, cdr) — car + cdr escape
+                        if (instr.operands[1] < local_count &&
+                            !escape_map[instr.operands[1]]) {
+                            escape_map[instr.operands[1]] = 1;
+                            changed = true;
+                        }
+                        if (instr.operands[2] < local_count &&
+                            !escape_map[instr.operands[2]]) {
+                            escape_map[instr.operands[2]] = 1;
+                            changed = true;
+                        }
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
+        return changed;
+    }
+
+    // True if this opcode is either an escape point OR a pure
+    // propagator (Local, MakePair) whose operands may need
+    // backward propagation.
+    static bool is_escape_point_or_pure_propagator(aura::ir::IROpcode op) {
+        return is_escape_point(op) ||
+               op == aura::ir::IROpcode::Local ||
+               op == aura::ir::IROpcode::MakePair;
+    }
+
+    void run_on_function(aura::ir::IRFunction& func) {
+        // Allocate the escape_map (size = local_count, default 0).
+        func.escape_map.assign(func.local_count, 0);
+
+        // Pass 1: mark direct escape points.
+        for (const auto& block : func.blocks) {
+            for (const auto& instr : block.instructions) {
+                if (is_escape_point(instr.opcode)) {
+                    mark_escape_point(instr, block, func.escape_map);
+                }
+            }
+        }
+
+        // Pass 2: backward propagation until fixpoint.
+        bool changed = true;
+        int max_iters = 100;  // safety bound
+        while (changed && max_iters-- > 0) {
+            changed = propagate_backward(func, func.escape_map);
+        }
+    }
+};
+
 } // namespace aura::compiler
