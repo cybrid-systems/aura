@@ -10872,25 +10872,19 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     //   replacing the original node with a call to the new function.
     //   Free variables in the extracted expression become parameters.
     primitives_.add("mutate:refactor/extract", [this](std::span<const EvalValue> a) -> EvalValue {
-        auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
-            auto mi = string_heap_.size(); string_heap_.push_back(m);
-            auto ki = string_heap_.size(); string_heap_.push_back(k);
-            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
-            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
-            return kp;
-        };
+        // (post 3.1 follow-on) local merr removed; use make_merr
         defuse_version_++;
-        if (workspace_read_only_) return merr("read-only", "workspace is read-only");
+        if (workspace_read_only_) return make_merr("read-only", "workspace is read-only");
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) ||
             !workspace_flat_ || !workspace_pool_)
-            return merr("bad-arg", "usage: (mutate:refactor/extract node-id new-name [summary])");
+            return make_merr("bad-arg", "usage: (mutate:refactor/extract node-id new-name [summary])");
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto name_idx = as_string_idx(a[1]);
         if (name_idx >= string_heap_.size())
-            return merr("bad-arg", "name string index out of range");
+            return make_merr("bad-arg", "name string index out of range");
         auto& flat = *workspace_flat_;
         if (node >= flat.size())
-            return merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
+            return make_merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
 
         auto new_name = string_heap_[name_idx];
         std::string summary = (a.size() > 2 && is_string(a[2]))
@@ -10963,13 +10957,13 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
             } else {
                 parse_err = "extract function definition could not be parsed";
             }
-            return merr("parse-error", parse_err);
+            return make_merr("parse-error", parse_err);
         }
 
         // The define's body (the lambda body "x") should be at pr.root's child 0's child 0
         auto define_v = flat.get(pr.root);
         if (define_v.tag != aura::ast::NodeTag::Define || define_v.children.empty())
-            return merr("internal", "parsed define form has unexpected structure");
+            return make_merr("internal", "parsed define form has unexpected structure");
 
         // For simplicity, replace the define body's variable with the extracted node
         auto lambda_id = define_v.child(0);
