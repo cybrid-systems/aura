@@ -13,9 +13,11 @@
 
 **重要**：本文档描述的 12+ 个 mutate 原语 + 原子性/回滚/ panic checkpoint / 与 workspace/DefUse 集成 **全部实装**。`mutate:query-and-replace` 等高级组合也已落地。准确分两层：
 
-（Refactor small-step note, 2026-06-12）`make_merr` centralized (Evaluator member, Step 0.1); first sites (replace-type, replace-value) migrated (0.2/0.3). Remaining local `merr` lambdas will be cleaned in follow-on small steps. See evaluator.md §3.2 and evaluator_impl.cpp. No behavior change.
+（Refactor small-step note, 2026-06-12）`make_merr` centralized COMPLETE (Step 0.1 + 3.1 series): all original local `merr` lambdas (~14-15 across mutate+query) eliminated; last one in extract-function removed. See developer/evaluator.md §3.2 + evaluator_impl.cpp (grep for "local merr removed"). No behavior change.
 
-ADT extraction (Step 2.3): state moved to adt_runtime_ (FFI pattern); old global + registration block removed from evaluator_impl. Lookups and ctor reg now per-Evaluator. Parser side (parse_datatype) noted for future. See adt_runtime.{ixx,impl.cpp} and evaluator.md File map.
+ADT extraction (Step 2.3 + 3.2 hygiene): state moved to adt_runtime_ (exact FFI pattern); old global g_adt + registration block removed. Lookups/ctor reg now per-Evaluator via runtime. CMake comments normalized, pilot notes updated. See adt_runtime.{ixx,impl.cpp}, evaluator.md File map, CMakeLists.txt.
+
+merr + ADT phases: small-step complete per approved roadmap.
 
 ### C++ Core Layer (`src/compiler/evaluator_impl.cpp` / `service.ixx` / `src/core/ast.ixx`)
 
