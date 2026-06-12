@@ -11168,19 +11168,13 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     //   a new parent at the specified child index.
     primitives_.add("mutate:move-node", [this](std::span<const EvalValue> a) -> EvalValue {
         using namespace aura::ast;
-        auto merr = [this](const std::string& k, const std::string& m) -> EvalValue {
-            auto mi = string_heap_.size(); string_heap_.push_back(m);
-            auto ki = string_heap_.size(); string_heap_.push_back(k);
-            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
-            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
-            return kp;
-        };
+        // (post 3.1 follow-on) local merr removed; use make_merr
         defuse_version_++;
         if (workspace_read_only_)
-            return merr("read-only", "workspace is read-only");
+            return make_merr("read-only", "workspace is read-only");
         if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) ||
             !workspace_flat_)
-            return merr("bad-arg", "usage: (mutate:move-node node parent pos)");
+            return make_merr("bad-arg", "usage: (mutate:move-node node parent pos)");
         auto node = static_cast<NodeId>(as_int(a[0]));
         auto new_parent = static_cast<NodeId>(as_int(a[1]));
         auto new_pos = static_cast<std::uint32_t>(as_int(a[2]));
@@ -11188,7 +11182,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
 
         if (node >= flat.size() || new_parent >= flat.size() ||
             node == NULL_NODE || new_parent == NULL_NODE)
-            return merr("out-of-range", "node or parent ID out of range");
+            return make_merr("out-of-range", "node or parent ID out of range");
 
         if (node == new_parent)
             return merr("cycle", "cannot move node to itself");
