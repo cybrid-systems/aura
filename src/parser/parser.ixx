@@ -76,8 +76,15 @@ private:
     std::size_t parse_depth_ = 0;
 };
 
-// Free function — parse directly into FlatAST.
-export FlatParseResult parse_to_flat(std::string_view source, aura::ast::FlatAST& flat,
+// Free function — the public parser entry point (Issue #161 cpp26 P0).
+//
+// parse_to_flat is the pure-function entry point. The FlatParser
+// instance is created and discarded within this function, so all
+// state is local to the call. The FlatParser class above is an
+// internal implementation detail; the public surface is this free
+// function. Combined with [[nodiscard]] below, the parser API
+// is pure-function + non-silent-failure (Issue #161 acceptance).
+export [[nodiscard]] FlatParseResult parse_to_flat(std::string_view source, aura::ast::FlatAST& flat,
                                      aura::ast::StringPool& pool);
 
 } // namespace aura::parser
