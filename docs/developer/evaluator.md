@@ -571,7 +571,7 @@ Before merging a new primitive, walk this list:
       `defuse_touch_fn_(...)` if set
 - [ ] **§2.5 arg validation**: `a.size()` + `is_*` checks before
       any `as_*` or index access
-- [ ] **§2.4 / §3.2 error returns**: use the centralized `make_merr(k, m)` (or the tagged-pair convention for mutate errors) — the old local `merr` lambdas have been consolidated (Step 0.1+).
+- [ ] **§2.4 / §3.2 error returns**: use the centralized `make_merr(k, m)` (or the tagged-pair convention for mutate errors) — the old local `merr` lambdas have been consolidated (Step 0.1+). Query cluster started in 3.1 (def-use etc.).
 - [ ] **§5 closure vs primitive**: correct constructor for the
       use case
 - [ ] **§3.3 read-only fast path**: if a mutate primitive, checks
