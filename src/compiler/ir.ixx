@@ -416,6 +416,16 @@ export struct IRFunction {
     // falls back to the interpreter). When the function is itself
     // generic (specialized_for == 0), generic_id is ignored.
     std::uint32_t generic_id = 0xFFFFFFFF;
+
+    // Issue #160: escape analysis result. Filled by
+    // EscapeAnalysisPass. Size = local_count. 0 = NON_ESCAPING
+    // (slot is only used locally), 1 = ESCAPED (slot is returned,
+    // passed to a call, stored in a cell/hash, captured in a
+    // closure, etc.). Consumers (JIT, arena-aware allocation,
+    // future stack promotion) check this map to enable
+    // optimizations — e.g., a non-escaping pair can be
+    // arena-allocated instead of heap-allocated.
+    std::vector<std::uint8_t> escape_map;
 };
 
 // Closure bridge data: original tree-walker info for IR closures.
