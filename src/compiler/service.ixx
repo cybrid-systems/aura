@@ -1775,6 +1775,14 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         // diagnostics that pass through `has_errors() == false` (Bug A).
         tc.set_strict(true);
 
+        // Issue #168: gate the type cache by the global mutation
+        // epoch. Any mutation since the last infer_flat bumps the
+        // epoch; the type checker's cache_invalidated_ flag is
+        // set on the next call, forcing re-inference of every
+        // node. Coarse but provably correct for the stale-cache
+        // bug class.
+        tc.set_cache_epoch(mutation_epoch_.load(std::memory_order_relaxed));
+
         auto result = tc.infer_flat(flat, pool, pr.root, diag);
 
         // Issue #116: the typecheck command doesn't proceed to
@@ -1824,6 +1832,9 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         aura::compiler::TypeChecker tc(type_registry_);
         aura::diag::DiagnosticCollector diag;
         tc.set_strict(true);  // match the typecheck() default
+        // Issue #168: gate by global mutation epoch (same as
+        // the typecheck() path).
+        tc.set_cache_epoch(mutation_epoch_.load(std::memory_order_relaxed));
         return tc.infer_flat_partial(
             *current_ast_, *current_pool_, rec, diag);
     }
