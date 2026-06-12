@@ -11248,13 +11248,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     //   Replaces the original node with a call to the new function.
     primitives_.add("mutate:extract-function", [this, collect_free_vars](const auto& a) -> EvalValue {
         using namespace aura::ast;
-        auto merr = [&](const std::string& k, const std::string& m) -> EvalValue {
-            auto mi = string_heap_.size(); string_heap_.push_back(m);
-            auto ki = string_heap_.size(); string_heap_.push_back(k);
-            auto mp = make_pair(pairs_.size()); pairs_.push_back({make_string(mi), EvalValue(0)});
-            auto kp = make_pair(pairs_.size()); pairs_.push_back({make_string(ki), mp});
-            return kp;
-        };
+        // last local merr definition removed; all calls use centralized make_merr
         defuse_version_++;
         if (workspace_read_only_)
             return make_merr("read-only", "workspace is read-only");
