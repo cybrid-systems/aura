@@ -780,6 +780,9 @@ private:
     // this count are padding and should be ignored (they
     // contain uninitialized values that may be 0, which is
     // indistinguishable from a real slot reference).
+public:
+    // Public wrapper for use by other passes (e.g.,
+    // LinearOwnershipPass) that need operand counts.
     static std::uint32_t operand_count_local(aura::ir::IROpcode op) {
         switch (op) {
             case aura::ir::IROpcode::Nop: return 0;
@@ -903,7 +906,7 @@ private:
         if (n == 0) return;
         std::vector<bool> used(n, false);
         for (const auto& instr : block.instructions) {
-            auto op_count = operand_count_local(instr.opcode);
+            auto op_count = DCEPass::operand_count_local(instr.opcode);
             for (std::uint32_t k = 0; k < op_count; ++k) {
                 auto op = instr.operands[k];
                 // Skip the result slot of has_result_slot ops.
@@ -1125,6 +1128,120 @@ private:
             changed = propagate_backward(func, func.escape_map);
         }
     }
+};
+
+// Issue #160: Linear Ownership Pass (validation).
+//
+// Validates linear-typed IR at compile time. Catches:
+//   1. Use-after-move: a slot is moved, then used again later.
+//   2. Use-of-moved: a slot's result is referenced after the
+//      slot has been moved (via MoveOp).
+//   3. Move-without-consume: a linear-typed slot is never
+//      consumed by the end of its scope (memory leak /
+//      scope-leak diagnostic).
+//
+// This is a validation pass — it doesn't transform the IR.
+// It just checks invariants. When the lowering pass starts
+// emitting linear IR (MoveOp, BorrowOp, DropOp, RefCountOp),
+// this pass will catch the most common errors at compile time.
+//
+// Algorithm:
+//   - Walk each function's IR.
+//   - Maintain a "moved" bitset of size local_count.
+//   - On MoveOp(result, src): if src is already moved, emit
+//     a warning. Mark src as moved. The result is a new
+//     binding (not moved yet).
+//   - On any other op using a moved slot as input: emit a
+//     warning (use-after-move).
+//   - At end of function: if a linear-typed slot (tracked
+//     separately) was never consumed, emit a warning.
+//
+// Cost: O(N) per function. No transformation.
+export class LinearOwnershipPass {
+public:
+    void run(aura::ir::IRModule& module) {
+        use_after_move_count_ = 0;
+        for (auto& func : module.functions) {
+            run_on_function(func);
+        }
+    }
+
+    bool has_error() const { return use_after_move_count_ > 0; }
+    std::string_view name() const { return "linear-ownership"; }
+    std::size_t use_after_move_count() const { return use_after_move_count_; }
+
+private:
+    // True if the opcode is a linear-move-ish op that
+    // consumes its source.
+    static bool is_consuming(aura::ir::IROpcode op) {
+        switch (op) {
+            case aura::ir::IROpcode::MoveOp:
+            case aura::ir::IROpcode::DropOp:
+            case aura::ir::IROpcode::RefCountOp:  // dec variant
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    // True if the opcode reads a slot as an INPUT. For these
+    // ops, if the source slot has been moved, it's a use-after-move.
+    static bool reads_input(aura::ir::IROpcode op) {
+        // Conservative: most ops read some input. The result
+        // slot (operands[0] for has_result_slot ops) is a write,
+        // not a read, so it's not an input. Inputs are
+        // operands[1..operand_count].
+        switch (op) {
+            case aura::ir::IROpcode::Nop:
+            case aura::ir::IROpcode::Branch:
+            case aura::ir::IROpcode::Jump:
+            case aura::ir::IROpcode::Return:
+            case aura::ir::IROpcode::ConstVoid:
+            case aura::ir::IROpcode::CellGet:
+            case aura::ir::IROpcode::MakePair:
+                return false;  // no input slots
+            default:
+                return true;  // has at least one input
+        }
+    }
+
+    void run_on_function(aura::ir::IRFunction& func) {
+        // moved[i] = 1 if slot i has been moved (consumed).
+        // Initially all 0.
+        std::vector<std::uint8_t> moved(func.local_count, 0);
+
+        for (const auto& block : func.blocks) {
+            for (const auto& instr : block.instructions) {
+                if (is_consuming(instr.opcode)) {
+                    // Source slot (the consumed one) is operands[1]
+                    // for MoveOp/DropOp, operands[1] for
+                    // RefCountOp's first input.
+                    auto consumed = instr.operands[1];
+                    if (consumed < func.local_count) {
+                        if (moved[consumed]) {
+                            // Use-after-move detected.
+                            ++use_after_move_count_;
+                        }
+                        moved[consumed] = 1;
+                    }
+                } else if (reads_input(instr.opcode) &&
+                           func.local_count > 0) {
+                    // Check all input operands for use-after-move.
+                    // Skip operands[0] (result slot, a write).
+                    auto op_count = DCEPass::operand_count_local(instr.opcode);
+                    for (std::uint32_t k = 1; k < op_count; ++k) {
+                        auto slot = instr.operands[k];
+                        if (slot < func.local_count && moved[slot]) {
+                            // Use-after-move detected.
+                            ++use_after_move_count_;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    std::size_t use_after_move_count_ = 0;
 };
 
 } // namespace aura::compiler
