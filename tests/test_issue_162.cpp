@@ -23,6 +23,7 @@
 #include <type_traits>
 #include <vector>
 import aura.core;
+import aura.core.ast;
 import aura.core.type;
 import aura.diag;
 import aura.compiler.type_checker;
@@ -167,15 +168,123 @@ bool test_backward_compat() {
     return true;
 }
 
-int main() {
-    std::fprintf(stdout, "═══ Issue #162 — Phase 1: Type Concepts ═══\n");
+// ── Phase 2 tests ─────────────────────────────────────────────
 
+// Test 7: InferenceRule concept — 3 concrete types satisfy it
+//
+// The static_asserts in type_concepts.ixx already prove the
+// three concrete rules satisfy InferenceRule at compile time.
+// This test is the runtime witness.
+bool test_inference_rule_satisfaction() {
+    PRINTLN("\n--- Test 7: InferenceRule concept satisfaction ---");
+    CHECK(static_cast<bool>(aura::compiler::InferenceRule<aura::compiler::LiteralRule>),
+          "LiteralRule satisfies InferenceRule (via trait)");
+    CHECK(static_cast<bool>(aura::compiler::InferenceRule<aura::compiler::BoolRule>),
+          "BoolRule satisfies InferenceRule (via trait)");
+    CHECK(static_cast<bool>(aura::compiler::InferenceRule<aura::compiler::VarRule>),
+          "VarRule satisfies InferenceRule (via trait)");
+    return true;
+}
+
+// Test 8: LiteralRule — matches LiteralInt, returns int_type
+//
+// The simplest possible InferenceRule. The synthesize method
+// doesn't touch the constraint system — it just returns a
+// constant. Verifies the rule's matches() predicate and that
+// infer_with_rules routes correctly.
+bool test_literal_rule() {
+    PRINTLN("\n--- Test 8: LiteralRule ---");
+    aura::core::TypeRegistry reg;
+    aura::compiler::ConstraintSystem cs(reg);
+    aura::diag::SourceLocation loc{};
+    aura::compiler::InferenceContext ctx{reg, cs, loc};
+
+    aura::ast::NodeView v_int{};
+    v_int.tag = aura::ast::NodeTag::LiteralInt;
+    v_int.int_value = 42;
+    v_int.marker = aura::ast::SyntaxMarker::User;
+
+    aura::compiler::LiteralRule rule;
+    CHECK(rule.matches(v_int), "LiteralRule matches LiteralInt");
+    auto ty = rule.synthesize(ctx, v_int);
+    CHECK(ty.index == reg.int_type().index, "LiteralRule returns int_type for LiteralInt");
+    auto routed = aura::compiler::infer_with_rules(rule, ctx, v_int);
+    CHECK(routed.index == reg.int_type().index, "infer_with_rules routes LiteralRule to int_type");
+    return true;
+}
+
+// Test 9: VarRule — matches Variable, adds CONSISTENT constraint
+//
+// The first rule that touches the constraint system. After
+// synthesize, ctx.cs should have at least one constraint
+// (the CONSISTENT between the fresh var and Dynamic).
+bool test_var_rule() {
+    PRINTLN("\n--- Test 9: VarRule ---");
+    aura::core::TypeRegistry reg;
+    aura::compiler::ConstraintSystem cs(reg);
+    aura::diag::SourceLocation loc{};
+    aura::compiler::InferenceContext ctx{reg, cs, loc};
+
+    aura::ast::NodeView v_var{};
+    v_var.tag = aura::ast::NodeTag::Variable;
+    v_var.sym_id = 0;
+    v_var.marker = aura::ast::SyntaxMarker::User;
+
+    aura::compiler::VarRule rule;
+    CHECK(rule.matches(v_var), "VarRule matches Variable");
+    auto ty = rule.synthesize(ctx, v_var);
+    // Fresh var is non-zero type id (not DYNAMIC)
+    CHECK(ty.index != 0, "VarRule returns a non-zero fresh type var");
+    // VarRule uses add() (not add_delta) — it's committing to the
+    // full-solve path. The constraint should be in the system, and
+    // a subsequent solve() should resolve it cleanly.
+    auto solve_status = cs.solve();
+    CHECK(solve_status == aura::compiler::SolveResult::SOLVED,
+          "VarRule's constraint (fresh var ~ Dynamic) solves cleanly");
+    return true;
+}
+
+// Test 10: rule dispatch — non-matching rule returns Dynamic
+//
+// When the rule's matches() returns false, infer_with_rules
+// should fall back to the dynamic type (the safe "I don't
+// know" answer). This is the property that makes
+// infer_with_rules composable across multiple rules.
+bool test_rule_dispatch() {
+    PRINTLN("\n--- Test 10: rule dispatch on non-matching view ---");
+    aura::core::TypeRegistry reg;
+    aura::compiler::ConstraintSystem cs(reg);
+    aura::diag::SourceLocation loc{};
+    aura::compiler::InferenceContext ctx{reg, cs, loc};
+
+    aura::ast::NodeView v_call{};
+    v_call.tag = aura::ast::NodeTag::Call;
+    v_call.marker = aura::ast::SyntaxMarker::User;
+
+    aura::compiler::LiteralRule rule;
+    CHECK(!rule.matches(v_call), "LiteralRule does NOT match Call");
+    auto routed = aura::compiler::infer_with_rules(rule, ctx, v_call);
+    CHECK(routed.index == reg.dynamic_type().index,
+          "infer_with_rules falls back to dynamic_type for non-matching rule");
+    return true;
+}
+
+int main() {
+    std::fprintf(stdout, "═══ Issue #162 — Phases 1+2: Type Concepts ═══\n");
+
+    std::fprintf(stdout, "\n--- Phase 1: TypeConstraint + 2 concrete constraints ---\n");
     test_concept_satisfaction();
     test_solve_equal();
     test_solve_consistent();
     test_solve_empty();
     test_concept_rejection();
     test_backward_compat();
+
+    std::fprintf(stdout, "\n--- Phase 2: InferenceRule + 3 concrete rules ---\n");
+    test_inference_rule_satisfaction();
+    test_literal_rule();
+    test_var_rule();
+    test_rule_dispatch();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
