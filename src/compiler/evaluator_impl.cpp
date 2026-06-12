@@ -7720,6 +7720,74 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         return make_string(sidx);
     });
 
+    // Issue #159 Phase 1: (typecheck-incremental) — incremental
+    // typecheck using the most recent MutationRecord from the
+    // mutation log. Routes through TypeChecker::infer_flat_partial
+    // (the per-subtree re-inference path) instead of doing a full
+    // traversal. Returns the number of nodes re-inferred
+    // (cache hits don't count). On a workspace with no
+    // recent mutations, returns 0 (no-op).
+    //
+    // Usage pattern in Aura:
+    //   (mutate:rebind "f" "..." "...")
+    //   (typecheck-incremental)   ; re-infer only what changed
+    //   (query:type "f")
+    //
+    // Compared to (typecheck-current), this is faster for small
+    // mutations because the type checker only walks the dirty
+    // subtree. The win scales with workspace size.
+    primitives_.add("typecheck-incremental", [this](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(workspace_mtx_);
+        coverage_counters_[1]++;
+        if (!workspace_flat_ || !workspace_pool_) {
+            auto eidx = string_heap_.size();
+            string_heap_.push_back("no workspace");
+            return make_string(eidx);
+        }
+        // Find the most recent mutation record in the workspace's
+        // mutation log. The log is append-only, so the last entry
+        // is the most recent. If empty, no-op.
+        const auto& log = workspace_flat_->all_mutations();
+        if (log.empty()) {
+            auto ridx = string_heap_.size();
+            string_heap_.push_back("no mutations recorded");
+            return make_string(ridx);
+        }
+        const auto& rec = log.back();
+        if (rec.target_node == aura::ast::NULL_NODE &&
+            rec.parent_id == aura::ast::NULL_NODE) {
+            // Empty record — no-op.
+            auto ridx = string_heap_.size();
+            string_heap_.push_back("empty mutation record");
+            return make_string(ridx);
+        }
+        // Lazily create persistent type registry (stable TypeIds
+        // across calls) — same pattern as typecheck-current.
+        if (!type_registry_) {
+            type_registry_ = new aura::core::TypeRegistry();
+        }
+        auto& treg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
+        aura::compiler::TypeChecker tc(treg);
+        aura::diag::DiagnosticCollector diag;
+        // Run the partial re-inference. The per-node path uses
+        // the cache (skip clean nodes) and re-infers only the
+        // affected subtree (descendants of target_node + dirty
+        // ancestors). See type_checker_impl.cpp:2901 for the
+        // full algorithm.
+        std::size_t re_inferred = tc.infer_flat_partial(
+            *workspace_flat_, *workspace_pool_, rec, diag);
+        std::string out = "re-inferred: " + std::to_string(re_inferred) + "\n";
+        if (!diag.diagnostics().empty()) {
+            out += "diagnostics:\n";
+            for (auto& d : diag.diagnostics()) {
+                out += "  [" + std::to_string(static_cast<int>(d.kind)) + "] " + d.format() + "\n";
+            }
+        }
+        auto ridx = string_heap_.size();
+        string_heap_.push_back(out);
+        return make_string(ridx);
+    });
+
     // ── Issue #104: AuraQuery type-introspection primitives ───────────
     // These are the LLM-facing surface for "let me ask the type
     // system what it thinks". All four read from the same cache
