@@ -97,8 +97,8 @@ void run_pipeline(IRModule& mod, Passes&... passes) {
 |------|------|------|--------|
 | `pass_manager.ixx` | ~~IRPass 虚基类~~ ✅ Pass concept | Pass concept + fold pipeline | P0 |
 | `service.ixx` | 手动 pass 注册 | `run_pipeline(module, ck, ar, cf)` | P1 |
-| `type_checker.ixx` | class ConstraintSystem | concept `TypeConstraint` + template solver (Issue #162 Phase 1 ✅, Phase 2 ⏳) | P1 |
-| `type_checker.ixx` | class InferenceEngine | concept `InferenceRule` + template engine (Issue #162 Phase 2 ⏳) | P2 |
+| `type_checker.ixx` | class ConstraintSystem | concept `TypeConstraint` + template solver (Issue #162 Phase 1 ✅, Phase 3 ⏳) | P1 |
+| `type_checker.ixx` | class InferenceEngine | concept `InferenceRule` + template engine (Issue #162 Phase 2 ✅, full migration Phase 3 ⏳) | P2 |
 
 ### 2.3 std::expected > bool+string 结构体
 
