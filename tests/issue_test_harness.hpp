@@ -20,10 +20,19 @@ static int g_failed = 0;
     } \
 } while(0)
 
-static int run_harness_tests() {
-    // Caller should have defined test_*() funcs and called them before including? 
-    // For simplicity in pilots: the including .cpp defines the tests and calls run.
-    // This header provides the globals + CHECK + a helper main wrapper.
-    // Pilots currently inline their main; this is a starting point for dedup.
-    return g_failed > 0 ? 1 : 0;
+// Run the pilot's test_* functions (caller defines them) and report.
+// Usage in pilot .cpp:
+//   bool test_foo() { ... CHECK(...); return true; }  // etc.
+//   int main() { ... test_foo(); ... return run_pilot_tests(); }
+static int run_pilot_tests() {
+    // Pilots call their test_ funcs before this; we just report.
+    std::println("\n--- Results ---");
+    std::println("  PASSED: {}", g_passed);
+    std::println("  FAILED: {}", g_failed);
+    if (g_failed > 0) {
+        std::println("  OVERALL: FAIL");
+        return 1;
+    }
+    std::println("  OVERALL: PASS");
+    return 0;
 }
