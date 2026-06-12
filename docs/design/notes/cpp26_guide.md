@@ -61,7 +61,7 @@ export ParseResult parse(std::string_view source,
 
 | 文件 | 当前 | 目标 | 优先级 |
 |------|------|------|--------|
-| `parser.ixx` | class Parser | 纯函数 `parse()` | P0 |
+| `parser.ixx` | ~~class Parser~~ ✅ pure `parse_to_flat` | 纯函数 `parse()` | P0 |
 | `lowering.ixx` | class LoweringPass | 纯函数 `lower_to_ir()` | P0 |
 | `arity.ixx` | class ArityChecker | 纯函数 `check_arity()` | P1 |
 | `compute_kind.ixx` | class ComputeKindAnalysis | 纯函数 `compute_kind()` | P1 |
