@@ -935,15 +935,6 @@ add_test(NAME issue_135_verification COMMAND ./test_issue_135)
 # primarily the AOT name-mangler (mangle_aot_name).
 # Phase 2 pilot-6: converted using early helper (small/light test).
 # Base covers core + value etc.; extra include + the AOT/observability headers.
-# Issue #136 verification: memory hardening + hash performance
-# + AOT polish + expanded benchmarks. The runtime.c tests for
-# memory reset live in tests/runtime_test_harness.c (extended
-# in this issue). The Aura-level benchmarks live in
-# tests/benchmark.py (4 new cases). This C++ test binary
-# exercises the parts that need direct C++ verification —
-# primarily the AOT name-mangler (mangle_aot_name).
-# Phase 2 pilot-6: converted using early helper (small/light test).
-# Base covers core + value etc.; extra include + the AOT/observability headers.
 aura_add_issue_test(test_issue_136)
 target_include_directories(test_issue_136 PRIVATE src/compiler)
 target_sources(test_issue_136 PRIVATE
