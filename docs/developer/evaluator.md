@@ -669,7 +669,9 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-31 prep**: test_issue_171 (Function Inliner + TCO). Short attempted but caused dep/link issues from evaluator modern imports; restored original full block for health (30/30). See plan Phase 2.
 
-**Phase 2 pilot-32**: Convert test_issue_204 (GC env_frames_ walk integration / mark_env_frame_roots; light serve-only GC test, 5 scenarios). Very light. See CMakeLists.txt + plan Phase 2. Continuing the chain.
+**Phase 2 pilot-32 prep**: test_issue_204 (GC env_frames_ walk integration). Short hit re-gen fail; full restored. 26/26. See previous. 
+
+**Phase 2 pilot-33**: Convert test_issue_173 (stable-id type aliases / PairId/CellId/StringId + sentinels; Phase 2 of #145, very light compile-check only, no sources). Minimal. See plan Phase 2. Continuing.
 
 ```scheme
 ; happy path
