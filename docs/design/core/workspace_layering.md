@@ -54,7 +54,7 @@
 （pilot-28 note）test_issue_147（heavy test conversion 验证）已转换。详见 evaluator.md §12。
 （pilot-29 note）test_issue_148（mutation-aware incremental type checking / constraint delta 验证）已转换。详见 evaluator.md §12。
 （pilot-30 note）test_issue_149（rich inferred types / specialization / GuardShape 验证）已转换。详见 evaluator.md §12。
-（pilot-31 note）test_issue_171（Function Inliner/TCO 验证）转换中。详见 evaluator.md §12 和 plan Phase 2。
+（pilot-31 note）test_issue_171（Function Inliner/TCO 验证）prep（short 导致 link 问题，full block 恢复健康）。详见 evaluator.md §12 和 plan Phase 2。
 
 ### Aura Layer (`lib/std/workspace.aura`)
 
