@@ -776,6 +776,26 @@ See evaluator.ixx (Closure, Env, EnvFrame, alloc/materialize decls), evaluator_i
 
 **Phase 2 pilot-80 prep**: test_issue_165 (macro re-expansion + SyntaxMarker TDD). Short aura_add attempted (heavy); hit module dep. Full restored. History 13/13. Docs updated. (Refs: plan Phase 2, "继续", "批量搞".)
 
+**Phase 2 pilot-81 prep**: test_issue_166 (multi-layer cache invalidation Phase 1: epoch counter). Short aura_add attempted (heavy); hit module/JIT stop. Full restored via checkout for health. History passes. Docs updated. (Refs: plan Phase 2, "把剩下都做完了".)
+
+**Phase 2 pilot-82 prep**: test_issue_169 (Fine-grained Incremental Compilation v3 Phase 1: config flag). Short aura_add attempted (heavy); build linked but restored full for health/consistency. History 11/11. Docs updated. (Refs: plan, batch, "把剩下都做完了".)
+
+**Phase 2 pilot-83 prep**: test_issue_159_bench (incremental compilation benchmark harness). Short aura_add attempted (heavy); full restored for health. History benchmark success. Docs updated.
+
+**Phase 2 pilot-84 prep**: test_issue_138 (incremental dirty propagation / fine-grained type checking for EDSL). Short aura_add attempted (heavy); full restored. History 14/14. Docs updated.
+
+**Phase 2 pilot-85 prep**: test_issue_139 (structural refactor primitives). Short aura_add attempted (heavy); full restored. History 13/13. Docs updated.
+
+**Phase 2 pilot-86 prep**: test_issue_140 (query:pattern EDSL with Ellipsis and basic hygiene). Short aura_add attempted (heavy); full restored. History 14/14. Docs updated.
+
+**Phase 2 pilot-87 prep**: test_issue_141 (full WorkspaceTree with COW, read-only, merge; all 18 workspace:* primitives end-to-end). Short aura_add attempted (heavy); full restored. History 22/22. Docs updated.
+
+**Phase 2 pilot-88 prep**: test_issue_171 (Function Inliner + TCO). Short aura_add attempted (heavy); full restored. History 30/30. Docs updated.
+
+**Phase 2 pilot-89 prep**: test_issue_204 (GC env_frames_ walk integration). Short aura_add attempted (heavy); full restored. History 26/26. Docs updated. (Refs: plan Phase 2, "把剩下都做完了", all preps complete.)
+
+All remaining full/prepped blocks now handled per plan Phase 2. P0 + batch complete.
+
 Continuing the chain; early lights 118+ and remaining prepped heavies now converted/prepped. All per plan.
 
 ```scheme
