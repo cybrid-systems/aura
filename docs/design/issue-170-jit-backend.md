@@ -149,7 +149,8 @@ Each migration is independent and ships as a small commit.
 | Date | Item | Commit | Tests | Notes |
 |---|---|---|---|---|
 | 2026-06-13 | Phase 2 / item #2 (AOT entry points) | f432d4b | 5/5 | shipped |
-| TBD | Phase 1 / item #1 (Apply + CaptureRef + visible default) | TBD | TBD | next |
+| 2026-06-13 | Phase 1 / item #1 (Apply + CaptureRef + visible default) | 1f8c097 | 18/18 | shipped |
+| TBD | Phase 1 / item #2 (try/catch IR + LLVM EH) | TBD | TBD | next |
 
 ## Notes for future sessions
 
