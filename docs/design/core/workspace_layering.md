@@ -114,6 +114,8 @@
 
 （pilot-76 prep note）test_issue_130（cache hit rate 验证）。Short 尝试 hit module dep; full 恢复健康。历史 counts。详见 evaluator.md §12。继续。
 
+（pilot-77 prep note）test_issue_131（FFI primitives 验证）。Short 尝试 hit module; full 恢复。历史 passes。详见 evaluator.md §12。继续。
+
 All remaining full/prepped blocks now handled per plan Phase 2. Early 115+ and heavies complete. + P0 complete.
 
 ### Aura Layer (`lib/std/workspace.aura`)
