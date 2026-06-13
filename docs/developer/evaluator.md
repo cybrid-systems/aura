@@ -641,6 +641,8 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-17**: Converted test_issue_168 (incremental type cache safety Phase 1: epoch gate for set_cache_epoch API + basic flow with mutation). See CMakeLists.txt (168 block) + plan Phase 2.
 
+**Phase 2 pilot-18**: Converted test_issue_170 (LLVM JIT AOT entry points Phase 1: verifies new public API on empty state). Lightweight. See CMakeLists.txt (170 block) + plan Phase 2. Continuing one-at-a-time dedup.
+
 ```scheme
 ; happy path
 (display (foo 42))            ; expect 84

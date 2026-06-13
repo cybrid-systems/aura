@@ -1535,9 +1535,9 @@ add_test(NAME issue_169_verification COMMAND ./test_issue_169)
 # flow needs a real FlatFunction, which is exercised by
 # the test_ir / test_issue_158 / test_issue_159 tests
 # (which already compile via the full IR pipeline).
-add_executable(test_issue_170 tests/test_issue_170.cpp)
-set_property(TARGET test_issue_170 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_170 PRIVATE src src/compiler)
+# Phase 2 pilot-18: converted using early helper (light JIT AOT test).
+# Base covers core + value/diag/value_impl; append the jit + messaging + spec_jit specifics + LLVM bits.
+aura_add_issue_test(test_issue_170)
 target_sources(test_issue_170 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
@@ -1548,12 +1548,6 @@ set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "
 target_include_directories(test_issue_170 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_170 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_170 PRIVATE ${llvm_libs})
-target_compile_options(test_issue_170 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
-target_link_libraries(test_issue_170 PRIVATE pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_170_verification COMMAND ./test_issue_170)
 
 # Issue #159 Phase 4: incremental compilation benchmark
 # harness. Measures eval_current latency across 4 scenarios
