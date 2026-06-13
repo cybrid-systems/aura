@@ -257,6 +257,33 @@ target_compile_options(test_concurrent PRIVATE -Wall -Wextra -Wpedantic
     -Wno-parentheses)
 target_link_libraries(test_concurrent PRIVATE pthread)
 add_test(NAME concurrent_basic COMMAND ./test_concurrent)
+
+# Phase 2 dedup helper (definition placed early so it precedes all
+# test_issue_* and pilot calls in this file). See also the pilots section
+# comment for history.
+function(aura_add_issue_test NAME)
+    add_executable(${NAME} tests/${NAME}.cpp)
+    set_property(TARGET ${NAME} PROPERTY CXX_MODULE_STD ON)
+    target_include_directories(${NAME} PRIVATE src)
+    # Common private impls (core + value; type_checker pulled explicitly by tests that need it to avoid heavy import closure in every binary)
+    target_sources(${NAME} PRIVATE
+        src/core/ast_impl.cpp
+        src/core/type_impl.cpp
+        src/compiler/value_impl.cpp)
+    # Common public modules (core layers + basic value/diag — safe for nearly all tests)
+    target_sources(${NAME} PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
+        src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
+        src/core/type_arena.ixx src/core/type.ixx
+        src/compiler/value.ixx
+        src/compiler/diag.ixx)
+    target_compile_options(${NAME} PRIVATE -Wall -Wextra -Wpedantic
+        -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+        -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
+        -Wno-parentheses)
+    target_link_libraries(${NAME} PRIVATE pthread stdc++ stdc++exp aura-reflect)
+    add_test(NAME ${NAME}_verification COMMAND ./${NAME})
+endfunction()
+
 # Issue #115 verification tests (criterion #1 multi-core speedup
 # + criterion #3 long-running stability). Standalone binary so it
 # can be run independently of test_concurrent's other suites.
@@ -795,29 +822,10 @@ add_test(NAME issue_131_verification COMMAND ./test_issue_131)
 # unique tail for test-specific modules/impls.
 #
 # Base set here covers the common core + light compiler modules used by
-# most issue tests (ast_walkers, pure extracts, query/mutate smoke etc.).
-# Pilots (thin harness) and full tests now both benefit.
-function(aura_add_issue_test NAME)
-    add_executable(${NAME} tests/${NAME}.cpp)
-    set_property(TARGET ${NAME} PROPERTY CXX_MODULE_STD ON)
-    target_include_directories(${NAME} PRIVATE src)
-    # Common private impls (core types/ast always needed for FlatAST etc.)
-    target_sources(${NAME} PRIVATE
-        src/core/ast_impl.cpp
-        src/core/type_impl.cpp)
-    # Common public modules (core layers + basic value/diag used everywhere)
-    target_sources(${NAME} PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-        src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-        src/core/type_arena.ixx src/core/type.ixx
-        src/compiler/value.ixx
-        src/compiler/diag.ixx)
-    target_compile_options(${NAME} PRIVATE -Wall -Wextra -Wpedantic
-        -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-        -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-        -Wno-parentheses)
-    target_link_libraries(${NAME} PRIVATE pthread stdc++ stdc++exp aura-reflect)
-    add_test(NAME ${NAME}_verification COMMAND ./${NAME})
-endfunction()
+# (Definition of aura_add_issue_test is now early in the file — before
+# the first test_issue_* — for correct CMake call ordering.
+# The body above (near line ~260) is the active one. This late text is a
+# historical marker only.)
 
 # ── CMake pilots (Step 1.1/1.2/1.3 / 3.2) now via aura_add_issue_test (Phase 2 dedup) ──
 # test_error_merr.cpp — exercises make_merr (centralized in 0.1+) via
