@@ -1202,6 +1202,14 @@ target_sources(test_issue_163 PRIVATE
 # timeout), (4) 20 parallel fibers via orch:parallel work,
 # (5) 50 sequential spawn+join complete within reasonable time
 # (proves no CPU burn from the removed spin fallback).
+# Phase 2 pilot-13: converted using early helper. Base covers core + value/diag/value_impl; append the heavy fiber/serve + evaluator/JIT/LLVM specifics.
+# Issue #164 verification: fiber:join spin-fallback elimination.
+# Verifies (1) basic fiber:join still works, (2) no spin even
+# on already-done target, (3) concurrent mutate:rebind during
+# fiber:join completes correctly (no version mismatch, no
+# timeout), (4) 20 parallel fibers via orch:parallel work,
+# (5) 50 sequential spawn+join complete within reasonable time
+# (proves no CPU burn from the removed spin fallback).
 add_executable(test_issue_164 tests/test_issue_164.cpp)
 set_property(TARGET test_issue_164 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_164 PRIVATE src src/compiler)

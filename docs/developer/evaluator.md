@@ -631,6 +631,8 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-12**: Converted test_issue_163 (expanded Pass concept usage: AnalysisPass, run_pipeline, run_analysis_pipeline, mark_coercions). See CMakeLists.txt (163 block) + plan Phase 2. Continuing one-at-a-time dedup.
 
+**Phase 2 pilot-13**: Converted test_issue_164 (fiber:join spin-fallback elimination: 5 acceptance criteria for join, no-spin, concurrent mutate, parallel, perf). See CMakeLists.txt (164 block) + plan Phase 2.
+
 ```scheme
 ; happy path
 (display (foo 42))            ; expect 84
