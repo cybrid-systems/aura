@@ -116,6 +116,12 @@
 
 （pilot-77 prep note）test_issue_131（FFI primitives 验证）。Short 尝试 hit module; full 恢复。历史 passes。详见 evaluator.md §12。继续。
 
+（pilot-78 prep note）test_issue_135（true parallel 验证）。Short 尝试 build ok but test partial; full 恢复健康。历史 5 ACs。详见 evaluator.md §12。批量搞。
+
+（pilot-79 prep note）test_issue_164（fiber:join spin-fallback 验证）。Short 尝试 hit module; full 恢复。历史 6+/6。详见 evaluator.md §12。继续。
+
+（pilot-80 prep note）test_issue_165（macro re-expansion + SyntaxMarker TDD 验证）。Short 尝试 hit module; full 恢复。历史 13/13。详见 evaluator.md §12。批量搞。
+
 All remaining full/prepped blocks now handled per plan Phase 2. Early 115+ and heavies complete. + P0 complete.
 
 ### Aura Layer (`lib/std/workspace.aura`)
