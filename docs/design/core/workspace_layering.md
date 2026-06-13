@@ -64,7 +64,8 @@
 （pilot-38 note）test_issue_159_bench（incremental compilation benchmark harness 验证）prep（short 导致 re-gen，full 恢复）。详见 evaluator.md §12。
 （pilot-39 note）test_issue_138（incremental dirty propagation / type checking for EDSL 验证）prep（short 导致 stop，full 恢复）。详见 evaluator.md §12。
 （pilot-40 note）test_issue_139（structural refactor primitives 验证）prep（short 导致 stop，full 恢复）。详见 evaluator.md §12。
-（pilot-41 note）test_issue_140（query:pattern with Ellipsis and hygiene 验证）转换中（prepped heavy）。详见 evaluator.md §12 和 plan Phase 2。
+（pilot-41 note）test_issue_140（query:pattern with Ellipsis and hygiene 验证）prep（short 导致 stop，full 恢复）。详见 evaluator.md §12。
+（pilot-42 note）test_issue_141（full WorkspaceTree with COW, read-only, merge 验证）转换中（last major prepped heavy）。详见 evaluator.md §12 和 plan Phase 2。
 
 ### Aura Layer (`lib/std/workspace.aura`)
 
