@@ -1923,13 +1923,10 @@ add_test(NAME issue_141_verification COMMAND ./test_issue_141)
 # and hygiene. query:where and query:filter shipped in commit 8bc00b6;
 # mutate:replace-subtree, capture detection, and the extended
 # MutationRecord are added in this PR.
-add_executable(test_issue_142 tests/test_issue_142.cpp)
-set_property(TARGET test_issue_142 PROPERTY CXX_MODULE_STD ON)
+# Phase 2 pilot-23: converted using early helper. Base covers core + value/diag/value_impl; append the heavy parser/serve/evaluator/JIT/LLVM + query/mutate specifics + observability headers + rtti/LLVM bits (heavy like 141/140).
+aura_add_issue_test(test_issue_142)
 target_include_directories(test_issue_142 PRIVATE src src/compiler)
 target_sources(test_issue_142 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx
-    src/core/type.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
@@ -1984,12 +1981,6 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_142 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_142 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_142 PRIVATE ${llvm_libs})
-target_compile_options(test_issue_142 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
-target_link_libraries(test_issue_142 PRIVATE pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_142_verification COMMAND ./test_issue_142)
 
 # ── GC ↔ Evaluator integration tests (Issue #113) ─────────
 # Verifies the Evaluator root source registration API surface
