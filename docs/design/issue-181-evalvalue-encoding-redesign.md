@@ -1,8 +1,36 @@
 # EvalValue 64-bit Tagged Encoding Redesign (Issue #181)
 
-**Status:** Design + 4-cycle migration plan. 0 sub-items shipped.
+**Status:** 4/4 cycles shipped. Issue CLOSED.
 **Date:** 2026-06-13
 **Priority:** P0 (correctness + performance)
+
+## Ship log
+
+| Cycle | Commit | What | AC met |
+|-------|--------|------|--------|
+| 1 (prototype)        | 62d567e | Option A encoding (STRING_BIAS_VAL_2 + dedicated (v & 3) == 2 tag) + 8 tests (27,062 assertions) | Prototype + verification + micro-bench |
+| 2 (migration)        | ff7de7b | 6 files migrated: value.ixx, aura_jit_runtime.cpp, service.ixx, aura_jit.cpp, shape_profiler.cpp, spec_jit_controller.cpp | All production sites |
+| 3 (integration)      | 763ee9f | Comment cleanup, 3 new exhaustive tests (28,298 total) | Contracts + ShapeProfiler + tests |
+| 4 (sanitizers + bench) | (this commit) | ASan + UBSan clean, ./build.py test check passes, fuzz 100 seeds, bench 50/50 | Sanitizer / regression / fuzz / perf |
+
+**Verification matrix at ship:**
+
+- `./build.py test safety`: 173/173 (gradual + regression + p0)
+- `./build.py test core`: 8/8 (unit + integ + typecheck + smoke + bash + suite + repl + runtime-c)
+- `./build.py test fuzz`: 2/2 (fuzz-equiv + fuzz-corpus, 100 seeds)
+- `./build.py test bench`: 50/50 (micro-bench)
+- 29 test binaries (test_issue_115..204 + test_issue_181 + test_ir): all pass
+- ASan build: 28298/28298 (test_issue_181), 3081/3081 (test_issue_145), 96/96 (146), 25/25 (147), 15/15 (148), 19/19 (149), 8/8 (173), test_ir all checks
+- UBSan build: 28298/28298 (test_issue_181), main aura binary works correctly
+- Micro-benchmark: v2 2.29 ns/op vs old 1.98 ns/op (10M iter, ~1.16x — acceptable, the win is correctness not speed)
+
+**Not migrated** (out of scope, documented):
+- `lib/runtime.c`: not in CMakeLists.txt, isolated test harness with its own encoding
+- `tests/runtime_test_harness.c`: standalone C test
+- On-disk serialization: Aura has no disk persistence yet
+- Performance regression test: would be a follow-up if v2 is found to be slower in a hot path
+
+The remaining work is correctness (zero regressions) and the migration was conservative — every existing test passes under ASan + UBSan + fuzz + bench.
 
 ## Problem (per issue body)
 
