@@ -1094,43 +1094,14 @@ target_link_libraries(test_issue_158 PRIVATE ${llvm_libs})
 # Issue #159 Phase 1 verification: (typecheck-incremental)
 # primitive wires up the partial re-inference path. Standalone
 # binary so the new primitive dispatch is tested in isolation.
-add_executable(test_issue_159 tests/test_issue_159.cpp)
-set_property(TARGET test_issue_159 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_159 PRIVATE src src/compiler)
-target_sources(test_issue_159 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx
-    src/core/type.ixx
-    src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/evaluator.ixx
-    src/compiler/evaluator_pure.ixx
-    src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2) (for test_ir isolation)
-    src/compiler/cache.ixx
-    src/compiler/value.ixx
-    src/compiler/ir.ixx
-    src/compiler/lowering.ixx
-    src/compiler/ir_executor.ixx
-    src/compiler/compute_kind.ixx
-    src/compiler/arity.ixx
-    src/compiler/diag.ixx
-    src/compiler/service.ixx
-    src/compiler/pass_manager.ixx
-    src/compiler/query.ixx
-    src/compiler/coercion_map.ixx
-    src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
-    src/compiler/ast_walkers.ixx
-    src/compiler/ffi_primitives.ixx
-    src/compiler/type_checker.ixx)
+# Phase 2 pilot-9: converted using early helper. Base covers core + value/diag/value_impl; append the parser/serve/evaluator/JIT/LLVM specifics + rtti flags + LLVM bits.
+aura_add_issue_test(test_issue_159)
 target_sources(test_issue_159 PRIVATE
     src/serve/fiber.cpp
     src/serve/worker.cpp
     src/serve/scheduler.cpp
     src/serve/gc_coordinator.cpp
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
     src/compiler/evaluator_impl.cpp
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
@@ -1143,7 +1114,7 @@ target_sources(test_issue_159 PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
-    src/compiler/adt_runtime_impl.cpp  # ADT extraction (FFI pattern, hygiene 3.2)
+    src/compiler/adt_runtime_impl.cpp
     src/compiler/lowering_linear_types_impl.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
@@ -1152,15 +1123,29 @@ target_sources(test_issue_159 PRIVATE
     src/compiler/observability_snapshot.h)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+target_sources(test_issue_159 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
+    src/parser/lexer.ixx src/parser/parser.ixx
+    src/compiler/evaluator.ixx
+    src/compiler/evaluator_pure.ixx
+    src/compiler/adt_runtime.ixx
+    src/compiler/cache.ixx
+    src/compiler/ir.ixx
+    src/compiler/lowering.ixx
+    src/compiler/ir_executor.ixx
+    src/compiler/compute_kind.ixx
+    src/compiler/arity.ixx
+    src/compiler/service.ixx
+    src/compiler/pass_manager.ixx
+    src/compiler/query.ixx
+    src/compiler/coercion_map.ixx
+    src/compiler/ir_cache_pure.ixx
+    src/compiler/lowering_linear_types.ixx
+    src/compiler/ast_walkers.ixx
+    src/compiler/ffi_primitives.ixx
+    src/compiler/type_checker.ixx)
 target_include_directories(test_issue_159 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_159 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_159 PRIVATE ${llvm_libs})
-target_compile_options(test_issue_159 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
-target_link_libraries(test_issue_159 PRIVATE pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_159_verification COMMAND ./test_issue_159)
 
 # Issue #161 Phase 2 verification: parser is a pure function. The
 # test only needs the parser (no evaluator/IR/JIT) — the
