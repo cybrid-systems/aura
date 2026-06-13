@@ -63,7 +63,11 @@ public:
     Env& operator=(const Env&) = default;
     void set_parent(const Env* p) { parent_ = p; }
     void set_primitives(const Primitives* p) { primitives_ = p; }
-    void set_cells(std::pmr::vector<types::EvalValue>* c) { cells_ = c; }
+    // P0 step 2 (EnvFrame SoA migration, symmetric to EnvFrame): removed
+    // set_cells and internal cells_ pointer. Legacy Env now also pure
+    // for bindings (returns raw sentinels from lookups); cell deref
+    // always uses central Evaluator::cells_ (or explicit param to
+    // lookup_cell_*). Prepares for dropping pointer chasing entirely.
     // Issue #145 Phase 2.2 — SoA walk infrastructure.
     //
     // `owner_` is a back-pointer to the owning Evaluator, used
@@ -162,7 +166,11 @@ private:
     // drop (the original goal) removes this field after the
     // migration completes; see cpp26_guide.md §2.7.7.
     const aura::ast::StringPool* pool_ = nullptr;  // Issue #145
-    std::pmr::vector<types::EvalValue>* cells_ = nullptr;
+    // P0 step 2: cells_ pointer removed (was used for cell deref in
+    // lookups). Bindings now always return the raw value (cell
+    // sentinel if applicable); deref centralized via Evaluator
+    // or passed cells to lookup_cell helpers. This + EnvFrame
+    // change eliminates one class of pointer-to-reallocatable-heap.
     std::vector<std::pair<std::string, types::EvalValue>> bindings_;
     // Issue #145: parallel SymId-keyed store. Both arrays
     // share the same length and order. lookup_by_symid reads
