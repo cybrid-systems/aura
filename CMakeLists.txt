@@ -2830,3 +2830,24 @@ target_compile_options(test_issue_171 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-parentheses)
 target_link_libraries(test_issue_171 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_171_verification COMMAND ./test_issue_171)
+
+# Issue #204 verification: GC env_frames_ walk integration
+# (Issue #172 Phase 4). Verifies GCCollector::mark_env_frame_roots()
+# sets the correct bits for indices reachable through env
+# parent chains. The caller-side integration (evaluator walking
+# env_frames_ and producing the index lists) is a separate
+# follow-up — this test verifies the GC-side method only.
+add_executable(test_issue_204 tests/test_issue_204.cpp)
+set_property(TARGET test_issue_204 PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_issue_204 PRIVATE src src/serve)
+target_sources(test_issue_204 PRIVATE
+    src/serve/gc_coordinator.cpp
+    src/serve/scheduler.cpp
+    src/serve/fiber.cpp
+    src/serve/worker.cpp)
+target_compile_options(test_issue_204 PRIVATE -Wall -Wextra -Wpedantic
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
+    -Wno-parentheses)
+target_link_libraries(test_issue_204 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+add_test(NAME issue_204_verification COMMAND ./test_issue_204)

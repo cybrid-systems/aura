@@ -152,6 +152,27 @@ public:
                          size_t pairs_size,
                          size_t closures_size);
 
+    // Issue #172 / #204: env_frame_roots walk. The caller
+    // (evaluator) walks the env_frames_ arena itself and
+    // passes the resulting pair/closure indices here. The
+    // GC doesn't know about EnvFrame's definition (it lives
+    // in the evaluator); the caller does the walk and
+    // returns the indices. This decouples the GC from the
+    // EnvFrame type while still benefiting from the SoA
+    // arena's linear-walk efficiency.
+    //
+    // pair_roots: pair indices reachable from any env frame
+    //             (via bindings_symid_ holding a tagged pair ref)
+    // closure_roots: closure indices reachable from any env
+    //             frame (via bindings holding a tagged closure ref)
+    //
+    // The mark vectors must be sized (via mark_from_roots or
+    // a direct resize) before calling this; otherwise set()
+    // is a silent no-op.
+    void mark_env_frame_roots(
+        const std::vector<int64_t>& pair_roots,
+        const std::vector<int64_t>& closure_roots);
+
     GCSweepResult sweep();
 
     // Mark accessors (for testing)
