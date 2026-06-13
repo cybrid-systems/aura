@@ -661,7 +661,9 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-27**: Converted test_issue_146 (pure-function + monadic Result extraction Phase 1: evaluator_pure module, coerce_to_int_pure as free Result, legacy wrapper compat + many more pure extracts like is_truthy, edit_distance, ffi_marshal, arithmetic_sum etc.; 96/96). See CMakeLists.txt (146 block) + plan Phase 2.
 
-**Phase 2 pilot-28**: Convert test_issue_147 (next heavy in file order, similar full serve/eval/jit config). Docs + targeted. See plan Phase 2. Multi-advance.
+**Phase 2 pilot-28**: Converted test_issue_147. See previous. 
+
+**Phase 2 pilot-29**: Convert test_issue_148 (mutation-aware incremental type checking with constraint delta solving; 8 ACs on incremental_infer, partial API, let-poly, occurrence narrowing, delta solve). Heavy. See CMake + plan Phase 2. Continuing multi small steps.
 
 ```scheme
 ; happy path
