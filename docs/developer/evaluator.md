@@ -611,7 +611,9 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-2**: helper extended with base common core modules/impls (arena/ast/type etc.) + full standard link (pthread + stdc++ + aura-reflect); first real test_issue_132 (ast_walkers extraction verification) converted — block now ~3 lines (call + 1 specific append) instead of 15+ repeated lines. See CMakeLists.txt (helper + test_issue_132 block) + plan Phase 2. Follow-on small steps will convert more (generalize base or add parameters as needed).
 
-**Phase 2 pilot-3**: base further grown (value_impl + type_checker_impl PRIVATE; type_checker.ixx PUBLIC). Converted test_issue_116 (TypeChecker deferred Coercion + isolation). Now uses helper + small serve/parser tail. Continuing the dedup one (or few) tests per micro-step per plan. See current CMakeLists (116 block + helper) + §13 File map if extended.
+**Phase 2 pilot-3** (infra): helper definition moved early in CMakeLists.txt (before any test_issue_* calls, near line 264) so all subsequent conversions are safe regardless of source order. (116 conversion was experimental and reverted to keep module closure simple during base stabilization.)
+
+**Phase 2 pilot-4**: Converted test_issue_134 (ADT (datatype ...) verification, ties back to our 2.3/3.2 ADT extraction). Uses early helper + include extra (src/compiler) + append for parser/serve/type_checker/ir/coercion/observability bits. Block shrank dramatically. Base remains conservative (core + value/diag/value_impl). See CMakeLists.txt (134 block + early helper) + plan Phase 2. Next micros will continue one-at-a-time conversions.
 
 ```scheme
 ; happy path
