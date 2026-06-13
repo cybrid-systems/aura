@@ -44,6 +44,7 @@
 （pilot-18 note）test_issue_170（LLVM JIT AOT entry points 验证）已转换。
 （pilot-19 note）test_issue_138（incremental dirty propagation / type checking 验证）已转换。
 （pilot-20 note）test_issue_139（structural refactor primitives 验证）已转换。
+（pilot-21 note）test_issue_140（query:pattern with Ellipsis and hygiene 验证）已转换。
 
 ### Aura Layer (`lib/std/workspace.aura`)
 
