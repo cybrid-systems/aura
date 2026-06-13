@@ -1301,9 +1301,13 @@ export inline std::string format_value(const types::EvalValue& v,
         return std::to_string(types::as_int(v));
     if (types::is_float(v))
         return std::to_string(types::as_float(v));
-    // IMPORTANT: Check is_string BEFORE is_keyword (Issue #96 bug fix).
-    // The STRING_BIAS - idx encoding can produce bit patterns that
-    // overlap with RefKeyword (every 64th idx starting at 19).
+    // IMPORTANT: Check is_string BEFORE is_keyword (Issue #96 bug fix;
+    // pre-#181 encoding rationale). The current v2 encoding
+    // (Issue #181) has (v & 3) == 2 as the dedicated string tag,
+    // disjoint from ref / special. The ordering is still
+    // semantically important (a string at a particular idx is
+    // never a keyword), but the encoding no longer relies on
+    // ordering for correctness.
     if (types::is_string(v)) {
         if (!heap.empty()) {
             auto idx = types::as_string_idx(v);

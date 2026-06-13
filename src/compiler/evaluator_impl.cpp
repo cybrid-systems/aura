@@ -847,11 +847,12 @@ namespace {
             std::fprintf(stdout, "%s", as_bool(v) ? "#t" : "#f");
             return;
         }
-        // IMPORTANT: Check is_string BEFORE is_keyword (Issue #96 bug fix).
-        // The STRING_BIAS - idx encoding can produce bit patterns that
-        // overlap with RefKeyword (every 64th idx starting at 19).
-        // In practice, no real RefKeyword has such a huge index, so
-        // checking string first resolves the ambiguity correctly.
+        // IMPORTANT: Check is_string BEFORE is_keyword (Issue #96 bug fix;
+        // pre-#181 encoding rationale). The v2 encoding (Issue #181)
+        // uses (v & 3) == 2 as the dedicated string tag, so this is
+        // no longer a correctness concern — but the ordering is kept
+        // for semantic clarity (a string at idx N is never a keyword
+        // at the same value).
         if (is_string(v) && !heap.empty()) {
             auto idx = as_string_idx(v);
             if (idx < heap.size()) {

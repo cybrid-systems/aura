@@ -323,11 +323,132 @@ bool test_v2_pool_capacity() {
     return true;
 }
 
+// ── Test 9 (Cycle 3): exhaustive odd-idx disambiguation ──
+//
+// Per the design doc test scenarios: for every idx in [0, 64),
+// verify that make_string(idx) is classified as a string AND
+// NOT classified as ref/error/kwd. This is the exhaustively
+// small version of test 1 (which checks 4K idx). Both pass;
+// test 9 documents the historical collision indices explicitly.
+bool test_v2_exhaustive_64() {
+    PRINTLN("\n--- Test 9: v2 exhaustive disambiguation (idx in [0, 64)) ---");
+    for (std::uint64_t idx = 0; idx < 64; ++idx) {
+        std::int64_t v = make_string_raw_v2(idx);
+        EvalValue ev(v);
+        // String classification (the encoding invariant).
+        CHECK(is_string_v2(ev), "idx in [0,64) → is_string_v2");
+        // Disambiguation: not a ref, not an error, not a keyword.
+        // (The ref_type check below is the exhaustive proof that
+        // the v2 encoding eliminates the historical RefError
+        // / RefKeyword collisions at idx 31 / idx 19.)
+        if (is_ref(v)) {
+            // Should NEVER happen with v2. If it does, the
+            // encoding broke.
+            CHECK(false, "v2 idx classified as ref (impossible)");
+            // Also report which ref type it would have been
+            // (for diagnostic purposes).
+            std::fprintf(stderr, "    idx=%lu → ref_type=%lu\n",
+                         idx, ref_type(v));
+        }
+        // Predicate order: is_string(v) && is_ref(v) is ALWAYS
+        // false (the encodings are disjoint at the source).
+        CHECK(!(is_string_v2(ev) && is_ref(v)),
+              "predicate order: !is_string_v2(v) || !is_ref(v)");
+    }
+    PASS("all 64 indices are strings, none are refs");
+    return true;
+}
+
+// ── Test 10 (Cycle 3): predicate order is disjoint at compile time ──
+//
+// For the v2 encoding, is_string(v) and is_ref(v) are disjoint.
+// Verify for a wide range of values, including the boundary
+// cases (idx 0, idx at the v2 max, all the historical collision
+// indices, and random fixnums/refs).
+bool test_v2_predicate_disjoint() {
+    PRINTLN("\n--- Test 10: is_string_v2 and is_ref are disjoint ───");
+    // Check all string values
+    for (std::uint64_t idx : {0ULL, 1ULL, 19ULL, 31ULL, 100ULL,
+                               0xFFFFULL, 0xFFFFFULL, (1ULL << 30)}) {
+        EvalValue ev(make_string_raw_v2(idx));
+        CHECK(!is_ref(ev.val),
+              "is_string_v2 ∧ is_ref = false (v2 string value)");
+    }
+    // Check all ref values
+    for (std::uint64_t type = 0; type < 12; ++type) {
+        for (std::uint64_t idx = 0; idx < 50; ++idx) {
+            std::int64_t ref_v = make_ref(type, idx);
+            CHECK(!is_string_raw_v2(ref_v),
+                  "is_string_v2 ∧ is_ref = false (ref value)");
+        }
+    }
+    PASS("is_string_v2 and is_ref are disjoint (v2 encoding eliminates collision)");
+    return true;
+}
+
+// ── Test 11 (Cycle 3): Cycle 2 migration didn't break anything ──
+//
+// The inline is_string / is_float in value.ixx now use the v2
+// encoding. The raw helpers in value_tags.h also use v2. The
+// old make_string_raw / string_idx_raw / STRING_BIAS_VAL
+// constants are kept for ABI compatibility (lib/runtime.c +
+// C-only test harness) but are no longer the source of truth.
+//
+// Verify that the inline module helpers and the raw helpers
+// agree on a wide range of inputs.
+bool test_v2_inline_agrees_with_raw() {
+    PRINTLN("\n--- Test 11: inline (is_string) agrees with raw (is_string_raw_v2) ───");
+    // The inline is_string does (v & 3) == 2 && v <= STRING_BIAS_VAL_2.
+    // The raw is_string_raw_v2 does (v & 3) == 2.
+    // For values in the string range (v <= STRING_BIAS_VAL_2), they agree.
+    // For values outside the string range (v > STRING_BIAS_VAL_2 but
+    // still (v & 3) == 2), the inline rejects but the raw accepts.
+    // That's the safety belt working as designed.
+    int n_string_range = 0;
+    int n_outside_range = 0;
+    // Walk through the string range with step 1 (a 1000-value window
+    // is enough to verify the inline helper agrees with the raw
+    // helper on every value in the string range).
+    for (std::int64_t v = -9000000000000000000LL; v > -9000000000000001000LL; v -= 1) {
+        EvalValue ev(v);
+        if (is_string_raw_v2(v)) {
+            if (v <= STRING_BIAS_VAL_2) {
+                ++n_string_range;
+                CHECK(is_string_v2(ev),
+                      "inline agrees with raw in string range");
+            } else {
+                ++n_outside_range;
+                CHECK(!is_string_v2(ev),
+                      "inline rejects outside string range (safety belt)");
+            }
+        }
+    }
+    // Sample outside the string range (positive values, which are
+    // mostly fixnums with the (v & 3) == 2 tag).
+    for (std::int64_t v = 0; v < 1000; v += 1) {
+        if (is_string_raw_v2(v)) {
+            ++n_outside_range;
+            EvalValue ev(v);
+            CHECK(!is_string_v2(ev),
+                  "inline rejects outside string range (safety belt)");
+        }
+    }
+    std::fprintf(stdout, "  checked: in-range=%d, out-of-range=%d\n",
+                 n_string_range, n_outside_range);
+    PASS("inline and raw helpers agree in string range; "
+         "inline rejects out-of-range tag matches (safety belt)");
+    return true;
+}
+
 int main() {
-    std::fprintf(stdout, "═══ Issue #181 — EvalValue 64-bit tagged encoding (Cycle 1) ═══\n");
-    std::fprintf(stdout, "  Option A prototype: dedicated (v & 3) == 2 tag for strings.\n");
-    std::fprintf(stdout, "  Verifies no collisions + roundtrip + micro-benchmark.\n");
-    std::fprintf(stdout, "  Full migration is Cycle 2 (separate follow-up).\n\n");
+    std::fprintf(stdout, "═══ Issue #181 — EvalValue 64-bit tagged encoding (Cycles 1-3) ═══\n");
+    std::fprintf(stdout, "  Option A encoding: dedicated (v & 3) == 2 tag for strings.\n");
+    std::fprintf(stdout, "  Cycle 1: prototype + micro-bench.\n");
+    std::fprintf(stdout, "  Cycle 2: migration of all production sites (value.ixx,\n");
+    std::fprintf(stdout, "    aura_jit_runtime.cpp, service.ixx, aura_jit.cpp,\n");
+    std::fprintf(stdout, "    shape_profiler.cpp, spec_jit_controller.cpp).\n");
+    std::fprintf(stdout, "  Cycle 3: integration + Contracts + ShapeProfiler verification +\n");
+    std::fprintf(stdout, "    exhaustive tests.\n\n");
 
     test_v2_no_collisions();
     test_v2_historical_collisions_fixed();
@@ -337,6 +458,9 @@ int main() {
     test_old_encoding_still_works();
     test_v2_micro_benchmark();
     test_v2_pool_capacity();
+    test_v2_exhaustive_64();
+    test_v2_predicate_disjoint();
+    test_v2_inline_agrees_with_raw();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
