@@ -1432,13 +1432,62 @@ private:
 // Cost: O(C × F) where C = number of call sites, F = number
 // of functions. For the minimal version, F is checked once per
 // call site (the callee is looked up by name in module.functions).
+// Issue #171: Function Inliner (Priority 2) — actually inlines
+// trivial callees at their call sites. Extends the #160 scaffold
+// (which only counted call sites) with:
+//   1. Data-flow: build slot → func_id map for the caller
+//      (MakeClosure writes func_id to a slot; Call reads it)
+//   2. Static callee resolution: for each Call, look up the
+//      func_id via the slot map
+//   3. Substitution: if the callee is trivial-inlinable, replace
+//      the Call with a copy of the ConstXxx instruction at the
+//      call site, with operands[0] remapped to the caller's
+//      result slot
+//   4. Recursion guard: skip inlining if the callee's func_id
+//      matches the caller's func_id
+//
+// What this DOESN'T do (deferred to follow-up issues):
+//   - Multi-block callees (requires branch-aware inlining)
+//   - Functions with parameters (requires local renaming of
+//     the callee's local space into the caller's)
+//   - Size heuristics (currently "single block + constant return")
+//   - Call site cloning for polymorphic dispatch
+//   - TCO (Issue #171 Priority 3, separate commit)
+//
+// Cost: O(C × F) per function, where C = call sites, F = functions.
+// Data-flow analysis is O(C) per function; the per-call-site
+// inline check is O(1) (func_id → function lookup is O(1) via
+// a pre-built index).
 export class InlinePass {
 public:
     void run(aura::ir::IRModule& module) {
         inlined_count_ = 0;
-        for (auto& func : module.functions) {
+        // Build a func_id → IRFunction* index for O(1) lookup.
+        // module.functions is a std::vector indexed by func_id.
+        if (func_index_.size() != module.functions.size()) {
+            func_index_.clear();
+            func_index_.resize(module.functions.size());
+            for (std::size_t i = 0; i < module.functions.size(); ++i)
+                func_index_[i] = &module.functions[i];
+        }
+        for (std::size_t fi = 0; fi < module.functions.size(); ++fi) {
+            auto& func = module.functions[fi];
+            // Recursion guard: skip inlining back into the same
+            // function (direct recursion). Indirect recursion
+            // detection is a follow-up.
+            const auto caller_fid = static_cast<std::uint32_t>(fi);
+            // Build slot → func_id map for this function
+            std::unordered_map<std::uint32_t, std::uint32_t> slot_to_func;
+            for (const auto& block : func.blocks) {
+                for (const auto& instr : block.instructions) {
+                    if (instr.opcode == aura::ir::IROpcode::MakeClosure) {
+                        // MakeClosure(result_slot, func_id, ...)
+                        slot_to_func[instr.operands[0]] = instr.operands[1];
+                    }
+                }
+            }
             for (auto& block : func.blocks) {
-                run_on_block(module, func, block);
+                run_on_block(func, block, slot_to_func, caller_fid);
             }
         }
     }
@@ -1452,25 +1501,19 @@ private:
     // function" that can be inlined trivially. Specifically:
     //   - Has exactly one block
     //   - The block has 2 instructions: a ConstXxx + a Return
-    //   - The Return's source is the ConstXxx's result
-    //
-    // Public (for tests) via is_trivial_inlinable_for_test.
+    //   - The Return's source is the ConstXxx's result slot
     static bool is_trivial_inlinable(const aura::ir::IRFunction& func) {
         if (func.blocks.size() != 1) return false;
         const auto& block = func.blocks[0];
         if (block.instructions.size() != 2) return false;
-        // Pattern: [ConstXxx(result=slot, value=...) , Return(value=slot)]
         const auto& a = block.instructions[0];
         const auto& b = block.instructions[1];
-        // First must be a constant-producing op.
         bool a_is_const = (a.opcode == aura::ir::IROpcode::ConstI64 ||
                            a.opcode == aura::ir::IROpcode::ConstF64 ||
                            a.opcode == aura::ir::IROpcode::ConstBool ||
                            a.opcode == aura::ir::IROpcode::ConstString ||
                            a.opcode == aura::ir::IROpcode::ConstVoid);
-        // Second must be a Return.
         bool b_is_return = (b.opcode == aura::ir::IROpcode::Return);
-        // The Return's source must be the Const's result slot.
         bool slots_match = (a.operands[0] == b.operands[0]);
         return a_is_const && b_is_return && slots_match;
     }
@@ -1486,40 +1529,66 @@ private:
     }
 
 public:
-    // Public wrapper for tests. The actual inliner would call
-    // this internally to decide whether to inline a call site.
+    // Public wrapper for tests.
     static bool is_trivial_inlinable_for_test(
         const aura::ir::IRFunction& func) {
         return is_trivial_inlinable(func);
     }
 
 private:
-    void run_on_block(aura::ir::IRModule& module,
-                      const aura::ir::IRFunction& caller,
-                      aura::ir::BasicBlock& block) {
+    void run_on_block(aura::ir::IRFunction& caller,
+                      aura::ir::BasicBlock& block,
+                      const std::unordered_map<std::uint32_t, std::uint32_t>& slot_to_func,
+                      std::uint32_t caller_fid) {
+        // Walk the block, find Call sites with a known static
+        // callee that's trivial-inlinable, and substitute the
+        // constant directly at the call site.
+        //
+        // The substitution is an in-place rewrite of the Call
+        // instruction to be a ConstXxx with operands[0] remapped
+        // to the caller's result slot (instr.operands[3]). Since
+        // the callee has no parameters and no control flow, the
+        // ConstXxx's value can be written directly to the result
+        // slot without a temporary.
+        (void)caller;
         for (std::size_t i = 0; i < block.instructions.size(); ++i) {
             auto& instr = block.instructions[i];
             if (instr.opcode != aura::ir::IROpcode::Call) continue;
-            // The callee is operands[0]. For a Call, this is a
-            // function id (SymId resolved via the caller's pool).
-            // For this minimal inliner, we only handle calls
-            // where operands[0] is a small literal (the function
-            // id is the literal in the call's pool).
-            // TODO: proper SymId resolution. For now, we skip
-            // calls where we can't determine the callee name.
-            (void)caller;
-            (void)module;
-            // We don't have a direct way to resolve operands[0]
-            // (a slot index) to a function name. The lowering
-            // would have to emit a different representation.
-            // For this minimal inliner, we just count how many
-            // Call instructions exist and report them — the
-            // actual inlining requires lowering integration.
-            ++inlined_count_;  // count attempts; no actual inline
+            // Operands[0] = callee slot. Look up static func_id.
+            auto callee_slot = instr.operands[0];
+            auto it = slot_to_func.find(callee_slot);
+            if (it == slot_to_func.end()) continue;  // dynamic callee
+            auto callee_fid = it->second;
+            // Recursion guard: don't inline into self
+            if (callee_fid == caller_fid) continue;
+            // Look up the callee function
+            if (callee_fid >= func_index_.size()) continue;
+            const auto* callee = func_index_[callee_fid];
+            if (!callee) continue;
+            // Check trivial-inlinable
+            if (!is_trivial_inlinable(*callee)) continue;
+            // Get the constant instruction from the callee
+            const auto& const_instr = callee->blocks[0].instructions[0];
+            // The result slot for the inlined constant is the
+            // Call's result slot (instr.operands[3]).
+            auto result_slot = instr.operands[3];
+            // Rewrite the Call instruction in place to be the
+            // ConstXxx (with remapped result slot).
+            instr.opcode = const_instr.opcode;
+            instr.operands[0] = result_slot;
+            // Copy operands[1] and [2] from the callee's const
+            // instruction (they hold the const value bits, not
+            // the Call's arg_base / arg_count which the
+            // original Call had here).
+            instr.operands[1] = const_instr.operands[1];
+            instr.operands[2] = const_instr.operands[2];
+            ++inlined_count_;
         }
     }
 
     std::size_t inlined_count_ = 0;
+    // Issue #171: func_id → IRFunction* index for O(1) lookup.
+    std::vector<const aura::ir::IRFunction*> func_index_;
 };
 
 } // namespace aura::compiler
