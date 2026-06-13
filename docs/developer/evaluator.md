@@ -623,6 +623,8 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-8**: Converted test_issue_158 (quasiquote should expand inner macro calls in code positions). Uses early helper + appends for parser/serve/evaluator/JIT/LLVM specifics. See CMakeLists.txt (158 block) + plan Phase 2. Continuing the one-at-a-time dedup.
 
+**Phase 2 pilot-9**: Converted test_issue_159 (typecheck-incremental primitive for partial re-inference). Uses early helper + appends for parser/serve/evaluator/JIT/LLVM specifics. See CMakeLists.txt (159 block) + plan Phase 2.
+
 ```scheme
 ; happy path
 (display (foo 42))            ; expect 84
