@@ -749,11 +749,12 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilots 52-70 batch prep (一把做完)**: Converted (short aura_add) for remaining full-block tests per plan: lights 124 (try/catch IR, 6 ACs),125 (per-module dirty, observ),126 (pure fns),127 (Result<T>),128 (span),130 (cache_hit_rate),131 (FFI extraction); 135 (true parallel 5 ACs heavy); + preps for long-standing 164 (fiber join 5 ACs),165 (macro re-exp TDD),166 (epoch cache),169 (incr comp v3),159_bench,138-141 (dirty/structural/query/workspace 14-22),171 (inliner/TCO),204 (GC). Short forms attempted (per 119-123 light pattern + heavy tails for 135+); hit module import errors (lowering) + ninja stop on aura_jit deprecation during re-gen for preps. Full blocks restored via `git checkout -- CMakeLists.txt` for build health (matching pilot-46/42 etc precedent). Pre-existing + targeted re-builds + runs confirm prior pass counts (e.g. 6/6 124; 5+ for 135/164; 22/22 141 etc). .bak cleanup done. Living docs + §0 updated same batch. Per user "继续把剩下的都一把做完" + small-step protocol + plan Phase 2. (No other *.bak found.)
 
-**P0 refactor start (from Task 4 review)**: EnvFrame SoA migration (Issue #145). 
-Step 1 (prior): removed raw `cells_` from `EnvFrame` struct (pure data: parent_id + bindings only). lookup_local* return sentinels; deref centralized in Evaluator::lookup_by_symid_chain.
-Step 2 (this commit): symmetric for legacy `Env` class — removed `cells_` member + `set_cells` (and all wiring `set_cells(&cells_)` lines). Env lookups now return raw sentinels only (like EnvFrame). lookup_cell_ptr/index paths already use explicit cells param + raw bindings_ from frames (both legacy and SoA). 
-Legacy parent_ pointer walk + Env/EnvFrame dual still present (future steps: more EnvId preference in apply_closure etc, eliminate parent_ pointer). 
-See evaluator.ixx (Env + EnvFrame decls), evaluator_impl.cpp (lookup fixes + wiring removal), review report §6 P0. Living docs updated same commit. Goal: cache-friendly pure index-driven envs, no cells_/pairs_ pointer chasing, better GC safety.
+**P0 complete (from Task 4 review)**: EnvFrame SoA migration (Issue #145) finished.
+- cells_/pairs_ pointer chasing eliminated from Env/EnvFrame (prior steps): pure data for bindings; deref via central Evaluator cells_ or explicit param.
+- Legacy captured-env pointer path in Closure completely cleaned: removed `env` field from Closure and ClosureView; all capture sites and materialize_call_env now exclusively use env_id + env_frames_ (SoA, GC-safe, no pointer).
+- lookup_by_symid on (temp) legacy Env now prefers owner_/parent_id SoA index walk, eliminating parent_ chasing in hot paths for SoA captures.
+- Legacy Env class remains only for temporary call-frame binding copies (ne in apply_closure) and top/module envs; no cells_ or captured-env pointers, parent_ walk is legacy fallback only.
+See evaluator.ixx (Closure, Env, EnvFrame, alloc/materialize decls), evaluator_impl.cpp (capture sites, lookups, apply_closure, materialize), ir_executor_impl (snapshot), review report §6 P0. Living docs updated same commit. Per user request: legacy Env path cleaned + cells_/pairs_ pointer chasing eliminated.
 
 Continuing the chain; early lights 118+ and remaining prepped heavies now converted/prepped. All per plan.
 
