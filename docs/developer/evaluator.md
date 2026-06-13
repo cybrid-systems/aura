@@ -625,6 +625,8 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-9**: Converted test_issue_159 (typecheck-incremental primitive for partial re-inference). Uses early helper + appends for parser/serve/evaluator/JIT/LLVM specifics. See CMakeLists.txt (159 block) + plan Phase 2.
 
+**Phase 2 pilot-10**: Converted test_issue_161 (parser is a pure function; minimal subset, no evaluator/IR/JIT). Lightweight. See CMakeLists.txt (161 block) + plan Phase 2. Continuing one-at-a-time dedup.
+
 ```scheme
 ; happy path
 (display (foo 42))            ; expect 84
