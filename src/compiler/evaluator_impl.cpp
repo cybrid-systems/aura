@@ -17013,8 +17013,22 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                         return make_keyword(kidx);
                     }
                     auto val = eval_env.lookup(std::string(name));
-                    if (val)
+                    if (val) {
+                        // Issue #229 Cycle 1 fix: dereference cell
+                        // sentinel. The Define case binds the name to
+                        // a cell (make_cell(ci)) for re-def support;
+                        // ordinary lookups (Variable here, call sites
+                        // elsewhere) should auto-deref the cell to
+                        // the underlying value. Without this, simple
+                        // `(define x 10) (display x)` shows
+                        // `<cell[0]>` instead of `10`.
+                        if (is_cell(*val)) {
+                            auto ci = as_cell_id(*val);
+                            if (ci < cells_.size())
+                                return cells_[ci];
+                        }
                         return *val;
+                    }
                     std::string var_name(name);
                     if (var_name.empty()) {
                         var_name = std::format("<sym:{}>", v.sym_id);
