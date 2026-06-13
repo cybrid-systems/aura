@@ -617,6 +617,8 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-5**: Converted test_issue_135 (true parallel multi-agent orchestration verification). Heavy test (serve, parser, full evaluator*, JIT, LLVM, query, lowering, etc.). Uses early helper + appends for the long tail of sources + LLVM bits + rtti flags. Pattern holding: one (complex) test per small step. See CMakeLists.txt (135 block) + plan Phase 2.
 
+**Phase 2 pilot-6**: Converted test_issue_136 (AOT name-mangler + memory/AOT/benchmark verification). Lightweight (headers + src/compiler include). Base + early helper makes it 4 lines. See CMakeLists.txt (136 block) + plan Phase 2. Continuing one-at-a-time dedup.
+
 ```scheme
 ; happy path
 (display (foo 42))            ; expect 84
