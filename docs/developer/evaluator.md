@@ -627,6 +627,8 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-10**: Converted test_issue_161 (parser is a pure function; minimal subset, no evaluator/IR/JIT). Lightweight. See CMakeLists.txt (161 block) + plan Phase 2. Continuing one-at-a-time dedup.
 
+**Phase 2 pilot-11**: Converted test_issue_162 (Type Concepts for the type system: TypeConstraint concept + concrete constraints + solve_constraints). See CMakeLists.txt (162 block) + plan Phase 2.
+
 ```scheme
 ; happy path
 (display (foo 42))            ; expect 84

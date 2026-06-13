@@ -34,6 +34,7 @@
 （pilot-8 note）test_issue_158（quasiquote 内宏展开验证）已转换。helper 基建稳固。
 （pilot-9 note）test_issue_159（incremental typecheck 验证）已转换。持续小步 dedup。
 （pilot-10 note）test_issue_161（parser pure 验证）已转换。helper 基建稳固。
+（pilot-11 note）test_issue_162（type concepts 验证）已转换。持续小步 dedup。
 
 ### Aura Layer (`lib/std/workspace.aura`)
 
