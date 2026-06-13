@@ -3212,6 +3212,26 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             auto diag = parse_error_diag(pr);
             return {0, false, diag.format()};
         }
+
+        // Issue #184 Cycle 1: wrap the mutation effect in a
+        // MutationBoundaryGuard (RAII). The guard acquires the
+        // exclusive workspace_mtx_ write lock + bumps
+        // defuse_version_ (acquire load + release store) on
+        // construction, pops the checkpoint + releases the lock
+        // on destruction. This composes with the existing
+        // MutationTransaction (the guard handles lock/version;
+        // the transaction handles AST-level rollback on failure).
+        //
+        // success_flag is set by this scope and read by the
+        // guard's destructor. We default to true; the only
+        // path that sets it false is below (when the type error
+        // check fails — even though the tx auto-rolls back,
+        // marking the guard as failure makes the intent
+        // explicit and prepares for the future rollback path).
+        bool boundary_success = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(
+            evaluator_, &boundary_success);
+
         auto result =
             evaluator_.eval_flat(*current_ast_, *current_pool_, pr.root, evaluator_.top_env());
         if (!result) {
@@ -3224,6 +3244,10 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             auto err = evaluator_.last_mutate_error();
             evaluator_.clear_last_mutate_error();
             // Transaction auto-rollbacks on destructor
+            // Issue #184: signal the boundary guard that this is a
+            // rollback intent (today both paths commit; explicit
+            // flag sets up the future rollback implementation).
+            boundary_success = false;
             return {0, false, err};
         }
 

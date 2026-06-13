@@ -4701,7 +4701,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         if (aura::messaging::g_fiber_yield_mutation_boundary)
             aura::messaging::g_fiber_yield_mutation_boundary();
 
-        defuse_version_++;
+        defuse_version_.fetch_add(1, std::memory_order_relaxed);
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]))
             return make_merr("bad-arg", "usage: (mutate:replace-type node-id new-type)");
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
@@ -4741,7 +4741,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         // Actually apply the type change
         flat.set_type(node, new_tid);
         workspace_flat_->mark_dirty_upward(node);
-        defuse_version_++;
+        defuse_version_.fetch_add(1, std::memory_order_relaxed);
         if (aura::messaging::g_fiber_yield_mutation_boundary)
             aura::messaging::g_fiber_yield_mutation_boundary();
         return make_int(static_cast<std::int64_t>(mid));
@@ -4754,7 +4754,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
         // (Step 0.2/0.3) local merr removed; using centralized make_merr
         // (declared in evaluator.ixx, defined above).
-        defuse_version_++;
+        defuse_version_.fetch_add(1, std::memory_order_relaxed);
         aura::messaging::g_fiber_yield_mutation_boundary
                 ? aura::messaging::g_fiber_yield_mutation_boundary()
                 : (void)0;  // safe point before mutation
@@ -4829,7 +4829,7 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     primitives_.add("mutate:record-patch", [this](std::span<const EvalValue> a) -> EvalValue {
         std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
         // (Step 0.3 continuation) local merr removed; use centralized make_merr
-        defuse_version_++;
+        defuse_version_.fetch_add(1, std::memory_order_relaxed);
         aura::messaging::g_fiber_yield_mutation_boundary
                 ? aura::messaging::g_fiber_yield_mutation_boundary()
                 : (void)0;  // safe point before mutation
@@ -5319,7 +5319,7 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         }
     }
 
-    defuse_version_++;
+    defuse_version_.fetch_add(1, std::memory_order_relaxed);
     if (aura::messaging::g_fiber_yield_mutation_boundary)
         aura::messaging::g_fiber_yield_mutation_boundary();
 
@@ -6223,11 +6223,11 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         // ── 依赖图查询：通过 dep_caller_fn_ 获取调用者节点 ────
         // dep_caller_fn_ 在 init_pair_primitives 中注册，使用
         // DefUseIndex 的 O(k) 依赖图查询（k = 调用者数量）。
-        // 在 defuse_version_++ 之前调用，因为索引在失效前有效。
+        // 在 defuse_version_.fetch_add(1, std::memory_order_relaxed) 之前调用，因为索引在失效前有效。
         auto dep_callers = dep_caller_fn_
             ? dep_caller_fn_(defuse_index_, sym)
             : std::vector<aura::ast::NodeId>{};
-        defuse_version_++;
+        defuse_version_.fetch_add(1, std::memory_order_relaxed);
 
         // Find old Define node by name
         aura::ast::NodeId old_define = aura::ast::NULL_NODE;
@@ -6864,7 +6864,7 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         auto dep_callers = dep_caller_fn_
             ? dep_caller_fn_(defuse_index_, sym)
             : std::vector<aura::ast::NodeId>{};
-        defuse_version_++;
+        defuse_version_.fetch_add(1, std::memory_order_relaxed);
 
         // Find Define node with matching symbol name
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
@@ -7007,7 +7007,7 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
     // The tree walker in eval_flat skips NULL_NODE children.
     primitives_.add("mutate:remove-node", [this, mev](const auto& a) -> EvalValue {
         std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
-        defuse_version_++;
+        defuse_version_.fetch_add(1, std::memory_order_relaxed);
         aura::messaging::g_fiber_yield_mutation_boundary
                 ? aura::messaging::g_fiber_yield_mutation_boundary()
                 : (void)0;  // safe point before mutation
@@ -7044,7 +7044,7 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
     // Parses code-string INTO workspace, preserving all existing nodes/IDs.
     primitives_.add("mutate:insert-child", [this, mev](const auto& a) -> EvalValue {
         std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
-        defuse_version_++;
+        defuse_version_.fetch_add(1, std::memory_order_relaxed);
         aura::messaging::g_fiber_yield_mutation_boundary
                 ? aura::messaging::g_fiber_yield_mutation_boundary()
                 : (void)0;  // safe point before mutation
@@ -7093,7 +7093,7 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
     // Reads current value, adds delta, writes back. Simpler than read+replace-value.
     primitives_.add("mutate:tweak-literal", [this, mev](const auto& a) -> EvalValue {
         std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
-        defuse_version_++;
+        defuse_version_.fetch_add(1, std::memory_order_relaxed);
         aura::messaging::g_fiber_yield_mutation_boundary
                 ? aura::messaging::g_fiber_yield_mutation_boundary()
                 : (void)0;  // safe point before mutation
@@ -7143,7 +7143,7 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
     primitives_.add("mutate:replace-pattern", [this, mev](const auto& a) -> EvalValue {
         std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
         using namespace aura::ast;
-        defuse_version_++;
+        defuse_version_.fetch_add(1, std::memory_order_relaxed);
         aura::messaging::g_fiber_yield_mutation_boundary
                 ? aura::messaging::g_fiber_yield_mutation_boundary()
                 : (void)0;  // safe point before mutation
@@ -7443,7 +7443,7 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 workspace_pool_ = static_cast<aura::ast::StringPool*>(new_pool);
             }
         }
-        defuse_version_++;
+        defuse_version_.fetch_add(1, std::memory_order_relaxed);
         using namespace aura::ast;
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) ||
             !workspace_flat_ || !workspace_pool_)
@@ -9763,7 +9763,7 @@ Evaluator::Evaluator() {
             idx = new DefUseIndex();
             defuse_index_ = idx;
             idx->build(*workspace_flat_, *workspace_pool_);
-            defuse_version_ = 1;
+            defuse_version_.store(1, std::memory_order_relaxed);
             defuse_rebuild_count_++;
             defuse_affected_syms_.clear();
             return idx;
@@ -9785,14 +9785,14 @@ Evaluator::Evaluator() {
         if (!affected_sym_ids.empty()) {
             if (workspace_flat_->size() == idx->flat_size_at_build_) {
                 idx->update_callers_for(*workspace_flat_, affected_sym_ids);
-                defuse_version_ = 1;
+                defuse_version_.store(1, std::memory_order_relaxed);
                 return idx;
             }
         }
 
         // Fallback: full rebuild (flat size changed or many affected syms)
         idx->build(*workspace_flat_, *workspace_pool_);
-        defuse_version_ = 1;
+        defuse_version_.store(1, std::memory_order_relaxed);
         defuse_rebuild_count_++;
         return idx;
     };
@@ -9925,7 +9925,7 @@ Evaluator::Evaluator() {
             return make_merr("internal", "failed to build def-use index");
         // Force full rebuild regardless of version
         idx->build(*workspace_flat_, *workspace_pool_);
-        defuse_version_ = 1;
+        defuse_version_.store(1, std::memory_order_relaxed);
         this->defuse_rebuild_count_++;
         defuse_affected_syms_.clear();
         return make_int(1);
@@ -10213,7 +10213,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     auto all_list = list_of(all_names);
     // Pack: (defuse-version . (dirty ...) . (all ...))
     auto v_pid = pairs_.size();
-    pairs_.push_back({make_int(static_cast<std::int64_t>(defuse_version_)), dirty_list});
+    pairs_.push_back({make_int(static_cast<std::int64_t>(defuse_version_.load(std::memory_order_relaxed))), dirty_list});
     auto v_pair = make_pair(v_pid);
     auto final_pid = pairs_.size();
     pairs_.push_back({v_pair, all_list});
@@ -10816,7 +10816,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     primitives_.add("mutate:splice", [this](std::span<const EvalValue> a) -> EvalValue {
         std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
         // (Step 0.3) local merr removed; centralized make_merr
-        defuse_version_++;
+        defuse_version_.fetch_add(1, std::memory_order_relaxed);
         if (workspace_read_only_) return make_merr("read-only", "workspace is read-only");
         if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) ||
             !workspace_flat_ || !workspace_pool_)
@@ -10902,7 +10902,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue {
         std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
         // local merr removed; now centralized make_merr (phase complete)
-        defuse_version_++;
+        defuse_version_.fetch_add(1, std::memory_order_relaxed);
         if (workspace_read_only_) return make_merr("read-only", "workspace is read-only");
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) ||
             !workspace_flat_ || !workspace_pool_)
@@ -11012,7 +11012,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     //   Free variables in the extracted expression become parameters.
     primitives_.add("mutate:refactor/extract", [this](std::span<const EvalValue> a) -> EvalValue {
         // local merr removed; now centralized make_merr (phase complete)
-        defuse_version_++;
+        defuse_version_.fetch_add(1, std::memory_order_relaxed);
         if (workspace_read_only_) return make_merr("read-only", "workspace is read-only");
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) ||
             !workspace_flat_ || !workspace_pool_)
@@ -11247,7 +11247,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     primitives_.add("mutate:rename-symbol", [this, ensure_defuse](const auto& a) -> EvalValue {
         using namespace aura::ast;
         // local merr removed; now centralized make_merr (phase complete)
-        defuse_version_++;
+        defuse_version_.fetch_add(1, std::memory_order_relaxed);
         if (workspace_read_only_)
             return make_merr("read-only", "workspace is read-only");
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) ||
@@ -11308,7 +11308,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     primitives_.add("mutate:move-node", [this](std::span<const EvalValue> a) -> EvalValue {
         using namespace aura::ast;
         // local merr removed; now centralized make_merr (phase complete)
-        defuse_version_++;
+        defuse_version_.fetch_add(1, std::memory_order_relaxed);
         if (workspace_read_only_)
             return make_merr("read-only", "workspace is read-only");
         if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) ||
@@ -11378,7 +11378,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     primitives_.add("mutate:extract-function", [this, collect_free_vars](const auto& a) -> EvalValue {
         using namespace aura::ast;
         // last local merr definition removed; all calls use centralized make_merr
-        defuse_version_++;
+        defuse_version_.fetch_add(1, std::memory_order_relaxed);
         if (workspace_read_only_)
             return make_merr("read-only", "workspace is read-only");
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) ||
@@ -11498,7 +11498,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         using aura::ast::SymId;
         using aura::ast::NULL_NODE;
         // local merr removed (last one); all calls now use centralized make_merr
-        defuse_version_++;
+        defuse_version_.fetch_add(1, std::memory_order_relaxed);
         if (workspace_read_only_)
             return make_merr("read-only", "workspace is read-only");
         if (a.empty() || !is_int(a[0]) || !workspace_flat_ || !workspace_pool_)
@@ -12047,7 +12047,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
             string_heap_.push_back(sym_name);
             auto result = (*rebind_fn)({make_string(si), make_string(ci), make_string(sym_idx + 1 < string_heap_.size() ? sym_idx : si)});
             if (is_bool(result) && as_bool(result)) {
-                defuse_version_++;
+                defuse_version_.fetch_add(1, std::memory_order_relaxed);
                 return make_bool(true);
             }
         }
@@ -12075,7 +12075,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         }
         
         if (new_def != aura::ast::NULL_NODE) {
-            defuse_version_++;
+            defuse_version_.fetch_add(1, std::memory_order_relaxed);
             return make_bool(true);
         }
         return make_bool(true);  // Parsed into workspace flat
@@ -12102,7 +12102,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
             ws.pool = ws.parent_pool_;
             ws.has_own_flat = false;
             ws.generation = 0;
-            defuse_version_++;
+            defuse_version_.fetch_add(1, std::memory_order_relaxed);
             // If we just discarded the active workspace, sync pointers
             if (idx == tree->active_idx()) {
                 workspace_flat_ = ws.flat;
@@ -12213,7 +12213,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         // to the new arena-allocated flat, and update_shared_tree_root updated
         // root's WorkspaceNode to point to it).
         tree->set_active(0);
-        defuse_version_++;
+        defuse_version_.fetch_add(1, std::memory_order_relaxed);
         // (ASAN fix #107 leak) delete the old index.
         defuse_index_destroy(&defuse_index_);
         return make_string(ri);
@@ -12687,7 +12687,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         // the post-wait check is "first join ever or just reset"
         // — guarded by `!= 0` so we don't false-positive on the
         // initial state.
-        defuse_version_at_wait_ = defuse_version_;
+        defuse_version_at_wait_ = defuse_version_.load(std::memory_order_relaxed);
 
         if (aura::messaging::g_fiber_yield && aura::messaging::g_fiber_lookup) {
             // Issue #119: serve-async proper-blocking path.
@@ -12829,14 +12829,15 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         // actually happened (i.e., the joiner didn't fast-path
         // the already-done target). For fast-path joins, there's
         // no wait, so no re-validation needed.
-        if (defuse_version_at_wait_ != defuse_version_ &&
+        auto dv_now = defuse_version_.load(std::memory_order_acquire);
+        if (defuse_version_at_wait_ != dv_now &&
             defuse_version_at_wait_ != 0) {
             std::println(std::cerr,
                 "[fiber:join] WARN: workspace mutated during join "
                 "(defuse_version {} -> {}). The joiner resumed after "
                 "concurrent mutate:* primitives. Result is still valid; "
                 "re-validate callers if they depend on workspace state.",
-                defuse_version_at_wait_, defuse_version_);
+                defuse_version_at_wait_, dv_now);
         }
         defuse_version_at_wait_ = 0;  // reset for next join
 
@@ -13370,7 +13371,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
             }
 
             // Success
-            defuse_version_++;
+            defuse_version_.fetch_add(1, std::memory_order_relaxed);
             auto src_fn = primitives_.lookup("current-source");
             if (src_fn) {
                 auto src = (*src_fn)({});
@@ -13787,7 +13788,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         string_heap_.push_back(best_code);
         auto sc_fn = primitives_.lookup("set-code");
         if (sc_fn) (*sc_fn)({make_string(bi)});
-        defuse_version_++;
+        defuse_version_.fetch_add(1, std::memory_order_relaxed);
         // (ASAN fix #107 leak) delete the old index.
         defuse_index_destroy(&defuse_index_);
 
