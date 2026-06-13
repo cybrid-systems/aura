@@ -300,20 +300,13 @@ export struct Closure {
     // to get the right pool with the right fallback.
     ast::StringPool* pool = nullptr;
     ast::NodeId body_id = ast::NULL_NODE;
-    const Env* env = nullptr;
-    // Issue #145 Phase 2.3 — SoA capture index. When set
-    // (≠ NULL_ENV_ID), the captured env is also registered in
-    // Evaluator::env_frames_, and apply_closure materializes
-    // the call env from env_frames_[env_id] instead of copying
-    // through the legacy `env` pointer. This makes closure
-    // captures GC-safe (indices survive arena compaction) and
-    // keeps the captured env hot in the SoA cache.
-    //
-    // During the Phase 2.3.x transition, `env` and `env_id`
-    // coexist: `env_id` is the canonical SoA handle, `env` is
-    // the legacy raw-pointer handle preserved for any site not
-    // yet migrated (Phase 2.6 deletes `env` once all callers
-    // route through the SoA walk).
+    // P0 complete: legacy `env` pointer removed from Closure.
+    // All captures now use only `env_id` (registered in env_frames_).
+    // apply_closure and materialize always route through SoA
+    // (env_frames_[env_id]). No more raw Env* for captured envs.
+    // The temporary call-frame Env (ne) is still used for the
+    // lambda scope bindings (with SoA parent_id for walks).
+    // This eliminates the legacy captured-env pointer path.
     EnvId env_id = NULL_ENV_ID;
     bool dotted = false;
     ast::ASTArena* owner_arena = nullptr;  // arena where flat/pool/env lives
@@ -688,17 +681,12 @@ public:
     // provided). Returns the new id, or NULL_ENV_ID on overflow.
     //
     // Used at Closure construction to register the captured env
-    // in the SoA arena so closure application can materialize
-    // the call env via env_frames_[cl.env_id] instead of
-    // copying through the legacy `Closure::env` pointer.
+    // in the SoA arena (P0: legacy Closure::env pointer path removed;
+    // env_id is the only capture handle).
     EnvId alloc_env_frame_from_env(const Env& e, EnvId parent_id = NULL_ENV_ID);
     // Issue #145 Phase 2.3 — materialize a fresh Env suitable
-    // for evaluating a closure body. When `cl.env_id` is set,
-    // rebuild the call env from env_frames_[cl.env_id] (SoA
-    // walk path — GC-safe, index-driven parent lookups). When
-    // it is NULL_ENV_ID, fall back to copying the legacy
-    // `cl.env` raw pointer (preserved for stack-allocated
-    // local-eval closures not yet in the arena).
+    // for evaluating a closure body. Always uses env_frames_[cl.env_id]
+    // (SoA walk, GC-safe; P0 legacy cl.env fallback completely removed).
     //
     // P0: frames carry pure bindings + parent_id only. Support
     // pointers (cells_/pool_/primitives_) are wired by the
@@ -1480,10 +1468,8 @@ export struct ClosureView {
     bool dotted = false;
     const aura::ast::FlatAST* flat = nullptr;
     const aura::ast::StringPool* pool = nullptr;
-    const Env* env = nullptr;
-    // Issue #145 Phase 2.3 — SoA capture index mirror of
-    // Closure::env_id. Read-only view; setters not exposed
-    // (ClosureView is for inspection, not construction).
+    // P0: legacy env removed from ClosureView too. Use env_id
+    // for inspection of captured env (via Evaluator env_frame if needed).
     EnvId env_id = NULL_ENV_ID;
     const aura::ast::ASTArena* owner_arena = nullptr;
     std::string_view name;
