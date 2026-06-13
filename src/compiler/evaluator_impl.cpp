@@ -4171,6 +4171,14 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
     // canonical pool) is the fallback — see Env::lookup_by_intern
     // for the full resolution chain. Observable behavior
     // matches Env::lookup(name) when no binding is found.
+    //
+    // Issue #231 fix: don't pass canonical_pool() here. The
+    // module's bindings are interned in the module's own
+    // pool (per-module arena), NOT in the workspace pool.
+    // Different pools = different SymIds = lookup_by_symid
+    // misses the binding. Use the legacy string-based lookup
+    // directly, which walks bindings_ (string-keyed) without
+    // needing a SymId. The same applies to module-keys.
     primitives_.add("module-get", [this](std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_module(a[0]) || !is_string(a[1]))
             return make_void();
@@ -4178,9 +4186,15 @@ io_print_val(a[0], string_heap_, pairs_, false, 0, keyword_table_);
         auto name_idx = as_string_idx(a[1]);
         if (mod_idx >= modules_.size() || name_idx >= string_heap_.size())
             return make_void();
-        auto result = modules_[mod_idx]->lookup_by_intern(
-            string_heap_[name_idx], canonical_pool());
-        return result ? *result : make_void();
+        auto result = modules_[mod_idx]->lookup(std::string(string_heap_[name_idx]));
+        if (!result) return make_void();
+        // Issue #229 fix: deref cell sentinel
+        if (is_cell(*result)) {
+            auto ci = as_cell_id(*result);
+            if (ci < cells_.size())
+                return cells_[ci];
+        }
+        return *result;
     });
 
     // (module-keys mod) — List all exported binding names from a module
