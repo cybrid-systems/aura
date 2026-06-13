@@ -104,6 +104,8 @@
 
 （pilot-71 prep note）test_issue_124（try/catch IR support 验证）。Short 尝试 hit module dep (lowering); full 恢复健康。历史 counts 6/6。详见 evaluator.md §12。P0 EnvFrame side-task 完成后继续主 refactor。
 
+（pilot-72 prep note）test_issue_125（per-module dirty tracking + observability 验证）。Short 尝试 hit module dep; full 恢复。历史 ~6/6。详见 evaluator.md §12。继续。
+
 All remaining full/prepped blocks now handled per plan Phase 2. Early 115+ and heavies complete. + P0 complete.
 
 ### Aura Layer (`lib/std/workspace.aura`)
