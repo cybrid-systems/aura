@@ -764,6 +764,8 @@ See evaluator.ixx (Closure, Env, EnvFrame, alloc/materialize decls), evaluator_i
 
 **Phase 2 pilot-74 prep**: test_issue_127 (Result<T> pipeline-stage aliases + lower_to_ir_result). Short aura_add attempted (light + observability + ir); hit module dep (lowering). Full restored via checkout for health. History counts from batch. Docs updated. (Refs: plan Phase 2, "继续", P0 complete.)
 
+**Phase 2 pilot-75 prep**: test_issue_128 (std::span adoption in hot paths + cells/compute_kind span). Short aura_add attempted (light + compute_kind_impl); hit module dep. Full restored. History passes. Docs updated. (Refs: plan, "继续".)
+
 Continuing the chain; early lights 118+ and remaining prepped heavies now converted/prepped. All per plan.
 
 ```scheme
