@@ -134,6 +134,71 @@ inline constexpr std::uint64_t string_idx_raw(std::int64_t v) noexcept {
     return static_cast<std::uint64_t>(-static_cast<std::int64_t>(v) - 9000000000000000000LL);
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// Issue #181 — EvalValue 64-bit tagged encoding redesign (Cycle 1)
+//
+// Option A: dedicated tag bit for strings at (v & 3) == 2.
+// The current encoding (above) collides with is_ref() for odd
+// indices: for idx ≡ 31 (mod 64), the result has (v & 3) == 1
+// matching is_ref, and ref_type matches RefError (8) — so the
+// string is misclassified as RefError. This is the source of
+// the bug per the issue body.
+//
+// The v2 encoding shifts idx left by 2 to reserve the low 2
+// bits for a constant tag. Pool capacity drops from 2^62 to
+// 2^60 (still plenty for any practical string pool).
+//
+//   bits 0-1: TAG = 2 (string, was unused in old encoding)
+//   bits 2+:   (STRING_BIAS_VAL_2 - v) >> 2  = idx
+//
+// All string values have (v & 3) == 2 — disjoint from fixnum
+// (0), ref (1), and special (3). is_string becomes a simple
+// tag check; no range disambiguation needed.
+//
+// Migration is the work of Cycle 2. Cycle 1 only prototypes
+// these helpers alongside the old encoding so the new design
+// can be verified in isolation (exhaustive collision tests +
+// micro-benchmarks).
+// ═══════════════════════════════════════════════════════════════════
+
+// New bias for the v2 encoding: same magnitude as STRING_BIAS_VAL
+// but with low 2 bits = 2 (the string tag).
+//   STRING_BIAS_VAL_2 = STRING_BIAS_VAL + 2  (low 2 bits: 0 → 2)
+inline constexpr std::int64_t STRING_BIAS_VAL_2 = STRING_BIAS_VAL + 2;
+
+inline constexpr std::int64_t make_string_raw_v2(std::uint64_t idx) noexcept {
+    return STRING_BIAS_VAL_2 - static_cast<std::int64_t>(idx << 2);
+}
+inline constexpr bool is_string_raw_v2(std::int64_t v) noexcept {
+    return (v & 3) == 2;
+}
+inline constexpr std::uint64_t string_idx_raw_v2(std::int64_t v) noexcept {
+    return static_cast<std::uint64_t>(STRING_BIAS_VAL_2 - v) >> 2;
+}
+
+// Compile-time guard: v2 helpers must produce disjoint tags.
+// (If this fires, the encoding was changed without updating
+// the tag bits — fix the constants above.)
+static_assert((make_string_raw_v2(0) & 3) == 2,
+              "v2 string encoding broke tag bits (idx=0)");
+static_assert((make_string_raw_v2(1) & 3) == 2,
+              "v2 string encoding broke tag bits (idx=1)");
+static_assert((make_string_raw_v2(31) & 3) == 2,
+              "v2 string encoding broke tag bits (idx=31 — was RefError collision)");
+static_assert((make_string_raw_v2(19) & 3) == 2,
+              "v2 string encoding broke tag bits (idx=19 — was RefKeyword collision)");
+static_assert((make_string_raw_v2(0xFFFFULL) & 3) == 2,
+              "v2 string encoding broke tag bits (idx=0xFFFF)");
+
+// Roundtrip check at compile time: make then decode returns the
+// same idx. (Sanity guard against off-by-one in the shift.)
+static_assert(string_idx_raw_v2(make_string_raw_v2(0)) == 0,
+              "v2 roundtrip broke for idx=0");
+static_assert(string_idx_raw_v2(make_string_raw_v2(42)) == 42,
+              "v2 roundtrip broke for idx=42");
+static_assert(string_idx_raw_v2(make_string_raw_v2(0xFFFFFULL)) == 0xFFFFFULL,
+              "v2 roundtrip broke for idx=0xFFFFF");
+
 } // namespace aura::compiler::types
 
 #endif // AURA_COMPILER_VALUE_TAGS_H

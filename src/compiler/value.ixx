@@ -135,6 +135,33 @@ export inline std::uint64_t as_string_idx(const EvalValue& v) noexcept {
     return string_idx_raw(v.val);
 }
 
+// ── Issue #181 Cycle 1: v2 string encoding prototype ──────
+//
+// All string values have (v & 3) == 2 — disjoint from fixnum
+// (0), ref (1), and special (3). Eliminates the
+// idx ≡ 31 (mod 64) → RefError and
+// idx ≡ 19 (mod 64) → RefKeyword collisions at the source.
+//
+// These prototypes are for testing/migration only. The full
+// migration (replacing is_string, is_float, JIT emitter, etc.)
+// is the work of Cycle 2 — see docs/design/issue-181.
+export inline EvalValue make_string_v2(std::uint64_t idx) noexcept {
+    return EvalValue(make_string_raw_v2(idx));
+}
+export inline bool is_string_v2(const EvalValue& v) noexcept {
+    // Tag check is necessary (the bug fix) but not sufficient
+    // (fixnums in the right range with the right bit pattern
+    // would also pass the pure tag check). For the Cycle 1
+    // prototype, keep the range check as a safety belt.
+    // Cycle 2 may remove it once the encoding is fully
+    // migrated and the bit allocation is documented as
+    // reserved for strings.
+    return is_string_raw_v2(v.val) && v.val <= STRING_BIAS_VAL_2;
+}
+export inline std::uint64_t as_string_idx_v2(const EvalValue& v) noexcept {
+    return string_idx_raw_v2(v.val);
+}
+
 export inline EvalValue make_pair(std::uint64_t idx) noexcept {
     return EvalValue(make_ref(RefPair, idx));
 }

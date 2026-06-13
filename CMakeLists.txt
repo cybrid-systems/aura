@@ -2730,3 +2730,13 @@ add_test(NAME issue_204_verification COMMAND ./test_issue_204)
 aura_add_issue_test(test_issue_173)
 target_include_directories(test_issue_173 PRIVATE src src/compiler)
 
+
+# Issue #181 verification: EvalValue 64-bit tagged encoding
+# redesign (Cycle 1: Option A prototype). Verifies the v2
+# string encoding has no tag collisions (no misclassification
+# at the historical idx 19/31 collisions), roundtrip works,
+# and is no slower than the old encoding. Full migration to
+# the v2 encoding is Cycle 2 — this test exercises the
+# prototype helpers only.
+aura_add_issue_test(test_issue_181)
+target_include_directories(test_issue_181 PRIVATE src src/compiler)
