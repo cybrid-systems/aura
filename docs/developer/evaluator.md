@@ -655,7 +655,9 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-24**: Converted test_issue_143 (escape analysis integration into pass_manager; IRFunction hand-crafted tests for return/call/MakePair/capture/pure/fixpoint ACs). Heavy (serve+eval+JIT+LLVM+observ). Short form landed cleanly (21/21). See CMakeLists.txt (143 block) + plan Phase 2.
 
-**Phase 2 pilot-25**: Convert test_issue_144 (C++26 contracts integration: 13 contract_assert sites in hot paths + hook registration with DiagnosticCollector + runtime ACs exercising Env/Primitives/QueryEngine/FlatAST/apply_patches/ShapeProfiler). Heavy (serve + jit + llvm + contract_handler + shape). Attempt short via helper + append (note special contract_handler.cpp + shape_profiler); verify binary + smoke. See plan Phase 2. Continuing the chain.
+**Phase 2 pilot-25**: Converted test_issue_144 (C++26 contracts integration: 13 contract_assert sites in hot paths + hook registration with DiagnosticCollector + runtime ACs exercising Env/Primitives/QueryEngine/FlatAST/apply_patches/ShapeProfiler). Heavy (serve + jit + llvm + contract_handler + shape). Short landed (12/12). See CMakeLists.txt (144 block) + plan Phase 2.
+
+**Phase 2 pilot-26**: Convert test_issue_145 (DOD/SoA Phase 1 partial: Closure::params SymId migration, EnvView/ClosureView, bind_symid/lookup_by_symid fast path, 6 ACs). Note: config was split (bare early + full late block); consolidate to early aura_add + deltas. Targeted verify. See plan Phase 2.
 
 ```scheme
 ; happy path
