@@ -643,6 +643,10 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-18**: Converted test_issue_170 (LLVM JIT AOT entry points Phase 1: verifies new public API on empty state). Lightweight. See CMakeLists.txt (170 block) + plan Phase 2. Continuing one-at-a-time dedup.
 
+**Phase 2 pilot-19**: Converted test_issue_138 (incremental dirty propagation and fine-grained type checking for EDSL mutations: dirty-bit tracking, mark_dirty_upward, incremental cache, stress, perf). See CMakeLists.txt (138 block) + plan Phase 2.
+
+**Phase 2 pilot-20**: Converted test_issue_139 (structural refactor primitives: extract-function, inline-call, rename-symbol, refactor/extract, move-node, splice, wrap; end-to-end on real Aura code). See CMakeLists.txt (139 block) + plan Phase 2.
+
 ```scheme
 ; happy path
 (display (foo 42))            ; expect 84
