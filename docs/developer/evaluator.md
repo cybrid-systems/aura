@@ -675,7 +675,9 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-34**: Converted test_issue_164 (fiber:join spin-fallback; 5 ACs). Short landed clean (6+/6). See previous.
 
-**Phase 2 pilot-35**: Convert test_issue_165 (macro re-expansion + SyntaxMarker after EDSL mutations; TDD, expected baseline FAIL on main per comment). Long-standing prepped heavy. Attempt short. See plan Phase 2. Continuing to complete remaining prepped.
+**Phase 2 pilot-35 prep**: test_issue_165 (macro re-expansion + SyntaxMarker TDD). Short hit build stop; full restored. See previous.
+
+**Phase 2 pilot-36**: Convert test_issue_166 (multi-layer cache invalidation Phase 1: epoch counter; verifies epoch on mutation, stale detection, basic flow). Long-standing prepped heavy. Attempt short + prep if needed. See plan Phase 2. Continuing to complete.
 
 ```scheme
 ; happy path
