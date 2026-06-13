@@ -2689,7 +2689,8 @@ target_sources(test_issue_171 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
     src/compiler/adt_runtime.ixx
-    src/compiler/ffi_primitives.ixx)
+    src/compiler/ffi_primitives.ixx
+    src/compiler/value.ixx)
 target_sources(test_issue_171 PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/type_checker_impl.cpp
