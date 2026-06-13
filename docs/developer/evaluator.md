@@ -657,7 +657,9 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-25**: Converted test_issue_144 (C++26 contracts integration: 13 contract_assert sites in hot paths + hook registration with DiagnosticCollector + runtime ACs exercising Env/Primitives/QueryEngine/FlatAST/apply_patches/ShapeProfiler). Heavy (serve + jit + llvm + contract_handler + shape). Short landed (12/12). See CMakeLists.txt (144 block) + plan Phase 2.
 
-**Phase 2 pilot-26**: Convert test_issue_145 (DOD/SoA Phase 1 partial: Closure::params SymId migration, EnvView/ClosureView, bind_symid/lookup_by_symid fast path, 6 ACs). Note: config was split (bare early + full late block); consolidate to early aura_add + deltas. Targeted verify. See plan Phase 2.
+**Phase 2 pilot-26**: Converted test_issue_145 (DOD/SoA Phase 1 partial: Closure::params SymId migration, EnvView/ClosureView, bind_symid/lookup_by_symid fast path, 8 ACs + bulk env_frames stress). Consolidated split config. 3081/3081. See CMakeLists.txt (145 block) + plan Phase 2.
+
+**Phase 2 pilot-27**: Convert test_issue_146 (pure-function + monadic Result extraction Phase 1: evaluator_pure module, coerce_to_int_pure as free Result, legacy wrapper compat, 4 ACs). Uses new pure import. Heavy (jit etc.). See plan Phase 2.
 
 ```scheme
 ; happy path

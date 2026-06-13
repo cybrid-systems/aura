@@ -2429,13 +2429,10 @@ target_link_libraries(test_issue_145 PRIVATE ${llvm_libs})
 # (coerce_to_int_pure) and its compatibility with the legacy
 # coerce_to_int wrapper. Full issue is 2 weeks of work; this
 # PR ships the first slice of the 6-8 target functions.
-add_executable(test_issue_146 tests/test_issue_146.cpp)
-set_property(TARGET test_issue_146 PROPERTY CXX_MODULE_STD ON)
+# Phase 2 pilot-27: converted using early helper. Leverages new evaluator_pure module (modernization). Heavy (jit, serve etc.).
+aura_add_issue_test(test_issue_146)
 target_include_directories(test_issue_146 PRIVATE src src/compiler)
 target_sources(test_issue_146 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx
-    src/core/type.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
@@ -2457,7 +2454,6 @@ target_sources(test_issue_146 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ast_walkers.ixx
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
-target_compile_definitions(test_issue_146 PRIVATE AURA_HAVE_LLVM=1)
 target_sources(test_issue_146 PRIVATE
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
     src/core/ast_impl.cpp
@@ -2485,11 +2481,9 @@ target_sources(test_issue_146 PRIVATE
     src/serve/scheduler.cpp
     src/serve/gc_coordinator.cpp)
 # Issue #146: aura_jit.cpp uses LLVM and pimpl over an Impl
-# forward declaration. Needs -fno-rtti to match the aura binary
-# configuration (test_issue_145 also relies on this).
+# forward declaration. Needs -fno-rtti (shared with 145).
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_link_libraries(test_issue_146 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 target_include_directories(test_issue_146 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_146 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_146 PRIVATE ${llvm_libs})
