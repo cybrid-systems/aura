@@ -27,6 +27,7 @@
 
 （Refactor 2.3/3.2/5.1 note）ADT 提取和 merr 消除已完成（见 adt_runtime 和 make_merr 变更）；evaluator_impl 精简中。详见 developer/evaluator.md 和 roadmap。
 （5.2 note）register_primitives 签名在 adt/ffi 间已对齐（coverage_counters 等指针一致传递）。
+（Phase 2 pilot-2 note）CMake helper `aura_add_issue_test` 增强并转换首个真实 test_issue_132；后续小步将继续 dedup 40+ 测试。详见 evaluator.md §12。
 
 ### Aura Layer (`lib/std/workspace.aura`)
 

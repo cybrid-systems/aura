@@ -788,18 +788,34 @@ target_compile_options(test_issue_131 PRIVATE -Wall -Wextra -Wpedantic
 target_link_libraries(test_issue_131 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_131_verification COMMAND ./test_issue_131)
 
-# Phase 2 pilot (post-5.2 per roadmap): aura_add_issue_test helper for dedup.
-# Captures the repeated 6-line boilerplate used by the 3 harness pilots
-# (1.1-1.3 / 3.2). Later steps will generalize it for the full 40+ test_issue_*.
+# Phase 2 dedup (post-5.2 per roadmap): aura_add_issue_test helper.
+# Reduces the 30-60 line boilerplate per test_issue_* (add_executable,
+# set_property, includes, massive repeated target_sources for core modules,
+# compile_options, link with aura-reflect, add_test) down to 1 call + small
+# unique tail for test-specific modules/impls.
+#
+# Base set here covers the common core + light compiler modules used by
+# most issue tests (ast_walkers, pure extracts, query/mutate smoke etc.).
+# Pilots (thin harness) and full tests now both benefit.
 function(aura_add_issue_test NAME)
     add_executable(${NAME} tests/${NAME}.cpp)
     set_property(TARGET ${NAME} PROPERTY CXX_MODULE_STD ON)
     target_include_directories(${NAME} PRIVATE src)
+    # Common private impls (core types/ast always needed for FlatAST etc.)
+    target_sources(${NAME} PRIVATE
+        src/core/ast_impl.cpp
+        src/core/type_impl.cpp)
+    # Common public modules (core layers + basic value/diag used everywhere)
+    target_sources(${NAME} PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
+        src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
+        src/core/type_arena.ixx src/core/type.ixx
+        src/compiler/value.ixx
+        src/compiler/diag.ixx)
     target_compile_options(${NAME} PRIVATE -Wall -Wextra -Wpedantic
         -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
         -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
         -Wno-parentheses)
-    target_link_libraries(${NAME} PRIVATE pthread)
+    target_link_libraries(${NAME} PRIVATE pthread stdc++ stdc++exp aura-reflect)
     add_test(NAME ${NAME}_verification COMMAND ./${NAME})
 endfunction()
 
@@ -820,22 +836,12 @@ aura_add_issue_test(test_harness_pilot)
 # from CompilerService. Standalone binary that exercises
 # the new find_top_level_defines and collect_user_bindings
 # pure functions.
-add_executable(test_issue_132 tests/test_issue_132.cpp)
-set_property(TARGET test_issue_132 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_132 PRIVATE src)
-target_sources(test_issue_132 PRIVATE
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp)
+# Phase 2 pilot-2: first real (non-pilot) test converted to aura_add_issue_test.
+# Only the test-specific extra (ast_walkers) is appended; base covers core.
+aura_add_issue_test(test_issue_132)
+# Specific to this test (ast_walkers pure extraction from #132)
 target_sources(test_issue_132 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
     src/compiler/ast_walkers.ixx)
-target_compile_options(test_issue_132 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
-target_link_libraries(test_issue_132 PRIVATE pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_132_verification COMMAND ./test_issue_132)
 
 # Issue #134 verification: ADT (datatype ...) form.
 # Standalone binary that exercises parse_datatype
@@ -2815,7 +2821,8 @@ target_sources(test_issue_171 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/arity.ixx
     src/compiler/type_checker.ixx
     src/compiler/coercion_map.ixx
-    src/compiler/pass_manager.ixx)
+    src/compiler/pass_manager.ixx
+    src/compiler/evaluator.ixx)
 target_sources(test_issue_171 PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/type_checker_impl.cpp
@@ -2865,3 +2872,4 @@ target_compile_options(test_issue_173 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-parentheses)
 target_link_libraries(test_issue_173 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_173_verification COMMAND ./test_issue_173)
+
