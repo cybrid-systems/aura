@@ -1446,28 +1446,16 @@ target_sources(test_issue_167 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 # Issue #168 verification: incremental type cache safety
 # (Phase 1: epoch gate). Verifies the set_cache_epoch API +
 # basic flow with mutation.
-add_executable(test_issue_168 tests/test_issue_168.cpp)
-set_property(TARGET test_issue_168 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_168 PRIVATE src src/compiler)
+# Phase 2 pilot-17: converted using early helper (light type/cache test).
+# Base covers core + value/diag/value_impl; append the parser + type_checker specifics.
+aura_add_issue_test(test_issue_168)
 target_sources(test_issue_168 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx
-    src/core/type.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/diag.ixx
     src/compiler/coercion_map.ixx
     src/compiler/type_checker.ixx)
 target_sources(test_issue_168 PRIVATE
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
     src/compiler/type_checker_impl.cpp)
-target_compile_options(test_issue_168 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
-target_link_libraries(test_issue_168 PRIVATE pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_168_verification COMMAND ./test_issue_168)
 
 # Issue #169 verification: Fine-grained Incremental Compilation
 # v3 (Phase 1: config flag). Verifies the IncrementalStrictness
