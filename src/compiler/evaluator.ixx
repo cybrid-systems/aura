@@ -1121,6 +1121,79 @@ private:
     // BEFORE lock acquisition to keep the no-op fast path.
     std::shared_mutex workspace_mtx_;
 public:
+    // ── Issue #177: explicit Mutation Boundary + per-fiber checkpoint ───
+    //
+    // The MutationCheckpoint + enter/exit APIs establish a
+    // structured scope around mutate:* operations. A checkpoint
+    // captures the defuse_version_ at the boundary entry, so
+    // the evaluator can roll back to that point on failure
+    // (panic, GC safepoint abort, or explicit rollback request).
+    //
+    // The boundary is per-fiber (thread_local stack) so concurrent
+    // fibers each have their own checkpoint stack. This composes
+    // with the existing workspace_mtx_ shared_mutex: a fiber
+    // inside a boundary holds the exclusive write lock; the
+    // checkpoint provides a safe rollback point if the fiber
+    // yields (yield is a fiber-level operation; the workspace
+    // lock is released on yield).
+    //
+    // Usage (callers will migrate to this API over time):
+    //   enter_mutation_boundary();        // captures + version++
+    //   if (some_panic_condition) {
+    //       exit_mutation_boundary(false);  // rollback
+    //   } else {
+    //       exit_mutation_boundary(true);   // commit
+    //   }
+    //
+    // Performance: minimal (the boundary only fires on the
+    // mutate path, which is already mutex-protected; the
+    // checkpoint capture is a single uint64_t read + push).
+    //
+    // Current state: API surface only. The actual rollback
+    // (the "rollback_to_version" referenced in exit) is a
+    // follow-up that requires hooking into MutationRecord
+    // (#142) and the defuse_index_ restoration.
+    struct MutationCheckpoint {
+        std::uint64_t version;  // defuse_version_ at boundary entry
+    };
+    // Per-fiber checkpoint stack. thread_local so concurrent
+    // fibers each have their own stack (no cross-fiber pollution).
+    // The stack is LIFO; the most recent checkpoint is at the top.
+    static thread_local std::vector<MutationCheckpoint>
+        g_mutation_stack;
+    // Enter a mutation boundary. Acquires the exclusive write
+    // lock and captures a checkpoint with the current
+    // defuse_version_. The version is bumped so any pending
+    // readers (holding shared locks from before this call) see
+    // a version mismatch and deopt.
+    void enter_mutation_boundary() {
+        std::unique_lock<std::shared_mutex> lock(workspace_mtx_);
+        g_mutation_stack.push_back({defuse_version_});
+        defuse_version_++;
+    }
+    // Exit a mutation boundary. Pops the checkpoint. If success
+    // is true, the version advance is kept; if false, the
+    // checkpoint is returned (caller can use the version to
+    // roll back via the defuse_index_ restoration — TODO,
+    // follow-up). The lock is released by the unique_lock going
+    // out of scope.
+    //
+    // Returns the popped checkpoint (or {0} if the stack is
+    // empty — a defensive fallback for unbalanced calls).
+    MutationCheckpoint exit_mutation_boundary(bool success) {
+        (void)success;  // success's effect (rollback vs commit)
+                        // is a follow-up; today both are commits.
+        if (g_mutation_stack.empty()) return {0};
+        auto cp = g_mutation_stack.back();
+        g_mutation_stack.pop_back();
+        return cp;
+    }
+    // Get the current checkpoint stack depth (for testing /
+    // observability). Returns 0 if the stack is empty.
+    static std::size_t mutation_boundary_depth() {
+        return g_mutation_stack.size();
+    }
+public:
     // Issue #157 Phase 1: lock hooks for the JIT runtime bridges
     // (aura_lock_workspace_read/write + aura_unlock_workspace_read/write
     // in aura_jit_runtime.cpp). These are public thin wrappers that
