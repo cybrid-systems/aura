@@ -169,8 +169,36 @@ std::optional<EvalValue> Env::lookup(const std::string& n) const {
             return v;
         }
     // 2. Check parent
-    if (parent_)
+    if (parent_) {
         return parent_->lookup(n);
+    }
+    // 2b. Issue #232 fallback: SoA walk via parent_id_ when parent_
+    // is null but parent_id_ is set. This happens for env frames
+    // materialized by materialize_call_env from a closure captured
+    // in a stack env (e.g., named-let → letrec → lambda capture).
+    // Without this walk, the closure body can'"'"'t see bindings
+    // from the surrounding scope.
+    if (parent_id_ != NULL_ENV_ID && owner_) {
+        const EnvFrame& pfr = owner_->env_frame(parent_id_);
+        // Walk the parent frame'"'"'s bindings (string-keyed)
+        for (auto& b : pfr.bindings_) {
+            if (b.first == n) {
+                if (is_cell(b.second)) {
+                    auto ci = as_cell_id(b.second);
+                    if (ci < owner_->cells().size())
+                        return owner_->cells()[ci];
+                }
+                return b.second;
+            }
+        }
+        // Recurse via SoA: walk the parent'"'"'s parent_id_ chain
+        if (pfr.parent_id != NULL_ENV_ID) {
+            Env tmp;
+            tmp.set_owner(owner_);
+            tmp.set_parent_id(pfr.parent_id);
+            return tmp.lookup(n);
+        }
+    }
     // 3. Fallback: check primitives (allows passing names like `+` as values)
     if (primitives_) {
         auto slot = primitives_->slot_for_name(n);
@@ -17947,7 +17975,23 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                         // binding)
                         tail_env.emplace(&eval_env);
                         tail_env->set_primitives(&primitives_);
-            
+
+                        // Issue #232 fix: register the parent env in env_frames_
+                        // if not already, then set tail_env's parent_id_ so the
+                        // closure captured from this env can walk the parent
+                        // chain via SoA. Without this, named-let desugared to
+                        // (letrec ((loop (lambda (i) body))) (loop 0)) loses access
+                        // to bindings from the surrounding let* — the lambda's
+                        // body sees 'unbound variable: n' for n bound in the
+                        // outer let.
+                        if (eval_env.parent_id() == NULL_ENV_ID) {
+                            // eval_env is not yet in env_frames_; register it
+                            // so we can give tail_env a real parent_id_.
+                            EnvId eval_id = alloc_env_frame_from_env(eval_env);
+                            const_cast<Env&>(eval_env).set_parent_id(eval_id);
+                        }
+                        tail_env->set_parent_id(eval_env.parent_id());
+
                         std::size_t ci = cells_.size();
                         cells_.push_back(make_void());
                         tail_env->bind(std::string(name), make_cell(ci));
