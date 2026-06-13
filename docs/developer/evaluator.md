@@ -653,7 +653,9 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-23**: Converted (prep) test_issue_142 (composite query:where/filter + mutate:replace-subtree with capture/hygiene/rollback; 11 AC tests). Heavy (full serve/eval/JIT/LLVM + observability). Short form attempted; block restored full for build health (heavy pattern). See CMakeLists.txt (142 block) + plan Phase 2. Continuing the chain of similar one-at-a-time dedup ("这些类似的就一直做下去").
 
-**Phase 2 pilot-24**: Convert test_issue_143 (escape analysis integration into pass_manager; IRFunction hand-crafted tests for return/call/MakePair/capture/pure/fixpoint ACs). Heavy (serve+eval+JIT+LLVM+observ). Attempt short via helper + append; verify binary + smoke. See plan Phase 2.
+**Phase 2 pilot-24**: Converted test_issue_143 (escape analysis integration into pass_manager; IRFunction hand-crafted tests for return/call/MakePair/capture/pure/fixpoint ACs). Heavy (serve+eval+JIT+LLVM+observ). Short form landed cleanly (21/21). See CMakeLists.txt (143 block) + plan Phase 2.
+
+**Phase 2 pilot-25**: Convert test_issue_144 (C++26 contracts integration: 13 contract_assert sites in hot paths + hook registration with DiagnosticCollector + runtime ACs exercising Env/Primitives/QueryEngine/FlatAST/apply_patches/ShapeProfiler). Heavy (serve + jit + llvm + contract_handler + shape). Attempt short via helper + append (note special contract_handler.cpp + shape_profiler); verify binary + smoke. See plan Phase 2. Continuing the chain.
 
 ```scheme
 ; happy path
