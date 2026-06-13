@@ -635,6 +635,10 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-14**: Converted test_issue_165 (macro re-expansion + SyntaxMarker handling after EDSL mutations; TDD test, expected baseline FAIL on main). See CMakeLists.txt (165 block) + plan Phase 2.
 
+**Phase 2 pilot-15**: Converted test_issue_166 (multi-layer cache invalidation Phase 1: epoch counter). See CMakeLists.txt (166 block) + plan Phase 2.
+
+**Phase 2 pilot-16**: Converted test_issue_167 (IR layer SoA/DOD migration Phase 1: scaffold for IRModuleV2 + IRInstructionView API). Lightweight. See CMakeLists.txt (167 block) + plan Phase 2.
+
 ```scheme
 ; happy path
 (display (foo 42))            ; expect 84

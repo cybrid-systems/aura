@@ -1436,21 +1436,12 @@ add_test(NAME issue_166_verification COMMAND ./test_issue_166)
 # (Phase 1: scaffold). Verifies the basic IRModuleV2 +
 # IRInstructionView API. The new module is parallel to
 # existing ir.ixx — no consumer changes.
-add_executable(test_issue_167 tests/test_issue_167.cpp)
-set_property(TARGET test_issue_167 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_167 PRIVATE src src/compiler)
+# Phase 2 pilot-16: converted using early helper (light IR API test).
+# Base covers core + value/diag/value_impl; append the ir + ir_soa specifics.
+aura_add_issue_test(test_issue_167)
 target_sources(test_issue_167 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx
-    src/core/type.ixx
     src/compiler/ir.ixx
     src/compiler/ir_soa.ixx)
-target_compile_options(test_issue_167 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
-target_link_libraries(test_issue_167 PRIVATE pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_167_verification COMMAND ./test_issue_167)
 
 # Issue #168 verification: incremental type cache safety
 # (Phase 1: epoch gate). Verifies the set_cache_epoch API +
