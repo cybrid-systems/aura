@@ -17990,19 +17990,36 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                         tail_env.emplace(&eval_env);
                         tail_env->set_primitives(&primitives_);
 
-                        // Issue #232 fix: register the parent env in env_frames_
-                        // if not already, then set tail_env's parent_id_ so the
-                        // closure captured from this env can walk the parent
-                        // chain via SoA. Without this, named-let desugared to
-                        // (letrec ((loop (lambda (i) body))) (loop 0)) loses access
-                        // to bindings from the surrounding let* — the lambda's
-                        // body sees 'unbound variable: n' for n bound in the
-                        // outer let.
+                        // Issue #232 fix: register eval_env in env_frames_
+                        // (always, not just when parent_id_ is NULL), then
+                        // set tail_env's parent_id_ to eval_env's id. The
+                        // materialized call env can then walk the SoA chain
+                        // via lookup()'s parent_id_ fallback (added in #232
+                        // commit 6e73ef2). The fix below is needed because
+                        // even when eval_env.parent_id_ is non-NULL (e.g., a
+                        // materialized call env has parent_id_ = top_'s id),
+                        // the SoA walk needs to find the BINDINGS (e.g., 'n'
+                        // from a let*), which live in eval_env but NOT in top_.
+                        // Registering eval_env in env_frames_ makes those
+                        // bindings visible to the SoA walk.
+                        //
+                        // Idempotency: skip if eval_env is already a frame
+                        // (this would require tracking which envs are frames;
+                        // for now, we always register, which is wasteful but
+                        // correct).
                         if (eval_env.parent_id() == NULL_ENV_ID) {
-                            // eval_env is not yet in env_frames_; register it
-                            // so we can give tail_env a real parent_id_.
                             EnvId eval_id = alloc_env_frame_from_env(eval_env);
                             const_cast<Env&>(eval_env).set_parent_id(eval_id);
+                        } else {
+                            // eval_env already has a parent_id_ (probably the
+                            // top env). The SoA walk starts at this parent_id_
+                            // which is top_ — but top_ doesn't have the let*'s
+                            // bindings. Register eval_env as a NEW frame in
+                            // env_frames_ (at the next index) and update its
+                            // parent_id_ to the new id. The old parent_id_ is
+                            // preserved on the eval_env's OWN frame.
+                            EnvId new_id = alloc_env_frame_from_env(eval_env);
+                            const_cast<Env&>(eval_env).set_parent_id(new_id);
                         }
                         tail_env->set_parent_id(eval_env.parent_id());
 
