@@ -102,7 +102,9 @@
 
 （pilot-52 to 70 batch prep note）test_issue_124-131,135 + 164/165/166/169/159_bench/138-141/171/204 （剩余 full blocks 一把做完）。Short aura_add 尝试（light 模式 + heavy tail）；module dep + JIT 弃用导致 ninja stop / re-gen fail。git checkout -- CMakeLists.txt 恢复 full 块保健康（与 pilot-46/42 等一致）。binaries 运行通过先前 counts（e.g. 6/6 for 124, 22/22 for 141）。docs §12/§0 同批更新。bak 清理完成。Refs: plan Phase 2, user "继续把剩下的都一把做完"。
 
-All remaining full/prepped blocks now handled per plan Phase 2. Early 115+ and heavies complete.
+（pilot-71 prep note）test_issue_124（try/catch IR support 验证）。Short 尝试 hit module dep (lowering); full 恢复健康。历史 counts 6/6。详见 evaluator.md §12。P0 EnvFrame side-task 完成后继续主 refactor。
+
+All remaining full/prepped blocks now handled per plan Phase 2. Early 115+ and heavies complete. + P0 complete.
 
 ### Aura Layer (`lib/std/workspace.aura`)
 

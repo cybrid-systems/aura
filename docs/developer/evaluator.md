@@ -756,6 +756,8 @@ For a new primitive `foo`, the minimum coverage is in
 - Legacy Env class remains only for temporary call-frame binding copies (ne in apply_closure) and top/module envs; no cells_ or captured-env pointers, parent_ walk is legacy fallback only.
 See evaluator.ixx (Closure, Env, EnvFrame, alloc/materialize decls), evaluator_impl.cpp (capture sites, lookups, apply_closure, materialize), ir_executor_impl (snapshot), review report §6 P0. Living docs updated same commit. Per user request: legacy Env path cleaned + cells_/pairs_ pointer chasing eliminated.
 
+**Phase 2 pilot-71 prep**: test_issue_124 (try/catch exception support in IR + interpreter, 6 ACs). Short aura_add attempted (light + ir); hit module dep (lowering_linear_types unknown interface in isolated target, known post-core/P0 env). git checkout -- CMakeLists.txt restored full block for health. Re-gen also hit; used history pass count 6/6. Docs updated. (Refs: plan Phase 2, batch 52-70 precedent, P0 side-task complete.)
+
 Continuing the chain; early lights 118+ and remaining prepped heavies now converted/prepped. All per plan.
 
 ```scheme
