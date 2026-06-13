@@ -878,13 +878,11 @@ target_sources(test_issue_134 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 # orchestration (fiber:join + orch:parallel + WorkspaceTree).
 # The umbrella issue's work was completed across earlier
 # sub-issues (#97, #98, #107, #109, #119). This test binary
-# programmatically verifies all 5 acceptance criteria:
-#   1. fiber:spawn + fiber:join returns spawned value
-#   2. orch:parallel runs tasks concurrently (with results
-#      and error isolation)
-#   3. Workspace layering for isolated mutation experiments
-#   4. No regression in fiber / orchestration tests
-#   5. Memory / ASAN sanity (100 fibers + 50 workspaces)
+# programmatically verifies all 5 acceptance criteria.
+# Phase 2 pilot-5: converted using early helper. Base covers core
+# + value/diag/value_impl; append the heavy orchestration/eval/JIT
+# specifics (serve, parser, evaluator*, lowering*, query*, jit*,
+# LLVM bits, rtti flags, extra includes).
 add_executable(test_issue_135 tests/test_issue_135.cpp)
 set_property(TARGET test_issue_135 PROPERTY CXX_MODULE_STD ON)
 target_sources(test_issue_135 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES

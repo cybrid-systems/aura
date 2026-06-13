@@ -613,7 +613,9 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-3** (infra): helper definition moved early in CMakeLists.txt (before any test_issue_* calls, near line 264) so all subsequent conversions are safe regardless of source order. (116 conversion was experimental and reverted to keep module closure simple during base stabilization.)
 
-**Phase 2 pilot-4**: Converted test_issue_134 (ADT (datatype ...) verification, ties back to our 2.3/3.2 ADT extraction). Uses early helper + include extra (src/compiler) + append for parser/serve/type_checker/ir/coercion/observability bits. Block shrank dramatically. Base remains conservative (core + value/diag/value_impl). See CMakeLists.txt (134 block + early helper) + plan Phase 2. Next micros will continue one-at-a-time conversions.
+**Phase 2 pilot-4**: Converted test_issue_134 (ADT (datatype ...) verification, ties back to our 2.3/3.2 ADT extraction). Uses early helper + include extra (src/compiler) + append for parser/serve/type_checker/ir/coercion/observability bits. Block shrank dramatically. Base remains conservative (core + value/diag/value_impl). See CMakeLists.txt (134 block + early helper) + plan Phase 2.
+
+**Phase 2 pilot-5**: Converted test_issue_135 (true parallel multi-agent orchestration verification). Heavy test (serve, parser, full evaluator*, JIT, LLVM, query, lowering, etc.). Uses early helper + appends for the long tail of sources + LLVM bits + rtti flags. Pattern holding: one (complex) test per small step. See CMakeLists.txt (135 block) + plan Phase 2.
 
 ```scheme
 ; happy path
