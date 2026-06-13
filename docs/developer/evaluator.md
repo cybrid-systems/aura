@@ -621,6 +621,8 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-7**: Converted test_issue_137 (full hygienic macros end-to-end + mutate compatibility + regression). Heavy (parser, serve, evaluator*, JIT, LLVM). Uses early helper + appends for the tail + rtti/LLVM bits. See CMakeLists.txt (137 block) + plan Phase 2.
 
+**Phase 2 pilot-8**: Converted test_issue_158 (quasiquote should expand inner macro calls in code positions). Uses early helper + appends for parser/serve/evaluator/JIT/LLVM specifics. See CMakeLists.txt (158 block) + plan Phase 2. Continuing the one-at-a-time dedup.
+
 ```scheme
 ; happy path
 (display (foo 42))            ; expect 84

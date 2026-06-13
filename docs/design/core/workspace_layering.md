@@ -31,6 +31,7 @@
 （pilot-3 note）base 增加 value/type_checker 相关；转换 test_issue_116。
 （pilot-6 note）test_issue_136（AOT mangle 验证）已转换。helper 基建稳固，持续小步 dedup 40+ 测试。详见 evaluator.md §12。
 （pilot-7 note）test_issue_137（hygienic macros 验证）已转换。继续 Phase 2 小步。
+（pilot-8 note）test_issue_158（quasiquote 内宏展开验证）已转换。helper 基建稳固。
 
 ### Aura Layer (`lib/std/workspace.aura`)
 
