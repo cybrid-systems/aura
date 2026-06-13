@@ -18,9 +18,11 @@
 //
 namespace aura::compiler::shape {
 
-// ── FLOAT_BIAS from value_tags.h (issue #58) ────────────────────
+// ── FLOAT_BIAS / STRING_BIAS from value_tags.h (issue #58, #181) ──
+// Issue #181 Cycle 2: STRING_BIAS_VAL_2 is the v2 upper bound of
+// the string range (was STRING_BIAS_VAL before Cycle 2).
 static constexpr std::int64_t kFloatBias  = aura::compiler::types::FLOAT_BIAS_VAL;
-static constexpr std::int64_t kStringBias = aura::compiler::types::STRING_BIAS_VAL;
+static constexpr std::int64_t kStringBias = aura::compiler::types::STRING_BIAS_VAL_2;
 
 static inline bool is_fixnum_val(std::int64_t v) noexcept { return (v & 1) == 0; }
 static inline bool is_ref_val(std::int64_t v) noexcept    { return (v & 3) == 1; }

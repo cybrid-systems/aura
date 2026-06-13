@@ -59,6 +59,7 @@ inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
 #include <atomic>
 #include <chrono>
 #include "runtime_shared.h"
+#include "value_tags.h"  // Issue #181 Cycle 2: v2 string encoding helpers
 
 // ── TL Arena (thread-local bump allocator) ────────────────────
 __thread TLarena g_tl_arena;
@@ -991,10 +992,21 @@ const char* aura_string_ref(int64_t val);
 // Must match the IR interpreter's CastOp cases exactly.
 // Operates on EvalValue-compatible tagged values.
 int64_t aura_cast_op(int64_t val, int64_t type_tag) {
+    using aura::compiler::types::is_string_raw_v2;
+    using aura::compiler::types::STRING_BIAS_VAL_2;
+    using aura::compiler::types::FLOAT_BIAS_VAL;
     auto is_bool = [](int64_t v) { return v == 3 || v == 7; };
-    auto is_string = [](int64_t v) { return v <= -9000000000000000000LL; };
-    auto is_fixnum = [](int64_t v) { return (v & 1) == 0 && v > -10000000000000000LL; };
-    auto is_float = [](int64_t v) { return v <= -10000000000000000LL && v > -9000000000000000000LL; };
+    // Issue #181 Cycle 2: v2 string encoding. (v & 3) == 2 is
+    // the dedicated string tag. Range check via STRING_BIAS_VAL_2
+    // is the safety belt (catches fixnums in the right range
+    // that happen to have the string tag bit set).
+    auto is_string = [](int64_t v) {
+        return is_string_raw_v2(v) && v <= STRING_BIAS_VAL_2;
+    };
+    auto is_fixnum = [](int64_t v) { return (v & 1) == 0 && v > FLOAT_BIAS_VAL; };
+    auto is_float = [](int64_t v) {
+        return v <= FLOAT_BIAS_VAL && v > STRING_BIAS_VAL_2;
+    };
 
     switch (type_tag) {
         case 0: { // Coerce to Int
@@ -1008,8 +1020,8 @@ int64_t aura_cast_op(int64_t val, int64_t type_tag) {
                     return static_cast<int64_t>(std::atoll(s)) << 1;
             }
             if (is_float(val)) {
-                int64_t idx = -val - 10000000000000000LL;
-                double d = aura_float_ref(-10000000000000000LL - idx);
+                int64_t idx = -val - FLOAT_BIAS_VAL;
+                double d = aura_float_ref(-FLOAT_BIAS_VAL - idx);
                 return static_cast<int64_t>(d) << 1;
             }
             return 0;
@@ -1023,8 +1035,8 @@ int64_t aura_cast_op(int64_t val, int64_t type_tag) {
             else if (is_bool(val))
                 s = (val == 7) ? "#t" : "#f";
             else if (is_float(val)) {
-                int64_t idx = -val - 10000000000000000LL;
-                double d = aura_float_ref(-10000000000000000LL - idx);
+                int64_t idx = -val - FLOAT_BIAS_VAL;
+                double d = aura_float_ref(-FLOAT_BIAS_VAL - idx);
                 s = std::to_string(d);
             } else
                 return val;
@@ -1149,14 +1161,18 @@ std::size_t aura_jit_pool_size() {
 }
 
 std::int64_t aura_alloc_string(const char* s) {
+    using aura::compiler::types::make_string_raw_v2;
     std::int64_t idx = (std::int64_t)g_string_pool.size();
     g_string_pool.push_back(s ? s : "");
-    return -9000000000000000000LL - idx;
+    // Issue #181 Cycle 2: v2 string encoding.
+    return make_string_raw_v2(static_cast<std::uint64_t>(idx));
 }
 
 const char* aura_string_ref(std::int64_t val) {
-    std::int64_t idx = -val - 9000000000000000000LL;
-    if (idx >= 0 && idx < (std::int64_t)g_string_pool.size())
+    using aura::compiler::types::string_idx_raw_v2;
+    if (!aura::compiler::types::is_string_raw_v2(val)) return "";
+    std::uint64_t idx = string_idx_raw_v2(val);
+    if (idx < g_string_pool.size())
         return g_string_pool[(std::size_t)idx].c_str();
     return "";
 }
@@ -1166,8 +1182,10 @@ const char* aura_string_ref(std::int64_t val) {
 // callback(idx) should return the new index after pushing to the external heap.
 // 
 const char* aura_jit_string_content(std::int64_t val) {
-    std::int64_t idx = -val - 9000000000000000000LL;
-    if (idx >= 0 && idx < (std::int64_t)g_string_pool.size())
+    using aura::compiler::types::string_idx_raw_v2;
+    if (!aura::compiler::types::is_string_raw_v2(val)) return nullptr;
+    std::uint64_t idx = string_idx_raw_v2(val);
+    if (idx < g_string_pool.size())
         return g_string_pool[(std::size_t)idx].c_str();
     return nullptr;
 }

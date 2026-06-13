@@ -731,8 +731,15 @@ struct LLVMBuilder {
                 // fast path for the common case.
                 auto* bit0 = irb->CreateAnd(arg_val, c64(1));
                 auto* is_ref  = irb->CreateICmpEQ(bit0, c64(1));
-                auto* is_string_approx = irb->CreateICmpSLE(
-                    arg_val, c64(-9000000000000000000LL));
+                // Issue #181 Cycle 2: v2 string encoding. Use
+                // (v & 3) == 2 as the dedicated string tag, plus
+                // a range check against STRING_BIAS_VAL_2 (the
+                // safety belt, mirrors the C++ is_string helper).
+                auto* low2 = irb->CreateAnd(arg_val, c64(3));
+                auto* is_string_tag = irb->CreateICmpEQ(low2, c64(2));
+                auto* is_string_approx = irb->CreateAnd(
+                    is_string_tag,
+                    irb->CreateICmpSLE(arg_val, c64(aura::compiler::types::STRING_BIAS_VAL_2)));
                 // Combine: ref -> 10; string -> 4; else 1 (treat as
                 // fixnum; this is an over-approximation, which is
                 // fine because the interpreter re-checks on deopt).
