@@ -59,7 +59,8 @@
 （pilot-33 note）test_issue_173（stable-id type aliases / PairId/CellId/StringId 验证）已转换（very light）。详见 evaluator.md §12。
 （pilot-34 note）test_issue_164（fiber:join spin-fallback 验证）已转换。详见 evaluator.md §12。
 （pilot-35 note）test_issue_165（macro re-expansion + SyntaxMarker TDD 验证）prep（short 导致 build stop，full 恢复）。详见 evaluator.md §12。
-（pilot-36 note）test_issue_166（multi-layer cache invalidation / epoch counter 验证）转换中（long-standing heavy）。详见 evaluator.md §12 和 plan Phase 2。
+（pilot-36 note）test_issue_166（multi-layer cache invalidation / epoch counter 验证）prep（short 导致 stop，full 恢复）。详见 evaluator.md §12。
+（pilot-37 note）test_issue_169（Fine-grained Incremental Compilation v3 / config flag 验证）转换中（long-standing heavy）。详见 evaluator.md §12 和 plan Phase 2。
 
 ### Aura Layer (`lib/std/workspace.aura`)
 
