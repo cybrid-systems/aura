@@ -855,34 +855,24 @@ target_sources(test_issue_132 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 # Standalone binary that exercises parse_datatype
 # for various forms (with/without ctors, with/without
 # type params, zero-arity ctors).
-add_executable(test_issue_134 tests/test_issue_134.cpp)
-set_property(TARGET test_issue_134 PROPERTY CXX_MODULE_STD ON)
-target_include_directories(test_issue_134 PRIVATE src src/compiler)
+# Phase 2 pilot-4: converted using early helper (definition before all calls).
+# Base covers core + value/diag/value_impl; append the rest (parser, serve,
+# type_checker, ir/coercion, observability .h, extra include dir).
+aura_add_issue_test(test_issue_134)
+target_include_directories(test_issue_134 PRIVATE src/compiler)
 target_sources(test_issue_134 PRIVATE
     src/serve/fiber.cpp
     src/serve/worker.cpp
     src/serve/scheduler.cpp
     src/serve/gc_coordinator.cpp
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
-    src/core/ast_impl.cpp
-    src/core/type_impl.cpp
-    src/compiler/value_impl.cpp
     src/compiler/type_checker_impl.cpp
     src/compiler/observability_metrics.h)
 target_sources(test_issue_134 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
-    src/compiler/diag.ixx src/compiler/value.ixx
     src/compiler/ir.ixx src/compiler/ir_cache_pure.ixx
     src/compiler/coercion_map.ixx
     src/compiler/type_checker.ixx)
-target_compile_options(test_issue_134 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
-target_link_libraries(test_issue_134 PRIVATE pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_134_verification COMMAND ./test_issue_134)
 
 # Issue #135 verification: True parallel multi-agent
 # orchestration (fiber:join + orch:parallel + WorkspaceTree).
