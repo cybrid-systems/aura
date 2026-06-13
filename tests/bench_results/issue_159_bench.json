@@ -1,5 +1,5 @@
 {
-  "timestamp_ms": 482834842,
+  "timestamp_ms": 584168354,
   "issue": 159,
   "phase": 4,
   "description": "Incremental compilation benchmark — eval_current latency under 4 scenarios × N workspace sizes",
@@ -12,31 +12,31 @@
   "results": [
     {
       "n_defines": 10,
-      "A_us": 11.417,
-      "B_us": 10.958,
-      "C_us": 10.959,
-      "D_us": 11.792
+      "A_us": 11.291,
+      "B_us": 10.833,
+      "C_us": 12.25,
+      "D_us": 12.667
     },
     {
       "n_defines": 50,
-      "A_us": 14.167,
-      "B_us": 13.583,
-      "C_us": 13.75,
-      "D_us": 14.167
+      "A_us": 14.083,
+      "B_us": 14.5,
+      "C_us": 15.25,
+      "D_us": 15.75
     },
     {
       "n_defines": 100,
-      "A_us": 17.375,
-      "B_us": 18.917,
-      "C_us": 19.125,
-      "D_us": 24.167
+      "A_us": 19.25,
+      "B_us": 18.916,
+      "C_us": 18.292,
+      "D_us": 19.166
     },
     {
       "n_defines": 500,
-      "A_us": 48.75,
-      "B_us": 48.667,
+      "A_us": 49.458,
+      "B_us": 48.666,
       "C_us": 48.75,
-      "D_us": 48.958
+      "D_us": 49.292
     }
   ]
 }

@@ -70,7 +70,9 @@
 
 （pilot-44 note）test_issue_116（deferred CoercionNode insertion 验证）prep（short 导致 stop，full 恢复）。详见 evaluator.md §12。
 
-（pilot-45 note）test_issue_117（linear ownership validation fixes / full re-simulation + gradual+Linear boundary 验证）转换中（light）。详见 evaluator.md §12 和 plan Phase 2。
+（pilot-45 note）test_issue_117（linear ownership validation fixes / full re-simulation + gradual+Linear boundary 验证）prep（short 导致 stop，full 恢复）。详见 evaluator.md §12。
+
+（pilot-46 note）test_issue_118（solver timeout returns SolveResult + unbound/module diag paths 验证）转换中（light）。详见 evaluator.md §12 和 plan Phase 2。
 
 ### Aura Layer (`lib/std/workspace.aura`)
 
