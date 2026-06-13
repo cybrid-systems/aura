@@ -770,6 +770,12 @@ See evaluator.ixx (Closure, Env, EnvFrame, alloc/materialize decls), evaluator_i
 
 **Phase 2 pilot-77 prep**: test_issue_131 (FFI primitives extraction). Short aura_add attempted (light + ir/ffi); hit module dep. Full restored. History from batch. Docs updated. (Refs: plan, "继续".)
 
+**Phase 2 pilot-78 prep**: test_issue_135 (true parallel multi-agent orchestration, 5 ACs). Short aura_add attempted (heavy with JIT/LLVM); build linked but test partial (24/39, some orch issues perhaps from P0); full restored via checkout for health. History 5 ACs. Docs updated. (Refs: plan, batch, "批量搞".)
+
+**Phase 2 pilot-79 prep**: test_issue_164 (fiber:join spin-fallback, 5 ACs). Short aura_add attempted (heavy); hit module dep. Full restored. History 6+/6. Docs updated.
+
+**Phase 2 pilot-80 prep**: test_issue_165 (macro re-expansion + SyntaxMarker TDD). Short aura_add attempted (heavy); hit module dep. Full restored. History 13/13. Docs updated. (Refs: plan Phase 2, "继续", "批量搞".)
+
 Continuing the chain; early lights 118+ and remaining prepped heavies now converted/prepped. All per plan.
 
 ```scheme
