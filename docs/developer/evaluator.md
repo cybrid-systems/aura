@@ -649,6 +649,8 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-21**: Converted test_issue_140 (query:pattern EDSL primitive with Ellipsis and basic hygiene; hygiene fix for SyntaxMarker::MacroIntroduced). See CMakeLists.txt (140 block) + plan Phase 2.
 
+**Phase 2 pilot-22**: Converted test_issue_141 (full WorkspaceTree with COW, read-only permissions, and merge primitives; all 18 workspace:* primitives end-to-end). See CMakeLists.txt (141 block) + plan Phase 2.
+
 ```scheme
 ; happy path
 (display (foo 42))            ; expect 84
