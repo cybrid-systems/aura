@@ -673,7 +673,9 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-33**: Converted test_issue_173 (stable-id type aliases / PairId/CellId/StringId + sentinels; 3 tests, very light). 8/8. Short landed. See CMake + plan Phase 2.
 
-**Phase 2 pilot-34**: Convert test_issue_164 (fiber:join spin-fallback elimination; 5 ACs for join/no-spin/ concurrent mutate/parallel/perf). Long-standing prepped heavy (full serve/eval/jit/LLVM/observ). Attempt short + prep if needed. See plan Phase 2. To complete the dedup.
+**Phase 2 pilot-34**: Converted test_issue_164 (fiber:join spin-fallback; 5 ACs). Short landed clean (6+/6). See previous.
+
+**Phase 2 pilot-35**: Convert test_issue_165 (macro re-expansion + SyntaxMarker after EDSL mutations; TDD, expected baseline FAIL on main per comment). Long-standing prepped heavy. Attempt short. See plan Phase 2. Continuing to complete remaining prepped.
 
 ```scheme
 ; happy path

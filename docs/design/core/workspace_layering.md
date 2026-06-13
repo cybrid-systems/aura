@@ -57,7 +57,8 @@
 （pilot-31 note）test_issue_171（Function Inliner/TCO 验证）prep（short 导致 link 问题，full block 恢复健康）。详见 evaluator.md §12 和 plan Phase 2。
 （pilot-32 note）test_issue_204（GC env_frames_ walk integration 验证）prep（short 导致 re-gen 问题，full 恢复）。详见 evaluator.md §12。
 （pilot-33 note）test_issue_173（stable-id type aliases / PairId/CellId/StringId 验证）已转换（very light）。详见 evaluator.md §12。
-（pilot-34 note）test_issue_164（fiber:join spin-fallback 验证）转换中（long-standing heavy）。详见 evaluator.md §12 和 plan Phase 2。
+（pilot-34 note）test_issue_164（fiber:join spin-fallback 验证）已转换。详见 evaluator.md §12。
+（pilot-35 note）test_issue_165（macro re-expansion + SyntaxMarker TDD 验证）转换中（long-standing heavy）。详见 evaluator.md §12 和 plan Phase 2。
 
 ### Aura Layer (`lib/std/workspace.aura`)
 
