@@ -1,5 +1,31 @@
 // aura_jit_runtime.cpp — JIT runtime functions for closure/cell/pair/prim ops
 // These are compiled as regular C++ and registered in the ORC JIT as symbols.
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Issue #173: stable-id type aliases (Phase 2 of #145 workstream 2)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// PairId / CellId / StringId are the canonical index types for
+// the runtime heaps. They're `uint32_t` (vs the previous
+// implicit int64_t from vector::size()) for two reasons:
+//   1. Smaller, denser encoding (32 bits covers 4B entries)
+//   2. Explicit type: a PairId cannot be confused with a
+//      CellId or a StringId, catching bugs at compile time
+//
+// The id is currently a vector index (g_pair_slots[id], etc.).
+// Future work (remap table or generation stamp) will decouple
+// the id from the storage location so reallocation doesn't
+// invalidate cached ids. The aliases are the first step —
+// establish the type system that the rest of the migration
+// will build on.
+using PairId   = unsigned int;
+using CellId   = unsigned int;
+using StringId = unsigned int;
+inline constexpr PairId   NULL_PAIR_ID   = static_cast<PairId>(~0ULL);
+inline constexpr CellId   NULL_CELL_ID   = static_cast<CellId>(~0ULL);
+inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
+
+
 //
 // ═══════════════════════════════════════════════════════════════════════════
 // Issue #157 — workspace_mtx_ bypass in JIT runtime bridges

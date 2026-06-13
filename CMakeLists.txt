@@ -2851,3 +2851,17 @@ target_compile_options(test_issue_204 PRIVATE -Wall -Wextra -Wpedantic
     -Wno-parentheses)
 target_link_libraries(test_issue_204 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_204_verification COMMAND ./test_issue_204)
+
+# Issue #173 verification: stable-id type aliases (Phase 2 of
+# #145 workstream 2). Verifies PairId/CellId/StringId +
+# NULL_X_ID sentinels. Full migration (remap table,
+# resolve_X, GC sweep compact) is the follow-up.
+add_executable(test_issue_173 tests/test_issue_173.cpp)
+set_property(TARGET test_issue_173 PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_issue_173 PRIVATE src src/compiler)
+target_compile_options(test_issue_173 PRIVATE -Wall -Wextra -Wpedantic
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
+    -Wno-parentheses)
+target_link_libraries(test_issue_173 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+add_test(NAME issue_173_verification COMMAND ./test_issue_173)
