@@ -671,7 +671,9 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-32 prep**: test_issue_204 (GC env_frames_ walk integration). Short hit re-gen fail; full restored. 26/26. See previous. 
 
-**Phase 2 pilot-33**: Convert test_issue_173 (stable-id type aliases / PairId/CellId/StringId + sentinels; Phase 2 of #145, very light compile-check only, no sources). Minimal. See plan Phase 2. Continuing.
+**Phase 2 pilot-33**: Converted test_issue_173 (stable-id type aliases / PairId/CellId/StringId + sentinels; 3 tests, very light). 8/8. Short landed. See CMake + plan Phase 2.
+
+**Phase 2 pilot-34**: Convert test_issue_164 (fiber:join spin-fallback elimination; 5 ACs for join/no-spin/ concurrent mutate/parallel/perf). Long-standing prepped heavy (full serve/eval/jit/LLVM/observ). Attempt short + prep if needed. See plan Phase 2. To complete the dedup.
 
 ```scheme
 ; happy path
