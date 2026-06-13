@@ -261,7 +261,57 @@ bool test_exception_stack_nested() {
     return true;
 }
 
-// ── Test 10: Phase 1 / item #2 lowers the 4 exception opcodes ──
+// ── Test 11: spec_jit_controller deopt signal (Phase 2 / item #1) ──
+// The spec controller consults AuraJIT's unhandled_opcode_count to
+// decide whether to attempt shape-based specialization. If ANY
+// unhandled opcode has been reported, specialization is skipped.
+#include "spec_jit_controller.h"
+bool test_spec_jit_deopt_signal() {
+    PRINTLN("\n--- Test 11: spec_jit_controller deopt signal ---");
+    aura::jit::AuraJIT jit;
+    aura::compiler::shape::SpecJITController ctrl(jit);
+
+    // Initial: no unhandled opcodes → should NOT deopt
+    CHECK(ctrl.unhandled_opcode_count() == 0,
+          "spec controller sees 0 unhandled opcodes initially");
+    CHECK(!ctrl.should_deopt_specialization(),
+          "should_deopt_specialization() returns false initially");
+
+    // Simulate an unhandled opcode being reported
+    jit.mutable_metrics().unhandled_opcode_count.store(1, std::memory_order_relaxed);
+
+    // Now: should deopt
+    CHECK(ctrl.unhandled_opcode_count() == 1,
+          "spec controller sees 1 unhandled opcode after store");
+    CHECK(ctrl.should_deopt_specialization(),
+          "should_deopt_specialization() returns true after unhandled opcode");
+
+    // compile_specialized should now return nullptr (deopt)
+    uint8_t shape_map[] = {1, 1, 0, 0};  // Int, Int, Dynamic, Dynamic
+    auto fn = ctrl.compile_specialized("test_fn", shape_map, 4,
+                                       nullptr, 2, 4);
+    CHECK(fn == nullptr,
+          "compile_specialized returns nullptr when deopt signal is set");
+    return true;
+}
+
+// ── Test 12: spec_jit_controller clears the deopt on reset ──
+// Manually resetting the counter should re-enable specialization.
+bool test_spec_jit_deopt_reset() {
+    PRINTLN("\n--- Test 12: deopt signal clears on counter reset ---");
+    aura::jit::AuraJIT jit;
+    aura::compiler::shape::SpecJITController ctrl(jit);
+
+    // Trigger deopt
+    jit.mutable_metrics().unhandled_opcode_count.store(5, std::memory_order_relaxed);
+    CHECK(ctrl.should_deopt_specialization(), "deopt active when count > 0");
+
+    // Reset
+    jit.mutable_metrics().unhandled_opcode_count.store(0, std::memory_order_relaxed);
+    CHECK(!ctrl.should_deopt_specialization(),
+          "deopt cleared when counter reset to 0");
+    return true;
+}
 // Verifies that the expected IROpcode enum values (in ir.ixx)
 // match what the JIT's lower() switch handles. The JIT-local
 // Op enum (aura_jit.cpp:115-167) is anonymous and not accessible
@@ -302,6 +352,8 @@ int main() {
     test_exception_stack_push_pop();
     test_exception_stack_nested();
     test_issue_170_phase1_item2_enum_values();
+    test_spec_jit_deopt_signal();
+    test_spec_jit_deopt_reset();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);

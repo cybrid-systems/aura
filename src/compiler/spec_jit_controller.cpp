@@ -95,6 +95,22 @@ aura::jit::ScalarFn SpecJITController::compile_specialized(
 {
     (void)generic_fn;  // Unused in Phase 2 — the guard is at the call site
 
+    // Issue #170 Phase 2 / item #1: deopt gate. If the
+    // underlying AuraJIT has seen ANY unhandled opcode,
+    // skip shape specialization — the specialized path would
+    // inherit the bug. The caller falls back to the generic
+    // (non-specialized) function, which goes through the
+    // IR executor or a different code path that's safe for
+    // unhandled opcodes.
+    if (should_deopt_specialization()) {
+        std::fprintf(stderr,
+            "spec: deopting specialization for '%s' "
+            "(AuraJIT unhandled_opcode_count=%llu > 0)\n",
+            fn_name.c_str(),
+            (unsigned long long)unhandled_opcode_count());
+        return nullptr;
+    }
+
     // Build a FlatFunction with shape_map
     // For L1, we just need a skeleton function that the AuraJIT can compile
     // The actual compilation happens through the existing JIT path, but with
@@ -163,6 +179,21 @@ void SpecJITController::invalidate(const std::string& fn_name) {
 void SpecJITController::clear() {
     specializations_.clear();
     global_version_ = 0;
+}
+
+// Issue #170 Phase 2 / item #1: deopt signal for the shape
+// specializer. Returns true if the underlying AuraJIT has
+// reported ANY unhandled opcode since process start. This is
+// the conservative version — any unhandled opcode in any
+// function disables shape specialization globally. A
+// per-function version is a future enhancement (would need
+// to track which function compiled the unhandled opcode).
+bool SpecJITController::should_deopt_specialization() const {
+    return unhandled_opcode_count() > 0;
+}
+
+std::uint64_t SpecJITController::unhandled_opcode_count() const {
+    return jit_.metrics().unhandled_opcode_count.load(std::memory_order_relaxed);
 }
 
 }  // namespace aura::compiler::shape
