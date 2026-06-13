@@ -659,7 +659,9 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-26**: Converted test_issue_145 (DOD/SoA Phase 1 partial: Closure::params SymId migration, EnvView/ClosureView, bind_symid/lookup_by_symid fast path, 8 ACs + bulk env_frames stress). Consolidated split config. 3081/3081. See CMakeLists.txt (145 block) + plan Phase 2.
 
-**Phase 2 pilot-27**: Convert test_issue_146 (pure-function + monadic Result extraction Phase 1: evaluator_pure module, coerce_to_int_pure as free Result, legacy wrapper compat, 4 ACs). Uses new pure import. Heavy (jit etc.). See plan Phase 2.
+**Phase 2 pilot-27**: Converted test_issue_146 (pure-function + monadic Result extraction Phase 1: evaluator_pure module, coerce_to_int_pure as free Result, legacy wrapper compat + many more pure extracts like is_truthy, edit_distance, ffi_marshal, arithmetic_sum etc.; 96/96). See CMakeLists.txt (146 block) + plan Phase 2.
+
+**Phase 2 pilot-28**: Convert test_issue_147 (next heavy in file order, similar full serve/eval/jit config). Docs + targeted. See plan Phase 2. Multi-advance.
 
 ```scheme
 ; happy path
