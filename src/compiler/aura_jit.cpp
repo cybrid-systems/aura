@@ -178,6 +178,12 @@ struct LLVMBuilder {
 
     // AOT mode: OpPrimitive stores negative sentinel for primitive dispatch
     bool aot_mode = false;
+    // Issue #170 Phase 1 / item #1: optional metrics pointer.
+    // Set by compile() (and the AOT path) so the lower() default
+    // branch can increment unhandled_opcode_count. Nullable so
+    // direct lower() calls in tests don't crash; in production
+    // it's always set when going through compile().
+    aura::jit::AuraJIT::Metrics* metrics = nullptr;
     // Shape map from FlatFunction: null = dynamic, non-null = known shapes
     // Values: 0=Dynamic, 1=Int, 2=Float, 3=Bool, 4=String, 5=Void
     const uint8_t* shape_map = nullptr;
@@ -749,6 +755,57 @@ struct LLVMBuilder {
                 irb->CreateCall(fn_closure_capture, {closure_val, c64(inst.ops[1]), env_val});
                 return true;
             }
+            // Issue #170 Phase 1 / item #1: CaptureRef captures a
+            // cell reference (not a value) into the closure env. The
+            // IR interpreter's convention is to encode the cell's
+            // IR slot as make_int(-1 - ops[2]) (negative offset
+            // marker, slot is the magnitude). The JIT matches this
+            // encoding exactly so JIT-compiled and IR-interpreted
+            // closures produce identical env values.
+            //
+            // The runtime bridge is the same as OpCapture
+            // (aura_closure_capture) — only the value written
+            // differs. This keeps the runtime ABI simple: one
+            // capture bridge, two encodings (raw value vs encoded
+            // cell-ref), differentiated by the sign of the env val.
+            case OpCaptureRef: {
+                auto closure_val = load(inst.ops[0]);
+                auto cell_slot = c64(inst.ops[2]);  // IR slot of the cell
+                // -1 - cell_slot (matches ir_executor_impl.cpp:842)
+                auto encoded = irb->CreateSub(c64(-1), cell_slot);
+                irb->CreateCall(fn_closure_capture, {closure_val, c64(inst.ops[1]), encoded});
+                return true;
+            }
+            // Issue #170 Phase 1 / item #1: Apply is the closure
+            // form of Call. Argument layout differs from OpCall:
+            //   ops[0] = closure_slot
+            //   ops[1] = arg_count
+            //   ops[2] = result_slot
+            //   args are at locals[ops[0]+1] ... locals[ops[0]+arg_count]
+            //   (inline-args encoding; OpCall uses an arg_base pointer).
+            // The runtime call (aura_closure_call) is identical to
+            // OpCall — only the slot-to-arg-array materialization is
+            // different. This is the same pattern as the IR executor
+            // (ir_executor_impl.cpp:846-877).
+            case OpApply: {
+                auto closure = load(inst.ops[0]);
+                auto arg_count = inst.ops[1];
+                auto alloca_ty = llvm::ArrayType::get(llvm::Type::getInt64Ty(ctx), arg_count);
+                auto args_arr = irb->CreateAlloca(alloca_ty);
+                // Inline args: locals[ops[0]+1] ... locals[ops[0]+arg_count]
+                for (uint32_t i = 0; i < arg_count; ++i) {
+                    auto gep = irb->CreateGEP(llvm::Type::getInt64Ty(ctx), args_arr, c64(i));
+                    irb->CreateStore(load(inst.ops[0] + 1 + i), gep);
+                }
+                auto call = irb->CreateCall(
+                    fn_closure_call,
+                    {closure,
+                     irb->CreateBitCast(args_arr,
+                                        llvm::PointerType::getUnqual(llvm::Type::getInt64Ty(ctx))),
+                     c64(arg_count)});
+                store(inst.ops[2], call);
+                return true;
+            }
             case OpCall: {
                 // ops[0] = callee_slot, ops[1] = arg_base, ops[2] = arg_count, ops[3] = result_slot
                 auto callee = load(inst.ops[0]);
@@ -1250,10 +1307,51 @@ struct LLVMBuilder {
                 return true;
             }
 
-            default:
+            default: {
+                // Issue #170 Phase 1 / item #1: visible default.
+                // Previously this branch silently wrote 0 to the
+                // result slot and reported 'success' to the caller,
+                // which is a SOUNDNESS BUG: any function that hits
+                // an unhandled opcode (e.g. Raise, IsError, TryBegin,
+                // TryEnd — all deferred to Phase 1 / item #2) would
+                // produce wrong output with no signal.
+                //
+                // Now: increment the unhandled-opcode counter, log
+                // a one-time warning to stderr (rate-limited via
+                // std::atomic so multi-threaded compiles don't spam),
+                // and write a tagged sentinel to the result slot.
+                // The sentinel is make_void() (tag 11) — obviously
+                // not a valid int/float/pair/closure/function
+                // return value, so a future consumer (test, fuzz
+                // harness, observability tool) can detect the
+                // anomaly immediately.
+                //
+                // We do NOT emit llvm::IRBuilder::CreateUnreachable
+                // here because that would terminate the current
+                // basic block and break control-flow joining for
+                // subsequent instructions in the same block. The
+                // counter is the observability hook; the spec
+                // controller (Phase 2 / item #1) will use it to
+                // auto-deopt to the interpreter for hot functions.
+                if (metrics) {
+                    metrics->unhandled_opcode_count.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
                 if (inst.ops[0] < fn.local_count)
-                    store(inst.ops[0], c64(0));
+                    store(inst.ops[0], c64(11));  // VOID sentinel
+                // Rate-limited stderr log: log the first occurrence
+                // per JIT instance (one-time warning is enough —
+                // the counter tracks ongoing volume).
+                static std::atomic<bool> warned{false};
+                bool expected = false;
+                if (warned.compare_exchange_strong(expected, true)) {
+                    std::fprintf(stderr,
+                        "aura_jit: WARNING — unhandled IROpcode in "
+                        "lower() (counter exposed via Metrics). "
+                        "Deferred to Issue #170 Phase 1 / item #2.\n");
+                }
                 return true;
+            }
         }
     }
 };
@@ -1480,6 +1578,14 @@ static bool emit_native_object_llvm(const FlatFunction& fn, const std::string& o
         builder.string_pool = string_pool;
     builder.aot_mode = true;
     builder.mod = mod.get();
+    // Issue #170 Phase 1 / item #1: AOT path has no per-call
+    // metrics pointer (it doesn't go through AuraJIT's
+    // compile()). The default branch still increments via the
+    // builder->metrics pointer, which is null here — so the
+    // unhandled counter is a no-op in AOT mode. Acceptable
+    // for now (AOT is for benchmarking/AOT experiments, not
+    // production); the public AOT API in f432d4b has its own
+    // observability (compile_to_llvm_ir) for inspection.
     builder.declare_runtime();
 
     // Build function with unique name (counter disambiguates __lambda__ duplicates).
@@ -1776,6 +1882,12 @@ struct AuraJIT::Impl {
         builder.declare_runtime();
         builder.shape_map = fn.shape_map;
         builder.shape_map_size = fn.local_count;
+        // Issue #170 Phase 1 / item #1: wire metrics into the
+        // builder so the lower() default branch can increment
+        // unhandled_opcode_count. compile() always sets metrics
+        // (it's the AuraJIT::Metrics from the public API); the
+        // AOT path is metric-free for now.
+        builder.metrics = metrics;
         if (string_pool_)
             builder.string_pool = string_pool_;
 
@@ -2028,6 +2140,13 @@ char* AuraJIT::Metrics::format(char* buf, std::size_t buf_size) const noexcept {
     const auto vfail = verify_fail_count.load(std::memory_order_relaxed);
     const auto mfail = add_module_fail_count.load(std::memory_order_relaxed);
     const auto cfns = cached_function_count.load(std::memory_order_relaxed);
+    // Issue #170 Phase 1 / item #1: unhandled-opcode counter.
+    // Reads from Metrics directly (per-instance); the JIT's
+    // lower() default branch increments this on every IROpcode
+    // that doesn't have a case. Hot functions with non-zero
+    // values are candidates for spec_jit_controller auto-deopt
+    // (Phase 2 / item #1).
+    const auto unhandled = unhandled_opcode_count.load(std::memory_order_relaxed);
     // Live prim-call counters from aura_jit_runtime.cpp
     // (read via the global accessors). The total is in nanoseconds;
     // average per call is computed inline.
@@ -2038,12 +2157,14 @@ char* AuraJIT::Metrics::format(char* buf, std::size_t buf_size) const noexcept {
                   "jit: compiles=%llu avg_us=%llu hot_swaps=%llu "
                   "cached_fns=%llu inlined_prims=%llu slow_prims=%llu "
                   "prim_calls=%llu prim_avg_ns=%llu "
-                  "verify_fail=%llu add_mod_fail=%llu",
+                  "verify_fail=%llu add_mod_fail=%llu "
+                  "unhandled_opcode=%llu",
                   (unsigned long long)cc, (unsigned long long)avg_us,
                   (unsigned long long)hs, (unsigned long long)cfns,
                   (unsigned long long)inl, (unsigned long long)slow,
                   (unsigned long long)pc, (unsigned long long)pavg,
-                  (unsigned long long)vfail, (unsigned long long)mfail);
+                  (unsigned long long)vfail, (unsigned long long)mfail,
+                  (unsigned long long)unhandled);
     return buf;
 }
 

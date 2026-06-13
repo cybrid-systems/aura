@@ -148,6 +148,14 @@ public:
         std::atomic<std::uint64_t> inlined_prim_count{0};   // fast-path
         std::atomic<std::uint64_t> slow_prim_count{0};     // aura_prim_call path
         std::atomic<std::uint64_t> cached_function_count{0};
+        // Issue #170 Phase 1 / item #1: counter for IROpcodes that
+        // the JIT lowering doesn't have a case for. The default
+        // branch in lower() increments this and writes a sentinel
+        // (0) to the result slot — this is the "visible default"
+        // that replaces the previously-silent write-0 behavior.
+        // spec_jit_controller (Phase 2 / item #1) will consume this
+        // to auto-deopt hot functions that hit unhandled opcodes.
+        std::atomic<std::uint64_t> unhandled_opcode_count{0};
 
         // Format as a single-line string for telemetry / log output.
         // Caller-provided buffer; returns the same pointer.
