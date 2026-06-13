@@ -663,7 +663,9 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-28**: Converted test_issue_147. See previous. 
 
-**Phase 2 pilot-29**: Convert test_issue_148 (mutation-aware incremental type checking with constraint delta solving; 8 ACs on incremental_infer, partial API, let-poly, occurrence narrowing, delta solve). Heavy. See CMake + plan Phase 2. Continuing multi small steps.
+**Phase 2 pilot-29**: Converted test_issue_148 (mutation-aware incremental type checking with constraint delta solving; 8 ACs on incremental_infer, partial API, let-poly, occurrence narrowing, delta solve). 15/15. See CMakeLists.txt (148 block) + plan Phase 2.
+
+**Phase 2 pilot-30**: Convert test_issue_149 (propagate rich inferred types for specialization, monomorphization, improved deopt guards; 8 ACs on IR metadata, GuardShape, TypeSpecializationWrap, gradual). Heavy. See plan Phase 2.
 
 ```scheme
 ; happy path

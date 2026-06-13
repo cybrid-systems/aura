@@ -2601,13 +2601,12 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 target_include_directories(test_issue_148 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_148 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_148 PRIVATE ${llvm_libs})
-add_executable(test_issue_149 tests/test_issue_149.cpp)
-set_property(TARGET test_issue_149 PROPERTY CXX_MODULE_STD ON)
+# Issue #149 verification: propagate rich inferred types for specialization,
+# monomorphization and improved deopt guards.
+# Phase 2 pilot-30: converted using early helper. Heavy (jit, serve, type etc.).
+aura_add_issue_test(test_issue_149)
 target_include_directories(test_issue_149 PRIVATE src src/compiler)
 target_sources(test_issue_149 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx
-    src/core/type.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
@@ -2629,7 +2628,6 @@ target_sources(test_issue_149 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ast_walkers.ixx
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
-target_compile_definitions(test_issue_149 PRIVATE AURA_HAVE_LLVM=1)
 target_sources(test_issue_149 PRIVATE
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
     src/core/ast_impl.cpp
@@ -2658,7 +2656,6 @@ target_sources(test_issue_149 PRIVATE
     src/serve/gc_coordinator.cpp)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-target_link_libraries(test_issue_149 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 target_include_directories(test_issue_149 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_149 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_149 PRIVATE ${llvm_libs})
