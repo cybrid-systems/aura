@@ -17471,8 +17471,7 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                         // Bind error value to var and evaluate handler
                                         Env catch_env(&eval_env);
                                         catch_env.set_primitives(&primitives_);
-                                        catch_env.set_cells(
-                                            const_cast<std::pmr::vector<EvalValue>*>(&cells_));
+                                        // P0: no cells_ on Env; deref uses central cells_ or owner walk
                                         if (!var_name.empty() && result) {
                                             catch_env.bind(var_name, *result);
                                         }
