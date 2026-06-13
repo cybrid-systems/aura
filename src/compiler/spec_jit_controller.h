@@ -52,6 +52,28 @@ public:
     // Clear all cached specializations.
     void clear();
 
+    // Issue #170 Phase 2 / item #1: deopt signal.
+    //
+    // Returns true if the underlying AuraJIT has reported any
+    // unhandled opcodes since process start (i.e. the global
+    // Metrics::unhandled_opcode_count is > 0). Callers SHOULD
+    // skip shape-based specialization when this returns true —
+    // the specialized path would inherit the unhandled-opcode
+    // bug, leading to silent wrong results.
+    //
+    // Conservative: a single unhandled opcode anywhere in the
+    // process disables ALL specialization. A finer-grained
+    // per-function check is a follow-up (would require tracking
+    // which function compiled the unhandled opcode).
+    bool should_deopt_specialization() const;
+
+    // Issue #170 Phase 2 / item #1: explicit deopt-decision entry.
+    // Returns the underlying AuraJIT's unhandled_opcode_count, so
+    // callers can implement custom thresholding (e.g. only deopt
+    // after N unhandled opcodes in a hot function). The default
+    // should_deopt_specialization() uses threshold = 1.
+    std::uint64_t unhandled_opcode_count() const;
+
     // Shape map codes (must match shape.h ShapeID conventions)
     static constexpr uint8_t kDynamic   = 0;
     static constexpr uint8_t kShapeInt  = 1;

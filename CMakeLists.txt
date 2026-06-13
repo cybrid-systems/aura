@@ -1625,7 +1625,8 @@ target_sources(test_issue_170 PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge.cpp
-    src/compiler/messaging_bridge_impl.cpp)
+    src/compiler/messaging_bridge_impl.cpp
+    src/compiler/spec_jit_controller.cpp)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_170 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_170 PRIVATE AURA_HAVE_LLVM=1)
