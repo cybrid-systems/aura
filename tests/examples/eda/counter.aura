@@ -1,0 +1,64 @@
+; ── counter.aura — example EDA module (Issue #182 Cycle 1 v0) ──
+;
+; 8-bit counter with clock and reset, output q.
+; Demonstrates the std/eda IR construction (direct
+; constructor calls — see DESIGN-NOTES in lib/std/eda.aura
+; for why EDSL macros are deferred to a later cycle).
+;
+; Run: ./build/aura < tests/examples/eda/counter.aura
+;
+; Expected output:
+;   ═══ EDA IR: counter ═══
+;   module counter(input clk, input rst, output q [8-1:0]);
+;   wire [8-1:0] q_next;
+;   assign q = q_next;
+;   endmodule
+;
+;   ═══ Query helpers ═══
+;   Module name: counter
+;   Ports: 3 (clk rst q )
+;   Wires: 1
+;   Assigns: 1
+
+(require "std/eda" all:)
+
+; Build a counter module IR using direct constructors
+(define m
+  (make-eda:module 'counter
+    (list
+      (make-eda:port 'clk 'input 1)
+      (make-eda:port 'rst 'input 1)
+      (make-eda:port 'q 'output 8))
+    (list
+      (make-eda:wire 'q-next 8)
+      (make-eda:assign
+        (make-eda:expr 'symbol (list 'q))
+        (make-eda:expr 'symbol (list 'q-next))))))
+
+; Display the IR
+(newline)
+(display "═══ EDA IR: counter ═══\n")
+(eda:display m)
+(newline)
+(newline)
+(display "═══ Query helpers ═══\n")
+(display "Module name: ")
+(display (eda:query:module-name m))
+(newline)
+(display "Ports: ")
+(display (length (eda:query:ports m)))
+(display " (")
+(let loop ((ps (eda:query:ports m)))
+  (cond
+    ((null? ps) '())
+    (else
+      (display (eda:port-name (car ps)))
+      (display " ")
+      (loop (cdr ps)))))
+(display ")\n")
+(display "Wires: ")
+(display (length (eda:query:wires m)))
+(newline)
+(display "Assigns: ")
+(display (length (eda:query:assigns m)))
+(newline)

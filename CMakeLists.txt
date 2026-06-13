@@ -2716,3 +2716,17 @@ target_include_directories(test_issue_173 PRIVATE src src/compiler)
 # prototype helpers only.
 aura_add_issue_test(test_issue_181)
 target_include_directories(test_issue_181 PRIVATE src src/compiler)
+
+# Issue #182 verification: Hardware IR + Verilog Backend
+# (Cycle 1: IR + accessors + display + query helpers, C++
+# verification only).
+#
+# Issue #182 is by design 100% stdlib work (lib/std/eda.aura).
+# The Aura binary's top-level `define` has upstream bugs
+# (see lib/std/eda.aura DESIGN-NOTES) that block the stdlib
+# port. To make Cycle 1 progress shippable, this test
+# verifies the same IR concepts in C++. When Aura's macro
+# /hygiene bugs are fixed, the stdlib version can be ported
+# from this C++ prototype.
+aura_add_issue_test(test_issue_182)
+target_include_directories(test_issue_182 PRIVATE src src/compiler)
