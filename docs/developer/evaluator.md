@@ -633,6 +633,8 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-13**: Converted test_issue_164 (fiber:join spin-fallback elimination: 5 acceptance criteria for join, no-spin, concurrent mutate, parallel, perf). See CMakeLists.txt (164 block) + plan Phase 2.
 
+**Phase 2 pilot-14**: Converted test_issue_165 (macro re-expansion + SyntaxMarker handling after EDSL mutations; TDD test, expected baseline FAIL on main). See CMakeLists.txt (165 block) + plan Phase 2.
+
 ```scheme
 ; happy path
 (display (foo 42))            ; expect 84
