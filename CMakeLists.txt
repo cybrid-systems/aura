@@ -301,8 +301,8 @@ target_sources(test_issue_115 PRIVATE
 # (TypeChecker no longer mutates FlatAST in-place). Standalone
 # binary so the snapshot / idempotency checks can run in
 # isolation from the broader test_ir / test_concurrent harnesses.
-add_executable(test_issue_116 tests/test_issue_116.cpp)
-set_property(TARGET test_issue_116 PROPERTY CXX_MODULE_STD ON)
+# Phase 2 pilot-44: converted using early helper. Light (serve + parser + core + value + type_checker; helper base + deltas).
+aura_add_issue_test(test_issue_116)
 target_include_directories(test_issue_116 PRIVATE src)
 target_sources(test_issue_116 PRIVATE
     src/serve/fiber.cpp
@@ -315,9 +315,6 @@ target_sources(test_issue_116 PRIVATE
     src/compiler/value_impl.cpp
     src/compiler/type_checker_impl.cpp)
 target_sources(test_issue_116 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx src/core/type.ixx
-    src/compiler/value.ixx src/compiler/diag.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/coercion_map.ixx
     src/compiler/ir_cache_pure.ixx
@@ -325,12 +322,6 @@ target_sources(test_issue_116 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ast_walkers.ixx
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
-target_compile_options(test_issue_116 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
-target_link_libraries(test_issue_116 PRIVATE pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_116_verification COMMAND ./test_issue_116)
 
 # Issue #117 verification: full re-simulation mode for linear
 # ownership + gradual+Linear boundary check. Standalone
