@@ -50,7 +50,8 @@
 （pilot-24 note）test_issue_143（escape analysis IR pass integration 验证）已转换。详见 evaluator.md §12。
 （pilot-25 note）test_issue_144（C++26 contracts integration 验证）已转换。详见 evaluator.md §12。
 （pilot-26 note）test_issue_145（DOD/SoA Phase 1 partial 验证）已转换。详见 evaluator.md §12。
-（pilot-27 note）test_issue_146（pure Result extract / evaluator_pure Phase 1 验证）转换中。详见 evaluator.md §12 和 plan Phase 2。
+（pilot-27 note）test_issue_146（pure Result extract / evaluator_pure Phase 1 验证）已转换。详见 evaluator.md §12。
+（pilot-28 note）test_issue_147（heavy test conversion 验证）转换中。详见 evaluator.md §12 和 plan Phase 2。
 
 ### Aura Layer (`lib/std/workspace.aura`)
 
