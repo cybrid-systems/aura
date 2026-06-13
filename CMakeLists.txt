@@ -287,8 +287,8 @@ endfunction()
 # Issue #115 verification tests (criterion #1 multi-core speedup
 # + criterion #3 long-running stability). Standalone binary so it
 # can be run independently of test_concurrent's other suites.
-add_executable(test_issue_115 tests/test_issue_115.cpp)
-set_property(TARGET test_issue_115 PROPERTY CXX_MODULE_STD ON)
+# Phase 2 pilot-43: converted using early helper. Light serve-only (4 files; helper base + small delta for include and serve sources).
+aura_add_issue_test(test_issue_115)
 target_include_directories(test_issue_115 PRIVATE src)
 target_sources(test_issue_115 PRIVATE
     src/serve/fiber.cpp
@@ -296,12 +296,6 @@ target_sources(test_issue_115 PRIVATE
     src/serve/scheduler.cpp
     src/serve/gc_coordinator.cpp
 )
-target_compile_options(test_issue_115 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
-target_link_libraries(test_issue_115 PRIVATE pthread)
-add_test(NAME issue_115_verification COMMAND ./test_issue_115)
 
 # Issue #116 verification: deferred CoercionNode insertion
 # (TypeChecker no longer mutates FlatAST in-place). Standalone
