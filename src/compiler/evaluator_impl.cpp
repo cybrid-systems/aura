@@ -198,6 +198,31 @@ std::optional<EvalValue> Env::lookup(const std::string& n) const {
             tmp.set_parent_id(pfr.parent_id);
             return tmp.lookup(n);
         }
+        // Final fallback: the frame at parent_id_ has the snapshot
+        // of the env at capture time. If that env is still live
+        // (e.g., it'"'"'s a heap-allocated module env or the top_
+        // env), check its live bindings too. The frame is a snapshot
+        // and may be stale if bindings were added after the frame
+        // was created (e.g., via require in a nested module load).
+        // We use the owner_ pointer to find the live env: for index 0
+        // it'"'"'s top_, for higher indices we walk the env_frames_
+        // pool to find a matching live env. The simplest case
+        // (index 0 = top_) is the most common and we handle that
+        // directly via owner_->top().
+        if (parent_id_ == 0 && owner_) {
+            // Check live top_ env'"'"'s bindings
+            for (auto it = const_cast<aura::compiler::Env&>(owner_->top_env()).bindings().rbegin();
+                 it != const_cast<aura::compiler::Env&>(owner_->top_env()).bindings().rend(); ++it) {
+                if (it->first == n) {
+                    if (is_cell(it->second)) {
+                        auto ci = as_cell_id(it->second);
+                        if (ci < owner_->cells().size())
+                            return owner_->cells()[ci];
+                    }
+                    return it->second;
+                }
+            }
+        }
     }
     // 3. Fallback: check primitives (allows passing names like `+` as values)
     if (primitives_) {
@@ -15394,6 +15419,22 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     // module eval stay valid for the module's lifetime.
     auto* mod_env = mod_arena.create<Env>(&top_);
     mod_env->set_primitives(&primitives_);
+    // Issue #232 follow-up: register the module env in env_frames_ so
+    // closures captured during module eval (e.g., the lambda in
+    // `(define (f x) ...)`) can walk the parent chain via SoA when
+    // materialize_call_env creates a fresh env for the call. Without
+    // this, the closure body can't see bindings from the surrounding
+    // scope (e.g., from a nested `(require "other-module" all:)`).
+    //
+    // Pass top_.parent_id() (the env_id of top_'s frame, which is
+    // the root frame index) as the explicit parent. This makes the
+    // new frame's parent_id_ point to top_'s frame so the SoA walk
+    // can find top_'s bindings (which is where the require primitive
+    // injects the required module's exports).
+    EnvId top_id = top_.parent_id();
+    if (top_id == NULL_ENV_ID) top_id = 0;  // top_ is at index 0
+    EnvId mod_id = alloc_env_frame_from_env(*mod_env, top_id);
+    const_cast<Env*>(mod_env)->set_parent_id(mod_id);
 
 
     // 7. Clear any stale export set from previous module loads
