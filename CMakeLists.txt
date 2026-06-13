@@ -2295,13 +2295,10 @@ target_link_libraries(test_issue_143 PRIVATE ${llvm_libs})
 # Issue #144 verification: C++26 contracts integration. Tests
 # the 13 contract_assert sites added in this PR, plus the
 # hook-based violation integration (AC #2).
-add_executable(test_issue_144 tests/test_issue_144.cpp)
-set_property(TARGET test_issue_144 PROPERTY CXX_MODULE_STD ON)
+# Phase 2 pilot-25: converted using early helper. Base + append for heavy (parser/serve/eval + jit + llvm + contract_handler.cpp + shape_profiler + observability). Note traditional headers in .cpp (shape.h before modules).
+aura_add_issue_test(test_issue_144)
 target_include_directories(test_issue_144 PRIVATE src src/compiler)
 target_sources(test_issue_144 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx
-    src/core/type.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
@@ -2352,17 +2349,11 @@ target_sources(test_issue_144 PRIVATE
     src/compiler/spec_jit_controller.cpp
     src/compiler/observability_metrics.h
     src/compiler/observability_snapshot.h)
-target_compile_options(test_issue_144 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
-target_link_libraries(test_issue_144 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_144 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_144 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_144 PRIVATE ${llvm_libs})
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-add_test(NAME issue_144_verification COMMAND ./test_issue_144)
 
 # Issue #145 verification (partial): DOD/SoA Phase 1. Tests
 # Closure::params SoA migration + EnvView/ClosureView new
