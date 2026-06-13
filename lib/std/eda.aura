@@ -1,0 +1,287 @@
+; ── std/eda.aura — Hardware IR + Verilog Backend (Issue #182) ──
+;
+; EDA = Electronic Design Automation. Cycle 1 ships:
+;   1. Hardware IR data types (eda:module, eda:port, eda:wire,
+;      eda:assign, eda:expr, eda:always, eda:signal,
+;      eda:sensitivity) as plain Aura lists
+;   2. Constructors (make-eda:*) — direct function calls
+;   3. Predicates (eda:*?) and accessors (eda:*-field)
+;   4. Display / debug functions (eda:display*)
+;   5. Query helpers (eda:query:*) — Cycle 2 stub
+;
+; All operations are pure Aura data manipulation — no C++
+; changes are required. The IR is plain Aura lists, queryable +
+; mutable via existing query/mutate primitives (#107, #110).
+;
+; Usage (Cycle 1 v0 — no EDSL macros, use direct constructors):
+;   (require "std/eda" all:)
+;   (define m
+;     (make-eda:module 'counter
+;       (list
+;         (make-eda:port 'clk 'input 1)
+;         (make-eda:port 'q 'output 8))
+;       (list
+;         (make-eda:wire 'q-next 8)
+;         (make-eda:assign
+;           (make-eda:expr 'symbol (list 'q))
+;           (make-eda:expr 'symbol (list 'q-next))))))
+;   (eda:display m)
+;
+; Cycle 1 v0 deliberately skips the EDSL macros
+; (eda:module, eda:port, eda:wire, eda:assign, eda:expr).
+; The Aura macro subsystem has known issues that prevent
+; the macros from working correctly (see DESIGN-NOTES below).
+; Cycles 2+ may revisit the EDSL once the macro bugs are
+; addressed (separate Aura-level bug fix).
+;
+; Implementation notes (Cycle 1 v0):
+;   - IR is plain lists, not structs. The legacy define-struct
+;     has a hygiene bug (let body captures field symbols)
+;     and define-hygienic-macro doesn't work for
+;     symbol-generating macros. Lists bypass the issue.
+;   - Predicates use `equal?` (not `eq?`) because colons in
+;     symbols make Aura treat them as package-qualified;
+;     `eq?` may fail for same-name symbols from different
+;     packages.
+;
+; Refs: docs/design/issue-182-hardware-eda.md
+
+; ═══════════════════════════════════════════════════════════
+; Hardware IR data types (list-based)
+; ═══════════════════════════════════════════════════════════
+;
+; Each IR type is a flat list:
+;   eda:module:      (eda:module name ports body)
+;   eda:port:        (eda:port name direction width)
+;   eda:wire:        (eda:wire name width)
+;   eda:assign:      (eda:assign lhs rhs)
+;   eda:always:      (eda:always sensitivity body)
+;   eda:signal:      (eda:signal name width kind)
+;   eda:expr:        (eda:expr op args)
+;   eda:sensitivity: (eda:sensitivity edge signal)
+
+; ── eda:module ──
+(define (make-eda:module name ports body)
+  (list 'eda:module name ports body))
+(define (eda:module? x)
+  (and (pair? x) (equal? (car x) 'eda:module)))
+(define (eda:module-name m) (car (cdr m)))
+(define (eda:module-ports m) (car (cdr (cdr m))))
+(define (eda:module-body m) (car (cdr (cdr (cdr m)))))
+
+; ── eda:port ──
+(define (make-eda:port name direction width)
+  (list 'eda:port name direction width))
+(define (eda:port? x)
+  (and (pair? x) (equal? (car x) 'eda:port)))
+(define (eda:port-name p) (car (cdr p)))
+(define (eda:port-direction p) (car (cdr (cdr p))))
+(define (eda:port-width p) (car (cdr (cdr (cdr p)))))
+
+; ── eda:wire ──
+(define (make-eda:wire name width)
+  (list 'eda:wire name width))
+(define (eda:wire? x)
+  (and (pair? x) (equal? (car x) 'eda:wire)))
+(define (eda:wire-name w) (car (cdr w)))
+(define (eda:wire-width w) (car (cdr (cdr w))))
+
+; ── eda:assign ──
+(define (make-eda:assign lhs rhs)
+  (list 'eda:assign lhs rhs))
+(define (eda:assign? x)
+  (and (pair? x) (equal? (car x) 'eda:assign)))
+(define (eda:assign-lhs a) (car (cdr a)))
+(define (eda:assign-rhs a) (car (cdr (cdr a))))
+
+; ── eda:always ──
+(define (make-eda:always sensitivity body)
+  (list 'eda:always sensitivity body))
+(define (eda:always? x)
+  (and (pair? x) (equal? (car x) 'eda:always)))
+(define (eda:always-sensitivity a) (car (cdr a)))
+(define (eda:always-body a) (car (cdr (cdr a))))
+
+; ── eda:signal ──
+(define (make-eda:signal name width kind)
+  (list 'eda:signal name width kind))
+(define (eda:signal? x)
+  (and (pair? x) (equal? (car x) 'eda:signal)))
+(define (eda:signal-name s) (car (cdr s)))
+(define (eda:signal-width s) (car (cdr (cdr s))))
+(define (eda:signal-kind s) (car (cdr (cdr (cdr s)))))
+
+; ── eda:expr ──
+(define (make-eda:expr op args)
+  (list 'eda:expr op args))
+(define (eda:expr? x)
+  (and (pair? x) (equal? (car x) 'eda:expr)))
+(define (eda:expr-op e) (car (cdr e)))
+(define (eda:expr-args e) (car (cdr (cdr e))))
+
+; ── eda:sensitivity ──
+(define (make-eda:sensitivity edge signal)
+  (list 'eda:sensitivity edge signal))
+(define (eda:sensitivity? x)
+  (and (pair? x) (equal? (car x) 'eda:sensitivity)))
+(define (eda:sensitivity-edge s) (car (cdr s)))
+(define (eda:sensitivity-signal s) (car (cdr (cdr s))))
+
+; ═══════════════════════════════════════════════════════════
+; Display / debug functions
+; ═══════════════════════════════════════════════════════════
+
+(define (eda:display ir)
+  (cond
+    ((eda:module? ir) (eda:display-module ir))
+    ((eda:port? ir)   (eda:display-port ir))
+    ((eda:wire? ir)   (eda:display-wire ir))
+    ((eda:assign? ir) (eda:display-assign ir))
+    ((eda:always? ir) (eda:display-always ir))
+    ((eda:signal? ir) (eda:display-signal ir))
+    ((eda:expr? ir)   (eda:display-expr ir))
+    ((list? ir) (map eda:display ir))
+    (else (display ir))))
+
+(define (eda:display-module m)
+  (display "module ")
+  (display (eda:module-name m))
+  (display "(")
+  (let loop ((ps (eda:module-ports m)) (first? #t))
+    (cond
+      ((null? ps) '())
+      (else
+        (if (not first?) (display ", "))
+        (eda:display-port (car ps))
+        (loop (cdr ps) #f))))
+  (display ");\n")
+  (map eda:display (eda:module-body m))
+  (display "endmodule"))
+
+(define (eda:display-port p)
+  (display (eda:port-direction p))
+  (display " ")
+  (display (eda:port-name p))
+  (cond
+    ((> (eda:port-width p) 1)
+     (display " [")
+     (display (eda:port-width p))
+     (display "-1:0]"))
+    (else '())))
+
+(define (eda:display-wire w)
+  (display "wire ")
+  (cond
+    ((> (eda:wire-width w) 1)
+     (display "[")
+     (display (eda:wire-width w))
+     (display "-1:0] ")))
+  (display (eda:wire-name w))
+  (display ";\n"))
+
+(define (eda:display-assign a)
+  (display "assign ")
+  (eda:display-expr (eda:assign-lhs a))
+  (display " = ")
+  (eda:display-expr (eda:assign-rhs a))
+  (display ";\n"))
+
+(define (eda:display-always a)
+  (display "always @(")
+  (map eda:display-sensitivity (eda:always-sensitivity a))
+  (display ") begin\n")
+  (map eda:display (eda:always-body a))
+  (display "end"))
+
+(define (eda:display-sensitivity s)
+  (display (eda:sensitivity-edge s))
+  (display " ")
+  (display (eda:sensitivity-signal s)))
+
+(define (eda:display-signal s)
+  (display (eda:signal-kind s))
+  (display " ")
+  (cond
+    ((> (eda:signal-width s) 1)
+     (display "[")
+     (display (eda:signal-width s))
+     (display "-1:0] ")))
+  (display (eda:signal-name s)))
+
+(define (eda:display-expr e)
+  (let ((op (eda:expr-op e))
+        (args (eda:expr-args e)))
+    (cond
+      ((eq? op 'symbol)
+       (display (car args)))
+      ((eq? op 'int)
+       (display (car args)))
+      ((eq? op 'slice)
+       (eda:display-expr (car args))
+       (display "[")
+       (display (car (cdr args)))
+       (display ":")
+       (display (car (cdr (cdr args))))
+       (display "]"))
+      (else
+        (display op)
+        (display "(")
+        (let loop ((a args) (first #t))
+          (if (null? a) '()
+            (begin
+              (if (not first) (display ", "))
+              (eda:display-expr (car a))
+              (loop (cdr a) #f))))
+        (display ")")))))
+
+; ═══════════════════════════════════════════════════════════
+; Cycle 2: query helpers (stub for now, expanded in Cycle 2)
+; ═══════════════════════════════════════════════════════════
+
+; eda:query:ports: return all ports of a module
+; Cycle 1 stub: just returns the ports field directly.
+; Cycle 2 will add filter / map / etc. for complex queries.
+(define (eda:query:ports m) (eda:module-ports m))
+
+(define (eda:query:wires m)
+  (let loop ((body (eda:module-body m)) (acc '()))
+    (cond
+      ((null? body) (reverse acc))
+      ((eda:wire? (car body)) (loop (cdr body) (cons (car body) acc)))
+      (else (loop (cdr body) acc)))))
+
+(define (eda:query:assigns m)
+  (let loop ((body (eda:module-body m)) (acc '()))
+    (cond
+      ((null? body) (reverse acc))
+      ((eda:assign? (car body)) (loop (cdr body) (cons (car body) acc)))
+      (else (loop (cdr body) acc)))))
+
+(define (eda:query:module-name m) (eda:module-name m))
+
+; ═══════════════════════════════════════════════════════════
+; Exports
+; ═══════════════════════════════════════════════════════════
+
+(export
+  ; IR constructors
+  make-eda:module make-eda:port make-eda:wire make-eda:assign
+  make-eda:always make-eda:signal make-eda:expr make-eda:sensitivity
+  ; IR predicates
+  eda:module? eda:port? eda:wire? eda:assign?
+  eda:always? eda:signal? eda:expr? eda:sensitivity?
+  ; IR accessors
+  eda:module-name eda:module-ports eda:module-body
+  eda:port-name eda:port-direction eda:port-width
+  eda:wire-name eda:wire-width
+  eda:assign-lhs eda:assign-rhs
+  eda:always-sensitivity eda:always-body
+  eda:signal-name eda:signal-width eda:signal-kind
+  eda:expr-op eda:expr-args
+  eda:sensitivity-edge eda:sensitivity-signal
+  ; Display / debug
+  eda:display eda:display-module eda:display-port eda:display-wire
+  eda:display-assign eda:display-always eda:display-sensitivity
+  eda:display-signal eda:display-expr
+  ; Query helpers
+  eda:query:ports eda:query:wires eda:query:assigns eda:query:module-name)
