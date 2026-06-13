@@ -1217,7 +1217,7 @@ ClosureSnapshot IRInterpreter::make_snapshot(std::uint64_t id, const IRClosure& 
                            .func_param_types = std::move(param_types),
                            .func_return_type = std::move(return_type),
                            .func_free_vars = std::move(free_vars),
-                           .env = nullptr}; // P0: main Aura Closure no longer carries legacy Env*; IR snapshot uses own env if applicable.
+                           .env = closure.env};
 }
 
 std::string IRInterpreter::type_of_closure(std::uint64_t closure_id) const {
