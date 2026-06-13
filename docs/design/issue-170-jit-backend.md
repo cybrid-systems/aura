@@ -1,6 +1,6 @@
 # LLVM JIT Backend Completion — Design (Issue #170)
 
-**Status:** Phase 1 (AOT entry points) shipped 2026-06-13 (f432d4b)
+**Status:** All 4 items shipped (2026-06-13, 1 morning session, 6 commits)
 **Date:** 2026-06-13
 **Workstream:** 2 of #143 (LLVM JIT Backend completion)
 
@@ -151,9 +151,61 @@ Each migration is independent and ships as a small commit.
 | 2026-06-13 | Phase 2 / item #2 (AOT entry points) | f432d4b | 5/5 | shipped |
 | 2026-06-13 | Phase 1 / item #1 (Apply + CaptureRef + visible default) | 1f8c097 | 18/18 | shipped |
 | 2026-06-13 | ENUM FIX: 14 IROpcodes were silently wrong (off-by-one) | 84fbd67 | 18/18 | soundness fix |
-| TBD | Phase 1 / item #2 (try/catch IR + LLVM EH) | TBD | TBD | next |
-| TBD | Phase 2 / item #1 (spec_jit_controller + shape spec) | TBD | TBD | pending |
-| TBD | Phase 2 / item #3 (runtime → LLVM intrinsics) | TBD | TBD | pending |
+| 2026-06-13 | Phase 1 / item #2 (try/catch IR + JIT EH) | ae11053 | 43/43 | shipped (structured EH, not LLVM EH) |
+| 2026-06-13 | Phase 2 / item #1 (spec_jit_controller deopt signal) | 344e824 | 50/50 | shipped |
+| 2026-06-13 | Phase 2 / item #3 (intrinsic_count observability) | 9901a91 | 54/54 | shipped (scaffolding only; per-lowering migrations deferred) |
+
+## Per-item detailed outcomes
+
+### Phase 1 / item #2 (try/catch + JIT EH) — SHIPPED
+
+Implemented as **structured exception handling** (not LLVM
+invoke/landingpad). Thread-local LIFO exception stack in
+`aura_jit_runtime.cpp`:
+  - aura_exception_push/pop — manage the stack
+  - aura_exception_top_handler/payload — read the top frame
+  - aura_exception_depth — current depth
+
+JIT lowerings (aura_jit.cpp):
+  - OpTryBegin: push (handler_block, payload_slot)
+  - OpTryEnd: pop
+  - OpRaise: read top frame, store cause to payload slot,
+    dispatch to handler_block via a switch jump table
+  - OpIsError: bit check (val & 0x1F) == 0x11 (RefError tag)
+
+Limitation: concurrent fibers share the thread-local stack,
+so a Raise in one fiber would branch to a handler set by a
+different fiber — incorrect. spec_jit_controller's deopt
+signal (Phase 2 / item #1) handles this at the dispatch
+level: if any unhandled opcode has been seen (which the
+new Raise/IsError lowerings don't produce), the spec
+controller deopts to the IR executor.
+
+### Phase 2 / item #3 (runtime → intrinsics) — SCAFFOLDING
+
+Added `intrinsic_count` atomic counter to Metrics; included
+in `Metrics::format()` output. The counter is the
+observability hook for the migration: each lowering that
+replaces a runtime helper with inline IR bumps the counter.
+
+Per-lowering migrations deferred to follow-up commits:
+  - aura_alloc_string     → skip for ephemeral string consts
+  - aura_alloc_float      → inline for ephemeral float consts
+  - aura_alloc_pair_arena → stack-allocate when shape is Pair
+                            and escape_map says non-escaping
+  - aura_pair_car_unchecked → inline as GEP+load when L2
+                              layout is statically known
+
+Each is a 1-2 day focused migration. Per-commit
+intrinsic_count delta is the per-commit observability.
+
+## Test results at close
+
+  Fresh build OK
+  ./build.py test core → 9/9 suites green
+  test_issue_170 → 54/54 PASS
+  (5/5 baseline → 18/18 after item #1 → 43/43 after item #2
+   → 50/50 after spec_jit_controller → 54/54 after intrinsic)
 
 ## Notes for future sessions
 
