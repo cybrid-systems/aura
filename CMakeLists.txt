@@ -443,7 +443,6 @@ target_sources(test_issue_120 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/coercion_map.ixx
     src/compiler/ir_cache_pure.ixx
-    src/compiler/lowering_linear_types.ixx
     src/compiler/ast_walkers.ixx
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
