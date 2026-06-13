@@ -2665,13 +2665,12 @@ target_link_libraries(test_issue_149 PRIVATE ${llvm_libs})
 # trivial callees at known-static call sites (the #160 scaffold
 # only counted call sites). TCO tests follow in a follow-up
 # commit when the TCO pass ships.
-add_executable(test_issue_171 tests/test_issue_171.cpp)
-set_property(TARGET test_issue_171 PROPERTY CXX_MODULE_STD ON)
+# Issue #171 verification: Function Inliner (Priority 2) +
+# TCO (Priority 3). ...
+# Phase 2 pilot-31: converted using early helper. Lighter (parser + arity/type_checker/compute_kind/pass; no jit/llvm).
+aura_add_issue_test(test_issue_171)
 target_include_directories(test_issue_171 PRIVATE src src/compiler)
 target_sources(test_issue_171 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx
-    src/core/type.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/diag.ixx
     src/compiler/ir.ixx
@@ -2689,12 +2688,6 @@ target_sources(test_issue_171 PRIVATE
     src/parser/parser_impl.cpp
     src/core/ast_impl.cpp
     src/core/type_impl.cpp)
-target_compile_options(test_issue_171 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
-target_link_libraries(test_issue_171 PRIVATE pthread stdc++ stdc++exp aura-reflect)
-add_test(NAME issue_171_verification COMMAND ./test_issue_171)
 
 # Issue #204 verification: GC env_frames_ walk integration
 # (Issue #172 Phase 4). Verifies GCCollector::mark_env_frame_roots()
