@@ -96,6 +96,32 @@ public:
     ScalarFn compile(const FlatFunction& fn);
     void* get_function_ptr(const char* name);
 
+    // Issue #170 Phase 1: AOT (ahead-of-time) compilation
+    // entry points. These let external tools (benchmark
+    // harnesses, AOT experiments, static analysis passes)
+    // reuse the same LLVM pipeline that the JIT uses, but
+    // emit a standalone artifact instead of in-memory code.
+    //
+    // compile_to_llvm_ir: returns the textual LLVM IR
+    //   (for the most recently compiled module) as a
+    //   std::string. Useful for static analysis (e.g.,
+    //   `lli`, `opt -O2` on the IR to get a sense of
+    //   achievable perf without going through the full
+    //   LLVM codegen).
+    //
+    // compile_to_object_file: writes the most recently
+    //   compiled module to disk as a native .o file. The
+    //   file can be linked with any C linker to produce a
+    //   standalone executable. Useful for AOT experiments
+    //   (compile once, run many times).
+    //
+    // Both return false / empty on failure (no module
+    // compiled yet, or the LLVM pipeline failed). On success,
+    // the module is still resident in the JIT (no side
+    // effect on subsequent compile() calls).
+    std::string compile_to_llvm_ir();
+    bool compile_to_object_file(const std::string& path);
+
     // Register a compiled function with the runtime for closure calls
     void register_function(int64_t func_id, ScalarFn fn_ptr, uint32_t local_count,
                            uint32_t arg_count, uint32_t env_count);

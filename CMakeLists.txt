@@ -1612,6 +1612,31 @@ target_compile_options(test_issue_169 PRIVATE -Wall -Wextra -Wpedantic
 target_link_libraries(test_issue_169 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_169_verification COMMAND ./test_issue_169)
 
+# Issue #170 verification: LLVM JIT AOT entry points
+# (Phase 1). Verifies the new public API on the empty
+# state (no compile yet). The actual module-emission
+# flow needs a real FlatFunction, which is exercised by
+# the test_ir / test_issue_158 / test_issue_159 tests
+# (which already compile via the full IR pipeline).
+add_executable(test_issue_170 tests/test_issue_170.cpp)
+set_property(TARGET test_issue_170 PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_issue_170 PRIVATE src src/compiler)
+target_sources(test_issue_170 PRIVATE
+    src/compiler/aura_jit.cpp
+    src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
+    src/compiler/messaging_bridge_impl.cpp)
+set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+target_include_directories(test_issue_170 PRIVATE ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(test_issue_170 PRIVATE AURA_HAVE_LLVM=1)
+target_link_libraries(test_issue_170 PRIVATE ${llvm_libs})
+target_compile_options(test_issue_170 PRIVATE -Wall -Wextra -Wpedantic
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
+    -Wno-parentheses)
+target_link_libraries(test_issue_170 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+add_test(NAME issue_170_verification COMMAND ./test_issue_170)
+
 # Issue #159 Phase 4: incremental compilation benchmark
 # harness. Measures eval_current latency across 4 scenarios
 # × N workspace sizes, outputs JSON to tests/bench_results/.
