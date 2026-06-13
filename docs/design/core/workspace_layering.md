@@ -29,6 +29,7 @@
 （5.2 note）register_primitives 签名在 adt/ffi 间已对齐（coverage_counters 等指针一致传递）。
 （Phase 2 pilot-2 note）CMake helper `aura_add_issue_test` 增强并转换首个真实 test_issue_132；后续小步将继续 dedup 40+ 测试。详见 evaluator.md §12。
 （pilot-3 note）base 增加 value/type_checker 相关；转换 test_issue_116。
+（pilot-6 note）test_issue_136（AOT mangle 验证）已转换。helper 基建稳固，持续小步 dedup 40+ 测试。详见 evaluator.md §12。
 
 ### Aura Layer (`lib/std/workspace.aura`)
 
