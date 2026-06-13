@@ -40,6 +40,7 @@
 （pilot-14 note）test_issue_165（macro re-expansion + SyntaxMarker TDD 验证）已转换。
 （pilot-15 note）test_issue_166（multi-layer cache invalidation 验证）已转换。
 （pilot-16 note）test_issue_167（IR SoA/DOD migration 验证）已转换。
+（pilot-17 note）test_issue_168（incremental type cache safety 验证）已转换。
 
 ### Aura Layer (`lib/std/workspace.aura`)
 

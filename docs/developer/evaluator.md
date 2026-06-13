@@ -639,6 +639,8 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-16**: Converted test_issue_167 (IR layer SoA/DOD migration Phase 1: scaffold for IRModuleV2 + IRInstructionView API). Lightweight. See CMakeLists.txt (167 block) + plan Phase 2.
 
+**Phase 2 pilot-17**: Converted test_issue_168 (incremental type cache safety Phase 1: epoch gate for set_cache_epoch API + basic flow with mutation). See CMakeLists.txt (168 block) + plan Phase 2.
+
 ```scheme
 ; happy path
 (display (foo 42))            ; expect 84
