@@ -191,12 +191,16 @@ std::optional<EvalValue> Env::lookup(const std::string& n) const {
                 return b.second;
             }
         }
-        // Recurse via SoA: walk the parent'"'"'s parent_id_ chain
+        // Recurse via SoA: walk the parent'"'"'s parent_id_ chain.
+        // Capture the result but only return if non-null — if the
+        // recursive lookup returns nullopt, fall through to the
+        // primitive + ADT fallbacks below (otherwise primitives
+        // like `+` and `*` would be reported as unbound variables).
         if (pfr.parent_id != NULL_ENV_ID) {
             Env tmp;
             tmp.set_owner(owner_);
             tmp.set_parent_id(pfr.parent_id);
-            return tmp.lookup(n);
+            if (auto r = tmp.lookup(n)) return *r;
         }
         // Final fallback: the frame at parent_id_ has the snapshot
         // of the env at capture time. If that env is still live
