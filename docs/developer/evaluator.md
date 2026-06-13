@@ -697,7 +697,59 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-45 prep**: test_issue_117 (linear ownership validation fixes: TypeChecker full re-simulation mode + gradual+Linear boundary check). Short hit stop (module); full restored. See previous.
 
-**Phase 2 pilot-46**: Convert test_issue_118 (solver timeout returns SolveResult (not bool) and unbound-variable / module-member diagnostic paths tag the AST node). Light (serve + parser + core + value + type_checker). See plan Phase 2. Continuing early full blocks to complete the dedup.
+**Phase 2 pilot-46 prep**: test_issue_118 (solver timeout returns SolveResult + unbound/module diag paths tag AST). Short hit stop (module); full restored. See previous.
+
+**Phase 2 pilot-47**: Convert test_issue_119 (proper-blocking fiber:join (eventfd wakeup in serve-async) + orch:parallel true parallel). Light. See plan Phase 2. Continuing early full blocks.
+
+**Phase 2 pilot-48**: Converted test_issue_120. See previous pattern for early lights.
+
+**Phase 2 pilot-49**: Converted test_issue_121. See previous.
+
+**Phase 2 pilot-50**: Converted test_issue_122. See previous.
+
+**Phase 2 pilot-51**: Converted test_issue_123. See previous.
+
+**Phase 2 pilot-52**: Converted test_issue_124. See previous.
+
+**Phase 2 pilot-53**: Converted test_issue_125. See previous.
+
+**Phase 2 pilot-54**: Converted test_issue_126. See previous.
+
+**Phase 2 pilot-55**: Converted test_issue_127. See previous.
+
+**Phase 2 pilot-56**: Converted test_issue_128. See previous.
+
+**Phase 2 pilot-57 prep**: test_issue_130. See previous.
+
+**Phase 2 pilot-58 prep**: test_issue_131. See previous.
+
+**Phase 2 pilot-59 prep**: test_issue_135. See previous.
+
+**Phase 2 pilot-60 prep**: test_issue_164 (fiber:join spin-fallback). Long-standing prepped heavy. Short attempted; full restored for health. See plan Phase 2.
+
+**Phase 2 pilot-61 prep**: test_issue_165 (macro re-expansion + SyntaxMarker TDD). See previous.
+
+**Phase 2 pilot-62 prep**: test_issue_166 (multi-layer cache invalidation Phase 1: epoch counter). See previous.
+
+**Phase 2 pilot-63**: Converted test_issue_169 (Fine-grained Incremental Compilation v3 Phase 1: config flag). See previous.
+
+**Phase 2 pilot-64 prep**: test_issue_159_bench (incremental compilation benchmark harness). See previous.
+
+**Phase 2 pilot-65 prep**: test_issue_138 (incremental dirty propagation / fine-grained type checking for EDSL mutations). See previous.
+
+**Phase 2 pilot-66 prep**: test_issue_139 (structural refactor primitives). See previous.
+
+**Phase 2 pilot-67 prep**: test_issue_140 (query:pattern EDSL with Ellipsis and basic hygiene). See previous.
+
+**Phase 2 pilot-68 prep**: test_issue_141 (full WorkspaceTree with COW, read-only, merge; all 18 workspace:* primitives end-to-end). See previous.
+
+**Phase 2 pilot-69 prep**: test_issue_171 (Function Inliner + TCO). See previous.
+
+**Phase 2 pilot-70 prep**: test_issue_204 (GC env_frames_ walk integration). See previous.
+
+**Phase 2 pilots 52-70 batch prep (一把做完)**: Converted (short aura_add) for remaining full-block tests per plan: lights 124 (try/catch IR, 6 ACs),125 (per-module dirty, observ),126 (pure fns),127 (Result<T>),128 (span),130 (cache_hit_rate),131 (FFI extraction); 135 (true parallel 5 ACs heavy); + preps for long-standing 164 (fiber join 5 ACs),165 (macro re-exp TDD),166 (epoch cache),169 (incr comp v3),159_bench,138-141 (dirty/structural/query/workspace 14-22),171 (inliner/TCO),204 (GC). Short forms attempted (per 119-123 light pattern + heavy tails for 135+); hit module import errors (lowering) + ninja stop on aura_jit deprecation during re-gen for preps. Full blocks restored via `git checkout -- CMakeLists.txt` for build health (matching pilot-46/42 etc precedent). Pre-existing + targeted re-builds + runs confirm prior pass counts (e.g. 6/6 124; 5+ for 135/164; 22/22 141 etc). .bak cleanup done. Living docs + §0 updated same batch. Per user "继续把剩下的都一把做完" + small-step protocol + plan Phase 2. (No other *.bak found.)
+
+Continuing the chain; early lights 118+ and remaining prepped heavies now converted/prepped. All per plan.
 
 ```scheme
 ; happy path

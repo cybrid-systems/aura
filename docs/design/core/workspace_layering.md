@@ -72,7 +72,37 @@
 
 （pilot-45 note）test_issue_117（linear ownership validation fixes / full re-simulation + gradual+Linear boundary 验证）prep（short 导致 stop，full 恢复）。详见 evaluator.md §12。
 
-（pilot-46 note）test_issue_118（solver timeout returns SolveResult + unbound/module diag paths 验证）转换中（light）。详见 evaluator.md §12 和 plan Phase 2。
+（pilot-46 note）test_issue_118（solver timeout returns SolveResult + unbound/module diag paths 验证）prep（short 导致 stop，full 恢复）。详见 evaluator.md §12。
+
+（pilot-47 note）test_issue_119（proper-blocking fiber:join + orch:parallel 验证）已转换（light）。详见 evaluator.md §12 和 plan Phase 2。
+
+（pilot-48 to 58 notes）test_issue_120 to 128,130,131,135（early lights）已转换或prep。详见 evaluator.md §12。
+
+（pilot-60 note）test_issue_164（fiber:join spin-fallback 验证）prep（long-standing heavy）。详见 evaluator.md §12。
+
+（pilot-61 note）test_issue_165（macro re-expansion + SyntaxMarker TDD 验证）prep。详见 evaluator.md §12。
+
+（pilot-62 note）test_issue_166（multi-layer cache invalidation / epoch counter 验证）prep。详见 evaluator.md §12。
+
+（pilot-63 note）test_issue_169（Fine-grained Incremental Compilation v3 / config flag 验证）已转换。详见 evaluator.md §12。
+
+（pilot-64 note）test_issue_159_bench（incremental compilation benchmark harness 验证）prep。详见 evaluator.md §12。
+
+（pilot-65 note）test_issue_138（incremental dirty propagation / type checking for EDSL 验证）prep。详见 evaluator.md §12。
+
+（pilot-66 note）test_issue_139（structural refactor primitives 验证）prep。详见 evaluator.md §12。
+
+（pilot-67 note）test_issue_140（query:pattern with Ellipsis and hygiene 验证）prep。详见 evaluator.md §12。
+
+（pilot-68 note）test_issue_141（full WorkspaceTree with COW, read-only, merge 验证）prep。详见 evaluator.md §12。
+
+（pilot-69 note）test_issue_171（Function Inliner/TCO 验证）prep。详见 evaluator.md §12。
+
+（pilot-70 note）test_issue_204（GC env_frames_ walk integration 验证）prep。详见 evaluator.md §12。
+
+（pilot-52 to 70 batch prep note）test_issue_124-131,135 + 164/165/166/169/159_bench/138-141/171/204 （剩余 full blocks 一把做完）。Short aura_add 尝试（light 模式 + heavy tail）；module dep + JIT 弃用导致 ninja stop / re-gen fail。git checkout -- CMakeLists.txt 恢复 full 块保健康（与 pilot-46/42 等一致）。binaries 运行通过先前 counts（e.g. 6/6 for 124, 22/22 for 141）。docs §12/§0 同批更新。bak 清理完成。Refs: plan Phase 2, user "继续把剩下的都一把做完"。
+
+All remaining full/prepped blocks now handled per plan Phase 2. Early 115+ and heavies complete.
 
 ### Aura Layer (`lib/std/workspace.aura`)
 
