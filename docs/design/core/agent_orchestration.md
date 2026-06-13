@@ -145,6 +145,7 @@
 | `agent:spawn` | `std/orchestrator.aura` | 包装 `_agent:spawn`，fallback 到本地 closure |
 
 （Refactor 3.1 note）_agent:spawn 内部 merr 已清理到集中 make_merr (post 3.1)。详见 evaluator.md §3.2。
+（Phase 2 pilot-5 note）test_issue_135（多 agent 并行编排验证）已转为使用早期 aura_add_issue_test helper + append。CMake dedup 持续小步推进。详见 evaluator.md §12。
 | `agent:ask` | `std/orchestrator.aura` | 带 correlation-id + 超时的请求/响应 |
 | `agent:list` / `agent:status` / `agent:stop` / `agent:restart` | `std/orchestrator.aura` | 生命周期管理 |
 
