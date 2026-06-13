@@ -275,6 +275,131 @@ bool test_inlined_count_resets() {
     return true;
 }
 
+// ── TCO tests (Issue #171 Priority 3) ──
+
+// ── Test 7: TCO rewrites tail Call+Return to Jump ──
+bool test_tco_tail_call_rewrite() {
+    PRINTLN("\n--- Test 7: TCO rewrites tail Call+Return to Jump ---");
+    aura::ir::IRModule mod;
+    // Callee (func_id=0): k42 (single-block trivial)
+    mod.functions.push_back(make_const_i64_callee("k42", 0, 42));
+    // Callee (func_id=1): something to TCO into. Single block:
+    // Local(0, 0) ; Return(0) — but the simplest tail-call
+    // pattern is Call to k42, then Return(k42_result).
+    // For TCO to fire: Block ends with Call+Return.
+    aura::ir::IRFunction caller;
+    caller.name = "caller";
+    caller.local_count = 2;
+    caller.blocks.push_back({0});
+    // MakeClosure(k42) at slot 0; Call(closure=0, args=0, count=0, result=1);
+    // Return(result=1)
+    caller.blocks[0].instructions = {
+        {aura::ir::IROpcode::MakeClosure, {0, 0, 0, 0}, 0, 13},
+        {aura::ir::IROpcode::Call,        {0, 0, 0, 1}, 0, 0},
+        {aura::ir::IROpcode::Return,      {1, 0, 0, 0}, 0, 0},
+    };
+    mod.functions.push_back(std::move(caller));
+
+    aura::compiler::TCOPass tco;
+    tco.run(mod);
+
+    auto& block = mod.functions[1].blocks[0];
+    CHECK(block.instructions.size() == 2,
+          "Call+Return collapsed to 2 instructions (Call → Jump, Return removed)");
+    CHECK(block.instructions[0].opcode == aura::ir::IROpcode::MakeClosure,
+          "MakeClosure preserved");
+    CHECK(block.instructions[1].opcode == aura::ir::IROpcode::Jump,
+          "tail Call rewritten to Jump");
+    CHECK(block.instructions[1].operands[0] == 0,
+          "Jump target = callee's entry block id (0)");
+    CHECK(tco.tco_count() == 1, "tco_count() == 1");
+    return true;
+}
+
+// ── Test 8: TCO skips non-tail calls ──
+// A Call NOT followed by a Return (e.g., followed by another
+// instruction) should not be TCO'd.
+bool test_tco_skip_non_tail() {
+    PRINTLN("\n--- Test 8: TCO skips non-tail calls ---");
+    aura::ir::IRModule mod;
+    mod.functions.push_back(make_const_i64_callee("k42", 0, 42));
+    aura::ir::IRFunction caller;
+    caller.name = "caller";
+    caller.local_count = 2;
+    caller.blocks.push_back({0});
+    // Call NOT followed by Return (followed by another ConstI64)
+    caller.blocks[0].instructions = {
+        {aura::ir::IROpcode::MakeClosure, {0, 0, 0, 0}, 0, 13},
+        {aura::ir::IROpcode::Call,        {0, 0, 0, 1}, 0, 0},  // NOT tail
+        {aura::ir::IROpcode::ConstI64,    {1, 99, 0, 0}, 0, 1},  // overwrite result
+        {aura::ir::IROpcode::Return,      {1, 0, 0, 0}, 0, 0},
+    };
+    mod.functions.push_back(std::move(caller));
+
+    aura::compiler::TCOPass tco;
+    tco.run(mod);
+
+    auto& block = mod.functions[1].blocks[0];
+    CHECK(block.instructions[1].opcode == aura::ir::IROpcode::Call,
+          "non-tail Call NOT rewritten (preserved as Call)");
+    CHECK(tco.tco_count() == 0, "tco_count() == 0 (no tail call found)");
+    return true;
+}
+
+// ── Test 9: TCO skips when Return's value != Call's result ──
+bool test_tco_skip_mismatched_return() {
+    PRINTLN("\n--- Test 9: TCO skips when Return's value != Call's result ---");
+    aura::ir::IRModule mod;
+    mod.functions.push_back(make_const_i64_callee("k42", 0, 42));
+    aura::ir::IRFunction caller;
+    caller.name = "caller";
+    caller.local_count = 3;
+    caller.blocks.push_back({0});
+    // Call returns to slot 1, but Return uses slot 2 (different)
+    caller.blocks[0].instructions = {
+        {aura::ir::IROpcode::MakeClosure, {0, 0, 0, 0}, 0, 13},
+        {aura::ir::IROpcode::ConstI64,    {2, 0, 0, 0}, 0, 1},  // separate value
+        {aura::ir::IROpcode::Call,        {0, 0, 0, 1}, 0, 0},  // result 1, but Return uses 2
+        {aura::ir::IROpcode::Return,      {2, 0, 0, 0}, 0, 0},  // Return slot 2, not 1
+    };
+    mod.functions.push_back(std::move(caller));
+
+    aura::compiler::TCOPass tco;
+    tco.run(mod);
+
+    auto& block = mod.functions[1].blocks[0];
+    CHECK(block.instructions[2].opcode == aura::ir::IROpcode::Call,
+          "mismatched Call/Return NOT rewritten (Call value not used)");
+    CHECK(tco.tco_count() == 0, "tco_count() == 0");
+    return true;
+}
+
+// ── Test 10: TCO is idempotent ──
+// Running TCO twice doesn't double-transform.
+bool test_tco_idempotent() {
+    PRINTLN("\n--- Test 10: TCO is idempotent ---");
+    aura::ir::IRModule mod;
+    mod.functions.push_back(make_const_i64_callee("k42", 0, 42));
+    aura::ir::IRFunction caller;
+    caller.name = "caller";
+    caller.local_count = 2;
+    caller.blocks.push_back({0});
+    caller.blocks[0].instructions = {
+        {aura::ir::IROpcode::MakeClosure, {0, 0, 0, 0}, 0, 13},
+        {aura::ir::IROpcode::Call,        {0, 0, 0, 1}, 0, 0},
+        {aura::ir::IROpcode::Return,      {1, 0, 0, 0}, 0, 0},
+    };
+    mod.functions.push_back(std::move(caller));
+
+    aura::compiler::TCOPass tco;
+    tco.run(mod);
+    CHECK(tco.tco_count() == 1, "first run: 1 TCO");
+    tco.run(mod);
+    CHECK(tco.tco_count() == 0,
+          "second run: 0 TCO (no remaining Call+Return pattern)");
+    return true;
+}
+
 int main() {
     std::fprintf(stdout, "═══ Issue #171 — Function Inliner (Priority 2) ═══\n");
     std::fprintf(stdout, "  Verifies the inliner ACTUALLY inlines, not just counts.\n\n");
@@ -285,6 +410,10 @@ int main() {
     test_skip_dynamic_callee();
     test_multiple_call_sites();
     test_inlined_count_resets();
+    test_tco_tail_call_rewrite();
+    test_tco_skip_non_tail();
+    test_tco_skip_mismatched_return();
+    test_tco_idempotent();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
