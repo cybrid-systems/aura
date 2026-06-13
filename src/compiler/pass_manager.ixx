@@ -1723,4 +1723,173 @@ private:
     std::vector<const aura::ir::IRFunction*> func_index_;
 };
 
+// Issue #183 Cycle 2: MonomorphizePass
+//
+// Compiles a function twice when shape profiling has
+// determined a stable shape for it:
+//   1. The original function becomes the GENERIC version
+//      (specialized_for = 0).
+//   2. A new function is added to IRModule.functions[] as
+//      the SPECIALIZED version (specialized_for = shape_id,
+//      generic_id = <index of the generic version>).
+//   3. The specialized version's entry block is rewritten
+//      to:
+//        OpGuardShape result=0, arg=arg_slot_0, expected=shape_id, generic=2
+//        OpBranch result=0, cond=result, true=1, false=2
+//        block 1 (specialized body): original entry block body
+//        block 2 (generic trampoline):
+//            OpCall result=0, callee=generic_id, arg_base=0, arg_count=N
+//            OpReturn result=0
+//
+// Cycle 2 ships the SCAFFOLDING: the pass works for
+// functions where:
+//   - shape_profiler has a stable shape (shape_id != 0)
+//   - The function takes ≥ 1 argument (the guard checks arg 0)
+//   - The function has a single entry block with a non-empty body
+//
+// The full integration (per-function shape tracking, JIT
+// dispatch, mutate integration) is the work of follow-up
+// issues. This pass is testable in isolation: the C++ test
+// (TC61 + new test cases) constructs an IRModule manually
+// and runs the pass on it.
+export class MonomorphizePass {
+public:
+    struct Result {
+        std::uint32_t specialized_id = 0xFFFFFFFFu; // new function index
+        std::uint32_t generic_id = 0xFFFFFFFFu;     // original function index
+        std::uint32_t shape_id = 0;                 // the shape we specialized for
+    };
+
+    void run(aura::ir::IRModule& module) {
+        results_.clear();
+        // Take a snapshot of function indices/IDs since we're
+        // appending to functions[]. Snapshot is the original
+        // function list size (before any appends this pass makes).
+        std::size_t const original_count = module.functions.size();
+        for (std::size_t i = 0; i < original_count; ++i) {
+            // Skip if we already specialized this function
+            // (idempotency for re-running the pass).
+            if (module.functions[i].specialized_for != 0) continue;
+            // Need ≥ 1 arg to guard on.
+            if (module.functions[i].arg_count == 0) continue;
+            // Need a shape to specialize for. For Cycle 2
+            // scaffolding, we read from an external
+            // shape_to_specialize_ map (filled by the test).
+            // In production, this would be wired to the
+            // shape_profiler_ (#60). The map is keyed by
+            // function name (simple; production would use
+            // function id).
+            auto it = shape_to_specialize_.find(module.functions[i].name);
+            if (it == shape_to_specialize_.end()) continue;
+            std::uint32_t shape_id = it->second;
+            if (shape_id == 0) continue;  // 0 = no specialization
+
+            Result r;
+            r.shape_id = shape_id;
+            r.generic_id = static_cast<std::uint32_t>(i);
+
+            // 1. Make the ORIGINAL function the generic version.
+            // (specialized_for stays 0; generic_id is meaningless
+            // for the generic version per the IR spec.)
+            // (Nothing to do — it already has specialized_for == 0.)
+
+            // 2. Clone the function for the specialized version.
+            aura::ir::IRFunction spec = module.functions[i];
+            spec.specialized_for = shape_id;
+            spec.generic_id = r.generic_id;
+            spec.id = static_cast<std::uint32_t>(module.functions.size());
+
+            // 3. Rewrite the entry block to emit the guard.
+            // Find the entry block (assumes block 0 is the
+            // entry; matches what the lowering pass produces).
+            if (spec.blocks.empty()) {
+                // Malformed IR; skip.
+                continue;
+            }
+            auto& entry = spec.blocks[spec.entry_block];
+
+            // Build a new block 1: the generic trampoline.
+            aura::ir::BasicBlock trampoline;
+            trampoline.id = 1;
+            // Add a Call to the generic version, then Return.
+            // Call: callee, arg_base, arg_count, result
+            // Use a fresh local for the result (not strictly
+            // needed for tail call but kept for clarity).
+            std::uint32_t call_result_slot = spec.local_count++;
+            {
+                aura::ir::IRInstruction call_instr;
+                call_instr.opcode = aura::ir::IROpcode::Call;
+                call_instr.operands = std::array<std::uint32_t, 4>{
+                    r.generic_id,   // callee
+                    0u,              // arg_base = 0 (params at slots 0..N-1)
+                    spec.arg_count,  // arg_count
+                    call_result_slot // result slot
+                };
+                trampoline.instructions.push_back(call_instr);
+            }
+            {
+                aura::ir::IRInstruction ret_instr;
+                ret_instr.opcode = aura::ir::IROpcode::Return;
+                ret_instr.operands = std::array<std::uint32_t, 4>{
+                    call_result_slot, 0u, 0u, 0u
+                };
+                trampoline.instructions.push_back(ret_instr);
+            }
+            spec.blocks.push_back(trampoline);
+
+            // Insert the guard + branch at the start of the
+            // existing entry block.
+            // The guard writes a bool to local slot 0 (the
+            // branch's cond input).
+            std::uint32_t guard_result = 0u;  // local 0 is the convention
+            // (but local 0 might be a param; to be safe, use
+            // a fresh local for the guard result)
+            if (spec.local_count == 0) spec.local_count = 1;
+            guard_result = spec.local_count++;
+            aura::ir::IRInstruction guard_instr;
+            guard_instr.opcode = aura::ir::IROpcode::GuardShape;
+            // OpGuardShape: result, arg_slot, expected, generic_block
+            guard_instr.operands = std::array<std::uint32_t, 4>{
+                guard_result,  // result slot (bool 1/0)
+                0u,            // arg slot 0 (the first param)
+                shape_id,      // expected shape
+                1u             // generic trampoline block id
+            };
+            // Branch: cond, true_target, false_target
+            // true  = existing entry block body (id 0)
+            // false = trampoline (id 1)
+            aura::ir::IRInstruction branch_instr;
+            branch_instr.opcode = aura::ir::IROpcode::Branch;
+            branch_instr.operands = std::array<std::uint32_t, 4>{
+                guard_result, 0u, 1u, 0u
+            };
+
+            // Splice guard + branch at the front of entry.instructions
+            std::vector<aura::ir::IRInstruction> new_body;
+            new_body.reserve(entry.instructions.size() + 2);
+            new_body.push_back(guard_instr);
+            new_body.push_back(branch_instr);
+            for (auto& instr : entry.instructions) {
+                new_body.push_back(std::move(instr));
+            }
+            entry.instructions = std::move(new_body);
+
+            // 4. Add the specialized function to the module.
+            r.specialized_id = module.add_function(std::move(spec));
+            results_.push_back(r);
+        }
+    }
+
+    bool has_error() const { return false; }
+    std::string_view name() const { return "monomorphize"; }
+    std::vector<Result> const& results() const { return results_; }
+
+    // Test seam: production code wires this to shape_profiler_.
+    // For Cycle 2 scaffolding, the test fills it directly.
+    std::map<std::string, std::uint32_t> shape_to_specialize_;
+
+private:
+    std::vector<Result> results_;
+};
+
 } // namespace aura::compiler
