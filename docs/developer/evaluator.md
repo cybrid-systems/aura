@@ -647,6 +647,8 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-20**: Converted test_issue_139 (structural refactor primitives: extract-function, inline-call, rename-symbol, refactor/extract, move-node, splice, wrap; end-to-end on real Aura code). See CMakeLists.txt (139 block) + plan Phase 2.
 
+**Phase 2 pilot-21**: Converted test_issue_140 (query:pattern EDSL primitive with Ellipsis and basic hygiene; hygiene fix for SyntaxMarker::MacroIntroduced). See CMakeLists.txt (140 block) + plan Phase 2.
+
 ```scheme
 ; happy path
 (display (foo 42))            ; expect 84
