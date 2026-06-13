@@ -6689,6 +6689,20 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         auto& flat = *workspace_flat_;
         EvalValue result = make_void();
 
+        // Issue #186 Phase 1: pre-compute the pattern's children
+        // count once. The outer loop can then skip nodes whose
+        // children count doesn't match the pattern's children
+        // count, avoiding the recursive descent into subtrees
+        // that can't possibly match. For large ASTs (500-5000
+        // nodes) this is a real win — the O(N × Depth) becomes
+        // O(N) when the pattern's children count is a strong
+        // filter.
+        auto pat_root_node = pat_flat->get(pr.root);
+        const std::size_t pat_child_count = pat_root_node.children.size();
+        const bool pat_root_is_wildcard =
+            pat_root_node.tag == aura::ast::NodeTag::Variable &&
+            pat_root_node.sym_id == wildcard_sym;
+
         // Walk every node in workspace and try matching at each position.
         // Issue #140: skip nodes with SyntaxMarker::MacroIntroduced
         // (the matcher's root position is the user-written top-level
@@ -6698,9 +6712,23 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         // code by default. Callers who want to include macro nodes
         // can query the specific macro node or use a different
         // primitive (out of scope for #140's basic hygiene).
+        //
+        // Issue #186: also skip nodes whose children count doesn't
+        // match the pattern's children count (the pattern's
+        // children are the only subtree that can match). This is
+        // a quick early-exit that's safe because:
+        //   - If pat_root is a wildcard "..." → no constraint
+        //   - Otherwise, the children count must match exactly
+        //     (verified later in match_subtree's default case)
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             if (flat.marker(id) == aura::ast::SyntaxMarker::MacroIntroduced)
                 continue;
+            if (!pat_root_is_wildcard) {
+                auto ws_node = flat.get(id);
+                if (ws_node.children.size() != pat_child_count)
+                    continue;  // Issue #186 early-exit: children count
+                               // mismatch → skip without recursion
+            }
             if (match_subtree(id, pr.root)) {
                 auto pid = pairs_.size();
                 pairs_.push_back({make_int(static_cast<std::int64_t>(id)), result});
