@@ -132,6 +132,13 @@ public:
     // Register an external C symbol with the JIT (e.g., from dlopen)
     void register_symbol(const char* name, void* ptr);
 
+    // Issue #193: per-function unhandled-opcode count. Returns
+    // the number of unhandled opcodes the JIT's lower() has
+    // recorded for the most recent compile of `name`. Returns
+    // 0 if the function was never compiled or has never hit
+    // an unhandled opcode.
+    std::uint64_t unhandled_opcode_count_for_function(const char* name) const;
+
     // Set string pool for OpConstString support. Must be called before compile().
     // The pool pointer must remain valid for the lifetime of all compilations.
     void set_string_pool(const std::vector<std::string>* pool);

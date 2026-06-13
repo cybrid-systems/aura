@@ -352,6 +352,41 @@ bool test_format_includes_intrinsics() {
     }
     return true;
 }
+
+// ── Test 15: per-function unhandled-opcode count (Issue #193) ──
+// Replaces the conservative should_deopt_specialization()
+// (which disables ALL specialization when ANY function has
+// unhandled opcodes) with a per-function query. The accessor
+// is unhandled_opcode_count_for_function(name) on AuraJIT,
+// and SpecJITController has the matching should_deopt_..._for(name).
+bool test_per_function_unhandled_count() {
+    PRINTLN("\n--- Test 15: per-function unhandled-opcode count ---");
+    aura::jit::AuraJIT jit;
+    aura::compiler::shape::SpecJITController ctrl(jit);
+
+    // Initial: no function has been compiled, so all counts are 0
+    CHECK(jit.unhandled_opcode_count_for_function("foo") == 0,
+          "unseen function reports count=0");
+    CHECK(!ctrl.should_deopt_specialization_for("foo"),
+          "unseen function: no deopt");
+    CHECK(jit.unhandled_opcode_count_for_function(nullptr) == 0,
+          "nullptr name: count=0 (defensive)");
+
+    // After compile() on a function with unhandled opcodes,
+    // the per-function counter should reflect the hits. We
+    // can't easily trigger the default branch in lower()
+    // without a real FlatFunction, but we can verify the
+    // helper is exposed and returns 0 for a fresh JIT.
+    // (Real verification happens via the integration with
+    // service.ixx, which we don't reach from this test.)
+    auto& m = jit.mutable_metrics();
+    m.unhandled_opcode_count.store(7, std::memory_order_relaxed);
+    CHECK(jit.unhandled_opcode_count_for_function("foo") == 0,
+          "global counter is independent of per-function counter");
+    CHECK(ctrl.unhandled_opcode_count_for("foo") == 0,
+          "spec controller's per-fn count also 0 for unseen fn");
+    return true;
+}
 // Verifies that the expected IROpcode enum values (in ir.ixx)
 // match what the JIT's lower() switch handles. The JIT-local
 // Op enum (aura_jit.cpp:115-167) is anonymous and not accessible
@@ -396,6 +431,7 @@ int main() {
     test_spec_jit_deopt_reset();
     test_intrinsic_counter_exposed();
     test_format_includes_intrinsics();
+    test_per_function_unhandled_count();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);

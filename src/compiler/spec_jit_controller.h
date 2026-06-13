@@ -74,6 +74,17 @@ public:
     // should_deopt_specialization() uses threshold = 1.
     std::uint64_t unhandled_opcode_count() const;
 
+    // Issue #193: per-function deopt signal. Returns true if the
+    // specific function `fn_name` has reported any unhandled
+    // opcodes during its compiles. This is the proper replacement
+    // for the conservative should_deopt_specialization() in the
+    // common case: deopt the affected function, not the whole
+    // process. Other functions with clean compiles are unaffected.
+    bool should_deopt_specialization_for(const std::string& fn_name) const;
+
+    // Issue #193: explicit per-function counter accessor.
+    std::uint64_t unhandled_opcode_count_for(const std::string& fn_name) const;
+
     // Shape map codes (must match shape.h ShapeID conventions)
     static constexpr uint8_t kDynamic   = 0;
     static constexpr uint8_t kShapeInt  = 1;

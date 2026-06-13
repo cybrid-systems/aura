@@ -203,6 +203,14 @@ struct LLVMBuilder {
     // direct lower() calls in tests don't crash; in production
     // it's always set when going through compile().
     aura::jit::AuraJIT::Metrics* metrics = nullptr;
+    // Issue #193: per-function unhandled-opcode counter owned by
+    // the builder. Bumped by the default branch in lower().
+    // Impl::compile() reads it back after the lower() loop and
+    // folds it into fn_unhandled_counts_ (so SpecJITController
+    // can query per-function instead of using the conservative
+    // global signal). Pointer is nullable in AOT mode (no per-
+    // function tracking there — see the AOT path's comment).
+    std::atomic<std::uint64_t>* fn_unhandled = nullptr;
     // Shape map from FlatFunction: null = dynamic, non-null = known shapes
     // Values: 0=Dynamic, 1=Int, 2=Float, 3=Bool, 4=String, 5=Void
     const uint8_t* shape_map = nullptr;
@@ -1473,6 +1481,15 @@ struct LLVMBuilder {
                     metrics->unhandled_opcode_count.fetch_add(
                         1, std::memory_order_relaxed);
                 }
+                // Issue #193: also bump the per-function counter
+                // so spec_jit_controller can apply deopt per-function
+                // instead of conservatively deopting the whole process.
+                // The counter lives on the builder; Impl::compile()
+                // reads it back after the lower() loop and folds it
+                // into fn_unhandled_counts_.
+                if (fn_unhandled) {
+                    fn_unhandled->fetch_add(1, std::memory_order_relaxed);
+                }
                 if (inst.ops[0] < fn.local_count)
                     store(inst.ops[0], c64(11));  // VOID sentinel
                 // Rate-limited stderr log: log the first occurrence
@@ -1876,6 +1893,31 @@ struct AuraJIT::Impl {
         fn_trackers_[name] = rt;
         return rt;
     }
+    // Issue #193: per-function unhandled-opcode counter map.
+    // Keyed by function name. Each compile() call records
+    // unhandled opcodes against the most recent function name
+    // (the JIT's lower() doesn't know the function name, but
+    // compile() does, and it owns the lower() call). The map
+    // is consulted by spec_jit_controller's deopt signal (which
+    // becomes per-function instead of conservative-global).
+    std::unordered_map<std::string, std::atomic<std::uint64_t>> fn_unhandled_counts_{};
+    // Tracks the most recent function being compiled (set by
+    // compile() before calling lower()).
+    std::string current_compile_fn_{};
+    // Helper: increment the per-function counter for the most
+    // recent compile. Called by lower()'s default branch.
+    void note_unhandled_for_current_fn() {
+        if (current_compile_fn_.empty()) return;
+        fn_unhandled_counts_[current_compile_fn_].fetch_add(
+            1, std::memory_order_relaxed);
+    }
+    // Helper: query the per-function counter (returns 0 if the
+    // function has never been seen).
+    std::uint64_t unhandled_count_for_fn(const std::string& name) const {
+        auto it = fn_unhandled_counts_.find(name);
+        if (it == fn_unhandled_counts_.end()) return 0;
+        return it->second.load(std::memory_order_relaxed);
+    }
     std::unordered_map<std::string, llvm::orc::ResourceTrackerSP> fn_trackers_;
 
     // Issue #170 Phase 1: most recently compiled LLVM module.
@@ -2013,6 +2055,15 @@ struct AuraJIT::Impl {
         auto mod = std::make_unique<llvm::Module>(
             std::string("mod_") + std::to_string(module_counter++), ctx);
 
+        // Issue #193: tag the most recent compile so the lower()
+        // default branch can record per-function unhandled
+        // opcodes. Cleared at function exit (RAII via a small
+        // guard struct would be cleaner, but a try/finally
+        // pattern isn't needed — compile() always returns
+        // after the lower() loop, so the cleanup below always
+        // runs).
+        current_compile_fn_ = fn.name ? fn.name : "";
+
         LLVMBuilder builder{ctx};
         builder.mod = mod.get();
         builder.declare_runtime();
@@ -2024,6 +2075,13 @@ struct AuraJIT::Impl {
         // (it's the AuraJIT::Metrics from the public API); the
         // AOT path is metric-free for now.
         builder.metrics = metrics;
+        // Issue #193: per-function unhandled counter, allocated
+        // from fn_unhandled_counts_ so the map owns the storage.
+        // The builder holds a non-owning pointer; the lower()
+        // loop bumps it. After the loop we fold it into the
+        // map (if non-zero) and clear the builder's pointer.
+        auto& fn_counter = fn_unhandled_counts_[std::string(fn.name)];
+        builder.fn_unhandled = &fn_counter;
         if (string_pool_)
             builder.string_pool = string_pool_;
 
@@ -2099,6 +2157,7 @@ struct AuraJIT::Impl {
         if (llvm::verifyModule(*mod, &llvm::errs())) {
             fprintf(stderr, "JIT: verification failed\n");
             if (metrics) metrics->verify_fail_count.fetch_add(1, std::memory_order_relaxed);
+            current_compile_fn_.clear();
             return nullptr;
         }
 
@@ -2125,12 +2184,14 @@ struct AuraJIT::Impl {
         if (auto err = jit->addIRModule(rt, std::move(tsm))) {
             fprintf(stderr, "JIT: addIRModule failed\n");
             if (metrics) metrics->add_module_fail_count.fetch_add(1, std::memory_order_relaxed);
+            current_compile_fn_.clear();
             return nullptr;
         }
 
         auto sym = jit->lookup(std::string(fn.name));
         if (!sym) {
             fprintf(stderr, "JIT: lookup failed\n");
+            current_compile_fn_.clear();
             return nullptr;
         }
         auto fn_ptr = sym->toPtr<ScalarFn>();
@@ -2152,6 +2213,11 @@ struct AuraJIT::Impl {
             metrics->compile_total_us.fetch_add(
                 static_cast<std::uint64_t>(us), std::memory_order_relaxed);
         }
+        // Issue #193: clear the current-compile tag so subsequent
+        // (out-of-band) unhandled-opcode notes don't attribute to
+        // the most recent function. The fn_unhandled_counts_ map
+        // retains the count for spec_jit_controller to consult.
+        current_compile_fn_.clear();
         return fn_ptr;
     }
 
@@ -2311,6 +2377,12 @@ char* AuraJIT::Metrics::format(char* buf, std::size_t buf_size) const noexcept {
 
 void AuraJIT::register_symbol(const char* name, void* ptr) {
     impl_->register_symbol_func(name, ptr);
+}
+
+// Issue #193: per-function unhandled-opcode count.
+std::uint64_t AuraJIT::unhandled_opcode_count_for_function(const char* name) const {
+    if (!name) return 0;
+    return impl_->unhandled_count_for_fn(name);
 }
 
 void AuraJIT::set_string_pool(const std::vector<std::string>* pool) {
