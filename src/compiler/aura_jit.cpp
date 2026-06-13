@@ -151,20 +151,39 @@ enum Op : uint32_t {
     OpCdr = 36,
     OpRaise = 37,
     OpIsError = 38,
+    // Issue #124: TryBegin + TryEnd added between IsError and
+    // HashRef in IROpcode (aura::ir). Without these, OpRaise
+    // and OpIsError were correctly numbered but the JIT's
+    // local mirror was already off-sync — the case statements
+    // for HashRef/Set/Remove/Arena/GuardShape used values that
+    // did not match the IR enum. This enum is now in lockstep
+    // with IROpcode: TryBegin=39, TryEnd=40, HashRef=41,
+    // HashSet=42, HashRemove=43, LinearWrap=44, MoveOp=45,
+    // BorrowOp=46, MutBorrowOp=47, DropOp=48, RefCountOp=49,
+    // ArenaPush=50, ArenaPop=51, GuardShape=52.
+    //
+    // OpTryBegin + OpTryEnd lowering is still TODO (Phase 1 /
+    // item #2 of #170); the enum entries are here so the
+    // default branch in lower() can detect them as unhandled.
+    OpTryBegin = 39,
+    OpTryEnd = 40,
     // Hash operations (inline dispatch, avoids PrimCall overhead)
-    OpHashRef = 39,
-    OpHashSet = 40,
-    OpHashRemove = 41,
-    // M4 Linear ownership opcodes — handled by literal IR opcode values
-    // in the lower() switch (42-47). OpDrop=46, RefCountOp=47.
+    OpHashRef = 41,
+    OpHashSet = 42,
+    OpHashRemove = 43,
+    // M4 Linear ownership opcodes — match aura::ir::IROpcode.
+    OpLinearWrap = 44,
+    OpMoveOp = 45,
+    OpBorrowOp = 46,
+    OpMutBorrowOp = 47,
+    OpDropOp = 48,
+    OpRefCountOp = 49,
     // Arena operations
-    OpArenaPush = 48,
-    OpArenaPop = 49,
+    OpArenaPush = 50,
+    OpArenaPop = 51,
     // Issue #61 Iter 3: lazy-deopt guard. Same encoding as
-    // aura::ir::IROpcode::GuardShape (now 52 after Issue #124
-    // added TryBegin + TryEnd before it); we keep the local
-    // mirror in sync.
-    OpGuardShape = 50,
+    // aura::ir::IROpcode::GuardShape (52).
+    OpGuardShape = 52,
 };
 
 // LLVM IR Builder
@@ -845,36 +864,30 @@ struct LLVMBuilder {
 
             // Drop: call all safe drop functions (runtime's live-flag is idempotent)
             // ── M4 Linear ownership ops (IROpcode values from ir.ixx) ─
-            // LinearWrap=42, MoveOp=43, BorrowOp=44, MutBorrowOp=45,
-            // DropOp=46, RefCountOp=47
             // For untagged AOT runtime:
             //   LinearWrap/MoveOp/BorrowOp/MutBorrowOp/RefCountOp =
             //     no-ops (compile-time concepts, pass through)
-            //   DropOp (46) = actually calls drop functions
+            //   DropOp = actually calls drop functions
 
-            case 42: /* IROpcode::LinearWrap */
-            case 43: /* IROpcode::MoveOp */
-            case 44: /* IROpcode::BorrowOp */
-            case 45: /* IROpcode::MutBorrowOp */
-            case 47: /* IROpcode::RefCountOp */ {
+            case OpLinearWrap:
+            case OpBorrowOp:
+            case OpMutBorrowOp:
+            case OpRefCountOp: {
+                store(inst.ops[0], load(inst.ops[1]));
+                return true;
+            }
+            case OpMoveOp: {
                 // Issue #106: source invalidation. After a
                 // MoveOp the source slot is zeroed so a later
                 // DropOp on the source is a no-op (the runtime's
                 // drop helpers all bounds-check or check the
-                // IS_PAIR low-bit tag, and 0 fails both). For
-                // BorrowOp / MutBorrowOp / RefCountOp / LinearWrap
-                // the source remains valid, so we keep the simple
-                // store/load for those. MoveOp is split out below.
-                if (inst.opcode == 43 /* MoveOp */) {
-                    auto val = load(inst.ops[1]);
-                    store(inst.ops[0], val);
-                    store(inst.ops[1], c64(0));  // source invalidated
-                } else {
-                    store(inst.ops[0], load(inst.ops[1]));
-                }
+                // IS_PAIR low-bit tag, and 0 fails both).
+                auto val = load(inst.ops[1]);
+                store(inst.ops[0], val);
+                store(inst.ops[1], c64(0));  // source invalidated
                 return true;
             }
-            case 46: /* IROpcode::DropOp */ {
+            case OpDropOp: {
                 auto val = load(inst.ops[0]);
                 irb->CreateCall(fn_drop_pair, {val});
                 irb->CreateCall(fn_drop_cell, {val});
