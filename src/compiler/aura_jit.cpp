@@ -1111,6 +1111,21 @@ struct LLVMBuilder {
 
                     // Fast path: no bounds check, no lock
                     irb->SetInsertPoint(bb_fast);
+                    // Issue #194 Phase 2 / item #3 (smallest piece):
+                    // bump intrinsic_count on the fast path. The
+                    // fast path here is a single C function call
+                    // (aura_pair_car_unchecked); full inlining into
+                    // a GEP+load sequence is the follow-up (requires
+                    // declaring g_pair_slots as a JIT-visible global
+                    // + matching the AuraPair struct layout). The
+                    // counter bump establishes the metric signal so
+                    // we can measure how often the fast path fires
+                    // before deciding whether the full inlining is
+                    // worth the complexity.
+                    if (metrics) {
+                        metrics->intrinsic_count.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
                     auto* fast_result = irb->CreateCall(fn_pair_car_unchecked, {pair_val});
                     irb->CreateBr(bb_done);
 
