@@ -607,7 +607,9 @@ For a new primitive `foo`, the minimum coverage is in
 
 **3.2 pilot dedup note**: Common harness header (`tests/issue_test_harness.hpp`) introduced; the 3 CMake pilots now use `#include` to shrink boilerplate. Full adoption/thinning in later dedup steps. See pilots + roadmap 3.2.
 
-**Phase 2 pilot (post 5.2)**: `aura_add_issue_test(NAME)` helper added to CMakeLists.txt; the 3 pilots are now single-line calls (dedup of the add_executable/set_property/compile/link/add_test repetition). This safely prototypes the macro before the 40+ full test_issue blocks. The helper + header together address the "extreme duplication" called out in the plan. Next small steps will generalize the helper (add the common module sources list etc.). See CMakeLists.txt (the function + pilot comments) + plan Phase 2.
+**Phase 2 pilot (post 5.2)**: `aura_add_issue_test(NAME)` helper added to CMakeLists.txt; the 3 pilots are now single-line calls (dedup of the add_executable/set_property/compile/link/add_test repetition). This safely prototypes the macro before the 40+ full test_issue blocks. The helper + header together address the "extreme duplication" called out in the plan.
+
+**Phase 2 pilot-2**: helper extended with base common core modules/impls (arena/ast/type etc.) + full standard link (pthread + stdc++ + aura-reflect); first real test_issue_132 (ast_walkers extraction verification) converted — block now ~3 lines (call + 1 specific append) instead of 15+ repeated lines. See CMakeLists.txt (helper + test_issue_132 block) + plan Phase 2. Follow-on small steps will convert more (generalize base or add parameters as needed).
 
 ```scheme
 ; happy path
