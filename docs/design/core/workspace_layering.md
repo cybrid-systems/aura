@@ -36,6 +36,7 @@
 （pilot-10 note）test_issue_161（parser pure 验证）已转换。helper 基建稳固。
 （pilot-11 note）test_issue_162（type concepts 验证）已转换。持续小步 dedup。
 （pilot-12 note）test_issue_163（Pass concept / run_pipeline 验证）已转换。helper 基建稳固。
+（pilot-13 note）test_issue_164（fiber:join spin-fallback 验证）已转换。持续小步。
 
 ### Aura Layer (`lib/std/workspace.aura`)
 
