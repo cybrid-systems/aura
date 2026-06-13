@@ -695,7 +695,9 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-44 prep**: test_issue_116 (deferred CoercionNode insertion; TypeChecker no longer mutates in-place). Short hit stop; full restored. See previous.
 
-**Phase 2 pilot-45**: Convert test_issue_117 (linear ownership validation fixes: TypeChecker full re-simulation mode + gradual+Linear boundary check; 6 regression scenarios). Light (serve + parser + core + value + type_checker). See plan Phase 2. Continuing early full blocks to complete the dedup.
+**Phase 2 pilot-45 prep**: test_issue_117 (linear ownership validation fixes: TypeChecker full re-simulation mode + gradual+Linear boundary check). Short hit stop (module); full restored. See previous.
+
+**Phase 2 pilot-46**: Convert test_issue_118 (solver timeout returns SolveResult (not bool) and unbound-variable / module-member diagnostic paths tag the AST node). Light (serve + parser + core + value + type_checker). See plan Phase 2. Continuing early full blocks to complete the dedup.
 
 ```scheme
 ; happy path
