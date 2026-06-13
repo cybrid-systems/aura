@@ -216,7 +216,15 @@ export struct EnvFrame {
     EnvId parent_id = NULL_ENV_ID;
     const Primitives* primitives_ = nullptr;
     const aura::ast::StringPool* pool_ = nullptr;
-    std::pmr::vector<types::EvalValue>* cells_ = nullptr;
+    // P0 (EnvFrame SoA migration): removed raw cells_ pointer.
+    // EnvFrame is now pure data (bindings + parent_id index).
+    // Cell deref (when bound value is cell sentinel) is centralized
+    // in Evaluator::lookup_by_symid_chain (and legacy Env paths)
+    // using the Evaluator-owned central pmr cells_ vector.
+    // This eliminates one source of pointer-to-reallocatable-heap
+    // and prepares for full removal of cells_/pairs_ pointers from
+    // all env representations. See evaluator_impl.cpp lookup_local
+    // variants and lookup_by_symid_chain.
     std::vector<std::pair<std::string, types::EvalValue>> bindings_;
     // Phase 1 parity: parallel SymId-keyed store. Same length
     // and order as bindings_. SymId fast path reads this;
@@ -684,6 +692,9 @@ public:
     // `cl.env` raw pointer (preserved for stack-allocated
     // local-eval closures not yet in the arena).
     //
+    // P0: frames carry pure bindings + parent_id only. Support
+    // pointers (cells_/pool_/primitives_) are wired by the
+    // caller (apply_closure etc.) after materialization.
     // In either case, primitives_/cells_/pool_ are wired from
     // the active Evaluator + Closure::pool — these are the
     // runtime support pointers the body needs to see, not part
@@ -740,8 +751,13 @@ public:
     // at `start`. Returns the first match (closest frame
     // wins; shadowing semantics match Env::lookup_by_symid).
     // Demonstrates the SoA infra: walks via env_frames_ index
-    // lookup, not pointer chase. Future Phase 2.x replaces
-    // Env::lookup_by_symid with this implementation.
+    // lookup, not pointer chase.
+    //
+    // P0 (EnvFrame SoA migration): cell sentinels returned by
+    // EnvFrame local lookups are resolved here against the
+    // Evaluator's central cells_ pmr vector. EnvFrame is now
+    // free of raw heap pointers. Legacy Env still uses its
+    // cells_ pointer during transition.
     std::optional<types::EvalValue> lookup_by_symid_chain(
         EnvId start, aura::ast::SymId s) const
         pre (start != NULL_ENV_ID);
