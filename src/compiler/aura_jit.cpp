@@ -9,6 +9,7 @@
 namespace types = aura::compiler::types;
 
 #include <llvm/IR/Module.h>
+#include <llvm/Transforms/Utils/Cloning.h>  // Issue #170: CloneModule for AOT snapshot
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/LLVMContext.h>
@@ -1635,6 +1636,15 @@ struct AuraJIT::Impl {
     }
     std::unordered_map<std::string, llvm::orc::ResourceTrackerSP> fn_trackers_;
 
+    // Issue #170 Phase 1: most recently compiled LLVM module.
+    // Held as a unique_ptr so we can release it when a new
+    // compile happens (or when the JIT is destroyed). Used by
+    // compile_to_llvm_ir() and compile_to_object_file() to
+    // give external tools (benchmark, AOT, static analysis)
+    // access to the LLVM IR / native code that the JIT just
+    // generated.
+    std::unique_ptr<llvm::Module> last_module_;
+
     bool init() {
         if (initialized)
             return true;
@@ -1844,6 +1854,23 @@ struct AuraJIT::Impl {
             return nullptr;
         }
 
+        // Issue #170 Phase 1: snapshot the verified + optimized
+        // module for the AOT entry points. We clone here (cheap
+        // for typical Aura functions; the clone lives in
+        // last_module_ until the next compile() replaces it).
+        // The clone is necessary because the original `mod` is
+        // moved into the ThreadSafeModule below and handed off
+        // to the JIT; we can't keep both the JIT's reference and
+        // a public visible one without cloning.
+        {
+            auto cloned = llvm::CloneModule(*mod);
+            if (cloned) {
+                // Replace last_module_ in a thread-safe way (compile_mtx_
+                // already held; last_module_ is only touched here)
+                last_module_ = std::move(cloned);
+            }
+        }
+
         auto tsm =
             llvm::orc::ThreadSafeModule(std::move(mod), std::make_unique<llvm::LLVMContext>());
         auto rt = get_or_create_tracker(std::string(fn.name), metrics);
@@ -1921,10 +1948,70 @@ ScalarFn AuraJIT::compile(const FlatFunction& fn) {
     // hot-swap counters get updated. The impl uses the pointer
     // (not a reference) so it can be null in tests that construct
     // an Impl directly.
-    return impl_->compile(fn, &metrics_);
+    auto result = impl_->compile(fn, &metrics_);
+    // Issue #170 Phase 1: snapshot the most recent compiled module
+    // for AOT access via compile_to_llvm_ir / compile_to_object_file.
+    // The impl's compile() now keeps a copy of the optimized module
+    // in impl_->last_module_ for the AOT entry points to consume.
+    return result;
 }
 void* AuraJIT::get_function_ptr(const char* name) {
     return impl_->get_function_ptr(name);
+}
+
+// Issue #170 Phase 1: AOT entry points. The compile() function
+// stores the most recently compiled (and optimized) module in
+// impl_->last_module_. These methods re-emit that module as
+// either textual LLVM IR or a native .o file. Both are no-ops
+// if no module has been compiled yet (returns empty / false).
+std::string AuraJIT::compile_to_llvm_ir() {
+    if (!impl_ || !impl_->last_module_) {
+        return std::string();
+    }
+    std::string buf;
+    llvm::raw_string_ostream os(buf);
+    impl_->last_module_->print(os, /*AAW=*/nullptr);
+    os.flush();
+    return buf;
+}
+
+bool AuraJIT::compile_to_object_file(const std::string& path) {
+    if (!impl_ || !impl_->last_module_) {
+        return false;
+    }
+    // Reuse the existing AOT pipeline (same TargetMachine setup
+    // as the test helper around line 1540). Lazy-init the native
+    // target once per process.
+    static std::once_flag aot_target_init;
+    std::call_once(aot_target_init, []() {
+        llvm::InitializeNativeTarget();
+        llvm::InitializeNativeTargetAsmPrinter();
+    });
+
+    auto triple_str = llvm::sys::getDefaultTargetTriple();
+    llvm::Triple triple(triple_str);
+    std::string err;
+    const auto* target = llvm::TargetRegistry::lookupTarget(triple_str, err);
+    if (!target) return false;
+
+    auto tm = std::unique_ptr<llvm::TargetMachine>(
+        target->createTargetMachine(triple, "generic", {}, {}, {}));
+    if (!tm) return false;
+
+    impl_->last_module_->setDataLayout(tm->createDataLayout());
+
+    std::error_code ec;
+    llvm::raw_fd_ostream dest(path, ec, llvm::sys::fs::OF_None);
+    if (ec) return false;
+
+    llvm::legacy::PassManager cgpm;
+    if (tm->addPassesToEmitFile(cgpm, dest, nullptr,
+                                 llvm::CodeGenFileType::ObjectFile)) {
+        return false;
+    }
+    cgpm.run(*impl_->last_module_);
+    dest.flush();
+    return true;
 }
 
 // ── Metrics::format (Issue #114) ────────────────────────────
