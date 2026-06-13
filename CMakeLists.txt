@@ -1285,6 +1285,13 @@ add_test(NAME issue_164_verification COMMAND ./test_issue_164)
 # and is expected to FAIL on the current main (proving the
 # bug exists) and PASS after the post-mutation macro
 # re-expansion pass is added.
+# Phase 2 pilot-14: converted using early helper. Base covers core + value/diag/value_impl; append the heavy parser/serve/evaluator/JIT/LLVM specifics.
+# Issue #165 verification: macro re-expansion + SyntaxMarker
+# handling after EDSL mutations. The test is TDD — it
+# reproduces the hygiene violation (AC #1+#2+#4 of the issue)
+# and is expected to FAIL on the current main (proving the
+# bug exists) and PASS after the post-mutation macro
+# re-expansion pass is added.
 add_executable(test_issue_165 tests/test_issue_165.cpp)
 set_property(TARGET test_issue_165 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_165 PRIVATE src src/compiler)
