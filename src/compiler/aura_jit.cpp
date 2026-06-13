@@ -2283,6 +2283,10 @@ char* AuraJIT::Metrics::format(char* buf, std::size_t buf_size) const noexcept {
     // values are candidates for spec_jit_controller auto-deopt
     // (Phase 2 / item #1).
     const auto unhandled = unhandled_opcode_count.load(std::memory_order_relaxed);
+    // Issue #170 Phase 2 / item #3: intrinsic count. Tracks how
+    // many runtime helper calls the JIT replaced with inline
+    // sequences. Single number for observability.
+    const auto intrinsic = intrinsic_count.load(std::memory_order_relaxed);
     // Live prim-call counters from aura_jit_runtime.cpp
     // (read via the global accessors). The total is in nanoseconds;
     // average per call is computed inline.
@@ -2294,13 +2298,14 @@ char* AuraJIT::Metrics::format(char* buf, std::size_t buf_size) const noexcept {
                   "cached_fns=%llu inlined_prims=%llu slow_prims=%llu "
                   "prim_calls=%llu prim_avg_ns=%llu "
                   "verify_fail=%llu add_mod_fail=%llu "
-                  "unhandled_opcode=%llu",
+                  "unhandled_opcode=%llu intrinsics=%llu",
                   (unsigned long long)cc, (unsigned long long)avg_us,
                   (unsigned long long)hs, (unsigned long long)cfns,
                   (unsigned long long)inl, (unsigned long long)slow,
                   (unsigned long long)pc, (unsigned long long)pavg,
                   (unsigned long long)vfail, (unsigned long long)mfail,
-                  (unsigned long long)unhandled);
+                  (unsigned long long)unhandled,
+                  (unsigned long long)intrinsic);
     return buf;
 }
 

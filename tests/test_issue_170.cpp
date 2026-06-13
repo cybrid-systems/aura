@@ -312,6 +312,46 @@ bool test_spec_jit_deopt_reset() {
           "deopt cleared when counter reset to 0");
     return true;
 }
+
+// ── Test 13: intrinsic_count is exposed via Metrics ──
+// Phase 2 / item #3: counter for runtime helper calls that
+// the JIT inlined as intrinsics. Starts at 0; the full
+// migration (1-2w of work per the design doc) will bump
+// this from the lowerings. For now, the test just verifies
+// the counter is accessible and atomic.
+bool test_intrinsic_counter_exposed() {
+    PRINTLN("\n--- Test 13: intrinsic_count is exposed ---");
+    aura::jit::AuraJIT jit;
+    auto& m = jit.mutable_metrics();
+    auto initial = m.intrinsic_count.load(std::memory_order_relaxed);
+    CHECK(initial == 0, "intrinsic_count starts at 0 on fresh JIT");
+    m.intrinsic_count.store(7, std::memory_order_relaxed);
+    CHECK(m.intrinsic_count.load() == 7,
+          "intrinsic_count is mutable via store/load");
+    return true;
+}
+
+// ── Test 14: Metrics::format() includes intrinsics count ──
+bool test_format_includes_intrinsics() {
+    PRINTLN("\n--- Test 14: format() output includes intrinsics ---");
+    aura::jit::AuraJIT jit;
+    auto& m = jit.mutable_metrics();
+    m.intrinsic_count.store(42, std::memory_order_relaxed);
+    char buf[512] = {0};
+    m.format(buf, sizeof(buf));
+    std::string s(buf);
+    auto pos = s.find("intrinsics=");
+    CHECK(pos != std::string::npos,
+          "format() output contains 'intrinsics=' label");
+    if (pos != std::string::npos) {
+        auto val_str = s.substr(pos + std::string("intrinsics=").size());
+        auto end = val_str.find(' ');
+        if (end != std::string::npos) val_str = val_str.substr(0, end);
+        CHECK(val_str == "42",
+              "format() output shows intrinsics=42 (the stored value)");
+    }
+    return true;
+}
 // Verifies that the expected IROpcode enum values (in ir.ixx)
 // match what the JIT's lower() switch handles. The JIT-local
 // Op enum (aura_jit.cpp:115-167) is anonymous and not accessible
@@ -354,6 +394,8 @@ int main() {
     test_issue_170_phase1_item2_enum_values();
     test_spec_jit_deopt_signal();
     test_spec_jit_deopt_reset();
+    test_intrinsic_counter_exposed();
+    test_format_includes_intrinsics();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);

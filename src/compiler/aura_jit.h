@@ -156,6 +156,14 @@ public:
         // spec_jit_controller (Phase 2 / item #1) will consume this
         // to auto-deopt hot functions that hit unhandled opcodes.
         std::atomic<std::uint64_t> unhandled_opcode_count{0};
+        // Issue #170 Phase 2 / item #3: counter for runtime helper
+        // calls that the JIT inlined as intrinsics. Tracks the
+        // payoff of the runtime→intrinsics migration. Starts at
+        // 0; increments each time a lowering replaces a runtime
+        // call with an inline sequence (LLVM IR or always_inline
+        // function). Provides a single number for observability +
+        // perf regression detection.
+        std::atomic<std::uint64_t> intrinsic_count{0};
 
         // Format as a single-line string for telemetry / log output.
         // Caller-provided buffer; returns the same pointer.
