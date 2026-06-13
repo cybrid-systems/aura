@@ -28,14 +28,16 @@ namespace aura::compiler::shape {
 //   bit0-1=11 : Special (#f=3, #t=7, void=11)
 //   bit0-1=01 : Ref (pool-indexed heap type, bits 2-5 = subtype)
 //   FLOAT_BIAS (≤ -10000000000000000) : Float
-//   STRING_BIAS (≤ -9000000000000000000) : String
+//   STRING_BIAS (≤ STRING_BIAS_VAL_2) : String
+//   (Issue #181 Cycle 2: STRING_BIAS_VAL_2 = STRING_BIAS_VAL + 2,
+//   the v2 upper bound of the string range.)
 //
 // Timing: ~2-5ns (bit ops, no heap access)
 //
 // Tag/bit constants come from value_tags.h (issue #58); we just
 // alias them under the local names this file used before.
 static constexpr std::int64_t kFloatBias  = aura::compiler::types::FLOAT_BIAS_VAL;
-static constexpr std::int64_t kStringBias = aura::compiler::types::STRING_BIAS_VAL;
+static constexpr std::int64_t kStringBias = aura::compiler::types::STRING_BIAS_VAL_2;
 
 static inline bool is_fixnum_val(std::int64_t v) noexcept { return (v & 1) == 0; }
 static inline bool is_ref_val(std::int64_t v) noexcept    { return (v & 3) == 1; }

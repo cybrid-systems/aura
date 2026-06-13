@@ -119,20 +119,36 @@ export inline EvalValue make_float(double d) {
     return EvalValue(aura_alloc_float(d));  // FLOAT_BIAS encoding
 }
 export inline bool is_float(const EvalValue& v) noexcept {
-    return v.val <= FLOAT_BIAS_VAL && v.val > STRING_BIAS_VAL;
+    // Issue #181 Cycle 2: upper bound of float range is
+    // STRING_BIAS_VAL_2 (the new string upper bound), not
+    // STRING_BIAS_VAL. With the v2 string encoding,
+    // string values can be at STRING_BIAS_VAL_2, so the
+    // float range ends just below that.
+    return v.val <= FLOAT_BIAS_VAL && v.val > STRING_BIAS_VAL_2;
 }
 export inline double as_float(const EvalValue& v) {
     return aura_float_ref(v.val);
 }
 
+// Issue #181 Cycle 2: string encoding migrated to Option A.
+// make_string / is_string / as_string_idx now use the v2
+// encoding (dedicated (v & 3) == 2 tag + range check against
+// STRING_BIAS_VAL_2). The previous encoding was susceptible
+// to collisions at idx ≡ 31 (mod 64) → RefError and
+// idx ≡ 19 (mod 64) → RefKeyword. The new encoding is
+// collision-free at the source.
 export inline EvalValue make_string(std::uint64_t idx) noexcept {
-    return EvalValue(make_string_raw(idx));
+    return EvalValue(make_string_raw_v2(idx));
 }
 export inline bool is_string(const EvalValue& v) noexcept {
-    return v.val <= STRING_BIAS_VAL;
+    // Tag check is necessary (the bug fix) but not sufficient
+    // (fixnums in the right range with the right bit pattern
+    // would also pass the pure tag check). The range check
+    // is the safety belt that prevents false positives.
+    return is_string_raw_v2(v.val) && v.val <= STRING_BIAS_VAL_2;
 }
 export inline std::uint64_t as_string_idx(const EvalValue& v) noexcept {
-    return string_idx_raw(v.val);
+    return string_idx_raw_v2(v.val);
 }
 
 // ── Issue #181 Cycle 1: v2 string encoding prototype ──────
