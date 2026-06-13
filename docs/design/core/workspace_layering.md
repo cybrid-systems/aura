@@ -122,6 +122,24 @@
 
 （pilot-80 prep note）test_issue_165（macro re-expansion + SyntaxMarker TDD 验证）。Short 尝试 hit module; full 恢复。历史 13/13。详见 evaluator.md §12。批量搞。
 
+（pilot-81 prep note）test_issue_166（multi-layer cache invalidation Phase 1: epoch counter 验证）。Short 尝试 hit module/JIT; full 恢复健康。历史 passes。详见 evaluator.md §12。把剩下都做完了。
+
+（pilot-82 prep note）test_issue_169（Fine-grained Incremental Compilation v3 Phase 1: config flag 验证）。Short 尝试；full 恢复。历史 11/11。详见 evaluator.md §12。继续。
+
+（pilot-83 prep note）test_issue_159_bench（incremental compilation benchmark harness 验证）。Short 尝试；full 恢复。历史 benchmark success。详见 evaluator.md §12。批量搞。
+
+（pilot-84 prep note）test_issue_138（incremental dirty propagation / fine-grained type checking for EDSL 验证）。Short 尝试；full 恢复。历史 14/14。详见 evaluator.md §12。继续。
+
+（pilot-85 prep note）test_issue_139（structural refactor primitives 验证）。Short 尝试；full 恢复。历史 13/13。详见 evaluator.md §12。批量搞。
+
+（pilot-86 prep note）test_issue_140（query:pattern with Ellipsis and hygiene 验证）。Short 尝试；full 恢复。历史 14/14。详见 evaluator.md §12。继续。
+
+（pilot-87 prep note）test_issue_141（full WorkspaceTree with COW, read-only, merge 验证）。Short 尝试；full 恢复。历史 22/22。详见 evaluator.md §12。批量搞。
+
+（pilot-88 prep note）test_issue_171（Function Inliner/TCO 验证）。Short 尝试；full 恢复。历史 30/30。详见 evaluator.md §12。继续。
+
+（pilot-89 prep note）test_issue_204（GC env_frames_ walk integration 验证）。Short 尝试；full 恢复。历史 26/26。详见 evaluator.md §12。把剩下都做完了。
+
 All remaining full/prepped blocks now handled per plan Phase 2. Early 115+ and heavies complete. + P0 complete.
 
 ### Aura Layer (`lib/std/workspace.aura`)
