@@ -667,7 +667,9 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-30**: Converted test_issue_149 (propagate rich inferred types for specialization, monomorphization, improved deopt guards; 8 ACs on IR metadata, GuardShape, TypeSpecializationWrap, gradual). 19/19. See CMakeLists.txt (149 block) + plan Phase 2.
 
-**Phase 2 pilot-31**: Convert test_issue_171 (Function Inliner Priority 2 + TCO Priority 3; inlines trivial callees, TCO scaffold). Lighter (no full jit). See plan Phase 2. Continuing.
+**Phase 2 pilot-31 prep**: test_issue_171 (Function Inliner + TCO). Short attempted but caused dep/link issues from evaluator modern imports; restored original full block for health (30/30). See plan Phase 2.
+
+**Phase 2 pilot-32**: Convert test_issue_204 (GC env_frames_ walk integration / mark_env_frame_roots; light serve-only GC test, 5 scenarios). Very light. See CMakeLists.txt + plan Phase 2. Continuing the chain.
 
 ```scheme
 ; happy path
