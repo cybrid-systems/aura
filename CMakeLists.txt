@@ -2233,13 +2233,10 @@ target_link_libraries(aura PRIVATE linenoise)
 # a while but was never integrated into pass_manager. This test
 # wires it up via a new EscapeAnalysisWrap class and verifies
 # the basic analysis correctness on hand-crafted IRFunctions.
-add_executable(test_issue_143 tests/test_issue_143.cpp)
-set_property(TARGET test_issue_143 PROPERTY CXX_MODULE_STD ON)
+# Phase 2 pilot-24: converted using early helper. Base covers core + value/diag/value_impl; append heavy parser/serve/evaluator/JIT/LLVM + observability headers + rtti/LLVM bits.
+aura_add_issue_test(test_issue_143)
 target_include_directories(test_issue_143 PRIVATE src src/compiler)
 target_sources(test_issue_143 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
-    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
-    src/core/type_arena.ixx
-    src/core/type.ixx
     src/parser/lexer.ixx src/parser/parser.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
@@ -2289,17 +2286,11 @@ target_sources(test_issue_143 PRIVATE
     src/compiler/aura_jit_bridge.cpp
     src/compiler/observability_metrics.h
     src/compiler/observability_snapshot.h)
-target_compile_options(test_issue_143 PRIVATE -Wall -Wextra -Wpedantic
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
-    -Wno-parentheses)
-target_link_libraries(test_issue_143 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 target_include_directories(test_issue_143 PRIVATE ${LLVM_INCLUDE_DIRS})
 target_compile_definitions(test_issue_143 PRIVATE AURA_HAVE_LLVM=1)
 target_link_libraries(test_issue_143 PRIVATE ${llvm_libs})
-set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
-add_test(NAME issue_143_verification COMMAND ./test_issue_143)
 
 # Issue #144 verification: C++26 contracts integration. Tests
 # the 13 contract_assert sites added in this PR, plus the
