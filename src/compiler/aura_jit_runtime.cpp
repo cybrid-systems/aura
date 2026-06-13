@@ -1030,7 +1030,41 @@ int64_t aura_cast_op(int64_t val, int64_t type_tag) {
 // Forward declaration — definition is at the bottom of the file
 // because it touches g_string_pool / g_float_pool (which are
 // declared further down).
-void aura_reset_runtime();
+// Issue #170 Phase 1 / item #2: per-thread exception stack
+// for the JIT's try/catch handling. Mirrors the IR executor's
+// ex_stack_ (ir_executor_impl.cpp:641-680) but lives in
+// thread-local storage so concurrent fibers don't race on it.
+//
+// Layout per frame:
+//   handler_block: the IR block id to branch to on raise
+//   payload_slot:  the local slot where the cause should be stored
+//
+// The stack is LIFO. aura_exception_push appends, aura_exception_pop
+// removes the top, aura_exception_top returns the top frame's
+// fields without popping. Raises branch directly to handler_block
+// (no longjmp) — the JIT's lower() for OpRaise reads the top
+// frame via aura_exception_top and emits a Br to handler_block.
+struct ExFrame {
+    std::uint64_t handler_block;
+    std::uint64_t payload_slot;
+};
+static thread_local std::vector<ExFrame> g_ex_stack;
+
+extern "C" void aura_exception_push(std::uint64_t handler_block, std::uint64_t payload_slot) {
+    g_ex_stack.push_back({handler_block, payload_slot});
+}
+extern "C" void aura_exception_pop() {
+    if (!g_ex_stack.empty()) g_ex_stack.pop_back();
+}
+extern "C" std::uint64_t aura_exception_top_handler() {
+    return g_ex_stack.empty() ? 0 : g_ex_stack.back().handler_block;
+}
+extern "C" std::uint64_t aura_exception_top_payload() {
+    return g_ex_stack.empty() ? ~0ULL : g_ex_stack.back().payload_slot;
+}
+extern "C" std::uint64_t aura_exception_depth() {
+    return static_cast<std::uint64_t>(g_ex_stack.size());
+}
 
 // === Display bridge ===
 void aura_display_int(int64_t val) {
@@ -1169,6 +1203,7 @@ void aura_reset_runtime() {
     g_closure_envs.clear();
     g_arena_closure_envs.clear();
     g_cell_heap.clear();
+    g_ex_stack.clear();
     g_pair_slots.clear();
     std::memset(g_jit_fns, 0, sizeof(g_jit_fns));
     // Issue #136: clear string and float pools. They grow on

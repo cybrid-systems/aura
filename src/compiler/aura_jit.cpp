@@ -259,6 +259,16 @@ struct LLVMBuilder {
     llvm::Function* fn_drop_cell = nullptr;
     llvm::Function* fn_drop_closure = nullptr;
     llvm::Function* fn_drop_value = nullptr;
+    // Issue #170 Phase 1 / item #2: try/catch runtime bridges.
+    // The exception stack is thread-local in aura_jit_runtime.cpp;
+    // OpRaise reads the top frame's handler_block + payload_slot
+    // and emits a direct Br to handler_block (no longjmp, no
+    // C++ exception, no LLVM invoke/landingpad). The stack is
+    // LIFO; OpTryBegin pushes, OpTryEnd pops.
+    llvm::Function* fn_exception_push = nullptr;
+    llvm::Function* fn_exception_pop = nullptr;
+    llvm::Function* fn_exception_top_handler = nullptr;
+    llvm::Function* fn_exception_top_payload = nullptr;
     llvm::Function* fn_arena_push = nullptr;
     llvm::Function* fn_arena_pop = nullptr;
     llvm::Function* fn_alloc_float = nullptr;
@@ -393,6 +403,24 @@ struct LLVMBuilder {
                                                llvm::Function::ExternalLinkage, "aura_drop_cell", mod);
         fn_drop_closure = llvm::Function::Create(llvm::FunctionType::get(void_ty, {i64}, false),
                                                   llvm::Function::ExternalLinkage, "aura_drop_closure", mod);
+
+        // Issue #170 Phase 1 / item #2: try/catch exception stack
+        // bridges. aura_exception_push/pop manage the LIFO stack;
+        // aura_exception_top_handler/payload return the current
+        // top frame's fields (0 / ~0 if empty). The JIT's OpRaise
+        // reads these and emits a direct Br to handler_block.
+        fn_exception_push = llvm::Function::Create(
+            llvm::FunctionType::get(void_ty, {i64, i64}, false),
+            llvm::Function::ExternalLinkage, "aura_exception_push", mod);
+        fn_exception_pop = llvm::Function::Create(
+            llvm::FunctionType::get(void_ty, false),
+            llvm::Function::ExternalLinkage, "aura_exception_pop", mod);
+        fn_exception_top_handler = llvm::Function::Create(
+            llvm::FunctionType::get(i64, false),
+            llvm::Function::ExternalLinkage, "aura_exception_top_handler", mod);
+        fn_exception_top_payload = llvm::Function::Create(
+            llvm::FunctionType::get(i64, false),
+            llvm::Function::ExternalLinkage, "aura_exception_top_payload", mod);
 
         // Arena push/pop
         fn_arena_push = llvm::Function::Create(llvm::FunctionType::get(void_ty, false),
@@ -892,6 +920,101 @@ struct LLVMBuilder {
                 irb->CreateCall(fn_drop_pair, {val});
                 irb->CreateCall(fn_drop_cell, {val});
                 irb->CreateCall(fn_drop_closure, {val});
+                return true;
+            }
+
+            // ── try/catch / error handling (Issue #170 Phase 1 / item #2) ──
+            //
+            // Model: thread-local LIFO exception stack in
+            // aura_jit_runtime.cpp. OpTryBegin pushes a frame
+            // (handler_block, payload_slot). OpRaise reads the
+            // top frame, stores the cause to payload_slot, and
+            // emits a direct Br to handler_block. OpTryEnd pops
+            // the frame. OpIsError checks the value's RefError
+            // tag (bit 0 = 1, bits 1-4 = RefError = 8 → mask 0x1F,
+            // value 0x11).
+            //
+            // Limitation: this is "structured" exception handling
+            // via the exception stack + direct branches, NOT
+            // LLVM's native invoke/landingpad. It works for
+            // single-threaded / single-fiber code (the common
+            // case). Concurrent fibers share the thread-local
+            // stack, so a Raise in one fiber would branch to a
+            // handler set by a different fiber — incorrect
+            // behavior. Phase 2 / item #3 (spec_jit_controller)
+            // will detect this via unhandled_opcode_count and
+            // deopt to the IR executor. For now, we ship the
+            // basic correctness path.
+            case OpIsError: {
+                // ops[0] = result_slot, ops[1] = value_slot
+                auto val = load(inst.ops[1]);
+                // Tag check: (val & 0x1F) == 0x11 (RefError encoded)
+                constexpr std::uint64_t REF_ERROR_MASK = 0x1F;
+                constexpr std::uint64_t REF_ERROR_TAG  = 0x11;
+                auto masked = irb->CreateAnd(val, c64(REF_ERROR_MASK));
+                auto is_err = irb->CreateICmpEQ(masked, c64(REF_ERROR_TAG));
+                store(inst.ops[0],
+                      irb->CreateSelect(is_err, c64(KWD_TRUE_VAL), c64(KWD_FALSE_VAL)));
+                return true;
+            }
+            case OpTryBegin: {
+                // ops[0] = handler_block, ops[1] = result_slot, ops[2] = payload_slot
+                auto handler_block = inst.ops[0];
+                auto payload_slot  = inst.ops[2];
+                irb->CreateCall(fn_exception_push, {c64(handler_block), c64(payload_slot)});
+                return true;
+            }
+            case OpTryEnd: {
+                // ops[0] = result_slot (mostly a no-op for the
+                // JIT — the try body's result was already in a
+                // separate slot; the IR executor's TryEnd is also
+                // a no-op for the same reason).
+                irb->CreateCall(fn_exception_pop);
+                return true;
+            }
+            case OpRaise: {
+                // ops[0] = result_slot, ops[1] = cause_slot
+                auto cause = load(inst.ops[1]);
+                // 1. Read the top frame's payload_slot, store cause
+                auto payload = irb->CreateCall(fn_exception_top_payload, {});
+                auto payload_i32 = irb->CreateTrunc(payload, llvm::Type::getInt32Ty(ctx));
+                auto gep = irb->CreateGEP(llvm::Type::getInt64Ty(ctx),
+                                          llvm_locals[0], payload_i32);
+                irb->CreateStore(cause, gep);
+                // 2. Read the top frame's handler_block
+                auto handler = irb->CreateCall(fn_exception_top_handler, {});
+                auto handler_i32 = irb->CreateTrunc(handler, llvm::Type::getInt32Ty(ctx));
+                // 3. Store the cause to result slot (for the handler's reading)
+                store(inst.ops[0], cause);
+                // 4. Dispatch on handler_i32 to the right LLVM block.
+                //    Build a switch instruction: each block_id gets
+                //    its own case. The default branch is a trap
+                //    (unreachable) — the IR executor's behavior for
+                //    a Raise with an empty exception stack is to
+                //    return an uncaught-exception error, which the
+                //    JIT will return via a follow-up commit. For
+                //    now, the trap is the soundest fallback (better
+                //    than silently continuing with wrong state).
+                auto* parent = irb->GetInsertBlock()->getParent();
+                auto* dispatch_bb = llvm::BasicBlock::Create(ctx, "raise_dispatch", parent);
+                auto* default_bb  = llvm::BasicBlock::Create(ctx, "raise_trap", parent);
+                irb->CreateBr(dispatch_bb);
+                irb->SetInsertPoint(dispatch_bb);
+                auto* si = irb->CreateSwitch(handler_i32, default_bb, block_map.size());
+                for (auto& kv : block_map) {
+                    si->addCase(llvm::ConstantInt::get(
+                        llvm::Type::getInt32Ty(ctx), kv.first), kv.second);
+                }
+                irb->SetInsertPoint(default_bb);
+                irb->CreateUnreachable();
+                // After the trap, the next IRBuilder instruction
+                // would be in a new block. Set up a fresh block
+                // for any subsequent code (the outer loop in
+                // compile() handles the next source block; if
+                // Raise was the last instruction in this source
+                // block, this is unused).
+                auto* cont_bb = llvm::BasicBlock::Create(ctx, "raise_cont", parent);
+                irb->SetInsertPoint(cont_bb);
                 return true;
             }
 
