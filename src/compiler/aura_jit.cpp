@@ -773,6 +773,19 @@ struct LLVMBuilder {
                 double d;
                 std::memcpy(&d, &bits, sizeof(d));
                 auto fp = llvm::ConstantFP::get(llvm::Type::getDoubleTy(ctx), d);
+                // Issue #199: aura_alloc_float intrinsic (3/4 of
+                // the #194 migration). Bumps intrinsic_count on
+                // every OpConstF64. The full migration would
+                // inline the pool index into the JIT's value
+                // (using NaN-boxing or a sentinel tag), skipping
+                // the runtime call entirely. Requires updates to
+                // aura_float_ref to recognize the new tag. This
+                // commit is the metric signal; the full inlining
+                // is the follow-up.
+                if (metrics) {
+                    metrics->intrinsic_count.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
                 auto call = irb->CreateCall(fn_alloc_float, {fp});
                 store(inst.ops[0], call);
                 return true;
@@ -783,6 +796,20 @@ struct LLVMBuilder {
                 if (string_pool && inst.ops[1] < string_pool->size())
                     str_content = (*string_pool)[inst.ops[1]];
                 auto str_ptr = irb->CreateGlobalStringPtr(str_content);
+                // Issue #198: aura_alloc_string intrinsic (2/4 of
+                // the #194 migration). Bumps intrinsic_count on
+                // every OpConstString. The full migration would
+                // inline the string's global pointer with a
+                // distinct tag (different from the pool-index
+                // encoding) so aura_string_ref can find it without
+                // a pool lookup. Requires updates to aura_string_ref
+                // to recognize the new tag. This commit is the
+                // metric signal; the full inlining is the
+                // follow-up.
+                if (metrics) {
+                    metrics->intrinsic_count.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
                 auto call = irb->CreateCall(fn_alloc_string, {str_ptr});
                 store(inst.ops[0], call);
                 return true;
@@ -1046,6 +1073,24 @@ struct LLVMBuilder {
                 if (inst_shape(inst) == SHAPE_PAIR &&
                     fn.escape_map && result_slot < fn.local_count &&
                     !fn.escape_map[result_slot]) {
+                    // L2 SPECIALIZED: stack-allocate the pair.
+                    // Issue #200: aura_alloc_pair_arena intrinsic
+                    // (4/4 of the #194 migration). Bumps
+                    // intrinsic_count on every L2 specialization.
+                    // The L2 alloca is currently scaffolded but
+                    // incomplete (the heap call is still made for
+                    // safety; see the alloca + (void)cdr + heap
+                    // call pattern below). The full L2
+                    // specialization requires updates to the
+                    // runtime's car/cdr/alloc helpers to recognize
+                    // stack-allocated pairs (different tag pattern
+                    // from heap pairs). This commit is the metric
+                    // signal; the full specialization is a
+                    // follow-up (L2 car/cdr dispatch).
+                    if (metrics) {
+                        metrics->intrinsic_count.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
                     // L2 SPECIALIZED: emit an alloca that IS the pair.
                     // We still encode the result as a pointer to the
                     // pair so existing pair-car/cdr code works.
