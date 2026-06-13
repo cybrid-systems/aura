@@ -66,7 +66,11 @@
 （pilot-40 note）test_issue_139（structural refactor primitives 验证）prep（short 导致 stop，full 恢复）。详见 evaluator.md §12。
 （pilot-41 note）test_issue_140（query:pattern with Ellipsis and hygiene 验证）prep（short 导致 stop，full 恢复）。详见 evaluator.md §12。
 （pilot-42 note）test_issue_141（full WorkspaceTree with COW, read-only, merge 验证）prep（short 导致 stop，full 恢复）。详见 evaluator.md §12。
-（pilot-43 note）test_issue_115（early light serve-only 验证）转换中。详见 evaluator.md §12 和 plan Phase 2。
+（pilot-43 note）test_issue_115（early light serve-only 验证）已转换。详见 evaluator.md §12。
+
+（pilot-44 note）test_issue_116（deferred CoercionNode insertion 验证）prep（short 导致 stop，full 恢复）。详见 evaluator.md §12。
+
+（pilot-45 note）test_issue_117（linear ownership validation fixes / full re-simulation + gradual+Linear boundary 验证）转换中（light）。详见 evaluator.md §12 和 plan Phase 2。
 
 ### Aura Layer (`lib/std/workspace.aura`)
 

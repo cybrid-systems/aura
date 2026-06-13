@@ -677,7 +677,25 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-35 prep**: test_issue_165 (macro re-expansion + SyntaxMarker TDD). Short hit build stop; full restored. See previous.
 
-**Phase 2 pilot-36**: Convert test_issue_166 (multi-layer cache invalidation Phase 1: epoch counter; verifies epoch on mutation, stale detection, basic flow). Long-standing prepped heavy. Attempt short + prep if needed. See plan Phase 2. Continuing to complete.
+**Phase 2 pilot-36 prep**: test_issue_166 (multi-layer cache invalidation Phase 1: epoch counter). Short hit stop; full restored. See previous.
+
+**Phase 2 pilot-37**: Converted test_issue_169 (Fine-grained Incremental Compilation v3 Phase 1: config flag). Short succeeded (11/11). See previous.
+
+**Phase 2 pilot-38 prep**: test_issue_159_bench (incremental compilation benchmark harness). Short hit re-gen; full restored. Benchmark success (1.00x overhead). See previous.
+
+**Phase 2 pilot-39 prep**: test_issue_138 (incremental dirty propagation / type checking for EDSL). Short hit stop; full restored. 14/14. See previous.
+
+**Phase 2 pilot-40 prep**: test_issue_139 (structural refactor primitives). Short hit stop; full restored. 13/13. See previous.
+
+**Phase 2 pilot-41 prep**: test_issue_140 (query:pattern EDSL with Ellipsis and basic hygiene). Short hit stop; full restored. 14/14. See previous.
+
+**Phase 2 pilot-42 prep**: test_issue_141 (full WorkspaceTree with COW, read-only, merge; all 18 workspace:* primitives end-to-end). Short hit stop; full restored. 22/22. See previous.
+
+**Phase 2 pilot-43**: Converted test_issue_115 (early light serve-only: fiber/worker/scheduler/gc). Short clean. 6/6. See previous.
+
+**Phase 2 pilot-44 prep**: test_issue_116 (deferred CoercionNode insertion; TypeChecker no longer mutates in-place). Short hit stop; full restored. See previous.
+
+**Phase 2 pilot-45**: Convert test_issue_117 (linear ownership validation fixes: TypeChecker full re-simulation mode + gradual+Linear boundary check; 6 regression scenarios). Light (serve + parser + core + value + type_checker). See plan Phase 2. Continuing early full blocks to complete the dedup.
 
 ```scheme
 ; happy path
