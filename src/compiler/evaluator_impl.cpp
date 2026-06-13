@@ -346,17 +346,19 @@ void EnvFrame::bind_symid(aura::ast::SymId s, types::EvalValue v) {
 // EnvFrame::lookup_local — Env::lookup minus parent walk +
 // primitive + ADT fallbacks. Pure frame-local lookup. Use
 // Evaluator::walk_env_frames for chain-aware lookup.
+//
+// P0 migration: EnvFrame no longer holds a cells_ pointer
+// (removed from struct for pure data / no pointer-to-heap).
+// If the bound value is a cell sentinel, we return it as-is.
+// Cell resolution is centralized in the Evaluator's
+// lookup_by_symid_chain (and legacy Env paths) using the
+// owning Evaluator's central cells_ pmr::vector. This
+// makes frames fully index-driven and reallocation-safe.
 std::optional<types::EvalValue> EnvFrame::lookup_local(
     const std::string& n) const {
     for (auto it = bindings_.rbegin(); it != bindings_.rend(); ++it) {
         if (it->first == n) {
-            auto& v = it->second;
-            if (is_cell(v) && cells_) {
-                auto idx = as_cell_id(v);
-                if (idx < cells_->size())
-                    return (*cells_)[idx];
-            }
-            return v;
+            return it->second;  // sentinel returned; deref happens at caller (Evaluator chain or legacy)
         }
     }
     return std::nullopt;
@@ -364,17 +366,14 @@ std::optional<types::EvalValue> EnvFrame::lookup_local(
 
 // EnvFrame::lookup_local_by_symid — Env::lookup_by_symid minus
 // parent walk. Pure frame-local SymId compare.
+//
+// P0 migration: same as lookup_local — return raw sentinel
+// (cell or not). Central deref lives in Evaluator.
 std::optional<types::EvalValue> EnvFrame::lookup_local_by_symid(
     aura::ast::SymId s) const {
     for (auto it = bindings_symid_.rbegin(); it != bindings_symid_.rend(); ++it) {
         if (it->first == s) {
-            auto& v = it->second;
-            if (is_cell(v) && cells_) {
-                auto idx = as_cell_id(v);
-                if (idx < cells_->size())
-                    return (*cells_)[idx];
-            }
-            return v;
+            return it->second;
         }
     }
     return std::nullopt;
@@ -384,6 +383,10 @@ std::optional<types::EvalValue> EnvFrame::lookup_local_by_symid(
 // its id. The id is the new size()-1 of env_frames_. Returns
 // NULL_ENV_ID on overflow (>4G envs, which is unreachable in
 // practice for a single evaluator lifetime).
+//
+// P0 (EnvFrame SoA): frames are allocated with only parent_id +
+// primitives_. No cells_ pointer (pure data). Cell resolution
+// centralized later in lookup paths using Evaluator::cells_.
 aura::compiler::EnvId Evaluator::alloc_env_frame(
     EnvId parent_id, const Primitives* primitives) {
     if (env_frames_.size() >= NULL_ENV_ID) {
@@ -407,12 +410,11 @@ aura::compiler::EnvId Evaluator::alloc_env_frame(
 // position in the SoA arena); callers can override with an
 // explicit parent_id if they want to re-parent the frame.
 //
-// Only bindings_ + bindings_symid_ are mirrored — primitives_,
-// pool_, cells_ are NOT, because in the closure-application
-// hot path these get re-set on the materialized Env copy
-// (see apply_closure). Mirroring them here would be wasted
-// work and would risk divergence if the captured env pointed
-// at cells_ that get reallocated.
+// P0: Only bindings_ + bindings_symid_ are mirrored.
+// primitives_/pool_/cells_ deliberately not part of the frame
+// (cells_ removed entirely from EnvFrame struct in P0 step 1;
+// resolution centralized on Evaluator). This keeps frames
+// as pure, index-only data.
 aura::compiler::EnvId Evaluator::alloc_env_frame_from_env(
     const Env& e, EnvId parent_id) {
     EnvId pid = (parent_id != NULL_ENV_ID) ? parent_id : e.parent_id();
@@ -469,15 +471,30 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
 // Evaluator::lookup_by_symid_chain — demonstrate the SoA walk.
 // Walks env_frames_ via index lookup (no pointer chase) and
 // returns the first match (closest frame wins, shadowing
-// semantics match Env::lookup_by_symid). Cell references are
-// dereferenced via the frame's cells_ pointer.
+// semantics match Env::lookup_by_symid).
+//
+// P0: Cell deref is now centralized here using the Evaluator's
+// own central `cells_` pmr vector (the only owner of the
+// re-allocatable cell heap). EnvFrame no longer stores a
+// cells_ pointer; frames are pure data + indices. This is
+// the canonical path for new SoA code. Legacy Env paths
+// (still using Env::cells_ pointer) remain for transition.
 std::optional<types::EvalValue> Evaluator::lookup_by_symid_chain(
     EnvId start, aura::ast::SymId s) const {
     std::optional<types::EvalValue> result;
     walk_env_frames(start, [&](EnvId, const EnvFrame& fr) {
         auto v = fr.lookup_local_by_symid(s);
         if (v.has_value()) {
-            result = std::move(v);
+            auto val = *v;
+            if (is_cell(val)) {
+                auto idx = as_cell_id(val);
+                if (idx < cells_.size())
+                    result = cells_[idx];
+                else
+                    result = val; // defensive
+            } else {
+                result = std::move(val);
+            }
             return false;  // stop walking — closest frame wins
         }
         return true;  // continue walking
