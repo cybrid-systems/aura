@@ -150,7 +150,10 @@ Each migration is independent and ships as a small commit.
 |---|---|---|---|---|
 | 2026-06-13 | Phase 2 / item #2 (AOT entry points) | f432d4b | 5/5 | shipped |
 | 2026-06-13 | Phase 1 / item #1 (Apply + CaptureRef + visible default) | 1f8c097 | 18/18 | shipped |
+| 2026-06-13 | ENUM FIX: 14 IROpcodes were silently wrong (off-by-one) | 84fbd67 | 18/18 | soundness fix |
 | TBD | Phase 1 / item #2 (try/catch IR + LLVM EH) | TBD | TBD | next |
+| TBD | Phase 2 / item #1 (spec_jit_controller + shape spec) | TBD | TBD | pending |
+| TBD | Phase 2 / item #3 (runtime → LLVM intrinsics) | TBD | TBD | pending |
 
 ## Notes for future sessions
 
