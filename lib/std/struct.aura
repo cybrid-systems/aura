@@ -3,8 +3,18 @@
 ;
 ; (define-struct Name (field1 field2 ...))
 ;   generates make-Name, Name?, Name-field1, Name-field2, ...
+;
+; Issue #182 (Cycle 1): switched from `defmacro` (legacy) to
+; `define-hygienic-macro` (#121) so the field names in the
+; make function's body are properly bound to the lambda's
+; parameters, not the macro's lexical scope. The legacy
+; `defmacro` was silently capturing the field symbols from
+; the macro's local environment, producing broken
+; constructors (e.g., make-foo with fields (a b) would
+; create a vector containing the symbols a and b, not
+; their values).
 
-(defmacro (define-struct name fields)
+(define-hygienic-macro (define-struct name fields)
   (let ((mk (symbol-append "make-" name))
         (pred (symbol-append name "?")))
     (let build ((i 1) (fs fields) (acc

@@ -163,12 +163,9 @@ std::optional<EvalValue> Env::lookup(const std::string& n) const {
     for (auto it = bindings_.rbegin(); it != bindings_.rend(); ++it)
         if (it->first == n) {
             auto& v = it->second;
-            // If the binding is a cell reference, dereference it
-            if (is_cell(v) && cells_) {
-                auto idx = as_cell_id(v);
-                if (idx < cells_->size())
-                    return (*cells_)[idx];
-            }
+            // P0 step 2: return raw (cell sentinel if applicable).
+            // No cells_ member on Env. Deref centralized in Evaluator
+            // scope using its cells_ (or explicit for cell ptr paths).
             return v;
         }
     // 2. Check parent
@@ -234,13 +231,11 @@ void Env::bind_symid(aura::ast::SymId s, types::EvalValue v) {
 std::optional<types::EvalValue> Env::lookup_by_symid(aura::ast::SymId s) const {
     for (auto it = bindings_symid_.rbegin(); it != bindings_symid_.rend(); ++it) {
         if (it->first == s) {
-            auto& v = it->second;
-            if (is_cell(v) && cells_) {
-                auto idx = as_cell_id(v);
-                if (idx < cells_->size())
-                    return (*cells_)[idx];
-            }
-            return v;
+            // P0 step 2: return raw binding (sentinel as-is). No cells_
+            // member anymore. Deref (if cell) happens at caller using
+            // central Evaluator cells_ when in Evaluator scope, or
+            // explicit cells param for mutation paths (lookup_cell_*).
+            return it->second;
         }
     }
     return parent_ ? parent_->lookup_by_symid(s) : std::nullopt;
@@ -9070,7 +9065,9 @@ Evaluator::Evaluator() {
     };
 
     top_.set_primitives(&primitives_);
-    top_.set_cells(&cells_);
+    top_.// P0 step 2: set_cells wiring removed (no cells_ member on Env/EnvFrame;
+// cell resolution always via Evaluator central cells_ or passed
+// to lookup_cell_ptr/index).
     // Issue #145 Phase 2.2: register top_ env with this
     // Evaluator's env_frames_ SoA arena. The frame's bindings_
     // stay in top_ itself (we don't copy into env_frames_) —
@@ -15356,7 +15353,9 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     // module eval stay valid for the module's lifetime.
     auto* mod_env = mod_arena.create<Env>(&top_);
     mod_env->set_primitives(&primitives_);
-    mod_env->set_cells(&cells_);
+    mod_env->// P0 step 2: set_cells wiring removed (no cells_ member on Env/EnvFrame;
+// cell resolution always via Evaluator central cells_ or passed
+// to lookup_cell_ptr/index).
 
     // 7. Clear any stale export set from previous module loads
     if (current_export_set_)
@@ -15673,7 +15672,9 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid,
         // otherwise fall back to the legacy `cl.env` pointer copy.
         Env ne = materialize_call_env(cl);
         ne.set_primitives(&primitives_);
-        ne.set_cells(&cells_);
+        ne.// P0 step 2: set_cells wiring removed (no cells_ member on Env/EnvFrame;
+// cell resolution always via Evaluator central cells_ or passed
+// to lookup_cell_ptr/index).
         // Issue #145: set the pool so bind_symid can mirror
         // lambda params into the string-keyed bindings_ array
         // (so body code's lookup(name) still finds them).
@@ -16541,7 +16542,9 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 // Create new env and bind
                 Env new_env(&env);
                 new_env.set_primitives(&primitives_);
-                new_env.set_cells(&cells_);
+                new_env.// P0 step 2: set_cells wiring removed (no cells_ member on Env/EnvFrame;
+// cell resolution always via Evaluator central cells_ or passed
+// to lookup_cell_ptr/index).
                 for (auto& [n, v] : bindings)
                     new_env.bind(n, v);
                 // Evaluate body in new env
@@ -16608,7 +16611,9 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
             // Build tail env with regular params bound.
             Env tail_env(&env);
             tail_env.set_primitives(&primitives_);
-            tail_env.set_cells(&cells_);
+            tail_env.// P0 step 2: set_cells wiring removed (no cells_ member on Env/EnvFrame;
+// cell resolution always via Evaluator central cells_ or passed
+// to lookup_cell_ptr/index).
             if (md.pool) tail_env.set_pool(md.pool);
             for (std::size_t i = 0; i < md.params.size() && i < cargs.size(); ++i) {
                 tail_env.bind(md.params[i], std::move(cargs[i]));
@@ -16659,7 +16664,9 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                     // Create tail env and apply
                     Env tail_env = materialize_call_env(cl);
                     tail_env.set_primitives(&primitives_);
-                    tail_env.set_cells(&cells_);
+                    tail_env.// P0 step 2: set_cells wiring removed (no cells_ member on Env/EnvFrame;
+// cell resolution always via Evaluator central cells_ or passed
+// to lookup_cell_ptr/index).
                     // Issue #145: set the pool so bind_symid can mirror
                     if (cl.pool) tail_env.set_pool(cl.pool);
                     for (std::size_t i = 0; i < cargs.size() && i < cl.params.size(); ++i)
@@ -16700,7 +16707,9 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
             }
             Env tail_env = materialize_call_env(cl);
             tail_env.set_primitives(&primitives_);
-            tail_env.set_cells(&cells_);
+            tail_env.// P0 step 2: set_cells wiring removed (no cells_ member on Env/EnvFrame;
+// cell resolution always via Evaluator central cells_ or passed
+// to lookup_cell_ptr/index).
             // Issue #145: set the pool so bind_symid can mirror
             if (cl.pool) tail_env.set_pool(cl.pool);
             for (std::size_t i = 0; i < cargs.size() && i < cl.params.size(); ++i)
@@ -17072,7 +17081,9 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                         }
                         tail_env.emplace(&eval_env);
                         tail_env->set_primitives(&primitives_);
-                        tail_env->set_cells(&cells_);
+                        tail_env->// P0 step 2: set_cells wiring removed (no cells_ member on Env/EnvFrame;
+// cell resolution always via Evaluator central cells_ or passed
+// to lookup_cell_ptr/index).
                         for (std::size_t i = 0; i < iargs.size(); ++i) {
                             tail_env->bind(std::string(p->resolve(pspan[i])), std::move(iargs[i]));
                         }
@@ -17180,7 +17191,9 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                 is_rest ? md.params.size() - 1 : md.params.size();
                             tail_env.emplace(&eval_env);
                             tail_env->set_primitives(&primitives_);
-                            tail_env->set_cells(&cells_);
+                            tail_env->// P0 step 2: set_cells wiring removed (no cells_ member on Env/EnvFrame;
+// cell resolution always via Evaluator central cells_ or passed
+// to lookup_cell_ptr/index).
 
                             for (std::size_t i = 0; i < regular_count && i + 1 < v.children.size();
                                  ++i) {
@@ -17399,7 +17412,9 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                             // Create child env with %cap:name bindings
                             tail_env.emplace(&eval_env);
                             tail_env->set_primitives(&primitives_);
-                            tail_env->set_cells(&cells_);
+                            tail_env->// P0 step 2: set_cells wiring removed (no cells_ member on Env/EnvFrame;
+// cell resolution always via Evaluator central cells_ or passed
+// to lookup_cell_ptr/index).
                             for (auto& cap : caps)
                                 tail_env->bind("%cap:" + cap, make_bool(true));
                             // Push to capability_stack_ for capability-stack readout
@@ -17588,7 +17603,9 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                         }
                         tail_env = materialize_call_env(cl);
                         tail_env->set_primitives(&primitives_);
-                        tail_env->set_cells(&cells_);
+                        tail_env->// P0 step 2: set_cells wiring removed (no cells_ member on Env/EnvFrame;
+// cell resolution always via Evaluator central cells_ or passed
+// to lookup_cell_ptr/index).
                         // Issue #145: set the pool so bind_symid can mirror
                         if (cl.pool) tail_env->set_pool(cl.pool);
                         for (std::size_t i = 0; i < cargs.size(); ++i) {
@@ -17643,7 +17660,9 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                 // 创建隔离环境
                                 Env mod_env(&eval_env);
                                 mod_env.set_primitives(&primitives_);
-                                mod_env.set_cells(&cells_);
+                                mod_env.// P0 step 2: set_cells wiring removed (no cells_ member on Env/EnvFrame;
+// cell resolution always via Evaluator central cells_ or passed
+// to lookup_cell_ptr/index).
 
                                 // 绑定类型参数到环境（按原始参数名）
                                 for (std::size_t ai = 1; ai < v.children.size(); ++ai) {
@@ -17946,7 +17965,9 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                         // binding)
                         tail_env.emplace(&eval_env);
                         tail_env->set_primitives(&primitives_);
-                        tail_env->set_cells(&cells_);
+                        tail_env->// P0 step 2: set_cells wiring removed (no cells_ member on Env/EnvFrame;
+// cell resolution always via Evaluator central cells_ or passed
+// to lookup_cell_ptr/index).
                         std::size_t ci = cells_.size();
                         cells_.push_back(make_void());
                         tail_env->bind(std::string(name), make_cell(ci));
@@ -18032,7 +18053,9 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                         }
 
                         auto& me = const_cast<Env&>(eval_env);
-                        me.set_cells(&cells_);
+                        me.// P0 step 2: set_cells wiring removed (no cells_ member on Env/EnvFrame;
+// cell resolution always via Evaluator central cells_ or passed
+// to lookup_cell_ptr/index).
                         auto ci = cells_.size();
                         cells_.push_back(*vv);
                         me.bind(std::string(name), make_cell(ci));
@@ -18048,7 +18071,9 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                     // This avoids C++ complexity and works with existing pair infrastructure.
                     auto type_name = p->resolve(v.sym_id);
                     Env& me = const_cast<Env&>(eval_env);
-                    me.set_cells(&cells_);
+                    me.// P0 step 2: set_cells wiring removed (no cells_ member on Env/EnvFrame;
+// cell resolution always via Evaluator central cells_ or passed
+// to lookup_cell_ptr/index).
 
                     for (auto cid : v.children) {
                         if (cid >= f->size())
@@ -18128,7 +18153,9 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                     auto name = p->resolve(v.sym_id);
                     auto val_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
                     Env& me = const_cast<Env&>(eval_env);
-                    me.set_cells(&cells_);
+                    me.// P0 step 2: set_cells wiring removed (no cells_ member on Env/EnvFrame;
+// cell resolution always via Evaluator central cells_ or passed
+// to lookup_cell_ptr/index).
 
                     // Check if already bound as a cell — update existing cell to maintain
                     // sequential define chains across multiple eval calls
@@ -18217,7 +18244,9 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                         std::vector<std::size_t> cell_ids;
                         {
                             auto& mutable_env = const_cast<Env&>(eval_env);
-                            mutable_env.set_cells(&cells_);
+                            mutable_env.// P0 step 2: set_cells wiring removed (no cells_ member on Env/EnvFrame;
+// cell resolution always via Evaluator central cells_ or passed
+// to lookup_cell_ptr/index).
                             for (auto& d : letrec_defs) {
                                 auto ci = alloc_cell(make_void());
                                 mutable_env.bind(d.first, make_cell(ci));
@@ -18410,7 +18439,9 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
 
                     // Bind Name in the current env (as a cell with functor marker)
                     Env& me = const_cast<Env&>(eval_env);
-                    me.set_cells(&cells_);
+                    me.// P0 step 2: set_cells wiring removed (no cells_ member on Env/EnvFrame;
+// cell resolution always via Evaluator central cells_ or passed
+// to lookup_cell_ptr/index).
                     auto ci = alloc_cell(make_void());
                     auto sidx = string_heap_.size();
                     string_heap_.push_back("%functor");
@@ -18508,7 +18539,9 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                         auto var_name = p->resolve(static_cast<aura::ast::SymId>(v.int_value));
                         if (!var_name.empty()) {
                             auto& me = const_cast<Env&>(eval_env);
-                            me.set_cells(&cells_);
+                            me.// P0 step 2: set_cells wiring removed (no cells_ member on Env/EnvFrame;
+// cell resolution always via Evaluator central cells_ or passed
+// to lookup_cell_ptr/index).
                             auto ci = cells_.size();
                             cells_.push_back(*child_result);
                             me.bind(std::string(var_name), make_cell(ci));
