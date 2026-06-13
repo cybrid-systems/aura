@@ -196,4 +196,15 @@ std::uint64_t SpecJITController::unhandled_opcode_count() const {
     return jit_.metrics().unhandled_opcode_count.load(std::memory_order_relaxed);
 }
 
+// Issue #193: per-function deopt signal. Replaces the
+// conservative should_deopt_specialization() for callers that
+// know which function they're specializing.
+bool SpecJITController::should_deopt_specialization_for(const std::string& fn_name) const {
+    return unhandled_opcode_count_for(fn_name) > 0;
+}
+
+std::uint64_t SpecJITController::unhandled_opcode_count_for(const std::string& fn_name) const {
+    return jit_.unhandled_opcode_count_for_function(fn_name.c_str());
+}
+
 }  // namespace aura::compiler::shape
