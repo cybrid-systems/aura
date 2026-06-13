@@ -46,6 +46,7 @@
 （pilot-20 note）test_issue_139（structural refactor primitives 验证）已转换。
 （pilot-21 note）test_issue_140（query:pattern with Ellipsis and hygiene 验证）已转换。
 （pilot-22 note）test_issue_141（full WorkspaceTree with COW, read-only, merge 验证）已转换。
+（pilot-23 note）test_issue_142（composite query:where/filter + mutate:replace-subtree with capture/hygiene/rollback 验证）已转换（prep，heavy 模式 full block 保留用于 build 健康）。详见 evaluator.md §12 和 plan Phase 2。
 
 ### Aura Layer (`lib/std/workspace.aura`)
 

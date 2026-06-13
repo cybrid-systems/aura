@@ -19,6 +19,7 @@ ADT extraction (Step 2.3 + 3.2 hygiene): state moved to adt_runtime_ (exact FFI 
 
 merr + ADT phases: small-step complete per approved roadmap.
 （Phase 2 pilot note）CMake 3-pilot dedup via `aura_add_issue_test` helper started (post-5.2); see developer/evaluator.md §12 + CMakeLists near pilots.
+（pilot-23 note）test_issue_142（query where/filter + mutate:replace-subtree 验证）已 prep 转换（heavy，full block 健康保留）。详见 evaluator.md §12。
 
 ### C++ Core Layer (`src/compiler/evaluator_impl.cpp` / `service.ixx` / `src/core/ast.ixx`)
 

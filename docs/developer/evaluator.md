@@ -651,6 +651,8 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-22**: Converted test_issue_141 (full WorkspaceTree with COW, read-only permissions, and merge primitives; all 18 workspace:* primitives end-to-end). See CMakeLists.txt (141 block) + plan Phase 2.
 
+**Phase 2 pilot-23**: Converted (prep) test_issue_142 (composite query:where/filter + mutate:replace-subtree with capture/hygiene/rollback; 11 AC tests). Heavy (full serve/eval/JIT/LLVM + observability). Short form attempted; block restored full for build health (heavy pattern). See CMakeLists.txt (142 block) + plan Phase 2. Continuing the chain of similar one-at-a-time dedup ("这些类似的就一直做下去").
+
 ```scheme
 ; happy path
 (display (foo 42))            ; expect 84
