@@ -762,6 +762,8 @@ See evaluator.ixx (Closure, Env, EnvFrame, alloc/materialize decls), evaluator_i
 
 **Phase 2 pilot-73 prep**: test_issue_126 (pure functions from CompilerService/Evaluator + ir_cache_pure, 4 main tests). Short aura_add attempted (very light, only core impls + ir_cache etc); hit module dep (lowering/ir). Full restored. History passes from batch. Docs updated. (Refs: plan, "继续".)
 
+**Phase 2 pilot-74 prep**: test_issue_127 (Result<T> pipeline-stage aliases + lower_to_ir_result). Short aura_add attempted (light + observability + ir); hit module dep (lowering). Full restored via checkout for health. History counts from batch. Docs updated. (Refs: plan Phase 2, "继续", P0 complete.)
+
 Continuing the chain; early lights 118+ and remaining prepped heavies now converted/prepped. All per plan.
 
 ```scheme
