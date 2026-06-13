@@ -972,12 +972,25 @@ private:
 
     // ── Def-Use Analysis (P1) ───────────────────────────────────
     void* defuse_index_ = nullptr;
-    std::uint64_t defuse_version_ = 0;  // incremented on each mutation
+    // Issue #184: defuse_version_ is std::atomic so other fibers /
+    // threads can read it without a torn read, and so the version
+    // bump performed by enter_mutation_boundary() is a release-store
+    // that publishes prior mutation writes to any thread that
+    // subsequently acquire-loads. The orderings are:
+    //   - write (mutation): memory_order_release — the increment
+    //     publishes all mutation writes to acquirers.
+    //   - read (JIT deopt check, fiber resume check, etc.):
+    //     memory_order_acquire — synchronizes with prior releases.
+    //   - read for stats / debug: memory_order_relaxed is fine.
+    std::atomic<std::uint64_t> defuse_version_{0};
     // Issue #164: per-join defuse_version_ snapshot. Set at the
     // start of fiber:join's wait, re-checked at wakeup to detect
     // mutations that happened DURING the join (the "transient
     // inconsistency" the issue calls out). 0 means "no active
-    // wait" (fast-path or never-wait joins).
+    // wait" (fast-path or never-wait joins). Per-fiber; not atomic
+    // (owning fiber reads/writes; the wakeup check happens on the
+    // same fiber's worker thread). Issue #184 Cycle 3 may promote
+    // this to atomic if cross-fiber resume becomes a thing.
     std::uint64_t defuse_version_at_wait_ = 0;
     // (#10) Track mutation-affected symbols for targeted index rebuild
     // Mutation primitives push affected sym names here; ensure_defuse
@@ -1178,10 +1191,16 @@ public:
     // defuse_version_. The version is bumped so any pending
     // readers (holding shared locks from before this call) see
     // a version mismatch and deopt.
+    //
+    // Issue #184: the version load is acquire (synchronizes with
+    // prior release-stores from earlier mutations on other
+    // threads); the version increment is release (publishes any
+    // writes the caller will make under the boundary to acquirers
+    // on other threads).
     void enter_mutation_boundary() {
         std::unique_lock<std::shared_mutex> lock(workspace_mtx_);
-        g_mutation_stack.push_back({defuse_version_});
-        defuse_version_++;
+        g_mutation_stack.push_back({defuse_version_.load(std::memory_order_acquire)});
+        defuse_version_.fetch_add(1, std::memory_order_release);
     }
     // Exit a mutation boundary. Pops the checkpoint. If success
     // is true, the version advance is kept; if false, the
@@ -1205,6 +1224,61 @@ public:
     static std::size_t mutation_boundary_depth() {
         return g_mutation_stack.size();
     }
+
+    // ── Issue #184: MutationBoundaryGuard (RAII) ─────────────
+    // Acquires the exclusive workspace write lock + bumps
+    // defuse_version_ on construction, pops the checkpoint on
+    // destruction. Replaces manual enter/exit pairs so callers
+    // can't forget to pair them on the panic / early-return path.
+    //
+    // Usage:
+    //   bool ok = true;
+    //   {
+    //       MutationBoundaryGuard guard(evaluator, &ok);
+    //       // ... mutation work ...
+    //       // Set ok = false before destruction to request rollback.
+    //   }  // guard exits here; lock released; checkpoint popped.
+    //
+    // The success_flag is a pointer to a bool that the caller
+    // controls. On construction it's set to true (default);
+    // caller can set it to false to signal rollback intent.
+    // The exit path reads the flag (today both branches commit;
+    // the rollback path is a follow-up that requires hooking
+    // into MutationRecord (#142) and the defuse_index_
+    // restoration).
+    //
+    // Move-only (the lock + state can't be safely copied); do
+    // not copy. Construction blocks until the exclusive lock
+    // is acquired.
+    class MutationBoundaryGuard {
+    public:
+        MutationBoundaryGuard(Evaluator& ev, bool* success_flag) noexcept
+            : ev_(&ev), flag_(success_flag) {
+            if (flag_) *flag_ = true;  // optimistic default
+            ev_->enter_mutation_boundary();
+        }
+        ~MutationBoundaryGuard() {
+            if (!ev_) return;
+            bool success = flag_ ? *flag_ : true;
+            ev_->exit_mutation_boundary(success);
+        }
+        MutationBoundaryGuard(const MutationBoundaryGuard&) = delete;
+        MutationBoundaryGuard& operator=(const MutationBoundaryGuard&) = delete;
+        MutationBoundaryGuard(MutationBoundaryGuard&& o) noexcept
+            : ev_(o.ev_), flag_(o.flag_) { o.ev_ = nullptr; o.flag_ = nullptr; }
+        MutationBoundaryGuard& operator=(MutationBoundaryGuard&& o) noexcept {
+            if (this != &o) {
+                // Exit current if any, then steal.
+                if (ev_) ev_->exit_mutation_boundary(flag_ ? *flag_ : true);
+                ev_ = o.ev_; flag_ = o.flag_;
+                o.ev_ = nullptr; o.flag_ = nullptr;
+            }
+            return *this;
+        }
+    private:
+        Evaluator* ev_;
+        bool* flag_;
+    };
 public:
     // Issue #157 Phase 1: lock hooks for the JIT runtime bridges
     // (aura_lock_workspace_read/write + aura_unlock_workspace_read/write
@@ -1230,7 +1304,13 @@ public:
     // Phase 1b (deferred to follow-up) will use this in the L2
     // SHAPE_PAIR paths to do a version check at entry; on mismatch,
     // deopt to the slow path. For Phase 1 we just expose the accessor.
-    std::uint64_t get_defuse_version() const { return defuse_version_; }
+    //
+    // Issue #184: the accessor uses acquire ordering so the JIT
+    // runtime's version check synchronizes with any release-store
+    // performed by enter_mutation_boundary() on another thread.
+    std::uint64_t get_defuse_version() const {
+        return defuse_version_.load(std::memory_order_acquire);
+    }
 
     // Issue #157 Phase 1: yield-mutation-boundary hook for the JIT.
     // High-level mutate primitives call g_fiber_yield_mutation_boundary
