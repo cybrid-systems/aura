@@ -48,7 +48,8 @@
 （pilot-22 note）test_issue_141（full WorkspaceTree with COW, read-only, merge 验证）已转换。
 （pilot-23 note）test_issue_142（composite query:where/filter + mutate:replace-subtree with capture/hygiene/rollback 验证）已转换（prep，heavy 模式 full block 保留用于 build 健康）。详见 evaluator.md §12 和 plan Phase 2。
 （pilot-24 note）test_issue_143（escape analysis IR pass integration 验证）已转换。详见 evaluator.md §12。
-（pilot-25 note）test_issue_144（C++26 contracts integration 验证）转换中（heavy）。详见 evaluator.md §12 和 plan Phase 2。
+（pilot-25 note）test_issue_144（C++26 contracts integration 验证）已转换。详见 evaluator.md §12。
+（pilot-26 note）test_issue_145（DOD/SoA Phase 1 partial 验证）转换中。详见 evaluator.md §12 和 plan Phase 2。
 
 ### Aura Layer (`lib/std/workspace.aura`)
 
