@@ -619,6 +619,8 @@ For a new primitive `foo`, the minimum coverage is in
 
 **Phase 2 pilot-6**: Converted test_issue_136 (AOT name-mangler + memory/AOT/benchmark verification). Lightweight (headers + src/compiler include). Base + early helper makes it 4 lines. See CMakeLists.txt (136 block) + plan Phase 2. Continuing one-at-a-time dedup.
 
+**Phase 2 pilot-7**: Converted test_issue_137 (full hygienic macros end-to-end + mutate compatibility + regression). Heavy (parser, serve, evaluator*, JIT, LLVM). Uses early helper + appends for the tail + rtti/LLVM bits. See CMakeLists.txt (137 block) + plan Phase 2.
+
 ```scheme
 ; happy path
 (display (foo 42))            ; expect 84
