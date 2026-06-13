@@ -130,6 +130,21 @@ static aura::ast::NodeId expand_inner_macros(
 static constexpr std::size_t MAX_ENV_DEPTH = 1024;
 thread_local std::size_t g_env_lookup_depth = 0;
 
+// Issue #177: per-fiber MutationCheckpoint stack. The
+// declaration is in Evaluator (evaluator.ixx); the
+// definition is here so the thread_local variable is in
+// exactly one TU. Each fiber has its own stack (thread_local
+// + the fibers are cooperative-scheduled on threads, so
+// they share the thread's thread_local; the stack is
+// per-fiber via the yield/enter mechanism — the fiber's
+// state includes the stack pointer or we re-establish
+// it on resume). For now, thread_local is the
+// conservative choice; per-fiber state in Fiber::state_
+// is a follow-up.
+thread_local std::vector<aura::compiler::Evaluator::MutationCheckpoint>
+    aura::compiler::Evaluator::g_mutation_stack;
+
+
 // ── ADT state now in adt_runtime_ (refactor Step 2.3, FFI pattern) ───────
 // The old global g_adt_constructors + AdtCtorEntry struct have been
 // removed. Per-Evaluator state is in adt_runtime_ (see adt_runtime.ixx/ _impl).
