@@ -7,10 +7,17 @@ module;
 #include <dirent.h>
 #include <dlfcn.h>
 #include <sys/socket.h>
+
 #include <netinet/in.h>
 #include "runtime_shared.h"
 #include "git_ctx.h"
 #include <contracts>
+
+// Issue #195: extern "C" declarations for the per-fiber
+// exception state API. Defined in aura_jit_runtime.cpp.
+extern "C" std::uint64_t aura_exception_depth();
+extern "C" std::uint64_t aura_exception_fiber_count();
+extern "C" void aura_exception_clear_all();
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <poll.h>
@@ -15251,6 +15258,28 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         if (!get_incremental_stats_fn_) return make_int(0);
         auto packed = get_incremental_stats_fn_();
         return make_int(static_cast<std::int64_t>(packed & 0xFFFF));
+    });
+
+    // (jit:exception-depth) — Issue #195: current fiber's
+    // exception stack depth. Reads from the per-fiber ExStack
+    // via the JIT runtime's hook (aura_fiber_current_id).
+    // Returns 0 if no exception state for the current fiber.
+    primitives_.add("jit:exception-depth", [this](const auto&) -> EvalValue {
+        return make_int(static_cast<std::int64_t>(aura_exception_depth()));
+    });
+    // (jit:exception-fibers) — Issue #195: number of distinct
+    // fiber ids that have exception state. Used for
+    // observability of the per-fiber ExStack map size.
+    primitives_.add("jit:exception-fibers", [this](const auto&) -> EvalValue {
+        return make_int(static_cast<std::int64_t>(
+            aura_exception_fiber_count()));
+    });
+    // (jit:exception-fibers-clear) — Issue #195: clear all
+    // per-fiber exception state. Returns void. Used by the
+    // session-reset path; safe to call from Aura code.
+    primitives_.add("jit:exception-fibers-clear", [this](const auto&) -> EvalValue {
+        aura_exception_clear_all();
+        return make_void();
     });
 
     // (concurrency:stats) — Issue #189 (P0): concurrency safety
