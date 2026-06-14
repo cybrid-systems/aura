@@ -319,6 +319,48 @@ std::optional<types::EvalValue> Env::lookup_by_symid(aura::ast::SymId s) const {
     return parent_ ? parent_->lookup_by_symid(s) : std::nullopt;
 }
 
+// Issue #207 (Cycle 1): bindings_with_names() — materializes
+// the named version of the bindings. Walks the SymId-keyed
+// bindings_symid_ array and resolves each SymId to a name
+// string via pool_->resolve(). Returns a new vector with
+// (name, value) pairs in the same order as bindings_symid_.
+//
+// This is the "current behavior, as a derived view" per the
+// issue body. The legacy bindings_ array still holds the
+// string-keyed version, but new code should use this helper
+// to read the named view (rather than reading bindings_
+// directly). When the migration completes (Cycle 2+), the
+// legacy bindings_ array is dropped and bindings_with_names()
+// becomes the only path to get a named view.
+//
+// For envs without pool_ set, the name is rendered as
+// "@<symid:N>" where N is the SymId value. This is a
+// fallback for envs that haven't been migrated yet.
+std::vector<std::pair<std::string, types::EvalValue>>
+Env::bindings_with_names() const {
+    std::vector<std::pair<std::string, types::EvalValue>> out;
+    out.reserve(bindings_symid_.size());
+    for (const auto& [sym, val] : bindings_symid_) {
+        std::string name;
+        if (pool_) {
+            // pool_->resolve() returns the canonical name
+            // (string_view) for this SymId. If the SymId
+            // is not in the pool (defensive), the resolved
+            // view is empty.
+            std::string_view resolved = pool_->resolve(sym);
+            if (!resolved.empty()) name.assign(resolved.data(),
+                                              resolved.size());
+        }
+        if (name.empty()) {
+            // Fallback: render the SymId as a string for
+            // display purposes.
+            name = "@symid:" + std::to_string(sym);
+        }
+        out.emplace_back(std::move(name), val);
+    }
+    return out;
+}
+
 // Issue #145 follow-up / Phase 2.5.0: lookup_by_intern — the
 // SymId-first migration scaffold for the eventual bindings_
 // drop. Takes a name string, interns via the given pool
