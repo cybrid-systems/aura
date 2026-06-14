@@ -1477,11 +1477,20 @@ public:
             for (std::size_t i = 0; i < module.functions.size(); ++i)
                 func_index_[i] = &module.functions[i];
         }
+        // Issue #203: build the call graph and compute SCCs
+        // for mutual-recursion detection. The inliner's
+        // recursion guard now skips inlining if the caller
+        // and callee are in the same strongly-connected
+        // component (i.e., reachable from each other through
+        // the call graph).
+        const auto call_graph = build_call_graph(module);
+        scc_id_of_fid_ = compute_sccs(module.functions.size(),
+                                       call_graph);
         for (std::size_t fi = 0; fi < module.functions.size(); ++fi) {
             auto& func = module.functions[fi];
             // Recursion guard: skip inlining back into the same
-            // function (direct recursion). Indirect recursion
-            // detection is a follow-up.
+            // function (direct recursion) OR into a function in
+            // the same SCC (mutual recursion). See #203.
             const auto caller_fid = static_cast<std::uint32_t>(fi);
             // Build slot → func_id map for this function
             std::unordered_map<std::uint32_t, std::uint32_t> slot_to_func;
@@ -1604,8 +1613,18 @@ private:
             auto it = slot_to_func.find(callee_slot);
             if (it == slot_to_func.end()) continue;  // dynamic callee
             auto callee_fid = it->second;
-            // Recursion guard: don't inline into self
+            // Recursion guard: don't inline into self OR into a
+            // function in the same SCC (mutual recursion).
+            // See Issue #203. The scc_id_of_fid_ map is built
+            // once per run() call; scc_id_of_fid_[i] == scc_id_of_fid_[j]
+            // iff i and j are in the same strongly-connected
+            // component of the call graph.
             if (callee_fid == caller_fid) continue;
+            if (callee_fid < scc_id_of_fid_.size() &&
+                caller_fid < scc_id_of_fid_.size() &&
+                scc_id_of_fid_[callee_fid] == scc_id_of_fid_[caller_fid]) {
+                continue;  // mutual recursion: same SCC
+            }
             // Look up the callee function
             if (callee_fid >= func_index_.size()) continue;
             const auto* callee = func_index_[callee_fid];
@@ -2143,6 +2162,108 @@ private:
     static inline std::size_t total_inlined_branch_aware_ = 0;
     // Issue #171: func_id → IRFunction* index for O(1) lookup.
     std::vector<const aura::ir::IRFunction*> func_index_;
+    // Issue #203: SCC membership per func_id. Rebuilt on
+    // each run() call. Two functions are mutually recursive
+    // iff scc_id_of_fid_[i] == scc_id_of_fid_[j]. This is
+    // a more general recursion guard than the direct
+    // callee_fid == caller_fid check (which only catches
+    // direct recursion).
+    std::vector<std::uint32_t> scc_id_of_fid_;
+
+    // Issue #203: build the call graph from a module. For
+    // each function f, finds all fids g such that f has a
+    // static Call to g (resolved via MakeClosure + Call).
+    // Returns graph[i] = list of fids called by function i.
+    // Functions that don't call anything get an empty list.
+    static std::vector<std::vector<std::uint32_t>> build_call_graph(
+        const aura::ir::IRModule& module) {
+        const std::size_t n = module.functions.size();
+        std::vector<std::vector<std::uint32_t>> graph(n);
+        for (std::size_t fi = 0; fi < n; ++fi) {
+            const auto& func = module.functions[fi];
+            // Build slot → func_id map for this function
+            std::unordered_map<std::uint32_t, std::uint32_t> slot_to_func;
+            for (const auto& block : func.blocks) {
+                for (const auto& instr : block.instructions) {
+                    if (instr.opcode == aura::ir::IROpcode::MakeClosure) {
+                        // MakeClosure(result_slot, func_id, ...)
+                        slot_to_func[instr.operands[0]] = instr.operands[1];
+                    }
+                }
+            }
+            // Find all Call instructions and resolve their callees.
+            // De-dupe (a function may call g multiple times).
+            std::unordered_set<std::uint32_t> callees;
+            for (const auto& block : func.blocks) {
+                for (const auto& instr : block.instructions) {
+                    if (instr.opcode != aura::ir::IROpcode::Call) continue;
+                    auto callee_slot = instr.operands[0];
+                    auto it = slot_to_func.find(callee_slot);
+                    if (it == slot_to_func.end()) continue;
+                    auto callee_fid = it->second;
+                    if (callee_fid >= n) continue;
+                    callees.insert(callee_fid);
+                }
+            }
+            graph[fi].assign(callees.begin(), callees.end());
+        }
+        return graph;
+    }
+
+    // Issue #203: Tarjan's SCC algorithm. Returns a vector
+    // scc_id where scc_id[i] = SCC id of node i. SCCs are
+    // numbered in reverse topological order (a later SCC has
+    // no edges to an earlier SCC). Two nodes are mutually
+    // reachable iff they have the same scc_id. O(V + E) time.
+    static std::vector<std::uint32_t> compute_sccs(
+        std::size_t n,
+        const std::vector<std::vector<std::uint32_t>>& graph) {
+        std::vector<std::int64_t> index(n, -1);
+        std::vector<std::int64_t> lowlink(n, -1);
+        std::vector<bool> on_stack(n, false);
+        std::vector<std::uint32_t> scc_id(n, 0);
+        std::vector<std::uint32_t> stack;
+        std::uint32_t next_index = 0;
+        std::uint32_t next_scc = 0;
+        // Recursive lambda (Tarjan's algorithm is naturally
+        // recursive; depth is bounded by the SCC size, which
+        // is bounded by n).
+        // We use std::function for the recursion so we can
+        // have a self-referential closure. The std::function
+        // heap-allocates the closure, which is fine for the
+        // one-time per-run cost.
+        std::function<void(std::uint32_t)> strongconnect =
+            [&](std::uint32_t v) {
+            index[v] = static_cast<std::int64_t>(next_index);
+            lowlink[v] = static_cast<std::int64_t>(next_index);
+            ++next_index;
+            stack.push_back(v);
+            on_stack[v] = true;
+            for (std::uint32_t w : graph[v]) {
+                if (w >= n) continue;
+                if (index[w] == -1) {
+                    strongconnect(w);
+                    lowlink[v] = std::min(lowlink[v], lowlink[w]);
+                } else if (on_stack[w]) {
+                    lowlink[v] = std::min(lowlink[v], index[w]);
+                }
+            }
+            if (lowlink[v] == index[v]) {
+                std::uint32_t w;
+                do {
+                    w = stack.back();
+                    stack.pop_back();
+                    on_stack[w] = false;
+                    scc_id[w] = next_scc;
+                } while (w != v);
+                ++next_scc;
+            }
+        };
+        for (std::uint32_t v = 0; v < n; ++v) {
+            if (index[v] == -1) strongconnect(v);
+        }
+        return scc_id;
+    }
 };
 
 // Issue #171: Tail Call Optimization (Priority 3).
