@@ -983,6 +983,13 @@ private:
     //     memory_order_acquire — synchronizes with prior releases.
     //   - read for stats / debug: memory_order_relaxed is fine.
     std::atomic<std::uint64_t> defuse_version_{0};
+    // Issue #189: total mutations counter (for observability).
+    // Bumped alongside defuse_version_ so dashboards can see
+    // "how many mutations has this evaluator processed" without
+    // having to interpret the version increment. Read via
+    // `total_mutations()`. Relaxed-ordering for stats; not
+    // used for control flow.
+    std::atomic<std::uint64_t> total_mutations_{0};
     // Issue #164: per-join defuse_version_ snapshot. Set at the
     // start of fiber:join's wait, re-checked at wakeup to detect
     // mutations that happened DURING the join (the "transient
@@ -1201,6 +1208,9 @@ public:
         std::unique_lock<std::shared_mutex> lock(workspace_mtx_);
         g_mutation_stack.push_back({defuse_version_.load(std::memory_order_acquire)});
         defuse_version_.fetch_add(1, std::memory_order_release);
+        // Issue #189: bump the total-mutations counter for
+        // observability. Relaxed because it's stats-only.
+        total_mutations_.fetch_add(1, std::memory_order_relaxed);
     }
     // Exit a mutation boundary. Pops the checkpoint. If success
     // is true, the version advance is kept; if false, the
@@ -1223,6 +1233,53 @@ public:
     // observability). Returns 0 if the stack is empty.
     static std::size_t mutation_boundary_depth() {
         return g_mutation_stack.size();
+    }
+
+    // Issue #189: reader-side version snapshot API. Fibers /
+    // JIT-compiled code / closure dispatch that need to detect
+    // concurrent mutations capture a snapshot via
+    // `defuse_version_snapshot()` and later check
+    // `is_version_current(snap)`. The snapshot is acquire-loaded
+    // so it synchronizes with prior release-stores from mutation
+    // boundaries.
+    //
+    // Usage:
+    //   auto snap = ev.defuse_version_snapshot();
+    //   // ... do work that may read AST/cells/pairs ...
+    //   if (!ev.is_version_current(snap)) {
+    //     // mutation happened during work; deopt / re-fetch /
+    //     // restart as needed
+    //   }
+    //
+    // This is the per-fiber equivalent of the issue's suggested
+    // `Fiber::snapshot_version_` — implemented on the Evaluator
+    // so the JIT/closure-dispatch paths can call it without
+    // needing a Fiber handle.
+    [[nodiscard]] std::uint64_t defuse_version_snapshot() const noexcept {
+        return defuse_version_.load(std::memory_order_acquire);
+    }
+    // Issue #189: returns true if `snap` still represents the
+    // current defuse version (no mutation happened between the
+    // snapshot and now). Returns false if a mutation has
+    // occurred (i.e., the workspace may have changed and cached
+    // AST/IR/cell data is potentially stale).
+    [[nodiscard]] bool is_version_current(std::uint64_t snap) const noexcept {
+        auto now = defuse_version_.load(std::memory_order_acquire);
+        return now == snap;
+    }
+    // Issue #189: observability accessor for the raw counter.
+    // Equivalent to defuse_version_snapshot() but with relaxed
+    // ordering (for stats / display only, not for control flow).
+    [[nodiscard]] std::uint64_t defuse_version_relaxed() const noexcept {
+        return defuse_version_.load(std::memory_order_relaxed);
+    }
+    // Issue #189: the total number of mutations ever applied to
+    // this evaluator (sum of all fetch_add increments since the
+    // evaluator was constructed). Tracked via a counter that's
+    // bumped alongside defuse_version_ in the MutationBoundaryGuard
+    // and the legacy fetch_add callsites.
+    [[nodiscard]] std::uint64_t total_mutations() const noexcept {
+        return total_mutations_.load(std::memory_order_relaxed);
     }
 
     // ── Issue #184: MutationBoundaryGuard (RAII) ─────────────
