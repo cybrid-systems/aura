@@ -461,6 +461,21 @@ public:
                 std::string n = name ? std::string(name) : std::string();
                 return clear_block_dirty_v2(n, func_idx, block_idx);
             });
+        // Issue #197: hook for (compile:inline-pass-stats).
+        // The hook reads the static lifetime counters
+        // maintained by InlinePass (process-wide totals).
+        // If the InlinePass hasn't been run yet, both
+        // counters are 0.
+        evaluator_.set_get_inline_stats_fn(
+            []() -> std::uint64_t {
+                std::uint64_t inlined =
+                    static_cast<std::uint64_t>(
+                        aura::compiler::InlinePass::total_inlined());
+                std::uint64_t branch_aware =
+                    static_cast<std::uint64_t>(
+                        aura::compiler::InlinePass::total_inlined_branch_aware());
+                return (branch_aware << 32) | (inlined & 0xFFFFFFFF);
+            });
         aura::messaging::g_current_compiler_service = this;
         // Setup messaging bridge (avoids circular module dependency)
         aura::messaging::g_messaging_bridge.send =
