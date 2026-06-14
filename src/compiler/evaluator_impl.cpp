@@ -15182,6 +15182,39 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         };
         return build_hash(kv);
     });
+    // (jit:intrinsic-count) — Issue #194: return the
+    // runtime→intrinsic migration counter from the AuraJIT.
+    // This is the per-commit observability signal for the 4
+    // candidates the issue body tracks. Returns 0 if no hook
+    // is installed (e.g. unit-test Evaluator without a JIT).
+    primitives_.add("jit:intrinsic-count", [this](const auto&) -> EvalValue {
+        if (!get_intrinsic_count_fn_) return make_int(0);
+        return make_int(static_cast<std::int64_t>(get_intrinsic_count_fn_()));
+    });
+    // (jit:deopt-fn? fn-name threshold) — Issue #193: returns
+    // #t if the function should be deopted (i.e., its
+    // unhandled-opcode count exceeds the threshold). Default
+    // threshold is 0 (any hit triggers deopt). Production code
+    // should pass a non-zero threshold (e.g. 10) to avoid
+    // thrashing on transient bugs during initial JIT warmup.
+    primitives_.add("jit:deopt-fn?", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_string(a[0])) return make_bool(false);
+        auto idx = as_string_idx(a[0]);
+        if (idx >= string_heap_.size()) return make_bool(false);
+        std::uint64_t threshold = 0;
+        if (a.size() >= 2 && is_int(a[1])) {
+            auto t = as_int(a[1]);
+            if (t < 0) t = 0;
+            threshold = static_cast<std::uint64_t>(t);
+        }
+        // The intrinsic_count check would need a separate hook
+        // for the per-function unhandled count. For now, we
+        // look up via the AuraJIT if it's installed. If the
+        // hook isn't installed, default to false (never deopt).
+        if (!get_jit_unhandled_count_fn_) return make_bool(false);
+        auto count = get_jit_unhandled_count_fn_(string_heap_[idx].c_str());
+        return make_bool(count > threshold);
+    });
 
     // (concurrency:stats) — Issue #189 (P0): concurrency safety
     // observability. Reports the current defuse_version_ (the

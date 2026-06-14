@@ -372,6 +372,27 @@ public:
                 if (!ws_flat || !ws_pool) return "";
                 return unparse_node(*ws_flat, *ws_pool, ws_flat->root, 0);
             });
+        // Issue #194: hook to query the runtime→intrinsic migration
+        // counter from the AuraJIT. Used by the (jit:intrinsic-count)
+        // Aura-level primitive. Returns 0 if no JIT is attached
+        // (e.g. --no-llvm build, unit-test Evaluator).
+        evaluator_.set_get_intrinsic_count_fn(
+            [this]() -> std::uint64_t {
+                // The Metrics struct on AuraJIT includes
+                // intrinsic_count (the per-lowering migration counter
+                // shipped in 9901a91). Access via Metrics() — returns
+                // a fresh struct snapshot, so reads are atomic.
+                // The intrinsic_count field is std::atomic<uint64_t>.
+                return jit_.metrics().intrinsic_count.load(
+                    std::memory_order_relaxed);
+            });
+        // Issue #193: hook to query the per-function
+        // unhandled-opcode count. Used by the (jit:deopt-fn?)
+        // primitive (Issue #193 follow-up).
+        evaluator_.set_get_jit_unhandled_count_fn(
+            [this](const char* name) -> std::uint64_t {
+                return jit_.unhandled_opcode_count_for_function(name);
+            });
         aura::messaging::g_current_compiler_service = this;
         // Setup messaging bridge (avoids circular module dependency)
         aura::messaging::g_messaging_bridge.send =

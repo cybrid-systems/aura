@@ -441,6 +441,27 @@ public:
     void set_try_jit_fn(std::function<TryJitFn> fn) {
         try_jit_fn_ = std::move(fn);
     }
+    // Issue #194: hook to query the runtime→intrinsic migration
+    // counter from the AuraJIT. The Evaluator doesn't have a
+    // direct pointer to the JIT (that's owned by
+    // CompilerService), so the service installs a hook that
+    // returns the current value. Returns 0 if no hook is
+    // installed (e.g. unit-test Evaluator without a JIT).
+    using GetIntrinsicCountFn = std::uint64_t();
+    std::function<GetIntrinsicCountFn> get_intrinsic_count_fn_ = nullptr;
+    void set_get_intrinsic_count_fn(std::function<GetIntrinsicCountFn> fn) {
+        get_intrinsic_count_fn_ = std::move(fn);
+    }
+    // Issue #193: hook to query the per-function unhandled-opcode
+    // count from the AuraJIT. fn-name is the Aura symbol name
+    // (e.g. "my-func"). Returns 0 if the function has never been
+    // compiled, or if no JIT hook is installed.
+    using GetJitUnhandledCountFn = std::uint64_t(const char*);
+    std::function<GetJitUnhandledCountFn> get_jit_unhandled_count_fn_ = nullptr;
+    void set_get_jit_unhandled_count_fn(
+        std::function<GetJitUnhandledCountFn> fn) {
+        get_jit_unhandled_count_fn_ = std::move(fn);
+    }
 
     // Mutation typecheck error state (P2 #34)
     const std::string& last_mutate_error() const { return last_mutate_error_; }
