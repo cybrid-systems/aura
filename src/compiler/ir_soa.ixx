@@ -74,6 +74,15 @@ export struct IRFunctionSoA {
     // Basic blocks: ranges into the SoA columns
     std::vector<BasicBlockSoA> blocks_;
 
+    // Issue #196: per-block dirty bitmask. One bit per block;
+    // 0 = clean (cached lowered IR is valid), 1 = dirty
+    // (block has been modified since the last lower, needs
+    // re-lower). Bumped by mark_define_dirty (full invalidate)
+    // and the smarter-re-lower (incremental, per-block).
+    // The "smarter re-lower" (follow-up) consults this mask to
+    // skip blocks whose cached IR is still valid.
+    std::pmr::vector<std::uint8_t> block_dirty_;
+
     // Number of instructions currently stored
     std::size_t size() const { return opcodes_.size(); }
 
@@ -93,6 +102,57 @@ export struct IRFunctionSoA {
         adt_variant_ids_.reserve(n);
         narrow_evidence_.reserve(n);
     }
+
+    // Issue #196: per-block dirty tracking. The bitmask is
+    // 1 byte per block (8 blocks packed per byte in the
+    // future if needed; for now 1 byte/block is fine).
+    // The "smarter re-lower" follow-up will consult
+    // is_block_dirty() to skip re-lowering clean blocks.
+
+    // Mark a single block dirty. Resizes the bitmask if
+    // needed (lazy resize on first call).
+    void mark_block_dirty(std::uint32_t block_id) {
+        if (block_id >= block_dirty_.size()) {
+            block_dirty_.resize(block_id + 1, 1);
+            return;
+        }
+        block_dirty_[block_id] = 1;
+    }
+
+    // Mark all blocks dirty (used by mark_define_dirty for
+    // a full invalidate). Cheaper than a loop of individual
+    // mark_block_dirty() calls.
+    void mark_all_blocks_dirty() {
+        for (auto& b : block_dirty_) b = 1;
+    }
+
+    // Clear a single block's dirty flag (called by the
+    // smarter-re-lower after re-lowering the block).
+    void clear_block_dirty(std::uint32_t block_id) {
+        if (block_id < block_dirty_.size()) {
+            block_dirty_[block_id] = 0;
+        }
+    }
+
+    // Query: is this block dirty? Returns 0 (clean) for
+    // out-of-range block_id (treat unknown as clean).
+    bool is_block_dirty(std::uint32_t block_id) const {
+        if (block_id >= block_dirty_.size()) return false;
+        return block_dirty_[block_id] != 0;
+    }
+
+    // Query: number of currently-dirty blocks. Used by the
+    // observability primitive.
+    std::size_t dirty_block_count() const {
+        std::size_t n = 0;
+        for (auto b : block_dirty_) if (b) ++n;
+        return n;
+    }
+
+    // Issue #196: public read-only view of the per-block dirty
+    // bitmask for the observability layer.
+    [[nodiscard]] const std::pmr::vector<std::uint8_t>&
+    block_dirty_column() const noexcept { return block_dirty_; }
 };
 
 // ── BasicBlockSoA ─────────────────────────────────────────────

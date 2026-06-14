@@ -418,6 +418,49 @@ public:
                 return (cache_size << 48) | (dirty_count << 32) |
                        (epoch << 16) | (edges & 0xFFFF);
             });
+        // Issue #196: per-block dirty hooks. Mirror the
+        // get_incremental_stats hook pattern: stateless
+        // lambdas that read the current state of
+        // ir_cache_v2_ on demand. No caching at the
+        // hook layer — the underlying reads are O(1) or
+        // O(num_functions_in_entry) which is also small
+        // (typically <10 functions per define).
+        evaluator_.set_get_dirty_block_count_fn(
+            [this](const char* name) -> std::uint64_t {
+                std::string n = name ? std::string(name) : std::string();
+                auto it = ir_cache_v2_.find(n);
+                if (it == ir_cache_v2_.end()) return 0;
+                return static_cast<std::uint64_t>(
+                    it->second.dirty_block_count());
+            });
+        evaluator_.set_get_func_dirty_block_count_fn(
+            [this](const char* name, std::size_t func_idx) -> std::uint64_t {
+                std::string n = name ? std::string(name) : std::string();
+                auto it = ir_cache_v2_.find(n);
+                if (it == ir_cache_v2_.end()) return 0;
+                return static_cast<std::uint64_t>(
+                    it->second.func_dirty_block_count(func_idx));
+            });
+        evaluator_.set_is_block_dirty_fn(
+            [this](const char* name, std::size_t func_idx,
+                   std::uint32_t block_idx) -> bool {
+                std::string n = name ? std::string(name) : std::string();
+                auto it = ir_cache_v2_.find(n);
+                if (it == ir_cache_v2_.end()) return false;
+                return it->second.is_block_dirty(func_idx, block_idx);
+            });
+        evaluator_.set_mark_block_dirty_fn(
+            [this](const char* name, std::size_t func_idx,
+                   std::uint32_t block_idx) -> bool {
+                std::string n = name ? std::string(name) : std::string();
+                return mark_block_dirty_v2(n, func_idx, block_idx);
+            });
+        evaluator_.set_clear_block_dirty_fn(
+            [this](const char* name, std::size_t func_idx,
+                   std::uint32_t block_idx) -> bool {
+                std::string n = name ? std::string(name) : std::string();
+                return clear_block_dirty_v2(n, func_idx, block_idx);
+            });
         aura::messaging::g_current_compiler_service = this;
         // Setup messaging bridge (avoids circular module dependency)
         aura::messaging::g_messaging_bridge.send =
@@ -2241,6 +2284,120 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         // stale?" check that complements the per-function
         // invalidate_function BFS in dep_graph_.
         std::uint64_t last_seen_epoch_ = 0;
+        // Issue #196: per-block dirty bitmask. One inner
+        // vector per IRFunction; each inner vector has 1 byte
+        // per basic block (1=dirty, 0=clean). Indexed by
+        // [func_idx][block_idx]. The outer vector mirrors
+        // irs.size(); the inner vector mirrors
+        // irs[func_idx].blocks.size().
+        //
+        // Why per-block: a typical mutation in a deep dep
+        // graph touches 1-2 functions and even fewer blocks.
+        // The full-invalidate approach (pre-#196) re-lowers
+        // every function in the cascade; the per-block
+        // approach (this) can in principle re-lower only
+        // the affected blocks. The "smarter re-lower" Phase
+        // 5 follow-up will consume is_block_dirty() to skip
+        // clean blocks; this PR ships the data structure +
+        // observability so the consumer can be wired in
+        // without re-touching the cache.
+        //
+        // Convention: all blocks in a freshly-cached entry
+        // are dirty (the entry needs a re-lower before
+        // being usable). After store_define_v2 succeeds,
+        // all blocks are clean.
+        std::vector<std::vector<std::uint8_t>> block_dirty_per_func_;
+
+        // Issue #196: per-block dirty bitmask helpers.
+
+        // Mark every block in every function dirty. Used by
+        // mark_define_dirty / mark_all_defines_dirty to
+        // signal a full re-lower is needed.
+        void mark_all_blocks_dirty() {
+            for (auto& func_blocks : block_dirty_per_func_) {
+                for (auto& b : func_blocks) b = 1;
+            }
+        }
+
+        // Mark a single block dirty. Resizes the bitmask
+        // for that function if needed (e.g. caller doesn't
+        // know the block count up front).
+        void mark_block_dirty(std::size_t func_idx, std::uint32_t block_idx) {
+            if (func_idx >= block_dirty_per_func_.size()) {
+                block_dirty_per_func_.resize(func_idx + 1);
+            }
+            auto& fb = block_dirty_per_func_[func_idx];
+            if (block_idx >= fb.size()) {
+                fb.resize(block_idx + 1, 1);
+                return;
+            }
+            fb[block_idx] = 1;
+        }
+
+        // Clear a single block's dirty flag (called by the
+        // smarter-re-lower after re-lowering the block).
+        // No-op if indices out of range.
+        void clear_block_dirty(std::size_t func_idx, std::uint32_t block_idx) {
+            if (func_idx >= block_dirty_per_func_.size()) return;
+            auto& fb = block_dirty_per_func_[func_idx];
+            if (block_idx >= fb.size()) return;
+            fb[block_idx] = 0;
+        }
+
+        // Query: is this (function, block) dirty? Returns
+        // false (clean) for out-of-range indices.
+        bool is_block_dirty(std::size_t func_idx, std::uint32_t block_idx) const {
+            if (func_idx >= block_dirty_per_func_.size()) return false;
+            const auto& fb = block_dirty_per_func_[func_idx];
+            if (block_idx >= fb.size()) return false;
+            return fb[block_idx] != 0;
+        }
+
+        // Query: total dirty block count across all
+        // functions. Used by the observability primitive.
+        std::size_t dirty_block_count() const {
+            std::size_t n = 0;
+            for (const auto& fb : block_dirty_per_func_) {
+                for (auto b : fb) if (b) ++n;
+            }
+            return n;
+        }
+
+        // Query: dirty block count for a single function.
+        // Returns 0 for out-of-range func_idx.
+        std::size_t func_dirty_block_count(std::size_t func_idx) const {
+            if (func_idx >= block_dirty_per_func_.size()) return 0;
+            std::size_t n = 0;
+            for (auto b : block_dirty_per_func_[func_idx]) if (b) ++n;
+            return n;
+        }
+
+        // Initialize the per-func bitmask to match the
+        // current irs[] layout. All blocks start dirty
+        // (the entry needs re-lower before use). Called
+        // by store_define_v2 after irs is populated.
+        void init_block_dirty_from_irs() {
+            block_dirty_per_func_.clear();
+            block_dirty_per_func_.reserve(irs.size());
+            for (const auto& fn : irs) {
+                block_dirty_per_func_.emplace_back(
+                    fn.blocks.size(), std::uint8_t{1});
+            }
+        }
+
+        // Clear all per-block dirty bits. Called by
+        // store_define_v2 after init — the just-stored
+        // entry is clean.
+        void clear_all_block_dirty() {
+            for (auto& fb : block_dirty_per_func_) {
+                for (auto& b : fb) b = 0;
+            }
+        }
+
+        // Issue #196: public read-only view of the per-block
+        // dirty bitmask for the observability layer.
+        [[nodiscard]] const std::vector<std::vector<std::uint8_t>>&
+        block_dirty_view() const noexcept { return block_dirty_per_func_; }
     };
     std::unordered_map<std::string, IRCacheEntry> ir_cache_v2_;
 
@@ -2270,6 +2427,9 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
 
     // Store (or replace) a define's IR cache entry. Called after re-lower.
     // Also recomputes the source_hash from the canonical unparse.
+    // Issue #196: also rebuilds the per-block dirty bitmask from the
+    // freshly-stored irs[] (all blocks clean) so the entry is ready
+    // for incremental re-lower on subsequent mutations.
     void store_define_v2(const std::string& name, std::string source,
                           std::vector<aura::ir::IRFunction> irs,
                           std::vector<aura::ir::ClosureBridgeData> bridges,
@@ -2283,6 +2443,14 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         entry.strings = std::move(strings);
         entry.dirty = false;
         entry.mutation_count = 0;
+        // Issue #196: rebuild the per-block dirty bitmask to
+        // match the new irs layout, then mark all blocks clean.
+        // init_block_dirty_from_irs() sizes to irs[].blocks.size()
+        // and marks all dirty; clear_all_block_dirty() flips
+        // them to clean. Net effect: bitmask mirrors irs shape
+        // and reports "no dirty blocks".
+        entry.init_block_dirty_from_irs();
+        entry.clear_all_block_dirty();
     }
 
     // Mark a single define dirty. Called by mutate:rebind, mutate:set-body, etc.
@@ -2293,10 +2461,18 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
     // f must re-lower every g that references f (the IR for g embeds a
     // closure capture of f's lowered function). When pre_cache_workspace_defines
     // is enabled (Phase 3 full), the depends_on scan populates dep_graph_.
+    //
+    // Issue #196: also marks every block in every function of the
+    // affected entries as dirty. This is a conservative
+    // whole-function invalidation; the smarter per-block
+    // invalidation will be added in a follow-up that consults
+    // the dep_graph_ to find which block(s) of a dependent
+    // actually reference the mutated define.
     void mark_define_dirty(const std::string& name) {
         auto it = ir_cache_v2_.find(name);
         if (it != ir_cache_v2_.end()) {
             it->second.dirty = true;
+            it->second.mark_all_blocks_dirty();
         }
         // Cascade: BFS over called_by. Use std::queue (FIFO) for proper BFS
         // ordering — vector-as-stack is technically DFS, which is fine for
@@ -2315,6 +2491,7 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                 auto cit = ir_cache_v2_.find(dependent);
                 if (cit != ir_cache_v2_.end()) {
                     cit->second.dirty = true;
+                    cit->second.mark_all_blocks_dirty();
                 }
                 bfs.push(dependent);
             }
@@ -2323,10 +2500,87 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
 
     // Mark all defines dirty. Called when (set-code ...) re-parses the whole
     // workspace (which can change any define's body).
+    // Issue #196: also flips every block in every entry to dirty.
     void mark_all_defines_dirty() {
         for (auto& [_, entry] : ir_cache_v2_) {
             entry.dirty = true;
+            entry.mark_all_blocks_dirty();
         }
+    }
+
+    // Issue #196: fine-grained per-block dirty marking API.
+    // Public hooks so the smarter-re-lower and EDSL code can
+    // mark individual blocks dirty without invalidating the
+    // whole function. The block is identified by (func_idx,
+    // block_idx) within the entry's irs[] / blocks[].
+
+    // Mark a single block dirty. Returns true on success,
+    // false if the entry doesn't exist or the indices are
+    // out of range (with conservative behavior: if the entry
+    // exists but indices are out of range, the whole entry
+    // is marked dirty).
+    bool mark_block_dirty_v2(const std::string& name,
+                              std::size_t func_idx,
+                              std::uint32_t block_idx) {
+        auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end()) return false;
+        auto& entry = it->second;
+        if (func_idx >= entry.irs.size() ||
+            block_idx >= entry.irs[func_idx].blocks.size()) {
+            // Out of range — conservatively mark the whole
+            // entry dirty so the next lookup_define_v2 will
+            // re-lower.
+            entry.dirty = true;
+            entry.mark_all_blocks_dirty();
+            return true;
+        }
+        entry.mark_block_dirty(func_idx, block_idx);
+        // Don't flip entry.dirty — a single dirty block
+        // doesn't necessarily mean the whole entry is
+        // invalid (consumers can re-lower just that block).
+        return true;
+    }
+
+    // Clear a single block's dirty bit. Called by the
+    // smarter-re-lower after re-lowering a block.
+    // Returns true on success, false if the entry doesn't
+    // exist.
+    bool clear_block_dirty_v2(const std::string& name,
+                               std::size_t func_idx,
+                               std::uint32_t block_idx) {
+        auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end()) return false;
+        auto& entry = it->second;
+        entry.clear_block_dirty(func_idx, block_idx);
+        return true;
+    }
+
+    // Query: total dirty block count for an entry. Returns
+    // 0 if the entry doesn't exist.
+    std::size_t dirty_block_count_v2(const std::string& name) const {
+        auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end()) return 0;
+        return it->second.dirty_block_count();
+    }
+
+    // Query: dirty block count for a specific function in
+    // an entry. Returns 0 if the entry or func_idx is
+    // out of range.
+    std::size_t func_dirty_block_count_v2(const std::string& name,
+                                           std::size_t func_idx) const {
+        auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end()) return 0;
+        return it->second.func_dirty_block_count(func_idx);
+    }
+
+    // Query: is a specific block dirty? Returns false if
+    // the entry, func_idx, or block_idx is out of range.
+    bool is_block_dirty_v2(const std::string& name,
+                            std::size_t func_idx,
+                            std::uint32_t block_idx) const {
+        auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end()) return false;
+        return it->second.is_block_dirty(func_idx, block_idx);
     }
 
     // Phase 2: walk workspace_flat_'s top-level defines and pre-populate

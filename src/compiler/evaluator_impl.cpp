@@ -15259,6 +15259,112 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         auto packed = get_incremental_stats_fn_();
         return make_int(static_cast<std::int64_t>(packed & 0xFFFF));
     });
+    // (compile:block-dirty-count name) — Issue #196: total
+    // number of dirty blocks across all functions in the
+    // named define's IR cache entry. Returns 0 if no hook
+    // is installed or the entry doesn't exist. Use case:
+    // an EDSL agent can measure "did the previous mutation
+    // actually re-lower anything?" by reading this primitive
+    // before and after a mutation cycle.
+    primitives_.add("compile:block-dirty-count",
+        [this](const auto& a) -> EvalValue {
+            if (a.empty() || !is_string(a[0])) return make_int(0);
+            auto idx = as_string_idx(a[0]);
+            if (idx >= string_heap_.size()) return make_int(0);
+            if (!get_dirty_block_count_fn_) return make_int(0);
+            return make_int(static_cast<std::int64_t>(
+                get_dirty_block_count_fn_(string_heap_[idx].c_str())));
+        });
+    // (compile:func-block-dirty-count name func-idx) —
+    // Issue #196: dirty block count for a specific function
+    // in the named define's IR cache entry. Returns 0 if
+    // no hook, the entry doesn't exist, or func-idx is
+    // out of range.
+    primitives_.add("compile:func-block-dirty-count",
+        [this](const auto& a) -> EvalValue {
+            if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1])) {
+                return make_int(0);
+            }
+            auto idx = as_string_idx(a[0]);
+            if (idx >= string_heap_.size()) return make_int(0);
+            auto fidx = as_int(a[1]);
+            if (fidx < 0) return make_int(0);
+            if (!get_func_dirty_block_count_fn_) return make_int(0);
+            return make_int(static_cast<std::int64_t>(
+                get_func_dirty_block_count_fn_(
+                    string_heap_[idx].c_str(),
+                    static_cast<std::size_t>(fidx))));
+        });
+    // (compile:block-dirty? name func-idx block-idx) —
+    // Issue #196: returns #t if the specific (function,
+    // block) is dirty in the named define's IR cache entry.
+    // Returns #f otherwise. Use case: fine-grained
+    // "did THIS block change?" query for the smarter
+    // re-lower (Phase 5 follow-up).
+    primitives_.add("compile:block-dirty?",
+        [this](const auto& a) -> EvalValue {
+            if (a.size() < 3 || !is_string(a[0]) ||
+                !is_int(a[1]) || !is_int(a[2])) {
+                return make_bool(false);
+            }
+            auto idx = as_string_idx(a[0]);
+            if (idx >= string_heap_.size()) return make_bool(false);
+            auto fidx = as_int(a[1]);
+            auto bidx = as_int(a[2]);
+            if (fidx < 0 || bidx < 0) return make_bool(false);
+            if (!is_block_dirty_fn_) return make_bool(false);
+            return make_bool(is_block_dirty_fn_(
+                string_heap_[idx].c_str(),
+                static_cast<std::size_t>(fidx),
+                static_cast<std::uint32_t>(bidx)));
+        });
+    // (compile:mark-block-dirty! name func-idx block-idx) —
+    // Issue #196: fine-grained mark a single (function, block)
+    // dirty in the named define's IR cache entry. Returns
+    // #t on success, #f if the entry doesn't exist or the
+    // hook is not installed. Use case: the smarter
+    // re-lower (Phase 5 follow-up) marks only the affected
+    // blocks rather than the whole entry.
+    primitives_.add("compile:mark-block-dirty!",
+        [this](const auto& a) -> EvalValue {
+            if (a.size() < 3 || !is_string(a[0]) ||
+                !is_int(a[1]) || !is_int(a[2])) {
+                return make_bool(false);
+            }
+            auto idx = as_string_idx(a[0]);
+            if (idx >= string_heap_.size()) return make_bool(false);
+            auto fidx = as_int(a[1]);
+            auto bidx = as_int(a[2]);
+            if (fidx < 0 || bidx < 0) return make_bool(false);
+            if (!mark_block_dirty_fn_) return make_bool(false);
+            return make_bool(mark_block_dirty_fn_(
+                string_heap_[idx].c_str(),
+                static_cast<std::size_t>(fidx),
+                static_cast<std::uint32_t>(bidx)));
+        });
+    // (compile:clear-block-dirty! name func-idx block-idx) —
+    // Issue #196: clear a single (function, block) dirty bit
+    // in the named define's IR cache entry. Returns #t on
+    // success, #f if the entry doesn't exist or the hook is
+    // not installed. Use case: the smarter re-lower clears
+    // the dirty bit after re-lowering a block.
+    primitives_.add("compile:clear-block-dirty!",
+        [this](const auto& a) -> EvalValue {
+            if (a.size() < 3 || !is_string(a[0]) ||
+                !is_int(a[1]) || !is_int(a[2])) {
+                return make_bool(false);
+            }
+            auto idx = as_string_idx(a[0]);
+            if (idx >= string_heap_.size()) return make_bool(false);
+            auto fidx = as_int(a[1]);
+            auto bidx = as_int(a[2]);
+            if (fidx < 0 || bidx < 0) return make_bool(false);
+            if (!clear_block_dirty_fn_) return make_bool(false);
+            return make_bool(clear_block_dirty_fn_(
+                string_heap_[idx].c_str(),
+                static_cast<std::size_t>(fidx),
+                static_cast<std::uint32_t>(bidx)));
+        });
 
     // (jit:exception-depth) — Issue #195: current fiber's
     // exception stack depth. Reads from the per-fiber ExStack
