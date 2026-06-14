@@ -1018,6 +1018,8 @@ struct LLVMBuilder {
                 // ops[0] = result_slot, ops[1] = cause_slot
                 auto cause = load(inst.ops[1]);
                 // 1. Read the top frame's payload_slot, store cause
+                //    (the per-fiber ExStack's top frame has a
+                //    payload_slot that the handler reads from).
                 auto payload = irb->CreateCall(fn_exception_top_payload, {});
                 auto payload_i32 = irb->CreateTrunc(payload, llvm::Type::getInt32Ty(ctx));
                 auto gep = irb->CreateGEP(llvm::Type::getInt64Ty(ctx),
@@ -1026,37 +1028,131 @@ struct LLVMBuilder {
                 // 2. Read the top frame's handler_block
                 auto handler = irb->CreateCall(fn_exception_top_handler, {});
                 auto handler_i32 = irb->CreateTrunc(handler, llvm::Type::getInt32Ty(ctx));
-                // 3. Store the cause to result slot (for the handler's reading)
+                // 3. Store the cause to result slot (for the
+                //    handler's reading) — this is the "raised value"
+                //    the catch block can read.
                 store(inst.ops[0], cause);
-                // 4. Dispatch on handler_i32 to the right LLVM block.
-                //    Build a switch instruction: each block_id gets
-                //    its own case. The default branch is a trap
-                //    (unreachable) — the IR executor's behavior for
-                //    a Raise with an empty exception stack is to
-                //    return an uncaught-exception error, which the
-                //    JIT will return via a follow-up commit. For
-                //    now, the trap is the soundest fallback (better
-                //    than silently continuing with wrong state).
+                // 4. Issue #195: emit an `invoke` to the
+                //    aura_throw_exception helper (instead of the
+                //    old switch-dispatch + Br). The helper sets up
+                //    a standard _Unwind_Exception header and calls
+                //    _Unwind_RaiseException. The unwinder then walks
+                //    the stack via the module's personality function
+                //    (set above). The personality function
+                //    (aura_personality) walks the current fiber's
+                //    ExStack; if a handler is set, the unwinder
+                //    resumes at the handler's landingpad (which
+                //    uses the handler_block we just computed).
+                //
+                //    Normal control flow: the `invoke` "succeeds"
+                //    (returns to the normal label) — but actually
+                //    it doesn't, because aura_throw_exception calls
+                //    _Unwind_RaiseException which never returns.
+                //    So we just have an unreachable after.
+                //
+                //    The unwind label points to a new "catchall"
+                //    basic block that:
+                //    a) Reads the per-fiber ExStack via the
+                //       persona call (already done in
+                //       aura_personality).
+                //    b) Dispatches on handler_i32 to the matching
+                //       handler block via switch.
+                //    c) Default: re-raises (resumes the unwind).
                 auto* parent = irb->GetInsertBlock()->getParent();
-                auto* dispatch_bb = llvm::BasicBlock::Create(ctx, "raise_dispatch", parent);
-                auto* default_bb  = llvm::BasicBlock::Create(ctx, "raise_trap", parent);
-                irb->CreateBr(dispatch_bb);
-                irb->SetInsertPoint(dispatch_bb);
-                auto* si = irb->CreateSwitch(handler_i32, default_bb, block_map.size());
-                for (auto& kv : block_map) {
-                    si->addCase(llvm::ConstantInt::get(
-                        llvm::Type::getInt32Ty(ctx), kv.first), kv.second);
+                auto* fn_throw = mod->getFunction("aura_throw_exception");
+                if (fn_throw) {
+                    // Find or create the catchall block. We use a
+                    // per-function static "has_catchall" flag via
+                    // a small RAII guard. Since the same function
+                    // may have multiple OpRaise (nested try/catch),
+                    // we add the catchall once and reuse it.
+                    static thread_local std::unordered_map<llvm::Function*,
+                        llvm::BasicBlock*> s_catchall_cache;
+                    llvm::BasicBlock* catchall_bb = nullptr;
+                    auto it = s_catchall_cache.find(parent);
+                    if (it != s_catchall_cache.end()) {
+                        catchall_bb = it->second;
+                    } else {
+                        catchall_bb = llvm::BasicBlock::Create(
+                            ctx, "raise_catchall", parent);
+                        // Landingpad: declare the personality.
+                        // (Actually, the personality is set on
+                        // the module, not the basic block; this
+                        // is a no-op call for documentation.)
+                        auto* i8_ptr_ty = llvm::PointerType::getUnqual(
+                            llvm::Type::getInt8Ty(ctx));
+                        // Landingpad signature: (i8*, i32) result,
+                        // catch-all (no permitted type clauses).
+                        // The personality function (set on the
+                        // function above) decides whether to
+                        // handle the exception; the landingpad
+                        // just receives the matched-clause info.
+                        auto* lp_ty = llvm::StructType::get(
+                            i8_ptr_ty, llvm::Type::getInt32Ty(ctx));
+                        // LLVM 22 CreateLandingPad signature:
+                        // (Type*, unsigned NumClauses, Twine Name).
+                        // The NumClauses is a hint; clauses are
+                        // added later via addClause() if needed.
+                        auto* lp = irb->CreateLandingPad(
+                            lp_ty, 1, "aura_lp");
+                        // Read the current handler from the
+                        // per-fiber ExStack. If a handler is set,
+                        // dispatch to it via switch. Default: re-raise.
+                        auto* h = irb->CreateCall(
+                            mod->getFunction("aura_exception_top_handler"),
+                            {});
+                        auto* h_i32 = irb->CreateTrunc(
+                            h, llvm::Type::getInt32Ty(ctx));
+                        auto* default_rethrow = llvm::BasicBlock::Create(
+                            ctx, "raise_rethrow", parent);
+                        auto* si = irb->CreateSwitch(
+                            h_i32, default_rethrow, block_map.size());
+                        for (auto& kv : block_map) {
+                            si->addCase(llvm::ConstantInt::get(
+                                llvm::Type::getInt32Ty(ctx), kv.first),
+                                kv.second);
+                        }
+                        // Default: re-raise. Resume the unwind
+                        // with the same landingpad.
+                        irb->SetInsertPoint(default_rethrow);
+                        irb->CreateResume(lp);
+                        s_catchall_cache[parent] = catchall_bb;
+                    }
+                    // Emit the invoke: `aura_throw_exception(cause)`
+                    // to a normal-continue label (unreachable in
+                    // practice) or unwind to catchall_bb.
+                    auto* cont_bb = llvm::BasicBlock::Create(
+                        ctx, "raise_unreachable", parent);
+                    // Use the FunctionCallee convenience overload:
+                    // (Callee, NormalDest, UnwindDest, Args).
+                    llvm::FunctionCallee callee(fn_throw);
+                    irb->CreateInvoke(callee, cont_bb, catchall_bb,
+                                      llvm::ArrayRef<llvm::Value*>{cause});
+                    irb->SetInsertPoint(cont_bb);
+                    irb->CreateUnreachable();
+                } else {
+                    // aura_throw_exception not registered (no
+                    // LLVM JIT engine). Fall back to the original
+                    // switch-dispatch behavior.
+                    auto* dispatch_bb = llvm::BasicBlock::Create(
+                        ctx, "raise_dispatch", parent);
+                    auto* default_bb = llvm::BasicBlock::Create(
+                        ctx, "raise_trap", parent);
+                    irb->CreateBr(dispatch_bb);
+                    irb->SetInsertPoint(dispatch_bb);
+                    auto* si = irb->CreateSwitch(
+                        handler_i32, default_bb, block_map.size());
+                    for (auto& kv : block_map) {
+                        si->addCase(llvm::ConstantInt::get(
+                            llvm::Type::getInt32Ty(ctx), kv.first),
+                            kv.second);
+                    }
+                    irb->SetInsertPoint(default_bb);
+                    irb->CreateUnreachable();
+                    auto* cont_bb = llvm::BasicBlock::Create(
+                        ctx, "raise_cont", parent);
+                    irb->SetInsertPoint(cont_bb);
                 }
-                irb->SetInsertPoint(default_bb);
-                irb->CreateUnreachable();
-                // After the trap, the next IRBuilder instruction
-                // would be in a new block. Set up a fresh block
-                // for any subsequent code (the outer loop in
-                // compile() handles the next source block; if
-                // Raise was the last instruction in this source
-                // block, this is unused).
-                auto* cont_bb = llvm::BasicBlock::Create(ctx, "raise_cont", parent);
-                irb->SetInsertPoint(cont_bb);
                 return true;
             }
 
@@ -1737,6 +1833,15 @@ int64_t aura_pair_car(int64_t);
 int64_t aura_pair_cdr(int64_t);
 int64_t aura_pair_car_unchecked(int64_t);
 int64_t aura_pair_cdr_unchecked(int64_t);
+// Issue #195: per-fiber exception state API.
+void aura_exception_push(uint64_t, uint64_t);
+void aura_exception_pop();
+uint64_t aura_exception_top_handler();
+uint64_t aura_exception_top_payload();
+uint64_t aura_exception_depth();
+void aura_throw_exception(uint64_t);
+uint64_t aura_exception_fiber_count();
+void aura_exception_clear_all();
 // Issue #157 Phase 1b: defuse_version_ accessor for L2 version check.
 uint64_t aura_get_defuse_version();
 int64_t aura_prim_call(int64_t, int64_t, int64_t, int64_t);
@@ -2064,6 +2169,28 @@ struct AuraJIT::Impl {
         reg("aura_set_hash_str_convert_callback", (void*)aura_set_hash_str_convert_callback);
         reg("aura_hash_key_eq", (void*)aura_hash_key_eq);
 
+        // Issue #195: register the per-fiber exception state
+        // API and the C personality function. Note that
+        // aura_exception_fiber_count and aura_exception_clear_all
+        // are also registered but not used in JIT-compiled
+        // code (they're for Aura-level observability).
+        reg("aura_exception_fiber_count", (void*)aura_exception_fiber_count);
+        reg("aura_exception_clear_all", (void*)aura_exception_clear_all);
+
+        // Issue #195: register the per-fiber exception state
+        // API and the C personality function. The JIT-compiled
+        // code can call into these when OpRaise emits an
+        // `invoke` to aura_throw_exception (the follow-up wiring
+        // in aura_jit.cpp's lower() function).
+        reg("aura_exception_push", (void*)aura_exception_push);
+        reg("aura_exception_pop", (void*)aura_exception_pop);
+        reg("aura_exception_top_handler", (void*)aura_exception_top_handler);
+        reg("aura_exception_top_payload", (void*)aura_exception_top_payload);
+        reg("aura_exception_depth", (void*)aura_exception_depth);
+        reg("aura_exception_fiber_count", (void*)aura_exception_fiber_count);
+        reg("aura_exception_clear_all", (void*)aura_exception_clear_all);
+        reg("aura_throw_exception", (void*)aura_throw_exception);
+
         // C standard library functions
         reg("printf", (void*)printf);
         reg("fprintf", (void*)fprintf);
@@ -2159,6 +2286,17 @@ struct AuraJIT::Impl {
         auto fn_type = llvm::FunctionType::get(ret_ty, {ptr_i64, i32_ty}, false);
         builder.func =
             llvm::Function::Create(fn_type, llvm::Function::ExternalLinkage, fn.name, mod.get());
+        // Issue #195: tag the function with the C personality
+        // function. Any `invoke` instruction in the function
+        // can unwind through this personality. The personality
+        // function (aura_personality) walks the current fiber's
+        // ExStack and reports _URC_HANDLER_FOUND if a handler
+        // is set. Without this, OpRaise's `invoke` would crash
+        // the process when the unwinder tries to find a
+        // personality function for the current frame.
+        if (auto* persona_fn = mod->getFunction("aura_personality")) {
+            builder.func->setPersonalityFn(persona_fn);
+        }
         auto arg_it = builder.func->arg_begin();
         arg_it->setName("locals_ptr");
         ++arg_it;
