@@ -942,6 +942,254 @@ bool test_tco_inter_block_coexist_with_intra() {
     return true;
 }
 
+// ── Test 21 (Issue #203): Inliner mutual recursion guard A↔B ──
+// A calls B, B calls A. Without the SCC guard, the inliner
+// would infinite-loop (A→B→A→B→... ). With the SCC guard,
+// both A's call to B and B's call to A are skipped.
+bool test_inline_mutual_recursion_AB() {
+    PRINTLN("\n--- Test 21: Inliner mutual recursion A↔B is skipped ---");
+    aura::ir::IRModule mod;
+    // Function 0 (A): single-block, calls function 1 (B)
+    aura::ir::IRFunction funcA;
+    funcA.name = "A";
+    funcA.local_count = 4;
+    funcA.blocks.push_back({0});
+    funcA.blocks[0].instructions = {
+        {aura::ir::IROpcode::MakeClosure, {2, 1, 0, 0}, 0, 13},  // closure(slot=2, func_id=1=B)
+        {aura::ir::IROpcode::Call,        {2, 0, 0, 1}, 0, 0},   // call B → result slot 1
+        {aura::ir::IROpcode::Return,      {1, 0, 0, 0}, 0, 0},
+    };
+    mod.functions.push_back(std::move(funcA));
+    // Function 1 (B): single-block, calls function 0 (A)
+    aura::ir::IRFunction funcB;
+    funcB.name = "B";
+    funcB.local_count = 4;
+    funcB.blocks.push_back({0});
+    funcB.blocks[0].instructions = {
+        {aura::ir::IROpcode::MakeClosure, {2, 0, 0, 0}, 0, 13},  // closure(slot=2, func_id=0=A)
+        {aura::ir::IROpcode::Call,        {2, 0, 0, 1}, 0, 0},   // call A → result slot 1
+        {aura::ir::IROpcode::Return,      {1, 0, 0, 0}, 0, 0},
+    };
+    mod.functions.push_back(std::move(funcB));
+
+    aura::compiler::InlinePass inliner;
+    inliner.run(mod);
+
+    // A's Call should NOT be inlined (B is in same SCC as A)
+    auto& aCall = mod.functions[0].blocks[0].instructions[1];
+    CHECK(aCall.opcode == aura::ir::IROpcode::Call,
+          "A's Call to B NOT inlined (mutual recursion guard)");
+    // B's Call should NOT be inlined (A is in same SCC as B)
+    auto& bCall = mod.functions[1].blocks[0].instructions[1];
+    CHECK(bCall.opcode == aura::ir::IROpcode::Call,
+          "B's Call to A NOT inlined (mutual recursion guard)");
+    CHECK(inliner.inlined_count() == 0,
+          "inlined_count() == 0 (no inlining happened)");
+    return true;
+}
+
+// ── Test 22 (Issue #203): Inliner direct self-recursion A→A (regression) ──
+// A calls A. The pre-#203 guard `callee_fid == caller_fid`
+// already handles this. Verify the SCC guard doesn't break it.
+bool test_inline_self_recursion_A() {
+    PRINTLN("\n--- Test 22: Inliner direct self-recursion A→A (regression) ---");
+    aura::ir::IRModule mod;
+    aura::ir::IRFunction funcA;
+    funcA.name = "A";
+    funcA.local_count = 4;
+    funcA.blocks.push_back({0});
+    funcA.blocks[0].instructions = {
+        {aura::ir::IROpcode::MakeClosure, {0, 0, 0, 0}, 0, 13},  // closure(slot=0, func_id=0=A)
+        {aura::ir::IROpcode::Call,        {0, 0, 0, 1}, 0, 0},   // call A → result slot 1
+        {aura::ir::IROpcode::Return,      {1, 0, 0, 0}, 0, 0},
+    };
+    mod.functions.push_back(std::move(funcA));
+
+    aura::compiler::InlinePass inliner;
+    inliner.run(mod);
+
+    // A's Call should NOT be inlined (self-recursion)
+    auto& aCall = mod.functions[0].blocks[0].instructions[1];
+    CHECK(aCall.opcode == aura::ir::IROpcode::Call,
+          "A's Call to A NOT inlined (self-recursion guard)");
+    CHECK(inliner.inlined_count() == 0,
+          "inlined_count() == 0 (no inlining happened)");
+    return true;
+}
+
+// ── Test 23 (Issue #203): Inliner non-recursive A→B→C is inlined ──
+// A calls B, B calls C, C is a leaf (constant-returning).
+// A and B are in different SCCs, so A→B inlining is allowed.
+// B and C are in different SCCs, so B→C inlining is allowed.
+bool test_inline_non_recursive_chain() {
+    PRINTLN("\n--- Test 23: Inliner non-recursive chain A→B→C is inlined ---");
+    aura::ir::IRModule mod;
+    // Function 0: C (constant return, trivially inlinable)
+    mod.functions.push_back(make_const_i64_callee("C", 0, 42));
+    // Function 1: B, calls C
+    aura::ir::IRFunction funcB;
+    funcB.name = "B";
+    funcB.local_count = 4;
+    funcB.blocks.push_back({0});
+    funcB.blocks[0].instructions = {
+        {aura::ir::IROpcode::MakeClosure, {0, 0, 0, 0}, 0, 13},  // closure(slot=0, func_id=0=C)
+        {aura::ir::IROpcode::Call,        {0, 0, 0, 1}, 0, 0},   // call C → result slot 1
+        {aura::ir::IROpcode::Return,      {1, 0, 0, 0}, 0, 0},
+    };
+    mod.functions.push_back(std::move(funcB));
+    // Function 2: A, calls B
+    aura::ir::IRFunction funcA;
+    funcA.name = "A";
+    funcA.local_count = 4;
+    funcA.blocks.push_back({0});
+    funcA.blocks[0].instructions = {
+        {aura::ir::IROpcode::MakeClosure, {0, 1, 0, 0}, 0, 13},  // closure(slot=0, func_id=1=B)
+        {aura::ir::IROpcode::Call,        {0, 0, 0, 1}, 0, 0},   // call B → result slot 1
+        {aura::ir::IROpcode::Return,      {1, 0, 0, 0}, 0, 0},
+    };
+    mod.functions.push_back(std::move(funcA));
+
+    aura::compiler::InlinePass inliner;
+    inliner.run(mod);
+
+    // B's Call to C: should be inlined (C is constant-returning)
+    auto& bCall = mod.functions[1].blocks[0].instructions[1];
+    CHECK(bCall.opcode == aura::ir::IROpcode::ConstI64,
+          "B's Call to C inlined (C is constant-returning)");
+    // A's Call to B: NOT inlined (B's body is now [MakeClosure,
+    // ConstI64, Return] = 3 instrs; the trivial-inlinable check
+    // requires exactly 2 instrs). The inliner doesn't re-run
+    // after inlining, so it sees B's pre-inlined form. This
+    // matches the pre-#203 behavior; fixing this is a separate
+    // optimization (re-run the inliner until fixed-point).
+    auto& aCall = mod.functions[2].blocks[0].instructions[1];
+    CHECK(aCall.opcode == aura::ir::IROpcode::Call,
+          "A's Call to B NOT inlined (B's pre-inlined form is 3 instrs; trivial-inlinable requires 2)");
+    CHECK(inliner.inlined_count() == 1,
+          "inlined_count() == 1 (B→C inlined; A→B not — pre-#203 behavior)");
+    return true;
+}
+
+// ── Test 24 (Issue #203): Inliner mixed module: some recursive, some not ──
+// A↔B (mutual recursion) + C→D (no recursion, both inlinable).
+// The inliner should:
+//   - skip A↔B
+//   - inline C→D
+bool test_inline_mixed_recursive_and_non_recursive() {
+    PRINTLN("\n--- Test 24: Inliner mixed module (recursive + non-recursive) ---");
+    aura::ir::IRModule mod;
+    // Function 0: A (calls B)
+    aura::ir::IRFunction funcA;
+    funcA.name = "A";
+    funcA.local_count = 4;
+    funcA.blocks.push_back({0});
+    funcA.blocks[0].instructions = {
+        {aura::ir::IROpcode::MakeClosure, {0, 1, 0, 0}, 0, 13},  // A's closure
+        {aura::ir::IROpcode::Call,        {0, 0, 0, 1}, 0, 0},   // A calls B
+        {aura::ir::IROpcode::Return,      {1, 0, 0, 0}, 0, 0},
+    };
+    mod.functions.push_back(std::move(funcA));
+    // Function 1: B (calls A; forms A↔B mutual recursion)
+    aura::ir::IRFunction funcB;
+    funcB.name = "B";
+    funcB.local_count = 4;
+    funcB.blocks.push_back({0});
+    funcB.blocks[0].instructions = {
+        {aura::ir::IROpcode::MakeClosure, {0, 0, 0, 0}, 0, 13},  // B's closure
+        {aura::ir::IROpcode::Call,        {0, 0, 0, 1}, 0, 0},   // B calls A
+        {aura::ir::IROpcode::Return,      {1, 0, 0, 0}, 0, 0},
+    };
+    mod.functions.push_back(std::move(funcB));
+    // Function 2: D (constant return, trivially inlinable)
+    mod.functions.push_back(make_const_i64_callee("D", 2, 99));
+    // Function 3: C (calls D; inlinable since D→42)
+    aura::ir::IRFunction funcC;
+    funcC.name = "C";
+    funcC.local_count = 4;
+    funcC.blocks.push_back({0});
+    funcC.blocks[0].instructions = {
+        {aura::ir::IROpcode::MakeClosure, {0, 2, 0, 0}, 0, 13},  // C's closure (func_id=2=D)
+        {aura::ir::IROpcode::Call,        {0, 0, 0, 1}, 0, 0},   // C calls D
+        {aura::ir::IROpcode::Return,      {1, 0, 0, 0}, 0, 0},
+    };
+    mod.functions.push_back(std::move(funcC));
+
+    aura::compiler::InlinePass inliner;
+    inliner.run(mod);
+
+    // A's Call to B: NOT inlined (mutual recursion)
+    auto& aCall = mod.functions[0].blocks[0].instructions[1];
+    CHECK(aCall.opcode == aura::ir::IROpcode::Call,
+          "A's Call to B NOT inlined (mutual recursion)");
+    // B's Call to A: NOT inlined (mutual recursion)
+    auto& bCall = mod.functions[1].blocks[0].instructions[1];
+    CHECK(bCall.opcode == aura::ir::IROpcode::Call,
+          "B's Call to A NOT inlined (mutual recursion)");
+    // C's Call to D: inlined (D is constant-returning; not in same SCC as C)
+    auto& cCall = mod.functions[3].blocks[0].instructions[1];
+    CHECK(cCall.opcode == aura::ir::IROpcode::ConstI64,
+          "C's Call to D inlined (D is constant-returning; not in C's SCC)");
+    CHECK(cCall.operands[1] == 99,
+          "C's inlined constant is 99 (D's value)");
+    CHECK(inliner.inlined_count() == 1,
+          "inlined_count() == 1 (only C→D was inlined; A↔B skipped)");
+    return true;
+}
+
+// ── Test 25 (Issue #203): Inliner 3-way mutual recursion A→B→C→A ──
+// Three functions in a cycle. All three should be skipped
+// (each call is to a function in the same SCC).
+bool test_inline_three_way_mutual_recursion() {
+    PRINTLN("\n--- Test 25: Inliner 3-way mutual recursion A→B→C→A ---");
+    aura::ir::IRModule mod;
+    // Function 0: A, calls B
+    aura::ir::IRFunction funcA;
+    funcA.name = "A";
+    funcA.local_count = 4;
+    funcA.blocks.push_back({0});
+    funcA.blocks[0].instructions = {
+        {aura::ir::IROpcode::MakeClosure, {0, 1, 0, 0}, 0, 13},  // A calls B
+        {aura::ir::IROpcode::Call,        {0, 0, 0, 1}, 0, 0},
+        {aura::ir::IROpcode::Return,      {1, 0, 0, 0}, 0, 0},
+    };
+    mod.functions.push_back(std::move(funcA));
+    // Function 1: B, calls C
+    aura::ir::IRFunction funcB;
+    funcB.name = "B";
+    funcB.local_count = 4;
+    funcB.blocks.push_back({0});
+    funcB.blocks[0].instructions = {
+        {aura::ir::IROpcode::MakeClosure, {0, 2, 0, 0}, 0, 13},  // B calls C
+        {aura::ir::IROpcode::Call,        {0, 0, 0, 1}, 0, 0},
+        {aura::ir::IROpcode::Return,      {1, 0, 0, 0}, 0, 0},
+    };
+    mod.functions.push_back(std::move(funcB));
+    // Function 2: C, calls A (closes the cycle)
+    aura::ir::IRFunction funcC;
+    funcC.name = "C";
+    funcC.local_count = 4;
+    funcC.blocks.push_back({0});
+    funcC.blocks[0].instructions = {
+        {aura::ir::IROpcode::MakeClosure, {0, 0, 0, 0}, 0, 13},  // C calls A
+        {aura::ir::IROpcode::Call,        {0, 0, 0, 1}, 0, 0},
+        {aura::ir::IROpcode::Return,      {1, 0, 0, 0}, 0, 0},
+    };
+    mod.functions.push_back(std::move(funcC));
+
+    aura::compiler::InlinePass inliner;
+    inliner.run(mod);
+
+    // None of the calls should be inlined (all 3 in same SCC)
+    for (std::size_t fi = 0; fi < 3; ++fi) {
+        auto& call = mod.functions[fi].blocks[0].instructions[1];
+        CHECK(call.opcode == aura::ir::IROpcode::Call,
+              "function " + std::to_string(fi) + " Call NOT inlined (3-way recursion)");
+    }
+    CHECK(inliner.inlined_count() == 0,
+          "inlined_count() == 0 (3-way recursion: all skipped)");
+    return true;
+}
+
 int main() {
     std::fprintf(stdout, "═══ Issue #171 — Function Inliner (Priority 2) ═══\n");
     std::fprintf(stdout, "  Verifies the inliner ACTUALLY inlines, not just counts.\n\n");
@@ -966,6 +1214,11 @@ int main() {
     test_tco_inter_block_tail_call_is_entry();
     test_tco_inter_block_dynamic_callee_skipped();
     test_tco_inter_block_coexist_with_intra();
+    test_inline_mutual_recursion_AB();
+    test_inline_self_recursion_A();
+    test_inline_non_recursive_chain();
+    test_inline_mixed_recursive_and_non_recursive();
+    test_inline_three_way_mutual_recursion();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
