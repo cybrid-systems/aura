@@ -1196,6 +1196,12 @@ private:
     [[nodiscard]] const std::pmr::vector<std::uint8_t>& dirty_column() const noexcept {
         return dirty_;
     }
+    // Issue #190: read-only view of the marker column for
+    // observability/aggregation. Used by the (syntax-marker-counts)
+    // primitive to walk all nodes in O(n).
+    [[nodiscard]] const std::pmr::vector<SyntaxMarker>& marker_column() const noexcept {
+        return marker_;
+    }
 
     // ── Node validation (NodeMeta invariants) ─────────────────
     // Checks a single node against its NodeMeta invariants.
