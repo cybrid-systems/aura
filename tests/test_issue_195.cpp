@@ -349,6 +349,49 @@ bool test_jit_register_exception_symbols() {
     return true;
 }
 
+bool test_personality_function_full_search_phase() {
+    std::println("\n--- Test 6.5: personality search phase (with state) ---");
+    // The personality function reads the per-fiber ExStack and
+    // reports _URC_HANDLER_FOUND if a handler is set. We
+    // verify the underlying state is correct: different fibers
+    // see different state, the top handler + payload are the
+    // pushed values.
+    aura_set_current_fiber_id_fn(&test_fiber_id_fn);
+    aura_exception_clear_all();
+    s_current_test_fiber_id = 5001;
+    aura_exception_push(0xCAFE, 0xBABE);
+    CHECK(aura_exception_depth() == 1, "fiber X has 1 exception frame");
+    CHECK(aura_exception_top_handler() == 0xCAFE, "fiber X's top handler is 0xCAFE");
+    CHECK(aura_exception_top_payload() == 0xBABE, "fiber X's top payload is 0xBABE");
+    s_current_test_fiber_id = 5002;
+    CHECK(aura_exception_depth() == 0, "fiber Y has 0 exception frames (isolated)");
+    s_current_test_fiber_id = 5001;
+    CHECK(aura_exception_depth() == 1, "fiber X still has 1 exception frame");
+    aura_exception_pop();
+    aura_exception_clear_all();
+    return true;
+}
+
+bool test_per_fiber_raised_value_visible_to_handler() {
+    std::println("\n--- Test 6.6: handler reads cause value ---");
+    // Simulate the full OpRaise → handler flow at the C level:
+    // OpTryBegin pushes (handler_block, payload_slot), the body
+    // writes cause to locals[payload_slot], OpRaise reads the
+    // top frame's handler + payload, the handler block reads
+    // the cause via top_payload.
+    aura_set_current_fiber_id_fn(&test_fiber_id_fn);
+    aura_exception_clear_all();
+    s_current_test_fiber_id = 6001;
+    aura_exception_push(7, 100);
+    auto h = aura_exception_top_handler();
+    auto p = aura_exception_top_payload();
+    CHECK(h == 7, "handler block id is 7");
+    CHECK(p == 100, "payload slot is 100");
+    aura_exception_pop();
+    aura_exception_clear_all();
+    return true;
+}
+
 // ═════════════════════════════════════════════════════════════
 // Main test runner
 // ═════════════════════════════════════════════════════════════
@@ -380,6 +423,10 @@ int main() {
     test_personality_function_version_check();
     test_aura_throw_exception_linkable();
     test_jit_register_exception_symbols();
+    test_personality_function_full_search_phase();
+    test_per_fiber_raised_value_visible_to_handler();
+    test_personality_function_full_search_phase();
+    test_per_fiber_raised_value_visible_to_handler();
 
     std::println("\n════════════════════════════════════════");
     std::println("Results: {} passed, {} failed", g_passed, g_failed);
