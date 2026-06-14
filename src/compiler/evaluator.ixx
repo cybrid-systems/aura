@@ -620,7 +620,19 @@ public:
     // Distinct from set_workspace_flat: workspace_flat_ is the persistent
     // EDSL workspace (set via (set-code ...)), this is the per-eval
     // source-being-evaluated.
-    void set_workspace_flat(ast::FlatAST* f) { workspace_flat_ = f; }
+    void set_workspace_flat(ast::FlatAST* f) {
+        workspace_flat_ = f;
+        // Issue #211: invalidate the (tag, arity) index
+        // when the workspace changes. The index is keyed
+        // by node positions in the OLD workspace, which
+        // are invalid for the new workspace.
+        // (The set-code primitive ALSO invalidates inline,
+        // because it assigns to workspace_flat_ directly
+        // instead of going through this setter. The double
+        // invalidation is safe — invalidate is a no-op if
+        // the index is already empty.)
+        invalidate_tag_arity_index();
+    }
     void set_workspace_pool(ast::StringPool* p) { workspace_pool_ = p; }
     ast::FlatAST* workspace_flat() const { return workspace_flat_; }
     ast::StringPool* workspace_pool() const { return workspace_pool_; }
@@ -1030,6 +1042,40 @@ private:
     ast::StringPool* workspace_pool_ = nullptr;
     ast::FlatAST* current_flat_ = nullptr;           // per-eval source-being-evaluated (set by CompilerService eval paths)
     ast::StringPool* current_pool_ = nullptr;
+    // Issue #211: (tag, arity) index for the query:pattern
+    // primitive. Built on demand, cached for the lifetime
+    // of the workspace (invalidated when workspace_flat_
+    // is changed via set_workspace_flat). The index lets
+    // the matcher skip nodes whose (tag, arity) doesn't
+    // match the pattern's root — a massive speedup for
+    // patterns where the root's tag+arity is rare.
+    //
+    // Keyed by (tag, arity) pair. tag is a NodeTag enum
+    // value (cast to uint8_t); arity is the children
+    // count. The value is a vector of NodeIds whose node
+    // has the matching (tag, arity).
+    //
+    // The index is per-evaluator (process-wide), not
+    // per-primitive-call. Building it on first use and
+    // reusing it across calls is the optimization. The
+    // build cost is O(N) — a single pass over the
+    // workspace, which is faster than the per-call
+    // full-walk that the matcher would otherwise do.
+    mutable std::unordered_map<
+        std::uint64_t, std::vector<aura::ast::NodeId>>
+        tag_arity_index_;
+    // The workspace pointer the index was built for.
+    // When this changes, the index must be rebuilt.
+    mutable const ast::FlatAST* tag_arity_index_workspace_ = nullptr;
+    // Build (or rebuild) the index for the current
+    // workspace. Called by query:pattern (and other
+    // future matchers) before walking.
+    void build_tag_arity_index() const;
+    // Drop the index (called on workspace changes).
+    void invalidate_tag_arity_index() {
+        tag_arity_index_.clear();
+        tag_arity_index_workspace_ = nullptr;
+    }
     void* type_registry_ = nullptr; // points to aura::core::TypeRegistry
     std::unordered_map<ClosureId, Closure> closures_;
     ClosureBridgeFn closure_bridge_;
@@ -1381,6 +1427,32 @@ private:
     // BEFORE lock acquisition to keep the no-op fast path.
     std::shared_mutex workspace_mtx_;
 public:
+    // Issue #211: test accessors for the (tag, arity) index.
+    [[nodiscard]] std::size_t tag_arity_index_size() const noexcept {
+        return tag_arity_index_.size();
+    }
+    [[nodiscard]] const ast::FlatAST* tag_arity_index_workspace() const noexcept {
+        return tag_arity_index_workspace_;
+    }
+    // Force a build of the index (for tests that need to
+    // verify the index without going through query:pattern).
+    // The index is normally lazy-built on first use, so
+    // this is only needed for direct unit tests of the
+    // index itself.
+    void force_build_tag_arity_index() const { build_tag_arity_index(); }
+    // Test accessors for setting the workspace directly
+    // (bypassing the Aura primitive pipeline, which is
+    // tested separately).
+    void set_workspace_flat_for_test(ast::FlatAST* f) {
+        set_workspace_flat(f);
+    }
+    void invalidate_tag_arity_index_for_test() {
+        invalidate_tag_arity_index();
+    }
+    ast::FlatAST* workspace_flat_for_test() const { return workspace_flat_; }
+    // Expose the arena allocator so tests can build
+    // workspace FlatASTs.
+    ast::ASTArena& test_arena() { return *arena_; }
     // ── Issue #177: explicit Mutation Boundary + per-fiber checkpoint ───
     //
     // The MutationCheckpoint + enter/exit APIs establish a
