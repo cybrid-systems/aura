@@ -8229,6 +8229,140 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         string_heap_.push_back(panic_safe_source_);
         return make_string(idx);
     });
+
+    // (mutate:atomic-batch) — Issue #192 (P0): apply a list of
+    // mutate operations atomically (all-or-nothing). The list is
+    // a sequence of sub-lists, each sub-list is (op-name arg1 arg2 ...)
+    // — same shape as if you'd called the individual (mutate:rebind ...)
+    // / (mutate:remove-node ...) / etc. primitives directly. On any
+    // failure mid-batch, all mutations since the batch started are
+    // rolled back via FlatAST::rollback_since. The result is #t on
+    // full success, #f on rollback.
+    //
+    // Example:
+    //   (mutate:atomic-batch
+    //      (list
+    //         (list "mutate:rebind" "f" "(lambda (x) (* x 2))" "test")
+    //         (list "mutate:rebind" "g" "(lambda (x) (* x 3))" "test"))
+    //      "double rebind")
+    //
+    // Implementation note: each op's primitive acquires its own lock
+    // (workspace_mtx_ unique_lock). This is "weak atomicity" —
+    // protected from concurrent batches, but if another fiber
+    // mutates in between two batched ops, that mutation would also
+    // be in the log and would be rolled back if a later op in the
+    // batch fails. Strong atomicity (hold the lock the whole time,
+    // dispatch via lockless helpers) is a follow-up.
+    primitives_.add("mutate:atomic-batch", [this, mev](const auto& a) -> EvalValue {
+        // Allow a.size() == 1 with the ops list being empty (void)
+        // — that's a vacuous success (no ops, no rollback needed).
+        // The summary string is optional in that case.
+        if (a.size() < 1) {
+            return mev("bad-arg",
+                "usage: (mutate:atomic-batch (list ...) \"summary\")");
+        }
+        // a[0] is the ops list. It can be an empty list (void)
+        // or a non-empty proper list. Anything else is bad-arg.
+        EvalValue op_list = a[0];
+        if (!is_pair(op_list) && !is_void(op_list)) {
+            return mev("bad-arg",
+                "ops list must be a list (use (list) for empty)");
+        }
+        if (!workspace_flat_) {
+            return mev("no-workspace", "no FlatAST available");
+        }
+        std::uint64_t initial_log_size = workspace_flat_->all_mutations().size();
+        bool ok = true;
+        std::size_t op_count = 0;
+        auto list_to_vec = [this](EvalValue list) -> std::vector<EvalValue> {
+            std::vector<EvalValue> out;
+            while (is_pair(list)) {
+                auto pidx = as_pair_idx(list);
+                if (pidx >= pairs_.size()) break;
+                out.push_back(pairs_[pidx].car);
+                list = pairs_[pidx].cdr;
+            }
+            return out;
+        };
+        auto pair_car = [this](EvalValue v) -> EvalValue {
+            return pairs_[as_pair_idx(v)].car;
+        };
+        auto pair_cdr = [this](EvalValue v) -> EvalValue {
+            return pairs_[as_pair_idx(v)].cdr;
+        };
+        while (is_pair(op_list)) {
+            EvalValue op = pair_car(op_list);
+            op_list = pair_cdr(op_list);
+            if (!is_pair(op)) { ok = false; break; }
+            EvalValue op_name_ev = pair_car(op);
+            if (!is_string(op_name_ev)) { ok = false; break; }
+            std::vector<EvalValue> op_args = list_to_vec(pair_cdr(op));
+            std::string op_name = string_heap_[as_string_idx(op_name_ev)];
+            auto prim_opt = primitives_.lookup(op_name);
+            if (!prim_opt) { ok = false; break; }
+            EvalValue result = (*prim_opt)(op_args);
+            if (is_bool(result) && !as_bool(result)) {
+                ok = false;
+                break;
+            }
+            ++op_count;
+        }
+        if (!ok) {
+            workspace_flat_->rollback_since(initial_log_size);
+            atomic_batch_rollbacks_++;
+            return make_bool(false);
+        }
+        atomic_batch_count_++;
+        atomic_batch_ops_total_ += op_count;
+        return make_bool(true);
+    });
+    // (atomic-batch:stats) — Issue #192: observability for
+    // mutate:atomic-batch. Hash with batch-count, ops-total,
+    // rollback-count, ops-per-batch (avg).
+    primitives_.add("atomic-batch:stats", [this](const auto&) -> EvalValue {
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+                auto kidx = string_heap_.size();
+                string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::size_t avg = atomic_batch_count_ > 0
+            ? atomic_batch_ops_total_ / atomic_batch_count_
+            : 0;
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"batch-count", make_int(static_cast<std::int64_t>(atomic_batch_count_))},
+            {"ops-total", make_int(static_cast<std::int64_t>(atomic_batch_ops_total_))},
+            {"rollback-count", make_int(static_cast<std::int64_t>(atomic_batch_rollbacks_))},
+            {"ops-per-batch", make_int(static_cast<std::int64_t>(avg))},
+        };
+        return build_hash(kv);
+    });
 }
 
 
@@ -15223,6 +15357,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         if (!workspace_flat_) return make_int(0);
         return make_int(static_cast<std::int64_t>(workspace_flat_->generation()));
     });
+
     // (syntax-marker-counts) — Issue #190: aggregate count of
     // each SyntaxMarker value across the workspace. Hash with
     // 3 integer fields: user, macro-introduced, bool-literal,
