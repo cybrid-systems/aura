@@ -251,6 +251,12 @@ target_sources(test_concurrent PRIVATE
     src/exec/execution_adapter.cpp
     src/exec/combinators.cpp
     src/compiler/messaging_bridge_impl.cpp
+    # Issue #195: fiber.cpp has a static initializer that
+    # calls aura_set_current_fiber_id_fn (defined in
+    # aura_jit_runtime.cpp) to install the per-fiber id
+    # hook. Without this dependency, the linker fails with
+    # "undefined reference to aura_set_current_fiber_id_fn".
+    src/compiler/aura_jit_runtime.cpp
 )
 target_compile_options(test_concurrent PRIVATE -Wall -Wextra -Wpedantic
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
