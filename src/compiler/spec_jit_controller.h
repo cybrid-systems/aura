@@ -80,7 +80,15 @@ public:
     // for the conservative should_deopt_specialization() in the
     // common case: deopt the affected function, not the whole
     // process. Other functions with clean compiles are unaffected.
-    bool should_deopt_specialization_for(const std::string& fn_name) const;
+    //
+    // Optional `threshold` parameter (default 0 = current
+    // behavior; any hit triggers deopt). Production code should
+    // pass a non-zero threshold (e.g. 10) to avoid thrashing on
+    // transient bugs — a function that hits an unhandled opcode
+    // once or twice during initial JIT warmup shouldn't
+    // permanently disable specialization for it.
+    bool should_deopt_specialization_for(const std::string& fn_name,
+                                         std::uint64_t threshold = 0) const;
 
     // Issue #193: explicit per-function counter accessor.
     std::uint64_t unhandled_opcode_count_for(const std::string& fn_name) const;
