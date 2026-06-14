@@ -822,6 +822,61 @@ public:
     void walk_env_frame_roots(
         std::vector<std::int64_t>& pair_roots_out,
         std::vector<std::int64_t>& closure_roots_out) const;
+
+    // Issue #206: remap table + resolve_X helpers.
+    //
+    // When the GC sweeps a heap (e.g., after marking), it
+    // compacts the arena: live objects are moved to the
+    // front, freed objects leave a hole. The OLD id of a
+    // live object now points to either a different object
+    // (if the compact moved it) or a hole (if it was freed).
+    //
+    // The remap table is the mechanism for resolving old
+    // ids to new ids:
+    //   - remap_[old_idx] = new_idx (if old was live, moved)
+    //   - remap_[old_idx] = -1 (if old was freed)
+    //
+    // resolve_X(old_id) consults the remap table and returns
+    // the new id, or -1 if the old id was freed.
+    //
+    // The remap is REBUILT on each compact (the table
+    // reflects the most recent compact). Before any compact,
+    // the table is empty and resolve_X returns the input
+    // (identity mapping, since no compact has happened yet).
+    //
+    // Currently: only pairs have a remap table (the test
+    // focuses on pairs). Other heaps (cells, closures,
+    // strings) follow the same pattern; their remap is a
+    // follow-up.
+    [[nodiscard]] std::int64_t resolve_pair(
+        std::uint64_t old_id) const noexcept {
+        if (pair_remap_.empty()) return static_cast<std::int64_t>(old_id);
+        if (old_id >= pair_remap_.size()) return -1;
+        return pair_remap_[old_id];
+    }
+    [[nodiscard]] std::size_t pair_remap_size() const noexcept {
+        return pair_remap_.size();
+    }
+    // Issue #206: compact the pairs_ arena. `live_mask[i]`
+    // is true if pairs_[i] is live (should be kept). Pairs
+    // not in live_mask are removed, and the remap table is
+    // built:
+    //   pair_remap_[old_idx] = new_idx (if live_mask[old_idx])
+    //   pair_remap_[old_idx] = -1       (otherwise)
+    //
+    // The arena is shrunk to fit the live pairs.
+    // Returns the number of pairs after compact.
+    //
+    // If pair_remap_ is empty after compact (size 0
+    // because live_mask was all-false), resolve_X returns
+    // the input identity (since remap is empty).
+    //
+    // If live_mask is empty (no entries), the compact is
+    // a no-op and pair_remap_ is rebuilt as identity
+    // (all pairs treated as live).
+    [[nodiscard]] std::int64_t compact_pairs(
+        const std::vector<bool>& live_mask);
+    void clear_pair_remap() noexcept { pair_remap_.clear(); }
     // Walk the parent chain starting from `start`, calling
     // `f(EnvId, const EnvFrame&)` for each frame including
     // `start`. Stops when `f` returns false (early exit) or the
@@ -952,6 +1007,10 @@ private:
     // data is parallel to Env; parent walks go via parent_id_
     // (index) instead of Env::parent_ (pointer).
     std::vector<EnvFrame> env_frames_;
+    // Issue #206: pair remap table. Rebuilt by compact_pairs().
+    // pair_remap_[old_idx] = new_idx (live, moved) or -1 (freed).
+    // Empty means no compact has happened yet (identity mapping).
+    std::vector<std::int64_t> pair_remap_;
     std::vector<types::EvalValue> error_values_; // error cause values (indexed by ErrorRef)
     std::vector<void*> opaque_heap_;             // opaque pointers (indexed by OpaqueRef)
     // Issue #131: FFI state moved to FFIRuntime instance

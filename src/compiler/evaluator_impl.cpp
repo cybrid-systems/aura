@@ -627,6 +627,53 @@ void Evaluator::walk_env_frame_roots(
     }
 }
 
+// Issue #206: Evaluator::compact_pairs. Compacts the
+// pairs_ arena, building a remap table for stable id
+// resolution.
+//
+// Algorithm: linear scan, copy live pairs to the front,
+// build pair_remap_[old_idx] = new_idx. Dead pairs (not
+// in `live_mask`) are skipped and their old index gets
+// remap to -1.
+//
+// Returns the number of pairs after compact.
+//
+// The remap table is sized to the OLD pairs_ size, even
+// after compact (which shrinks pairs_). This is by
+// design: a stale id (e.g., from a saved
+// MutationRecord) might still be in [0, old_size). The
+// remap tells us if that id is live (and what its new
+// index is) or freed (-1).
+std::int64_t Evaluator::compact_pairs(
+    const std::vector<bool>& live_mask) {
+    const std::size_t n_old = pairs_.size();
+    pair_remap_.clear();
+    pair_remap_.reserve(n_old);
+    // Build a new vector with only the live pairs. Use
+    // move-semantics to avoid copies where possible.
+    std::pmr::vector<Pair> new_pairs{&runtime_resource_};
+    new_pairs.reserve(n_old);  // upper bound
+    std::int64_t new_idx = 0;
+    for (std::size_t i = 0; i < n_old; ++i) {
+        // If live_mask is empty, treat all as live.
+        // If live_mask is sized to n_old, use the bit.
+        // If live_mask is shorter than i, treat as dead
+        // (defensive).
+        const bool is_live = live_mask.empty()
+            ? true
+            : (i < live_mask.size() ? live_mask[i] : false);
+        if (is_live) {
+            pair_remap_.push_back(new_idx);
+            new_pairs.push_back(std::move(pairs_[i]));
+            ++new_idx;
+        } else {
+            pair_remap_.push_back(-1);
+        }
+    }
+    pairs_ = std::move(new_pairs);
+    return static_cast<std::int64_t>(pairs_.size());
+}
+
 // ── Issue #145: EnvView / ClosureView impls ──────────────────
 //
 // make_env_view: build a zero-copy view over an Env's
