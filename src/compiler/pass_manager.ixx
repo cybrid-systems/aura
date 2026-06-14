@@ -2222,16 +2222,20 @@ private:
         if (block.instructions.size() < 2) return;
         // Look at the last 2 instructions
         const auto n = block.instructions.size();
-        auto& call_instr = block.instructions[n - 2];
-        auto& ret_instr = block.instructions[n - 1];
+        // Use POINTERS (not references) so we can re-assign
+        // them after the vector reallocates from the Local
+        // inserts below. References to vector elements are
+        // invalidated by insert()/push_back().
+        aura::ir::IRInstruction* call_instr = &block.instructions[n - 2];
+        aura::ir::IRInstruction* ret_instr = &block.instructions[n - 1];
         // Must be Call followed by Return
-        if (call_instr.opcode != aura::ir::IROpcode::Call) return;
-        if (ret_instr.opcode != aura::ir::IROpcode::Return) return;
+        if (call_instr->opcode != aura::ir::IROpcode::Call) return;
+        if (ret_instr->opcode != aura::ir::IROpcode::Return) return;
         // The Return's value must be the Call's result (otherwise
         // the Call is not actually the tail position).
-        if (ret_instr.operands[0] != call_instr.operands[3]) return;
+        if (ret_instr->operands[0] != call_instr->operands[3]) return;
         // The Call's callee must be statically known
-        auto callee_slot = call_instr.operands[0];
+        auto callee_slot = call_instr->operands[0];
         auto it = slot_to_func.find(callee_slot);
         if (it == slot_to_func.end()) return;  // dynamic callee
         auto callee_fid = it->second;
@@ -2249,24 +2253,76 @@ private:
         // before the Branch. For now, only handle arg_base == 0
         // (the common case for tail-recursion where args are
         // already in the callee's param slots 0..arg_count-1).
-        auto arg_base = call_instr.operands[1];
-        auto arg_count = call_instr.operands[2];
+        auto arg_base = call_instr->operands[1];
+        auto arg_count = call_instr->operands[2];
+        // Issue #201: handle non-zero arg_base by emitting
+        // Local(callee_param_i, caller_arg_base + i) for each
+        // arg i in 0..arg_count-1 before the Jump. After the
+        // Local inserts, the caller's args are in slots
+        // 0..arg_count-1 (callee's param slots) and the Jump
+        // (which is the only thing the callee sees) doesn't
+        // need to know about the original arg_base.
         if (arg_base != 0) {
-            // For the minimal version, skip non-zero arg_base
-            // (would need to insert Local copies). Document as
-            // a follow-up. A future commit can add the Local
-            // inserts here.
-            (void)arg_count;
-            return;
+            // Check that all caller slots [arg_base ..
+            // arg_base + arg_count - 1] are valid (we can't
+            // bail out mid-transformation). The IR is assumed
+            // to be well-formed, so we don't re-validate.
+            // Insert Local copies in FORWARD order: insert
+            // Local(callee_param_i, caller_arg_base + i) at
+            // position (call_idx + i) for i in 0..arg_count-1.
+            // The first insert pushes the Call to call_idx+1,
+            // but we then re-insert at the new call_idx+1
+            // (which is call_idx+1+i' for the next i'), so
+            // forward iteration with an ever-increasing insert
+            // position naturally builds the correct order:
+            // [MC, CI, ..., CI, Local(0), Local(1), Local(2), Call→Jump]
+            // (Note: we deliberately don't use reverse iteration
+            //  because the insert position is computed from the
+            //  ORIGINAL call_idx, and reverse iteration would
+            //  interleave the inserts with the Call and Return.)
+            //
+            // Capture source_ast_node_id + type_id BEFORE
+            // inserting (the `call_instr` reference is to the
+            // ORIGINAL Call position, and the vector may
+            // reallocate during inserts, invalidating the
+            // reference).
+            const auto src_node_id = call_instr->source_ast_node_id;
+            const auto src_type_id = call_instr->type_id;
+            const std::size_t call_idx = n - 2;  // index of the Call instruction
+            for (std::uint32_t i = 0; i < arg_count; ++i) {
+                aura::ir::IRInstruction local;
+                local.opcode = aura::ir::IROpcode::Local;
+                local.operands = {i, arg_base + i, 0, 0};
+                local.source_ast_node_id = src_node_id;
+                local.type_id = src_type_id;
+                block.instructions.insert(
+                    block.instructions.begin() +
+                        static_cast<std::ptrdiff_t>(call_idx) +
+                        static_cast<std::ptrdiff_t>(i),
+                    local);
+            }
+            // The Call was at call_idx; after arg_count inserts
+            // it's now at position (call_idx + arg_count).
+            // Update the call_instr pointer to point at the
+            // new Call location (the vector may have reallocated,
+            // so the original pointer is dangling).
+            // Now the Call's arg_base is still the original
+            // (non-zero) value, but we're about to rewrite
+            // the Call to a Jump so the arg_base is irrelevant.
+            // (We don't need to mutate call_instr->operands[1]
+            // before the rewrite, since the Jump opcode only
+            // reads operands[0].)
+            call_instr = &block.instructions[call_idx + arg_count];
         }
         // Transform: replace Call with Branch to callee's entry,
         // remove Return. The Branch takes no args (callee's
-        // params are already at slots 0..arg_count-1).
-        call_instr.opcode = aura::ir::IROpcode::Jump;  // wait, Jump is unconditional; need Branch
+        // params are already at slots 0..arg_count-1, after the
+        // Local copies above for non-zero arg_base).
+        call_instr->opcode = aura::ir::IROpcode::Jump;  // wait, Jump is unconditional; need Branch
         // Actually, use Jump since the target is unconditional
         // (after the tail call there's no condition to check).
-        call_instr.opcode = aura::ir::IROpcode::Jump;
-        call_instr.operands[0] = callee_entry_id;
+        call_instr->opcode = aura::ir::IROpcode::Jump;
+        call_instr->operands[0] = callee_entry_id;
         // Remove the Return (Branch is the new terminator)
         block.instructions.pop_back();
         ++tco_count_;
