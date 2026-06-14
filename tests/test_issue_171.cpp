@@ -622,6 +622,326 @@ bool test_tco_arg_base_mixed_in_same_module() {
     return true;
 }
 
+// ── Test 15 (Issue #202): TCO inter-block, single pred ──
+// Pattern:
+//   Block 0: ...; Jump(1);
+//   Block 1: Call(closure, ...); Return(result);
+// After TCO:
+//   Block 0: ...; Jump(callee_entry);    (was Jump(1))
+//   Block 1: (still Call+Return, but now dead — intra-block TCO will collapse it later)
+bool test_tco_inter_block_single_pred() {
+    PRINTLN("\n--- Test 15: TCO inter-block single pred ---");
+    aura::ir::IRModule mod;
+    mod.functions.push_back(make_const_i64_callee("k42", 0, 42));
+    aura::ir::IRFunction caller;
+    caller.name = "caller";
+    caller.local_count = 2;
+    caller.blocks.push_back({0});
+    caller.blocks.push_back({1});
+    // Block 0: MakeClosure, Jump(1)
+    caller.blocks[0].instructions = {
+        {aura::ir::IROpcode::MakeClosure, {0, 0, 0, 0}, 0, 13},
+        {aura::ir::IROpcode::Jump,        {1, 0, 0, 0}, 0, 0},
+    };
+    // Block 1: Call, Return
+    caller.blocks[1].instructions = {
+        {aura::ir::IROpcode::Call,        {0, 0, 0, 1}, 0, 0},
+        {aura::ir::IROpcode::Return,      {1, 0, 0, 0}, 0, 0},
+    };
+    mod.functions.push_back(std::move(caller));
+
+    aura::compiler::TCOPass tco;
+    tco.run(mod);
+
+    // Block 0: terminator should now be Jump(0) (callee's entry id)
+    auto& b0 = mod.functions[1].blocks[0];
+    CHECK(b0.instructions.size() == 2,
+          "block 0: 2 instructions (MakeClosure + Jump; unchanged)");
+    CHECK(b0.instructions[1].opcode == aura::ir::IROpcode::Jump,
+          "block 0: terminator is Jump");
+    CHECK(b0.instructions[1].operands[0] == 0,
+          "block 0: Jump target = callee entry block 0 (was block 1)");
+    // Block 1: still Call+Return (intra-block TCO will collapse it
+    // when run_on_block iterates after inter-block, since intra-block
+    // TCO runs AFTER inter-block TCO in the run() loop)
+    auto& b1 = mod.functions[1].blocks[1];
+    CHECK(b1.instructions.size() == 1,
+          "block 1: 1 instruction (intra-block TCO collapsed Call+Return to Jump)");
+    CHECK(b1.instructions[0].opcode == aura::ir::IROpcode::Jump,
+          "block 1: collapsed to Jump (intra-block TCO)");
+    CHECK(b1.instructions[0].operands[0] == 0,
+          "block 1: Jump target = callee entry block 0");
+    CHECK(tco.tco_inter_block_count() == 1,
+          "tco_inter_block_count() == 1 (1 pred rewritten)");
+    CHECK(tco.tco_count() == 1,
+          "tco_count() == 1 (intra-block TCO collapsed block 1's Call+Return)");
+    return true;
+}
+
+// ── Test 16 (Issue #202): TCO inter-block, multiple preds ──
+// Two blocks both jump to block 2 (the tail-call block).
+// Both preds should be rewritten.
+bool test_tco_inter_block_multi_pred() {
+    PRINTLN("\n--- Test 16: TCO inter-block multiple preds ---");
+    aura::ir::IRModule mod;
+    mod.functions.push_back(make_const_i64_callee("k42", 0, 42));
+    aura::ir::IRFunction caller;
+    caller.name = "caller";
+    caller.local_count = 2;
+    caller.blocks.push_back({0});
+    caller.blocks.push_back({1});
+    caller.blocks.push_back({2});
+    // Block 0: MakeClosure, Jump(2)
+    caller.blocks[0].instructions = {
+        {aura::ir::IROpcode::MakeClosure, {0, 0, 0, 0}, 0, 13},
+        {aura::ir::IROpcode::Jump,        {2, 0, 0, 0}, 0, 0},
+    };
+    // Block 1: also Jump(2) (no MakeClosure, but that's OK)
+    caller.blocks[1].instructions = {
+        {aura::ir::IROpcode::Jump,        {2, 0, 0, 0}, 0, 0},
+    };
+    // Block 2: Call, Return
+    caller.blocks[2].instructions = {
+        {aura::ir::IROpcode::Call,        {0, 0, 0, 1}, 0, 0},
+        {aura::ir::IROpcode::Return,      {1, 0, 0, 0}, 0, 0},
+    };
+    mod.functions.push_back(std::move(caller));
+
+    aura::compiler::TCOPass tco;
+    tco.run(mod);
+
+    // Block 0: Jump target = callee entry 0
+    auto& b0 = mod.functions[1].blocks[0];
+    CHECK(b0.instructions[1].operands[0] == 0,
+          "block 0: Jump target re-targeted to callee entry 0");
+    // Block 1: Jump target = callee entry 0
+    auto& b1 = mod.functions[1].blocks[1];
+    CHECK(b1.instructions[0].operands[0] == 0,
+          "block 1: Jump target re-targeted to callee entry 0");
+    // Block 2: collapsed to Jump by intra-block TCO
+    auto& b2 = mod.functions[1].blocks[2];
+    CHECK(b2.instructions.size() == 1,
+          "block 2: collapsed to 1 instruction by intra-block TCO");
+    CHECK(b2.instructions[0].opcode == aura::ir::IROpcode::Jump,
+          "block 2: collapsed to Jump");
+    CHECK(tco.tco_inter_block_count() == 2,
+          "tco_inter_block_count() == 2 (2 preds rewritten)");
+    CHECK(tco.tco_count() == 1,
+          "tco_count() == 1 (intra-block TCO collapsed block 2's Call+Return)");
+    return true;
+}
+
+// ── Test 17 (Issue #202): TCO inter-block, Branch pred is skipped ──
+// A Block that ends with Branch (conditional jump) into the
+// tail-call block should NOT be re-targeted — Branch has two
+// outcomes, and only one is the tail call.
+bool test_tco_inter_block_branch_pred_skipped() {
+    PRINTLN("\n--- Test 17: TCO inter-block Branch pred is skipped ---");
+    aura::ir::IRModule mod;
+    mod.functions.push_back(make_const_i64_callee("k42", 0, 42));
+    aura::ir::IRFunction caller;
+    caller.name = "caller";
+    caller.local_count = 3;
+    caller.blocks.push_back({0});
+    caller.blocks.push_back({1});
+    caller.blocks.push_back({2});
+    // Block 0: Branch(cond=0, true=2, false=1)  — Branch pred
+    // (MakeClosure needed so the Call's callee slot 0 is statically known)
+    caller.blocks[0].instructions = {
+        {aura::ir::IROpcode::MakeClosure, {0, 0, 0, 0}, 0, 13},
+        {aura::ir::IROpcode::ConstI64,    {0, 1, 0, 0}, 0, 1},  // cond
+        {aura::ir::IROpcode::Branch,      {0, 2, 1, 0}, 0, 0},  // cond=0, true=2, false=1
+    };
+    // Block 1: Jump(2)  — Jump pred
+    caller.blocks[1].instructions = {
+        {aura::ir::IROpcode::Jump,        {2, 0, 0, 0}, 0, 0},
+    };
+    // Block 2: Call+Return (tail-call)
+    caller.blocks[2].instructions = {
+        {aura::ir::IROpcode::Call,        {0, 0, 0, 1}, 0, 0},
+        {aura::ir::IROpcode::Return,      {1, 0, 0, 0}, 0, 0},
+    };
+    mod.functions.push_back(std::move(caller));
+
+    aura::compiler::TCOPass tco;
+    tco.run(mod);
+
+    // Block 0 (Branch pred): unchanged
+    auto& b0 = mod.functions[1].blocks[0];
+    CHECK(b0.instructions[2].operands[1] == 2,
+          "block 0 (Branch pred): Branch true-target unchanged (still 2)");
+    CHECK(b0.instructions[2].operands[2] == 1,
+          "block 0 (Branch pred): Branch false-target unchanged (still 1)");
+    // Block 1 (Jump pred): re-targeted
+    auto& b1 = mod.functions[1].blocks[1];
+    CHECK(b1.instructions[0].operands[0] == 0,
+          "block 1 (Jump pred): Jump target re-targeted to callee entry 0");
+    // Block 2: collapsed to Jump by intra-block TCO
+    auto& b2 = mod.functions[1].blocks[2];
+    CHECK(b2.instructions.size() == 1,
+          "block 2: collapsed to 1 instruction by intra-block TCO");
+    CHECK(tco.tco_inter_block_count() == 1,
+          "tco_inter_block_count() == 1 (only the Jump pred was rewritten; Branch pred skipped)");
+    return true;
+}
+
+// ── Test 18 (Issue #202): TCO inter-block, tail-call block is entry ──
+// The tail-call block is block 0 (the entry block). No preds exist
+// to rewrite (since it's the entry). inter-block TCO should
+// bail out (no preds to rewrite) but intra-block TCO should
+// still fire on the tail-call block.
+bool test_tco_inter_block_tail_call_is_entry() {
+    PRINTLN("\n--- Test 18: TCO inter-block tail-call block is entry (no preds) ---");
+    aura::ir::IRModule mod;
+    mod.functions.push_back(make_const_i64_callee("k42", 0, 42));
+    aura::ir::IRFunction caller;
+    caller.name = "caller";
+    caller.local_count = 2;
+    caller.blocks.push_back({0});
+    // Block 0: MakeClosure, Call, Return (no pred)
+    caller.blocks[0].instructions = {
+        {aura::ir::IROpcode::MakeClosure, {0, 0, 0, 0}, 0, 13},
+        {aura::ir::IROpcode::Call,        {0, 0, 0, 1}, 0, 0},
+        {aura::ir::IROpcode::Return,      {1, 0, 0, 0}, 0, 0},
+    };
+    mod.functions.push_back(std::move(caller));
+
+    aura::compiler::TCOPass tco;
+    tco.run(mod);
+
+    auto& b0 = mod.functions[1].blocks[0];
+    // intra-block TCO should have fired: Call+Return → Jump
+    CHECK(b0.instructions.size() == 2,
+          "entry block: 2 instructions (MakeClosure + Jump; intra-block TCO collapsed Call+Return)");
+    CHECK(b0.instructions[1].opcode == aura::ir::IROpcode::Jump,
+          "entry block: tail Call rewritten to Jump");
+    CHECK(tco.tco_inter_block_count() == 0,
+          "tco_inter_block_count() == 0 (no preds to rewrite)");
+    CHECK(tco.tco_count() == 1,
+          "tco_count() == 1 (intra-block TCO fired on the entry block)");
+    return true;
+}
+
+// ── Test 19 (Issue #202): TCO inter-block, callee not statically known ──
+// The Call's callee is a function pointer (not a MakeClosure slot).
+// inter-block TCO should skip the tail-call block (callee is dynamic).
+bool test_tco_inter_block_dynamic_callee_skipped() {
+    PRINTLN("\n--- Test 19: TCO inter-block dynamic callee is skipped ---");
+    aura::ir::IRModule mod;
+    mod.functions.push_back(make_const_i64_callee("k42", 0, 42));
+    aura::ir::IRFunction caller;
+    caller.name = "caller";
+    caller.local_count = 2;
+    caller.blocks.push_back({0});
+    caller.blocks.push_back({1});
+    // Block 0: no MakeClosure, Jump(1)
+    caller.blocks[0].instructions = {
+        {aura::ir::IROpcode::Jump,        {1, 0, 0, 0}, 0, 0},
+    };
+    // Block 1: Call with callee slot 99 (no MakeClosure for slot 99)
+    caller.blocks[1].instructions = {
+        {aura::ir::IROpcode::Call,        {99, 0, 0, 1}, 0, 0},
+        {aura::ir::IROpcode::Return,      {1, 0, 0, 0}, 0, 0},
+    };
+    mod.functions.push_back(std::move(caller));
+
+    aura::compiler::TCOPass tco;
+    tco.run(mod);
+
+    // Block 0: not re-targeted (callee was dynamic)
+    auto& b0 = mod.functions[1].blocks[0];
+    CHECK(b0.instructions[0].operands[0] == 1,
+          "block 0: Jump target unchanged (callee was dynamic, inter-block TCO skipped)");
+    // Block 1: not collapsed (intra-block TCO also skips dynamic callee)
+    auto& b1 = mod.functions[1].blocks[1];
+    CHECK(b1.instructions.size() == 2,
+          "block 1: 2 instructions (intra-block TCO also skipped dynamic callee)");
+    CHECK(tco.tco_inter_block_count() == 0,
+          "tco_inter_block_count() == 0 (dynamic callee skipped)");
+    CHECK(tco.tco_count() == 0,
+          "tco_count() == 0 (intra-block TCO also skipped dynamic callee)");
+    return true;
+}
+
+// ── Test 20 (Issue #202): TCO inter-block + intra-block co-exist ──
+// Module has 3 tail-call patterns:
+//   1. Intra-block (block A: Call+Return in same block)
+//   2. Inter-block (block B: pred jumps to tail-call block C)
+//   3. Inter-block with multiple preds (block D: 2 preds jump to tail-call block E)
+// All 3 should be TCO'd: intra-block count == 1, inter-block count == 3.
+bool test_tco_inter_block_coexist_with_intra() {
+    PRINTLN("\n--- Test 20: TCO inter-block + intra-block coexist ---");
+    aura::ir::IRModule mod;
+    mod.functions.push_back(make_const_i64_callee("k42", 0, 42));
+    mod.functions.push_back(make_const_i64_callee("k99", 1, 99));
+    aura::ir::IRFunction caller;
+    caller.name = "caller";
+    caller.local_count = 4;
+    caller.blocks.push_back({0});  // A: intra-block
+    caller.blocks.push_back({1});  // B: pred of C
+    caller.blocks.push_back({2});  // C: tail-call block
+    caller.blocks.push_back({3});  // D: pred of E
+    caller.blocks.push_back({4});  // E: tail-call block
+    // A: MakeClosure(0), Call, Return (intra-block TCO target)
+    caller.blocks[0].instructions = {
+        {aura::ir::IROpcode::MakeClosure, {0, 0, 0, 0}, 0, 13},
+        {aura::ir::IROpcode::Call,        {0, 0, 0, 1}, 0, 0},
+        {aura::ir::IROpcode::Return,      {1, 0, 0, 0}, 0, 0},
+    };
+    // B: MakeClosure(0), Jump(2)
+    caller.blocks[1].instructions = {
+        {aura::ir::IROpcode::MakeClosure, {0, 0, 0, 0}, 0, 13},
+        {aura::ir::IROpcode::Jump,        {2, 0, 0, 0}, 0, 0},
+    };
+    // C: Call, Return (tail-call block; pred B)
+    caller.blocks[2].instructions = {
+        {aura::ir::IROpcode::Call,        {0, 0, 0, 1}, 0, 0},
+        {aura::ir::IROpcode::Return,      {1, 0, 0, 0}, 0, 0},
+    };
+    // D: MakeClosure(1), Jump(4)  (callee is k99 = func_id 1)
+    caller.blocks[3].instructions = {
+        {aura::ir::IROpcode::MakeClosure, {2, 1, 0, 0}, 0, 13},
+        {aura::ir::IROpcode::Jump,        {4, 0, 0, 0}, 0, 0},
+    };
+    // E: Call, Return (tail-call block; pred D)
+    caller.blocks[4].instructions = {
+        {aura::ir::IROpcode::Call,        {2, 0, 0, 3}, 0, 0},
+        {aura::ir::IROpcode::Return,      {3, 0, 0, 0}, 0, 0},
+    };
+    mod.functions.push_back(std::move(caller));
+
+    aura::compiler::TCOPass tco;
+    tco.run(mod);
+
+    // A (intra-block): Call+Return → Jump
+    auto& a = mod.functions[2].blocks[0];
+    CHECK(a.instructions.size() == 2,
+          "block A: 2 instrs (MakeClosure + Jump; intra-block TCO)");
+    CHECK(a.instructions[1].opcode == aura::ir::IROpcode::Jump,
+          "block A: tail Call rewritten to Jump");
+    // B (pred of C): Jump target = callee entry 0
+    auto& b = mod.functions[2].blocks[1];
+    CHECK(b.instructions[1].operands[0] == 0,
+          "block B: Jump target re-targeted to callee entry 0");
+    // C (tail-call block): collapsed to Jump by intra-block TCO
+    auto& c = mod.functions[2].blocks[2];
+    CHECK(c.instructions.size() == 1,
+          "block C: collapsed to 1 instr by intra-block TCO");
+    // D (pred of E): Jump target = callee entry 0 (k99's entry)
+    auto& d = mod.functions[2].blocks[3];
+    CHECK(d.instructions[1].operands[0] == 0,
+          "block D: Jump target re-targeted to callee entry 0 (k99's entry)");
+    // E (tail-call block): collapsed to Jump
+    auto& e = mod.functions[2].blocks[4];
+    CHECK(e.instructions.size() == 1,
+          "block E: collapsed to 1 instr by intra-block TCO");
+    CHECK(tco.tco_inter_block_count() == 2,
+          "tco_inter_block_count() == 2 (B and D re-targeted)");
+    CHECK(tco.tco_count() == 3,
+          "tco_count() == 3 (A, C, E collapsed; A=1 intra-block, C=1 intra, E=1 intra)");
+    return true;
+}
+
 int main() {
     std::fprintf(stdout, "═══ Issue #171 — Function Inliner (Priority 2) ═══\n");
     std::fprintf(stdout, "  Verifies the inliner ACTUALLY inlines, not just counts.\n\n");
@@ -640,6 +960,12 @@ int main() {
     test_tco_arg_base_nonzero_multi();
     test_tco_arg_base_nonzero_zero_args();
     test_tco_arg_base_mixed_in_same_module();
+    test_tco_inter_block_single_pred();
+    test_tco_inter_block_multi_pred();
+    test_tco_inter_block_branch_pred_skipped();
+    test_tco_inter_block_tail_call_is_entry();
+    test_tco_inter_block_dynamic_callee_skipped();
+    test_tco_inter_block_coexist_with_intra();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);

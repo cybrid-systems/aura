@@ -2185,6 +2185,7 @@ export class TCOPass {
 public:
     void run(aura::ir::IRModule& module) {
         tco_count_ = 0;
+        tco_inter_block_count_ = 0;
         // Build func_id → IRFunction* index (same pattern as
         // InlinePass for O(1) lookup).
         if (func_index_.size() != module.functions.size()) {
@@ -2204,6 +2205,19 @@ public:
                     }
                 }
             }
+            // Issue #202: inter-block TCO runs FIRST. It detects
+            // tail-call blocks (Call+Return) and re-targets
+            // unconditional-Jump predecessors to the callee's
+            // entry. The tail-call block itself becomes a
+            // unreachable dead block after this (intra-block
+            // TCO may then collapse it to a single Jump).
+            //
+            // Running inter-block TCO first means we see the
+            // original Call+Return pattern in the tail-call
+            // block (intra-block TCO would have transformed it
+            // to a single Jump, hiding the tail-call pattern
+            // from inter-block analysis).
+            run_inter_block_tco(func, slot_to_func);
             for (auto& block : func.blocks) {
                 run_on_block(func, block, slot_to_func);
             }
@@ -2213,6 +2227,9 @@ public:
     bool has_error() const { return false; }
     std::string_view name() const { return "tco"; }
     std::size_t tco_count() const { return tco_count_; }
+    std::size_t tco_inter_block_count() const {
+        return tco_inter_block_count_;
+    }
 
 private:
     void run_on_block(aura::ir::IRFunction& caller,
@@ -2329,7 +2346,91 @@ private:
         (void)caller;
     }
 
+    // Issue #202: inter-block TCO. Detects the pattern
+    //
+    //   Block P: ...; Jump(B);
+    //   Block B: Call(callee, arg_base, arg_count, result); Return(result);
+    //
+    // and transforms it to
+    //
+    //   Block P: ...; Jump(callee_entry);    (B is now dead)
+    //   Block B: Call(callee, ...); Return(result);   (will be collapsed by intra-block TCO)
+    //
+    // For the transformation to be correct, ALL predecessors
+    // of B must be unconditional Jumps (no Branch into B —
+    // a Branch would mean B is one of two outcomes, and the
+    // other outcome may have a different semantics).
+    //
+    // Also: for the simple form, we require arg_base == 0
+    // (the callee reads from slots 0..arg_count-1 directly).
+    // Non-zero arg_base would require inserting Local copies
+    // at the end of each predecessor, which is a follow-up
+    // (the Local copies would need to be propagated to all
+    // preds, and the args must be at compatible slots in
+    // all preds).
+    void run_inter_block_tco(
+        aura::ir::IRFunction& func,
+        const std::unordered_map<std::uint32_t, std::uint32_t>& slot_to_func) {
+        // For each block, check if it's a tail-call block.
+        // If yes, find all preds and rewrite them to jump
+        // to the callee entry.
+        for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
+            const auto& block = func.blocks[bi];
+            if (!is_tail_call_block(block, slot_to_func)) continue;
+            // Get the callee entry id
+            const auto& call_instr =
+                block.instructions[block.instructions.size() - 2];
+            auto callee_slot = call_instr.operands[0];
+            auto arg_base = call_instr.operands[1];
+            auto it = slot_to_func.find(callee_slot);
+            if (it == slot_to_func.end()) continue;
+            auto callee_fid = it->second;
+            if (callee_fid >= func_index_.size()) continue;
+            const auto* callee = func_index_[callee_fid];
+            if (!callee || callee->blocks.empty()) continue;
+            auto callee_entry_id = callee->blocks[0].id;
+            // For now, skip non-zero arg_base (see header comment).
+            if (arg_base != 0) continue;
+            // Find all unconditional-Jump predecessors of bi
+            // (other blocks whose terminator is Jump(bi)).
+            // We skip Branch predecessors (a Branch into B
+            // would mean B is one of two outcomes, and TCO
+            // is only sound if B is the unique successor).
+            for (std::size_t pi = 0; pi < func.blocks.size(); ++pi) {
+                if (pi == bi) continue;
+                auto& pred = func.blocks[pi];
+                if (pred.instructions.empty()) continue;
+                auto& last = pred.instructions.back();
+                if (last.opcode != aura::ir::IROpcode::Jump) continue;
+                if (last.operands[0] != block.id) continue;
+                // Rewrite pred's terminator: Jump(bi) → Jump(callee_entry)
+                last.operands[0] = callee_entry_id;
+                ++tco_inter_block_count_;
+            }
+        }
+    }
+
+    // Predicate: is `block` a tail-call block?
+    // A tail-call block ends with Call+Return where the
+    // Return's value is the Call's result, and the Call's
+    // callee is statically known.
+    static bool is_tail_call_block(
+        const aura::ir::BasicBlock& block,
+        const std::unordered_map<std::uint32_t, std::uint32_t>& slot_to_func) {
+        if (block.instructions.size() < 2) return false;
+        const auto n = block.instructions.size();
+        const auto& call = block.instructions[n - 2];
+        const auto& ret = block.instructions[n - 1];
+        if (call.opcode != aura::ir::IROpcode::Call) return false;
+        if (ret.opcode != aura::ir::IROpcode::Return) return false;
+        if (ret.operands[0] != call.operands[3]) return false;
+        if (slot_to_func.find(call.operands[0]) == slot_to_func.end())
+            return false;
+        return true;
+    }
+
     std::size_t tco_count_ = 0;
+    std::size_t tco_inter_block_count_ = 0;
     std::vector<const aura::ir::IRFunction*> func_index_;
 };
 
