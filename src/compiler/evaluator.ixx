@@ -462,6 +462,20 @@ public:
         std::function<GetJitUnhandledCountFn> fn) {
         get_jit_unhandled_count_fn_ = std::move(fn);
     }
+    // Issue #196: hook to query the incremental-compilation
+    // observability struct from the CompilerService. Returns
+    // a packed uint64 with (cache_size << 48) | (dirty_count << 32)
+    // | (epoch << 16) | (edges & 0xFFFF). Returns 0 if no hook
+    // is installed (e.g. unit-test Evaluator without a
+    // CompilerService). The 16-bit per-field packing is fine
+    // for the realistic scale of AI multi-round mutations
+    // (typically < 64K defines, < 64K dirty entries, < 64K
+    // mutation epoch, < 64K dep edges per define).
+    using GetIncrementalStatsFn = std::uint64_t();
+    std::function<GetIncrementalStatsFn> get_incremental_stats_fn_ = nullptr;
+    void set_get_incremental_stats_fn(std::function<GetIncrementalStatsFn> fn) {
+        get_incremental_stats_fn_ = std::move(fn);
+    }
 
     // Mutation typecheck error state (P2 #34)
     const std::string& last_mutate_error() const { return last_mutate_error_; }
