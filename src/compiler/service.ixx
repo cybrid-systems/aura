@@ -3311,15 +3311,28 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
 
     // Expose evaluator env for --inspect evaluator
     std::string inspect_env() const {
-        // Format: var_name → type_name per binding
+        // Issue #209 (Cycle 3): migrated to use
+        // bindings_with_names() instead of bindings().
+        // The legacy bindings() accessor bumps the
+        // bindings_legacy_uses metric; the new path
+        // routes through bindings_symid_ + pool_->resolve()
+        // (with '@symid:N' fallback for envs without
+        // pool_ set, e.g., top_ which has pool_ == nullptr
+        // per the post-canonical-pool migration).
         std::string out;
         auto& env = evaluator_.top_env();
         std::size_t count = 0;
         const aura::compiler::Env* e = &env;
         while (e) {
-            for (auto& b : const_cast<aura::compiler::Env&>(*e).bindings()) {
-                out += "  " + b.first + " → " +
-                       aura::compiler::types::format_value(b.second) + "\n";
+            // Use the new accessor (no metric bump).
+            // For envs without pool_ (e.g., top_), the
+            // names fall back to '@symid:N' (a reasonable
+            // display for an env-inspector primitive).
+            auto named = const_cast<aura::compiler::Env&>(*e)
+                             .bindings_with_names();
+            for (auto& [name, val] : named) {
+                out += "  " + name + " → " +
+                       aura::compiler::types::format_value(val) + "\n";
                 ++count;
             }
             e = e->parent();

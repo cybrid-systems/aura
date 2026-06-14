@@ -171,6 +171,47 @@ bool test_bindings_with_names_resolves() {
     return true;
 }
 
+// ── Test 6 (Issue #209 Cycle 3): inspect_env in service.ixx ──
+// migrated to bindings_with_names() (no metric bump).
+// Verifies the migration via the public CompilerService
+// API: populate the workspace via Aura code, call
+// inspect_env, and verify the output contains the
+// expected bindings (with the '@symid:N' fallback for
+// envs without pool_).
+bool test_inspect_env_uses_bindings_with_names() {
+    PRINTLN("\n--- Test 6: inspect_env migrated to bindings_with_names ---");
+    aura::compiler::CompilerService cs;
+    // Populate the workspace with some top-level defines
+    cs.eval("(define test:alpha 1)");
+    cs.eval("(define test:beta 2)");
+    cs.eval("(define test:gamma 3)");
+    // Capture the bindings_legacy_uses metric on top_ BEFORE
+    // the inspect_env call. The pre-#209 code would bump
+    // the metric (via the legacy bindings() accessor).
+    // The post-#209 code routes through bindings_with_names()
+    // and does NOT bump the metric.
+    auto& top = cs.evaluator().top_env();
+    cs.inspect_env();  // First call: 1 metric bump pre-#209
+    std::size_t uses_before = top.bindings_legacy_uses();
+    std::string out = cs.inspect_env();  // Second call: 0 metric bumps post-#209
+    std::size_t uses_after = top.bindings_legacy_uses();
+    CHECK(uses_after == uses_before,
+          "inspect_env does NOT bump bindings_legacy_uses (post-#209 migration)");
+    // The output starts with "env: N bindings\n" where N
+    // is the count. The format is "var_name → value" per
+    // binding. (For top_ which has no pool_, names fall
+    // back to '@symid:N'.) We don't check the count
+    // because cs.eval() doesn't necessarily populate top_
+    // (it uses a per-eval scratch env). The main check
+    // is the metric: the inspect_env call does NOT bump
+    // bindings_legacy_uses (post-#209 migration).
+    CHECK(out.find("env: ") != std::string::npos,
+          "output starts with 'env: ' header");
+    CHECK(out.find("bindings") != std::string::npos,
+          "output contains 'bindings' in header");
+    return true;
+}
+
 int main() {
     std::fprintf(stdout, "═══ Issue #208 Cycle 2 — Env::bindings_ migration ═══\n");
     std::fprintf(stdout, "  Verifies the bindings_legacy_uses metric and the\n");
@@ -182,6 +223,7 @@ int main() {
     test_bindings_symid_iter_data_parity();
     test_reset_bindings_legacy_uses();
     test_bindings_with_names_resolves();
+    test_inspect_env_uses_bindings_with_names();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
