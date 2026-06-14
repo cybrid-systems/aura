@@ -400,6 +400,228 @@ bool test_tco_idempotent() {
     return true;
 }
 
+// ── Test 11 (Issue #201): TCO with non-zero arg_base (single arg) ──
+// Callee expects param at slot 0; caller passes it from slot 5.
+// TCO must emit Local(0, 5) before the Jump.
+bool test_tco_arg_base_nonzero_single() {
+    PRINTLN("\n--- Test 11: TCO arg_base=5 single arg ---");
+    aura::ir::IRModule mod;
+    // Callee (func_id=0): k42
+    mod.functions.push_back(make_const_i64_callee("k42", 0, 42));
+    // Caller
+    aura::ir::IRFunction caller;
+    caller.name = "caller";
+    caller.local_count = 8;
+    caller.blocks.push_back({0});
+    // Caller stack:
+    //   slot 0: closure (MakeClosure result)
+    //   slot 5: the actual arg value
+    // Call(closure=0, arg_base=5, count=1, result=6)
+    // Return(6)
+    caller.blocks[0].instructions = {
+        {aura::ir::IROpcode::MakeClosure, {0, 0, 0, 0}, 0, 13},
+        {aura::ir::IROpcode::ConstI64,    {5, 7, 0, 0}, 0, 1},    // load arg
+        {aura::ir::IROpcode::Call,        {0, 5, 1, 6}, 0, 0},    // tail call
+        {aura::ir::IROpcode::Return,      {6, 0, 0, 0}, 0, 0},
+    };
+    mod.functions.push_back(std::move(caller));
+
+    aura::compiler::TCOPass tco;
+    tco.run(mod);
+
+    auto& block = mod.functions[1].blocks[0];
+    // After TCO: 4 instructions: MakeClosure, ConstI64 (load 5),
+    // Local(0, 5) (inserted by TCO), Jump (was Call), Return was popped.
+    CHECK(block.instructions.size() == 4,
+          "arg_base=5 single arg: 4 instructions (was 4: MakeClosure + ConstI64 + Local-insert + Jump)");
+    CHECK(block.instructions[0].opcode == aura::ir::IROpcode::MakeClosure,
+          "MakeClosure preserved");
+    CHECK(block.instructions[1].opcode == aura::ir::IROpcode::ConstI64,
+          "ConstI64 (load arg) preserved");
+    CHECK(block.instructions[2].opcode == aura::ir::IROpcode::Local,
+          "TCO inserted Local copy");
+    CHECK(block.instructions[2].operands[0] == 0,
+          "Local writes to callee param slot 0");
+    CHECK(block.instructions[2].operands[1] == 5,
+          "Local reads from caller arg_base slot 5");
+    CHECK(block.instructions[3].opcode == aura::ir::IROpcode::Jump,
+          "Call rewritten to Jump");
+    CHECK(block.instructions[3].operands[0] == 0,
+          "Jump target = callee entry block 0");
+    CHECK(tco.tco_count() == 1, "tco_count() == 1");
+    return true;
+}
+
+// ── Test 12 (Issue #201): TCO with non-zero arg_base, multi-arg ──
+// Callee expects params at slots 0, 1, 2; caller passes them
+// from slots 5, 6, 7. TCO must emit 3 Local copies before the
+// Jump. After the rewrite, the block layout is:
+//   [0] MakeClosure(0, 0)
+//   [1] ConstI64(5, 1)
+//   [2] ConstI64(6, 2)
+//   [3] ConstI64(7, 3)
+//   [4] Local(0, 5)   <-- inserted by TCO
+//   [5] Local(1, 6)   <-- inserted by TCO
+//   [6] Local(2, 7)   <-- inserted by TCO
+//   [7] Jump(0)       <-- was Call, rewritten
+// (Return was at [5] in the original 6-instr block; after the
+// 3 Local inserts, Return moves to [8] and is then popped.)
+bool test_tco_arg_base_nonzero_multi() {
+    PRINTLN("\n--- Test 12: TCO arg_base=5 multi-arg (3 args) ---");
+    aura::ir::IRModule mod;
+    // Callee (func_id=0): k42 (3 params, single block)
+    aura::ir::IRFunction k42;
+    k42.name = "k42";
+    k42.local_count = 3;
+    k42.blocks.push_back({0});
+    k42.blocks[0].instructions = {
+        {aura::ir::IROpcode::Local, {0, 0, 0, 0}, 0, 0},
+        {aura::ir::IROpcode::Local, {1, 1, 0, 0}, 0, 0},
+        {aura::ir::IROpcode::Local, {2, 2, 0, 0}, 0, 0},
+        {aura::ir::IROpcode::Return, {0, 0, 0, 0}, 0, 0},
+    };
+    mod.functions.push_back(std::move(k42));
+    // Caller
+    aura::ir::IRFunction caller;
+    caller.name = "caller";
+    caller.local_count = 10;
+    caller.blocks.push_back({0});
+    caller.blocks[0].instructions = {
+        {aura::ir::IROpcode::MakeClosure, {0, 0, 0, 0}, 0, 13},
+        {aura::ir::IROpcode::ConstI64,    {5, 1, 0, 0}, 0, 1},
+        {aura::ir::IROpcode::ConstI64,    {6, 2, 0, 0}, 0, 1},
+        {aura::ir::IROpcode::ConstI64,    {7, 3, 0, 0}, 0, 1},
+        {aura::ir::IROpcode::Call,        {0, 5, 3, 8}, 0, 0},
+        {aura::ir::IROpcode::Return,      {8, 0, 0, 0}, 0, 0},
+    };
+    mod.functions.push_back(std::move(caller));
+
+    aura::compiler::TCOPass tco;
+    tco.run(mod);
+
+    auto& block = mod.functions[1].blocks[0];
+    CHECK(block.instructions.size() == 8,
+          "arg_base=5 multi-arg: 8 instructions (4 caller prefix + 3 Local-inserts + 1 Jump)");
+    // 4 caller prefix
+    CHECK(block.instructions[0].opcode == aura::ir::IROpcode::MakeClosure,
+          "[0] MakeClosure preserved");
+    CHECK(block.instructions[1].opcode == aura::ir::IROpcode::ConstI64,
+          "[1] ConstI64(5) preserved");
+    CHECK(block.instructions[2].opcode == aura::ir::IROpcode::ConstI64,
+          "[2] ConstI64(6) preserved");
+    CHECK(block.instructions[3].opcode == aura::ir::IROpcode::ConstI64,
+          "[3] ConstI64(7) preserved");
+    // 3 Local inserts at positions 4, 5, 6
+    CHECK(block.instructions[4].opcode == aura::ir::IROpcode::Local,
+          "[4] TCO-inserted Local");
+    CHECK(block.instructions[4].operands[0] == 0 && block.instructions[4].operands[1] == 5,
+          "[4] Local(0, 5) — param 0 from caller slot 5");
+    CHECK(block.instructions[5].opcode == aura::ir::IROpcode::Local,
+          "[5] TCO-inserted Local");
+    CHECK(block.instructions[5].operands[0] == 1 && block.instructions[5].operands[1] == 6,
+          "[5] Local(1, 6) — param 1 from caller slot 6");
+    CHECK(block.instructions[6].opcode == aura::ir::IROpcode::Local,
+          "[6] TCO-inserted Local");
+    CHECK(block.instructions[6].operands[0] == 2 && block.instructions[6].operands[1] == 7,
+          "[6] Local(2, 7) — param 2 from caller slot 7");
+    // Call (now at position 7) was rewritten to Jump
+    CHECK(block.instructions[7].opcode == aura::ir::IROpcode::Jump,
+          "[7] tail Call rewritten to Jump");
+    CHECK(block.instructions[7].operands[0] == 0,
+          "[7] Jump target = callee entry block 0");
+    CHECK(tco.tco_count() == 1, "tco_count() == 1");
+    return true;
+}
+
+// ── Test 13 (Issue #201): TCO with arg_base != 0 and arg_count == 0 ──
+// Edge case: no args to copy. arg_base=5, arg_count=0.
+// The existing arg_base==0 path is reused (no Local inserts
+// needed). TCO succeeds.
+bool test_tco_arg_base_nonzero_zero_args() {
+    PRINTLN("\n--- Test 13: TCO arg_base=5, arg_count=0 (no copies) ---");
+    aura::ir::IRModule mod;
+    mod.functions.push_back(make_const_i64_callee("k42", 0, 42));
+    aura::ir::IRFunction caller;
+    caller.name = "caller";
+    caller.local_count = 6;
+    caller.blocks.push_back({0});
+    caller.blocks[0].instructions = {
+        {aura::ir::IROpcode::MakeClosure, {0, 0, 0, 0}, 0, 13},
+        {aura::ir::IROpcode::Call,        {0, 5, 0, 1}, 0, 0},  // 0 args, base 5
+        {aura::ir::IROpcode::Return,      {1, 0, 0, 0}, 0, 0},
+    };
+    mod.functions.push_back(std::move(caller));
+
+    aura::compiler::TCOPass tco;
+    tco.run(mod);
+
+    auto& block = mod.functions[1].blocks[0];
+    CHECK(block.instructions.size() == 2,
+          "arg_base=5, count=0: 2 instructions (no Local inserts, Return popped)");
+    CHECK(block.instructions[0].opcode == aura::ir::IROpcode::MakeClosure,
+          "MakeClosure preserved");
+    CHECK(block.instructions[1].opcode == aura::ir::IROpcode::Jump,
+          "Call rewritten to Jump (no Local inserts since count==0)");
+    CHECK(tco.tco_count() == 1, "tco_count() == 1");
+    return true;
+}
+
+// ── Test 14 (Issue #201): TCO preserves tail-call semantics on
+// both arg_base=0 and arg_base!=0 in the same module. Ensures
+// the two paths don't interfere.
+bool test_tco_arg_base_mixed_in_same_module() {
+    PRINTLN("\n--- Test 14: TCO mixed arg_base=0 and arg_base!=0 in same module ---");
+    aura::ir::IRModule mod;
+    mod.functions.push_back(make_const_i64_callee("k42", 0, 42));
+    // k99: another simple callee
+    mod.functions.push_back(make_const_i64_callee("k99", 1, 99));
+    // Caller: block 0 has tail-call with arg_base=0 to k42;
+    //         block 1 has tail-call with arg_base=5 to k99.
+    aura::ir::IRFunction caller;
+    caller.name = "caller";
+    caller.local_count = 8;
+    caller.blocks.push_back({0});
+    caller.blocks.push_back({1});
+    // Block 0: MakeClosure k42 (func_id 0) at slot 0; tail Call
+    // with arg_base=0, count=0 to k42; Return.
+    caller.blocks[0].instructions = {
+        {aura::ir::IROpcode::MakeClosure, {0, 0, 0, 0}, 0, 13},
+        {aura::ir::IROpcode::Call,        {0, 0, 0, 1}, 0, 0},
+        {aura::ir::IROpcode::Return,      {1, 0, 0, 0}, 0, 0},
+    };
+    // Block 1: MakeClosure k99 (func_id 1) at slot 2; ConstI64
+    // at slot 5; tail Call with arg_base=5, count=1 to k99; Return.
+    caller.blocks[1].instructions = {
+        {aura::ir::IROpcode::MakeClosure, {2, 1, 0, 0}, 0, 13},
+        {aura::ir::IROpcode::ConstI64,    {5, 7, 0, 0}, 0, 1},
+        {aura::ir::IROpcode::Call,        {2, 5, 1, 6}, 0, 0},
+        {aura::ir::IROpcode::Return,      {6, 0, 0, 0}, 0, 0},
+    };
+    mod.functions.push_back(std::move(caller));
+
+    aura::compiler::TCOPass tco;
+    tco.run(mod);
+
+    // Block 0: MakeClosure + Jump (2 instrs)
+    auto& b0 = mod.functions[2].blocks[0];
+    CHECK(b0.instructions.size() == 2,
+          "block 0: 2 instrs (MakeClosure + Jump; no Local inserts for arg_base=0)");
+    CHECK(b0.instructions[1].opcode == aura::ir::IROpcode::Jump,
+          "block 0: tail Call rewritten to Jump");
+    // Block 1: MakeClosure + ConstI64 + Local + Jump (4 instrs)
+    auto& b1 = mod.functions[2].blocks[1];
+    CHECK(b1.instructions.size() == 4,
+          "block 1: 4 instrs (MakeClosure + ConstI64 + Local-insert + Jump)");
+    CHECK(b1.instructions[2].opcode == aura::ir::IROpcode::Local,
+          "block 1: TCO-inserted Local at index 2");
+    CHECK(b1.instructions[2].operands[0] == 0 && b1.instructions[2].operands[1] == 5,
+          "block 1: Local(0, 5) — arg_base=5 param 0");
+    CHECK(b1.instructions[3].opcode == aura::ir::IROpcode::Jump,
+          "block 1: tail Call rewritten to Jump");
+    CHECK(tco.tco_count() == 2, "tco_count() == 2 (one per block)");
+    return true;
+}
+
 int main() {
     std::fprintf(stdout, "═══ Issue #171 — Function Inliner (Priority 2) ═══\n");
     std::fprintf(stdout, "  Verifies the inliner ACTUALLY inlines, not just counts.\n\n");
@@ -414,6 +636,10 @@ int main() {
     test_tco_skip_non_tail();
     test_tco_skip_mismatched_return();
     test_tco_idempotent();
+    test_tco_arg_base_nonzero_single();
+    test_tco_arg_base_nonzero_multi();
+    test_tco_arg_base_nonzero_zero_args();
+    test_tco_arg_base_mixed_in_same_module();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
