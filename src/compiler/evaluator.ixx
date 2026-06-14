@@ -477,6 +477,46 @@ public:
         get_incremental_stats_fn_ = std::move(fn);
     }
 
+    // Issue #196: per-block dirty hooks. Mirror the
+    // get_incremental_stats_fn_ pattern: the hook is a
+    // stateless function that reads the current state of
+    // the CompilerService's ir_cache_v2_. The 3 hooks are:
+    //   - dirty_block_count(name)           — total dirty blocks
+    //   - func_dirty_block_count(name, i)   — dirty blocks in func i
+    //   - is_block_dirty(name, i, b)        — is (i, b) dirty?
+    //   - mark_block_dirty(name, i, b)      — mark (i, b) dirty
+    //   - clear_block_dirty(name, i, b)     — clear (i, b) dirty
+    // All return 0 / false if no hook is installed, so
+    // unit-test Evaluator instances (without a CompilerService)
+    // stay default-safe.
+    using GetDirtyBlockCountFn = std::uint64_t(const char*);
+    std::function<GetDirtyBlockCountFn> get_dirty_block_count_fn_ = nullptr;
+    void set_get_dirty_block_count_fn(
+        std::function<GetDirtyBlockCountFn> fn) {
+        get_dirty_block_count_fn_ = std::move(fn);
+    }
+    using GetFuncDirtyBlockCountFn = std::uint64_t(const char*, std::size_t);
+    std::function<GetFuncDirtyBlockCountFn> get_func_dirty_block_count_fn_ = nullptr;
+    void set_get_func_dirty_block_count_fn(
+        std::function<GetFuncDirtyBlockCountFn> fn) {
+        get_func_dirty_block_count_fn_ = std::move(fn);
+    }
+    using IsBlockDirtyFn = bool(const char*, std::size_t, std::uint32_t);
+    std::function<IsBlockDirtyFn> is_block_dirty_fn_ = nullptr;
+    void set_is_block_dirty_fn(std::function<IsBlockDirtyFn> fn) {
+        is_block_dirty_fn_ = std::move(fn);
+    }
+    using MarkBlockDirtyFn = bool(const char*, std::size_t, std::uint32_t);
+    std::function<MarkBlockDirtyFn> mark_block_dirty_fn_ = nullptr;
+    void set_mark_block_dirty_fn(std::function<MarkBlockDirtyFn> fn) {
+        mark_block_dirty_fn_ = std::move(fn);
+    }
+    using ClearBlockDirtyFn = bool(const char*, std::size_t, std::uint32_t);
+    std::function<ClearBlockDirtyFn> clear_block_dirty_fn_ = nullptr;
+    void set_clear_block_dirty_fn(std::function<ClearBlockDirtyFn> fn) {
+        clear_block_dirty_fn_ = std::move(fn);
+    }
+
     // Mutation typecheck error state (P2 #34)
     const std::string& last_mutate_error() const { return last_mutate_error_; }
     void clear_last_mutate_error() { last_mutate_error_.clear(); }
