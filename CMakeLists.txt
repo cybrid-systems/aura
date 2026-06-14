@@ -2771,6 +2771,31 @@ target_compile_options(test_issue_204 PRIVATE -Wall -Wextra -Wpedantic
 target_link_libraries(test_issue_204 PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_204_verification COMMAND ./test_issue_204)
 
+# Issue #205 verification: caller-side env_frames_ walk
+# wires evaluator to GCCollector::mark_env_frame_roots.
+# Verifies the registration mechanism + EnvFrameRoots
+# struct + that mark_env_frame_roots is invoked with the
+# env walk's output.
+add_executable(test_issue_205 tests/test_issue_205.cpp)
+set_property(TARGET test_issue_205 PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_issue_205 PRIVATE src src/serve)
+target_sources(test_issue_205 PRIVATE
+    src/serve/gc_coordinator.cpp
+    src/serve/scheduler.cpp
+    src/serve/fiber.cpp
+    src/serve/worker.cpp
+    # Same dep as test_concurrent: aura_set_current_fiber_id_fn
+    # (defined in aura_jit_runtime.cpp) is called from
+    # fiber.cpp's static init.
+    src/compiler/aura_jit_runtime.cpp)
+target_compile_options(test_issue_205 PRIVATE -Wall -Wextra -Wpedantic
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
+    -Wno-parentheses)
+set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+target_link_libraries(test_issue_205 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+add_test(NAME issue_205_verification COMMAND ./test_issue_205)
+
 # Issue #173 verification: stable-id type aliases (Phase 2 of
 # #145 workstream 2). Verifies PairId/CellId/StringId +
 # NULL_X_ID sentinels. Full migration (remap table,

@@ -571,6 +571,62 @@ std::optional<types::EvalValue> Evaluator::lookup_by_symid_chain(
     return result;
 }
 
+// Issue #205: Evaluator::walk_env_frame_roots. Linear pass
+// over env_frames_ collecting pair/closure ref indices
+// reachable through env bindings.
+//
+// For each frame, walk both bindings vectors (they're
+// parallel — same length, same order — and either may have
+// values not in the other depending on whether the pool_
+// was set when binding). For each value, check if it's a
+// pair/closure ref and extract the index.
+//
+// This is a "shallow" walk: it doesn't recursively descend
+// into pairs (the GC's mark phase handles the recursion
+// via pair_marks_ and closure_marks_). It only discovers
+// the TOP-LEVEL refs that are reachable from env bindings.
+//
+// Complexity: O(frames * bindings_per_frame). For a typical
+// module with N functions and M env frames, each with
+// ~10 bindings, this is O(N * M * 10) ≈ O(10 * N * M).
+// For N=100, M=1000, that's ~1M operations — negligible.
+void Evaluator::walk_env_frame_roots(
+    std::vector<std::int64_t>& pair_roots_out,
+    std::vector<std::int64_t>& closure_roots_out) const {
+    // De-dup: a pair/closure may be bound in multiple envs.
+    // Using a small set per pass; if the size grows beyond
+    // a threshold, we fall back to dedup-after-the-fact
+    // (mark vectors also de-dup via the set() semantic).
+    // For now, just always set — the GC's mark_env_frame_roots
+    // is idempotent (set() is a no-op if already set).
+    for (const auto& fr : env_frames_) {
+        // Walk the name-keyed bindings. bindings_symid_ is
+        // populated when pool_ is set; bindings_ is always
+        // populated. We walk BOTH to be safe (they should
+        // hold the same values, but checking is cheap).
+        for (const auto& [name, val] : fr.bindings_) {
+            (void)name;
+            if (is_pair(val)) {
+                pair_roots_out.push_back(
+                    static_cast<std::int64_t>(as_pair_idx(val)));
+            } else if (is_closure(val)) {
+                closure_roots_out.push_back(
+                    static_cast<std::int64_t>(as_closure_id(val)));
+            }
+        }
+        for (const auto& [sym, val] : fr.bindings_symid_) {
+            (void)sym;
+            if (is_pair(val)) {
+                pair_roots_out.push_back(
+                    static_cast<std::int64_t>(as_pair_idx(val)));
+            } else if (is_closure(val)) {
+                closure_roots_out.push_back(
+                    static_cast<std::int64_t>(as_closure_id(val)));
+            }
+        }
+    }
+}
+
 // ── Issue #145: EnvView / ClosureView impls ──────────────────
 //
 // make_env_view: build a zero-copy view over an Env's
