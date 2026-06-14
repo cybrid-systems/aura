@@ -15215,6 +15215,43 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         auto count = get_jit_unhandled_count_fn_(string_heap_[idx].c_str());
         return make_bool(count > threshold);
     });
+    // (compile:cache-size) — Issue #196: number of defines
+    // currently in the ir_cache_v2_ map. Each entry corresponds
+    // to a top-level define that has been compiled at least
+    // once. Returns 0 if no hook is installed.
+    primitives_.add("compile:cache-size", [this](const auto&) -> EvalValue {
+        if (!get_incremental_stats_fn_) return make_int(0);
+        auto packed = get_incremental_stats_fn_();
+        return make_int(static_cast<std::int64_t>(packed >> 48));
+    });
+    // (compile:dirty-count) — Issue #196: number of currently-
+    // dirty entries in the ir_cache_v2_ map. A dirty entry
+    // means the cached IR is stale and needs re-lower on next
+    // access. Returns 0 if no hook is installed.
+    primitives_.add("compile:dirty-count", [this](const auto&) -> EvalValue {
+        if (!get_incremental_stats_fn_) return make_int(0);
+        auto packed = get_incremental_stats_fn_();
+        return make_int(static_cast<std::int64_t>((packed >> 32) & 0xFFFF));
+    });
+    // (compile:epoch) — Issue #196: current mutation_epoch_ value.
+    // The epoch is bumped atomically on every mutation. Cache
+    // entries that haven't seen the current epoch are stale.
+    // Returns 0 if no hook is installed.
+    primitives_.add("compile:epoch", [this](const auto&) -> EvalValue {
+        if (!get_incremental_stats_fn_) return make_int(0);
+        auto packed = get_incremental_stats_fn_();
+        return make_int(static_cast<std::int64_t>((packed >> 16) & 0xFFFF));
+    });
+    // (compile:dep-edges) — Issue #196: total number of edges
+    // in the dep_graph_ map. Each edge means "this define
+    // depends on that define"; mutations to the target cascade
+    // to invalidate the source via invalidate_function BFS.
+    // Returns 0 if no hook is installed.
+    primitives_.add("compile:dep-edges", [this](const auto&) -> EvalValue {
+        if (!get_incremental_stats_fn_) return make_int(0);
+        auto packed = get_incremental_stats_fn_();
+        return make_int(static_cast<std::int64_t>(packed & 0xFFFF));
+    });
 
     // (concurrency:stats) — Issue #189 (P0): concurrency safety
     // observability. Reports the current defuse_version_ (the

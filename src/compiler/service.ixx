@@ -393,6 +393,31 @@ public:
             [this](const char* name) -> std::uint64_t {
                 return jit_.unhandled_opcode_count_for_function(name);
             });
+        // Issue #196: hook to query the incremental-compilation
+        // observability struct. Used by the (compile:cache-size),
+        // (compile:dirty-count), (compile:epoch), (compile:dep-edges)
+        // primitives.
+        evaluator_.set_get_incremental_stats_fn(
+            [this]() -> std::uint64_t {
+                // Return 4 values packed as (cache << 48) | (dirty << 32) | (epoch << 16) | edges
+                std::uint64_t cache_size = static_cast<std::uint64_t>(
+                    ir_cache_v2_.size());
+                std::uint64_t dirty_count = 0;
+                for (auto& [_, e] : ir_cache_v2_) {
+                    if (e.dirty) ++dirty_count;
+                }
+                std::uint64_t epoch = mutation_epoch_.load(
+                    std::memory_order_relaxed);
+                std::uint64_t edges = 0;
+                for (auto& [_, dep_entry] : dep_graph_) {
+                    edges += static_cast<std::uint64_t>(dep_entry.calls.size());
+                    edges += static_cast<std::uint64_t>(dep_entry.called_by.size());
+                }
+                // Pack into a single uint64 — simpler than a struct
+                // crossing the module boundary.
+                return (cache_size << 48) | (dirty_count << 32) |
+                       (epoch << 16) | (edges & 0xFFFF);
+            });
         aura::messaging::g_current_compiler_service = this;
         // Setup messaging bridge (avoids circular module dependency)
         aura::messaging::g_messaging_bridge.send =
