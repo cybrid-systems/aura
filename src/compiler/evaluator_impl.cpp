@@ -632,6 +632,48 @@ std::optional<types::EvalValue> Evaluator::lookup_by_symid_chain(
 // module with N functions and M env frames, each with
 // ~10 bindings, this is O(N * M * 10) ≈ O(10 * N * M).
 // For N=100, M=1000, that's ~1M operations — negligible.
+// Issue #211: build the (tag, arity) index for the
+// query:pattern primitive. The index is built once per
+// workspace and cached. The key is (tag << 32) | arity
+// (tag in high 32 bits, arity in low 32 bits). The value
+// is a vector of NodeIds whose node has the matching
+// (tag, arity).
+//
+// Build cost: O(N) — a single pass over the workspace.
+// Lookup cost: O(1) for the index lookup, then O(bucket
+// size) for the iteration. For patterns where the root's
+// (tag, arity) is rare (e.g., looking for `(+ 1 2)` in a
+// 1000-node AST with mostly `define`s and `lambda`s), the
+// bucket size is small and the lookup is much faster than
+// the full walk (which is O(N) regardless).
+void Evaluator::build_tag_arity_index() const {
+    // If the index is already built for the current
+    // workspace, no-op. This is the fast path: the index
+    // is built once and reused across multiple
+    // query:pattern calls.
+    if (tag_arity_index_workspace_ == workspace_flat_ &&
+        !tag_arity_index_.empty()) {
+        return;
+    }
+    // The index is stale (different workspace or empty).
+    // Rebuild.
+    tag_arity_index_.clear();
+    tag_arity_index_workspace_ = workspace_flat_;
+    if (!workspace_flat_) return;
+    const auto& flat = *workspace_flat_;
+    const std::size_t n = flat.size();
+    tag_arity_index_.reserve(n);
+    for (aura::ast::NodeId id = 0; id < n; ++id) {
+        const auto node = flat.get(id);
+        const auto tag = static_cast<std::uint32_t>(node.tag);
+        const auto arity = static_cast<std::uint32_t>(node.children.size());
+        const std::uint64_t key =
+            (static_cast<std::uint64_t>(tag) << 32) |
+            static_cast<std::uint64_t>(arity);
+        tag_arity_index_[key].push_back(id);
+    }
+}
+
 void Evaluator::walk_env_frame_roots(
     std::vector<std::int64_t>& pair_roots_out,
     std::vector<std::int64_t>& closure_roots_out) const {
@@ -5617,6 +5659,11 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         flat_ptr->root = pr.root;
         workspace_flat_ = flat_ptr;
         workspace_pool_ = pool_ptr;
+        // Issue #211: invalidate the (tag, arity) index
+        // when the workspace changes. (The set_workspace_flat
+        // hook would do this, but set-code assigns directly
+        // here, so we invalidate inline.)
+        invalidate_tag_arity_index();
         update_shared_tree_root();
         // Invalidate def-use index (new workspace)
         // (ASAN fix #107 leak) delete the old index; without this,
@@ -6975,6 +7022,7 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             pat_root_node.tag == aura::ast::NodeTag::Variable &&
             pat_root_node.sym_id == wildcard_sym;
 
+
         // Walk every node in workspace and try matching at each position.
         // Issue #140: skip nodes with SyntaxMarker::MacroIntroduced
         // (the matcher's root position is the user-written top-level
@@ -6992,19 +7040,54 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         //   - If pat_root is a wildcard "..." → no constraint
         //   - Otherwise, the children count must match exactly
         //     (verified later in match_subtree's default case)
-        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            if (flat.marker(id) == aura::ast::SyntaxMarker::MacroIntroduced)
-                continue;
-            if (!pat_root_is_wildcard) {
-                auto ws_node = flat.get(id);
-                if (ws_node.children.size() != pat_child_count)
-                    continue;  // Issue #186 early-exit: children count
-                               // mismatch → skip without recursion
+        //
+        // Issue #211: use the (tag, arity) index to skip
+        // non-matching nodes BEFORE the recursive descent.
+        // For patterns where the root's (tag, arity) is rare
+        // (e.g., looking for `(+ 1 2)` in a workspace with
+        // mostly `define`s and `lambda`s), this is a massive
+        // speedup vs. the O(N) full walk.
+        //
+        // The index is built lazily on first use and cached
+        // per-workspace (invalidated when workspace_flat_ is
+        // changed via set_workspace_flat).
+        if (!pat_root_is_wildcard) {
+            // Index lookup: find all nodes whose (tag, arity)
+            // matches the pattern's root.
+            build_tag_arity_index();
+            const std::uint32_t pat_tag_val =
+                static_cast<std::uint32_t>(pat_root_node.tag);
+            const std::uint64_t pat_key =
+                (static_cast<std::uint64_t>(pat_tag_val) << 32) |
+                static_cast<std::uint64_t>(pat_child_count);
+            auto it = tag_arity_index_.find(pat_key);
+            if (it == tag_arity_index_.end()) {
+                // No nodes match the pattern's (tag, arity).
+                // Skip the full walk.
+                return make_void();
             }
-            if (match_subtree(id, pr.root)) {
-                auto pid = pairs_.size();
-                pairs_.push_back({make_int(static_cast<std::int64_t>(id)), result});
-                result = make_pair(pid);
+            const auto& bucket = it->second;
+            for (aura::ast::NodeId id : bucket) {
+                if (id >= flat.size()) continue;
+                if (flat.marker(id) == aura::ast::SyntaxMarker::MacroIntroduced)
+                    continue;
+                if (match_subtree(id, pr.root)) {
+                    auto pid = pairs_.size();
+                    pairs_.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                    result = make_pair(pid);
+                }
+            }
+        } else {
+            // Wildcard pattern: full walk (the index doesn't
+            // help for wildcards).
+            for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+                if (flat.marker(id) == aura::ast::SyntaxMarker::MacroIntroduced)
+                    continue;
+                if (match_subtree(id, pr.root)) {
+                    auto pid = pairs_.size();
+                    pairs_.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                    result = make_pair(pid);
+                }
             }
         }
 
