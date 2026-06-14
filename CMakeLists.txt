@@ -3443,3 +3443,43 @@ target_sources(test_issue_196 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ast_walkers.ixx
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
+
+# Issue #197: branch-aware inliner + parameter renaming
+# (extends InlinePass from #171). Predicate + single-block
+# transformation shipped; multi-block CFG splicing is a
+# follow-up. Pattern matches test_issue_171 (direct C++ tests
+# on IRModule, no Aura layer needed).
+# Issue #197: branch-aware inliner + parameter renaming
+# (extends InlinePass from #171). Predicate + single-block
+# transformation shipped; multi-block CFG splicing is a
+# follow-up. Pattern matches test_issue_171 (direct C++ tests
+# on IRModule, no Aura layer needed).
+add_executable(test_issue_197 tests/test_issue_197.cpp)
+set_property(TARGET test_issue_197 PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_issue_197 PRIVATE src src/compiler)
+target_sources(test_issue_197 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
+    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
+    src/core/type_arena.ixx
+    src/core/type.ixx
+    src/parser/lexer.ixx src/parser/parser.ixx
+    src/compiler/diag.ixx
+    src/compiler/ir.ixx
+    src/compiler/compute_kind.ixx
+    src/compiler/arity.ixx
+    src/compiler/type_checker.ixx
+    src/compiler/coercion_map.ixx
+    src/compiler/pass_manager.ixx)
+target_sources(test_issue_197 PRIVATE
+    src/compiler/arity_impl.cpp
+    src/compiler/type_checker_impl.cpp
+    src/compiler/compute_kind_impl.cpp
+    src/parser/lexer_impl.cpp
+    src/parser/parser_impl.cpp
+    src/core/ast_impl.cpp
+    src/core/type_impl.cpp)
+target_compile_options(test_issue_197 PRIVATE -Wall -Wextra -Wpedantic
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
+    -Wno-parentheses)
+target_link_libraries(test_issue_197 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+add_test(NAME issue_197_verification COMMAND ./test_issue_197)
