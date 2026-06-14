@@ -229,7 +229,7 @@ export constexpr OpcodeInfo kOpcodeInfo[] = {
 static_assert(std::size(kOpcodeInfo) == 53, "kOpcodeInfo must have exactly one entry per IROpcode");
 
 // Helper: look up opcode info by IROpcode enum value
-inline const OpcodeInfo* lookup_opcode(IROpcode op) {
+export inline const OpcodeInfo* lookup_opcode(IROpcode op) {
     auto idx = static_cast<std::size_t>(op);
     return idx < std::size(kOpcodeInfo) ? &kOpcodeInfo[idx] : nullptr;
 }
