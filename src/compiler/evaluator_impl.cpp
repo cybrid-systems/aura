@@ -108,12 +108,20 @@ static std::string closest_match(std::string_view name, std::span<const std::str
 using namespace aura::diag;
 
 // Forward decl: macro body cloner (defined at end of file)
+// Issue #190: `cloned_marker` controls the SyntaxMarker applied to
+// every node the cloner creates in the target flat. Default is
+// SyntaxMarker::User (the legacy behavior — closure body
+// materialization, etc.). Macro expansion call sites pass
+// SyntaxMarker::MacroIntroduced so the downstream type checker
+// / IR lowering / EDSL query-mutate know the nodes are
+// macro-introduced and shouldn't be silently edited.
 static aura::ast::NodeId
 clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
                  aura::ast::FlatAST& source, aura::ast::StringPool& source_pool,
                  aura::ast::NodeId body_id,
                  const std::unordered_map<std::string, aura::ast::NodeId>* subst = nullptr,
-                 std::unordered_map<std::string, std::string>* name_map = nullptr);
+                 std::unordered_map<std::string, std::string>* name_map = nullptr,
+                 aura::ast::SyntaxMarker cloned_marker = aura::ast::SyntaxMarker::User);
 
 // Forward decl: inner-macro expansion helper (defined at end of file).
 // Used by the runtime hygienic macro expansion to recursively
@@ -15116,6 +15124,76 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         return make_bool(is_version_current(snap));
     });
 
+    // (syntax-marker node-id) — Issue #190: return the SyntaxMarker
+    // value of a node (0=User, 1=MacroIntroduced, 2=BoolLiteral).
+    // Used for EDSL filter queries (e.g., "find all macro-introduced
+    // nodes") and for diagnostic output ("why did mutate:rebind
+    // refuse to edit this node?").
+    primitives_.add("syntax-marker", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0])) return make_int(0);
+        if (!workspace_flat_) return make_int(0);
+        auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        if (id >= workspace_flat_->size()) return make_int(0);
+        return make_int(static_cast<std::int64_t>(workspace_flat_->marker(id)));
+    });
+    // (syntax-marker-counts) — Issue #190: aggregate count of
+    // each SyntaxMarker value across the workspace. Hash with
+    // 3 integer fields: user, macro-introduced, bool-literal,
+    // plus total-nodes. Useful for dashboards ("how much of the
+    // workspace is macro-introduced code?") and for asserting
+    // hygiene invariants in tests.
+    primitives_.add("syntax-marker-counts", [this](const auto&) -> EvalValue {
+        if (!workspace_flat_) return make_void();
+        std::size_t user = 0, macro = 0, bool_lit = 0, total = 0;
+        const auto& markers = workspace_flat_->marker_column();
+        for (std::size_t i = 0; i < markers.size(); ++i) {
+            ++total;
+            auto m = static_cast<int>(markers[i]);
+            if (m == 0) ++user;
+            else if (m == 1) ++macro;
+            else if (m == 2) ++bool_lit;
+        }
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+                auto kidx = string_heap_.size();
+                string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"user", make_int(static_cast<std::int64_t>(user))},
+            {"macro-introduced", make_int(static_cast<std::int64_t>(macro))},
+            {"bool-literal", make_int(static_cast<std::int64_t>(bool_lit))},
+            {"total-nodes", make_int(static_cast<std::int64_t>(total))},
+        };
+        return build_hash(kv);
+    });
+
     // (gc-arena-stats) — Report per-arena allocation. Shows main arena +
     // every per-module arena. Format: "main:0.1MB/8.0MB;json.aura:0.5MB/8.0MB;..."
     // (semicolons separate entries; slashes separate used/capacity within an entry).
@@ -16753,7 +16831,9 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 auto* cl_flat = target_arena->create<aura::ast::FlatAST>(cl_alloc);
                 auto* cl_pool = target_arena->create<aura::ast::StringPool>(cl_alloc);
                 auto cloned_body =
-                    clone_macro_body(*cl_flat, *cl_pool, *flat, *pool, body_node, nullptr);
+                    clone_macro_body(*cl_flat, *cl_pool, *flat, *pool, body_node, nullptr,
+                                     /*name_map=*/nullptr,
+                                     /*cloned_marker=*/aura::ast::SyntaxMarker::User);
                 cl_flat->root = cloned_body;
                 // P0: register captured for SoA, no legacy env pointer in Closure.
                 EnvId cap_id = alloc_env_frame_from_env(env);
@@ -17540,7 +17620,8 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                                 std::unordered_map<std::string, std::string> rename_map;
                                 auto* src_pool = md.pool ? md.pool : p;
                                 auto expanded = clone_macro_body(*f, *p, *md.flat, *src_pool,
-                                                                 md.body_id, &subst, &rename_map);
+                                                                 md.body_id, &subst, &rename_map,
+                                                                 /*cloned_marker=*/aura::ast::SyntaxMarker::MacroIntroduced);
                                 if (expanded == aura::ast::NULL_NODE) return make_void();
                                 // Issue #121: recursively expand any nested
                                 // macro calls in the cloned body using the
@@ -19073,7 +19154,8 @@ clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
                  aura::ast::FlatAST& source, aura::ast::StringPool& source_pool,
                  aura::ast::NodeId body_id,
                  const std::unordered_map<std::string, aura::ast::NodeId>* subst,
-                 std::unordered_map<std::string, std::string>* name_map) {
+                 std::unordered_map<std::string, std::string>* name_map,
+                 aura::ast::SyntaxMarker cloned_marker) {
     using namespace aura::ast;
     if (body_id == NULL_NODE || body_id >= source.size())
         return NULL_NODE;
@@ -19236,11 +19318,11 @@ clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
         return target_pool.intern(fresh);
     };
 
-    // Clone children recursively
+    // Clone children recursively (pass cloned_marker through)
     std::vector<aura::ast::NodeId> child_ids;
     for (std::uint32_t i = 0; i < v.children.size(); ++i)
         child_ids.push_back(clone_macro_body(target, target_pool, source, source_pool, v.child(i),
-                                             subst, name_map));
+                                             subst, name_map, cloned_marker));
 
     // Clone params (for Lambda nodes) — with hygienic renaming
     std::vector<aura::ast::SymId> param_syms;
@@ -19324,7 +19406,12 @@ clone_macro_body(aura::ast::FlatAST& target, aura::ast::StringPool& target_pool,
     }
 
     if (new_id != NULL_NODE) {
-        target.set_marker(new_id, SyntaxMarker::MacroIntroduced);
+        // Issue #190: use the caller's specified marker
+        // (MacroIntroduced for macro expansion, User for closure
+        // materialization). The recursive calls already set the
+        // marker on each child node, so this is just the outer
+        // wrapper node.
+        target.set_marker(new_id, cloned_marker);
         target.set_loc(new_id, v.line, v.col);
     }
     return new_id;
@@ -19592,7 +19679,8 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
                         // Clone macro body with substitution
                         std::unordered_map<std::string, std::string> rename_map;
                         auto expanded = clone_macro_body(flat, pool, *md.src_flat, *md.src_pool,
-                                                         md.body_id, &subst, &rename_map);
+                                                         md.body_id, &subst, &rename_map,
+                                                         /*cloned_marker=*/aura::ast::SyntaxMarker::MacroIntroduced);
                         if (expanded != NULL_NODE) {
                             if (id == root)
                                 new_root = expanded;
@@ -20148,45 +20236,21 @@ std::size_t Evaluator::post_mutation_macro_reexpand(
         // For non-hygienic macros, the name_map is empty (no
         // gensym) and the params bind to call-site names (legacy
         // defmacro behavior).
+        // Issue #190: pass MacroIntroduced so the cloned nodes
+        // get the correct SyntaxMarker at creation time. (The
+        // post-clone BFS marker-set that used to be here is now
+        // redundant — clone_macro_body handles it.)
         auto* src_pool = md.pool ? md.pool : &pool;
         auto* src_flat = md.flat ? md.flat : &flat;
         auto expanded = clone_macro_body(flat, pool, *src_flat, *src_pool,
-                                         md.body_id, &subst_map, &rename_map);
+                                         md.body_id, &subst_map, &rename_map,
+                                         /*cloned_marker=*/aura::ast::SyntaxMarker::MacroIntroduced);
         if (expanded == NULL_NODE) continue;
 
         // Recursively expand any nested macro calls in the
         // cloned body. Bounded by depth=10 to prevent infinite
         // loops (a macro that expands to itself).
         expanded = expand_inner_macros(&flat, &pool, expanded, 0, 10, macros_);
-
-        // Set SyntaxMarker::MacroIntroduced on the new
-        // expansion. This is the key fix: the marker tells
-        // downstream consumers (type checker, IR lowering,
-        // mutation operators) that this code is macro-
-        // generated and should be re-validated on every
-        // mutation.
-        flat.set_marker(expanded, SyntaxMarker::MacroIntroduced);
-
-        // Mark all descendants of the expansion as
-        // MacroIntroduced too (the marker is on the root,
-        // but the tree walk in post_mutation_invariant_check
-        // and the type checker's #149 narrow_evidence path
-        // look at every node).
-        std::vector<NodeId> mark_frontier;
-        mark_frontier.push_back(expanded);
-        while (!mark_frontier.empty()) {
-            std::vector<NodeId> next;
-            for (auto n : mark_frontier) {
-                flat.set_marker(n, SyntaxMarker::MacroIntroduced);
-                auto v = flat.get(n);
-                for (auto c : v.children) {
-                    if (c != NULL_NODE && c < flat.size()) {
-                        next.push_back(c);
-                    }
-                }
-            }
-            mark_frontier = std::move(next);
-        }
 
         ++re_expanded;
     }
