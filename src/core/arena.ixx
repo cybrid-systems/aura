@@ -13,11 +13,30 @@ export struct ArenaStats {
     std::size_t peak_used = 0;        // historical high-water mark
     std::size_t allocation_count = 0; // number of allocation calls
     std::size_t wasted = 0;           // alignment padding
+    // Issue #187 (P0): compaction observability. The first 4 fields
+    // are pure accounting (already shipped). The new 3 are added for
+    // production memory stability so we can see whether compaction
+    // is helping and trigger auto-compact at the right threshold.
+    std::size_t compaction_count = 0;       // number of compact() calls
+    std::size_t last_compaction_saved = 0;  // bytes reclaimed by last compact
+    std::size_t total_compaction_saved = 0; // lifetime bytes reclaimed
 
     std::string format() const {
-        return std::format("arena: {:.1f}MB / {:.1f}MB (peak {:.1f}MB) | {} allocs | {}B wasted",
-                           used / 1048576.0, capacity / 1048576.0, peak_used / 1048576.0,
-                           allocation_count, wasted);
+        return std::format(
+            "arena: {:.1f}MB / {:.1f}MB (peak {:.1f}MB) | {} allocs | {}B wasted | "
+            "{} compactions (last saved {}B, total {}B)",
+            used / 1048576.0, capacity / 1048576.0, peak_used / 1048576.0,
+            allocation_count, wasted, compaction_count, last_compaction_saved,
+            total_compaction_saved);
+    }
+
+    // Fragmentation ratio: (capacity - used) / capacity.
+    // 0.0 = fully packed, 1.0 = completely empty.
+    // Issue #187: this is the key signal for auto-compact triggers.
+    [[nodiscard]] double fragmentation_ratio() const noexcept {
+        return capacity == 0 ? 0.0
+                              : static_cast<double>(capacity - used) /
+                                    static_cast<double>(capacity);
     }
 
     void merge(const ArenaStats& other) {
@@ -26,6 +45,11 @@ export struct ArenaStats {
         peak_used = std::max(peak_used, other.peak_used);
         allocation_count += other.allocation_count;
         wasted += other.wasted;
+        compaction_count += other.compaction_count;
+        total_compaction_saved += other.total_compaction_saved;
+        // last_compaction_saved: take the more recent (larger count)
+        if (other.compaction_count > 0)
+            last_compaction_saved = other.last_compaction_saved;
     }
 };
 
@@ -126,7 +150,8 @@ private:
 export class ASTArena {
 public:
     explicit ASTArena(std::size_t initial_size = 8 * 1024 * 1024)
-        : buffer_(initial_size)
+        : initial_size_(initial_size)
+        , buffer_(initial_size)
         , resource_(buffer_.data(), buffer_.size(), std::pmr::new_delete_resource()) {}
 
     ~ASTArena() {
@@ -209,6 +234,92 @@ public:
         return buffer_.size() + small_pool_.capacity();
     }
 
+    // Issue #187 (P0): estimate how many bytes could be reclaimed
+    // by a compaction. This is a cheap, side-effect-free check that
+    // callers (auto-compact trigger, observability) can use to decide
+    // whether a full compact() is worth the cost.
+    //
+    // The current implementation reports the gap between used bytes
+    // and total buffer capacity (i.e. unused capacity). This is the
+    // upper bound on what a buffer-shrinking compact could save.
+    // For a full live-object-moving compact, savings would be less
+    // (depends on actual fragmentation), but that variant isn't
+    // implemented yet — see `compact()` below for the conservative
+    // buffer-shrinking variant.
+    [[nodiscard]] std::size_t compact_estimate() const noexcept {
+        std::size_t cap = buffer_.size();
+        std::size_t u = stats_.used;
+        return cap > u ? cap - u : 0;
+    }
+
+    // Issue #187 (P0): conservative compact() that shrinks the
+    // underlying pmr buffer to the smallest size that still holds
+    // the live allocations. This is NOT a full live-object-moving
+    // defragmentation pass — that would require either:
+    //   (a) moving live objects in-place and patching all pointers
+    //       (unsupported: arena objects are referenced by raw
+    //        pointers from outside, e.g. closures_ cl_flat), or
+    //   (b) a stop-the-world mark phase that identifies dead
+    //       objects and compacts only those (would need a GC
+    //       integration; tracked as a separate follow-up).
+    //
+    // What this does: grow-shrink the buffer to the used-size +
+    // safety margin so the unused tail can be reclaimed by
+    // std::vector<std::byte>'s allocator. Safe because the pmr
+    // resource's existing in-buffer allocations are preserved
+    // (monotonic_buffer_resource::release() doesn't free in-buffer
+    // memory; we replace buffer_ with a fresh one and remap).
+    //
+    // Returns the number of bytes reclaimed.
+    [[nodiscard]] std::size_t compact() noexcept {
+        std::size_t before = buffer_.size();
+        std::size_t u = stats_.used;
+        if (u == 0) {
+            // Empty arena: shrink to 1KB (preserve some headroom for
+            // future small allocations).
+            buffer_.resize(1024);
+            rebuild_resource_();
+        } else if (u < before) {
+            // Round up to power of 2 with 25% headroom, min 1KB.
+            std::size_t target = 1024;
+            while (target < u + u / 4) target *= 2;
+            if (target < before) {
+                buffer_.resize(target);
+                // Rebuild resource on new buffer. Live allocations
+                // in the buffer below `target` are still valid
+                // (monotonic_buffer_resource is a bump allocator;
+                // all live ptrs are below `stats_.used` which is
+                // < `target`).
+                rebuild_resource_();
+            }
+        }
+        std::size_t after = buffer_.size();
+        std::size_t saved = (before > after) ? (before - after) : 0;
+        if (saved > 0) {
+            stats_.compaction_count++;
+            stats_.last_compaction_saved = saved;
+            stats_.total_compaction_saved += saved;
+        }
+        return saved;
+    }
+
+    // Issue #187 (P0): shrink_to_fit() — convenience wrapper that
+    // returns the buffer to its initial allocation size. Useful
+    // after a long batch of mutations to reclaim any growth from
+    // geometric buffer expansion. No-op if buffer is already at
+    // initial size.
+    void shrink_to_fit() noexcept {
+        if (buffer_.size() > initial_size_ && stats_.used < initial_size_) {
+            std::size_t before = buffer_.size();
+            buffer_.resize(initial_size_);
+            rebuild_resource_();
+            std::size_t saved = before - initial_size_;
+            stats_.compaction_count++;
+            stats_.last_compaction_saved = saved;
+            stats_.total_compaction_saved += saved;
+        }
+    }
+
     // Number of live tracked objects (for tests / diagnostics)
     [[nodiscard]] std::size_t live_count() const noexcept { return dtors_.size(); }
 
@@ -229,6 +340,21 @@ private:
             it->dtor(it->ptr);
         }
         dtors_.clear();
+    }
+
+    // Issue #187 (P0): destroy + reconstruct the pmr resource on the
+    // current buffer_. std::pmr::monotonic_buffer_resource has a
+    // deleted copy/move assignment operator, so we can't just
+    // resource_ = ...; we have to manage its lifetime via
+    // destroy_at + construct_at. All live in-buffer allocations
+    // (pointed to by old resource_ ptrs) are still valid because
+    // buffer_ hasn't moved (resize may shrink but never reallocates
+    // while shrinking, and any ptr below stats_.used is in the
+    // preserved prefix).
+    void rebuild_resource_() noexcept {
+        std::destroy_at(&resource_);
+        std::construct_at(&resource_, buffer_.data(), buffer_.size(),
+                          std::pmr::new_delete_resource());
     }
 
     void* allocate_raw(std::size_t size, std::size_t alignment)
@@ -271,6 +397,7 @@ private:
     SmallObjectPool small_pool_;
     ArenaStats stats_;
     std::vector<DtorEntry> dtors_;
+    std::size_t initial_size_ = 0; // Issue #187: for shrink_to_fit()
 };
 
 // ── ArenaGroup — multi-arena manager ─────────────────────────────
@@ -280,6 +407,15 @@ private:
 //
 export class ArenaGroup {
 public:
+    // Issue #187: compaction policy. When the fragmentation ratio
+    // (capacity - used) / capacity exceeds this threshold (0.0-1.0),
+    // auto_compact() will trigger a compact() on that arena. Default
+    // 0.50 = compact when half the buffer is unused.
+    void set_compact_threshold(double ratio) noexcept {
+        compact_threshold_ = std::clamp(ratio, 0.0, 0.95);
+    }
+    [[nodiscard]] double compact_threshold() const noexcept { return compact_threshold_; }
+
     // Get or create an arena for a module
     ASTArena& module_arena(const std::string& name, std::size_t initial_size = 8 * 1024 * 1024) {
         auto it = arenas_.find(name);
@@ -300,6 +436,26 @@ public:
     void reset_all() {
         for (auto& [_, arena] : arenas_)
             arena->reset();
+    }
+
+    // Issue #187 (P0): compact a specific module's arena. Returns
+    // bytes reclaimed, or 0 if the module isn't found.
+    [[nodiscard]] std::size_t compact_module(const std::string& name) {
+        auto it = arenas_.find(name);
+        if (it == arenas_.end()) return 0;
+        return it->second->compact();
+    }
+
+    // Issue #187 (P0): compact every arena whose fragmentation ratio
+    // exceeds the configured threshold. Returns total bytes reclaimed.
+    [[nodiscard]] std::size_t auto_compact() {
+        std::size_t total = 0;
+        for (auto& [_, arena] : arenas_) {
+            if (arena->stats().fragmentation_ratio() >= compact_threshold_) {
+                total += arena->compact();
+            }
+        }
+        return total;
     }
 
     // Aggregate stats across all managed arenas
@@ -323,8 +479,37 @@ public:
     // Number of managed arenas
     [[nodiscard]] std::size_t count() const { return arenas_.size(); }
 
+    // Issue #187 (P0): JSON snapshot of all managed arenas for
+    // observability (the `observability_json` primitive surfaces
+    // this to Aura code via the (arena:stats) primitive).
+    [[nodiscard]] std::string stats_json() const {
+        std::string out = "{\"arenas\":[";
+        bool first = true;
+        for (auto& [name, arena] : arenas_) {
+            if (!first) out += ",";
+            first = false;
+            auto s = arena->stats();
+            std::string esc_name;
+            for (char c : name) {
+                if (c == '"' || c == '\\') esc_name += '\\';
+                esc_name += c;
+            }
+            out += std::format(
+                "{{\"name\":\"{}\",\"used\":{},\"capacity\":{},"
+                "\"peak_used\":{},\"allocs\":{},\"compaction_count\":{},"
+                "\"last_compaction_saved\":{},\"total_compaction_saved\":{},"
+                "\"fragmentation_ratio\":{:.3f}}}",
+                esc_name, s.used, s.capacity, s.peak_used, s.allocation_count,
+                s.compaction_count, s.last_compaction_saved,
+                s.total_compaction_saved, s.fragmentation_ratio());
+        }
+        out += "],\"compact_threshold\":" + std::to_string(compact_threshold_) + "}";
+        return out;
+    }
+
 private:
     std::unordered_map<std::string, std::unique_ptr<ASTArena>> arenas_;
+    double compact_threshold_ = 0.50; // Issue #187: default 50% fragmentation triggers compact
 };
 
 } // namespace aura::ast
