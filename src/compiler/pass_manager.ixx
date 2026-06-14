@@ -6,6 +6,7 @@ import aura.core.type;
 import aura.compiler.ir;
 import aura.compiler.compute_kind;
 import aura.compiler.arity;
+import aura.compiler.constant_folding;
 import aura.compiler.type_checker;
 import aura.compiler.coercion_map;
 import aura.diag;
@@ -110,28 +111,60 @@ private:
     ArityCheckResult result_;
 };
 
-// ── ConstantFoldingWrap — compile-time constant folding ─────────
+// ── ConstantFoldingWrap — compile-time constant folding (Issue #212) ─
+//
+// Issue #212: the fold logic is now in `aura.compiler.constant_folding`
+// (the pure module), following the same pattern as
+// `ComputeKindWrap` / `ArityWrap`. The Wrap holds the per-instance
+// state (a single known-map + counter) and delegates to the
+// pure functions for the actual per-block / per-function work.
+//
+// Behavior is byte-identical to the legacy in-class version:
+//   - run(IRModule&) folds every function; the counter is the
+//     sum across all functions.
+//   - fold_function(func) folds one function; the counter
+//     accumulates the function's contribution. Returns the
+//     per-function count (legacy behavior preserved for the
+//     6 service.ixx + 1 main.cpp call sites).
+//   - The per-block known-map is reset on block entry, so
+//     cross-block ConstI64 propagation does not leak.
+//
+// The per-block helper `constant_fold_block` is exposed on
+// the Wrap (was previously private) for the incremental
+// compilation hot path: callers that already have a known
+// map in hand can pass it through without going through
+// the per-function allocator.
 export class ConstantFoldingWrap {
 public:
     void run(aura::ir::IRModule& module) {
         folded_ = 0;
         for (auto& func : module.functions) {
-            for (auto& block : func.blocks) {
-                fold_block(block);
-            }
+            auto r = aura::compiler::constant_fold_function(func);
+            folded_ += r.folded_count;
         }
     }
 
-    // Phase 4: per-function constant folding — reuses the private fold_block logic.
-    // Each function's blocks are folded independently; known_ is reset per block.
-    // Returns the number of instructions folded in this function.
+    // Per-function fold — accumulates the per-function count
+    // into the wrap's total. Returns the per-function delta,
+    // matching the legacy `fold_function` contract (the
+    // service.ixx + main.cpp call sites depend on the return
+    // value being the per-function count).
     std::size_t fold_function(aura::ir::IRFunction& func) {
         std::size_t before = folded_;
-        for (auto& block : func.blocks) {
-            known_.clear();
-            fold_block(block);
-        }
+        auto r = aura::compiler::constant_fold_function(func);
+        folded_ += r.folded_count;
         return folded_ - before;
+    }
+
+    // Per-block fold (Issue #212 span variant). Caller owns
+    // the known map. Useful for incremental compilation: when
+    // re-folding a single block after a mutation, the caller
+    // has a known map in hand and just needs the per-instruction
+    // decisions. Returns the count for this block.
+    std::size_t fold_block(aura::ir::BasicBlock& block) {
+        std::size_t n = aura::compiler::constant_fold_block(block, known_);
+        folded_ += n;
+        return n;
     }
 
     bool has_error() const { return false; }
@@ -139,100 +172,15 @@ public:
     std::size_t folded_count() const { return folded_; }
 
 private:
-    void fold_block(aura::ir::BasicBlock& block) {
-        known_.clear();
-        for (auto& instr : block.instructions) {
-            auto& ops = instr.operands;
-            switch (instr.opcode) {
-                case aura::ir::IROpcode::ConstI64:
-                    known_[ops[0]] = (static_cast<std::int64_t>(ops[2]) << 32) | ops[1];
-                    break;
-                case aura::ir::IROpcode::ConstF64:
-                    break;
-                case aura::ir::IROpcode::Local: {
-                    auto it = known_.find(ops[1]);
-                    if (it != known_.end()) {
-                        // Don't propagate tagged bool values (7=#t, 3=#f) as ConstI64
-                        // since the AOT/JIT emitter treats ConstI64 as fixnum-encoded.
-                        if (it->second != 3 && it->second != 7) {
-                            replace(instr, ops[0], it->second);
-                            ++folded_;
-                        }
-                    }
-                    break;
-                }
-#define FOLD_BIN(OP, EXPR)                                                                         \
-    case aura::ir::IROpcode::OP: {                                                                 \
-        auto it_a = known_.find(ops[1]), it_b = known_.find(ops[2]);                               \
-        if (it_a != known_.end() && it_b != known_.end()) {                                        \
-            replace(instr, ops[0], EXPR);                                                          \
-            ++folded_;                                                                             \
-        }                                                                                          \
-        break;                                                                                     \
-    }
-// Tagged truthiness helper: value 3 = #f, value 0 = int 0.
-// Both #f and integer 0 are falsy. Fixnum 0 encodes as val=0.
-#define IS_TRUTHY(v) ((v) != 3 && (v) != 0)
-
-#define FOLD_BOOL(OP, TRUTHY_EXPR)                                                                 \
-    case aura::ir::IROpcode::OP: {                                                                 \
-        auto it_a = known_.find(ops[1]), it_b = known_.find(ops[2]);                               \
-        if (it_a != known_.end() && it_b != known_.end()) {                                        \
-            replace_bool(instr, ops[0], TRUTHY_EXPR);                                              \
-            ++folded_;                                                                             \
-        }                                                                                          \
-        break;                                                                                     \
-    }
-#define FOLD_BOOL_CMP(OP, EXPR)                                                                    \
-    case aura::ir::IROpcode::OP: {                                                                 \
-        auto it_a = known_.find(ops[1]), it_b = known_.find(ops[2]);                               \
-        if (it_a != known_.end() && it_b != known_.end()) {                                        \
-            replace_bool(instr, ops[0], EXPR);                                                     \
-            ++folded_;                                                                             \
-        }                                                                                          \
-        break;                                                                                     \
-    }
-                    FOLD_BIN(Add, it_a->second + it_b->second)
-                    FOLD_BIN(Sub, it_a->second - it_b->second)
-                    FOLD_BIN(Mul, it_a->second * it_b->second)
-                    FOLD_BIN(Div, it_a->second / it_b->second)
-                    FOLD_BOOL_CMP(Eq, (it_a->second == it_b->second))
-                    FOLD_BOOL_CMP(Lt, (it_a->second < it_b->second))
-                    FOLD_BOOL_CMP(Gt, (it_a->second > it_b->second))
-                    FOLD_BOOL_CMP(Le, (it_a->second <= it_b->second))
-                    FOLD_BOOL_CMP(Ge, (it_a->second >= it_b->second))
-                    FOLD_BOOL(And, (IS_TRUTHY(it_a->second) && IS_TRUTHY(it_b->second)))
-                    FOLD_BOOL(Or, (IS_TRUTHY(it_a->second) || IS_TRUTHY(it_b->second)))
-#undef FOLD_BIN
-#undef FOLD_BOOL
-                case aura::ir::IROpcode::Not: {
-                    auto it = known_.find(ops[1]);
-                    if (it != known_.end()) {
-                        // Falsy: 3=#f or 0=int 0
-                        replace_bool(instr, ops[0], !IS_TRUTHY(it->second));
-                        ++folded_;
-                    }
-                    break;
-                }
-                default:
-                    break;
-            }
-        }
-    }
-
-    void replace(aura::ir::IRInstruction& instr, std::uint32_t slot, std::int64_t val) {
-        instr.opcode = aura::ir::IROpcode::ConstI64;
-        instr.operands = {slot, static_cast<std::uint32_t>(val & 0xFFFFFFFF),
-                          static_cast<std::uint32_t>((val >> 32) & 0xFFFFFFFF), 0};
-        known_[slot] = val;
-    }
-
-    void replace_bool(aura::ir::IRInstruction& instr, std::uint32_t slot, bool val) {
-        instr.opcode = aura::ir::IROpcode::ConstBool;
-        instr.operands = {slot, val ? 1u : 0u, 0, 0};
-        known_[slot] = val ? 7 : 3;
-    }
-
+    // Legacy per-instance known-map (kept for fold_block callers
+    // that don't have a known map in hand; reset between blocks
+    // by the public fold_block entry point, which is what the
+    // original class did).
+    //
+    // Uses the full type rather than the `ConstantKnownMap` alias
+    // — GCC 16 ICEs on `is_really_empty_class` for the alias
+    // under some instantiation paths, but the concrete
+    // std::unordered_map is fine.
     std::unordered_map<std::uint32_t, std::int64_t> known_;
     std::size_t folded_ = 0;
 };
