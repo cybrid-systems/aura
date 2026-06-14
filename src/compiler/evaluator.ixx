@@ -990,6 +990,14 @@ private:
     // `total_mutations()`. Relaxed-ordering for stats; not
     // used for control flow.
     std::atomic<std::uint64_t> total_mutations_{0};
+    // Issue #192: atomic-batch observability counters. Bumped
+    // by the (mutate:atomic-batch) primitive. Relaxed-ordering
+    // (stats-only). Separate from total_mutations_ so dashboards
+    // can distinguish "N mutations applied" from "M atomic
+    // batches completed (covering K of those N)".
+    std::atomic<std::uint64_t> atomic_batch_count_{0};
+    std::atomic<std::uint64_t> atomic_batch_ops_total_{0};
+    std::atomic<std::uint64_t> atomic_batch_rollbacks_{0};
     // Issue #164: per-join defuse_version_ snapshot. Set at the
     // start of fiber:join's wait, re-checked at wakeup to detect
     // mutations that happened DURING the join (the "transient
