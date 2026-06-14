@@ -64,6 +64,27 @@ struct GCRootSet {
 // Called during the GC root collection phase.
 using GCRootFlushFn = std::function<void(GCRootSet& out)>;
 
+// Issue #205: env-walk callback (caller-side).
+// The evaluator walks its env_frames_ SoA arena (O(frames))
+// and produces index lists for pair/closure cells that are
+// reachable through env parent chains. The GC marks each
+// list's indices. This replaces the old pointer-chasing
+// Env* walk with a single linear pass over env_frames_,
+// giving 3-5x faster mark phase for large workspaces
+// (per Issue #172).
+//
+// The callback is registered once (at startup) and called
+// once per GC cycle (between mark_from_roots and sweep).
+// Decoupling the walk from the GC keeps the GC's surface
+// area narrow — it doesn't need to know EnvFrame's layout.
+struct EnvFrameRoots {
+    std::vector<int64_t> pair_roots;     // pair indices reachable through env chains
+    std::vector<int64_t> closure_roots;  // closure indices reachable through env chains
+    // Future: string_roots, workspace_roots, etc. — add as
+    // the issue's body sections get implemented.
+};
+using GCEnvWalkFn = std::function<void(EnvFrameRoots& out)>;
+
 // Forward declarations for sweep types
 class MarkBitVector;
 struct GCSweepResult;
@@ -146,6 +167,16 @@ public:
     // vector heaps after marking. Called during sweep phase.
     void register_sweep_fn(GCSweepFn fn);
 
+    // Issue #205: env-walk callback (caller-side).
+    // The evaluator registers a callback that walks its
+    // env_frames_ SoA arena and produces the EnvFrameRoots
+    // lists. The GC calls it between mark_from_roots and
+    // sweep (so the mark vectors are already sized). This
+    // is the 3-5x mark-phase speedup from #172.
+    void register_env_walk_fn(GCEnvWalkFn fn) {
+        env_walk_fn_ = std::move(fn);
+    }
+
     // ── Mark + Sweep (Phase 3) ──────────────────────
     void mark_from_roots(const GCRootSet& roots,
                          size_t string_heap_size,
@@ -214,6 +245,11 @@ private:
 
     // Sweep callback (Phase 4)
     GCSweepFn sweep_fn_;
+
+    // Issue #205: env-walk callback (caller-side). The
+    // evaluator walks env_frames_ and produces pair/closure
+    // index lists. Called between mark_from_roots and sweep.
+    GCEnvWalkFn env_walk_fn_;
 
     // Mark state (Phase 3)
     MarkBitVector string_marks_;

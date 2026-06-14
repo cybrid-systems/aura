@@ -114,6 +114,24 @@ bool GCCollector::collect() {
         mark_end - mark_start).count();
     metrics_.mark_us.fetch_add(mark_us, std::memory_order_relaxed);
 
+    // Issue #205: env-walk. The evaluator walks env_frames_
+    // (O(frames) SoA linear pass, replacing the old pointer
+    // chase). Produces pair/closure index lists. We then
+    // call mark_env_frame_roots to set the bits. The walk
+    // runs AFTER mark_from_roots so the mark vectors are
+    // already sized (mark_env_frame_roots is a no-op if the
+    // vectors aren't sized yet). The walk is also additive:
+    // it doesn't replace the explicit root sources, it
+    // ADDS to them (env chains are not always reachable from
+    // the root sources, e.g., a frame that's only reachable
+    // through another frame's parent_id).
+    if (env_walk_fn_) {
+        EnvFrameRoots env_roots;
+        env_walk_fn_(env_roots);
+        mark_env_frame_roots(env_roots.pair_roots,
+                             env_roots.closure_roots);
+    }
+
     // ── Phase 4: Sweep (skeleton) ─────────────────────
     auto sweep_start = std::chrono::steady_clock::now();
     auto sweep_result = sweep();

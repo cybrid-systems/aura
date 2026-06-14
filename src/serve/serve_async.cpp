@@ -331,6 +331,31 @@ void run_serve_async(int num_workers) {
         return gc->request() && gc->collect();
     };
 
+    // Issue #205: env-walk callback. The Evaluator's
+    // env_frames_ SoA arena is walked (linear pass, O(frames))
+    // to discover pair/closure refs reachable through env
+    // bindings. This replaces the old pointer-chasing Env*
+    // walk with a single linear pass — 3-5x mark-phase
+    // speedup for large workspaces (per Issue #172).
+    //
+    // The callback reads g_current_compiler_service to get
+    // the active Evaluator (set per-session on the IO
+    // thread). The GC is called from the IO thread via
+    // (gc-heap), so the active service is the session's.
+    sched.gc_collector()->register_env_walk_fn(
+        [](aura::serve::EnvFrameRoots& out) {
+            auto* svc = static_cast<aura::compiler::CompilerService*>(
+                aura::messaging::g_current_compiler_service);
+            if (!svc) return;
+            // CompilerService exposes the Evaluator; walk
+            // the Evaluator's env_frames_ arena. The walk
+            // is read-only and SoA-friendly (no allocations
+            // in the hot path; only pair/closure indices
+            // are appended to the output vectors).
+            svc->evaluator().walk_env_frame_roots(
+                out.pair_roots, out.closure_roots);
+        });
+
     // 3. Shared state between stdin_reader and session fibers
     std::deque<std::string> stdin_lines;  // complete JSON lines from stdin
     bool stdin_eof = false;

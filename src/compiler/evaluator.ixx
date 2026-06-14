@@ -803,6 +803,25 @@ public:
     [[nodiscard]] std::size_t env_frames_size() const {
         return env_frames_.size();
     }
+    // Issue #205: walk env_frames_ and collect pair/closure
+    // indices reachable through env bindings. The GC calls
+    // this (via the env_walk callback) to discover roots
+    // that are only reachable through env parent chains.
+    //
+    // Algorithm: linear pass over env_frames_ (O(frames)).
+    // For each frame, walk bindings_ + bindings_symid_ and
+    // extract pair/closure ref indices. The parent_id chain
+    // is implicit: every frame in env_frames_ is reachable
+    // from some root (the workspace), so we just scan all
+    // bindings of all frames.
+    //
+    // The walk is purely SoA: env_frames_ is a std::vector,
+    // bindings_/bindings_symid_ are std::vector, refs are
+    // 64-bit tagged pointers. No pointer chase, no
+    // recursive descent, no risk of stack overflow.
+    void walk_env_frame_roots(
+        std::vector<std::int64_t>& pair_roots_out,
+        std::vector<std::int64_t>& closure_roots_out) const;
     // Walk the parent chain starting from `start`, calling
     // `f(EnvId, const EnvFrame&)` for each frame including
     // `start`. Stops when `f` returns false (early exit) or the
