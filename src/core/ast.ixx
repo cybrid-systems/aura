@@ -119,6 +119,77 @@ public:
     // Total bytes used for string data
     std::size_t data_size() const { return buf_.size(); }
 
+    // Issue #187 (P0): observability for the hash table. 0.0 = empty,
+    // 1.0 = fully packed. load_factor (entries / capacity) is the
+    // standard metric. We expose it alongside the raw counts so the
+    // auto-compact trigger (Issue #187) can decide when to rehash.
+    [[nodiscard]] std::size_t entry_count() const noexcept { return entry_count_; }
+    [[nodiscard]] std::size_t hash_capacity() const noexcept { return hash_capacity_; }
+    [[nodiscard]] double load_factor() const noexcept {
+        return hash_capacity_ == 0 ? 0.0
+                                   : static_cast<double>(entry_count_) /
+                                         static_cast<double>(hash_capacity_);
+    }
+    [[nodiscard]] std::size_t hash_table_bytes() const noexcept {
+        return hash_tbl_.size() * sizeof(SymId);
+    }
+    // Sum of byte lengths of all interned strings (excludes the
+    // trailing NUL per string but includes the leading \0 sentinel).
+    [[nodiscard]] std::size_t string_bytes_total() const noexcept {
+        std::size_t total = 1; // leading \0
+        for (std::uint32_t i = 0; i < hash_capacity_; ++i) {
+            if (hash_tbl_[i] != INVALID_SYM) {
+                total += resolve(hash_tbl_[i]).size() + 1; // +1 for NUL
+            }
+        }
+        return total;
+    }
+    // Total memory footprint of this StringPool (buf_ + hash_tbl_ +
+    // entry_count_ + hash_capacity_ bookkeeping). For the
+    // observability layer to report.
+    [[nodiscard]] std::size_t total_bytes() const noexcept {
+        return data_size() + hash_table_bytes() + sizeof(*this);
+    }
+    // Fragmentation ratio of buf_ = (data_size - string_bytes_total)
+    // / data_size. 0.0 = perfectly packed, 1.0 = entirely dead bytes.
+    // After reset()+re-intern, the leading \0 + the most-recently-
+    // appended strings dominate; older strings can leave gaps if the
+    // pool has been reset-then-rebuilt. In typical steady state
+    // (no reset), buf_ grows monotonically and fragmentation ~0.
+    [[nodiscard]] double buf_fragmentation() const noexcept {
+        std::size_t ds = data_size();
+        return ds == 0 ? 0.0
+                       : static_cast<double>(ds - string_bytes_total()) /
+                             static_cast<double>(ds);
+    }
+
+    // Issue #187 (P0): conservative compact() that rebuilds the
+    // hash table at the smallest power-of-2 capacity that still
+    // holds all live entries (load factor 0.5-0.6). SymIds (which
+    // are offsets into buf_) are NOT remapped — buf_ is monotonic
+    // (strings are only appended, never removed), so SymIds stay
+    // valid. This compact only reclaims hash_tbl_ memory, not
+    // buf_ memory.
+    //
+    // Returns bytes reclaimed (from hash_tbl_ shrink).
+    [[nodiscard]] std::size_t compact() noexcept {
+        std::size_t before = hash_table_bytes();
+        if (entry_count_ == 0) {
+            // Nothing to keep — reset to minimum.
+            rehash(64);
+        } else {
+            // Pick smallest power-of-2 capacity with load <= 0.5.
+            std::uint32_t target = 64;
+            while (target / 2 < entry_count_) target *= 2;
+            if (target < hash_capacity_) {
+                rehash(target);
+            }
+        }
+        std::size_t after = hash_table_bytes();
+        std::size_t saved = (before > after) ? (before - after) : 0;
+        return saved;
+    }
+
     // Reset all state
     void reset() {
         buf_.clear();

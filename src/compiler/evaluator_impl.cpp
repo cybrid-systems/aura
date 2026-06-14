@@ -14801,6 +14801,132 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         return make_int(static_cast<std::int64_t>(reclaimed));
     });
 
+    // (arena:compact) — Issue #187 (P0): conservative arena buffer
+    // compaction. Reclaims the unused tail of the main arena's pmr
+    // buffer by rebuilding it at used-size + 25% headroom. Returns
+    // the number of bytes reclaimed. Use (arena:compact-all) to
+    // compact every per-module arena above the configured threshold.
+    primitives_.add("arena:compact", [this](const auto&) -> EvalValue {
+        if (!arena_) return make_int(0);
+        return make_int(static_cast<std::int64_t>(arena_->compact()));
+    });
+    primitives_.add("arena:compact-all", [this](const auto&) -> EvalValue {
+        if (!arena_group_) return make_int(0);
+        return make_int(static_cast<std::int64_t>(arena_group_->auto_compact()));
+    });
+    primitives_.add("arena:shrink-to-fit", [this](const auto&) -> EvalValue {
+        if (!arena_) return make_void();
+        arena_->shrink_to_fit();
+        return make_void();
+    });
+    // (arena:set-compact-threshold pct) — Issue #187: configure the
+    // fragmentation ratio at which (arena:compact-all) triggers a
+    // compact. pct is 0-95 (clamped). 50 = default.
+    primitives_.add("arena:set-compact-threshold", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]) || !arena_group_) return make_void();
+        arena_group_->set_compact_threshold(static_cast<double>(as_int(a[0])) / 100.0);
+        return make_void();
+    });
+    // (arena:estimate) — Issue #187: bytes that could be reclaimed
+    // by a (arena:compact). Cheap O(1) check, no side effects.
+    primitives_.add("arena:estimate", [this](const auto&) -> EvalValue {
+        if (!arena_) return make_int(0);
+        return make_int(static_cast<std::int64_t>(arena_->compact_estimate()));
+    });
+    // (arena:stats-json) — Issue #187: JSON snapshot of all managed
+    // arenas (capacity, used, fragmentation, compaction count). For
+    // dashboards and auto-tuners. Returns the JSON as a string.
+    primitives_.add("arena:stats-json", [this](const auto&) -> EvalValue {
+        std::string out;
+        if (arena_group_) {
+            out = arena_group_->stats_json();
+        } else if (arena_) {
+            // Single-arena fallback: emit a one-entry JSON manually.
+            auto s = arena_->stats();
+            out = std::format(
+                "{{\"arenas\":[{{\"name\":\"main\",\"used\":{},\"capacity\":{},"
+                "\"peak_used\":{},\"allocs\":{},\"compaction_count\":{},"
+                "\"last_compaction_saved\":{},\"total_compaction_saved\":{},"
+                "\"fragmentation_ratio\":{:.3f}}}],\"compact_threshold\":0.5}}",
+                s.used, s.capacity, s.peak_used, s.allocation_count,
+                s.compaction_count, s.last_compaction_saved,
+                s.total_compaction_saved, s.fragmentation_ratio());
+        } else {
+            out = "{\"arenas\":[]}";
+        }
+        auto sidx = string_heap_.size();
+        string_heap_.push_back(out);
+        return types::make_string(sidx);
+    });
+    // (string-pool:compact) — Issue #187 (P0): rehash the workspace's
+    // StringPool to the smallest power-of-2 capacity that still
+    // holds all live entries. Reclaims hash_tbl_ memory. Returns
+    // bytes reclaimed. SymIds are stable (buf_ is monotonic).
+    primitives_.add("string-pool:compact", [this](const auto&) -> EvalValue {
+        if (!workspace_pool_ && !canonical_pool())
+            return make_int(0);
+        auto* pool = workspace_pool_ ? workspace_pool_ : canonical_pool();
+        return make_int(static_cast<std::int64_t>(pool->compact()));
+    });
+    // (string-pool:stats) — Issue #187: StringPool observability.
+    // Returns hash {entries, capacity, load-factor, data-size,
+    // hash-bytes, fragmentation}.
+    // (Built inline using the same hash-build pattern as
+    //  gc-arena-info above.)
+    primitives_.add("string-pool:stats", [this](const auto&) -> EvalValue {
+        if (!workspace_pool_ && !canonical_pool())
+            return make_void();
+        auto* pool = workspace_pool_ ? workspace_pool_ : canonical_pool();
+        std::size_t entries = pool->entry_count();
+        std::size_t cap = pool->hash_capacity();
+        double lf = pool->load_factor();
+        std::size_t ds = pool->data_size();
+        std::size_t hb = pool->hash_table_bytes();
+        double frag = pool->buf_fragmentation();
+
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+                auto kidx = string_heap_.size();
+                string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"entries", make_int(static_cast<std::int64_t>(entries))},
+            {"capacity", make_int(static_cast<std::int64_t>(cap))},
+            {"load-factor", make_float(lf)},
+            {"data-size", make_int(static_cast<std::int64_t>(ds))},
+            {"hash-bytes", make_int(static_cast<std::int64_t>(hb))},
+            {"fragmentation", make_float(frag)},
+        };
+        return build_hash(kv);
+    });
+
     // (gc-arena-stats) — Report per-arena allocation. Shows main arena +
     // every per-module arena. Format: "main:0.1MB/8.0MB;json.aura:0.5MB/8.0MB;..."
     // (semicolons separate entries; slashes separate used/capacity within an entry).
