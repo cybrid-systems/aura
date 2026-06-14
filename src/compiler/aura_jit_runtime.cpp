@@ -1082,6 +1082,19 @@ int64_t aura_cast_op(int64_t val, int64_t type_tag) {
 // fields without popping. Raises branch directly to handler_block
 // (no longjmp) — the JIT's lower() for OpRaise reads the top
 // frame via aura_exception_top and emits a Br to handler_block.
+//
+// KNOWN LIMITATION (Issue #195): the `thread_local` storage
+// means concurrent fibers on the same thread SHARE this
+// stack. A Raise in fiber A could branch to a handler set
+// by fiber B — incorrect behavior. The full fix is
+// per-fiber exception state + LLVM invoke + landingpad +
+// personality function (1-2 weeks of work, tracked by
+// Issue #195). For now, structured EH is correct for the
+// single-fiber case (the common case for sequential Aura
+// programs). The spec_jit_controller's deopt signal catches
+// this in production by deopting any function that
+// triggers an unhandled opcode (which the new lowerings
+// don't produce).
 struct ExFrame {
     std::uint64_t handler_block;
     std::uint64_t payload_slot;
