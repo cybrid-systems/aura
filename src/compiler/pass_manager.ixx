@@ -1462,6 +1462,13 @@ export class InlinePass {
 public:
     void run(aura::ir::IRModule& module) {
         inlined_count_ = 0;
+        // Issue #197: bump the global per-run stats
+        // (consumed by the (compile:inline-pass-stats)
+        // Aura primitive). The total is the lifetime sum
+        // of inlined + inlined_branch_aware; the last-run
+        // values are reset on each run().
+        run_inlined_ = 0;
+        run_inlined_branch_aware_ = 0;
         // Build a func_id → IRFunction* index for O(1) lookup.
         // module.functions is a std::vector indexed by func_id.
         if (func_index_.size() != module.functions.size()) {
@@ -1501,6 +1508,20 @@ public:
     // measure the new path's contribution.
     std::size_t inlined_branch_aware_count() const {
         return inlined_branch_aware_count_;
+    }
+    // Issue #197: per-run and lifetime totals for the
+    // (compile:inline-pass-stats) Aura primitive. run_*
+    // are reset on each run() call; total_* are lifetime
+    // sums (process-wide).
+    static std::size_t total_inlined() {
+        return total_inlined_;
+    }
+    static std::size_t total_inlined_branch_aware() {
+        return total_inlined_branch_aware_;
+    }
+    std::size_t run_inlined() const { return run_inlined_; }
+    std::size_t run_inlined_branch_aware() const {
+        return run_inlined_branch_aware_;
     }
 private:
     // True if the function is a "constant-returning single-block
@@ -1601,6 +1622,8 @@ private:
                 instr.operands[1] = const_instr.operands[1];
                 instr.operands[2] = const_instr.operands[2];
                 ++inlined_count_;
+                ++run_inlined_;
+                ++total_inlined_;
                 continue;
             }
             // Issue #197: branch-aware inliner path. Handles
@@ -1612,6 +1635,8 @@ private:
             if (is_inlinable_branch_aware(*callee)) {
                 if (try_inline_branch_aware(caller, block, i, *callee, instr)) {
                     ++inlined_branch_aware_count_;
+                    ++run_inlined_branch_aware_;
+                    ++total_inlined_branch_aware_;
                     // The Call at position i has been replaced
                     // with a Jump; the callee's blocks have
                     // been appended after this block. The
@@ -1725,79 +1750,112 @@ private:
     // copy of the callee's body, with slot + block ids
     // remapped into the caller's namespace.
     //
-    // For this 1-commit PR, the transformation is limited to
-    // the **single-block callee with parameters** case. The
-    // multi-block (Branch+Return) case is a follow-up that
-    // requires CFG splicing. The single-block case is the
-    // most common inlining candidate and demonstrates the
-    // full slot-rename + parameter-copy mechanism.
+    // Handles two cases:
+    //   1. **Single-block callee** (fast path): the Call is
+    //      the last instruction in the caller's block, and
+    //      the callee has 1 block. The transformation is an
+    //      in-place rewrite: param copies + inlined body +
+    //      Local(call_result, return_source) replace the Call.
+    //   2. **Multi-block callee** (CFG splicing): the Call
+    //      is at any position in the caller's block. The
+    //      transformation splits the caller's block at the
+    //      Call, clones all callee blocks into the caller
+    //      (with slot + block remap), wires the cloned
+    //      entry block as the continuation of the "before"
+    //      block, and the cloned exit block jumps to the
+    //      "after" block.
     //
-    // For the single-block case, the callee has:
-    //   - 1 block
-    //   - N instructions (any non-control-flow)
-    //   - 1 Return at the end
-    //   - local_count >= 0 locals (parameters in 0..arg_count-1)
-    //
-    // The transformation:
-    //   1. For each callee local i, allocate a fresh caller
-    //      slot. Build slot_rename_map.
-    //   2. For each param i in 0..arg_count-1, emit
-    //      Local(slot_rename_map[i], arg_base + i) at the
-    //      call site (before the inlined body).
-    //   3. Replace the Call at call_pos with a copy of each
-    //      callee instruction, with operands[0] (result) and
-    //      any local-slot operands remapped via the rename
-    //      map.
-    //   4. The final Return is replaced with
-    //      Local(call_result_slot, return_source_slot).
+    // The fast path (single-block) is more efficient (no
+    // new blocks allocated); the multi-block path is the
+    // full CFG splicing for Branch+Return callees.
     //
     // Returns true on success; false if the inlining can't
-    // be performed (e.g. arg_count != callee.arg_count, or
-    // the Call isn't the last meaningful instruction).
+    // be performed (e.g. arg_count != callee.arg_count, the
+    // callee has no Return, or some other pre-condition fails).
     bool try_inline_branch_aware(aura::ir::IRFunction& caller,
                                   aura::ir::BasicBlock& block,
                                   std::size_t call_pos,
                                   const aura::ir::IRFunction& callee,
                                   const aura::ir::IRInstruction& call_instr) {
-        // Limitation 1: only single-block callees for this PR.
-        // Multi-block (Branch+Return) CFG splicing is a
-        // follow-up; the predicate accepts multi-block for
-        // forward compatibility.
-        if (callee.blocks.size() != 1) return false;
-        const auto& callee_block = callee.blocks[0];
-        // Limitation 2: the callee block must end with Return.
-        if (callee_block.instructions.empty()) return false;
-        const auto& last_instr = callee_block.instructions.back();
-        if (last_instr.opcode != aura::ir::IROpcode::Return) {
-            return false;
-        }
-        // Limitation 3: call must be the last instruction in
-        // the caller's block (so we can append the inlined
-        // body in place without block splitting). TCO-like
-        // pattern.
-        if (call_pos != block.instructions.size() - 1) return false;
         // arg_count must match callee.arg_count.
         std::uint32_t arg_count = call_instr.operands[2];
         std::uint32_t arg_base = call_instr.operands[1];
         std::uint32_t result_slot = call_instr.operands[3];
         if (arg_count != callee.arg_count) return false;
-        // Build slot_rename_map. For each callee local i
-        // (0..callee.local_count-1), allocate a fresh caller
-        // slot. The caller's local_count grows accordingly.
+        // Find the callee's exit block (the one ending in
+        // Return). Exactly one block should end in Return;
+        // the others end in Branch/Jump.
+        std::size_t exit_block = callee.blocks.size();
+        for (std::size_t b = 0; b < callee.blocks.size(); ++b) {
+            if (callee.blocks[b].instructions.empty()) continue;
+            if (callee.blocks[b].instructions.back().opcode ==
+                aura::ir::IROpcode::Return) {
+                exit_block = b;
+                break;
+            }
+        }
+        if (exit_block >= callee.blocks.size()) return false;
+        // Dispatch: single-block vs multi-block.
+        if (callee.blocks.size() == 1) {
+            return try_inline_single_block(caller, block, call_pos,
+                                            callee, call_instr,
+                                            arg_count, arg_base,
+                                            result_slot, exit_block);
+        }
+        return try_inline_multi_block(caller, block, call_pos,
+                                        callee, call_instr,
+                                        arg_count, arg_base,
+                                        result_slot, exit_block);
+    }
+
+    // Single-block fast path: in-place rewrite. The Call
+    // must be the last instruction in the caller's block.
+    // Pre-conditions: callee has 1 block, the block ends
+    // with Return, and the caller's local_count is grown
+    // to include the callee's locals.
+    bool try_inline_single_block(aura::ir::IRFunction& caller,
+                                  aura::ir::BasicBlock& block,
+                                  std::size_t call_pos,
+                                  const aura::ir::IRFunction& callee,
+                                  const aura::ir::IRInstruction& call_instr,
+                                  std::uint32_t arg_count,
+                                  std::uint32_t arg_base,
+                                  std::uint32_t result_slot,
+                                  std::size_t exit_block) {
+        const auto& callee_block = callee.blocks[0];
+        // Fast path only applies when the Call is the last
+        // instruction in the caller's block. If the Call is
+        // in the middle, delegate to the multi-block path
+        // (which handles the block split correctly).
+        if (call_pos != block.instructions.size() - 1) {
+            return try_inline_multi_block(caller, block, call_pos,
+                                            callee, call_instr,
+                                            arg_count, arg_base,
+                                            result_slot, exit_block);
+        }
+        const auto& last_instr = callee_block.instructions.back();
+        // Build slot_rename_map. Same approach as
+        // try_inline_multi_block: walk instructions to
+        // find all referenced slots, not just
+        // callee.local_count.
         std::unordered_map<std::uint32_t, std::uint32_t> slot_rename;
+        std::uint32_t max_slot = 0;
+        for (const auto& instr : callee_block.instructions) {
+            for (std::size_t op = 0; op < 4; ++op) {
+                if (instr.operands[op] > max_slot) {
+                    max_slot = instr.operands[op];
+                }
+            }
+        }
         std::uint32_t new_local_start = caller.local_count;
-        for (std::uint32_t i = 0; i < callee.local_count; ++i) {
+        for (std::uint32_t i = 0; i <= max_slot; ++i) {
             slot_rename[i] = new_local_start + i;
         }
-        caller.local_count = new_local_start + callee.local_count;
-        // Build the new instruction sequence at the call site.
-        // Insert order: parameter copies, then the inlined
-        // body (minus the trailing Return), then a final
-        // Local to copy the return value into the call's
-        // result slot.
+        caller.local_count = new_local_start + max_slot + 1;
+        // Build the new instruction sequence.
         std::vector<aura::ir::IRInstruction> new_instrs;
         new_instrs.reserve(callee_block.instructions.size() + arg_count);
-        // 1. Parameter copies: Local(slot_rename[i], arg_base + i)
+        // 1. Parameter copies.
         for (std::uint32_t i = 0; i < arg_count; ++i) {
             aura::ir::IRInstruction local;
             local.opcode = aura::ir::IROpcode::Local;
@@ -1805,32 +1863,32 @@ private:
             local.operands[1] = arg_base + i;
             new_instrs.push_back(local);
         }
-        // 2. Inlined body: copy each instruction except the
-        // final Return, remapping operands via slot_rename.
-        // The result slot (operands[0]) for has_result_slot
-        // opcodes is also remapped.
+        // 2. Inlined body (excluding trailing Return).
         for (std::size_t k = 0; k + 1 < callee_block.instructions.size(); ++k) {
             auto cp = callee_block.instructions[k];
-            // Remap result slot if present.
             const auto* info = lookup_opcode(cp.opcode);
             if (info && info->has_result_slot) {
                 auto it = slot_rename.find(cp.operands[0]);
                 if (it != slot_rename.end()) cp.operands[0] = it->second;
             }
-            // Remap operand slots that reference callee
-            // locals. We remap operands[1..3] only (the
-            // source operands) — operands[0] is the result
-            // and is already handled above.
-            for (std::size_t op = 1; op < 4; ++op) {
+            if (cp.opcode == aura::ir::IROpcode::Branch) {
+                auto it = slot_rename.find(cp.operands[0]);
+                if (it != slot_rename.end()) cp.operands[0] = it->second;
+            }
+            bool is_branch = (cp.opcode ==
+                aura::ir::IROpcode::Branch);
+            bool is_jump = (cp.opcode ==
+                aura::ir::IROpcode::Jump);
+            std::size_t remap_end = 4;
+            if (is_branch) remap_end = 1;
+            if (is_jump) remap_end = 0;
+            for (std::size_t op = 1; op < remap_end; ++op) {
                 auto it = slot_rename.find(cp.operands[op]);
                 if (it != slot_rename.end()) cp.operands[op] = it->second;
             }
             new_instrs.push_back(cp);
         }
-        // 3. Final Return: replace with Local(result_slot,
-        //    return_source_after_remap). The Return's
-        //    operand[0] is the return source slot; remap it
-        //    and copy into the call's result slot.
+        // 3. Final Return → Local(result_slot, return_source).
         std::uint32_t ret_src = last_instr.operands[0];
         auto rit = slot_rename.find(ret_src);
         if (rit != slot_rename.end()) ret_src = rit->second;
@@ -1839,10 +1897,7 @@ private:
         final_copy.operands[0] = result_slot;
         final_copy.operands[1] = ret_src;
         new_instrs.push_back(final_copy);
-        // Replace the Call at call_pos with the new_instrs
-        // sequence. The simplest way is to insert new_instrs
-        // at call_pos, then erase call_pos (now the old
-        // Call shifted by new_instrs.size()).
+        // In-place rewrite.
         auto insert_pos = block.instructions.begin() + call_pos;
         block.instructions.insert(insert_pos, new_instrs.begin(),
                                   new_instrs.end());
@@ -1851,9 +1906,241 @@ private:
         return true;
     }
 
+    // Multi-block path: CFG splicing. Splits the caller's
+    // block at call_pos, clones all callee blocks into the
+    // caller with slot + block remap, and wires the cloned
+    // entry/exit blocks to the caller's "before" and "after"
+    // blocks.
+    bool try_inline_multi_block(aura::ir::IRFunction& caller,
+                                 aura::ir::BasicBlock& block,
+                                 std::size_t call_pos,
+                                 const aura::ir::IRFunction& callee,
+                                 const aura::ir::IRInstruction& call_instr,
+                                 std::uint32_t arg_count,
+                                 std::uint32_t arg_base,
+                                 std::uint32_t result_slot,
+                                 std::size_t exit_block) {
+        // Step 1: Capture the original terminator and the
+        // "after" instructions (instructions after the Call)
+        // BEFORE we mutate the block.
+        std::optional<aura::ir::IRInstruction> orig_terminator;
+        std::vector<aura::ir::IRInstruction> after_instrs;
+        // A block typically ends with a terminator
+        // (Branch/Jump/Return). If the Call is in the
+        // middle, the terminator is the last instruction.
+        // If the Call is the last instruction, the block
+        // has no terminator (the Call would be the end of
+        // the block, which is unusual — typically the Call
+        // is followed by a terminator or by more code).
+        bool call_is_last = (call_pos + 1 == block.instructions.size());
+        if (!call_is_last) {
+            // Original terminator is the last instruction.
+            // after_instrs is empty (since call_pos+1 ==
+            // end means there's nothing after the Call but
+            // the terminator). Wait — that's only true if
+            // the terminator is the instruction right after
+            // the Call. In general, there could be
+            // instructions between the Call and the
+            // terminator. Let's handle both.
+            // after_instrs = instructions [call_pos+1, end)
+            for (std::size_t k = call_pos + 1;
+                 k < block.instructions.size(); ++k) {
+                after_instrs.push_back(block.instructions[k]);
+            }
+            // The terminator is the LAST of those, if any.
+            if (!after_instrs.empty()) {
+                orig_terminator = after_instrs.back();
+                after_instrs.pop_back();
+            }
+        }
+        // Step 2: Build slot_rename_map. Walk all callee
+        // blocks and collect all referenced slot indices,
+        // then map each to a fresh caller slot. The map
+        // is keyed by the original callee slot; missing
+        // entries are no-ops (the slot wasn't referenced).
+        // We use the actual referenced slots (not just
+        // callee.local_count) because the test callees
+        // (and real-world IR) can reference slots beyond
+        // local_count if they were constructed manually.
+        std::unordered_map<std::uint32_t, std::uint32_t> slot_rename;
+        std::uint32_t max_slot = 0;
+        for (const auto& cb : callee.blocks) {
+            for (const auto& instr : cb.instructions) {
+                for (std::size_t op = 0; op < 4; ++op) {
+                    if (instr.operands[op] > max_slot) {
+                        max_slot = instr.operands[op];
+                    }
+                }
+            }
+        }
+        std::uint32_t new_local_start = caller.local_count;
+        for (std::uint32_t i = 0; i <= max_slot; ++i) {
+            slot_rename[i] = new_local_start + i;
+        }
+        caller.local_count = new_local_start + max_slot + 1;
+        // Step 3: Build block_rename_map. Each callee block
+        // j maps to a fresh caller block id.
+        // caller.blocks.size() is the count of existing
+        // caller blocks; new block ids start there.
+        // We'll have N callee blocks + 1 B_after, so the
+        // ids are [caller.blocks.size(), caller.blocks.size() + N).
+        std::uint32_t new_block_start =
+            static_cast<std::uint32_t>(caller.blocks.size());
+        std::unordered_map<std::uint32_t, std::uint32_t> block_rename;
+        for (std::uint32_t j = 0; j < callee.blocks.size(); ++j) {
+            block_rename[j] = new_block_start + j;
+        }
+        std::uint32_t b_after_id = new_block_start +
+                                    static_cast<std::uint32_t>(callee.blocks.size());
+        // Step 4: Clone the callee's exit block first to
+        // figure out the return-source slot after remap
+        // (the Local that writes to call_result_slot will
+        // read from this remapped slot).
+        std::uint32_t ret_src = callee.blocks[exit_block]
+                                    .instructions.back().operands[0];
+        auto rit = slot_rename.find(ret_src);
+        if (rit != slot_rename.end()) ret_src = rit->second;
+        // Step 5: Rewrite the caller's original block to
+        // hold I_0..I_{call_pos-1} (instructions before the
+        // Call), then the param copies, then a Jump to
+        // block_rename[0] (the cloned entry block).
+        if (call_pos < block.instructions.size()) {
+            block.instructions.resize(call_pos);
+        }
+        for (std::uint32_t i = 0; i < arg_count; ++i) {
+            aura::ir::IRInstruction local;
+            local.opcode = aura::ir::IROpcode::Local;
+            local.operands[0] = slot_rename.at(i);
+            local.operands[1] = arg_base + i;
+            block.instructions.push_back(local);
+        }
+        aura::ir::IRInstruction jump;
+        jump.opcode = aura::ir::IROpcode::Jump;
+        jump.operands[0] = block_rename.at(0);
+        block.instructions.push_back(jump);
+        // Step 6: Clone each callee block into the caller
+        // (appended to caller.blocks). For each block:
+        //   - Copy instructions, remapping slots
+        //   - For the exit block, replace the trailing
+        //     Return with Local(call_result, ret_src) +
+        //     Jump(b_after_id)
+        //   - For non-exit blocks, the trailing
+        //     Branch/Jump has its target remapped via
+        //     block_rename
+        for (std::uint32_t j = 0; j < callee.blocks.size(); ++j) {
+            aura::ir::BasicBlock clone;
+            clone.id = block_rename.at(j);
+            const auto& cb = callee.blocks[j];
+            for (std::size_t k = 0; k < cb.instructions.size(); ++k) {
+                auto cp = cb.instructions[k];
+                const auto* info = lookup_opcode(cp.opcode);
+                // Remap result slot if has_result_slot
+                // (opcodes like Local, Add, Const*, etc.).
+                if (info && info->has_result_slot) {
+                    auto it = slot_rename.find(cp.operands[0]);
+                    if (it != slot_rename.end()) cp.operands[0] = it->second;
+                }
+                // For Branch, operands[0] is the cond slot
+                // (Branch has no result slot, so the
+                // has_result_slot check above skipped it).
+                // Remap operands[0] explicitly for Branch.
+                if (cp.opcode == aura::ir::IROpcode::Branch) {
+                    auto it = slot_rename.find(cp.operands[0]);
+                    if (it != slot_rename.end()) cp.operands[0] = it->second;
+                }
+                // Remap slot-typed source operands only.
+                // Branch operands[1..2] are block ids, not
+                // slots. Jump operands[0] is a block id.
+                // For all other opcodes, operands[1..3] are
+                // slot-typed (and the remap is a no-op for
+                // operands that aren't in slot_rename, e.g.
+                // arg_base which is a caller slot).
+                bool is_branch = (cp.opcode ==
+                    aura::ir::IROpcode::Branch);
+                bool is_jump = (cp.opcode ==
+                    aura::ir::IROpcode::Jump);
+                std::size_t remap_end = 4;
+                if (is_branch) remap_end = 1;  // only operands[0] is a slot
+                if (is_jump) remap_end = 0;    // no slot operands
+                for (std::size_t op = 1; op < remap_end; ++op) {
+                    auto it = slot_rename.find(cp.operands[op]);
+                    if (it != slot_rename.end()) cp.operands[op] = it->second;
+                }
+                clone.instructions.push_back(cp);
+            }
+            // The terminator (last instruction) needs
+            // special handling. A multi-block callee may
+            // have multiple Return blocks (each returning
+            // a different value via a different source
+            // slot). For ANY block ending in Return, we
+            // replace the Return with Local(call_result,
+            // this_block's_return_source) + Jump(b_after_id).
+            if (!clone.instructions.empty()) {
+                auto& term = clone.instructions.back();
+                if (term.opcode == aura::ir::IROpcode::Return) {
+                    // This block returns. Replace with
+                    // Local(call_result, this_block's
+                    // return_source_after_slot_remap) + Jump
+                    // to B_after.
+                    std::uint32_t this_ret_src = term.operands[0];
+                    auto trit = slot_rename.find(this_ret_src);
+                    if (trit != slot_rename.end()) {
+                        this_ret_src = trit->second;
+                    }
+                    clone.instructions.pop_back();
+                    aura::ir::IRInstruction local;
+                    local.opcode = aura::ir::IROpcode::Local;
+                    local.operands[0] = result_slot;
+                    local.operands[1] = this_ret_src;
+                    clone.instructions.push_back(local);
+                    aura::ir::IRInstruction jmp;
+                    jmp.opcode = aura::ir::IROpcode::Jump;
+                    jmp.operands[0] = b_after_id;
+                    clone.instructions.push_back(jmp);
+                } else if (term.opcode == aura::ir::IROpcode::Branch) {
+                    // Branch: cond, true_block, false_block
+                    auto bit0 = block_rename.find(term.operands[1]);
+                    if (bit0 != block_rename.end()) term.operands[1] = bit0->second;
+                    auto bit1 = block_rename.find(term.operands[2]);
+                    if (bit1 != block_rename.end()) term.operands[2] = bit1->second;
+                } else if (term.opcode == aura::ir::IROpcode::Jump) {
+                    // Jump: target_block
+                    auto bit = block_rename.find(term.operands[0]);
+                    if (bit != block_rename.end()) term.operands[0] = bit->second;
+                }
+            }
+            caller.blocks.push_back(std::move(clone));
+        }
+        // Step 7: Build B_after (the new block that holds
+        // the "after" instructions + the original
+        // terminator). Append to caller.blocks.
+        aura::ir::BasicBlock after_block;
+        after_block.id = b_after_id;
+        for (const auto& instr : after_instrs) {
+            after_block.instructions.push_back(instr);
+        }
+        if (orig_terminator.has_value()) {
+            after_block.instructions.push_back(*orig_terminator);
+        }
+        caller.blocks.push_back(std::move(after_block));
+        (void)call_instr;  // suppress unused
+        return true;
+    }
+
+
+
     std::size_t inlined_count_ = 0;
     // Issue #197: branch-aware inliner counter.
     std::size_t inlined_branch_aware_count_ = 0;
+    // Issue #197: per-run totals (reset on each run()).
+    std::size_t run_inlined_ = 0;
+    std::size_t run_inlined_branch_aware_ = 0;
+    // Issue #197: lifetime totals (process-wide, static).
+    // The (compile:inline-pass-stats) Aura primitive reads
+    // these. They are not reset on run(); only the per-run
+    // counts are reset.
+    static inline std::size_t total_inlined_ = 0;
+    static inline std::size_t total_inlined_branch_aware_ = 0;
     // Issue #171: func_id → IRFunction* index for O(1) lookup.
     std::vector<const aura::ir::IRFunction*> func_index_;
 };

@@ -516,6 +516,19 @@ public:
     void set_clear_block_dirty_fn(std::function<ClearBlockDirtyFn> fn) {
         clear_block_dirty_fn_ = std::move(fn);
     }
+    // Issue #197: hook to query the inliner's lifetime
+    // total counters. The InlinePass tracks
+    // total_inlined (pre-#197 constant-substitution path)
+    // and total_inlined_branch_aware (post-#197
+    // branch-aware path) as static process-wide counters.
+    // The hook returns them packed as (branch_aware << 32)
+    // | inlined, so a single uint64 can carry both 32-bit
+    // counts. Returns 0 if no hook is installed.
+    using GetInlineStatsFn = std::uint64_t();
+    std::function<GetInlineStatsFn> get_inline_stats_fn_ = nullptr;
+    void set_get_inline_stats_fn(std::function<GetInlineStatsFn> fn) {
+        get_inline_stats_fn_ = std::move(fn);
+    }
 
     // Mutation typecheck error state (P2 #34)
     const std::string& last_mutate_error() const { return last_mutate_error_; }

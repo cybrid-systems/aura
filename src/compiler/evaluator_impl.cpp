@@ -15365,6 +15365,67 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
                 static_cast<std::size_t>(fidx),
                 static_cast<std::uint32_t>(bidx)));
         });
+    // (compile:inline-pass-stats) — Issue #197: returns
+    // a hash with the inliner's lifetime counters:
+    //   :inlined          — process-wide total of the
+    //                       pre-#197 constant-substitution path
+    //   :branch-aware     — process-wide total of the
+    //                       post-#197 branch-aware path
+    //   :total            — sum of both
+    // Returns all-zeros if no hook is installed (e.g.
+    // unit-test Evaluator without a CompilerService).
+    // The counters are static and process-wide, so the
+    // primitive surfaces the cumulative inlining work
+    // done by all InlinePass runs since process start.
+    primitives_.add("compile:inline-pass-stats",
+        [this](const auto&) -> EvalValue {
+            std::int64_t inlined = 0;
+            std::int64_t branch_aware = 0;
+            if (get_inline_stats_fn_) {
+                std::uint64_t packed = get_inline_stats_fn_();
+                inlined = static_cast<std::int64_t>(packed & 0xFFFFFFFF);
+                branch_aware = static_cast<std::int64_t>(packed >> 32);
+            }
+            std::int64_t total = inlined + branch_aware;
+            auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(8);
+                if (!ht) return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = 0xcbf29ce484222325ull;
+                    for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                    auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+                    auto kidx = string_heap_.size();
+                    string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"inlined", make_int(inlined)},
+                {"branch-aware", make_int(branch_aware)},
+                {"total", make_int(total)},
+            };
+            return build_hash(kv);
+        });
 
     // (jit:exception-depth) — Issue #195: current fiber's
     // exception stack depth. Reads from the per-fiber ExStack
