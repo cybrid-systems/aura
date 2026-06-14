@@ -143,6 +143,16 @@ public:
     const Env* parent() const { return parent_; }
     // Issue #207 (Cycle 1): legacy bindings() accessors —
     // bumped for the bindings_legacy_uses metric.
+    // Issue #210 (Cycle 4): these accessors are scheduled
+    // for removal once all callers are migrated (per the
+    // Cycle 2.5+ plan in #208). New code should use
+    // bindings_symid_iter() or bindings_with_names().
+    // The accessors still work and bump the
+    // bindings_legacy_uses_ counter (for migration
+    // observability). A full deprecation cycle (with
+    // [[deprecated]] attribute or compile-time check)
+    // is deferred until the migration is complete — see
+    // the cleanup path in #208.
     std::vector<std::pair<std::string, types::EvalValue>>& bindings() {
         ++bindings_legacy_uses_;
         return bindings_;
