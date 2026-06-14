@@ -24,6 +24,7 @@ target_sources(aura PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/diag.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
@@ -49,6 +50,7 @@ target_sources(aura PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -192,6 +194,7 @@ target_sources(test_ir PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/diag.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
@@ -222,6 +225,7 @@ target_sources(test_ir PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -709,6 +713,7 @@ target_sources(test_issue_128 PRIVATE
     src/core/type_impl.cpp
     src/compiler/value_impl.cpp
     src/compiler/type_checker_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp)
 target_sources(test_issue_128 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
@@ -882,6 +887,7 @@ target_sources(test_issue_135 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/diag.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
@@ -908,6 +914,7 @@ target_sources(test_issue_135 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -967,6 +974,7 @@ target_sources(test_issue_137 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -995,6 +1003,7 @@ target_sources(test_issue_137 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
     src/compiler/query.ixx
@@ -1023,6 +1032,7 @@ target_sources(test_issue_158 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -1051,6 +1061,7 @@ target_sources(test_issue_158 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
     src/compiler/query.ixx
@@ -1079,6 +1090,7 @@ target_sources(test_issue_159 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -1107,6 +1119,7 @@ target_sources(test_issue_159 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
     src/compiler/query.ixx
@@ -1161,9 +1174,11 @@ target_sources(test_issue_163 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/pass_manager.ixx)
 target_sources(test_issue_163 PRIVATE
     src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/arity_impl.cpp
     src/compiler/type_checker_impl.cpp)
@@ -1201,6 +1216,7 @@ target_sources(test_issue_164 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
     src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2)
@@ -1225,6 +1241,7 @@ target_sources(test_issue_164 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -1277,6 +1294,7 @@ target_sources(test_issue_184 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
     src/compiler/adt_runtime.ixx
@@ -1301,6 +1319,7 @@ target_sources(test_issue_184 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -1359,6 +1378,7 @@ target_sources(test_issue_165 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
     src/compiler/pass_manager.ixx
@@ -1382,6 +1402,7 @@ target_sources(test_issue_165 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -1431,6 +1452,7 @@ target_sources(test_issue_166 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
     src/compiler/pass_manager.ixx
@@ -1454,6 +1476,7 @@ target_sources(test_issue_166 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -1527,6 +1550,7 @@ target_sources(test_issue_169 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/evaluator.ixx
     src/compiler/evaluator_pure.ixx
     src/compiler/adt_runtime.ixx  # ADT extraction (FFI pattern, hygiene 3.2)
@@ -1551,6 +1575,7 @@ target_sources(test_issue_169 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -1620,6 +1645,7 @@ target_sources(test_issue_159_bench PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FI
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/diag.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
@@ -1643,6 +1669,7 @@ target_sources(test_issue_159_bench PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -1699,6 +1726,7 @@ target_sources(test_issue_138 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/diag.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
@@ -1722,6 +1750,7 @@ target_sources(test_issue_138 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -1772,6 +1801,7 @@ target_sources(test_issue_139 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/diag.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
@@ -1795,6 +1825,7 @@ target_sources(test_issue_139 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -1845,6 +1876,7 @@ target_sources(test_issue_140 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/diag.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
@@ -1868,6 +1900,7 @@ target_sources(test_issue_140 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -1917,6 +1950,7 @@ target_sources(test_issue_141 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/diag.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
@@ -1940,6 +1974,7 @@ target_sources(test_issue_141 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -1987,6 +2022,7 @@ target_sources(test_issue_142 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/diag.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
@@ -2010,6 +2046,7 @@ target_sources(test_issue_142 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -2053,6 +2090,7 @@ target_sources(test_gc_evaluator_integration PUBLIC FILE_SET CXX_MODULES BASE_DI
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/diag.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
@@ -2082,6 +2120,7 @@ target_sources(test_gc_evaluator_integration PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -2297,6 +2336,7 @@ target_sources(test_issue_143 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/diag.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
@@ -2320,6 +2360,7 @@ target_sources(test_issue_143 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -2359,6 +2400,7 @@ target_sources(test_issue_144 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/diag.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
@@ -2378,6 +2420,7 @@ target_sources(test_issue_144 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/type_checker_impl.cpp
@@ -2426,6 +2469,7 @@ target_sources(test_issue_145 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/diag.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
@@ -2445,6 +2489,7 @@ target_sources(test_issue_145 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/type_checker_impl.cpp
@@ -2493,6 +2538,7 @@ target_sources(test_issue_146 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/diag.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
@@ -2512,6 +2558,7 @@ target_sources(test_issue_146 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/type_checker_impl.cpp
@@ -2551,6 +2598,7 @@ target_sources(test_issue_147 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/diag.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
@@ -2570,6 +2618,7 @@ target_sources(test_issue_147 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/type_checker_impl.cpp
@@ -2609,6 +2658,7 @@ target_sources(test_issue_148 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/diag.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
@@ -2628,6 +2678,7 @@ target_sources(test_issue_148 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/type_checker_impl.cpp
@@ -2667,6 +2718,7 @@ target_sources(test_issue_149 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/diag.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
@@ -2686,6 +2738,7 @@ target_sources(test_issue_149 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/type_checker_impl.cpp
@@ -2732,12 +2785,14 @@ target_sources(test_issue_171 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/type_checker.ixx
     src/compiler/coercion_map.ixx
     src/compiler/pass_manager.ixx)
 target_sources(test_issue_171 PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/type_checker_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/parser/lexer_impl.cpp
     src/parser/parser_impl.cpp
@@ -2848,6 +2903,7 @@ target_sources(test_issue_187 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -2876,6 +2932,7 @@ target_sources(test_issue_187 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
     src/compiler/query.ixx
@@ -2912,6 +2969,7 @@ target_sources(test_issue_188 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -2946,6 +3004,7 @@ target_sources(test_issue_188 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
     src/compiler/query.ixx
@@ -2976,6 +3035,7 @@ target_sources(test_issue_189 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -3010,6 +3070,7 @@ target_sources(test_issue_189 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
     src/compiler/query.ixx
@@ -3041,6 +3102,7 @@ target_sources(test_issue_190 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -3075,6 +3137,7 @@ target_sources(test_issue_190 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
     src/compiler/query.ixx
@@ -3106,6 +3169,7 @@ target_sources(test_issue_191 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -3140,6 +3204,7 @@ target_sources(test_issue_191 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
     src/compiler/query.ixx
@@ -3169,6 +3234,7 @@ target_sources(test_issue_192 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -3203,6 +3269,7 @@ target_sources(test_issue_192 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
     src/compiler/query.ixx
@@ -3233,6 +3300,7 @@ target_sources(test_issue_193 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -3267,6 +3335,7 @@ target_sources(test_issue_193 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
     src/compiler/query.ixx
@@ -3300,6 +3369,7 @@ target_sources(test_issue_194 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -3334,6 +3404,7 @@ target_sources(test_issue_194 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
     src/compiler/query.ixx
@@ -3367,6 +3438,7 @@ target_sources(test_issue_195 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -3401,6 +3473,7 @@ target_sources(test_issue_195 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
     src/compiler/query.ixx
@@ -3431,6 +3504,7 @@ target_sources(test_issue_196 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -3465,6 +3539,7 @@ target_sources(test_issue_196 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
     src/compiler/query.ixx
@@ -3497,12 +3572,14 @@ target_sources(test_issue_197 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/type_checker.ixx
     src/compiler/coercion_map.ixx
     src/compiler/pass_manager.ixx)
 target_sources(test_issue_197 PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/type_checker_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/parser/lexer_impl.cpp
     src/parser/parser_impl.cpp
@@ -3534,6 +3611,7 @@ target_sources(test_issue_197_observability PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -3568,6 +3646,7 @@ target_sources(test_issue_197_observability PUBLIC FILE_SET CXX_MODULES BASE_DIR
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
     src/compiler/query.ixx
@@ -3596,6 +3675,7 @@ target_sources(test_issue_206 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -3628,6 +3708,7 @@ target_sources(test_issue_206 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
     src/compiler/query.ixx
@@ -3656,6 +3737,7 @@ target_sources(test_issue_174 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -3688,6 +3770,7 @@ target_sources(test_issue_174 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
     src/compiler/query.ixx
@@ -3717,6 +3800,7 @@ target_sources(test_issue_208 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -3749,6 +3833,7 @@ target_sources(test_issue_208 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
     src/compiler/query.ixx
@@ -3779,6 +3864,7 @@ target_sources(test_issue_210 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -3811,6 +3897,7 @@ target_sources(test_issue_210 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
     src/compiler/query.ixx
@@ -3840,6 +3927,7 @@ target_sources(test_issue_211 PRIVATE
     src/compiler/cache_impl.cpp
     src/compiler/lowering_impl.cpp
     src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
     src/compiler/compute_kind_impl.cpp
     src/compiler/query_impl.cpp
     src/compiler/shape_profiler.cpp
@@ -3872,6 +3960,7 @@ target_sources(test_issue_211 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ir_executor.ixx
     src/compiler/compute_kind.ixx
     src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
     src/compiler/service.ixx
     src/compiler/pass_manager.ixx
     src/compiler/query.ixx
@@ -3881,3 +3970,30 @@ target_sources(test_issue_211 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/ast_walkers.ixx
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
+
+# Issue #212 verification: pure-function extraction of
+# constant_folding (Cycle 1). Verifies the new
+# `aura.compiler.constant_folding` module is the
+# canonical home for the fold logic, and that
+# `ConstantFoldingWrap` (in pass_manager.ixx) is now a
+# thin wrapper. Light target — no evaluator/serve deps;
+# this is a pure module test, exercised against
+# hand-built IRFunctions.
+aura_add_issue_test(test_issue_212)
+target_sources(test_issue_212 PRIVATE
+    src/compiler/constant_folding_impl.cpp
+    src/compiler/type_checker_impl.cpp
+    src/compiler/arity_impl.cpp
+    src/compiler/compute_kind_impl.cpp)
+target_sources(test_issue_212 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
+    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
+    src/core/type_arena.ixx src/core/type.ixx
+    src/compiler/value.ixx
+    src/compiler/diag.ixx
+    src/compiler/ir.ixx
+    src/compiler/compute_kind.ixx
+    src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
+    src/compiler/coercion_map.ixx
+    src/compiler/type_checker.ixx
+    src/compiler/pass_manager.ixx)
