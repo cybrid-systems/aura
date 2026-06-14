@@ -200,9 +200,14 @@ std::uint64_t SpecJITController::unhandled_opcode_count() const {
 
 // Issue #193: per-function deopt signal. Replaces the
 // conservative should_deopt_specialization() for callers that
-// know which function they're specializing.
-bool SpecJITController::should_deopt_specialization_for(const std::string& fn_name) const {
-    return unhandled_opcode_count_for(fn_name) > 0;
+// know which function they're specializing. The optional
+// `threshold` parameter avoids thrashing on transient bugs
+// during initial JIT warmup: a function that hits an
+// unhandled opcode once or twice isn't immediately deopted
+// for the rest of the session.
+bool SpecJITController::should_deopt_specialization_for(const std::string& fn_name,
+                                                         std::uint64_t threshold) const {
+    return unhandled_opcode_count_for(fn_name) > threshold;
 }
 
 std::uint64_t SpecJITController::unhandled_opcode_count_for(const std::string& fn_name) const {
