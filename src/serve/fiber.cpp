@@ -19,6 +19,22 @@ thread_local Fiber* g_current_fiber = nullptr;
 // TLS: current worker's dispatch loop context
 thread_local WorkerContext* g_worker_ctx = nullptr;
 
+// Issue #195: per-fiber exception state requires a way to
+// query the current fiber's id from the runtime (the JIT
+// personality function and aura_exception_* use it). We
+// install a hook here that returns the current fiber's id
+// (or 0 if no fiber is active). The hook is set up once
+// at static-init time.
+extern "C" std::uint64_t aura_fiber_current_id() {
+    return g_current_fiber ? g_current_fiber->id() : 0;
+}
+// The runtime-side hook installer (defined in
+// aura_jit_runtime.cpp).
+extern "C" void aura_set_current_fiber_id_fn(std::uint64_t (*)());
+// One-time hook installer via a static initializer.
+static int s_fiber_hook_init = (aura_set_current_fiber_id_fn(
+    &aura_fiber_current_id), 0);
+
 Scheduler* g_scheduler = nullptr;
 
 // ── GC safepoint check ────────────────────────────────

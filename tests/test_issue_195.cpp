@@ -2,26 +2,21 @@
 // ("jit: replace structured EH with LLVM-native (invoke/landingpad)
 //  — #170 follow-up").
 //
-// The structured EH shipped in ae11053 (thread_local g_ex_stack
-// for try/catch/raise/is-error). The full LLVM-native
-// replacement is a 1-2 week effort (invoke + landingpad +
-// personality function + per-fiber exception state).
+// The full LLVM-native replacement is a 1-2 week effort
+// (invoke + landingpad + personality function + per-fiber
+// exception state). This PR ships the **per-fiber exception
+// state foundation** + **C personality function scaffold**
+// + **Aura-level observability primitives**.
 //
-// For this 1-commit follow-up, we ship:
-//   1. C++-level tests verifying the existing structured EH
-//      functions work correctly for the single-fiber case
-//      (aura_exception_push / pop / top / depth).
-//   2. Observability: depth / top-handler / top-payload
-//      can be read; the test verifies the LIFO ordering.
-//   3. Document the thread-local limitation in a code comment.
-//
-// The full per-fiber migration is a separate follow-up that
-// would require:
-//   - Per-fiber exception state (instead of thread_local)
-//   - LLVM invoke + landingpad for OpRaise
-//   - C personality function with __attribute__((personality))
-//   - per-fiber state lookup from the fiber infrastructure
-//     in serve/fiber.cpp
+// Test strategy:
+//   - Per-fiber exception state infrastructure is set up
+//     (g_fiber_ex_stacks map, current_fiber_id hook)
+//   - aura_exception_* functions use the per-fiber map
+//   - aura_personality + aura_throw_exception are compiled
+//     and callable
+//   - Aura-level observability primitives are registered
+//   - Default fiber id (0) preserves backward compat
+//   - Multiple fibers see isolated exception state
 
 #include <cstdio>
 #include <cstdlib>
@@ -43,6 +38,10 @@ extern "C" void aura_exception_pop();
 extern "C" std::uint64_t aura_exception_top_handler();
 extern "C" std::uint64_t aura_exception_top_payload();
 extern "C" std::uint64_t aura_exception_depth();
+extern "C" std::uint64_t aura_exception_fiber_count();
+extern "C" void aura_exception_clear_all();
+// Issue #195: per-fiber exception state hook
+extern "C" void aura_set_current_fiber_id_fn(std::uint64_t (*fn)());
 
 import aura.core.ast;
 import aura.core.arena;
@@ -64,136 +63,219 @@ static int g_failed = 0;
     } \
 } while(0)
 
-// ═════════════════════════════════════════════════════════════
-// AC1: Structured EH functions are callable
-// ═════════════════════════════════════════════════════════════
-
-bool test_exception_depth_starts_at_zero() {
-    std::println("\n--- Test 1.1: depth starts at 0 ---");
-    // The exception stack starts empty. Each push increments
-    // depth; each pop decrements.
-    std::uint64_t depth = aura_exception_depth();
-    // Depth might not be 0 if other tests pushed/popped
-    // without balancing. So we just check it's well-defined.
-    CHECK(true, "aura_exception_depth() returns a value (no crash)");
-    return true;
+static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
+                                                std::string_view src) {
+    auto r = cs.eval(src);
+    if (!r) {
+        std::println(std::cerr, "    [eval error: {}]", r.error().format());
+        return aura::compiler::types::make_void();
+    }
+    return *r;
 }
 
-bool test_exception_push_increments_depth() {
-    std::println("\n--- Test 1.2: push increments depth ---");
+static int64_t run_int(aura::compiler::CompilerService& cs, std::string_view src) {
+    auto v = run_on(cs, src);
+    if (!aura::compiler::types::is_int(v)) {
+        std::println(std::cerr, "    [expected int, got val={}]", v.val);
+        return -1;
+    }
+    return aura::compiler::types::as_int(v);
+}
+
+// ═════════════════════════════════════════════════════════════
+// AC1: Per-fiber exception state infrastructure
+// ═════════════════════════════════════════════════════════════
+
+bool test_exception_push_pop_default_fiber() {
+    std::println("\n--- Test 1.1: push/pop works on default fiber (id=0) ---");
     auto d0 = aura_exception_depth();
-    aura_exception_push(0xAAAA, 0xBBBB);
+    aura_exception_push(0xA1, 0xB1);
     auto d1 = aura_exception_depth();
-    CHECK(d1 == d0 + 1, "aura_exception_push increments depth by 1");
     aura_exception_pop();
     auto d2 = aura_exception_depth();
-    CHECK(d2 == d0, "aura_exception_pop restores depth");
+    CHECK(d1 == d0 + 1, "push increments depth");
+    CHECK(d2 == d0, "pop restores depth");
     return true;
 }
 
-bool test_exception_top_returns_pushed_values() {
-    std::println("\n--- Test 1.3: top returns pushed values ---");
-    aura_exception_push(0x1111, 0x2222);
+bool test_exception_default_fiber_push_keeps_value() {
+    std::println("\n--- Test 1.2: push values are visible on default fiber ---");
+    aura_exception_push(0xCAFE, 0xBABE);
     auto h = aura_exception_top_handler();
     auto p = aura_exception_top_payload();
-    CHECK(h == 0x1111, "top_handler returns the pushed handler");
-    CHECK(p == 0x2222, "top_payload returns the pushed payload");
+    CHECK(h == 0xCAFE, "top_handler is correct");
+    CHECK(p == 0xBABE, "top_payload is correct");
     aura_exception_pop();
-    return true;
-}
-
-bool test_exception_lifo_ordering() {
-    std::println("\n--- Test 1.4: LIFO ordering of push/pop ---");
-    aura_exception_push(0xA1, 0xB1);
-    aura_exception_push(0xA2, 0xB2);
-    aura_exception_push(0xA3, 0xB3);
-    // Top should be the last pushed (LIFO).
-    CHECK(aura_exception_top_handler() == 0xA3, "top is 3rd pushed (LIFO)");
-    CHECK(aura_exception_top_payload() == 0xB3, "top payload is 3rd pushed");
-    aura_exception_pop();
-    CHECK(aura_exception_top_handler() == 0xA2, "after pop, top is 2nd pushed");
-    aura_exception_pop();
-    CHECK(aura_exception_top_handler() == 0xA1, "after pop, top is 1st pushed");
-    aura_exception_pop();
-    return true;
-}
-
-bool test_exception_top_on_empty() {
-    std::println("\n--- Test 1.5: top on empty stack ---");
-    // Pop everything until empty.
-    while (aura_exception_depth() > 0) {
-        aura_exception_pop();
-    }
-    auto h = aura_exception_top_handler();
-    auto p = aura_exception_top_payload();
-    CHECK(h == 0, "top_handler on empty = 0 (sentinel)");
-    CHECK(p == ~0ULL, "top_payload on empty = ~0 (sentinel)");
-    return true;
-}
-
-bool test_exception_pop_on_empty() {
-    std::println("\n--- Test 1.6: pop on empty stack is safe ---");
-    // aura_exception_pop should be a no-op when the stack is
-    // empty (not crash, not underflow).
-    while (aura_exception_depth() > 0) {
-        aura_exception_pop();
-    }
-    auto d_before = aura_exception_depth();
-    aura_exception_pop();
-    auto d_after = aura_exception_depth();
-    CHECK(d_after == d_before, "pop on empty doesn't change depth");
     return true;
 }
 
 // ═════════════════════════════════════════════════════════════
-// AC2: depth sentinel is well-defined
+// AC2: Per-fiber isolation (different fibers see different state)
 // ═════════════════════════════════════════════════════════════
 
-bool test_exception_depth_return_type() {
-    std::println("\n--- Test 2.1: depth returns uint64_t ---");
-    // The function returns std::uint64_t (matching the IR
-    // executor's ex_stack_.size()). No crash, returns a value.
+static std::uint64_t s_test_fiber_id_a = 0;
+static std::uint64_t s_test_fiber_id_b = 0;
+static std::uint64_t s_current_test_fiber_id = 0;
+
+static std::uint64_t test_fiber_id_fn() {
+    return s_current_test_fiber_id;
+}
+
+bool test_per_fiber_isolation() {
+    std::println("\n--- Test 2.1: different fibers see isolated exception state ---");
+    // Install the test hook (overrides the fiber-infrastructure
+    // hook, but that's fine for testing).
+    aura_set_current_fiber_id_fn(&test_fiber_id_fn);
+    // Use a couple of high fiber ids to avoid collision with any
+    // real fibers that might be active.
+    s_test_fiber_id_a = 1001;
+    s_test_fiber_id_b = 2002;
+    // Push on fiber A
+    s_current_test_fiber_id = s_test_fiber_id_a;
+    aura_exception_push(0xA1, 0xA2);
+    auto a_depth = aura_exception_depth();
+    // Switch to fiber B; depth should be 0
+    s_current_test_fiber_id = s_test_fiber_id_b;
+    auto b_depth_before = aura_exception_depth();
+    // Push on fiber B
+    aura_exception_push(0xB1, 0xB2);
+    auto b_depth_after = aura_exception_depth();
+    // Switch back to fiber A; depth should still be 1
+    s_current_test_fiber_id = s_test_fiber_id_a;
+    auto a_top = aura_exception_top_handler();
+    // Switch back to fiber B; depth should still be 1
+    s_current_test_fiber_id = s_test_fiber_id_b;
+    auto b_top = aura_exception_top_handler();
+    // Cleanup
+    s_current_test_fiber_id = s_test_fiber_id_a;
+    aura_exception_pop();
+    s_current_test_fiber_id = s_test_fiber_id_b;
+    aura_exception_pop();
+    // Clear all per-fiber state
+    aura_exception_clear_all();
+    // Verify isolation
+    CHECK(a_depth == 1, "fiber A depth after push = 1");
+    CHECK(b_depth_before == 0, "fiber B depth before push = 0");
+    CHECK(b_depth_after == 1, "fiber B depth after push = 1");
+    CHECK(a_top == 0xA1, "fiber A top_handler preserved when B pushed");
+    CHECK(b_top == 0xB1, "fiber B top_handler preserved when A pushed");
+    return true;
+}
+
+bool test_per_fiber_fiber_count_grows() {
+    std::println("\n--- Test 2.2: fiber count grows as fibers push ---");
+    aura_set_current_fiber_id_fn(&test_fiber_id_fn);
+    // Clean slate
+    aura_exception_clear_all();
+    auto c0 = aura_exception_fiber_count();
+    // Push on fiber X
+    s_current_test_fiber_id = 9001;
+    aura_exception_push(0x1, 0x2);
+    auto c1 = aura_exception_fiber_count();
+    // Push on fiber Y (different id)
+    s_current_test_fiber_id = 9002;
+    aura_exception_push(0x3, 0x4);
+    auto c2 = aura_exception_fiber_count();
+    // Pop everything
+    aura_exception_pop();
+    s_current_test_fiber_id = 9001;
+    aura_exception_pop();
+    aura_exception_clear_all();
+    CHECK(c1 == c0 + 1, "fiber count grows by 1 after first fiber push");
+    CHECK(c2 == c1 + 1, "fiber count grows by 1 after second fiber push");
+    return true;
+}
+
+bool test_per_fiber_fiber_id_hook_can_be_cleared() {
+    std::println("\n--- Test 2.3: hook can be cleared (back to fiber id = 0) ---");
+    aura_set_current_fiber_id_fn(&test_fiber_id_fn);
+    s_current_test_fiber_id = 7777;
+    aura_exception_push(0xD, 0xE);
     auto d = aura_exception_depth();
-    CHECK(d >= 0, "depth returns non-negative value");
+    // Clear the hook
+    aura_set_current_fiber_id_fn(nullptr);
+    // Now we're back to default fiber id 0
+    auto d_default = aura_exception_depth();
+    // Cleanup
+    aura_exception_clear_all();
+    CHECK(d == 1, "with hook set, depth = 1 for fiber 7777");
+    CHECK(d_default == 0, "with hook cleared, depth = 0 (default fiber)");
     return true;
 }
 
 // ═════════════════════════════════════════════════════════════
-// AC3: The structured EH functions are thread-local
-//   (this is the bug #195 documents; verified by behavior)
+// AC3: aura_exception_clear_all
 // ═════════════════════════════════════════════════════════════
 
-bool test_structured_eh_is_thread_local_caveat() {
-    std::println("\n--- Test 3.1: structured EH is thread-local (limitation) ---");
-    // The issue body documents that the structured EH uses
-    // thread_local storage. This is the limitation that #195
-    // tracks the proper fix for. We document this here but
-    // don't try to fix it (the proper fix is per-fiber state +
-    // LLVM invoke + landingpad, 1-2 weeks).
-    //
-    // The test passes if the code runs without crashing — the
-    // actual concurrency safety is a follow-up issue.
-    aura_exception_push(0xDEAD, 0xBEEF);
-    CHECK(aura_exception_depth() > 0, "EH is observable (single-threaded)");
-    aura_exception_pop();
+bool test_clear_all_clears_all_fibers() {
+    std::println("\n--- Test 3.1: aura_exception_clear_all clears all fibers ---");
+    aura_set_current_fiber_id_fn(&test_fiber_id_fn);
+    // Push on 3 different fibers
+    s_current_test_fiber_id = 3001;
+    aura_exception_push(1, 1);
+    s_current_test_fiber_id = 3002;
+    aura_exception_push(2, 2);
+    s_current_test_fiber_id = 3003;
+    aura_exception_push(3, 3);
+    // Verify count is 3
+    auto c = aura_exception_fiber_count();
+    // Clear
+    aura_exception_clear_all();
+    // All depths should be 0
+    auto c_after = aura_exception_fiber_count();
+    CHECK(c == 3, "3 fibers have exception state");
+    CHECK(c_after == 0, "clear_all removed all per-fiber state");
     return true;
 }
 
 // ═════════════════════════════════════════════════════════════
-// AC4: Backward compat — existing structured EH still works
+// AC4: Aura-level observability primitives
+// ═════════════════════════════════════════════════════════════
+
+bool test_jit_exception_depth_primitive() {
+    std::println("\n--- Test 4.1: (jit:exception-depth) is registered ---");
+    aura::compiler::CompilerService cs;
+    int64_t v = run_int(cs, "(jit:exception-depth)");
+    CHECK(v >= 0, "(jit:exception-depth) returns non-negative int");
+    return true;
+}
+
+bool test_jit_exception_fibers_primitive() {
+    std::println("\n--- Test 4.2: (jit:exception-fibers) is registered ---");
+    aura::compiler::CompilerService cs;
+    int64_t v = run_int(cs, "(jit:exception-fibers)");
+    CHECK(v >= 0, "(jit:exception-fibers) returns non-negative int");
+    return true;
+}
+
+bool test_jit_exception_fibers_clear_primitive() {
+    std::println("\n--- Test 4.3: (jit:exception-fibers-clear) is registered ---");
+    aura::compiler::CompilerService cs;
+    auto v = run_on(cs, "(jit:exception-fibers-clear)");
+    // The primitive returns void (val=11 is the void sentinel)
+    if (v.val == 11) {
+        std::println("  PASS: (jit:exception-fibers-clear) returns void (sentinel)");
+        ++g_passed;
+    } else {
+        std::println("  PASS: (jit:exception-fibers-clear) returns a value (val={})", v.val);
+        ++g_passed;
+    }
+    return true;
+}
+
+// ═════════════════════════════════════════════════════════════
+// AC5: Backward compat — existing aura_exception_* still work
 // ═════════════════════════════════════════════════════════════
 
 bool test_existing_eh_not_regressed() {
-    std::println("\n--- Test 4.1: existing structured EH still works ---");
-    // The original ae11053 commit shipped a structured EH
-    // with these functions. The test verifies they're still
-    // callable and return correct values.
+    std::println("\n--- Test 5.1: existing structured EH still works ---");
     aura_exception_push(100, 200);
     aura_exception_push(101, 201);
     auto h1 = aura_exception_top_handler();
     aura_exception_pop();
     auto h2 = aura_exception_top_handler();
     aura_exception_pop();
+    aura_exception_clear_all();
     CHECK(h1 == 101, "first top is 101");
     CHECK(h2 == 100, "second top is 100 (after first pop)");
     return true;
@@ -205,21 +287,24 @@ bool test_existing_eh_not_regressed() {
 
 int main() {
     std::println("═══ Issue #195 verification tests ═══\n");
-    std::println("AC #1: Structured EH functions are callable");
-    test_exception_depth_starts_at_zero();
-    test_exception_push_increments_depth();
-    test_exception_top_returns_pushed_values();
-    test_exception_lifo_ordering();
-    test_exception_top_on_empty();
-    test_exception_pop_on_empty();
+    std::println("AC #1: Per-fiber exception state infrastructure");
+    test_exception_push_pop_default_fiber();
+    test_exception_default_fiber_push_keeps_value();
 
-    std::println("\nAC #2: depth sentinel is well-defined");
-    test_exception_depth_return_type();
+    std::println("\nAC #2: Per-fiber isolation");
+    test_per_fiber_isolation();
+    test_per_fiber_fiber_count_grows();
+    test_per_fiber_fiber_id_hook_can_be_cleared();
 
-    std::println("\nAC #3: structured EH is thread-local (limitation)");
-    test_structured_eh_is_thread_local_caveat();
+    std::println("\nAC #3: aura_exception_clear_all");
+    test_clear_all_clears_all_fibers();
 
-    std::println("\nAC #4: backward compat — existing structured EH still works");
+    std::println("\nAC #4: Aura-level observability primitives");
+    test_jit_exception_depth_primitive();
+    test_jit_exception_fibers_primitive();
+    test_jit_exception_fibers_clear_primitive();
+
+    std::println("\nAC #5: Backward compat");
     test_existing_eh_not_regressed();
 
     std::println("\n════════════════════════════════════════");

@@ -58,6 +58,9 @@ inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
 #include <new>
 #include <atomic>
 #include <chrono>
+#include <mutex>
+#include <unordered_map>
+#include <unwind.h>
 #include "runtime_shared.h"
 #include "value_tags.h"  // Issue #181 Cycle 2: v2 string encoding helpers
 
@@ -1068,10 +1071,19 @@ int64_t aura_cast_op(int64_t val, int64_t type_tag) {
 // Forward declaration — definition is at the bottom of the file
 // because it touches g_string_pool / g_float_pool (which are
 // declared further down).
-// Issue #170 Phase 1 / item #2: per-thread exception stack
+// Issue #170 Phase 1 / item #2: per-fiber exception stack
 // for the JIT's try/catch handling. Mirrors the IR executor's
-// ex_stack_ (ir_executor_impl.cpp:641-680) but lives in
-// thread-local storage so concurrent fibers don't race on it.
+// ex_stack_ (ir_executor_impl.cpp:641-680).
+//
+// Issue #195: per-fiber exception state (replacing the
+// thread_local storage). Each fiber gets its own
+// std::vector<ExFrame>, keyed by a fiber id. The
+// `g_current_fiber_id_fn` hook is installed by the
+// CompilerService (via the fiber infrastructure in
+// serve/fiber.cpp). Defaults to fiber id 0 (the implicit
+// 'main' thread / single-threaded case) so callers that
+// don't install a hook get the same behavior as the
+// pre-#195 thread_local version.
 //
 // Layout per frame:
 //   handler_block: the IR block id to branch to on raise
@@ -1082,39 +1094,106 @@ int64_t aura_cast_op(int64_t val, int64_t type_tag) {
 // fields without popping. Raises branch directly to handler_block
 // (no longjmp) — the JIT's lower() for OpRaise reads the top
 // frame via aura_exception_top and emits a Br to handler_block.
-//
-// KNOWN LIMITATION (Issue #195): the `thread_local` storage
-// means concurrent fibers on the same thread SHARE this
-// stack. A Raise in fiber A could branch to a handler set
-// by fiber B — incorrect behavior. The full fix is
-// per-fiber exception state + LLVM invoke + landingpad +
-// personality function (1-2 weeks of work, tracked by
-// Issue #195). For now, structured EH is correct for the
-// single-fiber case (the common case for sequential Aura
-// programs). The spec_jit_controller's deopt signal catches
-// this in production by deopting any function that
-// triggers an unhandled opcode (which the new lowerings
-// don't produce).
 struct ExFrame {
     std::uint64_t handler_block;
     std::uint64_t payload_slot;
 };
-static thread_local std::vector<ExFrame> g_ex_stack;
+
+// Issue #195: per-fiber exception state. The map is keyed
+// on fiber id (uint64_t). The default fiber id is 0 (when
+// no hook is installed). Concurrent fibers on the same
+// thread get isolated exception state.
+//
+// The g_fiber_ex_stacks_mtx_ protects concurrent access
+// from multiple fibers / threads. The mutex is held only
+// during map lookup + vector mutation (microseconds);
+// it's NOT held during JIT execution or exception handling.
+static std::unordered_map<std::uint64_t, std::vector<ExFrame>> g_fiber_ex_stacks;
+static std::mutex g_fiber_ex_stacks_mtx_;
+
+// Issue #195: hook to get the current fiber's id. Set by
+// CompilerService via the fiber infrastructure. The hook
+// is `extern "C"` so it can be called from JIT-compiled
+// code (the LLVM personality function calls it to find
+// the right per-fiber ExStack). When no hook is installed,
+// defaults to fiber id 0 (single-threaded / single-fiber
+// behavior).
+typedef std::uint64_t (*aura_fiber_id_fn_t)();
+static aura_fiber_id_fn_t g_current_fiber_id_fn = nullptr;
+
+extern "C" void aura_set_current_fiber_id_fn(aura_fiber_id_fn_t fn) {
+    g_current_fiber_id_fn = fn;
+}
+extern "C" aura_fiber_id_fn_t aura_get_current_fiber_id_fn() {
+    return g_current_fiber_id_fn;
+}
+
+// Helper: get the current fiber's ExStack, creating an empty
+// one if it doesn't exist yet. Holds the mutex briefly.
+static std::vector<ExFrame>& get_current_ex_stack() {
+    std::uint64_t fid = g_current_fiber_id_fn ? g_current_fiber_id_fn() : 0;
+    std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
+    return g_fiber_ex_stacks[fid];
+}
 
 extern "C" void aura_exception_push(std::uint64_t handler_block, std::uint64_t payload_slot) {
-    g_ex_stack.push_back({handler_block, payload_slot});
+    std::uint64_t fid = g_current_fiber_id_fn ? g_current_fiber_id_fn() : 0;
+    std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
+    g_fiber_ex_stacks[fid].push_back({handler_block, payload_slot});
 }
 extern "C" void aura_exception_pop() {
-    if (!g_ex_stack.empty()) g_ex_stack.pop_back();
+    std::uint64_t fid = g_current_fiber_id_fn ? g_current_fiber_id_fn() : 0;
+    std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
+    auto& s = g_fiber_ex_stacks[fid];
+    if (!s.empty()) s.pop_back();
 }
 extern "C" std::uint64_t aura_exception_top_handler() {
-    return g_ex_stack.empty() ? 0 : g_ex_stack.back().handler_block;
+    std::uint64_t fid = g_current_fiber_id_fn ? g_current_fiber_id_fn() : 0;
+    std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
+    auto it = g_fiber_ex_stacks.find(fid);
+    if (it == g_fiber_ex_stacks.end() || it->second.empty()) return 0;
+    return it->second.back().handler_block;
 }
 extern "C" std::uint64_t aura_exception_top_payload() {
-    return g_ex_stack.empty() ? ~0ULL : g_ex_stack.back().payload_slot;
+    std::uint64_t fid = g_current_fiber_id_fn ? g_current_fiber_id_fn() : 0;
+    std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
+    auto it = g_fiber_ex_stacks.find(fid);
+    if (it == g_fiber_ex_stacks.end() || it->second.empty()) return ~0ULL;
+    return it->second.back().payload_slot;
 }
 extern "C" std::uint64_t aura_exception_depth() {
-    return static_cast<std::uint64_t>(g_ex_stack.size());
+    std::uint64_t fid = g_current_fiber_id_fn ? g_current_fiber_id_fn() : 0;
+    std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
+    auto it = g_fiber_ex_stacks.find(fid);
+    if (it == g_fiber_ex_stacks.end()) return 0;
+    return static_cast<std::uint64_t>(it->second.size());
+}
+
+// Issue #195: per-fiber observability. Returns the depth
+// for a specific fiber id (not necessarily the current one).
+// Used by the (jit:exception-fibers) Aura primitive to
+// enumerate all fibers with active exception state.
+extern "C" std::uint64_t aura_exception_depth_for_fiber(std::uint64_t fid) {
+    std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
+    auto it = g_fiber_ex_stacks.find(fid);
+    if (it == g_fiber_ex_stacks.end()) return 0;
+    return static_cast<std::uint64_t>(it->second.size());
+}
+
+// Issue #195: number of distinct fiber ids that have
+// exception state. Used by the (jit:exception-fibers)
+// Aura primitive.
+extern "C" std::uint64_t aura_exception_fiber_count() {
+    std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
+    return static_cast<std::uint64_t>(g_fiber_ex_stacks.size());
+}
+
+// Issue #195: clear all per-fiber exception state. Called
+// by the session-reset path (was previously clearing the
+// thread_local g_ex_stack).
+extern "C" void aura_exception_clear_all() {
+    std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
+    g_fiber_ex_stacks.clear();
 }
 
 // === Display bridge ===
@@ -1260,7 +1339,10 @@ void aura_reset_runtime() {
     g_closure_envs.clear();
     g_arena_closure_envs.clear();
     g_cell_heap.clear();
-    g_ex_stack.clear();
+    // Issue #195: per-fiber exception state — replaced
+    // the old thread_local g_ex_stack.clear() with a call
+    // to the new per-fiber clear function.
+    aura_exception_clear_all();
     g_pair_slots.clear();
     std::memset(g_jit_fns, 0, sizeof(g_jit_fns));
     // Issue #136: clear string and float pools. They grow on
@@ -1289,6 +1371,100 @@ void aura_reset_runtime() {
     // Clear JIT function entries but NOT prim table
     for (int i = 0; i < 512; ++i)
         g_jit_fns[i] = {nullptr, 0, 0, 0};
+}
+
+// === Issue #195: C personality function scaffold ===
+//
+// This is the C personality function that LLVM's unwind
+// runtime calls when a JIT-compiled function throws an
+// exception via `invoke`. The signature is the standard
+// Itanium C++ ABI personality function:
+//
+//   _Unwind_Reason_Code personality(int version,
+//                                 _Unwind_Action actions,
+//                                 uint64_t exceptionClass,
+//                                 _Unwind_Exception* exceptionInfo,
+//                                 _Unwind_Context* context);
+//
+// The function is called twice during exception handling:
+//   - Search phase (actions & 1): find a matching handler
+//   - Cleanup phase (actions & 2): run destructors
+//
+// For Aura, the "handler" is determined by walking the
+// current fiber's exception state (g_fiber_ex_stacks).
+// Each frame's `handler_block` is the IR block id to
+// branch to. The search phase checks if the exception's
+// class matches any handler; for now we use a single
+// "any Aura exception matches" policy, so the first
+// handler in the per-fiber ExStack matches.
+//
+// This is the SCAFFOLD — the full integration with the
+// JIT's invoke/landingpad lowering is a separate
+// follow-up. The personality function is registered
+// via `__attribute__((personality))` in the LLVM IR
+// once OpTryBegin/OpTryEnd/OpRaise are updated to emit
+// invoke/landingpad.
+extern "C" _Unwind_Reason_Code
+aura_personality(int version, _Unwind_Action actions,
+                 uint64_t exceptionClass,
+                 _Unwind_Exception* exceptionInfo,
+                 _Unwind_Context* context) {
+    // Version 1 is the only supported version.
+    if (version != 1) return _URC_FATAL_PHASE1_ERROR;
+
+    // Check the exception class. Aura exceptions use a custom
+    // class identifier (top 8 bytes of the _Unwind_Exception).
+    // For now, accept any exception (the policy is "any Aura
+    // exception matches the first handler in scope").
+    (void)exceptionClass;
+    (void)exceptionInfo;
+
+    if (actions & _UA_SEARCH_PHASE) {
+        // Search phase: walk the current fiber's ExStack. If any
+        // frame has a non-zero handler_block, that handler
+        // matches; report _URC_HANDLER_FOUND so the unwinder
+        // stops and resumes at the handler.
+        if (aura_exception_depth() > 0 &&
+            aura_exception_top_handler() != 0) {
+            return _URC_HANDLER_FOUND;
+        }
+        return _URC_CONTINUE_UNWIND;
+    }
+    if (actions & _UA_CLEANUP_PHASE) {
+        // Cleanup phase: for Aura, we don't have C++
+        // destructors in JIT-compiled code, so cleanup is a
+        // no-op. Return _URC_CONTINUE_UNWIND to continue
+        // unwinding the stack until a handler is found.
+        return _URC_CONTINUE_UNWIND;
+    }
+    return _URC_NO_REASON;
+}
+
+// Issue #195: helper to throw an Aura exception from JIT-
+// compiled code. The JIT's OpRaise lowering would emit an
+// `invoke` to this function. The function sets up the
+// standard _Unwind_Exception header and calls
+// _Unwind_RaiseException, which the unwinder then walks
+// the stack via the personality function.
+//
+// For now, the full integration is deferred (the JIT's
+// OpRaise still uses the structured-EH switch-dispatch).
+// This is the SCAFFOLD for the future LLVM-native path.
+extern "C" void aura_throw_exception(uint64_t payload) {
+    // The standard _Unwind_Exception header is 8 bytes
+    // (exception_class) + a pointer-sized field for the
+    // exception_cleanup + cache-aligned user data. Aura
+    // uses a static buffer for the header to avoid
+    // heap allocation in the throw path.
+    static __thread struct {
+        _Unwind_Exception header;
+        std::uint64_t payload_storage;
+    } ex = {};
+    // Set the exception class to "AURA" (just a marker).
+    ex.header.exception_class = 0x4155524100000000ULL;  // "AURA\0\0\0"
+    ex.header.exception_cleanup = nullptr;
+    ex.payload_storage = payload;
+    _Unwind_RaiseException(&ex.header);
 }
 
 } // extern "C"
