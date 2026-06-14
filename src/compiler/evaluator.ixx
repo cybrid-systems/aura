@@ -87,7 +87,14 @@ public:
     [[nodiscard]] Evaluator* owner() const { return owner_; }
     void set_parent_id(EnvId id) { parent_id_ = id; }
     [[nodiscard]] EnvId parent_id() const { return parent_id_; }
-    void bind(const std::string& n, types::EvalValue v) { bindings_.emplace_back(n, std::move(v)); }
+    // Issue #207 (Cycle 1): bind(name, value) writes to
+    // bindings_ only. The migration to route through
+    // bind_symid is a Cycle 2 item (requires pool_ to
+    // become non-const, which is a bigger refactor that
+    // touches many call sites).
+    void bind(const std::string& n, types::EvalValue v) {
+        bindings_.emplace_back(n, std::move(v));
+    }
     // Issue #145: SymId fast path. The apply_closure loop hits
     // this once per parameter per call — replacing the old
     // string-compare lookup with integer-compare. Implemented
@@ -134,10 +141,34 @@ public:
     // Return cell index (stable across vector reallocation) or nullopt if not a cell
     std::optional<std::uint64_t> lookup_cell_index(const std::string& n) const;
     const Env* parent() const { return parent_; }
-    std::vector<std::pair<std::string, types::EvalValue>>& bindings() { return bindings_; }
-    std::span<const std::pair<std::string, types::EvalValue>> bindings() const {
+    // Issue #207 (Cycle 1): legacy bindings() accessors —
+    // bumped for the bindings_legacy_uses metric.
+    std::vector<std::pair<std::string, types::EvalValue>>& bindings() {
+        ++bindings_legacy_uses_;
         return bindings_;
     }
+    std::span<const std::pair<std::string, types::EvalValue>> bindings() const {
+        ++bindings_legacy_uses_;
+        return bindings_;
+    }
+    // Issue #207: bindings_symid_iter() — preferred accessor
+    // for new code. Returns a span over the SymId-keyed
+    // bindings_symid_ array (the migration's primary storage
+    // per the issue-174 plan). No string intern, no allocation;
+    // just a view.
+    [[nodiscard]] std::span<const std::pair<aura::ast::SymId, types::EvalValue>>
+    bindings_symid_iter() const noexcept {
+        return bindings_symid_;
+    }
+    // Issue #207: bindings_with_names() — materializes the
+    // named version of the bindings. Uses pool_->resolve() to
+    // get the name for each SymId. Returns a new vector;
+    // the caller is expected to use it for display / debugging
+    // (e.g., the env inspector primitive). Hot paths should
+    // use bindings_symid_iter() instead — this helper pays
+    // the resolve() cost per binding.
+    [[nodiscard]] std::vector<std::pair<std::string, types::EvalValue>>
+    bindings_with_names() const;
     // Issue #145: SymId-keyed view of the same bindings. Same
     // length and order as bindings(). Used by EnvView.
     std::span<const std::pair<aura::ast::SymId, types::EvalValue>> bindings_symid() const {
@@ -185,6 +216,19 @@ private:
     // registered with an Evaluator (top_, modules_).
     Evaluator* owner_ = nullptr;
     EnvId parent_id_ = NULL_ENV_ID;
+    // Issue #207 (Cycle 1): bindings_legacy_uses_ counter.
+    // Bumped on every access to the legacy bindings() accessor.
+    // Provides observability for the migration from
+    // string-keyed bindings_ to SymId-keyed bindings_symid_.
+    // Cycle 2+ migrates callers incrementally, watching the
+    // metric trend to 0.
+    mutable std::size_t bindings_legacy_uses_ = 0;
+public:
+    // Issue #207: accessors for the metric.
+    [[nodiscard]] std::size_t bindings_legacy_uses() const noexcept {
+        return bindings_legacy_uses_;
+    }
+    void reset_bindings_legacy_uses() noexcept { bindings_legacy_uses_ = 0; }
 };
 
 export using ClosureId = std::uint64_t;
