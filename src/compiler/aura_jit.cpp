@@ -2170,25 +2170,22 @@ struct AuraJIT::Impl {
         reg("aura_hash_key_eq", (void*)aura_hash_key_eq);
 
         // Issue #195: register the per-fiber exception state
-        // API and the C personality function. Note that
-        // aura_exception_fiber_count and aura_exception_clear_all
-        // are also registered but not used in JIT-compiled
-        // code (they're for Aura-level observability).
-        reg("aura_exception_fiber_count", (void*)aura_exception_fiber_count);
-        reg("aura_exception_clear_all", (void*)aura_exception_clear_all);
-
-        // Issue #195: register the per-fiber exception state
         // API and the C personality function. The JIT-compiled
         // code can call into these when OpRaise emits an
-        // `invoke` to aura_throw_exception (the follow-up wiring
-        // in aura_jit.cpp's lower() function).
+        // `invoke` to aura_throw_exception. Note: the
+        // previous block (above) also registers
+        // aura_exception_fiber_count and
+        // aura_exception_clear_all — those are duplicate
+        // registrations and the second reg() call fails with
+        // "JIT: failed to define symbol". The duplicates
+        // were removed (the first set is the canonical
+        // registration; the second set is dead code that
+        // only the duplicate-registration bug survived).
         reg("aura_exception_push", (void*)aura_exception_push);
         reg("aura_exception_pop", (void*)aura_exception_pop);
         reg("aura_exception_top_handler", (void*)aura_exception_top_handler);
         reg("aura_exception_top_payload", (void*)aura_exception_top_payload);
         reg("aura_exception_depth", (void*)aura_exception_depth);
-        reg("aura_exception_fiber_count", (void*)aura_exception_fiber_count);
-        reg("aura_exception_clear_all", (void*)aura_exception_clear_all);
         reg("aura_throw_exception", (void*)aura_throw_exception);
 
         // C standard library functions
