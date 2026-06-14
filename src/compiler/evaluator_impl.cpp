@@ -6282,9 +6282,15 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         // ── 依赖图驱动：dirty 所有调用者 ────────────────────────
         // 利用从 def-use 索引预取的调用者列表，标记 dirty + 向上传播。
         // 这样下次 typecheck-current 就知道这些节点需要重新类型推断。
+        // Issue #188: rebind changes the function body, so callers
+        // need re-inference + re-constraint-solve. Coercion markers
+        // are NOT touched (rebinds don't change type annotations),
+        // so we use kGeneralDirty | kConstraintDirty (not Coercion).
         for (std::size_t ui = 0; ui < dep_callers.size(); ++ui) {
             if (dep_callers[ui] < flat.size())
-                flat.mark_dirty_upward(dep_callers[ui]);
+                flat.mark_dirty_upward(dep_callers[ui],
+                    aura::ast::FlatAST::kGeneralDirty |
+                    aura::ast::FlatAST::kConstraintDirty);
         }
 
         // Record affected sym for incremental DefUseIndex update
@@ -6903,9 +6909,17 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 flat.set_child(lambda_id, 0, pr.root);
 
                 // 依赖图驱动：dirty 所有调用者
+                // Issue #188: set-body changes the function body
+                // (same as rebind but via the Lambda node instead
+                // of the Define node). Mark callers with
+                // kGeneralDirty | kConstraintDirty. No occurrence/
+                // ownership bits — body change doesn't add new
+                // narrowing or affect Linear state directly.
                 for (std::size_t ui = 0; ui < dep_callers.size(); ++ui) {
                     if (dep_callers[ui] < flat.size())
-                        flat.mark_dirty_upward(dep_callers[ui]);
+                        flat.mark_dirty_upward(dep_callers[ui],
+                            aura::ast::FlatAST::kGeneralDirty |
+                            aura::ast::FlatAST::kConstraintDirty);
                 }
 
                 // Record affected sym for incremental DefUseIndex update
@@ -14923,6 +14937,81 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
             {"data-size", make_int(static_cast<std::int64_t>(ds))},
             {"hash-bytes", make_int(static_cast<std::int64_t>(hb))},
             {"fragmentation", make_float(frag)},
+        };
+        return build_hash(kv);
+    });
+
+    // (dirty:reasons node-id) — Issue #188: return the per-node
+    // dirty-reason bitmask. Useful for the type checker to decide
+    // which targeted re-analysis pass to run, and for diagnostics
+    // to surface "why is this node dirty". Bit values:
+    //   0x01 = general (re-infer), 0x02 = constraint, 0x04 = occurrence,
+    //   0x08 = ownership, 0x10 = coercion. Returns 0 for clean nodes
+    //   or out-of-range ids.
+    primitives_.add("dirty:reasons", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0])) return make_int(0);
+        if (!workspace_flat_) return make_int(0);
+        auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        return make_int(static_cast<std::int64_t>(workspace_flat_->dirty_reasons(id)));
+    });
+    // (dirty:counts) — Issue #188: aggregate per-reason dirty counts
+    // across the workspace. Returns hash with 5 integer fields:
+    //   general, constraint, occurrence, ownership, coercion, total
+    //   (total is the number of dirty nodes, not the sum of bits).
+    // Built inline using the same hash-build pattern as gc-arena-info.
+    primitives_.add("dirty:counts", [this](const auto&) -> EvalValue {
+        if (!workspace_flat_) return make_void();
+        std::size_t gen = 0, con = 0, occ = 0, own = 0, coe = 0, total = 0;
+        const auto& dirty = workspace_flat_->dirty_column();
+        for (std::size_t i = 0; i < dirty.size(); ++i) {
+            auto b = dirty[i];
+            if (b == 0) continue;
+            ++total;
+            if (b & 0x01) ++gen;
+            if (b & 0x02) ++con;
+            if (b & 0x04) ++occ;
+            if (b & 0x08) ++own;
+            if (b & 0x10) ++coe;
+        }
+        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+            auto* ht = FlatHashTable::create(8);
+            if (!ht) return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            for (auto& [k, v] : kv) {
+                std::uint64_t h = 0xcbf29ce484222325ull;
+                for (char c : k) h = (h ^ static_cast<std::uint8_t>(c)) * 0x100000001b3ull;
+                auto fp = static_cast<std::uint8_t>(h >> 57) | 0x80;
+                auto kidx = string_heap_.size();
+                string_heap_.push_back(k);
+                EvalValue key_ev = make_string(kidx);
+                bool inserted = false;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = v.val;
+                        ht->size++;
+                        inserted = true;
+                        break;
+                    }
+                }
+                if (!inserted) { FlatHashTable::destroy(ht); return make_void(); }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        };
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"general", make_int(static_cast<std::int64_t>(gen))},
+            {"constraint", make_int(static_cast<std::int64_t>(con))},
+            {"occurrence", make_int(static_cast<std::int64_t>(occ))},
+            {"ownership", make_int(static_cast<std::int64_t>(own))},
+            {"coercion", make_int(static_cast<std::int64_t>(coe))},
+            {"total", make_int(static_cast<std::int64_t>(total))},
         };
         return build_hash(kv);
     });

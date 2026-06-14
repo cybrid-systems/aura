@@ -1119,25 +1119,82 @@ private:
     }
 
     // ── Dirty tracking (incremental compilation) ───────────────
+    //
+    // Issue #188: per-node dirty bitmask. The dirty_ column is
+    // repurposed as a bitmask where each bit represents a different
+    // reason for invalidation. This lets the type checker do
+    // *targeted* re-analysis (only re-run occurrence-narrowing when
+    // a predicate changed, only re-validate ownership when a Linear
+    // binding changed, etc.) instead of the coarse "re-infer
+    // everything dirty" pass.
+    //
+    // The old single-bit semantics are preserved: `is_dirty(id)` is
+    // `true` iff ANY bit is set, so existing callers see no behavior
+    // change. New callers can use `is_dirty_for(id, reason)` for
+    // targeted re-analysis.
 
-    void mark_dirty(NodeId id) {
+    // Issue #188: dirty-reason bits. Each can be OR'd together when
+    // a single mutation triggers multiple concerns. Bit 0 (kGeneral)
+    // is the backward-compatible "this node needs re-inference" bit.
+    enum DirtyReason : std::uint8_t {
+        kGeneralDirty       = 0x01, // node type must be re-inferred
+        kConstraintDirty    = 0x02, // constraints involving this var changed
+        kOccurrenceDirty    = 0x04, // occurrence-narrowing affected
+        kOwnershipDirty     = 0x08, // Linear/Move/Borrow state changed
+        kCoercionDirty      = 0x10, // deferred coercion needs re-apply
+    };
+
+    // Issue #188: mark a node dirty for one or more specific reasons.
+    // The `kGeneralDirty` bit is set automatically so existing
+    // is_dirty() callers still see "this node needs work".
+    void mark_dirty(NodeId id, std::uint8_t reasons = kGeneralDirty) {
         if (id >= dirty_.size())
-            dirty_.resize(id + 1, false);
-        dirty_[id] = true;
+            dirty_.resize(id + 1, 0);
+        dirty_[id] |= reasons;
         clear_cached_value(id);  // invalidate result cache
     }
-    void mark_subtree_dirty(NodeId id) {
-        mark_dirty(id);
+    void mark_subtree_dirty(NodeId id, std::uint8_t reasons = kGeneralDirty) {
+        mark_dirty(id, reasons);
         auto v = get(id);
         for (auto c : v.children) {
             if (c != NULL_NODE)
-                mark_subtree_dirty(c);
+                mark_subtree_dirty(c, reasons);
         }
     }
-    bool is_dirty(NodeId id) const { return id < dirty_.size() && dirty_[id]; }
+    // Issue #188: backward-compatible single-bit semantics — true if
+    // any dirty bit is set. The pre-#188 callers that asked "is this
+    // node dirty?" still get the right answer.
+    bool is_dirty(NodeId id) const {
+        return id < dirty_.size() && dirty_[id] != 0;
+    }
+    // Issue #188: targeted check — true if a specific reason bit
+    // (or any of the bits in the reason mask) is set. Lets the type
+    // checker say "this node's occurrence narrowing is stale but
+    // ownership is fine" and re-narrow only.
+    bool is_dirty_for(NodeId id, std::uint8_t reason_mask) const {
+        return id < dirty_.size() && (dirty_[id] & reason_mask) != 0;
+    }
+    // Issue #188: return the full dirty bitmask (for diagnostics).
+    std::uint8_t dirty_reasons(NodeId id) const {
+        return id < dirty_.size() ? dirty_[id] : 0;
+    }
     void clear_dirty(NodeId id) {
         if (id < dirty_.size())
-            dirty_[id] = false;
+            dirty_[id] = 0;
+    }
+    // Issue #188: clear specific reason bits (leaves others set).
+    // Used after a targeted re-analysis pass so the bit for the
+    // resolved concern is cleared but other stale reasons remain.
+    void clear_dirty_for(NodeId id, std::uint8_t reason_mask) {
+        if (id < dirty_.size())
+            dirty_[id] &= static_cast<std::uint8_t>(~reason_mask);
+    }
+    // Issue #188: read-only view of the dirty column for
+    // observability/aggregation. Used by the (dirty:counts)
+    // primitive to walk all nodes in O(n) without a per-node
+    // accessor call.
+    [[nodiscard]] const std::pmr::vector<std::uint8_t>& dirty_column() const noexcept {
+        return dirty_;
     }
 
     // ── Node validation (NodeMeta invariants) ─────────────────
@@ -1195,13 +1252,17 @@ private:
     }
     // Propagate dirty upward: mark this node AND all ancestors dirty
     // Uses parent_ SoA column for O(depth) traversal (iterative, no recursion)
-    void mark_dirty_upward(NodeId id) {
+    // Issue #188: optional `reasons` parameter propagates the bitmask
+    // from the leaf to all ancestors. Default is kGeneralDirty for
+    // backward compatibility with the 30+ callers that don't yet
+    // classify their mutations.
+    void mark_dirty_upward(NodeId id, std::uint8_t reasons = kGeneralDirty) {
         std::deque<NodeId> queue;
         queue.push_back(id);
         while (!queue.empty()) {
             auto nid = queue.front();
             queue.pop_front();
-            mark_dirty(nid);
+            mark_dirty(nid, reasons);
             auto p = parent_[nid];
             if (p != NULL_NODE)
                 queue.push_back(p);
