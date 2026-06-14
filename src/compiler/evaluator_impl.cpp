@@ -15136,6 +15136,93 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         if (id >= workspace_flat_->size()) return make_int(0);
         return make_int(static_cast<std::int64_t>(workspace_flat_->marker(id)));
     });
+    // (ast:stable-ref node-id) — Issue #191: capture a StableNodeRef
+    // (id + current generation) for the given node. Returns a
+    // 2-element pair (id . gen) that can be passed to
+    // (ast:ref-valid?) and (ast:ref-get). Use this in EDSL code
+    // to safely hold a reference to a node across multiple
+    // mutation / query calls.
+    primitives_.add("ast:stable-ref", [this](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0])) return make_void();
+        if (!workspace_flat_) return make_void();
+        auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto ref = workspace_flat_->make_ref(id);
+        // Pack as (id . gen) pair
+        std::size_t pid = pairs_.size();
+        pairs_.push_back({make_int(static_cast<std::int64_t>(ref.id)),
+                          make_int(static_cast<std::int64_t>(ref.gen))});
+        return make_pair(pid);
+    });
+    // (ast:ref-valid? id gen) — Issue #191: returns #t if the
+    // (id, gen) pair is still a valid stable reference. The ref
+    // is valid iff:
+    //   - id != NULL_NODE
+    //   - id is in-bounds
+    //   - id's node_gen_ matches gen
+    //   - FlatAST's current generation matches gen
+    // (the last check is what catches "a structural mutation
+    // happened between capture and use" — even if the slot
+    // still exists, the structural relationship has changed).
+    primitives_.add("ast:ref-valid?", [this](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1]))
+            return make_bool(false);
+        if (!workspace_flat_) return make_bool(false);
+        auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto gen = static_cast<std::uint16_t>(as_int(a[1]));
+        return make_bool(workspace_flat_->is_valid(
+            aura::ast::FlatAST::StableNodeRef{id, gen}));
+    });
+    // (ast:ref-get id gen) — Issue #191: safely get a node
+    // from a stable reference. Returns the node as a value if
+    // the ref is valid; void if stale. Useful for EDSL code
+    // that wants to query a node it stored earlier without
+    // crashing on stale refs.
+    //
+    // For now, the returned value is a placeholder string
+    // containing the node's tag name (so callers can at least
+    // see "this is what kind of node it was" even if they
+    // can't get the full NodeView through Aura values).
+    primitives_.add("ast:ref-get", [this](const auto& a) -> EvalValue {
+        if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1]))
+            return make_void();
+        if (!workspace_flat_) return make_void();
+        auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto gen = static_cast<std::uint16_t>(as_int(a[1]));
+        auto opt = workspace_flat_->get_safe(
+            aura::ast::FlatAST::StableNodeRef{id, gen});
+        if (!opt) return make_void();
+        // Return the tag name as a string for observability
+        std::string tag_name = "?";
+        switch (opt->tag) {
+            case aura::ast::NodeTag::LiteralInt: tag_name = "LiteralInt"; break;
+            case aura::ast::NodeTag::LiteralFloat: tag_name = "LiteralFloat"; break;
+            case aura::ast::NodeTag::LiteralString: tag_name = "LiteralString"; break;
+            case aura::ast::NodeTag::Variable: tag_name = "Variable"; break;
+            case aura::ast::NodeTag::Call: tag_name = "Call"; break;
+            case aura::ast::NodeTag::IfExpr: tag_name = "IfExpr"; break;
+            case aura::ast::NodeTag::Lambda: tag_name = "Lambda"; break;
+            case aura::ast::NodeTag::Let: tag_name = "Let"; break;
+            case aura::ast::NodeTag::LetRec: tag_name = "LetRec"; break;
+            case aura::ast::NodeTag::Define: tag_name = "Define"; break;
+            case aura::ast::NodeTag::Begin: tag_name = "Begin"; break;
+            case aura::ast::NodeTag::Set: tag_name = "Set"; break;
+            case aura::ast::NodeTag::Quote: tag_name = "Quote"; break;
+            case aura::ast::NodeTag::MacroDef: tag_name = "MacroDef"; break;
+            default: tag_name = "Node"; break;
+        }
+        std::string s = std::string("<node:") + tag_name + " id=" + std::to_string(id) + ">";
+        std::size_t sidx = string_heap_.size();
+        string_heap_.push_back(s);
+        return types::make_string(sidx);
+    });
+    // (ast:generation) — Issue #191: return the current
+    // generation counter. Used to inspect when a structural
+    // mutation has happened (compare the returned value to
+    // a previously-captured one).
+    primitives_.add("ast:generation", [this](const auto&) -> EvalValue {
+        if (!workspace_flat_) return make_int(0);
+        return make_int(static_cast<std::int64_t>(workspace_flat_->generation()));
+    });
     // (syntax-marker-counts) — Issue #190: aggregate count of
     // each SyntaxMarker value across the workspace. Hash with
     // 3 integer fields: user, macro-introduced, bool-literal,

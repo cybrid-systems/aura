@@ -1042,6 +1042,12 @@ private:
         // Set new child's parent
         if (child != NULL_NODE && child < parent_.size())
             parent_[child] = id;
+        // Issue #191: structural mutation invalidates all stored
+        // NodeIds. Without the bump, a caller that did
+        // (query:children (capture: parent-id)) before this set_child
+        // would have a stale span that no longer matches the
+        // child's actual position in the new children array.
+        bump_generation();
     }
 
     // Insert a child at position idx (0 = first, child_count = append)
@@ -1059,6 +1065,9 @@ private:
         // Set new child's parent
         if (child != NULL_NODE && child < parent_.size())
             parent_[child] = id;
+        // Issue #191: structural mutation invalidates all stored
+        // NodeIds (the child array positions shifted).
+        bump_generation();
     }
 
     // Remove a child at position idx by replacing with NULL_NODE
@@ -1068,6 +1077,11 @@ private:
             if (slot != NULL_NODE && slot < parent_.size())
                 parent_[slot] = NULL_NODE;
             slot = NULL_NODE;
+            // Issue #191: structural mutation invalidates all
+            // stored NodeIds (the child's slot is now NULL; a
+            // stored parent_of that pointed through it would
+            // see a different child).
+            bump_generation();
         }
     }
 
@@ -1407,6 +1421,62 @@ private:
         if (!is_valid(id))
             return std::nullopt;
         return get(id);
+    }
+
+    // Issue #191: StableNodeRef — a safe handle that bundles a
+    // NodeId with the FlatAST generation it was captured from.
+    // If the generation has changed (because a structural
+    // mutation happened between capture and use), the ref is
+    // invalid even if the NodeId is still in-bounds.
+    //
+    // This is the recommended way to store NodeIds across
+    // mutation calls in EDSL / query / mutate primitives. The
+    // raw NodeId API is kept for performance-critical paths
+    // where the caller knows the ID is fresh.
+    struct StableNodeRef {
+        NodeId id = NULL_NODE;
+        std::uint16_t gen = 0;
+
+        // Default-constructed refs are always invalid (id=NULL).
+        bool is_valid_in(const FlatAST& ast) const noexcept {
+            return ast.is_valid(*this);
+        }
+    };
+
+    // Issue #191: make a StableNodeRef capturing the current
+    // generation. Use this in EDSL / query / mutate primitives
+    // to safely hold a reference to a node across calls.
+    [[nodiscard]] StableNodeRef make_ref(NodeId id) const noexcept {
+        return StableNodeRef{id, generation_};
+    }
+
+    // Issue #191: validation + safe get that take a StableNodeRef.
+    // The ref's gen is compared to the FlatAST's current gen; if
+    // they differ, the ref is stale (a structural mutation
+    // happened in between).
+    [[nodiscard]] bool is_valid(const StableNodeRef& ref) const noexcept {
+        return ref.id != NULL_NODE
+            && ref.id < tag_.size()
+            && ref.id < node_gen_.size()
+            && node_gen_[ref.id] == ref.gen
+            && ref.gen == generation_;  // gen must also match current
+    }
+    [[nodiscard]] std::optional<NodeView> get_safe(const StableNodeRef& ref) const noexcept {
+        if (!is_valid(ref))
+            return std::nullopt;
+        return get(ref.id);
+    }
+
+    // Issue #191: bump the generation counter (with wrap-around
+    // to 1, skipping 0 which is reserved). Called automatically
+    // by structural mutation methods (set_child / insert_child /
+    // remove_child) to invalidate all stale NodeIds in the
+    // workspace. Also exposed publicly for the mutation
+    // primitives to call after a non-SoA-mutating structural
+    // change (e.g., a workspace-level COW swap).
+    void bump_generation() noexcept {
+        ++generation_;
+        if (generation_ == 0) generation_ = 1;
     }
 
     bool rollback(std::uint64_t mutation_id) {
