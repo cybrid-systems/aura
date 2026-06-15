@@ -4256,3 +4256,17 @@ target_compile_options(test_issue_214 PRIVATE -freflection -Wall)
 target_compile_features(test_issue_214 PUBLIC cxx_std_26)
 target_link_libraries(test_issue_214 PRIVATE stdc++ pthread)
 add_test(NAME issue_214_verification COMMAND ./test_issue_214)
+
+# Issue #215: auto_deserialize for containers + nested struct
+# (Issue #178 Cycle 2).
+#
+# Standalone C++ test (like test_issue_214) because the
+# test exercises the reflect.hh header directly with the
+# -freflection compile flag.
+add_executable(test_issue_215 tests/test_issue_215.cpp)
+set_property(TARGET test_issue_215 PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_issue_215 PRIVATE src)
+target_compile_options(test_issue_215 PRIVATE -freflection -Wall)
+target_compile_features(test_issue_215 PUBLIC cxx_std_26)
+target_link_libraries(test_issue_215 PRIVATE stdc++ pthread)
+add_test(NAME issue_215_verification COMMAND ./test_issue_215)

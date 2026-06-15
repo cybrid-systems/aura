@@ -28,6 +28,8 @@
 #include <array>
 #include <vector>
 #include <string_view>
+#include <optional>
+#include <variant>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -67,6 +69,28 @@ struct MemberInfo {
     std::size_t elem_size = 0; // for Array/Vector: element byte size
     std::size_t array_len = 0; // for Array: fixed count
 };
+
+// ── Type traits for container detection (Issue #215) ─────────
+
+template <typename T> struct is_std_string : std::false_type {};
+template <> struct is_std_string<std::string> : std::true_type {};
+template <typename T> constexpr bool is_std_string_v = is_std_string<T>::value;
+
+template <typename T> struct is_std_vector : std::false_type {};
+template <typename T, typename A> struct is_std_vector<std::vector<T, A>> : std::true_type {};
+template <typename T> constexpr bool is_std_vector_v = is_std_vector<T>::value;
+
+template <typename T> struct is_std_array : std::false_type {};
+template <typename T, std::size_t N> struct is_std_array<std::array<T, N>> : std::true_type {};
+template <typename T> constexpr bool is_std_array_v = is_std_array<T>::value;
+
+template <typename T> struct is_std_optional : std::false_type {};
+template <typename T> struct is_std_optional<std::optional<T>> : std::true_type {};
+template <typename T> constexpr bool is_std_optional_v = is_std_optional<T>::value;
+
+template <typename T> struct is_std_variant : std::false_type {};
+template <typename... Ts> struct is_std_variant<std::variant<Ts...>> : std::true_type {};
+template <typename T> constexpr bool is_std_variant_v = is_std_variant<T>::value;
 
 // ── Type classifier ───────────────────────────────────────────
 
@@ -385,7 +409,98 @@ template <typename T> std::string auto_to_json_pretty(const T& obj) {
 
 // ── auto_serialize<T> — binary serialization (for cache_module) ──
 
-template <typename T> void auto_serialize(std::vector<char>& buf, const T& obj) {
+// Issue #215: Top-level container overloads. These are
+// picked over the generic struct path for std::vector<T>,
+// std::optional<T>, and std::variant<Ts...>. They
+// recurse on each element so nested containers work.
+
+// Forward declare the string overload so it's visible to
+// the vector/optional/variant overload bodies below.
+void auto_serialize(std::vector<char>& buf, const std::string& s);
+
+// std::vector<T> overload (any T)
+template <typename T>
+void auto_serialize(std::vector<char>& buf, const std::vector<T>& vec) {
+    auto sz = static_cast<std::uint32_t>(vec.size());
+    buf.insert(buf.end(), reinterpret_cast<char*>(&sz),
+               reinterpret_cast<char*>(&sz) + 4);
+    if constexpr (std::is_trivially_copyable_v<T>) {
+        // POD: write raw bytes (faster)
+        if (!vec.empty())
+            buf.insert(buf.end(),
+                       reinterpret_cast<const char*>(vec.data()),
+                       reinterpret_cast<const char*>(vec.data()) + vec.size() * sizeof(T));
+    } else {
+        // Non-POD: recurse on each element
+        for (const auto& e : vec)
+            auto_serialize(buf, e);
+    }
+}
+
+// std::string overload (top-level + recursion target)
+void auto_serialize(std::vector<char>& buf, const std::string& s) {
+    std::uint32_t len = static_cast<std::uint32_t>(s.size());
+    buf.insert(buf.end(), reinterpret_cast<char*>(&len),
+               reinterpret_cast<char*>(&len) + 4);
+    buf.insert(buf.end(), s.begin(), s.end());
+}
+
+// std::optional<T> overload
+template <typename T>
+void auto_serialize(std::vector<char>& buf, const std::optional<T>& opt) {
+    char has_value = opt.has_value() ? 1 : 0;
+    buf.push_back(has_value);
+    if (opt.has_value()) {
+        if constexpr (std::is_trivially_copyable_v<T> && !is_std_string_v<T>) {
+            // POD: raw bytes
+            buf.insert(buf.end(),
+                       reinterpret_cast<const char*>(&*opt),
+                       reinterpret_cast<const char*>(&*opt) + sizeof(T));
+        } else {
+            // Non-POD: recurse
+            auto_serialize(buf, *opt);
+        }
+    }
+}
+
+// std::variant<Ts...> overload
+template <typename... Ts>
+void auto_serialize(std::vector<char>& buf, const std::variant<Ts...>& v) {
+    std::uint32_t idx = static_cast<std::uint32_t>(v.index());
+    buf.insert(buf.end(), reinterpret_cast<char*>(&idx),
+               reinterpret_cast<char*>(&idx) + 4);
+    std::visit([&buf](const auto& inner) {
+        using InnerT = std::remove_cv_t<std::remove_reference_t<decltype(inner)>>;
+        if constexpr (std::is_trivially_copyable_v<InnerT> && !is_std_string_v<InnerT>) {
+            buf.insert(buf.end(),
+                       reinterpret_cast<const char*>(&inner),
+                       reinterpret_cast<const char*>(&inner) + sizeof(InnerT));
+        } else {
+            auto_serialize(buf, inner);
+        }
+    }, v);
+}
+
+// std::array<T, N> overload (for non-POD T or as top-level)
+template <typename T, std::size_t N>
+void auto_serialize(std::vector<char>& buf, const std::array<T, N>& arr) {
+    if constexpr (std::is_trivially_copyable_v<T>) {
+        // POD: raw bytes
+        if (N > 0)
+            buf.insert(buf.end(),
+                       reinterpret_cast<const char*>(arr.data()),
+                       reinterpret_cast<const char*>(arr.data()) + N * sizeof(T));
+    } else {
+        // Non-POD: recurse
+        for (const auto& e : arr)
+            auto_serialize(buf, e);
+    }
+}
+
+// ── Generic flat-struct serialization (POD/flat case) ──
+
+template <typename T>
+void auto_serialize(std::vector<char>& buf, const T& obj) {
     constexpr auto members = reflect_members<T>();
     const auto* base = reinterpret_cast<const char*>(&obj);
     for (auto& m : members) {
@@ -461,7 +576,135 @@ template <typename T> std::vector<char> auto_serialize(const T& obj) {
 
 // ── auto_deserialize<T> — binary deserialization (stub) ──
 
-template <typename T> T auto_deserialize(const std::vector<char>& buf, std::size_t& pos) {
+// Issue #215: Single dispatching template that handles flat
+// structs, vector<T>, optional<T>, variant<Ts...>, and
+// array<T, N> based on T's traits. The user passes T
+// explicitly and gets back a T.
+
+// Forward declarations (Issue #215): the inner dispatcher
+// and struct path are defined later; the container
+// overloads below use them via these declarations.
+template <typename T>
+T auto_deserialize_inner(const std::vector<char>& buf, std::size_t& pos);
+
+template <typename T>
+T auto_deserialize_struct(const std::vector<char>& buf, std::size_t& pos);
+
+// std::vector<T> overload — reads size + elements (recursive)
+template <typename T>
+std::vector<T> auto_deserialize_vec(const std::vector<char>& buf, std::size_t& pos) {
+    std::uint32_t sz;
+    std::memcpy(&sz, &buf[pos], 4);
+    pos += 4;
+    std::vector<T> result;
+    if constexpr (std::is_trivially_copyable_v<T>) {
+        result.resize(sz);
+        if (sz > 0)
+            std::memcpy(result.data(), &buf[pos], sz * sizeof(T));
+        pos += sz * sizeof(T);
+    } else {
+        result.reserve(sz);
+        for (std::uint32_t i = 0; i < sz; ++i) {
+            result.push_back(auto_deserialize_inner<T>(buf, pos));
+        }
+    }
+    return result;
+}
+
+// std::array<T, N> overload
+template <typename T, std::size_t N>
+std::array<T, N> auto_deserialize_arr(const std::vector<char>& buf, std::size_t& pos) {
+    std::array<T, N> result;
+    if constexpr (std::is_trivially_copyable_v<T>) {
+        if (N > 0)
+            std::memcpy(result.data(), &buf[pos], N * sizeof(T));
+        pos += N * sizeof(T);
+    } else {
+        for (std::size_t i = 0; i < N; ++i) {
+            result[i] = auto_deserialize_inner<T>(buf, pos);
+        }
+    }
+    return result;
+}
+
+// std::optional<T> overload
+template <typename T>
+std::optional<T> auto_deserialize_opt(const std::vector<char>& buf, std::size_t& pos) {
+    char has_value = buf[pos++];
+    if (!has_value) return std::nullopt;
+    if constexpr (std::is_trivially_copyable_v<T> && !is_std_string_v<T>) {
+        T val;
+        std::memcpy(&val, &buf[pos], sizeof(T));
+        pos += sizeof(T);
+        return val;
+    } else {
+        return auto_deserialize_inner<T>(buf, pos);
+    }
+}
+
+// std::variant<Ts...> overload
+template <std::size_t I, typename... Ts>
+std::variant<Ts...> auto_deserialize_variant_at(const std::vector<char>& buf,
+                                                  std::size_t& pos,
+                                                  std::uint32_t idx) {
+    if constexpr (I < sizeof...(Ts)) {
+        using CurT = std::variant_alternative_t<I, std::variant<Ts...>>;
+        if (I == idx) {
+            if constexpr (std::is_trivially_copyable_v<CurT> && !is_std_string_v<CurT>) {
+                CurT val;
+                std::memcpy(&val, &buf[pos], sizeof(CurT));
+                pos += sizeof(CurT);
+                return val;
+            } else {
+                return auto_deserialize_inner<CurT>(buf, pos);
+            }
+        } else {
+            return auto_deserialize_variant_at<I + 1, Ts...>(buf, pos, idx);
+        }
+    } else {
+        return std::variant<Ts...>{};
+    }
+}
+template <typename... Ts>
+std::variant<Ts...> auto_deserialize_var(const std::vector<char>& buf,
+                                          std::size_t& pos) {
+    std::uint32_t idx;
+    std::memcpy(&idx, &buf[pos], 4);
+    pos += 4;
+    return auto_deserialize_variant_at<0, Ts...>(buf, pos, idx);
+}
+
+// Inner dispatcher — given an element type T (could be int,
+// string, struct, etc.), produce a T. The top-level
+// auto_deserialize<T> routes container types to the
+// per-container overloads above; this dispatcher handles
+// the element types.
+template <typename T>
+T auto_deserialize_inner(const std::vector<char>& buf, std::size_t& pos) {
+    if constexpr (is_std_string_v<T>) {
+        std::uint32_t len;
+        std::memcpy(&len, &buf[pos], 4);
+        pos += 4;
+        T val;
+        // Use buf.data() + offset instead of &buf[pos+len]
+        // — the latter triggers operator[] bounds check
+        val.assign(buf.data() + pos, len);
+        pos += len;
+        return val;
+    } else if constexpr (std::is_trivially_copyable_v<T>) {
+        T val{};
+        std::memcpy(&val, &buf[pos], sizeof(T));
+        pos += sizeof(T);
+        return val;
+    } else {
+        // For complex element types, fall through to the
+        // member-based path (assumes T is a flat struct)
+        return auto_deserialize_struct<T>(buf, pos);
+    }
+}
+
+// Member-based struct path (POD flat structs)
+template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, std::size_t& pos) {
     T obj{};
     constexpr auto members = reflect_members<T>();
     auto* base = reinterpret_cast<char*>(&obj);
@@ -522,6 +765,50 @@ template <typename T> T auto_deserialize(const std::vector<char>& buf, std::size
         }
     }
     return obj;
+}
+
+// ── Top-level dispatcher for auto_deserialize (Issue #215) ──
+//
+// Single template that dispatches on T's traits:
+//   - std::vector<T_elem>  → auto_deserialize_vec<T_elem>
+//   - std::array<T, N>     → auto_deserialize_arr<T>
+//   - std::optional<T>     → auto_deserialize_opt<T>
+//   - std::variant<Ts...>  → auto_deserialize_var<Ts...>
+//   - flat struct          → auto_deserialize_struct<T>
+//   - scalar/string        → auto_deserialize_inner<T>
+namespace detail {
+
+// Variant dispatch helper. Expands the variant's
+// alternative types into a parameter pack and calls
+// auto_deserialize_var.
+template <typename Variant, std::size_t... Is>
+Variant auto_deserialize_variant_impl(const std::vector<char>& buf,
+                                        std::size_t& pos,
+                                        std::index_sequence<Is...>) {
+    return auto_deserialize_var<typename std::variant_alternative_t<Is, Variant>...>(buf, pos);
+}
+
+} // namespace detail
+
+template <typename T>
+T auto_deserialize(const std::vector<char>& buf, std::size_t& pos) {
+    if constexpr (is_std_vector_v<T>) {
+        using Inner = typename T::value_type;
+        return auto_deserialize_vec<Inner>(buf, pos);
+    } else if constexpr (is_std_array_v<T>) {
+        using Inner = typename T::value_type;
+        constexpr std::size_t N = std::tuple_size_v<T>;
+        return auto_deserialize_arr<Inner, N>(buf, pos);
+    } else if constexpr (is_std_optional_v<T>) {
+        using Inner = typename T::value_type;
+        return auto_deserialize_opt<Inner>(buf, pos);
+    } else if constexpr (is_std_variant_v<T>) {
+        constexpr std::size_t N = std::variant_size_v<T>;
+        return detail::auto_deserialize_variant_impl<T>(
+            buf, pos, std::make_index_sequence<N>{});
+    } else {
+        return auto_deserialize_inner<T>(buf, pos);
+    }
 }
 
 template <typename T> T auto_deserialize(const std::vector<char>& buf) {
@@ -648,20 +935,6 @@ private:
     std::size_t pos_ = 0;
 };
 
-
-// ── Type traits for container detection ───────────────────────-
-
-template <typename T> struct is_std_string : std::false_type {};
-template <> struct is_std_string<std::string> : std::true_type {};
-template <typename T> constexpr bool is_std_string_v = is_std_string<T>::value;
-
-template <typename T> struct is_std_vector : std::false_type {};
-template <typename T, typename A> struct is_std_vector<std::vector<T, A>> : std::true_type {};
-template <typename T> constexpr bool is_std_vector_v = is_std_vector<T>::value;
-
-template <typename T> struct is_std_array : std::false_type {};
-template <typename T, std::size_t N> struct is_std_array<std::array<T, N>> : std::true_type {};
-template <typename T> constexpr bool is_std_array_v = is_std_array<T>::value;
 
 template <typename T> struct always_false : std::false_type {};
 template <typename T> constexpr bool always_false_v = always_false<T>::value;
