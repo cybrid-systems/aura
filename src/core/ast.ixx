@@ -1562,7 +1562,14 @@ private:
     // future (after wrap-around at uint64_t max), but the
     // log size is monotonically non-decreasing within a
     // session.
-    std::size_t rollback_to_size(std::size_t checkpoint_size) {
+    std::size_t rollback_to_size(std::size_t checkpoint_size)
+        // Issue #213 follow-up: C++26 contract. The function
+        // is total — handles any checkpoint_size (including
+        // past the log end, in which case it's a no-op). The
+        // contract documents the semantic: result count
+        // is 0 when checkpoint_size >= log.size().
+        pre (true)
+    {
         if (mutation_log_.size() <= checkpoint_size) return 0;
         std::size_t count = 0;
         for (std::size_t i = mutation_log_.size(); i > checkpoint_size; --i) {

@@ -526,7 +526,15 @@ export TypeCheckResult type_check_flat_pure(
     const std::unordered_map<std::string, aura::core::TypeId>& sigs = {},
     const std::unordered_map<std::string, std::string>& module_src = {},
     bool strict = false,
-    std::uint64_t cache_epoch = 0);
+    std::uint64_t cache_epoch = 0)
+    // Issue #213 follow-up: C++26 contract. The function
+    // is total: it handles any `root` (including
+    // NULL_NODE — returns an invalid TypeId), any sigs /
+    // module_src maps (empty maps are the default). The
+    // only precondition is that `diag` is a live
+    // DiagnosticCollector (i.e. not moved-from). This is
+    // implicit at the language level.
+    pre (true);
 
 export struct TypeChecker {
     aura::core::TypeRegistry& types;

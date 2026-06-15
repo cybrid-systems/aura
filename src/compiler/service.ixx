@@ -3563,6 +3563,15 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         auto result =
             evaluator_.eval_flat(*current_ast_, *current_pool_, pr.root, evaluator_.top_env());
         if (!result) {
+            // Issue #213 follow-up: the eval failed (e.g. parse
+            // error in the mutate code itself). Mark the
+            // boundary as failed so the guard's destructor
+            // triggers the rollback path (Cycle 1: rolls back
+            // the MutationRecord log; Cycle 2: bumps version +
+            // invalidates defuse_index_). The sub-primitives
+            // that ran during eval_flat may have appended
+            // records that we want to undo.
+            boundary_success = false;
             return {0, false, result.error().message};
         }
         auto& val = *result;
@@ -3751,7 +3760,12 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             }
             return res;
         }
-        // If mutation returned 0/false, it indicates failure — transaction auto-rollbacks
+        // If mutation returned 0/false, it indicates failure — transaction auto-rollbacks.
+        // Issue #213 follow-up: mark the boundary as failed so
+        // the guard's destructor triggers the rollback path.
+        // The sub-primitives that ran during eval_flat may have
+        // appended records to the log; we want to undo them.
+        boundary_success = false;
         return {0, false, "mutation returned zero (failed)"};
     }
 
