@@ -1530,6 +1530,17 @@ public:
     // via the MutationRecord inverse (Issue #213 Cycle 1).
     // The lock is released by the unique_lock going out of scope.
     //
+    // Issue #213 Cycle 2 — version-bump invariant:
+    //   Both success and failure bump the version a second
+    //   time (legacy behavior: enter + exit = 2 bumps per
+    //   boundary). The bump is release-store so any pending
+    //   readers holding a snapshot from before the boundary
+    //   see a version mismatch and deopt. This invariant
+    //   matters for primitives that hold a snapshot across
+    //   the boundary (e.g. JIT-specialized L2 SHAPE_PAIR
+    //   paths) — they expect 2 bumps per boundary to know
+    //   the workspace was definitely mutated.
+    //
     // Issue #213 Cycle 1 — rollback path:
     //   1. Call workspace_flat_->rollback_to_size(cp.mutation_log_size)
     //      to walk the log in reverse and apply the inverse
@@ -1563,15 +1574,16 @@ public:
             // Invalidate the def-use index — the workspace state
             // is now different from what the index reflects.
             defuse_index_ = nullptr;
-            // Bump version again so readers holding the old
-            // snapshot see a mismatch.
-            defuse_version_.fetch_add(1, std::memory_order_release);
-            // Issue #189: bump the total-mutations counter for
-            // observability. Relaxed because it's stats-only.
-            // We bump it even on rollback so dashboards can see
-            // "the boundary attempted to mutate, then rolled back".
-            total_mutations_.fetch_add(1, std::memory_order_relaxed);
         }
+        // Bump version on both success and failure (legacy
+        // invariant: 2 bumps per boundary). The lock is
+        // released by the unique_lock going out of scope.
+        defuse_version_.fetch_add(1, std::memory_order_release);
+        // Issue #189: bump the total-mutations counter for
+        // observability. Relaxed because it's stats-only.
+        // We bump it even on rollback so dashboards can see
+        // "the boundary attempted to mutate, then rolled back".
+        total_mutations_.fetch_add(1, std::memory_order_relaxed);
         return cp;
     }
     // Get the current checkpoint stack depth (for testing /
