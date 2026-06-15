@@ -1481,12 +1481,16 @@ public:
     // mutate path, which is already mutex-protected; the
     // checkpoint capture is a single uint64_t read + push).
     //
-    // Current state: API surface only. The actual rollback
-    // (the "rollback_to_version" referenced in exit) is a
-    // follow-up that requires hooking into MutationRecord
-    // (#142) and the defuse_index_ restoration.
+    // Current state: API surface + the actual rollback path
+    // (Issue #213 Cycle 1). The checkpoint captures both the
+    // defuse_version_ and the mutation log size at entry; on
+    // exit_mutation_boundary(false), the log is rolled back to
+    // the checkpoint size, the defuse_index_ is invalidated,
+    // and the defuse_version_ is bumped again so any pending
+    // readers see the rolled-back state.
     struct MutationCheckpoint {
-        std::uint64_t version;  // defuse_version_ at boundary entry
+        std::uint64_t version;              // defuse_version_ at boundary entry
+        std::size_t mutation_log_size = 0;  // FlatAST::mutation_log_.size() at entry
     };
     // Per-fiber checkpoint stack. thread_local so concurrent
     // fibers each have their own stack (no cross-fiber pollution).
@@ -1506,7 +1510,15 @@ public:
     // on other threads).
     void enter_mutation_boundary() {
         std::unique_lock<std::shared_mutex> lock(workspace_mtx_);
-        g_mutation_stack.push_back({defuse_version_.load(std::memory_order_acquire)});
+        // Issue #213 Cycle 1: capture the mutation log size at
+        // entry so the exit(false) rollback knows how far to undo.
+        // The size is the log size *at the moment of the boundary
+        // entry* — any mutations recorded after this point (during
+        // the boundary body) will be appended to positions >=
+        // this size, and `rollback_to_size` will undo them.
+        std::size_t log_size = workspace_flat_ ? workspace_flat_->all_mutations().size() : 0;
+        g_mutation_stack.push_back(
+            {defuse_version_.load(std::memory_order_acquire), log_size});
         defuse_version_.fetch_add(1, std::memory_order_release);
         // Issue #189: bump the total-mutations counter for
         // observability. Relaxed because it's stats-only.
@@ -1514,19 +1526,52 @@ public:
     }
     // Exit a mutation boundary. Pops the checkpoint. If success
     // is true, the version advance is kept; if false, the
-    // checkpoint is returned (caller can use the version to
-    // roll back via the defuse_index_ restoration — TODO,
-    // follow-up). The lock is released by the unique_lock going
-    // out of scope.
+    // mutations recorded between enter and exit are rolled back
+    // via the MutationRecord inverse (Issue #213 Cycle 1).
+    // The lock is released by the unique_lock going out of scope.
+    //
+    // Issue #213 Cycle 1 — rollback path:
+    //   1. Call workspace_flat_->rollback_to_size(cp.mutation_log_size)
+    //      to walk the log in reverse and apply the inverse
+    //      mutation for each record beyond the checkpoint. The
+    //      inverse is computed by FlatAST::rollback(mutation_id):
+    //      - For field-level (int_val_/type_id_): restore the
+    //        old_value at the field_offset.
+    //      - For subtree-level: mark RolledBack and bump
+    //        generation. (The actual re-parse + re-attach is
+    //        done at a higher level by the rollback primitive
+    //        in the Aura surface layer; see ast.ixx:1488.)
+    //   2. Invalidate defuse_index_ so the next query rebuilds
+    //      it from the rolled-back state.
+    //   3. Bump defuse_version_ again (release-store) so any
+    //      pending readers holding a snapshot from before the
+    //      rollback see a version mismatch and deopt.
+    //   4. Bump total_mutations_ for observability.
     //
     // Returns the popped checkpoint (or {0} if the stack is
     // empty — a defensive fallback for unbalanced calls).
     MutationCheckpoint exit_mutation_boundary(bool success) {
-        (void)success;  // success's effect (rollback vs commit)
-                        // is a follow-up; today both are commits.
-        if (g_mutation_stack.empty()) return {0};
+        if (g_mutation_stack.empty()) return {0, 0};
         auto cp = g_mutation_stack.back();
         g_mutation_stack.pop_back();
+        if (!success && workspace_flat_) {
+            // Roll back the mutations that were appended between
+            // enter and exit. The log size captured at entry
+            // tells us how far to undo.
+            std::size_t rolled = workspace_flat_->rollback_to_size(cp.mutation_log_size);
+            (void)rolled;  // count is for debug; not exposed via the API
+            // Invalidate the def-use index — the workspace state
+            // is now different from what the index reflects.
+            defuse_index_ = nullptr;
+            // Bump version again so readers holding the old
+            // snapshot see a mismatch.
+            defuse_version_.fetch_add(1, std::memory_order_release);
+            // Issue #189: bump the total-mutations counter for
+            // observability. Relaxed because it's stats-only.
+            // We bump it even on rollback so dashboards can see
+            // "the boundary attempted to mutate, then rolled back".
+            total_mutations_.fetch_add(1, std::memory_order_relaxed);
+        }
         return cp;
     }
     // Get the current checkpoint stack depth (for testing /
