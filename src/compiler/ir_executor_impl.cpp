@@ -192,16 +192,17 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
             auto& instr = block.instructions[ii];
             auto& ops = instr.operands;
 
-            // ── Operand validation via kOpcodeInfo ─────────────────
-            if constexpr (true) {
-                auto idx = static_cast<std::size_t>(instr.opcode);
-                if (idx < std::size(kOpcodeInfo)) {
-                    auto& info = kOpcodeInfo[idx];
-                    if (info.has_result_slot && ops[0] >= locals.size()) {
-                        return std::unexpected(Diagnostic{
-                            ErrorKind::IRCorruption,
-                            std::format("{}: result slot {} out of bounds", info.name, ops[0])});
-                    }
+             // ── Operand validation via lookup_opcode ────────
+            // Issue #217 Cycle 4: replaced direct kOpcodeInfo[idx]
+            // access with the bounds-checked lookup_opcode helper
+            // (declared in ir.ixx). The helper handles the bounds
+            // check + array access in one call, returning nullptr
+            // for invalid opcodes.
+            if (auto* info = lookup_opcode(instr.opcode)) {
+                if (info->has_result_slot && ops[0] >= locals.size()) {
+                    return std::unexpected(Diagnostic{
+                        ErrorKind::IRCorruption,
+                        std::format("{}: result slot {} out of bounds", info->name, ops[0])});
                 }
             }
 
@@ -1087,11 +1088,12 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
 
             // ── Runtime type assertion (strict mode only) ─────────
             if (strict_mode_ && instr.type_id != 0) {
-                auto idx = static_cast<std::size_t>(instr.opcode);
-                bool has_result = idx < std::size(kOpcodeInfo) && kOpcodeInfo[idx].has_result_slot;
-                if (has_result) {
+                // Issue #217 Cycle 4: use lookup_opcode
+                // helper for the bounds check + access.
+                if (auto* info = lookup_opcode(instr.opcode);
+                    info && info->has_result_slot) {
                     auto rv = check_runtime_type(instr.type_id, locals[ops[0]],
-                                                 std::string(kOpcodeInfo[idx].name));
+                                                 std::string(info->name));
                     if (rv)
                         return std::unexpected(*rv);
                 }
