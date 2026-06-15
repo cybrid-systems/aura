@@ -52,14 +52,9 @@ static int g_failed = 0;
 
 // ── Local copies of IR types (Issue #217 Cycle 1 pilot) ──────
 //
-// We copy the IR type definitions into the test so the test
-// compiles independently of the aura.compiler.ir module
-// (which has many dependencies and would require a heavy
-// target). This is the same pattern as test_issue_214.cpp
-// (which copies a MathModule struct for testing).
-//
-// When the real migration ships (Cycle 2+), these local
-// copies will be replaced with `import aura.compiler.ir;`.
+// Cycle 3: These local copies are kept for the CYCLE 1
+// tests (which don't need the full module). A new Test 8
+// uses the REAL IR types imported from aura.compiler.ir.
 
 // From src/compiler/ir.ixx (subset — only the fields the
 // reflect_members / auto_serialize path needs).
