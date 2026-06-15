@@ -806,8 +806,20 @@ T auto_deserialize(const std::vector<char>& buf, std::size_t& pos) {
         constexpr std::size_t N = std::variant_size_v<T>;
         return detail::auto_deserialize_variant_impl<T>(
             buf, pos, std::make_index_sequence<N>{});
-    } else {
+    } else if constexpr (is_std_string_v<T> || std::is_arithmetic_v<T>) {
+        // Scalar/string element types: use the inner
+        // dispatcher (raw memcpy for POD, length-prefix
+        // for strings).
         return auto_deserialize_inner<T>(buf, pos);
+    } else {
+        // Flat struct (with reflectable members): use
+        // the member-based path. This is critical —
+        // auto_deserialize_inner would do a raw memcpy
+        // of sizeof(T) bytes including padding, but
+        // auto_serialize writes only the member bytes
+        // (skipping padding). The member-based path
+        // reads back exactly what was written.
+        return auto_deserialize_struct<T>(buf, pos);
     }
 }
 
