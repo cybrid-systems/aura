@@ -684,6 +684,156 @@ bool test_flatast_soa_columns() {
     return true;
 }
 
+// ── Test 16: NodeView production migration (Cycle 12) ───────
+//
+// Issue #217 Cycle 12: real NodeView in src/core/ast.ixx
+// has 12 fields covering the union of all AST node data:
+//   - POD scalars: id (NodeId=u32), tag (NodeTag=u32-enum),
+//     int_value (i64), float_value (f64), sym_id (SymId=u32),
+//     line (u32), col (u32), type_id (u32)
+//   - 3 span fields: children (span<const NodeId>),
+//     params (span<const SymId>), param_annotations
+//     (span<const NodeId>). Two of the three have
+//     identical element types (uint32_t) but different
+//     semantic meaning — the reflect path must
+//     distinguish them by FIELD, not by element type.
+//   - marker (SyntaxMarker=u8-enum)
+//
+// This test verifies the generic reflect path handles
+// the full NodeView shape. The struct below is a
+// hand-written copy of the production NodeView (same
+// field names + types, same field order) — the real
+// NodeView can't be used directly here because
+// tests/test_issue_217.cpp is a small standalone TU
+// that doesn't import the aura.core.ast module.
+//
+// If this test passes, the production NodeView in
+// src/core/ast.ixx can be auto_serialize'd /
+// auto_deserialize'd without any custom overloads
+// (the reflect path sees all 12 fields automatically).
+// The actual production migration (adding a
+// `NodeView astdoc::reflect::auto_deserialize<NodeView>(buf, pos)`
+// call site in cache_reflect.cpp or similar) is a
+// separate commit once the public API is confirmed.
+struct NodeViewFullLike {
+    std::uint32_t id = 0;
+    std::uint32_t tag = 0;  // NodeTag enum (uint32-backed)
+    std::int64_t int_value = 0;
+    double float_value = 0.0;
+    std::uint32_t sym_id = 0;  // SymId (uint32)
+    std::uint32_t line = 0;
+    std::uint32_t col = 0;
+    std::uint32_t type_id = 0;
+    std::span<const std::uint32_t> children;     // span<const NodeId>
+    std::span<const std::uint32_t> params;       // span<const SymId>
+    std::span<const std::uint32_t> param_annotations;  // span<const NodeId>
+    std::uint8_t marker = 0;  // SyntaxMarker enum (uint8-backed)
+};
+bool test_node_view_full() {
+    PRINTLN("\n--- Test 16: NodeView full (production shape) ---");
+    constexpr auto members = aura::reflect::reflect_members<NodeViewFullLike>();
+    std::println("NodeViewFullLike has {} members", members.size());
+    // 12 fields: 8 POD scalars + 3 spans + 1 enum-byte
+    CHECK(members.size() == 12, "NodeViewFullLike has 12 members");
+    // Verify all expected field names are found
+    const char* expected[] = {
+        "id", "tag", "int_value", "float_value", "sym_id",
+        "line", "col", "type_id", "children", "params",
+        "param_annotations", "marker"
+    };
+    for (auto& name : expected) {
+        bool found = false;
+        for (std::size_t i = 0; i < members.size(); ++i) {
+            if (members[i].name == name) { found = true; break; }
+        }
+        CHECK(found, name);
+    }
+    // Verify the 3 span fields all have elem_size = 4
+    // (uint32_t element type, regardless of semantic name)
+    for (std::size_t i = 0; i < members.size(); ++i) {
+        const auto& m = members[i];
+        if (m.name == "children" || m.name == "params" || m.name == "param_annotations") {
+            CHECK(m.kind == aura::reflect::MemberKind::Span,
+                  "span field kind");
+            CHECK(m.elem_size == sizeof(std::uint32_t),
+                  "span field elem_size = 4");
+        }
+    }
+
+    // Roundtrip test: all 12 fields populated
+    std::vector<std::uint32_t> children_data = {10, 20, 30};
+    std::vector<std::uint32_t> params_data = {100, 200, 300, 400};
+    std::vector<std::uint32_t> annot_data = {5, 6};
+
+    NodeViewFullLike original;
+    original.id = 42;
+    original.tag = 0x03;  // Call
+    original.int_value = 0xDEADBEEFCAFE0001LL;
+    original.float_value = 3.14159;
+    original.sym_id = 0xABCD;
+    original.line = 100;
+    original.col = 50;
+    original.type_id = 0x12345;
+    original.children = std::span<const std::uint32_t>(children_data.data(), children_data.size());
+    original.params = std::span<const std::uint32_t>(params_data.data(), params_data.size());
+    original.param_annotations = std::span<const std::uint32_t>(annot_data.data(), annot_data.size());
+    original.marker = 1;  // MacroIntroduced
+
+    std::vector<char> buf;
+    aura::reflect::auto_serialize(buf, original);
+    std::println("NodeViewFullLike serialized: {} bytes", buf.size());
+    // Cycle 12 format:
+    //   id (u32)            : 4
+    //   tag (u32)           : 4
+    //   int_value (i64)     : 8
+    //   float_value (f64)   : 8
+    //   sym_id (u32)        : 4
+    //   line (u32)          : 4
+    //   col (u32)           : 4
+    //   type_id (u32)       : 4
+    //   children span       : 4 + 3*4 = 16
+    //   params span         : 4 + 4*4 = 20
+    //   param_annotations   : 4 + 2*4 = 12
+    //   marker (u8)         : 1
+    //                       = 89 bytes
+    CHECK(buf.size() == 89, "buf size == 89 bytes");
+
+    std::size_t pos = 0;
+    auto rt = aura::reflect::auto_deserialize<NodeViewFullLike>(buf, pos);
+    CHECK(rt.id == 42, "id");
+    CHECK(rt.tag == 0x03, "tag");
+    CHECK(rt.int_value == 0xDEADBEEFCAFE0001LL, "int_value");
+    CHECK(rt.float_value == 3.14159, "float_value");
+    CHECK(rt.sym_id == 0xABCD, "sym_id");
+    CHECK(rt.line == 100, "line");
+    CHECK(rt.col == 50, "col");
+    CHECK(rt.type_id == 0x12345, "type_id");
+    // The 3 span fields must be deserialized with the
+    // CORRECT element counts (not just byte counts).
+    // Cycle 8 fix already handles this: the deserialize
+    // path divides byte_count by elem_size before storing
+    // it in the span's size field.
+    CHECK(rt.children.size() == 3, "children size == 3");
+    if (rt.children.size() == 3) {
+        CHECK(rt.children[0] == 10, "children[0]");
+        CHECK(rt.children[1] == 20, "children[1]");
+        CHECK(rt.children[2] == 30, "children[2]");
+    }
+    CHECK(rt.params.size() == 4, "params size == 4");
+    if (rt.params.size() == 4) {
+        CHECK(rt.params[0] == 100, "params[0]");
+        CHECK(rt.params[3] == 400, "params[3]");
+    }
+    CHECK(rt.param_annotations.size() == 2, "param_annotations size == 2");
+    if (rt.param_annotations.size() == 2) {
+        CHECK(rt.param_annotations[0] == 5, "param_annotations[0]");
+        CHECK(rt.param_annotations[1] == 6, "param_annotations[1]");
+    }
+    CHECK(rt.marker == 1, "marker");
+    CHECK(pos == buf.size(), "all bytes consumed");
+    return true;
+}
+
 bool test_reflect_opcode_info() {
     PRINTLN("\n--- Test 1: reflect_members<OpcodeInfo>() ---");
     constexpr auto members = aura::reflect::reflect_members<OpcodeInfo>();
@@ -851,6 +1001,7 @@ int main() {
     test_mutation_record_roundtrip();
     test_match_clause_info_roundtrip();
     test_flatast_soa_columns();
+    test_node_view_full();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
