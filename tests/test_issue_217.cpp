@@ -586,6 +586,104 @@ bool test_match_clause_info_roundtrip() {
     return true;
 }
 
+// ── Test 15: FlatAST-like SoA columns (Cycle 11) ───────────
+//
+// Issue #217 Cycle 11: FlatAST in src/core/ast.ixx stores
+// data in SoA (Structure of Arrays) columns for cache
+// locality (Issue #145). The SoA columns are PRIVATE
+// members of the FlatAST class, so the generic
+// reflect_members<T>() template can't see them. The
+// proper fix is a CUSTOM auto_serialize overload for
+// FlatAST that iterates the SoA columns explicitly
+// (deferred to a future cycle — see follow-ups).
+//
+// This test verifies the conceptual approach with a
+// FlatAST-like struct that has PUBLIC SoA columns.
+// The struct has 4 SoA columns: int_val_ (vector<int64_t>),
+// type_id_ (vector<uint32_t>), tag_ (vector<uint8_t>),
+// and string_val_ (vector<string>). All 4 should be
+// reflectable + roundtrippable.
+//
+// Cycle 11 also adds vector<string> support to the
+// generic reflect path. The POD-vector path
+// reinterpret_casts to vector<char>, which gives the
+// correct byte count for POD element types but produces
+// garbage for std::string (each string is separately
+// heap-allocated, so the vector's contiguous data is
+// just the string objects' internal memory, not the
+// string contents). The new special path detects
+// vector<string> via elem_size == sizeof(std::string)
+// and uses the length-prefixed string format
+// (u32 count + (u32 len + bytes) per string).
+struct FlatASTLikeSoA {
+    std::vector<std::int64_t> int_val_;
+    std::vector<std::uint32_t> type_id_;
+    std::vector<std::uint8_t> tag_;
+    std::vector<std::string> string_val_;
+};
+bool test_flatast_soa_columns() {
+    PRINTLN("\n--- Test 15: FlatAST-like SoA columns ---");
+    constexpr auto members = aura::reflect::reflect_members<FlatASTLikeSoA>();
+    std::println("FlatASTLikeSoA has {} members", members.size());
+    // 4 SoA columns: int_val_, type_id_, tag_, string_val_
+    CHECK(members.size() == 4, "FlatASTLikeSoA has 4 members");
+    bool found_int = false, found_type = false, found_tag = false, found_str = false;
+    for (std::size_t i = 0; i < members.size(); ++i) {
+        if (members[i].name == "int_val_") found_int = true;
+        if (members[i].name == "type_id_") found_type = true;
+        if (members[i].name == "tag_") found_tag = true;
+        if (members[i].name == "string_val_") found_str = true;
+    }
+    CHECK(found_int, "field 'int_val_' found");
+    CHECK(found_type, "field 'type_id_' found");
+    CHECK(found_tag, "field 'tag_' found");
+    CHECK(found_str, "field 'string_val_' found");
+
+    // Roundtrip test: all 4 columns populated
+    FlatASTLikeSoA original;
+    original.int_val_ = {0xCAFE0001, 0xCAFE0002, 0xCAFE0003};
+    original.type_id_ = {101, 102};
+    original.tag_ = {1, 2, 3, 4, 5};
+    original.string_val_ = {"hello", "world"};
+
+    std::vector<char> buf;
+    aura::reflect::auto_serialize(buf, original);
+    std::println("FlatASTLikeSoA serialized: {} bytes", buf.size());
+    // Cycle 11 format:
+    //   int_val_   (vector<int64_t>):  4 + 3*8 = 28 bytes
+    //   type_id_   (vector<uint32_t>): 4 + 2*4 = 12 bytes
+    //   tag_       (vector<uint8_t>):  4 + 5*1 =  9 bytes
+    //   string_val_ (vector<string>):   4 + (4+5) + (4+5) = 22 bytes
+    //                                 = 71 bytes total
+    CHECK(buf.size() == 71, "buf size == 71 bytes");
+
+    std::size_t pos = 0;
+    auto rt = aura::reflect::auto_deserialize<FlatASTLikeSoA>(buf, pos);
+    CHECK(rt.int_val_.size() == 3, "int_val_ size == 3");
+    if (rt.int_val_.size() == 3) {
+        CHECK(rt.int_val_[0] == 0xCAFE0001, "int_val_[0]");
+        CHECK(rt.int_val_[1] == 0xCAFE0002, "int_val_[1]");
+        CHECK(rt.int_val_[2] == 0xCAFE0003, "int_val_[2]");
+    }
+    CHECK(rt.type_id_.size() == 2, "type_id_ size == 2");
+    if (rt.type_id_.size() == 2) {
+        CHECK(rt.type_id_[0] == 101, "type_id_[0]");
+        CHECK(rt.type_id_[1] == 102, "type_id_[1]");
+    }
+    CHECK(rt.tag_.size() == 5, "tag_ size == 5");
+    if (rt.tag_.size() == 5) {
+        CHECK(rt.tag_[0] == 1, "tag_[0]");
+        CHECK(rt.tag_[4] == 5, "tag_[4]");
+    }
+    CHECK(rt.string_val_.size() == 2, "string_val_ size == 2");
+    if (rt.string_val_.size() == 2) {
+        CHECK(rt.string_val_[0] == "hello", "string_val_[0]");
+        CHECK(rt.string_val_[1] == "world", "string_val_[1]");
+    }
+    CHECK(pos == buf.size(), "all bytes consumed");
+    return true;
+}
+
 bool test_reflect_opcode_info() {
     PRINTLN("\n--- Test 1: reflect_members<OpcodeInfo>() ---");
     constexpr auto members = aura::reflect::reflect_members<OpcodeInfo>();
@@ -752,6 +850,7 @@ int main() {
     test_span_uint32_roundtrip();
     test_mutation_record_roundtrip();
     test_match_clause_info_roundtrip();
+    test_flatast_soa_columns();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);

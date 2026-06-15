@@ -624,13 +624,36 @@ void auto_serialize(std::vector<char>& buf, const T& obj) {
                 break;
             }
             case MemberKind::Vector: {
-                // Write vector: size (as u32) + raw elements
-                auto& vec = *reinterpret_cast<const std::vector<char>*>(field);
-                uint32_t sz = static_cast<uint32_t>(vec.size());
-                buf.insert(buf.end(), reinterpret_cast<char*>(&sz),
-                           reinterpret_cast<char*>(&sz) + 4);
-                if (!vec.empty())
-                    buf.insert(buf.end(), vec.data(), vec.data() + vec.size());
+                // Issue #217 Cycle 11: vector<string> special path.
+                // The POD-vector path below reinterpret_casts to
+                // vector<char>, which gives the byte count correctly
+                // for POD element types but produces garbage for
+                // std::string (each string is separately heap-allocated,
+                // so the vector's contiguous data is just the string
+                // objects' internal memory, not the string contents).
+                // Detect by elem_size == sizeof(std::string).
+                if (m.elem_size == sizeof(std::string)) {
+                    auto& vec = *reinterpret_cast<const std::vector<std::string>*>(field);
+                    uint32_t count = static_cast<uint32_t>(vec.size());
+                    buf.insert(buf.end(), reinterpret_cast<char*>(&count),
+                               reinterpret_cast<char*>(&count) + 4);
+                    for (const auto& s : vec) {
+                        uint32_t len = static_cast<uint32_t>(s.size());
+                        buf.insert(buf.end(), reinterpret_cast<char*>(&len),
+                                   reinterpret_cast<char*>(&len) + 4);
+                        if (!s.empty())
+                            buf.insert(buf.end(), s.data(), s.data() + s.size());
+                    }
+                } else {
+                    // POD-vector path: reinterpret as vector<char>
+                    // so vec.size() gives the byte count.
+                    auto& vec = *reinterpret_cast<const std::vector<char>*>(field);
+                    uint32_t sz = static_cast<uint32_t>(vec.size());
+                    buf.insert(buf.end(), reinterpret_cast<char*>(&sz),
+                               reinterpret_cast<char*>(&sz) + 4);
+                    if (!vec.empty())
+                        buf.insert(buf.end(), vec.data(), vec.data() + vec.size());
+                }
                 break;
             }
             case MemberKind::Other:
@@ -876,12 +899,45 @@ template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, st
                 break;
             }
             case MemberKind::Vector: {
-                uint32_t sz;
-                std::memcpy(&sz, &buf[pos], 4);
-                pos += 4;
-                auto& vec = *reinterpret_cast<std::vector<char>*>(field);
-                vec.assign(&buf[pos], &buf[pos + sz]);
-                pos += sz;
+                // Issue #217 Cycle 11: vector<string> special path
+                // (mirror of the serialize side). For POD element
+                // types, the data is contiguous raw bytes. For
+                // vector<string>, each string is length-prefixed
+                // and the count precedes the list.
+                if (m.elem_size == sizeof(std::string)) {
+                    uint32_t count;
+                    std::memcpy(&count, &buf[pos], 4);
+                    pos += 4;
+                    auto& vec = *reinterpret_cast<std::vector<std::string>*>(field);
+                    vec.clear();
+                    vec.reserve(count);
+                    for (uint32_t i = 0; i < count; ++i) {
+                        uint32_t len;
+                        std::memcpy(&len, &buf[pos], 4);
+                        pos += 4;
+                        // Issue #217 Cycle 11 fix: use
+                        // buf.data() + offset for the
+                        // one-past-the-end iterator instead
+                        // of &buf[pos + len]. &buf[N] calls
+                        // operator[] which asserts when N >=
+                        // buf.size(). For string fields
+                        // that end exactly at the buf
+                        // boundary (e.g. the LAST member of
+                        // a struct), this asserts even
+                        // though we want a valid
+                        // one-past-the-end iterator.
+                        std::string s(buf.data() + pos, len);
+                        pos += len;
+                        vec.push_back(std::move(s));
+                    }
+                } else {
+                    uint32_t sz;
+                    std::memcpy(&sz, &buf[pos], 4);
+                    pos += 4;
+                    auto& vec = *reinterpret_cast<std::vector<char>*>(field);
+                    vec.assign(&buf[pos], &buf[pos + sz]);
+                    pos += sz;
+                }
                 break;
             }
             case MemberKind::Other:
