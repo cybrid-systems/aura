@@ -109,7 +109,9 @@ bool test_fiber_yield() {
     });
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_1 = wait_for_atomic(counter, 111);
     sched.stop();
     t.join();
 
@@ -140,7 +142,9 @@ bool test_multi_fiber_parallel() {
     }
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_2 = wait_for_atomic(completed, NUM_FIBERS);
     sched.stop();
     t.join();
 
@@ -206,7 +210,9 @@ bool test_worker_distribution() {
     }
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_3 = wait_for_atomic(completed, 16);
     sched.stop();
     t.join();
 
@@ -237,7 +243,9 @@ bool test_fiber_spawns_fiber() {
     });
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_4 = wait_for_atomic(counter, 11);
     sched.stop();
     t.join();
 
@@ -418,7 +426,9 @@ bool test_load_aware_distribution() {
     }
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_5 = wait_for_atomic(completed, 40);
     sched.stop();
     t.join();
 
@@ -652,7 +662,9 @@ bool test_mixed_cpu_io() {
     }
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_6 = wait_for_atomic(cpu_done, 20);
     sched.stop();
     t.join();
 
@@ -716,7 +728,9 @@ bool test_auto_worker_count() {
     }
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_7 = wait_for_atomic(completed, 20);
     sched.stop();
     t.join();
 
@@ -837,7 +851,9 @@ bool test_metrics_disabled() {
     }
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_8 = wait_for_atomic(completed, 10);
     sched.stop();
     t.join();
 
@@ -866,7 +882,9 @@ bool test_metrics_post_run() {
     }
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_9 = wait_for_atomic(completed, N);
     sched.stop();
     t.join();
 
@@ -945,7 +963,9 @@ bool test_single_worker() {
     }
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_10 = wait_for_atomic(completed, 20);
     sched.stop();
     t.join();
 
@@ -1269,7 +1289,9 @@ bool test_round_robin_fallback() {
     }
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_11 = wait_for_atomic(completed, 8);
     sched.stop();
     t.join();
 
@@ -1298,7 +1320,9 @@ bool test_exec_adapter_basic() {
     op.start();
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_12 = wait_for_atomic(ran, 1);
     sched.stop();
     t.join();
 
@@ -1330,7 +1354,9 @@ bool test_exec_when_all() {
     op.start();
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_13 = wait_for_atomic(counter, N);
     sched.stop();
     t.join();
 
@@ -1366,7 +1392,9 @@ bool test_exec_let_value() {
     op.start();
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_14 = wait_for_atomic(stage, 111);
     sched.stop();
     t.join();
 
@@ -1566,7 +1594,9 @@ bool test_exec_multi_when_all() {
     auto o3 = std::move(s3).connect(aura::exec::fiber_receiver{}); o3.start();
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_15 = wait_for_atomic(total, 15);
     sched.stop();
     t.join();
 
@@ -1599,7 +1629,9 @@ bool test_exec_mixed_schedule() {
     auto ow = std::move(ws).connect(aura::exec::fiber_receiver{}); ow.start();
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_16 = wait_for_atomic(solo, 2);
     sched.stop();
     t.join();
 
@@ -1684,7 +1716,9 @@ bool test_yield_reason_tracking() {
     });
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_17 = wait_for_atomic(stage, 4);
     sched.stop();
     t.join();
 
@@ -1744,7 +1778,9 @@ bool test_yield_explicit_state() {
     });
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_18 = wait_for_atomic(counter, 11);
     sched.stop();
     t.join();
 
@@ -1792,7 +1828,9 @@ bool test_yield_reason_chain() {
     });
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_19 = wait_for_atomic(stage, 4);
     sched.stop();
     t.join();
 
@@ -1825,7 +1863,9 @@ bool test_yield_mixed_reasons() {
     }
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_20 = wait_for_atomic(stealable_count, 5);
     sched.stop();
     t.join();
 
@@ -1896,7 +1936,9 @@ bool test_metrics_reset() {
     });
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_21 = wait_for_atomic(done, 1);
     sched.stop();
     t.join();
 
@@ -1992,7 +2034,9 @@ bool test_metrics_mixed_workload() {
         });
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_22 = wait_for_atomic(cpu_done, 10);
     sched.stop();
     t.join();
 
@@ -2043,7 +2087,9 @@ bool test_metrics_multiple_queries() {
     sched.spawn([&done]() { done.fetch_add(1); });
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_23 = wait_for_atomic(done, 1);
     sched.stop();
     t.join();
 
@@ -2072,7 +2118,9 @@ bool test_metrics_no_workers() {
     sched.spawn([&done]() { done.fetch_add(1); });
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_24 = wait_for_atomic(done, 1);
     sched.stop();
     t.join();
 
@@ -2115,7 +2163,9 @@ bool test_metrics_consistency() {
     }
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_25 = wait_for_atomic(completed, N);
     sched.stop();
     t.join();
 
@@ -2198,7 +2248,9 @@ bool test_incr_cache_populated() {
     });
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_26 = wait_for_atomic(ran, 1);
     sched.stop();
     t.join();
 
@@ -2225,7 +2277,9 @@ bool test_incr_mark_dirty_clears_cache() {
     sched.spawn([&done]() { done.store(1); });
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_27 = wait_for_atomic(done, 1);
     sched.stop();
     t.join();
 
@@ -2252,7 +2306,9 @@ bool test_incr_clear_dirty_preserves_cache() {
     });
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_28 = wait_for_atomic(done, 1);
     sched.stop();
     t.join();
 
@@ -2282,7 +2338,9 @@ bool test_incr_repeated_spawn() {
         });
 
         std::thread t([&sched]() { sched.run(); });
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        // Issue: replaced fixed sleep_for with wait_for_atomic
+        // for robustness under CPU load (5s deadline vs 2-3s fixed).
+        bool _wait_ok_29 = wait_for_atomic(done, 1);
         sched.stop();
         t.join();
 
@@ -2527,7 +2585,9 @@ bool test_fiber_affinity() {
     }, 0);
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_30 = wait_for_atomic(completed, 1);
     sched.stop();
     t.join();
 
@@ -2561,7 +2621,9 @@ bool test_steal_skips_pinned() {
     }, 1);
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_31 = wait_for_atomic(completed_a, 1);
     sched.stop();
     t.join();
 
@@ -2623,7 +2685,9 @@ bool test_scheduler_pin_primitive() {
     CHECK(fb2->affinity() == -1, "unpinned fiber has no affinity");
 
     std::thread t([&sched]() { sched.run(); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_32 = wait_for_atomic(completed, 1);
     sched.stop();
     t.join();
 
@@ -2684,7 +2748,9 @@ bool test_gc_safepoint_all_stop() {
     can_proceed.store(true, std::memory_order_release);
 
     // Let fibers finish
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_33 = wait_for_atomic(fibers_done, N);
     sched.stop();
     t.join();
 
@@ -2839,7 +2905,9 @@ bool test_gc_safepoint_stress() {
             sched.resume_from_gc();
     }
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_34 = wait_for_atomic(fibers_done, N);
     sched.stop();
     t.join();
 
@@ -3036,7 +3104,7 @@ bool test_gc_root_no_sources() {
     gc->request();
     gc->collect();
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
     sched.stop();
     t.join();
 
@@ -3078,7 +3146,10 @@ bool test_gc_root_unregister_source() {
     gc->request();
     gc->collect();
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    // Note: this is a function-call result, not a std::atomic
+    // member. wait_for_atomic requires a member access. Keep
+    // the original sleep_for here.
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
     sched.stop();
     t.join();
 
@@ -3122,7 +3193,7 @@ bool test_gc_root_large_set() {
     gc->request();
     gc->collect();
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
     sched.stop();
     t.join();
 
@@ -3301,7 +3372,9 @@ bool test_gc_safepoint_spawn_during_gc() {
     CHECK(arrived, "fibers reached safepoint");
 
     sched.resume_from_gc();
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    // Issue: replaced fixed sleep_for with wait_for_atomic
+    // for robustness under CPU load (5s deadline vs 2-3s fixed).
+    bool _wait_ok_38 = wait_for_atomic(fc, 2);
     sched.stop();
     t.join();
 
