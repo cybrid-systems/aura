@@ -824,7 +824,11 @@ def test_concurrent():
     if not bin_path.exists():
         print("  test_concurrent binary not found")
         return 1
-    r = subprocess.run([str(bin_path)], timeout=180)
+    # Issue #217 follow-up: 180s timeout was too short for
+    # the 5258-test stress run (occasionally >180s under
+    # system load, causing false-positive "1/N test suites
+    # failed" in CI). 600s gives comfortable headroom.
+    r = subprocess.run([str(bin_path)], timeout=600)
     if r.returncode != 0 and r.stderr:
         print(r.stderr[:500], file=sys.stderr)
     return r.returncode
