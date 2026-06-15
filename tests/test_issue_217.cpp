@@ -170,6 +170,83 @@ bool test_opcode_info_str_roundtrip() {
     CHECK(rt.has_result_slot == true, "has_result_slot roundtrips");
     return true;
 }
+
+// ── Test 9: AST SourceLocation roundtrip (Issue #217 Cycle 5) ──
+//
+// The simplest AST type: SourceLocation has 3 uint32 fields.
+// reflect_members + auto_serialize/auto_deserialize should
+// work out of the box.
+struct SourceLocation {
+    std::uint32_t line = 0, column = 0, file = 0;
+};
+bool test_source_location_roundtrip() {
+    PRINTLN("\n--- Test 9: AST SourceLocation roundtrip ---");
+    constexpr auto members = aura::reflect::reflect_members<SourceLocation>();
+    std::println("SourceLocation has {} members", members.size());
+    CHECK(members.size() == 3, "SourceLocation has 3 members");
+    const char* expected[] = {"line", "column", "file"};
+    for (auto& e : expected) {
+        bool found = false;
+        for (std::size_t i = 0; i < members.size(); ++i) {
+            if (members[i].name == e) { found = true; break; }
+        }
+        CHECK(found, e);
+    }
+
+    SourceLocation original{42, 7, 1};
+    std::vector<char> buf;
+    aura::reflect::auto_serialize(buf, original);
+    std::println("SourceLocation serialized: {} bytes (3 * 4 = 12 expected)",
+                 buf.size());
+    CHECK(buf.size() == 12, "buf size == 12 bytes (3 uint32)");
+
+    std::size_t pos = 0;
+    auto rt = aura::reflect::auto_deserialize<SourceLocation>(buf, pos);
+    CHECK(rt.line == 42, "line roundtrips");
+    CHECK(rt.column == 7, "column roundtrips");
+    CHECK(rt.file == 1, "file roundtrips");
+    CHECK(pos == buf.size(), "all bytes consumed");
+    return true;
+}
+
+// ── Test 10: AST Patch roundtrip (Issue #217 Cycle 5) ────────
+//
+// Patch is an AI mutation descriptor (3 POD fields). Similar
+// to SourceLocation, the reflection should work directly.
+struct Patch {
+    std::uint32_t node = 0;
+    std::uint32_t field_offset = 0;
+    std::uint64_t new_value = 0;
+};
+bool test_patch_roundtrip() {
+    PRINTLN("\n--- Test 10: AST Patch roundtrip ---");
+    constexpr auto members = aura::reflect::reflect_members<Patch>();
+    std::println("Patch has {} members", members.size());
+    CHECK(members.size() == 3, "Patch has 3 members");
+    const char* expected[] = {"node", "field_offset", "new_value"};
+    for (auto& e : expected) {
+        bool found = false;
+        for (std::size_t i = 0; i < members.size(); ++i) {
+            if (members[i].name == e) { found = true; break; }
+        }
+        CHECK(found, e);
+    }
+
+    Patch original{100, 16, 0xDEADBEEFCAFE};
+    std::vector<char> buf;
+    aura::reflect::auto_serialize(buf, original);
+    std::println("Patch serialized: {} bytes", buf.size());
+    CHECK(!buf.empty(), "buf is non-empty");
+
+    std::size_t pos = 0;
+    auto rt = aura::reflect::auto_deserialize<Patch>(buf, pos);
+    CHECK(rt.node == 100, "node roundtrips");
+    CHECK(rt.field_offset == 16, "field_offset roundtrips");
+    CHECK(rt.new_value == 0xDEADBEEFCAFE, "new_value roundtrips");
+    CHECK(pos == buf.size(), "all bytes consumed");
+    return true;
+}
+
 bool test_reflect_opcode_info() {
     PRINTLN("\n--- Test 1: reflect_members<OpcodeInfo>() ---");
     constexpr auto members = aura::reflect::reflect_members<OpcodeInfo>();
@@ -330,6 +407,8 @@ int main() {
     test_kopcode_info_add();
     test_opcode_info_str_roundtrip();
     test_lookup_opcode_helper();
+    test_source_location_roundtrip();
+    test_patch_roundtrip();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
