@@ -399,6 +399,111 @@ bool test_span_uint32_roundtrip() {
     return true;
 }
 
+// ── Test 13: MutationRecord-like (5 std::string fields) ────
+//
+// Issue #217 Cycle 9: MutationRecord in src/core/ast.ixx
+// has 5 std::string fields (operator_name, old_type_str,
+// new_type_str, summary, old_subtree_source), 2 enum
+// fields (MutationStatus, InvariantStatus), and several
+// POD fields. This test verifies a struct with the same
+// shape roundtrips correctly.
+enum class MutationStatus : std::uint8_t {
+    Committed = 0,
+    RolledBack = 1,
+};
+enum class InvariantStatus : std::uint8_t {
+    NotChecked = 0,
+    Ok = 1,
+    Warnings = 2,
+    Violations = 3,
+};
+struct MutationRecordLike {
+    std::uint64_t mutation_id = 0;
+    std::uint64_t timestamp_ms = 0;
+    std::uint32_t target_node = 0;
+    std::string operator_name;
+    std::string old_type_str;
+    std::string new_type_str;
+    std::string summary;
+    MutationStatus status = MutationStatus::Committed;
+    std::uint32_t field_offset = 0;
+    std::uint64_t old_value = 0;
+    std::uint64_t new_value = 0;
+    bool has_rollback_data = false;
+    std::uint32_t parent_id = 0;
+    std::uint32_t child_idx = 0;
+    std::string old_subtree_source;
+    bool has_subtree_rollback = false;
+    InvariantStatus invariant_status = InvariantStatus::NotChecked;
+};
+bool test_mutation_record_roundtrip() {
+    PRINTLN("\n--- Test 13: MutationRecord-like (5 std::strings) ---");
+    constexpr auto members = aura::reflect::reflect_members<MutationRecordLike>();
+    std::println("MutationRecordLike has {} members", members.size());
+    // 17 fields total: 2 u64 + 4 u32 + 5 string + 2 enums + 3 bool-ish (has_rollback_data, has_subtree_rollback, ...)
+    CHECK(members.size() == 17, "MutationRecordLike has 17 members");
+    // Verify all 5 string fields are found
+    const char* expected_strings[] = {
+        "operator_name", "old_type_str", "new_type_str",
+        "summary", "old_subtree_source"
+    };
+    for (auto& e : expected_strings) {
+        bool found = false;
+        for (std::size_t i = 0; i < members.size(); ++i) {
+            if (members[i].name == e) { found = true; break; }
+        }
+        CHECK(found, e);
+    }
+
+    // Build a MutationRecord with all 5 strings populated
+    MutationRecordLike original;
+    original.mutation_id = 0xDEADBEEFCAFE0001;
+    original.timestamp_ms = 1700000000000;
+    original.target_node = 42;
+    original.operator_name = "replace-type";
+    original.old_type_str = "Int";
+    original.new_type_str = "Bool";
+    original.summary = "type changed from Int to Bool";
+    original.status = MutationStatus::Committed;
+    original.field_offset = 16;
+    original.old_value = 100;
+    original.new_value = 200;
+    original.has_rollback_data = true;
+    original.parent_id = 7;
+    original.child_idx = 2;
+    original.old_subtree_source = "(+ 1 2)";
+    original.has_subtree_rollback = true;
+    original.invariant_status = InvariantStatus::Ok;
+
+    std::vector<char> buf;
+    aura::reflect::auto_serialize(buf, original);
+    std::println("MutationRecordLike serialized: {} bytes", buf.size());
+    CHECK(!buf.empty(), "buf is non-empty");
+
+    // Full roundtrip
+    std::size_t pos = 0;
+    auto rt = aura::reflect::auto_deserialize<MutationRecordLike>(buf, pos);
+    CHECK(rt.mutation_id == 0xDEADBEEFCAFE0001, "mutation_id roundtrips");
+    CHECK(rt.timestamp_ms == 1700000000000, "timestamp_ms roundtrips");
+    CHECK(rt.target_node == 42, "target_node roundtrips");
+    CHECK(rt.operator_name == "replace-type", "operator_name roundtrips");
+    CHECK(rt.old_type_str == "Int", "old_type_str roundtrips");
+    CHECK(rt.new_type_str == "Bool", "new_type_str roundtrips");
+    CHECK(rt.summary == "type changed from Int to Bool", "summary roundtrips");
+    CHECK(rt.status == MutationStatus::Committed, "status roundtrips");
+    CHECK(rt.field_offset == 16, "field_offset roundtrips");
+    CHECK(rt.old_value == 100, "old_value roundtrips");
+    CHECK(rt.new_value == 200, "new_value roundtrips");
+    CHECK(rt.has_rollback_data == true, "has_rollback_data roundtrips");
+    CHECK(rt.parent_id == 7, "parent_id roundtrips");
+    CHECK(rt.child_idx == 2, "child_idx roundtrips");
+    CHECK(rt.old_subtree_source == "(+ 1 2)", "old_subtree_source roundtrips");
+    CHECK(rt.has_subtree_rollback == true, "has_subtree_rollback roundtrips");
+    CHECK(rt.invariant_status == InvariantStatus::Ok, "invariant_status roundtrips");
+    CHECK(pos == buf.size(), "all bytes consumed");
+    return true;
+}
+
 bool test_reflect_opcode_info() {
     PRINTLN("\n--- Test 1: reflect_members<OpcodeInfo>() ---");
     constexpr auto members = aura::reflect::reflect_members<OpcodeInfo>();
@@ -563,6 +668,7 @@ int main() {
     test_patch_roundtrip();
     test_span_field_roundtrip();
     test_span_uint32_roundtrip();
+    test_mutation_record_roundtrip();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
