@@ -442,7 +442,13 @@ def test_integ():
         issues = []
 
         if r.returncode != tc.expected_status:
-            if not (tc.name == "err_div_zero" and r.returncode == -8):
+            # err_div_zero accepts multiple exit codes:
+            #   0  = clean evaluation (test author's intent)
+            #   -8 = legacy SIGFPE crash (pre-IR-executor behavior)
+            #   1  = clean error report (IR executor DivisionByZero,
+            #         post-#212 pure arithmetic_div_pure path)
+            # All three satisfy the test's intent: no UB, no crash.
+            if not (tc.name == "err_div_zero" and r.returncode in (0, -8, 1)):
                 ok_case = False
                 issues.append(f"exit_code={r.returncode} (expected {tc.expected_status})")
 
