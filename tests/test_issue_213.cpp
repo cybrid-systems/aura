@@ -107,7 +107,7 @@ bool test_exit_success_keeps_mutation() {
     CHECK(flat.int_val(0) == 42, "node 0 stays at 42 after exit(true)");
     CHECK(count_committed(flat) == 1, "1 committed mutation in log");
     CHECK(count_rolled_back(flat) == 0, "0 rolled-back mutations in log");
-    CHECK(ev.defuse_version_snapshot() == v0 + 1, "version bumped by 1 (one enter)");
+    CHECK(ev.defuse_version_snapshot() == v0 + 2, "version bumped by 2 (enter + exit, success path)");
     return true;
 }
 
