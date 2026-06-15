@@ -3984,11 +3984,13 @@ target_sources(test_issue_212 PRIVATE
     src/compiler/constant_folding_impl.cpp
     src/compiler/type_checker_impl.cpp
     src/compiler/arity_impl.cpp
-    src/compiler/compute_kind_impl.cpp)
+    src/compiler/compute_kind_impl.cpp
+    tests/_stubs/issue_212_runtime_stubs.cpp)
 target_sources(test_issue_212 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
     src/core/type_arena.ixx src/core/type.ixx
     src/compiler/value.ixx
+    src/compiler/evaluator_pure.ixx
     src/compiler/diag.ixx
     src/compiler/ir.ixx
     src/compiler/compute_kind.ixx
@@ -3997,3 +3999,36 @@ target_sources(test_issue_212 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
     src/compiler/coercion_map.ixx
     src/compiler/type_checker.ixx
     src/compiler/pass_manager.ixx)
+
+# Issue #212 Phase 4: pure-function path benchmark.
+# Measures the perf cost of the pure-function extraction
+# (constant_folding + arithmetic_sum) vs the legacy Wrap
+# path. The benchmark runs in-process, <2s total, and
+# writes JSON to tests/bench_results/issue_212_bench.json.
+add_executable(issue_212_bench tests/bench/issue_212_bench.cpp)
+set_property(TARGET issue_212_bench PROPERTY CXX_MODULE_STD ON)
+target_include_directories(issue_212_bench PRIVATE src src/compiler)
+target_sources(issue_212_bench PRIVATE
+    src/core/ast_impl.cpp
+    src/core/type_impl.cpp
+    src/compiler/value_impl.cpp
+    src/compiler/constant_folding_impl.cpp
+    src/compiler/type_checker_impl.cpp
+    src/compiler/arity_impl.cpp
+    src/compiler/compute_kind_impl.cpp
+    tests/_stubs/issue_212_runtime_stubs.cpp)
+target_sources(issue_212_bench PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
+    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
+    src/core/type_arena.ixx src/core/type.ixx
+    src/compiler/value.ixx
+    src/compiler/evaluator_pure.ixx
+    src/compiler/diag.ixx
+    src/compiler/ir.ixx
+    src/compiler/compute_kind.ixx
+    src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
+    src/compiler/coercion_map.ixx
+    src/compiler/type_checker.ixx
+    src/compiler/pass_manager.ixx)
+target_link_libraries(issue_212_bench PRIVATE pthread stdc++ stdc++exp aura-reflect)
+add_test(NAME issue_212_bench COMMAND ./issue_212_bench)

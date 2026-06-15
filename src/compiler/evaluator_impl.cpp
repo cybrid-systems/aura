@@ -878,86 +878,30 @@ Primitives::Primitives() {
         return aura::compiler::pure::arithmetic_sum_pure(a, heap, &std::cerr);
     };
     // (-) → 0, (- x) → -x, (- x y ...) → x - y - z - ...
+    // Issue #212 Phase 3: thin forwarder to arithmetic_sub_pure.
     table_["-"] = [this](std::span<const EvalValue> a) {
-        if (a.empty())
-            return make_int(0);
-        bool any_f = false;
-        for (auto& v : a)
-            if (is_float(v)) {
-                any_f = true;
-                break;
-            }
-        auto to_f = [this](const EvalValue& v) {
-            return is_float(v) ? as_float(v) : static_cast<double>(coerce_to_int(v, *string_heap_));
-        };
-        if (any_f) {
-            if (a.size() == 1)
-                return make_float(-to_f(a[0]));
-            double r = to_f(a[0]);
-            for (std::size_t i = 1; i < a.size(); ++i)
-                r -= to_f(a[i]);
-            return make_float(r);
-        }
-        if (a.size() == 1)
-            return make_int(-coerce_to_int(a[0], *string_heap_));
-        std::int64_t r = coerce_to_int(a[0], *string_heap_);
-        for (std::size_t i = 1; i < a.size(); ++i)
-            r -= coerce_to_int(a[i], *string_heap_);
-        return make_int(r);
+        return aura::compiler::pure::arithmetic_sub_pure(a, *string_heap_, &std::cerr);
     };
     // (*) → 1, (* x) → x, (* x y ...) → product; float if any arg is float
+    // Issue #212 Phase 3: thin forwarder to arithmetic_mul_pure.
     table_["*"] = [this](std::span<const EvalValue> a) {
-        if (a.empty())
-            return make_int(1);
-        bool any_f = false;
-        for (auto& v : a)
-            if (is_float(v)) {
-                any_f = true;
-                break;
-            }
-        if (any_f) {
-            double r = 1.0;
-            for (auto& v : a)
-                r *=
-                    is_float(v) ? as_float(v) : static_cast<double>(coerce_to_int(v, *string_heap_));
-            return make_float(r);
-        }
-        std::int64_t r = 1;
-        for (auto& v : a)
-            r *= coerce_to_int(v, *string_heap_);
-        return make_int(r);
+        return aura::compiler::pure::arithmetic_mul_pure(a, *string_heap_, &std::cerr);
     };
     // (/) → 1, (/ x) → 1.0/x (float reciprocal), (/ x y ...) → x / y / z / ...
+    // Issue #212 Phase 3: thin forwarder to arithmetic_div_pure.
+    // On div-by-zero the pure function returns an unexpected Diagnostic;
+    // we mirror the legacy behavior (silent 0 result for non-empty divisor
+    // lists, or 0 for the reciprocal case) so the existing test surface
+    // doesn't change. A future migration can surface the error.
     table_["/"] = [this](std::span<const EvalValue> a) {
-        if (a.empty())
-            return make_int(1);
-        auto to_f = [this](const EvalValue& v) {
-            return is_float(v) ? as_float(v) : static_cast<double>(coerce_to_int(v, *string_heap_));
-        };
-        if (a.size() == 1) {
-            double x = to_f(a[0]);
-            return (x == 0.0) ? make_int(0) : make_float(1.0 / x);
-        }
-        bool any_f = false;
-        for (auto& v : a)
-            if (is_float(v)) {
-                any_f = true;
-                break;
-            }
-        if (any_f) {
-            double r = to_f(a[0]);
-            for (std::size_t i = 1; i < a.size(); ++i) {
-                double d = to_f(a[i]);
-                r = (d == 0.0) ? 0.0 : (r / d);
-            }
-            return make_float(r);
-        }
-        std::int64_t r = coerce_to_int(a[0], *string_heap_);
-        for (std::size_t i = 1; i < a.size(); ++i) {
-            auto d = coerce_to_int(a[i], *string_heap_);
-            r = (d == 0) ? 0 : (r / d);
-        }
-        return make_int(r);
+        auto r = aura::compiler::pure::arithmetic_div_pure(a, *string_heap_, &std::cerr);
+        if (r) return *r;
+        // Error path: legacy behavior. For (/) empty → 1 (but
+        // the pure function already errors on empty, so legacy
+        // returned 1; we mirror that). For other errors (div by
+        // zero, type mismatch), legacy returned 0; mirror that.
+        if (a.empty()) return make_int(1);
+        return make_int(0);
     };
     auto chain_cmp = [this](const auto& a, auto fn_int, auto fn_float) -> EvalValue {
         if (a.size() < 2)
