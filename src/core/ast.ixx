@@ -1549,6 +1549,32 @@ private:
         return count;
     }
 
+    // Issue #213 Cycle 1: rollback all mutations appended to
+    // the log after `checkpoint_size` (i.e. the log size at
+    // boundary entry). Walks the log in reverse from the end
+    // down to the checkpoint, calling `rollback` on each
+    // committed record. Returns the number of records that
+    // were successfully rolled back.
+    //
+    // Why size-based and not id-based: the log is append-only,
+    // so the log size at boundary entry is a stable handle.
+    // A mid-mutation `mutation_id` could be re-used in the
+    // future (after wrap-around at uint64_t max), but the
+    // log size is monotonically non-decreasing within a
+    // session.
+    std::size_t rollback_to_size(std::size_t checkpoint_size) {
+        if (mutation_log_.size() <= checkpoint_size) return 0;
+        std::size_t count = 0;
+        for (std::size_t i = mutation_log_.size(); i > checkpoint_size; --i) {
+            auto& rec = mutation_log_[i - 1];
+            if (rec.status == MutationStatus::Committed) {
+                if (rollback(rec.mutation_id))
+                    ++count;
+            }
+        }
+        return count;
+    }
+
     // ── Type ID access ─────────────────────────────────────────
 
     std::uint32_t type_id(NodeId id) const { return id < type_id_.size() ? type_id_[id] : 0; }
