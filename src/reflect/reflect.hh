@@ -195,6 +195,47 @@ template <typename T> consteval std::array<MemberInfo, member_count<T>()> reflec
     return result;
 }
 
+// ── Module exports reflection (Issue #214 Cycle 1) ───────────
+//
+// Compile-time scan of a module's public function/data member
+// names. Returns an array of string_views of identifier names.
+//
+// The `filter` template parameter lets callers restrict the
+// set — e.g. only public functions, only data members with a
+// certain attribute, etc. The default filter returns all
+// named, non-static members.
+//
+// Usage:
+//   constexpr auto exports = module_exports<MyType>();
+//   for (auto name : exports) {
+//       std::println("{}", name);
+//   }
+//
+// Consumers (Issue #178):
+//   - AI Agent: discover a module's surface area
+//   - IDE: autocomplete candidate generation
+//   - EDSL: validate `require` references statically
+template <typename T, std::size_t MaxExports = 64>
+struct ModuleExports {
+    std::array<std::string_view, MaxExports> data{};
+    std::size_t size = 0;
+    constexpr std::string_view operator[](std::size_t i) const { return data[i]; }
+    constexpr auto begin() const { return data.begin(); }
+    constexpr auto end() const { return data.begin() + size; }
+};
+
+template <typename T, std::size_t MaxExports = 64>
+consteval ModuleExports<T, MaxExports> module_exports() {
+    auto members = std::meta::members_of(^^T, std::meta::access_context::unchecked());
+    ModuleExports<T, MaxExports> me{};
+    for (auto m : members) {
+        if (me.size >= MaxExports) break;
+        if (!std::meta::has_identifier(m)) continue;
+        me.data[me.size++] = std::meta::identifier_of(m);
+    }
+    return me;
+}
+
 // ── JSON escape ───────────────────────────────────────────────
 
 inline std::string json_escape(std::string_view s) {

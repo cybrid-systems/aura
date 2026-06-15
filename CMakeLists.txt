@@ -4240,3 +4240,19 @@ target_sources(test_issue_213_panic_fiber PUBLIC FILE_SET CXX_MODULES BASE_DIRS 
     src/compiler/ffi_primitives.ixx
     src/compiler/type_checker.ixx)
 add_test(NAME issue_213_panic_fiber_verification COMMAND ./test_issue_213_panic_fiber)
+
+# Issue #214 Cycle 1: reflect_module_exports + stdlib source
+# scanner + query:module-exports primitive.
+#
+# Standalone C++ test (not linked into the Aura evaluator)
+# because the C++ side tests the compile-time reflection in
+# reflect.hh (requires -freflection flag, which the aura
+# target doesn't use). The Aura-side test (Test 4) shells
+# out to the ./build/aura binary.
+add_executable(test_issue_214 tests/test_issue_214.cpp)
+set_property(TARGET test_issue_214 PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_issue_214 PRIVATE src)
+target_compile_options(test_issue_214 PRIVATE -freflection -Wall)
+target_compile_features(test_issue_214 PUBLIC cxx_std_26)
+target_link_libraries(test_issue_214 PRIVATE stdc++ pthread)
+add_test(NAME issue_214_verification COMMAND ./test_issue_214)
