@@ -94,6 +94,34 @@ export enum class IROpcode : std::uint8_t {
     GuardShape,   // deopt guard: result, arg_slot, expected_shape, generic_block
 };
 
+// ── Issue #217 Cycle 3: IR types are reflection-ready ────────
+//
+// The IR types below (IRInstruction, OpcodeInfo, BasicBlock,
+// IRFunction, IRModule) are plain POD structs that the
+// C++26 P2996 reflection (reflect_members<T>()) sees
+// automatically — no explicit REFLECT_MEMBERS annotation
+// is required. The reflection-driven serialization
+// (auto_serialize<T>(buf, obj) / auto_deserialize<T>(buf,
+// pos)) works for these types out of the box.
+//
+// The migration scope per the issue body is:
+//   1. Add a serialization path that uses auto_serialize
+//      (currently the IR types are in-memory only; no
+//      hand-written serializers exist in this file).
+//   2. Replace the kOpcodeInfo[] table with a reflection-
+//      driven dispatch table (Cycle 4 of #217).
+//   3. Replace any AST type hand-written serializers
+//      in src/core/ast.ixx with auto_serialize
+//      (separate issue).
+//
+// The test in tests/test_issue_217.cpp verifies the
+// reflection infrastructure works for IR-shaped types
+// using local copies of these definitions (Cycle 1
+// pilot) + a Roundtrip test on the real types via
+// import (Test 8 — deferred to a future cycle because
+// the test target's module imports currently conflict
+// with arena.ixx's gc_hooks.h).
+
 export struct IRInstruction {
     IROpcode opcode;
     std::array<std::uint32_t, 4> operands = {};
