@@ -247,6 +247,68 @@ bool test_patch_roundtrip() {
     return true;
 }
 
+// ── Test 11: std::span field roundtrip (Issue #217 Cycle 6) ──
+//
+// NodeView in src/core/ast.ixx uses std::span<const NodeId>
+// for the children field. This test verifies a struct
+// with a span field roundtrips through the new
+// MemberKind::Span path.
+//
+// Note: std::span is non-owning. The deserialized span
+// points into the buf (no copy) — the caller must keep
+// the buf alive for the lifetime of the span. The test
+// verifies the data while the buf is still in scope.
+struct NodeViewLike {
+    std::uint32_t id = 0;
+    std::uint32_t tag = 0;
+    std::int64_t int_value = 0;
+    std::span<const char> children;
+};
+bool test_span_field_roundtrip() {
+    PRINTLN("\n--- Test 11: std::span field roundtrip ---");
+    constexpr auto members = aura::reflect::reflect_members<NodeViewLike>();
+    std::println("NodeViewLike has {} members", members.size());
+    CHECK(members.size() == 4, "NodeViewLike has 4 members");
+    bool found_children = false;
+    for (std::size_t i = 0; i < members.size(); ++i) {
+        if (members[i].name == "children") {
+            found_children = true;
+            std::println("  children kind = {}", (int)members[i].kind);
+        }
+    }
+    CHECK(found_children, "NodeViewLike has 'children' field");
+
+    // Build a span from a vector of char
+    std::vector<char> data = {'a', 'b', 'c', 'd', 'e'};
+    NodeViewLike original;
+    original.id = 42;
+    original.tag = 7;
+    original.int_value = 0xDEADBEEF;
+    original.children = std::span<const char>(data.data(), data.size());
+
+    std::vector<char> buf;
+    aura::reflect::auto_serialize(buf, original);
+    std::println("NodeViewLike serialized: {} bytes", buf.size());
+    // Expected: 4 (id) + 4 (tag) + 8 (int_value) +
+    //           4 (span size) + 5 (data) = 25 bytes
+    CHECK(buf.size() == 25, "buf size == 25 bytes (4+4+8+4+5)");
+
+    std::size_t pos = 0;
+    auto rt = aura::reflect::auto_deserialize<NodeViewLike>(buf, pos);
+    CHECK(rt.id == 42, "id roundtrips");
+    CHECK(rt.tag == 7, "tag roundtrips");
+    CHECK(rt.int_value == 0xDEADBEEF, "int_value roundtrips");
+    // The deserialized span points into buf (no copy).
+    // The data is still in scope (buf is alive).
+    CHECK(rt.children.size() == 5, "children size == 5");
+    if (rt.children.size() == 5) {
+        CHECK(rt.children[0] == 'a', "children[0] == 'a'");
+        CHECK(rt.children[4] == 'e', "children[4] == 'e'");
+    }
+    CHECK(pos == buf.size(), "all bytes consumed");
+    return true;
+}
+
 bool test_reflect_opcode_info() {
     PRINTLN("\n--- Test 1: reflect_members<OpcodeInfo>() ---");
     constexpr auto members = aura::reflect::reflect_members<OpcodeInfo>();
@@ -409,6 +471,7 @@ int main() {
     test_lookup_opcode_helper();
     test_source_location_roundtrip();
     test_patch_roundtrip();
+    test_span_field_roundtrip();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
