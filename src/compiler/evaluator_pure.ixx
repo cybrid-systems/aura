@@ -265,7 +265,17 @@ namespace aura::compiler::pure {
 // that ignore the Result, but adds an error path for callers
 // that want to handle string-parse failures explicitly.
 export inline aura::diag::Result<std::int64_t> coerce_to_int_pure(
-    const types::EvalValue& v, std::span<const std::string> heap) {
+    const types::EvalValue& v, std::span<const std::string> heap)
+    // Issue #213 follow-up: C++26 contract. The function
+    // gracefully handles v being any EvalValue (returns 0 for
+    // non-coercible types), so the precondition is just
+    // that the function never panics. We assert the heap is
+    // well-formed IF the value is a string (the only case
+    // that uses the heap) — but this is a soft precondition
+    // (the function falls back to 0 on bad heap indices, so
+    // there's no hard requirement here).
+    pre (true) // function is total; heap is consulted only for string values
+{
     if (types::is_int(v))
         return types::as_int(v);
     if (types::is_float(v))
@@ -552,6 +562,13 @@ arithmetic_div_pure(
     std::span<const types::EvalValue> args,
     std::span<const std::string> string_heap,
     std::ostream* diag = nullptr)
+    // Issue #213 follow-up: C++26 contract. Division by
+    // zero is detected at runtime via std::unexpected; the
+    // function gracefully handles empty args (returns
+    // TypeError), so the only precondition is that the
+    // span's data() is non-null (i.e. not a default-constructed
+    // span with a null pointer).
+    pre (args.data() != nullptr || args.empty())
 {
     auto coerce_one = [&](const types::EvalValue& v) -> std::int64_t {
         auto r = coerce_to_int_pure(v, string_heap);

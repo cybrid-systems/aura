@@ -6464,16 +6464,35 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
     // Parses new code INTO the existing workspace FlatAST, then redirects the old
     // Define's value reference to the newly parsed nodes. All pre-existing mutations
     // on other nodes are preserved.
+        // Issue #213 follow-up: migrate mutate:rebind to the
+    // MutationBoundaryGuard. The guard handles the version
+    // bump + lock; the panic_checkpoint mechanism stays as-is
+    // (it's a SEPARATE mechanism for panic recovery, not
+    // boundary rollback — see save_panic_checkpoint() docs
+    // in evaluator.ixx).
+    //
+    // The guard's `ok` flag handles PLANNED rollback (via
+    // MutationRecord inverse on exit(false)). The panic
+    // checkpoint handles PANIC recovery (restores the saved
+    // source if an exception is thrown during the body).
+    // Both can fire on the same call site (e.g. typecheck
+    // failure: guard rolls back the MutationRecord log +
+    // panic_checkpoint restores the source).
     primitives_.add("mutate:rebind", [this, mev](const auto& a) -> EvalValue {
-        if (workspace_read_only_) return mev("read-only", "workspace is read-only");
-        std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
+        bool ok = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(*this, &ok);
+        if (workspace_read_only_) { ok = false; return mev("read-only", "workspace is read-only"); }
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
-            !workspace_pool_)
+            !workspace_pool_) {
+            ok = false;
             return mev("bad-arg", "usage: (mutate:rebind name new-code-string [summary])");
+        }
         // Issue #141 AC: lazy COW — trigger clone on first mutate, not on switch.
         if (workspace_tree_) {
-            if (!trigger_lazy_cow(workspace_tree_))
+            if (!trigger_lazy_cow(workspace_tree_)) {
+                ok = false;
                 return mev("cow-refused", "COW refused: budget exceeded or read-only");
+            }
             // Re-read workspace_flat_/pool_ in case COW created a new local flat.
             void* new_flat = nullptr;
             void* new_pool = nullptr;
@@ -6484,8 +6503,10 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         }
         auto name_idx = as_string_idx(a[0]);
         auto code_idx = as_string_idx(a[1]);
-        if (name_idx >= string_heap_.size() || code_idx >= string_heap_.size())
+        if (name_idx >= string_heap_.size() || code_idx >= string_heap_.size()) {
+            ok = false;
             return mev("bad-arg", "string index out of range");
+        }
         auto& flat = *workspace_flat_;
         auto name = string_heap_[name_idx];
         // Phase 2.5.0: route via canonical_pool() (== workspace_pool, explicit).
@@ -6514,8 +6535,10 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 break;
             }
         }
-        if (old_define == aura::ast::NULL_NODE)
+        if (old_define == aura::ast::NULL_NODE) {
+            ok = false;
             return mev("not-found", std::string("function \"") + name + "\" not found in AST");
+        }
 
         // Parse new code INTO workspace flat (append mode). All new node IDs
         // are valid in the same FlatAST and can be cross-referenced.
@@ -6532,6 +6555,7 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             } else {
                 parse_err = "rebind code could not be parsed";
             }
+            ok = false;
             return mev("parse-error", parse_err);
         }
 
@@ -6541,8 +6565,10 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         auto root_v = flat.get(pr.root);
         if (root_v.tag == aura::ast::NodeTag::Define) {
             // New code is a full define — extract its value child
-            if (root_v.children.empty())
+            if (root_v.children.empty()) {
+                ok = false;
                 return mev("parse-error", "define form in rebind code has no body");
+            }
             new_value = root_v.child(0);
         }
 
@@ -6661,6 +6687,7 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         if (!last_mutate_error_.empty()) {
             if (panic_auto_rollback_ && had_checkpoint) {
                 restore_panic_checkpoint();
+                ok = false;
                 return mev("mutation-failed",
                            std::string(typeid(*this).name()) + ": mutation rejected — auto-rolled back: " +
                                last_mutate_error_);
@@ -7160,16 +7187,27 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
     // (mutate:set-body name-str new-body-code-str) — Replace function body by name
     // Finds (define (name params) ...) and replaces the Lambda body.
     // Parses new body INTO the workspace FlatAST so all node IDs are valid.
+        // Issue #213 follow-up: migrate mutate:set-body to the
+    // MutationBoundaryGuard. Same pattern as rebind: guard
+    // handles version-bump + lock + planned rollback;
+    // save_panic_checkpoint / restore_panic_checkpoint handle
+    // panic recovery (separately). The two mechanisms are
+    // complementary, not redundant.
     primitives_.add("mutate:set-body", [this, mev](const auto& a) -> EvalValue {
-        if (workspace_read_only_) return mev("read-only", "workspace is read-only");
-        std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
+        bool ok = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(*this, &ok);
+        if (workspace_read_only_) { ok = false; return mev("read-only", "workspace is read-only"); }
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
-            !workspace_pool_)
+            !workspace_pool_) {
+            ok = false;
             return mev("bad-arg", "usage: (mutate:set-body name new-body-code [summary])");
+        }
         auto name_idx = as_string_idx(a[0]);
         auto code_idx = as_string_idx(a[1]);
-        if (name_idx >= string_heap_.size() || code_idx >= string_heap_.size())
+        if (name_idx >= string_heap_.size() || code_idx >= string_heap_.size()) {
+            ok = false;
             return mev("bad-arg", "string index out of range");
+        }
         auto& flat = *workspace_flat_;
         auto name = string_heap_[name_idx];
         // Phase 2.5.0: route via canonical_pool() (== workspace_pool, explicit).
@@ -7190,12 +7228,16 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             auto v = flat.get(id);
             if (v.tag == aura::ast::NodeTag::Define && v.sym_id == sym) {
                 // The Define should have one child: a Lambda
-                if (v.children.size() != 1)
+                if (v.children.size() != 1) {
+                    ok = false;
                     return mev("arity-error", std::string("function \"") + name + "\" define has " + std::to_string(v.children.size()) + " children, expected 1");
+                }
                 auto lambda_id = v.child(0);
                 auto lv = flat.get(lambda_id);
-                if (lv.tag != aura::ast::NodeTag::Lambda)
+                if (lv.tag != aura::ast::NodeTag::Lambda) {
+                    ok = false;
                     return mev("type-error", std::string("function \"") + name + "\" body is not a Lambda node");
+                }
 
                 // Parse new body INTO workspace flat (all IDs stay valid)
                 auto pr =
@@ -7212,6 +7254,7 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                     } else {
                         parse_err = "new body code could not be parsed";
                     }
+                    ok = false;
                     return mev("parse-error", parse_err);
                 }
 
@@ -7316,6 +7359,7 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 if (!last_mutate_error_.empty()) {
                     if (panic_auto_rollback_ && had_checkpoint) {
                         restore_panic_checkpoint();
+                        ok = false;
                         return mev("mutation-failed",
                                    "mutation rejected — auto-rolled back: " + last_mutate_error_);
                     }
@@ -7326,6 +7370,7 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 return make_bool(true);
             }
         }
+        ok = false;
         return mev("not-found", std::string("function \"") + name + "\" not found in AST");
     });
 
@@ -8621,11 +8666,29 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
     // be in the log and would be rolled back if a later op in the
     // batch fails. Strong atomicity (hold the lock the whole time,
     // dispatch via lockless helpers) is a follow-up.
+        // Issue #213 follow-up: migrate mutate:atomic-batch to
+    // the MutationBoundaryGuard. The atomic-batch already
+    // has its own rollback mechanism (rollback_since(
+    // initial_log_size) on error) — this stays as-is. The
+    // guard adds the lock + version-bump + defuse_index_
+    // invalidation that the legacy code did manually. The
+    // two rollback paths are complementary:
+    //   - The guard's `ok` flag (set when the batch fails)
+    //     bumps defuse_version_ + invalidates defuse_index_
+    //     on exit(false), so readers holding the pre-batch
+    //     snapshot see a mismatch.
+    //   - The batch's internal `ok` flag (set when any
+    //     sub-primitive fails) triggers rollback_since(
+    //     initial_log_size) which actually undoes the
+    //     per-op mutations recorded in the log.
     primitives_.add("mutate:atomic-batch", [this, mev](const auto& a) -> EvalValue {
+        bool guard_ok = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(*this, &guard_ok);
         // Allow a.size() == 1 with the ops list being empty (void)
         // — that's a vacuous success (no ops, no rollback needed).
         // The summary string is optional in that case.
         if (a.size() < 1) {
+            guard_ok = false;
             return mev("bad-arg",
                 "usage: (mutate:atomic-batch (list ...) \"summary\")");
         }
@@ -8633,10 +8696,12 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         // or a non-empty proper list. Anything else is bad-arg.
         EvalValue op_list = a[0];
         if (!is_pair(op_list) && !is_void(op_list)) {
+            guard_ok = false;
             return mev("bad-arg",
                 "ops list must be a list (use (list) for empty)");
         }
         if (!workspace_flat_) {
+            guard_ok = false;
             return mev("no-workspace", "no FlatAST available");
         }
         std::uint64_t initial_log_size = workspace_flat_->all_mutations().size();
@@ -8678,6 +8743,7 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         if (!ok) {
             workspace_flat_->rollback_since(initial_log_size);
             atomic_batch_rollbacks_++;
+            guard_ok = false;
             return make_bool(false);
         }
         atomic_batch_count_++;
