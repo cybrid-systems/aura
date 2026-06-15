@@ -58,6 +58,7 @@ enum class MemberKind : std::uint8_t {
     Double,
     Array,
     Vector,
+    Span,  // Issue #217 Cycle 6: std::span<T, N>
     Struct,
     Other,
     Unknown
@@ -81,6 +82,11 @@ template <typename T> constexpr bool is_std_string_v = is_std_string<T>::value;
 template <typename T> struct is_std_string_view : std::false_type {};
 template <> struct is_std_string_view<std::string_view> : std::true_type {};
 template <typename T> constexpr bool is_std_string_view_v = is_std_string_view<T>::value;
+
+// Issue #217 Cycle 6: std::span detection
+template <typename T> struct is_std_span : std::false_type {};
+template <typename T, std::size_t Extent> struct is_std_span<std::span<T, Extent>> : std::true_type {};
+template <typename T> constexpr bool is_std_span_v = is_std_span<T>::value;
 
 template <typename T> struct is_std_vector : std::false_type {};
 template <typename T, typename A> struct is_std_vector<std::vector<T, A>> : std::true_type {};
@@ -151,14 +157,17 @@ consteval MemberKind classify_type(std::meta::info type) {
         return MemberKind::Int64;
     }
 
-    // std::array<T,N> / std::vector<T> detection via display_string
-    // (template_of + is_same_type has issues with GCC 16.1)
+    // std::array<T,N> / std::vector<T> / std::span<T,N> detection
+    // via display_string (template_of + is_same_type has
+    // issues with GCC 16.1)
     if (is_class_type(type) && has_template_arguments(type)) {
         auto str = display_string_of(type);
         if (str.starts_with("std::array"))
             return MemberKind::Array;
         if (str.starts_with("std::vector"))
             return MemberKind::Vector;
+        if (str.starts_with("std::span"))
+            return MemberKind::Span;
     }
 
     // Nested struct with reflectable members → recursive
@@ -586,6 +595,22 @@ void auto_serialize(std::vector<char>& buf, const T& obj) {
                 buf.insert(buf.end(), field, field + m.elem_size * m.array_len);
                 break;
             }
+            case MemberKind::Span: {
+                // Issue #217 Cycle 6: std::span is a
+                // non-owning view (ptr + size). Write
+                // size-prefixed raw elements. The
+                // deserialized span will point into the
+                // buf (no copy) — caller must keep the
+                // buf alive for the lifetime of the
+                // deserialized span.
+                auto& sp = *reinterpret_cast<const std::span<const char>*>(field);
+                uint32_t sz = static_cast<uint32_t>(sp.size());
+                buf.insert(buf.end(), reinterpret_cast<char*>(&sz),
+                           reinterpret_cast<char*>(&sz) + 4);
+                if (!sp.empty())
+                    buf.insert(buf.end(), sp.data(), sp.data() + sp.size());
+                break;
+            }
             case MemberKind::Vector: {
                 // Write vector: size (as u32) + raw elements
                 auto& vec = *reinterpret_cast<const std::vector<char>*>(field);
@@ -801,6 +826,21 @@ template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, st
                 pos += m.elem_size * m.array_len;
                 break;
             }
+            case MemberKind::Span: {
+                // Issue #217 Cycle 6: deserialize a
+                // std::span by constructing it to point
+                // into the buf. The span is non-owning,
+                // so the caller must keep the buf alive
+                // for the lifetime of the deserialized
+                // span.
+                uint32_t sz;
+                std::memcpy(&sz, &buf[pos], 4);
+                pos += 4;
+                auto& sp = *reinterpret_cast<std::span<const char>*>(field);
+                sp = std::span<const char>(buf.data() + pos, sz);
+                pos += sz;
+                break;
+            }
             case MemberKind::Vector: {
                 uint32_t sz;
                 std::memcpy(&sz, &buf[pos], 4);
@@ -945,6 +985,19 @@ template <typename T> bool auto_validate(const T& obj, std::string* error = null
                     if (error)
                         *error =
                             std::string(m.name) + " string_view too long: " + std::to_string(sv.size());
+                    ok = false;
+                }
+                break;
+            }
+            case MemberKind::Span: {
+                // Issue #217 Cycle 6: size check for
+                // std::span (it's also a container-like
+                // type with a size() accessor).
+                auto& sp = *reinterpret_cast<const std::span<const char>*>(field);
+                if (sp.size() > 100000000) {
+                    if (error)
+                        *error =
+                            std::string(m.name) + " span too large: " + std::to_string(sp.size());
                     ok = false;
                 }
                 break;
