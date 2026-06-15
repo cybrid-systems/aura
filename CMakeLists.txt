@@ -4299,3 +4299,25 @@ target_compile_options(test_issue_217 PRIVATE -freflection -Wall)
 target_compile_features(test_issue_217 PUBLIC cxx_std_26)
 target_link_libraries(test_issue_217 PRIVATE stdc++ pthread)
 add_test(NAME issue_217_verification COMMAND ./test_issue_217)
+
+# Issue #178 Cycle 5: production NodeView migration to
+# reflect_members + auto_serialize.
+#
+# Imports aura.core.ast (for the real NodeView) and uses
+# the reflect path to roundtrip a populated NodeView.
+# Verifies the generic reflect path works on the actual
+# production struct (12 fields: 8 POD scalars + 3 spans
+# + 1 enum-byte).
+add_executable(test_issue_178 tests/test_issue_178.cpp)
+set_property(TARGET test_issue_178 PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_issue_178 PRIVATE src)
+target_sources(test_issue_178 PRIVATE
+    src/core/ast_impl.cpp)
+target_sources(test_issue_178 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
+    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx src/core/type_arena.ixx src/core/type.ixx)
+target_compile_options(test_issue_178 PRIVATE -freflection -Wall -Wextra -Wpedantic
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
+    -Wno-parentheses)
+target_link_libraries(test_issue_178 PRIVATE pthread stdc++ stdc++exp aura-reflect)
+add_test(NAME issue_178_verification COMMAND ./test_issue_178)
