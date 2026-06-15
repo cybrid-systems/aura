@@ -4286,3 +4286,16 @@ target_compile_options(test_issue_216 PRIVATE -freflection -Wall)
 target_compile_features(test_issue_216 PUBLIC cxx_std_26)
 target_link_libraries(test_issue_216 PRIVATE stdc++ pthread)
 add_test(NAME issue_216_verification COMMAND ./test_issue_216)
+
+# Issue #217: AST/IR migration to reflect_members +
+# auto_serialize (Issue #178 Cycle 4). The full scope is
+# 1 week of focused work; this test is the Cycle 1 pilot
+# that verifies the reflection infrastructure works for
+# IR-shaped types (OpcodeInfo, IRInstruction).
+add_executable(test_issue_217 tests/test_issue_217.cpp)
+set_property(TARGET test_issue_217 PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_issue_217 PRIVATE src)
+target_compile_options(test_issue_217 PRIVATE -freflection -Wall)
+target_compile_features(test_issue_217 PUBLIC cxx_std_26)
+target_link_libraries(test_issue_217 PRIVATE stdc++ pthread)
+add_test(NAME issue_217_verification COMMAND ./test_issue_217)
