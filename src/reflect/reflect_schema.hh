@@ -212,6 +212,13 @@ template <typename T> std::string_view get_json_schema() {
     return schema_storage<T>::get();
 }
 
+// Issue #216 Cycle 3: canonical schema<T>() alias.
+// Returns the JSON Schema for T as a string_view. The
+// schema is generated at compile time via P2996 reflection.
+template <typename T> std::string_view schema() {
+    return schema_storage<T>::get();
+}
+
 } // namespace aura::reflect
 
 #endif // AURA_REFLECT_SCHEMA_HH

@@ -438,7 +438,7 @@ void auto_serialize(std::vector<char>& buf, const std::vector<T>& vec) {
 }
 
 // std::string overload (top-level + recursion target)
-void auto_serialize(std::vector<char>& buf, const std::string& s) {
+inline void auto_serialize(std::vector<char>& buf, const std::string& s) {
     std::uint32_t len = static_cast<std::uint32_t>(s.size());
     buf.insert(buf.end(), reinterpret_cast<char*>(&len),
                reinterpret_cast<char*>(&len) + 4);

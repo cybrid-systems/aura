@@ -4270,3 +4270,19 @@ target_compile_options(test_issue_215 PRIVATE -freflection -Wall)
 target_compile_features(test_issue_215 PUBLIC cxx_std_26)
 target_link_libraries(test_issue_215 PRIVATE stdc++ pthread)
 add_test(NAME issue_215_verification COMMAND ./test_issue_215)
+
+# Issue #216: query:schema + mutate integration
+# (Issue #178 Cycle 3).
+#
+# Standalone C++ test (like test_issue_214/215) because
+# the test exercises the reflect_schema.hh header directly
+# with the -freflection compile flag. Tests 3-6 shell out
+# to the ./build/aura binary to test the Aura-side
+# query:schema primitive.
+add_executable(test_issue_216 tests/test_issue_216.cpp)
+set_property(TARGET test_issue_216 PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_issue_216 PRIVATE src)
+target_compile_options(test_issue_216 PRIVATE -freflection -Wall)
+target_compile_features(test_issue_216 PUBLIC cxx_std_26)
+target_link_libraries(test_issue_216 PRIVATE stdc++ pthread)
+add_test(NAME issue_216_verification COMMAND ./test_issue_216)
