@@ -44,9 +44,12 @@ export constexpr SymId INVALID_SYM = ~0u;
 //     all uint32/uint64 preserve. 25 new checks pass in
 //     test_issue_217.cpp Test 13. This unblocks the
 //     actual MutationRecord migration in src/core/ast.ixx.
-//   - Cycle 10 (deferred): MatchClauseInfo has
-//     std::vector<SymId> fields. The vector overload is
-//     already supported (tested in #215 Cycle 2).
+//   - Cycle 10 verification: MatchClauseInfo-like struct
+//     (2 std::vector<SymId> + 1 bool) roundtrips correctly.
+//     All 3 fields preserve their values through
+//     serialize/deserialize. 18 new checks pass in
+//     test_issue_217.cpp Test 14. This unblocks the
+//     actual MatchClauseInfo migration in src/core/ast.ixx.
 //
 // The test in tests/test_issue_217.cpp verifies the
 // reflection infrastructure works for the simple AST types

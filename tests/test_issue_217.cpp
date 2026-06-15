@@ -504,6 +504,88 @@ bool test_mutation_record_roundtrip() {
     return true;
 }
 
+// ── Test 14: MatchClauseInfo-like (2 std::vector<SymId> + bool) ─
+//
+// Issue #217 Cycle 10: MatchClauseInfo in src/core/ast.ixx
+// has 2 std::vector<SymId> fields (used_constructors,
+// candidate_constructors) and 1 bool (has_wildcard).
+// SymId is std::uint32_t. The vector overload is already
+// supported (tested in #215 Cycle 2). This test verifies
+// the full struct roundtrips correctly.
+struct MatchClauseInfoLike {
+    std::vector<std::uint32_t> used_constructors;
+    std::vector<std::uint32_t> candidate_constructors;
+    bool has_wildcard = false;
+};
+bool test_match_clause_info_roundtrip() {
+    PRINTLN("\n--- Test 14: MatchClauseInfo-like (vectors) ---");
+    constexpr auto members = aura::reflect::reflect_members<MatchClauseInfoLike>();
+    std::println("MatchClauseInfoLike has {} members", members.size());
+    CHECK(members.size() == 3, "MatchClauseInfoLike has 3 members");
+    const char* expected_fields[] = {
+        "used_constructors", "candidate_constructors", "has_wildcard"
+    };
+    for (auto& e : expected_fields) {
+        bool found = false;
+        for (std::size_t i = 0; i < members.size(); ++i) {
+            if (members[i].name == e) { found = true; break; }
+        }
+        CHECK(found, e);
+    }
+
+    // Build a MatchClauseInfo with all 3 fields populated
+    MatchClauseInfoLike original;
+    original.used_constructors = {101, 102, 103};
+    original.candidate_constructors = {201, 202};
+    original.has_wildcard = true;
+
+    std::vector<char> buf;
+    aura::reflect::auto_serialize(buf, original);
+    std::println("MatchClauseInfoLike serialized: {} bytes", buf.size());
+    // Expected: 4 (used_constructors count) + 12 (3 * 4) +
+    //           4 (candidate_constructors count) + 8 (2 * 4) +
+    //           1 (has_wildcard) = 29 bytes
+    CHECK(buf.size() == 29, "buf size == 29 bytes (4+12+4+8+1)");
+
+    std::size_t pos = 0;
+    auto rt = aura::reflect::auto_deserialize<MatchClauseInfoLike>(buf, pos);
+    CHECK(rt.used_constructors.size() == 3,
+          "used_constructors size == 3");
+    if (rt.used_constructors.size() == 3) {
+        CHECK(rt.used_constructors[0] == 101, "used[0] == 101");
+        CHECK(rt.used_constructors[1] == 102, "used[1] == 102");
+        CHECK(rt.used_constructors[2] == 103, "used[2] == 103");
+    }
+    CHECK(rt.candidate_constructors.size() == 2,
+          "candidate_constructors size == 2");
+    if (rt.candidate_constructors.size() == 2) {
+        CHECK(rt.candidate_constructors[0] == 201, "cand[0] == 201");
+        CHECK(rt.candidate_constructors[1] == 202, "cand[1] == 202");
+    }
+    CHECK(rt.has_wildcard == true, "has_wildcard roundtrips");
+    CHECK(pos == buf.size(), "all bytes consumed");
+
+    // Test empty vectors too
+    MatchClauseInfoLike empty;
+    empty.used_constructors = {};
+    empty.candidate_constructors = {};
+    empty.has_wildcard = false;
+    std::vector<char> buf2;
+    aura::reflect::auto_serialize(buf2, empty);
+    std::println("Empty MatchClauseInfoLike serialized: {} bytes", buf2.size());
+    // Expected: 4 (count 0) + 4 (count 0) + 1 (bool) = 9 bytes
+    CHECK(buf2.size() == 9, "empty buf size == 9 bytes (4+4+1)");
+    std::size_t pos2 = 0;
+    auto rt2 = aura::reflect::auto_deserialize<MatchClauseInfoLike>(buf2, pos2);
+    CHECK(rt2.used_constructors.size() == 0,
+          "empty used_constructors roundtrips");
+    CHECK(rt2.candidate_constructors.size() == 0,
+          "empty candidate_constructors roundtrips");
+    CHECK(rt2.has_wildcard == false,
+          "empty has_wildcard roundtrips");
+    return true;
+}
+
 bool test_reflect_opcode_info() {
     PRINTLN("\n--- Test 1: reflect_members<OpcodeInfo>() ---");
     constexpr auto members = aura::reflect::reflect_members<OpcodeInfo>();
@@ -669,6 +751,7 @@ int main() {
     test_span_field_roundtrip();
     test_span_uint32_roundtrip();
     test_mutation_record_roundtrip();
+    test_match_clause_info_roundtrip();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
