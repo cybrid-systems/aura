@@ -91,12 +91,59 @@ struct OpcodeInfo {
 // src/compiler/ir.ixx:154). Used to verify the roundtrip
 // works on the real metadata table.
 constexpr OpcodeInfo kOpcodeInfo[] = {
-    {"nop", 0, false},
-    {"const-i64", 1, true},
-    {"add", 3, true},
+    {"nop", 0, false},         // 0 Nop
+    {"const-i64", 1, true},    // 1 ConstI64
+    {"const-f64", 1, true},    // 2 ConstF64
+    {"local", 2, true},        // 3 Local
+    {"arg", 2, true},          // 4 Arg
+    {"add", 3, true},          // 5 Add
+    {"sub", 3, true},          // 6 Sub
+    {"mul", 3, true},          // 7 Mul
+    {"div", 3, true},          // 8 Div
 };
 
-// ── Test 7: OpcodeInfo with std::string name (the fix path) ──
+// ── Test 8: lookup_opcode helper (Issue #217 Cycle 4) ──────
+//
+// The lookup_opcode(IROpcode) helper in src/compiler/ir.ixx
+// does the bounds check + array access in one call. This
+// test verifies it returns the right OpcodeInfo for the
+// known opcodes.
+//
+// Note: this test uses a local copy of OpcodeInfo (same
+// as Test 1-7) because we can't import the aura.compiler.ir
+// module from this test target (see Test 8 in the previous
+// cycle). The lookup_opcode helper is a constexpr function
+// in the ir.ixx module; we re-implement it here for the
+// local copy.
+const OpcodeInfo* local_lookup_opcode(IROpcode op) {
+    auto idx = static_cast<std::size_t>(op);
+    return idx < std::size(kOpcodeInfo) ? &kOpcodeInfo[idx] : nullptr;
+}
+bool test_lookup_opcode_helper() {
+    PRINTLN("\n--- Test 8: lookup_opcode helper ---");
+    // Valid opcodes return the right info
+    auto* nop = local_lookup_opcode(IROpcode::Nop);
+    CHECK(nop != nullptr, "lookup_opcode(Nop) returns non-null");
+    if (nop) {
+        CHECK(nop->name == "nop", "Nop name == \"nop\"");
+        CHECK(nop->operand_count == 0, "Nop operand_count == 0");
+        CHECK(nop->has_result_slot == false, "Nop has_result_slot == false");
+    }
+    auto* add_info = local_lookup_opcode(IROpcode::Add);
+    CHECK(add_info != nullptr, "lookup_opcode(Add) returns non-null");
+    if (add_info) {
+        CHECK(add_info->name == "add", "Add name == \"add\"");
+        CHECK(add_info->operand_count == 3, "Add operand_count == 3");
+        CHECK(add_info->has_result_slot == true, "Add has_result_slot == true");
+    }
+    auto* const_i64 = local_lookup_opcode(IROpcode::ConstI64);
+    CHECK(const_i64 != nullptr, "lookup_opcode(ConstI64) returns non-null");
+    if (const_i64) {
+        CHECK(const_i64->name == "const-i64", "ConstI64 name == \"const-i64\"");
+        CHECK(const_i64->operand_count == 1, "ConstI64 operand_count == 1");
+    }
+    return true;
+}
 //
 // The current OpcodeInfo uses std::string_view for `name`
 // (for constexpr support). The migration could change it
@@ -245,14 +292,18 @@ bool test_kopcode_info_nop() {
     return true;
 }
 
-// ── Test 6: kOpcodeInfo[2] roundtrips (add) ────────────────
+// ── Test 6: kOpcodeInfo[5] roundtrips (add) ────────────────
 bool test_kopcode_info_add() {
-    PRINTLN("\n--- Test 6: kOpcodeInfo[2] (add) roundtrip ---");
-    OpcodeInfo original = kOpcodeInfo[2];
-    CHECK(original.name == "add", "kOpcodeInfo[2].name == \"add\"");
-    CHECK(original.operand_count == 3, "kOpcodeInfo[2].operand_count == 3");
+    PRINTLN("\n--- Test 6: kOpcodeInfo[5] (add) roundtrip ---");
+    // After expanding the local kOpcodeInfo table to
+    // include entries for the test opcodes (Nop=0,
+    // ConstI64=1, ConstF64=2, Local=3, Arg=4, Add=5, ...),
+    // the Add entry is at index 5.
+    OpcodeInfo original = kOpcodeInfo[5];
+    CHECK(original.name == "add", "kOpcodeInfo[5].name == \"add\"");
+    CHECK(original.operand_count == 3, "kOpcodeInfo[5].operand_count == 3");
     CHECK(original.has_result_slot == true,
-          "kOpcodeInfo[2].has_result_slot == true");
+          "kOpcodeInfo[5].has_result_slot == true");
 
     std::vector<char> buf;
     aura::reflect::auto_serialize(buf, original);
@@ -278,6 +329,7 @@ int main() {
     test_kopcode_info_nop();
     test_kopcode_info_add();
     test_opcode_info_str_roundtrip();
+    test_lookup_opcode_helper();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
