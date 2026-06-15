@@ -839,7 +839,7 @@ template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, st
                 break;
             }
             case MemberKind::Span: {
-                // Issue #217 Cycle 6/7: deserialize a
+                // Issue #217 Cycle 6/7/8: deserialize a
                 // std::span by constructing it to point
                 // into the buf. The span is non-owning,
                 // so the caller must keep the buf alive
@@ -849,11 +849,29 @@ template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, st
                 // Cycle 7 fix: read byte count (not
                 // element count) since the serialize
                 // side writes the byte count.
+                //
+                // Cycle 8 fix: divide byte_count by
+                // elem_size before storing it in the
+                // span's size field. This is required
+                // because std::span's size field stores
+                // the ELEMENT count, not the byte count.
+                // For std::span<const char> the two are
+                // the same, but for std::span<const
+                // uint32_t> the byte count is 4x the
+                // element count.
+                //
+                // Note: this works because std::span's
+                // internal layout is {ptr, size} for any
+                // element type — only the size field needs
+                // the byte-to-element conversion.
                 uint32_t byte_count;
                 std::memcpy(&byte_count, &buf[pos], 4);
                 pos += 4;
                 auto& sp = *reinterpret_cast<std::span<const char>*>(field);
-                sp = std::span<const char>(buf.data() + pos, byte_count);
+                std::size_t elem_count = m.elem_size > 0
+                                              ? byte_count / m.elem_size
+                                              : byte_count;
+                sp = std::span<const char>(buf.data() + pos, elem_count);
                 pos += byte_count;
                 break;
             }

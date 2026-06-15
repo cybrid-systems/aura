@@ -336,8 +336,8 @@ struct NodeViewLikeU32 {
     std::int64_t int_value = 0;
     std::span<const std::uint32_t> children;
 };
-bool test_span_uint32_serialize_only() {
-    PRINTLN("\n--- Test 12: std::span<const uint32_t> serialize ---");
+bool test_span_uint32_roundtrip() {
+    PRINTLN("\n--- Test 12: std::span<const uint32_t> full roundtrip ---");
     constexpr auto members = aura::reflect::reflect_members<NodeViewLikeU32>();
     std::println("NodeViewLikeU32 has {} members", members.size());
     CHECK(members.size() == 4, "NodeViewLikeU32 has 4 members");
@@ -375,6 +375,27 @@ bool test_span_uint32_serialize_only() {
     //         = 40 bytes
     CHECK(buf.size() == 40,
           "buf size == 40 bytes (4+4+8+4+20)");
+
+    // Cycle 8 fix: full deserialize roundtrip for non-char
+    // element types. The Span case now divides byte_count
+    // by elem_size before storing in the span's size field,
+    // so non-char element types work correctly.
+    std::size_t pos = 0;
+    auto rt = aura::reflect::auto_deserialize<NodeViewLikeU32>(buf, pos);
+    CHECK(rt.id == 42, "id roundtrips");
+    CHECK(rt.tag == 7, "tag roundtrips");
+    CHECK(rt.int_value == 0xDEADBEEF, "int_value roundtrips");
+    // The deserialized span: byte_count / elem_size = 20 / 4 = 5 elements
+    CHECK(rt.children.size() == 5,
+          "children size == 5 (byte_count / elem_size = 20 / 4)");
+    if (rt.children.size() == 5) {
+        CHECK(rt.children[0] == 100, "children[0] == 100");
+        CHECK(rt.children[1] == 200, "children[1] == 200");
+        CHECK(rt.children[2] == 300, "children[2] == 300");
+        CHECK(rt.children[3] == 400, "children[3] == 400");
+        CHECK(rt.children[4] == 500, "children[4] == 500");
+    }
+    CHECK(pos == buf.size(), "all bytes consumed");
     return true;
 }
 
@@ -541,7 +562,7 @@ int main() {
     test_source_location_roundtrip();
     test_patch_roundtrip();
     test_span_field_roundtrip();
-    test_span_uint32_serialize_only();
+    test_span_uint32_roundtrip();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
