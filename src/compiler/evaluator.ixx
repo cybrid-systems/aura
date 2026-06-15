@@ -1492,11 +1492,41 @@ public:
         std::uint64_t version;              // defuse_version_ at boundary entry
         std::size_t mutation_log_size = 0;  // FlatAST::mutation_log_.size() at entry
     };
-    // Per-fiber checkpoint stack. thread_local so concurrent
-    // fibers each have their own stack (no cross-fiber pollution).
-    // The stack is LIFO; the most recent checkpoint is at the top.
+    // Per-fiber checkpoint stack. Each Fiber carries its own
+    // `mutation_stack_` (added in Issue #213 Cycle 3), so a
+    // fiber that migrates between threads brings its stack
+    // with it. The static accessor `current_fiber()` returns
+    // the fiber currently running on this thread (or nullptr
+    // if no fiber is active, e.g. main-thread execution).
+    //
+    // The `static thread_local std::vector<...> g_mutation_stack`
+    // pattern from #184 was a conservative choice that worked
+    // when fibers were always pinned to their spawning thread.
+    // With the GC safepoint + scheduler work in P2, fibers can
+    // be stolen between workers; the per-fiber state avoids
+    // the resulting "where did my stack go" bugs.
+    //
+    // When no fiber is active, we fall back to a thread-local
+    // stack so the main-thread eval path still works.
     static thread_local std::vector<MutationCheckpoint>
-        g_mutation_stack;
+        g_main_thread_stack;
+
+    // Current fiber on this thread. Set by the scheduler
+    // before resume(); cleared after the fiber yields. nullptr
+    // when the main thread is running (no fiber).
+    // Stored as void* to avoid a circular include between
+    // evaluator.ixx and fiber.h. The .cpp file casts to Fiber*.
+    static thread_local void* g_current_fiber_void;
+    static void* get_current_fiber() { return g_current_fiber_void; }
+    static void set_current_fiber(void* f) { g_current_fiber_void = f; }
+
+    // Internal: get the active stack (fiber's if a fiber is
+    // running on this thread, else the main-thread fallback).
+    // The fiber's stack is stored as an opaque void*; we
+    // cast to the proper type here. The pointer is owned
+    // by the fiber (allocated lazily on first enter, freed
+    // on fiber destruction — see fiber.cpp's destructor).
+    std::vector<MutationCheckpoint>& active_mutation_stack();
     // Enter a mutation boundary. Acquires the exclusive write
     // lock and captures a checkpoint with the current
     // defuse_version_. The version is bumped so any pending
@@ -1517,7 +1547,7 @@ public:
         // the boundary body) will be appended to positions >=
         // this size, and `rollback_to_size` will undo them.
         std::size_t log_size = workspace_flat_ ? workspace_flat_->all_mutations().size() : 0;
-        g_mutation_stack.push_back(
+        active_mutation_stack().push_back(
             {defuse_version_.load(std::memory_order_acquire), log_size});
         defuse_version_.fetch_add(1, std::memory_order_release);
         // Issue #189: bump the total-mutations counter for
@@ -1562,9 +1592,10 @@ public:
     // Returns the popped checkpoint (or {0} if the stack is
     // empty — a defensive fallback for unbalanced calls).
     MutationCheckpoint exit_mutation_boundary(bool success) {
-        if (g_mutation_stack.empty()) return {0, 0};
-        auto cp = g_mutation_stack.back();
-        g_mutation_stack.pop_back();
+        auto& stack = active_mutation_stack();
+        if (stack.empty()) return {0, 0};
+        auto cp = stack.back();
+        stack.pop_back();
         if (!success && workspace_flat_) {
             // Roll back the mutations that were appended between
             // enter and exit. The log size captured at entry
@@ -1589,8 +1620,12 @@ public:
     // Get the current checkpoint stack depth (for testing /
     // observability). Returns 0 if the stack is empty.
     static std::size_t mutation_boundary_depth() {
-        return g_mutation_stack.size();
+        return active_mutation_stack_static().size();
     }
+
+    // Static version of active_mutation_stack() for observability
+    // accessors that don't have an Evaluator instance handy.
+    static std::vector<MutationCheckpoint>& active_mutation_stack_static();
 
     // Issue #189: reader-side version snapshot API. Fibers /
     // JIT-compiled code / closure dispatch that need to detect
