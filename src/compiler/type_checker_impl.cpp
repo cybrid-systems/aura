@@ -2872,23 +2872,51 @@ std::string TypeChecker::declared_type_module(const std::string& name) const {
 
 TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
                                DiagnosticCollector& diag) {
+    // Issue #212 Phase 1d: route through the pure function.
+    // The Wrap holds per-instance state (sigs, module_src,
+    // strict, cache_epoch, stats accumulator) and passes them
+    // to the pure function. The result struct bundles the
+    // inferred type, deferred coercions, and per-call stats so
+    // we don't need to call back into the engine.
+    auto r = type_check_flat_pure(flat, pool, node, types, diag,
+                                  type_sigs_, type_module_src_,
+                                  strict_, cache_epoch_);
+    stats_.cache_hits += r.cache_hits;
+    stats_.cache_misses += r.cache_misses;
+    stats_.stale_cache += r.stale_cache;
+    last_coercions_ = std::move(r.coercions);
+    return r.inferred_type;
+}
+
+// Issue #212 Phase 1d: pure-function entry point for type
+// checking. Mirrors the pattern of constant_fold_function /
+// compute_kind / check_arity — takes all dependencies as
+// parameters, returns a result struct, no member state.
+TypeCheckResult type_check_flat_pure(
+    FlatAST& flat, StringPool& pool, NodeId root,
+    TypeRegistry& types, DiagnosticCollector& diag,
+    const std::unordered_map<std::string, TypeId>& sigs,
+    const std::unordered_map<std::string, std::string>& module_src,
+    bool strict, std::uint64_t cache_epoch)
+{
+    TypeCheckResult result;
     InferenceEngine engine(types, diag);
-    engine.declared_modules_ = type_module_src_;
-    engine.declared_sigs_ = type_sigs_;
-    engine.set_strict(strict_);  // Issue #79: plumb strict mode
-    engine.set_cache_epoch(cache_epoch_);  // Issue #168
+    engine.declared_modules_ = module_src;
+    engine.declared_sigs_ = sigs;
+    engine.set_strict(strict);  // Issue #79: plumb strict mode
+    engine.set_cache_epoch(cache_epoch);  // Issue #168
     engine.bind_declared_sigs();
-    auto result = engine.infer_flat(flat, pool, node);
-    // Accumulate stats for the TypeChecker (Issue #72).
+    result.inferred_type = engine.infer_flat(flat, pool, root);
+    // Capture per-call stats (Issue #72) for the result.
     auto es = engine.stats();
-    stats_.cache_hits += es.cache_hits;
-    stats_.cache_misses += es.cache_misses;
-    stats_.stale_cache += es.stale_cache;
+    result.cache_hits = es.cache_hits;
+    result.cache_misses = es.cache_misses;
+    result.stale_cache = es.stale_cache;
     // Issue #116: capture the engine's deferred coercions so
     // the caller can apply them after type checking returns.
-    // The engine is short-lived (per infer_flat call) so we
-    // move-out here to avoid an extra copy.
-    last_coercions_ = engine.take_coercions();
+    // The engine is short-lived (per call) so we move-out here
+    // to avoid an extra copy.
+    result.coercions = engine.take_coercions();
     return result;
 }
 

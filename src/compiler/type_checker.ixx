@@ -470,6 +470,64 @@ private:
 };
 
 // ── TypeChecker — Public API ─────────────────────────────
+// Issue #212 Phase 1d: pure-function extraction of the
+// type-checker hot path. The result struct + free function
+// below mirror the pattern in `aura.compiler.constant_folding`
+// (Cycle 1 of #212) and `aura.compiler.compute_kind` /
+// `aura.compiler.arity` (existing). The TypeChecker struct
+// itself becomes a thin wrapper that holds per-instance
+// state (declared-sig maps, strict mode, cache epoch,
+// accumulated stats) and routes through the pure function.
+//
+// Why extract this:
+//   - The hot path (`infer_flat`) is called from many sites
+//     (service.ixx, main.cpp CLI, mutation primitives, typed-
+//     mutate, partial re-inference, etc.). A pure function
+//     makes the call graph explicit and testable in isolation
+//     (no TypeChecker lifecycle).
+//   - Strict-mode + cache-epoch + declared-sigs are caller
+//     state. Today they're baked into TypeChecker member
+//     fields. With the pure function, the caller passes them
+//     in explicitly — same semantics, but the function
+//     becomes a black box that any caller can drive.
+//   - The result struct bundles the inferred type + the
+//     deferred coercion map + the per-call cache stats, so
+//     the caller doesn't need to call into the TypeChecker
+//     to get the stats or take the coercions.
+export struct TypeCheckResult {
+    aura::core::TypeId inferred_type{};     // default-constructed = invalid
+    CoercionMap coercions;                  // deferred coercion intent
+    std::uint64_t cache_hits = 0;
+    std::uint64_t cache_misses = 0;
+    std::uint64_t stale_cache = 0;
+};
+
+// Pure: type-check a FlatAST subtree and return the inferred
+// type + deferred coercions + per-call stats. Constructs a
+// short-lived InferenceEngine internally; the engine is the
+// same as the legacy TypeChecker::infer_flat used.
+//
+// All caller state (declared-sigs, module-src, strict, cache
+// epoch) is passed in as parameters. No `this`, no member
+// access. The function is the canonical entry point; the
+// TypeChecker struct is a thin convenience wrapper for
+// callers that want to accumulate state across calls.
+//
+// The `sigs` map is the *resolved* form (name → TypeId), as
+// produced by `TypeChecker::inject_type_sigs`. The string→string
+// form stays in `inject_type_sigs` (the stateful setup step);
+// this pure function assumes resolution has already happened.
+export TypeCheckResult type_check_flat_pure(
+    aura::ast::FlatAST& flat,
+    aura::ast::StringPool& pool,
+    aura::ast::NodeId root,
+    aura::core::TypeRegistry& types,
+    aura::diag::DiagnosticCollector& diag,
+    const std::unordered_map<std::string, aura::core::TypeId>& sigs = {},
+    const std::unordered_map<std::string, std::string>& module_src = {},
+    bool strict = false,
+    std::uint64_t cache_epoch = 0);
+
 export struct TypeChecker {
     aura::core::TypeRegistry& types;
     aura::core::TypeId infer_flat(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,

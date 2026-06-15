@@ -442,4 +442,166 @@ arithmetic_sum_pure(
     return types::make_int(r);
 }
 
+// arithmetic_sub_pure — Issue #212 Phase 3.
+//
+// Pure variadic subtraction: (-) → 0, (- x) → -x, (- x y z ...) → x - y - z.
+// Promotes to float if any arg is float. Returns the result as a
+// fresh EvalValue (make_int or make_float). Same diag sink
+// convention as arithmetic_sum_pure.
+export inline types::EvalValue
+arithmetic_sub_pure(
+    std::span<const types::EvalValue> args,
+    std::span<const std::string> string_heap,
+    std::ostream* diag = nullptr)
+{
+    auto coerce_one = [&](const types::EvalValue& v) -> std::int64_t {
+        auto r = coerce_to_int_pure(v, string_heap);
+        if (r) return *r;
+        if (diag && types::is_string(v) && !string_heap.empty()) {
+            auto idx = types::as_string_idx(v);
+            if (idx < string_heap.size()) {
+                *diag << "error: type mismatch — expected Int, got String '"
+                       << string_heap[idx] << "'\n";
+            }
+        }
+        return 0;
+    };
+    if (args.empty())
+        return types::make_int(0);
+    bool any_f = false;
+    for (const auto& v : args) {
+        if (types::is_float(v)) { any_f = true; break; }
+    }
+    if (any_f) {
+        if (args.size() == 1)
+            return types::make_float(-(types::is_float(args[0])
+                                          ? types::as_float(args[0])
+                                          : static_cast<double>(coerce_one(args[0]))));
+        double r = types::is_float(args[0])
+                       ? types::as_float(args[0])
+                       : static_cast<double>(coerce_one(args[0]));
+        for (std::size_t i = 1; i < args.size(); ++i)
+            r -= types::is_float(args[i])
+                     ? types::as_float(args[i])
+                     : static_cast<double>(coerce_one(args[i]));
+        return types::make_float(r);
+    }
+    if (args.size() == 1)
+        return types::make_int(-coerce_one(args[0]));
+    std::int64_t r = coerce_one(args[0]);
+    for (std::size_t i = 1; i < args.size(); ++i)
+        r -= coerce_one(args[i]);
+    return types::make_int(r);
+}
+
+// arithmetic_mul_pure — Issue #212 Phase 3.
+//
+// Pure variadic multiplication: (*) → 1, (* x) → x, (* x y z ...) → x * y * z.
+// Promotes to float if any arg is float.
+export inline types::EvalValue
+arithmetic_mul_pure(
+    std::span<const types::EvalValue> args,
+    std::span<const std::string> string_heap,
+    std::ostream* diag = nullptr)
+{
+    auto coerce_one = [&](const types::EvalValue& v) -> std::int64_t {
+        auto r = coerce_to_int_pure(v, string_heap);
+        if (r) return *r;
+        if (diag && types::is_string(v) && !string_heap.empty()) {
+            auto idx = types::as_string_idx(v);
+            if (idx < string_heap.size()) {
+                *diag << "error: type mismatch — expected Int, got String '"
+                       << string_heap[idx] << "'\n";
+            }
+        }
+        return 0;
+    };
+    if (args.empty())
+        return types::make_int(1);
+    bool any_f = false;
+    for (const auto& v : args) {
+        if (types::is_float(v)) { any_f = true; break; }
+    }
+    if (any_f) {
+        double r = 1.0;
+        for (const auto& v : args)
+            r *= types::is_float(v)
+                     ? types::as_float(v)
+                     : static_cast<double>(coerce_one(v));
+        return types::make_float(r);
+    }
+    std::int64_t r = 1;
+    for (const auto& v : args)
+        r *= coerce_one(v);
+    return types::make_int(r);
+}
+
+// arithmetic_div_pure — Issue #212 Phase 3.
+//
+// Pure variadic division. Returns Result<EvalValue> because
+// division by zero is a runtime error that the caller can
+// decide how to handle (legacy: silent #inf / #nan for floats,
+// trap for ints; the result type lets new code report the
+// error explicitly via .error()).
+//
+// `nonzero_count` out-param: when non-null, set to the count
+// of args that were non-zero. Useful for callers that want to
+// short-circuit on all-zeros.
+export inline aura::diag::Result<types::EvalValue>
+arithmetic_div_pure(
+    std::span<const types::EvalValue> args,
+    std::span<const std::string> string_heap,
+    std::ostream* diag = nullptr)
+{
+    auto coerce_one = [&](const types::EvalValue& v) -> std::int64_t {
+        auto r = coerce_to_int_pure(v, string_heap);
+        if (r) return *r;
+        if (diag && types::is_string(v) && !string_heap.empty()) {
+            auto idx = types::as_string_idx(v);
+            if (idx < string_heap.size()) {
+                *diag << "error: type mismatch — expected Int, got String '"
+                       << string_heap[idx] << "'\n";
+            }
+        }
+        return 0;
+    };
+    if (args.empty()) {
+        return std::unexpected(aura::diag::Diagnostic(
+            aura::diag::ErrorKind::TypeError,
+            "division: at least one argument required"));
+    }
+    if (args.size() == 1)
+        return types::make_int(1 / coerce_one(args[0]));  // legacy: 1/x
+
+    // Multi-arg: a / b / c / ...
+    // Check all divisors (args[1..]) for zero first; bail out
+    // before mutating any state.
+    for (std::size_t i = 1; i < args.size(); ++i) {
+        if (coerce_one(args[i]) == 0) {
+            return std::unexpected(aura::diag::Diagnostic(
+                aura::diag::ErrorKind::DivisionByZero,
+                "division by zero"));
+        }
+    }
+
+    bool any_f = false;
+    for (const auto& v : args) {
+        if (types::is_float(v)) { any_f = true; break; }
+    }
+    if (any_f) {
+        double r = types::is_float(args[0])
+                       ? types::as_float(args[0])
+                       : static_cast<double>(coerce_one(args[0]));
+        for (std::size_t i = 1; i < args.size(); ++i)
+            r /= types::is_float(args[i])
+                     ? types::as_float(args[i])
+                     : static_cast<double>(coerce_one(args[i]));
+        return types::make_float(r);
+    }
+    std::int64_t r = coerce_one(args[0]);
+    for (std::size_t i = 1; i < args.size(); ++i)
+        r /= coerce_one(args[i]);
+    return types::make_int(r);
+}
+
 } // namespace aura::compiler::pure
