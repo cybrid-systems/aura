@@ -53,6 +53,7 @@ enum class MemberKind : std::uint8_t {
     UInt64,
     Bool,
     String,
+    StringView,  // Issue #217 Cycle 2: std::string_view
     Float,
     Double,
     Array,
@@ -75,6 +76,11 @@ struct MemberInfo {
 template <typename T> struct is_std_string : std::false_type {};
 template <> struct is_std_string<std::string> : std::true_type {};
 template <typename T> constexpr bool is_std_string_v = is_std_string<T>::value;
+
+// Issue #217 Cycle 2: std::string_view detection
+template <typename T> struct is_std_string_view : std::false_type {};
+template <> struct is_std_string_view<std::string_view> : std::true_type {};
+template <typename T> constexpr bool is_std_string_view_v = is_std_string_view<T>::value;
 
 template <typename T> struct is_std_vector : std::false_type {};
 template <typename T, typename A> struct is_std_vector<std::vector<T, A>> : std::true_type {};
@@ -101,6 +107,13 @@ consteval MemberKind classify_type(std::meta::info type) {
         return MemberKind::Bool;
     if (is_same_type(type, ^^std::string))
         return MemberKind::String;
+    // Issue #217 Cycle 2: std::string_view is a
+    // string-like type (ptr + size) but with a different
+    // layout from std::string. Use a separate MemberKind
+    // so the auto_serialize switch can extract the
+    // (ptr, size) correctly.
+    if (is_same_type(type, ^^std::string_view))
+        return MemberKind::StringView;
     if (is_same_type(type, ^^float))
         return MemberKind::Float;
     if (is_same_type(type, ^^double))
@@ -414,9 +427,11 @@ template <typename T> std::string auto_to_json_pretty(const T& obj) {
 // std::optional<T>, and std::variant<Ts...>. They
 // recurse on each element so nested containers work.
 
-// Forward declare the string overload so it's visible to
-// the vector/optional/variant overload bodies below.
+// Forward declare the string + string_view overloads so
+// they're visible to the vector/optional/variant overload
+// bodies below.
 void auto_serialize(std::vector<char>& buf, const std::string& s);
+void auto_serialize(std::vector<char>& buf, const std::string_view& sv);
 
 // std::vector<T> overload (any T)
 template <typename T>
@@ -443,6 +458,16 @@ inline void auto_serialize(std::vector<char>& buf, const std::string& s) {
     buf.insert(buf.end(), reinterpret_cast<char*>(&len),
                reinterpret_cast<char*>(&len) + 4);
     buf.insert(buf.end(), s.begin(), s.end());
+}
+
+// Issue #217 Cycle 2: std::string_view top-level
+// overload. Same length-prefixed layout as std::string;
+// used for recursion targets (e.g. a vector<string_view>).
+inline void auto_serialize(std::vector<char>& buf, const std::string_view& sv) {
+    std::uint32_t len = static_cast<std::uint32_t>(sv.size());
+    buf.insert(buf.end(), reinterpret_cast<char*>(&len),
+               reinterpret_cast<char*>(&len) + 4);
+    buf.insert(buf.end(), sv.data(), sv.data() + sv.size());
 }
 
 // std::optional<T> overload
@@ -542,6 +567,18 @@ void auto_serialize(std::vector<char>& buf, const T& obj) {
                 buf.insert(buf.end(), reinterpret_cast<char*>(&len),
                            reinterpret_cast<char*>(&len) + 4);
                 buf.insert(buf.end(), s.begin(), s.end());
+                break;
+            }
+            case MemberKind::StringView: {
+                // Issue #217 Cycle 2: std::string_view is
+                // {const char* data, size_t size}. We
+                // extract both and write the same
+                // length-prefixed raw bytes as std::string.
+                auto& sv = *reinterpret_cast<const std::string_view*>(field);
+                uint32_t len = static_cast<uint32_t>(sv.size());
+                buf.insert(buf.end(), reinterpret_cast<char*>(&len),
+                           reinterpret_cast<char*>(&len) + 4);
+                buf.insert(buf.end(), sv.data(), sv.data() + sv.size());
                 break;
             }
             case MemberKind::Array: {
@@ -745,6 +782,20 @@ template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, st
                 pos += len;
                 break;
             }
+            case MemberKind::StringView: {
+                // Issue #217 Cycle 2: read length-prefixed
+                // raw bytes into a std::string_view. The
+                // string_view points into the buffer (no
+                // copy), so the caller must keep the buffer
+                // alive for the lifetime of the view.
+                uint32_t len;
+                std::memcpy(&len, &buf[pos], 4);
+                pos += 4;
+                auto& sv = *reinterpret_cast<std::string_view*>(field);
+                sv = std::string_view(buf.data() + pos, len);
+                pos += len;
+                break;
+            }
             case MemberKind::Array: {
                 std::memcpy(field, &buf[pos], m.elem_size * m.array_len);
                 pos += m.elem_size * m.array_len;
@@ -881,6 +932,19 @@ template <typename T> bool auto_validate(const T& obj, std::string* error = null
                     if (error)
                         *error =
                             std::string(m.name) + " string too long: " + std::to_string(s.size());
+                    ok = false;
+                }
+                break;
+            }
+            case MemberKind::StringView: {
+                // Issue #217 Cycle 2: same size check for
+                // string_view (it's also a string-like type
+                // with a size() accessor).
+                auto& sv = *reinterpret_cast<const std::string_view*>(field);
+                if (sv.size() > 100000000) {
+                    if (error)
+                        *error =
+                            std::string(m.name) + " string_view too long: " + std::to_string(sv.size());
                     ok = false;
                 }
                 break;

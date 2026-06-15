@@ -158,26 +158,20 @@ bool test_opcode_info_roundtrip() {
     std::vector<char> buf;
     aura::reflect::auto_serialize(buf, original);
     std::println("buf size: {}", buf.size());
-    // Note: OpcodeInfo::name is std::string_view which
-    // classify_type doesn't recognize (it only handles
-    // std::string, not std::string_view). The name
-    // field is silently skipped by both auto_serialize
-    // and auto_deserialize. This is a known limitation
-    // for the IR migration — the real fix is to either
-    // (a) add string_view detection to classify_type,
-    // or (b) change OpcodeInfo::name to std::string
-    // (with constexpr migration).
+    // Cycle 2 fix: std::string_view is now a first-class
+    // MemberKind (StringView). The name field roundtrips
+    // because both serialize and deserialize use the
+    // length-prefixed raw-bytes layout.
     CHECK(!buf.empty(), "buf is non-empty");
-    std::println("  (name is std::string_view, skipped — see notes)");
 
     std::size_t pos = 0;
     auto roundtrip = aura::reflect::auto_deserialize<OpcodeInfo>(buf, pos);
-    // operand_count and has_result_slot should roundtrip
-    // (the name field is unknown/struct, silently skipped)
+    CHECK(roundtrip.name == "const-i64",
+          "string_view name roundtrips (Issue #217 Cycle 2 fix)");
     CHECK(roundtrip.operand_count == 1,
-          "operand_count roundtrips (string_view skipped)");
+          "operand_count roundtrips");
     CHECK(roundtrip.has_result_slot == true,
-          "has_result_slot roundtrips (string_view skipped)");
+          "has_result_slot roundtrips");
     return true;
 }
 
@@ -248,7 +242,8 @@ bool test_kopcode_info_nop() {
     aura::reflect::auto_serialize(buf, original);
     std::size_t pos = 0;
     auto rt = aura::reflect::auto_deserialize<OpcodeInfo>(buf, pos);
-    // nop name is also string_view; not roundtripped
+    // Cycle 2 fix: string_view name roundtrips
+    CHECK(rt.name == "nop", "nop name roundtrips (string_view)");
     CHECK(rt.operand_count == 0, "nop operand_count roundtrips");
     CHECK(rt.has_result_slot == false,
           "nop has_result_slot roundtrips");
@@ -268,7 +263,7 @@ bool test_kopcode_info_add() {
     aura::reflect::auto_serialize(buf, original);
     std::size_t pos = 0;
     auto rt = aura::reflect::auto_deserialize<OpcodeInfo>(buf, pos);
-    // add name is also string_view; not roundtripped
+    CHECK(rt.name == "add", "add name roundtrips (string_view)");
     CHECK(rt.operand_count == 3, "add operand_count roundtrips");
     CHECK(rt.has_result_slot == true,
           "add has_result_slot roundtrips");
