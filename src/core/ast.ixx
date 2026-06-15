@@ -37,11 +37,16 @@ export constexpr SymId INVALID_SYM = ~0u;
 //     follow-up limitation (Cycle 8).
 //
 // For the still-pending types (MutationRecord, MatchClauseInfo):
-//   - MutationRecord has 5 std::string fields. The
-//     reflection should work but the test needs to
-//     verify all 5 fields roundtrip correctly.
-//   - MatchClauseInfo has std::vector<SymId> fields
-//     which use the vector overload (already supported).
+//   - Cycle 9 verification: MutationRecord-like struct
+//     (5 std::string fields + 2 enum fields + 10 POD fields)
+//     roundtrips correctly. All 5 string fields preserve
+//     their values, all enums preserve, all bool preserve,
+//     all uint32/uint64 preserve. 25 new checks pass in
+//     test_issue_217.cpp Test 13. This unblocks the
+//     actual MutationRecord migration in src/core/ast.ixx.
+//   - Cycle 10 (deferred): MatchClauseInfo has
+//     std::vector<SymId> fields. The vector overload is
+//     already supported (tested in #215 Cycle 2).
 //
 // The test in tests/test_issue_217.cpp verifies the
 // reflection infrastructure works for the simple AST types
