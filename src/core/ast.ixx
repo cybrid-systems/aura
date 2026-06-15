@@ -10,7 +10,7 @@ export constexpr NodeId NULL_NODE = ~0u;
 export using SymId = std::uint32_t;
 export constexpr SymId INVALID_SYM = ~0u;
 
-// ── Issue #217 Cycle 5: AST types are reflection-ready ──────
+// ── Issue #217 Cycle 5/7: AST types are reflection-ready ─────
 //
 // The AST types below (SourceLocation, ParsedPhase, NodeMeta,
 // NodeView, MutationRecord, Patch, MatchClauseInfo) are plain
@@ -21,30 +21,33 @@ export constexpr SymId INVALID_SYM = ~0u;
 // auto_deserialize<T>(buf, pos)) works for the simple types
 // (SourceLocation, Patch) out of the box.
 //
-// For the complex types (NodeView, MutationRecord), there are
-// open issues to address in future cycles:
-//   - NodeView contains std::span<const NodeId> children and
-//     std::span<const SymId> params. std::span is not yet
-//     handled by classify_type (only std::array is).
-//   - MutationRecord contains multiple std::string fields
-//     and a std::string old_subtree_source. The string
-//     fields are reflection-friendly (MemberKind::String).
-//   - MatchClauseInfo contains std::vector<SymId> fields
+// Cycle 7 updates:
+//   - std::span<T, N> is now a first-class MemberKind
+//     (MemberKind::Span, is_std_span trait). Cycle 6
+//     added the basic support; Cycle 7 fixed the
+//     serialize side to use elem_size from MemberInfo
+//     (correct for non-char element types).
+//   - NodeView's serialize side now correctly writes
+//     the byte count for std::span<const NodeId>
+//     children, std::span<const SymId> params, etc.
+//   - The DESERIALIZE side still hardcodes std::span<const
+//     char> for the destination type. For non-char
+//     element types, the caller must re-interpret the
+//     deserialized bytes. This is documented as a
+//     follow-up limitation (Cycle 8).
+//
+// For the still-pending types (MutationRecord, MatchClauseInfo):
+//   - MutationRecord has 5 std::string fields. The
+//     reflection should work but the test needs to
+//     verify all 5 fields roundtrip correctly.
+//   - MatchClauseInfo has std::vector<SymId> fields
 //     which use the vector overload (already supported).
 //
 // The test in tests/test_issue_217.cpp verifies the
 // reflection infrastructure works for the simple AST types
-// (SourceLocation, Patch) and documents the limitations
-// for the complex types.
-//
-// The migration scope per the issue body is:
-//   1. Replace hand-written JSON / binary serializers
-//      with auto_serialize.
-//   2. Replace hand-written deserializers with
-//      auto_deserialize.
-//   3. Migrate the SoA columns (int_val_, type_id_,
-//      tag_, sym_id_, etc.) to a single struct that
-//      can be auto_serialize'd. Much bigger refactor.
+// (SourceLocation, Patch, NodeViewLike with std::span<const
+// char>) and documents the limitations for the more complex
+// types.
 
 // ── Source location ────────────────────────────
 export struct SourceLocation {

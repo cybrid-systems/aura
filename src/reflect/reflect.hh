@@ -234,7 +234,10 @@ template <typename T> consteval std::array<MemberInfo, member_count<T>()> reflec
             .offset = offset_of(m).bytes,
             .kind = kind,
             .elem_size =
-                (kind == MemberKind::Array || kind == MemberKind::Vector) ? elem_size_of(type) : 0,
+                (kind == MemberKind::Array || kind == MemberKind::Vector ||
+                 kind == MemberKind::Span)
+                    ? elem_size_of(type)
+                    : 0,
             .array_len = (kind == MemberKind::Array) ? array_size_of(type) : 0,
         };
     }
@@ -596,19 +599,28 @@ void auto_serialize(std::vector<char>& buf, const T& obj) {
                 break;
             }
             case MemberKind::Span: {
-                // Issue #217 Cycle 6: std::span is a
+                // Issue #217 Cycle 6/7: std::span is a
                 // non-owning view (ptr + size). Write
-                // size-prefixed raw elements. The
-                // deserialized span will point into the
-                // buf (no copy) — caller must keep the
-                // buf alive for the lifetime of the
-                // deserialized span.
+                // byte-prefixed raw elements (NOT count-
+                // prefixed — the element type might not
+                // be char, so we write the byte count
+                // directly). The deserialized span will
+                // point into the buf (no copy) — caller
+                // must keep the buf alive for the
+                // lifetime of the deserialized span.
+                //
+                // Cycle 7 fix: use elem_size from the
+                // MemberInfo (set by reflect_members for
+                // Span MemberKind) to correctly compute
+                // the byte count for non-char element
+                // types (e.g. std::span<const NodeId> in
+                // NodeView).
                 auto& sp = *reinterpret_cast<const std::span<const char>*>(field);
-                uint32_t sz = static_cast<uint32_t>(sp.size());
-                buf.insert(buf.end(), reinterpret_cast<char*>(&sz),
-                           reinterpret_cast<char*>(&sz) + 4);
-                if (!sp.empty())
-                    buf.insert(buf.end(), sp.data(), sp.data() + sp.size());
+                uint32_t byte_count = static_cast<uint32_t>(sp.size() * m.elem_size);
+                buf.insert(buf.end(), reinterpret_cast<char*>(&byte_count),
+                           reinterpret_cast<char*>(&byte_count) + 4);
+                if (byte_count > 0)
+                    buf.insert(buf.end(), sp.data(), sp.data() + byte_count);
                 break;
             }
             case MemberKind::Vector: {
@@ -827,18 +839,22 @@ template <typename T> T auto_deserialize_struct(const std::vector<char>& buf, st
                 break;
             }
             case MemberKind::Span: {
-                // Issue #217 Cycle 6: deserialize a
+                // Issue #217 Cycle 6/7: deserialize a
                 // std::span by constructing it to point
                 // into the buf. The span is non-owning,
                 // so the caller must keep the buf alive
                 // for the lifetime of the deserialized
                 // span.
-                uint32_t sz;
-                std::memcpy(&sz, &buf[pos], 4);
+                //
+                // Cycle 7 fix: read byte count (not
+                // element count) since the serialize
+                // side writes the byte count.
+                uint32_t byte_count;
+                std::memcpy(&byte_count, &buf[pos], 4);
                 pos += 4;
                 auto& sp = *reinterpret_cast<std::span<const char>*>(field);
-                sp = std::span<const char>(buf.data() + pos, sz);
-                pos += sz;
+                sp = std::span<const char>(buf.data() + pos, byte_count);
+                pos += byte_count;
                 break;
             }
             case MemberKind::Vector: {

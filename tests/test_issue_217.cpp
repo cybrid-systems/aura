@@ -309,6 +309,75 @@ bool test_span_field_roundtrip() {
     return true;
 }
 
+// ── Test 12: NodeView-like with std::span<const uint32_t> ───
+//
+// Issue #217 Cycle 7: the real NodeView in ast.ixx has
+// `std::span<const NodeId>` (where NodeId is uint32_t) for
+// the children field. The Cycle 6 Span implementation
+// hardcoded `std::span<const char>` in the deserialize
+// path, which is correct for char spans but is a type
+// mismatch for non-char element types.
+//
+// Cycle 7 fixes the SERIALIZE side: it now writes the
+// BYTE count (not element count), computed via
+// elem_size from the MemberInfo. The DESERIALIZE side
+// still hardcodes std::span<const char> which means
+// non-char element types need a re-interpretation step
+// (documented as a follow-up limitation).
+//
+// This test verifies the elem_size is correctly set for
+// the Span MemberKind (the fix that enables the
+// NodeView migration) and the SERIALIZE side produces
+// the right byte count. The full roundtrip (with
+// deserialization) is limited to char spans (Test 11).
+struct NodeViewLikeU32 {
+    std::uint32_t id = 0;
+    std::uint32_t tag = 0;
+    std::int64_t int_value = 0;
+    std::span<const std::uint32_t> children;
+};
+bool test_span_uint32_serialize_only() {
+    PRINTLN("\n--- Test 12: std::span<const uint32_t> serialize ---");
+    constexpr auto members = aura::reflect::reflect_members<NodeViewLikeU32>();
+    std::println("NodeViewLikeU32 has {} members", members.size());
+    CHECK(members.size() == 4, "NodeViewLikeU32 has 4 members");
+    bool found_children = false;
+    int children_kind = -1;
+    std::size_t children_elem_size = 0;
+    for (std::size_t i = 0; i < members.size(); ++i) {
+        if (members[i].name == "children") {
+            found_children = true;
+            children_kind = (int)members[i].kind;
+            children_elem_size = members[i].elem_size;
+            std::println("  children kind = {}, elem_size = {}",
+                         children_kind, children_elem_size);
+        }
+    }
+    CHECK(found_children, "NodeViewLikeU32 has 'children' field");
+    CHECK(children_kind == 15,
+          "children kind is MemberKind::Span (= 15)");
+    CHECK(children_elem_size == sizeof(std::uint32_t),
+          "children elem_size is sizeof(uint32_t) = 4");
+
+    // Build a span from a vector of uint32_t
+    std::vector<std::uint32_t> data = {100, 200, 300, 400, 500};
+    NodeViewLikeU32 original;
+    original.id = 42;
+    original.tag = 7;
+    original.int_value = 0xDEADBEEF;
+    original.children = std::span<const std::uint32_t>(data.data(), data.size());
+
+    std::vector<char> buf;
+    aura::reflect::auto_serialize(buf, original);
+    std::println("NodeViewLikeU32 serialized: {} bytes", buf.size());
+    // Expected: 4 (id) + 4 (tag) + 8 (int_value) +
+    //           4 (span byte_count) + 20 (5 * sizeof(uint32_t))
+    //         = 40 bytes
+    CHECK(buf.size() == 40,
+          "buf size == 40 bytes (4+4+8+4+20)");
+    return true;
+}
+
 bool test_reflect_opcode_info() {
     PRINTLN("\n--- Test 1: reflect_members<OpcodeInfo>() ---");
     constexpr auto members = aura::reflect::reflect_members<OpcodeInfo>();
@@ -472,6 +541,7 @@ int main() {
     test_source_location_roundtrip();
     test_patch_roundtrip();
     test_span_field_roundtrip();
+    test_span_uint32_serialize_only();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
