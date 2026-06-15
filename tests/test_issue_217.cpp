@@ -834,6 +834,63 @@ bool test_node_view_full() {
     return true;
 }
 
+// ── Test 17: NodeView empty/default roundtrip (Cycle 13) ────
+//
+// Issue #217 Cycle 13: the production NodeView is
+// default-constructed in MappedCache::get (cache_impl.cpp
+// line 356) for the empty-cache case. Verify the empty
+// NodeView (all 12 fields at their defaults) roundtrips
+// correctly through the reflect path.
+//
+// This is the "blank slate" check: the empty NodeView
+// has 3 zero-length spans + 8 zero scalars + 1 zero
+// enum. The serialized form is 53 bytes:
+//   41 bytes POD (with tag=LiteralInt=1 and marker=User=0
+//   for the default values; all other POD are 0)
+//   + 12 bytes span headers (3 spans * 4 bytes header,
+//   0 bytes data — empty spans)
+//
+// Test 16 (above) covers the populated roundtrip; this
+// test covers the empty roundtrip. Both use the same
+// NodeViewFullLike struct (the hand-written copy that
+// mirrors the production NodeView's field layout).
+//
+// The test_issue_178 binary (separate target) imports
+// the real aura.core.ast module and roundtrips the
+// ACTUAL production NodeView type. test_issue_178
+// doesn't build in the current GCC 16.1 env due to a
+// std module + -freflection + pthread header ICE
+// (documented in the test_issue_178.cpp file). This
+// test_issue_217 Test 17 is the in-env verification of
+// the empty-roundtrip behavior.
+bool test_node_view_empty() {
+    PRINTLN("\n--- Test 17: NodeView empty (defaults) roundtrip ---");
+    NodeViewFullLike original;  // all defaults
+
+    std::vector<char> buf;
+    aura::reflect::auto_serialize(buf, original);
+    std::println("Empty NodeViewFullLike serialized: {} bytes", buf.size());
+    // 41 bytes POD + 12 bytes span headers = 53 bytes
+    CHECK(buf.size() == 53, "empty buf size == 53 bytes");
+
+    std::size_t pos = 0;
+    auto rt = aura::reflect::auto_deserialize<NodeViewFullLike>(buf, pos);
+    CHECK(rt.id == 0, "empty id roundtrips");
+    CHECK(rt.tag == 0, "empty tag roundtrips");
+    CHECK(rt.int_value == 0, "empty int_value");
+    CHECK(rt.float_value == 0.0, "empty float_value");
+    CHECK(rt.sym_id == 0, "empty sym_id");
+    CHECK(rt.line == 0, "empty line");
+    CHECK(rt.col == 0, "empty col");
+    CHECK(rt.type_id == 0, "empty type_id");
+    CHECK(rt.children.size() == 0, "empty children");
+    CHECK(rt.params.size() == 0, "empty params");
+    CHECK(rt.param_annotations.size() == 0, "empty param_annotations");
+    CHECK(rt.marker == 0, "empty marker");
+    CHECK(pos == buf.size(), "all bytes consumed");
+    return true;
+}
+
 bool test_reflect_opcode_info() {
     PRINTLN("\n--- Test 1: reflect_members<OpcodeInfo>() ---");
     constexpr auto members = aura::reflect::reflect_members<OpcodeInfo>();
@@ -1002,6 +1059,7 @@ int main() {
     test_match_clause_info_roundtrip();
     test_flatast_soa_columns();
     test_node_view_full();
+    test_node_view_empty();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
