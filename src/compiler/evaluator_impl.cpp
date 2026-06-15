@@ -152,12 +152,83 @@ thread_local std::size_t g_env_lookup_depth = 0;
 // + the fibers are cooperative-scheduled on threads, so
 // they share the thread's thread_local; the stack is
 // per-fiber via the yield/enter mechanism — the fiber's
-// state includes the stack pointer or we re-establish
-// it on resume). For now, thread_local is the
-// conservative choice; per-fiber state in Fiber::state_
-// is a follow-up.
+// Issue #213 Cycle 3: per-fiber state. The mutation
+// stack now lives on the Fiber itself (fiber.h's
+// `mutation_stack_` field), so a fiber that migrates
+// between threads brings its stack with it. The
+// `g_main_thread_stack` is a thread_local fallback for
+// main-thread eval (no fiber active). The accessor
+// `active_mutation_stack()` in evaluator.ixx routes
+// between the two.
 thread_local std::vector<aura::compiler::Evaluator::MutationCheckpoint>
-    aura::compiler::Evaluator::g_mutation_stack;
+    aura::compiler::Evaluator::g_main_thread_stack;
+thread_local void*
+    aura::compiler::Evaluator::g_current_fiber_void;
+
+// Implementation of active_mutation_stack() — the
+// header has the declaration only (to avoid pulling
+// fiber.h into evaluator.ixx). Here we have full access
+// to the Fiber class definition.
+std::vector<aura::compiler::Evaluator::MutationCheckpoint>&
+aura::compiler::Evaluator::active_mutation_stack() {
+    if (g_current_fiber_void != nullptr) {
+        auto* fiber = static_cast<aura::serve::Fiber*>(g_current_fiber_void);
+        void* p = fiber->mutation_stack_ptr();
+        if (p == nullptr) {
+            // Lazy allocation: first enter on this fiber.
+            p = new std::vector<MutationCheckpoint>();
+            fiber->set_mutation_stack_ptr(p);
+        }
+        return *static_cast<std::vector<MutationCheckpoint>*>(p);
+    }
+    return g_main_thread_stack;
+}
+
+// Issue #213 Cycle 3: function pointer implementations
+// that the fiber side calls. The setter is called by
+// Fiber::resume() to update g_current_fiber_void. The
+// deleter is called by ~Fiber() to free the per-fiber
+// storage. Both are defined here because the storage type
+// (std::vector<MutationCheckpoint>) is opaque to fiber.cpp.
+namespace {
+void* fiber_setter_impl(void* f) {
+    auto prev = aura::compiler::Evaluator::get_current_fiber();
+    aura::compiler::Evaluator::set_current_fiber(f);
+    return prev;
+}
+void fiber_storage_deleter_impl(void* p) {
+    using C = aura::compiler::Evaluator::MutationCheckpoint;
+    delete static_cast<std::vector<C>*>(p);
+}
+}  // namespace
+
+// Register the function pointers at static-init time. The
+// fiber side calls them; we don't need the Evaluator to
+// know about Fiber (one-way dependency).
+struct FiberHookRegistrar {
+    FiberHookRegistrar() {
+        aura::serve::g_fiber_setter_ = fiber_setter_impl;
+        aura::serve::g_fiber_storage_deleter_ = fiber_storage_deleter_impl;
+    }
+};
+static FiberHookRegistrar g_fiber_hook_registrar{};
+
+std::vector<aura::compiler::Evaluator::MutationCheckpoint>&
+aura::compiler::Evaluator::active_mutation_stack_static() {
+    // The static version uses the same per-fiber / main-thread
+    // routing logic. We could call active_mutation_stack() but
+    // it's a non-static member, so we inline the routing here.
+    if (g_current_fiber_void != nullptr) {
+        auto* fiber = static_cast<aura::serve::Fiber*>(g_current_fiber_void);
+        void* p = fiber->mutation_stack_ptr();
+        if (p == nullptr) {
+            p = new std::vector<MutationCheckpoint>();
+            fiber->set_mutation_stack_ptr(p);
+        }
+        return *static_cast<std::vector<MutationCheckpoint>*>(p);
+    }
+    return g_main_thread_stack;
+}
 
 
 // ── ADT state now in adt_runtime_ (refactor Step 2.3, FFI pattern) ───────
@@ -7442,23 +7513,32 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
     //       → replaces (* 2 x) with (+ x x) everywhere
     //     (mutate:replace-pattern "(... (+ ... ...))" "...")
     //       → strips outer call, keeps only the first child
+    // Issue #213 Cycle 2: migrate mutate:replace-pattern to
+    // use the MutationBoundaryGuard. The primitive mutates
+    // the children_ SoA column (call->set_child) for each
+    // matched node — the rollback path doesn't restore the
+    // original children (the SoA column isn't in the rollback
+    // switch), but it does bump the version + invalidate the
+    // defuse index, so readers know the workspace state changed.
     primitives_.add("mutate:replace-pattern", [this, mev](const auto& a) -> EvalValue {
-        std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
+        bool ok = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(*this, &ok);
         using namespace aura::ast;
-        defuse_version_.fetch_add(1, std::memory_order_acq_rel);
-        total_mutations_.fetch_add(1, std::memory_order_relaxed);
         aura::messaging::g_fiber_yield_mutation_boundary
                 ? aura::messaging::g_fiber_yield_mutation_boundary()
                 : (void)0;  // safe point before mutation
-        if (workspace_read_only_)
-            return mev("read-only", "workspace is read-only");
+        if (workspace_read_only_) { ok = false; return mev("read-only", "workspace is read-only"); }
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) ||
-            !workspace_flat_ || !workspace_pool_)
+            !workspace_flat_ || !workspace_pool_) {
+            ok = false;
             return mev("bad-arg", "usage: (mutate:replace-pattern pattern replacement)");
+        }
         auto pattern_idx = as_string_idx(a[0]);
         auto repl_idx = as_string_idx(a[1]);
-        if (pattern_idx >= string_heap_.size() || repl_idx >= string_heap_.size())
+        if (pattern_idx >= string_heap_.size() || repl_idx >= string_heap_.size()) {
+            ok = false;
             return mev("bad-arg", "string index out of range");
+        }
         auto& flat = *workspace_flat_;
 
         auto pattern_str = string_heap_[pattern_idx];
@@ -7477,8 +7557,10 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
         auto* pat_pool = temp_arena_->create<aura::ast::StringPool>(alloc);
         auto* pat_flat = temp_arena_->create<aura::ast::FlatAST>(alloc);
         auto pat_pr = aura::parser::parse_to_flat(pattern_str, *pat_flat, *pat_pool);
-        if (!pat_pr.success || pat_pr.root == NULL_NODE)
+        if (!pat_pr.success || pat_pr.root == NULL_NODE) {
+            ok = false;
             return mev("parse-error", "pattern string could not be parsed");
+        }
 
         auto wildcard_sym = pat_pool->intern("...");
 
@@ -7731,14 +7813,22 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
     //   Rollback (Issue #142): records parent_id, child_idx, and
     //   old_subtree_source in the mutation log so the (rollback ...)
     //   primitive can restore the original subtree verbatim.
+    // Issue #213 Cycle 2: migrate mutate:replace-subtree to
+    // use the MutationBoundaryGuard. The primitive already
+    // uses add_mutation_subtree (with has_subtree_rollback=true)
+    // — so the rollback path can re-parse the old_subtree_source
+    // and re-attach it at (parent_id, child_idx).
     primitives_.add("mutate:replace-subtree", [this, mev](const auto& a) -> EvalValue {
-        std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
-        if (workspace_read_only_) return mev("read-only", "workspace is read-only");
+        bool ok = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(*this, &ok);
+        if (workspace_read_only_) { ok = false; return mev("read-only", "workspace is read-only"); }
         // Issue #141: lazy COW trigger (active child workspace still
         // shares parent's flat — clone before mutating).
         if (workspace_tree_) {
-            if (!trigger_lazy_cow(workspace_tree_))
+            if (!trigger_lazy_cow(workspace_tree_)) {
+                ok = false;
                 return mev("cow-refused", "COW refused: budget exceeded or read-only");
+            }
             void* new_flat = nullptr;
             void* new_pool = nullptr;
             if (refresh_active_flat_pool(workspace_tree_, &new_flat, &new_pool)) {
@@ -7746,23 +7836,29 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 workspace_pool_ = static_cast<aura::ast::StringPool*>(new_pool);
             }
         }
-        defuse_version_.fetch_add(1, std::memory_order_acq_rel);
-        total_mutations_.fetch_add(1, std::memory_order_relaxed);
         using namespace aura::ast;
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) ||
-            !workspace_flat_ || !workspace_pool_)
+            !workspace_flat_ || !workspace_pool_) {
+            ok = false;
             return mev("bad-arg", "usage: (mutate:replace-subtree node-id new-code [summary])");
+        }
         auto target = static_cast<NodeId>(as_int(a[0]));
         auto code_idx = as_string_idx(a[1]);
-        if (code_idx >= string_heap_.size())
+        if (code_idx >= string_heap_.size()) {
+            ok = false;
             return mev("bad-arg", "code string index out of range");
+        }
         auto& flat = *workspace_flat_;
-        if (target == NULL_NODE || target >= flat.size())
+        if (target == NULL_NODE || target >= flat.size()) {
+            ok = false;
             return mev("bad-arg", "node-id out of range");
+        }
 
         // ── Hygiene gate (Issue #142 AC) ─────────────────────
-        if (flat.marker(target) == SyntaxMarker::MacroIntroduced)
+        if (flat.marker(target) == SyntaxMarker::MacroIntroduced) {
+            ok = false;
             return mev("hygiene", "cannot mutate macro-introduced node");
+        }
 
         auto new_code = string_heap_[code_idx];
         std::string summary = (a.size() > 2 && is_string(a[2]))
@@ -7783,8 +7879,10 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
                 }
             }
         }
-        if (!found_slot)
+        if (!found_slot) {
+            ok = false;
             return mev("no-parent", "target subtree has no parent slot to replace");
+        }
 
         // ── Capture old subtree source (for rollback) ────────
         std::string old_source;
@@ -11251,20 +11349,27 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     //   → list of inserted node IDs
     //   Parses and inserts multiple child expressions at the given position.
     //   code-strings can be multiple arguments (variadic).
-    primitives_.add("mutate:splice", [this](std::span<const EvalValue> a) -> EvalValue {
-        std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
-        // (Step 0.3) local merr removed; centralized make_merr
-        defuse_version_.fetch_add(1, std::memory_order_acq_rel);
-        total_mutations_.fetch_add(1, std::memory_order_relaxed);
-        if (workspace_read_only_) return make_merr("read-only", "workspace is read-only");
-        if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) ||
-            !workspace_flat_ || !workspace_pool_)
-            return make_merr("bad-arg", "usage: (mutate:splice parent-id position code-strings... [summary])");
-        auto parent = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        auto pos = static_cast<std::uint32_t>(as_int(a[1]));
-        auto& flat = *workspace_flat_;
-        if (parent >= flat.size())
-            return make_merr("out-of-range", "parent node ID " + std::to_string(parent) + " >= flat size " + std::to_string(flat.size()));
+    // Issue #213 Cycle 2: migrate mutate:splice to use the
+// MutationBoundaryGuard. The primitive mutates children_
+// (SoA column not in rollback switch), so the rollback
+// path is "bump version + invalidate defuse_index_".
+primitives_.add("mutate:splice", [this](std::span<const EvalValue> a) -> EvalValue {
+    bool ok = true;
+    aura::compiler::Evaluator::MutationBoundaryGuard guard(*this, &ok);
+    // (Step 0.3) local merr removed; centralized make_merr
+    if (workspace_read_only_) { ok = false; return make_merr("read-only", "workspace is read-only"); }
+    if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) ||
+        !workspace_flat_ || !workspace_pool_) {
+        ok = false;
+        return make_merr("bad-arg", "usage: (mutate:splice parent-id position code-strings... [summary])");
+    }
+    auto parent = static_cast<aura::ast::NodeId>(as_int(a[0]));
+    auto pos = static_cast<std::uint32_t>(as_int(a[1]));
+    auto& flat = *workspace_flat_;
+    if (parent >= flat.size()) {
+        ok = false;
+        return make_merr("out-of-range", "parent node ID " + std::to_string(parent) + " >= flat size " + std::to_string(flat.size()));
+    }
 
         // Collect all code strings (variadic) before the optional summary
         std::vector<EvalValue> code_args;
@@ -11284,8 +11389,10 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
                 summary = string_heap_[sidx];
         }
 
-        if (code_args.empty())
+        if (code_args.empty()) {
+            ok = false;
             return make_merr("bad-arg", "no code strings provided to splice");
+        }
 
         // Parse each code string and insert
         EvalValue result_list = make_void();
@@ -11338,22 +11445,31 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     //       → replaces node 5 with (display <original-node-5>)
     //     (mutate:wrap 3 "(let ((x _)) x)" "bind x")
     //       → wraps in let binding
-    primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue {
-        std::unique_lock<std::shared_mutex> wlock(workspace_mtx_);
-        // local merr removed; now centralized make_merr (phase complete)
-        defuse_version_.fetch_add(1, std::memory_order_acq_rel);
-        total_mutations_.fetch_add(1, std::memory_order_relaxed);
-        if (workspace_read_only_) return make_merr("read-only", "workspace is read-only");
-        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) ||
-            !workspace_flat_ || !workspace_pool_)
-            return make_merr("bad-arg", "usage: (mutate:wrap node-id wrapper-template [summary])");
-        auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        auto tmpl_idx = as_string_idx(a[1]);
-        if (tmpl_idx >= string_heap_.size())
-            return make_merr("bad-arg", "template string index out of range");
-        auto& flat = *workspace_flat_;
-        if (node >= flat.size())
-            return make_merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
+    // Issue #213 Cycle 2: migrate mutate:wrap to use the
+// MutationBoundaryGuard. Mutates children_ (SoA column
+// not in rollback switch), so the rollback path is
+// "bump version + invalidate defuse_index_".
+primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue {
+    bool ok = true;
+    aura::compiler::Evaluator::MutationBoundaryGuard guard(*this, &ok);
+    // local merr removed; now centralized make_merr (phase complete)
+    if (workspace_read_only_) { ok = false; return make_merr("read-only", "workspace is read-only"); }
+    if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) ||
+        !workspace_flat_ || !workspace_pool_) {
+        ok = false;
+        return make_merr("bad-arg", "usage: (mutate:wrap node-id wrapper-template [summary])");
+    }
+    auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+    auto tmpl_idx = as_string_idx(a[1]);
+    if (tmpl_idx >= string_heap_.size()) {
+        ok = false;
+        return make_merr("bad-arg", "template string index out of range");
+    }
+    auto& flat = *workspace_flat_;
+    if (node >= flat.size()) {
+        ok = false;
+        return make_merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
+    }
 
         std::string summary = (a.size() > 2 && is_string(a[2]))
                                   ? string_heap_[as_string_idx(a[2])]
@@ -11376,8 +11492,10 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
             if (parent_of_target != aura::ast::NULL_NODE) break;
         }
 
-        if (parent_of_target == aura::ast::NULL_NODE || child_idx_in_parent < 0)
+        if (parent_of_target == aura::ast::NULL_NODE || child_idx_in_parent < 0) {
+            ok = false;
             return make_merr("no-parent", "node " + std::to_string(node) + " has no parent in the AST");
+        }
 
         // Replace `_` in the template with a unique variable
         std::string sentinel = "__WRAP_TARGET_" + std::to_string(node) + "__";
@@ -11450,21 +11568,32 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     //   Extracts the subtree rooted at node-id into a new top-level define,
     //   replacing the original node with a call to the new function.
     //   Free variables in the extracted expression become parameters.
+    // Issue #213 Cycle 2: migrate mutate:refactor/extract to
+    // use the MutationBoundaryGuard. Mutates the AST (adds
+    // a new define + replaces original with a call), but
+    // rollback doesn't reverse the AST changes — it just
+    // bumps the version + invalidates the defuse index.
     primitives_.add("mutate:refactor/extract", [this](std::span<const EvalValue> a) -> EvalValue {
+        bool ok = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(*this, &ok);
         // local merr removed; now centralized make_merr (phase complete)
-        defuse_version_.fetch_add(1, std::memory_order_acq_rel);
-        total_mutations_.fetch_add(1, std::memory_order_relaxed);
-        if (workspace_read_only_) return make_merr("read-only", "workspace is read-only");
+        if (workspace_read_only_) { ok = false; return make_merr("read-only", "workspace is read-only"); }
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) ||
-            !workspace_flat_ || !workspace_pool_)
+            !workspace_flat_ || !workspace_pool_) {
+            ok = false;
             return make_merr("bad-arg", "usage: (mutate:refactor/extract node-id new-name [summary])");
+        }
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto name_idx = as_string_idx(a[1]);
-        if (name_idx >= string_heap_.size())
+        if (name_idx >= string_heap_.size()) {
+            ok = false;
             return make_merr("bad-arg", "name string index out of range");
+        }
         auto& flat = *workspace_flat_;
-        if (node >= flat.size())
+        if (node >= flat.size()) {
+            ok = false;
             return make_merr("out-of-range", "node ID " + std::to_string(node) + " >= flat size " + std::to_string(flat.size()));
+        }
 
         auto new_name = string_heap_[name_idx];
         std::string summary = (a.size() > 2 && is_string(a[2]))
@@ -11515,8 +11644,10 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
             if (parent_of_target != aura::ast::NULL_NODE) break;
         }
 
-        if (parent_of_target == aura::ast::NULL_NODE || child_idx_in_parent < 0)
+        if (parent_of_target == aura::ast::NULL_NODE || child_idx_in_parent < 0) {
+            ok = false;
             return make_merr("no-parent", "node " + std::to_string(node) + " has no parent in the AST");
+        }
 
         // Create the new function definition string
         std::string define_str = "(define (" + new_name + " x) x)";
@@ -11537,6 +11668,7 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
             } else {
                 parse_err = "extract function definition could not be parsed";
             }
+            ok = false;
             return make_merr("parse-error", parse_err);
         }
 
@@ -11685,16 +11817,27 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     //   → #t/#f
     //   Renames all definitions and references of old-name to new-name.
     //   Uses def-use index for finding all references.
+    // Issue #213 Cycle 2: migrate mutate:rename-symbol to
+    // use the MutationBoundaryGuard. The primitive mutates
+    // sym_id_ for many nodes at once — too many to log with
+    // add_mutation_with_rollback, so we use add_mutation for
+    // the summary record. The rollback path is "bump version
+    // + invalidate defuse_index_" (no per-node data restoration
+    // because there are too many).
     primitives_.add("mutate:rename-symbol", [this, ensure_defuse](const auto& a) -> EvalValue {
         using namespace aura::ast;
+        bool ok = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(*this, &ok);
         // local merr removed; now centralized make_merr (phase complete)
-        defuse_version_.fetch_add(1, std::memory_order_acq_rel);
-        total_mutations_.fetch_add(1, std::memory_order_relaxed);
-        if (workspace_read_only_)
+        if (workspace_read_only_) {
+            ok = false;
             return make_merr("read-only", "workspace is read-only");
+        }
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) ||
-            !workspace_flat_ || !workspace_pool_)
+            !workspace_flat_ || !workspace_pool_) {
+            ok = false;
             return make_merr("bad-arg", "usage: (mutate:rename-symbol old-name new-name)");
+        }
         auto old_name_idx = as_string_idx(a[0]);
         auto new_name_idx = as_string_idx(a[1]);
         if (old_name_idx >= string_heap_.size() || new_name_idx >= string_heap_.size())
@@ -11735,8 +11878,10 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
             }
         }
 
-        if (count == 0)
+        if (count == 0) {
+            ok = false;
             return make_merr("not-found", std::string("symbol \"") + old_name + "\" not found in AST");
+        }
 
         flat.add_mutation(0, "rename-symbol", old_name, new_name, summary);
         return make_bool(true);
@@ -11747,34 +11892,50 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
     //   → #t/#f
     //   Moves a node (and its subtree) from its current position to
     //   a new parent at the specified child index.
+    // Issue #213 Cycle 2: migrate mutate:move-node to use
+    // the MutationBoundaryGuard. The primitive mutates the
+    // children_ SoA column (which is not in the rollback
+    // switch), so the rollback path is "bump version +
+    // invalidate defuse_index_" — the actual move is not
+    // reversed, but readers know the workspace state changed.
     primitives_.add("mutate:move-node", [this](std::span<const EvalValue> a) -> EvalValue {
         using namespace aura::ast;
+        bool ok = true;
+        aura::compiler::Evaluator::MutationBoundaryGuard guard(*this, &ok);
         // local merr removed; now centralized make_merr (phase complete)
-        defuse_version_.fetch_add(1, std::memory_order_acq_rel);
-        total_mutations_.fetch_add(1, std::memory_order_relaxed);
-        if (workspace_read_only_)
+        if (workspace_read_only_) {
+            ok = false;
             return make_merr("read-only", "workspace is read-only");
+        }
         if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) ||
-            !workspace_flat_)
+            !workspace_flat_) {
+            ok = false;
             return make_merr("bad-arg", "usage: (mutate:move-node node parent pos)");
+        }
         auto node = static_cast<NodeId>(as_int(a[0]));
         auto new_parent = static_cast<NodeId>(as_int(a[1]));
         auto new_pos = static_cast<std::uint32_t>(as_int(a[2]));
         auto& flat = *workspace_flat_;
 
         if (node >= flat.size() || new_parent >= flat.size() ||
-            node == NULL_NODE || new_parent == NULL_NODE)
+            node == NULL_NODE || new_parent == NULL_NODE) {
+            ok = false;
             return make_merr("out-of-range", "node or parent ID out of range");
+        }
 
-        if (node == new_parent)
+        if (node == new_parent) {
+            ok = false;
             return make_merr("cycle", "cannot move node to itself");
+        }
 
         // Check if new_parent is a descendant of node (would create cycle)
         {
             auto p = flat.parent_of(new_parent);
             while (p != NULL_NODE) {
-                if (p == node)
+                if (p == node) {
+                    ok = false;
                     return make_merr("cycle", "new parent is a descendant of moved node");
+                }
                 auto next = flat.parent_of(p);
                 if (next == p) break;
                 p = next;
@@ -11782,8 +11943,10 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
         }
 
         auto cur_parent = flat.parent_of(node);
-        if (cur_parent == NULL_NODE)
+        if (cur_parent == NULL_NODE) {
+            ok = false;
             return make_merr("no-parent", "node has no parent (possibly the root)");
+        }
 
         int cur_idx = -1;
         auto cpv = flat.get(cur_parent);
@@ -11793,8 +11956,10 @@ primitives_.add("ast:version", [this](const auto&) -> EvalValue {
                 break;
             }
         }
-        if (cur_idx < 0)
+        if (cur_idx < 0) {
+            ok = false;
             return make_merr("inconsistency", "node not found in parent's children list");
+        }
 
         std::string summary = (a.size() > 3 && is_string(a[3]))
                                   ? string_heap_[as_string_idx(a[3])]

@@ -19,6 +19,11 @@ thread_local Fiber* g_current_fiber = nullptr;
 // TLS: current worker's dispatch loop context
 thread_local WorkerContext* g_worker_ctx = nullptr;
 
+// Issue #213 Cycle 3: function pointers that the Evaluator
+// registers at startup. See fiber.h for the rationale.
+void* (*g_fiber_setter_)(void*) = nullptr;
+void (*g_fiber_storage_deleter_)(void*) = nullptr;
+
 // Issue #195: per-fiber exception state requires a way to
 // query the current fiber's id from the runtime (the JIT
 // personality function and aura_exception_* use it). We
@@ -105,6 +110,26 @@ Fiber::~Fiber() {
         auto* base = static_cast<char*>(stack_) - 4096;
         ::munmap(base, 4096 + stack_size_);
     }
+    // Issue #213 Cycle 3: free the per-fiber mutation stack
+    // storage. The pointer was lazily allocated by
+    // Evaluator::active_mutation_stack() on first use. We
+    // only know it as void* here (fiber.h doesn't have the
+    // MutationCheckpoint type), so the Evaluator's accessor
+    // casts it back. The destructor just frees the void*
+    // — the Evaluator accessor is the one that knows the
+    // actual vector type.
+    if (mutation_stack_storage_) {
+        // The Evaluator accessor lazy-allocates; it owns the
+        // pointer. But for cleanup, we cast to the right type
+        // and delete. This requires the Evaluator's type to
+        // be visible. Use a function pointer that the
+        // Evaluator registers at startup to do the cleanup
+        // (avoids a circular include).
+        if (g_fiber_storage_deleter_) {
+            g_fiber_storage_deleter_(mutation_stack_storage_);
+        }
+        mutation_stack_storage_ = nullptr;
+    }
 }
 
 // ── Resume — worker → fiber ───────────────────────────
@@ -123,6 +148,13 @@ void Fiber::resume() {
 
     auto prev = g_current_fiber;
     g_current_fiber = this;
+    // Issue #213 Cycle 3: also update the Evaluator's
+    // thread_local current_fiber pointer so the
+    // active_mutation_stack() accessor can find the
+    // per-fiber stack. We use a function pointer that the
+    // Evaluator registers at startup (avoids the circular
+    // include between fiber.h and evaluator.ixx).
+    auto prev_fiber_void = g_fiber_setter_ ? g_fiber_setter_(this) : nullptr;
     state_.store(FiberState::Running, std::memory_order_release);
 
     // Swap from worker's loop context to fiber's context
@@ -131,6 +163,7 @@ void Fiber::resume() {
                      (unsigned long)id_, std::strerror(errno));
     }
 
+    if (g_fiber_setter_) g_fiber_setter_(prev_fiber_void);
     g_current_fiber = prev;
 }
 

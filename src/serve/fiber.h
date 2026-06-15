@@ -96,6 +96,19 @@ public:
     int eventfd() const { return eventfd_; }
     bool is_done() const { return state_.load(std::memory_order_acquire) == FiberState::Done; }
 
+    // Issue #213 Cycle 3: per-fiber mutation stack. The
+    // Evaluator's enter/exit_mutation_boundary reads/writes
+    // this stack (via active_mutation_stack()) instead of a
+    // thread_local, so a fiber that migrates between threads
+    // brings its stack with it.
+    //
+    // Type: opaque void* to avoid the circular dep between
+    // fiber.h and evaluator.ixx. The Evaluator casts it to
+    // `std::vector<MutationCheckpoint>*` and operates on
+    // it via the pointer.
+    void* mutation_stack_ptr() { return mutation_stack_storage_; }
+    void set_mutation_stack_ptr(void* p) { mutation_stack_storage_ = p; }
+
 private:
     uint64_t id_;
     std::atomic<FiberState> state_{FiberState::Ready};
@@ -111,7 +124,23 @@ private:
 
     // Trampoline: called when fiber starts
     static void trampoline(uint32_t high, uint32_t low);
+
+    // Per-fiber state: the mutation stack (Issue #213 Cycle 3).
+    // Opaque void* — see mutation_stack_ptr() / set_mutation_stack_ptr().
+    void* mutation_stack_storage_ = nullptr;
 };
+
+// Issue #213 Cycle 3: function pointers that the Evaluator
+// registers at startup, to avoid the circular include between
+// fiber.h and evaluator.ixx. The setter is called by
+// Fiber::resume() to update the Evaluator's thread_local
+// "current fiber" pointer. The deleter is called by
+// ~Fiber() to free the per-fiber storage owned by the
+// Evaluator. Both are void(void*) and void*(Fiber*) —
+// the function signatures are minimal so the fiber side
+// doesn't need to know about Evaluator internals.
+extern void* (*g_fiber_setter_)(void*);
+extern void (*g_fiber_storage_deleter_)(void*);
 
 // ── GCPhase — GC safepoint state machine (P2) ────────
 enum class GCPhase : uint8_t {
