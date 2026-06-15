@@ -10,7 +10,43 @@ export constexpr NodeId NULL_NODE = ~0u;
 export using SymId = std::uint32_t;
 export constexpr SymId INVALID_SYM = ~0u;
 
-// ── Source location ──────────────────────────────────────────
+// ── Issue #217 Cycle 5: AST types are reflection-ready ──────
+//
+// The AST types below (SourceLocation, ParsedPhase, NodeMeta,
+// NodeView, MutationRecord, Patch, MatchClauseInfo) are plain
+// POD structs that the C++26 P2996 reflection
+// (reflect_members<T>()) sees automatically — no explicit
+// REFLECT_MEMBERS annotation is required. The reflection-driven
+// serialization (auto_serialize<T>(buf, obj) /
+// auto_deserialize<T>(buf, pos)) works for the simple types
+// (SourceLocation, Patch) out of the box.
+//
+// For the complex types (NodeView, MutationRecord), there are
+// open issues to address in future cycles:
+//   - NodeView contains std::span<const NodeId> children and
+//     std::span<const SymId> params. std::span is not yet
+//     handled by classify_type (only std::array is).
+//   - MutationRecord contains multiple std::string fields
+//     and a std::string old_subtree_source. The string
+//     fields are reflection-friendly (MemberKind::String).
+//   - MatchClauseInfo contains std::vector<SymId> fields
+//     which use the vector overload (already supported).
+//
+// The test in tests/test_issue_217.cpp verifies the
+// reflection infrastructure works for the simple AST types
+// (SourceLocation, Patch) and documents the limitations
+// for the complex types.
+//
+// The migration scope per the issue body is:
+//   1. Replace hand-written JSON / binary serializers
+//      with auto_serialize.
+//   2. Replace hand-written deserializers with
+//      auto_deserialize.
+//   3. Migrate the SoA columns (int_val_, type_id_,
+//      tag_, sym_id_, etc.) to a single struct that
+//      can be auto_serialize'd. Much bigger refactor.
+
+// ── Source location ────────────────────────────
 export struct SourceLocation {
     std::uint32_t line = 0, column = 0, file = 0;
 };
