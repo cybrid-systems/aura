@@ -4022,6 +4022,24 @@ target_compile_options(cycle14_reflect_bench PRIVATE -freflection -Wall
     -Wno-unused-but-set-variable -Wno-unused-parameter)
 target_link_libraries(cycle14_reflect_bench PRIVATE stdc++ aura-reflect)
 add_test(NAME cycle14_reflect_bench COMMAND ./cycle14_reflect_bench)
+
+# Issue #221 Cycle 14 P5: benchmark suite for PersistentChildVector
+# (slice 5/5 — the ship gate for #221). Measures throughput across
+# 4 dimensions (PCV ops perf vs std::vector, COW back-reference
+# refcount growth, simulated #177 rollback flow, persistence
+# stress with the AC of < 2µs/op) and outputs JSON to
+# tests/bench_results/cycle221_pcv_bench.json for data-driven
+# design decisions. Standalone TU (no module imports — avoids the
+# GCC 16.1 std module + P2996 reflection conflict). The PCV header
+# is header-only.
+add_executable(cycle221_pcv_bench tests/bench/cycle221_pcv_bench.cpp)
+target_include_directories(cycle221_pcv_bench PRIVATE src)
+target_compile_options(cycle221_pcv_bench PRIVATE -Wall -Wextra -Wpedantic
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter)
+target_compile_features(cycle221_pcv_bench PUBLIC cxx_std_26)
+target_link_libraries(cycle221_pcv_bench PRIVATE stdc++ pthread)
+add_test(NAME cycle221_pcv_bench COMMAND ./cycle221_pcv_bench)
 target_include_directories(issue_212_bench PRIVATE src src/compiler)
 target_sources(issue_212_bench PRIVATE
     src/core/ast_impl.cpp
