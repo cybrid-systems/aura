@@ -39,18 +39,7 @@ extern "C" std::int64_t aura_jit_prim_dispatch(
     return 0;
 }
 
-static int g_passed = 0;
-static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (!(cond)) { \
-        std::print("  FAIL: {} (line {})\n", std::string(msg), __LINE__); \
-        ++g_failed; \
-    } else { \
-        std::print("  PASS: {}\n", std::string(msg)); \
-        ++g_passed; \
-    } \
-} while(0)
 
 #define PRINTLN(msg) do { std::print("{}\n", std::string(msg)); } while(0)
 
@@ -266,6 +255,14 @@ bool test_exception_stack_nested() {
 // decide whether to attempt shape-based specialization. If ANY
 // unhandled opcode has been reported, specialization is skipped.
 #include "spec_jit_controller.h"
+
+// Unified test harness (Issue #226). Provides
+// CHECK / EXPECT_* / TEST / RUN_ALL_TESTS. The local
+// g_passed / g_failed / CHECK macro above are removed;
+// this file now uses the harness's versions.
+#include "test_harness.hpp"
+using aura::test::g_passed;
+using aura::test::g_failed;
 bool test_spec_jit_deopt_signal() {
     PRINTLN("\n--- Test 11: spec_jit_controller deopt signal ---");
     aura::jit::AuraJIT jit;

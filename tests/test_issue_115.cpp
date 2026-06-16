@@ -23,18 +23,15 @@
 #include "serve/scheduler.h"
 #include "serve/worker.h"
 
-static int g_passed = 0;
-static int g_failed = 0;
+// Unified test harness (Issue #226). Provides
+// CHECK / EXPECT_* / TEST / RUN_ALL_TESTS. The local
+// g_passed / g_failed / CHECK macro above are removed;
+// this file now uses the harness's versions.
+#include "test_harness.hpp"
+using aura::test::g_passed;
+using aura::test::g_failed;
 
-#define CHECK(cond, msg) do { \
-    if (!(cond)) { \
-        std::println("  FAIL: {} (line {})", msg, __LINE__); \
-        ++g_failed; \
-    } else { \
-        std::println("  PASS: {}", msg); \
-        ++g_passed; \
-    } \
-} while(0)
+
 
 bool test_parallel_speedup() {
     std::println("\n--- Test: parallel speedup (Issue #115 — criterion #1) ---");

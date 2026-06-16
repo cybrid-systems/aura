@@ -16,6 +16,14 @@
 #include <cstdio>
 #include <cstdlib>
 
+// Unified test harness (Issue #226). Provides
+// CHECK / EXPECT_* / TEST / RUN_ALL_TESTS. The local
+// g_passed / g_failed / CHECK macro above are removed;
+// this file now uses the harness's versions.
+#include "test_harness.hpp"
+using aura::test::g_passed;
+using aura::test::g_failed;
+
 // Forward-declare the type aliases to verify they're
 // at the expected types. The actual definitions are in
 // aura_jit_runtime.cpp (which is linked into the test).
@@ -33,18 +41,7 @@ inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
 }  // namespace runtime
 }  // namespace aura
 
-static int g_passed = 0;
-static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (!(cond)) { \
-        std::fprintf(stderr, "  FAIL: %s (line %d)\n", (msg), __LINE__); \
-        ++g_failed; \
-    } else { \
-        std::fprintf(stdout, "  PASS: %s\n", (msg)); \
-        ++g_passed; \
-    } \
-} while(0)
 
 #define PRINTLN(msg) do { std::fprintf(stdout, "%s\n", (msg)); } while(0)
 

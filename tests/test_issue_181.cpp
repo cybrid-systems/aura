@@ -45,6 +45,14 @@
 // raw encoding (the same one lib/runtime.c uses).
 #include "value_tags.h"
 
+// Unified test harness (Issue #226). Provides
+// CHECK / EXPECT_* / TEST / RUN_ALL_TESTS. The local
+// g_passed / g_failed / CHECK macro above are removed;
+// this file now uses the harness's versions.
+#include "test_harness.hpp"
+using aura::test::g_passed;
+using aura::test::g_failed;
+
 // Re-import the module-exported v2 helpers via the value.ixx
 // module. The test target gets value.ixx via aura_add_issue_test
 // (see CMakeLists.txt).
@@ -71,17 +79,7 @@ using aura::compiler::types::make_ref;
 using aura::compiler::types::FLOAT_BIAS_VAL;
 using aura::compiler::types::STRING_BIAS_VAL;
 
-static int g_passed = 0;
-static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (!(cond)) { \
-        std::fprintf(stderr, "  FAIL: %s (line %d)\n", (msg), __LINE__); \
-        ++g_failed; \
-    } else { \
-        ++g_passed; \
-    } \
-} while(0)
 
 #define PASS(msg) do { std::fprintf(stdout, "  PASS: %s\n", (msg)); } while(0)
 
