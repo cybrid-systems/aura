@@ -192,4 +192,40 @@ export aura::diag::LowerResult<aura::ir::IRModule> lower_to_ir_with_cache_result
     const std::unordered_map<std::string, std::vector<std::string>>* cache_strings = nullptr,
     const std::string* self_name = nullptr, const aura::core::TypeRegistry* type_reg = nullptr);
 
+// ── Per-function lowering API (Issue #224 cycle 3) ──────────
+//
+// Lower a single Lambda AST node into a self-contained IRFunction.
+// Unlike lower_to_ir / lower_to_ir_with_cache, this does NOT
+// create a __top__ entry function — it returns the Lambda's
+// function directly. Used by the per-function re-lower path
+// in CompilerService::relower_define_function(), which replaces
+// a single function in a cached entry's irs[] without
+// re-lowering the whole bundle.
+//
+// The returned IRFunction has:
+//   - id = 0 (caller is responsible for assigning the correct
+//     func_id when inserting back into the cache)
+//   - name = "__lambda__" (matches what lower_to_ir produces
+//     for a top-level Define body)
+//   - free_vars populated (used by the call-site re-resolution)
+//   - bridge data NOT populated (the lower_to_ir pipeline sets
+//     bridge data on the IRModule, not on the function)
+//
+// The caller (CompilerService) is responsible for:
+//   - re-binding func_ids in MakeClosure instructions of the
+//     new function (or any callers that referenced it)
+//   - re-running per-function passes (compute_kind, constant_fold)
+//   - updating the per-block dirty bitmask for the new function
+//
+// On failure (no Lambda found, or empty body), returns an
+// empty IRFunction (blocks.empty() == true). The caller
+// should check this and fall back to a full re-lower.
+export aura::ir::IRFunction lower_function_at(ast::FlatAST& flat, ast::StringPool& pool,
+                                              ast::ASTArena& arena, ast::NodeId lambda_node_id,
+                                              const Primitives* primitives = nullptr,
+                                              const std::unordered_map<
+                                                  std::string,
+                                                  std::vector<aura::ir::IRFunction>>* cache = nullptr,
+                                              std::vector<std::string>* cache_hits = nullptr);
+
 } // namespace aura::compiler

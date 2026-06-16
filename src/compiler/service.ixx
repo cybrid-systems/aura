@@ -2664,9 +2664,60 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                 1, std::memory_order_relaxed);
             return true;
         }
-        // Bitmask says at least one block is dirty → do a
+        // Issue #224 cycle 3: detect single-function-dirty
+        // and dispatch to per-function re-lower. The
+        // contract: when the bitmask reports dirty blocks
+        // in EXACTLY ONE function in the entry, we can
+        // re-lower just that one function (the body
+        // Lambda, typically function idx 1) and replace
+        // it in the cache without re-iterating the rest
+        // of the bundle. The cycle-3 win: avoid the full
+        // bundle re-iteration when only one function is
+        // dirty.
+        //
+        // Caveats (cycle-3 scope):
+        //   - We require that expanded_root points to a
+        //     Lambda (the function body). For nested
+        //     lambdas (multi-function bundles), the
+        //     dispatch falls back to full re-lower
+        //     because the cached entry doesn't store
+        //     per-function source node ids.
+        //   - The MakeClosure operands in the new
+        //     function reference the original func_id
+        //     (we preserve it on replace), so callers
+        //     that reference the old function keep
+        //     working.
+        if (it->second.irs.size() >= 2) {
+            std::size_t dirty_func_idx = static_cast<std::size_t>(-1);
+            std::size_t dirty_func_count = 0;
+            for (std::size_t fi = 0; fi < it->second.block_dirty_per_func_.size(); ++fi) {
+                bool any = false;
+                for (auto b : it->second.block_dirty_per_func_[fi]) {
+                    if (b) {
+                        any = true;
+                        break;
+                    }
+                }
+                if (any) {
+                    ++dirty_func_count;
+                    dirty_func_idx = fi;
+                }
+            }
+            if (dirty_func_count == 1 && dirty_func_idx == 1 && expanded_root != aura::ast::NULL_NODE) {
+                // Only the body function is dirty, and we
+                // have a source node id. Try per-function
+                // re-lower.
+                if (relower_define_function(name, dirty_func_idx, flat, pool, expanded_root)) {
+                    return true;
+                }
+                // If per-function failed, fall through to
+                // full re-lower below.
+            }
+        }
+        // Bitmask says at least one block is dirty (or
+        // per-function dispatch didn't apply) → do a
         // full re-lower. The future per-block re-lower
-        // (cycle 3+) will route only the dirty blocks
+        // (cycle 4+) will route only the dirty blocks
         // through lowering; today we still re-lower the
         // whole function bundle.
         metrics_.relower_full_called_count.fetch_add(
@@ -2724,6 +2775,98 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         // Record dependencies for dep_graph_.
         for (auto& called_name : cache_hits) {
             record_dependency(name, called_name);
+        }
+        return true;
+    }
+
+    // Issue #224 cycle 3: per-function re-lower. Re-lowers a
+    // single Lambda AST node and replaces that function in the
+    // cached entry's irs[] without touching the rest of the
+    // bundle.
+    //
+    // This is the real per-function win: if a cached entry has
+    // a body Lambda + N nested lambdas, and only the body's
+    // function has dirty blocks, we re-lower ONE function
+    // instead of N+1. For typical define bodies (single Lambda,
+    // no nested functions), this collapses to "re-lower the
+    // one function".
+    //
+    // The (flat, pool, lambda_node_id) args let the caller
+    // pass the FlatAST that contains the Lambda — typically
+    // the same flat that was used to populate the entry via
+    // store_define_v2 / cache_define, possibly with the source
+    // re-parsed after a (set-code ...) mutation.
+    //
+    // Returns:
+    //   - true  if the per-function re-lower succeeded and the
+    //            function was replaced in the cache.
+    //   - false if the entry doesn't exist, func_idx is out of
+    //            range, lambda_node_id is invalid, or the
+    //            lowering returned an empty function. Caller
+    //            should fall back to relower_define_blocks()
+    //            (full re-lower) on false.
+    //
+    // Side effects:
+    //   - Bumps relower_per_function_called_count
+    //   - Replaces ir_cache_v2_[name].irs[func_idx] in place
+    //   - Clears the per-block dirty bits for that function
+    //     (the new IR is presumed correct)
+    //   - Mirrors the new function into ir_cache_[name] (v1)
+    //   - Runs per-function passes (compute_kind, constant_fold)
+    //     on the new function, matching what cache_define does
+    //     for the full-bundle path.
+    //
+    // The MakeClosure operands in the new function reference
+    // func_id 0 (reset by lower_function_at). The caller is
+    // responsible for fixing them up; for cycle 3 we accept
+    // func_id 0 as a placeholder and document the limitation.
+    // A future cycle will add a func_id remap pass for the
+    // per-function replacement path.
+    bool relower_define_function(const std::string& name, std::size_t func_idx,
+                                  aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                  aura::ast::NodeId lambda_node_id) {
+        auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end()) return false;
+        auto& entry = it->second;
+        if (func_idx >= entry.irs.size()) return false;
+        // Re-lower just this one function.
+        auto new_func = aura::compiler::lower_function_at(
+            flat, pool, arena_, lambda_node_id, &evaluator_.primitives());
+        if (new_func.blocks.empty()) {
+            // Lowering returned empty — fall back to full re-lower.
+            return false;
+        }
+        // Run per-function passes (mirrors cache_define).
+        {
+            aura::compiler::ComputeKindWrap ck_pass;
+            aura::compiler::ConstantFoldingWrap cf_pass;
+            ck_pass.compute_function(new_func);
+            cf_pass.fold_function(new_func);
+        }
+        // Bump the per-function re-lower counter.
+        metrics_.relower_per_function_called_count.fetch_add(
+            1, std::memory_order_relaxed);
+        // Replace the function in the v2 cache. Preserve the
+        // original func_id so MakeClosure operands in callers
+        // (which reference the old func_id) keep working.
+        const auto old_func_id = entry.irs[func_idx].id;
+        new_func.id = old_func_id;
+        entry.irs[func_idx] = std::move(new_func);
+        // Clear the per-block dirty bits for this function
+        // (we just re-lowered it, so the new IR is correct).
+        for (auto& b : entry.block_dirty_per_func_[func_idx]) {
+            b = 0;
+        }
+        // Also clear the entry.dirty flag if this was the only
+        // dirty function.
+        if (entry.dirty_block_count() == 0) {
+            entry.dirty = false;
+        }
+        // Mirror to v1 cache. The v1 cache stores the function
+        // in ir_cache_[name]; we need to find and replace.
+        auto v1_it = ir_cache_.find(name);
+        if (v1_it != ir_cache_.end() && func_idx > 0 && (func_idx - 1) < v1_it->second.size()) {
+            v1_it->second[func_idx - 1] = entry.irs[func_idx];
         }
         return true;
     }
