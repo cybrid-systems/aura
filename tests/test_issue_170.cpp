@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_170.cpp — Issue #170: Accelerate LLVM JIT Backend
 // (Phase 1: AOT entry points + Phase 1 / item #1: complete core
 // lowering).

@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_196.cpp — Verify Issue #196 acceptance criteria
 // ("Improve incremental recompilation granularity & stability
 //  for frequent AI mutations (coarse per-function dirty

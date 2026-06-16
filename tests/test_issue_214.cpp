@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_214.cpp — Issue #214 Cycle 1:
 // reflect_module_exports (compile-time) + stdlib source scanner (runtime)
 // + query:module-exports primitive.

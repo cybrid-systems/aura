@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_205.cpp — Issue #205 caller-side env_frames_ walk
 // wires evaluator to GCCollector::mark_env_frame_roots.
 //

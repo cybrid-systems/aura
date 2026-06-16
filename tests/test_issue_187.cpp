@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_187.cpp — Verify Issue #187 acceptance criteria
 // ("Implement Arena compaction and enhance double-arena strategy
 //  for production memory stability and cache friendliness").

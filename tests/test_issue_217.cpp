@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_217.cpp — Issue #217 Cycle 1 (pilot):
 // AST/IR migration to reflect_members + auto_serialize.
 //

@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_188.cpp — Verify Issue #188 acceptance criteria
 // ("Fine-grained incremental type checking + dirty propagation +
 //  Occurrence Typing re-validation after typed mutations for

@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_167.cpp — Issue #167: IR layer SoA/DOD migration
 // (Phase 1: scaffold).
 //

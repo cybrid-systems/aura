@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_184.cpp — Issue #184: MutationBoundaryGuard RAII +
 // atomic defuse_version_ + Fiber + Mutation Concurrency Safety.
 //

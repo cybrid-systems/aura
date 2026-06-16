@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_119.cpp — Verify the proper-blocking fiber:join fix
 // and the orch:parallel true-parallel guarantee.
 //

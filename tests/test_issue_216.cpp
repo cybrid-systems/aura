@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_216.cpp — Issue #216 Cycle 3:
 // query:schema + mutate integration (pre-mutation validation).
 //

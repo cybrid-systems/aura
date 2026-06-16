@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_124.cpp — Verify try/catch exception support fix
 // (Issue #124).
 //

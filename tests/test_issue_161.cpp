@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_161.cpp — Issue #161 Phase 2: parser is now a pure function.
 //
 // Verifies (a) parse_to_flat is the only public entry point (no

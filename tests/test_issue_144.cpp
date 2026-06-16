@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_144.cpp — Verify Issue #144 acceptance criteria
 // ("feat(c++26): Broaden [[pre]]/[[post]] Contracts to all hot
 // paths").

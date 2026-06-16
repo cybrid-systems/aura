@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_163.cpp — Issue #163: Expand Pass concept usage and
 // apply Concepts to more components.
 //

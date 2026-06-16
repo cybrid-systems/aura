@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_149.cpp — Verify Issue #149 acceptance criteria
 // ("propagate rich inferred types for specialization,
 // monomorphization and improved deopt guards").

@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_132.cpp — Verify the AST walker extractions
 // (Issue #132).
 //

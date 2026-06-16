@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_148.cpp — Verify Issue #148 acceptance criteria
 // ("mutation-aware incremental type checking with constraint
 // delta solving").

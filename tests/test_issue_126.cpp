@@ -1,3 +1,5 @@
+// @category: regression
+// @reason: mentions 'regression' in top comment
 // test_issue_126.cpp — Verify the pure functions extracted
 // from CompilerService and Evaluator (Issue #126).
 //

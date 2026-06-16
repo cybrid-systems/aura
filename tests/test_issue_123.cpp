@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_123.cpp — Verify the IR-level require pre-execution
 // fix (Issue #123).
 //

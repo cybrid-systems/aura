@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_159_bench.cpp — Issue #159 Phase 4: incremental
 // compilation benchmark harness.
 //

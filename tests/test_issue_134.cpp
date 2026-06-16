@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_134.cpp — Verify the complete ADT support
 // (datatype ...) form + global constructor registry
 // (Issue #134).

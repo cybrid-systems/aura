@@ -1,3 +1,5 @@
+// @category: issue_specific
+// @reason: default for test_issue_*.cpp
 // test_issue_210.cpp — Issue #210 Cycle 4 env cleanup:
 // the final step (drop bindings_ entirely).
 //

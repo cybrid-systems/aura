@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_137.cpp — Verify Issue #137 acceptance criteria
 // ("Implement full hygienic macros with automatic gensym in macro expansion").
 //

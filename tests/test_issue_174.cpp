@@ -1,3 +1,5 @@
+// @category: issue_specific
+// @reason: default for test_issue_*.cpp
 // test_issue_174.cpp — Issue #174 Cycle 1 Env::bindings_
 // migration: bindings_symid_iter() + bindings_with_names()
 // + bindings_legacy_uses metric.

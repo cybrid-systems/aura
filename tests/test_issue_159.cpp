@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_159.cpp — Issue #159 Phase 1: incremental typecheck primitive.
 //
 // Verifies (typecheck-incremental) is exported, works on the workspace's

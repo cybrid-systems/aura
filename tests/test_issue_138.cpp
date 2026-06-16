@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_138.cpp — Verify Issue #138 acceptance criteria
 // ("Complete incremental dirty propagation and fine-grained type
 // checking for EDSL mutations").

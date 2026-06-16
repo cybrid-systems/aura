@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_222.cpp — Issue #222: structural mutation
 // concurrency safety (Issue #179 Cycle 4, slice 1/3).
 //

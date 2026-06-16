@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_168.cpp — Issue #168: incremental type cache safety
 // after typed mutations (Phase 1: epoch gate).
 //

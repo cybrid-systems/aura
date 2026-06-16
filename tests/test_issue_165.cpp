@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_165.cpp — Issue #165: macro re-expansion + SyntaxMarker
 // handling after EDSL mutations.
 //

@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_221.cpp — Issue #221: PersistentChildVector
 // (Issue #179 Cycle 3, slice 1/5).
 //

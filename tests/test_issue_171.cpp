@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_171.cpp — Issue #171: High-Impact IR Optimization Passes
 // (Function Inliner + TCO).
 //

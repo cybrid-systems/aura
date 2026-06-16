@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_219.cpp — Issue #219: gap-buffer child_data_
 // for O(1) insert/remove in FlatAST.
 //

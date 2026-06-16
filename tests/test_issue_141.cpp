@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_141.cpp — Verify Issue #141 acceptance criteria
 // ("feat(workspace): implement full WorkspaceTree with COW,
 // read-only permissions and merge primitives").

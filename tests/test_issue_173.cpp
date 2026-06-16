@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_173.cpp — Issue #173: heap vectors — arena-backed
 // storage + stable IDs (Phase 2 of #145 workstream 2).
 //

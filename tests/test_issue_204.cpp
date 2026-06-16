@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_204.cpp — Issue #172 (Phase 4) / #204: GC
 // integration with the EnvFrame SoA arena.
 //

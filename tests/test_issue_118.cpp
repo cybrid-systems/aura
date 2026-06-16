@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_118.cpp — Verify the constraint solver timeout fix
 // and the diagnostic node-tagging fix.
 //

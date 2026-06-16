@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_178.cpp — Issue #178 Cycle 5: production NodeView
 // migration to reflect_members + auto_serialize.
 //

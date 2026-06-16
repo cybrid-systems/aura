@@ -1,3 +1,5 @@
+// @category: issue_specific
+// @reason: default for test_issue_*.cpp
 // test_issue_223.cpp — Issue #223: closure-bridge epoch counter
 // for lifetime tracking (Issue #180 Cycle 1).
 //

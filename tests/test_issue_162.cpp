@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_162.cpp — Issue #162 Phase 1: Type Concepts for
 // the type system.
 //

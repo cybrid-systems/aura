@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_140.cpp — Verify Issue #140 acceptance criteria
 // ("feat(edsl): implement high-performance query:pattern matcher
 // with Ellipsis and basic hygiene").

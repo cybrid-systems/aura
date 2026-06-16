@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_212.cpp — Issue #212 Cycle 1:
 // pure-function extraction of `constant_folding`.
 //

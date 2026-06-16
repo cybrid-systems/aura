@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_122.cpp — Verify the reflection primitive fixes
 // (Issue #122).
 //

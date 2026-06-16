@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_197.cpp — Issue #197: branch-aware inliner + parameter
 // renaming (extends InlinePass from #171).
 //
