@@ -1165,6 +1165,184 @@ private:
     std::size_t size() const { return tag_.size(); }
     bool empty() const { return tag_.empty(); }
 
+    // ── Issue #217 Cycle 14 (P2): FlatAST SoA custom serialize ─
+    //
+    // The production FlatAST has 23 PRIVATE SoA columns
+    // (tag_/int_val_/float_val_/sym_id_/child_begin_/
+    // child_count_/child_data_/parent_/param_begin_/
+    // param_count_/cap_require_count_/param_data_/
+    // param_annot_data_/line_/col_/marker_/dirty_/type_id_/
+    // error_kind_/value_cache_/node_first_mutation_/
+    // node_gen_). The generic reflect_members<T>() can't
+    // see private members, so the generic auto_serialize
+    // path doesn't work. These custom methods iterate the
+    // SoA columns directly.
+    //
+    // Wire format (matches tests/test_issue_217.cpp Test 18):
+    //   [u32 format_version = 1]
+    //   [u32 num_nodes]
+    //   For each of 22 SoA columns (fixed order, see below):
+    //     [u32 count]
+    //     [count * sizeof(elem) raw bytes]
+    //   [u32 next_mutation_id_ (low 32 bits)]
+    //   [u16 generation_]
+    //   [u16 reserved]
+    //
+    // The 22 SoA columns in order:
+    //   1. tag_           (u32 = NodeTag)
+    //   2. int_val_       (i64)
+    //   3. float_val_     (f64)
+    //   4. sym_id_        (u32 = SymId)
+    //   5. child_begin_   (u32)
+    //   6. child_count_   (u32)
+    //   7. child_data_    (u32 = NodeId)
+    //   8. parent_        (u32 = NodeId)
+    //   9. param_begin_   (u32)
+    //  10. param_count_   (u32)
+    //  11. cap_require_count_ (u32)
+    //  12. param_data_    (u32 = SymId)
+    //  13. param_annot_data_ (u32 = NodeId)
+    //  14. line_         (u32)
+    //  15. col_          (u32)
+    //  16. marker_        (u8 = SyntaxMarker)
+    //  17. dirty_         (u8)
+    //  18. type_id_       (u32)
+    //  19. error_kind_    (u8)
+    //  20. value_cache_   (i64)
+    //  21. node_first_mutation_ (u32)
+    //  22. node_gen_      (u16)
+    //
+    // NOT serialized in v1 (would be v2):
+    //   - mutation_log_ (vector<MutationRecord> — length-
+    //     prefixed records. Cyclically a separate concern
+    //     from #147 MutationRecord migration.)
+    //   - match_info_ (vector<MatchClauseInfo> — side table,
+    //     populated by add_match_clause, not in core SoA)
+    //   - region_by_sym_ / region_by_lambda_id_ (pmr::unordered_map,
+    //     populated by performance-region / evolution-region
+    //     parsers)
+    //   - root (scalar; can be derived from the AST or
+    //     set after deserialize)
+    void serialize_soa(std::vector<char>& buf) const {
+        // Format version
+        std::uint32_t version = 1;
+        buf.insert(buf.end(), reinterpret_cast<char*>(&version),
+                   reinterpret_cast<char*>(&version) + 4);
+        // Num nodes (informational; per-node columns derive their size)
+        std::uint32_t num_nodes = static_cast<std::uint32_t>(tag_.size());
+        buf.insert(buf.end(), reinterpret_cast<char*>(&num_nodes),
+                   reinterpret_cast<char*>(&num_nodes) + 4);
+
+        // Helper: serialize a pmr::vector<T> as count + raw bytes
+        auto write_column = [&buf](const auto& col) {
+            std::uint32_t count = static_cast<std::uint32_t>(col.size());
+            buf.insert(buf.end(), reinterpret_cast<char*>(&count),
+                       reinterpret_cast<char*>(&count) + 4);
+            if (!col.empty()) {
+                buf.insert(buf.end(),
+                           reinterpret_cast<const char*>(col.data()),
+                           reinterpret_cast<const char*>(col.data()) +
+                               col.size() * sizeof(typename std::remove_reference<decltype(col)>::type::value_type));
+            }
+        };
+        // 22 SoA columns (mutation_log_ excluded; see comment)
+        write_column(tag_);
+        write_column(int_val_);
+        write_column(float_val_);
+        write_column(sym_id_);
+        write_column(child_begin_);
+        write_column(child_count_);
+        write_column(child_data_);
+        write_column(parent_);
+        write_column(param_begin_);
+        write_column(param_count_);
+        write_column(cap_require_count_);
+        write_column(param_data_);
+        write_column(param_annot_data_);
+        write_column(line_);
+        write_column(col_);
+        write_column(marker_);
+        write_column(dirty_);
+        write_column(type_id_);
+        write_column(error_kind_);
+        write_column(value_cache_);
+        write_column(node_first_mutation_);
+        write_column(node_gen_);
+        // Scalars
+        buf.insert(buf.end(), reinterpret_cast<const char*>(&next_mutation_id_),
+                   reinterpret_cast<const char*>(&next_mutation_id_) + 4);
+        buf.insert(buf.end(), reinterpret_cast<const char*>(&generation_),
+                   reinterpret_cast<const char*>(&generation_) + 2);
+        // 2 bytes padding for u32 alignment of a future v2 field
+        std::uint16_t reserved = 0;
+        buf.insert(buf.end(), reinterpret_cast<const char*>(&reserved),
+                   reinterpret_cast<const char*>(&reserved) + 2);
+    }
+
+    // Static (no instance needed). Returns a freshly-constructed
+    // FlatAST populated from the wire format. The FlatAST uses
+    // a default std::pmr::polymorphic_allocator (no arena) — if
+    // the caller needs arena-backed deserialization, they should
+    // pass an allocator to the FlatAST constructor after the
+    // call.
+    //
+    // NOT in v1: mutation_log_, match_info_, region_by_*,
+    // root. After deserialize, these are empty/default — the
+    // caller is responsible for re-running any post-load
+    // initialization (e.g. link_parents after data-driven
+    // loads).
+    static FlatAST deserialize_soa(const std::vector<char>& buf, std::size_t& pos) {
+        FlatAST ast;
+        std::uint32_t version;
+        std::memcpy(&version, &buf[pos], 4); pos += 4;
+        // Only v1 is supported. The caller is responsible for
+        // version dispatch in a future multi-version loader.
+        if (version != 1) {
+            // For now, just set pos to end (signal failure to caller).
+            pos = buf.size();
+            return ast;
+        }
+        std::uint32_t num_nodes;
+        std::memcpy(&num_nodes, &buf[pos], 4); pos += 4;
+
+        auto read_column = [&buf, &pos](auto& col) {
+            using T = typename std::remove_reference<decltype(col)>::type::value_type;
+            std::uint32_t count;
+            std::memcpy(&count, &buf[pos], 4); pos += 4;
+            col.resize(count);
+            if (count > 0) {
+                std::memcpy(col.data(), &buf[pos], count * sizeof(T));
+                pos += count * sizeof(T);
+            }
+        };
+        read_column(ast.tag_);
+        read_column(ast.int_val_);
+        read_column(ast.float_val_);
+        read_column(ast.sym_id_);
+        read_column(ast.child_begin_);
+        read_column(ast.child_count_);
+        read_column(ast.child_data_);
+        read_column(ast.parent_);
+        read_column(ast.param_begin_);
+        read_column(ast.param_count_);
+        read_column(ast.cap_require_count_);
+        read_column(ast.param_data_);
+        read_column(ast.param_annot_data_);
+        read_column(ast.line_);
+        read_column(ast.col_);
+        read_column(ast.marker_);
+        read_column(ast.dirty_);
+        read_column(ast.type_id_);
+        read_column(ast.error_kind_);
+        read_column(ast.value_cache_);
+        read_column(ast.node_first_mutation_);
+        read_column(ast.node_gen_);
+        std::memcpy(&ast.next_mutation_id_, &buf[pos], 4); pos += 4;
+        std::memcpy(&ast.generation_, &buf[pos], 2); pos += 2;
+        pos += 2;  // reserved
+        return ast;
+    }
+
     // ── Marker access ─────────────────────────────────────────
 
     void set_marker(NodeId id, SyntaxMarker m)

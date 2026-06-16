@@ -914,6 +914,291 @@ bool test_reflect_opcode_info() {
     return true;
 }
 
+// ── Test 18: FlatAST SoA custom auto_serialize (Cycle 14) ──
+//
+// Issue #217 Cycle 14: the production FlatAST in
+// src/core/ast.ixx has PRIVATE SoA columns (23 pmr::vector
+// columns for tag/int_val/float_val/sym_id/child_*/param_*/
+// line/col/marker/dirty/type_id/error_kind/value_cache/
+// mutation_log/node_first_mutation/node_gen). The generic
+// reflect_members<T>() template can only see PUBLIC
+// members, so the generic auto_serialize path doesn't
+// work for FlatAST.
+//
+// The fix: write CUSTOM auto_serialize / auto_deserialize
+// overloads for FlatAST that iterate the SoA columns
+// directly. These non-template overloads take priority
+// over the generic reflect-based template (C++ overload
+// resolution rule: non-template > template).
+//
+// This test verifies the CUSTOM pattern works using a
+// hand-written struct (FlatASTSoALike) with the same 23
+// SoA columns as the production FlatAST. All columns are
+// PUBLIC (so the test compiles without a friend declaration
+// hack). The wire format is the SAME as what the
+// production custom overloads will use:
+//
+//   [u32 format_version = 1]
+//   [u32 num_nodes]
+//   For each of 23 SoA columns (fixed order, see below):
+//     [u32 count]
+//     [count * sizeof(elem) raw bytes]
+//   [u32 next_mutation_id_ (low 32 bits)]
+//   [u16 generation_]
+//   [u16 reserved]
+//
+// The 23 SoA columns in order:
+//   1. tag_           u32 (NodeTag)
+//   2. int_val_       i64
+//   3. float_val_     f64
+//   4. sym_id_        u32 (SymId)
+//   5. child_begin_   u32
+//   6. child_count_   u32
+//   7. child_data_    u32 (NodeId)
+//   8. parent_        u32 (NodeId)
+//   9. param_begin_   u32
+//  10. param_count_   u32
+//  11. cap_require_count_ u32
+//  12. param_data_    u32 (SymId)
+//  13. param_annot_data_ u32 (NodeId)
+//  14. line_         u32
+//  15. col_          u32
+//  16. marker_        u8 (SyntaxMarker)
+//  17. dirty_         u8
+//  18. type_id_       u32
+//  19. error_kind_    u8
+//  20. value_cache_   i64
+//  21. mutation_log_  (struct MutationRecord — length-prefixed
+//                      records, NOT raw bytes. For Cycle 14
+//                      roundtrip we only verify count; full
+//                      MutationRecord serialize is a
+//                      separate concern from #147.)
+//  22. node_first_mutation_ u32
+//  23. node_gen_      u16
+//
+// Note: this is the "columnar" wire format. The 23
+// columns are independent arrays. For a FlatAST with N
+// nodes, each of the per-node columns (1, 2, 3, 4, 5,
+// 6, 8, 9, 10, 11, 14, 15, 16, 17, 18, 19, 20, 22, 23)
+// has size N. The "list" columns (7 child_data_, 12
+// param_data_, 13 param_annot_data_) have variable
+// size (sum of all child_count_ values, etc.). The
+// mutation_log_ column (21) is a vector<MutationRecord>
+// with its own length.
+//
+// For the test, the hand-written struct only has the
+// core POD columns; mutation_log_ and the side tables
+// (match_info_, region_by_*) are not exercised here
+// (the production custom serialize will be a longer
+// format with those as v2).
+struct FlatASTSoALike {
+    // 23 SoA columns (PUBLIC for testability)
+    std::vector<std::uint32_t> tag_;
+    std::vector<std::int64_t> int_val_;
+    std::vector<double> float_val_;
+    std::vector<std::uint32_t> sym_id_;
+    std::vector<std::uint32_t> child_begin_;
+    std::vector<std::uint32_t> child_count_;
+    std::vector<std::uint32_t> child_data_;     // NodeId
+    std::vector<std::uint32_t> parent_;          // NodeId
+    std::vector<std::uint32_t> param_begin_;
+    std::vector<std::uint32_t> param_count_;
+    std::vector<std::uint32_t> cap_require_count_;
+    std::vector<std::uint32_t> param_data_;      // SymId
+    std::vector<std::uint32_t> param_annot_data_;
+    std::vector<std::uint32_t> line_;
+    std::vector<std::uint32_t> col_;
+    std::vector<std::uint8_t> marker_;
+    std::vector<std::uint8_t> dirty_;
+    std::vector<std::uint32_t> type_id_;
+    std::vector<std::uint8_t> error_kind_;
+    std::vector<std::int64_t> value_cache_;
+    std::vector<std::uint32_t> node_first_mutation_;
+    std::vector<std::uint16_t> node_gen_;
+    // Scalars (also part of the wire format)
+    std::uint32_t next_mutation_id_ = 0;
+    std::uint16_t generation_ = 0;
+};
+// Custom auto_serialize for FlatAST (the non-template
+// overload that takes priority over the generic template).
+// This is the SAME code that will live in src/core/ast.ixx
+// for the production FlatAST (just templated on the
+// production type).
+//
+// The format is columnar: each SoA column is written as
+// a length-prefixed raw byte buffer. Columns are written
+// in a fixed order matching the order they're declared
+// in the struct (and the same order they'll be in the
+// production code).
+inline void flat_ast_soa_serialize(std::vector<char>& buf, const FlatASTSoALike& ast) {
+    // Format version
+    uint32_t version = 1;
+    buf.insert(buf.end(), reinterpret_cast<char*>(&version),
+               reinterpret_cast<char*>(&version) + 4);
+    // Num nodes (informational; per-node columns derive their size from this)
+    uint32_t num_nodes = static_cast<uint32_t>(ast.tag_.size());
+    buf.insert(buf.end(), reinterpret_cast<char*>(&num_nodes),
+               reinterpret_cast<char*>(&num_nodes) + 4);
+
+    // Helper: serialize a vector<T> as count + raw bytes
+    auto write_column = [&buf](const auto& col) {
+        uint32_t count = static_cast<uint32_t>(col.size());
+        buf.insert(buf.end(), reinterpret_cast<char*>(&count),
+                   reinterpret_cast<char*>(&count) + 4);
+        if (!col.empty()) {
+            buf.insert(buf.end(),
+                       reinterpret_cast<const char*>(col.data()),
+                       reinterpret_cast<const char*>(col.data()) + col.size() * sizeof(typename std::remove_reference<decltype(col)>::type::value_type));
+        }
+    };
+    // 19 per-node + list columns (same as production columns 1-19 except mutation_log_)
+    write_column(ast.tag_);
+    write_column(ast.int_val_);
+    write_column(ast.float_val_);
+    write_column(ast.sym_id_);
+    write_column(ast.child_begin_);
+    write_column(ast.child_count_);
+    write_column(ast.child_data_);
+    write_column(ast.parent_);
+    write_column(ast.param_begin_);
+    write_column(ast.param_count_);
+    write_column(ast.cap_require_count_);
+    write_column(ast.param_data_);
+    write_column(ast.param_annot_data_);
+    write_column(ast.line_);
+    write_column(ast.col_);
+    write_column(ast.marker_);
+    write_column(ast.dirty_);
+    write_column(ast.type_id_);
+    write_column(ast.error_kind_);
+    write_column(ast.value_cache_);
+    write_column(ast.node_first_mutation_);
+    write_column(ast.node_gen_);
+    // Scalars
+    buf.insert(buf.end(), reinterpret_cast<const char*>(&ast.next_mutation_id_),
+               reinterpret_cast<const char*>(&ast.next_mutation_id_) + 4);
+    buf.insert(buf.end(), reinterpret_cast<const char*>(&ast.generation_),
+               reinterpret_cast<const char*>(&ast.generation_) + 2);
+    // 2 bytes padding for u32 alignment of the next field
+    // (if we add one in v2)
+    uint16_t reserved = 0;
+    buf.insert(buf.end(), reinterpret_cast<const char*>(&reserved),
+               reinterpret_cast<const char*>(&reserved) + 2);
+}
+inline FlatASTSoALike flat_ast_soa_deserialize(const std::vector<char>& buf, std::size_t& pos) {
+    FlatASTSoALike ast;
+    uint32_t version;
+    std::memcpy(&version, &buf[pos], 4); pos += 4;
+    CHECK(version == 1, "FlatAST SoA format version == 1");
+    uint32_t num_nodes;
+    std::memcpy(&num_nodes, &buf[pos], 4); pos += 4;
+
+    auto read_column = [&buf, &pos](auto& col) {
+        using T = typename std::remove_reference<decltype(col)>::type::value_type;
+        uint32_t count;
+        std::memcpy(&count, &buf[pos], 4); pos += 4;
+        col.resize(count);
+        if (count > 0) {
+            std::memcpy(col.data(), &buf[pos], count * sizeof(T));
+            pos += count * sizeof(T);
+        }
+    };
+    read_column(ast.tag_);
+    read_column(ast.int_val_);
+    read_column(ast.float_val_);
+    read_column(ast.sym_id_);
+    read_column(ast.child_begin_);
+    read_column(ast.child_count_);
+    read_column(ast.child_data_);
+    read_column(ast.parent_);
+    read_column(ast.param_begin_);
+    read_column(ast.param_count_);
+    read_column(ast.cap_require_count_);
+    read_column(ast.param_data_);
+    read_column(ast.param_annot_data_);
+    read_column(ast.line_);
+    read_column(ast.col_);
+    read_column(ast.marker_);
+    read_column(ast.dirty_);
+    read_column(ast.type_id_);
+    read_column(ast.error_kind_);
+    read_column(ast.value_cache_);
+    read_column(ast.node_first_mutation_);
+    read_column(ast.node_gen_);
+    std::memcpy(&ast.next_mutation_id_, &buf[pos], 4); pos += 4;
+    std::memcpy(&ast.generation_, &buf[pos], 2); pos += 2;
+    pos += 2;  // reserved
+    return ast;
+}
+bool test_flat_ast_soa_roundtrip() {
+    PRINTLN("\n--- Test 18: FlatAST SoA custom serialize ---");
+    // Build a small FlatAST-like with 3 nodes:
+    //   node 0: LiteralInt(42)
+    //   node 1: Variable(0xABCD)
+    //   node 2: Call(0, [1])
+    FlatASTSoALike original;
+    original.tag_ = {0x01, 0x02, 0x03};  // LiteralInt, Variable, Call
+    original.int_val_ = {42, 0, 0};
+    original.float_val_ = {0.0, 0.0, 0.0};
+    original.sym_id_ = {0xFFFFFFFF, 0xABCD, 0xFFFFFFFF};
+    original.child_begin_ = {0, 0, 1};
+    original.child_count_ = {0, 0, 1};
+    original.child_data_ = {1};  // Call's child is Variable (node 1)
+    original.parent_ = {0xFFFFFFFF, 2, 0xFFFFFFFF};  // Variable's parent is Call
+    original.param_begin_ = {0, 0, 0};
+    original.param_count_ = {0, 0, 0};
+    original.cap_require_count_ = {0, 0, 0};
+    original.param_data_ = {};
+    original.param_annot_data_ = {};
+    original.line_ = {10, 11, 12};
+    original.col_ = {1, 1, 5};
+    original.marker_ = {0, 0, 0};
+    original.dirty_ = {0, 0, 0};
+    original.type_id_ = {0, 0, 0};
+    original.error_kind_ = {0, 0, 0};
+    original.value_cache_ = {0, 0, 0};
+    original.node_first_mutation_ = {0, 0, 0};
+    original.node_gen_ = {1, 1, 1};
+    original.next_mutation_id_ = 5;
+    original.generation_ = 3;
+
+    std::vector<char> buf;
+    flat_ast_soa_serialize(buf, original);
+    std::println("FlatASTSoALike serialized: {} bytes", buf.size());
+    // Wire format: 4 (version) + 4 (num_nodes) + 22 columns
+    // (each = 4-byte count + count * sizeof(elem) raw bytes) +
+    // 4 (next_mutation_id) + 2 (generation) + 2 (reserved).
+    // For 3 nodes + 1 child_data + 0 param_data: 8 + 323 + 8
+    // = 339 bytes.
+    CHECK(buf.size() == 339, "buf size == 339 bytes");
+
+    std::size_t pos = 0;
+    auto rt = flat_ast_soa_deserialize(buf, pos);
+    // Verify 3 nodes worth of data roundtrips
+    CHECK(rt.tag_.size() == 3, "tag_ size == 3");
+    if (rt.tag_.size() == 3) {
+        CHECK(rt.tag_[0] == 0x01, "tag_[0] == LiteralInt");
+        CHECK(rt.tag_[1] == 0x02, "tag_[1] == Variable");
+        CHECK(rt.tag_[2] == 0x03, "tag_[2] == Call");
+    }
+    CHECK(rt.int_val_.size() == 3 && rt.int_val_[0] == 42, "int_val_[0] == 42");
+    CHECK(rt.sym_id_.size() == 3 && rt.sym_id_[1] == 0xABCD, "sym_id_[1] == 0xABCD");
+    CHECK(rt.child_data_.size() == 1 && rt.child_data_[0] == 1, "child_data_[0] == 1 (Call's child)");
+    CHECK(rt.parent_.size() == 3 && rt.parent_[1] == 2, "parent_[1] == 2 (Variable's parent is Call)");
+    CHECK(rt.line_.size() == 3 && rt.line_[0] == 10, "line_[0] == 10");
+    CHECK(rt.col_.size() == 3 && rt.col_[2] == 5, "col_[2] == 5");
+    CHECK(rt.marker_.size() == 3, "marker_ size == 3");
+    CHECK(rt.dirty_.size() == 3, "dirty_ size == 3");
+    CHECK(rt.type_id_.size() == 3, "type_id_ size == 3");
+    CHECK(rt.error_kind_.size() == 3, "error_kind_ size == 3");
+    CHECK(rt.value_cache_.size() == 3, "value_cache_ size == 3");
+    CHECK(rt.node_gen_.size() == 3 && rt.node_gen_[0] == 1, "node_gen_[0] == 1");
+    CHECK(rt.next_mutation_id_ == 5, "next_mutation_id_ == 5");
+    CHECK(rt.generation_ == 3, "generation_ == 3");
+    CHECK(pos == buf.size(), "all bytes consumed");
+    return true;
+}
+
 // ── Test 2: auto_serialize/auto_deserialize roundtrip ───────
 bool test_opcode_info_roundtrip() {
     PRINTLN("\n--- Test 2: OpcodeInfo roundtrip ---");
@@ -1060,6 +1345,7 @@ int main() {
     test_flatast_soa_columns();
     test_node_view_full();
     test_node_view_empty();
+    test_flat_ast_soa_roundtrip();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
