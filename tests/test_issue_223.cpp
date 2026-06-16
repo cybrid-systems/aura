@@ -69,9 +69,13 @@ struct MockEpochTracker {
 // is stale (its captured epoch doesn't match the service's
 // current epoch). Default epoch 0 counts as stale (legacy
 // bridges without explicit epoch capture are considered
-// untrusted).
+// untrusted). The production semantics (Issue #223 apply_closure
+// wiring) is: bridge_epoch == 0 means "legacy / not tracked" —
+// such closures are NOT auto-invalidated (don't break existing
+// closures that pre-date the tracking). New code paths should
+// set bridge_epoch to the current epoch at construction.
 static bool is_bridge_stale(uint64_t bridge_epoch, uint64_t current_epoch) {
-    if (bridge_epoch == 0) return true;  // legacy / unset
+    if (bridge_epoch == 0) return false;  // legacy / unset: trust
     return bridge_epoch != current_epoch;
 }
 
@@ -124,33 +128,50 @@ void test_2_bridge_capture() {
     bd.body_source = "(lambda (x) x)";
     bd.bridge_epoch = epoch_at_construction;
     CHECK(bd.bridge_epoch == 0, "bridge captured epoch 0");
-    CHECK(is_bridge_stale(bd.bridge_epoch, svc.bridge_epoch()),
-          "bridge with epoch 0 is stale (legacy sentinel)");
+    // Production semantics: bridge_epoch == 0 is legacy / not
+    // tracked. Such closures are NOT auto-invalidated (the
+    // production is_bridge_stale returns false for 0). The
+    // apply_closure wiring relies on this for backward compat
+    // with closures built before the epoch tracking was added.
+    CHECK(!is_bridge_stale(bd.bridge_epoch, svc.bridge_epoch()),
+          "bridge with epoch 0 is legacy (not auto-invalidated)");
 
     // Bump the service epoch (simulates arena reset)
     svc.reset();
     CHECK(svc.bridge_epoch() == 1, "service epoch bumped to 1");
 
-    // The bridge is now stale (epoch 0 != current 1)
-    CHECK(is_bridge_stale(bd.bridge_epoch, svc.bridge_epoch()),
-          "bridge captured at epoch 0 is stale after reset");
+    // Bridge with epoch 0 is still treated as legacy (not stale)
+    // \u2014 it was constructed when no service was bound, so the
+    // caller's pre-existing lifetime model applies.
+    CHECK(!is_bridge_stale(bd.bridge_epoch, svc.bridge_epoch()),
+          "bridge captured at epoch 0 stays legacy (not stale) after reset");
 
-    // Construct a new bridge at the current epoch
+    // But a bridge with an EXPLICIT epoch IS stale after reset
+    bd.bridge_epoch = 0;  // start fresh
+    bd.bridge_epoch = 1;  // captured at epoch 1 (current is 1)
+    CHECK(!is_bridge_stale(bd.bridge_epoch, svc.bridge_epoch()),
+          "bridge captured at epoch 1 is not stale at epoch 1");
+    svc.reset();  // service → 2
+    CHECK(svc.bridge_epoch() == 2, "service epoch bumped to 2");
+    CHECK(is_bridge_stale(bd.bridge_epoch, svc.bridge_epoch()),
+          "bridge captured at epoch 1 is stale after reset to epoch 2");
+
+    // Construct a new bridge at the current epoch (2)
     ClosureBridgeData bd2;
     bd2.flat = &fake_flat;
     bd2.pool = &fake_pool;
     bd2.body_id = 42;
     bd2.body_source = "(lambda (x) x)";
-    bd2.bridge_epoch = svc.bridge_epoch();  // 1
-    CHECK(bd2.bridge_epoch == 1, "new bridge captured epoch 1");
+    bd2.bridge_epoch = svc.bridge_epoch();  // 2
+    CHECK(bd2.bridge_epoch == 2, "new bridge captured epoch 2");
     CHECK(!is_bridge_stale(bd2.bridge_epoch, svc.bridge_epoch()),
-          "new bridge at epoch 1 is not stale");
+          "new bridge at epoch 2 is not stale");
 
     // Bump again (simulates another major mutation)
     svc.bump_bridge_epoch();
-    CHECK(svc.bridge_epoch() == 2, "epoch bumped to 2");
+    CHECK(svc.bridge_epoch() == 3, "epoch bumped to 3");
     CHECK(is_bridge_stale(bd2.bridge_epoch, svc.bridge_epoch()),
-          "bridge captured at epoch 1 is stale after bump to 2");
+          "bridge captured at epoch 2 is stale after bump to 3");
 }
 
 // ── Test 3: IRClosure carries the bridge_epoch ────────────────
@@ -164,15 +185,17 @@ void test_3_irclosure_carry() {
     CHECK(cl.bridge_epoch == 0, "IRClosure bridge_epoch defaults to 0");
 
     svc.reset();
-    // The IRClosure captured at epoch 0; service is at epoch 1.
-    // The stale check sees the mismatch.
-    CHECK(is_bridge_stale(cl.bridge_epoch, svc.bridge_epoch()),
-          "IRClosure captured at epoch 0 is stale after reset");
+    // IRClosure captured at epoch 0 is legacy (not invalidated).
+    CHECK(!is_bridge_stale(cl.bridge_epoch, svc.bridge_epoch()),
+          "IRClosure captured at epoch 0 stays legacy (not stale) after reset");
 
-    // Re-capture
-    cl.bridge_epoch = svc.bridge_epoch();
+    // Re-capture at a tracked epoch
+    cl.bridge_epoch = svc.bridge_epoch();  // 1
     CHECK(!is_bridge_stale(cl.bridge_epoch, svc.bridge_epoch()),
           "IRClosure re-captured at current epoch is not stale");
+    svc.bump_bridge_epoch();
+    CHECK(is_bridge_stale(cl.bridge_epoch, svc.bridge_epoch()),
+          "IRClosure captured at epoch 1 is stale after bump to 2");
 }
 
 // ── Test 4: Epoch monotonicity + no false negatives ──────────
@@ -191,12 +214,65 @@ void test_4_monotonicity() {
     }
     // The bridge that captured at last_epoch is now stale
     ClosureBridgeData bd;
-    bd.bridge_epoch = 0;  // initially stale
-    CHECK(is_bridge_stale(bd.bridge_epoch, svc.bridge_epoch()),
-          "zero-epoch bridge is stale after 200 epoch bumps");
+    bd.bridge_epoch = 0;  // legacy / not tracked
+    CHECK(!is_bridge_stale(bd.bridge_epoch, svc.bridge_epoch()),
+          "zero-epoch bridge is legacy (not stale) after 200 epoch bumps");
     bd.bridge_epoch = last_epoch;
     CHECK(!is_bridge_stale(bd.bridge_epoch, svc.bridge_epoch()),
           "fresh bridge at current epoch is not stale");
+    // A bridge captured BEFORE the bumps is now stale
+    ClosureBridgeData old_bd;
+    old_bd.bridge_epoch = 0;  // start clean
+    old_bd.bridge_epoch = 1;  // captured at epoch 1
+    CHECK(is_bridge_stale(old_bd.bridge_epoch, svc.bridge_epoch()),
+          "old bridge captured at epoch 1 is stale after 200 epoch bumps");
+}
+
+// ── Test 5: apply_closure wiring (simulated) ─────────────────
+// Mirrors the apply_closure logic in evaluator_impl.cpp:
+// "if cl.flat is non-null, check is_bridge_stale; if stale,
+//  return nullopt (invalidate); otherwise proceed with eval".
+// The test verifies the invalidation logic.
+void test_5_apply_closure_invalidation() {
+    PRINTLN("\n--- Test 5: apply_closure wiring (simulated) ---");
+    MockEpochTracker svc;
+
+    // Build a closure that captures the current epoch
+    struct SimulatedClosure {
+        void* flat = (void*)0xdeadbeef;  // pretend arena-allocated
+        void* pool = (void*)0xcafebabe;
+        std::uint32_t body_id = 42;
+        std::uint64_t bridge_epoch = 0;
+    };
+    SimulatedClosure cl;
+    cl.bridge_epoch = svc.bridge_epoch();  // 0
+    CHECK(cl.bridge_epoch == 0, "closure captured epoch 0 (no service bound yet)");
+
+    // Simulate the apply_closure check: is_bridge_stale returns
+    // false for legacy / unset epoch (the safe default — don't
+    // break existing closures that don't track).
+    bool would_invalidate = is_bridge_stale(cl.bridge_epoch, svc.bridge_epoch());
+    CHECK(!would_invalidate,
+          "legacy closure (epoch 0) is not invalidated");
+
+    // Now set the closure to a tracked epoch (e.g. via a bridge
+    // construction that captured the service's epoch)
+    cl.bridge_epoch = 1;
+    svc.bump_bridge_epoch();  // service is now at 1 (legacy + bump)
+    // The closure was captured at 0, service is at 1.
+    // Wait — if the closure was captured at 1 and service is at 1,
+    // they're equal. Let's reset to see staleness.
+    svc.reset();  // service bumps to 2
+    would_invalidate = is_bridge_stale(cl.bridge_epoch, svc.bridge_epoch());
+    CHECK(would_invalidate,
+          "closure captured at epoch 1 is invalidated after service reset (epoch 2)");
+
+    // Re-bridge: build a new closure at the new epoch
+    SimulatedClosure cl2;
+    cl2.bridge_epoch = svc.bridge_epoch();  // 2
+    would_invalidate = is_bridge_stale(cl2.bridge_epoch, svc.bridge_epoch());
+    CHECK(!would_invalidate,
+          "fresh closure at current epoch is not invalidated");
 }
 
 int main() {
@@ -204,6 +280,7 @@ int main() {
     test_2_bridge_capture();
     test_3_irclosure_carry();
     test_4_monotonicity();
+    test_5_apply_closure_invalidation();
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

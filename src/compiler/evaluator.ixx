@@ -19,6 +19,7 @@ import aura.compiler.evaluator_pure;
 
 namespace aura::compiler {
 
+
 using EvalValue = types::EvalValue;
 using PrimFn = std::function<EvalValue(std::span<const EvalValue>)>;
 
@@ -374,6 +375,17 @@ export struct Closure {
     EnvId env_id = NULL_ENV_ID;
     bool dotted = false;
     ast::ASTArena* owner_arena = nullptr;  // arena where flat/pool/env lives
+    // Issue #223: epoch captured at closure construction. The
+    // IRExecutor / apply_closure compares this against the
+    // service's bridge_epoch(); a mismatch means the closure's
+    // flat*/pool* are stale (arena was reset or a major mutation
+    // invalidated the captured pointers). Default 0 = legacy
+    // / unset (such closures are NOT auto-invalidated — they
+    // pre-date the tracking and the caller is responsible for
+    // setting this on construction). New code paths that bridge
+    // from the IR executor or the parser should set this to the
+    // current bridge_epoch() at construction time.
+    std::uint64_t bridge_epoch = 0;
 };
 
 // Legacy alias — kept for backward compatibility during the
@@ -462,6 +474,35 @@ public:
     void set_module_loaded_callback(ModuleLoadedFn cb) { module_loaded_cb_ = std::move(cb); }
     void set_type_registry(void* reg) { type_registry_ = reg; }
     void set_compiler_service(void* svc) { compiler_service_ = svc; }
+    // Issue #223: returns the current bridge_epoch from the
+    // service (or 0 if no service is bound). Closure-construction
+    // sites capture this at construction time; apply_closure
+    // compares against it to detect stale closures (arena was
+    // reset or major mutation invalidated the captured flat*/pool*).
+    //
+    // The bridge_epoch() call goes through a function pointer
+    // (bridge_epoch_fn_) to avoid a circular include with
+    // service.ixx. CompilerService::install_bridge_epoch_fn()
+    // sets the function pointer when binding to the Evaluator.
+    using BridgeEpochFn = std::uint64_t (*)(void*);
+    [[nodiscard]] std::uint64_t current_bridge_epoch() const noexcept {
+        if (bridge_epoch_fn_ && compiler_service_) {
+            return bridge_epoch_fn_(compiler_service_);
+        }
+        return 0;
+    }
+    void install_bridge_epoch_fn(BridgeEpochFn fn) noexcept {
+        bridge_epoch_fn_ = fn;
+    }
+    // Issue #223: returns true if a closure's captured bridge_epoch
+    // is stale relative to the current epoch. bridge_epoch == 0
+    // means "legacy / not tracked" and is treated as trustworthy
+    // (the closure pre-dates the tracking; caller manages its own
+    // lifetime). Non-zero values are validated strictly.
+    static bool is_bridge_stale(std::uint64_t bridge_epoch, std::uint64_t current_epoch) noexcept {
+        if (bridge_epoch == 0) return false;  // legacy / unset: trust the closure
+        return bridge_epoch != current_epoch;
+    }
     void set_session_id(const std::string& id) { session_id_ = id; }
     // Phase 2: EDSL IR cache V2 hooks (set by CompilerService on init)
     void set_mark_define_dirty_fn(std::function<void(const std::string&)> fn) {
@@ -1180,6 +1221,11 @@ private:
     bool workspace_read_only_ = false;  // quick lock flag for P6 mutations
     // ── CompilerService pointer (for messaging) ─────────────────
     void* compiler_service_ = nullptr;  // CompilerService*
+    // Issue #223: function pointer that returns the service's
+    // current bridge epoch. Set by CompilerService on
+    // set_compiler_service() so Evaluator can query the epoch
+    // without a circular include of service.ixx.
+    BridgeEpochFn bridge_epoch_fn_ = nullptr;
     // Function pointer callbacks (set by CompilerService to avoid circular deps)
     std::function<bool(const std::string&, const std::string&)>* msg_send_fn_ = nullptr;
     std::function<std::optional<std::string>(int)>* msg_recv_fn_ = nullptr;
