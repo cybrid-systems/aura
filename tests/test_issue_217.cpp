@@ -32,6 +32,7 @@
 #include <cstdint>
 #include <print>
 #include <variant>
+#include <unordered_map>
 
 #include "reflect/reflect.hh"
 
@@ -1277,6 +1278,333 @@ bool test_ir_instruction_roundtrip() {
     return true;
 }
 
+// ── Test 19: FlatAST v2 side-data (mutation_log / match_info /
+//                 region_by_* / root) ────────────────────
+//
+// Issue #217 Cycle 14 P3: extend FlatAST serialize from v1
+// (22 SoA columns + scalars) to v2 (adds the 5 side-data
+// fields that the production FlatAST has but v1 omitted).
+// This test verifies the v2 wire format by adding the 5
+// fields to a hand-written struct and roundtripping them
+// through the same serialize/deserialize pattern.
+//
+// The 5 v2 side-data fields:
+//   1. mutation_log_         (vector<MutationRecordLike>)
+//   2. match_info_           (vector<MatchClauseInfoLike>)
+//   3. region_by_sym_        (unordered_map<u32, u8>)
+//   4. region_by_lambda_id_  (unordered_map<u32, u8>)
+//   5. root                  (NodeId = u32)
+//
+// We use the MutationRecordLike + MatchClauseInfoLike
+// structs already defined for Test 13/14 (Cycle 9/10
+// verification) — same field layout as the production
+// types. The test is the in-env verification of the v2
+// wire format additions.
+struct FlatASTSoALikeV2 {
+    // 22 SoA columns (same as v1)
+    std::vector<std::uint32_t> tag_;
+    std::vector<std::int64_t> int_val_;
+    std::vector<double> float_val_;
+    std::vector<std::uint32_t> sym_id_;
+    std::vector<std::uint32_t> child_begin_;
+    std::vector<std::uint32_t> child_count_;
+    std::vector<std::uint32_t> child_data_;
+    std::vector<std::uint32_t> parent_;
+    std::vector<std::uint32_t> param_begin_;
+    std::vector<std::uint32_t> param_count_;
+    std::vector<std::uint32_t> cap_require_count_;
+    std::vector<std::uint32_t> param_data_;
+    std::vector<std::uint32_t> param_annot_data_;
+    std::vector<std::uint32_t> line_;
+    std::vector<std::uint32_t> col_;
+    std::vector<std::uint8_t> marker_;
+    std::vector<std::uint8_t> dirty_;
+    std::vector<std::uint32_t> type_id_;
+    std::vector<std::uint8_t> error_kind_;
+    std::vector<std::int64_t> value_cache_;
+    std::vector<std::uint32_t> node_first_mutation_;
+    std::vector<std::uint16_t> node_gen_;
+    // Scalars (v1)
+    std::uint32_t next_mutation_id_ = 0;
+    std::uint16_t generation_ = 0;
+    // v2 side-data fields
+    std::vector<MutationRecordLike> mutation_log_;
+    std::vector<MatchClauseInfoLike> match_info_;
+    std::unordered_map<std::uint32_t, std::uint8_t> region_by_sym_;
+    std::unordered_map<std::uint32_t, std::uint8_t> region_by_lambda_id_;
+    std::uint32_t root = 0xFFFFFFFF;
+};
+// Helper: write a length-prefixed map<u32, u8> to buf
+inline void write_map_u32_u8(std::vector<char>& buf, const std::unordered_map<std::uint32_t, std::uint8_t>& m) {
+    uint32_t count = static_cast<uint32_t>(m.size());
+    buf.insert(buf.end(), reinterpret_cast<char*>(&count),
+               reinterpret_cast<char*>(&count) + 4);
+    for (const auto& [k, v] : m) {
+        buf.insert(buf.end(), reinterpret_cast<const char*>(&k),
+                   reinterpret_cast<const char*>(&k) + 4);
+        buf.insert(buf.end(), reinterpret_cast<const char*>(&v),
+                   reinterpret_cast<const char*>(&v) + 1);
+    }
+}
+inline void read_map_u32_u8(const std::vector<char>& buf, std::size_t& pos,
+                            std::unordered_map<std::uint32_t, std::uint8_t>& m) {
+    uint32_t count;
+    std::memcpy(&count, &buf[pos], 4); pos += 4;
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t k; uint8_t v;
+        std::memcpy(&k, &buf[pos], 4); pos += 4;
+        std::memcpy(&v, &buf[pos], 1); pos += 1;
+        m[k] = v;
+    }
+}
+inline void flat_ast_soa_v2_serialize(std::vector<char>& buf, const FlatASTSoALikeV2& ast) {
+    // Header (same as v1)
+    uint32_t version = 2;
+    buf.insert(buf.end(), reinterpret_cast<char*>(&version),
+               reinterpret_cast<char*>(&version) + 4);
+    uint32_t num_nodes = static_cast<uint32_t>(ast.tag_.size());
+    buf.insert(buf.end(), reinterpret_cast<char*>(&num_nodes),
+               reinterpret_cast<char*>(&num_nodes) + 4);
+    // 22 SoA columns
+    auto write_column = [&buf](const auto& col) {
+        uint32_t count = static_cast<uint32_t>(col.size());
+        buf.insert(buf.end(), reinterpret_cast<char*>(&count),
+                   reinterpret_cast<char*>(&count) + 4);
+        if (!col.empty()) {
+            buf.insert(buf.end(),
+                       reinterpret_cast<const char*>(col.data()),
+                       reinterpret_cast<const char*>(col.data()) + col.size() * sizeof(typename std::remove_reference<decltype(col)>::type::value_type));
+        }
+    };
+    write_column(ast.tag_);
+    write_column(ast.int_val_);
+    write_column(ast.float_val_);
+    write_column(ast.sym_id_);
+    write_column(ast.child_begin_);
+    write_column(ast.child_count_);
+    write_column(ast.child_data_);
+    write_column(ast.parent_);
+    write_column(ast.param_begin_);
+    write_column(ast.param_count_);
+    write_column(ast.cap_require_count_);
+    write_column(ast.param_data_);
+    write_column(ast.param_annot_data_);
+    write_column(ast.line_);
+    write_column(ast.col_);
+    write_column(ast.marker_);
+    write_column(ast.dirty_);
+    write_column(ast.type_id_);
+    write_column(ast.error_kind_);
+    write_column(ast.value_cache_);
+    write_column(ast.node_first_mutation_);
+    write_column(ast.node_gen_);
+    // v1 scalars
+    buf.insert(buf.end(), reinterpret_cast<const char*>(&ast.next_mutation_id_),
+               reinterpret_cast<const char*>(&ast.next_mutation_id_) + 4);
+    buf.insert(buf.end(), reinterpret_cast<const char*>(&ast.generation_),
+               reinterpret_cast<const char*>(&ast.generation_) + 2);
+    uint16_t reserved = 0;
+    buf.insert(buf.end(), reinterpret_cast<const char*>(&reserved),
+               reinterpret_cast<const char*>(&reserved) + 2);
+    // v2 side-data: mutation_log_ + match_info_ + region_by_* + root
+    aura::reflect::auto_serialize(buf, ast.mutation_log_);
+    aura::reflect::auto_serialize(buf, ast.match_info_);
+    write_map_u32_u8(buf, ast.region_by_sym_);
+    write_map_u32_u8(buf, ast.region_by_lambda_id_);
+    buf.insert(buf.end(), reinterpret_cast<const char*>(&ast.root),
+               reinterpret_cast<const char*>(&ast.root) + 4);
+}
+inline FlatASTSoALikeV2 flat_ast_soa_v2_deserialize(const std::vector<char>& buf, std::size_t& pos) {
+    FlatASTSoALikeV2 ast;
+    uint32_t version;
+    std::memcpy(&version, &buf[pos], 4); pos += 4;
+    CHECK(version == 2, "FlatAST SoA v2 format version == 2");
+    uint32_t num_nodes;
+    std::memcpy(&num_nodes, &buf[pos], 4); pos += 4;
+    auto read_column = [&buf, &pos](auto& col) {
+        using T = typename std::remove_reference<decltype(col)>::type::value_type;
+        uint32_t count;
+        std::memcpy(&count, &buf[pos], 4); pos += 4;
+        col.resize(count);
+        if (count > 0) {
+            std::memcpy(col.data(), &buf[pos], count * sizeof(T));
+            pos += count * sizeof(T);
+        }
+    };
+    read_column(ast.tag_);
+    read_column(ast.int_val_);
+    read_column(ast.float_val_);
+    read_column(ast.sym_id_);
+    read_column(ast.child_begin_);
+    read_column(ast.child_count_);
+    read_column(ast.child_data_);
+    read_column(ast.parent_);
+    read_column(ast.param_begin_);
+    read_column(ast.param_count_);
+    read_column(ast.cap_require_count_);
+    read_column(ast.param_data_);
+    read_column(ast.param_annot_data_);
+    read_column(ast.line_);
+    read_column(ast.col_);
+    read_column(ast.marker_);
+    read_column(ast.dirty_);
+    read_column(ast.type_id_);
+    read_column(ast.error_kind_);
+    read_column(ast.value_cache_);
+    read_column(ast.node_first_mutation_);
+    read_column(ast.node_gen_);
+    std::memcpy(&ast.next_mutation_id_, &buf[pos], 4); pos += 4;
+    std::memcpy(&ast.generation_, &buf[pos], 2); pos += 2;
+    pos += 2;  // reserved
+    // v2 side-data
+    ast.mutation_log_ = aura::reflect::auto_deserialize<std::vector<MutationRecordLike>>(buf, pos);
+    ast.match_info_ = aura::reflect::auto_deserialize<std::vector<MatchClauseInfoLike>>(buf, pos);
+    read_map_u32_u8(buf, pos, ast.region_by_sym_);
+    read_map_u32_u8(buf, pos, ast.region_by_lambda_id_);
+    std::memcpy(&ast.root, &buf[pos], 4); pos += 4;
+    return ast;
+}
+bool test_flat_ast_soa_v2_roundtrip() {
+    PRINTLN("\n--- Test 19: FlatAST SoA v2 (side-data) roundtrip ---");
+    FlatASTSoALikeV2 original;
+    // 2 nodes (LiteralInt + Variable)
+    original.tag_ = {0x01, 0x02};
+    original.int_val_ = {42, 0};
+    original.float_val_ = {0.0, 0.0};
+    original.sym_id_ = {0xFFFFFFFF, 0xABCD};
+    original.child_begin_ = {0, 0};
+    original.child_count_ = {0, 0};
+    original.line_ = {10, 11};
+    original.col_ = {1, 1};
+    original.marker_ = {0, 0};
+    original.dirty_ = {0, 0};
+    original.type_id_ = {0, 0};
+    original.error_kind_ = {0, 0};
+    original.value_cache_ = {0, 0};
+    original.node_first_mutation_ = {0, 0};
+    original.node_gen_ = {1, 1};
+    original.next_mutation_id_ = 7;
+    original.generation_ = 2;
+    // v2: mutation_log_ with 2 records (use MutationRecordLike
+    // — same struct as Test 13, same field layout as production
+    // MutationRecord in src/core/ast.ixx)
+    MutationRecordLike mr1;
+    mr1.mutation_id = 1;
+    mr1.timestamp_ms = 1000;
+    mr1.target_node = 0;
+    mr1.operator_name = "replace-type";
+    mr1.old_type_str = "Int";
+    mr1.new_type_str = "Float";
+    mr1.summary = "type change";
+    mr1.status = MutationStatus::Committed;
+    mr1.field_offset = 0;
+    mr1.old_value = 0;
+    mr1.new_value = 0;
+    mr1.has_rollback_data = false;
+    mr1.parent_id = 0xFFFFFFFF;
+    mr1.child_idx = 0;
+    mr1.old_subtree_source = "";
+    mr1.has_subtree_rollback = false;
+    mr1.invariant_status = InvariantStatus::NotChecked;
+    MutationRecordLike mr2;
+    mr2.mutation_id = 2;
+    mr2.timestamp_ms = 2000;
+    mr2.target_node = 1;
+    mr2.operator_name = "replace-value";
+    mr2.old_type_str = "Symbol";
+    mr2.new_type_str = "Symbol";
+    mr2.summary = "rename";
+    mr2.status = MutationStatus::RolledBack;
+    mr2.field_offset = 4;
+    mr2.old_value = 0xAAAA;
+    mr2.new_value = 0xBBBB;
+    mr2.has_rollback_data = true;
+    mr2.parent_id = 0xFFFFFFFF;
+    mr2.child_idx = 0;
+    mr2.old_subtree_source = "";
+    mr2.has_subtree_rollback = false;
+    mr2.invariant_status = InvariantStatus::Ok;
+    original.mutation_log_.push_back(mr1);
+    original.mutation_log_.push_back(mr2);
+    // v2: match_info_ with 1 record (MatchClauseInfoLike)
+    MatchClauseInfoLike mci;
+    mci.used_constructors = {101, 102, 103};
+    mci.candidate_constructors = {201, 202};
+    mci.has_wildcard = false;
+    original.match_info_.push_back(mci);
+    // v2: region_by_sym_ (2 entries: key=SymId, value=region id)
+    original.region_by_sym_[0xABCD] = 1;  // hot
+    original.region_by_sym_[0xDEAD] = 2;  // cold
+    // v2: region_by_lambda_id_ (1 entry: key=NodeId, value=region id)
+    original.region_by_lambda_id_[5] = 1;
+    // v2: root scalar
+    original.root = 0;
+
+    std::vector<char> buf;
+    flat_ast_soa_v2_serialize(buf, original);
+    std::println("FlatASTSoALikeV2 serialized: {} bytes", buf.size());
+    // Expected > v1 size (339 for 3 nodes). The 2-node
+    // v1 part: smaller (fewer nodes) + the v2 side data
+    // (mutation_log_ 2 records, match_info_ 1 record,
+    // 2+1 map entries, 4-byte root). The exact size depends
+    // on string lengths, so we just verify it's > 100 bytes
+    // and that the roundtrip is lossless.
+    CHECK(buf.size() > 100, "buf size > 100 (v2 has side data)");
+
+    std::size_t pos = 0;
+    auto rt = flat_ast_soa_v2_deserialize(buf, pos);
+    // 22 columns
+    CHECK(rt.tag_.size() == 2, "tag_ size == 2");
+    if (rt.tag_.size() == 2) {
+        CHECK(rt.tag_[0] == 0x01, "tag_[0]");
+        CHECK(rt.tag_[1] == 0x02, "tag_[1]");
+    }
+    CHECK(rt.int_val_[0] == 42, "int_val_[0] == 42");
+    CHECK(rt.sym_id_[1] == 0xABCD, "sym_id_[1]");
+    CHECK(rt.next_mutation_id_ == 7, "next_mutation_id_ == 7");
+    CHECK(rt.generation_ == 2, "generation_ == 2");
+    // v2 side-data: mutation_log_ (2 records, all fields)
+    CHECK(rt.mutation_log_.size() == 2, "mutation_log_ size == 2");
+    if (rt.mutation_log_.size() == 2) {
+        CHECK(rt.mutation_log_[0].mutation_id == 1, "mutation_log_[0].mutation_id");
+        CHECK(rt.mutation_log_[0].operator_name == "replace-type", "mutation_log_[0].operator_name");
+        CHECK(rt.mutation_log_[0].old_type_str == "Int", "mutation_log_[0].old_type_str");
+        CHECK(rt.mutation_log_[0].new_type_str == "Float", "mutation_log_[0].new_type_str");
+        CHECK(rt.mutation_log_[0].timestamp_ms == 1000, "mutation_log_[0].timestamp_ms");
+        CHECK(rt.mutation_log_[1].mutation_id == 2, "mutation_log_[1].mutation_id");
+        CHECK(rt.mutation_log_[1].has_rollback_data == true, "mutation_log_[1].has_rollback_data");
+        CHECK(rt.mutation_log_[1].old_value == 0xAAAA, "mutation_log_[1].old_value");
+        CHECK(rt.mutation_log_[1].new_value == 0xBBBB, "mutation_log_[1].new_value");
+        CHECK(rt.mutation_log_[1].invariant_status == InvariantStatus::Ok,
+              "mutation_log_[1].invariant_status == InvariantStatus::Ok");
+    }
+    // v2: match_info_ (1 record with 3 used + 2 candidate + no wildcard)
+    CHECK(rt.match_info_.size() == 1, "match_info_ size == 1");
+    if (rt.match_info_.size() == 1) {
+        CHECK(rt.match_info_[0].used_constructors.size() == 3, "used_constructors size == 3");
+        if (rt.match_info_[0].used_constructors.size() == 3) {
+            CHECK(rt.match_info_[0].used_constructors[0] == 101, "used_constructors[0]");
+            CHECK(rt.match_info_[0].used_constructors[2] == 103, "used_constructors[2]");
+        }
+        CHECK(rt.match_info_[0].candidate_constructors.size() == 2, "candidate_constructors size == 2");
+        if (rt.match_info_[0].candidate_constructors.size() == 2) {
+            CHECK(rt.match_info_[0].candidate_constructors[1] == 202, "candidate_constructors[1]");
+        }
+        CHECK(rt.match_info_[0].has_wildcard == false, "has_wildcard == false");
+    }
+    // v2: region_by_sym_ (2 entries)
+    CHECK(rt.region_by_sym_.size() == 2, "region_by_sym_ size == 2");
+    CHECK(rt.region_by_sym_.at(0xABCD) == 1, "region_by_sym_[0xABCD] == 1 (hot)");
+    CHECK(rt.region_by_sym_.at(0xDEAD) == 2, "region_by_sym_[0xDEAD] == 2 (cold)");
+    // v2: region_by_lambda_id_ (1 entry)
+    CHECK(rt.region_by_lambda_id_.size() == 1, "region_by_lambda_id_ size == 1");
+    CHECK(rt.region_by_lambda_id_.at(5) == 1, "region_by_lambda_id_[5] == 1");
+    // v2: root scalar
+    CHECK(rt.root == 0, "root == 0");
+    CHECK(pos == buf.size(), "all bytes consumed");
+    return true;
+}
+
 // ── Test 5: kOpcodeInfo[0] roundtrips (nop) ────────────────
 bool test_kopcode_info_nop() {
     PRINTLN("\n--- Test 5: kOpcodeInfo[0] (nop) roundtrip ---");
@@ -1346,6 +1674,7 @@ int main() {
     test_node_view_full();
     test_node_view_empty();
     test_flat_ast_soa_roundtrip();
+    test_flat_ast_soa_v2_roundtrip();
 
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);

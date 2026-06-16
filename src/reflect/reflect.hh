@@ -445,6 +445,16 @@ template <typename T> std::string auto_to_json_pretty(const T& obj) {
 void auto_serialize(std::vector<char>& buf, const std::string& s);
 void auto_serialize(std::vector<char>& buf, const std::string_view& sv);
 
+// Issue #217 Cycle 14 P3: forward-declare the generic
+// struct template so it's visible to the
+// std::vector<T>/std::optional<T>/std::variant<Ts...>/std::array<T,N>
+// overloads below. Without this, the vector's `auto_serialize(buf, e)`
+// call (for non-trivially-copyable element types like
+// MutationRecord) can't find the struct overload because
+// it hasn't been declared yet.
+template <typename T>
+void auto_serialize(std::vector<char>& buf, const T& obj);
+
 // std::vector<T> overload (any T)
 template <typename T>
 void auto_serialize(std::vector<char>& buf, const std::vector<T>& vec) {
