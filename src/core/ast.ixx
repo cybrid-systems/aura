@@ -1,3 +1,12 @@
+// Issue #221: include the PersistentChildVector header in the
+// module's global module fragment (same trick as #220's
+// gap_buffer.hh). The global fragment is processed BEFORE the
+// module's purview, so the std includes in
+// persistent_child_vector.hh don't conflict with `import std;`.
+module;
+
+#include "core/persistent_child_vector.hh"
+
 export module aura.core.ast;
 import std;
 import aura.core.type;
@@ -507,17 +516,26 @@ private:
     std::pmr::vector<std::int64_t> int_val_;
     std::pmr::vector<double> float_val_;
     std::pmr::vector<SymId> sym_id_;
-    // Issue #220: per-node children list. Each node has its
-    // own contiguous std::pmr::vector<NodeId> of child NodeIds.
-    // The accessors (children(), set_child(), insert_child(),
-    // remove_child(), get().children) all read from this field.
+    // Issue #220/221: per-node children. Each node has its own
+    // PersistentChildVector<NodeId> (a COW / immutable vector
+    // defined in src/core/persistent_child_vector.hh). The
+    // accessors (children(), set_child(), insert_child(),
+    // remove_child(), get().children) read through the PCV
+    // span. The add_X methods build a per-node list from their
+    // child NodeIds and store it via the PCV range constructor
+    // (one allocation per node, no per-element COW).
+    //
+    // The PCV's storage is reference-counted via
+    // std::shared_ptr, so back-references (e.g. a closure that
+    // captured the pre-mutation children list) stay valid. This
+    // is the foundation for #221 slice 3/5 (#177 rollback).
     //
     // The children_ field uses the DEFAULT polymorphic_allocator
     // (i.e. the global memory resource). Arena propagation to
     // nested pmr vectors is brittle in C++26; a future commit
     // can wire a custom allocator wrapper if arena-backed
     // per-node lists are needed.
-    std::pmr::vector<std::pmr::vector<NodeId>> children_;
+    std::pmr::vector<PersistentChildVector<NodeId>> children_;
     std::pmr::vector<NodeId> parent_;
     std::pmr::vector<std::uint32_t> param_begin_;
     std::pmr::vector<std::uint32_t> param_count_;
@@ -601,10 +619,9 @@ private:
 
     // Set parent for all children of the given node
     void link_children(NodeId id) {
-        // Issue #220: walk the per-node children_ list (the
-        // legacy child_data_ + child_begin_ + child_count_ access
-        // pattern would be wrong for the GapBuffer layout since
-        // child_begin_ is a LOGICAL offset, not a physical one).
+        // Issue #220/221: walk the per-node PCV. The PCV's
+        // iterators are const (the vector is immutable from
+        // the outside), so this is read-only iteration.
         for (auto cid : children_[id]) {
             if (cid != NULL_NODE)
                 parent_[cid] = id;
@@ -641,20 +658,25 @@ private:
 
     [[nodiscard]] NodeId add_call(NodeId func, std::span<const NodeId> args) {
         auto id = add_node(NodeTag::Call);
-        children_[id].push_back(func);
-        // Issue #219: range-append via GapBuffer::append (gap-buffer
-        // doesn't support a general range insert; append is the
-        // common case for AST construction).
-        children_[id].insert(children_[id].end(), args.begin(), args.end());
+        {
+            std::vector<NodeId> _kids;  // PCV:2 element(s)
+            _kids.push_back(func);
+            for (auto _a : args) _kids.push_back(_a);
+            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
+        }
         link_children(id);
         return id;
     }
 
     [[nodiscard]] NodeId add_if(NodeId cond, NodeId then_b, NodeId else_b) {
         auto id = add_node(NodeTag::IfExpr);
-        children_[id].push_back(cond);
-        children_[id].push_back(then_b);
-        children_[id].push_back(else_b);
+        {
+            std::vector<NodeId> _kids;  // PCV:3 element(s)
+            _kids.push_back(cond);
+            _kids.push_back(then_b);
+            _kids.push_back(else_b);
+            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
+        }
         link_children(id);
         return id;
     }
@@ -676,7 +698,11 @@ private:
             param_annot_data_[pstart + i] = annots[i];
         param_begin_[id] = pstart;
         param_count_[id] = static_cast<std::uint32_t>(params.size());
-        children_[id].push_back(body);
+        {
+            std::vector<NodeId> _kids;  // PCV:1 element(s)
+            _kids.push_back(body);
+            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
+        }
         link_children(id);
         return id;
     }
@@ -684,8 +710,12 @@ private:
     [[nodiscard]] NodeId add_let(SymId name, NodeId val, NodeId body) {
         auto id = add_node(NodeTag::Let);
         sym_id_[id] = name;
-        children_[id].push_back(val);
-        children_[id].push_back(body);
+        {
+            std::vector<NodeId> _kids;  // PCV:2 element(s)
+            _kids.push_back(val);
+            _kids.push_back(body);
+            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
+        }
         link_children(id);
         return id;
     }
@@ -693,8 +723,12 @@ private:
     [[nodiscard]] NodeId add_letrec(SymId name, NodeId val, NodeId body) {
         auto id = add_node(NodeTag::LetRec);
         sym_id_[id] = name;
-        children_[id].push_back(val);
-        children_[id].push_back(body);
+        {
+            std::vector<NodeId> _kids;  // PCV:2 element(s)
+            _kids.push_back(val);
+            _kids.push_back(body);
+            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
+        }
         link_children(id);
         return id;
     }
@@ -702,7 +736,11 @@ private:
     [[nodiscard]] NodeId add_define(SymId name, NodeId val) {
         auto id = add_node(NodeTag::Define);
         sym_id_[id] = name;
-        children_[id].push_back(val);
+        {
+            std::vector<NodeId> _kids;  // PCV:1 element(s)
+            _kids.push_back(val);
+            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
+        }
         link_children(id);
         return id;
     }
@@ -804,21 +842,33 @@ private:
         param_annot_data_.resize(param_annot_data_.size() + params.size(), NULL_NODE);
         param_begin_[id] = pstart;
         param_count_[id] = static_cast<std::uint32_t>(params.size());
-        children_[id].insert(children_[id].end(), ctors.begin(), ctors.end());
+        {
+            std::vector<NodeId> _kids;  // PCV:1 element(s)
+            for (auto _a : ctors) _kids.push_back(_a);
+            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
+        }
         return id;
     }
 
     [[nodiscard]] NodeId add_begin(NodeId* exprs, std::uint32_t count) {
         auto id = add_node(NodeTag::Begin);
         for (std::uint32_t i = 0; i < count; ++i) {
-            children_[id].push_back(exprs[i]);
+            {
+            std::vector<NodeId> _kids;  // PCV:1 element(s)
+                _kids.push_back(exprs[i]);
+                children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
+            }
         }
         link_children(id);
         return id;
     }
     [[nodiscard]] NodeId add_begin(std::span<const NodeId> exprs) {
         auto id = add_node(NodeTag::Begin);
-        children_[id].insert(children_[id].end(), exprs.begin(), exprs.end());
+        {
+            std::vector<NodeId> _kids;  // PCV:1 element(s)
+            for (auto _a : exprs) _kids.push_back(_a);
+            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
+        }
         link_children(id);
         return id;
     }
@@ -852,7 +902,11 @@ private:
 
     [[nodiscard]] NodeId add_export(std::span<const NodeId> syms) {
         auto id = add_node(NodeTag::Export);
-        children_[id].insert(children_[id].end(), syms.begin(), syms.end());
+        {
+            std::vector<NodeId> _kids;  // PCV:1 element(s)
+            for (auto _a : syms) _kids.push_back(_a);
+            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
+        }
         link_children(id);
         return id;
     }
@@ -860,7 +914,11 @@ private:
     [[nodiscard]] NodeId add_set(SymId name, NodeId val) {
         auto id = add_node(NodeTag::Set);
         sym_id_[id] = name;
-        children_[id].push_back(val);
+        {
+            std::vector<NodeId> _kids;  // PCV:1 element(s)
+            _kids.push_back(val);
+            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
+        }
         link_children(id);
         return id;
     }
@@ -872,8 +930,11 @@ private:
         // Issue #120: encode dotted in bit 0 and hygienic in bit 1 of
         // int_val_ (the existing unused slot for MacroDef).
         int_val_[id] = (hygienic ? 2 : 0) | (dotted ? 1 : 0);
-        children_[id].push_back(body);
-        // Store params using the same SoA as Lambda params
+        {
+            std::vector<NodeId> _kids;  // PCV:1 element(s)
+            _kids.push_back(body);
+            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
+        }
         auto pstart = static_cast<std::uint32_t>(param_data_.size());
         param_data_.insert(param_data_.end(), params.begin(), params.end());
         param_annot_data_.resize(param_annot_data_.size() + params.size(), NULL_NODE);
@@ -895,15 +956,23 @@ private:
 
     [[nodiscard]] NodeId add_quote(NodeId val) {
         auto id = add_node(NodeTag::Quote);
-        children_[id].push_back(val);
+        {
+            std::vector<NodeId> _kids;  // PCV:1 element(s)
+            _kids.push_back(val);
+            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
+        }
         link_children(id);
         return id;
     }
 
     [[nodiscard]] NodeId add_pair(NodeId car, NodeId cdr) {
         auto id = add_node(NodeTag::Pair);
-        children_[id].push_back(car);
-        children_[id].push_back(cdr);
+        {
+            std::vector<NodeId> _kids;  // PCV:2 element(s)
+            _kids.push_back(car);
+            _kids.push_back(cdr);
+            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
+        }
         link_children(id);
         return id;
     }
@@ -911,7 +980,11 @@ private:
     [[nodiscard]] NodeId add_type_annotation(SymId type_name, NodeId inner, SymId var_sym = INVALID_SYM) {
         auto id = add_node(NodeTag::TypeAnnotation);
         sym_id_[id] = type_name;
-        children_[id].push_back(inner);
+        {
+            std::vector<NodeId> _kids;  // PCV:1 element(s)
+            _kids.push_back(inner);
+            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
+        }
         if (var_sym != INVALID_SYM) {
             int_val_[id] = static_cast<std::int64_t>(var_sym);
         }
@@ -928,14 +1001,22 @@ private:
 
     [[nodiscard]] NodeId add_coercion(NodeId inner, std::uint32_t type_id) {
         auto id = add_node(NodeTag::Coercion);
-        children_[id].push_back(inner);
+        {
+            std::vector<NodeId> _kids;  // PCV:1 element(s)
+            _kids.push_back(inner);
+            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
+        }
         type_id_[id] = type_id;
         link_children(id);
         return id;
     }
     [[nodiscard]] NodeId add_coercion(NodeId inner, std::uint32_t type_tag, std::uint32_t type_id) {
         auto id = add_node(NodeTag::Coercion);
-        children_[id].push_back(inner);
+        {
+            std::vector<NodeId> _kids;  // PCV:1 element(s)
+            _kids.push_back(inner);
+            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
+        }
         int_val_[id] = static_cast<std::int64_t>(type_tag);
         type_id_[id] = type_id;
         link_children(id);
@@ -944,35 +1025,55 @@ private:
     // ── M4 Linear ownership builders ───────────────────────────
     [[nodiscard]] NodeId add_linear(NodeId inner) {
         auto id = add_node(NodeTag::Linear);
-        children_[id].push_back(inner);
+        {
+            std::vector<NodeId> _kids;  // PCV:1 element(s)
+            _kids.push_back(inner);
+            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
+        }
         link_children(id);
         return id;
     }
 
     [[nodiscard]] NodeId add_move(NodeId inner) {
         auto id = add_node(NodeTag::Move);
-        children_[id].push_back(inner);
+        {
+            std::vector<NodeId> _kids;  // PCV:1 element(s)
+            _kids.push_back(inner);
+            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
+        }
         link_children(id);
         return id;
     }
 
     [[nodiscard]] NodeId add_borrow(NodeId inner) {
         auto id = add_node(NodeTag::Borrow);
-        children_[id].push_back(inner);
+        {
+            std::vector<NodeId> _kids;  // PCV:1 element(s)
+            _kids.push_back(inner);
+            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
+        }
         link_children(id);
         return id;
     }
 
     [[nodiscard]] NodeId add_mut_borrow(NodeId inner) {
         auto id = add_node(NodeTag::MutBorrow);
-        children_[id].push_back(inner);
+        {
+            std::vector<NodeId> _kids;  // PCV:1 element(s)
+            _kids.push_back(inner);
+            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
+        }
         link_children(id);
         return id;
     }
 
     [[nodiscard]] NodeId add_drop(NodeId inner) {
         auto id = add_node(NodeTag::Drop);
-        children_[id].push_back(inner);
+        {
+            std::vector<NodeId> _kids;  // PCV:1 element(s)
+            _kids.push_back(inner);
+            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
+        }
         link_children(id);
         return id;
     }
@@ -1050,65 +1151,57 @@ private:
     }
     // Mutable overload (for code paths that need to write through
     // the children list, e.g. fixup_deltas in ast_impl.cpp).
-    std::span<NodeId> children_mutable(NodeId id) {
+    // PCV is immutable; this returns a const span. For
+    // mutation, use insert_child / remove_child / set_child
+    // (which return a new PCV and assign back to children_[id]).
+    std::span<const NodeId> children_mutable(NodeId id) {
         if (id >= children_.size()) return {};
-        return std::span<NodeId>(children_[id].data(), children_[id].size());
+        return std::span<const NodeId>(children_[id].data(), children_[id].size());
     }
 
     void set_child(NodeId id, std::uint32_t idx, NodeId child) {
-        // Issue #220: write through the per-node children_ list
-        // (the children_ element is contiguous, so no gap-buffer
-        // indirection is needed).
-        auto& slot = children_[id][idx];
+        // Issue #220/221: COW set. Read the old child, build a
+        // new PCV with the replacement, install it. O(1) for
+        // the per-node COW; no other nodes are affected.
+        const auto& list = children_[id];
+        if (idx >= list.size()) return;
+        auto old_cid = list[idx];
         // Clear old child's parent
-        if (slot != NULL_NODE && slot < parent_.size())
-            parent_[slot] = NULL_NODE;
-        slot = child;
+        if (old_cid != NULL_NODE && old_cid < parent_.size())
+            parent_[old_cid] = NULL_NODE;
+        children_[id] = list.with_set(idx, child);
         // Set new child's parent
         if (child != NULL_NODE && child < parent_.size())
             parent_[child] = id;
-        // Issue #191: structural mutation invalidates all stored
-        // NodeIds. Without the bump, a caller that did
-        // (query:children (capture: parent-id)) before this set_child
-        // would have a stale span that no longer matches the
-        // child's actual position in the new children array.
         bump_generation();
     }
 
     // Insert a child at position idx (0 = first, child_count = append)
     // Shifts all subsequent children and updates child_begin_ for later nodes.
     void insert_child(NodeId id, std::uint32_t idx, NodeId child) {
-        // Issue #220: write through the per-node children_ list
-        // (O(1) amortized via std::pmr::vector, no other nodes
-        // to shift since each node owns its own list).
-        auto& list = children_[id];
+        // Issue #220/221: COW insert. Build a new PCV with
+        // the inserted element, install it. O(1) for the
+        // per-node COW; no other nodes are affected.
+        const auto& list = children_[id];
         auto pos = std::min(static_cast<std::uint32_t>(list.size()), idx);
-        list.insert(list.begin() + pos, child);
+        children_[id] = list.with_insert(pos, child);
         // Set new child's parent
         if (child != NULL_NODE && child < parent_.size())
             parent_[child] = id;
-        // Issue #191: structural mutation invalidates all stored
-        // NodeIds. Without the bump, a caller that did
-        // (query:children (capture: parent-id)) before this set_child
-        // would have a stale span that no longer matches the
-        // child's actual position in the new children array.
         bump_generation();
     }
 
     // Remove a child at position idx by replacing with NULL_NODE
     void remove_child(NodeId id, std::uint32_t idx) {
-        // Issue #220: erase from the per-node children_ list
-        // (O(n) within the node, but no other nodes to shift).
-        auto& list = children_[id];
+        // Issue #220/221: COW erase. Build a new PCV without
+        // the erased element, install it. O(1) for the per-node
+        // COW; no other nodes are affected.
+        const auto& list = children_[id];
         if (idx < list.size()) {
             auto cid = list[idx];
             if (cid != NULL_NODE && cid < parent_.size())
                 parent_[cid] = NULL_NODE;
-            list.erase(list.begin() + idx);
-            // Issue #191: structural mutation invalidates all
-            // stored NodeIds (the child's slot is now NULL; a
-            // stored parent_of that pointed through it would
-            // see a different child).
+            children_[id] = list.with_erase(idx);
             bump_generation();
         }
     }
@@ -1352,12 +1445,11 @@ private:
             std::size_t offset = 0;
             for (NodeId i = 0; i < num_nodes; ++i) {
                 auto count = child_counts[i];
-                auto& list = ast.children_[i];
-                if (count > 0) {
-                    list.insert(list.end(),
-                                flat_children.begin() + offset,
-                                flat_children.begin() + offset + count);
-                }
+                // Issue #221: build each per-node PCV from the
+                // flat column via the range constructor.
+                ast.children_[i] = PersistentChildVector<NodeId>(
+                    flat_children.begin() + offset,
+                    flat_children.begin() + offset + count);
                 offset += count;
             }
         }
