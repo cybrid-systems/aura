@@ -70,9 +70,20 @@ private:
     const std::uint8_t* tags_ = nullptr;
     const std::int64_t* int_vals_ = nullptr;
     const SymId* sym_ids_ = nullptr;
-    const std::uint32_t* child_begins_ = nullptr;
-    const std::uint32_t* child_counts_ = nullptr;
+    // Issue #220: per-node children split into 2 columns
+    // (per-node count + flat concatenation). The legacy
+    // child_begins_/child_counts_ 3-column representation is
+    // gone. child_count_per_node_[i] is the number of
+    // children for node i; child_data_ is the concatenation of
+    // all per-node children. The per-node starting offset is
+    // computed in memory (cum_begins_, below) by setup_pointers.
+    const std::uint32_t* child_count_per_node_ = nullptr;
     const NodeId* child_data_ = nullptr;
+    // In-memory cumulative offsets for O(1) child lookup.
+    // cum_begins_[i] = sum of child_count_per_node_[0..i-1].
+    // Filled by setup_pointers from the on-disk per-node
+    // counts; not part of the cache file format.
+    std::vector<std::uint32_t> cum_begins_;
     const std::uint32_t* param_begins_ = nullptr;
     const std::uint32_t* param_counts_ = nullptr;
     const SymId* param_data_ = nullptr;

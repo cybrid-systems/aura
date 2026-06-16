@@ -272,12 +272,18 @@ void setup_pointers(MappedCache& cache) {
     cache.tags_ = reinterpret_cast<const std::uint8_t*>(nd + next_pad(n * 1));
     cache.int_vals_ = reinterpret_cast<const std::int64_t*>(nd + next_pad(n * 8));
     cache.sym_ids_ = reinterpret_cast<const SymId*>(nd + next_pad(n * 4));
-    cache.child_begins_ = reinterpret_cast<const std::uint32_t*>(nd + next_pad(n * 4));
-    cache.child_counts_ = reinterpret_cast<const std::uint32_t*>(nd + next_pad(n * 4));
+    // Issue #220: per-node child counts (1 column) replace the
+    // legacy child_begins_ + child_counts_ (2 columns). The
+    // per-node starting offset is computed in cum_begins_ below
+    // (O(1) lookup at get() time).
+    cache.child_count_per_node_ = reinterpret_cast<const std::uint32_t*>(nd + next_pad(n * 4));
 
     std::uint32_t total_children = 0;
-    for (std::size_t i = 0; i < n; ++i)
-        total_children += cache.child_counts_[i];
+    cache.cum_begins_.resize(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        cache.cum_begins_[i] = total_children;
+        total_children += cache.child_count_per_node_[i];
+    }
     cache.child_data_ = reinterpret_cast<const NodeId*>(nd + next_pad(total_children * 4));
 
     cache.param_begins_ = reinterpret_cast<const std::uint32_t*>(nd + next_pad(n * 4));
@@ -335,9 +341,11 @@ void MappedCache::copy_pointers(const MappedCache& o) {
     tags_ = o.tags_;
     int_vals_ = o.int_vals_;
     sym_ids_ = o.sym_ids_;
-    child_begins_ = o.child_begins_;
-    child_counts_ = o.child_counts_;
+    // Issue #220: per-node children (child_count_per_node_ +
+    // child_data_ from mmap; cum_begins_ computed in memory).
+    child_count_per_node_ = o.child_count_per_node_;
     child_data_ = o.child_data_;
+    cum_begins_ = o.cum_begins_;
     param_begins_ = o.param_begins_;
     param_counts_ = o.param_counts_;
     param_data_ = o.param_data_;
@@ -366,7 +374,8 @@ NodeView MappedCache::get(NodeId id) const {
         // can read it directly. Old cache files (no type_ids_ column)
         // get 0 here, which matches flat.type_id()'s DYNAMIC default.
         .type_id = type_ids_ ? type_ids_[id] : 0u,
-        .children = std::span(child_data_ + child_begins_[id], child_counts_[id]),
+        .children = std::span(child_data_ + cum_begins_[id],
+                               child_count_per_node_[id]),
         .params = std::span(param_data_ + param_begins_[id], param_counts_[id]),
         .marker = markers_ ? static_cast<SyntaxMarker>(markers_[id]) : SyntaxMarker::User,
     };
