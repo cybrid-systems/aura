@@ -57,18 +57,10 @@ import aura.compiler.ir;
 import aura.compiler.evaluator;
 import aura.compiler.service;
 
-static int g_passed = 0;
-static int g_failed = 0;
-
-#define CHECK(cond, msg) do { \
-    if (!(cond)) { \
-        std::println("  FAIL: {} (line {})", msg, __LINE__); \
-        ++g_failed; \
-    } else { \
-        std::println("  PASS: {}", msg); \
-        ++g_passed; \
-    } \
-} while(0)
+// Unified test harness (Issue #226 cycle 1). Provides
+// CHECK/EXPECT/TEST/RUN_ALL_TESTS so this file matches
+// the same pattern as other test_issue_*.cpp files.
+#include "test_harness.hpp"
 
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
                                                 std::string_view src) {
@@ -629,6 +621,14 @@ bool test_cascade_body_only_marks_only_body() {
 // ═════════════════════════════════════════════════════════════
 
 int main() {
+    // The harness's CHECK macro handles the per-check
+    // pass/fail reporting. The legacy test functions
+    // (test_metrics_exposed, etc.) call CHECK() directly,
+    // which increments the harness's g_passed/g_failed
+    // counters. The harness's RUN_ALL_TESTS() reports the
+    // final counters and returns 0 on full pass.
+    //
+    // We keep the section headers as visual structure.
     std::println("═══ Issue #224 cycle 2 + cycle 3 + cycle 4 verification tests ═══\n");
 
     std::println("AC #1+#2: counters exposed");
@@ -665,7 +665,5 @@ int main() {
     test_cascade_uses_targeted_path();
     test_cascade_body_only_marks_only_body();
 
-    std::println("\n════════════════════════════════════════");
-    std::println("Results: {} passed, {} failed", g_passed, g_failed);
-    return g_failed == 0 ? 0 : 1;
+    return RUN_ALL_TESTS();
 }

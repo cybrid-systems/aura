@@ -25,7 +25,8 @@ Test suites:
   core        核心管线 (unit + integ + typecheck + smoke + bash + suite)
   safety      安全回归 (gradual + regression + p0)
   fuzz        Fuzz 测试 (fuzz-equiv + fuzz-corpus)
-  check       构建 + core + safety + fuzz（CI 默认）
+  issues      Issue #226 — unified test_issue_* runner (all per-issue tests)
+  check       构建 + core + safety + fuzz + issues（CI 默认）
 """
 
 import json
@@ -847,6 +848,22 @@ def test_issue_146():
     return r.returncode
 
 
+def test_issues():
+    """Run all test_issue_* binaries (Issue #226 cycle 1).
+
+    Unified runner. Discovers all test_issue_*.cpp-built
+    binaries in build/ and runs them in sequence,
+    aggregating pass/fail counts. Wired into CI.
+    """
+    print(f"{B}═══ All Issue Tests (unified runner, Issue #226) ═══{N}")
+    r = subprocess.run([sys.executable, str(ROOT / "tests" / "run_issue_tests.py")],
+                      capture_output=True, text=True, timeout=600)
+    print(r.stdout)
+    if r.stderr:
+        print(r.stderr, file=sys.stderr)
+    return r.returncode
+
+
 def test_p0_regression():
     """Run P0 fix regression tests."""
     print(f"{B}═══ P0 Regression Tests ═══{N}")
@@ -918,6 +935,14 @@ def test_suite_runner():
 CI_CORE = ["unit", "integ", "typecheck", "smoke", "bash", "suite", "repl", "runtime-c", "concurrent"]
 CI_SAFETY = ["gradual", "regression", "p0"]
 CI_FUZZ = ["fuzz-equiv", "fuzz-corpus"]
+# Issue #226 cycle 1: unified test_issue_* runner.
+# All per-issue test binaries (test_issue_115.cpp through
+# test_issue_224.cpp) are discovered and run by
+# tests/run_issue_tests.py. The runner aggregates pass/fail
+# counts across all 80+ binaries and exits non-zero on
+# any failure. Wired into CI's build job so every per-issue
+# test runs on every push to main.
+CI_ISSUES = ["issues"]
 
 SUITES = {
     "unit": test_unit,
@@ -938,6 +963,7 @@ SUITES = {
     "suite": test_suite_runner,
     "repl": test_repl,
     "concurrent": test_concurrent,
+    "issues": test_issues,
 }
 
 
@@ -1183,7 +1209,7 @@ def main():
     commands = {
         "build": cmd_build,
         "clean": cmd_clean,
-        "check": lambda: cmd_build() or cmd_test(CI_CORE + CI_SAFETY + CI_FUZZ),
+        "check": lambda: cmd_build() or cmd_test(CI_CORE + CI_SAFETY + CI_FUZZ + CI_ISSUES),
         "test": lambda: cmd_test(args or ["all"]),
         "list": cmd_list,
         "demo": test_demo,
