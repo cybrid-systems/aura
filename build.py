@@ -854,10 +854,18 @@ def test_issues():
     Unified runner. Discovers all test_issue_*.cpp-built
     binaries in build/ and runs them in sequence,
     aggregating pass/fail counts. Wired into CI.
+
+    Passes --build to the runner so the test_issue_*
+    binaries are built first. Without this, CI fails
+    with "No test_issue_* binaries found" because
+    `build.py check` doesn't build every per-issue
+    test target.
     """
     print(f"{B}═══ All Issue Tests (unified runner, Issue #226) ═══{N}")
-    r = subprocess.run([sys.executable, str(ROOT / "tests" / "run_issue_tests.py")],
-                      capture_output=True, text=True, timeout=600)
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "tests" / "run_issue_tests.py"), "--build"],
+        capture_output=True, text=True, timeout=1200,
+    )
     print(r.stdout)
     if r.stderr:
         print(r.stderr, file=sys.stderr)
