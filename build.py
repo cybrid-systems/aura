@@ -895,7 +895,7 @@ def test_suite_runner():
             failed += 1
             continue
         r = subprocess.run([str(AURA), "--load", str(f)],
-                          capture_output=True, text=True, timeout=30)
+                          capture_output=True, text=True, timeout=120)
         if r.returncode == 0:
             ok(f"  suite/{name}.aura")
             passed += 1

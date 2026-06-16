@@ -127,6 +127,27 @@ public:
         std::copy(first, last, data_->data.get());
     }
 
+    // Fill-constructor: pre-allocates the buffer (one allocation)
+    // and calls fill(i) for each element. Saves one allocation vs
+    // the range-constructor pattern (which needs a temp std::vector
+    // + a PCV copy). Used by FlatAST's add_X methods when the
+    // element count is known up front.
+    //
+    // Example:
+    //   children_[id] = PersistentChildVector<NodeId>(
+    //       3, [](size_t i) -> NodeId {
+    //           return i == 0 ? cond : (i == 1 ? then_b : else_b);
+    //       });
+    template <typename FillFn>
+    PersistentChildVector(size_type n, FillFn fill) {
+        if (n == 0) return;
+        size_ = n;
+        data_ = make_storage(n);
+        for (size_type i = 0; i < n; ++i) {
+            data_->data[i] = fill(i);
+        }
+    }
+
     // Copy / move: O(1) (shared_ptr copy).
     PersistentChildVector(const PersistentChildVector&) = default;
     PersistentChildVector& operator=(const PersistentChildVector&) = default;
