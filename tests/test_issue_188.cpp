@@ -348,7 +348,7 @@ bool test_fuzzer_multi_mutation() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int main() {
+int run_issue_188() {
     std::println("═══ Issue #188 verification tests ═══\n");
     std::println("AC #1: Fine-grained per-node dirty bitmask");
     test_dirty_bitmask_constants();

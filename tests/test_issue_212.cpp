@@ -679,7 +679,7 @@ bool test_arithmetic_div_pure() {
     return true;
 }
 
-int main() {
+int run_issue_212() {
     std::fprintf(stdout, "═══ Issue #212 Cycle 1 — pure-function extraction of constant_folding ═══\n");
     std::fprintf(stdout, "  Verifies the new aura.compiler.constant_folding module.\n");
     std::fprintf(stdout, "  Wrap is a thin wrapper; pure functions are the canonical API.\n\n");

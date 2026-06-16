@@ -198,7 +198,7 @@ bool test_long_running_stability() {
     return true;
 }
 
-int main() {
+int run_issue_115() {
     std::println("═══ Issue #115 verification tests ═══\n");
     test_parallel_speedup();
     test_long_running_stability();

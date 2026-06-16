@@ -149,7 +149,7 @@ bool test_collect_user_bindings() {
     return true;
 }
 
-int main() {
+int run_issue_132() {
     std::println("═══ Issue #132 verification tests ═══\n");
     test_find_top_level_defines_basic();
     test_find_top_level_defines_nested();

@@ -303,7 +303,7 @@ bool test_query_pipeline_for_llm() {
 // Main
 // ═══════════════════════════════════════════════════════════════
 
-int main() {
+int run_issue_142() {
     std::println("═══ Issue #142 verification tests ═══\n");
 
     std::println("── AC #1: query:where + query:filter ──");

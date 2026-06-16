@@ -279,7 +279,7 @@ bool test_fuzzer_many_macros() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int main() {
+int run_issue_190() {
     std::println("═══ Issue #190 verification tests ═══\n");
     std::println("AC #1: clone_macro_body takes cloned_marker param");
     test_clone_macro_body_marker_param();

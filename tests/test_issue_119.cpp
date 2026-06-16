@@ -179,7 +179,7 @@ bool test_fuzz_spawn_join() {
     return true;
 }
 
-int main() {
+int run_issue_119() {
     std::println("═══ Issue #119 verification tests ═══\n");
     test_fiber_join_parseable();
     test_orch_parallel_parseable();

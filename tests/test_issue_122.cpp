@@ -142,7 +142,7 @@ bool test_reflect_in_query() {
     return true;
 }
 
-int main() {
+int run_issue_122() {
     std::println("═══ Issue #122 verification tests ═══\n");
     test_reflect_type_scalar();
     test_reflect_type_unknown();

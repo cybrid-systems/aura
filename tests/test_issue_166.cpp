@@ -127,7 +127,7 @@ bool test_rapid_mutations() {
     return true;
 }
 
-int main() {
+int run_issue_166() {
     std::fprintf(stdout, "═══ Issue #166 — multi-layer cache invalidation (Phase 1) ═══\n");
 
     test_eval_mutate_eval();

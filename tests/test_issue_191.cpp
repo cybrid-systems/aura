@@ -322,7 +322,7 @@ bool test_fuzzer_many_structural_mutations() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int main() {
+int run_issue_191() {
     std::println("═══ Issue #191 verification tests ═══\n");
     std::println("AC #1: StableNodeRef struct exists and works");
     test_stable_node_ref_default_invalid();

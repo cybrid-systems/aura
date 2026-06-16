@@ -438,7 +438,7 @@ bool test_v2_inline_agrees_with_raw() {
     return true;
 }
 
-int main() {
+int run_issue_181() {
     std::fprintf(stdout, "═══ Issue #181 — EvalValue 64-bit tagged encoding (Cycles 1-3) ═══\n");
     std::fprintf(stdout, "  Option A encoding: dedicated (v & 3) == 2 tag for strings.\n");
     std::fprintf(stdout, "  Cycle 1: prototype + micro-bench.\n");

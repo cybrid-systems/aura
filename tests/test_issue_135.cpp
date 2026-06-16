@@ -771,7 +771,7 @@ bool test_workspace_memory_primitives() {
 // Main
 // ═══════════════════════════════════════════════════════════════
 
-int main() {
+int run_issue_135() {
     std::println("═══ Issue #135 verification tests ═══\n");
     std::println("── Acceptance criterion 1: fiber:join returns spawned value ──");
     test_fiber_join_returns_value();

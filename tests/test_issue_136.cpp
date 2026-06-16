@@ -99,14 +99,21 @@ bool test_mangle_preserves_leading_trailing() {
     std::println("\n--- Test: mangle_aot_name preserves leading/trailing _ ---");
     // Leading / trailing underscores (reserved-name prefix style)
     // must be preserved, not collapsed.
+    //
+    // The disambiguator is appended at the END (after any
+    // trailing underscores), per the aot_mangle.h comment:
+    // "Appending at the end produces the same string both
+    //  sides, so the .reg.c reference and the LLVM object
+    //  symbol line up." So `__init__` becomes `__init___0`
+    // (the trailing _ is preserved, then `_0` is appended).
     CHECK(mangle_aot_name("__top__", 0) == "__top__",
-          "__top__ preserved (leading+trailing _)");
-    CHECK(mangle_aot_name("__init__", 0) == "__init_0__",
-          "__init__ → __init_0__ (leading+trailing preserved, disambiguator added)");
+          "__top__ preserved (no disambiguator for canonical entry)");
+    CHECK(mangle_aot_name("__init__", 0) == "__init___0",
+          "__init__ → __init___0 (trailing _ preserved, _0 appended)");
     CHECK(mangle_aot_name("_priv", 0) == "_priv_0",
           "_priv → _priv_0 (leading preserved)");
-    CHECK(mangle_aot_name("trail_", 0) == "trail_0_",
-          "trail_ → trail_0_ (trailing preserved)");
+    CHECK(mangle_aot_name("trail_", 0) == "trail__0",
+          "trail_ → trail__0 (trailing _ preserved, _0 appended)");
     return true;
 }
 
@@ -135,7 +142,7 @@ bool test_mangle_empty_and_alphanumeric() {
     return true;
 }
 
-int main() {
+int run_issue_136() {
     std::println("═══ Issue #136 verification tests ═══\n");
 
     std::println("── Sub-task 3: AOT name mangling ──");

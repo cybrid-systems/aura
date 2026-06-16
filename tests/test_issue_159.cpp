@@ -234,7 +234,7 @@ bool test_typecheck_current_cache_reuse() {
     return true;
 }
 
-int main() {
+int run_issue_159() {
     std::fprintf(stdout, "═══ Issue #159 — incremental typecheck + eval (Phases 1-5) ═══\n");
 
     // Phase 1 tests

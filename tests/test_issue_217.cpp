@@ -1647,7 +1647,7 @@ bool test_kopcode_info_add() {
     return true;
 }
 
-int main() {
+int run_issue_217() {
     std::fprintf(stdout, "═══ Issue #217 — IR reflection pilot (Cycle 1) ═══\n");
     std::fprintf(stdout, "  Verifies the reflection infrastructure works for\n");
     std::fprintf(stdout, "  IR-shaped types. The full migration ships in\n");
