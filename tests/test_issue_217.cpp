@@ -953,9 +953,8 @@ bool test_reflect_opcode_info() {
 //   2. int_val_       i64
 //   3. float_val_     f64
 //   4. sym_id_        u32 (SymId)
-//   5. child_begin_   u32
-//   6. child_count_   u32
-//   7. child_data_    u32 (NodeId)
+//   5. child_count_per_node_ u32 (per-node count)  [Issue #220]
+//   6. child_data_    u32 (NodeId, flat concat)         [Issue #220]
 //   8. parent_        u32 (NodeId)
 //   9. param_begin_   u32
 //  10. param_count_   u32
@@ -998,14 +997,14 @@ struct FlatASTSoALike {
     std::vector<std::int64_t> int_val_;
     std::vector<double> float_val_;
     std::vector<std::uint32_t> sym_id_;
-    std::vector<std::uint32_t> child_begin_;
-    std::vector<std::uint32_t> child_count_;
-    std::vector<std::uint32_t> child_data_;     // NodeId
-    std::vector<std::uint32_t> parent_;          // NodeId
+    // Issue #220: per-node children as 2 columns
+    std::vector<std::uint32_t> child_count_per_node_;  // u32 per node
+    std::vector<std::uint32_t> child_data_;            // NodeId (flat concat)
+    std::vector<std::uint32_t> parent_;                // NodeId
     std::vector<std::uint32_t> param_begin_;
     std::vector<std::uint32_t> param_count_;
     std::vector<std::uint32_t> cap_require_count_;
-    std::vector<std::uint32_t> param_data_;      // SymId
+    std::vector<std::uint32_t> param_data_;            // SymId
     std::vector<std::uint32_t> param_annot_data_;
     std::vector<std::uint32_t> line_;
     std::vector<std::uint32_t> col_;
@@ -1057,8 +1056,8 @@ inline void flat_ast_soa_serialize(std::vector<char>& buf, const FlatASTSoALike&
     write_column(ast.int_val_);
     write_column(ast.float_val_);
     write_column(ast.sym_id_);
-    write_column(ast.child_begin_);
-    write_column(ast.child_count_);
+    // Issue #220: per-node children as 2 columns
+    write_column(ast.child_count_per_node_);
     write_column(ast.child_data_);
     write_column(ast.parent_);
     write_column(ast.param_begin_);
@@ -1108,8 +1107,8 @@ inline FlatASTSoALike flat_ast_soa_deserialize(const std::vector<char>& buf, std
     read_column(ast.int_val_);
     read_column(ast.float_val_);
     read_column(ast.sym_id_);
-    read_column(ast.child_begin_);
-    read_column(ast.child_count_);
+    // Issue #220: per-node children as 2 columns
+    read_column(ast.child_count_per_node_);
     read_column(ast.child_data_);
     read_column(ast.parent_);
     read_column(ast.param_begin_);
@@ -1142,8 +1141,9 @@ bool test_flat_ast_soa_roundtrip() {
     original.int_val_ = {42, 0, 0};
     original.float_val_ = {0.0, 0.0, 0.0};
     original.sym_id_ = {0xFFFFFFFF, 0xABCD, 0xFFFFFFFF};
-    original.child_begin_ = {0, 0, 1};
-    original.child_count_ = {0, 0, 1};
+    // Issue #220: per-node children (node 0: 0 children, node 1: 0
+    // children, node 2 (Call): 1 child = Variable(1))
+    original.child_count_per_node_ = {0, 0, 1};
     original.child_data_ = {1};  // Call's child is Variable (node 1)
     original.parent_ = {0xFFFFFFFF, 2, 0xFFFFFFFF};  // Variable's parent is Call
     original.param_begin_ = {0, 0, 0};
@@ -1166,12 +1166,13 @@ bool test_flat_ast_soa_roundtrip() {
     std::vector<char> buf;
     flat_ast_soa_serialize(buf, original);
     std::println("FlatASTSoALike serialized: {} bytes", buf.size());
-    // Wire format: 4 (version) + 4 (num_nodes) + 22 columns
-    // (each = 4-byte count + count * sizeof(elem) raw bytes) +
-    // 4 (next_mutation_id) + 2 (generation) + 2 (reserved).
-    // For 3 nodes + 1 child_data + 0 param_data: 8 + 323 + 8
-    // = 339 bytes.
-    CHECK(buf.size() == 339, "buf size == 339 bytes");
+    // Wire format (Issue #220): 4 (version) + 4 (num_nodes) +
+    // 21 columns (each = 4-byte count + count * sizeof(elem)
+    // raw bytes) + 4 (next_mutation_id) + 2 (generation) +
+    // 2 (reserved).
+    // For 3 nodes + 1 child_data (flat) + 0 param_data: 8 + 307 + 8
+    // = 323 bytes.
+    CHECK(buf.size() == 323, "buf size == 323 bytes (Issue #220 wire format)");
 
     std::size_t pos = 0;
     auto rt = flat_ast_soa_deserialize(buf, pos);
@@ -1301,14 +1302,14 @@ bool test_ir_instruction_roundtrip() {
 // types. The test is the in-env verification of the v2
 // wire format additions.
 struct FlatASTSoALikeV2 {
-    // 22 SoA columns (same as v1)
+    // 22 SoA columns (Issue #220: per-node children split
+    // into 2 columns; legacy 3 columns removed)
     std::vector<std::uint32_t> tag_;
     std::vector<std::int64_t> int_val_;
     std::vector<double> float_val_;
     std::vector<std::uint32_t> sym_id_;
-    std::vector<std::uint32_t> child_begin_;
-    std::vector<std::uint32_t> child_count_;
-    std::vector<std::uint32_t> child_data_;
+    std::vector<std::uint32_t> child_count_per_node_;  // u32 per node
+    std::vector<std::uint32_t> child_data_;            // NodeId (flat concat)
     std::vector<std::uint32_t> parent_;
     std::vector<std::uint32_t> param_begin_;
     std::vector<std::uint32_t> param_count_;
@@ -1380,8 +1381,8 @@ inline void flat_ast_soa_v2_serialize(std::vector<char>& buf, const FlatASTSoALi
     write_column(ast.int_val_);
     write_column(ast.float_val_);
     write_column(ast.sym_id_);
-    write_column(ast.child_begin_);
-    write_column(ast.child_count_);
+    // Issue #220: per-node children as 2 columns
+    write_column(ast.child_count_per_node_);
     write_column(ast.child_data_);
     write_column(ast.parent_);
     write_column(ast.param_begin_);
@@ -1435,8 +1436,8 @@ inline FlatASTSoALikeV2 flat_ast_soa_v2_deserialize(const std::vector<char>& buf
     read_column(ast.int_val_);
     read_column(ast.float_val_);
     read_column(ast.sym_id_);
-    read_column(ast.child_begin_);
-    read_column(ast.child_count_);
+    // Issue #220: per-node children as 2 columns
+    read_column(ast.child_count_per_node_);
     read_column(ast.child_data_);
     read_column(ast.parent_);
     read_column(ast.param_begin_);
@@ -1472,8 +1473,7 @@ bool test_flat_ast_soa_v2_roundtrip() {
     original.int_val_ = {42, 0};
     original.float_val_ = {0.0, 0.0};
     original.sym_id_ = {0xFFFFFFFF, 0xABCD};
-    original.child_begin_ = {0, 0};
-    original.child_count_ = {0, 0};
+    original.child_count_per_node_ = {0, 0};  // Issue #220
     original.line_ = {10, 11};
     original.col_ = {1, 1};
     original.marker_ = {0, 0};

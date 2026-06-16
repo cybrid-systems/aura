@@ -96,9 +96,9 @@ struct BenchFlatAST {
     std::vector<std::int64_t> int_val_;
     std::vector<double> float_val_;
     std::vector<std::uint32_t> sym_id_;
-    std::vector<std::uint32_t> child_begin_;
-    std::vector<std::uint32_t> child_count_;
-    std::vector<std::uint32_t> child_data_;
+    // Issue #220: per-node children as 2 columns
+    std::vector<std::uint32_t> child_count_per_node_;  // u32 per node
+    std::vector<std::uint32_t> child_data_;            // NodeId (flat concat)
     std::vector<std::uint32_t> parent_;
     std::vector<std::uint32_t> param_begin_;
     std::vector<std::uint32_t> param_count_;
@@ -139,8 +139,8 @@ inline void bench_flatast_serialize(std::vector<char>& buf, const BenchFlatAST& 
     write_column(ast.int_val_);
     write_column(ast.float_val_);
     write_column(ast.sym_id_);
-    write_column(ast.child_begin_);
-    write_column(ast.child_count_);
+    // Issue #220: per-node children as 2 columns
+    write_column(ast.child_count_per_node_);
     write_column(ast.child_data_);
     write_column(ast.parent_);
     write_column(ast.param_begin_);
@@ -203,9 +203,9 @@ void bench_flatast(std::vector<BenchResult>& results) {
         ast.int_val_.resize(N, 42);
         ast.float_val_.resize(N, 3.14);
         ast.sym_id_.resize(N, 0xABCD);
-        ast.child_begin_.resize(N, 0);
-        ast.child_count_.resize(N, 3);  // 3 children per node
-        ast.child_data_.resize(N * 3);  // N nodes * 3 children
+        // Issue #220: per-node children as 2 columns
+        ast.child_count_per_node_.resize(N, 3);  // 3 children per node
+        ast.child_data_.resize(N * 3);  // N nodes * 3 children (flat concat)
         ast.parent_.resize(N, 0);
         ast.param_begin_.resize(N, 0);
         ast.param_count_.resize(N, 0);
