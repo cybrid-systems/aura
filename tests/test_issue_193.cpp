@@ -169,7 +169,7 @@ bool test_per_function_not_global() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int main() {
+int run_issue_193() {
     std::println("═══ Issue #193 verification tests ═══\n");
     std::println("AC #1: Threshold parameter preserves backward compat");
     test_threshold_default_zero();

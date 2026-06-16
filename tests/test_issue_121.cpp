@@ -195,7 +195,7 @@ bool test_hygienic_gensym_in_macro() {
     return true;
 }
 
-int main() {
+int run_issue_121() {
     std::println("═══ Issue #121 verification tests ═══\n");
     test_gensym_unique();
     test_gensym_with_prefix();

@@ -248,7 +248,7 @@ bool test_fuzz_gradual_occurrence_linear() {
     return true;
 }
 
-int main() {
+int run_issue_118() {
     std::println("═══ Issue #118 verification tests ═══\n");
     test_solve_result_enum();
     test_timeout_reports_unresolved();

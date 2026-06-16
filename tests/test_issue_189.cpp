@@ -300,7 +300,7 @@ bool test_fuzzer_many_mutations() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int main() {
+int run_issue_189() {
     std::println("═══ Issue #189 verification tests ═══\n");
     std::println("AC #1: Memory ordering fix — defuse_version_ bump");
     test_version_bump_on_rebind();

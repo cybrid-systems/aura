@@ -345,7 +345,7 @@ void test_6_body_source_fallback() {
     }
 }
 
-int main() {
+int run_issue_223() {
     test_1_epoch_basics();
     test_2_bridge_capture();
     test_3_irclosure_carry();

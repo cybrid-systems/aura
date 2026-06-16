@@ -209,7 +209,7 @@ bool test_inspect_env_uses_bindings_with_names() {
     return true;
 }
 
-int main() {
+int run_issue_208() {
     std::fprintf(stdout, "═══ Issue #208 Cycle 2 — Env::bindings_ migration ═══\n");
     std::fprintf(stdout, "  Verifies the bindings_legacy_uses metric and the\n");
     std::fprintf(stdout, "  bindings_symid_iter / bindings_with_names accessors.\n");

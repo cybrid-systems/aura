@@ -112,7 +112,7 @@ bool test_parse_ffi_sig_invalid() {
     return true;
 }
 
-int main() {
+int run_issue_131() {
     std::println("═══ Issue #131 verification tests ═══\n");
     test_ffi_runtime_standalone();
     test_parse_ffi_sig_valid();

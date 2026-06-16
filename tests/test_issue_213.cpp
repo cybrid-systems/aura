@@ -291,7 +291,7 @@ bool test_rollback_to_size_idempotent() {
     return true;
 }
 
-int main() {
+int run_issue_213() {
     std::fprintf(stdout, "═══ Issue #213 Cycle 1 — mutation boundary rollback ═══\n");
     std::fprintf(stdout, "  Verifies the new rollback path in\n");
     std::fprintf(stdout, "  `Evaluator::exit_mutation_boundary(false)`.\n\n");

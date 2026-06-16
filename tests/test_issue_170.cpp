@@ -410,7 +410,7 @@ bool test_issue_170_phase1_item2_enum_values() {
     return true;
 }
 
-int main() {
+int run_issue_170() {
     std::fprintf(stdout, "═══ Issue #170 — JIT backend completion ═══\n");
     std::fprintf(stdout, "  (Phase 1: AOT entry points + Phase 1 / item #1: core lowering)\n\n");
 

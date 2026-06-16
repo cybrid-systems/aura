@@ -464,7 +464,7 @@ bool test_node_id_isolation() {
 // Main
 // ═══════════════════════════════════════════════════════════════
 
-int main() {
+int run_issue_141() {
     std::println("═══ Issue #141 verification tests ═══\n");
 
     std::println("── AC #1: Workspace create/switch/list/current ──");

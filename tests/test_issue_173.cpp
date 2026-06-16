@@ -84,7 +84,7 @@ bool test_types_distinct() {
     return true;
 }
 
-int main() {
+int run_issue_173() {
     std::fprintf(stdout, "═══ Issue #173 — stable-id type aliases ═══\n");
     std::fprintf(stdout, "  Verifies PairId/CellId/StringId + NULL_X_ID sentinels.\n");
     std::fprintf(stdout, "  Full migration (remap table, resolve_X, GC sweep compact)\n");

@@ -579,7 +579,7 @@ bool test_call_in_middle_with_terminator_preserved() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int main() {
+int run_issue_197() {
     std::println("═══ Issue #197 verification tests ═══\n");
     std::println("AC #1: is_inlinable_branch_aware predicate");
     test_predicate_accepts_single_block_with_params();

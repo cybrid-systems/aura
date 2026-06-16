@@ -135,7 +135,7 @@ bool test_end_to_end() {
     return true;
 }
 
-int main() {
+int run_issue_124() {
     std::println("═══ Issue #124 verification tests ═══\n");
     test_try_catch_parses();
     test_safe_div_parses();

@@ -508,7 +508,7 @@ bool test_materialize_call_env_legacy_when_env_id_null() {
 // Main
 // ═══════════════════════════════════════════════════════════════
 
-int main() {
+int run_issue_145() {
     std::println("═══ Issue #145 verification tests (DOD/SoA Phase 1) ═══\n");
 
     std::println("── AC #1: Closure::params is SymId[] ──");

@@ -646,7 +646,7 @@ bool test_arithmetic_sum_no_diag_by_default() {
 // Main
 // ═══════════════════════════════════════════════════════════════
 
-int main() {
+int run_issue_146() {
     std::println("═══ Issue #146 verification tests (pure-function extraction) ═══\n");
 
     std::println("── AC #1: coerce_to_int_pure happy paths ──");

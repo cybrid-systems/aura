@@ -320,7 +320,7 @@ void test_null_ast_returns_zero() {
 // Main
 // ═══════════════════════════════════════════════════════════════
 
-int main() {
+int run_issue_148() {
     std::println("═══ Issue #148 incremental type checking tests ═══\n");
 
     std::println("── AC #1: API is exported & callable ──");

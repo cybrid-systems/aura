@@ -341,7 +341,7 @@ bool test_perf_5000_nodes() {
 // Main
 // ═══════════════════════════════════════════════════════════════
 
-int main() {
+int run_issue_140() {
     std::println("═══ Issue #140 verification tests ═══\n");
 
     std::println("── AC #1: Simple pattern + Ellipsis ──");

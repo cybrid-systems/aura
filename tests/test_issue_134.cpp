@@ -101,7 +101,7 @@ bool test_parse_datatype_no_ctors() {
     return true;
 }
 
-int main() {
+int run_issue_134() {
     std::println("═══ Issue #134 verification tests ═══\n");
     test_parse_datatype();
     test_parse_datatype_zero_arity();

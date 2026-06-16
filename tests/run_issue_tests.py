@@ -40,10 +40,11 @@ BUILD = ROOT / "build"
 # reports them but does NOT count them as runner failures.
 # This is so CI doesn't fail on issues that exist on main.
 # To add a new pre-existing failure: append the binary name.
-PRE_EXISTING_FAILURES = {
-    "test_issue_136",  # __init__ / trail_ disambiguator (Issue #130)
-    "test_issue_184",  # 1 known failure in cycle 1
-}
+#
+# Currently empty — all previously-tracked failures
+# (test_issue_136 mangle disambiguator, test_issue_184
+# version monotonicity) have been fixed in ba7737e.
+PRE_EXISTING_FAILURES: set[str] = set()
 
 G = "\033[32m"
 R = "\033[31m"

@@ -172,7 +172,7 @@ bool test_env_walk_empty_no_op() {
     return true;
 }
 
-int main() {
+int run_issue_205() {
     std::fprintf(stdout, "═══ Issue #205 — caller-side env_frames_ walk ═══\n");
     std::fprintf(stdout, "  Wires evaluator env walk to GC mark_env_frame_roots.\n\n");
 

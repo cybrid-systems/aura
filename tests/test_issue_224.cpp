@@ -620,7 +620,7 @@ bool test_cascade_body_only_marks_only_body() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int main() {
+int run_issue_224() {
     // The harness's CHECK macro handles the per-check
     // pass/fail reporting. The legacy test functions
     // (test_metrics_exposed, etc.) call CHECK() directly,

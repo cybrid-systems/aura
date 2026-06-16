@@ -465,7 +465,7 @@ bool test_define_struct_pattern() {
 // Main
 // ═══════════════════════════════════════════════════════════════
 
-int main() {
+int run_issue_137() {
     std::println("═══ Issue #137 verification tests ═══\n");
 
     std::println("── AC #1: No name capture in standard hygiene test cases ──");

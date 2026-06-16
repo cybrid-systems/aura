@@ -156,7 +156,7 @@ bool test_env_without_pool_uses_fallback() {
     return true;
 }
 
-int main() {
+int run_issue_210() {
     std::fprintf(stdout, "═══ Issue #210 Cycle 4 — Env::bindings_ cleanup ═══\n");
     std::fprintf(stdout, "  Verifies the cleanup-readiness invariants.\n");
     std::fprintf(stdout, "  The full drop of bindings_ is deferred to\n");

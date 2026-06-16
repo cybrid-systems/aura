@@ -182,7 +182,7 @@ bool test_rebuild_after_invalidate_uses_current_workspace() {
     return true;
 }
 
-int main() {
+int run_issue_211() {
     std::fprintf(stdout, "═══ Issue #211 — (tag, arity) index for query:pattern ═══\n");
     std::fprintf(stdout, "  Verifies the index is built, cached, and invalidated.\n");
     std::fprintf(stdout, "  Variadic ..., predicates, and memoization are follow-ups.\n\n");

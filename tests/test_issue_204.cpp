@@ -149,7 +149,7 @@ bool test_env_walk_before_root_set() {
     return true;
 }
 
-int main() {
+int run_issue_204() {
     std::fprintf(stdout, "═══ Issue #172 (Phase 4) / #204 — GC env_frames_ walk ═══\n");
     std::fprintf(stdout, "  Verifies GCCollector::mark_env_frame_roots().\n\n");
 

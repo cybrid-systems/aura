@@ -101,7 +101,7 @@ bool test_let_poly_mutation() {
     return true;
 }
 
-int main() {
+int run_issue_168() {
     std::fprintf(stdout, "═══ Issue #168 — incremental type cache safety (Phase 1) ═══\n");
 
     test_set_cache_epoch();

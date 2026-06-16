@@ -272,7 +272,7 @@ bool test_real_program_defer() {
     return true;
 }
 
-int main() {
+int run_issue_116() {
     std::println("═══ Issue #116 verification tests ═══\n");
     test_well_typed_no_mutation();
     test_apply_round_trip();

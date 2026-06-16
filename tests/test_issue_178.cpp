@@ -381,7 +381,7 @@ bool test_hygienic_macro_marker_roundtrip() {
     return true;
 }
 
-int main() {
+int run_issue_178() {
     test_reflect_node_view();
     test_node_view_roundtrip();
     test_empty_node_view();

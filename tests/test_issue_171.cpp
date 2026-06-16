@@ -1187,7 +1187,7 @@ bool test_inline_three_way_mutual_recursion() {
     return true;
 }
 
-int main() {
+int run_issue_171() {
     std::fprintf(stdout, "═══ Issue #171 — Function Inliner (Priority 2) ═══\n");
     std::fprintf(stdout, "  Verifies the inliner ACTUALLY inlines, not just counts.\n\n");
 

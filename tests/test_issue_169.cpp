@@ -87,7 +87,7 @@ bool test_no_behavior_change() {
     return true;
 }
 
-int main() {
+int run_issue_169() {
     std::fprintf(stdout, "═══ Issue #169 — Incremental Compilation v3 (Phase 1: config flag) ═══\n");
 
     test_enum_values();

@@ -146,7 +146,7 @@ bool test_span_size() {
     return true;
 }
 
-int main() {
+int run_issue_128() {
     std::println("═══ Issue #128 verification tests ═══\n");
     test_cells_returns_span();
     test_span_vector_conversion();

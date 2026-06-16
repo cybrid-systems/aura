@@ -172,7 +172,7 @@ bool test_qq_nested_inner_macro() {
     return true;
 }
 
-int main() {
+int run_issue_158() {
     std::fprintf(stdout, "═══ Issue #158 — qq + inner macro verification ═══\n");
 
     test_qq_legacy_inner_macro();

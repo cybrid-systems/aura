@@ -232,7 +232,7 @@ bool test_snapshot_rollback_preserves_macro() {
     return true;
 }
 
-int main() {
+int run_issue_165() {
     std::fprintf(stdout, "═══ Issue #165 — macro re-expansion + SyntaxMarker after mutation ═══\n");
 
     test_hygienic_macro_survives_mutation();
