@@ -4343,6 +4343,18 @@ target_compile_features(test_issue_220 PUBLIC cxx_std_26)
 target_link_libraries(test_issue_220 PRIVATE stdc++ pthread)
 add_test(NAME issue_220_verification COMMAND ./test_issue_220)
 
+# Issue #221: persistent child vectors (Issue #179 Cycle 3,
+# slice 1/5). Tests the PersistentChildVector<T> data
+# structure defined in src/core/persistent_child_vector.hh.
+# Standalone test (no module imports — avoids the GCC 16.1
+# std module + P2996 reflection conflict).
+add_executable(test_issue_221 tests/test_issue_221.cpp)
+target_include_directories(test_issue_221 PRIVATE src)
+target_compile_options(test_issue_221 PRIVATE -Wall -Wextra)
+target_compile_features(test_issue_221 PUBLIC cxx_std_26)
+target_link_libraries(test_issue_221 PRIVATE stdc++ pthread)
+add_test(NAME issue_221_verification COMMAND ./test_issue_221)
+
 # Issue #178 Cycle 5: production NodeView migration to
 # reflect_members + auto_serialize.
 #
