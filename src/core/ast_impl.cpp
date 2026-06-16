@@ -40,7 +40,7 @@ bool apply_patches(FlatAST& ast, std::span<const Patch> patches) {
 // ── Delta fixup (for deserialization) ──────────────────────────
 void fixup_deltas(FlatAST& ast) {
     for (NodeId id = 0; id < ast.size(); ++id) {
-        auto children = const_cast<FlatAST&>(ast).children(id);
+        auto children = ast.children_mutable(id);
         for (auto& cid : children) {
             if (cid != NULL_NODE)
                 cid += id;

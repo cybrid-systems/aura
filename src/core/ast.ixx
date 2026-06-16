@@ -492,6 +492,9 @@ private:
         sym_id_.push_back(INVALID_SYM);
         child_begin_.push_back(0);
         child_count_.push_back(0);
+        // Issue #220: init the per-node children_ entry (uses
+        // the outer's allocator, which is the default for now).
+        children_.emplace_back();
         param_begin_.push_back(0);
         param_count_.push_back(0);
         cap_require_count_.push_back(0);
@@ -525,6 +528,22 @@ private:
     // Issue #219: gap-buffer for O(1) amortized insert/remove.
     // See src/core/gap_buffer.hh for the data structure.
     GapBuffer<NodeId> child_data_;
+    // Issue #220 (partial): per-node children list. Each node
+    // has its own contiguous std::pmr::vector<NodeId> of child
+    // NodeIds. The accessors (children(), set_child(),
+    // insert_child(), remove_child(), get().children) all read
+    // from this field. child_data_ + child_begin_ + child_count_
+    // are kept populated for the wire format (v1 columnar) and
+    // for backward-compatibility with cache_impl.cpp. A
+    // follow-up commit will migrate the wire format and remove
+    // the legacy fields.
+    //
+    // The children_ field uses the DEFAULT polymorphic_allocator
+    // (i.e. the global memory resource). Arena propagation to
+    // nested pmr vectors is brittle in C++26; a future commit
+    // can wire a custom allocator wrapper if arena-backed
+    // per-node lists are needed.
+    std::pmr::vector<std::pmr::vector<NodeId>> children_;
     std::pmr::vector<NodeId> parent_;
     std::pmr::vector<std::uint32_t> param_begin_;
     std::pmr::vector<std::uint32_t> param_count_;
@@ -610,10 +629,11 @@ private:
 
     // Set parent for all children of the given node
     void link_children(NodeId id) {
-        auto begin = child_begin_[id];
-        auto end = begin + child_count_[id];
-        for (auto i = begin; i < end; ++i) {
-            auto cid = child_data_[i];
+        // Issue #220: walk the per-node children_ list (the
+        // legacy child_data_ + child_begin_ + child_count_ access
+        // pattern would be wrong for the GapBuffer layout since
+        // child_begin_ is a LOGICAL offset, not a physical one).
+        for (auto cid : children_[id]) {
             if (cid != NULL_NODE)
                 parent_[cid] = id;
         }
@@ -651,11 +671,13 @@ private:
     [[nodiscard]] NodeId add_call(NodeId func, std::span<const NodeId> args) {
         auto id = add_node(NodeTag::Call);
         child_data_.push_back(func);
+        children_[id].push_back(func);
         auto start = static_cast<std::uint32_t>(child_data_.size());
         // Issue #219: range-append via GapBuffer::append (gap-buffer
         // doesn't support a general range insert; append is the
         // common case for AST construction).
         child_data_.append(args.begin(), args.end());
+        children_[id].insert(children_[id].end(), args.begin(), args.end());
         child_begin_[id] = start - 1; // includes func
         child_count_[id] = 1 + static_cast<std::uint32_t>(args.size());
         link_children(id);
@@ -666,8 +688,11 @@ private:
         auto id = add_node(NodeTag::IfExpr);
         auto start = static_cast<std::uint32_t>(child_data_.size());
         child_data_.push_back(cond);
+        children_[id].push_back(cond);
         child_data_.push_back(then_b);
+        children_[id].push_back(then_b);
         child_data_.push_back(else_b);
+        children_[id].push_back(else_b);
         child_begin_[id] = start;
         child_count_[id] = 3;
         link_children(id);
@@ -692,6 +717,7 @@ private:
         param_begin_[id] = pstart;
         param_count_[id] = static_cast<std::uint32_t>(params.size());
         child_data_.push_back(body);
+        children_[id].push_back(body);
         child_begin_[id] = static_cast<std::uint32_t>(child_data_.size() - 1);
         child_count_[id] = 1;
         link_children(id);
@@ -703,7 +729,9 @@ private:
         sym_id_[id] = name;
         auto start = static_cast<std::uint32_t>(child_data_.size());
         child_data_.push_back(val);
+        children_[id].push_back(val);
         child_data_.push_back(body);
+        children_[id].push_back(body);
         child_begin_[id] = start;
         child_count_[id] = 2;
         link_children(id);
@@ -715,7 +743,9 @@ private:
         sym_id_[id] = name;
         auto start = static_cast<std::uint32_t>(child_data_.size());
         child_data_.push_back(val);
+        children_[id].push_back(val);
         child_data_.push_back(body);
+        children_[id].push_back(body);
         child_begin_[id] = start;
         child_count_[id] = 2;
         link_children(id);
@@ -727,6 +757,7 @@ private:
         sym_id_[id] = name;
         auto start = static_cast<std::uint32_t>(child_data_.size());
         child_data_.push_back(val);
+        children_[id].push_back(val);
         child_begin_[id] = start;
         child_count_[id] = 1;
         link_children(id);
@@ -833,6 +864,7 @@ private:
         // Store constructor nodes in child_data_
         auto cstart = static_cast<std::uint32_t>(child_data_.size());
         child_data_.append(ctors.begin(), ctors.end());
+        children_[id].insert(children_[id].end(), ctors.begin(), ctors.end());
         child_begin_[id] = cstart;
         child_count_[id] = static_cast<std::uint32_t>(ctors.size());
         return id;
@@ -841,8 +873,10 @@ private:
     [[nodiscard]] NodeId add_begin(NodeId* exprs, std::uint32_t count) {
         auto id = add_node(NodeTag::Begin);
         auto start = static_cast<std::uint32_t>(child_data_.size());
-        for (std::uint32_t i = 0; i < count; ++i)
+        for (std::uint32_t i = 0; i < count; ++i) {
             child_data_.push_back(exprs[i]);
+            children_[id].push_back(exprs[i]);
+        }
         child_begin_[id] = start;
         child_count_[id] = count;
         link_children(id);
@@ -852,6 +886,7 @@ private:
         auto id = add_node(NodeTag::Begin);
         auto start = static_cast<std::uint32_t>(child_data_.size());
         child_data_.append(exprs.begin(), exprs.end());
+        children_[id].insert(children_[id].end(), exprs.begin(), exprs.end());
         child_begin_[id] = start;
         child_count_[id] = static_cast<std::uint32_t>(exprs.size());
         link_children(id);
@@ -889,6 +924,7 @@ private:
         auto id = add_node(NodeTag::Export);
         auto start = static_cast<std::uint32_t>(child_data_.size());
         child_data_.append(syms.begin(), syms.end());
+        children_[id].insert(children_[id].end(), syms.begin(), syms.end());
         child_begin_[id] = start;
         child_count_[id] = static_cast<std::uint32_t>(syms.size());
         link_children(id);
@@ -900,6 +936,7 @@ private:
         sym_id_[id] = name;
         auto start = static_cast<std::uint32_t>(child_data_.size());
         child_data_.push_back(val);
+        children_[id].push_back(val);
         child_begin_[id] = start;
         child_count_[id] = 1;
         link_children(id);
@@ -915,6 +952,7 @@ private:
         int_val_[id] = (hygienic ? 2 : 0) | (dotted ? 1 : 0);
         auto start = static_cast<std::uint32_t>(child_data_.size());
         child_data_.push_back(body);
+        children_[id].push_back(body);
         child_begin_[id] = start;
         child_count_[id] = 1;
         // Store params using the same SoA as Lambda params
@@ -941,6 +979,7 @@ private:
         auto id = add_node(NodeTag::Quote);
         auto start = static_cast<std::uint32_t>(child_data_.size());
         child_data_.push_back(val);
+        children_[id].push_back(val);
         child_begin_[id] = start;
         child_count_[id] = 1;
         link_children(id);
@@ -951,7 +990,9 @@ private:
         auto id = add_node(NodeTag::Pair);
         auto start = static_cast<std::uint32_t>(child_data_.size());
         child_data_.push_back(car);
+        children_[id].push_back(car);
         child_data_.push_back(cdr);
+        children_[id].push_back(cdr);
         child_begin_[id] = start;
         child_count_[id] = 2;
         link_children(id);
@@ -963,6 +1004,7 @@ private:
         sym_id_[id] = type_name;
         auto start = static_cast<std::uint32_t>(child_data_.size());
         child_data_.push_back(inner);
+        children_[id].push_back(inner);
         child_begin_[id] = start;
         child_count_[id] = 1;
         if (var_sym != INVALID_SYM) {
@@ -983,6 +1025,7 @@ private:
         auto id = add_node(NodeTag::Coercion);
         auto start = static_cast<std::uint32_t>(child_data_.size());
         child_data_.push_back(inner);
+        children_[id].push_back(inner);
         child_begin_[id] = start;
         child_count_[id] = 1;
         type_id_[id] = type_id;
@@ -993,6 +1036,7 @@ private:
         auto id = add_node(NodeTag::Coercion);
         auto start = static_cast<std::uint32_t>(child_data_.size());
         child_data_.push_back(inner);
+        children_[id].push_back(inner);
         child_begin_[id] = start;
         child_count_[id] = 1;
         int_val_[id] = static_cast<std::int64_t>(type_tag);
@@ -1005,6 +1049,7 @@ private:
         auto id = add_node(NodeTag::Linear);
         auto start = static_cast<std::uint32_t>(child_data_.size());
         child_data_.push_back(inner);
+        children_[id].push_back(inner);
         child_begin_[id] = start;
         child_count_[id] = 1;
         link_children(id);
@@ -1015,6 +1060,7 @@ private:
         auto id = add_node(NodeTag::Move);
         auto start = static_cast<std::uint32_t>(child_data_.size());
         child_data_.push_back(inner);
+        children_[id].push_back(inner);
         child_begin_[id] = start;
         child_count_[id] = 1;
         link_children(id);
@@ -1025,6 +1071,7 @@ private:
         auto id = add_node(NodeTag::Borrow);
         auto start = static_cast<std::uint32_t>(child_data_.size());
         child_data_.push_back(inner);
+        children_[id].push_back(inner);
         child_begin_[id] = start;
         child_count_[id] = 1;
         link_children(id);
@@ -1035,6 +1082,7 @@ private:
         auto id = add_node(NodeTag::MutBorrow);
         auto start = static_cast<std::uint32_t>(child_data_.size());
         child_data_.push_back(inner);
+        children_[id].push_back(inner);
         child_begin_[id] = start;
         child_count_[id] = 1;
         link_children(id);
@@ -1045,6 +1093,7 @@ private:
         auto id = add_node(NodeTag::Drop);
         auto start = static_cast<std::uint32_t>(child_data_.size());
         child_data_.push_back(inner);
+        children_[id].push_back(inner);
         child_begin_[id] = start;
         child_count_[id] = 1;
         link_children(id);
@@ -1054,6 +1103,29 @@ private:
     // ── Access ─────────────────────────────────────────────────
 
     NodeView get(NodeId id) const {
+        if (id >= tag_.size()) {
+            // Defensive: stale or invalid NodeId. Return a default
+            // NodeView (empty spans, NULL_NODE-like values). The
+            // parser can produce invalid NodeIds during
+            // quasiquote expansion (Issue #219 regression) when a
+            // previously-captured NodeView's underlying buffer
+            // moved. Without this check, the next access would
+            // crash on tag_[id] / child_data_[begin] / etc.
+            return NodeView{
+                .id = id,
+                .tag = static_cast<NodeTag>(0),
+                .int_value = 0,
+                .float_value = 0.0,
+                .sym_id = INVALID_SYM,
+                .line = 0,
+                .col = 0,
+                .type_id = 0u,
+                .children = {},
+                .params = {},
+                .param_annotations = {},
+                .marker = SyntaxMarker::User,
+            };
+        }
         return NodeView{
             .id = id,
             .tag = tag_[id],
@@ -1066,7 +1138,7 @@ private:
             // callers can read it without a separate flat.type_id()
             // lookup. Same value as flat.type_id(id).
             .type_id = id < type_id_.size() ? type_id_[id] : 0u,
-            .children = std::span(child_data_.data() + child_begin_[id], child_count_[id]),
+            .children = std::span<const NodeId>(children_[id].data(), children_[id].size()),
             .params = std::span(param_data_.data() + param_begin_[id], param_count_[id]),
             .param_annotations = std::span(param_annot_data_.data() + param_begin_[id], param_count_[id]),
             .marker = id < marker_.size() ? marker_[id] : SyntaxMarker::User,
@@ -1095,12 +1167,22 @@ private:
 
     // ── Child field access ─────────────────────────────────────
 
-    std::span<NodeId> children(NodeId id) {
-        return std::span(child_data_.data() + child_begin_[id], child_count_[id]);
+    std::span<const NodeId> children(NodeId id) const {
+        if (id >= children_.size()) return {};
+        return std::span<const NodeId>(children_[id].data(), children_[id].size());
+    }
+    // Mutable overload (for code paths that need to write through
+    // the children list, e.g. fixup_deltas in ast_impl.cpp).
+    std::span<NodeId> children_mutable(NodeId id) {
+        if (id >= children_.size()) return {};
+        return std::span<NodeId>(children_[id].data(), children_[id].size());
     }
 
     void set_child(NodeId id, std::uint32_t idx, NodeId child) {
-        auto& slot = child_data_[child_begin_[id] + idx];
+        // Issue #220: write through the per-node children_ list
+        // (the children_ element is contiguous, so no gap-buffer
+        // indirection is needed).
+        auto& slot = children_[id][idx];
         // Clear old child's parent
         if (slot != NULL_NODE && slot < parent_.size())
             parent_[slot] = NULL_NODE;
@@ -1119,34 +1201,33 @@ private:
     // Insert a child at position idx (0 = first, child_count = append)
     // Shifts all subsequent children and updates child_begin_ for later nodes.
     void insert_child(NodeId id, std::uint32_t idx, NodeId child) {
-        auto pos = child_begin_[id] + std::min(idx, child_count_[id]);
-        // Issue #219: GapBuffer::insert(pos, v) replaces
-        // vector::insert(begin()+pos, 1, child). The gap buffer
-        // amortizes the O(n) shift to O(1) when the gap is near
-        // the insertion point.
-        child_data_.insert(pos, child);
-        // Shift child_begin only for nodes whose children start at or after pos.
-        // Children before the insertion point are unaffected by the shift.
-        for (auto i = id + 1; i < tag_.size(); ++i) {
-            if (child_begin_[i] >= pos)
-                child_begin_[i]++;
-        }
-        child_count_[id]++;
+        // Issue #220: write through the per-node children_ list
+        // (O(1) amortized via std::pmr::vector, no other nodes
+        // to shift since each node owns its own list).
+        auto& list = children_[id];
+        auto pos = std::min(static_cast<std::uint32_t>(list.size()), idx);
+        list.insert(list.begin() + pos, child);
         // Set new child's parent
         if (child != NULL_NODE && child < parent_.size())
             parent_[child] = id;
         // Issue #191: structural mutation invalidates all stored
-        // NodeIds (the child array positions shifted).
+        // NodeIds. Without the bump, a caller that did
+        // (query:children (capture: parent-id)) before this set_child
+        // would have a stale span that no longer matches the
+        // child's actual position in the new children array.
         bump_generation();
     }
 
     // Remove a child at position idx by replacing with NULL_NODE
     void remove_child(NodeId id, std::uint32_t idx) {
-        if (idx < child_count_[id]) {
-            auto& slot = child_data_[child_begin_[id] + idx];
-            if (slot != NULL_NODE && slot < parent_.size())
-                parent_[slot] = NULL_NODE;
-            slot = NULL_NODE;
+        // Issue #220: erase from the per-node children_ list
+        // (O(n) within the node, but no other nodes to shift).
+        auto& list = children_[id];
+        if (idx < list.size()) {
+            auto cid = list[idx];
+            if (cid != NULL_NODE && cid < parent_.size())
+                parent_[cid] = NULL_NODE;
+            list.erase(list.begin() + idx);
             // Issue #191: structural mutation invalidates all
             // stored NodeIds (the child's slot is now NULL; a
             // stored parent_of that pointed through it would
@@ -1165,6 +1246,7 @@ private:
         child_begin_.clear();
         child_count_.clear();
         child_data_.clear();
+        children_.clear();
         parent_.clear();
         param_begin_.clear();
         param_count_.clear();
