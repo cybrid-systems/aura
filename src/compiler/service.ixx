@@ -2501,6 +2501,31 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         // Cascade: BFS over called_by. Use std::queue (FIFO) for proper BFS
         // ordering — vector-as-stack is technically DFS, which is fine for
         // correctness but std::queue is more idiomatic and self-documenting.
+        //
+        // Issue #224 cycle 4: dep_graph_-aware cascade. For each
+        // dependent that we reach via the BFS, we know via the
+        // dep_graph_ that the dependent *calls* the mutated
+        // function (the edge `dependent → name` exists in
+        // dep_graph_[dependent].calls). The CALL is in the
+        // dependent's body Lambda (irs[1] in the entry, by
+        // convention — irs[0] is the __top__ entry function).
+        // Nested lambdas in the dependent (irs[2..N]) are
+        // self-contained; they don't reference the mutated
+        // function, so their blocks don't need re-lowering.
+        //
+        // Cycle-4 win: for a dependent with K nested lambdas,
+        // we mark only the body function's blocks dirty (not
+        // all functions in the entry). When the bitmask
+        // consumer (relower_define_blocks) sees this, the
+        // re-lower-define-function path can re-lower just
+        // irs[1] and leave the nested lambdas alone.
+        //
+        // Fallback: if the convention doesn't hold (e.g., the
+        // dependent has 0 or 1 IRFunction, or the body is at
+        // a different index), we conservatively mark all
+        // blocks dirty. This preserves correctness; the cycle-4
+        // win is "typical define bodies" (single body Lambda,
+        // no nested lambdas → no fallback needed).
         std::queue<std::string> bfs;
         std::unordered_set<std::string> visited;
         bfs.push(name);
@@ -2512,12 +2537,33 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             if (dit == dep_graph_.end()) continue;
             for (auto& dependent : dit->second.called_by) {
                 if (!visited.insert(dependent).second) continue;
-                auto cit = ir_cache_v2_.find(dependent);
-                if (cit != ir_cache_v2_.end()) {
-                    cit->second.dirty = true;
-                    cit->second.mark_all_blocks_dirty();
-                }
                 bfs.push(dependent);
+                auto cit = ir_cache_v2_.find(dependent);
+                if (cit == ir_cache_v2_.end()) continue;
+                auto& centry = cit->second;
+                // Try the targeted approach: mark only the
+                // body function's blocks dirty. Convention:
+                // body Lambda is at irs[1]; irs[0] is the
+                // __top__ entry. Skip the entry function
+                // (irs[0]) — it's a thin wrapper that just
+                // returns the closure, doesn't reference
+                // mutated functions directly.
+                if (centry.irs.size() >= 2 &&
+                    1 < centry.block_dirty_per_func_.size()) {
+                    centry.dirty = true;
+                    for (auto& b : centry.block_dirty_per_func_[1]) {
+                        b = 1;
+                    }
+                    metrics_.cascade_body_only_count.fetch_add(
+                        1, std::memory_order_relaxed);
+                } else {
+                    // Fallback: convention doesn't hold —
+                    // conservatively mark all blocks dirty.
+                    centry.dirty = true;
+                    centry.mark_all_blocks_dirty();
+                    metrics_.cascade_full_count.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
             }
         }
     }

@@ -60,6 +60,15 @@ struct CompilerMetrics {
     // of the bundle. Bumped when per-function re-lower is
     // actually performed (replaces the full re-lower path).
     std::atomic<std::uint64_t> relower_per_function_called_count{0};
+    // Issue #224 cycle 4: dep_graph_-aware cascade. When
+    // mark_define_dirty cascades a mutation to a dependent,
+    // it tries to mark only the body function's blocks dirty
+    // (irs[1], the Lambda body) instead of the whole entry.
+    // Bumped per successful targeted cascade. The fallback
+    // (cascade_full_count) tracks dependents that didn't fit
+    // the convention and required the whole-entry mark.
+    std::atomic<std::uint64_t> cascade_body_only_count{0};
+    std::atomic<std::uint64_t> cascade_full_count{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()
