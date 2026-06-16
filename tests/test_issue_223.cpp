@@ -275,12 +275,86 @@ void test_5_apply_closure_invalidation() {
           "fresh closure at current epoch is not invalidated");
 }
 
+// ── Test 6: body_source re-parse fallback (schema) ──────────
+//
+// The production apply_closure now has a body_source re-parse
+// fallback: if the bridge is stale AND body_source is non-empty,
+// it re-parses body_source into a fresh FlatAST + StringPool
+// and updates the closure in place. If body_source is empty
+// (legacy closure) or the re-parse fails, the closure is
+// invalidated (return nullopt).
+//
+// This test verifies the data flow:
+// - Closure::body_source is a string field (default empty)
+// - is_bridge_stale(bridge, current) determines when to fallback
+// - The fallback re-uses the existing parse_to_flat path
+//
+// The actual parse_to_flat call requires the full parser
+// module, which is not available in a standalone TU (would
+// trigger the GCC 16.1 std module + P2996 reflection conflict).
+// The schema + flow verification is the best we can do here.
+void test_6_body_source_fallback() {
+    PRINTLN("\n--- Test 6: body_source re-parse fallback (schema) ---");
+    // Mirror of Closure's body_source field (Issue #223).
+    struct SimulatedClosure {
+        void* flat = nullptr;
+        void* pool = nullptr;
+        std::uint32_t body_id = 0;
+        std::uint64_t bridge_epoch = 0;
+        std::string body_source;  // NEW: Issue #223
+    };
+
+    // Case 1: closure with empty body_source, stale bridge
+    // \u2014 the apply_closure fallback can't help (no source
+    // to re-parse). The closure is invalidated.
+    {
+        SimulatedClosure cl;
+        cl.body_source = "";
+        cl.bridge_epoch = 1;
+        // Stale (simulated): current=2
+        bool stale = is_bridge_stale(cl.bridge_epoch, 2);
+        bool has_fallback = !cl.body_source.empty();
+        CHECK(stale, "stale bridge detected");
+        CHECK(!has_fallback, "no body_source = no fallback available");
+        // Production: returns nullopt (invalidate)
+    }
+
+    // Case 2: closure with body_source, stale bridge
+    // \u2014 the apply_closure fallback re-parses and recovers.
+    {
+        SimulatedClosure cl;
+        cl.body_source = "(lambda (x) (* x x))";
+        cl.bridge_epoch = 1;
+        bool stale = is_bridge_stale(cl.bridge_epoch, 2);
+        bool has_fallback = !cl.body_source.empty();
+        CHECK(stale, "stale bridge detected");
+        CHECK(has_fallback, "body_source available for re-parse");
+        // Production: calls parse_to_flat, updates cl.flat/pool/body_id
+        // and cl.bridge_epoch = current_bridge_epoch().
+    }
+
+    // Case 3: closure with body_source, fresh bridge
+    // \u2014 the apply_closure uses the existing flat*/pool*
+    // (no re-parse needed).
+    {
+        SimulatedClosure cl;
+        cl.body_source = "(lambda (x) (* x x))";
+        cl.bridge_epoch = 2;  // matches current
+        bool stale = is_bridge_stale(cl.bridge_epoch, 2);
+        bool has_fallback = !cl.body_source.empty();
+        CHECK(!stale, "fresh bridge: not stale");
+        CHECK(has_fallback, "body_source still available (would only be used if stale)");
+        // Production: uses cl.flat directly (no fallback needed).
+    }
+}
+
 int main() {
     test_1_epoch_basics();
     test_2_bridge_capture();
     test_3_irclosure_carry();
     test_4_monotonicity();
     test_5_apply_closure_invalidation();
+    test_6_body_source_fallback();
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

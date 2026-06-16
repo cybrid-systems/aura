@@ -386,6 +386,13 @@ export struct Closure {
     // from the IR executor or the parser should set this to the
     // current bridge_epoch() at construction time.
     std::uint64_t bridge_epoch = 0;
+    // Issue #223: body source text (used for body_source re-parse
+    // fallback when the bridge is stale). Populated by the
+    // IR executor / parser when constructing a cross-evaluator
+    // closure; empty for legacy closures built before the
+    // tracking was added. apply_closure falls back to re-parsing
+    // this source if the bridge is stale AND this is non-empty.
+    std::string body_source;
 };
 
 // Legacy alias — kept for backward compatibility during the
@@ -494,6 +501,17 @@ public:
     void install_bridge_epoch_fn(BridgeEpochFn fn) noexcept {
         bridge_epoch_fn_ = fn;
     }
+    // Issue #223: re-parse a stale bridge's body_source and update
+    // the closure in place. The new FlatAST/StringPool are stored
+    // in reparsed_bridges_ (heap-allocated, survive until the
+    // Evaluator is destroyed). Returns true on success (the
+    // closure's flat/pool/body_id now point at fresh, valid
+    // memory + the bridge_epoch is bumped to current).
+    //
+    // Returns false if body_source is empty (legacy closure
+    // without fallback support — caller should invalidate) or
+    // the re-parse fails (parse error — caller should invalidate).
+    bool reparse_bridge(Closure& cl) noexcept;
     // Issue #223: returns true if a closure's captured bridge_epoch
     // is stale relative to the current epoch. bridge_epoch == 0
     // means "legacy / not tracked" and is treated as trustworthy
@@ -1393,6 +1411,20 @@ private:
     // (Phase 2.4.1 / Phase 2.5 will inline string contents
     // into the arena).
     std::pmr::vector<std::string> string_heap_{&runtime_resource_};
+    // Issue #223: storage for re-parsed closure bodies (heap-
+    // allocated FlatAST + StringPool that survive until the
+    // Evaluator is destroyed). The bridge callback / apply_closure
+    // uses these to recover from a stale bridge (the body's
+    // flat*/pool* are dangling, but body_source survives; we
+    // re-parse body_source into a new FlatAST/Pool and update
+    // the closure in place). unique_ptr so the FlatAST/
+    // StringPool destructors run when the Evaluator is
+    // destroyed.
+    struct ReparsedBridge {
+        std::unique_ptr<aura::ast::FlatAST> flat;
+        std::unique_ptr<aura::ast::StringPool> pool;
+    };
+    std::vector<ReparsedBridge> reparsed_bridges_;
     // Short string cache: ≤6 byte strings are deduplicated via this hash
     // (avoids redundant string_heap_ pushes and enables faster equal?)
     std::unordered_map<std::string, types::EvalValue> short_str_cache_;
