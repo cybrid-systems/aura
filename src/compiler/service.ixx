@@ -682,6 +682,14 @@ public:
         // must be cleared after arena reset to avoid dangling pointers.
         ir_cache_.clear();
         ir_cache_strings_.clear();
+        // Issue #223: bump mutation_epoch_ so any stale
+        // ClosureBridgeData that captured the old epoch is detected
+        // by the bridge callback / apply_closure. The bridge_epoch_
+        // field on ClosureBridgeData captures this at construction
+        // time; a mismatch indicates the bridge's flat*/pool* are
+        // dangling (the arena was reset). The bridge falls back
+        // to re-parse from body_source (or invalidates the closure).
+        mutation_epoch_.fetch_add(1, std::memory_order_relaxed);
     }
 
     // ---- Strict mode (type errors → rejected) ------------------------
@@ -4427,6 +4435,29 @@ public:
     //   - jit_cache lookup: if entry.last_seen_epoch_ != current,
     //                        treat as stale (re-compile)
     std::atomic<std::uint64_t> mutation_epoch_{0};
+
+    // Issue #223: bridge_epoch() returns the current epoch for
+    // ClosureBridgeData lifetime tracking. The bridge callback
+    // (IRExecutor::MakeClosure) and apply_closure compare the
+    // bridge's captured epoch against this; a mismatch means
+    // the bridge's flat*/pool* are stale (arena was reset or
+    // a major mutation happened). The bridge falls back to
+    // re-parse from body_source or invalidates the closure.
+    //
+    // For Cycle 1 we reuse mutation_epoch_ — both are bumped
+    // together on reset() and on structural mutations, so a
+    // single counter suffices. Cycle 2 may split if bridge
+    // and cache invalidation need different policies.
+    [[nodiscard]] std::uint64_t bridge_epoch() const noexcept {
+        return mutation_epoch_.load(std::memory_order_relaxed);
+    }
+    // Issue #223: explicitly bump the bridge epoch. Called when
+    // the bridge_epoch_ field on existing ClosureBridgeData should
+    // be considered stale (e.g. major mutation that doesn't reset
+    // the arena). For Cycle 1 we just forward to mutation_epoch_.
+    void bump_bridge_epoch() noexcept {
+        mutation_epoch_.fetch_add(1, std::memory_order_relaxed);
+    }
 
     // Issue #59 Iter 3: Mutation Lock. A mutate:* operation (which
     // mutates a function body and calls invalidate_function) holds
