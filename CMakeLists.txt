@@ -4327,6 +4327,22 @@ target_compile_features(test_issue_219 PUBLIC cxx_std_26)
 target_link_libraries(test_issue_219 PRIVATE stdc++ pthread)
 add_test(NAME issue_219_verification COMMAND ./test_issue_219)
 
+# Issue #220: per-node children linked list (Issue #179 Cycle 2).
+# Replaces FlatAST's std::pmr::vector<NodeId> child_data_ (with
+# child_begin_/child_count_ SoA columns) with a per-node
+# std::pmr::vector<std::pmr::vector<NodeId>> children_ field.
+# The per-node list gives O(1) amortized insert/erase at a
+# specific node (just std::pmr::vector ops on that node's list;
+# no more shifting of "all subsequent child_begin_ entries").
+# Standalone test (no module imports — avoids the GCC 16.1
+# std module + P2996 reflection conflict).
+add_executable(test_issue_220 tests/test_issue_220.cpp)
+target_include_directories(test_issue_220 PRIVATE src)
+target_compile_options(test_issue_220 PRIVATE -Wall -Wextra)
+target_compile_features(test_issue_220 PUBLIC cxx_std_26)
+target_link_libraries(test_issue_220 PRIVATE stdc++ pthread)
+add_test(NAME issue_220_verification COMMAND ./test_issue_220)
+
 # Issue #178 Cycle 5: production NodeView migration to
 # reflect_members + auto_serialize.
 #
