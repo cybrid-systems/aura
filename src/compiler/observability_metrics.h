@@ -53,6 +53,13 @@ struct CompilerMetrics {
     // benchmarking / --evo-explain.
     std::atomic<std::uint64_t> relower_skipped_entirely_count{0};
     std::atomic<std::uint64_t> relower_full_called_count{0};
+    // Issue #224 cycle 3: per-function re-lower. The helper
+    // relower_define_function() re-lowers a single Lambda
+    // from a cached entry's bundle (one of N functions) and
+    // replaces it in ir_cache_v2_ without touching the rest
+    // of the bundle. Bumped when per-function re-lower is
+    // actually performed (replaces the full re-lower path).
+    std::atomic<std::uint64_t> relower_per_function_called_count{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()

@@ -1432,6 +1432,74 @@ aura::diag::LowerResult<IRModule> lower_to_ir_with_cache_result(
                             cache_bridge, cache_strings, self_name);
 }
 
+// ── lower_function_at — per-function lowering (Issue #224 cycle 3) ─
+//
+// Lower a single Lambda AST node into a self-contained
+// IRFunction. Reuses lower_to_ir_impl to do the work, then
+// extracts the Lambda function (the one that isn't the
+// __top__ entry function).
+//
+// Cycle 3 scope notes:
+//   - The __top__ entry function is created by lower_to_ir_impl
+//     and then discarded. The call is wasteful but simple.
+//   - Re-running the region inference pass + caching on the
+//     caller's flat is OK because the inference is idempotent
+//     (marks functions with mutation calls as Evolution; safe
+//     to re-run).
+//   - The returned function's id is 0; the caller is
+//     responsible for assigning the correct func_id and
+//     rebinding MakeClosure operands in callers.
+//   - The per-function passes (compute_kind, constant_fold) are
+//     NOT run here; the caller should run them after
+//     replacement, matching what cache_define does for the
+//     full-bundle path.
+IRFunction lower_function_at(
+    FlatAST& flat, StringPool& pool, ASTArena& arena, NodeId lambda_node_id,
+    const Primitives* primitives,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>>* cache,
+    std::vector<std::string>* cache_hits) {
+    if (lambda_node_id == NULL_NODE || lambda_node_id >= flat.size()) {
+        return IRFunction{};
+    }
+    // Save the current root and replace with the Lambda node.
+    // lower_to_ir_impl starts from flat.root, so swapping
+    // root lets the same pipeline lower just the Lambda
+    // subtree. We restore the root on the way out.
+    auto saved_root = flat.root;
+    flat.root = lambda_node_id;
+    IRModule ir_mod;
+    // Use the simpler lower_to_ir (no cache) — the per-function
+    // path doesn't need cache_hits / dep tracking (the caller
+    // already has the dependency graph and the function is
+    // self-contained).
+    (void)cache;
+    (void)cache_hits;
+    ir_mod = lower_to_ir_impl(flat, pool, arena, /*cache=*/nullptr, /*cache_hits=*/nullptr,
+                              primitives, /*type_reg=*/nullptr,
+                              /*cache_bridge=*/nullptr, /*cache_strings=*/nullptr,
+                              /*self_name=*/nullptr);
+    flat.root = saved_root;
+    // The result has functions: [0] = __top__ (entry, with
+    // MakeClosure call), [1] = __lambda__ (the actual function).
+    // We return [1] and let the caller re-assign func_id.
+    if (ir_mod.functions.size() < 2) {
+        return IRFunction{};
+    }
+    // Find the non-entry function (in case the lowering added
+    // helper functions for nested lambdas; for the simple
+    // case there's exactly one).
+    // For cycle 3 we return the FIRST non-entry function and
+    // discard any nested lambdas (those are re-lowered on
+    // subsequent per-function calls or the next full re-lower).
+    for (auto& fn : ir_mod.functions) {
+        if (fn.id != ir_mod.entry_function_id) {
+            fn.id = 0;  // caller assigns
+            return std::move(fn);
+        }
+    }
+    return IRFunction{};
+}
+
 // ── unparse_node — FlatAST → S-expression source ───────────────
 std::string unparse_node(const FlatAST& flat, const StringPool& pool, NodeId id, int indent) {
     if (id == NULL_NODE || id >= flat.size())

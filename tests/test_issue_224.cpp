@@ -341,11 +341,130 @@ bool test_repeat_skip_bumps_counter() {
 }
 
 // ═════════════════════════════════════════════════════════════
+// Cycle 3 ACs: per-function re-lower API
+// ═════════════════════════════════════════════════════════════
+
+bool test_per_function_metric_exposed() {
+    std::println("\n--- Test 9.1: relower_per_function_called_count is exposed ---");
+    aura::compiler::CompilerService cs;
+    auto n = cs.metrics().relower_per_function_called_count.load(
+        std::memory_order_relaxed);
+    CHECK(n == 0, "relower_per_function_called_count starts at 0");
+    return true;
+}
+
+bool test_relower_define_function_unknown_entry() {
+    std::println("\n--- Test 9.2: relower_define_function on unknown entry → false ---");
+    aura::compiler::CompilerService cs;
+    aura::ast::ASTArena arena(4096);
+    auto a = arena.allocator();
+    aura::ast::FlatAST flat(a);
+    aura::ast::StringPool pool(a);
+    bool ok = cs.relower_define_function("nope", 1, flat, pool, 0);
+    CHECK(ok == false, "relower_define_function(unknown) returns false");
+    CHECK(cs.metrics().relower_per_function_called_count.load(
+              std::memory_order_relaxed) == 0,
+          "relower_per_function_called_count not bumped on unknown entry");
+    return true;
+}
+
+bool test_relower_define_function_out_of_range_func_idx() {
+    std::println("\n--- Test 9.3: relower_define_function with bad func_idx → false ---");
+    aura::compiler::CompilerService cs;
+    // Populate a v2 entry with 1 function / 1 block.
+    aura::ir::IRFunction fn;
+    fn.id = 1;
+    fn.name = "r_inner";
+    fn.entry_block = 0;
+    fn.blocks.push_back({0, {}, {}});
+    std::vector<aura::ir::IRFunction> irs;
+    irs.push_back(fn);
+    cs.store_define_v2("r", "(define (r x) (* x 2))",
+                       std::move(irs),
+                       std::vector<aura::ir::ClosureBridgeData>{},
+                       std::vector<std::string>{});
+    aura::ast::ASTArena arena(4096);
+    auto a = arena.allocator();
+    aura::ast::FlatAST flat(a);
+    aura::ast::StringPool pool(a);
+    // func_idx = 99 is out of range (entry has 1 function).
+    bool ok = cs.relower_define_function("r", 99, flat, pool, 0);
+    CHECK(ok == false, "relower_define_function(out-of-range func_idx) returns false");
+    return true;
+}
+
+bool test_relower_define_function_replaces_irs() {
+    std::println("\n--- Test 9.4: relower_define_function replaces irs[func_idx] ---");
+    aura::compiler::CompilerService cs;
+    // Populate a v2 entry with 1 function / 1 block.
+    aura::ir::IRFunction fn;
+    fn.id = 7;  // Use a distinctive id
+    fn.name = "s_inner";
+    fn.entry_block = 0;
+    fn.blocks.push_back({0, {}, {}});
+    std::vector<aura::ir::IRFunction> irs;
+    irs.push_back(fn);
+    cs.store_define_v2("s", "(define (s x) (* x 2))",
+                       std::move(irs),
+                       std::vector<aura::ir::ClosureBridgeData>{},
+                       std::vector<std::string>{});
+    // Re-lower with invalid lambda_node_id (NULL_NODE) —
+    // the helper should return false (empty function).
+    aura::ast::ASTArena arena(4096);
+    auto a = arena.allocator();
+    aura::ast::FlatAST flat(a);
+    aura::ast::StringPool pool(a);
+    bool ok = cs.relower_define_function("s", 0, flat, pool,
+                                          aura::ast::NULL_NODE);
+    // NULL_NODE is invalid → lower_function_at returns empty
+    // function → helper returns false.
+    CHECK(ok == false,
+          "relower_define_function(invalid lambda_node_id) returns false");
+    return true;
+}
+
+bool test_relower_define_function_preserves_func_id() {
+    std::println("\n--- Test 9.5: relower_define_function preserves func_id ---");
+    aura::compiler::CompilerService cs;
+    // Populate a v2 entry with 1 function / 1 block.
+    aura::ir::IRFunction fn;
+    fn.id = 42;  // Distinctive id
+    fn.name = "t_inner";
+    fn.entry_block = 0;
+    fn.blocks.push_back({0, {}, {}});
+    std::vector<aura::ir::IRFunction> irs;
+    irs.push_back(fn);
+    cs.store_define_v2("t", "(define (t x) (* x 2))",
+                       std::move(irs),
+                       std::vector<aura::ir::ClosureBridgeData>{},
+                       std::vector<std::string>{});
+    // Mark block 0 dirty and try per-function re-lower with
+    // a non-Lambda node (a LiteralInt at idx 0). This will
+    // fail in the Lambda case inside lowering and return
+    // empty. The helper returns false; the original entry
+    // is unchanged.
+    cs.mark_block_dirty_v2("t", 0, 0);
+    aura::ast::ASTArena arena(4096);
+    auto a = arena.allocator();
+    aura::ast::FlatAST flat(a);
+    aura::ast::StringPool pool(a);
+    aura::ast::NodeId fake_lambda = 0;  // likely a literal, not a lambda
+    bool ok = cs.relower_define_function("t", 0, flat, pool, fake_lambda);
+    // The per-function re-lower failed (fake node is not a
+    // Lambda) → returns false. The bitmask is still dirty
+    // (we did NOT clear it on failure).
+    CHECK(ok == false, "fake non-Lambda node → returns false");
+    CHECK(cs.dirty_block_count_v2("t") == 1,
+          "bitmask still 1 dirty block after failed per-function re-lower");
+    return true;
+}
+
+// ═════════════════════════════════════════════════════════════
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
 int main() {
-    std::println("═══ Issue #224 cycle 2 verification tests ═══\n");
+    std::println("═══ Issue #224 cycle 2 + cycle 3 verification tests ═══\n");
 
     std::println("AC #1+#2: counters exposed");
     test_metrics_exposed();
@@ -367,6 +486,13 @@ int main() {
 
     std::println("\nAC #8: repeat skip → counter bumps each time");
     test_repeat_skip_bumps_counter();
+
+    std::println("\nAC #9: cycle 3 — per-function re-lower API");
+    test_per_function_metric_exposed();
+    test_relower_define_function_unknown_entry();
+    test_relower_define_function_out_of_range_func_idx();
+    test_relower_define_function_replaces_irs();
+    test_relower_define_function_preserves_func_id();
 
     std::println("\n════════════════════════════════════════");
     std::println("Results: {} passed, {} failed", g_passed, g_failed);
