@@ -17205,44 +17205,6 @@ EvalValue Evaluator::build_policy_hash(const MemoryPolicy& p) {
 
 // eval_in(ast::Expr*) removed — all evaluation uses eval_flat(FlatAST&) now
 
-// Issue #223: re-parse a stale bridge's body_source and update
-// the closure in place. The new FlatAST/StringPool are stored
-// in reparsed_bridges_ so they survive until the Evaluator is
-// destroyed. Returns true on success; the closure's flat/pool/
-// body_id point at fresh, valid memory and bridge_epoch is
-// bumped to the current value.
-bool Evaluator::reparse_bridge(Closure& cl) noexcept {
-    if (cl.body_source.empty()) {
-        return false;  // legacy closure, no fallback
-    }
-    // Allocate fresh FlatAST + StringPool on the heap. We use
-    // heap allocation (not arena) because the closure lifetime
-    // is independent of the arena — the reparsed AST must
-    // survive arena resets.
-    auto new_flat = std::make_unique<aura::ast::FlatAST>();
-    auto new_pool = std::make_unique<aura::ast::StringPool>();
-    // Re-parse body_source into the new FlatAST + StringPool.
-    // parse_to_flat is a pure function (Issue #161 acceptance):
-    // same source → same AST. The output flat/pool are populated
-    // in place; root points at the parsed expression.
-    auto result = aura::parser::parse_to_flat(cl.body_source, *new_flat, *new_pool);
-    if (!result.success) {
-        // Parse failed (malformed source, etc.) — can't rebuild.
-        return false;
-    }
-    // Save the new flat/pool in reparsed_bridges_ so they
-    // survive until the Evaluator dies. Then install them in
-    // the closure.
-    auto new_body_id = result.root;
-    reparsed_bridges_.push_back(ReparsedBridge{std::move(new_flat), std::move(new_pool)});
-    auto& saved = reparsed_bridges_.back();
-    cl.flat = saved.flat.get();
-    cl.pool = saved.pool.get();
-    cl.body_id = new_body_id;
-    cl.bridge_epoch = current_bridge_epoch();
-    return true;
-}
-
 // apply_closure — looks up closures_, foreign functions, or IR bridge
 std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid,
                                                   std::span<const EvalValue> args) {
@@ -17346,19 +17308,6 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid,
                 ne.bind_symid(cl.params[i], args[i]);  // Issue #145: SymId
         }
         if (cl.flat) {
-            // Issue #223: check if the closure's bridge is stale
-            // (arena was reset, or major mutation invalidated the
-            // captured flat*/pool*). If stale, try the body_source
-            // re-parse fallback (rebuilds the FlatAST + StringPool
-            // from cl.body_source). If body_source is empty
-            // (legacy closure) or re-parse fails, invalidate.
-            if (is_bridge_stale(cl.bridge_epoch, current_bridge_epoch())) {
-                if (!reparse_bridge(cl)) {
-                    return std::nullopt;  // invalidate
-                }
-                // reparse_bridge updated cl.flat/pool/body_id;
-                // fall through to eval_flat with the fresh data.
-            }
             auto r = eval_flat(*cl.flat, *cl.pool, cl.body_id, ne);
             if (r)
                 return *r;
