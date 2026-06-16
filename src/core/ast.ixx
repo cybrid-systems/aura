@@ -1315,28 +1315,52 @@ private:
         return ReaderLockGuard(this);
     }
 
+    // Issue #222 slice 3/3: _locked() variants of the structural
+    // mutators. Caller MUST hold the structural mutation lock
+    // (e.g. is inside a begin_structural_mutation() scope). Used
+    // for multi-step atomic mutations where the caller wants to
+    // batch several set_child / insert_child / remove_child calls
+    // under a single lock + single generation bump. Without these,
+    // calling set_child inside begin_structural_mutation would
+    // double-lock the non-recursive std::shared_mutex and deadlock.
+    //
+    // The body is identical to the public version except for the
+    // guard acquisition.
+    void set_child_locked(NodeId id, std::uint32_t idx, NodeId child) {
+        const auto& list = children_[id];
+        if (idx >= list.size()) return;
+        auto old_cid = list[idx];
+        if (old_cid != NULL_NODE && old_cid < parent_.size())
+            parent_[old_cid] = NULL_NODE;
+        children_[id] = list.with_set(idx, child);
+        if (child != NULL_NODE && child < parent_.size())
+            parent_[child] = id;
+        add_mutation_child_op(id, idx, old_cid, child, "structural-set-child");
+    }
+    void insert_child_locked(NodeId id, std::uint32_t idx, NodeId child) {
+        const auto& list = children_[id];
+        auto pos = std::min(static_cast<std::uint32_t>(list.size()), idx);
+        children_[id] = list.with_insert(pos, child);
+        if (child != NULL_NODE && child < parent_.size())
+            parent_[child] = id;
+        add_mutation_child_op(id, pos, NULL_NODE, child, "structural-insert-child");
+    }
+    void remove_child_locked(NodeId id, std::uint32_t idx) {
+        const auto& list = children_[id];
+        if (idx < list.size()) {
+            auto cid = list[idx];
+            if (cid != NULL_NODE && cid < parent_.size())
+                parent_[cid] = NULL_NODE;
+            children_[id] = list.with_erase(idx);
+            add_mutation_child_op(id, idx, cid, NULL_NODE, "structural-remove-child");
+        }
+    }
+
     void set_child(NodeId id, std::uint32_t idx, NodeId child) {
         // Issue #222: acquire the structural mutation guard. The
         // guard's dtor bumps generation_ + releases the lock.
         StructuralMutationGuard guard(this);
-        // Issue #220/221: COW set. Read the old child, build a
-        // new PCV with the replacement, install it. O(1) for
-        // the per-node COW; no other nodes are affected.
-        const auto& list = children_[id];
-        if (idx >= list.size()) return;
-        auto old_cid = list[idx];
-        // Clear old child's parent
-        if (old_cid != NULL_NODE && old_cid < parent_.size())
-            parent_[old_cid] = NULL_NODE;
-        children_[id] = list.with_set(idx, child);
-        // Set new child's parent
-        if (child != NULL_NODE && child < parent_.size())
-            parent_[child] = id;
-        // Issue #222 slice 2/3: record the mutation in mutation_log_
-        // (for audit + #177 rollback via rollback_to_size). Also calls
-        // mark_dirty_upward(id) inside, marking the parent + ancestors
-        // dirty for incremental re-eval.
-        add_mutation_child_op(id, idx, old_cid, child, "structural-set-child");
+        set_child_locked(id, idx, child);
     }
 
     // Insert a child at position idx (0 = first, child_count = append)
@@ -1344,40 +1368,14 @@ private:
     void insert_child(NodeId id, std::uint32_t idx, NodeId child) {
         // Issue #222: acquire the structural mutation guard.
         StructuralMutationGuard guard(this);
-        // Issue #220/221: COW insert. Build a new PCV with
-        // the inserted element, install it. O(1) for the
-        // per-node COW; no other nodes are affected.
-        const auto& list = children_[id];
-        auto pos = std::min(static_cast<std::uint32_t>(list.size()), idx);
-        // Capture the pre-insert state for rollback. The child
-        // at `pos` (if any) shifts to pos+1; the new child is
-        // at pos. For add_mutation_child_op we use old_child=NULL_NODE
-        // (nothing was "there" before) and new_child=child.
-        NodeId old_at_pos = (pos < list.size()) ? list[pos] : NULL_NODE;
-        children_[id] = list.with_insert(pos, child);
-        // Set new child's parent
-        if (child != NULL_NODE && child < parent_.size())
-            parent_[child] = id;
-        // Issue #222 slice 2/3: record the mutation.
-        add_mutation_child_op(id, pos, NULL_NODE, child, "structural-insert-child");
+        insert_child_locked(id, idx, child);
     }
 
     // Remove a child at position idx by replacing with NULL_NODE
     void remove_child(NodeId id, std::uint32_t idx) {
         // Issue #222: acquire the structural mutation guard.
         StructuralMutationGuard guard(this);
-        // Issue #220/221: COW erase. Build a new PCV without
-        // the erased element, install it. O(1) for the per-node
-        // COW; no other nodes are affected.
-        const auto& list = children_[id];
-        if (idx < list.size()) {
-            auto cid = list[idx];
-            if (cid != NULL_NODE && cid < parent_.size())
-                parent_[cid] = NULL_NODE;
-            children_[id] = list.with_erase(idx);
-            // Issue #222 slice 2/3: record the mutation.
-            add_mutation_child_op(id, idx, cid, NULL_NODE, "structural-remove-child");
-        }
+        remove_child_locked(id, idx);
     }
 
     // ── Bulk ───────────────────────────────────────────────────
