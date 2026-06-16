@@ -1332,10 +1332,11 @@ private:
         // Set new child's parent
         if (child != NULL_NODE && child < parent_.size())
             parent_[child] = id;
-        // Issue #222: mark the mutated node dirty so incremental
-        // re-eval (Issue #148) and dirty-aware caching (Issue #188)
-        // see the mutation.
-        mark_dirty(id, kGeneralDirty);
+        // Issue #222 slice 2/3: record the mutation in mutation_log_
+        // (for audit + #177 rollback via rollback_to_size). Also calls
+        // mark_dirty_upward(id) inside, marking the parent + ancestors
+        // dirty for incremental re-eval.
+        add_mutation_child_op(id, idx, old_cid, child, "structural-set-child");
     }
 
     // Insert a child at position idx (0 = first, child_count = append)
@@ -1348,12 +1349,17 @@ private:
         // per-node COW; no other nodes are affected.
         const auto& list = children_[id];
         auto pos = std::min(static_cast<std::uint32_t>(list.size()), idx);
+        // Capture the pre-insert state for rollback. The child
+        // at `pos` (if any) shifts to pos+1; the new child is
+        // at pos. For add_mutation_child_op we use old_child=NULL_NODE
+        // (nothing was "there" before) and new_child=child.
+        NodeId old_at_pos = (pos < list.size()) ? list[pos] : NULL_NODE;
         children_[id] = list.with_insert(pos, child);
         // Set new child's parent
         if (child != NULL_NODE && child < parent_.size())
             parent_[child] = id;
-        // Issue #222: mark the mutated node dirty.
-        mark_dirty(id, kGeneralDirty);
+        // Issue #222 slice 2/3: record the mutation.
+        add_mutation_child_op(id, pos, NULL_NODE, child, "structural-insert-child");
     }
 
     // Remove a child at position idx by replacing with NULL_NODE
@@ -1369,8 +1375,8 @@ private:
             if (cid != NULL_NODE && cid < parent_.size())
                 parent_[cid] = NULL_NODE;
             children_[id] = list.with_erase(idx);
-            // Issue #222: mark the mutated node dirty.
-            mark_dirty(id, kGeneralDirty);
+            // Issue #222 slice 2/3: record the mutation.
+            add_mutation_child_op(id, idx, cid, NULL_NODE, "structural-remove-child");
         }
     }
 
@@ -1915,6 +1921,27 @@ private:
             node_first_mutation_[target_node] = static_cast<std::uint32_t>(mutation_log_.size());
         }
         return mid;
+    }
+
+    // Issue #222 slice 2/3: record a structural child-list mutation
+    // (set_child / insert_child / remove_child). Captures parent,
+    // child_idx, old child NodeId, new child NodeId. Rollback is via
+    // the #221 children_snapshot (capture in the #177 MutationCheckpoint)
+    // + rollback_to_size on the mutation log; has_rollback=true signals
+    // that the caller has set up a snapshot for rollback.
+    //
+    // Calls mark_dirty_upward(parent) so the parent + ancestors are
+    // marked dirty for incremental re-eval (#148) / dirty-aware
+    // caching (#188). The "structural-" prefix on op_name distinguishes
+    // these from typed_mutate's "replace-type" / "replace-value" kinds.
+    std::uint64_t add_mutation_child_op(NodeId parent, std::uint32_t child_idx,
+                                        NodeId old_child, NodeId new_child,
+                                        std::string_view op_name) {
+        return add_mutation_with_rollback(
+            parent, op_name, "", "", op_name, MutationStatus::Committed,
+            child_idx, static_cast<std::uint64_t>(old_child),
+            static_cast<std::uint64_t>(new_child),
+            /*has_rollback=*/true);
     }
 
     // Get mutation history for a specific node (0 == no history)
