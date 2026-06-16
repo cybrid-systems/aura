@@ -812,9 +812,6 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         ircl.flat = bd.flat;
                         ircl.pool = bd.pool;
                         ircl.body_id = bd.body_id;
-                        // Issue #223: capture the bridge's epoch so the
-                        // IRClosure lifetime check can detect stale bridges.
-                        ircl.bridge_epoch = bd.bridge_epoch;
                         if (ops[1] < module_.functions.size())
                             ircl.params = module_.functions[ops[1]].params;
                     }

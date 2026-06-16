@@ -464,15 +464,6 @@ export struct ClosureBridgeData {
     const ast::StringPool* pool = nullptr;
     ast::NodeId body_id = ast::NULL_NODE;
     std::string body_source; // serialized source for bridge fallback re-parse
-    // Issue #223: epoch captured at bridge construction. If the
-    // service's bridge_epoch() returns a different value, the
-    // bridge's flat*/pool* are stale (arena was reset, or a major
-    // mutation invalidated the captured pointers). The bridge
-    // callback / apply_closure compares this against the current
-    // epoch and either re-parses from body_source or invalidates
-    // the closure. Default 0 = "unset" (legacy bridge); Cycle 1
-    // captures the current epoch explicitly via set_closure_bridge.
-    std::uint64_t bridge_epoch = 0;
 };
 
 export struct IRModule {
@@ -490,23 +481,18 @@ export struct IRModule {
     }
 
     // Set bridge data for a function (for cross-evaluator lambda calls)
-    // Issue #223: epoch is the bridge_epoch_ captured at this point;
-    // a future mismatch with the service's bridge_epoch() signals
-    // the bridge's flat*/pool* are stale.
     void set_closure_bridge(std::uint32_t func_id, const ast::FlatAST* flat,
-                            const ast::StringPool* pool, ast::NodeId body_id,
-                            std::uint64_t epoch = 0) {
+                            const ast::StringPool* pool, ast::NodeId body_id) {
         if (func_id < functions.size()) {
-            closure_bridge[func_id] = {flat, pool, body_id, "", epoch};
+            closure_bridge[func_id] = {flat, pool, body_id, ""};
         }
     }
 
     // Set bridge data by pointer (for cached function injection)
     void set_closure_bridge_ptr(std::uint32_t func_id, const ast::FlatAST* flat,
-                                const ast::StringPool* pool, ast::NodeId body_id,
-                                std::uint64_t epoch = 0) {
+                                const ast::StringPool* pool, ast::NodeId body_id) {
         if (func_id < closure_bridge.size()) {
-            closure_bridge[func_id] = {flat, pool, body_id, "", epoch};
+            closure_bridge[func_id] = {flat, pool, body_id, ""};
         }
     }
 

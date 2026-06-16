@@ -19,7 +19,6 @@ import aura.compiler.evaluator_pure;
 
 namespace aura::compiler {
 
-
 using EvalValue = types::EvalValue;
 using PrimFn = std::function<EvalValue(std::span<const EvalValue>)>;
 
@@ -375,24 +374,6 @@ export struct Closure {
     EnvId env_id = NULL_ENV_ID;
     bool dotted = false;
     ast::ASTArena* owner_arena = nullptr;  // arena where flat/pool/env lives
-    // Issue #223: epoch captured at closure construction. The
-    // IRExecutor / apply_closure compares this against the
-    // service's bridge_epoch(); a mismatch means the closure's
-    // flat*/pool* are stale (arena was reset or a major mutation
-    // invalidated the captured pointers). Default 0 = legacy
-    // / unset (such closures are NOT auto-invalidated — they
-    // pre-date the tracking and the caller is responsible for
-    // setting this on construction). New code paths that bridge
-    // from the IR executor or the parser should set this to the
-    // current bridge_epoch() at construction time.
-    std::uint64_t bridge_epoch = 0;
-    // Issue #223: body source text (used for body_source re-parse
-    // fallback when the bridge is stale). Populated by the
-    // IR executor / parser when constructing a cross-evaluator
-    // closure; empty for legacy closures built before the
-    // tracking was added. apply_closure falls back to re-parsing
-    // this source if the bridge is stale AND this is non-empty.
-    std::string body_source;
 };
 
 // Legacy alias — kept for backward compatibility during the
@@ -481,46 +462,6 @@ public:
     void set_module_loaded_callback(ModuleLoadedFn cb) { module_loaded_cb_ = std::move(cb); }
     void set_type_registry(void* reg) { type_registry_ = reg; }
     void set_compiler_service(void* svc) { compiler_service_ = svc; }
-    // Issue #223: returns the current bridge_epoch from the
-    // service (or 0 if no service is bound). Closure-construction
-    // sites capture this at construction time; apply_closure
-    // compares against it to detect stale closures (arena was
-    // reset or major mutation invalidated the captured flat*/pool*).
-    //
-    // The bridge_epoch() call goes through a function pointer
-    // (bridge_epoch_fn_) to avoid a circular include with
-    // service.ixx. CompilerService::install_bridge_epoch_fn()
-    // sets the function pointer when binding to the Evaluator.
-    using BridgeEpochFn = std::uint64_t (*)(void*);
-    [[nodiscard]] std::uint64_t current_bridge_epoch() const noexcept {
-        if (bridge_epoch_fn_ && compiler_service_) {
-            return bridge_epoch_fn_(compiler_service_);
-        }
-        return 0;
-    }
-    void install_bridge_epoch_fn(BridgeEpochFn fn) noexcept {
-        bridge_epoch_fn_ = fn;
-    }
-    // Issue #223: re-parse a stale bridge's body_source and update
-    // the closure in place. The new FlatAST/StringPool are stored
-    // in reparsed_bridges_ (heap-allocated, survive until the
-    // Evaluator is destroyed). Returns true on success (the
-    // closure's flat/pool/body_id now point at fresh, valid
-    // memory + the bridge_epoch is bumped to current).
-    //
-    // Returns false if body_source is empty (legacy closure
-    // without fallback support — caller should invalidate) or
-    // the re-parse fails (parse error — caller should invalidate).
-    bool reparse_bridge(Closure& cl) noexcept;
-    // Issue #223: returns true if a closure's captured bridge_epoch
-    // is stale relative to the current epoch. bridge_epoch == 0
-    // means "legacy / not tracked" and is treated as trustworthy
-    // (the closure pre-dates the tracking; caller manages its own
-    // lifetime). Non-zero values are validated strictly.
-    static bool is_bridge_stale(std::uint64_t bridge_epoch, std::uint64_t current_epoch) noexcept {
-        if (bridge_epoch == 0) return false;  // legacy / unset: trust the closure
-        return bridge_epoch != current_epoch;
-    }
     void set_session_id(const std::string& id) { session_id_ = id; }
     // Phase 2: EDSL IR cache V2 hooks (set by CompilerService on init)
     void set_mark_define_dirty_fn(std::function<void(const std::string&)> fn) {
@@ -1239,11 +1180,6 @@ private:
     bool workspace_read_only_ = false;  // quick lock flag for P6 mutations
     // ── CompilerService pointer (for messaging) ─────────────────
     void* compiler_service_ = nullptr;  // CompilerService*
-    // Issue #223: function pointer that returns the service's
-    // current bridge epoch. Set by CompilerService on
-    // set_compiler_service() so Evaluator can query the epoch
-    // without a circular include of service.ixx.
-    BridgeEpochFn bridge_epoch_fn_ = nullptr;
     // Function pointer callbacks (set by CompilerService to avoid circular deps)
     std::function<bool(const std::string&, const std::string&)>* msg_send_fn_ = nullptr;
     std::function<std::optional<std::string>(int)>* msg_recv_fn_ = nullptr;
@@ -1411,20 +1347,6 @@ private:
     // (Phase 2.4.1 / Phase 2.5 will inline string contents
     // into the arena).
     std::pmr::vector<std::string> string_heap_{&runtime_resource_};
-    // Issue #223: storage for re-parsed closure bodies (heap-
-    // allocated FlatAST + StringPool that survive until the
-    // Evaluator is destroyed). The bridge callback / apply_closure
-    // uses these to recover from a stale bridge (the body's
-    // flat*/pool* are dangling, but body_source survives; we
-    // re-parse body_source into a new FlatAST/Pool and update
-    // the closure in place). unique_ptr so the FlatAST/
-    // StringPool destructors run when the Evaluator is
-    // destroyed.
-    struct ReparsedBridge {
-        std::unique_ptr<aura::ast::FlatAST> flat;
-        std::unique_ptr<aura::ast::StringPool> pool;
-    };
-    std::vector<ReparsedBridge> reparsed_bridges_;
     // Short string cache: ≤6 byte strings are deduplicated via this hash
     // (avoids redundant string_heap_ pushes and enables faster equal?)
     std::unordered_map<std::string, types::EvalValue> short_str_cache_;

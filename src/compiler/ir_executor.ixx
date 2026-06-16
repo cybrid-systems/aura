@@ -22,12 +22,6 @@ export struct IRClosure {
     const ast::StringPool* pool = nullptr;
     ast::NodeId body_id = ast::NULL_NODE;
     std::vector<std::string> params;
-    // Issue #223: epoch captured from the bridge at MakeClosure
-    // time. The IRExecutor / apply_closure compares this against
-    // the service's bridge_epoch(); a mismatch means the bridge
-    // is stale (arena reset / major mutation). The closure falls
-    // back to re-parse from body_source or is invalidated.
-    std::uint64_t bridge_epoch = 0;
 };
 
 // Returned by run_function's Call handler to signal a new call is needed.
