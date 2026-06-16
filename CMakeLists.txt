@@ -4315,6 +4315,18 @@ target_compile_features(test_issue_217 PUBLIC cxx_std_26)
 target_link_libraries(test_issue_217 PRIVATE stdc++ pthread)
 add_test(NAME issue_217_verification COMMAND ./test_issue_217)
 
+# Issue #219: gap-buffer child_data_ for O(1) insert/remove
+# in FlatAST. Tests the GapBuffer<T> template defined in
+# src/core/gap_buffer.hh. Standalone test (no production
+# module imports), so it doesn't trigger the GCC 16.1
+# std module + P2996 reflection conflict.
+add_executable(test_issue_219 tests/test_issue_219.cpp)
+target_include_directories(test_issue_219 PRIVATE src)
+target_compile_options(test_issue_219 PRIVATE -Wall -Wextra)
+target_compile_features(test_issue_219 PUBLIC cxx_std_26)
+target_link_libraries(test_issue_219 PRIVATE stdc++ pthread)
+add_test(NAME issue_219_verification COMMAND ./test_issue_219)
+
 # Issue #178 Cycle 5: production NodeView migration to
 # reflect_members + auto_serialize.
 #

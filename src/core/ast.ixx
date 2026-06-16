@@ -1,3 +1,17 @@
+// Issue #219: include the gap-buffer header in the module's
+// global module fragment. The global fragment is processed
+// BEFORE the module's purview, so the std includes in
+// gap_buffer.hh don't conflict with `import std;` (which
+// only takes effect after the module declaration).
+module;
+
+// GapBuffer is a header-only template. It uses raw
+// `::operator new` + `<cstring>` + `<type_traits>` — NO
+// std containers or pmr allocators, so it avoids the
+// GCC 16.1 std module + local std #include conflict that
+// blocks reflect.hh in a C++ module.
+#include "core/gap_buffer.hh"
+
 export module aura.core.ast;
 import std;
 import aura.core.type;
@@ -508,7 +522,9 @@ private:
     std::pmr::vector<SymId> sym_id_;
     std::pmr::vector<std::uint32_t> child_begin_;
     std::pmr::vector<std::uint32_t> child_count_;
-    std::pmr::vector<NodeId> child_data_;
+    // Issue #219: gap-buffer for O(1) amortized insert/remove.
+    // See src/core/gap_buffer.hh for the data structure.
+    GapBuffer<NodeId> child_data_;
     std::pmr::vector<NodeId> parent_;
     std::pmr::vector<std::uint32_t> param_begin_;
     std::pmr::vector<std::uint32_t> param_count_;
@@ -636,7 +652,10 @@ private:
         auto id = add_node(NodeTag::Call);
         child_data_.push_back(func);
         auto start = static_cast<std::uint32_t>(child_data_.size());
-        child_data_.insert(child_data_.end(), args.begin(), args.end());
+        // Issue #219: range-append via GapBuffer::append (gap-buffer
+        // doesn't support a general range insert; append is the
+        // common case for AST construction).
+        child_data_.append(args.begin(), args.end());
         child_begin_[id] = start - 1; // includes func
         child_count_[id] = 1 + static_cast<std::uint32_t>(args.size());
         link_children(id);
@@ -813,7 +832,7 @@ private:
         param_count_[id] = static_cast<std::uint32_t>(params.size());
         // Store constructor nodes in child_data_
         auto cstart = static_cast<std::uint32_t>(child_data_.size());
-        child_data_.insert(child_data_.end(), ctors.begin(), ctors.end());
+        child_data_.append(ctors.begin(), ctors.end());
         child_begin_[id] = cstart;
         child_count_[id] = static_cast<std::uint32_t>(ctors.size());
         return id;
@@ -832,7 +851,7 @@ private:
     [[nodiscard]] NodeId add_begin(std::span<const NodeId> exprs) {
         auto id = add_node(NodeTag::Begin);
         auto start = static_cast<std::uint32_t>(child_data_.size());
-        child_data_.insert(child_data_.end(), exprs.begin(), exprs.end());
+        child_data_.append(exprs.begin(), exprs.end());
         child_begin_[id] = start;
         child_count_[id] = static_cast<std::uint32_t>(exprs.size());
         link_children(id);
@@ -869,7 +888,7 @@ private:
     [[nodiscard]] NodeId add_export(std::span<const NodeId> syms) {
         auto id = add_node(NodeTag::Export);
         auto start = static_cast<std::uint32_t>(child_data_.size());
-        child_data_.insert(child_data_.end(), syms.begin(), syms.end());
+        child_data_.append(syms.begin(), syms.end());
         child_begin_[id] = start;
         child_count_[id] = static_cast<std::uint32_t>(syms.size());
         link_children(id);
@@ -1101,7 +1120,11 @@ private:
     // Shifts all subsequent children and updates child_begin_ for later nodes.
     void insert_child(NodeId id, std::uint32_t idx, NodeId child) {
         auto pos = child_begin_[id] + std::min(idx, child_count_[id]);
-        child_data_.insert(child_data_.begin() + pos, 1, child);
+        // Issue #219: GapBuffer::insert(pos, v) replaces
+        // vector::insert(begin()+pos, 1, child). The gap buffer
+        // amortizes the O(n) shift to O(1) when the gap is near
+        // the insertion point.
+        child_data_.insert(pos, child);
         // Shift child_begin only for nodes whose children start at or after pos.
         // Children before the insertion point are unaffected by the shift.
         for (auto i = id + 1; i < tag_.size(); ++i) {
@@ -1310,6 +1333,14 @@ private:
             std::uint32_t count;
             std::memcpy(&count, &buf[pos], 4); pos += 4;
             col.resize(count);
+            // Issue #219: GapBuffer's `data()` is not contiguous
+            // when the gap is in the middle. compact() moves the
+            // gap to the end so data() returns a contiguous
+            // pointer. For pmr::vector this is a no-op (the
+            // compiler optimizes it away for trivial types).
+            if constexpr (requires { col.compact(); }) {
+                col.compact();
+            }
             if (count > 0) {
                 std::memcpy(col.data(), &buf[pos], count * sizeof(T));
                 pos += count * sizeof(T);
