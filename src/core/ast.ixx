@@ -1208,6 +1208,24 @@ private:
 
     // ── Bulk ───────────────────────────────────────────────────
 
+    // Issue #221: capture a snapshot of children_ for rollback
+    // (#177 MutationCheckpoint integration). The returned vector
+    // contains PCV copies that share the underlying storage with
+    // children_ (PCV COW); the snapshot is O(1) per node.
+    // Returns std::pmr::vector to match children_'s allocator.
+    std::pmr::vector<PersistentChildVector<NodeId>> snapshot_children() const {
+        return children_;  // vector copy ctor; each PCV is shared_ptr copy
+    }
+
+    // Issue #221: restore children_ from a pre-captured snapshot.
+    // The passed-in vector is moved (its shared_ptrs are now bound
+    // to children_; back-references to the old PCVs in the
+    // snapshot are released as the snapshot goes out of scope).
+    void restore_children(std::pmr::vector<PersistentChildVector<NodeId>>&& snapshot) {
+        children_ = std::move(snapshot);
+        bump_generation();
+    }
+
     void clear() {
         tag_.clear();
         int_val_.clear();

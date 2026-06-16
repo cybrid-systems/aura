@@ -1,3 +1,13 @@
+// Issue #221: include the PersistentChildVector header in the
+// module's global module fragment (same trick as ast.ixx for
+// gap_buffer.hh / persistent_child_vector.hh). The global
+// fragment is processed BEFORE the module's purview, so the
+// std includes in persistent_child_vector.hh don't conflict
+// with `import std;`.
+module;
+
+#include "../core/persistent_child_vector.hh"
+
 export module aura.compiler.evaluator;
 import std;
 import aura.core;
@@ -1491,6 +1501,20 @@ public:
     struct MutationCheckpoint {
         std::uint64_t version;              // defuse_version_ at boundary entry
         std::size_t mutation_log_size = 0;  // FlatAST::mutation_log_.size() at entry
+        // Issue #221: snapshot of FlatAST::children_ (the per-node
+        // PersistentChildVector list). On rollback (exit(false)),
+        // the captured vector is reinstalled in workspace_flat_->
+        // children_. The PCV's COW semantics make the snapshot
+        // cheap (each PCV is a shared_ptr copy — the underlying
+        // storage is kept alive by the shared_ptr in the
+        // checkpoint). Back-references to the pre-mutation PCs
+        // (e.g. closures that captured children[id] pre-mutation)
+        // stay valid because the checkpoint holds a shared_ptr to
+        // each pre-mutation PCV.
+        // std::pmr::vector matches the allocator of FlatAST::children_
+        // (so the vector copy doesn't require allocator conversion).
+        std::pmr::vector<aura::ast::PersistentChildVector<aura::ast::NodeId>>
+            children_snapshot;
     };
     // Per-fiber checkpoint stack. Each Fiber carries its own
     // `mutation_stack_` (added in Issue #213 Cycle 3), so a
@@ -1547,8 +1571,20 @@ public:
         // the boundary body) will be appended to positions >=
         // this size, and `rollback_to_size` will undo them.
         std::size_t log_size = workspace_flat_ ? workspace_flat_->all_mutations().size() : 0;
+        // Issue #221: capture the per-node children_ vector. The
+        // PCV's COW semantics make this a cheap copy (each PCV
+        // is a shared_ptr to immutable storage; the snapshot
+        // holds shared_ptrs that keep the pre-mutation PCs alive).
+        // std::pmr::vector matches the allocator of FlatAST::children_
+        // (so the vector copy doesn't require allocator conversion).
+        std::pmr::vector<aura::ast::PersistentChildVector<aura::ast::NodeId>>
+            children_snapshot;
+        if (workspace_flat_) {
+            children_snapshot = workspace_flat_->snapshot_children();
+        }
         active_mutation_stack().push_back(
-            {defuse_version_.load(std::memory_order_acquire), log_size});
+            {defuse_version_.load(std::memory_order_acquire), log_size,
+             std::move(children_snapshot)});
         defuse_version_.fetch_add(1, std::memory_order_release);
         // Issue #189: bump the total-mutations counter for
         // observability. Relaxed because it's stats-only.
@@ -1602,6 +1638,11 @@ public:
             // tells us how far to undo.
             std::size_t rolled = workspace_flat_->rollback_to_size(cp.mutation_log_size);
             (void)rolled;  // count is for debug; not exposed via the API
+            // Issue #221: restore the per-node children_ from the
+            // pre-mutation snapshot. The checkpoint's children_snapshot
+            // holds shared_ptrs to the pre-mutation PCs (PCV COW),
+            // so the restoration is O(1) per node.
+            workspace_flat_->restore_children(std::move(cp.children_snapshot));
             // Invalidate the def-use index — the workspace state
             // is now different from what the index reflects.
             defuse_index_ = nullptr;
