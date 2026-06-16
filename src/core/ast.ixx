@@ -658,25 +658,21 @@ private:
 
     [[nodiscard]] NodeId add_call(NodeId func, std::span<const NodeId> args) {
         auto id = add_node(NodeTag::Call);
-        {
-            std::vector<NodeId> _kids;  // PCV:2 element(s)
-            _kids.push_back(func);
-            for (auto _a : args) _kids.push_back(_a);
-            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
-        }
+        children_[id] = PersistentChildVector<NodeId>(
+            1 + args.size(), [&](std::size_t i) -> NodeId {
+                if (i == 0) return func;
+                return args[i - 1];
+            });
         link_children(id);
         return id;
     }
 
     [[nodiscard]] NodeId add_if(NodeId cond, NodeId then_b, NodeId else_b) {
         auto id = add_node(NodeTag::IfExpr);
-        {
-            std::vector<NodeId> _kids;  // PCV:3 element(s)
-            _kids.push_back(cond);
-            _kids.push_back(then_b);
-            _kids.push_back(else_b);
-            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
-        }
+        children_[id] = PersistentChildVector<NodeId>(
+            3, [&](std::size_t i) -> NodeId {
+                return (i == 0 ? cond : (i == 1 ? then_b : else_b));
+            });
         link_children(id);
         return id;
     }
@@ -698,11 +694,10 @@ private:
             param_annot_data_[pstart + i] = annots[i];
         param_begin_[id] = pstart;
         param_count_[id] = static_cast<std::uint32_t>(params.size());
-        {
-            std::vector<NodeId> _kids;  // PCV:1 element(s)
-            _kids.push_back(body);
-            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
-        }
+        children_[id] = PersistentChildVector<NodeId>(
+            1, [&](std::size_t i) -> NodeId {
+                return body;
+            });
         link_children(id);
         return id;
     }
@@ -710,12 +705,10 @@ private:
     [[nodiscard]] NodeId add_let(SymId name, NodeId val, NodeId body) {
         auto id = add_node(NodeTag::Let);
         sym_id_[id] = name;
-        {
-            std::vector<NodeId> _kids;  // PCV:2 element(s)
-            _kids.push_back(val);
-            _kids.push_back(body);
-            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
-        }
+        children_[id] = PersistentChildVector<NodeId>(
+            2, [&](std::size_t i) -> NodeId {
+                return (i == 0 ? val : body);
+            });
         link_children(id);
         return id;
     }
@@ -723,12 +716,10 @@ private:
     [[nodiscard]] NodeId add_letrec(SymId name, NodeId val, NodeId body) {
         auto id = add_node(NodeTag::LetRec);
         sym_id_[id] = name;
-        {
-            std::vector<NodeId> _kids;  // PCV:2 element(s)
-            _kids.push_back(val);
-            _kids.push_back(body);
-            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
-        }
+        children_[id] = PersistentChildVector<NodeId>(
+            2, [&](std::size_t i) -> NodeId {
+                return (i == 0 ? val : body);
+            });
         link_children(id);
         return id;
     }
@@ -736,11 +727,10 @@ private:
     [[nodiscard]] NodeId add_define(SymId name, NodeId val) {
         auto id = add_node(NodeTag::Define);
         sym_id_[id] = name;
-        {
-            std::vector<NodeId> _kids;  // PCV:1 element(s)
-            _kids.push_back(val);
-            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
-        }
+        children_[id] = PersistentChildVector<NodeId>(
+            1, [&](std::size_t i) -> NodeId {
+                return val;
+            });
         link_children(id);
         return id;
     }
@@ -842,33 +832,28 @@ private:
         param_annot_data_.resize(param_annot_data_.size() + params.size(), NULL_NODE);
         param_begin_[id] = pstart;
         param_count_[id] = static_cast<std::uint32_t>(params.size());
-        {
-            std::vector<NodeId> _kids;  // PCV:1 element(s)
-            for (auto _a : ctors) _kids.push_back(_a);
-            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
-        }
+        children_[id] = PersistentChildVector<NodeId>(
+            ctors.begin(), ctors.end());
         return id;
     }
 
     [[nodiscard]] NodeId add_begin(NodeId* exprs, std::uint32_t count) {
         auto id = add_node(NodeTag::Begin);
-        for (std::uint32_t i = 0; i < count; ++i) {
-            {
-            std::vector<NodeId> _kids;  // PCV:1 element(s)
-                _kids.push_back(exprs[i]);
-                children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
-            }
-        }
+        // Build the N-element PCV directly from the exprs array via
+        // the fill-constructor (single allocation, no temp vector).
+        children_[id] = PersistentChildVector<NodeId>(
+            count, [&](std::size_t i) -> NodeId {
+                return exprs[i];
+            });
         link_children(id);
         return id;
     }
     [[nodiscard]] NodeId add_begin(std::span<const NodeId> exprs) {
         auto id = add_node(NodeTag::Begin);
-        {
-            std::vector<NodeId> _kids;  // PCV:1 element(s)
-            for (auto _a : exprs) _kids.push_back(_a);
-            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
-        }
+        children_[id] = PersistentChildVector<NodeId>(
+            exprs.size(), [&](std::size_t i) -> NodeId {
+                return exprs[i];
+            });
         link_children(id);
         return id;
     }
@@ -902,11 +887,10 @@ private:
 
     [[nodiscard]] NodeId add_export(std::span<const NodeId> syms) {
         auto id = add_node(NodeTag::Export);
-        {
-            std::vector<NodeId> _kids;  // PCV:1 element(s)
-            for (auto _a : syms) _kids.push_back(_a);
-            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
-        }
+        children_[id] = PersistentChildVector<NodeId>(
+            syms.size(), [&](std::size_t i) -> NodeId {
+                return syms[i];
+            });
         link_children(id);
         return id;
     }
@@ -914,11 +898,10 @@ private:
     [[nodiscard]] NodeId add_set(SymId name, NodeId val) {
         auto id = add_node(NodeTag::Set);
         sym_id_[id] = name;
-        {
-            std::vector<NodeId> _kids;  // PCV:1 element(s)
-            _kids.push_back(val);
-            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
-        }
+        children_[id] = PersistentChildVector<NodeId>(
+            1, [&](std::size_t i) -> NodeId {
+                return val;
+            });
         link_children(id);
         return id;
     }
@@ -930,11 +913,10 @@ private:
         // Issue #120: encode dotted in bit 0 and hygienic in bit 1 of
         // int_val_ (the existing unused slot for MacroDef).
         int_val_[id] = (hygienic ? 2 : 0) | (dotted ? 1 : 0);
-        {
-            std::vector<NodeId> _kids;  // PCV:1 element(s)
-            _kids.push_back(body);
-            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
-        }
+        children_[id] = PersistentChildVector<NodeId>(
+            1, [&](std::size_t i) -> NodeId {
+                return body;
+            });
         auto pstart = static_cast<std::uint32_t>(param_data_.size());
         param_data_.insert(param_data_.end(), params.begin(), params.end());
         param_annot_data_.resize(param_annot_data_.size() + params.size(), NULL_NODE);
@@ -956,23 +938,20 @@ private:
 
     [[nodiscard]] NodeId add_quote(NodeId val) {
         auto id = add_node(NodeTag::Quote);
-        {
-            std::vector<NodeId> _kids;  // PCV:1 element(s)
-            _kids.push_back(val);
-            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
-        }
+        children_[id] = PersistentChildVector<NodeId>(
+            1, [&](std::size_t i) -> NodeId {
+                return val;
+            });
         link_children(id);
         return id;
     }
 
     [[nodiscard]] NodeId add_pair(NodeId car, NodeId cdr) {
         auto id = add_node(NodeTag::Pair);
-        {
-            std::vector<NodeId> _kids;  // PCV:2 element(s)
-            _kids.push_back(car);
-            _kids.push_back(cdr);
-            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
-        }
+        children_[id] = PersistentChildVector<NodeId>(
+            2, [&](std::size_t i) -> NodeId {
+                return (i == 0 ? car : cdr);
+            });
         link_children(id);
         return id;
     }
@@ -980,11 +959,10 @@ private:
     [[nodiscard]] NodeId add_type_annotation(SymId type_name, NodeId inner, SymId var_sym = INVALID_SYM) {
         auto id = add_node(NodeTag::TypeAnnotation);
         sym_id_[id] = type_name;
-        {
-            std::vector<NodeId> _kids;  // PCV:1 element(s)
-            _kids.push_back(inner);
-            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
-        }
+        children_[id] = PersistentChildVector<NodeId>(
+            1, [&](std::size_t i) -> NodeId {
+                return inner;
+            });
         if (var_sym != INVALID_SYM) {
             int_val_[id] = static_cast<std::int64_t>(var_sym);
         }
@@ -1001,22 +979,20 @@ private:
 
     [[nodiscard]] NodeId add_coercion(NodeId inner, std::uint32_t type_id) {
         auto id = add_node(NodeTag::Coercion);
-        {
-            std::vector<NodeId> _kids;  // PCV:1 element(s)
-            _kids.push_back(inner);
-            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
-        }
+        children_[id] = PersistentChildVector<NodeId>(
+            1, [&](std::size_t i) -> NodeId {
+                return inner;
+            });
         type_id_[id] = type_id;
         link_children(id);
         return id;
     }
     [[nodiscard]] NodeId add_coercion(NodeId inner, std::uint32_t type_tag, std::uint32_t type_id) {
         auto id = add_node(NodeTag::Coercion);
-        {
-            std::vector<NodeId> _kids;  // PCV:1 element(s)
-            _kids.push_back(inner);
-            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
-        }
+        children_[id] = PersistentChildVector<NodeId>(
+            1, [&](std::size_t i) -> NodeId {
+                return inner;
+            });
         int_val_[id] = static_cast<std::int64_t>(type_tag);
         type_id_[id] = type_id;
         link_children(id);
@@ -1025,55 +1001,50 @@ private:
     // ── M4 Linear ownership builders ───────────────────────────
     [[nodiscard]] NodeId add_linear(NodeId inner) {
         auto id = add_node(NodeTag::Linear);
-        {
-            std::vector<NodeId> _kids;  // PCV:1 element(s)
-            _kids.push_back(inner);
-            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
-        }
+        children_[id] = PersistentChildVector<NodeId>(
+            1, [&](std::size_t i) -> NodeId {
+                return inner;
+            });
         link_children(id);
         return id;
     }
 
     [[nodiscard]] NodeId add_move(NodeId inner) {
         auto id = add_node(NodeTag::Move);
-        {
-            std::vector<NodeId> _kids;  // PCV:1 element(s)
-            _kids.push_back(inner);
-            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
-        }
+        children_[id] = PersistentChildVector<NodeId>(
+            1, [&](std::size_t i) -> NodeId {
+                return inner;
+            });
         link_children(id);
         return id;
     }
 
     [[nodiscard]] NodeId add_borrow(NodeId inner) {
         auto id = add_node(NodeTag::Borrow);
-        {
-            std::vector<NodeId> _kids;  // PCV:1 element(s)
-            _kids.push_back(inner);
-            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
-        }
+        children_[id] = PersistentChildVector<NodeId>(
+            1, [&](std::size_t i) -> NodeId {
+                return inner;
+            });
         link_children(id);
         return id;
     }
 
     [[nodiscard]] NodeId add_mut_borrow(NodeId inner) {
         auto id = add_node(NodeTag::MutBorrow);
-        {
-            std::vector<NodeId> _kids;  // PCV:1 element(s)
-            _kids.push_back(inner);
-            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
-        }
+        children_[id] = PersistentChildVector<NodeId>(
+            1, [&](std::size_t i) -> NodeId {
+                return inner;
+            });
         link_children(id);
         return id;
     }
 
     [[nodiscard]] NodeId add_drop(NodeId inner) {
         auto id = add_node(NodeTag::Drop);
-        {
-            std::vector<NodeId> _kids;  // PCV:1 element(s)
-            _kids.push_back(inner);
-            children_[id] = PersistentChildVector<NodeId>(_kids.begin(), _kids.end());
-        }
+        children_[id] = PersistentChildVector<NodeId>(
+            1, [&](std::size_t i) -> NodeId {
+                return inner;
+            });
         link_children(id);
         return id;
     }
