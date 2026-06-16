@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_166.cpp — Issue #166: multi-layer cache invalidation
 // (Phase 1: epoch counter).
 //

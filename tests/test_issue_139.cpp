@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_139.cpp — Verify Issue #139 acceptance criteria
 // ("Add advanced structural refactoring operators to mutate EDSL
 // and improve strategy selector").

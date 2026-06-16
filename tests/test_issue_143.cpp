@@ -1,3 +1,5 @@
+// @category: issue_specific
+// @reason: default for test_issue_*.cpp
 // test_issue_143.cpp — Verify Issue #143 partial deliverable
 // (escape analysis integration into the existing pass infra).
 //

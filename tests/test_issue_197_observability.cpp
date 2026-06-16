@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_197_observability.cpp — Issue #197 Aura
 // observability for the inliner (compile:inline-pass-stats).
 //

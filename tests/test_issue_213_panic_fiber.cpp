@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_213_panic_fiber.cpp — Issue #213 follow-up cycle:
 // "Test scenarios" follow-up section from the issue body.
 //

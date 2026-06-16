@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_194.cpp — Verify Issue #194 acceptance criteria
 // ("jit: per-lowering runtime → intrinsic migrations (4 candidates,
 //  #170 follow-up)").

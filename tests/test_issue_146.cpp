@@ -1,3 +1,5 @@
+// @category: regression
+// @reason: mentions 'regression' in top comment
 // test_issue_146.cpp — Verify Issue #146 first extract
 // (pure-function + monadic Result extraction for Evaluator core).
 //

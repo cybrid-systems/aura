@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_116.cpp — Verify deferred CoercionNode insertion
 // (TypeChecker no longer mutates FlatAST in-place).
 //

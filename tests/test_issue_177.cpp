@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_177.cpp — Issue #213 verification:
 //
 // Integration-level smoke test for the migrated mutate:*

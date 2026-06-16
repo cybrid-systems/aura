@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_215.cpp — Issue #215:
 // auto_deserialize for containers + nested struct
 // (Issue #178 Cycle 2).

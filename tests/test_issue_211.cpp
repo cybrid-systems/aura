@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_211.cpp — Issue #211 dedicated tree pattern
 // matcher: (tag, arity) index for query:pattern.
 //

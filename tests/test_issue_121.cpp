@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_121.cpp — Verify the gensym / symbol-append / recursive
 // macro expansion fixes (Issue #121).
 //

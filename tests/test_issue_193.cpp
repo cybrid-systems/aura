@@ -1,3 +1,5 @@
+// @category: issue_specific
+// @reason: default for test_issue_*.cpp
 // test_issue_193.cpp — Verify Issue #193 acceptance criteria
 // ("jit: per-function unhandled_opcode tracking (replaces
 //  conservative deopt in #170)").

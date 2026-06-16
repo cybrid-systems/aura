@@ -1,3 +1,5 @@
+// @category: issue_specific
+// @reason: default for test_issue_*.cpp
 // test_issue_136.cpp — Verify Issue #136 acceptance criteria
 //
 // Sub-tasks covered:

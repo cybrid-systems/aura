@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_224.cpp — Verify Issue #224 acceptance criteria
 // ("per-block re-lower using the Issue #196 per-block
 //  dirty bitmask").

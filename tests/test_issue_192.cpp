@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_192.cpp — Verify Issue #192 acceptance criteria
 // ("Introduce atomic batch mutate + query:replace-and-validate
 //  primitive for reliable AI multi-round iterative editing").

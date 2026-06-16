@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_181.cpp — Issue #181: EvalValue 64-bit tagged
 // encoding redesign (Cycle 1: Option A prototype).
 //

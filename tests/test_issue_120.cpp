@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_120.cpp — Verify the hygienic macro fix (Issue #120).
 //
 // Regression scenarios:

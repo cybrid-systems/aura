@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_164.cpp — Issue #164: fiber:join spin-fallback elimination.
 //
 // Verifies:

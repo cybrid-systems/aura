@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_208.cpp — Issue #208 Cycle 2 env migration
 // scaffold: bindings_legacy_uses metric + bindings_symid_iter
 // migration pattern.

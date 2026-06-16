@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_189.cpp — Verify Issue #189 acceptance criteria
 // ("Critical race condition in mutation primitives under
 //  multi-fiber concurrency").

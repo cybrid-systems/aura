@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_130.cpp — Verify the cache hit rate metric
 // (Issue #130).
 //

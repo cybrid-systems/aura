@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_158.cpp — Issue #158 verification:
 // Quasiquote should expand inner macro calls in code positions.
 //

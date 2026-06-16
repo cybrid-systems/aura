@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 #include <unordered_map>
 // test_issue_127.cpp — Verify the Result<T> aliases
 // (Issue #127).

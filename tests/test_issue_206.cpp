@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_206.cpp — Issue #206 GC sweep compact + remap
 // + resolve_X helpers (subset of #145 Phase 2 / workstream 2).
 //

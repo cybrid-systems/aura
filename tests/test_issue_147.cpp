@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_147.cpp — Verify Issue #147 acceptance criteria
 // ("preserve occurrence narrowing and linear ownership invariants
 // after typed mutations").

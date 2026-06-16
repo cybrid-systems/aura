@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_128.cpp — Verify the std::span adoption
 // (Issue #128).
 //

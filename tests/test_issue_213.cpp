@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_213.cpp — Issue #213 Cycle 1:
 // rollback mechanism for the mutation boundary API.
 //

@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_142.cpp — Verify Issue #142 acceptance criteria
 // ("feat(edsl): add composite query primitives (query:filter /
 // query:where) and enhance mutate hygiene + replace-subtree").

@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_191.cpp — Verify Issue #191 acceptance criteria
 // ("Harden NodeId stability + introduce StableNodeRef to
 //  eliminate dangling references under structural mutate,

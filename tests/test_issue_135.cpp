@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_135.cpp — Verify Issue #135 acceptance criteria:
 //
 //   1. (fiber:spawn (lambda () (+ 1 2))) + (fiber:join fid) returns 3

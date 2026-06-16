@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_220.cpp — Issue #220: per-node children linked list
 // (Issue #179 Cycle 2).
 //

@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_125.cpp — Verify the per-module dirty-skip
 // optimization (Issue #125).
 //

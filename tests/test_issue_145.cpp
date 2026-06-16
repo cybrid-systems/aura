@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_145.cpp — Verify Issue #145 partial deliverable
 // (Closure::params SoA migration + EnvView/ClosureView new types +
 // bind_symid/lookup_by_symid fast path).

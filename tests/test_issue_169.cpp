@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_169.cpp — Issue #169: Fine-grained Incremental
 // Compilation v3 (Phase 1: config flag).
 //

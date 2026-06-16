@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_131.cpp — Verify the FFI primitives
 // extraction (Issue #131).
 //

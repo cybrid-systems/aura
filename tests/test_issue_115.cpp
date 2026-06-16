@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_115.cpp — Standalone tests for the Issue #115 follow-ups:
 //   - test_parallel_speedup: verifies 4-worker runtime is faster than
 //     1-worker on CPU-bound fibers (criterion #1)

@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_117.cpp — Verify linear ownership validation fixes
 // (TypeChecker now has full re-simulation mode + gradual+Linear
 // boundary check).

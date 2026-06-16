@@ -1,3 +1,5 @@
+// @category: unit
+// @reason: no CompilerService usage; pure C++ test
 // test_issue_182.cpp — Issue #182: Hardware IR + Verilog Backend
 // (Cycle 1: IR + accessors + display + query helpers, C++ verification).
 //

@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_195.cpp — Verify Issue #195 acceptance criteria
 // ("jit: replace structured EH with LLVM-native (invoke/landingpad)
 //  — #170 follow-up").

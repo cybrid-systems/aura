@@ -1,3 +1,5 @@
+// @category: integration
+// @reason: uses CompilerService to eval Aura source
 // test_issue_190.cpp — Verify Issue #190 acceptance criteria
 // ("Ensure macro expansion hygiene (SyntaxMarker::MacroIntroduced)
 //  is fully respected across type_checker, lowering, IR
