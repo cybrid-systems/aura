@@ -1179,19 +1179,14 @@ private:
     // SoA columns directly.
     //
     // Wire format (matches tests/test_issue_217.cpp Test 18):
-    //   [u32 format_version = 2]
+    //   [u32 format_version = 1]
     //   [u32 num_nodes]
     //   For each of 22 SoA columns (fixed order, see below):
     //     [u32 count]
     //     [count * sizeof(elem) raw bytes]
     //   [u32 next_mutation_id_ (low 32 bits)]
     //   [u16 generation_]
-    //   --- v2 additions below ---
-    //   [mutation_log_ via auto_serialize]  (vector<MutationRecord>)
-    //   [match_info_ via auto_serialize]    (vector<MatchClauseInfo>)
-    //   [u32 region_by_sym_count] + for each: [u32 key][u8 value]
-    //   [u32 region_by_lambda_id_count] + for each: [u32 key][u8 value]
-    //   [u32 root NodeId]
+    //   [u16 reserved]
     //
     // The 22 SoA columns in order:
     //   1. tag_           (u32 = NodeTag)
@@ -1229,9 +1224,8 @@ private:
     //   - root (scalar; can be derived from the AST or
     //     set after deserialize)
     void serialize_soa(std::vector<char>& buf) const {
-        // Format version (Cycle 14 P3: bumped 1 -> 2 for the
-        // mutation_log_/match_info_/region_by_*/root fields)
-        std::uint32_t version = 2;
+        // Format version
+        std::uint32_t version = 1;
         buf.insert(buf.end(), reinterpret_cast<char*>(&version),
                    reinterpret_cast<char*>(&version) + 4);
         // Num nodes (informational; per-node columns derive their size)
@@ -1279,56 +1273,10 @@ private:
                    reinterpret_cast<const char*>(&next_mutation_id_) + 4);
         buf.insert(buf.end(), reinterpret_cast<const char*>(&generation_),
                    reinterpret_cast<const char*>(&generation_) + 2);
-
-        // ── Issue #217 Cycle 14 P3 (v2): additional data ────
-        // The v1 wire format ends with the scalars (next_
-        // mutation_id_ + generation_ + 2 bytes reserved).
-        // v2 adds: mutation_log_ (vector<MutationRecord>),
-        // match_info_ (vector<MatchClauseInfo>), two
-        // pmr::unordered_map side tables (region_by_sym_,
-        // region_by_lambda_id_), and the root scalar.
-        //
-        // These use the existing auto_serialize machinery
-        // for vector<MutationRecord> and vector<MatchClauseInfo>
-        // (Cycles 9 and 10 verified conceptual; the types are
-        // flat POD structs and work out of the box). The
-        // pmr::unordered_map fields are serialized manually
-        // (the generic reflect path doesn't have a
-        // MemberKind for std::unordered_map; writing a manual
-        // count + (key + value) pair stream is simpler than
-        // adding the kind).
-        auto_serialize(buf, mutation_log_);
-        auto_serialize(buf, match_info_);
-        // region_by_sym_ (pmr::unordered_map<SymId, u8>):
-        //   [u32 count]
-        //   for each: [u32 key] [u8 value]
-        {
-            std::uint32_t map_count = static_cast<std::uint32_t>(region_by_sym_.size());
-            buf.insert(buf.end(), reinterpret_cast<char*>(&map_count),
-                       reinterpret_cast<char*>(&map_count) + 4);
-            for (const auto& [k, v] : region_by_sym_) {
-                buf.insert(buf.end(), reinterpret_cast<const char*>(&k),
-                           reinterpret_cast<const char*>(&k) + 4);
-                buf.insert(buf.end(), reinterpret_cast<const char*>(&v),
-                           reinterpret_cast<const char*>(&v) + 1);
-            }
-        }
-        // region_by_lambda_id_ (pmr::unordered_map<NodeId, u8>):
-        // same layout as above
-        {
-            std::uint32_t map_count = static_cast<std::uint32_t>(region_by_lambda_id_.size());
-            buf.insert(buf.end(), reinterpret_cast<char*>(&map_count),
-                       reinterpret_cast<char*>(&map_count) + 4);
-            for (const auto& [k, v] : region_by_lambda_id_) {
-                buf.insert(buf.end(), reinterpret_cast<const char*>(&k),
-                           reinterpret_cast<const char*>(&k) + 4);
-                buf.insert(buf.end(), reinterpret_cast<const char*>(&v),
-                           reinterpret_cast<const char*>(&v) + 1);
-            }
-        }
-        // root scalar (NodeId)
-        buf.insert(buf.end(), reinterpret_cast<const char*>(&root),
-                   reinterpret_cast<const char*>(&root) + 4);
+        // 2 bytes padding for u32 alignment of a future v2 field
+        std::uint16_t reserved = 0;
+        buf.insert(buf.end(), reinterpret_cast<const char*>(&reserved),
+                   reinterpret_cast<const char*>(&reserved) + 2);
     }
 
     // Static (no instance needed). Returns a freshly-constructed
@@ -1347,15 +1295,13 @@ private:
         FlatAST ast;
         std::uint32_t version;
         std::memcpy(&version, &buf[pos], 4); pos += 4;
-        // v1 and v2 are supported. v1 omits the 5 side-data
-        // fields (mutation_log_, match_info_, region_by_*,
-        // root); v2 includes them. For an unknown future
-        // version, the caller is responsible for dispatch.
-        if (version != 1 && version != 2) {
+        // Only v1 is supported. The caller is responsible for
+        // version dispatch in a future multi-version loader.
+        if (version != 1) {
+            // For now, just set pos to end (signal failure to caller).
             pos = buf.size();
             return ast;
         }
-        const bool is_v2 = (version == 2);
         std::uint32_t num_nodes;
         std::memcpy(&num_nodes, &buf[pos], 4); pos += 4;
 
@@ -1393,49 +1339,7 @@ private:
         read_column(ast.node_gen_);
         std::memcpy(&ast.next_mutation_id_, &buf[pos], 4); pos += 4;
         std::memcpy(&ast.generation_, &buf[pos], 2); pos += 2;
-        // 2 bytes reserved in v1; v2 repurpose as padding
-        // before the v2 fields
-        pos += 2;
-
-        // ── Issue #217 Cycle 14 P3 (v2): additional data ────
-        // v1 ends here (next_mutation_id_ + generation_ +
-        // 2 reserved). v2 adds the 5 side-data fields below.
-        // If version is v1, skip the v2 block entirely.
-        //
-        // For version 2, read the 5 fields:
-        //   1. mutation_log_ (vector<MutationRecord>)
-        //   2. match_info_   (vector<MatchClauseInfo>)
-        //   3. region_by_sym_ (pmr::unordered_map<SymId, u8>)
-        //   4. region_by_lambda_id_ (pmr::unordered_map<NodeId, u8>)
-        //   5. root (NodeId)
-        if (is_v2) {
-            ast.mutation_log_ = auto_deserialize<std::remove_reference_t<decltype(ast.mutation_log_)>>(buf, pos);
-            ast.match_info_ = auto_deserialize<std::remove_reference_t<decltype(ast.match_info_)>>(buf, pos);
-            // region_by_sym_
-            {
-                std::uint32_t map_count;
-                std::memcpy(&map_count, &buf[pos], 4); pos += 4;
-                for (std::uint32_t i = 0; i < map_count; ++i) {
-                    std::uint32_t k; std::uint8_t v;
-                    std::memcpy(&k, &buf[pos], 4); pos += 4;
-                    std::memcpy(&v, &buf[pos], 1); pos += 1;
-                    ast.region_by_sym_[k] = v;
-                }
-            }
-            // region_by_lambda_id_
-            {
-                std::uint32_t map_count;
-                std::memcpy(&map_count, &buf[pos], 4); pos += 4;
-                for (std::uint32_t i = 0; i < map_count; ++i) {
-                    std::uint32_t k; std::uint8_t v;
-                    std::memcpy(&k, &buf[pos], 4); pos += 4;
-                    std::memcpy(&v, &buf[pos], 1); pos += 1;
-                    ast.region_by_lambda_id_[k] = v;
-                }
-            }
-            // root scalar
-            std::memcpy(&ast.root, &buf[pos], 4); pos += 4;
-        }
+        pos += 2;  // reserved
         return ast;
     }
 

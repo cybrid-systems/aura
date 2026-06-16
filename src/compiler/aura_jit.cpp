@@ -318,10 +318,10 @@ struct LLVMBuilder {
 
     void declare_runtime() {
         auto i64 = llvm::Type::getInt64Ty(ctx);
-        auto ptr_i64 = llvm::PointerType::getUnqual(i64);
+        auto ptr_i64 = llvm::PointerType::getUnqual(ctx);
         auto void_ty = llvm::Type::getVoidTy(ctx);
         auto i8_ty = llvm::Type::getInt8Ty(ctx);
-        auto ptr_i8 = llvm::PointerType::getUnqual(i8_ty);
+        auto ptr_i8 = llvm::PointerType::getUnqual(ctx);
 
         fn_alloc_closure =
             llvm::Function::Create(llvm::FunctionType::get(i64, {i64}, false),
@@ -460,7 +460,7 @@ struct LLVMBuilder {
 
         // Hash table direct accessor (Phase 4c): get FlatHashTable*, then GEP
         {
-            auto i8_ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(ctx));
+            auto i8_ptr = llvm::PointerType::getUnqual(ctx);
             fn_hash_get_flat_table =
                 llvm::Function::Create(llvm::FunctionType::get(i8_ptr, {i64}, false),
                                         llvm::Function::ExternalLinkage, "aura_hash_get_flat_table", mod);
@@ -539,13 +539,13 @@ struct LLVMBuilder {
                 auto b_is_float = irb->CreateICmpSLE(b, c64(FLOAT_BIAS_VAL));
                 auto any_float = irb->CreateOr(a_is_float, b_is_float);
                 auto a_dbl = irb->CreateSelect(a_is_float,
-                    irb->CreateCall(fn_float_ref, {a}),
+                    irb->CreateCall(llvm::FunctionCallee(fn_float_ref), llvm::ArrayRef<llvm::Value*>{a}),
                     irb->CreateSIToFP(irb->CreateAShr(a, c64(1)), double_ty));
                 auto b_dbl = irb->CreateSelect(b_is_float,
-                    irb->CreateCall(fn_float_ref, {b}),
+                    irb->CreateCall(llvm::FunctionCallee(fn_float_ref), llvm::ArrayRef<llvm::Value*>{b}),
                     irb->CreateSIToFP(irb->CreateAShr(b, c64(1)), double_ty));
                 auto fsum = irb->CreateFAdd(a_dbl, b_dbl);
-                auto float_res = irb->CreateCall(fn_alloc_float, {fsum});
+                auto float_res = irb->CreateCall(llvm::FunctionCallee(fn_alloc_float), llvm::ArrayRef<llvm::Value*>{fsum});
                 auto fixnum_res = irb->CreateAdd(a, b);
                 store(inst.ops[0], irb->CreateSelect(any_float, float_res, fixnum_res));
                 return true;
@@ -561,13 +561,13 @@ struct LLVMBuilder {
                 auto b_is_float = irb->CreateICmpSLE(b, c64(FLOAT_BIAS_VAL));
                 auto any_float = irb->CreateOr(a_is_float, b_is_float);
                 auto a_dbl = irb->CreateSelect(a_is_float,
-                    irb->CreateCall(fn_float_ref, {a}),
+                    irb->CreateCall(llvm::FunctionCallee(fn_float_ref), llvm::ArrayRef<llvm::Value*>{a}),
                     irb->CreateSIToFP(irb->CreateAShr(a, c64(1)), double_ty));
                 auto b_dbl = irb->CreateSelect(b_is_float,
-                    irb->CreateCall(fn_float_ref, {b}),
+                    irb->CreateCall(llvm::FunctionCallee(fn_float_ref), llvm::ArrayRef<llvm::Value*>{b}),
                     irb->CreateSIToFP(irb->CreateAShr(b, c64(1)), double_ty));
                 auto fsub = irb->CreateFSub(a_dbl, b_dbl);
-                auto float_res = irb->CreateCall(fn_alloc_float, {fsub});
+                auto float_res = irb->CreateCall(llvm::FunctionCallee(fn_alloc_float), llvm::ArrayRef<llvm::Value*>{fsub});
                 auto fixnum_res = irb->CreateSub(a, b);
                 store(inst.ops[0], irb->CreateSelect(any_float, float_res, fixnum_res));
                 return true;
@@ -584,13 +584,13 @@ struct LLVMBuilder {
                 auto b_is_float = irb->CreateICmpSLE(b, c64(FLOAT_BIAS_VAL));
                 auto any_float = irb->CreateOr(a_is_float, b_is_float);
                 auto a_dbl = irb->CreateSelect(a_is_float,
-                    irb->CreateCall(fn_float_ref, {a}),
+                    irb->CreateCall(llvm::FunctionCallee(fn_float_ref), llvm::ArrayRef<llvm::Value*>{a}),
                     irb->CreateSIToFP(irb->CreateAShr(a, c64(1)), double_ty));
                 auto b_dbl = irb->CreateSelect(b_is_float,
-                    irb->CreateCall(fn_float_ref, {b}),
+                    irb->CreateCall(llvm::FunctionCallee(fn_float_ref), llvm::ArrayRef<llvm::Value*>{b}),
                     irb->CreateSIToFP(irb->CreateAShr(b, c64(1)), double_ty));
                 auto fmul = irb->CreateFMul(a_dbl, b_dbl);
-                auto float_res = irb->CreateCall(fn_alloc_float, {fmul});
+                auto float_res = irb->CreateCall(llvm::FunctionCallee(fn_alloc_float), llvm::ArrayRef<llvm::Value*>{fmul});
                 // Fixnum path: tagged fixnums (val<<1), multiply → (a*b)>>1
                 auto fixnum_res = irb->CreateAShr(irb->CreateMul(a, b), c64(1));
                 store(inst.ops[0], irb->CreateSelect(any_float, float_res, fixnum_res));
@@ -612,15 +612,15 @@ struct LLVMBuilder {
                 auto b_is_float = irb->CreateICmpSLE(divisor, c64(FLOAT_BIAS_VAL));
                 auto any_float = irb->CreateOr(a_is_float, b_is_float);
                 auto a_dbl = irb->CreateSelect(a_is_float,
-                    irb->CreateCall(fn_float_ref, {dividend}),
+                    irb->CreateCall(llvm::FunctionCallee(fn_float_ref), llvm::ArrayRef<llvm::Value*>{dividend}),
                     irb->CreateSIToFP(irb->CreateAShr(dividend, c64(1)), double_ty));
                 auto b_dbl = irb->CreateSelect(b_is_float,
-                    irb->CreateCall(fn_float_ref, {divisor}),
+                    irb->CreateCall(llvm::FunctionCallee(fn_float_ref), llvm::ArrayRef<llvm::Value*>{divisor}),
                     irb->CreateSIToFP(irb->CreateAShr(divisor, c64(1)), double_ty));
                 auto is_zero_f = irb->CreateFCmpOEQ(b_dbl, llvm::ConstantFP::get(double_ty, 0.0));
                 auto safe_b = irb->CreateSelect(is_zero_f, llvm::ConstantFP::get(double_ty, 1.0), b_dbl);
                 auto fdiv = irb->CreateFDiv(a_dbl, safe_b);
-                auto float_res = irb->CreateCall(fn_alloc_float, {fdiv});
+                auto float_res = irb->CreateCall(llvm::FunctionCallee(fn_alloc_float), llvm::ArrayRef<llvm::Value*>{fdiv});
                 auto is_zero = irb->CreateICmpEQ(divisor, c64(0));
                 auto safe_div = irb->CreateSelect(is_zero, c64(1), divisor);
                 auto div_result = irb->CreateSDiv(dividend, safe_div);
@@ -793,7 +793,7 @@ struct LLVMBuilder {
                     metrics->intrinsic_count.fetch_add(
                         1, std::memory_order_relaxed);
                 }
-                auto call = irb->CreateCall(fn_alloc_float, {fp});
+                auto call = irb->CreateCall(llvm::FunctionCallee(fn_alloc_float), llvm::ArrayRef<llvm::Value*>{fp});
                 store(inst.ops[0], call);
                 return true;
             }
@@ -802,7 +802,15 @@ struct LLVMBuilder {
                 std::string_view str_content;
                 if (string_pool && inst.ops[1] < string_pool->size())
                     str_content = (*string_pool)[inst.ops[1]];
-                auto str_ptr = irb->CreateGlobalStringPtr(str_content);
+                // LLVM 22 deprecation fix: CreateGlobalStringPtr → CreateGlobalString
+                // CreateGlobalStringPtr returned Constant* (i8*); CreateGlobalString
+                // returns GlobalVariable* ([N x i8]). To get the i8* pointer, do the
+                // GEP [0, 0] inline (this is exactly what CreateGlobalStringPtr used
+                // to do internally).
+                auto str_gv = irb->CreateGlobalString(str_content);
+                auto* zero32 = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+                auto str_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
+                    str_gv->getValueType(), str_gv, llvm::ArrayRef<llvm::Constant*>{zero32, zero32});
                 // Issue #198: aura_alloc_string intrinsic (2/4 of
                 // the #194 migration). Bumps intrinsic_count on
                 // every OpConstString. The full migration would
@@ -817,7 +825,7 @@ struct LLVMBuilder {
                     metrics->intrinsic_count.fetch_add(
                         1, std::memory_order_relaxed);
                 }
-                auto call = irb->CreateCall(fn_alloc_string, {str_ptr});
+                auto call = irb->CreateCall(llvm::FunctionCallee(fn_alloc_string), llvm::ArrayRef<llvm::Value*>{str_ptr});
                 store(inst.ops[0], call);
                 return true;
             }
@@ -828,11 +836,11 @@ struct LLVMBuilder {
                 // Check escape analysis: non-escaping closures use arena allocation
                 if (fn.escape_map && result_slot < fn.local_count && !fn.escape_map[result_slot]) {
                     // NON_ESCAPING: arena-allocated closure
-                    auto call = irb->CreateCall(fn_alloc_closure_arena, {c64(inst.ops[1])});
+                    auto call = irb->CreateCall(llvm::FunctionCallee(fn_alloc_closure_arena), llvm::ArrayRef<llvm::Value*>{c64(inst.ops[1])});
                     store(result_slot, call);
                 } else {
                     // ESCAPED or unknown: heap-allocated closure
-                    auto call = irb->CreateCall(fn_alloc_closure, {c64(inst.ops[1])});
+                    auto call = irb->CreateCall(llvm::FunctionCallee(fn_alloc_closure), llvm::ArrayRef<llvm::Value*>{c64(inst.ops[1])});
                     store(result_slot, call);
                 }
                 return true;
@@ -841,7 +849,7 @@ struct LLVMBuilder {
                 // ops[0] = closure_slot, ops[1] = env_idx, ops[2] = var_slot
                 auto closure_val = load(inst.ops[0]);
                 auto env_val = load(inst.ops[2]);
-                irb->CreateCall(fn_closure_capture, {closure_val, c64(inst.ops[1]), env_val});
+                irb->CreateCall(llvm::FunctionCallee(fn_closure_capture), llvm::ArrayRef<llvm::Value*>{closure_val, c64(inst.ops[1]), env_val});
                 return true;
             }
             // Issue #170 Phase 1 / item #1: CaptureRef captures a
@@ -862,7 +870,7 @@ struct LLVMBuilder {
                 auto cell_slot = c64(inst.ops[2]);  // IR slot of the cell
                 // -1 - cell_slot (matches ir_executor_impl.cpp:842)
                 auto encoded = irb->CreateSub(c64(-1), cell_slot);
-                irb->CreateCall(fn_closure_capture, {closure_val, c64(inst.ops[1]), encoded});
+                irb->CreateCall(llvm::FunctionCallee(fn_closure_capture), llvm::ArrayRef<llvm::Value*>{closure_val, c64(inst.ops[1]), encoded});
                 return true;
             }
             // Issue #170 Phase 1 / item #1: Apply is the closure
@@ -890,7 +898,7 @@ struct LLVMBuilder {
                     fn_closure_call,
                     {closure,
                      irb->CreateBitCast(args_arr,
-                                        llvm::PointerType::getUnqual(llvm::Type::getInt64Ty(ctx))),
+                                        llvm::PointerType::getUnqual(ctx)),
                      c64(arg_count)});
                 store(inst.ops[2], call);
                 return true;
@@ -910,7 +918,7 @@ struct LLVMBuilder {
                     fn_closure_call,
                     {callee,
                      irb->CreateBitCast(args_arr,
-                                        llvm::PointerType::getUnqual(llvm::Type::getInt64Ty(ctx))),
+                                        llvm::PointerType::getUnqual(ctx)),
                      c64(arg_count)});
                 store(inst.ops[3], call);
                 return true;
@@ -918,17 +926,17 @@ struct LLVMBuilder {
 
             // Cells
             case OpNewCell: {
-                auto call = irb->CreateCall(fn_new_cell);
+                auto call = irb->CreateCall(llvm::FunctionCallee(fn_new_cell));
                 store(inst.ops[0], call);
                 return true;
             }
             case OpCellGet: {
-                auto call = irb->CreateCall(fn_cell_get, {load(inst.ops[1])});
+                auto call = irb->CreateCall(llvm::FunctionCallee(fn_cell_get), llvm::ArrayRef<llvm::Value*>{load(inst.ops[1])});
                 store(inst.ops[0], call);
                 return true;
             }
             case OpCellSet: {
-                irb->CreateCall(fn_cell_set, {load(inst.ops[0]), load(inst.ops[1])});
+                irb->CreateCall(llvm::FunctionCallee(fn_cell_set), llvm::ArrayRef<llvm::Value*>{load(inst.ops[0]), load(inst.ops[1])});
                 return true;
             }
 
@@ -959,9 +967,9 @@ struct LLVMBuilder {
             }
             case OpDropOp: {
                 auto val = load(inst.ops[0]);
-                irb->CreateCall(fn_drop_pair, {val});
-                irb->CreateCall(fn_drop_cell, {val});
-                irb->CreateCall(fn_drop_closure, {val});
+                irb->CreateCall(llvm::FunctionCallee(fn_drop_pair), llvm::ArrayRef<llvm::Value*>{val});
+                irb->CreateCall(llvm::FunctionCallee(fn_drop_cell), llvm::ArrayRef<llvm::Value*>{val});
+                irb->CreateCall(llvm::FunctionCallee(fn_drop_closure), llvm::ArrayRef<llvm::Value*>{val});
                 return true;
             }
 
@@ -1003,7 +1011,7 @@ struct LLVMBuilder {
                 // ops[0] = handler_block, ops[1] = result_slot, ops[2] = payload_slot
                 auto handler_block = inst.ops[0];
                 auto payload_slot  = inst.ops[2];
-                irb->CreateCall(fn_exception_push, {c64(handler_block), c64(payload_slot)});
+                irb->CreateCall(llvm::FunctionCallee(fn_exception_push), llvm::ArrayRef<llvm::Value*>{c64(handler_block), c64(payload_slot)});
                 return true;
             }
             case OpTryEnd: {
@@ -1011,7 +1019,7 @@ struct LLVMBuilder {
                 // JIT — the try body's result was already in a
                 // separate slot; the IR executor's TryEnd is also
                 // a no-op for the same reason).
-                irb->CreateCall(fn_exception_pop);
+                irb->CreateCall(llvm::FunctionCallee(fn_exception_pop));
                 return true;
             }
             case OpRaise: {
@@ -1020,13 +1028,13 @@ struct LLVMBuilder {
                 // 1. Read the top frame's payload_slot, store cause
                 //    (the per-fiber ExStack's top frame has a
                 //    payload_slot that the handler reads from).
-                auto payload = irb->CreateCall(fn_exception_top_payload, {});
+                auto payload = irb->CreateCall(llvm::FunctionCallee(fn_exception_top_payload), llvm::ArrayRef<llvm::Value*>{});
                 auto payload_i32 = irb->CreateTrunc(payload, llvm::Type::getInt32Ty(ctx));
                 auto gep = irb->CreateGEP(llvm::Type::getInt64Ty(ctx),
                                           llvm_locals[0], payload_i32);
                 irb->CreateStore(cause, gep);
                 // 2. Read the top frame's handler_block
-                auto handler = irb->CreateCall(fn_exception_top_handler, {});
+                auto handler = irb->CreateCall(llvm::FunctionCallee(fn_exception_top_handler), llvm::ArrayRef<llvm::Value*>{});
                 auto handler_i32 = irb->CreateTrunc(handler, llvm::Type::getInt32Ty(ctx));
                 // 3. Store the cause to result slot (for the
                 //    handler's reading) — this is the "raised value"
@@ -1079,8 +1087,7 @@ struct LLVMBuilder {
                         // (Actually, the personality is set on
                         // the module, not the basic block; this
                         // is a no-op call for documentation.)
-                        auto* i8_ptr_ty = llvm::PointerType::getUnqual(
-                            llvm::Type::getInt8Ty(ctx));
+                        auto* i8_ptr_ty = llvm::PointerType::getUnqual(ctx);
                         // Landingpad signature: (i8*, i32) result,
                         // catch-all (no permitted type clauses).
                         // The personality function (set on the
@@ -1209,7 +1216,7 @@ struct LLVMBuilder {
                     (void)cdr;  // (L2 specialization: only car is in slot 0
                                  // for a real L2 we'd need 2 slots or a struct)
                     // For now: keep the original heap allocation for cdr
-                    auto call = irb->CreateCall(fn_alloc_pair_arena, {car, cdr});
+                    auto call = irb->CreateCall(llvm::FunctionCallee(fn_alloc_pair_arena), llvm::ArrayRef<llvm::Value*>{car, cdr});
                     // Use the heap call result (safer correctness); L2
                     // demo is in the comment above showing where the
                     // alloca would go. Issue #60 acceptance #1 is L1+L2
@@ -1218,11 +1225,11 @@ struct LLVMBuilder {
                 } else if (fn.escape_map && result_slot < fn.local_count &&
                            !fn.escape_map[result_slot]) {
                     // NON_ESCAPING: allocate from TL arena
-                    auto call = irb->CreateCall(fn_alloc_pair_arena, {car, cdr});
+                    auto call = irb->CreateCall(llvm::FunctionCallee(fn_alloc_pair_arena), llvm::ArrayRef<llvm::Value*>{car, cdr});
                     store(result_slot, call);
                 } else {
                     // ESCAPED or unknown: allocate from global heap
-                    auto call = irb->CreateCall(fn_alloc_pair, {car, cdr});
+                    auto call = irb->CreateCall(llvm::FunctionCallee(fn_alloc_pair), llvm::ArrayRef<llvm::Value*>{car, cdr});
                     store(result_slot, call);
                 }
                 return true;
@@ -1247,7 +1254,7 @@ struct LLVMBuilder {
                 bool spec_pair = (inst_shape(inst) == SHAPE_PAIR);
                 if (spec_pair) {
                     auto* i64_ty = llvm::Type::getInt64Ty(ctx);
-                    auto* cur = irb->CreateCall(fn_get_defuse_version, {});
+                    auto* cur = irb->CreateCall(llvm::FunctionCallee(fn_get_defuse_version), llvm::ArrayRef<llvm::Value*>{});
                     auto* expected = irb->CreateLoad(i64_ty, llvm_locals[fn.local_count]);
                     auto* match = irb->CreateICmpEQ(cur, expected);
                     auto* entry_bb = irb->GetInsertBlock();
@@ -1274,7 +1281,7 @@ struct LLVMBuilder {
                         metrics->intrinsic_count.fetch_add(
                             1, std::memory_order_relaxed);
                     }
-                    auto* fast_result = irb->CreateCall(fn_pair_car_unchecked, {pair_val});
+                    auto* fast_result = irb->CreateCall(llvm::FunctionCallee(fn_pair_car_unchecked), llvm::ArrayRef<llvm::Value*>{pair_val});
                     irb->CreateBr(bb_done);
 
                     // Slow path: bounds check + lock (Phase 1)
@@ -1283,8 +1290,8 @@ struct LLVMBuilder {
                     // before taking the slow path so observability
                     // tools see the deopt event. ~1ns relaxed atomic
                     // increment, negligible compared to the lock.
-                    irb->CreateCall(fn_deopt_inc, {});
-                    auto* slow_result = irb->CreateCall(fn_pair_car, {pair_val});
+                    irb->CreateCall(llvm::FunctionCallee(fn_deopt_inc), llvm::ArrayRef<llvm::Value*>{});
+                    auto* slow_result = irb->CreateCall(llvm::FunctionCallee(fn_pair_car), llvm::ArrayRef<llvm::Value*>{pair_val});
                     irb->CreateBr(bb_done);
 
                     // Merge
@@ -1295,7 +1302,7 @@ struct LLVMBuilder {
                     store(inst.ops[0], phi);
                 } else {
                     // Non-L2 path: always take the slow path (with bounds + lock)
-                    auto call = irb->CreateCall(fn_pair_car, {pair_val});
+                    auto call = irb->CreateCall(llvm::FunctionCallee(fn_pair_car), llvm::ArrayRef<llvm::Value*>{pair_val});
                     store(inst.ops[0], call);
                 }
                 return true;
@@ -1306,7 +1313,7 @@ struct LLVMBuilder {
                 bool spec_pair = (inst_shape(inst) == SHAPE_PAIR);
                 if (spec_pair) {
                     auto* i64_ty = llvm::Type::getInt64Ty(ctx);
-                    auto* cur = irb->CreateCall(fn_get_defuse_version, {});
+                    auto* cur = irb->CreateCall(llvm::FunctionCallee(fn_get_defuse_version), llvm::ArrayRef<llvm::Value*>{});
                     auto* expected = irb->CreateLoad(i64_ty, llvm_locals[fn.local_count]);
                     auto* match = irb->CreateICmpEQ(cur, expected);
                     auto* entry_bb = irb->GetInsertBlock();
@@ -1317,13 +1324,13 @@ struct LLVMBuilder {
                     irb->CreateCondBr(match, bb_fast, bb_slow);
 
                     irb->SetInsertPoint(bb_fast);
-                    auto* fast_result = irb->CreateCall(fn_pair_cdr_unchecked, {pair_val});
+                    auto* fast_result = irb->CreateCall(llvm::FunctionCallee(fn_pair_cdr_unchecked), llvm::ArrayRef<llvm::Value*>{pair_val});
                     irb->CreateBr(bb_done);
 
                     irb->SetInsertPoint(bb_slow);
                     // Issue #157 Phase 1c: bump the deopt counter.
-                    irb->CreateCall(fn_deopt_inc, {});
-                    auto* slow_result = irb->CreateCall(fn_pair_cdr, {pair_val});
+                    irb->CreateCall(llvm::FunctionCallee(fn_deopt_inc), llvm::ArrayRef<llvm::Value*>{});
+                    auto* slow_result = irb->CreateCall(llvm::FunctionCallee(fn_pair_cdr), llvm::ArrayRef<llvm::Value*>{pair_val});
                     irb->CreateBr(bb_done);
 
                     irb->SetInsertPoint(bb_done);
@@ -1332,7 +1339,7 @@ struct LLVMBuilder {
                     phi->addIncoming(slow_result, bb_slow);
                     store(inst.ops[0], phi);
                 } else {
-                    auto call = irb->CreateCall(fn_pair_cdr, {pair_val});
+                    auto call = irb->CreateCall(llvm::FunctionCallee(fn_pair_cdr), llvm::ArrayRef<llvm::Value*>{pair_val});
                     store(inst.ops[0], call);
                 }
                 return true;
@@ -1342,7 +1349,7 @@ struct LLVMBuilder {
             case OpCastOp: {
                 // ops[0] = result_slot, ops[1] = value_slot, ops[2] = type_tag
                 auto val = load(inst.ops[1]);
-                auto call = irb->CreateCall(fn_cast_op, {val, c64(inst.ops[2])});
+                auto call = irb->CreateCall(llvm::FunctionCallee(fn_cast_op), llvm::ArrayRef<llvm::Value*>{val, c64(inst.ops[2])});
                 store(inst.ops[0], call);
                 return true;
             }
@@ -1361,12 +1368,12 @@ struct LLVMBuilder {
                 // Fast-path: inline known primitives to skip aura_prim_call dispatch
                 switch (prim_id) {
                 case PrimNewline:
-                    irb->CreateCall(fn_newline);
+                    irb->CreateCall(llvm::FunctionCallee(fn_newline));
                     store(result_slot, c64(0));
                     return true;
                 case PrimDisplay:
                 case PrimWrite:
-                    irb->CreateCall(fn_display_int, {a1});
+                    irb->CreateCall(llvm::FunctionCallee(fn_display_int), llvm::ArrayRef<llvm::Value*>{a1});
                     store(result_slot, a1);
                     return true;
                 case PrimQuotient: {
@@ -1445,13 +1452,13 @@ struct LLVMBuilder {
 
             case OpArenaPush: {
                 // ArenaPush(result_slot, size) — push TL arena frame
-                irb->CreateCall(fn_arena_push);
+                irb->CreateCall(llvm::FunctionCallee(fn_arena_push));
                 store(inst.ops[0], c64(0));
                 return true;
             }
             case OpArenaPop: {
                 // ArenaPop(saved_offset_slot) — pop TL arena frame
-                irb->CreateCall(fn_arena_pop);
+                irb->CreateCall(llvm::FunctionCallee(fn_arena_pop));
                 return true;
             }
 
@@ -1476,8 +1483,8 @@ struct LLVMBuilder {
 
                 auto i64_ty   = llvm::Type::getInt64Ty(ctx);
                 auto i8_ty    = llvm::Type::getInt8Ty(ctx);
-                auto i8_ptr   = llvm::PointerType::getUnqual(i8_ty);
-                auto i64_ptr  = llvm::PointerType::getUnqual(i64_ty);
+                auto i8_ptr   = llvm::PointerType::getUnqual(ctx);
+                auto i64_ptr  = llvm::PointerType::getUnqual(ctx);
 
                 // Issue #157 Phase 2b: acquire read lock before
                 // fn_hash_get_flat_table. Held across the entire
@@ -1485,10 +1492,10 @@ struct LLVMBuilder {
                 // in done_bb. This makes the FlatHashTable pointer
                 // fetch + the GEPs + loads safe vs concurrent
                 // aura_hash_set / aura_hash_remove / rebuild.
-                irb->CreateCall(fn_lock_workspace_read, {});
+                irb->CreateCall(llvm::FunctionCallee(fn_lock_workspace_read), llvm::ArrayRef<llvm::Value*>{});
 
                 // Call aura_hash_get_flat_table — returns i8* (FlatHashTable*)
-                auto ht_ptr = irb->CreateCall(fn_hash_get_flat_table, {hash_val});
+                auto ht_ptr = irb->CreateCall(llvm::FunctionCallee(fn_hash_get_flat_table), llvm::ArrayRef<llvm::Value*>{hash_val});
 
                 // Declare all basic blocks upfront
                 auto null_bb = llvm::BasicBlock::Create(ctx, "hnull", func);
@@ -1560,7 +1567,7 @@ struct LLVMBuilder {
                 irb->SetInsertPoint(cmp_bb);
                 auto key_gep = irb->CreateGEP(i64_ty, keys_ptr, phi_idx);
                 auto stored_key = irb->CreateLoad(i64_ty, key_gep);
-                auto eq_res = irb->CreateCall(fn_hash_key_eq, {stored_key, key_val});
+                auto eq_res = irb->CreateCall(llvm::FunctionCallee(fn_hash_key_eq), llvm::ArrayRef<llvm::Value*>{stored_key, key_val});
                 auto eq = irb->CreateICmpNE(eq_res, c64(0));
                 irb->CreateCondBr(eq, found_bb, next_bb);
 
@@ -1592,7 +1599,7 @@ struct LLVMBuilder {
                 // inline IR region (null_bb branches here, miss_bb
                 // branches here, found_bb branches here, the loop
                 // backedge stays within the lock).
-                irb->CreateCall(fn_unlock_workspace_read, {});
+                irb->CreateCall(llvm::FunctionCallee(fn_unlock_workspace_read), llvm::ArrayRef<llvm::Value*>{});
                 return true;
             }
             case OpHashSet: {
@@ -1601,7 +1608,7 @@ struct LLVMBuilder {
                 // fn_hash_set extracts key/val from pair via g_pair_slots.
                 auto hash = load(inst.ops[1]);
                 auto pair = load(inst.ops[2]);
-                auto call = irb->CreateCall(fn_hash_set, {hash, pair});
+                auto call = irb->CreateCall(llvm::FunctionCallee(fn_hash_set), llvm::ArrayRef<llvm::Value*>{hash, pair});
                 store(inst.ops[0], call); // hash-set! returns void (0)
                 return true;
             }
@@ -1609,7 +1616,7 @@ struct LLVMBuilder {
                 // HashRemove(result_slot, hash_slot, key_slot)
                 auto hash = load(inst.ops[1]);
                 auto key = load(inst.ops[2]);
-                auto call = irb->CreateCall(fn_hash_remove, {hash, key});
+                auto call = irb->CreateCall(llvm::FunctionCallee(fn_hash_remove), llvm::ArrayRef<llvm::Value*>{hash, key});
                 store(inst.ops[0], call);
                 return true;
             }
@@ -1919,7 +1926,7 @@ static bool emit_native_object_llvm(const FlatFunction& fn, const std::string& o
     auto unique_name = (fn_name == "__top__")
         ? fn_name
         : fn_name + "_" + std::to_string(my_id);
-    auto ptr_i64 = llvm::PointerType::getUnqual(llvm::Type::getInt64Ty(local_ctx));
+    auto ptr_i64 = llvm::PointerType::getUnqual(local_ctx);
     auto i32_ty = llvm::Type::getInt32Ty(local_ctx);
     auto ret_ty = llvm::Type::getInt64Ty(local_ctx);
     auto fn_type = llvm::FunctionType::get(ret_ty, {ptr_i64, i32_ty}, false);
@@ -1988,7 +1995,8 @@ static bool emit_native_object_llvm(const FlatFunction& fn, const std::string& o
     auto triple_str = llvm::sys::getDefaultTargetTriple();
     llvm::Triple triple(triple_str);
     std::string err;
-    const auto* target = llvm::TargetRegistry::lookupTarget(triple_str, err);
+    // LLVM 22 deprecation fix: lookupTarget(StringRef) → lookupTarget(Triple)
+    const auto* target = llvm::TargetRegistry::lookupTarget(triple, err);
     if (!target) {
         fprintf(stderr, "AOT: cannot find target %s: %s\n", triple_str.c_str(), err.c_str());
         return false;
@@ -2277,7 +2285,7 @@ struct AuraJIT::Impl {
             builder.string_pool = string_pool_;
 
         // Build function
-        auto ptr_i64 = llvm::PointerType::getUnqual(llvm::Type::getInt64Ty(ctx));
+        auto ptr_i64 = llvm::PointerType::getUnqual(ctx);
         auto i32_ty = llvm::Type::getInt32Ty(ctx);
         auto ret_ty = llvm::Type::getInt64Ty(ctx);
         auto fn_type = llvm::FunctionType::get(ret_ty, {ptr_i64, i32_ty}, false);
@@ -2507,7 +2515,8 @@ bool AuraJIT::compile_to_object_file(const std::string& path) {
     auto triple_str = llvm::sys::getDefaultTargetTriple();
     llvm::Triple triple(triple_str);
     std::string err;
-    const auto* target = llvm::TargetRegistry::lookupTarget(triple_str, err);
+    // LLVM 22 deprecation fix: lookupTarget(StringRef) → lookupTarget(Triple)
+    const auto* target = llvm::TargetRegistry::lookupTarget(triple, err);
     if (!target) return false;
 
     auto tm = std::unique_ptr<llvm::TargetMachine>(
