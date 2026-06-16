@@ -170,7 +170,24 @@ struct TestFlatAST {
         return ReaderLockGuard(this);
     }
 
-    // ── Mutators (routed through guard + mark_dirty) ──
+    // ── Mutators (routed through guard + mark_dirty + mutation_log_) ──
+    // Issue #222 slice 2/3: structural mutates also append a
+    // MutationRecord to the log + mark_dirty_upward(parent).
+    struct MockMutationRecord {
+        NodeId parent;
+        std::uint32_t child_idx;
+        NodeId old_child;
+        NodeId new_child;
+        const char* op_name;
+    };
+    std::vector<MockMutationRecord> mutation_log_;
+    NodeId mark_dirty_upward_target_ = NULL_NODE;
+
+    void mark_dirty_upward(NodeId id, std::uint8_t reasons = 0x01) {
+        if (id != NULL_NODE) mark_dirty(id, reasons);
+        mark_dirty_upward_target_ = id;
+    }
+
     void set_child(NodeId id, std::uint32_t idx, NodeId child) {
         StructuralMutationGuard guard(this);
         const auto& list = children_[id];
@@ -181,7 +198,8 @@ struct TestFlatAST {
         children_[id] = list.with_set(idx, child);
         if (child != NULL_NODE && child < parent_.size())
             parent_[child] = id;
-        mark_dirty(id, kGeneralDirty);
+        mutation_log_.push_back({id, idx, old_cid, child, "structural-set-child"});
+        mark_dirty_upward(id);
     }
     void insert_child(NodeId id, std::uint32_t idx, NodeId child) {
         StructuralMutationGuard guard(this);
@@ -190,7 +208,8 @@ struct TestFlatAST {
         children_[id] = list.with_insert(pos, child);
         if (child != NULL_NODE && child < parent_.size())
             parent_[child] = id;
-        mark_dirty(id, kGeneralDirty);
+        mutation_log_.push_back({id, pos, NULL_NODE, child, "structural-insert-child"});
+        mark_dirty_upward(id);
     }
     void remove_child(NodeId id, std::uint32_t idx) {
         StructuralMutationGuard guard(this);
@@ -200,7 +219,8 @@ struct TestFlatAST {
             if (cid != NULL_NODE && cid < parent_.size())
                 parent_[cid] = NULL_NODE;
             children_[id] = list.with_erase(idx);
-            mark_dirty(id, kGeneralDirty);
+            mutation_log_.push_back({id, idx, cid, NULL_NODE, "structural-remove-child"});
+            mark_dirty_upward(id);
         }
     }
 };
@@ -466,12 +486,60 @@ void test_5_explicit_guard() {
     } \
 } while(0)
 
+// ── Test 6: Mutation log + mark_dirty_upward (slice 2/3) ───
+void test_6_mutation_log() {
+    PRINTLN("\n--- Test 6: Mutation log + mark_dirty_upward ---");
+    TestFlatAST ast;
+    auto a = ast.add_node();
+    auto b = ast.add_node();
+    auto c = ast.add_node();
+
+    // Initially: empty mutation log
+    CHECK(ast.mutation_log_.empty(), "mutation log empty at start");
+
+    // insert_child: appends one record (idx 0, list is empty so pos=0)
+    ast.insert_child(a, 0, b);
+    CHECK(ast.mutation_log_.size() == 1, "insert_child appended 1 mutation record");
+    CHECK(ast.mutation_log_[0].op_name == std::string("structural-insert-child"),
+          "op_name is structural-insert-child");
+    CHECK(ast.mutation_log_[0].parent == a, "mutation record parent correct");
+    CHECK(ast.mutation_log_[0].child_idx == 0, "mutation record child_idx correct");
+    CHECK(ast.mutation_log_[0].old_child == NULL_NODE, "old_child NULL (was empty)");
+    CHECK(ast.mutation_log_[0].new_child == b, "new_child is b");
+    CHECK(ast.mark_dirty_upward_target_ == a, "mark_dirty_upward called with parent");
+
+    // set_child on existing slot: appends one record
+    ast.set_child(a, 0, c);
+    CHECK(ast.mutation_log_.size() == 2, "set_child appended 1 mutation record");
+    CHECK(ast.mutation_log_[1].op_name == std::string("structural-set-child"),
+          "op_name is structural-set-child");
+    CHECK(ast.mutation_log_[1].parent == a, "set_child parent correct");
+    CHECK(ast.mutation_log_[1].child_idx == 0, "set_child child_idx correct");
+    CHECK(ast.mutation_log_[1].old_child == b, "set_child old_child is b");
+    CHECK(ast.mutation_log_[1].new_child == c, "set_child new_child is c");
+
+    // remove_child: appends another
+    ast.remove_child(a, 0);
+    CHECK(ast.mutation_log_.size() == 3, "remove_child appended 1 mutation record");
+    CHECK(ast.mutation_log_[2].op_name == std::string("structural-remove-child"),
+          "op_name is structural-remove-child");
+    CHECK(ast.mutation_log_[2].old_child == c, "remove old_child is c");
+    CHECK(ast.mutation_log_[2].new_child == NULL_NODE, "remove new_child is NULL_NODE");
+
+    // No-ops (out-of-range) don't append
+    std::size_t before = ast.mutation_log_.size();
+    ast.set_child(a, 999, NULL_NODE);  // out of range
+    ast.remove_child(a, 999);          // out of range
+    CHECK(ast.mutation_log_.size() == before, "out-of-range ops don't append to log");
+}
+
 int main() {
     SAFE_TEST(t1, test_1_single_thread);
     SAFE_TEST(t2, test_2_reader_lock);
     SAFE_TEST(t3, test_3_two_thread_smoke);
     SAFE_TEST(t4, test_4_multi_thread_stress);
     SAFE_TEST(t5, test_5_explicit_guard);
+    SAFE_TEST(t6, test_6_mutation_log);
     std::fprintf(stdout, "\n──────────────────────────────────────\n");
     std::fprintf(stdout, "Total: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
