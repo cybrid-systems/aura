@@ -1,17 +1,3 @@
-// Issue #219: include the gap-buffer header in the module's
-// global module fragment. The global fragment is processed
-// BEFORE the module's purview, so the std includes in
-// gap_buffer.hh don't conflict with `import std;` (which
-// only takes effect after the module declaration).
-module;
-
-// GapBuffer is a header-only template. It uses raw
-// `::operator new` + `<cstring>` + `<type_traits>` — NO
-// std containers or pmr allocators, so it avoids the
-// GCC 16.1 std module + local std #include conflict that
-// blocks reflect.hh in a C++ module.
-#include "core/gap_buffer.hh"
-
 export module aura.core.ast;
 import std;
 import aura.core.type;
@@ -490,8 +476,6 @@ private:
         int_val_.push_back(0);
         float_val_.push_back(0.0);
         sym_id_.push_back(INVALID_SYM);
-        child_begin_.push_back(0);
-        child_count_.push_back(0);
         // Issue #220: init the per-node children_ entry (uses
         // the outer's allocator, which is the default for now).
         children_.emplace_back();
@@ -523,20 +507,10 @@ private:
     std::pmr::vector<std::int64_t> int_val_;
     std::pmr::vector<double> float_val_;
     std::pmr::vector<SymId> sym_id_;
-    std::pmr::vector<std::uint32_t> child_begin_;
-    std::pmr::vector<std::uint32_t> child_count_;
-    // Issue #219: gap-buffer for O(1) amortized insert/remove.
-    // See src/core/gap_buffer.hh for the data structure.
-    GapBuffer<NodeId> child_data_;
-    // Issue #220 (partial): per-node children list. Each node
-    // has its own contiguous std::pmr::vector<NodeId> of child
-    // NodeIds. The accessors (children(), set_child(),
-    // insert_child(), remove_child(), get().children) all read
-    // from this field. child_data_ + child_begin_ + child_count_
-    // are kept populated for the wire format (v1 columnar) and
-    // for backward-compatibility with cache_impl.cpp. A
-    // follow-up commit will migrate the wire format and remove
-    // the legacy fields.
+    // Issue #220: per-node children list. Each node has its
+    // own contiguous std::pmr::vector<NodeId> of child NodeIds.
+    // The accessors (children(), set_child(), insert_child(),
+    // remove_child(), get().children) all read from this field.
     //
     // The children_ field uses the DEFAULT polymorphic_allocator
     // (i.e. the global memory resource). Arena propagation to
@@ -607,9 +581,7 @@ private:
         , int_val_(alloc)
         , float_val_(alloc)
         , sym_id_(alloc)
-        , child_begin_(alloc)
-        , child_count_(alloc)
-        , child_data_(alloc)
+
         , parent_(alloc)
         , param_begin_(alloc)
         , param_count_(alloc)
@@ -649,7 +621,6 @@ private:
     [[nodiscard]] NodeId add_literalstring(SymId name) {
         auto id = add_node(NodeTag::LiteralString);
         sym_id_[id] = name;
-        child_count_[id] = 0;
         link_children(id);
         return id;
     }
@@ -670,31 +641,20 @@ private:
 
     [[nodiscard]] NodeId add_call(NodeId func, std::span<const NodeId> args) {
         auto id = add_node(NodeTag::Call);
-        child_data_.push_back(func);
         children_[id].push_back(func);
-        auto start = static_cast<std::uint32_t>(child_data_.size());
         // Issue #219: range-append via GapBuffer::append (gap-buffer
         // doesn't support a general range insert; append is the
         // common case for AST construction).
-        child_data_.append(args.begin(), args.end());
         children_[id].insert(children_[id].end(), args.begin(), args.end());
-        child_begin_[id] = start - 1; // includes func
-        child_count_[id] = 1 + static_cast<std::uint32_t>(args.size());
         link_children(id);
         return id;
     }
 
     [[nodiscard]] NodeId add_if(NodeId cond, NodeId then_b, NodeId else_b) {
         auto id = add_node(NodeTag::IfExpr);
-        auto start = static_cast<std::uint32_t>(child_data_.size());
-        child_data_.push_back(cond);
         children_[id].push_back(cond);
-        child_data_.push_back(then_b);
         children_[id].push_back(then_b);
-        child_data_.push_back(else_b);
         children_[id].push_back(else_b);
-        child_begin_[id] = start;
-        child_count_[id] = 3;
         link_children(id);
         return id;
     }
@@ -716,10 +676,7 @@ private:
             param_annot_data_[pstart + i] = annots[i];
         param_begin_[id] = pstart;
         param_count_[id] = static_cast<std::uint32_t>(params.size());
-        child_data_.push_back(body);
         children_[id].push_back(body);
-        child_begin_[id] = static_cast<std::uint32_t>(child_data_.size() - 1);
-        child_count_[id] = 1;
         link_children(id);
         return id;
     }
@@ -727,13 +684,8 @@ private:
     [[nodiscard]] NodeId add_let(SymId name, NodeId val, NodeId body) {
         auto id = add_node(NodeTag::Let);
         sym_id_[id] = name;
-        auto start = static_cast<std::uint32_t>(child_data_.size());
-        child_data_.push_back(val);
         children_[id].push_back(val);
-        child_data_.push_back(body);
         children_[id].push_back(body);
-        child_begin_[id] = start;
-        child_count_[id] = 2;
         link_children(id);
         return id;
     }
@@ -741,13 +693,8 @@ private:
     [[nodiscard]] NodeId add_letrec(SymId name, NodeId val, NodeId body) {
         auto id = add_node(NodeTag::LetRec);
         sym_id_[id] = name;
-        auto start = static_cast<std::uint32_t>(child_data_.size());
-        child_data_.push_back(val);
         children_[id].push_back(val);
-        child_data_.push_back(body);
         children_[id].push_back(body);
-        child_begin_[id] = start;
-        child_count_[id] = 2;
         link_children(id);
         return id;
     }
@@ -755,11 +702,7 @@ private:
     [[nodiscard]] NodeId add_define(SymId name, NodeId val) {
         auto id = add_node(NodeTag::Define);
         sym_id_[id] = name;
-        auto start = static_cast<std::uint32_t>(child_data_.size());
-        child_data_.push_back(val);
         children_[id].push_back(val);
-        child_begin_[id] = start;
-        child_count_[id] = 1;
         link_children(id);
         return id;
     }
@@ -861,34 +804,21 @@ private:
         param_annot_data_.resize(param_annot_data_.size() + params.size(), NULL_NODE);
         param_begin_[id] = pstart;
         param_count_[id] = static_cast<std::uint32_t>(params.size());
-        // Store constructor nodes in child_data_
-        auto cstart = static_cast<std::uint32_t>(child_data_.size());
-        child_data_.append(ctors.begin(), ctors.end());
         children_[id].insert(children_[id].end(), ctors.begin(), ctors.end());
-        child_begin_[id] = cstart;
-        child_count_[id] = static_cast<std::uint32_t>(ctors.size());
         return id;
     }
 
     [[nodiscard]] NodeId add_begin(NodeId* exprs, std::uint32_t count) {
         auto id = add_node(NodeTag::Begin);
-        auto start = static_cast<std::uint32_t>(child_data_.size());
         for (std::uint32_t i = 0; i < count; ++i) {
-            child_data_.push_back(exprs[i]);
             children_[id].push_back(exprs[i]);
         }
-        child_begin_[id] = start;
-        child_count_[id] = count;
         link_children(id);
         return id;
     }
     [[nodiscard]] NodeId add_begin(std::span<const NodeId> exprs) {
         auto id = add_node(NodeTag::Begin);
-        auto start = static_cast<std::uint32_t>(child_data_.size());
-        child_data_.append(exprs.begin(), exprs.end());
         children_[id].insert(children_[id].end(), exprs.begin(), exprs.end());
-        child_begin_[id] = start;
-        child_count_[id] = static_cast<std::uint32_t>(exprs.size());
         link_children(id);
         return id;
     }
@@ -922,11 +852,7 @@ private:
 
     [[nodiscard]] NodeId add_export(std::span<const NodeId> syms) {
         auto id = add_node(NodeTag::Export);
-        auto start = static_cast<std::uint32_t>(child_data_.size());
-        child_data_.append(syms.begin(), syms.end());
         children_[id].insert(children_[id].end(), syms.begin(), syms.end());
-        child_begin_[id] = start;
-        child_count_[id] = static_cast<std::uint32_t>(syms.size());
         link_children(id);
         return id;
     }
@@ -934,11 +860,7 @@ private:
     [[nodiscard]] NodeId add_set(SymId name, NodeId val) {
         auto id = add_node(NodeTag::Set);
         sym_id_[id] = name;
-        auto start = static_cast<std::uint32_t>(child_data_.size());
-        child_data_.push_back(val);
         children_[id].push_back(val);
-        child_begin_[id] = start;
-        child_count_[id] = 1;
         link_children(id);
         return id;
     }
@@ -950,11 +872,7 @@ private:
         // Issue #120: encode dotted in bit 0 and hygienic in bit 1 of
         // int_val_ (the existing unused slot for MacroDef).
         int_val_[id] = (hygienic ? 2 : 0) | (dotted ? 1 : 0);
-        auto start = static_cast<std::uint32_t>(child_data_.size());
-        child_data_.push_back(body);
         children_[id].push_back(body);
-        child_begin_[id] = start;
-        child_count_[id] = 1;
         // Store params using the same SoA as Lambda params
         auto pstart = static_cast<std::uint32_t>(param_data_.size());
         param_data_.insert(param_data_.end(), params.begin(), params.end());
@@ -977,24 +895,15 @@ private:
 
     [[nodiscard]] NodeId add_quote(NodeId val) {
         auto id = add_node(NodeTag::Quote);
-        auto start = static_cast<std::uint32_t>(child_data_.size());
-        child_data_.push_back(val);
         children_[id].push_back(val);
-        child_begin_[id] = start;
-        child_count_[id] = 1;
         link_children(id);
         return id;
     }
 
     [[nodiscard]] NodeId add_pair(NodeId car, NodeId cdr) {
         auto id = add_node(NodeTag::Pair);
-        auto start = static_cast<std::uint32_t>(child_data_.size());
-        child_data_.push_back(car);
         children_[id].push_back(car);
-        child_data_.push_back(cdr);
         children_[id].push_back(cdr);
-        child_begin_[id] = start;
-        child_count_[id] = 2;
         link_children(id);
         return id;
     }
@@ -1002,11 +911,7 @@ private:
     [[nodiscard]] NodeId add_type_annotation(SymId type_name, NodeId inner, SymId var_sym = INVALID_SYM) {
         auto id = add_node(NodeTag::TypeAnnotation);
         sym_id_[id] = type_name;
-        auto start = static_cast<std::uint32_t>(child_data_.size());
-        child_data_.push_back(inner);
         children_[id].push_back(inner);
-        child_begin_[id] = start;
-        child_count_[id] = 1;
         if (var_sym != INVALID_SYM) {
             int_val_[id] = static_cast<std::int64_t>(var_sym);
         }
@@ -1023,22 +928,14 @@ private:
 
     [[nodiscard]] NodeId add_coercion(NodeId inner, std::uint32_t type_id) {
         auto id = add_node(NodeTag::Coercion);
-        auto start = static_cast<std::uint32_t>(child_data_.size());
-        child_data_.push_back(inner);
         children_[id].push_back(inner);
-        child_begin_[id] = start;
-        child_count_[id] = 1;
         type_id_[id] = type_id;
         link_children(id);
         return id;
     }
     [[nodiscard]] NodeId add_coercion(NodeId inner, std::uint32_t type_tag, std::uint32_t type_id) {
         auto id = add_node(NodeTag::Coercion);
-        auto start = static_cast<std::uint32_t>(child_data_.size());
-        child_data_.push_back(inner);
         children_[id].push_back(inner);
-        child_begin_[id] = start;
-        child_count_[id] = 1;
         int_val_[id] = static_cast<std::int64_t>(type_tag);
         type_id_[id] = type_id;
         link_children(id);
@@ -1047,55 +944,35 @@ private:
     // ── M4 Linear ownership builders ───────────────────────────
     [[nodiscard]] NodeId add_linear(NodeId inner) {
         auto id = add_node(NodeTag::Linear);
-        auto start = static_cast<std::uint32_t>(child_data_.size());
-        child_data_.push_back(inner);
         children_[id].push_back(inner);
-        child_begin_[id] = start;
-        child_count_[id] = 1;
         link_children(id);
         return id;
     }
 
     [[nodiscard]] NodeId add_move(NodeId inner) {
         auto id = add_node(NodeTag::Move);
-        auto start = static_cast<std::uint32_t>(child_data_.size());
-        child_data_.push_back(inner);
         children_[id].push_back(inner);
-        child_begin_[id] = start;
-        child_count_[id] = 1;
         link_children(id);
         return id;
     }
 
     [[nodiscard]] NodeId add_borrow(NodeId inner) {
         auto id = add_node(NodeTag::Borrow);
-        auto start = static_cast<std::uint32_t>(child_data_.size());
-        child_data_.push_back(inner);
         children_[id].push_back(inner);
-        child_begin_[id] = start;
-        child_count_[id] = 1;
         link_children(id);
         return id;
     }
 
     [[nodiscard]] NodeId add_mut_borrow(NodeId inner) {
         auto id = add_node(NodeTag::MutBorrow);
-        auto start = static_cast<std::uint32_t>(child_data_.size());
-        child_data_.push_back(inner);
         children_[id].push_back(inner);
-        child_begin_[id] = start;
-        child_count_[id] = 1;
         link_children(id);
         return id;
     }
 
     [[nodiscard]] NodeId add_drop(NodeId inner) {
         auto id = add_node(NodeTag::Drop);
-        auto start = static_cast<std::uint32_t>(child_data_.size());
-        child_data_.push_back(inner);
         children_[id].push_back(inner);
-        child_begin_[id] = start;
-        child_count_[id] = 1;
         link_children(id);
         return id;
     }
@@ -1243,9 +1120,6 @@ private:
         int_val_.clear();
         float_val_.clear();
         sym_id_.clear();
-        child_begin_.clear();
-        child_count_.clear();
-        child_data_.clear();
         children_.clear();
         parent_.clear();
         param_begin_.clear();

@@ -105,7 +105,10 @@ std::string FlatAST::validate_node(NodeId id, bool fail_on_error) const {
         return msg;
     }
 
-    auto child_count = child_count_[id];
+    // Issue #220: child_count now lives in children_[id].size()
+    // (the per-node std::pmr::vector<NodeId>), not in the
+    // legacy child_count_ SoA column (which is gone).
+    auto child_count = children(id).size();
     auto fixed = m.fixed_children;
 
     // Minimum children check
