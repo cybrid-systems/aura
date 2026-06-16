@@ -28,6 +28,14 @@
 #include <string>
 #include <vector>
 
+// Unified test harness (Issue #226). Provides
+// CHECK / EXPECT_* / TEST / RUN_ALL_TESTS. The local
+// g_passed / g_failed / CHECK macro above are removed;
+// this file now uses the harness's versions.
+#include "test_harness.hpp"
+using aura::test::g_passed;
+using aura::test::g_failed;
+
 import std;
 import aura.core;
 import aura.core.type;
@@ -36,18 +44,7 @@ import aura.compiler.evaluator;
 import aura.compiler.value;
 import aura.compiler.ir;
 
-static int g_passed = 0;
-static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (!(cond)) { \
-        std::fprintf(stderr, "  FAIL: %s (line %d)\n", (msg), __LINE__); \
-        ++g_failed; \
-    } else { \
-        std::fprintf(stdout, "  PASS: %s\n", (msg)); \
-        ++g_passed; \
-    } \
-} while(0)
 
 #define PRINTLN(msg) std::fprintf(stdout, "%s\n", (msg))
 

@@ -27,6 +27,14 @@
 #include <string>
 #include <vector>
 
+// Unified test harness (Issue #226). Provides
+// CHECK / EXPECT_* / TEST / RUN_ALL_TESTS. The local
+// g_passed / g_failed / CHECK macro above are removed;
+// this file now uses the harness's versions.
+#include "test_harness.hpp"
+using aura::test::g_passed;
+using aura::test::g_failed;
+
 // Forward declarations of the extern "C" functions defined in
 // src/compiler/aura_jit_runtime.cpp. The structured EH shipped
 // in ae11053 (Issue #170 follow-up). These are the runtime
@@ -53,18 +61,7 @@ import aura.compiler.value;
 import aura.compiler.evaluator;
 import aura.compiler.service;
 
-static int g_passed = 0;
-static int g_failed = 0;
 
-#define CHECK(cond, msg) do { \
-    if (!(cond)) { \
-        std::println("  FAIL: {} (line {})", msg, __LINE__); \
-        ++g_failed; \
-    } else { \
-        std::println("  PASS: {}", msg); \
-        ++g_passed; \
-    } \
-} while(0)
 
 static aura::compiler::types::EvalValue run_on(aura::compiler::CompilerService& cs,
                                                 std::string_view src) {
@@ -429,6 +426,5 @@ int main() {
     test_per_fiber_raised_value_visible_to_handler();
 
     std::println("\n════════════════════════════════════════");
-    std::println("Results: {} passed, {} failed", g_passed, g_failed);
-    return g_failed == 0 ? 0 : 1;
+    return RUN_ALL_TESTS();
 }
