@@ -44,6 +44,15 @@ struct CompilerMetrics {
     // --evo-explain.
     std::atomic<std::uint64_t> module_dirty_skips{0};
     std::atomic<std::uint64_t> module_dirty_recompiles{0};
+    // Issue #224: per-block re-lower consumer. The helper
+    // relower_define_blocks() consults the per-block bitmask
+    // (Issue #196): if zero dirty blocks, the cached IR
+    // bundle is reused as-is (no lowering call). The skip
+    // counter tracks saves; the full counter tracks when
+    // a re-lower was actually needed. Both exposed for
+    // benchmarking / --evo-explain.
+    std::atomic<std::uint64_t> relower_skipped_entirely_count{0};
+    std::atomic<std::uint64_t> relower_full_called_count{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()

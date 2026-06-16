@@ -2607,6 +2607,127 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
         return it->second.is_block_dirty(func_idx, block_idx);
     }
 
+    // Issue #224 cycle 2: per-block re-lower consumer.
+    // The smarter-re-lower foundation was laid in Issue
+    // #196 (per-block dirty bitmask + observability
+    // primitives). This helper is the first real
+    // consumer: it consults the bitmask and decides
+    // whether to (a) skip the re-lower entirely (no
+    // dirty blocks → return cached IR) or (b) do a
+    // full re-lower.
+    //
+    // Cycle 2 is intentionally scoped: the helper does
+    // NOT yet do per-block re-lowering (which would
+    // require a new lowering API that can re-emit a
+    // single block in isolation). The full re-lower is
+    // the existing path via lower_to_ir_with_cache.
+    // The honest win is the early-exit: if no blocks
+    // are dirty, we save the entire lowering pass.
+    //
+    // Returns:
+    //   - true  if a re-lower was performed OR skipped
+    //            (i.e., the entry was either refreshed
+    //             or already clean).
+    //   - false if the entry doesn't exist in ir_cache_v2_
+    //            (caller needs to do a full first-time
+    //             lower).
+    //
+    // Side effects:
+    //   - Bumps either relower_skipped_entirely_count
+    //     (no work done) or relower_full_called_count
+    //     (full re-lower performed).
+    //   - On full re-lower: calls store_define_v2 which
+    //     rebuilds the bitmask from the new irs[] and
+    //     clears all dirty bits.
+    //
+    // The (source, flat, pool, expanded_root) args are
+    // passed in (rather than looked up internally) so
+    // the caller can pass either the per-call flat or
+    // the workspace_flat, depending on the call site.
+    bool relower_define_blocks(const std::string& name,
+                                std::string_view source,
+                                aura::ast::FlatAST& flat,
+                                aura::ast::StringPool& pool,
+                                aura::ast::NodeId expanded_root) {
+        auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end()) {
+            // No entry → caller needs to do a full first-time lower.
+            return false;
+        }
+        const std::size_t dirty_blocks = it->second.dirty_block_count();
+        if (dirty_blocks == 0) {
+            // Bitmask says nothing changed → reuse cached IR.
+            // Bump the skip counter; do NOT call lowering.
+            // This is the cycle-2 win: avoid the full
+            // lowering pass when the bitmask is clean.
+            metrics_.relower_skipped_entirely_count.fetch_add(
+                1, std::memory_order_relaxed);
+            return true;
+        }
+        // Bitmask says at least one block is dirty → do a
+        // full re-lower. The future per-block re-lower
+        // (cycle 3+) will route only the dirty blocks
+        // through lowering; today we still re-lower the
+        // whole function bundle.
+        metrics_.relower_full_called_count.fetch_add(
+            1, std::memory_order_relaxed);
+        auto cache_ptr = ir_cache_.empty() ? nullptr : &ir_cache_;
+        auto cache_bridge_ptr =
+            ir_cache_bridge_.empty() ? nullptr : &ir_cache_bridge_;
+        auto cache_strings_ptr =
+            ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
+        std::vector<std::string> cache_hits;
+        auto ir_mod = aura::compiler::lower_to_ir_with_cache(
+            flat, pool, arena_, cache_ptr, &cache_hits,
+            &evaluator_.primitives(), cache_bridge_ptr,
+            cache_strings_ptr, &name);
+        // Run per-function passes on the new bundle.
+        {
+            aura::compiler::ComputeKindWrap ck_pass;
+            aura::compiler::ConstantFoldingWrap cf_pass;
+            for (auto& func : ir_mod.functions) {
+                if (func.id == ir_mod.entry_function_id) continue;
+                ck_pass.compute_function(func);
+                cf_pass.fold_function(func);
+            }
+        }
+        // Extract the non-entry functions as the bundle.
+        std::vector<aura::ir::IRFunction> bundle;
+        std::vector<aura::ir::ClosureBridgeData> bridge_bundle;
+        for (auto& func : ir_mod.functions) {
+            if (func.id != ir_mod.entry_function_id) {
+                bundle.push_back(std::move(func));
+                if (func.id < ir_mod.closure_bridge.size())
+                    bridge_bundle.push_back(ir_mod.closure_bridge[func.id]);
+                else
+                    bridge_bundle.emplace_back();
+            }
+        }
+        // Store in v2 cache first (rebuilds the bitmask +
+        // clears all dirty bits via store_define_v2's
+        // bookkeeping, and takes ownership of the bundle).
+        store_define_v2(name, std::string(source),
+                         std::move(bundle),
+                         std::move(bridge_bundle),
+                         ir_mod.string_pool);
+        // Mirror to v1 caches (legacy path). Read from v2
+        // so we don't keep two separate copies of the IR
+        // — v1 is a thin view onto the same data.
+        auto vit = ir_cache_v2_.find(name);
+        if (vit != ir_cache_v2_.end()) {
+            ir_cache_[name] = vit->second.irs;
+            ir_cache_bridge_[name] = vit->second.bridges;
+            ir_cache_strings_[name] = vit->second.strings;
+        }
+        // Mirror source bookkeeping.
+        function_sources_[name] = std::string(source);
+        // Record dependencies for dep_graph_.
+        for (auto& called_name : cache_hits) {
+            record_dependency(name, called_name);
+        }
+        return true;
+    }
+
     // Phase 2: walk workspace_flat_'s top-level defines and pre-populate
     // the v2 IR cache. For each define, compute canonical source (unparsed),
     // hash it, and:
