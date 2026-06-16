@@ -4387,6 +4387,20 @@ target_compile_features(test_issue_222 PUBLIC cxx_std_26)
 target_link_libraries(test_issue_222 PRIVATE stdc++ pthread)
 add_test(NAME issue_222_verification COMMAND ./test_issue_222)
 
+# Issue #223: closure-bridge epoch counter for lifetime tracking
+# (Issue #180 Cycle 1). Tests bridge_epoch_ on ClosureBridgeData +
+# IRClosure + the bridge_epoch() / bump_bridge_epoch() / reset()
+# epoch tracking on CompilerService. Standalone test (no module
+# imports — avoids the GCC 16.1 std module + P2996 reflection
+# conflict). Uses a MockEpochTracker that mirrors the production
+# mutation_epoch_ / bridge_epoch() semantics.
+add_executable(test_issue_223 tests/test_issue_223.cpp)
+target_include_directories(test_issue_223 PRIVATE src)
+target_compile_options(test_issue_223 PRIVATE -Wall -Wextra)
+target_compile_features(test_issue_223 PUBLIC cxx_std_26)
+target_link_libraries(test_issue_223 PRIVATE stdc++ pthread)
+add_test(NAME issue_223_verification COMMAND ./test_issue_223)
+
 # Issue #178 Cycle 5: production NodeView migration to
 # reflect_members + auto_serialize.
 #
