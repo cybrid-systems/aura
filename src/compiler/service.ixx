@@ -200,6 +200,7 @@ static std::int64_t convert_str_for_eval(std::int64_t val,
 
 namespace aura::compiler {
 
+
 // Convert FlatParseResult to Diagnostic with structured location.
 // Falls back to a generic parse error if no structured errors exist.
 static aura::diag::Diagnostic parse_error_diag(const aura::parser::FlatParseResult& pr) {
@@ -322,6 +323,12 @@ public:
         evaluator_.set_temp_arena(&temp_arena_);
         evaluator_.set_type_registry(&type_registry_);
         evaluator_.set_compiler_service(this);
+        // Issue #223: install the bridge_epoch getter so the
+        // Evaluator can query the service's current bridge epoch
+        // without a circular include. The lambda is a free
+        // function (no captures) so it can be passed as a
+        // function pointer.
+        evaluator_.install_bridge_epoch_fn(&CompilerService::bridge_epoch_trampoline);
         evaluator_.set_session_id(session_id_);
         // Phase 2: EDSL IR cache V2 hooks. Let evaluator_impl.cpp mark
         // cached defines dirty via these std::function pointers, without
@@ -667,6 +674,13 @@ public:
     static void unregister_session(const std::string& id) {
         std::lock_guard lk(registry_mtx());
         registry().erase(id);
+    }
+    // Issue #223: trampoline that lets the Evaluator query the
+    // service's bridge_epoch via a function pointer (no circular
+    // include). The argument is a CompilerService* cast to void*.
+    static std::uint64_t bridge_epoch_trampoline(void* svc) noexcept {
+        if (!svc) return 0;
+        return reinterpret_cast<CompilerService*>(svc)->bridge_epoch();
     }
 
     static CompilerService* lookup(const std::string& id) {
