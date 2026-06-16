@@ -1283,6 +1283,14 @@ private:
     // path doesn't work. These custom methods iterate the
     // SoA columns directly.
     //
+    // Issue #220: the children_ field is a per-node
+    // std::pmr::vector<NodeId>, so the wire format replaces
+    // the 3 legacy child_* columns (child_begin_ + child_count_ +
+    // child_data_) with 2 new columns (per-node count + flat
+    // children). This is the same column count (22 → 22) but
+    // the structure is different. Old v1 cache files won't
+    // roundtrip with the new format.
+    //
     // Wire format (matches tests/test_issue_217.cpp Test 18):
     //   [u32 format_version = 1]
     //   [u32 num_nodes]
@@ -1298,24 +1306,27 @@ private:
     //   2. int_val_       (i64)
     //   3. float_val_     (f64)
     //   4. sym_id_        (u32 = SymId)
-    //   5. child_begin_   (u32)
-    //   6. child_count_   (u32)
-    //   7. child_data_    (u32 = NodeId)
-    //   8. parent_        (u32 = NodeId)
-    //   9. param_begin_   (u32)
-    //  10. param_count_   (u32)
-    //  11. cap_require_count_ (u32)
-    //  12. param_data_    (u32 = SymId)
-    //  13. param_annot_data_ (u32 = NodeId)
-    //  14. line_         (u32)
-    //  15. col_          (u32)
-    //  16. marker_        (u8 = SyntaxMarker)
-    //  17. dirty_         (u8)
-    //  18. type_id_       (u32)
-    //  19. error_kind_    (u8)
-    //  20. value_cache_   (i64)
-    //  21. node_first_mutation_ (u32)
-    //  22. node_gen_      (u16)
+    //   5. child_count_per_node_ (u32 per node)  ← NEW (#220)
+    //   6. child_data     (u32 = NodeId, flat concatenation)  ← NEW (#220)
+    //   7. parent_        (u32 = NodeId)
+    //   8. param_begin_   (u32)
+    //   9. param_count_   (u32)
+    //  10. cap_require_count_ (u32)
+    //  11. param_data_    (u32 = SymId)
+    //  12. param_annot_data_ (u32 = NodeId)
+    //  13. line_         (u32)
+    //  14. col_          (u32)
+    //  15. marker_        (u8 = SyntaxMarker)
+    //  16. dirty_         (u8)
+    //  17. type_id_       (u32)
+    //  18. error_kind_    (u8)
+    //  19. value_cache_   (i64)
+    //  20. node_first_mutation_ (u32)
+    //  21. node_gen_      (u16)
+    //
+    // The legacy 3 columns (child_begin_ + child_count_ +
+    // child_data_ as a flat child array) are replaced by
+    // child_count_per_node_ + child_data.
     //
     // NOT serialized in v1 (would be v2):
     //   - mutation_log_ (vector<MutationRecord> — length-
@@ -1350,14 +1361,35 @@ private:
                                col.size() * sizeof(typename std::remove_reference<decltype(col)>::type::value_type));
             }
         };
-        // 22 SoA columns (mutation_log_ excluded; see comment)
+        // 19 SoA columns + 2 children columns (per-node count +
+        // flat children) = 21 columns total. The legacy
+        // child_begin_/child_count_/child_data_ are gone (see
+        // children_ field which is the new source of truth).
         write_column(tag_);
         write_column(int_val_);
         write_column(float_val_);
         write_column(sym_id_);
-        write_column(child_begin_);
-        write_column(child_count_);
-        write_column(child_data_);
+        // Issue #220: write the per-node children as two
+        // columns. (1) per-node count, (2) flat concatenation
+        // of all children. The reader reconstructs children_
+        // from these.
+        {
+            std::vector<std::uint32_t> child_counts(num_nodes);
+            std::uint32_t total_children = 0;
+            for (NodeId i = 0; i < num_nodes; ++i) {
+                child_counts[i] = static_cast<std::uint32_t>(children_[i].size());
+                total_children += child_counts[i];
+            }
+            write_column(child_counts);
+            std::vector<NodeId> flat_children;
+            flat_children.reserve(total_children);
+            for (NodeId i = 0; i < num_nodes; ++i) {
+                flat_children.insert(flat_children.end(),
+                                     children_[i].begin(),
+                                     children_[i].end());
+            }
+            write_column(flat_children);
+        }
         write_column(parent_);
         write_column(param_begin_);
         write_column(param_count_);
@@ -1432,9 +1464,29 @@ private:
         read_column(ast.int_val_);
         read_column(ast.float_val_);
         read_column(ast.sym_id_);
-        read_column(ast.child_begin_);
-        read_column(ast.child_count_);
-        read_column(ast.child_data_);
+        // Issue #220: read the per-node children columns and
+        // populate ast.children_ from them. The legacy
+        // child_begin_/child_count_/child_data_ columns are
+        // gone (the children_ field is the new source of
+        // truth, populated by all add_X methods).
+        {
+            std::vector<std::uint32_t> child_counts;
+            read_column(child_counts);
+            std::vector<NodeId> flat_children;
+            read_column(flat_children);
+            ast.children_.resize(num_nodes);
+            std::size_t offset = 0;
+            for (NodeId i = 0; i < num_nodes; ++i) {
+                auto count = child_counts[i];
+                auto& list = ast.children_[i];
+                if (count > 0) {
+                    list.insert(list.end(),
+                                flat_children.begin() + offset,
+                                flat_children.begin() + offset + count);
+                }
+                offset += count;
+            }
+        }
         read_column(ast.parent_);
         read_column(ast.param_begin_);
         read_column(ast.param_count_);
