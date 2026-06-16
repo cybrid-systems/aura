@@ -17308,6 +17308,16 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid,
                 ne.bind_symid(cl.params[i], args[i]);  // Issue #145: SymId
         }
         if (cl.flat) {
+            // Issue #223: check if the closure's bridge is stale
+            // (arena was reset, or major mutation invalidated the
+            // captured flat*/pool*). If stale, the flat*/pool*
+            // are dangling — invalidate the closure (return
+            // nullopt) so the caller can re-bridge from the new
+            // arena. The body_source re-parse fallback is a
+            // future slice (requires parser integration).
+            if (is_bridge_stale(cl.bridge_epoch, current_bridge_epoch())) {
+                return std::nullopt;
+            }
             auto r = eval_flat(*cl.flat, *cl.pool, cl.body_id, ne);
             if (r)
                 return *r;
