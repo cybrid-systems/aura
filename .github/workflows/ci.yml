@@ -25,6 +25,14 @@ jobs:
     - name: Build & Core Tests
       run: python3 build.py check
 
+    # Issue #226 cycle 1: unified test_issue_* runner.
+    # All 80+ per-issue test binaries (test_issue_*.cpp)
+    # are discovered and run via tests/run_issue_tests.py.
+    # Aggregated pass/fail counts; non-zero exit on any
+    # failure. Wired into CI's build job.
+    - name: Issue Tests (unified, #226)
+      run: python3 build.py test issues
+
     - name: Full Fuzz (--quick)
       run: python3 build.py test fuzz
 

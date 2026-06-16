@@ -3561,7 +3561,7 @@ target_sources(test_issue_196 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 # Reuses the test_issue_196 module dep chain (same
 # CXX_MODULES list, same source files).
 aura_add_issue_test(test_issue_224)
-target_include_directories(test_issue_224 PRIVATE src src/compiler)
+target_include_directories(test_issue_224 PRIVATE src src/compiler tests)
 target_sources(test_issue_224 PRIVATE
     src/serve/fiber.cpp
     src/serve/worker.cpp
