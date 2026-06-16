@@ -18167,8 +18167,17 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
         }
 
         // ── General function call ──
-        // Look up the function in the environment or primitives
-        auto prim = env.lookup_primitive(fn_name);
+        // Look up the function in the environment or primitives.
+        // #223 follow-up: skip primitive lookup when fn_name is
+        // empty (e.g. when fn_idx was out of bounds at line 17542).
+        // Without this guard, env.lookup_primitive("") triggers
+        // the pre (!n.empty()) contract on Primitives::lookup.
+        // The environment lookup below (lookup_by_intern) handles
+        // missing names gracefully via nullopt.
+        std::optional<PrimFn> prim;
+        if (!fn_name.empty()) {
+            prim = env.lookup_primitive(fn_name);
+        }
         if (prim) {
             std::vector<EvalValue> args;
             auto current = cdr_val;
@@ -19148,7 +19157,15 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                     // Primitive call (all arg evals are recursive)
                     if (callee.tag == aura::ast::NodeTag::Variable) {
                         auto cname = std::string(p->resolve(callee.sym_id));
-                        auto prim = eval_env.lookup_primitive(cname);
+                        // #223 follow-up: skip primitive lookup when
+                        // cname is empty (e.g. when sym_id was out of
+                        // bounds at the resolve() call). The
+                        // environment lookup below handles missing
+                        // names gracefully via nullopt.
+                        std::optional<PrimFn> prim;
+                        if (!cname.empty()) {
+                            prim = eval_env.lookup_primitive(cname);
+                        }
                         if (prim) {
                             std::vector<EvalValue> args;
                             for (std::size_t i = 1; i < v.children.size(); ++i) {
