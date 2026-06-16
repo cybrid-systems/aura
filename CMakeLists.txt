@@ -4007,6 +4007,21 @@ target_sources(test_issue_212 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
 # writes JSON to tests/bench_results/issue_212_bench.json.
 add_executable(issue_212_bench tests/bench/issue_212_bench.cpp)
 set_property(TARGET issue_212_bench PROPERTY CXX_MODULE_STD ON)
+
+# Issue #217 Cycle 14 P4: benchmark suite for the C++26 P2996
+# reflection + auto_serialize/auto_deserialize path. Measures
+# throughput across 4 dimensions (FlatAST SoA, NodeView
+# roundtrip, vector<string> serialize, columnar scan vs AoS)
+# and outputs JSON to tests/bench_results/cycle14_reflect_bench.json
+# for data-driven design decisions.
+add_executable(cycle14_reflect_bench tests/bench/cycle14_reflect_bench.cpp)
+set_property(TARGET cycle14_reflect_bench PROPERTY CXX_MODULE_STD ON)
+target_include_directories(cycle14_reflect_bench PRIVATE src)
+target_compile_options(cycle14_reflect_bench PRIVATE -freflection -Wall
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter)
+target_link_libraries(cycle14_reflect_bench PRIVATE stdc++ aura-reflect)
+add_test(NAME cycle14_reflect_bench COMMAND ./cycle14_reflect_bench)
 target_include_directories(issue_212_bench PRIVATE src src/compiler)
 target_sources(issue_212_bench PRIVATE
     src/core/ast_impl.cpp
