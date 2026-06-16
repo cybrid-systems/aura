@@ -4373,6 +4373,20 @@ target_compile_features(test_issue_221 PUBLIC cxx_std_26)
 target_link_libraries(test_issue_221 PRIVATE stdc++ pthread)
 add_test(NAME issue_221_verification COMMAND ./test_issue_221)
 
+# Issue #222: structural mutation concurrency safety (Issue #179
+# Cycle 4, slice 1/3). Tests the begin_structural_mutation() /
+# end_structural_mutation() RAII guard + set_child / insert_child
+# / remove_child routing + try_acquire_reader_lock() reader-side
+# API. Standalone test (no module imports — avoids the GCC 16.1
+# std module + P2996 reflection conflict). Uses a TestFlatAST
+# stub that mirrors the production API for testing purposes.
+add_executable(test_issue_222 tests/test_issue_222.cpp)
+target_include_directories(test_issue_222 PRIVATE src)
+target_compile_options(test_issue_222 PRIVATE -Wall -Wextra)
+target_compile_features(test_issue_222 PUBLIC cxx_std_26)
+target_link_libraries(test_issue_222 PRIVATE stdc++ pthread)
+add_test(NAME issue_222_verification COMMAND ./test_issue_222)
+
 # Issue #178 Cycle 5: production NodeView migration to
 # reflect_members + auto_serialize.
 #

@@ -6,6 +6,7 @@
 module;
 
 #include "core/persistent_child_vector.hh"
+#include <shared_mutex>
 
 export module aura.core.ast;
 import std;
@@ -476,6 +477,49 @@ export struct MatchClauseInfo {
     bool has_wildcard = false;
 };
 
+// ── Issue #222: OwnedSharedMutex wrapper ──────────────────────
+//
+// std::shared_mutex is neither copyable nor movable, so a class
+// containing it directly has its implicit copy/move ctors
+// deleted. This wrapper exposes a shared_mutex by pointer and
+// defines the copy/move semantics we want for FlatAST:
+//
+//   - Copy ctor: allocates a FRESH shared_mutex. Each copy
+//     gets its own mutex (independent mutation isolation).
+//   - Copy assign: no-op (the destination keeps its own mutex;
+//     only the data members are overwritten).
+//   - Move ctor / move assign: default (the unique_ptr is moved,
+//     transferring ownership of the mutex).
+//
+// Used as the type of `FlatAST::structural_mtx_`.
+class OwnedSharedMutex {
+public:
+    OwnedSharedMutex() : ptr_(std::make_unique<std::shared_mutex>()) {}
+    // Copy: allocate a fresh mutex.
+    OwnedSharedMutex(const OwnedSharedMutex&) noexcept
+        : ptr_(std::make_unique<std::shared_mutex>()) {}
+    // Move: transfer ownership.
+    OwnedSharedMutex(OwnedSharedMutex&&) noexcept = default;
+    // Copy-assign: keep our own mutex (the data being copied
+    // doesn't include the mutex state).
+    OwnedSharedMutex& operator=(const OwnedSharedMutex&) noexcept {
+        return *this;
+    }
+    // Move-assign: transfer ownership.
+    OwnedSharedMutex& operator=(OwnedSharedMutex&&) noexcept = default;
+    std::shared_mutex& get() noexcept { return *ptr_; }
+    const std::shared_mutex& get() const noexcept { return *ptr_; }
+    // Like get() but returns a non-const reference even through
+    // a const OwnedSharedMutex. Needed because shared_lock /
+    // unique_lock require a non-const mutex reference to acquire
+    // (the lock state is part of the mutex). The const_cast is
+    // safe here because acquiring a lock is a "logical const"
+    // operation: it doesn't modify the protected data.
+    std::shared_mutex& mutable_get() const noexcept { return *ptr_; }
+private:
+    std::unique_ptr<std::shared_mutex> ptr_;
+};
+
 // ── FlatAST — SoA flat index-based AST ─────────────────────────
 export class FlatAST {
 private:
@@ -536,6 +580,32 @@ private:
     // can wire a custom allocator wrapper if arena-backed
     // per-node lists are needed.
     std::pmr::vector<PersistentChildVector<NodeId>> children_;
+    // Issue #222: shared_mutex that guards structural mutations
+    // (set_child / insert_child / remove_child). Acquired
+    // exclusively via begin_structural_mutation() (the public
+    // RAII guard) by every mutator. Readers can either:
+    //   (a) Acquire a shared lock for the duration of their
+    //       read (via try_acquire_reader_lock()), or
+    //   (b) Read lock-free and verify generation_ after the
+    //       read (the existing pattern; safe because PCV is
+    //       immutable + COW).
+    // The mutex ensures that (COW-mutation + parent_ update
+    // + generation bump + dirty mark) is atomic w.r.t. other
+    // mutators AND readers that explicitly acquire the lock.
+    // PCV's COW semantics mean that readers NOT holding the
+    // lock still see consistent data (they read the old
+    // shared_ptr to the pre-mutation storage).
+    //
+    // Wrapped in OwnedSharedMutex because std::shared_mutex is
+    // neither copyable nor movable, which would otherwise delete
+    // FlatAST's implicit copy/move constructors (needed by
+    // WorkspaceTree::ensure_local_flat's `*new_flat = *parent_flat_`
+    // path). The wrapper allocates a FRESH mutex on copy (each
+    // FlatAST instance gets its own mutex — correct for
+    // independent mutation isolation), and the move constructor
+    // transfers ownership (the moved-from FlatAST keeps its
+    // mutex as nullptr; the moved-to owns it).
+    OwnedSharedMutex structural_mtx_;
     std::pmr::vector<NodeId> parent_;
     std::pmr::vector<std::uint32_t> param_begin_;
     std::pmr::vector<std::uint32_t> param_count_;
@@ -1130,7 +1200,125 @@ private:
         return std::span<const NodeId>(children_[id].data(), children_[id].size());
     }
 
+    // ── Issue #222: structural mutation guard ────────────────────
+    //
+    // RAII wrapper that holds an exclusive lock on structural_mtx_
+    // for its lifetime. On destruction:
+    //   1. Bumps generation_ (invalidates StableNodeRef).
+    //   2. Releases the exclusive lock.
+    //
+    // The lock + generation bump is the atomicity guarantee for
+    // structural mutations. A reader that wants to see consistent
+    // state across (read generation → read children_) can:
+    //   - capture generation_ before the read
+    //   - read children_
+    //   - verify generation_ unchanged after the read
+    //   - if changed, retry (with the new generation)
+    //
+    // Or, use try_acquire_reader_lock() for a longer-lived read
+    // transaction.
+    //
+    // The set_child / insert_child / remove_child methods acquire
+    // this guard internally. Callers who need to apply a multi-step
+    // mutation atomically (e.g. swap two children in a single
+    // "transaction") can acquire the guard explicitly:
+    //
+    //   {
+    //     auto guard = ast.begin_structural_mutation();
+    //     auto a = ast.children(id_a);
+    //     ast.set_child(id_a, 0, ...);
+    //     ast.set_child(id_b, 0, ...);
+    //     // guard's dtor bumps generation_ once, releases the lock.
+    //   }
+    //
+    // Move-only. The dtor is the single point that releases the
+    // lock + bumps the generation, so even exception paths are safe.
+    class StructuralMutationGuard {
+    public:
+        StructuralMutationGuard() noexcept = default;
+        explicit StructuralMutationGuard(FlatAST* ast) noexcept
+            : ast_(ast), lock_() {
+            if (ast_) lock_ = std::unique_lock<std::shared_mutex>(ast->structural_mtx_.get());
+        }
+        ~StructuralMutationGuard() {
+            if (ast_) ast_->bump_generation();
+            // unique_lock's dtor releases the lock.
+        }
+        StructuralMutationGuard(const StructuralMutationGuard&) = delete;
+        StructuralMutationGuard& operator=(const StructuralMutationGuard&) = delete;
+        StructuralMutationGuard(StructuralMutationGuard&& o) noexcept
+            : ast_(o.ast_), lock_(std::move(o.lock_)) {
+            o.ast_ = nullptr;
+        }
+        StructuralMutationGuard& operator=(StructuralMutationGuard&& o) noexcept {
+            if (this != &o) {
+                // Release any current lock first.
+                if (ast_) ast_->bump_generation();
+                ast_ = o.ast_;
+                lock_ = std::move(o.lock_);
+                o.ast_ = nullptr;
+            }
+            return *this;
+        }
+        // Returns true if the guard holds a valid lock.
+        [[nodiscard]] explicit operator bool() const noexcept {
+            return ast_ != nullptr && lock_.owns_lock();
+        }
+    private:
+        FlatAST* ast_ = nullptr;
+        std::unique_lock<std::shared_mutex> lock_;
+    };
+
+    // Acquire an exclusive lock on structural_mtx_ for the
+    // duration of the returned guard's lifetime. Used by
+    // set_child / insert_child / remove_child internally;
+    // callers can also acquire it explicitly for multi-step
+    // atomic mutations.
+    [[nodiscard]] StructuralMutationGuard begin_structural_mutation() {
+        return StructuralMutationGuard(this);
+    }
+
+    // Acquire a SHARED (reader) lock on structural_mtx_.
+    // The returned guard's lifetime is the duration of the
+    // reader's transaction. Use for long-lived reads that
+    // need a consistent view of children_ across multiple
+    // calls. For short reads (one children(id) call), the
+    // PCV's COW semantics + generation_ check are sufficient.
+    class ReaderLockGuard {
+    public:
+        ReaderLockGuard() noexcept = default;
+        explicit ReaderLockGuard(const FlatAST* ast) noexcept
+            : ast_(ast), lock_() {
+            if (ast_) lock_ = std::shared_lock<std::shared_mutex>(ast->structural_mtx_.mutable_get());
+        }
+        ~ReaderLockGuard() = default;
+        ReaderLockGuard(const ReaderLockGuard&) = delete;
+        ReaderLockGuard& operator=(const ReaderLockGuard&) = delete;
+        ReaderLockGuard(ReaderLockGuard&& o) noexcept
+            : ast_(o.ast_), lock_(std::move(o.lock_)) { o.ast_ = nullptr; }
+        ReaderLockGuard& operator=(ReaderLockGuard&& o) noexcept {
+            if (this != &o) {
+                ast_ = o.ast_;
+                lock_ = std::move(o.lock_);
+                o.ast_ = nullptr;
+            }
+            return *this;
+        }
+        [[nodiscard]] explicit operator bool() const noexcept {
+            return ast_ != nullptr && lock_.owns_lock();
+        }
+    private:
+        const FlatAST* ast_ = nullptr;
+        std::shared_lock<std::shared_mutex> lock_;
+    };
+    [[nodiscard]] ReaderLockGuard try_acquire_reader_lock() const {
+        return ReaderLockGuard(this);
+    }
+
     void set_child(NodeId id, std::uint32_t idx, NodeId child) {
+        // Issue #222: acquire the structural mutation guard. The
+        // guard's dtor bumps generation_ + releases the lock.
+        StructuralMutationGuard guard(this);
         // Issue #220/221: COW set. Read the old child, build a
         // new PCV with the replacement, install it. O(1) for
         // the per-node COW; no other nodes are affected.
@@ -1144,12 +1332,17 @@ private:
         // Set new child's parent
         if (child != NULL_NODE && child < parent_.size())
             parent_[child] = id;
-        bump_generation();
+        // Issue #222: mark the mutated node dirty so incremental
+        // re-eval (Issue #148) and dirty-aware caching (Issue #188)
+        // see the mutation.
+        mark_dirty(id, kGeneralDirty);
     }
 
     // Insert a child at position idx (0 = first, child_count = append)
     // Shifts all subsequent children and updates child_begin_ for later nodes.
     void insert_child(NodeId id, std::uint32_t idx, NodeId child) {
+        // Issue #222: acquire the structural mutation guard.
+        StructuralMutationGuard guard(this);
         // Issue #220/221: COW insert. Build a new PCV with
         // the inserted element, install it. O(1) for the
         // per-node COW; no other nodes are affected.
@@ -1159,11 +1352,14 @@ private:
         // Set new child's parent
         if (child != NULL_NODE && child < parent_.size())
             parent_[child] = id;
-        bump_generation();
+        // Issue #222: mark the mutated node dirty.
+        mark_dirty(id, kGeneralDirty);
     }
 
     // Remove a child at position idx by replacing with NULL_NODE
     void remove_child(NodeId id, std::uint32_t idx) {
+        // Issue #222: acquire the structural mutation guard.
+        StructuralMutationGuard guard(this);
         // Issue #220/221: COW erase. Build a new PCV without
         // the erased element, install it. O(1) for the per-node
         // COW; no other nodes are affected.
@@ -1173,7 +1369,8 @@ private:
             if (cid != NULL_NODE && cid < parent_.size())
                 parent_[cid] = NULL_NODE;
             children_[id] = list.with_erase(idx);
-            bump_generation();
+            // Issue #222: mark the mutated node dirty.
+            mark_dirty(id, kGeneralDirty);
         }
     }
 
