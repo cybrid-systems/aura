@@ -7568,10 +7568,10 @@ primitives_.add("mutate:query-and-replace", [this, mev](std::span<const EvalValu
             auto v = flat.get(id);
             if (v.children.empty())
                 continue;
-            auto children = flat.children_mutable(id);
+            const auto& children = flat.children(id);
             for (std::size_t ci = 0; ci < children.size(); ++ci) {
                 if (children[ci] == target) {
-                    children[ci] = aura::ast::NULL_NODE;
+                    flat.set_child(id, static_cast<std::uint32_t>(ci), aura::ast::NULL_NODE);
                     flat.add_mutation(id, "remove-node", std::to_string(target), "",
                                       "remove node " + std::to_string(target));
                     workspace_flat_->mark_dirty_upward(id);
@@ -12187,7 +12187,7 @@ primitives_.add("mutate:wrap", [this](std::span<const EvalValue> a) -> EvalValue
 
         // Remove from current parent (set to NULL_NODE).
         // insert_child will set parent_[node] = new_parent.
-        flat.children_mutable(cur_parent)[static_cast<std::size_t>(cur_idx)] = NULL_NODE;
+        flat.set_child(cur_parent, cur_idx, aura::ast::NULL_NODE);
 
         // Insert at new parent
         flat.insert_child(new_parent, new_pos, node);

@@ -114,11 +114,39 @@ public:
         std::fill_n(data_->data.get(), n, v);
     }
 
+    // Range constructor (used by FlatAST's add_X methods that
+    // build a per-node list from a std::span<NodeId> or a
+    // temporary std::vector). Constructs in O(n) — no per-
+    // element COW copies.
+    template <typename It>
+    PersistentChildVector(It first, It last) {
+        auto n = static_cast<size_type>(std::distance(first, last));
+        if (n == 0) return;
+        size_ = n;
+        data_ = make_storage(n);
+        std::copy(first, last, data_->data.get());
+    }
+
     // Copy / move: O(1) (shared_ptr copy).
     PersistentChildVector(const PersistentChildVector&) = default;
-    PersistentChildVector(PersistentChildVector&&) noexcept = default;
     PersistentChildVector& operator=(const PersistentChildVector&) = default;
-    PersistentChildVector& operator=(PersistentChildVector&&) noexcept = default;
+    // Custom move: the default move would leave size_ at its old
+    // value (size_t is trivially copyable, not moved). The shared_ptr
+    // gets reset to null by its own move. The result would be a
+    // "moved-from" vector with size > 0 but data() == nullptr — a
+    // bug waiting to crash. We explicitly reset size_ on move.
+    PersistentChildVector(PersistentChildVector&& other) noexcept
+        : data_(std::move(other.data_)), size_(other.size_) {
+        other.size_ = 0;
+    }
+    PersistentChildVector& operator=(PersistentChildVector&& other) noexcept {
+        if (this != &other) {
+            data_ = std::move(other.data_);
+            size_ = other.size_;
+            other.size_ = 0;
+        }
+        return *this;
+    }
 
     // ── Capacity (const) ──────────────────────────────────────
     constexpr size_type size() const noexcept { return size_; }
@@ -143,10 +171,17 @@ public:
     const_reference back() const { return data_->data[size_ - 1]; }
 
     // ── Iterators (const) ──────────────────────────────────────
-    const_iterator begin() const noexcept { return data_->data.get(); }
-    const_iterator end() const noexcept { return data_->data.get() + size_; }
-    const_iterator cbegin() const noexcept { return data_->data.get(); }
-    const_iterator cend() const noexcept { return data_->data.get() + size_; }
+    // Safe for empty / default-constructed vectors: when data_
+    // is null (no underlying Storage), begin() == end() ==
+    // nullptr. The for-range loop on an empty PCV is a no-op.
+    const_iterator begin() const noexcept {
+        return data_ ? data_->data.get() : nullptr;
+    }
+    const_iterator end() const noexcept {
+        return data_ ? data_->data.get() + size_ : nullptr;
+    }
+    const_iterator cbegin() const noexcept { return begin(); }
+    const_iterator cend() const noexcept { return end(); }
 
     // ── COW mutations (return a new vector) ──────────────────
     //

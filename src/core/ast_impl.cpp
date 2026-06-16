@@ -39,11 +39,17 @@ bool apply_patches(FlatAST& ast, std::span<const Patch> patches) {
 
 // ── Delta fixup (for deserialization) ──────────────────────────
 void fixup_deltas(FlatAST& ast) {
+    // Issue #221: the per-node children_ is a PersistentChildVector
+    // (immutable + COW). Iterate the read-only span and apply
+    // each delta as a set_child (which COW-creates a new PCV
+    // for that node).
     for (NodeId id = 0; id < ast.size(); ++id) {
-        auto children = ast.children_mutable(id);
-        for (auto& cid : children) {
-            if (cid != NULL_NODE)
-                cid += id;
+        const auto& list = ast.children(id);
+        for (std::uint32_t j = 0; j < list.size(); ++j) {
+            NodeId cid = list[j];
+            if (cid != NULL_NODE) {
+                ast.set_child(id, j, cid + id);
+            }
         }
     }
 }
