@@ -72,8 +72,11 @@ bool write_cache(const std::string& path, const FlatAST& flat, const StringPool&
     std::vector<std::uint8_t> tags(n);
     std::vector<std::int64_t> int_vals(n, 0);
     std::vector<SymId> sym_ids(n, INVALID_SYM);
-    std::vector<std::uint32_t> child_begins(n, 0);
-    std::vector<std::uint32_t> child_counts(n, 0);
+    // Issue #220: per-node child counts (1 column) replace the
+    // legacy child_begins_ + child_counts_ (2 columns). The
+    // per-node starting offset is reconstructed by setup_pointers
+    // from the cumulative sum.
+    std::vector<std::uint32_t> child_count_per_node(n, 0);
     std::vector<std::uint32_t> param_begins(n, 0);
     std::vector<std::uint32_t> param_counts(n, 0);
     std::vector<NodeId> child_data;
@@ -92,8 +95,9 @@ bool write_cache(const std::string& path, const FlatAST& flat, const StringPool&
         type_ids[id] = flat.type_id(id);  // Issue #73: persist TypeId so it
                                          // survives cache load
 
-        child_begins[id] = static_cast<std::uint32_t>(child_data.size());
-        child_counts[id] = static_cast<std::uint32_t>(v.children.size());
+        // Issue #220: per-node child count (the reader reconstructs
+        // the per-node starting offset via cumulative sum).
+        child_count_per_node[id] = static_cast<std::uint32_t>(v.children.size());
         child_data.insert(child_data.end(), v.children.begin(), v.children.end());
 
         param_begins[id] = static_cast<std::uint32_t>(param_data.size());
@@ -111,9 +115,7 @@ bool write_cache(const std::string& path, const FlatAST& flat, const StringPool&
     off += pad64(n * 8);
     std::uint64_t syms_off = off;
     off += pad64(n * 4);
-    std::uint64_t cb_off = off;
-    off += pad64(n * 4);
-    std::uint64_t cc_off = off;
+    std::uint64_t ccpn_off = off;
     off += pad64(n * 4);
     std::uint64_t cd_off = off;
     off += pad64(child_data.size() * 4);
@@ -174,10 +176,8 @@ bool write_cache(const std::string& path, const FlatAST& flat, const StringPool&
     f.write((const char*)int_vals.data(), n * 8);
     f.seekp(syms_off);
     f.write((const char*)sym_ids.data(), n * 4);
-    f.seekp(cb_off);
-    f.write((const char*)child_begins.data(), n * 4);
-    f.seekp(cc_off);
-    f.write((const char*)child_counts.data(), n * 4);
+    f.seekp(ccpn_off);
+    f.write((const char*)child_count_per_node.data(), n * 4);
     f.seekp(cd_off);
     f.write((const char*)child_data.data(), child_data.size() * 4);
     f.seekp(pb_off);
