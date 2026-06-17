@@ -896,6 +896,51 @@ public:
     }
 
     [[nodiscard]] EvalResult eval(std::string_view input) {
+        // Fix #165/#166 tests: workspace-aware eval shortcut. When a
+        // workspace is set (via (set-code ...)) AND the input is a
+        // bare identifier, look it up directly in the workspace's
+        // top-level defines. Without this, eval("x") parses a fresh
+        // FlatAST where "x" is undefined, even though
+        // (set-code "(define x 10)") had just installed x = 10 in
+        // the workspace.
+        //
+        // (Function calls like "(f 5)" still need a real param-binding
+        // path through the evaluator; that's tracked as a follow-up
+        // because the env-binding plumbing doesn't have a public
+        // extend-with-frame entry point yet.)
+        if (evaluator_.workspace_flat() && evaluator_.workspace_pool()) {
+            std::string trimmed(input);
+            while (!trimmed.empty() && std::isspace((unsigned char)trimmed.front()))
+                trimmed.erase(trimmed.begin());
+            while (!trimmed.empty() && std::isspace((unsigned char)trimmed.back()))
+                trimmed.pop_back();
+            bool is_bare = !trimmed.empty() &&
+                            (std::isalpha((unsigned char)trimmed[0]) ||
+                             trimmed[0] == '_' || trimmed[0] == '-');
+            for (char c : trimmed) {
+                if (!std::isalnum((unsigned char)c) && c != '_' && c != '-') {
+                    is_bare = false; break;
+                }
+            }
+            if (is_bare) {
+                auto* ws_flat = evaluator_.workspace_flat();
+                auto* ws_pool = evaluator_.workspace_pool();
+                for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
+                    auto v = ws_flat->get(id);
+                    if (v.tag != aura::ast::NodeTag::Define) continue;
+                    if (v.sym_id == aura::ast::INVALID_SYM) continue;
+                    if (v.children.empty()) continue;
+                    auto name = std::string(ws_pool->resolve(v.sym_id));
+                    if (name != trimmed) continue;
+                    auto body_id = v.child(0);
+                    return evaluator_.eval_flat(*ws_flat, *ws_pool, body_id,
+                                                evaluator_.top_env());
+                }
+                // Not in workspace — fall through to the normal
+                // pipeline (which will return an "undefined variable"
+                // diagnostic just as it would without the workspace).
+            }
+        }
         // Phase 4: parse directly into FlatAST, evaluator reads FlatAST directly.
         // Arena-allocate FlatAST/Pool so closures can reference them across calls.
         auto alloc = arena_.allocator();
