@@ -806,7 +806,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                 case IROpcode::MakeClosure: {
                     auto id = next_closure_id_++;
                     IRClosure ircl{ops[1], std::vector<EvalValue>(ops[2], make_void())};
-                    // Copy bridge data from IRModule if available
+                    // Copy bridge data from IRModule if available.
+                    // Issue #224 Cycle 2: shared_ptr-based bridge.
+                    // The copy bumps the refcount, so the closure
+                    // independently keeps the FlatAST alive.
                     if (ops[1] < module_.closure_bridge.size()) {
                         auto& bd = module_.closure_bridge[ops[1]];
                         ircl.flat = bd.flat;

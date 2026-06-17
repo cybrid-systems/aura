@@ -1138,13 +1138,20 @@ public:
                 for (std::size_t i = 0; i < snap->func_params.size() && i < args.size(); ++i)
                     ne.bind(snap->func_params[i], args[i]);
 
-                // Try fast path: bridge data from current module
+                // Try fast path: bridge data from current module.
+                // Issue #224 Cycle 2: shared_ptr is a non-owning view;
+                // we dereference to get the raw reference. The const
+                // is discarded via const_cast because eval_flat takes
+                // non-const refs (the FlatAST itself isn't mutated by
+                // eval_flat's implementation, but the signature is
+                // non-const for historical reasons).
                 if (snap->func_id < last_ir_mod_->closure_bridge.size()) {
                     auto& bd = last_ir_mod_->closure_bridge[snap->func_id];
                     if (bd.flat && bd.pool) {
-                        auto r = evaluator_.eval_flat(*const_cast<ast::FlatAST*>(bd.flat),
-                                                      *const_cast<ast::StringPool*>(bd.pool),
-                                                      bd.body_id, ne);
+                        auto r = evaluator_.eval_flat(
+                            *const_cast<ast::FlatAST*>(bd.flat.get()),
+                            *const_cast<ast::StringPool*>(bd.pool.get()),
+                            bd.body_id, ne);
                         if (r) {
                             return *r;
                         }
@@ -1359,13 +1366,17 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                 ne.bind(snap->func_free_vars[i], snap->env[i]);
             for (std::size_t i = 0; i < snap->func_params.size() && i < args.size(); ++i)
                 ne.bind(snap->func_params[i], args[i]);
-            // Try bridge data from IR module
+            // Try bridge data from IR module. Issue #224 Cycle 2:
+            // shared_ptr is a non-owning view; dereference via .get()
+            // and const_cast (eval_flat's signature takes non-const
+            // refs but doesn't actually mutate the FlatAST).
             if (snap->func_id < last_ir_mod_->closure_bridge.size()) {
                 auto& bd = last_ir_mod_->closure_bridge[snap->func_id];
                 if (bd.flat && bd.pool) {
-                    auto r = evaluator_.eval_flat(*const_cast<ast::FlatAST*>(bd.flat),
-                                                  *const_cast<ast::StringPool*>(bd.pool),
-                                                  bd.body_id, ne);
+                    auto r = evaluator_.eval_flat(
+                        *const_cast<ast::FlatAST*>(bd.flat.get()),
+                        *const_cast<ast::StringPool*>(bd.pool.get()),
+                        bd.body_id, ne);
                     if (r) return *r;
                 }
                 if (!bd.body_source.empty()) {

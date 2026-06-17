@@ -14,12 +14,19 @@ namespace aura::compiler {
 using EvalValue = types::EvalValue;
 
 // Runtime closure value
+//
+// Issue #224 Cycle 2: shared_ptr-based bridge. The shared_ptr
+// is a non-owning view (constructed with a no-op deleter at
+// MakeClosure time) that keeps the FlatAST/StringPool alive
+// as long as the closure exists — even after the lowering
+// arena is reset. The arena remains the actual owner.
 export struct IRClosure {
     std::uint32_t func_id = 0;
     std::vector<EvalValue> env;
-    // Original tree-walker closure info for bridge (nullptr if not available)
-    const ast::FlatAST* flat = nullptr;
-    const ast::StringPool* pool = nullptr;
+    // Original tree-walker closure info for bridge (empty shared_ptr
+    // = not available). See Issue #224 Cycle 2.
+    std::shared_ptr<const ast::FlatAST> flat;
+    std::shared_ptr<const ast::StringPool> pool;
     ast::NodeId body_id = ast::NULL_NODE;
     std::vector<std::string> params;
     // Issue #223: epoch captured from the bridge at MakeClosure

@@ -165,6 +165,11 @@ static std::uint32_t lower_flat_expr(
                             auto bridge_it = state.cache_bridge->find(std::string(name));
                             if (bridge_it != state.cache_bridge->end() &&
                                 ci < bridge_it->second.size()) {
+                                // Issue #224 Cycle 2: shared_ptr<>-based
+                                // bridge. The cache bridge holds a
+                                // shared_ptr; we copy it (refcount
+                                // incremented) so the new bridge keeps
+                                // the FlatAST alive independently.
                                 state.module.set_closure_bridge_ptr(
                                     new_fid, bridge_it->second[ci].flat, bridge_it->second[ci].pool,
                                     bridge_it->second[ci].body_id);
@@ -963,7 +968,15 @@ static std::uint32_t lower_flat_expr(
             auto fid = state.module.add_function(std::move(func));
             // Store bridge data for tree-walker compatibility
             if (state.current_flat && state.current_pool) {
-                state.module.set_closure_bridge(fid, state.current_flat, state.current_pool,
+                // Issue #224 Cycle 2: shared_ptr-based bridge. The
+                // shared_ptr is a non-owning view (no-op deleter) that
+                // keeps the FlatAST/StringPool alive as long as this
+                // bridge exists. The arena remains the actual owner.
+                auto flat_sp = std::shared_ptr<const aura::ast::FlatAST>(
+                    state.current_flat, [](const aura::ast::FlatAST*) {});
+                auto pool_sp = std::shared_ptr<const aura::ast::StringPool>(
+                    state.current_pool, [](const aura::ast::StringPool*) {});
+                state.module.set_closure_bridge(fid, std::move(flat_sp), std::move(pool_sp),
                                                 v.child(0));
                 // Save lambda body source for bridge fallback re-parse
                 auto body_src = unparse_node(*state.current_flat, *state.current_pool, v.child(0));
