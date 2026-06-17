@@ -4606,6 +4606,74 @@ target_sources(test_issue_225_bridge_invalidation PUBLIC FILE_SET CXX_MODULES BA
     src/compiler/type_checker.ixx)
 add_test(NAME issue_225_bridge_invalidation_verification COMMAND ./test_issue_225_bridge_invalidation)
 
+# Issue #226 Cycle 4: closure-bridge tests + invariants + TSan
+# (Issue #180 Cycle 4). 4 test sections — one per cycle:
+#   1. concurrent mutate + closure invoke (100 fibers)
+#   2. arena reset + bridge fallback
+#   3. post-mutation invariant checks
+#   4. doomsday stress (200 fibers, random ops)
+aura_add_issue_test(test_issue_226)
+target_include_directories(test_issue_226 PRIVATE src src/compiler tests)
+target_sources(test_issue_226 PRIVATE
+    src/serve/fiber.cpp
+    src/serve/worker.cpp
+    src/serve/scheduler.cpp
+    src/serve/gc_coordinator.cpp
+    src/parser/lexer_impl.cpp src/parser/parser_impl.cpp
+    src/core/ast_impl.cpp
+    src/core/type_impl.cpp
+    src/compiler/value_impl.cpp
+    src/compiler/evaluator_impl.cpp
+    src/compiler/cache_impl.cpp
+    src/compiler/lowering_impl.cpp
+    src/compiler/ir_executor_impl.cpp
+    src/compiler/constant_folding_impl.cpp
+    src/compiler/compute_kind_impl.cpp
+    src/compiler/query_impl.cpp
+    src/compiler/shape_profiler.cpp
+    src/compiler/spec_jit_controller.cpp
+    src/compiler/type_checker_impl.cpp
+    src/compiler/arity_impl.cpp
+    src/compiler/messaging_bridge_impl.cpp
+    src/compiler/ffi_primitives_impl.cpp
+    src/compiler/adt_runtime_impl.cpp
+    src/compiler/lowering_linear_types_impl.cpp
+    src/compiler/aura_jit.cpp
+    src/compiler/aura_jit_runtime.cpp
+    src/compiler/aura_jit_bridge.cpp
+    src/compiler/observability_metrics.h
+    src/compiler/observability_snapshot.h)
+set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
+target_include_directories(test_issue_226 PRIVATE ${LLVM_INCLUDE_DIRS})
+target_compile_definitions(test_issue_226 PRIVATE AURA_HAVE_LLVM=1)
+target_link_libraries(test_issue_226 PRIVATE ${llvm_libs})
+target_sources(test_issue_226 PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
+    src/core/arena.ixx src/core/ast.ixx src/core/core.ixx
+    src/core/type_arena.ixx src/core/type.ixx
+    src/compiler/value.ixx
+    src/parser/lexer.ixx src/parser/parser.ixx
+    src/compiler/evaluator.ixx
+    src/compiler/evaluator_pure.ixx
+    src/compiler/adt_runtime.ixx
+    src/compiler/cache.ixx
+    src/compiler/ir.ixx
+    src/compiler/lowering.ixx
+    src/compiler/ir_executor.ixx
+    src/compiler/compute_kind.ixx
+    src/compiler/arity.ixx
+    src/compiler/constant_folding.ixx
+    src/compiler/service.ixx
+    src/compiler/pass_manager.ixx
+    src/compiler/query.ixx
+    src/compiler/coercion_map.ixx
+    src/compiler/ir_cache_pure.ixx
+    src/compiler/lowering_linear_types.ixx
+    src/compiler/ast_walkers.ixx
+    src/compiler/ffi_primitives.ixx
+    src/compiler/type_checker.ixx)
+add_test(NAME issue_226_closure_bridge_stress_verification COMMAND ./test_issue_226)
+
 # Issue #178 Cycle 5: production NodeView migration to
 # reflect_members + auto_serialize.
 #
