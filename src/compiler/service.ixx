@@ -597,6 +597,12 @@ public:
         if (new_id >= new_mod.functions.size() || new_mod.functions[new_id].name != name)
             return false;
 
+        // Issue #225 cycle 3: invalidate the bridge data for
+        // the hot-swapped function. Closures that captured
+        // the old bindings will see the new epoch_ and
+        // re-parse on next use.
+        invalidate_bridge_for(name);
+
         // Hot-swap: replace in last_ir_mod_ at existing_id, preserving the id
         return last_ir_mod_->hot_swap_function(existing_id, std::move(new_mod.functions[new_id]));
     }
@@ -682,6 +688,14 @@ public:
         // must be cleared after arena reset to avoid dangling pointers.
         ir_cache_.clear();
         ir_cache_strings_.clear();
+        // Issue #225 cycle 3: explicitly clear all bridge data.
+        // The shared_ptr-based bridges (Issue #224) hold a
+        // non-owning view of the FlatAST, but the FlatAST's
+        // internal arrays (child_data_, etc.) live in the
+        // arena and are invalidated by arena_.reset() above.
+        // The bridges themselves must be cleared to avoid
+        // referencing the now-freed arena memory.
+        ir_cache_bridge_.clear();
         // Issue #223: bump mutation_epoch_ so any stale
         // ClosureBridgeData that captured the old epoch is detected
         // by the bridge callback / apply_closure. The bridge_epoch_
@@ -2509,6 +2523,11 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
             it->second.dirty = true;
             it->second.mark_all_blocks_dirty();
         }
+        // Issue #225 cycle 3: invalidate the bridge data for
+        // the mutated function. The bridge_epoch_ field is
+        // bumped so any closure holding a reference will
+        // detect staleness and re-parse on next use.
+        invalidate_bridge_for(name);
         // Cascade: BFS over called_by. Use std::queue (FIFO) for proper BFS
         // ordering — vector-as-stack is technically DFS, which is fine for
         // correctness but std::queue is more idiomatic and self-documenting.
@@ -2575,6 +2594,11 @@ auto ir_mod = aura::compiler::lower_to_ir_with_cache(
                     metrics_.cascade_full_count.fetch_add(
                         1, std::memory_order_relaxed);
                 }
+                // Issue #225 cycle 3: also invalidate the
+                // bridge data for the dependent. Closures
+                // that captured the mutated function's
+                // bindings will see the new epoch_ and re-parse.
+                invalidate_bridge_for(dependent);
             }
         }
     }
@@ -4592,6 +4616,16 @@ private:
             }
         }
 
+        // Issue #225 cycle 3: invalidate bridge data for
+        // the mutated function and all its dependents.
+        // Bumps the bridge_epoch_ field so any closure
+        // holding a reference will detect staleness and
+        // re-parse from body_source on next use.
+        invalidate_bridge_for(name);
+        for (auto& dep_name : dependents) {
+            invalidate_bridge_for(dep_name);
+        }
+
         // Clean up the original function's dep info
         auto it = dep_graph_.find(name);
         if (it != dep_graph_.end()) {
@@ -4703,6 +4737,15 @@ private:
 
 
 public:
+    // Issue #225 cycle 3: public test hook for the bridge
+    // invalidation helper. Production code triggers this
+    // through mark_define_dirty / invalidate_function /
+    // hot_swap_function_impl / reset(). Tests can call
+    // this directly to verify the helper's behavior.
+    void public_invalidate_bridges_for(const std::string& name) {
+        invalidate_bridge_for(name);
+    }
+
     // Track names defined via value define (tree-walker path) so subsequent
     // expressions referencing them fall back to tree-walker instead of IR.
     std::unordered_set<std::string> user_bindings_;
@@ -4778,6 +4821,29 @@ public:
     // the arena). For Cycle 1 we just forward to mutation_epoch_.
     void bump_bridge_epoch() noexcept {
         mutation_epoch_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // Issue #225 cycle 3: invalidate the bridge data for a
+    // function. Bumps the bridge_epoch_ field on all bridge
+    // entries in the entry's ir_cache_bridge_, so any closure
+    // holding a reference will detect the staleness and fall
+    // back to re-parse from body_source (or be invalidated).
+    //
+    // This is the "active" version of the safety check (when
+    // something is invalidated, take action) vs the "passive"
+    // version of Cycles 1+2 (just check the epoch + use
+    // shared_ptr). All 3 compose: the invalidation is the
+    // trigger, the epoch check is the detector, the
+    // shared_ptr is the safety net.
+    void invalidate_bridge_for(const std::string& name) {
+        auto bit = ir_cache_bridge_.find(name);
+        if (bit == ir_cache_bridge_.end()) return;
+        const auto current_epoch = bridge_epoch();
+        for (auto& bridge : bit->second) {
+            bridge.bridge_epoch = current_epoch;
+        }
+        metrics_.bridge_invalidations_count.fetch_add(
+            1, std::memory_order_relaxed);
     }
 
     // Issue #59 Iter 3: Mutation Lock. A mutate:* operation (which
