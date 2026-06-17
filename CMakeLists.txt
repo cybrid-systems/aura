@@ -2010,7 +2010,7 @@ target_compile_options(cycle221_pcv_bench PRIVATE -Wall -Wextra -Wpedantic
 target_compile_features(cycle221_pcv_bench PUBLIC cxx_std_26)
 target_link_libraries(cycle221_pcv_bench PRIVATE stdc++ pthread)
 add_test(NAME cycle221_pcv_bench COMMAND ./cycle221_pcv_bench)
-target_include_directories(issue_212_bench PRIVATE src src/compiler)
+target_include_directories(issue_212_bench PRIVATE src)
 target_sources(issue_212_bench PRIVATE
     src/core/ast_impl.cpp
     src/core/type_impl.cpp
@@ -2020,7 +2020,14 @@ target_sources(issue_212_bench PRIVATE
     src/compiler/arity_impl.cpp
     src/compiler/compute_kind_impl.cpp
     tests/_stubs/issue_212_runtime_stubs.cpp)
-target_link_libraries(issue_212_bench PRIVATE pthread stdc++ stdc++exp aura-reflect)
+# Match aura_test_objects's compile flags so the prebuilt BMIs
+# in module_cache/aura_test_objects.dir/ (produced by the .ixx
+# compile) have the same identity the .cpp imports expect.
+target_compile_options(issue_212_bench PRIVATE -Wall -Wextra -Wpedantic
+    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
+    -Wno-unused-but-set-variable -Wno-unused-parameter -Wno-misleading-indentation
+    -Wno-parentheses)
+target_link_libraries(issue_212_bench PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME issue_212_bench COMMAND ./issue_212_bench)
 
 # Issue #213 verification: rollback mechanism for the mutation
