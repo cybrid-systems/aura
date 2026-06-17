@@ -69,6 +69,13 @@ struct CompilerMetrics {
     // the convention and required the whole-entry mark.
     std::atomic<std::uint64_t> cascade_body_only_count{0};
     std::atomic<std::uint64_t> cascade_full_count{0};
+    // Issue #225 cycle 3: bridge invalidation. Bumped each
+    // time invalidate_bridge_for() is called (i.e. on
+    // mark_define_dirty, invalidate_function, and
+    // hot_swap_function_impl). The total count gives
+    // observability into how often the bridge_epoch_ field
+    // is bumped across the lifetime of the service.
+    std::atomic<std::uint64_t> bridge_invalidations_count{0};
 };
 
 // Per-function metrics, returned by CompilerService::snapshot()
