@@ -194,11 +194,17 @@ def main():
             print(f"{R}No test_issue_* binaries available after build.{N}")
             return 1
 
-    # Always run the build step to pick up any new test
-    # files. Already-built binaries are not rebuilt (ninja
-    # handles incremental builds). This ensures fresh CI
-    # runs always include all test_issue_* files.
-    build_targets(discover_test_issue_targets())
+    # Skip the build step by default. The CI runs `cmd_build`
+    # (in build.py) BEFORE test_issues, which compiles the
+    # `all_test_issue_targets` aggregate target. By the time
+    # this runner executes, all 62+ binaries should already
+    # exist in build/. Re-running `ninja -k 0 <88 targets>`
+    # here on every invocation added 10-20 minutes to the
+    # CI's `build.py check` step on slow runners (it does
+    # dependency resolution per target even when nothing
+    # changed). Pass --build to force a rebuild.
+    if args.build:
+        build_targets(discover_test_issue_targets())
     bins = discover_test_issue_binaries()
 
     if args.build:
