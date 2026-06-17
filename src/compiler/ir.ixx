@@ -459,9 +459,17 @@ export struct IRFunction {
 // Closure bridge data: original tree-walker info for IR closures.
 // Only populated when the lowered closure has corresponding FlatAST data
 // (i.e. for lambda forms, not for cached defines).
+//
+// Issue #224 Cycle 2: shared_ptr-based ownership. The shared_ptr
+// keeps the FlatAST/StringPool alive as long as any bridge holds
+// a reference — even after `arena_.reset()`. The arena is the
+// actual owner; the shared_ptr is a non-owning view (constructed
+// with a no-op deleter). This makes the bridge's lifetime
+// independent of the lowering arena, avoiding use-after-free
+// when a long-lived closure outlives the arena that produced it.
 export struct ClosureBridgeData {
-    const ast::FlatAST* flat = nullptr;
-    const ast::StringPool* pool = nullptr;
+    std::shared_ptr<const ast::FlatAST> flat;     // shared view of arena-owned FlatAST
+    std::shared_ptr<const ast::StringPool> pool;  // same
     ast::NodeId body_id = ast::NULL_NODE;
     std::string body_source; // serialized source for bridge fallback re-parse
     // Issue #223: epoch captured at bridge construction. If the
@@ -493,20 +501,34 @@ export struct IRModule {
     // Issue #223: epoch is the bridge_epoch_ captured at this point;
     // a future mismatch with the service's bridge_epoch() signals
     // the bridge's flat*/pool* are stale.
-    void set_closure_bridge(std::uint32_t func_id, const ast::FlatAST* flat,
-                            const ast::StringPool* pool, ast::NodeId body_id,
+    //
+    // Issue #224 Cycle 2: takes shared_ptr by value. The shared_ptr
+    // is a non-owning view (constructed with a no-op deleter at
+    // the call site) that keeps the FlatAST alive as long as the
+    // bridge exists.
+    void set_closure_bridge(std::uint32_t func_id,
+                            std::shared_ptr<const ast::FlatAST> flat,
+                            std::shared_ptr<const ast::StringPool> pool,
+                            ast::NodeId body_id,
                             std::uint64_t epoch = 0) {
         if (func_id < functions.size()) {
-            closure_bridge[func_id] = {flat, pool, body_id, "", epoch};
+            closure_bridge[func_id] = {std::move(flat), std::move(pool),
+                                       body_id, "", epoch};
         }
     }
 
     // Set bridge data by pointer (for cached function injection)
-    void set_closure_bridge_ptr(std::uint32_t func_id, const ast::FlatAST* flat,
-                                const ast::StringPool* pool, ast::NodeId body_id,
+    // Issue #224 Cycle 2: takes shared_ptr by value. The shared_ptr
+    // is a non-owning view (constructed with a no-op deleter at
+    // the call site).
+    void set_closure_bridge_ptr(std::uint32_t func_id,
+                                std::shared_ptr<const ast::FlatAST> flat,
+                                std::shared_ptr<const ast::StringPool> pool,
+                                ast::NodeId body_id,
                                 std::uint64_t epoch = 0) {
         if (func_id < closure_bridge.size()) {
-            closure_bridge[func_id] = {flat, pool, body_id, "", epoch};
+            closure_bridge[func_id] = {std::move(flat), std::move(pool),
+                                       body_id, "", epoch};
         }
     }
 
