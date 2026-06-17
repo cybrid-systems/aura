@@ -190,7 +190,7 @@ bool test_bindings_with_names() {
     return true;
 }
 
-int run_issue_174() {
+int main() {
     std::fprintf(stdout, "═══ Issue #174 Cycle 1 — Env::bindings_ migration ═══\n");
     std::fprintf(stdout, "  Adds bindings_symid_iter(), bindings_with_names(),\n");
     std::fprintf(stdout, "  and bindings_legacy_uses metric.\n\n");

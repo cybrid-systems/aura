@@ -125,7 +125,7 @@ bool test_synthetic_hit_rate() {
     return true;
 }
 
-int run_issue_130() {
+int main() {
     std::println("═══ Issue #130 verification tests ═══\n");
     test_fresh_hit_rate();
     test_hit_rate_computation();

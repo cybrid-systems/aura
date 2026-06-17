@@ -197,7 +197,7 @@ bool test_try_extract_define() {
     return true;
 }
 
-int run_issue_126() {
+int main() {
     std::println("═══ Issue #126 verification tests ═══\n");
     test_should_relower();
     test_fnv1a_64();

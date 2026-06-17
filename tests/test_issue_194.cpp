@@ -184,7 +184,7 @@ bool test_primitives_non_destructive() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int run_issue_194() {
+int main() {
     std::println("═══ Issue #194 verification tests ═══\n");
     std::println("AC #1: (jit:intrinsic-count) primitive");
     test_intrinsic_count_primitive_registered();

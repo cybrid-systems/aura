@@ -98,7 +98,7 @@ bool test_metrics_struct_has_counters() {
     return true;
 }
 
-int run_issue_125() {
+int main() {
     std::println("═══ Issue #125 verification tests ═══\n");
     test_dirty_skip_counters_exist();
     test_parse_smoke();

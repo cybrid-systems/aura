@@ -281,7 +281,7 @@ bool test_shape_profiler_contracts() {
 // Main
 // ═══════════════════════════════════════════════════════════════
 
-int run_issue_144() {
+int main() {
     std::println("═══ Issue #144 verification tests (C++26 contracts) ═══\n");
 
     std::println("── AC #1: 8-10 hot functions have contract_assert ──");

@@ -205,7 +205,7 @@ bool test_runtime_end_to_end() {
     return true;
 }
 
-int run_issue_120() {
+int main() {
     std::println("═══ Issue #120 verification tests ═══\n");
     test_capture_outer_tmp();
     test_nested_hygienic_macros();

@@ -227,7 +227,7 @@ bool test_compact_pairs_all_dead() {
     return true;
 }
 
-int run_issue_206() {
+int main() {
     std::fprintf(stdout, "═══ Issue #206 — GC sweep compact + remap + resolve_X ═══\n");
     std::fprintf(stdout, "  Verifies the compact_pairs() / resolve_pair() API.\n\n");
 

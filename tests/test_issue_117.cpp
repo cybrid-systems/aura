@@ -256,7 +256,7 @@ bool test_dirty_only_still_works() {
     return true;
 }
 
-int run_issue_117() {
+int main() {
     std::println("═══ Issue #117 verification tests ═══\n");
     test_full_re_simulation_discovers_linear();
     test_full_catches_what_dirty_misses();

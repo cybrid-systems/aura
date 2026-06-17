@@ -368,7 +368,7 @@ bool test_extract_type_correctness() {
 // Main
 // ═══════════════════════════════════════════════════════════════
 
-int run_issue_139() {
+int main() {
     std::println("═══ Issue #139 verification tests ═══\n");
 
     std::println("── AC #1: Structural refactor operators ──");

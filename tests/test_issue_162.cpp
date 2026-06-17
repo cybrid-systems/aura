@@ -268,7 +268,7 @@ bool test_rule_dispatch() {
     return true;
 }
 
-int run_issue_162() {
+int main() {
     std::fprintf(stdout, "═══ Issue #162 — Phases 1+2: Type Concepts ═══\n");
 
     std::fprintf(stdout, "\n--- Phase 1: TypeConstraint + 2 concrete constraints ---\n");

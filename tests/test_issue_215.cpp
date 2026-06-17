@@ -246,7 +246,7 @@ bool test_cache_header_compat() {
     return true;
 }
 
-int run_issue_215() {
+int main() {
     std::fprintf(stdout, "═══ Issue #215 — auto_deserialize for containers ═══\n");
     std::fprintf(stdout, "  Verifies the Cycle 2 sub-items of #178:\n");
     std::fprintf(stdout, "    1-5. vector/optional/array/variant roundtrips\n");

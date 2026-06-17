@@ -185,7 +185,7 @@ bool test_mutate_rebind_invalid_body() {
     return true;
 }
 
-int run_issue_216() {
+int main() {
     std::fprintf(stdout, "═══ Issue #216 — query:schema + mutate integration ═══\n");
     std::fprintf(stdout, "  Verifies the Cycle 3 sub-items of #178:\n");
     std::fprintf(stdout, "    1. schema<T>() compile-time\n");

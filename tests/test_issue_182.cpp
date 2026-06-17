@@ -496,7 +496,7 @@ bool test_end_to_end_counter() {
 // Main
 // ═══════════════════════════════════════════════════════════
 
-int run_issue_182() {
+int main() {
     std::fprintf(stdout, "═══ Issue #182 — Hardware IR + Verilog Backend (Cycle 1, C++) ═══\n");
     std::fprintf(stdout, "  Issue #182 is 100%% stdlib work; the Aura binary's\n");
     std::fprintf(stdout, "  top-level `define` has upstream bugs that block the\n");

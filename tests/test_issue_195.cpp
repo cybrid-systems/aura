@@ -395,7 +395,7 @@ bool test_per_fiber_raised_value_visible_to_handler() {
 // Main test runner
 // ═════════════════════════════════════════════════════════════
 
-int run_issue_195() {
+int main() {
     std::println("═══ Issue #195 verification tests ═══\n");
     std::println("AC #1: Per-fiber exception state infrastructure");
     test_exception_push_pop_default_fiber();

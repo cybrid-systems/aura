@@ -174,7 +174,7 @@ bool test_nested_boundaries() {
     return true;
 }
 
-int run_issue_177() {
+int main() {
     std::fprintf(stdout, "═══ Issue #213 / #177 — integration smoke test ═══\n");
     std::fprintf(stdout, "  Verifies the full #213 chain end-to-end:\n");
     std::fprintf(stdout, "    - Cycle 1: rollback mechanism\n");

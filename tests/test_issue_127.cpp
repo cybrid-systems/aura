@@ -119,7 +119,7 @@ bool test_monadic_chain() {
     return true;
 }
 
-int run_issue_127() {
+int main() {
     std::println("═══ Issue #127 verification tests ═══\n");
     test_alias_type_identity();
     test_result_error_channel();

@@ -152,7 +152,7 @@ bool test_end_to_end() {
     return true;
 }
 
-int run_issue_123() {
+int main() {
     std::println("═══ Issue #123 verification tests ═══\n");
     test_pre_exec_strips_begin();
     test_pre_exec_standalone();

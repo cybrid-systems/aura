@@ -230,7 +230,7 @@ bool test_coercion_marker_struct() {
     return true;
 }
 
-int run_issue_163() {
+int main() {
     std::fprintf(stdout, "═══ Issue #163 — Expand Pass concept usage ═══\n");
 
     test_analysis_pass_concept();

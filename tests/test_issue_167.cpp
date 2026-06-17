@@ -209,7 +209,7 @@ bool test_full_metadata() {
     return true;
 }
 
-int run_issue_167() {
+int main() {
     std::fprintf(stdout, "═══ Issue #167 — IR layer SoA/DOD migration (Phase 1) ═══\n");
 
     test_empty_module();

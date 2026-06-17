@@ -201,7 +201,7 @@ bool test_aura_primitive() {
     return true;
 }
 
-int run_issue_214() {
+int main() {
     std::fprintf(stdout, "═══ Issue #214 — reflect_module_exports + stdlib scanner ═══\n");
     std::fprintf(stdout, "  Verifies the Cycle 1 sub-items:\n");
     std::fprintf(stdout, "    1. module_exports<T>() compile-time reflection\n");

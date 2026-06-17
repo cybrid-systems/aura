@@ -197,7 +197,7 @@ bool test_independent_flatast() {
     return true;
 }
 
-int run_issue_161() {
+int main() {
     std::fprintf(stdout, "═══ Issue #161 — Phase 2: pure-function parser ═══\n");
 
     test_parse_to_flat_basic();

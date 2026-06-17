@@ -418,7 +418,7 @@ void test_9_walker() {
     CHECK(sum == 19, "sum of children (3+7+9) == 19");
 }
 
-int run_issue_220() {
+int main() {
     test_1_basic();
     test_2_insert();
     test_3_erase();
