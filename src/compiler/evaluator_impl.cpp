@@ -262,11 +262,20 @@ std::optional<EvalValue> Env::lookup(const std::string& n) const {
     // is null but parent_id_ is set. This happens for env frames
     // materialized by materialize_call_env from a closure captured
     // in a stack env (e.g., named-let → letrec → lambda capture).
-    // Without this walk, the closure body can'"'"'t see bindings
+    // Without this walk, the closure body can't see bindings
     // from the surrounding scope.
+    //
+    // Issue #145 P0 follow-up: hold env_frames_mtx_ as a
+    // shared lock for the entire walk. env_frame returns a
+    // reference into env_frames_; holding the lock prevents
+    // the main thread's alloc_env_frame from reallocating the
+    // deque's map array underneath us (which would free the
+    // map pointer we're reading).
     if (parent_id_ != NULL_ENV_ID && owner_) {
+        std::shared_lock<std::shared_mutex> env_rlock(
+            owner_->env_frames_lock());
         const EnvFrame& pfr = owner_->env_frame(parent_id_);
-        // Walk the parent frame'"'"'s bindings (string-keyed)
+        // Walk the parent frame's bindings (string-keyed)
         for (auto& b : pfr.bindings_) {
             if (b.first == n) {
                 if (is_cell(b.second)) {
@@ -277,7 +286,7 @@ std::optional<EvalValue> Env::lookup(const std::string& n) const {
                 return b.second;
             }
         }
-        // Recurse via SoA: walk the parent'"'"'s parent_id_ chain.
+        // Recurse via SoA: walk the parent's parent_id_ chain.
         // Capture the result but only return if non-null — if the
         // recursive lookup returns nullopt, fall through to the
         // primitive + ADT fallbacks below (otherwise primitives
@@ -575,6 +584,14 @@ std::optional<types::EvalValue> EnvFrame::lookup_local_by_symid(
 // centralized later in lookup paths using Evaluator::cells_.
 aura::compiler::EnvId Evaluator::alloc_env_frame(
     EnvId parent_id, const Primitives* primitives) {
+    // Issue #145 P0 follow-up: unique_lock on env_frames_mtx_
+    // to serialize push_back with fiber-thread readers
+    // (materialize_call_env). The deque's map array can be
+    // reallocated when the deque grows past the current map
+    // capacity, freeing the map pointer a fiber thread is
+    // reading via env_frame[id]. Unique lock makes the
+    // push_back atomic with respect to readers.
+    std::unique_lock<std::shared_mutex> wlock(env_frames_mtx_);
     if (env_frames_.size() >= NULL_ENV_ID) {
         // 4G envs reached. Return NULL to signal overflow;
         // callers should treat this as fatal (env allocation
@@ -606,6 +623,12 @@ aura::compiler::EnvId Evaluator::alloc_env_frame_from_env(
     EnvId pid = (parent_id != NULL_ENV_ID) ? parent_id : e.parent_id();
     EnvId id = alloc_env_frame(pid);
     if (id == NULL_ENV_ID) return NULL_ENV_ID;
+    // Issue #145 P0 follow-up: hold a shared lock while
+    // mutating the freshly-allocated frame. A concurrent
+    // alloc_env_frame on another thread (e.g. a fiber)
+    // could push_back and reallocate env_frames_'s map
+    // array, invalidating our `fr` reference.
+    std::unique_lock<std::shared_mutex> wlock(env_frames_mtx_);
     EnvFrame& fr = env_frames_[id];
     // e is `const`, so .bindings()/.bindings_symid() return
     // std::span (const overload). Use assign from iterators
@@ -640,6 +663,20 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // env_id set at capture time (via alloc_env_frame_from_env).
     // Always use SoA path for GC-safety and no pointer chasing.
     Env ne;
+    // Defensive: a closure with env_id == NULL_ENV_ID would
+    // trip the env_frame() contract and crash. This can happen
+    // when the closure was constructed via a path that
+    // skipped alloc_env_frame_from_env (e.g. a ClosureView
+    // copy, a default-constructed Closure moved into
+    // closures_[cid], or a frame that was pruned by a
+    // future gc-temp cycle). Fall back to a fresh Env with
+    // no captured bindings — the body will see globals via
+    // the workspace walk, which is correct for lambda
+    // bodies that don't actually reference the captured
+    // scope (the most common case for this failure mode).
+    if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size()) {
+        return ne;
+    }
     const EnvFrame& fr = env_frame(cl.env_id);
     ne.bindings() = fr.bindings_;
     ne.bindings_symid_mut() = fr.bindings_symid_;
@@ -17278,23 +17315,56 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid,
     }
 
     // Try tree-walker closures first
-    auto it = closures_.find(cid);
-    if (it != closures_.end()) {
-        auto& cl = it->second;
+    // Issue #145 P0 follow-up: shared lock on closures_mtx_
+    // while we look up AND copy the closure. The fiber
+    // thread holds this lock for the duration of the copy
+    // (microseconds), so the main thread's mutations don't
+    // race with the lookup. Without this lock, the fiber
+    // thread can see a half-modified Closure (the hash
+    // table node's key/value pair can be in an inconsistent
+    // state during insert/erase on the main thread).
+    Closure cl_copy;
+    bool cl_found = false;
+    {
+        std::shared_lock<std::shared_mutex> rlock(closures_mtx_);
+        auto it = closures_.find(cid);
+        if (it != closures_.end()) {
+            cl_copy = it->second;
+            cl_found = true;
+        }
+    }
+    if (cl_found) {
         // Issue #145 Phase 2.3 — materialize the call env from
         // the SoA arena (env_frames_[cl.env_id]) -- legacy cl.env pointer path removed in P0.
-        Env ne = materialize_call_env(cl);
+        // Hold the shared lock for the duration of the
+        // materialization so env_frames_ can't reallocate
+        // (deque map reallocation) underneath us. ASan caught
+        // the read-from-freed-map-pointer race when this
+        // wasn't locked.
+        Env ne;
+        EnvId parent_id = NULL_ENV_ID;
+        {
+            std::shared_lock<std::shared_mutex> env_rlock(env_frames_mtx_);
+            const EnvFrame& fr = env_frame(cl_copy.env_id);
+            ne.bindings() = fr.bindings_;
+            ne.bindings_symid_mut() = fr.bindings_symid_;
+            parent_id = fr.parent_id;
+        }
+        if (parent_id != NULL_ENV_ID) {
+            ne.set_owner(this);
+            ne.set_parent_id(parent_id);
+        }
         ne.set_primitives(&primitives_);
 
         // Issue #145: set the pool so bind_symid can mirror
         // lambda params into the string-keyed bindings_ array
         // (so body code's lookup(name) still finds them).
-        if (cl.pool) ne.set_pool(cl.pool);
-        if (cl.dotted) {
+        if (cl_copy.pool) ne.set_pool(cl_copy.pool);
+        if (cl_copy.dotted) {
             // Dotted rest param: bind named params, collect rest into list
-            std::size_t named_count = cl.params.size() - 1;
+            std::size_t named_count = cl_copy.params.size() - 1;
             for (std::size_t i = 0; i < named_count && i < args.size(); ++i)
-                ne.bind_symid(cl.params[i], args[i]);  // Issue #145: SymId
+                ne.bind_symid(cl_copy.params[i], args[i]);  // Issue #145: SymId
             // Collect remaining args into a pair list for the rest param
             types::EvalValue rest = make_void();
             for (std::size_t i = args.size(); i > named_count; --i) {
@@ -17302,12 +17372,12 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid,
                 pairs_.push_back({args[i - 1], rest});
                 rest = make_pair(pid);
             }
-            ne.bind_symid(cl.params.back(), rest);
+            ne.bind_symid(cl_copy.params.back(), rest);
         } else {
-            for (std::size_t i = 0; i < cl.params.size() && i < args.size(); ++i)
-                ne.bind_symid(cl.params[i], args[i]);  // Issue #145: SymId
+            for (std::size_t i = 0; i < cl_copy.params.size() && i < args.size(); ++i)
+                ne.bind_symid(cl_copy.params[i], args[i]);  // Issue #145: SymId
         }
-        if (cl.flat) {
+        if (cl_copy.flat) {
             // Issue #223: check if the closure's bridge is stale
             // (arena was reset, or major mutation invalidated the
             // captured flat*/pool*). If stale, the flat*/pool*
@@ -17315,10 +17385,10 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid,
             // nullopt) so the caller can re-bridge from the new
             // arena. The body_source re-parse fallback is a
             // future slice (requires parser integration).
-            if (is_bridge_stale(cl.bridge_epoch, current_bridge_epoch())) {
+            if (is_bridge_stale(cl_copy.bridge_epoch, current_bridge_epoch())) {
                 return std::nullopt;
             }
-            auto r = eval_flat(*cl.flat, *cl.pool, cl.body_id, ne);
+            auto r = eval_flat(*cl_copy.flat, *cl_copy.pool, cl_copy.body_id, ne);
             if (r)
                 return *r;
         }
@@ -17983,7 +18053,10 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 cl_flat->root = cloned_body;
                 // P0: register captured for SoA, no legacy env pointer in Closure.
                 EnvId cap_id = alloc_env_frame_from_env(env);
-                closures_[cid] = Closure{"", {}, cl_flat, cl_pool, cloned_body, cap_id, false, target_arena};
+                {
+                    std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+                    closures_[cid] = Closure{"", {}, cl_flat, cl_pool, cloned_body, cap_id, false, target_arena};
+                }
                 // Store param SymIds directly (Issue #145: SoA migration).
                 // Interning already happened at the lambda creation site
                 // (param_syms are SymId from pool->intern).
@@ -18092,7 +18165,10 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         // for SoA (GC-safe, no pointer). env_id is now the only handle.
                         cl.env_id = alloc_env_frame_from_env(*copied_env);
                         cl.owner_arena = target;
-                        closures_[cid] = std::move(cl);
+                        {
+                            std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+                            closures_[cid] = std::move(cl);
+                        }
 
                         // Bind in env
                         auto ci = alloc_cell(make_void());
@@ -19577,7 +19653,10 @@ static constexpr std::size_t MAX_C_STACK_DEPTH = 2000;
                     auto body_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
                     // P0: legacy env pointer removed. Register captured env in SoA for this closure.
                     EnvId cap_id = alloc_env_frame_from_env(*current_env);
-                    closures_[cid] = Closure{"", std::move(params), f, p, body_id, cap_id, dotted, target};
+                    {
+                        std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+                        closures_[cid] = Closure{"", std::move(params), f, p, body_id, cap_id, dotted, target};
+                    }
                     // Do NOT cache closure values — the closure captures the current env and a
                     // cached closure would reuse the same env on subsequent evaluations (wrong
                     // when the same Lambda node is evaluated with different captured variables).

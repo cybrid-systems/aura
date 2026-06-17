@@ -916,6 +916,15 @@ public:
     [[nodiscard]] bool is_valid_env_id(EnvId id) const {
         return id != NULL_ENV_ID && id < env_frames_.size();
     }
+    // Acquire a shared_lock on the env_frames_ deque before
+    // calling env_frame() / env_frame_mut() / iterating. This
+    // prevents the main thread's alloc_env_frame from
+    // reallocating the deque's map array (which would free the
+    // pointer a reader is holding). See env_frames_mtx_ below
+    // for the full rationale.
+    [[nodiscard]] std::shared_mutex& env_frames_lock() const {
+        return env_frames_mtx_;
+    }
     // Number of live frames.
     [[nodiscard]] std::size_t env_frames_size() const {
         return env_frames_.size();
@@ -1129,6 +1138,16 @@ private:
     }
     void* type_registry_ = nullptr; // points to aura::core::TypeRegistry
     std::unordered_map<ClosureId, Closure> closures_;
+    // Issue #145 P0 follow-up: shared_mutex protects closures_
+    // against concurrent access from fiber threads (e.g. a
+    // std::thread spawned by fiber:spawn calling apply_closure)
+    // and the main thread (mutate, define, eval). Without this
+    // lock, concurrent insert/erase + lookup races corrupt the
+    // hash table and the read returns NULL pointers (ASan
+    // SEGV at address 0x8 in the test_issue_164 heap trace).
+    // Reader (apply_closure, materialize_call_env) takes a
+    // shared lock; writer (closures_[cid] = ...) takes unique.
+    mutable std::shared_mutex closures_mtx_;
     ClosureBridgeFn closure_bridge_;
     ModuleLoadedFn module_loaded_cb_;
     std::unordered_map<std::string, MacroDef> macros_;
@@ -1157,7 +1176,31 @@ private:
     // appended in alloc_env_frame and indexed by EnvId. Frame
     // data is parallel to Env; parent walks go via parent_id_
     // (index) instead of Env::parent_ (pointer).
-    std::vector<EnvFrame> env_frames_;
+    //
+    // Issue #145 P0 follow-up: deque (not vector) so that
+    // push_back doesn't invalidate element references. This
+    // matters because materialize_call_env takes a
+    // `const EnvFrame&` reference and the closure body executes
+    // on a fiber thread (T27 in the ASan trace). A vector
+    // push_back on the main thread (T0) can reallocate the
+    // buffer, freeing the frame the fiber thread is still
+    // reading. deque grows in chunks without invalidating
+    // element references (BUT the map array itself can still
+    // be reallocated when the deque grows past the current
+    // map capacity — see env_frames_mtx_ below).
+    std::deque<EnvFrame> env_frames_;
+    // Issue #145 P0 follow-up: shared_mutex protects
+    // env_frames_ against concurrent access from fiber threads
+    // (e.g. a std::thread spawned by fiber:spawn calling
+    // materialize_call_env -> env_frame) and the main thread
+    // (alloc_env_frame). Without this lock, deque's map array
+    // reallocation on push_back can free the map-pointer that
+    // a fiber thread is reading via env_frame[id], causing a
+    // heap-use-after-free. Reader (env_frame, env_frame_mut,
+    // materialize_call_env, lookup_by_symid_chain) takes a
+    // shared lock; writer (alloc_env_frame, alloc_env_frame_
+    // from_env) takes unique.
+    mutable std::shared_mutex env_frames_mtx_;
     // Issue #206: pair remap table. Rebuilt by compact_pairs().
     // pair_remap_[old_idx] = new_idx (live, moved) or -1 (freed).
     // Empty means no compact has happened yet (identity mapping).
